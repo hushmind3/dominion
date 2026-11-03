@@ -27,7 +27,7 @@ export function CapabilitiesPage({navigate}:{navigate:(page:Page)=>void}){
   <div className="mb-8 flex items-center gap-4 rounded-2xl border border-blue-100 bg-blue-50 p-5"><div className="grid size-12 shrink-0 place-items-center rounded-xl bg-blue-100 text-blue-600"><Layers3 size={22}/></div><div><strong>실행 가능한 능력과 카탈로그 항목을 구분합니다.</strong><p>이 화면은 실제 설정과 확장 매니페스트를 읽습니다. 준비되지 않은 채널은 코드가 없으므로 호출할 수 없으며, 모델은 실제 서버를 조회해 상태를 확인합니다.</p></div></div>
   {data.error&&<Notice message={data.error}/>}
   <div className="mb-5 flex flex-wrap items-center gap-3"><Search size={18}/><TextInput placeholder="모든 모델 · 메신저 · 도구 통합 검색" value={query} onChange={e=>setQuery(e.target.value)}/></div>
-  <div className="mb-6 flex flex-wrap items-center gap-2 border-b border-slate-200 pb-3">{families.map(f=>{const Icon=f.icon;return <Button key={f.id} className={family===f.id?'active':''} onClick={()=>setFamily(f.id)}><Icon size={16}/>{f.label}<span>{counts[f.id]||0}</span></Button>})}</div>
+  <div className="mb-6 flex flex-wrap items-center gap-2 border-b border-slate-200 pb-3">{families.map(f=>{const Icon=f.icon;return <Button key={f.id} variant={family===f.id?'primary':'ghost'} onClick={()=>setFamily(f.id)}><Icon size={16}/>{f.label}<span>{counts[f.id]||0}</span></Button>})}</div>
   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">{rows.map(item=>{
    const fam=families.find(f=>f.id===item.namespace);
    const Icon=fam?.icon||Layers3;
