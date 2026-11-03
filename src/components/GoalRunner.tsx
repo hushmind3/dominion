@@ -69,11 +69,11 @@ export function GoalRunner(){
      <Button variant="ghost" className="px-2 py-1 text-xs" onClick={()=>void runs.reload()}><RefreshCw size={13}/> 새로고침</Button>
     </div>
     <div className="mt-2 max-h-72 space-y-2 overflow-y-auto">
-     {runs.value.map(r=><button key={r.id} type="button" onClick={()=>setActive(r.id)} className={['flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition',
+     {runs.value.map(r=><Button key={r.id} type="button" variant="ghost" onClick={()=>setActive(r.id)} className={['flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition',
       selected?.id===r.id?'border-blue-300 bg-blue-50':'border-slate-200 bg-white hover:bg-slate-50'].join(' ')}>
       <span className={['rounded-md px-2 py-1 text-[11px] font-semibold',stateColor(r.status)].join(' ')}>{states[r.status]||r.status}</span>
       <span className="min-w-0 flex-1 truncate text-sm text-slate-700">{r.goal}</span><ArrowRight size={14} className="shrink-0 text-slate-400"/>
-     </button>)}
+     </Button>)}
      {!runs.value.length&&<p className="py-5 text-center text-xs text-slate-500">실행 기록이 없습니다.</p>}
     </div>
    </div>
