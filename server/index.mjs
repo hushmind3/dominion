@@ -114,6 +114,7 @@ async function api(req,res,u){
   return json(res,await modelLibrary.remove(installedModel[1]));
  }
  if(url==='/api/model-library/runtime'&&method==='GET')return json(res,{...localRunner.status(),capabilities:localRunner.capabilities()});
+ if(url==='/api/model-library/runtime/install'&&method==='POST')return json(res,localRunner.install(await body(req)),202);
  if(url==='/api/model-library/runtime/load'&&method==='POST')return json(res,await localRunner.load(await body(req)));
  if(url==='/api/model-library/runtime/unload'&&method==='POST')return json(res,await localRunner.unload());
  if(url==='/api/executions'&&method==='GET')return json(res,executions().slice(0,200));
