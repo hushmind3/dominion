@@ -1,5 +1,5 @@
 import {useCallback,useEffect,useMemo,useState} from 'react'
-import {Activity,Blocks,BrainCircuit,CalendarClock,ChevronDown,ChevronsUpDown,Command,Compass,Connection,FileClock,Layers3,Menu,MessageSquareMore,Plus,RadioTower,Search,Settings2,ShieldCheck,Sparkles,UsersRound,Workflow,X} from 'lucide-react'
+import {Activity,Blocks,BrainCircuit,CalendarClock,ChevronDown,ChevronsUpDown,Command,Compass,FileClock,Layers3,Menu,MessageSquareMore,Plus,RadioTower,Search,Settings2,ShieldCheck,Sparkles,UsersRound,Workflow,X} from 'lucide-react'
 import {get} from './api'
 import {ChatPage} from './pages/Chat'
 import {ModelHub} from './pages/Models'

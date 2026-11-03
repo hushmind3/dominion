@@ -1,4 +1,4 @@
-import {FormEvent,useEffect,useRef,useState} from 'react'
+import {FormEvent,useEffect,useRef,useState,type KeyboardEvent} from 'react'
 import {ArrowRight,Bot,BrainCircuit,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,CornerDownLeft,History,LoaderCircle,MessageCircle,MoreHorizontal,Plus,Send,ShieldAlert,Sparkles,TerminalSquare,Trash2,X} from 'lucide-react'
 import {Agent,ChatMessage,ChatSession,Provider,get,post,streamChat} from '../api'
 import {Action,Empty,Notice,StateTag,useRemote} from '../components/UI'
@@ -44,7 +44,7 @@ export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onS
   }catch(e){setError((e as Error).message)}finally{setBusy(false);setApproval(null);}
  };
  const approve=async(ok:boolean)=>{if(!approval)return;try{await post('/api/approvals',{id:approval.id,allow:ok});setApproval(null)}catch(e){setError((e as Error).message)}};
- const appendKey=(e:React.KeyboardEvent<HTMLTextAreaElement>)=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();void send()}};
+ const appendKey=(e:KeyboardEvent<HTMLTextAreaElement>)=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();void send()}};
  const selectedProvider=providers.value.find(x=>x.id===providerId);
  return <div className="chat-layout">
   <div className={'conversation-list '+(!showHistory?'collapsed':'')}>

@@ -45,7 +45,7 @@ export async function connectorCall(provider,action,args={}){
   else if(action==='me')url='https://api.github.com/user';
   else throw Error('Unknown GitHub action');
  }else if(provider==='google'){
-  if(action==='youtube_search'){url=new URL('https://www.googleapis.com/youtube/v3/search');url.searchParams.set('part','snippet');url.searchParams.set('type','video');url.searchParams.set('mine','true');url.searchParams.set('maxResults','25');}
+  if(action==='youtube_search'){url=new URL('https://www.googleapis.com/youtube/v3/search');url.searchParams.set('part','snippet');url.searchParams.set('type','video');url.searchParams.set('forMine','true');url.searchParams.set('maxResults','25');}
   else if(action==='youtube_channels')url='https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&mine=true';
   else throw Error('Unknown Google action');
  }else throw Error('Unsupported provider');

@@ -117,6 +117,20 @@ async function api(req,res,u){
    return json(res,put('automation',{...x,id:x.id||crypto.randomUUID(),enabled:x.enabled!==false,nextAt:x.nextAt||new Date(Date.now()+3600000).toISOString()}));
   }
  }
+ if(url==='/api/mcp/catalog'&&method==='GET'){
+  const q=(u.searchParams.get('q')||'').trim();
+  if(q.length<3)throw Error('Search term must be at least 3 characters');
+  const endpoint=new URL('https://registry.modelcontextprotocol.io/v0.1/servers');
+  endpoint.searchParams.set('search',q);endpoint.searchParams.set('version','latest');endpoint.searchParams.set('limit','25');
+  const response=await fetch(endpoint,{signal:AbortSignal.timeout(12000)});
+  if(!response.ok)throw Error('MCP registry HTTP '+response.status);
+  const raw=await response.json();
+  return json(res,(raw.servers||[]).map(x=>{
+   const s=x.server||x;const pkg=(s.packages||[]).find(p=>(p.registryType||p.registry_type)==='npm');
+   const remote=(s.remotes||[]).find(r=>/^https:\/\//.test(r.url||''));
+   return {name:s.name,description:s.description||'',packageName:pkg?.identifier||'',url:remote?.url||''};
+  }));
+ }
  if(url==='/api/mcp'){
   if(method==='GET')return json(res,mcpServers());
   if(method==='POST')return json(res,saveMcp(await body(req)));

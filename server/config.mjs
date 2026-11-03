@@ -1,5 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs';
+if (fs.existsSync('.env') && typeof process.loadEnvFile==='function') process.loadEnvFile('.env');
 export const ROOT = path.resolve(process.cwd());
 export const DATA = path.resolve(process.env.DOMINION_DATA || path.join(ROOT,'runtime'));
 export const WORKSPACE = path.resolve(process.env.DOMINION_WORKSPACE || path.join(ROOT,'workspace'));

@@ -26,7 +26,7 @@ function asOpenAI(row){
  return v;
 }
 const runningSessions=new Set();
-export async function runTurn({sessionId,agentId,providerId,model,input,systemOverride,onEvent=()=>{},signal,toolsEnabled=true}){
+export async function runTurn({sessionId,agentId,providerId,model,input,systemOverride,reasoningLanguage,onEvent=()=>{},signal,toolsEnabled=true}){
  const sess=get('session',sessionId);if(!sess)throw Error('Session not found');
  if(runningSessions.has(sessionId))throw Error('Session is already running');
  runningSessions.add(sessionId);
@@ -40,7 +40,7 @@ export async function runTurn({sessionId,agentId,providerId,model,input,systemOv
     const title=sess.title==='새 대화'?String(input).trim().slice(0,58):sess.title;
     put('session',{...sess,title,providerId:provider,model:modelId,lastActivity:new Date().toISOString()});
   }
-  const system=systemOverride||systemFor(agent);
+  const system=(systemOverride||systemFor(agent))+(reasoningLanguage==='ko'?'\n\nWhen the provider exposes visible reasoning content, prefer explaining your thought process in Korean.':'');
   const tools=await toolsForModel(toolsEnabled);
   let iterations=0;
   while(iterations++<8){
