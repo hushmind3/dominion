@@ -1,10 +1,12 @@
 import {all,put,get,remove,log,bus,claimInbound,finishInbound} from './store.mjs';
 import {secretSet,secretGet,hasSecret} from './vault.mjs';
 import {newSession,runTurn} from './engine.mjs';
+import {runIntent} from './native-intent.mjs';
 import {roomCommand,runRoomIngress,stopRoomFlow,resetRoomFlow} from './room-orchestrator.mjs';
 import {channelCatalog,channelDefinition,validateChannelConfiguration} from './channel-catalog.mjs';
 
 import {channelDriver,registryErrors} from './channel-registry.mjs';
+import {parseSlash,channelCommand} from './commands.mjs';
 const workers=new Map();
 const statuses=new Map();
 const queues=new Map();
@@ -100,6 +102,21 @@ async function dispatch(record,event){
   }catch(e){if(eventKey)finishInbound(eventKey,false);log('channel.command_error',{channelId:record.id,error:safeError(e)});return false;}
   return true;
  }
+ const parsed=parseSlash(event.text);
+ if(parsed){
+  const eventKey=event.messageId?record.id+':'+event.conversationId+':'+event.messageId:null;
+  if(eventKey&&!claimInbound(eventKey))return true;
+  try{
+   const response=await channelCommand(record,event);
+   if(response!==null)await event.reply(response);
+   if(eventKey)finishInbound(eventKey,true);
+   return true;
+  }catch(error){
+   if(eventKey)finishInbound(eventKey,false);
+   log('channel.command_error',{channelId:record.id,error:safeError(error)});
+   return false;
+  }
+ }
  if(record.mentionOnly&&event.isGroup&&!event.mention)return true;
  const key=record.id+':'+event.conversationId;
  const run=async()=>{
@@ -117,7 +134,7 @@ async function dispatch(record,event){
      const s=newSession({title:record.name+' · '+event.conversationId,agentId:record.agentId,providerId:record.providerId,model:record.model});
      session=put('session',{...s,channelKey:key});
     }
-    const assistant=await runTurn({sessionId:session.id,agentId:record.agentId,providerId:record.providerId,model:record.model,input:event.text});
+    const assistant=await runIntent({sessionId:session.id,agentId:session.agentId||record.agentId,providerId:session.providerId||record.providerId,model:session.model||record.model,input:event.text});
     const output=assistant.content?.trim();
     if(output){await event.reply(output);log('channel.replied',{channelId:record.id,kind:record.kind,conversationId:event.conversationId});}
    }

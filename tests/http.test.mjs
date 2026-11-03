@@ -26,7 +26,7 @@ test('real gateway creates and retrieves agents, rooms, sessions and jobs', {tim
   response=await fetch(url+'/api/rooms',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'Test Room',agentIds:['general',agent.id],rounds:2})});assert.equal(response.status,200);const room=await response.json();assert.equal(room.agentIds.length,2);
   response=await fetch(url+'/api/sessions',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});assert.equal(response.status,200);const session=await response.json();assert.ok(session.id);
   response=await fetch(url+'/api/sessions/'+session.id+'/messages');assert.deepEqual(await response.json(),[]);
-  response=await fetch(url+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:session.id,input:'Hello',providerId:'',model:''})});assert.equal(response.status,200);const stream=await response.text();assert.match(stream,/Select a provider and model/);
+  response=await fetch(url+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:session.id,input:'Hello',providerId:'',model:''})});assert.equal(response.status,200);const stream=await response.text();assert.match(stream,/No active AI model found/);
   response=await fetch(url+'/api/capabilities');
   assert.equal(response.status,200);
   const capabilities=await response.json();

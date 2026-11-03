@@ -16,6 +16,7 @@ export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onS
  const [slashOpen,setSlashOpen]=useState(false),[slashActive,setSlashActive]=useState(0),[commandInfo,setCommandInfo]=useState('');
  const bottom=useRef<HTMLDivElement>(null),inputRef=useRef<HTMLTextAreaElement>(null);
  const slashItems=slashOpen?slashCandidates(input,agents.value,models):[];
+ useEffect(()=>{get<{providerId:string;model:string}>('/api/model-route').then(x=>{setProviderId(x.providerId);setModel(x.model)}).catch(()=>{});},[]);
  useEffect(()=>{if(sessionId!==undefined)setCurrent(sessionId)},[sessionId]);
  useEffect(()=>{if(current){get<ChatMessage[]>('/api/sessions/'+current+'/messages').then(setMessages).catch(()=>{})}else setMessages([])},[current]);
  useEffect(()=>{let valid=true;setModels([]);setModelError('');if(!providerId)return;get<Model[]>('/api/providers/'+providerId+'/models').then(x=>{if(!valid)return;setModels(x);if(x.length)setModel(old=>x.some(m=>m.id===old)?old:x[0].id);else setModel('')}).catch(e=>{if(valid){setModelError(e.message);setModel('')}});return()=>{valid=false}},[providerId]);
@@ -63,7 +64,6 @@ export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onS
     setCommandInfo('사용 가능한 도구 '+found.filter(x=>x.name).length+'개\n'+found.filter(x=>x.name).map(x=>x.name).join(' · '));return;
    }
    if(name==='goal'){
-    if(!model||!providerId)throw Error('모델을 먼저 연결하세요.');
     const goal=await post<{id:string}>('/api/goals',{goal:arg,executor:{agentId,providerId,model}});
     setCommandInfo('자율 작업 등록: '+goal.id.slice(0,8)+' · 실행 기록에서 상태를 확인할 수 있습니다.');return;
    }
@@ -113,7 +113,7 @@ export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onS
    await executeCommand(text);return;
   }
   if(busy)return;
-  if(!providerId||!model){setError('모델 허브에서 실행 중인 모델이나 API 모델을 먼저 선택해주세요.');return}
+  // Unconfigured sessions are routed automatically to an available provider.
   setBusy(true);setError('');setCommandInfo('');setLive('');setThought('');setInput('');setSlashOpen(false);setToolStatus('');
   try{
    let id=current;
@@ -127,6 +127,7 @@ export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onS
     if(event.type==='tool_start')setToolStatus('실행 중 · '+event.name);
     if(event.type==='tool_end')setToolStatus('완료 · '+event.name);
     if(event.type==='tool_error')setToolStatus('도구 오류 · '+event.error);
+     if(event.type==='goal_progress')setToolStatus('자율 실행 · '+event.event+' · '+event.status);
     if(event.type==='assistant_saved'){void get<ChatMessage[]>('/api/sessions/'+session+'/messages').then(setMessages);setLive('');setThought('');}
     if(event.type==='error')setError(event.message);
    });

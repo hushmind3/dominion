@@ -13,7 +13,8 @@
     "start": "node server/index.mjs",
     "test": "node --test --test-concurrency=1 tests/*.test.mjs",
     "check": "tsc --noEmit && npm test && npm run build",
-    "test:ui": "node scripts/ui-smoke.mjs"
+    "test:ui": "node scripts/ui-smoke.mjs",
+    "gate:engine": "node scripts/engine-gate.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "^2.0.0",

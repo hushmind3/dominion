@@ -4,6 +4,16 @@ import {spawn} from 'node:child_process';
 import {WORKSPACE} from './config.mjs';
 import {all,get,put,log,bus} from './store.mjs';
 import {discoverMcp,callMcp} from './mcp.mjs';
+// A cancelled MCP invocation may already have modified a remote system; the
+// caller must journal the outcome as uncertain instead of treating it as undone.
+export async function awaitOrAbort(promise,signal){
+ if(!signal)return promise;
+ signal.throwIfAborted();
+ let abort;
+ const interrupted=new Promise((_,reject)=>{abort=()=>reject(signal.reason||Error('Interrupted'));signal.addEventListener('abort',abort,{once:true});});
+ try{return await Promise.race([promise,interrupted]);}
+ finally{signal.removeEventListener('abort',abort);}
+}
 const params=(properties,required=[])=>({type:'object',properties,required,additionalProperties:false});
 export const builtin=[
  {name:'workspace_list',description:'List files and folders in the workspace',parameters:params({path:{type:'string',description:'Relative folder path'}})},
@@ -15,28 +25,47 @@ export const builtin=[
  {name:'memory_search',description:'Find saved knowledge relevant to a topic',parameters:params({query:{type:'string'}},['query'])},
  {name:'skill_propose',description:'Draft a reusable skill for user review and installation',parameters:params({name:{type:'string'},instructions:{type:'string'}},['name','instructions'])}
 ];
+// SQLite stores the approval ledger; in-memory promises only wake live requests.
 const pending=new Map();
-export const approvals=()=>[...pending.values()].map(x=>({id:x.id,tool:x.tool,args:x.args,at:x.at}));
-export function resolveApproval(id,allow){const p=pending.get(id);if(!p)return false;pending.delete(id);p.resolve(Boolean(allow));bus.emit('approval',{id,allowed:Boolean(allow)});return true;}
-async function allowed(tool,args,onEvent,signal){
+export const approvals=()=>all('approval').filter(x=>x.status==='pending'||x.status==='interrupted');
+export function recoverApprovals(){
+ for(const record of all('approval').filter(x=>x.status==='pending')){
+  put('approval',{...record,status:'interrupted',reason:'Restarted while awaiting approval; no tool will be replayed automatically'});
+ }
+}
+export function resolveApproval(id,allow){
+ const record=get('approval',id);
+ if(!record||!['pending','interrupted'].includes(record.status))return false;
+ const waiter=pending.get(id);
+ if(!waiter){
+  put('approval',{...record,status:'reviewed',decision:allow?'allow':'deny',reason:'No live execution. Resume the task manually.'});
+  bus.emit('approval',{id,allowed:false,interrupted:true});
+  return false;
+ }
+ waiter.resolve(Boolean(allow));return true;
+}
+async function allowed(tool,args,onEvent,signal,context={}){
  signal?.throwIfAborted();
  const policy=get('policy','default')||{};
  if((policy.autoApprove||[]).includes(tool.name)||policy.autoApproveAll===true)return true;
  const id=crypto.randomUUID();
  return new Promise(resolve=>{
   let settled=false;
-  const finish=ok=>{
+  const finish=(ok,reason='')=>{
    if(settled)return;settled=true;
    clearTimeout(timeout);signal?.removeEventListener('abort',abort);
-   pending.delete(id);resolve(Boolean(ok));
+   pending.delete(id);
+   put('approval',{...get('approval',id),status:reason==='cancelled'?'cancelled':reason==='timeout'?'expired':ok?'approved':'denied',decision:ok?'allow':'deny',resolvedAt:new Date().toISOString(),reason});
+   resolve(Boolean(ok));bus.emit('approval',{id,allowed:Boolean(ok)});
   };
-  const abort=()=>finish(false);
-  const timeout=setTimeout(()=>finish(false),120000);timeout.unref?.();
-  pending.set(id,{id,tool:tool.name,args,at:Date.now(),resolve:finish});
+  const abort=()=>finish(false,'cancelled');
+  const timeout=setTimeout(()=>finish(false,'timeout'),120000);timeout.unref?.();
+  put('approval',{id,tool:tool.name,args,status:'pending',runId:context.runId||null,callId:context.callId||null,requestedAt:new Date().toISOString()});
+  pending.set(id,{id,resolve:finish});
   signal?.addEventListener('abort',abort,{once:true});
   if(signal?.aborted){abort();return;}
   onEvent?.({type:'approval',id,tool:tool.name,args});
-  bus.emit('approval',{id,tool:tool.name,args});
+  bus.emit('approval',{id,tool:tool.name,args,status:'pending'});
  });
 }
 async function workspacePath(p='',existing=false){
@@ -55,13 +84,22 @@ async function exec(command,args=[],signal){
  if(typeof command!=='string'||!/^[\w./:-]+$/.test(command))throw Error('Invalid executable');
  if(!Array.isArray(args)||args.length>40||args.some(x=>typeof x!=='string'))throw Error('Invalid arguments');
  return new Promise((resolve,reject)=>{
-  const child=spawn(command,args,{cwd:WORKSPACE,shell:false,windowsHide:true,env:process.env,signal});
+  const child=spawn(command,args,{cwd:WORKSPACE,shell:false,windowsHide:true,env:process.env,signal,
+    detached:process.platform!=='win32'});
+   // Terminate the spawned process group, not only the shell-free parent process.
+   const stopTree=()=>{
+    if(!child.pid)return;
+    if(process.platform==='win32'){
+     const killer=spawn('taskkill',['/PID',String(child.pid),'/T','/F'],{stdio:'ignore',windowsHide:true});killer.on('error',()=>{});
+    }else{try{process.kill(-child.pid,'SIGTERM');}catch{child.kill('SIGTERM');}}
+   };
+   signal?.addEventListener('abort',stopTree,{once:true});
   let stdout='',stderr='',settled=false,timedOut=false;
   const finish=(error,result)=>{
-   if(settled)return;settled=true;clearTimeout(timer);
+   if(settled)return;settled=true;clearTimeout(timer);signal?.removeEventListener('abort',stopTree);
    if(error)reject(error);else resolve(result);
   };
-  const timer=setTimeout(()=>{timedOut=true;child.kill();},60000);timer.unref?.();
+  const timer=setTimeout(()=>{timedOut=true;stopTree();},60000);timer.unref?.();
   child.stdout?.on('data',x=>stdout=(stdout+x).slice(-30000));
   child.stderr?.on('data',x=>stderr=(stderr+x).slice(-10000));
   child.on('error',error=>finish(error));
@@ -75,13 +113,13 @@ export async function toolsForModel(enabled=true){
 }
 export async function executeTool(tool,args,onEvent=()=>{},context={}){
  const signal=context.signal;signal?.throwIfAborted();
- if(tool.approval&&!(await allowed(tool,args,onEvent,signal)))throw Error('Tool execution denied or expired');
+ if(tool.approval&&!(await allowed(tool,args,onEvent,signal,context)))throw Error('Tool execution denied or expired');
  if(tool.mcpId){
   // External MCP calls may cause side effects; first-time use requires permission.
   const policy=get('policy','default')||{};
-  if(!policy.autoApproveMcp && !(await allowed({...tool,approval:true},args,onEvent,signal)))throw Error('MCP tool denied');
+  if(!policy.autoApproveMcp && !(await allowed({...tool,approval:true},args,onEvent,signal,context)))throw Error('MCP tool denied');
   signal?.throwIfAborted();
-  const result=await callMcp(tool,args);
+  const result=await awaitOrAbort(callMcp(tool,args),signal);
   signal?.throwIfAborted();return result;
  }
  let result;

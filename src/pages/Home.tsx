@@ -1,6 +1,7 @@
 import {Activity,ArrowRight,ArrowUpRight,BookOpenText,BrainCircuit,Check,Cloud,Compass,MessageSquareMore,Play,RadioTower,ShieldCheck,Sparkles,Workflow} from 'lucide-react'
 import {Button,PageContainer} from '../components/Primitives'
 import {StatusPill} from '../components/StatusPill'
+import {ExecutionMonitor} from '../components/ExecutionMonitor'
 import {useRemote} from '../components/UI'
 import type {Agent,ChatSession,Provider} from '../api'
 
@@ -26,6 +27,7 @@ export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
   {title:'실행 시작',detail:'대화, 에이전트, 단계별 워크플로에서 공통 엔진을 사용합니다',target:'workflows' as const,icon:Workflow,done:jobs.value.length>0}
  ]
  return <PageContainer className="!max-w-[1480px] !px-4 !py-6 sm:!px-8 lg:!px-10 lg:!py-8">
+  <ExecutionMonitor/>
   <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
    <div><p className="m-0 text-[10px] font-extrabold tracking-[.21em] text-blue-700">YOUR COMMAND CENTER</p><h2 className="mb-0 mt-1 text-[25px] font-extrabold tracking-tight text-slate-900 sm:text-3xl">워크스페이스 개요</h2></div>
    <span className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3.5 py-2 text-[11px] font-semibold text-slate-600"><span className="size-2 rounded-full bg-emerald-500"/>실제 저장된 데이터 기준</span>

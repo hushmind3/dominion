@@ -2,6 +2,7 @@ import {all,get,put,remove,writeMessage,messages,log,bus,db} from './store.mjs';
 import {ExecutionRuntime} from './execution-runtime.mjs';
 import {streamCompletion,providerById} from './providers.mjs';
 import {toolsForModel,executeTool} from './tools.mjs';
+import {resolveModel} from './model-router.mjs';
 export function agents(){
  if(!get('agent','general'))put('agent',{id:'general',name:'General',description:'범용 작업 에이전트',systemPrompt:'You are a capable, practical assistant. Answer in the user language. Use tools to accomplish tasks when available.',providerId:'',model:'',color:'#5879e9'});
  return all('agent');
@@ -61,9 +62,12 @@ export async function runTurn({sessionId,agentId,providerId,model,input,systemOv
  const sess=get('session',sessionId);if(!sess)throw Error('Session not found');
  if(executionRuntime.isActive(sessionId))throw Error('Session is already running');
  const agent=get('agent',agentId||sess.agentId)||agents().find(a=>a.id==='general');
- const provider=providerId||sess.providerId||agent?.providerId;
- const modelId=model||sess.model||agent?.model;
- if(!provider||!modelId)throw Error('Select a provider and model in the model picker');
+ let provider=providerId||sess.providerId||agent?.providerId;
+ let modelId=model||sess.model||agent?.model;
+ if(!provider||!modelId){
+  const selected=await resolveModel({agentId:agent?.id,providerId:provider,model:modelId});
+  provider=selected.providerId;modelId=selected.model;
+ }
  if(input!==undefined&&String(input).trim()){
   writeMessage({session_id:sessionId,role:'user',content:String(input),agent_id:agent?.id});
   const title=sess.title==='새 대화'?String(input).trim().slice(0,58):sess.title;

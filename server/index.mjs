@@ -9,16 +9,19 @@ import {all,get,put,remove,messages,recentAudit,bus,pruneInbound} from './store.
 import {providers,saveProvider,availableModels} from './providers.mjs';
 import {modelLibrary} from './model-library.mjs';
 import {localRunner} from './local-runner.mjs';
+import {resolveModel} from './model-router.mjs';
+import {runIntent,cancelSessionIntent} from './native-intent.mjs';
 import {agents,sessions,newSession,runTurn,saveRoom,executions,activeExecutions,cancelExecution,recoverExecutions,renameSession,clearSession,forkSession,compactSession} from './engine.mjs';
 import {updateAgentModels,normalizeAgentAliases} from './agent-admin.mjs';
 import {enqueue,startJobs} from './jobs.mjs';
 import {workflows,saveWorkflow} from './workflows.mjs';
 import {goals,goal,goalEvents,createGoal,resumeGoal,cancelGoal} from './harness.mjs';
 import {mcpServers,saveMcp,deleteMcp,discoverMcp} from './mcp.mjs';
-import {builtin,toolsForModel,approvals,resolveApproval} from './tools.mjs';
+import {builtin,toolsForModel,approvals,resolveApproval,recoverApprovals} from './tools.mjs';
 import {oauthProviders,oauthStart,oauthCallback,connections,connectorCall} from './oauth.mjs';
 import {channels,catalog,channelById,saveChannel,deleteChannel,diagnoseChannel,handleChannelWebhook,startChannels} from './channels.mjs';
 import {activeRoomStatus,stopRoomFlow,resetRoomFlow} from './room-orchestrator.mjs';
+import {commandDefinitions} from './commands.mjs';
 const json=(res,data,status=200)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
 const fail=(res,e)=>json(res,{error:String(e.message||e)},e.status||400);
 async function body(req){
@@ -122,7 +125,7 @@ async function api(req,res,u){
  const executionCancel=url.match(/^\/api\/executions\/([^/]+)\/cancel$/);
  if(executionCancel&&method==='POST')return json(res,{cancelled:cancelExecution(executionCancel[1])});
  const sessionCancel=url.match(/^\/api\/sessions\/([^/]+)\/cancel$/);
- if(sessionCancel&&method==='POST')return json(res,{cancelled:cancelExecution(sessionCancel[1])});
+ if(sessionCancel&&method==='POST')return json(res,{cancelled:cancelExecution(sessionCancel[1])||cancelSessionIntent(sessionCancel[1])});
  if(url==='/api/sessions'){
   if(method==='GET')return json(res,sessions());
   if(method==='POST')return json(res,newSession(await body(req)));
@@ -140,7 +143,7 @@ async function api(req,res,u){
  if(url==='/api/chat'&&method==='POST'){
   const input=await body(req);
   const sessionId=input.sessionId||newSession({agentId:input.agentId,providerId:input.providerId,model:input.model}).id;
-  return stream(res,onEvent=>runTurn({...input,sessionId,onEvent}));
+  return stream(res,onEvent=>runIntent({...input,sessionId,onEvent}));
  }
  if(url==='/api/agents/bulk-model'&&method==='POST')return json(res,updateAgentModels(await body(req)));
  if(url==='/api/agents'){
@@ -209,6 +212,8 @@ async function api(req,res,u){
  }
  if(url==='/api/mcp/discover'&&method==='GET')return json(res,await discoverMcp());
  if(url==='/api/tools'&&method==='GET')return json(res,await toolsForModel());
+ if(url==='/api/model-route'&&method==='GET')return json(res,await resolveModel());
+ if(url==='/api/commands'&&method==='GET')return json(res,commandDefinitions);
  if(url==='/api/approvals'&&method==='GET')return json(res,approvals());
  if(url==='/api/approvals'&&method==='POST'){const x=await body(req);return json(res,{ok:resolveApproval(x.id,x.allow)});}
  if(url==='/api/skills'){
@@ -268,6 +273,6 @@ const server=http.createServer(async(req,res)=>{
   else await staticFile(req,res,u);
  }catch(e){if(!res.headersSent)fail(res,e);else{if(res.getHeader('Content-Type')?.includes('text/event-stream'))send(res,{type:'error',message:String(e)});res.end();}}
 });
-pruneInbound();agents();recoverExecutions();startJobs();startChannels();
+pruneInbound();agents();recoverApprovals();recoverExecutions();startJobs();startChannels();
 server.listen(PORT,HOST,()=>console.log('DOMINION running at http://'+HOST+':'+PORT));
 process.on('SIGTERM',()=>server.close());
