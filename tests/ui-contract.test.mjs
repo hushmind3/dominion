@@ -19,3 +19,12 @@ test('design tokens are centralized and GoalRunner is part of workflows',()=>{
  const page=readFileSync('src/pages/Workflows.tsx','utf8');
  assert.ok(page.includes('<GoalRunner/>'));
 });
+
+test('common page layout utilities replace duplicated custom selectors',()=>{
+ for(const name of readdirSync(pages).filter(n=>n.endsWith('.tsx'))){
+  const src=readFileSync(path.join(pages,name),'utf8');
+  for(const legacy of ['content-wrap','field-input','modal-scrim','modal-fields','modal-actions']){
+   assert.ok(!src.includes('className="'+legacy+'"'),name+' still uses legacy '+legacy);
+  }
+ }
+});
