@@ -14,6 +14,9 @@ async function pump(){
   while(true){
    const job=all('job').filter(x=>x.status==='queued').sort((a,b)=>a.createdAt.localeCompare(b.createdAt))[0];
    if(!job)break;
+   if(job.kind==='goal'&&goal(job.input?.goalId)?.status==='cancelled'){
+    put('job',{...job,status:'cancelled',finishedAt:new Date().toISOString()});continue;
+   }
    put('job',{...job,status:'running',startedAt:new Date().toISOString(),attempts:(job.attempts||0)+1});
    const events=[];
    const emit=e=>{const entry={jobId:job.id,...e};bus.emit('job_event',entry);if(events.length<200)events.push({type:e.type,at:Date.now()});};
@@ -31,8 +34,9 @@ async function pump(){
     put('job',{...get('job',job.id),status,result,finishedAt:new Date().toISOString(),events});
     log('job.'+status,{jobId:job.id});
    }catch(e){
-    put('job',{...get('job',job.id),status:'failed',error:String(e.message||e),finishedAt:new Date().toISOString(),events});
-    log('job.failed',{jobId:job.id,error:String(e)});
+    const cancelled=job.kind==='goal'&&goal(job.input?.goalId)?.status==='cancelled';
+    put('job',{...get('job',job.id),status:cancelled?'cancelled':'failed',error:String(e.message||e),finishedAt:new Date().toISOString(),events});
+    log(cancelled?'job.cancelled':'job.failed',{jobId:job.id,error:String(e)});
    }
   }
  }finally{working=false;}

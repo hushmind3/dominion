@@ -84,13 +84,22 @@ async function exec(command,args=[],signal){
  if(typeof command!=='string'||!/^[\w./:-]+$/.test(command))throw Error('Invalid executable');
  if(!Array.isArray(args)||args.length>40||args.some(x=>typeof x!=='string'))throw Error('Invalid arguments');
  return new Promise((resolve,reject)=>{
-  const child=spawn(command,args,{cwd:WORKSPACE,shell:false,windowsHide:true,env:process.env,signal});
+  const child=spawn(command,args,{cwd:WORKSPACE,shell:false,windowsHide:true,env:process.env,signal,
+    detached:process.platform!=='win32'});
+   // Terminate the spawned process group, not only the shell-free parent process.
+   const stopTree=()=>{
+    if(!child.pid)return;
+    if(process.platform==='win32'){
+     const killer=spawn('taskkill',['/PID',String(child.pid),'/T','/F'],{stdio:'ignore',windowsHide:true});killer.on('error',()=>{});
+    }else{try{process.kill(-child.pid,'SIGTERM');}catch{child.kill('SIGTERM');}}
+   };
+   signal?.addEventListener('abort',stopTree,{once:true});
   let stdout='',stderr='',settled=false,timedOut=false;
   const finish=(error,result)=>{
-   if(settled)return;settled=true;clearTimeout(timer);
+   if(settled)return;settled=true;clearTimeout(timer);signal?.removeEventListener('abort',stopTree);
    if(error)reject(error);else resolve(result);
   };
-  const timer=setTimeout(()=>{timedOut=true;child.kill();},60000);timer.unref?.();
+  const timer=setTimeout(()=>{timedOut=true;stopTree();},60000);timer.unref?.();
   child.stdout?.on('data',x=>stdout=(stdout+x).slice(-30000));
   child.stderr?.on('data',x=>stderr=(stderr+x).slice(-10000));
   child.on('error',error=>finish(error));
