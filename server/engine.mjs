@@ -3,13 +3,10 @@ import {ExecutionRuntime} from './execution-runtime.mjs';
 import {streamCompletion,providerById} from './providers.mjs';
 import {toolsForModel,executeTool} from './tools.mjs';
 import {resolveModel} from './model-router.mjs';
-export function agents(){
- if(!get('agent','general'))put('agent',{id:'general',name:'General',description:'범용 작업 에이전트',systemPrompt:'You are a capable, practical assistant. Answer in the user language. Use tools to accomplish tasks when available.',providerId:'',model:'',color:'#5879e9'});
- return all('agent');
-}
+export const agents=()=>all('agent');
 export const sessions=()=>all('session');
 export function newSession(input={}){
- return put('session',{title:input.title||'새 대화',agentId:input.agentId||'general',roomId:input.roomId||null,providerId:input.providerId||'',model:input.model||'',lastActivity:new Date().toISOString()});
+ return put('session',{title:input.title||'새 대화',agentId:input.agentId||'',roomId:input.roomId||null,providerId:input.providerId||'',model:input.model||'',lastActivity:new Date().toISOString()});
 }
 export function sessionMessages(id){if(!get('session',id))throw Error('Session not found');return messages(id);}
 function systemFor(agent,goal=''){
@@ -39,8 +36,7 @@ const executionRuntime=new ExecutionRuntime({
  getToolMode:(providerId,modelId)=>{
   const provider=providerById(providerId);
   if(provider.toolMode)return provider.toolMode;
-  if(['lmstudio','ollama','dominion-native'].includes(providerId)||
-     (provider.local&&/(?:^|[^0-9])(?:[1-8](?:\.\d+)?)b(?:[^a-z]|$)/i.test(modelId)))return 'compat';
+  if(provider.kind==='ollama'||(provider.local&&/(?:^|[^0-9])(?:[1-8](?:\.\d+)?)b(?:[^a-z]|$)/i.test(modelId)))return 'compat';
   return 'auto';
  },
  readHistory:runtimeHistory,convertMessage:asOpenAI,saveMessage:writeMessage,
@@ -61,7 +57,7 @@ export function recoverExecutions(){
 export async function runTurn({sessionId,agentId,providerId,model,input,systemOverride,reasoningLanguage,onEvent=()=>{},signal,toolsEnabled=true,speakerLabels=false,limits={}}){
  const sess=get('session',sessionId);if(!sess)throw Error('Session not found');
  if(executionRuntime.isActive(sessionId))throw Error('Session is already running');
- const agent=get('agent',agentId||sess.agentId)||agents().find(a=>a.id==='general');
+ const agent=get('agent',agentId||sess.agentId)||null;
  let provider=providerId||sess.providerId||agent?.providerId;
  let modelId=model||sess.model||agent?.model;
  if(!provider||!modelId){
