@@ -29,9 +29,11 @@ export class ExecutionRuntime {
     const persisted=()=>{const {controller:_,...data}=run;this.saveRun({...data,updatedAt:new Date().toISOString()});};
     const emit=(type,detail={})=>{persisted();onEvent({type,runId,sessionId,...detail});};
     const check=()=>{
-      if(controller.signal.aborted)throw abortError();
+      if(controller.signal.aborted)throw controller.signal.reason||abortError();
       if(Date.now()-start>maxElapsedMs||run.tokens>=maxTokens||run.toolCalls>maxToolCalls)throw Object.assign(Error('Execution budget exceeded'),{code:'BUDGET'});
     };
+    const deadline=setTimeout(()=>controller.abort(Object.assign(Error('Execution time budget exceeded'),{code:'BUDGET'})),maxElapsedMs);
+    deadline.unref?.();
     const externalAbort=()=>controller.abort(signal?.reason||abortError());
     if(signal?.aborted)externalAbort();
     else signal?.addEventListener('abort',externalAbort,{once:true});
@@ -93,12 +95,13 @@ export class ExecutionRuntime {
       }
       throw Object.assign(Error('Model iteration limit reached'),{code:'LIMIT'});
     }catch(error){
-      run.status=controller.signal.aborted?'cancelled':error?.code==='BUDGET'?'budget_exceeded':
+      run.status=error?.code==='BUDGET'||controller.signal.reason?.code==='BUDGET'?'budget_exceeded':controller.signal.aborted?'cancelled':
         error?.code==='INTERRUPTED'?'needs_review':'failed';
       run.reason=String(error?.message||error).slice(0,1000);
       emit('runtime.'+run.status,{reason:run.reason});
       throw error;
     }finally{
+      clearTimeout(deadline);
       signal?.removeEventListener('abort',externalAbort);
       run.finishedAt=new Date().toISOString();persisted();
       this.#sessions.delete(sessionId);this.#runs.delete(runId);
