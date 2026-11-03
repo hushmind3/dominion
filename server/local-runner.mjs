@@ -24,13 +24,23 @@ async function freePort(){
  });
 }
 class LocalRunner{
- constructor(){this.child=null;this.state={status:'idle'};this.launchToken=0;}
+ constructor(){this.child=null;this.state={status:'idle'};this.launchToken=0;this.cachedCapabilities=null;this.cachedAt=0;}
  capabilities(){
+  if(this.cachedCapabilities&&Date.now()-this.cachedAt<15000)return this.cachedCapabilities;
   const llama=process.env.DOMINION_LLAMA_SERVER||'llama-server';
   const py=process.env.DOMINION_MLX_PYTHON||'python3';
-  return {gguf:{available:binary(llama),command:llama},
-   mlx:{available:process.platform==='darwin'&&process.arch==='arm64'&&python(py),command:py},
-   memory:{total:os.totalmem(),free:os.freemem(),platform:process.platform,arch:process.arch}};
+  const memory={total:os.totalmem(),free:os.freemem(),platform:process.platform,arch:process.arch};
+  let gpu=null;
+  const nvidia=spawnSync('nvidia-smi',['--query-gpu=memory.total,memory.free','--format=csv,noheader,nounits'],{timeout:2000,encoding:'utf8',windowsHide:true});
+  if(nvidia.status===0){
+   const row=String(nvidia.stdout||'').trim().split('\n')[0].split(',').map(x=>Number(x.trim())*1024*1024);
+   if(row.length===2&&row.every(Number.isFinite))gpu={kind:'dedicated',total:row[0],free:row[1],source:'nvidia-smi'};
+  }
+  if(!gpu&&process.platform==='darwin'&&process.arch==='arm64')gpu={kind:'unified',total:memory.total,free:memory.free,source:'system memory (estimate)'};
+  this.cachedCapabilities={gguf:{available:binary(llama),command:llama},
+   mlx:{available:process.platform==='darwin'&&process.arch==='arm64'&&python(py),command:py},memory,gpu};
+  this.cachedAt=Date.now();
+  return this.cachedCapabilities;
  }
  status(){return {...this.state};}
  async unload(){
