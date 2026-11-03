@@ -66,34 +66,3 @@ export async function streamCompletion({providerId,model,messages,tools=[],onEve
  out.tool_calls=[...calls.entries()].sort((a,b)=>a[0]-b[0]).map(x=>x[1]);
  return out;
 }
-export async function searchHuggingFace(query='',limit=24){
- const url=new URL('https://huggingface.co/api/models');
- url.searchParams.set('search',query);url.searchParams.set('limit',String(Math.max(1,Math.min(40,limit))));
- url.searchParams.set('sort','downloads');url.searchParams.set('direction','-1');url.searchParams.set('full','false');
- const res=await fetch(url,{signal:AbortSignal.timeout(12000)});
- if(!res.ok)throw Error('Hugging Face HTTP '+res.status);
- const rows=await res.json();
- return rows.map(x=>({id:x.id,downloads:x.downloads||0,likes:x.likes||0,task:x.pipeline_tag||'',tags:(x.tags||[]).filter(t=>/gguf|mlx|text-generation|quantized/i.test(t)).slice(0,8)}));
-}
-export async function modelFiles(id){
- if(!/^[\w.-]+\/[\w.-]+$/.test(id))throw Error('Invalid model identifier');
- const r=await fetch('https://huggingface.co/api/models/'+id+'/tree/main?recursive=true&expand=false',{signal:AbortSignal.timeout(12000)});
- if(!r.ok)throw Error('Hugging Face files HTTP '+r.status);
- return (await r.json()).filter(f=>f.type==='file'&&/\.(gguf|safetensors)$/i.test(f.path)).map(f=>({path:f.path,size:f.size||0})).slice(0,120);
-}
-export async function downloadIntoLMStudio({modelId,quantization}){
- if(!/^[\w.-]+\/[\w.-]+$/.test(modelId))throw Error('Invalid model identifier');
- const endpoint='http://127.0.0.1:1234/api/v1/models/download';
- const payload={model:'https://huggingface.co/'+modelId};
- if(quantization)payload.quantization=quantization;
- const key=secretGet('provider:lmstudio');
- const r=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json',...(key?{Authorization:'Bearer '+key}:{})},body:JSON.stringify(payload),signal:AbortSignal.timeout(20000)});
- if(!r.ok)throw Error('LM Studio download HTTP '+r.status+': '+(await r.text()).slice(0,300));
- return r.json();
-}
-export async function lmDownloadStatus(jobId){
- if(!/^[\w-]+$/.test(jobId))throw Error('Invalid job id');
- const key=secretGet('provider:lmstudio');
- const r=await fetch('http://127.0.0.1:1234/api/v1/models/download/status/'+jobId,{headers:key?{Authorization:'Bearer '+key}:{},signal:AbortSignal.timeout(6500)});
- if(!r.ok)throw Error('LM Studio HTTP '+r.status);return r.json();
-}
