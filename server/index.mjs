@@ -11,7 +11,7 @@ import {enqueue,startJobs} from './jobs.mjs';
 import {mcpServers,saveMcp,deleteMcp,discoverMcp} from './mcp.mjs';
 import {builtin,toolsForModel,approvals,resolveApproval} from './tools.mjs';
 import {oauthProviders,oauthStart,oauthCallback,connections,connectorCall} from './oauth.mjs';
-import {channels,saveChannel,stopChannel,startChannels} from './channels.mjs';
+import {channels,catalog,channelById,saveChannel,deleteChannel,diagnoseChannel,handleChannelWebhook,startChannels} from './channels.mjs';
 const json=(res,data,status=200)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
 const fail=(res,e)=>json(res,{error:String(e.message||e)},e.status||400);
 async function body(req){
@@ -68,7 +68,7 @@ async function api(req,res,u){
  if(url==='/api/events'&&method==='GET'){
   res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});
   send(res,{type:'connected'});
-  const listeners=['record','message','audit','job_event','approval'].map(n=>{const fn=x=>send(res,{type:n,data:x});bus.on(n,fn);return [n,fn];});
+  const listeners=['record','message','audit','job_event','approval','channel_status'].map(n=>{const fn=x=>send(res,{type:n,data:x});bus.on(n,fn);return [n,fn];});
   const ping=setInterval(()=>send(res,{type:'ping'}),25000);
   req.on('close',()=>{clearInterval(ping);listeners.forEach(([n,fn])=>bus.off(n,fn));});
   return;
@@ -152,10 +152,15 @@ async function api(req,res,u){
   if(method==='GET')return json(res,get('policy','default')||{id:'default',autoApprove:[],autoApproveMcp:false,autoApproveAll:false});
   if(method==='POST'){const x=await body(req);return json(res,put('policy',{id:'default',autoApprove:Array.isArray(x.autoApprove)?x.autoApprove:[],autoApproveMcp:Boolean(x.autoApproveMcp),autoApproveAll:Boolean(x.autoApproveAll)}));}
  }
+ if(url==='/api/channels/catalog'&&method==='GET')return json(res,catalog());
  if(url==='/api/channels'){
   if(method==='GET')return json(res,channels());
   if(method==='POST')return json(res,await saveChannel(await body(req)));
  }
+ const channelId=url.match(/^\/api\/channels\/([^/]+)$/);
+ if(channelId&&method==='GET')return json(res,channelById(channelId[1])||{error:'Channel not found'});
+ const diagnostic=url.match(/^\/api\/channels\/([^/]+)\/diagnose$/);
+ if(diagnostic&&method==='POST')return json(res,await diagnoseChannel(diagnostic[1]));
  if(url==='/api/oauth/providers'&&method==='GET')return json(res,oauthProviders());
  if(url==='/api/oauth/connections'&&method==='GET')return json(res,connections());
  if(url.match(/^\/api\/oauth\/(github|google)\/start$/)&&method==='GET'){
@@ -170,7 +175,7 @@ async function api(req,res,u){
  if(deleted&&method==='DELETE'){
   const kind=deleted[1],id=deleted[2];
   if(kind==='mcp')await deleteMcp(id);
-  else if(kind==='channels'){await stopChannel(id);remove('channel',id);}
+  else if(kind==='channels')await deleteChannel(id);
   else remove(({agents:'agent',rooms:'room',skills:'skill',memories:'memory',automations:'automation',providers:'provider'})[kind],id);
   return json(res,{ok:true});
  }
@@ -179,6 +184,7 @@ async function api(req,res,u){
 const server=http.createServer(async(req,res)=>{
  try{
   const u=new URL(req.url,'http://127.0.0.1');
+  if(u.pathname.startsWith('/api/webhooks/') && await handleChannelWebhook(req,res,u))return;
   if(u.pathname.startsWith('/api/'))await api(req,res,u);
   else await staticFile(req,res,u);
  }catch(e){if(!res.headersSent)fail(res,e);else{if(res.getHeader('Content-Type')?.includes('text/event-stream'))send(res,{type:'error',message:String(e)});res.end();}}
