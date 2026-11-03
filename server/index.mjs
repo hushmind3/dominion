@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {HOST,PORT,ROOT,IS_LOCAL,ADMIN_TOKEN} from './config.mjs';
 import {capabilityInventory,capabilityExecute} from './capability-sources.mjs';
 import {all,get,put,remove,messages,recentAudit,bus,pruneInbound} from './store.mjs';
-import {providers,saveProvider,availableModels,searchHuggingFace,modelFiles,downloadIntoLMStudio,lmDownloadStatus} from './providers.mjs';
+import {providers,saveProvider,availableModels} from './providers.mjs';
 import {modelLibrary} from './model-library.mjs';
 import {localRunner} from './local-runner.mjs';
 import {agents,sessions,newSession,runTurn,saveRoom} from './engine.mjs';
@@ -110,10 +110,6 @@ async function api(req,res,u){
  if(url==='/api/model-library/runtime'&&method==='GET')return json(res,{...localRunner.status(),capabilities:localRunner.capabilities()});
  if(url==='/api/model-library/runtime/load'&&method==='POST')return json(res,await localRunner.load(await body(req)));
  if(url==='/api/model-library/runtime/unload'&&method==='POST')return json(res,await localRunner.unload());
- if(url==='/api/hf/search'&&method==='GET')return json(res,await searchHuggingFace(u.searchParams.get('q')||''));
- if(url==='/api/hf/files'&&method==='GET')return json(res,await modelFiles(u.searchParams.get('id')||''));
- if(url==='/api/hf/download'&&method==='POST')return json(res,await downloadIntoLMStudio(await body(req)));
- if(url.startsWith('/api/hf/download/')&&method==='GET')return json(res,await lmDownloadStatus(url.split('/').pop()));
  if(url==='/api/sessions'){
   if(method==='GET')return json(res,sessions());
   if(method==='POST')return json(res,newSession(await body(req)));
