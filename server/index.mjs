@@ -7,6 +7,8 @@ import {HOST,PORT,ROOT,IS_LOCAL,ADMIN_TOKEN} from './config.mjs';
 import {capabilityInventory,capabilityExecute} from './capability-sources.mjs';
 import {all,get,put,remove,messages,recentAudit,bus,pruneInbound} from './store.mjs';
 import {providers,saveProvider,availableModels,searchHuggingFace,modelFiles,downloadIntoLMStudio,lmDownloadStatus} from './providers.mjs';
+import {modelLibrary} from './model-library.mjs';
+import {localRunner} from './local-runner.mjs';
 import {agents,sessions,newSession,runTurn,saveRoom} from './engine.mjs';
 import {updateAgentModels,normalizeAgentAliases} from './agent-admin.mjs';
 import {enqueue,startJobs} from './jobs.mjs';
@@ -93,6 +95,21 @@ async function api(req,res,u){
  }
  const modelMatch=url.match(/^\/api\/providers\/([^/]+)\/models$/);
  if(modelMatch&&method==='GET')return json(res,await availableModels(modelMatch[1]));
+ if(url==='/api/model-library/catalog'&&method==='GET')return json(res,await modelLibrary.catalog({q:u.searchParams.get('q')||'',format:u.searchParams.get('format')||'',sort:u.searchParams.get('sort')||''}));
+ if(url==='/api/model-library/details'&&method==='GET')return json(res,await modelLibrary.detail(u.searchParams.get('id')||''));
+ if(url==='/api/model-library/installed'&&method==='GET')return json(res,await modelLibrary.installed());
+ if(url==='/api/model-library/jobs'&&method==='GET')return json(res,modelLibrary.jobsList());
+ if(url==='/api/model-library/download'&&method==='POST')return json(res,await modelLibrary.download(await body(req)));
+ const modelJob=url.match(/^\\/api\\/model-library\\/jobs\\/([a-f0-9]{24})\\/(pause|resume|cancel)$/);
+ if(modelJob&&method==='POST')return json(res,await modelLibrary.control(modelJob[1],modelJob[2]));
+ const installedModel=url.match(/^\\/api\\/model-library\\/installed\\/([a-f0-9]{24})$/);
+ if(installedModel&&method==='DELETE'){
+  if(localRunner.status().id===installedModel[1])await localRunner.unload();
+  return json(res,await modelLibrary.remove(installedModel[1]));
+ }
+ if(url==='/api/model-library/runtime'&&method==='GET')return json(res,{...localRunner.status(),capabilities:localRunner.capabilities()});
+ if(url==='/api/model-library/runtime/load'&&method==='POST')return json(res,await localRunner.load(await body(req)));
+ if(url==='/api/model-library/runtime/unload'&&method==='POST')return json(res,await localRunner.unload());
  if(url==='/api/hf/search'&&method==='GET')return json(res,await searchHuggingFace(u.searchParams.get('q')||''));
  if(url==='/api/hf/files'&&method==='GET')return json(res,await modelFiles(u.searchParams.get('id')||''));
  if(url==='/api/hf/download'&&method==='POST')return json(res,await downloadIntoLMStudio(await body(req)));
