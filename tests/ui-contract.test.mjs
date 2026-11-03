@@ -37,3 +37,4 @@ test('CSS is syntactically balanced after removing migrated selectors',()=>{
  assert.ok(css.length<2500,'Theme must not re-introduce legacy per-page styles');
  assert.equal(existsSync('src/style.css'),false,'Legacy stylesheet must be removed');
 });
+
