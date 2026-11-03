@@ -6,7 +6,7 @@ import {SidebarNavItem} from './SidebarNavigation'
 export type PageId='home'|'chat'|'models'|'agents'|'rooms'|'workflows'|'memory'|'capabilities'|'extensions'|'connections'|'automations'|'activity'|'settings'
 type NavItem={id:PageId;label:string;icon:typeof House}
 export const navigation:{title:string;items:NavItem[]}[]=[
- {title:'WORKSPACE',items:[{id:'home',label:'개요',icon:House},{id:'chat',label:'대화',icon:MessageSquareMore},{id:'models',label:'모델 허브',icon:Compass},{id:'agents',label:'에이전트',icon:BrainCircuit},{id:'rooms',label:'그룹 · 회의실',icon:UsersRound},{id:'workflows',label:'워크플로',icon:Workflow},{id:'memory',label:'기억 라이브러리',icon:BookOpenText}]},
+ {title:'WORKSPACE',items:[{id:'home',label:'홈',icon:House},{id:'chat',label:'대화',icon:MessageSquareMore},{id:'models',label:'모델 허브',icon:Compass},{id:'agents',label:'에이전트',icon:BrainCircuit},{id:'rooms',label:'그룹 · 회의실',icon:UsersRound},{id:'workflows',label:'워크플로',icon:Workflow},{id:'memory',label:'기억 라이브러리',icon:BookOpenText}]},
  {title:'INTEGRATIONS',items:[{id:'capabilities',label:'확장 허브',icon:Layers3},{id:'extensions',label:'MCP · 스킬',icon:Blocks},{id:'connections',label:'연결 · 채널',icon:RadioTower},{id:'automations',label:'자동화',icon:Workflow}]},
  {title:'CONTROL',items:[{id:'activity',label:'실행 기록',icon:Activity},{id:'settings',label:'설정',icon:Settings2}]}
 ]
