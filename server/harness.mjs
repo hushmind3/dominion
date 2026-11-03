@@ -7,6 +7,7 @@ import {streamCompletion} from './providers.mjs';
 import {likelyRequiresTools,requestedToolEffect,successfulToolEvidence} from './tool-compat.mjs';
 import {resolveModel} from './model-router.mjs';
 import {recordExperience,experienceHints} from './experience.mjs';
+import {memoryContext} from './memory-retrieval.mjs';
 
 // The run snapshot and event are committed together; the SSE bus is notification only.
 db.exec(`CREATE TABLE IF NOT EXISTS harness_runs (
@@ -136,7 +137,7 @@ async function planWithModel(r,{reason='',completed=[],signal}={}){
  let model;
  try{model=modelFor(r.planner,r.executor);}catch{model=await resolveModel(r.planner);}
  const agents=all('agent').filter(a=>a.providerId&&a.model).map(a=>({id:a.id,name:a.name}));
- const memory=all('memory').slice(0,10).map(x=>clip(x.text,400)).join('\n');
+ const memory=memoryContext(r.goal,{agentId:r.executor?.agentId,limit:8});
  const skills=all('skill').filter(x=>x.enabled).slice(0,6).map(x=>x.name+': '+clip(x.instructions,300)).join('\n');
  const past=experienceHints(r.goal,{agentId:r.executor?.agentId});
  const done=completed.map(x=>({id:x.id,name:x.name,result:clip(x.output,1500)}));

@@ -5,6 +5,7 @@ import {spawn} from 'node:child_process';
 import {WORKSPACE} from './config.mjs';
 import {all,get,put,log,bus} from './store.mjs';
 import {discoverMcp,callMcp} from './mcp.mjs';
+import {persistMemory,retrieveMemories} from './memory-retrieval.mjs';
 import {connections,connectorCall,githubRequest,youtubeUpload} from './oauth.mjs';
 import {devStatus,connectOrClone,setupSource,testSource,buildSource,packageSource,previewStart,previewStop,sourceDiff,sourceList,sourceRead,sourceWrite,waitDevJob} from './dev-studio.mjs';
 // A cancelled MCP invocation may already have modified a remote system; the
@@ -316,11 +317,8 @@ export async function executeTool(tool,args,onEvent=()=>{},context={}){
   case 'youtube_search':result=await connectorCall('google','youtube_search',{q:args.query,maxResults:args.maxResults});break;
   case 'youtube_channels':result=await connectorCall('google','youtube_channels');break;
   case 'youtube_upload':result=await youtubeUpload({path:args.path,title:args.title,description:args.description,privacyStatus:args.privacyStatus,tags:args.tags});break;
-  case 'memory_store':result=put('memory',{text:String(args.text).slice(0,3000),scope:String(args.scope||'shared')});break;
-  case 'memory_search':{
-   const terms=String(args.query).toLowerCase().split(/\s+/).filter(Boolean);
-   result=all('memory').map(x=>({...x,score:terms.filter(t=>x.text.toLowerCase().includes(t)).length})).filter(x=>x.score).sort((a,b)=>b.score-a.score).slice(0,8);break;
-  }
+  case 'memory_store':result=persistMemory({text:String(args.text).slice(0,1000),scope:String(args.scope||'shared'),source:'tool'});break;
+  case 'memory_search':result=retrieveMemories(String(args.query),{limit:8});break;
   case 'skill_propose':result=put('skill',{name:String(args.name).slice(0,80),instructions:String(args.instructions).slice(0,12000),enabled:false,status:'proposed'});break;
   case 'dev_status':result=await devStatus();break;
   case 'dev_connect':result=await connectOrClone({sourceDir:args.sourceDir,repoUrl:args.repoUrl,branch:args.branch});break;

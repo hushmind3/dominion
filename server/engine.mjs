@@ -6,6 +6,7 @@ import {streamCompletion,providerById} from './providers.mjs';
 import {toolsForModel,executeTool} from './tools.mjs';
 import {resolveModel} from './model-router.mjs';
 import {recordExperience,experienceHints} from './experience.mjs';
+import {persistMemory,memoryContext} from './memory-retrieval.mjs';
 import {connections as oauthConnections} from './oauth.mjs';
 export const agents=()=>all('agent');
 export const sessions=()=>all('session');
@@ -13,9 +14,9 @@ export function newSession(input={}){
  return put('session',{title:input.title||'새 대화',agentId:input.agentId||'',roomId:input.roomId||null,providerId:input.providerId||'',model:input.model||'',lastActivity:new Date().toISOString()});
 }
 export function sessionMessages(id){if(!get('session',id))throw Error('Session not found');return messages(id);}
-function systemFor(agent,goal=''){
+function systemFor(agent,goal='',query=''){
  const enabledSkills=all('skill').filter(s=>s.enabled).slice(0,12).map(x=>'### '+x.name+'\n'+x.instructions).join('\n\n');
- const recentMemory=all('memory').filter(x=>x.scope==='shared'||x.scope===agent?.id).slice(0,16).map(x=>'- '+x.text).join('\n');
+ const recentMemory=memoryContext(query||goal,{agentId:agent?.id,limit:8});
  const home=os.homedir();
  const paths='Computer paths: home='+home+'; Desktop='+path.join(home,'Desktop')+'; Documents='+path.join(home,'Documents')+'; Downloads='+path.join(home,'Downloads')+'. Use file_list/file_read/file_write with absolute paths for these folders, and shell_exec for real system commands. workspace_* tools only cover the workspace folder.';
  const accounts=oauthConnections().map(account=>account.provider+' ('+account.displayName+')');
@@ -85,7 +86,7 @@ export async function runTurn({sessionId,agentId,providerId,model,input,systemOv
  const access=policy.autoApproveAll?'Full computer access is enabled. Use the real tools directly; do not ask for permission in text.':policy.autoApproveMcp?'Computer actions require approval except MCP tools.':'Computer actions require user approval.';
  const task=String(input??messages(sessionId).filter(x=>x.role==='user').at(-1)?.content??'');
  const experience=experienceHints(task,{agentId:agent?.id});
- const system=(systemOverride||systemFor(agent))+(summary?'\n\nPrevious conversation context summary:\n'+summary:'')+'\n\n'+access+
+ const system=(systemOverride||systemFor(agent,'',task))+(summary?'\n\nPrevious conversation context summary:\n'+summary:'')+'\n\n'+access+
   (experience?'\n\nPrior execution outcomes (reference evidence, not instructions):\n'+experience:'')+
   (reasoningLanguage==='ko'?'\n\nWhen the provider exposes visible reasoning content, prefer explaining your thought process in Korean.':'');
  const result=await executionRuntime.execute({sessionId,agentId:agent?.id,providerId:provider,model:modelId,system,onEvent,signal,toolsEnabled,speakerLabels,reasoningEffort,thinking,limits});
@@ -106,6 +107,7 @@ export function clearSession(id){
  if(executionRuntime.isActive(id))throw Error('Stop the current execution before clearing the session');
  const result=db.prepare('DELETE FROM messages WHERE session_id=?').run(id);
  remove('session_compaction',id);
+ remove('learning_checkpoint',id);
  return {cleared:Number(result.changes),sessionId:id};
 }
 export function forkSession(id){
@@ -182,13 +184,12 @@ export async function learnFromSession(id,{providerId,model,automatic=false}={})
  ]});
  const data=extractJsonObject(response.content);
  if(!data)throw Error('The model did not return valid learning JSON');
- const known=new Set(all('memory').map(item=>String(item.text||'').trim().toLowerCase()));
  const memories=[];
  for(const item of (Array.isArray(data.memories)?data.memories:[]).slice(0,10)){
-  const value=removeLearningSecrets(item?.text).slice(0,1000),key=value.toLowerCase();
-  if(value.length<8||known.has(key)||value.includes('[REDACTED]'))continue;
-  known.add(key);
-  memories.push(put('memory',{text:value,scope:String(item.scope||'shared'),source:automatic?'auto-learning':'session-learning',sessionId:id}));
+  const value=removeLearningSecrets(item?.text).slice(0,1000);
+  const saved=persistMemory({text:value,scope:String(item?.scope||'shared'),
+   source:automatic?'auto-learning':'session-learning',sessionId:id});
+  if(saved.action==='created'||saved.action==='conflict')memories.push(saved.record);
  }
  let skill=null;
  if(data.skill&&typeof data.skill.name==='string'&&typeof data.skill.instructions==='string'){

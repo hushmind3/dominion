@@ -6,8 +6,7 @@ import {all,get,put} from './store.mjs';
 const normalize=value=>String(value??'').normalize('NFKC').toLowerCase().replace(/\s+/g,' ').trim();
 const stop=new Set(['나는','내가','나의','저는','제가','대해','알려줘','알려주세요','뭐야','무엇','어떤','그거','있어','있는','하기','사용자','user','this','that','with','what','does','about','please']);
 const aliases=[
- ['gpu','그래픽카드','그래픽 카드'],
- ['vram','비디오메모리','그래픽메모리'],
+ ['gpu','그래픽카드','그래픽 카드','vram','비디오메모리','그래픽메모리'],
  ['ram','램','메모리'],
  ['memory','기억','메모리'],
  ['ui','화면','인터페이스'],
