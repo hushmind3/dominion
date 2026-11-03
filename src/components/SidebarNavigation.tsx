@@ -4,7 +4,7 @@ export function SidebarNavItem({icon:Icon,label,active,count,onClick}:{
  icon:LucideIcon;label:string;active:boolean;count?:number;onClick:()=>void
 }){
  return <button type="button" onClick={onClick} aria-current={active?'page':undefined}
-  className={['group relative flex h-10 w-full items-center gap-3 rounded-xl border-0 px-3 text-left text-[13px] font-semibold transition-colors',
+  className={['group relative flex h-10 w-full items-center gap-3 rounded-xl border-0 px-3 text-left text-[13px] font-semibold',
    active?'bg-blue-500/15 text-white shadow-[inset_3px_0_0_#60a5fa]':'bg-transparent text-slate-400 hover:bg-white/10 hover:text-white'].join(' ')}>
   <Icon size={18} strokeWidth={1.8} className={active?'shrink-0 text-blue-300':'shrink-0 text-slate-500 group-hover:text-blue-300'}/>
   <span className="min-w-0 flex-1 truncate">{label}</span>
