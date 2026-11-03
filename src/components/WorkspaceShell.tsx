@@ -11,7 +11,7 @@ export const navigation:{title:string;items:NavItem[];collapsible?:boolean}[]=[
  {title:'고급',collapsible:true,items:[{id:'rooms',label:'멀티 에이전트',icon:UsersRound},{id:'workflows',label:'반복 작업',icon:Workflow}]}
 ]
 const items=navigation.flatMap(g=>g.items)
-export function WorkspaceSidebar({page,open,collapsed,online,running,pending,onNavigate,onClose,onToggle}:{page:PageId;open:boolean;collapsed:boolean;online:boolean;running:number;pending:number;onNavigate:(id:PageId)=>void;onClose:()=>void;onToggle:()=>void}){
+export function WorkspaceSidebar({page,open,collapsed,online,running,pending,onNavigate,onClose}:{page:PageId;open:boolean;collapsed:boolean;online:boolean;running:number;pending:number;onNavigate:(id:PageId)=>void;onClose:()=>void}){
  const advancedItems=navigation.find(g=>g.collapsible)?.items||[]
  const [advancedOpen,setAdvancedOpen]=useState(()=>{try{return localStorage.getItem('dominion.nav.advanced')==='1'||advancedItems.some(x=>x.id===page)}catch{return advancedItems.some(x=>x.id===page)}})
  useEffect(()=>{if(advancedItems.some(x=>x.id===page))setAdvancedOpen(true)},[page])
@@ -22,7 +22,6 @@ export function WorkspaceSidebar({page,open,collapsed,online,running,pending,onN
    <div className="flex h-16 shrink-0 items-center gap-3 border-b border-[#E0D8CC] px-5">
     <div className="grid size-8 place-items-center rounded-xl bg-[#C96442] text-[17px] font-black text-white shadow-[0_4px_12px_rgba(201,100,66,.28)]">D</div>
     <div className="min-w-0 flex-1 text-[14px] font-extrabold tracking-[.14em] text-[#24211D]">DOMINION</div>
-    <button type="button" className="rounded-md p-1.5 text-[#7C7469] transition-colors hover:bg-[#E8E0D3] hover:text-[#24211D]" aria-label="메뉴 접기" title="메뉴 접기" onClick={onToggle}><PanelLeftClose size={16}/></button>
    </div>
    <div className="px-3 pt-5"><button type="button" onClick={()=>onNavigate('chat')} className="flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-[#C96442] text-[12px] font-semibold text-white shadow-[0_6px_16px_rgba(201,100,66,.22)] transition-colors hover:bg-[#A94E30]"><Plus size={16}/> 새 대화</button></div>
    <nav className="mt-4 min-h-0 flex-1 overflow-y-auto px-2.5 pb-4">

@@ -1,6 +1,6 @@
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
 import {FormEvent,useEffect,useRef,useState,type KeyboardEvent} from 'react'
-import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,CornerDownLeft,HardDrive,History,LoaderCircle,MessageCircle,MoreHorizontal,PanelLeftClose,PanelLeftOpen,Plus,Power,RefreshCw,ShieldAlert,ShieldCheck,SlidersHorizontal,Sparkles,TerminalSquare,Trash2,X} from 'lucide-react'
+import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,CornerDownLeft,HardDrive,History,LoaderCircle,MessageCircle,MoreHorizontal,Plus,Power,RefreshCw,ShieldAlert,ShieldCheck,SlidersHorizontal,Sparkles,TerminalSquare,Trash2,X} from 'lucide-react'
 import {Agent,ChatMessage,ChatSession,Provider,get,post,streamChat} from '../api'
 import {Action,Empty,Notice,StateTag,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommands,type SlashChoice} from '../components/SlashMenu'
@@ -251,7 +251,7 @@ export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onS
   <div className="flex min-h-0 min-w-0 flex-col">
    <header className="relative flex h-16 shrink-0 items-center justify-between gap-2 border-b border-[#E7E0D5] bg-[#FFFDF9] px-4">
     <div className="flex min-w-0 items-center gap-1.5">
-     <Button size="icon" variant="ghost" onClick={()=>setShowHistory(x=>!x)} title={showHistory?'대화 목록 접기':'대화 목록 펼치기'} aria-label={showHistory?'대화 목록 접기':'대화 목록 펼치기'}>{showHistory?<PanelLeftClose size={18}/>:<PanelLeftOpen size={18}/>}</Button>
+      <Button size="icon" variant="ghost" onClick={()=>setShowHistory(x=>!x)} title={showHistory?'대화 목록 접기':'대화 목록 펼치기'} aria-label={showHistory?'대화 목록 접기':'대화 목록 펼치기'}><History size={18}/></Button>
      <div className="relative flex min-w-0 items-center gap-1">
       <SelectInput aria-label="모델 제공자" title={selectedProvider?.name||'자동 선택'} value={providerId} onChange={e=>{setProviderId(e.target.value);setModel('')}} className="!w-[158px] !border-0 !bg-transparent !py-1 !text-[12px]"><option value="">자동 선택</option>{providers.value.filter(p=>p.enabled).map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</SelectInput>
       <span className="text-[#B8AFA2]">/</span>

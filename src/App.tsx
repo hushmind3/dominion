@@ -82,7 +82,7 @@ export default function App(){
   return()=>{mounted=false;clearInterval(poll);stream.close();window.removeEventListener('keydown',shortcuts)}
  },[])
  return <div className="min-h-screen bg-[#F6F3EC] font-sans text-[#24211D]">
-  <WorkspaceSidebar page={page} open={sidebar} collapsed={collapsed} online={online} running={running} pending={pending} onNavigate={navigate} onClose={()=>setSidebar(false)} onToggle={toggleNav}/>
+  <WorkspaceSidebar page={page} open={sidebar} collapsed={collapsed} online={online} running={running} pending={pending} onNavigate={navigate} onClose={()=>setSidebar(false)}/>
   <main className={'min-h-screen min-w-0 transition-[margin] duration-200 '+(collapsed?'ml-0':'ml-[216px] max-[859px]:ml-0')}>
    <WorkspaceHeader page={page} online={online} collapsed={collapsed} onMenu={toggleNav} onSearch={()=>setPalette(true)}/>
    <div className={'min-w-0 page-'+page}>
