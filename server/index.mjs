@@ -13,6 +13,7 @@ import {agents,sessions,newSession,runTurn,saveRoom} from './engine.mjs';
 import {updateAgentModels,normalizeAgentAliases} from './agent-admin.mjs';
 import {enqueue,startJobs} from './jobs.mjs';
 import {workflows,saveWorkflow} from './workflows.mjs';
+import {goals,goal,goalEvents,createGoal,resumeGoal,cancelGoal} from './harness.mjs';
 import {mcpServers,saveMcp,deleteMcp,discoverMcp} from './mcp.mjs';
 import {builtin,toolsForModel,approvals,resolveApproval} from './tools.mjs';
 import {oauthProviders,oauthStart,oauthCallback,connections,connectorCall} from './oauth.mjs';
@@ -84,7 +85,7 @@ async function api(req,res,u){
  if(url==='/api/events'&&method==='GET'){
   res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});
   send(res,{type:'connected'});
-  const listeners=['record','message','audit','job_event','approval','channel_status','room_event'].map(n=>{const fn=x=>send(res,{type:n,data:x});bus.on(n,fn);return [n,fn];});
+  const listeners=['record','message','audit','job_event','approval','channel_status','room_event','goal_event'].map(n=>{const fn=x=>send(res,{type:n,data:x});bus.on(n,fn);return [n,fn];});
   const ping=setInterval(()=>send(res,{type:'ping'}),25000);
   req.on('close',()=>{clearInterval(ping);listeners.forEach(([n,fn])=>bus.off(n,fn));});
   return;
@@ -134,6 +135,20 @@ async function api(req,res,u){
  }
  const roomRun=url.match(/^\/api\/rooms\/([^/]+)\/run$/);
  if(roomRun&&method==='POST')return json(res,enqueue('meeting',{roomId:roomRun[1],goal:(await body(req)).goal}));
+ if(url==='/api/goals'){
+  if(method==='GET')return json(res,goals());
+  if(method==='POST'){const run=createGoal(await body(req));const job=enqueue('goal',{goalId:run.id});return json(res,{...run,jobId:job.id},201);}
+ }
+ const goalId=url.match(/^\/api\/goals\/([^/]+)$/);
+ if(goalId&&method==='GET')return json(res,goal(goalId[1])||{error:'Goal not found'},goal(goalId[1])?200:404);
+ const goalHistory=url.match(/^\/api\/goals\/([^/]+)\/events$/);
+ if(goalHistory&&method==='GET')return json(res,goalEvents(goalHistory[1]));
+ const goalCommand=url.match(/^\/api\/goals\/([^/]+)\/(resume|cancel)$/);
+ if(goalCommand&&method==='POST'){
+  const run=goalCommand[2]==='cancel'?cancelGoal(goalCommand[1]):resumeGoal(goalCommand[1]);
+  if(goalCommand[2]==='resume')enqueue('goal',{goalId:run.id});
+  return json(res,run);
+ }
  if(url==='/api/workflows'){
   if(method==='GET')return json(res,workflows());
   if(method==='POST')return json(res,saveWorkflow(await body(req)));
