@@ -1,0 +1,12 @@
+{
+  "id": "twitch",
+  "name": "Twitch Chat",
+  "category": "community",
+  "mode": "gateway",
+  "docs": "https://dev.twitch.tv/docs/chat/",
+  "description": "Live chat · 추가 구현 예정",
+  "features": [
+    "groups"
+  ],
+  "fields": []
+}

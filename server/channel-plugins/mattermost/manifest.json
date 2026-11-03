@@ -1,0 +1,13 @@
+{
+  "id": "mattermost",
+  "name": "Mattermost",
+  "category": "workplace",
+  "mode": "gateway",
+  "docs": "https://developers.mattermost.com/integrate/reference/websocket-api/",
+  "description": "Self-hosted Chat · 추가 구현 예정",
+  "features": [
+    "dm",
+    "groups"
+  ],
+  "fields": []
+}

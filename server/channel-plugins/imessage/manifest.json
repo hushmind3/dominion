@@ -1,0 +1,13 @@
+{
+  "id": "imessage",
+  "name": "iMessage",
+  "category": "messaging",
+  "mode": "gateway",
+  "docs": "https://docs.openclaw.ai/channels/imessage",
+  "description": "macOS 전용 브리지 검토",
+  "features": [
+    "dm",
+    "groups"
+  ],
+  "fields": []
+}

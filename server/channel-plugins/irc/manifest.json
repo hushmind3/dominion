@@ -1,0 +1,12 @@
+{
+  "id": "irc",
+  "name": "IRC",
+  "category": "community",
+  "mode": "socket",
+  "docs": "https://ircv3.net/",
+  "description": "IRCv3 · 추가 구현 예정",
+  "features": [
+    "groups"
+  ],
+  "fields": []
+}
