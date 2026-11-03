@@ -1,3 +1,4 @@
+import {DialogBackdrop,DialogPanel} from '../components/Dialog'
 import {StatusPill} from '../components/StatusPill'
 import {Button,TextInput,SelectInput} from '../components/Primitives'
 import {useEffect,useMemo,useState} from 'react'
@@ -84,7 +85,7 @@ export function ConnectionsPage(){
    <Subheading title="연결된 계정" extra={<span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">OAUTH CONNECTIONS</span>}/>
    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">{oauth.value.map(item=>{const account=accounts.value.find(a=>a.provider===item.id);const Icon=item.id==='github'?Github:Globe2;return <Panel className="flex min-w-0 flex-col gap-3 p-5" key={item.id}><div className="grid size-11 shrink-0 place-items-center rounded-xl bg-blue-50 text-blue-600"><Icon size={28}/></div><h3>{item.id==='github'?'GitHub':'Google · YouTube'}</h3><p>{item.id==='github'?'저장소와 계정 연결':'Google 계정과 YouTube 읽기 연결'}</p><div className="integration-status"><StateTag online={Boolean(account)}>{account?'연결됨 · '+account.displayName:item.configured?'OAuth 앱 준비됨':'OAuth 앱 설정 필요'}</StateTag></div><div className="mt-auto flex flex-wrap items-center gap-2"><Action variant="secondary" disabled={!item.configured} onClick={()=>connect(item.id)}><Link2 size={16}/>{account?'다시 연결':'계정 연결'}</Action></div></Panel>})}</div>
   </>}
-  {editor&&<div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/50 p-4" onMouseDown={()=>setEditor(null)}><div className="relative max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white shadow-2xl" onMouseDown={e=>e.stopPropagation()}>
+  {editor&&<DialogBackdrop onDismiss={()=>setEditor(null)}><DialogPanel size="wide">
    <div className="flex items-center justify-between border-b border-slate-100 p-5"><div><small>CHANNEL CONFIGURATION · {editor.entry.id.toUpperCase()}</small><h2>{editor.record.id?'연결 설정 변경':'새 연결 설정'}</h2></div><Button size="icon" variant="ghost" onClick={()=>setEditor(null)}><X size={18}/></Button></div>
    <div className="grid gap-4 p-5">
     <div className="mb-8 flex items-center gap-4 rounded-2xl border border-blue-100 bg-blue-50 p-5"><div className="grid size-12 shrink-0 place-items-center rounded-xl bg-blue-100 text-blue-600"><MessageCircle size={21}/></div><div><strong>{editor.entry.name}</strong><p>{editor.entry.description}</p></div></div>
@@ -102,6 +103,6 @@ export function ConnectionsPage(){
    </div>
    {error&&<Notice message={error}/>}
    <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 p-5"><Action variant="secondary" onClick={()=>setEditor(null)}>취소</Action><Action onClick={save} disabled={saving}><Check size={16}/>{saving?'저장 중':'설정 저장'}</Action></div>
-  </div></div>}
+  </DialogPanel></DialogBackdrop>}
  </div>
 }
