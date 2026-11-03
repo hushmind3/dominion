@@ -1,6 +1,7 @@
 import {all,put,get,remove,log,bus,claimInbound,finishInbound} from './store.mjs';
 import {secretSet,secretGet,hasSecret} from './vault.mjs';
 import {newSession,runTurn} from './engine.mjs';
+import {runIntent} from './native-intent.mjs';
 import {roomCommand,runRoomIngress,stopRoomFlow,resetRoomFlow} from './room-orchestrator.mjs';
 import {channelCatalog,channelDefinition,validateChannelConfiguration} from './channel-catalog.mjs';
 
@@ -133,7 +134,7 @@ async function dispatch(record,event){
      const s=newSession({title:record.name+' · '+event.conversationId,agentId:record.agentId,providerId:record.providerId,model:record.model});
      session=put('session',{...s,channelKey:key});
     }
-    const assistant=await runTurn({sessionId:session.id,agentId:session.agentId||record.agentId,providerId:session.providerId||record.providerId,model:session.model||record.model,input:event.text});
+    const assistant=await runIntent({sessionId:session.id,agentId:session.agentId||record.agentId,providerId:session.providerId||record.providerId,model:session.model||record.model,input:event.text});
     const output=assistant.content?.trim();
     if(output){await event.reply(output);log('channel.replied',{channelId:record.id,kind:record.kind,conversationId:event.conversationId});}
    }

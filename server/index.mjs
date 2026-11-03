@@ -10,6 +10,7 @@ import {providers,saveProvider,availableModels} from './providers.mjs';
 import {modelLibrary} from './model-library.mjs';
 import {localRunner} from './local-runner.mjs';
 import {resolveModel} from './model-router.mjs';
+import {runIntent,cancelSessionIntent} from './native-intent.mjs';
 import {agents,sessions,newSession,runTurn,saveRoom,executions,activeExecutions,cancelExecution,recoverExecutions,renameSession,clearSession,forkSession,compactSession} from './engine.mjs';
 import {updateAgentModels,normalizeAgentAliases} from './agent-admin.mjs';
 import {enqueue,startJobs} from './jobs.mjs';
@@ -124,7 +125,7 @@ async function api(req,res,u){
  const executionCancel=url.match(/^\/api\/executions\/([^/]+)\/cancel$/);
  if(executionCancel&&method==='POST')return json(res,{cancelled:cancelExecution(executionCancel[1])});
  const sessionCancel=url.match(/^\/api\/sessions\/([^/]+)\/cancel$/);
- if(sessionCancel&&method==='POST')return json(res,{cancelled:cancelExecution(sessionCancel[1])});
+ if(sessionCancel&&method==='POST')return json(res,{cancelled:cancelExecution(sessionCancel[1])||cancelSessionIntent(sessionCancel[1])});
  if(url==='/api/sessions'){
   if(method==='GET')return json(res,sessions());
   if(method==='POST')return json(res,newSession(await body(req)));
@@ -142,7 +143,7 @@ async function api(req,res,u){
  if(url==='/api/chat'&&method==='POST'){
   const input=await body(req);
   const sessionId=input.sessionId||newSession({agentId:input.agentId,providerId:input.providerId,model:input.model}).id;
-  return stream(res,onEvent=>runTurn({...input,sessionId,onEvent}));
+  return stream(res,onEvent=>runIntent({...input,sessionId,onEvent}));
  }
  if(url==='/api/agents/bulk-model'&&method==='POST')return json(res,updateAgentModels(await body(req)));
  if(url==='/api/agents'){
