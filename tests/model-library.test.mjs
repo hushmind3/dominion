@@ -30,7 +30,7 @@ function fakeHub(){
   if(p.includes('/raw/'))return new Response('# Test model', {status:200});
   if(p.includes('/resolve/')){
    if(!p.endsWith('model.Q4_K_M.gguf'))throw Error('Unexpected file: '+p);
-   const from=Number(opts.headers?.Range?.match(/^bytes=(\\d+)-$/)?.[1]||0);
+   const from=Number(opts.headers?.Range?.match(/^bytes=(\d+)-$/)?.[1]||0);
    return new Response(bytes.slice(from),{status:from?206:200,headers:{'Content-Length':String(bytes.length-from)}});
   }
   throw Error('Unknown fake API '+p);
@@ -87,5 +87,26 @@ test('MLX variant includes all weight and tokenizer files rather than one safete
   assert.equal(option.bytes,114);
   await assert.rejects(()=>m.detail('../private'),/Invalid Hugging Face repository/);
   await assert.rejects(()=>m.download({repo:'demo/Qwen-GGUF',optionId:'gguf:../../private'}),/Select an available/);
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+
+
+test('interrupted GGUF download resumes by byte Range without restarting',async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'dominion-resume-'));
+ try{
+  const mock=fakeHub();
+  const m=new ModelLibrary({root,hub:'https://hf.test',fetcher:mock.fetcher});
+  const detail=await m.detail('demo/Qwen-GGUF');
+  const option=detail.options[0];
+  const {createHash}=await import('node:crypto');
+  const id=createHash('sha256').update(detail.id+'|'+detail.revision+'|'+option.id).digest('hex').slice(0,24);
+  await fsp.mkdir(path.join(root,id),{recursive:true});
+  await fsp.writeFile(path.join(root,id,'model.Q4_K_M.gguf.part'),Buffer.from(mock.bytes.slice(0,6)));
+  const job=await m.download({repo:detail.id,optionId:option.id});
+  await m.jobs.get(job.id).promise;
+  assert.equal(job.id,id);
+  assert.equal(m.job(id).status,'completed');
+  assert.ok(mock.calls.some(x=>x.range==='bytes=6-'));
+  assert.deepEqual(await fsp.readFile(path.join(root,id,'model.Q4_K_M.gguf')),Buffer.from(mock.bytes));
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
