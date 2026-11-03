@@ -89,15 +89,11 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  return <div className="mx-auto w-full max-w-[1440px] overflow-x-hidden px-5 py-6 sm:px-8 lg:px-6 lg:pb-20">
   <Headline eyebrow="VIDEO PRODUCTION" title="영상 제작" description="영상 모델(ComfyUI 워크플로)을 선택해 쇼츠를 생성하고 YouTube에 올립니다. 채팅 모델과는 별개입니다." actions={<div className="flex flex-wrap items-center gap-2"><Button variant="secondary" onClick={()=>navigate('capabilities')} title="YouTube 계정 연결 설정" className={'!h-9 !min-h-9 !rounded-xl !px-3 !py-0 !text-[11px] '+(youtube.value.uploadAllowed?'!border-emerald-200 !bg-emerald-50 !text-emerald-700 hover:!bg-emerald-100':'!border-amber-200 !bg-amber-50 !text-amber-700 hover:!bg-amber-100')}><Youtube size={14}/>{youtube.value.uploadAllowed?'YouTube 연결됨':youtube.value.connected?'YouTube 권한 필요':'YouTube 연결'}</Button><Button variant="secondary" onClick={()=>{void video.reload();void youtube.reload()}}><RefreshCw size={16}/> 상태 새로고침</Button></div>}/>
   {error&&<Notice message={error}/>}
-  <div className="mb-4 grid grid-cols-1 gap-3 min-[700px]:grid-cols-[minmax(0,1fr)_300px] min-[1100px]:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[minmax(0,1fr)_380px]">
+  <div className="mb-4">
    <Panel className={'min-w-0 p-3 '+(video.value.comfy.reachable?'border-emerald-200 bg-emerald-50/50':'border-amber-200 bg-amber-50/50')}>
     <div className="flex flex-wrap items-center gap-2"><Clapperboard size={16} className={video.value.comfy.reachable?'text-emerald-700':'text-amber-700'}/><strong className="text-[12px] text-[#24211D]">ComfyUI 엔진</strong><StateTag online={video.value.comfy.reachable}>{video.value.comfy.reachable?'실행 중':'꺼짐'}</StateTag><span className="min-w-0 truncate text-[10px] text-[#8A8176]">{video.value.config.comfyUrl}</span><div className="ml-auto flex items-center gap-1.5">{video.value.comfy.reachable?<Button variant="secondary" className="!h-8 !px-2.5 !text-[11px]" disabled={stopping} onClick={()=>void stopComfy()}><Power size={13}/> {stopping?'종료 중':'종료'}</Button>:<>{video.value.installed&&<Button variant="primary" className="!h-8 !px-2.5 !text-[11px]" disabled={starting} onClick={()=>void startComfy()}>{starting?'시작 중':'시작'}</Button>}<Button variant="ghost" className="!h-8 !px-2 !text-[11px]" onClick={()=>setEngineOpen(open=>!open)}>{engineOpen?'닫기':'설정'}</Button></>}</div></div>
     {engineOpen&&<div className="mt-2 grid gap-2 border-t border-[#E7E0D5] pt-2"><FormField label="API 주소"><TextInput value={comfyUrl} onChange={e=>setComfyUrl(e.target.value)} placeholder="http://127.0.0.1:8188"/></FormField><FormField label="설치 폴더" hint="다른 드라이브의 ComfyUI나 ComfyUI 호환 엔진 경로"><TextInput value={comfyDir} onChange={e=>setComfyDir(e.target.value)} placeholder="C:\\ComfyUI"/></FormField><div className="flex flex-wrap items-center gap-2"><Button variant="secondary" disabled={savingConfig||!comfyUrl.trim()||!comfyDir.trim()} onClick={()=>void saveComfy()}>{savingConfig?'저장 중':'저장'}</Button><span className="text-[10px] text-[#8A8176]">ComfyUI 호환 API면 원격 서버도 사용할 수 있습니다.</span></div></div>}
     {!engineOpen&&<p className="mt-2 text-[10px] leading-4 text-[#8A8176]">영상 생성할 때만 켜세요 · 설치된 모델 {(video.value.installedModels||[]).length}개 · {fmtBytes(installedTotal)}</p>}
-   </Panel>
-   <Panel className="min-w-0 overflow-hidden p-4">
-    <div className="flex items-center justify-between gap-2"><strong className="text-[13px] text-[#24211D]">최근 생성</strong><span className="text-[10px] text-[#8A8176]">{video.value.jobs.length}개</span></div>
-    {recent.length?<div className="mt-1.5 grid gap-0.5">{recent.map(item=><Button variant="ghost" key={item.id} onClick={()=>setVideoJob(item)} className={'!h-auto !min-h-0 !w-full !justify-start !gap-2 !overflow-hidden !rounded-md !border-0 !px-1.5 !py-1 !text-left !text-[10px] !font-normal '+(videoJob?.id===item.id?'!bg-[#FAF7F1]':'')}><span className={'size-1.5 shrink-0 rounded-full '+(item.status==='completed'?'bg-emerald-500':'bg-amber-400')}/><span className="min-w-0 flex-1 truncate text-[10px] text-[#3A342D]">{item.title||item.prompt||item.id.slice(0,8)}</span><span className="shrink-0 text-[9px] text-[#A79C8E]">{item.seconds?item.seconds+'s':statusLabel(item.status)}</span></Button>)}</div>:<p className="mt-2 text-[11px] text-[#8A8176]">아직 생성한 영상이 없습니다.</p>}
    </Panel>
   </div>
   <div className="grid grid-cols-1 items-start gap-5 min-[700px]:grid-cols-[minmax(0,1fr)_300px] min-[1100px]:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[minmax(0,1fr)_380px]">
@@ -120,6 +116,21 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
       <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-[11px] leading-5 text-[#8A8176]">생성에는 ComfyUI가 실행 중이어야 합니다.</p><Action disabled={generating||!video.value.comfy.reachable||!workflow||!prompt.trim()} onClick={()=>void generate()}>{generating?<><LoaderCircle size={15} className="animate-spin"/> 요청 중</>:<><Play size={15}/> 영상 생성</>}</Action></div>
      </div>:<div className="rounded-xl border border-dashed border-[#D8CFC2] bg-[#FAF7F1] p-5 text-[12px] leading-6 text-[#5C544A]"><strong className="text-[#3A342D]">영상 워크플로가 없습니다.</strong><p className="mt-1">ComfyUI에서 Wan·HunyuanVideo·LTX 계열 워크플로를 API 형식으로 저장한 JSON을 아래 폴더에 넣으세요.</p><code className="mt-2 block break-all rounded-lg bg-[#FFFDF9] p-2 text-[11px] text-[#A94E30]">{video.value.config.workflowDir}</code><Button variant="secondary" className="mt-3" onClick={openWorkflows}>워크플로 폴더 열기</Button></div>}
     </Panel>
+   </div>
+   <div className="grid min-w-0 gap-5">
+    <Panel className="min-w-0 p-5 ">
+     <Subheading title="생성 결과" extra={videoJob?<StateTag online={videoJob.status==='completed'}>{statusLabel(videoJob.status)}</StateTag>:<span className="text-[11px] text-[#8A8176]">대기</span>}/>
+     {!videoJob?<div className="flex min-h-48 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[#D8CFC2] bg-[#FAF7F1] text-[12px] text-[#8A8176]"><Clapperboard size={24}/>영상을 생성하면 여기에 표시됩니다.</div>:<div className="grid gap-3">
+      {!terminal(videoJob.status)&&<><div className="flex justify-between text-[11px] text-[#7C7469]"><span>{videoJob.status==='queued'?'ComfyUI 대기 중':videoJob.status==='downloading'?'결과 저장 중':'생성 중'}</span><span>{videoJob.progress}%</span></div><div className="h-2 overflow-hidden rounded-full bg-[#F3EEE5]"><div className="h-full bg-[#C96442]" style={{width:Math.max(4,videoJob.progress)+'%'}}/></div></>}
+      {videoJob.result&&<div className="flex justify-center rounded-xl bg-black p-2"><video className="max-h-[420px] w-auto max-w-full rounded-lg" src={videoJob.result.url} controls playsInline/></div>}
+      {videoJob.status==='completed'&&videoJob.result&&<div className="grid gap-2"><div className="rounded-lg bg-[#FAF7F1] p-2"><p className="break-all text-[10px] leading-4 text-[#5C544A]" title={videoJob.result.file}>{videoJob.result.filename}</p><div className="mt-1.5 flex justify-end"><Button variant="ghost" className="!px-2 !py-1 !text-[10px]" onClick={()=>void reveal(videoJob.result!.file)}>폴더 열기</Button></div></div><Action onClick={useResult} className="w-full"><Upload size={14}/> 업로드 폼에 채우기</Action></div>}
+      {videoJob.status==='failed'&&<Notice message={videoJob.error||'영상 생성에 실패했습니다.'}/>}
+     </div>}
+    </Panel>
+<Panel className="min-w-0 overflow-hidden p-4">
+    <div className="flex items-center justify-between gap-2"><strong className="text-[13px] text-[#24211D]">최근 생성</strong><span className="text-[10px] text-[#8A8176]">{video.value.jobs.length}개</span></div>
+    {recent.length?<div className="mt-1.5 grid gap-0.5">{recent.map(item=><Button variant="ghost" key={item.id} onClick={()=>setVideoJob(item)} className={'!h-auto !min-h-0 !w-full !justify-start !gap-2 !overflow-hidden !rounded-md !border-0 !px-1.5 !py-1 !text-left !text-[10px] !font-normal '+(videoJob?.id===item.id?'!bg-[#FAF7F1]':'')}><span className={'size-1.5 shrink-0 rounded-full '+(item.status==='completed'?'bg-emerald-500':'bg-amber-400')}/><span className="min-w-0 flex-1 truncate text-[10px] text-[#3A342D]">{item.title||item.prompt||item.id.slice(0,8)}</span><span className="shrink-0 text-[9px] text-[#A79C8E]">{item.seconds?item.seconds+'s':statusLabel(item.status)}</span></Button>)}</div>:<p className="mt-2 text-[11px] text-[#8A8176]">아직 생성한 영상이 없습니다.</p>}
+   </Panel>
     <details className="group min-w-0 rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-4">
      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden"><div className="min-w-0"><strong className="block text-[13px] text-[#24211D]">이 워크플로의 구성 파일</strong><small className="block text-[10px] text-[#8A8176]">모델·인코더·VAE 조합</small></div><div className="flex shrink-0 items-center gap-2"><StateTag online={Boolean(video.value.modelsReady)}>{video.value.modelsReady?'준비됨':(video.value.models||[]).length?'확인 필요':'워크플로 필요'}</StateTag><ChevronDown size={15} className="text-[#8A8176] transition-transform group-open:rotate-180"/></div></summary>
      <div className="mt-3 border-t border-[#EFE9DF] pt-3">
@@ -141,18 +152,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
       {uploadJob&&<div className="rounded-lg border border-[#E7E0D5] bg-[#FAF7F1] p-3 text-[11px]"><div className="flex justify-between"><span>{uploadJob.status}</span><span>{uploadJob.progress}%</span></div>{uploadJob.result?.url&&<a className="mt-1 inline-flex items-center gap-1 font-semibold text-[#C96442]" href={uploadJob.result.url} target="_blank" rel="noreferrer">YouTube에서 열기 <ExternalLink size={12}/></a>}{uploadJob.error&&<p className="mt-1 text-rose-600">{uploadJob.error}</p>}</div>}
      </div>
     </details>
-   </div>
-   <div className="grid min-w-0 gap-5">
-    <Panel className="min-w-0 p-5 min-[700px]:sticky min-[700px]:top-20">
-     <Subheading title="생성 결과" extra={videoJob?<StateTag online={videoJob.status==='completed'}>{statusLabel(videoJob.status)}</StateTag>:<span className="text-[11px] text-[#8A8176]">대기</span>}/>
-     {!videoJob?<div className="flex min-h-48 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[#D8CFC2] bg-[#FAF7F1] text-[12px] text-[#8A8176]"><Clapperboard size={24}/>영상을 생성하면 여기에 표시됩니다.</div>:<div className="grid gap-3">
-      {!terminal(videoJob.status)&&<><div className="flex justify-between text-[11px] text-[#7C7469]"><span>{videoJob.status==='queued'?'ComfyUI 대기 중':videoJob.status==='downloading'?'결과 저장 중':'생성 중'}</span><span>{videoJob.progress}%</span></div><div className="h-2 overflow-hidden rounded-full bg-[#F3EEE5]"><div className="h-full bg-[#C96442]" style={{width:Math.max(4,videoJob.progress)+'%'}}/></div></>}
-      {videoJob.result&&<div className="flex justify-center rounded-xl bg-black p-2"><video className="max-h-[420px] w-auto max-w-full rounded-lg" src={videoJob.result.url} controls playsInline/></div>}
-      {videoJob.status==='completed'&&videoJob.result&&<div className="grid gap-2"><div className="rounded-lg bg-[#FAF7F1] p-2"><p className="break-all text-[10px] leading-4 text-[#5C544A]" title={videoJob.result.file}>{videoJob.result.filename}</p><div className="mt-1.5 flex justify-end"><Button variant="ghost" className="!px-2 !py-1 !text-[10px]" onClick={()=>void reveal(videoJob.result!.file)}>폴더 열기</Button></div></div><Action onClick={useResult} className="w-full"><Upload size={14}/> 업로드 폼에 채우기</Action></div>}
-      {videoJob.status==='failed'&&<Notice message={videoJob.error||'영상 생성에 실패했습니다.'}/>}
-     </div>}
-    </Panel>
-   </div>
+      </div>
   </div>
  </div>
 }
