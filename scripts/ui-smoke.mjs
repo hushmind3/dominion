@@ -52,6 +52,23 @@ try{
    await page.getByText('자율 목표 실행',{exact:true}).waitFor();
    await page.locator('#new-goal').fill('Create a small verification note.');
    assert.equal(await page.locator('#new-goal').inputValue(),'Create a small verification note.');
+   await page.getByRole('button',{name:/워크플로 생성/}).first().click();
+   await page.getByRole('dialog').waitFor();
+   await page.screenshot({path:path.join(shots,'workflow-editor.png'),fullPage:false});
+   await page.keyboard.press('Escape');
+   await page.getByRole('dialog').waitFor({state:'hidden'});
+  }
+  if(id==='models'){
+   await page.getByRole('button',{name:/제공자 추가/}).first().click();
+   await page.getByRole('dialog').waitFor();
+   await page.keyboard.press('Escape');
+   await page.getByRole('dialog').waitFor({state:'hidden'});
+  }
+  if(id==='agents'){
+   await page.getByRole('button',{name:/에이전트 만들기/}).first().click();
+   await page.getByRole('dialog').waitFor();
+   await page.keyboard.press('Escape');
+   await page.getByRole('dialog').waitFor({state:'hidden'});
   }
   await page.screenshot({path:path.join(shots,id+'.png'),fullPage:false});
  }
