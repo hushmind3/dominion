@@ -92,7 +92,7 @@ export function ConnectionsPage(){
     <label className="checkbox-row"><input type="checkbox" checked={editor.record.mentionOnly!==false} onChange={e=>setEditor({...editor,record:{...editor.record,mentionOnly:e.target.checked}})}/> 그룹에서는 봇 멘션이 있을 때만 답변</label>
     <label className="checkbox-row"><input type="checkbox" checked={Boolean(editor.record.enabled)} onChange={e=>setEditor({...editor,record:{...editor.record,enabled:e.target.checked}})}/> 연결 활성화</label>
     {editor.record.webhookPath&&<div className="channel-webhook"><strong>Webhook 경로</strong><code>{editor.record.webhookPath}</code><small>외부 플랫폼에서 접근할 수 있는 HTTPS 서버 주소를 이 경로 앞에 붙여 등록하세요.</small></div>}
-    {(editor.entry.instructions?.length||0)>0&&<div className="channel-guide"><strong>연결 안내</strong><ol>{editor.entry.instructions.map((t,i)=><li key={i}>{t}</li>)}</ol><a href={editor.entry.docs} target="_blank" rel="noreferrer">공식 문서 열기 <ExternalLink size={13}/></a></div>}
+    {(editor.entry.instructions?.length||0)>0&&<div className="channel-guide"><strong>연결 안내</strong><ol>{(editor.entry.instructions||[]).map((t,i)=><li key={i}>{t}</li>)}</ol><a href={editor.entry.docs} target="_blank" rel="noreferrer">공식 문서 열기 <ExternalLink size={13}/></a></div>}
    </div>
    {error&&<Notice message={error}/>}
    <div className="modal-actions"><Action variant="secondary" onClick={()=>setEditor(null)}>취소</Action><Action onClick={save} disabled={saving}><Check size={16}/>{saving?'저장 중':'설정 저장'}</Action></div>
