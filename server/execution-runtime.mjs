@@ -21,7 +21,7 @@ export class ExecutionRuntime {
     limits={}}){
     if(this.#sessions.has(sessionId))throw Error('Session is already running');
     const controller=new AbortController(),start=Date.now(),runId=crypto.randomUUID();
-    const maxIterations=clamp(limits.maxIterations,1,64,8);
+    const maxIterations=clamp(limits.maxIterations,1,64,16);
     const maxToolCalls=clamp(limits.maxToolCalls,1,512,64);
     const maxElapsedMs=clamp(limits.maxElapsedMs,1000,86400000,900000);
     const maxTokens=clamp(limits.maxTokens,100,2000000,100000);

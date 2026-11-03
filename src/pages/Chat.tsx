@@ -127,6 +127,7 @@ export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onS
     if(event.type==='tool_start')setToolStatus('실행 중 · '+event.name);
     if(event.type==='tool_end')setToolStatus('완료 · '+event.name);
     if(event.type==='tool_error')setToolStatus('도구 오류 · '+event.error);
+     if(event.type==='goal_progress')setToolStatus('자율 실행 · '+event.event+' · '+event.status);
     if(event.type==='assistant_saved'){void get<ChatMessage[]>('/api/sessions/'+session+'/messages').then(setMessages);setLive('');setThought('');}
     if(event.type==='error')setError(event.message);
    });

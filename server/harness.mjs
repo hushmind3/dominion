@@ -305,6 +305,11 @@ export async function runGoal(id,deps={}){
   }
   r=goal(id);
   if(r.steps.some(s=>s.status!=='completed'))return saveEvent(id,'workflow.needs_review',{status:'needs_review',reason:'Unresolved workflow dependencies'});
+  // Action evidence is a goal-level invariant too: a dishonest or overconfident
+  // planner cannot remove all executable actions and win via a prose review.
+  const goalRequiresTools=likelyRequiresTools(r.goal)||/(?:구현|배포|설치|프로젝트.{0,30}만들|implement|deploy|build a (?:site|project|app)|create a (?:site|project|app))/i.test(r.goal);
+  if(goalRequiresTools&&(r.usage.toolCalls||0)===0)
+   return saveEvent(id,'workflow.needs_review',{status:'needs_review',reason:'The requested action has no confirmed tool execution evidence'});
   return saveEvent(id,'workflow.completed',{status:'completed',finishedAt:new Date().toISOString(),
    summary:r.steps.map(s=>s.name+': '+clip(s.output,2000)).join("\n\n"),reason:''},{stepCount:r.steps.length,usage:r.usage});
  }catch(e){
