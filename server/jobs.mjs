@@ -27,8 +27,9 @@ async function pump(){
      const msg=await runTurn({sessionId:id,agentId:job.input.agentId,providerId:job.input.providerId,model:job.input.model,input:job.input.prompt,onEvent:emit});
      result={sessionId:id,messageId:msg.id};
     }
-    put('job',{...get('job',job.id),status:'completed',result,finishedAt:new Date().toISOString(),events});
-    log('job.completed',{jobId:job.id});
+    const status=job.kind==='goal'?(result.status==='completed'?'completed':result.status):'completed';
+    put('job',{...get('job',job.id),status,result,finishedAt:new Date().toISOString(),events});
+    log('job.'+status,{jobId:job.id});
    }catch(e){
     put('job',{...get('job',job.id),status:'failed',error:String(e.message||e),finishedAt:new Date().toISOString(),events});
     log('job.failed',{jobId:job.id,error:String(e)});
