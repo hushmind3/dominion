@@ -14,14 +14,6 @@ const shorten=(v:string,n=45)=>v.length>n?v.slice(0,n-3)+'…':v
 const compactNumber=(v=0)=>v>=1e6?(v/1e6).toFixed(1)+'M':v>=1e3?(v/1e3).toFixed(1)+'K':String(v)
 const cleanMarkdown=(value='')=>String(value).replace(/^---[\s\S]*?---/,'').replace(/```[\s\S]*?```/g,' ').replace(/\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)/g,' ').replace(/!\[[^\]]*\]\([^)]*\)/g,' ').replace(/\[([^\]]+)\]\([^)]*\)/g,'$1').replace(/^\s*\|.*$/gm,' ').replace(/^\s*[-:]{3,}\s*$/gm,' ').replace(/<[^>]+>/g,' ').replace(/^#{1,6}\s*/gm,'').replace(/[*_`>]/g,'').replace(/\n{3,}/g,'\n\n').trim()
 const updatedLabel=(value:string)=>value?new Date(value).toLocaleDateString():''
-const picks=[
- {id:'bartowski/Qwen2.5-7B-Instruct-GGUF',label:'Qwen 2.5 7B',note:'범용 대화·도구 호출에 무난한 7B'},
- {id:'bartowski/Qwen2.5-Coder-7B-Instruct-GGUF',label:'Qwen 2.5 Coder 7B',note:'코딩·에이전트 작업용 7B'},
- {id:'bartowski/Mistral-Nemo-Instruct-2407-GGUF',label:'Mistral Nemo 12B',note:'긴 문맥과 다국어에 강한 12B'},
- {id:'bartowski/DeepSeek-R1-Distill-Qwen-7B-GGUF',label:'DeepSeek R1 7B',note:'추론 특화蒸馏 7B'},
- {id:'bartowski/Phi-3.5-mini-instruct-GGUF',label:'Phi 3.5 mini',note:'가볍고 빠른 3.8B'},
- {id:'bartowski/gemma-2-9b-it-GGUF',label:'Gemma 2 9B',note:'Google 범용 instruction 9B'}
-] as const
 const viewTabs=[{id:'installed',label:'내 모델',icon:HardDrive},{id:'search',label:'모델 찾기',icon:Search},{id:'import',label:'로컬 모델 가져오기',icon:FolderOpen}] as const
 export function ModelExplorer(){
  const [view,setView]=useState<'installed'|'search'|'import'>('installed')
@@ -143,14 +135,13 @@ export function ModelExplorer(){
      <div className="mt-2 flex items-center justify-between text-[11px] text-[#8A8176]"><span>{loading?'검색 중…':catalog.length+'개 모델'}</span><span>Hugging Face 실시간</span></div>
     </div>
     <div className="max-h-[610px] overflow-y-auto">
-     {!q&&<div className="border-b border-[#EFE9DF] p-3"><div className="mb-2 px-1 text-[11px] font-semibold text-[#8A8176]">에디터 추천</div><div className="grid gap-1.5">{picks.map(pick=><Button key={pick.id} variant="ghost" onClick={()=>setSelected(pick.id)} className="!h-auto w-full !justify-start gap-2.5 !border-0 rounded-xl px-2.5 py-2 text-left hover:bg-[#FAF7F1]"><span className="grid size-8 shrink-0 place-items-center rounded-lg bg-[#F7E8E1] text-[12px] font-bold text-[#C96442]">{pick.label.slice(0,1)}</span><span className="min-w-0 flex-1"><strong className="block truncate text-[12px] text-[#3A342D]">{pick.label}</strong><small className="block truncate text-[10px] text-[#8A8176]">{pick.note}</small></span><ArrowRight size={13} className="shrink-0 text-[#A79C8E]"/></Button>)}</div></div>}
      {loading&&<div className="space-y-2 p-3">{[0,1,2,3].map(i=><div key={i} className="h-20 animate-pulse rounded-xl bg-[#FAF7F1]"/>)}</div>}
      {!loading&&catalog.map(m=><button type="button" key={m.id} onClick={()=>setSelected(m.id)} className={'w-full border-b border-[#EFE9DF] px-4 py-3.5 text-left transition-colors hover:bg-[#FAF7F1] '+(selected===m.id?'bg-[#F7E8E1]':'')}><div className="flex items-start gap-3"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#F3EEE5] text-[13px] font-bold text-[#C96442]">{m.name.slice(0,1).toUpperCase()}</span><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><strong className="truncate text-[13px] text-[#24211D]">{m.name}</strong>{m.gated&&<span className="rounded bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700">gated</span>}</div><div className="mt-0.5 truncate text-[11px] text-[#8A8176]">{m.author} · {m.task||m.library||'model'}</div><p className="mt-1 line-clamp-2 text-[11px] leading-5 text-[#5C544A]">{m.description||'설명을 불러오는 중입니다.'}</p><div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-[#8A8176]"><span>↓ {compactNumber(m.downloads)}</span><span>♡ {compactNumber(m.likes)}</span><span>{updatedLabel(m.updatedAt)}</span><span className="rounded bg-[#F3EEE5] px-1.5 py-0.5 font-semibold">{/gguf/i.test(m.tags.join(' '))?'GGUF':'MLX'}</span></div></div></div></button>)}
      {!loading&&!catalog.length&&<div className="p-8 text-center text-[12px] leading-6 text-[#7C7469]">검색 결과가 없습니다.</div>}
      {!loading&&catalog.length>0&&catalog.length>=limit&&<div className="p-3"><Button variant="secondary" className="w-full" onClick={()=>setLimit(limit+80)}>더 보기 · {catalog.length}개 표시 중</Button></div>}
     </div>
    </div>
-   <div className="min-w-0 p-4">
+   <div className="min-w-0 max-h-[610px] overflow-y-auto p-4 pr-2">
     {!selected?<div className="flex min-h-52 flex-col items-center justify-center gap-3 text-[12px] text-[#8d99a8]"><CloudDownload size={23}/>왼쪽에서 모델을 선택하세요.</div>:!detail?<div className="flex h-44 items-center justify-center text-[12px] text-[#8290a1]"><LoaderCircle size={17} className="mr-2 animate-spin"/>모델 상세 정보 불러오는 중</div>:<>
      <div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="break-all text-[20px] font-bold tracking-[-.02em] text-[#24211D]">{detail.name||detail.id}</h3><div className="mt-1 break-all text-[11px] text-[#8A8176]">{detail.id}</div><div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[#7C7469]"><span>↓ {compactNumber(detail.downloads)}</span><span>♡ {compactNumber(detail.likes)}</span><span>{detail.architecture||'언어 모델'}</span>{detail.license&&<span>{detail.license}</span>}<span>{detail.options.length}개 배포 형식</span></div></div><a href={'https://huggingface.co/'+detail.id} target="_blank" rel="noreferrer" aria-label="Hugging Face에서 보기" className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold text-[#C96442] hover:bg-[#F7E8E1]">Hugging Face <ExternalLink size={14}/></a></div>
      <div className="mt-5 text-[13px] font-semibold text-[#3A342D]">다운로드할 파일 선택</div>
@@ -173,16 +164,6 @@ export function ModelExplorer(){
     {runtime.setup?.error&&<p className="mt-2 text-rose-700">{runtime.setup.error}</p>}
     {runtime.setup?.file&&<p className="mt-1 truncate text-[#8d9bad]">{runtime.setup.file}</p>}
    </div>}
-  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#e8ecf1] bg-[#fafbfc] px-4 py-3">
-   <span className="flex flex-wrap gap-3 text-[11px] text-[#788598]"><span>GGUF: {runtime.capabilities?.gguf.available?'실행 가능'+(runtime.capabilities.gguf.backend?' · '+runtime.capabilities.gguf.backend.toUpperCase():''):'실행기 미설치'}</span>
-    {needEngine&&runtime.capabilities?.gguf.installable&&<span className="inline-flex items-center gap-2">
-     <button type="button" className="inline-flex h-7 items-center gap-1.5 rounded-md bg-[#C96442] px-2.5 text-[11px] font-semibold text-white disabled:opacity-50" disabled={installing||Boolean(working)} onClick={()=>void installEngine(recommendedBackend)}><ArrowDownToLine size={13}/>{installing?'설치 중':recommendedBackend==='cuda'?'NVIDIA CUDA 실행기 설치':'CPU 실행기 설치'}</button>
-     {recommendedBackend==='cuda'&&<button type="button" className="inline-flex h-7 items-center rounded-md border border-[#dce3ed] px-2 text-[11px] text-[#65768a] disabled:opacity-40" disabled={installing||Boolean(working)} onClick={()=>void installEngine('cpu')}>CPU 버전</button>}
-    </span>}
-    {runtime.capabilities?.gguf.available&&recommendedBackend==='cuda'&&runtime.capabilities.gguf.backend==='cpu'&&<button type="button" disabled={installing||Boolean(working)} onClick={()=>void installEngine('cuda')} className="inline-flex h-7 items-center rounded-md border border-[#dce3ed] px-2 text-[11px] text-[#556bb4] disabled:opacity-40">CUDA 실행기로 전환</button>}
-    <span>MLX: {runtime.capabilities?.mlx.available?'실행기 사용 가능':'Apple Silicon + mlx-lm 필요'}</span></span>
-   <div className="flex items-center gap-3"><label className="flex items-center gap-1.5 text-[11px] text-[#6d7b8d]">컨텍스트 <SelectInput value={context} onChange={e=>setContext(Number(e.target.value))} className="!w-20 !py-1"><option value={2048}>2K</option><option value={4096}>4K</option><option value={8192}>8K</option><option value={16384}>16K</option><option value={32768}>32K</option></SelectInput></label><label className="flex items-center gap-1.5 text-[11px] text-[#6d7b8d]"><input type="checkbox" checked={gpu} onChange={e=>setGpu(e.target.checked)}/> GPU</label></div>
-  </div>
   {runtime.status==='error'&&runtime.error&&<div className="border-t border-rose-100 bg-rose-50 px-4 py-2 text-[11px] text-rose-700">{runtime.error}</div>}
  </section>
 }
