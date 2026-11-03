@@ -47,7 +47,7 @@ export function GoalRunner(){
    <div className="flex flex-wrap items-center justify-between gap-3">
     <div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-xl bg-white/10"><Workflow size={21}/></span>
      <div><p className="m-0 text-[10px] font-bold tracking-widest text-blue-200">DURABLE AGENT EXECUTION</p>
-      <h2 className="m-0 text-xl font-bold">자율 목표 실행</h2></div></div>
+      <h2 className="m-0 text-xl font-bold text-white">자율 목표 실행</h2></div></div>
     <span className="rounded-full border border-white/20 px-3 py-1 text-xs text-slate-200">상태 · 이벤트 · 검수 · 재작업</span>
    </div>
   </div>
