@@ -65,8 +65,7 @@ export function createGoal(input){
 export function resumeGoal(id){
  const r=goal(id);
  if(!r||!['needs_review','interrupted'].includes(r.status))throw Error('Goal is not resumable');
- if(r.steps.some(x=>x.status==='running'))throw Error('Step must be reviewed before re-execution');
- return saveEvent(id,'workflow.queued',{status:'queued',reason:'',steps:r.steps.map(x=>x.status==='failed'?{...x,status:'pending'}:x)},{resumed:true});
+ return saveEvent(id,'workflow.queued',{status:'queued',reason:'',steps:r.steps.map(x=>['failed','interrupted','running'].includes(x.status)?{...x,status:'pending',attempts:0}:x)},{resumed:true,userConfirmedReplay:true});
 }
 export function cancelGoal(id){
  const r=goal(id);if(!r||terminal.has(r.status))throw Error('Goal is not active');
@@ -203,11 +202,15 @@ export async function runGoal(id,deps={}){
  let r=goal(id);if(!r||r.status!=='queued')throw Error('Goal is not queued');
  const planner=deps.plan||planWithModel,execute=deps.execute||executeWithModel,review=deps.review||reviewWithModel;
  try{
-  r=saveEvent(id,'workflow.planning',{status:'planning',startedAt:r.startedAt||new Date().toISOString()});
-  requireBudget(id);
-  const steps=normalizePlan(await planner(goal(id)),r.budget.maxSteps);
-  requireBudget(id);
-  r=saveEvent(id,'workflow.planned',{status:'running',plan:steps.map(({id,name,dependsOn,agentId})=>({id,name,dependsOn,agentId})),steps},{count:steps.length});
+  if(r.steps.length){
+   r=saveEvent(id,'workflow.resumed',{status:'running',reason:''},{remaining:r.steps.filter(s=>s.status!=='completed').length});
+  }else{
+   r=saveEvent(id,'workflow.planning',{status:'planning',startedAt:r.startedAt||new Date().toISOString()});
+   requireBudget(id);
+   const steps=normalizePlan(await planner(goal(id)),r.budget.maxSteps);
+   requireBudget(id);
+   r=saveEvent(id,'workflow.planned',{status:'running',plan:steps.map(({id,name,dependsOn,agentId})=>({id,name,dependsOn,agentId})),steps},{count:steps.length});
+  }
   while(true){
    r=goal(id);if(r.status==='cancelled')return r;
    const next=r.steps.find(s=>s.status==='pending'&&s.dependsOn.every(d=>r.steps.find(x=>x.id===d)?.status==='completed'));
