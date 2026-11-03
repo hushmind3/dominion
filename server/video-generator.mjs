@@ -28,11 +28,22 @@ function ensureDirs(config){
  fs.mkdirSync(config.workflowDir,{recursive:true});
  fs.mkdirSync(config.outputDir,{recursive:true});
 }
+function workflowModel(file){
+ try{
+  const data=JSON.parse(fs.readFileSync(file,'utf8'));
+  for(const node of Object.values(data)){
+   if(!node||typeof node!=='object')continue;
+   if(node.class_type==='UNETLoader'&&node.inputs?.unet_name)return node.inputs.unet_name;
+   if(node.class_type==='CheckpointLoaderSimple'&&node.inputs?.ckpt_name)return node.inputs.ckpt_name;
+  }
+ }catch{}
+ return '';
+}
 export function videoWorkflows(){
  const config=videoConfig();ensureDirs(config);
  return fs.readdirSync(config.workflowDir,{withFileTypes:true}).filter(entry=>entry.isFile()&&/\.json$/i.test(entry.name)).map(entry=>{
   const file=path.join(config.workflowDir,entry.name);
-  return {id:entry.name,name:entry.name.replace(/\.json$/i,''),bytes:fs.statSync(file).size,path:file};
+  return {id:entry.name,name:entry.name.replace(/\.json$/i,''),bytes:fs.statSync(file).size,path:file,model:workflowModel(file)};
  }).sort((a,b)=>a.name.localeCompare(b.name));
 }
 function requiredModels(config,workflows){
@@ -63,6 +74,22 @@ function requiredModels(config,workflows){
   return {...item,path:file,present,sizeBytes,download:known[item.name]||''};
  });
 }
+function installedVideoModels(config,workflows){
+ const folders=[['diffusion_models','diffusion'],['checkpoints','checkpoint'],['unet','unet']];
+ const items=[];
+ for(const [folder,kind] of folders){
+  const dir=path.join(config.comfyDir,'models',folder);
+  if(!fs.existsSync(dir))continue;
+  for(const entry of fs.readdirSync(dir,{withFileTypes:true})){
+   if(!entry.isFile()||!/\.(safetensors|ckpt|gguf|pt|pth)$/i.test(entry.name))continue;
+   const file=path.join(dir,entry.name);
+   let sizeBytes=0;
+   try{sizeBytes=fs.statSync(file).size}catch{}
+   items.push({name:entry.name,kind,folder,path:file,sizeBytes,usedBy:workflows.filter(workflow=>workflow.model===entry.name).map(workflow=>workflow.name)});
+  }
+ }
+ return items.sort((a,b)=>a.name.localeCompare(b.name));
+}
 export async function videoStatus(){
  const config=videoConfig();ensureDirs(config);
  let comfy={reachable:false,error:''};
@@ -73,7 +100,8 @@ export async function videoStatus(){
  }catch(error){comfy.error=String(error?.message||error)}
  const workflows=videoWorkflows();
  const models=requiredModels(config,workflows);
- return {config,comfy,installed:fs.existsSync(path.join(config.comfyDir,'main.py'))&&fs.existsSync(path.join(config.comfyDir,'.venv','Scripts','python.exe')),workflows,models,modelsReady:models.length>0&&models.every(model=>model.present),jobs:videoJobs().slice(-12)};
+ const installedModels=installedVideoModels(config,workflows);
+ return {config,comfy,installed:fs.existsSync(path.join(config.comfyDir,'main.py'))&&fs.existsSync(path.join(config.comfyDir,'.venv','Scripts','python.exe')),workflows,models,modelsReady:models.length>0&&models.every(model=>model.present),installedModels,jobs:videoJobs().slice(-12)};
 }
 function revealInShell(args){
  const explorer=path.join(process.env.WINDIR||'C:\\Windows','explorer.exe');

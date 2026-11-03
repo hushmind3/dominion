@@ -55,3 +55,10 @@ C:\Users\<사용자>\Documents\DOMINION Workspace\video-workflows\
 - ComfyUI는 앱과 별도 프로세스입니다. 영상 제작 화면의 **ComfyUI 종료** 버튼으로 끌 수 있고, 앱에서 시작한 경우 앱을 종료할 때도 함께 종료됩니다.
 - 필요 없으면 `C:\ComfyUI` 폴더를 삭제해도 채팅·모델·MCP 기능은 그대로 동작합니다. 영상 제작만 사용할 수 없게 됩니다.
 - 다른 영상 엔진을 쓰려면 영상 제작 화면의 ComfyUI URL을 원격 ComfyUI 주소로 바꾸거나, `video-workflows` 폴더에 다른 모델의 API 워크플로를 추가하면 됩니다. 모델 파일은 워크플로가 참조하는 이름으로 `C:\ComfyUI\models` 아래에 넣으면 자동 인식됩니다.
+
+## 6. 엔진·모델 조합 바꾸기
+
+- ComfyUI 엔진의 **API 주소**와 **설치 폴더**는 영상 제작 화면의 `설정`에서 바꿀 수 있습니다. 다른 드라이브의 ComfyUI나 원격 ComfyUI 호환 서버도 같은 방식으로 연결됩니다.
+- 영상 모델은 전역 고정 목록이 아닙니다. `models\diffusion_models`, `models\checkpoints`, `models\unet` 폴더를 실제로 스캔해 표시합니다.
+- 모델·텍스트 인코더·VAE **조합은 워크플로 JSON 단위**로 저장됩니다. 다른 조합을 쓰려면 해당 조합의 워크플로를 `video-workflows` 폴더에 추가하세요.
+- 설치된 모델 파일에 연결된 워크플로가 없으면 `조합 필요`로 표시되며, 그 모델만으로는 생성할 수 없습니다.

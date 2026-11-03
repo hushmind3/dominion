@@ -19,6 +19,18 @@ async function start(){
   const answer=await dialog.showOpenDialog(window||undefined,{title:'업로드할 영상 선택',properties:['openFile'],filters:[{name:'Video',extensions:['mp4','mov','webm','mkv','avi','m4v']}]});
   return answer.canceled?'':answer.filePaths[0]||'';
  });
+ ipcMain.removeHandler('dominion:show-item');
+ ipcMain.handle('dominion:show-item',async(_event,target)=>{
+  if(typeof target!=='string'||!target||!fs.existsSync(target))return {ok:false,error:'파일을 찾을 수 없습니다.'};
+  shell.showItemInFolder(path.resolve(target));
+  return {ok:true};
+ });
+ ipcMain.removeHandler('dominion:open-path');
+ ipcMain.handle('dominion:open-path',async(_event,target)=>{
+  if(typeof target!=='string'||!target||!fs.existsSync(target))return {ok:false,error:'폴더를 찾을 수 없습니다.'};
+  const error=await shell.openPath(path.resolve(target));
+  return error?{ok:false,error}:{ok:true};
+ });
  ipcMain.removeHandler('dominion:pick-model');
  ipcMain.handle('dominion:pick-model',async(_event,format)=>{
   const folder=format==='mlx';
