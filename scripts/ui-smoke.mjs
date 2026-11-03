@@ -36,6 +36,8 @@ try{
  page.on('pageerror',error=>errors.push(error.message));
  await page.goto(origin,{waitUntil:'domcontentloaded'});
  await page.getByText('DOMINION',{exact:true}).first().waitFor();
+ const firstNav=page.locator('aside nav button').first();
+ assert.equal(await firstNav.evaluate(el=>getComputedStyle(el).borderTopWidth),'0px','Sidebar items should not render as bordered pills');
  const links=[
   ['홈','home'],['대화','chat'],['모델 허브','models'],['에이전트','agents'],
   ['그룹 · 회의실','rooms'],['워크플로','workflows'],['기억 라이브러리','memory'],
@@ -61,8 +63,10 @@ try{
  if(await menu.count())await menu.first().click();
  else await page.locator('header button').first().click();
  await page.locator('aside').waitFor({state:'visible'});
+ await page.screenshot({path:path.join(shots,'mobile-sidebar-open.png'),fullPage:false});
  await page.locator('aside nav button').filter({hasText:'워크플로'}).first().click();
  await page.getByText('자율 목표 실행',{exact:true}).waitFor();
+ await page.waitForFunction(()=>document.querySelector('aside')?.getBoundingClientRect().right<=2,null,{timeout:3000});
  await page.screenshot({path:path.join(shots,'mobile-workflows.png'),fullPage:false});
  assert.deepEqual(errors,[],'Browser runtime exceptions on mobile');
  console.log('UI smoke passed: '+links.length+' desktop routes + mobile navigation. Screenshots: '+shots);
