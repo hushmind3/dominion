@@ -1,6 +1,7 @@
 // First-party dynamic feeds into the generic DOMINION capability kernel.
 // These feeds expose resources already owned by the engine, not copied placeholders.
 import {kernel} from './capability-kernel.mjs';
+import './channel-registry.mjs'; // Load on-disk channel capabilities before building the aggregate inventory.
 import {providers,availableModels} from './providers.mjs';
 import {mcpServers,discoverMcp} from './mcp.mjs';
 import {all,put,get} from './store.mjs';
