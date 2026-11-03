@@ -100,9 +100,9 @@ async function api(req,res,u){
  if(url==='/api/model-library/installed'&&method==='GET')return json(res,await modelLibrary.installed());
  if(url==='/api/model-library/jobs'&&method==='GET')return json(res,modelLibrary.jobsList());
  if(url==='/api/model-library/download'&&method==='POST')return json(res,await modelLibrary.download(await body(req)));
- const modelJob=url.match(/^\\/api\\/model-library\\/jobs\\/([a-f0-9]{24})\\/(pause|resume|cancel)$/);
+ const modelJob=url.match(/^\/api\/model-library\/jobs\/([a-f0-9]{24})\/(pause|resume|cancel)$/);
  if(modelJob&&method==='POST')return json(res,await modelLibrary.control(modelJob[1],modelJob[2]));
- const installedModel=url.match(/^\\/api\\/model-library\\/installed\\/([a-f0-9]{24})$/);
+ const installedModel=url.match(/^\/api\/model-library\/installed\/([a-f0-9]{24})$/);
  if(installedModel&&method==='DELETE'){
   if(localRunner.status().id===installedModel[1])await localRunner.unload();
   return json(res,await modelLibrary.remove(installedModel[1]));
