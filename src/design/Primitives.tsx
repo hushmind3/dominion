@@ -117,3 +117,26 @@ export function Spinner({label='불러오는 중'}:{label?:string}){return <div 
 export function Confirmation({open,onClose,onConfirm,title,message,confirmLabel='삭제'}:{open:boolean;onClose:()=>void;onConfirm:()=>void;title:string;message:string;confirmLabel?:string}){
  return <Dialog open={open} onClose={onClose} title={title} footer={<><Button onClick={onClose}>취소</Button><Button variant="danger" onClick={()=>{onConfirm();onClose()}}>{confirmLabel}</Button></>}><p className="text-[13px] leading-relaxed text-muted">{message}</p></Dialog>
 }
+
+
+export function Split({left,right}:{left:ReactNode;right:ReactNode}){
+ return <div className="grid min-h-[530px] min-w-0 grid-cols-1 lg:grid-cols-[minmax(275px,37%)_minmax(0,1fr)]"><div className="min-w-0 border-b border-line bg-canvas/50 lg:border-b-0 lg:border-r">{left}</div><div className="min-w-0">{right}</div></div>
+}
+export function Pane({children,pad=true}:{children:ReactNode;pad?:boolean}){
+ return <div className={cx('min-w-0',pad?'p-4 sm:p-5':'')}>{children}</div>
+}
+export function ScrollList({children,height='md'}:{children:ReactNode;height?:'sm'|'md'|'lg'}){
+ return <div className={cx('min-w-0 overflow-y-auto',height==='sm'?'max-h-[280px]':height==='md'?'max-h-[430px]':'max-h-[580px]')}>{children}</div>
+}
+export function Selectable({selected,children,onClick,disabled=false}:{selected:boolean;children:ReactNode;onClick:()=>void;disabled?:boolean}){
+ return <button type="button" disabled={disabled} aria-pressed={selected} onClick={onClick} className={cx('flex w-full min-w-0 items-center gap-3 border-b border-line p-3 text-left transition-colors last:border-0 hover:bg-brand-soft/45',selected&&'bg-brand-soft ring-inset ring-1 ring-brand/25')}>{children}</button>
+}
+export function CodeText({children}:{children:string}){
+ return <pre className="max-h-[330px] overflow-auto whitespace-pre-wrap break-words rounded-xl border border-line bg-canvas p-4 font-mono text-[11px] leading-relaxed text-muted">{children}</pre>
+}
+export function KeyValue({label,value}:{label:string;value:ReactNode}){
+ return <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-2 text-xs"><span className="text-subtle">{label}</span><span className="max-w-full break-words font-semibold text-ink">{value}</span></div>
+}
+export function Highlight({children,title,icon}:{children:ReactNode;title?:string;icon?:ReactNode}){
+ return <div className="rounded-xl border border-brand/10 bg-brand-soft/50 p-4"><div className="mb-2 flex items-center gap-2 text-xs font-bold text-brand">{icon}{title}</div><div className="text-xs leading-relaxed text-muted">{children}</div></div>
+}
