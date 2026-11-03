@@ -31,7 +31,7 @@ test('local 4B-style model executes a real filesystem request with no native too
  put('agent',{id:agentId,name:'Tiny agent',systemPrompt:'Execute tasks through tools',providerId,model:'tiny-4b'});
  put('policy',{id:'default',autoApproveAll:true,autoApproveMcp:false,autoApprove:[]});
  try{
-  const result=await runTurn({sessionId:session.id,input:'작업공간에 '+file+' 파일을 만들어 주세요.'});
+  const result=await runTurn({sessionId:session.id,input:'작업공간에 '+file+' 파일을 만들어 주세요.',autoLearning:false});
   assert.match(result.content,/완료되었습니다/);
   assert.equal(await readFile(path.join(WORKSPACE,file),'utf8'),'Written by the independent runtime');
   assert.equal(calls.length,2);
