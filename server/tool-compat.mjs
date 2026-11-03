@@ -42,6 +42,25 @@ function extract(raw){
  if(s.startsWith('<tool_call>'))s=s.replace(/^<tool_call>\s*/,'').replace(/\s*<\/tool_call>$/,'').trim();
  return JSON.parse(s);
 }
+export function validateToolArguments(tool,args){
+ if(!isObject(args))return 'Tool arguments must be an object';
+ const fields=tool.parameters?.properties||{},required=tool.parameters?.required||[];
+ for(const key of required)if(!Object.hasOwn(args,key))return 'Missing required argument '+key;
+ for(const [key,arg] of Object.entries(args)){
+  const field=fields[key];
+  if(!field){
+   if(tool.parameters?.additionalProperties===true||isObject(tool.parameters?.additionalProperties))continue;
+   return 'Unknown argument '+key+' for '+tool.name;
+  }
+  if(field.type==='string'&&typeof arg!=='string')return 'Argument '+key+' must be text';
+  if(field.type==='array'&&!Array.isArray(arg))return 'Argument '+key+' must be an array';
+  if(['number','integer'].includes(field.type)&&(typeof arg!=='number'||!Number.isFinite(arg)||(field.type==='integer'&&!Number.isInteger(arg))))return 'Argument '+key+' must be numeric';
+  if(field.type==='boolean'&&typeof arg!=='boolean')return 'Argument '+key+' must be boolean';
+  if(field.type==='object'&&!isObject(arg))return 'Argument '+key+' must be an object';
+  if(Array.isArray(field.enum)&&!field.enum.includes(arg))return 'Unsupported value for argument '+key;
+ }
+ return '';
+}
 export function parseCompatAction(raw,tools=[]){
  let value;
  try{value=extract(raw);}catch{return {kind:'invalid',reason:'Return exactly one valid JSON action (tool or final).'};}
@@ -54,16 +73,8 @@ export function parseCompatAction(raw,tools=[]){
  if(typeof value.name!=='string'||!isObject(value.arguments))return {kind:'invalid',reason:'tool action requires a tool name and arguments object'};
  const tool=tools.find(t=>t.name===value.name);
  if(!tool)return {kind:'invalid',reason:'Unknown tool '+clip(value.name,100)+'. Use tool_discover if needed.'};
- const fields=tool.parameters?.properties||{},required=tool.parameters?.required||[];
- for(const key of required)if(!(key in value.arguments))return {kind:'invalid',reason:'Missing required argument '+key};
- for(const [key,arg] of Object.entries(value.arguments)){
-  const field=fields[key];if(!field)return {kind:'invalid',reason:'Unknown argument '+key+' for '+tool.name};
-  if(field.type==='string'&&typeof arg!=='string')return {kind:'invalid',reason:'Argument '+key+' must be text'};
-  if(field.type==='array'&&!Array.isArray(arg))return {kind:'invalid',reason:'Argument '+key+' must be an array'};
-  if(field.type==='number'&&typeof arg!=='number')return {kind:'invalid',reason:'Argument '+key+' must be numeric'};
-  if(field.type==='boolean'&&typeof arg!=='boolean')return {kind:'invalid',reason:'Argument '+key+' must be boolean'};
-  if(field.type==='object'&&!isObject(arg))return {kind:'invalid',reason:'Argument '+key+' must be an object'};
- }
+ const validationError=validateToolArguments(tool,value.arguments);
+ if(validationError)return {kind:'invalid',reason:validationError};
  return {kind:'tool',name:tool.name,arguments:value.arguments};
 }
 export function likelyRequiresTools(text){
