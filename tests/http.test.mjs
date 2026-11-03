@@ -40,6 +40,15 @@ test('real gateway creates and retrieves agents, rooms, sessions and jobs', {tim
   response=await fetch(url+'/api/channels/catalog');
   assert.equal(response.status,200);
   assert.ok((await response.json()).length>=26);
+  response=await fetch(url+'/api/model-library/installed');
+  assert.equal(response.status,200);assert.deepEqual(await response.json(),[]);
+  response=await fetch(url+'/api/model-library/runtime');
+  assert.equal(response.status,200);const runtime=await response.json();
+  assert.equal(typeof runtime.capabilities.gguf.available,'boolean');
+  response=await fetch(url+'/api/model-library/details?id=..%2Fprivate');
+  assert.equal(response.status,400);
+  response=await fetch(url+'/api/model-library/runtime/load',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"id":"invalid"}'});
+  assert.equal(response.status,400);
   response=await fetch(url+'/api/approvals');assert.deepEqual(await response.json(),[]);
   response=await fetch(url+'/api/mcp');assert.deepEqual(await response.json(),[]);
   response=await fetch(url+'/api/policy');assert.equal((await response.json()).autoApproveAll,false);
