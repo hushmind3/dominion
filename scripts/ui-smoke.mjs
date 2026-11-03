@@ -94,3 +94,4 @@ try{
   else{child.once('exit',resolve);setTimeout(()=>{child.kill('SIGKILL');resolve();},2000).unref();}});
  await rm(temp,{recursive:true,force:true});
 }
+
