@@ -76,4 +76,13 @@ async function start(){
  app.on('activate',()=>{if(BrowserWindow.getAllWindows().length===0)void start();});
 }
 app.on('window-all-closed',()=>{if(process.platform!=='darwin')app.quit();});
-app.on('before-quit',()=>{quitting=true;if(engine&&!engine.killed)engine.kill();});
+let quitStopping=false;
+app.on('before-quit',(event)=>{
+ if(quitStopping)return;
+ event.preventDefault();
+ quitStopping=true;quitting=true;
+ const done=()=>{if(engine&&!engine.killed)engine.kill();app.quit();};
+ if(enginePort){
+  fetch('http://127.0.0.1:'+enginePort+'/api/video/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({force:true,onlyManaged:true}),signal:AbortSignal.timeout(2500)}).then(done,done);
+ }else done();
+});

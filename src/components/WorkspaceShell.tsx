@@ -1,5 +1,5 @@
 import {useEffect,useMemo,useState} from 'react'
-import {Activity,Blocks,BookOpenText,Bot,ChevronDown,ChevronRight,Clapperboard,Command,CommandIcon,Cpu,House,Layers3,Menu,MessageSquare,RadioTower,Search,Settings2,UsersRound,Workflow,X,Plus} from 'lucide-react'
+import {Activity,Blocks,BookOpenText,Bot,ChevronDown,ChevronRight,Clapperboard,Command,CommandIcon,Cpu,House,Layers3,Menu,MessageSquare,PanelLeftClose,RadioTower,Search,Settings2,UsersRound,Workflow,Plus} from 'lucide-react'
 import {Button,TextInput} from './Primitives'
 
 export type PageId='home'|'chat'|'video'|'models'|'agents'|'rooms'|'workflows'|'memory'|'capabilities'|'extensions'|'connections'|'automations'|'activity'|'settings'
@@ -11,18 +11,18 @@ export const navigation:{title:string;items:NavItem[];collapsible?:boolean}[]=[
  {title:'고급',collapsible:true,items:[{id:'rooms',label:'멀티 에이전트',icon:UsersRound},{id:'workflows',label:'반복 작업',icon:Workflow}]}
 ]
 const items=navigation.flatMap(g=>g.items)
-export function WorkspaceSidebar({page,open,online,running,pending,onNavigate,onClose}:{page:PageId;open:boolean;online:boolean;running:number;pending:number;onNavigate:(id:PageId)=>void;onClose:()=>void}){
+export function WorkspaceSidebar({page,open,collapsed,online,running,pending,onNavigate,onClose,onToggle}:{page:PageId;open:boolean;collapsed:boolean;online:boolean;running:number;pending:number;onNavigate:(id:PageId)=>void;onClose:()=>void;onToggle:()=>void}){
  const advancedItems=navigation.find(g=>g.collapsible)?.items||[]
  const [advancedOpen,setAdvancedOpen]=useState(()=>{try{return localStorage.getItem('dominion.nav.advanced')==='1'||advancedItems.some(x=>x.id===page)}catch{return advancedItems.some(x=>x.id===page)}})
  useEffect(()=>{if(advancedItems.some(x=>x.id===page))setAdvancedOpen(true)},[page])
  useEffect(()=>{try{localStorage.setItem('dominion.nav.advanced',advancedOpen?'1':'0')}catch{}},[advancedOpen])
  return <>
   {open&&<button type="button" className="fixed inset-0 z-40 bg-slate-900/40 min-[860px]:hidden" aria-label="메뉴 닫기" onClick={onClose}/>}
-  <aside aria-label="주 탐색" className={'fixed inset-y-0 left-0 z-50 flex w-[216px] flex-col border-r border-[#E0D8CC] bg-[#EFEAE1] text-[#4A443C] transition-transform duration-200 max-[859px]:-translate-x-full '+(open?'max-[859px]:translate-x-0':'')}>
+  <aside aria-label="주 탐색" className={'fixed inset-y-0 left-0 z-50 flex w-[216px] flex-col border-r border-[#E0D8CC] bg-[#EFEAE1] text-[#4A443C] transition-transform duration-200 max-[859px]:-translate-x-full '+(collapsed?'min-[860px]:-translate-x-full ':'')+(open?'max-[859px]:translate-x-0':'')}>
    <div className="flex h-16 shrink-0 items-center gap-3 border-b border-[#E0D8CC] px-5">
     <div className="grid size-8 place-items-center rounded-xl bg-[#C96442] text-[17px] font-black text-white shadow-[0_4px_12px_rgba(201,100,66,.28)]">D</div>
     <div className="min-w-0 flex-1 text-[14px] font-extrabold tracking-[.14em] text-[#24211D]">DOMINION</div>
-    <button type="button" className="min-[860px]:hidden" aria-label="닫기" onClick={onClose}><X size={16}/></button>
+    <button type="button" className="rounded-md p-1.5 text-[#7C7469] transition-colors hover:bg-[#E8E0D3] hover:text-[#24211D]" aria-label="메뉴 접기" title="메뉴 접기" onClick={onToggle}><PanelLeftClose size={16}/></button>
    </div>
    <div className="px-3 pt-5"><button type="button" onClick={()=>onNavigate('chat')} className="flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-[#C96442] text-[12px] font-semibold text-white shadow-[0_6px_16px_rgba(201,100,66,.22)] transition-colors hover:bg-[#A94E30]"><Plus size={16}/> 새 대화</button></div>
    <nav className="mt-4 min-h-0 flex-1 overflow-y-auto px-2.5 pb-4">
@@ -41,11 +41,11 @@ export function WorkspaceSidebar({page,open,online,running,pending,onNavigate,on
   </aside>
  </>
 }
-export function WorkspaceHeader({page,online,onMenu,onSearch}:{page:PageId;online:boolean;onMenu:()=>void;onSearch:()=>void}){
+export function WorkspaceHeader({page,online,collapsed,onMenu,onSearch}:{page:PageId;online:boolean;collapsed:boolean;onMenu:()=>void;onSearch:()=>void}){
  const selected=items.find(x=>x.id===page)
  return <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-3 border-b border-[#E7E0D5] bg-[#FFFDF9]/90 px-6 backdrop-blur-md">
   <div className="flex min-w-0 items-center gap-2">
-   <button type="button" className="mr-2 rounded-md p-1.5 text-[#5C544A] min-[860px]:hidden" aria-label="메뉴 열기" onClick={onMenu}><Menu size={18}/></button>
+   <button type="button" className="mr-2 rounded-md p-1.5 text-[#5C544A] transition-colors hover:bg-[#F3EEE5]" aria-label={collapsed?'메뉴 펼치기':'메뉴 접기'} title={collapsed?'메뉴 펼치기':'메뉴 접기'} onClick={onMenu}>{collapsed?<Menu size={18}/>:<PanelLeftClose size={18}/>}</button>
    <span className="hidden text-[12px] text-[#9C9388] sm:block">워크스페이스</span><ChevronRight size={13} className="hidden text-[#B8AFA2] sm:block"/>
    <h1 className="truncate text-[15px] font-bold tracking-[-.01em] text-[#24211D]">{selected?.label||'대시보드'}</h1>
   </div>

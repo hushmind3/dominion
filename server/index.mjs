@@ -22,7 +22,7 @@ import {mcpPresets} from './mcp-presets.mjs';
 import {skillCatalog,skillCatalogMeta,importCatalogSkill} from './skill-catalog.mjs';
 import {builtin,toolsForModel,approvals,resolveApproval,recoverApprovals} from './tools.mjs';
 import {oauthProviders,oauthStart,oauthCallback,oauthCallbackBase,connections,connectorCall,saveOAuthApp,youtubeUpload} from './oauth.mjs';
-import {videoStatus,saveVideoConfig,startComfyUI,videoWorkflows,startVideoJob,videoJob,videoJobs,videoConfig} from './video-generator.mjs';
+import {videoStatus,saveVideoConfig,startComfyUI,stopComfyUI,videoWorkflows,startVideoJob,videoJob,videoJobs,videoConfig,openVideoFile,openModelFolder} from './video-generator.mjs';
 import {channels,catalog,channelById,saveChannel,deleteChannel,diagnoseChannel,handleChannelWebhook,startChannels} from './channels.mjs';
 import {activeRoomStatus,stopRoomFlow,resetRoomFlow} from './room-orchestrator.mjs';
 import {commandDefinitions} from './commands.mjs';
@@ -262,6 +262,9 @@ async function api(req,res,u){
  if(url==='/api/video/status'&&method==='GET')return json(res,await videoStatus());
  if(url==='/api/video/config'&&method==='POST')return json(res,saveVideoConfig(await body(req)));
  if(url==='/api/video/start'&&method==='POST')return json(res,await startComfyUI());
+ if(url==='/api/video/stop'&&method==='POST')return json(res,await stopComfyUI(await body(req)));
+ if(url==='/api/video/reveal'&&method==='POST')return json(res,openVideoFile((await body(req)).file));
+ if(url==='/api/video/open-models'&&method==='POST')return json(res,openModelFolder());
  if(url==='/api/video/workflows'&&method==='GET')return json(res,videoWorkflows());
  if(url==='/api/video/generate'&&method==='POST')return json(res,await startVideoJob(await body(req)),202);
  if(url==='/api/video/jobs'&&method==='GET')return json(res,videoJobs());

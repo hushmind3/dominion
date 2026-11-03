@@ -22,10 +22,19 @@ export default function App(){
  const [page,setPage]=useState<PageId>(()=>locationState().page)
  const [session,setSession]=useState<string|undefined>(()=>locationState().session)
  const [sidebar,setSidebar]=useState(false)
+ const [collapsed,setCollapsed]=useState(()=>{try{const saved=localStorage.getItem('dominion.nav.collapsed');return saved===null?window.innerWidth<1200:saved==='1'}catch{return false}})
  const [palette,setPalette]=useState(false)
  const [online,setOnline]=useState(false)
  const [running,setRunning]=useState(0)
  const [pending,setPending]=useState(0)
+ const toggleNav=useCallback(()=>{
+  try{
+   if(window.innerWidth<860){setSidebar(open=>!open);return}
+   const next=!collapsed
+   setCollapsed(next)
+   try{localStorage.setItem('dominion.nav.collapsed',next?'1':'0')}catch{}
+  }catch{setSidebar(open=>!open)}
+ },[collapsed])
  const navigate=useCallback((target:PageId,sessionId?:string)=>{
   setPage(target)
   if(sessionId!==undefined)setSession(sessionId)
@@ -73,9 +82,9 @@ export default function App(){
   return()=>{mounted=false;clearInterval(poll);stream.close();window.removeEventListener('keydown',shortcuts)}
  },[])
  return <div className="min-h-screen bg-[#F6F3EC] font-sans text-[#24211D]">
-  <WorkspaceSidebar page={page} open={sidebar} online={online} running={running} pending={pending} onNavigate={navigate} onClose={()=>setSidebar(false)}/>
-  <main className="ml-[216px] min-h-screen min-w-0 max-[859px]:ml-0">
-   <WorkspaceHeader page={page} online={online} onMenu={()=>setSidebar(true)} onSearch={()=>setPalette(true)}/>
+  <WorkspaceSidebar page={page} open={sidebar} collapsed={collapsed} online={online} running={running} pending={pending} onNavigate={navigate} onClose={()=>setSidebar(false)} onToggle={toggleNav}/>
+  <main className={'min-h-screen min-w-0 transition-[margin] duration-200 '+(collapsed?'ml-0':'ml-[216px] max-[859px]:ml-0')}>
+   <WorkspaceHeader page={page} online={online} collapsed={collapsed} onMenu={toggleNav} onSearch={()=>setPalette(true)}/>
    <div className={'min-w-0 page-'+page}>
     {page==='capabilities'&&<CapabilitiesPage navigate={navigate}/>}
     {page==='memory'&&<MemoryPage/>}
