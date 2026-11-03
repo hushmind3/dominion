@@ -1,9 +1,10 @@
 import {all,get,put,log,bus} from './store.mjs';
 import {runMeeting,runTurn,newSession} from './engine.mjs';
 import {runWorkflow} from './workflows.mjs';
+import {runGoal,recoverGoals,goal} from './harness.mjs';
 let working=false;
 export function enqueue(kind,input){
- if(!['meeting','prompt','workflow'].includes(kind))throw Error('Unsupported job');
+ if(!['meeting','prompt','workflow','goal'].includes(kind))throw Error('Unsupported job');
  const job=put('job',{kind,input,status:'queued',createdAt:new Date().toISOString(),attempts:0});
  queueMicrotask(pump);return job;
 }
@@ -19,6 +20,7 @@ async function pump(){
    try{
     let result;
     if(job.kind==='meeting')result=await runMeeting(job.input.roomId,job.input.goal,emit);
+    else if(job.kind==='goal')result=await runGoal(job.input.goalId);
     else if(job.kind==='workflow')result=await runWorkflow(job,emit);
     else{
      const id=job.input.sessionId||newSession({title:job.input.prompt?.slice(0,60)||'자동 작업',agentId:job.input.agentId}).id;
@@ -43,7 +45,11 @@ export function scheduleTick(){
  }
 }
 export function startJobs(){
- for(const job of all('job').filter(x=>x.status==='running'))put('job',{...job,status:'queued',recovered:true});
+ recoverGoals();
+ for(const job of all('job').filter(x=>x.status==='running')){
+  if(job.kind==='goal'&&goal(job.input?.goalId)?.status!=='queued')put('job',{...job,status:'needs_review',recovered:true});
+  else put('job',{...job,status:'queued',recovered:true});
+ }
  queueMicrotask(pump);
  setInterval(scheduleTick,30000).unref?.();scheduleTick();
 }
