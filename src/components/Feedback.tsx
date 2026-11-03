@@ -4,7 +4,7 @@ import type {ReactNode} from 'react'
 export function Skeleton({lines=3}:{lines?:number}){
  return <div role="status" aria-label="불러오는 중" className="animate-pulse space-y-3 p-3">
   {Array.from({length:Math.max(1,Math.min(8,lines))},(_,i)=>
-   <div key={i} className={'h-3 rounded-full bg-slate-200 '+(i===lines-1?'w-2/3':'w-full')}/>)}
+   <div key={i} className={'h-3 rounded-full bg-[#E9E2D7] '+(i===lines-1?'w-2/3':'w-full')}/>)}
  </div>
 }
 export function Feedback({message,kind='info',onDismiss}:{
@@ -12,7 +12,7 @@ export function Feedback({message,kind='info',onDismiss}:{
 }){
  if(!message)return null;
  const colors=kind==='success'?'border-emerald-200 bg-emerald-50 text-emerald-800':
-  kind==='error'?'border-rose-200 bg-rose-50 text-rose-700':'border-blue-200 bg-blue-50 text-blue-700';
+  kind==='error'?'border-rose-200 bg-rose-50 text-rose-700':'border-[#E6C9B8] bg-[#F7E8E1] text-[#A94E30]';
  const Icon=kind==='success'?CheckCircle2:kind==='error'?TriangleAlert:Info;
  return <div role={kind==='error'?'alert':'status'}
    className={'flex items-start gap-3 rounded-xl border p-3 text-xs leading-6 '+colors}>

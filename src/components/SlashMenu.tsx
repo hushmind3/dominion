@@ -36,26 +36,26 @@ const icons:Record<string,typeof Command>={
 export function SlashMenu({items,active,onChoose}:{items:SlashChoice[];active:number;onChoose:(item:SlashChoice)=>void}){
  const groups=[...new Set(items.map(item=>item.group))]
  return <div role="listbox" aria-label="슬래시 명령어" id="dominion-slash-menu"
-  className="absolute bottom-full left-0 right-0 z-30 mb-3 max-h-[min(400px,60vh)] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_16px_60px_rgba(15,23,42,.2)]">
-  <div className="flex items-center gap-2 border-b border-slate-100 px-3 pb-2 pt-1 text-xs text-slate-500">
+  className="absolute bottom-full left-0 right-0 z-30 mb-3 max-h-[min(400px,60vh)] overflow-y-auto rounded-2xl border border-[#E7E0D5] bg-white p-2 shadow-[0_16px_60px_rgba(15,23,42,.2)]">
+  <div className="flex items-center gap-2 border-b border-[#EFE9DF] px-3 pb-2 pt-1 text-xs text-[#7C7469]">
    <Command size={15}/> 명령어 검색
-   <span className="ml-auto text-[10px] text-slate-400">↑↓ 이동 · Enter 선택 · Esc 닫기</span>
+   <span className="ml-auto text-[10px] text-[#9C9388]">↑↓ 이동 · Enter 선택 · Esc 닫기</span>
   </div>
-  {items.length===0&&<p className="px-3 py-6 text-center text-xs text-slate-500">해당 명령어나 선택 항목이 없습니다.</p>}
+  {items.length===0&&<p className="px-3 py-6 text-center text-xs text-[#7C7469]">해당 명령어나 선택 항목이 없습니다.</p>}
   {groups.map(group=><div key={group}>
-   <p className="px-3 pb-1 pt-3 text-[10px] font-bold tracking-[.12em] text-slate-400">{group}</p>
+   <p className="px-3 pb-1 pt-3 text-[10px] font-bold tracking-[.12em] text-[#9C9388]">{group}</p>
    {items.map((item,index)=>{
     if(item.group!==group)return null
     const Icon=icons[item.key]|| (item.key.startsWith('model:')?BrainCircuit:Bot)
     return <Button key={item.key} type="button" variant="ghost" role="option" aria-selected={active===index}
       onMouseDown={e=>e.preventDefault()} onClick={()=>onChoose(item)}
-      className={'!flex !w-full !items-center !justify-start !gap-3 !rounded-lg !border-0 !px-3 !py-2 !text-left '+(active===index?'!bg-blue-50 !text-blue-700':'!text-slate-700')}>
-      <span className={'grid size-8 shrink-0 place-items-center rounded-lg '+(active===index?'bg-blue-100':'bg-slate-100')}><Icon size={16}/></span>
+      className={'!flex !w-full !items-center !justify-start !gap-3 !rounded-lg !border-0 !px-3 !py-2 !text-left '+(active===index?'!bg-[#F7E8E1] !text-[#A94E30]':'!text-[#4A443C]')}>
+      <span className={'grid size-8 shrink-0 place-items-center rounded-lg '+(active===index?'bg-[#F1DCCF]':'bg-[#F3EEE5]')}><Icon size={16}/></span>
       <span className="min-w-0 flex-1"><strong className="block truncate text-sm font-semibold">
        {item.key.startsWith('model:')||item.key.startsWith('agent:')?item.name:item.command}
-      </strong><small className="block truncate text-[11px] font-normal text-slate-500">{item.key.includes(':')?item.description:item.name+' · '+item.description}</small></span>
-      {item.submenu?<ChevronRight size={14} className="shrink-0 text-slate-400"/>:
-       item.requiresArg?<span className="shrink-0 text-[10px] text-slate-400">{item.hint}…</span>:null}
+      </strong><small className="block truncate text-[11px] font-normal text-[#7C7469]">{item.key.includes(':')?item.description:item.name+' · '+item.description}</small></span>
+      {item.submenu?<ChevronRight size={14} className="shrink-0 text-[#9C9388]"/>:
+       item.requiresArg?<span className="shrink-0 text-[10px] text-[#9C9388]">{item.hint}…</span>:null}
     </Button>
    })}
   </div>)}

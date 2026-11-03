@@ -17,6 +17,7 @@ import {enqueue,startJobs} from './jobs.mjs';
 import {workflows,saveWorkflow} from './workflows.mjs';
 import {goals,goal,goalEvents,createGoal,resumeGoal,cancelGoal} from './harness.mjs';
 import {mcpServers,saveMcp,deleteMcp,discoverMcp} from './mcp.mjs';
+import {mcpPresets} from './mcp-presets.mjs';
 import {builtin,toolsForModel,approvals,resolveApproval,recoverApprovals} from './tools.mjs';
 import {oauthProviders,oauthStart,oauthCallback,connections,connectorCall} from './oauth.mjs';
 import {channels,catalog,channelById,saveChannel,deleteChannel,diagnoseChannel,handleChannelWebhook,startChannels} from './channels.mjs';
@@ -213,6 +214,7 @@ async function api(req,res,u){
   if(method==='GET')return json(res,mcpServers());
   if(method==='POST')return json(res,saveMcp(await body(req)));
  }
+ if(url==='/api/mcp/presets'&&method==='GET')return json(res,mcpPresets());
  if(url==='/api/mcp/discover'&&method==='GET')return json(res,await discoverMcp());
  if(url==='/api/tools'&&method==='GET')return json(res,await toolsForModel());
  if(url==='/api/model-route'&&method==='GET')return json(res,await resolveModel());

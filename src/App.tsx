@@ -72,7 +72,7 @@ export default function App(){
   window.addEventListener('keydown',shortcuts)
   return()=>{mounted=false;clearInterval(poll);stream.close();window.removeEventListener('keydown',shortcuts)}
  },[])
- return <div className="min-h-screen bg-[#f5f6f8] font-sans text-[#253040]">
+ return <div className="min-h-screen bg-[#F6F3EC] font-sans text-[#24211D]">
   <WorkspaceSidebar page={page} open={sidebar} online={online} running={running} pending={pending} onNavigate={navigate} onClose={()=>setSidebar(false)}/>
   <main className="ml-[216px] min-h-screen min-w-0 max-[859px]:ml-0">
    <WorkspaceHeader page={page} online={online} onMenu={()=>setSidebar(true)} onSearch={()=>setPalette(true)}/>
