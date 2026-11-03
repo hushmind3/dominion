@@ -1,31 +1,101 @@
-import {useEffect,useState} from 'react'
-import {ArrowRight,Check,Cloud,ExternalLink,Github,Globe2,KeyRound,Link2,LockKeyhole,MessageCircle,Plus,RadioTower,RefreshCw,Server,Settings2,ShieldCheck,Smartphone,Trash2,Unplug,X,Youtube} from 'lucide-react'
+import {useEffect,useMemo,useState} from 'react'
+import {Activity,ArrowRight,Check,ChevronRight,Cloud,ExternalLink,Filter,Globe2,Github,KeyRound,Link2,LockKeyhole,MessageCircle,Plus,RadioTower,Search,Settings2,ShieldCheck,Trash2,UsersRound,X} from 'lucide-react'
 import {del,get,post} from '../api'
-import {Action,Empty,FormField,Headline,Notice,Panel,StateTag,Subheading,refresh,useRemote} from '../components/UI'
+import {Action,FormField,Headline,Notice,Panel,StateTag,Subheading,useRemote} from '../components/UI'
+
+type ChannelField={key:string;label:string;type:'secret'|'text'|'url';required?:boolean;placeholder?:string}
+type ChannelEntry={id:string;name:string;category:string;mode:string;description:string;docs:string;available:boolean;status:string;features:string[];fields:ChannelField[];instructions?:string[];requiresPublicUrl?:boolean}
+type Channel={id:string;name:string;kind:string;agentId:string;providerId:string;model:string;enabled:boolean;mentionOnly:boolean;status:string;runtimeError?:string;configured:boolean;missing?:string[];credentialsPresent:Record<string,boolean>;webhookPath?:string}
 type OAuthProvider={id:string;configured:boolean;scope:string}
 type Connection={id:string;provider:string;displayName:string;scopes:string;hasToken:boolean}
-type Channel={id:string;name:string;kind:'telegram'|'discord';agentId:string;providerId:string;model:string;mentionOnly:boolean;enabled:boolean;hasToken:boolean}
+const groups=[{id:'all',name:'전체'},{id:'messaging',name:'메신저'},{id:'workplace',name:'업무'},{id:'community',name:'커뮤니티'},{id:'decentralized',name:'분산형'}]
+const badge=(s:string)=>({connected:'연결 중',webhook_ready:'웹훅 대기',starting:'시작 중',reconnecting:'재연결 중',error:'오류',disabled:'비활성',not_started:'미시작',stopped:'중지'} as Record<string,string>)[s]||s;
+const active=(s:string)=>s==='connected';
+
 export function ConnectionsPage(){
- const oauth=useRemote<OAuthProvider[]>('/api/oauth/providers',[]),accounts=useRemote<Connection[]>('/api/oauth/connections',[]),channels=useRemote<Channel[]>('/api/channels',[]);
- const agents=useRemote<any[]>('/api/agents',[]),providers=useRemote<any[]>('/api/providers',[]);
- const [channelEdit,setChannelEdit]=useState<any|null>(null),[error,setError]=useState(''),[info,setInfo]=useState(''),[test,setTest]=useState<any>(null);
- useEffect(()=>{const handler=(event:MessageEvent)=>{if(event.data==='dominion-oauth-complete'){accounts.reload();setInfo('계정 연결이 완료되었습니다.')}};window.addEventListener('message',handler);return()=>window.removeEventListener('message',handler)},[]);
- const connect=async(provider:string)=>{
-  setError('');const popup=window.open('','dominion_oauth','width=650,height=780');
-  try{const result=await get<{url:string}>('/api/oauth/'+provider+'/start');if(popup)popup.location.href=result.url;else window.location.href=result.url}catch(e){popup?.close();setError((e as Error).message)}
+ const registry=useRemote<ChannelEntry[]>('/api/channels/catalog',[]);
+ const channels=useRemote<Channel[]>('/api/channels',[]);
+ const oauth=useRemote<OAuthProvider[]>('/api/oauth/providers',[]);
+ const accounts=useRemote<Connection[]>('/api/oauth/connections',[]);
+ const agents=useRemote<any[]>('/api/agents',[]);
+ const providers=useRemote<any[]>('/api/providers',[]);
+ const [query,setQuery]=useState(''),[category,setCategory]=useState('all'),[view,setView]=useState<'channels'|'accounts'>('channels');
+ const [editor,setEditor]=useState<{entry:ChannelEntry;record:any}|null>(null);
+ const [error,setError]=useState(''),[info,setInfo]=useState(''),[probe,setProbe]=useState<Record<string,string>>({}),[saving,setSaving]=useState(false);
+ const installed=useMemo(()=>new Set(channels.value.map(x=>x.kind)),[channels.value]);
+ const filtered=useMemo(()=>registry.value.filter(x=>(category==='all'||x.category===category)&&[x.name,x.id,x.description].join(' ').toLowerCase().includes(query.toLowerCase())),[registry.value,category,query]);
+ const online=channels.value.filter(c=>active(c.status)).length;
+ const ready=registry.value.filter(x=>x.available).length;
+ useEffect(()=>{const handler=(event:MessageEvent)=>{if(event.data==='dominion-oauth-complete'){void accounts.reload();setInfo('OAuth 연결이 완료되었습니다.')}};window.addEventListener('message',handler);return()=>window.removeEventListener('message',handler)},[]);
+ const openEditor=(entry:ChannelEntry,existing?:Channel)=>{
+  if(!entry.available)return;
+  const record:any=existing?{...existing}:{name:entry.name,kind:entry.id,enabled:false,mentionOnly:true,agentId:'general',providerId:'',model:''};
+  for(const field of entry.fields)if(field.type==='secret')record[field.key]='';
+  setEditor({entry,record});setError('');
  };
- const saveChannel=async()=>{if(!channelEdit)return;try{await post('/api/channels',{...channelEdit,token:channelEdit.token||undefined});setChannelEdit(null);channels.reload();setInfo('채널 설정 저장됨 · 서버가 채널 연결을 시작합니다.')}catch(e){setError((e as Error).message)}};
- const testAccount=async(id:string)=>{try{const url=id==='github'?'/api/connector/github/repos':'/api/connector/google/youtube_channels';const rows=await get(url);setTest({id,data:rows});setError('')}catch(e){setError((e as Error).message)}};
- return <div className="content-wrap"><Headline eyebrow="CONNECTED WORLD" title="계정도, 메신저도 하나로." description="GitHub·Google OAuth와 텔레그램·디스코드 채널을 연결해 같은 에이전트 시스템에서 사용합니다."/>
- <div className="section-intro"><div className="section-intro-icon"><LockKeyhole size={23}/></div><div><strong>자격증명은 서버에만 보관됩니다</strong><p>연결 토큰은 로컬 암호화 저장소에 저장되고 브라우저에 다시 전달되지 않습니다. 계정의 허용 범위 안에서만 API를 사용합니다.</p></div></div>
- {error&&<Notice message={error}/>}
- {info&&<div className="success-line"><Check size={16}/>{info}</div>}
- <Subheading title="OAuth 계정" extra={<span className="source-caption">ACCOUNT CONNECTIONS</span>}/>
- <div className="integration-grid">{oauth.value.map(x=>{const item=accounts.value.find(a=>a.provider===x.id);const Icon=x.id==='github'?Github:Globe2;return <Panel className="integration-card" key={x.id}><div className={'integration-icon '+x.id}><Icon size={28}/></div><h3>{x.id==='github'?'GitHub':'Google · YouTube'}</h3><p>{x.id==='github'?'저장소, 코드, 프로젝트 접근':'Google 계정과 YouTube 채널 접근'}</p><div className="integration-status"><StateTag online={Boolean(item)}>{item?'연결됨 · '+item.displayName:x.configured?'연결 가능':'OAuth 설정 필요'}</StateTag></div><div className="integration-actions">{item?<><Action variant="secondary" onClick={()=>testAccount(x.id)}><RefreshCw size={15}/> API 확인</Action><Action variant="ghost" onClick={()=>connect(x.id)}>다시 연결</Action></>:<Action variant="secondary" disabled={!x.configured} onClick={()=>connect(x.id)}><Link2 size={16}/> 계정 연결</Action>}</div></Panel>})}</div>
- {test&&<Panel className="connection-test"><div className="subheading"><h3>API 응답 · {test.id}</h3><button className="icon-button small" onClick={()=>setTest(null)}><X size={18}/></button></div><pre>{JSON.stringify(test.data,null,2).slice(0,4500)}</pre></Panel>}
- <div className="section-gap"><Subheading title="메시징 채널" extra={<Action variant="secondary" onClick={()=>setChannelEdit({name:'새 Telegram 채널',kind:'telegram',enabled:true,agentId:'general',providerId:'',model:'',mentionOnly:true,token:''})}><Plus size={16}/> 채널 추가</Action>}/></div>
- <div className="channels-grid">{channels.value.map(x=><Panel className="channel-card" key={x.id}><div className="channel-icon"><MessageCircle size={23}/></div><div className="channel-copy"><h3>{x.name}</h3><p>{x.kind==='telegram'?'Telegram Bot API':'Discord Gateway'} · {agents.value.find(a=>a.id===x.agentId)?.name||x.agentId}</p><StateTag online={x.enabled&&x.hasToken}>{x.enabled&&x.hasToken?'연결 설정됨':'미설정'}</StateTag></div><button className="icon-button small" onClick={()=>setChannelEdit({...x,token:''})}><Settings2 size={18}/></button><button className="icon-button small" onClick={async()=>{if(confirm('채널을 제거할까요?')){await del('/api/channels/'+x.id);channels.reload()}}}><Trash2 size={18}/></button></Panel>)}{!channels.value.length&&<Panel><Empty icon={RadioTower} title="메신저를 연결해보세요" description="텔레그램과 디스코드 봇을 추가해 채팅을 연동할 수 있습니다."/></Panel>}</div>
- <Panel className="integration-guide"><div className="guide-icon"><ShieldCheck size={21}/></div><div><strong>연결 사전 준비</strong><p>GitHub / Google OAuth는 각 개발자 콘솔에서 앱을 등록하고 Callback URL을 설정해야 합니다. 메신저는 직접 발급한 봇 토큰을 사용하며, Discord에서는 Message Content Intent를 활성화해야 합니다.</p></div></Panel>
- {channelEdit&&<div className="modal-scrim" onMouseDown={()=>setChannelEdit(null)}><div className="edit-modal wide" onMouseDown={e=>e.stopPropagation()}><div className="modal-heading"><div><small>CHANNEL SETUP</small><h2>메시지 채널 연결</h2></div><button className="icon-button" onClick={()=>setChannelEdit(null)}><X size={19}/></button></div><div className="modal-fields"><div className="form-two"><FormField label="이름"><input className="field-input" value={channelEdit.name} onChange={e=>setChannelEdit({...channelEdit,name:e.target.value})}/></FormField><FormField label="채널"><select className="field-input" value={channelEdit.kind} onChange={e=>setChannelEdit({...channelEdit,kind:e.target.value})}><option value="telegram">Telegram</option><option value="discord">Discord</option></select></FormField></div><FormField label="봇 토큰" hint="기존 채널 수정 시 비워두면 현재 토큰을 유지합니다."><input type="password" className="field-input" value={channelEdit.token||''} onChange={e=>setChannelEdit({...channelEdit,token:e.target.value})} placeholder="Bot token"/></FormField><div className="form-two"><FormField label="연결할 에이전트"><select className="field-input" value={channelEdit.agentId} onChange={e=>setChannelEdit({...channelEdit,agentId:e.target.value})}>{agents.value.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select></FormField><FormField label="모델 제공자"><select className="field-input" value={channelEdit.providerId} onChange={e=>setChannelEdit({...channelEdit,providerId:e.target.value,model:''})}><option value="">에이전트 기본값 사용</option>{providers.value.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></FormField></div><FormField label="모델 ID (선택)"><input className="field-input" value={channelEdit.model||''} onChange={e=>setChannelEdit({...channelEdit,model:e.target.value})} placeholder="에이전트 기본값 사용"/></FormField><label className="checkbox-row"><input type="checkbox" checked={channelEdit.mentionOnly} onChange={e=>setChannelEdit({...channelEdit,mentionOnly:e.target.checked})}/> 그룹 채팅에서 멘션된 경우에만 응답</label><label className="checkbox-row"><input type="checkbox" checked={channelEdit.enabled} onChange={e=>setChannelEdit({...channelEdit,enabled:e.target.checked})}/> 채널 활성화</label></div><div className="modal-actions"><Action variant="secondary" onClick={()=>setChannelEdit(null)}>취소</Action><Action onClick={saveChannel}><Check size={16}/> 연결 저장</Action></div></div></div>}
+ const save=async()=>{
+  if(!editor||saving)return;
+  setSaving(true);setError('');
+  try{
+   await post('/api/channels',editor.record);
+   setEditor(null);setInfo(editor.entry.name+' 설정이 저장되었습니다.');
+   await channels.reload();
+  }catch(e){setError((e as Error).message)}finally{setSaving(false)}
+ };
+ const diagnose=async(id:string)=>{
+  setProbe(x=>({...x,[id]:'진단 중'}));
+  try{const r=await post<any>('/api/channels/'+id+'/diagnose',{});
+   setProbe(x=>({...x,[id]:r.verified?'인증 확인됨':r.message||'연결 상태 확인 필요'}));
+  }catch(e){setProbe(x=>({...x,[id]:(e as Error).message}))}
+ };
+ const connect=async(id:string)=>{
+  setError('');const popup=window.open('','dominion_oauth','width=650,height=780');
+  try{const r=await get<{url:string}>('/api/oauth/'+id+'/start');if(popup)popup.location.href=r.url;else window.location.href=r.url}catch(e){popup?.close();setError((e as Error).message)}
+ };
+ return <div className="content-wrap">
+  <Headline eyebrow="CHANNEL & INTEGRATION HUB" title="연결할 수 있는 모든 세계." description="메신저는 카탈로그에서 자동 발견합니다. 설치된 드라이버와 실제 인증 상태를 따로 표시합니다." actions={<Action variant="secondary" onClick={()=>{void registry.reload();void channels.reload()}}><Activity size={16}/> 상태 새로고침</Action>}/>
+  <div className="stat-row">
+   <div className="stat-card"><span className="stat-icon violet"><Globe2 size={20}/></span><div><small>발견된 플랫폼</small><strong>{registry.value.length}</strong></div></div>
+   <div className="stat-card"><span className="stat-icon blue"><RadioTower size={20}/></span><div><small>드라이버 준비</small><strong>{ready}</strong></div></div>
+   <div className="stat-card"><span className="stat-icon teal"><Check size={20}/></span><div><small>실제 연결 중</small><strong>{online}</strong></div></div>
+  </div>
+  <div className="subnav"><button className={view==='channels'?'selected':''} onClick={()=>setView('channels')}><RadioTower size={17}/> 메신저 · 채널 <b>{registry.value.length}</b></button><button className={view==='accounts'?'selected':''} onClick={()=>setView('accounts')}><Link2 size={17}/> OAuth · 계정 <b>{accounts.value.length}</b></button></div>
+  {error&&<Notice message={error}/>}
+  {info&&<div className="success-line"><Check size={16}/>{info}</div>}
+  {view==='channels'&&<>
+   <div className="directory-toolbar"><div className="directory-search"><Search size={17}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Telegram, Slack, Matrix, WhatsApp 등 검색"/></div><div className="directory-filters"><Filter size={15}/>{groups.map(g=><button className={category===g.id?'active':''} onClick={()=>setCategory(g.id)} key={g.id}>{g.name}</button>)}</div></div>
+   {registry.error&&<Notice message={registry.error}/>}
+   <div className="directory-grid">
+    {filtered.map(entry=>{const bindings=channels.value.filter(c=>c.kind===entry.id);return <Panel key={entry.id} className="directory-card">
+     <div className="directory-card-head"><div className={'directory-glyph '+entry.category}><MessageCircle size={23}/></div><span className={'directory-status '+(entry.available?'available':'planned')}>{entry.available?'드라이버 준비':'드라이버 미구현'}</span></div>
+     <h3>{entry.name}</h3><p>{entry.description}</p>
+     <div className="directory-caps">{entry.features.map(f=><span key={f}>{f}</span>)}<span>{entry.mode}</span></div>
+     {bindings.map(c=><div className="directory-binding" key={c.id}><div><strong>{c.name}</strong><small>{badge(c.status)}{c.runtimeError?' · '+c.runtimeError:''}</small>{probe[c.id]&&<small>{probe[c.id]}</small>}</div><div className={'binding-led '+(active(c.status)?'on':'')}/><button className="icon-button small" title="설정" onClick={()=>openEditor(entry,c)}><Settings2 size={16}/></button><button className="icon-button small" title="진단" onClick={()=>diagnose(c.id)}><Activity size={16}/></button><button className="icon-button small" title="삭제" onClick={async()=>{if(confirm(c.name+' 연결을 제거하시겠습니까?')){await del('/api/channels/'+c.id);void channels.reload()}}}><Trash2 size={15}/></button></div>)}
+     <div className="directory-footer"><a href={entry.docs} target="_blank" rel="noreferrer">공식 문서 <ExternalLink size={13}/></a>{entry.available?<button onClick={()=>openEditor(entry)}><Plus size={15}/> {bindings.length?'계정 추가':'연결 설정'}</button>:<span className="not-implemented">준비 중 · 연결 불가</span>}</div>
+    </Panel>})}
+   </div>
+   {!filtered.length&&<Panel><div className="empty">검색된 채널이 없습니다.</div></Panel>}
+   <Panel className="integration-guide"><div className="guide-icon"><ShieldCheck size={21}/></div><div><strong>카탈로그와 실제 실행의 구분</strong><p>카탈로그가 표시된다고 연결된 것은 아닙니다. 드라이버 준비 → 인증 설정 → 네트워크 연결 → 실제 메시지 수신 순서로 상태를 구분합니다. WhatsApp과 LINE은 외부 HTTPS 웹훅 설정이 필요합니다.</p></div></Panel>
+  </>}
+  {view==='accounts'&&<>
+   <Subheading title="연결된 계정" extra={<span className="source-caption">OAUTH CONNECTIONS</span>}/>
+   <div className="integration-grid">{oauth.value.map(item=>{const account=accounts.value.find(a=>a.provider===item.id);const Icon=item.id==='github'?Github:Globe2;return <Panel className="integration-card" key={item.id}><div className={'integration-icon '+item.id}><Icon size={28}/></div><h3>{item.id==='github'?'GitHub':'Google · YouTube'}</h3><p>{item.id==='github'?'저장소와 계정 연결':'Google 계정과 YouTube 읽기 연결'}</p><div className="integration-status"><StateTag online={Boolean(account)}>{account?'연결됨 · '+account.displayName:item.configured?'OAuth 앱 준비됨':'OAuth 앱 설정 필요'}</StateTag></div><div className="integration-actions"><Action variant="secondary" disabled={!item.configured} onClick={()=>connect(item.id)}><Link2 size={16}/>{account?'다시 연결':'계정 연결'}</Action></div></Panel>})}</div>
+  </>}
+  {editor&&<div className="modal-scrim" onMouseDown={()=>setEditor(null)}><div className="edit-modal wide channel-modal" onMouseDown={e=>e.stopPropagation()}>
+   <div className="modal-heading"><div><small>CHANNEL CONFIGURATION · {editor.entry.id.toUpperCase()}</small><h2>{editor.record.id?'연결 설정 변경':'새 연결 설정'}</h2></div><button className="icon-button" onClick={()=>setEditor(null)}><X size={18}/></button></div>
+   <div className="modal-fields">
+    <div className="section-intro"><div className="section-intro-icon"><MessageCircle size={21}/></div><div><strong>{editor.entry.name}</strong><p>{editor.entry.description}</p></div></div>
+    <FormField label="연결 이름"><input className="field-input" value={editor.record.name||''} onChange={e=>setEditor({...editor,record:{...editor.record,name:e.target.value}})}/></FormField>
+    {editor.entry.fields.map(field=><FormField key={field.key} label={field.label+(field.required?' *':'')} hint={field.type==='secret'&&editor.record.id?'기존 키는 표시하지 않습니다. 변경할 때만 입력하세요.':undefined}><input className="field-input" type={field.type==='secret'?'password':field.type==='url'?'url':'text'} value={editor.record[field.key]||''} placeholder={field.placeholder||''} onChange={e=>setEditor({...editor,record:{...editor.record,[field.key]:e.target.value}})}/></FormField>)}
+    <div className="form-two"><FormField label="에이전트"><select className="field-input" value={editor.record.agentId||'general'} onChange={e=>setEditor({...editor,record:{...editor.record,agentId:e.target.value}})}>{agents.value.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select></FormField><FormField label="모델 제공자"><select className="field-input" value={editor.record.providerId||''} onChange={e=>setEditor({...editor,record:{...editor.record,providerId:e.target.value}})}><option value="">에이전트 기본값</option>{providers.value.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></FormField></div>
+    <FormField label="모델 ID · 선택"><input className="field-input" value={editor.record.model||''} onChange={e=>setEditor({...editor,record:{...editor.record,model:e.target.value}})} placeholder="에이전트 기본 모델 사용"/></FormField>
+    <label className="checkbox-row"><input type="checkbox" checked={editor.record.mentionOnly!==false} onChange={e=>setEditor({...editor,record:{...editor.record,mentionOnly:e.target.checked}})}/> 그룹에서는 봇 멘션이 있을 때만 답변</label>
+    <label className="checkbox-row"><input type="checkbox" checked={Boolean(editor.record.enabled)} onChange={e=>setEditor({...editor,record:{...editor.record,enabled:e.target.checked}})}/> 연결 활성화</label>
+    {editor.record.webhookPath&&<div className="channel-webhook"><strong>Webhook 경로</strong><code>{editor.record.webhookPath}</code><small>외부 플랫폼에서 접근할 수 있는 HTTPS 서버 주소를 이 경로 앞에 붙여 등록하세요.</small></div>}
+    {editor.entry.instructions?.length>0&&<div className="channel-guide"><strong>연결 안내</strong><ol>{editor.entry.instructions.map((t,i)=><li key={i}>{t}</li>)}</ol><a href={editor.entry.docs} target="_blank" rel="noreferrer">공식 문서 열기 <ExternalLink size={13}/></a></div>}
+   </div>
+   {error&&<Notice message={error}/>}
+   <div className="modal-actions"><Action variant="secondary" onClick={()=>setEditor(null)}>취소</Action><Action onClick={save} disabled={saving}><Check size={16}/>{saving?'저장 중':'설정 저장'}</Action></div>
+  </div></div>}
  </div>
 }
