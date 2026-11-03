@@ -68,12 +68,12 @@ export class CapabilityKernel{
   }
   return installed;
  }
- async list(namespace){
+ list(namespace){
   const all=[...this.#records.values()].map(x=>({...x.descriptor}));
   if(!namespace||this.#feeds.has(namespace)){
    const feeds=[...this.#feeds.entries()].filter(([n])=>!namespace||n===namespace);
    for(const [n,feed] of feeds){
-    const values=await feed.list();
+    const values=feed.list();
     if(!Array.isArray(values))throw Error('Invalid capability feed: '+n);
     all.push(...values.map(v=>validateDescriptor(n,v)));
    }

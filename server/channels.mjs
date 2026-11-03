@@ -30,14 +30,14 @@ export function channels(){
   const credentials=credentialValues(record);
   const required=entry?.fields?.filter(f=>f.required)||[];
   const missing=required.filter(f=>!(f.type==='secret'?credentials[f.key]:record[f.key])).map(f=>f.label);
-  return {...record,credentialsPresent:Object.fromEntries((entry?.fields||[]).filter(f=>f.type==='secret').map(f=>[f.key,Boolean(credentials[f.key])])),hasToken:Boolean(credentials.token),configured:!missing.length,missing,status:statuses.get(record.id)?.status||(record.enabled?'not_started':'disabled'),runtimeError:statuses.get(record.id)?.error||'',driverAvailable:Boolean(entry?.driver),webhookPath:entry?.mode==='webhook'?'/api/webhooks/'+record.id:null};
+  return {...record,credentialsPresent:Object.fromEntries((entry?.fields||[]).filter(f=>f.type==='secret').map(f=>[f.key,Boolean(credentials[f.key])])),hasToken:Boolean(credentials.token),configured:!missing.length,missing,status:statuses.get(record.id)?.status||(record.enabled?'not_started':'disabled'),runtimeError:statuses.get(record.id)?.error||'',driverAvailable:Boolean(entry?.available),webhookPath:entry?.mode==='webhook'?'/api/webhooks/'+record.id:null};
  });
 }
 export function channelById(id){return channels().find(x=>x.id===id)||null;}
 export async function saveChannel(input){
  const entry=channelDefinition(input.kind);
  if(!entry)throw Error('Unknown channel type');
- if(!entry.driver)throw Error('This channel has a catalog entry but no runtime driver yet');
+ if(!entry.available)throw Error('This channel has a catalog entry but no runtime driver yet');
  const id=input.id||crypto.randomUUID();
  const previous=get('channel',id);
  if(previous&&previous.kind!==entry.id)throw Error('To change the channel type, create a separate connection');

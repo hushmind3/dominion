@@ -4,6 +4,7 @@ import path from 'node:path';
 import {timingSafeEqual} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {HOST,PORT,ROOT,IS_LOCAL,ADMIN_TOKEN} from './config.mjs';
+import {capabilityInventory,capabilityExecute} from './capability-sources.mjs';
 import {all,get,put,remove,messages,recentAudit,bus,pruneInbound} from './store.mjs';
 import {providers,saveProvider,availableModels,searchHuggingFace,modelFiles,downloadIntoLMStudio,lmDownloadStatus} from './providers.mjs';
 import {agents,sessions,newSession,runTurn,saveRoom} from './engine.mjs';
@@ -65,6 +66,16 @@ async function api(req,res,u){
   }catch(e){return fail(res,e);}
  }
  if(!authorized(req))return json(res,{error:'Unauthorized. Set X-Dominion-Token or use local origin.'},401);
+ if(url==='/api/capabilities'&&method==='GET'){
+  const family=u.searchParams.get('family')||undefined;
+  return json(res,{items:capabilityInventory(family),updatedAt:new Date().toISOString()});
+ }
+ const capabilityOp=url.match(/^\/api\/capabilities\/([a-z0-9_-]+)\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_]+)$/);
+ if(capabilityOp&&method==='POST'){
+  const [,family,id,operation]=capabilityOp;
+  if(!['models','tools','activate','deactivate'].includes(operation))throw Error('Capability action not exposed via HTTP');
+  return json(res,await capabilityExecute(family,id,operation,await body(req)));
+ }
  if(url==='/api/status')return json(res,{version:'0.1.0',providers:providers().length,agents:agents().length,sessions:sessions().length,rooms:all('room').length,mcp:mcpServers().length,jobs:all('job').filter(x=>x.status==='running').length});
  if(url==='/api/events'&&method==='GET'){
   res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});
