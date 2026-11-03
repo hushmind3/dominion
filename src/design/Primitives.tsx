@@ -1,4 +1,4 @@
-import {useEffect,useId,useState,type ButtonHTMLAttributes,type InputHTMLAttributes,type SelectHTMLAttributes,type TextareaHTMLAttributes,type ReactNode,type FormEvent} from 'react'
+import {forwardRef,useEffect,useId,useState,type ButtonHTMLAttributes,type InputHTMLAttributes,type SelectHTMLAttributes,type TextareaHTMLAttributes,type ReactNode,type FormEvent} from 'react'
 import {AlertCircle,ArrowRight,Check,ChevronDown,LoaderCircle,Search,X} from 'lucide-react'
 
 type Child={children:ReactNode}
@@ -58,9 +58,9 @@ export function Input({label,help,error,...props}:InputHTMLAttributes<HTMLInputE
 export function SearchBox({value,onChange,placeholder='검색',label='검색'}:{value:string;onChange:(value:string)=>void;placeholder?:string;label?:string}){
  return <div className="flex min-w-0 flex-1 items-center gap-2 rounded-[10px] border border-line bg-white px-3"><Search size={17} className="shrink-0 text-subtle"/><input aria-label={label} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} className="h-11 w-full min-w-0 bg-transparent text-[13px] text-ink placeholder:text-subtle outline-none"/>{value&&<IconButton size="sm" icon={<X size={15}/>} label="검색어 지우기" onClick={()=>onChange('')}/>}</div>
 }
-export function Textarea({label,rows=4,...props}:TextareaHTMLAttributes<HTMLTextAreaElement>&{label?:string}){
- return <label className="flex min-w-0 flex-1 flex-col gap-1.5"><span className={cx('text-xs font-semibold text-ink',!label&&'sr-only')}>{label||props.placeholder||'내용'}</span><textarea {...props} rows={rows} className={cx('w-full min-w-0 resize-y rounded-[10px] border border-line bg-white px-3.5 py-3 text-[13px] leading-relaxed text-ink placeholder:text-subtle focus:border-brand outline-none',props.className)}/></label>
-}
+export const Textarea=forwardRef<HTMLTextAreaElement,TextareaHTMLAttributes<HTMLTextAreaElement>&{label?:string}>(function Textarea({label,rows=4,...props},ref){
+ return <label className="flex min-w-0 flex-1 flex-col gap-1.5"><span className={cx('text-xs font-semibold text-ink',!label&&'sr-only')}>{label||props.placeholder||'내용'}</span><textarea ref={ref} {...props} rows={rows} className={cx('w-full min-w-0 resize-y rounded-[10px] border border-line bg-white px-3.5 py-3 text-[13px] leading-relaxed text-ink placeholder:text-subtle focus:border-brand outline-none',props.className)}/></label>
+})
 export function Select({label,items,placeholder,...props}:Omit<SelectHTMLAttributes<HTMLSelectElement>,'children'>&{label?:string;items:{value:string;label:string}[];placeholder?:string}){
  return <label className="flex min-w-0 flex-col gap-1.5"><span className={cx('text-xs font-semibold text-ink',!label&&'sr-only')}>{label||'선택'}</span><span className="relative"><select {...props} className={cx('min-h-10 w-full appearance-none rounded-[10px] border border-line bg-white py-2.5 pl-3 pr-9 text-[13px] text-ink outline-none focus:border-brand',props.className)}>{placeholder&&<option value="">{placeholder}</option>}{items.map(x=><option key={x.value} value={x.value}>{x.label}</option>)}</select><ChevronDown size={15} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-subtle"/></span></label>
 }
