@@ -56,16 +56,16 @@ async function exec(command,args=[],signal){
  if(!Array.isArray(args)||args.length>40||args.some(x=>typeof x!=='string'))throw Error('Invalid arguments');
  return new Promise((resolve,reject)=>{
   const child=spawn(command,args,{cwd:WORKSPACE,shell:false,windowsHide:true,env:process.env,signal});
-  let stdout='',stderr='',settled=false;
+  let stdout='',stderr='',settled=false,timedOut=false;
   const finish=(error,result)=>{
    if(settled)return;settled=true;clearTimeout(timer);
    if(error)reject(error);else resolve(result);
   };
-  const timer=setTimeout(()=>child.kill(),60000);timer.unref?.();
+  const timer=setTimeout(()=>{timedOut=true;child.kill();},60000);timer.unref?.();
   child.stdout?.on('data',x=>stdout=(stdout+x).slice(-30000));
   child.stderr?.on('data',x=>stderr=(stderr+x).slice(-10000));
   child.on('error',error=>finish(error));
-  child.on('close',code=>finish(null,{exitCode:code,stdout,stderr}));
+  child.on('close',code=>timedOut?finish(Error('Command timed out after 60 seconds')):finish(null,{exitCode:code,stdout,stderr}));
  });
 }
 export async function toolsForModel(enabled=true){
