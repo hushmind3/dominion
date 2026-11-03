@@ -18,6 +18,7 @@ import {workflows,saveWorkflow} from './workflows.mjs';
 import {goals,goal,goalEvents,createGoal,resumeGoal,cancelGoal} from './harness.mjs';
 import {mcpServers,saveMcp,deleteMcp,discoverMcp} from './mcp.mjs';
 import {mcpPresets} from './mcp-presets.mjs';
+import {skillCatalog,skillCatalogMeta,importCatalogSkill} from './skill-catalog.mjs';
 import {builtin,toolsForModel,approvals,resolveApproval,recoverApprovals} from './tools.mjs';
 import {oauthProviders,oauthStart,oauthCallback,connections,connectorCall} from './oauth.mjs';
 import {channels,catalog,channelById,saveChannel,deleteChannel,diagnoseChannel,handleChannelWebhook,startChannels} from './channels.mjs';
@@ -200,9 +201,9 @@ async function api(req,res,u){
  }
  if(url==='/api/mcp/catalog'&&method==='GET'){
   const q=(u.searchParams.get('q')||'').trim();
-  if(q.length<3)throw Error('Search term must be at least 3 characters');
   const endpoint=new URL('https://registry.modelcontextprotocol.io/v0.1/servers');
-  endpoint.searchParams.set('search',q);endpoint.searchParams.set('version','latest');endpoint.searchParams.set('limit','25');
+  if(q.length>=3)endpoint.searchParams.set('search',q);
+  endpoint.searchParams.set('version','latest');endpoint.searchParams.set('limit','25');
   const response=await fetch(endpoint,{signal:AbortSignal.timeout(12000)});
   if(!response.ok)throw Error('MCP registry HTTP '+response.status);
   const raw=await response.json();
@@ -227,6 +228,9 @@ async function api(req,res,u){
   if(method==='GET')return json(res,all('skill'));
   if(method==='POST'){const x=await body(req);return json(res,put('skill',{...x,id:x.id||crypto.randomUUID(),name:String(x.name||'Skill'),enabled:Boolean(x.enabled)}));}
  }
+ if(url==='/api/skill-catalog'&&method==='GET')return json(res,skillCatalog({q:u.searchParams.get('q')||'',category:u.searchParams.get('category')||'',source:u.searchParams.get('source')||'',limit:u.searchParams.get('limit')||500}));
+ if(url==='/api/skill-catalog/meta'&&method==='GET')return json(res,skillCatalogMeta());
+ if(url==='/api/skill-catalog/import'&&method==='POST')return json(res,await importCatalogSkill((await body(req)).id));
  if(url==='/api/memories'){
   if(method==='GET')return json(res,all('memory'));
   if(method==='POST'){const x=await body(req);return json(res,put('memory',{...x,id:x.id||crypto.randomUUID(),text:String(x.text||'')}));}
