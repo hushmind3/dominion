@@ -36,3 +36,9 @@
 @media(max-width:859px){
  .page-chat > div{height:calc(100dvh - 56px)}
 }
+
+/* Compact scale for all feature panels. */
+#root main h1{font-size:19px!important}
+#root main h2{font-size:16px!important}
+#root main h3{font-size:14px!important}
+#root main [class*="rounded-2xl"]{border-radius:12px}

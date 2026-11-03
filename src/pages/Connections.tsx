@@ -56,12 +56,12 @@ export function ConnectionsPage(){
   setError('');const popup=window.open('','dominion_oauth','width=650,height=780');
   try{const r=await get<{url:string}>('/api/oauth/'+id+'/start');if(popup)popup.location.href=r.url;else window.location.href=r.url}catch(e){popup?.close();setError((e as Error).message)}
  };
- return <div className="mx-auto w-full max-w-[1320px] px-5 py-9 sm:px-8 lg:px-11 lg:pb-20">
+ return <div className="mx-auto w-full max-w-[1320px] px-5 py-6 sm:px-8 lg:px-6 lg:pb-20">
   <Headline eyebrow="CHANNEL & INTEGRATION HUB" title="연결할 수 있는 모든 세계." description="메신저는 카탈로그에서 자동 발견합니다. 설치된 드라이버와 실제 인증 상태를 따로 표시합니다." actions={<Action variant="secondary" onClick={()=>{void registry.reload();void channels.reload()}}><Activity size={16}/> 상태 새로고침</Action>}/>
-  <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-3">
-   <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><span className="grid size-12 place-items-center rounded-xl bg-violet-50 text-violet-600"><Globe2 size={20}/></span><div><small>발견된 플랫폼</small><strong>{registry.value.length}</strong></div></div>
-   <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><span className="grid size-12 place-items-center rounded-xl bg-blue-50 text-blue-600"><RadioTower size={20}/></span><div><small>드라이버 준비</small><strong>{ready}</strong></div></div>
-   <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><span className="grid size-12 place-items-center rounded-xl bg-teal-50 text-teal-600"><Check size={20}/></span><div><small>실제 연결 중</small><strong>{online}</strong></div></div>
+  <div className="mb-5 grid grid-cols-1 gap-4 md:grid-cols-3">
+   <div className="flex items-center gap-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><span className="grid size-12 place-items-center rounded-xl bg-violet-50 text-violet-600"><Globe2 size={20}/></span><div><small>발견된 플랫폼</small><strong>{registry.value.length}</strong></div></div>
+   <div className="flex items-center gap-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><span className="grid size-12 place-items-center rounded-xl bg-blue-50 text-blue-600"><RadioTower size={20}/></span><div><small>드라이버 준비</small><strong>{ready}</strong></div></div>
+   <div className="flex items-center gap-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><span className="grid size-12 place-items-center rounded-xl bg-teal-50 text-teal-600"><Check size={20}/></span><div><small>실제 연결 중</small><strong>{online}</strong></div></div>
   </div>
   <div className="mb-6 flex flex-wrap items-center gap-2 border-b border-slate-200 pb-3"><Button variant={view==='channels'?'primary':'ghost'} onClick={()=>setView('channels')}><RadioTower size={17}/> 메신저 · 채널 <b>{registry.value.length}</b></Button><Button variant={view==='accounts'?'primary':'ghost'} onClick={()=>setView('accounts')}><Link2 size={17}/> OAuth · 계정 <b>{accounts.value.length}</b></Button></div>
   {error&&<Notice message={error}/>}
@@ -70,7 +70,7 @@ export function ConnectionsPage(){
    <div className="mb-5 flex flex-wrap items-center gap-3"><div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2"><Search size={17}/><TextInput value={query} onChange={e=>setQuery(e.target.value)} placeholder="Telegram, Slack, Matrix, WhatsApp 등 검색"/></div><div className="flex flex-wrap items-center gap-2"><Filter size={15}/>{groups.map(g=><Button variant={category===g.id?'primary':'ghost'} onClick={()=>setCategory(g.id)} key={g.id}>{g.name}</Button>)}</div></div>
    {registry.error&&<Notice message={registry.error}/>}
    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-    {filtered.map(entry=>{const bindings=channels.value.filter(c=>c.kind===entry.id);return <Panel key={entry.id} className="flex min-w-0 flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    {filtered.map(entry=>{const bindings=channels.value.filter(c=>c.kind===entry.id);return <Panel key={entry.id} className="flex min-w-0 flex-col gap-3 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
      <div className="flex items-start justify-between gap-3"><div className="grid size-11 shrink-0 place-items-center rounded-xl bg-blue-50 text-blue-600"><MessageCircle size={23}/></div><StatusPill status={entry.available?'available':'planned'}>{entry.available?'드라이버 준비':'드라이버 미구현'}</StatusPill></div>
      <h3>{entry.name}</h3><p>{entry.description}</p>
      <div className="flex flex-wrap gap-1.5">{entry.features.map(f=><span key={f}>{f}</span>)}<span>{entry.mode}</span></div>
@@ -78,7 +78,7 @@ export function ConnectionsPage(){
      <div className="mt-auto flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3"><a href={entry.docs} target="_blank" rel="noreferrer">공식 문서 <ExternalLink size={13}/></a>{entry.available?<Button onClick={()=>openEditor(entry)}><Plus size={15}/> {bindings.length?'계정 추가':'연결 설정'}</Button>:<span className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">준비 중 · 연결 불가</span>}</div>
     </Panel>})}
    </div>
-   {!filtered.length&&<Panel><div className="flex min-h-40 flex-col items-center justify-center gap-2 p-7 text-center text-slate-500">검색된 채널이 없습니다.</div></Panel>}
+   {!filtered.length&&<Panel><div className="flex min-h-40 flex-col items-center justify-center gap-2 p-5 text-center text-slate-500">검색된 채널이 없습니다.</div></Panel>}
    <Panel className="flex min-w-0 items-start gap-3 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm leading-6"><div className="grid size-10 shrink-0 place-items-center rounded-xl bg-blue-100 text-blue-700"><ShieldCheck size={21}/></div><div><strong>카탈로그와 실제 실행의 구분</strong><p>카탈로그가 표시된다고 연결된 것은 아닙니다. 드라이버 준비 → 인증 설정 → 네트워크 연결 → 실제 메시지 수신 순서로 상태를 구분합니다. WhatsApp과 LINE은 외부 HTTPS 웹훅 설정이 필요합니다.</p></div></Panel>
   </>}
   {view==='accounts'&&<>
@@ -88,7 +88,7 @@ export function ConnectionsPage(){
   {editor&&<DialogBackdrop onDismiss={()=>setEditor(null)}><DialogPanel size="wide">
    <div className="flex items-center justify-between border-b border-slate-100 p-5"><div><small>CHANNEL CONFIGURATION · {editor.entry.id.toUpperCase()}</small><h2>{editor.record.id?'연결 설정 변경':'새 연결 설정'}</h2></div><Button size="icon" variant="ghost" onClick={()=>setEditor(null)}><X size={18}/></Button></div>
    <div className="grid gap-4 p-5">
-    <div className="mb-8 flex items-center gap-4 rounded-2xl border border-blue-100 bg-blue-50 p-5"><div className="grid size-12 shrink-0 place-items-center rounded-xl bg-blue-100 text-blue-600"><MessageCircle size={21}/></div><div><strong>{editor.entry.name}</strong><p>{editor.entry.description}</p></div></div>
+    <div className="mb-5 flex items-center gap-4 rounded-xl border border-blue-100 bg-blue-50 p-5"><div className="grid size-12 shrink-0 place-items-center rounded-xl bg-blue-100 text-blue-600"><MessageCircle size={21}/></div><div><strong>{editor.entry.name}</strong><p>{editor.entry.description}</p></div></div>
     <FormField label="연결 이름"><TextInput  value={editor.record.name||''} onChange={e=>setEditor({...editor,record:{...editor.record,name:e.target.value}})}/></FormField>
     {editor.entry.fields.map(field=><FormField key={field.key} label={field.label+(field.required?' *':'')} hint={field.type==='secret'&&editor.record.id?'기존 키는 표시하지 않습니다. 변경할 때만 입력하세요.':undefined}><TextInput  type={field.type==='secret'?'password':field.type==='url'?'url':'text'} value={editor.record[field.key]||''} placeholder={field.placeholder||''} onChange={e=>setEditor({...editor,record:{...editor.record,[field.key]:e.target.value}})}/></FormField>)}
     <FormField label="응답 방식"><SelectInput  value={editor.record.roomId||''} onChange={e=>setEditor({...editor,record:{...editor.record,roomId:e.target.value,mentionOnly:e.target.value?false:editor.record.mentionOnly}})}><option value="">단일 에이전트</option>{rooms.value.map(r=><option value={r.id} key={r.id}>회의실 · {r.name} ({r.agentIds?.length||0}명)</option>)}</SelectInput></FormField>
