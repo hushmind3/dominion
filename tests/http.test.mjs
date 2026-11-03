@@ -5,11 +5,25 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
+import {createServer} from 'node:http';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function port(){return new Promise((resolve,reject)=>{const server=net.createServer();server.listen(0,'127.0.0.1',()=>{const p=server.address().port;server.close(()=>resolve(p))});server.on('error',reject);});}
 test('real gateway creates and retrieves agents, rooms, sessions and jobs', {timeout:40000}, async ()=>{
  const base=fs.mkdtempSync(path.join(os.tmpdir(),'dominion-smoke-'));
  const p=await port(), url='http://127.0.0.1:'+p;
+ const fake=createServer((req,res)=>{
+  if(req.url==='/v1/models'){
+   res.writeHead(200,{'Content-Type':'application/json'});
+   res.end(JSON.stringify({data:[{id:'fixed-fixture-model'}]}));return;
+  }
+  if(req.url==='/v1/chat/completions'){
+   res.writeHead(200,{'Content-Type':'text/event-stream'});
+   res.end('data: '+JSON.stringify({choices:[{delta:{content:'fixed fixture answer'}}]})+'\\n\\ndata: [DONE]\\n\\n');
+   return;
+  }
+  res.writeHead(404);res.end();
+ });
+ await new Promise(resolve=>fake.listen(0,'127.0.0.1',resolve));
  const child=spawn(process.execPath,['server/index.mjs'],{cwd:process.cwd(),env:{...process.env,DOMINION_DATA:path.join(base,'state'),DOMINION_WORKSPACE:path.join(base,'workspace'),DOMINION_PORT:String(p),DOMINION_HOST:'127.0.0.1'},stdio:'pipe'});
  let err='';child.stderr.on('data',d=>err+=d.toString());
  try{
@@ -52,6 +66,15 @@ test('real gateway creates and retrieves agents, rooms, sessions and jobs', {tim
   response=await fetch(url+'/api/approvals');assert.deepEqual(await response.json(),[]);
   response=await fetch(url+'/api/mcp');assert.deepEqual(await response.json(),[]);
   response=await fetch(url+'/api/policy');assert.equal((await response.json()).autoApproveAll,false);
+  const source={name:'Isolated fixture',baseUrl:'http://127.0.0.1:'+fake.address().port+'/v1',enabled:true};
+  response=await fetch(url+'/api/providers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(source)});
+  assert.equal(response.status,200);
+  const configured=await response.json();
+  response=await fetch(url+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+   sessionId:session.id,input:'fixture prompt',providerId:configured.id,model:'fixed-fixture-model'
+  })});
+  assert.equal(response.status,200);
+  assert.match(await response.text(),/fixed fixture answer/);
   response=await fetch(url+'/api/audit');assert.equal(response.status,200);
- }finally{child.kill('SIGTERM');fs.rmSync(base,{recursive:true,force:true});}
+ }finally{child.kill('SIGTERM');await new Promise(resolve=>fake.close(resolve));fs.rmSync(base,{recursive:true,force:true});}
 });
