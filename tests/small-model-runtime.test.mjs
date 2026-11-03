@@ -81,6 +81,18 @@ test('tool discovery makes large external MCP catalogue accessible to tiny model
  assert.ok(f.calls[2].messages[0].content.includes('mcp__git__list'));
  assert.deepEqual(discoverCompatibleTools(tools,'git')[0].name,'mcp__git__list');
 });
+test('discovery alone is not evidence that an actual file was created',async()=>{
+ const f=fixture({responses:[
+  '{"action":"tool","name":"tool_discover","arguments":{"query":"workspace_write"}}',
+  '{"action":"final","message":"파일을 만들었습니다."}',
+  '{"action":"tool","name":"workspace_write","arguments":{"path":"note.txt","content":"ok"}}',
+  '{"action":"final","message":"파일을 만들었습니다."}'
+ ]});
+ await f.run();
+ assert.equal(f.runs.at(-1).status,'completed');
+ assert.ok(f.events.some(x=>x.type==='runtime.action_repair'));
+ assert.equal(f.runs.at(-1).toolCalls,2);
+});
 test('malformed local model output cannot trigger an unverified success',async()=>{
  const f=fixture({responses:['I created it already.','Still done','Everything is ready']});
  await assert.rejects(f.run(),/could not produce a valid tool action/);
