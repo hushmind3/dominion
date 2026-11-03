@@ -18,7 +18,7 @@ test('real gateway creates and retrieves agents, rooms, sessions and jobs', {tim
   }
   if(req.url==='/v1/chat/completions'){
    res.writeHead(200,{'Content-Type':'text/event-stream'});
-   res.end('data: '+JSON.stringify({choices:[{delta:{content:'fixed fixture answer'}}]})+'\\n\\ndata: [DONE]\\n\\n');
+   res.end('data: '+JSON.stringify({choices:[{delta:{content:'fixed fixture answer'}}]})+'\n\ndata: [DONE]\n\n');
    return;
   }
   res.writeHead(404);res.end();
