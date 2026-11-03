@@ -29,7 +29,7 @@ export class ExecutionRuntime {
     const emit=(type,detail={})=>{persisted();onEvent({type,runId,sessionId,...detail});};
     const check=()=>{
       if(controller.signal.aborted)throw abortError();
-      if(Date.now()-start>maxElapsedMs||run.tokens>=maxTokens||run.toolCalls>=maxToolCalls)throw Object.assign(Error('Execution budget exceeded'),{code:'BUDGET'});
+      if(Date.now()-start>maxElapsedMs||run.tokens>=maxTokens||run.toolCalls>maxToolCalls)throw Object.assign(Error('Execution budget exceeded'),{code:'BUDGET'});
     };
     const externalAbort=()=>controller.abort(signal?.reason||abortError());
     if(signal?.aborted)externalAbort();
