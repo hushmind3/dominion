@@ -1,5 +1,6 @@
 import http from 'node:http';
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import path from 'node:path';
 import {timingSafeEqual} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
@@ -21,6 +22,7 @@ import {mcpPresets} from './mcp-presets.mjs';
 import {skillCatalog,skillCatalogMeta,importCatalogSkill} from './skill-catalog.mjs';
 import {builtin,toolsForModel,approvals,resolveApproval,recoverApprovals} from './tools.mjs';
 import {oauthProviders,oauthStart,oauthCallback,oauthCallbackBase,connections,connectorCall,saveOAuthApp,youtubeUpload} from './oauth.mjs';
+import {videoStatus,saveVideoConfig,videoWorkflows,startVideoJob,videoJob,videoJobs,videoConfig} from './video-generator.mjs';
 import {channels,catalog,channelById,saveChannel,deleteChannel,diagnoseChannel,handleChannelWebhook,startChannels} from './channels.mjs';
 import {activeRoomStatus,stopRoomFlow,resetRoomFlow} from './room-orchestrator.mjs';
 import {commandDefinitions} from './commands.mjs';
@@ -257,6 +259,26 @@ async function api(req,res,u){
  if(channelId&&method==='GET')return json(res,channelById(channelId[1])||{error:'Channel not found'});
  const diagnostic=url.match(/^\/api\/channels\/([^/]+)\/diagnose$/);
  if(diagnostic&&method==='POST')return json(res,await diagnoseChannel(diagnostic[1]));
+ if(url==='/api/video/status'&&method==='GET')return json(res,await videoStatus());
+ if(url==='/api/video/config'&&method==='POST')return json(res,saveVideoConfig(await body(req)));
+ if(url==='/api/video/workflows'&&method==='GET')return json(res,videoWorkflows());
+ if(url==='/api/video/generate'&&method==='POST')return json(res,await startVideoJob(await body(req)),202);
+ if(url==='/api/video/jobs'&&method==='GET')return json(res,videoJobs());
+ const videoJobMatch=url.match(/^\/api\/video\/jobs\/([^/]+)$/);
+ if(videoJobMatch&&method==='GET'){const job=videoJob(videoJobMatch[1]);return json(res,job||{error:'Video job not found'},job?200:404)}
+ const videoFile=url.match(/^\/api\/video\/files\/([^/]+)$/);
+ if(videoFile&&method==='GET'){
+  const filename=path.basename(decodeURIComponent(videoFile[1]));
+  const file=path.join(videoConfig().outputDir,filename);
+  if(!file.startsWith(videoConfig().outputDir+path.sep))return json(res,{error:'Invalid file'},400);
+  try{
+   const stat=await fs.stat(file);
+   if(!stat.isFile())throw Error('Not a file');
+   const type=/\.webm$/i.test(filename)?'video/webm':/\.gif$/i.test(filename)?'image/gif':/\.webp$/i.test(filename)?'image/webp':'video/mp4';
+   res.writeHead(200,{'Content-Type':type,'Content-Length':stat.size,'Cache-Control':'no-store'});
+   fsSync.createReadStream(file).pipe(res);return;
+  }catch{return json(res,{error:'Video file not found'},404)}
+ }
  if(url==='/api/youtube/status'&&method==='GET'){
   const account=connections().find(x=>x.provider==='google');
   return json(res,{connected:Boolean(account),uploadAllowed:Boolean(account&&String(account.scopes||'').includes('youtube.upload')),account:account?{displayName:account.displayName,scopes:account.scopes}:null,uploads:[...youtubeJobs.values()].slice(-20)});
