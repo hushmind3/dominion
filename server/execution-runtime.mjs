@@ -8,6 +8,7 @@ export class ExecutionRuntime {
   constructor({complete,discoverTools,invokeTool,readHistory,convertMessage,saveMessage,saveRun,saveOperation}){
     Object.assign(this,{complete,discoverTools,invokeTool,readHistory,convertMessage,saveMessage,saveRun,saveOperation});
   }
+  isActive(sessionId){return this.#sessions.has(sessionId);}
   active(){return [...this.#runs.values()].map(x=>({runId:x.id,sessionId:x.sessionId,status:x.status}));}
   cancel(id){
     const run=this.#runs.get(id)||this.#sessions.get(id);
