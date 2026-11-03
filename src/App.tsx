@@ -1,6 +1,6 @@
 import {useCallback,useEffect,useState} from 'react'
 import {get} from './api'
-import {WorkspaceSidebar,WorkspaceHeader,CommandPalette,type PageId} from './components/WorkspaceShell'
+import {WorkspaceSidebar,WorkspaceHeader,CommandPalette,navigation,type PageId} from './components/WorkspaceShell'
 import {HomePage} from './pages/Home'
 import {CapabilitiesPage} from './pages/Capabilities'
 import {MemoryPage} from './pages/Memory'
@@ -12,9 +12,15 @@ import {ExtensionsPage} from './pages/Extensions'
 import {ConnectionsPage} from './pages/Connections'
 import {OperationsPage} from './pages/Operations'
 
+function locationState(){
+ const raw=window.location.hash.replace(/^#\/?/,'')
+ const [name,query]=raw.split('?')
+ const valid=navigation.some(group=>group.items.some(item=>item.id===name))
+ return {page:(valid?name:'home') as PageId,session:new URLSearchParams(query||'').get('session')||undefined}
+}
 export default function App(){
- const [page,setPage]=useState<PageId>('home')
- const [session,setSession]=useState<string|undefined>()
+ const [page,setPage]=useState<PageId>(()=>locationState().page)
+ const [session,setSession]=useState<string|undefined>(()=>locationState().session)
  const [sidebar,setSidebar]=useState(false)
  const [palette,setPalette]=useState(false)
  const [online,setOnline]=useState(false)
@@ -23,9 +29,16 @@ export default function App(){
  const navigate=useCallback((target:PageId,sessionId?:string)=>{
   setPage(target)
   if(sessionId!==undefined)setSession(sessionId)
+  const next='#/'+target+(sessionId?'?session='+encodeURIComponent(sessionId):'')
+  if(window.location.hash!==next)window.location.hash=next
   setSidebar(false)
   setPalette(false)
-  window.scrollTo({top:0,behavior:'instant'})
+  window.scrollTo({top:0,behavior:'auto'})
+ },[])
+ useEffect(()=>{
+  const sync=()=>{const current=locationState();setPage(current.page);if(current.session)setSession(current.session);setSidebar(false);setPalette(false)}
+  window.addEventListener('hashchange',sync)
+  return()=>window.removeEventListener('hashchange',sync)
  },[])
  useEffect(()=>{
   let mounted=true
