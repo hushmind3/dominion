@@ -131,6 +131,38 @@ export async function compactSession(id,{providerId,model}={}){
  put('session_compaction',{id,throughMessageId:candidates.at(-1).id,summary,updatedAt:new Date().toISOString()});
  return {sessionId:id,summarized:candidates.length,remaining:history.length-cut,summary,usage:response.usage};
 }
+function extractJsonObject(text){
+ const source=String(text||'').trim(),start=source.indexOf('{');
+ if(start<0)return null;
+ let depth=0,inString=false,escaped=false;
+ for(let i=start;i<source.length;i++){
+  const char=source[i];
+  if(inString){if(escaped)escaped=false;else if(char==='\\')escaped=true;else if(char==='"')inString=false;continue}
+  if(char==='"'){inString=true;continue}
+  if(char==='{')depth++;
+  else if(char==='}'&&--depth===0){try{return JSON.parse(source.slice(start,i+1))}catch{return null}}
+ }
+ return null;
+}
+export async function learnFromSession(id,{providerId,model}={}){
+ if(!get('session',id))throw Error('Session not found');
+ if(!providerId||!model)throw Error('Select a connected model for learning');
+ const history=messages(id).filter(row=>row.role==='user'||row.role==='assistant');
+ if(history.length<2)throw Error('Not enough conversation to learn from');
+ const transcript=history.slice(-40).map(row=>'['+row.role+'] '+String(row.content||'').slice(0,3000)).join('\n').slice(-30000);
+ const response=await streamCompletion({providerId,model,tools:[],messages:[
+  {role:'system',content:'Extract durable knowledge from the conversation. Return ONE JSON object only: {"memories":[{"text":"...","scope":"shared"}],"skill":{"name":"...","instructions":"..."}} . Use null or an empty array when there is nothing durable. Memories must be stable user preferences, facts, decisions, or project constraints. Never include secrets, temporary details, tool output, or speculation. Skill instructions must be reusable and concise.'},
+  {role:'user',content:'Conversation:\n'+transcript}
+ ]});
+ const data=extractJsonObject(response.content);
+ if(!data)throw Error('The model did not return valid learning JSON');
+ const memories=(Array.isArray(data.memories)?data.memories:[]).filter(item=>item&&typeof item.text==='string'&&item.text.trim()).slice(0,10).map(item=>put('memory',{text:String(item.text).trim().slice(0,1000),scope:String(item.scope||'shared')}));
+ let skill=null;
+ if(data.skill&&typeof data.skill.name==='string'&&typeof data.skill.instructions==='string'&&data.skill.name.trim()&&data.skill.instructions.trim()){
+  skill=put('skill',{name:data.skill.name.trim().slice(0,80),instructions:data.skill.instructions.trim().slice(0,12000),enabled:false,status:'proposed'});
+ }
+ return {sessionId:id,memories,skill,usage:response.usage};
+}
 export function rooms(){return all('room');}
 export function saveRoom(data){
  const ids=Array.isArray(data.agentIds)?[...new Set(data.agentIds.map(String))]:[];

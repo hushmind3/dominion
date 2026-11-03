@@ -11,7 +11,7 @@ import {modelLibrary} from './model-library.mjs';
 import {localRunner} from './local-runner.mjs';
 import {resolveModel} from './model-router.mjs';
 import {runIntent,cancelSessionIntent} from './native-intent.mjs';
-import {agents,sessions,newSession,runTurn,saveRoom,executions,activeExecutions,cancelExecution,recoverExecutions,renameSession,clearSession,forkSession,compactSession} from './engine.mjs';
+import {agents,sessions,newSession,runTurn,saveRoom,executions,activeExecutions,cancelExecution,recoverExecutions,renameSession,clearSession,forkSession,compactSession,learnFromSession} from './engine.mjs';
 import {updateAgentModels,normalizeAgentAliases} from './agent-admin.mjs';
 import {enqueue,startJobs} from './jobs.mjs';
 import {workflows,saveWorkflow} from './workflows.mjs';
@@ -142,6 +142,8 @@ async function api(req,res,u){
   if(operation==='fork')return json(res,forkSession(id));
   if(operation==='compact')return json(res,await compactSession(id,await body(req)));
  }
+ const learn=url.match(/^\/api\/sessions\/([^/]+)\/learn$/);
+ if(learn&&method==='POST')return json(res,await learnFromSession(learn[1],await body(req)));
  const msgs=url.match(/^\/api\/sessions\/([^/]+)\/messages$/);
  if(msgs&&method==='GET')return json(res,messages(msgs[1]));
  if(url==='/api/chat'&&method==='POST'){

@@ -2,7 +2,7 @@ import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
 import {FormEvent,useEffect,useRef,useState,type KeyboardEvent} from 'react'
 import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,CornerDownLeft,HardDrive,History,LoaderCircle,MessageCircle,MoreHorizontal,PanelLeftClose,PanelLeftOpen,Plus,Power,RefreshCw,ShieldAlert,ShieldCheck,SlidersHorizontal,Sparkles,TerminalSquare,Trash2,X} from 'lucide-react'
 import {Agent,ChatMessage,ChatSession,Provider,get,post,streamChat} from '../api'
-import {Action,Empty,Notice,StateTag,useRemote} from '../components/UI'
+import {Action,Empty,Notice,StateTag,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommands,type SlashChoice} from '../components/SlashMenu'
 type Model={id:string;name:string}
 type InstalledModel={id:string;repo:string;label:string;format:string;bytes:number;source?:string}
@@ -26,7 +26,7 @@ export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onS
  const [input,setInput]=useState(''),[providerId,setProviderId]=useState(''),[model,setModel]=useState(''),[agentId,setAgentId]=useState('general'),[models,setModels]=useState<Model[]>([]);
  const [modelError,setModelError]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[live,setLive]=useState(''),[thought,setThought]=useState(''),[thinking,setThinking]=useState(false),[reasoningKo,setReasoningKo]=useState(true),[showReasoning,setShowReasoning]=useState(false),[showSettings,setShowSettings]=useState(false),[toolsEnabled,setToolsEnabled]=useState(true),[thinkingEnabled,setThinkingEnabled]=useState(true),[reasoningEffort,setReasoningEffort]=useState(''),[showHistory,setShowHistory]=useState(()=>{try{return localStorage.getItem('dominion.chat.sidebar')!=='0'}catch{return true}}),[approval,setApproval]=useState<{id:string;tool:string;args:any}|null>(null),[toolStatus,setToolStatus]=useState('');
  const [permissionMode,setPermissionMode]=useState<PermissionMode>('request'),[permissionOpen,setPermissionOpen]=useState(false),[permissionBusy,setPermissionBusy]=useState(false);
- const [modelMenu,setModelMenu]=useState(false),[installed,setInstalled]=useState<InstalledModel[]>([]),[modelsLoading,setModelsLoading]=useState(false),[runtime,setRuntime]=useState<Runtime>({status:'idle'}),[modelBusy,setModelBusy]=useState(''),[unloading,setUnloading]=useState(false),[menuError,setMenuError]=useState('');
+ const [modelMenu,setModelMenu]=useState(false),[installed,setInstalled]=useState<InstalledModel[]>([]),[modelsLoading,setModelsLoading]=useState(false),[runtime,setRuntime]=useState<Runtime>({status:'idle'}),[modelBusy,setModelBusy]=useState(''),[unloading,setUnloading]=useState(false),[learning,setLearning]=useState(false),[menuError,setMenuError]=useState('');
  const [slashOpen,setSlashOpen]=useState(false),[slashActive,setSlashActive]=useState(0),[commandInfo,setCommandInfo]=useState('');
  const bottom=useRef<HTMLDivElement>(null),inputRef=useRef<HTMLTextAreaElement>(null);
  const slashItems=slashOpen?slashCandidates(input,agents.value,models):[];
@@ -102,6 +102,16 @@ export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onS
    await providers.reload();setCommandInfo('로컬 모델을 내렸습니다. VRAM이 해제됩니다.')
   }catch(e){setError((e as Error).message)}finally{setUnloading(false)}
  }
+ const learnSession=async()=>{
+  if(!current){setError('학습할 대화를 먼저 선택하세요.');return}
+  if(!providerId||!model){setError('학습에 사용할 모델을 먼저 연결하세요.');return}
+  setLearning(true);setError('');setCommandInfo('');
+  try{
+   const result=await post<any>('/api/sessions/'+current+'/learn',{providerId,model});
+   setCommandInfo('학습 완료 · 기억 '+result.memories.length+'개 · 스킬 '+(result.skill?'1개 제안':'없음')+'\n메모리와 스킬 화면에서 확인하고 승인할 수 있습니다.');
+   refresh();
+  }catch(e){setError((e as Error).message)}finally{setLearning(false)}
+ };
  const pickSession=(s:ChatSession)=>{setCurrent(s.id);onSession(s.id);if(s.providerId)setProviderId(s.providerId);if(s.model)setModel(s.model);if(s.agentId)setAgentId(s.agentId);setLive('');setThought('');setError('')};
  const resetLocal=()=>{
   setCurrent(undefined);onSession(undefined);setMessages([]);setLive('');setThought('');setError('');
@@ -264,6 +274,7 @@ export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onS
     </div>
     <div className="flex shrink-0 items-center gap-1">
      <span className={"hidden items-center gap-2 text-[10px] font-bold uppercase tracking-wider sm:inline-flex "+(model&&!modelError?"text-emerald-700":"text-[#9C9388]")}><i className={'size-1.5 rounded-full '+(model&&!modelError?'bg-emerald-500':'bg-slate-300')}/>{model&&!modelError?(selectedProvider?.local?"LOCAL ENGINE":"CLOUD / API"):"MODEL NOT READY"}</span>
+     <Button variant="ghost" size="sm" disabled={!current||learning||busy} title="이 대화에서 기억과 스킬을 추출" onClick={()=>void learnSession()} className="!px-2"><BrainCircuit size={15}/><span className="hidden xl:inline">{learning?'학습 중':'학습'}</span></Button>
      {(selectedProvider?.local||runtime.status==='ready')&&<Button size="icon" variant="ghost" title="모델 내리기 · VRAM 해제" onClick={()=>void unloadModel()} disabled={unloading}>{unloading?<LoaderCircle size={16} className="animate-spin"/>:<Power size={17}/>}</Button>}
      <Button size="icon" variant="ghost" title="모델 관리" onClick={openModels}><Compass size={18}/></Button>
     </div>

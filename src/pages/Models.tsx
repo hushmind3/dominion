@@ -6,6 +6,18 @@ import {FormField,Notice,refresh,useRemote} from '../components/UI'
 import {DialogBackdrop,DialogPanel} from '../components/Dialog'
 import {ModelExplorer} from '../components/ModelExplorer'
 
+const providerPresets=[
+ {name:'OpenAI',baseUrl:'https://api.openai.com/v1',kind:'openai',local:false},
+ {name:'OpenRouter',baseUrl:'https://openrouter.ai/api/v1',kind:'openai',local:false},
+ {name:'Groq',baseUrl:'https://api.groq.com/openai/v1',kind:'openai',local:false},
+ {name:'DeepSeek',baseUrl:'https://api.deepseek.com/v1',kind:'openai',local:false},
+ {name:'Mistral',baseUrl:'https://api.mistral.ai/v1',kind:'openai',local:false},
+ {name:'xAI',baseUrl:'https://api.x.ai/v1',kind:'openai',local:false},
+ {name:'Together',baseUrl:'https://api.together.xyz/v1',kind:'openai',local:false},
+ {name:'Perplexity',baseUrl:'https://api.perplexity.ai',kind:'openai',local:false},
+ {name:'LM Studio',baseUrl:'http://127.0.0.1:1234/v1',kind:'openai',local:true},
+ {name:'Ollama',baseUrl:'http://127.0.0.1:11434/v1',kind:'ollama',local:true}
+]
 export function ModelHub(){
  const providers=useRemote<Provider[]>('/api/providers',[])
  const [counts,setCounts]=useState<Record<string,{list:string[];error?:string;busy?:boolean}>>({})
@@ -19,6 +31,8 @@ export function ModelHub(){
   catch(e){setCounts(old=>({...old,[p.id]:{list:[],error:(e as Error).message}}))}
  }
  const open=(p?:Provider)=>{setEdit(p||null);setName(p?.name||'');setBaseUrl(p?.baseUrl||'');setKind(p?.kind||'openai');setApiKey('');setLocal(Boolean(p?.local));setError('');setModal(true)}
+ const openPreset=(preset:typeof providerPresets[number])=>{setEdit(null);setName(preset.name);setBaseUrl(preset.baseUrl);setKind(preset.kind);setLocal(preset.local);setApiKey('');setError('');setModal(true)}
+ const configured=(preset:typeof providerPresets[number])=>providers.value.some(p=>p.baseUrl.replace(/\/$/,'')===preset.baseUrl.replace(/\/$/,''))
  const save=async()=>{
   try{
    await post('/api/providers',{id:edit?.id,name,baseUrl,kind,apiKey:apiKey||undefined,local,enabled:true})
@@ -30,8 +44,12 @@ export function ModelHub(){
    <div><h1 className="m-0 text-[19px] font-bold tracking-tight text-[#24211D]">모델 관리</h1><p className="mt-1 text-[12px] text-[#7a8798]">로컬 모델을 등록하고 실행하거나 새 모델을 다운로드합니다.</p></div>
    <Button type="button" onClick={()=>open()} className="inline-flex h-8 items-center gap-2 rounded-lg border border-[#E1D9CC] bg-white px-3 text-[11px] font-semibold text-[#40506a] hover:bg-[#FAF7F1]"><Plus size={14}/> API 연결 추가</Button>
   </header>
+  <section className="mb-5 rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-5 shadow-[0_1px_2px_rgba(36,33,29,.04)]">
+   <div className="mb-4 flex flex-wrap items-end justify-between gap-3"><div><h2 className="m-0 text-[17px] font-bold tracking-[-.02em] text-[#24211D]">제공자 빠른 연결</h2><p className="mt-1 text-[12px] text-[#7C7469]">API 키만 입력하면 바로 연결됩니다. OpenAI 호환 엔드포인트입니다.</p></div><Button type="button" onClick={()=>open()} className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#E1D9CC] bg-[#FFFDF9] px-3 text-[12px] font-semibold text-[#3A342D] hover:bg-[#F7F2EA]"><Plus size={14}/> 직접 입력</Button></div>
+   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-5">{providerPresets.map(preset=>{const connected=configured(preset);return <div key={preset.name} className="flex min-w-0 items-center justify-between gap-2 rounded-xl border border-[#EFE9DF] bg-[#FAF7F1] px-3 py-2.5"><div className="min-w-0"><strong className="block truncate text-[12px] text-[#3A342D]">{preset.name}</strong><small className="block truncate text-[10px] text-[#A79C8E]">{preset.local?'로컬':'API 키 필요'}</small></div><Button variant={connected?'secondary':'primary'} disabled={connected} onClick={()=>openPreset(preset)} className="!px-2.5 !py-1 !text-[11px]">{connected?'연결됨':'연결'}</Button></div>})}</div>
+  </section>
   <ModelExplorer/>
-  <section className="mt-5 rounded-xl border border-[#E7E0D5] bg-white">
+  <section className="mt-5 rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9]">
    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#EFE9DF] px-4 py-3"><div><h2 className="text-[13px] font-bold">모델 서버 · API 연결</h2><p className="mt-0.5 text-[11px] text-[#8b97a7]">Ollama, LM Studio, OpenAI 호환 제공자를 연결할 수 있습니다.</p></div><Button className="inline-flex h-8 items-center gap-2 rounded-lg border border-[#E1D9CC] px-3 text-[11px]" type="button" onClick={()=>providers.value.forEach(p=>void probe(p))}><RefreshCw size={13}/> 연결 확인</Button></div>
    {providers.value.length?<div className="divide-y divide-[#F0EAE1]">{providers.value.map(p=><div key={p.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
     <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-[#edf1fa] text-[#6179b6]">{p.local?<HardDrive size={15}/>:<Cloud size={15}/>}</span>
