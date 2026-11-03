@@ -7,7 +7,7 @@ const pages=path.resolve('src/pages');
 test('pages use reusable design-system controls rather than raw form elements',()=>{
  for(const name of readdirSync(pages).filter(n=>n.endsWith('.tsx'))){
   const src=readFileSync(path.join(pages,name),'utf8');
-  assert.doesNotMatch(src,/<(?:button|input|textarea|select|table)(?=[\\s/>])/,
+  assert.doesNotMatch(src,/<(?:button|input|textarea|select|table)(?=[\s/>])/,
    name+' contains a raw control instead of a shared primitive');
  }
 });
