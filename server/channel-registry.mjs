@@ -6,7 +6,7 @@ import {DATA} from './config.mjs';
 const here=path.dirname(fileURLToPath(import.meta.url));
 const roots=[path.join(here,'channel-plugins'),path.join(DATA,'channel-plugins')];
 const catalog=new Map(),drivers=new Map(),errors=new Map();
-const valid=/^[a-z0-9][a-z0-9_-]{1,50}$/;
+const valid=/^[a-z0-9][a-z0-9_-]{0,50}$/;
 const fieldKey=/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/;
 const fieldTypes=new Set(['secret','text','url']);
 const modes=new Set(['polling','gateway','socket','webhook','external']);
