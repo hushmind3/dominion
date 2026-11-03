@@ -71,3 +71,21 @@ export function likelyRequiresTools(text){
  return /(?:파일|폴더|디렉터리|코드|프로젝트|저장소|문서|로그|테스트|명령어|터미널|workspace|file|directory|repository|script|test).{0,45}(?:읽어|열어|보여|만들|생성|작성|수정|변경|삭제|실행|검사|확인해|정리해|찾아|저장|list|read|write|edit|create|delete|run|check)/i.test(s)
  || /(?:만들|생성|작성|수정|변경|삭제|실행|검사|저장|열어|읽어).{0,35}(?:파일|폴더|디렉터리|코드|프로젝트|문서|로그|테스트|명령어|터미널)/i.test(s);
 }
+
+
+// Proof of work must match the kind of action requested. A directory listing or
+// tool discovery is not evidence that a file was created or a deployment ran.
+export function requestedToolEffect(text=''){
+ const request=String(text||'');
+ if(/(?:만들|생성|작성|수정|편집|변경|삭제|제거|설치|배포|업로드|저장|전송|등록|커밋|푸시|구축|구현|적용|고쳐|create|write|edit|update|delete|remove|install|deploy|upload|save|send|commit|push|build|implement|apply|patch)/i.test(request))return 'mutation';
+ if(/(?:실행|구동|테스트|검증|빌드|명령|돌려|run|execute|test|verify|lint)/i.test(request))return 'execution';
+ return 'observation';
+}
+export function successfulToolEvidence(name,output,effect='observation'){
+ if(!name||name==='tool_discover'||output?.error||output?.isError===true||output?.ok===false||output?.success===false||
+    (typeof output?.exitCode==='number'&&output.exitCode!==0))return false;
+ const tool=String(name).toLowerCase();
+ if(effect==='mutation')return /(?:workspace_write|terminal_exec|memory_store|skill_propose|(?:^|[_-])(?:write|create|update|edit|patch|delete|remove|install|deploy|upload|save|send|commit|push|build|implement|apply|merge|modify|set|store|publish|post|put)(?:$|[_-]))/.test(tool);
+ if(effect==='execution')return /(?:terminal_exec|(?:^|[_-])(?:run|exec|execute|test|verify|check|build|deploy|start|launch)(?:$|[_-]))/.test(tool);
+ return true;
+}
