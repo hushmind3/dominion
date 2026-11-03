@@ -140,7 +140,8 @@ async function executeWithModel(r,step,feedback){
   "\nExecute required tools, do not claim actions not performed. Conclude with a concise factual result.";
  const msg=await runTurn({sessionId,agentId:selected.agentId,providerId:selected.providerId,model:selected.model,input:prompt,
   onEvent:e=>{
-   if(e.type==='assistant_saved')addUsage(r.id,e.usage);
+   if(goal(r.id)?.status==='cancelled')throw Object.assign(Error('Goal cancelled'),{code:'CANCELLED'});
+   if(e.type==='assistant_saved'){addUsage(r.id,e.usage);requireBudget(r.id);}
    if(e.type==='tool_end'&&!e.result?.error){
     toolCalls++;const ev={name:e.name,callId:e.callId,output:clip(JSON.stringify(e.result),1000)};evidence.push(ev);
     saveEvent(r.id,'tool.executed',{}, {stepId:step.id,attempt:step.attempts,name:e.name,callId:e.callId});
@@ -166,8 +167,12 @@ async function reviewWithModel(r,step,result){
  if(!result.content.trim()&&files.findings.length===0)return {passed:false,reason:'No result or artifact',mode:'deterministic'};
  const reviewerConfig=r.reviewer||{};
  let reviewer=null;
- try{reviewer=modelFor(reviewerConfig);}catch{}
- if(reviewer&&reviewer.providerId===result.executor?.providerId&&reviewer.model===result.executor?.model)reviewer=null;
+ try{if(reviewerConfig.agentId||reviewerConfig.providerId)reviewer=modelFor(reviewerConfig);}catch{}
+ const distinct=a=>a.providerId&&a.model&&(a.providerId!==result.executor?.providerId||a.model!==result.executor?.model);
+ if(!reviewer||!distinct(reviewer)){
+  const candidate=all('agent').find(distinct);
+  reviewer=candidate?{agentId:candidate.id,providerId:candidate.providerId,model:candidate.model}:null;
+ }
  if(!reviewer)return {passed:true,reason:'Evidence checks passed; independent model review not configured',mode:'evidence-only'};
  const prompt="Evaluate whether this output satisfies the task. Focus on evidence, not claims. Return JSON {\"passed\":true|false,\"reason\":\"...\"}.\nGoal: "+r.goal+"\nStep: "+step.prompt+"\nResult: "+clip(result.content,8000)+"\nTool evidence: "+JSON.stringify(result.evidence).slice(0,5000)+"\nArtifacts: "+JSON.stringify(files.findings);
  const response=await streamCompletion({providerId:reviewer.providerId,model:reviewer.model,messages:[{role:'system',content:'You are an independent result reviewer. Output JSON only.'},{role:'user',content:prompt}],tools:[]});
