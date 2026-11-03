@@ -1,8 +1,8 @@
 import {all,get,put,log} from './store.mjs';
 import {secretSet,secretGet,hasSecret} from './vault.mjs';
 const defaults=[
- {id:'lmstudio',name:'LM Studio',kind:'openai',baseUrl:'http://127.0.0.1:1234/v1',local:true,enabled:true},
- {id:'ollama',name:'Ollama',kind:'ollama',baseUrl:'http://127.0.0.1:11434/v1',local:true,enabled:true},
+ {id:'lmstudio',name:'LM Studio',kind:'openai',baseUrl:'http://127.0.0.1:1234/v1',local:true,enabled:true,toolMode:'compat'},
+ {id:'ollama',name:'Ollama',kind:'ollama',baseUrl:'http://127.0.0.1:11434/v1',local:true,enabled:true,toolMode:'compat'},
  {id:'deepseek',name:'DeepSeek',kind:'openai',baseUrl:'https://api.deepseek.com/v1',local:false,enabled:false}
 ];
 for(const x of defaults)if(!get('provider',x.id))put('provider',x);
@@ -12,7 +12,7 @@ export function saveProvider(data){
  const url=new URL(data.baseUrl);if(!['http:','https:'].includes(url.protocol))throw Error('HTTP(S) required');
  const id=String(data.id||crypto.randomUUID());
  const old=get('provider',id);
- const value=put('provider',{id,name:String(data.name),baseUrl:url.toString().replace(/\/$/,''),kind:data.kind==='ollama'?'ollama':'openai',local:Boolean(data.local),enabled:data.enabled!==false,description:String(data.description||''),createdAt:old?.createdAt});
+ const value=put('provider',{id,name:String(data.name),baseUrl:url.toString().replace(/\/$/,''),kind:data.kind==='ollama'?'ollama':'openai',local:Boolean(data.local),enabled:data.enabled!==false,toolMode:['compat','native','auto'].includes(data.toolMode)?data.toolMode:old?.toolMode||(['lmstudio','ollama','dominion-native'].includes(id)?'compat':'auto'),description:String(data.description||''),createdAt:old?.createdAt});
  if(typeof data.apiKey==='string')secretSet('provider:'+id,data.apiKey);
  log('provider.saved',{providerId:id});return {...value,hasKey:hasSecret('provider:'+id)};
 }
