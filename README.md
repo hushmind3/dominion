@@ -85,7 +85,7 @@ React / Tailwind UI ── HTTP/SSE ──> Node API Gateway
             Telegram / Discord / OAuth
 ```
 
-자세한 구현 경계와 참고 저장소는 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)를 참고하세요. 검증 상황은 [docs/STATUS.md](docs/STATUS.md)에 기록합니다.
+자세한 구현 경계는 [아키텍처](docs/ARCHITECTURE.md), 실제 원문 링크가 있는 [조사 근거 장부](docs/RESEARCH_LEDGER.md), [26종 채널별 출처와 구현 상태](docs/CHANNEL_RESEARCH.md)를 참고하세요. 검증 상황은 [docs/STATUS.md](docs/STATUS.md)에 기록합니다.
 
 ## 라이선스와 저장소 취급
 
