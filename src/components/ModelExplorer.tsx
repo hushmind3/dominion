@@ -8,7 +8,7 @@ type Option={id:string;format:'gguf'|'mlx';label:string;quantization:string;byte
 type Detail=Catalog&{revision:string;license:string;architecture:string;options:Option[];readme:string}
 type Installed={id:string;repo:string;optionId?:string;source?:string;externalPath?:string;format:'gguf'|'mlx';label:string;bytes:number;installedAt:string}
 type Job={id:string;repo:string;optionId:string;status:string;downloaded:number;total:number;current:string;error:string}
-type Runtime={status:string;id?:string;repo?:string;engine?:string;name?:string;error?:string;setup?:{status:string;backend:string;downloaded:number;total:number;tag:string;file?:string;error:string};capabilities?:{gguf:{available:boolean;backend?:string;installable?:boolean};mlx:{available:boolean};memory:{total:number;free:number};gpu?:{kind:string;free:number}|null}}
+type Runtime={status:string;id?:string;repo?:string;engine?:string;name?:string;error?:string;setup?:{status:string;backend:string;downloaded:number;total:number;tag:string;file?:string;error:string};capabilities?:{gguf:{available:boolean;backend?:string;installable?:boolean};mlx:{available:boolean};memory:{total:number;free:number;platform?:string;arch?:string};gpu?:{kind:string;free:number}|null}}
 const fmt=(v=0)=>v>=1073741824?(v/1073741824).toFixed(1)+' GB':v>=1048576?(v/1048576).toFixed(0)+' MB':v>=1024?(v/1024).toFixed(0)+' KB':String(v)+' B'
 const shorten=(v:string,n=45)=>v.length>n?v.slice(0,n-3)+'…':v
 const viewTabs=[{id:'installed',label:'내 모델',icon:HardDrive},{id:'search',label:'모델 찾기',icon:Search},{id:'import',label:'로컬 모델 가져오기',icon:FolderOpen}] as const
@@ -66,7 +66,7 @@ export function ModelExplorer(){
  const activeModel=installed.find(m=>m.id===runtime.id)
  const needEngine=runtime.capabilities?.gguf.available===false;
  const installing=['checking','downloading','extracting','verifying'].includes(runtime.setup?.status||'');
- const recommendedBackend=runtime.capabilities?.gpu?.kind==='dedicated'?'cuda':'cpu';
+ const recommendedBackend=runtime.capabilities?.memory.platform==='win32'&&runtime.capabilities.memory.arch==='x64'?'cuda':'cpu';
  const installerPercent=Math.round((runtime.setup?.downloaded||0)/Math.max(1,runtime.setup?.total||0)*100);
  const safe=async(key:string,action:()=>Promise<unknown>)=>{
   setWorking(key);setError('')
@@ -153,7 +153,9 @@ export function ModelExplorer(){
     {needEngine&&runtime.capabilities?.gguf.installable&&<span className="inline-flex items-center gap-2">
      <button type="button" className="inline-flex h-7 items-center gap-1.5 rounded-md bg-[#5475eb] px-2.5 text-[11px] font-semibold text-white disabled:opacity-50" disabled={installing||Boolean(working)} onClick={()=>void installEngine(recommendedBackend)}><ArrowDownToLine size={13}/>{installing?'설치 중':recommendedBackend==='cuda'?'NVIDIA CUDA 실행기 설치':'CPU 실행기 설치'}</button>
      {recommendedBackend==='cuda'&&<button type="button" className="inline-flex h-7 items-center rounded-md border border-[#dce3ed] px-2 text-[11px] text-[#65768a] disabled:opacity-40" disabled={installing||Boolean(working)} onClick={()=>void installEngine('cpu')}>CPU 버전</button>}
-    </span>}<span>MLX: {runtime.capabilities?.mlx.available?'실행기 사용 가능':'Apple Silicon + mlx-lm 필요'}</span></span>
+    </span>}
+    {runtime.capabilities?.gguf.available&&recommendedBackend==='cuda'&&runtime.capabilities.gguf.backend==='cpu'&&<button type="button" disabled={installing||Boolean(working)} onClick={()=>void installEngine('cuda')} className="inline-flex h-7 items-center rounded-md border border-[#dce3ed] px-2 text-[11px] text-[#556bb4] disabled:opacity-40">CUDA 실행기로 전환</button>}
+    <span>MLX: {runtime.capabilities?.mlx.available?'실행기 사용 가능':'Apple Silicon + mlx-lm 필요'}</span></span>
    <div className="flex items-center gap-3"><label className="flex items-center gap-1.5 text-[11px] text-[#6d7b8d]">컨텍스트 <SelectInput value={context} onChange={e=>setContext(Number(e.target.value))} className="!w-20 !py-1"><option value={2048}>2K</option><option value={4096}>4K</option><option value={8192}>8K</option><option value={16384}>16K</option><option value={32768}>32K</option></SelectInput></label><label className="flex items-center gap-1.5 text-[11px] text-[#6d7b8d]"><input type="checkbox" checked={gpu} onChange={e=>setGpu(e.target.checked)}/> GPU</label></div>
   </div>
   {runtime.status==='error'&&runtime.error&&<div className="border-t border-rose-100 bg-rose-50 px-4 py-2 text-[11px] text-rose-700">{runtime.error}</div>}

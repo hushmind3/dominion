@@ -68,7 +68,7 @@ class LocalRunner{
    if(model.format==='gguf'&&support?.installable){
     const token=++this.launchToken;
     this.state={status:'installing',id,repo:model.repo,format:model.format,name:model.repo+' / '+model.label,error:''};
-    const backend=gpu&&process.platform==='win32'&&this.capabilities().gpu?.kind==='dedicated'?'cuda':'cpu';
+    const backend=gpu&&process.platform==='win32'&&process.arch==='x64'?'cuda':'cpu';
     llamaInstaller.begin({backend},async()=>{
      this.cachedAt=0;
      if(token===this.launchToken&&this.state.status==='installing')await this.load({id,gpu,context});
