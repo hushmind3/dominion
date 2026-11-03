@@ -5,6 +5,7 @@ import {WORKSPACE} from './config.mjs';
 import {newSession,runTurn} from './engine.mjs';
 import {streamCompletion} from './providers.mjs';
 import {likelyRequiresTools} from './tool-compat.mjs';
+import {resolveModel} from './model-router.mjs';
 
 // The run snapshot and event are committed together; the SSE bus is notification only.
 db.exec(`CREATE TABLE IF NOT EXISTS harness_runs (
@@ -131,7 +132,8 @@ function normalizePlan(raw,maxSteps,completedIds=[]){
  return steps;
 }
 async function planWithModel(r,{reason='',completed=[],signal}={}){
- const model=modelFor(r.planner,r.executor);
+ let model;
+ try{model=modelFor(r.planner,r.executor);}catch{model=await resolveModel(r.planner);}
  const agents=all('agent').filter(a=>a.providerId&&a.model).map(a=>({id:a.id,name:a.name}));
  const memory=all('memory').slice(0,10).map(x=>clip(x.text,400)).join('\n');
  const skills=all('skill').filter(x=>x.enabled).slice(0,6).map(x=>x.name+': '+clip(x.instructions,300)).join('\n');
@@ -161,7 +163,9 @@ async function planWithModel(r,{reason='',completed=[],signal}={}){
  }
 }
 async function executeWithModel(r,step,feedback,signal){
- const selected=modelFor(step.agentId?{agentId:step.agentId}:r.executor,r.executor);
+ let selected;
+ try{selected=modelFor(step.agentId?{agentId:step.agentId}:r.executor,r.executor);}
+ catch{selected=await resolveModel({...r.executor,agentId:step.agentId||r.executor.agentId});}
  const sessionId=newSession({agentId:selected.agentId,providerId:selected.providerId,model:selected.model,title:step.name}).id;
  let toolCalls=0;const evidence=[];
  const previous=r.steps.filter(s=>s.status==='completed').map(s=>s.name+': '+clip(s.output,2000)).join("\n\n");

@@ -63,7 +63,6 @@ export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onS
     setCommandInfo('사용 가능한 도구 '+found.filter(x=>x.name).length+'개\n'+found.filter(x=>x.name).map(x=>x.name).join(' · '));return;
    }
    if(name==='goal'){
-    if(!model||!providerId)throw Error('모델을 먼저 연결하세요.');
     const goal=await post<{id:string}>('/api/goals',{goal:arg,executor:{agentId,providerId,model}});
     setCommandInfo('자율 작업 등록: '+goal.id.slice(0,8)+' · 실행 기록에서 상태를 확인할 수 있습니다.');return;
    }
@@ -113,7 +112,7 @@ export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onS
    await executeCommand(text);return;
   }
   if(busy)return;
-  if(!providerId||!model){setError('모델 허브에서 실행 중인 모델이나 API 모델을 먼저 선택해주세요.');return}
+  // Unconfigured sessions are routed automatically to an available provider.
   setBusy(true);setError('');setCommandInfo('');setLive('');setThought('');setInput('');setSlashOpen(false);setToolStatus('');
   try{
    let id=current;
