@@ -95,7 +95,7 @@ function modelFor(config={},fallback={}){
  return {agentId:specified?.id||candidate.id||'general',providerId,model};
 }
 function extractJson(raw){
- const value=clip(raw,30000).trim().replace(/^`{3}(?:json)?s*/i,'').replace(/s*`{3}$/,'');
+ const value=clip(raw,30000).trim().replace(/^`{3}(?:json)?/i,'').replace(/`{3}$/,'').trim();
  try{return JSON.parse(value);}catch{
   const start=value.indexOf('{'),end=value.lastIndexOf('}');
   if(start<0||end<=start)throw Error('Planner did not produce a valid JSON plan');
@@ -125,12 +125,7 @@ function normalizePlan(raw,maxSteps){
 }
 async function planWithModel(r){
  const model=modelFor(r.planner,r.executor),agents=all('agent').filter(a=>a.providerId&&a.model).map(a=>({id:a.id,name:a.name}));
- const prompt='Plan this goal as a JSON object {"steps":[{"id":"s1","name":"...","prompt":"...","dependsOn":[],"agentId":"...","requiresTools":false,"artifacts":[]}]}.
-'+
-  'Use 1-'+r.budget.maxSteps+' actionable steps, only real dependencies. Agent IDs if helpful: '+JSON.stringify(agents)+
-  '
-A step that must write files, call APIs, run code or browse requiresTools=true; artifacts contain workspace-relative paths when known. No markdown.
-Goal: '+r.goal;
+ const prompt="Plan this goal as a JSON object {\"steps\":[{\"id\":\"s1\",\"name\":\"...\",\"prompt\":\"...\",\"dependsOn\":[],\"agentId\":\"...\",\"requiresTools\":false,\"artifacts\":[]}]}. \n"+'Use 1-'+r.budget.maxSteps+' actionable steps, only real dependencies. Agent IDs if helpful: '+JSON.stringify(agents)+"\nA step that must write files, call APIs, run code or browse requiresTools=true; artifacts contain workspace-relative paths when known. No markdown.\nGoal: "+r.goal;
  const response=await streamCompletion({providerId:model.providerId,model:model.model,messages:[{role:'system',content:'You are a practical task planner. Return JSON only.'},{role:'user',content:prompt}],tools:[]});
  addUsage(r.id,response.usage);
  return extractJson(response.content);
@@ -139,18 +134,10 @@ async function executeWithModel(r,step,feedback){
  const selected=modelFor(step.agentId?{agentId:step.agentId}:r.executor,r.executor);
  const sessionId=newSession({agentId:selected.agentId,providerId:selected.providerId,model:selected.model,title:step.name}).id;
  let toolCalls=0;const evidence=[];
- const previous=r.steps.filter(s=>s.status==='completed').map(s=>s.name+': '+clip(s.output,2000)).join('
-
-');
- const prompt='Goal: '+r.goal+'
-Task: '+step.prompt+'
-Prior results:
-'+clip(previous,6000)+
-  (feedback?'
-Previous verification failed: '+clip(feedback,1600)+'
-Correct it and provide evidence.':'')+
-  '
-Execute required tools, do not claim actions not performed. Conclude with a concise factual result.';
+ const previous=r.steps.filter(s=>s.status==='completed').map(s=>s.name+': '+clip(s.output,2000)).join("\n\n");
+ const prompt="Goal: "+r.goal+"\nTask: "+step.prompt+"\nPrior results:\n"+clip(previous,6000)+
+  (feedback?"\nPrevious verification failed: "+clip(feedback,1600)+"\nCorrect it and provide evidence.":'')+
+  "\nExecute required tools, do not claim actions not performed. Conclude with a concise factual result.";
  const msg=await runTurn({sessionId,agentId:selected.agentId,providerId:selected.providerId,model:selected.model,input:prompt,
   onEvent:e=>{
    if(e.type==='assistant_saved')addUsage(r.id,e.usage);
@@ -182,13 +169,7 @@ async function reviewWithModel(r,step,result){
  try{reviewer=modelFor(reviewerConfig);}catch{}
  if(reviewer&&reviewer.providerId===result.executor?.providerId&&reviewer.model===result.executor?.model)reviewer=null;
  if(!reviewer)return {passed:true,reason:'Evidence checks passed; independent model review not configured',mode:'evidence-only'};
- const prompt='Evaluate whether this output satisfies the task. Focus on evidence, not claims. Return JSON {"passed":true|false,"reason":"..."}.
-'+
-  'Goal: '+r.goal+'
-Step: '+step.prompt+'
-Result: '+clip(result.content,8000)+'
-Tool evidence: '+JSON.stringify(result.evidence).slice(0,5000)+'
-Artifacts: '+JSON.stringify(files.findings);
+ const prompt="Evaluate whether this output satisfies the task. Focus on evidence, not claims. Return JSON {\"passed\":true|false,\"reason\":\"...\"}.\nGoal: "+r.goal+"\nStep: "+step.prompt+"\nResult: "+clip(result.content,8000)+"\nTool evidence: "+JSON.stringify(result.evidence).slice(0,5000)+"\nArtifacts: "+JSON.stringify(files.findings);
  const response=await streamCompletion({providerId:reviewer.providerId,model:reviewer.model,messages:[{role:'system',content:'You are an independent result reviewer. Output JSON only.'},{role:'user',content:prompt}],tools:[]});
  addUsage(r.id,response.usage);
  const answer=extractJson(response.content);
@@ -249,9 +230,7 @@ export async function runGoal(id,deps={}){
   r=goal(id);
   if(r.steps.some(s=>s.status!=='completed'))return saveEvent(id,'workflow.needs_review',{status:'needs_review',reason:'Unresolved workflow dependencies'});
   return saveEvent(id,'workflow.completed',{status:'completed',finishedAt:new Date().toISOString(),
-   summary:r.steps.map(s=>s.name+': '+clip(s.output,2000)).join('
-
-'),reason:''},{stepCount:r.steps.length,usage:r.usage});
+   summary:r.steps.map(s=>s.name+': '+clip(s.output,2000)).join("\n\n"),reason:''},{stepCount:r.steps.length,usage:r.usage});
  }catch(e){
   const state=goal(id);
   if(e.code==='BUDGET'||state?.status==='budget_exceeded'||state?.status==='cancelled')return goal(id);
