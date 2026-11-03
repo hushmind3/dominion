@@ -1,0 +1,16 @@
+{
+  "id": "x",
+  "name": "X / Twitter",
+  "category": "community",
+  "mode": "polling",
+  "docs": "https://github.com/openclaw/openclaw/blob/main/docs/channels/x.md",
+  "description": "X 멘션·응답 · 드라이버 미구현",
+  "features": [
+    "dm",
+    "groups"
+  ],
+  "fields": [],
+  "instructions": [
+    "현재 DOMINION 드라이버 미구현. 원본 채널 문서를 참고하여 독립 어댑터를 추가해야 합니다."
+  ]
+}

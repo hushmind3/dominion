@@ -1,0 +1,15 @@
+{
+  "id": "sms",
+  "name": "SMS / MMS",
+  "category": "messaging",
+  "mode": "webhook",
+  "docs": "https://github.com/openclaw/openclaw/blob/main/docs/channels/sms.md",
+  "description": "Twilio 기반 SMS·MMS 메시지 · 드라이버 미구현",
+  "features": [
+    "dm"
+  ],
+  "fields": [],
+  "instructions": [
+    "현재 DOMINION 드라이버 미구현. 원본 채널 문서를 참고하여 독립 어댑터를 추가해야 합니다."
+  ]
+}
