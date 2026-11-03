@@ -2,6 +2,7 @@ import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
 import {useState} from 'react'
 import {ArrowDown,ArrowRight,Check,ChevronRight,Layers3,Play,Plus,Settings2,Trash2,Workflow,X} from 'lucide-react'
 import {del,post} from '../api'
+import {GoalRunner} from '../components/GoalRunner'
 import {Action,FormField,Headline,Notice,Panel,Subheading,useRemote} from '../components/UI'
 type Step={id?:string;name:string;prompt:string;agentId:string;providerId:string;model:string}
 type Flow={id?:string;name:string;description:string;steps:Step[]}
@@ -17,6 +18,7 @@ export function WorkflowsPage({openSession}:{openSession:(id:string)=>void}){
  const start=async(f:Flow)=>{if(!f.id)return;try{await post('/api/workflows/'+f.id+'/run',{input:inputs[f.id]||''});setInfo(f.name+' 실행 대기열에 등록되었습니다.');await jobs.reload()}catch(e){setError((e as Error).message)}};
  return <div className="content-wrap"><Headline eyebrow="MULTI-STEP ORCHESTRATION" title="작업을 연결하면, 흐름이 됩니다." description="에이전트별 명령을 단계별로 연결하고 이전 단계의 출력을 다음 단계 입력으로 전달합니다. 실행 내용은 실제 DB에 남습니다." actions={<Action onClick={()=>{setError('');setEdit({name:'새 워크플로',description:'',steps:[emptyStep()]})}}><Plus size={17}/> 워크플로 생성</Action>}/>
  {error&&<Notice message={error}/>}
+ <GoalRunner/>
  {info&&<div className="success-line"><Check size={16}/>{info}</div>}
  <div className="section-intro"><div className="section-intro-icon"><Workflow size={22}/></div><div><strong>순차 실행 · 상태 저장 · 실패 감지</strong><p>각 단계에서 {"{{input}}"}는 시작 입력, {"{{previous}}"}는 직전 단계 출력으로 치환됩니다. 실패하면 작업 상태가 기록되고 성공으로 표시하지 않습니다.</p></div></div>
  <Subheading title="등록된 워크플로" extra={<span className="source-caption">{flows.value.length} WORKFLOWS</span>}/>
