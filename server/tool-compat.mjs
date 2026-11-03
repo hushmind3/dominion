@@ -1,7 +1,7 @@
 // Text action adapter for small local models without native function calling.
 const clip=(v,n)=>String(v??'').slice(0,n);
 const isObject=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
-const builtins=new Set(['workspace_list','workspace_read','workspace_write','file_list','file_read','file_write','shell_exec','terminal_exec','web_search','http_fetch','account_status','github_api','youtube_search','youtube_channels','memory_store','memory_search','skill_propose']);
+const builtins=new Set(['workspace_list','workspace_read','workspace_write','file_list','file_read','file_write','shell_exec','terminal_exec','web_search','http_fetch','account_status','github_api','youtube_search','youtube_channels','youtube_upload','memory_store','memory_search','skill_propose']);
 const discover={name:'tool_discover',description:'Find available tools, including connected MCP integrations',parameters:{type:'object',properties:{query:{type:'string',description:'What to search for'}},required:['query']}};
 const schema=t=>({name:t.name,description:clip(t.description||'',125),arguments:Object.fromEntries(Object.entries(t.parameters?.properties||{}).map(([key,value])=>[key,clip(value.description||value.type||'',80)])),required:t.parameters?.required||[]});
 export const selectCompatTools=(tools=[],extra=[])=>[discover,...tools.filter(t=>builtins.has(t.name)||extra.includes(t.name))].slice(0,18);

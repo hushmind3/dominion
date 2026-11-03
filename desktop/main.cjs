@@ -14,6 +14,11 @@ else{
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function freePort(){return new Promise((resolve,reject)=>{const s=net.createServer();s.once('error',reject);s.listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(()=>resolve(p))})})}
 async function start(){
+ ipcMain.removeHandler('dominion:pick-video');
+ ipcMain.handle('dominion:pick-video',async()=>{
+  const answer=await dialog.showOpenDialog(window||undefined,{title:'업로드할 영상 선택',properties:['openFile'],filters:[{name:'Video',extensions:['mp4','mov','webm','mkv','avi','m4v']}]});
+  return answer.canceled?'':answer.filePaths[0]||'';
+ });
  ipcMain.removeHandler('dominion:pick-model');
  ipcMain.handle('dominion:pick-model',async(_event,format)=>{
   const folder=format==='mlx';

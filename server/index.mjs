@@ -20,7 +20,7 @@ import {mcpServers,saveMcp,deleteMcp,discoverMcp} from './mcp.mjs';
 import {mcpPresets} from './mcp-presets.mjs';
 import {skillCatalog,skillCatalogMeta,importCatalogSkill} from './skill-catalog.mjs';
 import {builtin,toolsForModel,approvals,resolveApproval,recoverApprovals} from './tools.mjs';
-import {oauthProviders,oauthStart,oauthCallback,oauthCallbackBase,connections,connectorCall,saveOAuthApp} from './oauth.mjs';
+import {oauthProviders,oauthStart,oauthCallback,oauthCallbackBase,connections,connectorCall,saveOAuthApp,youtubeUpload} from './oauth.mjs';
 import {channels,catalog,channelById,saveChannel,deleteChannel,diagnoseChannel,handleChannelWebhook,startChannels} from './channels.mjs';
 import {activeRoomStatus,stopRoomFlow,resetRoomFlow} from './room-orchestrator.mjs';
 import {commandDefinitions} from './commands.mjs';
@@ -31,6 +31,7 @@ async function body(req){
  try{return parts.length?JSON.parse(Buffer.concat(parts).toString('utf8')):{};}catch{throw Error('Invalid JSON body');}
 }
 const methods=new Set(['POST','PUT','PATCH','DELETE']);
+const youtubeJobs=new Map();
 function authorized(req){
  if(ADMIN_TOKEN){
   const raw=req.headers['x-dominion-token']||'';
@@ -101,7 +102,7 @@ async function api(req,res,u){
  }
  const modelMatch=url.match(/^\/api\/providers\/([^/]+)\/models$/);
  if(modelMatch&&method==='GET')return json(res,await availableModels(modelMatch[1]));
- if(url==='/api/model-library/catalog'&&method==='GET')return json(res,await modelLibrary.catalog({q:u.searchParams.get('q')||'',format:u.searchParams.get('format')||'',sort:u.searchParams.get('sort')||'',limit:u.searchParams.get('limit')||80}));
+ if(url==='/api/model-library/catalog'&&method==='GET')return json(res,await modelLibrary.catalog({q:u.searchParams.get('q')||'',format:u.searchParams.get('format')||'',sort:u.searchParams.get('sort')||'',limit:u.searchParams.get('limit')||80,chatOnly:u.searchParams.get('chat')!=='0'}));
  if(url==='/api/model-library/details'&&method==='GET')return json(res,await modelLibrary.detail(u.searchParams.get('id')||''));
  if(url==='/api/model-library/installed'&&method==='GET')return json(res,await modelLibrary.installed());
  if(url==='/api/model-library/jobs'&&method==='GET')return json(res,modelLibrary.jobsList());
@@ -256,6 +257,22 @@ async function api(req,res,u){
  if(channelId&&method==='GET')return json(res,channelById(channelId[1])||{error:'Channel not found'});
  const diagnostic=url.match(/^\/api\/channels\/([^/]+)\/diagnose$/);
  if(diagnostic&&method==='POST')return json(res,await diagnoseChannel(diagnostic[1]));
+ if(url==='/api/youtube/status'&&method==='GET'){
+  const account=connections().find(x=>x.provider==='google');
+  return json(res,{connected:Boolean(account),uploadAllowed:Boolean(account&&String(account.scopes||'').includes('youtube.upload')),account:account?{displayName:account.displayName,scopes:account.scopes}:null,uploads:[...youtubeJobs.values()].slice(-20)});
+ }
+ if(url==='/api/youtube/upload'&&method==='POST'){
+  const input=await body(req);
+  const job={id:crypto.randomUUID(),status:'uploading',progress:0,sent:0,total:0,title:String(input.title||''),privacyStatus:String(input.privacyStatus||'private'),createdAt:new Date().toISOString()};
+  youtubeJobs.set(job.id,job);
+  youtubeUpload({path:input.path,title:input.title,description:input.description,privacyStatus:input.privacyStatus,tags:Array.isArray(input.tags)?input.tags:String(input.tags||'').split(',').map(tag=>tag.trim()).filter(Boolean),onProgress:({sent,total})=>{job.sent=sent;job.total=total;job.progress=Math.round(sent/Math.max(1,total)*100)}})
+   .then(result=>Object.assign(job,{status:'completed',progress:100,result}))
+   .catch(error=>Object.assign(job,{status:'failed',error:String(error?.message||error)}));
+  return json(res,job,202);
+ }
+ if(url==='/api/youtube/uploads'&&method==='GET')return json(res,[...youtubeJobs.values()].slice(-20));
+ const youtubeJob=url.match(/^\/api\/youtube\/uploads\/([^/]+)$/);
+ if(youtubeJob&&method==='GET'){const job=youtubeJobs.get(youtubeJob[1]);return json(res,job||{error:'Upload not found'},job?200:404)}
  if(url==='/api/oauth/providers'&&method==='GET')return json(res,oauthProviders());
  const oauthApp=url.match(/^\/api\/oauth\/providers\/(github|google)$/);
  if(oauthApp&&method==='POST')return json(res,saveOAuthApp(oauthApp[1],await body(req)));

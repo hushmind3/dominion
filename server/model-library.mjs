@@ -46,7 +46,7 @@ export class ModelLibrary{
   if(!REPO.test(repo))throw Error('Invalid Hugging Face repository');
   return this.hub+'/'+route+repo.split('/').map(encodeURIComponent).join('/');
  }
- async catalog({q='',format='',sort='downloads',limit=80}={}){
+ async catalog({q='',format='',sort='downloads',limit=80,chatOnly=true}={}){
   const search=String(q).trim().slice(0,120);
   const max=Math.min(500,Math.max(20,Number(limit)||80));
   const order=['downloads','likes','lastModified'].includes(sort)?sort:'downloads';
@@ -63,6 +63,10 @@ export class ModelLibrary{
    const tagText=x.id+' '+(x.tags||[]).join(' ');
    if(format==='gguf'&&!/gguf/i.test(tagText))continue;
    if(format==='mlx'&&!/mlx/i.test(tagText))continue;
+   const task=String(x.pipeline_tag||'').toLowerCase();
+   const hay=task+' '+tagText.toLowerCase();
+   const isChat=/text-generation|conversational|image-text-to-text|any-to-any/i.test(hay)&&!/text-to-speech|text-to-image|image-to-image|automatic-speech-recognition|feature-extraction|sentence-similarity|reranker|audio-classification/i.test(hay);
+   if(chatOnly&&!isChat)continue;
    if(!search&&!/(gguf|mlx)/i.test(tagText))continue;
    if(!map.has(x.id))map.set(x.id,x);
   }
@@ -127,7 +131,9 @@ export class ModelLibrary{
    const res=await this.fetcher(this.url(repo,'')+'/raw/'+revision+'/README.md',{signal:AbortSignal.timeout(7000)});
    if(res.ok)readme=(await res.text()).slice(0,14000);
   }catch{}
-  return {...this._summary(item),revision,architecture:item.config?.model_type||item.cardData?.base_model||'',license:item.cardData?.license||'',readme,options:groupsFor(files,item.tags||[],repo)};
+  const summary=this._summary(item);
+  const cleaned=readme.replace(/^---[\s\S]*?---/,'').replace(/\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)/g,' ').replace(/!\[[^\]]*\]\([^)]*\)/g,' ').replace(/<[^>]+>/g,' ').split('\n').map(line=>line.trim()).find(line=>line&&!line.startsWith('#')&&!line.startsWith('|')&&!line.startsWith('-')&&!line.startsWith('>')&&!line.startsWith('```'))||'';
+  return {...summary,description:summary.description||cleaned.replace(/[*_`[\]]/g,'').replace(/\s+/g,' ').trim().slice(0,500),revision,architecture:item.config?.model_type||item.cardData?.base_model||'',license:item.cardData?.license||'',readme,options:groupsFor(files,item.tags||[],repo)};
  }
  _key(repo,revision,optionId){return createHash('sha256').update(repo+'|'+revision+'|'+optionId).digest('hex').slice(0,24);}
  _view(job){const {controller,promise,...data}=job;return {...data};}

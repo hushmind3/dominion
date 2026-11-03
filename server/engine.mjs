@@ -18,7 +18,7 @@ function systemFor(agent,goal=''){
  const home=os.homedir();
  const paths='Computer paths: home='+home+'; Desktop='+path.join(home,'Desktop')+'; Documents='+path.join(home,'Documents')+'; Downloads='+path.join(home,'Downloads')+'. Use file_list/file_read/file_write with absolute paths for these folders, and shell_exec for real system commands. workspace_* tools only cover the workspace folder.';
  const accounts=oauthConnections().map(account=>account.provider+' ('+account.displayName+')');
- const accountLine='Connected accounts: '+(accounts.length?accounts.join(', '):'none')+'. Use account_status, github_api and youtube_search/youtube_channels for real account actions; never claim account access without a successful tool result.';
+ const accountLine='Connected accounts: '+(accounts.length?accounts.join(', '):'none')+'. Use account_status, github_api, youtube_search/youtube_channels and youtube_upload (approval required) for real account actions; never claim account access without a successful tool result.';
  return [agent?.systemPrompt||'You are a capable AI assistant.','You may use available tools. Do not claim to have performed a tool action unless it succeeded.',paths,accountLine,goal?'Current task: '+goal:'',recentMemory?'Relevant memory:\n'+recentMemory:'',enabledSkills?'Installed skills:\n'+enabledSkills:''].filter(Boolean).join('\n\n');
 }
 function asOpenAI(row,speakerLabels=false){

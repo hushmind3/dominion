@@ -12,6 +12,7 @@ type Runtime={status:string;id?:string;repo?:string;engine?:string;name?:string;
 const fmt=(v=0)=>v>=1073741824?(v/1073741824).toFixed(1)+' GB':v>=1048576?(v/1048576).toFixed(0)+' MB':v>=1024?(v/1024).toFixed(0)+' KB':String(v)+' B'
 const shorten=(v:string,n=45)=>v.length>n?v.slice(0,n-3)+'…':v
 const compactNumber=(v=0)=>v>=1e6?(v/1e6).toFixed(1)+'M':v>=1e3?(v/1e3).toFixed(1)+'K':String(v)
+const cleanMarkdown=(value='')=>String(value).replace(/^---[\s\S]*?---/,'').replace(/```[\s\S]*?```/g,' ').replace(/\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)/g,' ').replace(/!\[[^\]]*\]\([^)]*\)/g,' ').replace(/\[([^\]]+)\]\([^)]*\)/g,'$1').replace(/^\s*\|.*$/gm,' ').replace(/^\s*[-:]{3,}\s*$/gm,' ').replace(/<[^>]+>/g,' ').replace(/^#{1,6}\s*/gm,'').replace(/[*_`>]/g,'').replace(/\n{3,}/g,'\n\n').trim()
 const updatedLabel=(value:string)=>value?new Date(value).toLocaleDateString():''
 const picks=[
  {id:'bartowski/Qwen2.5-7B-Instruct-GGUF',label:'Qwen 2.5 7B',note:'범용 대화·도구 호출에 무난한 7B'},
@@ -30,6 +31,7 @@ export function ModelExplorer(){
  const [q,setQ]=useState('')
  const [format,setFormat]=useState('gguf')
  const [sort,setSort]=useState('downloads')
+ const [chatOnly,setChatOnly]=useState(true)
  const [catalog,setCatalog]=useState<Catalog[]>([])
  const [limit,setLimit]=useState(80)
  const [selected,setSelected]=useState('')
@@ -51,18 +53,19 @@ export function ModelExplorer(){
  useEffect(()=>{void refresh();const timer=setInterval(()=>void refresh(),1800);return()=>clearInterval(timer)},[refresh])
  useEffect(()=>{
   if(view!=='search')return
+  if(!q.trim()){setCatalog([]);setLoading(false);setError('');return}
   let valid=true
   const timer=setTimeout(async()=>{
    setLoading(true)
    try{
-    const data=await get<Catalog[]>('/api/model-library/catalog?'+new URLSearchParams({q,format,sort,limit:String(limit)}))
+    const data=await get<Catalog[]>('/api/model-library/catalog?'+new URLSearchParams({q,format,sort,limit:String(limit),chat:chatOnly?'1':'0'}))
     if(valid){setCatalog(data);setSelected(s=>data.some(m=>m.id===s)?s:'');setError('')}
    }catch(e){if(valid)setError((e as Error).message)}
    finally{if(valid)setLoading(false)}
   },300)
   return()=>{valid=false;clearTimeout(timer)}
- },[view,q,format,sort,limit])
- useEffect(()=>{setLimit(80)},[q,format,sort])
+ },[view,q,format,sort,limit,chatOnly])
+ useEffect(()=>{setLimit(80)},[q,format,sort,chatOnly])
  useEffect(()=>{
   if(view!=='search'||!selected){setDetail(null);setVariant('');return}
   let active=true
@@ -72,6 +75,8 @@ export function ModelExplorer(){
   }).catch(e=>{if(active)setError((e as Error).message)})
   return()=>{active=false}
  },[selected,view,format])
+ const readmePlain=detail?cleanMarkdown(detail.readme):''
+ const readmeSummary=detail?(detail.description||readmePlain.slice(0,600)):''
  const option=detail?.options.find(o=>o.id===variant)
  const selectedJob=jobs.find(j=>j.repo===detail?.id&&j.optionId===option?.id&&['resolving','downloading','paused','failed','cancelled'].includes(j.status))
  const existing=installed.find(m=>m.repo===detail?.id&&m.optionId===option?.id)
@@ -135,26 +140,27 @@ export function ModelExplorer(){
    <div className="min-w-0 border-b border-[#E7E0D5] lg:border-b-0 lg:border-r">
     <div className="border-b border-[#EFE9DF] p-4">
      <div className="flex h-11 items-center gap-2 rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] px-3 focus-within:border-[#C96442]"><Search size={17} className="text-[#A79C8E]"/><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Hugging Face 모델 검색 (gemma, qwen, uncensored…)" className="h-full w-full min-w-0 bg-transparent text-[14px] outline-none placeholder:text-[#A79C8E]"/>{q&&<button type="button" aria-label="검색어 지우기" onClick={()=>setQ('')} className="rounded p-1 text-[#A79C8E] hover:bg-[#F3EEE5]"><X size={14}/></button>}</div>
-     <div className="mt-3 flex flex-wrap items-center gap-1.5">{[{id:'all',label:'전체'},{id:'gguf',label:'GGUF'},{id:'mlx',label:'MLX'}].map(item=><Button key={item.id} variant={format===item.id?'primary':'ghost'} onClick={()=>setFormat(item.id)} className="!px-3 !py-1.5 !text-[12px]">{item.label}</Button>)}<SelectInput aria-label="정렬" value={sort} onChange={e=>setSort(e.target.value)} className="!ml-auto !w-auto !py-1.5 !text-[12px]"><option value="downloads">다운로드순</option><option value="likes">인기순</option><option value="lastModified">최신순</option></SelectInput></div>
-     <div className="mt-2 flex items-center justify-between text-[11px] text-[#8A8176]"><span>{loading?'검색 중…':catalog.length+'개 결과'}</span><span>Hugging Face 실시간</span></div>
+     <div className="mt-3 flex flex-wrap items-center gap-1.5">{[{id:'all',label:'전체'},{id:'gguf',label:'GGUF'},{id:'mlx',label:'MLX'}].map(item=><Button key={item.id} variant={format===item.id?'primary':'ghost'} onClick={()=>setFormat(item.id)} className="!px-3 !py-1.5 !text-[12px]">{item.label}</Button>)}<Button variant={chatOnly?'primary':'ghost'} onClick={()=>setChatOnly(value=>!value)} className="!px-3 !py-1.5 !text-[12px]">대화 모델만</Button><SelectInput aria-label="정렬" value={sort} onChange={e=>setSort(e.target.value)} className="!ml-auto !w-auto !py-1.5 !text-[12px]"><option value="downloads">다운로드순</option><option value="likes">인기순</option><option value="lastModified">최신순</option></SelectInput></div>
+     <div className="mt-2 flex items-center justify-between text-[11px] text-[#8A8176]"><span>{loading?'검색 중…':q?catalog.length+'개 결과':'검색어를 입력하세요'}</span><span>Hugging Face 실시간</span></div>
     </div>
     <div className="max-h-[610px] overflow-y-auto">
      {!q&&<div className="border-b border-[#EFE9DF] p-3"><div className="mb-2 px-1 text-[11px] font-semibold text-[#8A8176]">에디터 추천</div><div className="grid gap-1.5">{picks.map(pick=><Button key={pick.id} variant="ghost" onClick={()=>setSelected(pick.id)} className="!h-auto w-full !justify-start gap-2.5 !border-0 rounded-xl px-2.5 py-2 text-left hover:bg-[#FAF7F1]"><span className="grid size-8 shrink-0 place-items-center rounded-lg bg-[#F7E8E1] text-[12px] font-bold text-[#C96442]">{pick.label.slice(0,1)}</span><span className="min-w-0 flex-1"><strong className="block truncate text-[12px] text-[#3A342D]">{pick.label}</strong><small className="block truncate text-[10px] text-[#8A8176]">{pick.note}</small></span><ArrowRight size={13} className="shrink-0 text-[#A79C8E]"/></Button>)}</div></div>}
      {loading&&<div className="space-y-2 p-3">{[0,1,2,3].map(i=><div key={i} className="h-20 animate-pulse rounded-xl bg-[#FAF7F1]"/>)}</div>}
      {!loading&&catalog.map(m=><button type="button" key={m.id} onClick={()=>setSelected(m.id)} className={'w-full border-b border-[#EFE9DF] px-4 py-3.5 text-left transition-colors hover:bg-[#FAF7F1] '+(selected===m.id?'bg-[#F7E8E1]':'')}><div className="flex items-start gap-3"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#F3EEE5] text-[13px] font-bold text-[#C96442]">{m.name.slice(0,1).toUpperCase()}</span><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><strong className="truncate text-[13px] text-[#24211D]">{m.name}</strong>{m.gated&&<span className="rounded bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700">gated</span>}</div><div className="mt-0.5 truncate text-[11px] text-[#8A8176]">{m.author} · {m.task||m.library||'model'}</div><p className="mt-1 line-clamp-2 text-[11px] leading-5 text-[#5C544A]">{m.description||'설명을 불러오는 중입니다.'}</p><div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-[#8A8176]"><span>↓ {compactNumber(m.downloads)}</span><span>♡ {compactNumber(m.likes)}</span><span>{updatedLabel(m.updatedAt)}</span><span className="rounded bg-[#F3EEE5] px-1.5 py-0.5 font-semibold">{/gguf/i.test(m.tags.join(' '))?'GGUF':'MLX'}</span></div></div></div></button>)}
-     {!loading&&!catalog.length&&<div className="p-8 text-center text-[12px] text-[#7C7469]">검색 결과가 없습니다.</div>}
+     {!loading&&!catalog.length&&<div className="p-8 text-center text-[12px] leading-6 text-[#7C7469]">{q?'검색 결과가 없습니다.':'검색어를 입력하거나 위의 에디터 추천을 선택하세요.'}</div>}
      {!loading&&catalog.length>0&&catalog.length>=limit&&<div className="p-3"><Button variant="secondary" className="w-full" onClick={()=>setLimit(limit+80)}>더 보기 · {catalog.length}개 표시 중</Button></div>}
     </div>
    </div>
    <div className="min-w-0 p-4">
     {!selected?<div className="flex min-h-52 flex-col items-center justify-center gap-3 text-[12px] text-[#8d99a8]"><CloudDownload size={23}/>왼쪽에서 모델을 선택하세요.</div>:!detail?<div className="flex h-44 items-center justify-center text-[12px] text-[#8290a1]"><LoaderCircle size={17} className="mr-2 animate-spin"/>모델 상세 정보 불러오는 중</div>:<>
-     <div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="break-all text-[14px] font-bold text-[#273448]">{detail.id}</h3><div className="mt-1 text-[11px] text-[#8b97a6]">{detail.architecture||'언어 모델'}{detail.license?' · '+detail.license:''} · {detail.options.length}개 배포 형식</div></div><a href={'https://huggingface.co/'+detail.id} target="_blank" rel="noreferrer" aria-label="Hugging Face에서 보기" className="rounded-md p-2 text-[#7C7469] hover:bg-[#F3EEE5]"><ExternalLink size={16}/></a></div>
-     <p className="mt-3 line-clamp-3 text-[11px] text-[#708094]">{detail.description||detail.readme.replace(/^---[\s\S]*?---/,'').replace(/[#*\[\]>]/g,'').slice(0,250)||'모델 파일 크기와 형식을 확인한 후 다운로드하세요.'}</p>
-     <div className="mt-5 text-[12px] font-semibold">다운로드할 파일 선택</div>
-     <div className="mt-2 max-h-52 overflow-auto rounded-lg border border-[#e8ecf2]">{detail.options.filter(o=>format==='all'||o.format===format).map(o=><button type="button" key={o.id} onClick={()=>setVariant(o.id)} className={'flex w-full items-center gap-3 border-b border-[#edf0f4] px-3 py-3 text-left last:border-0 '+(variant===o.id?'bg-[#F7E8E1]':'hover:bg-[#fafbfc]')}><span className="rounded bg-[#F3EEE5] px-1.5 py-1 text-[10px] font-semibold">{o.format.toUpperCase()}</span><span className="min-w-0 flex-1 text-[12px] font-semibold">{o.label}<span className="ml-2 text-[10px] font-normal text-[#8a98a6]">{o.shards>1?o.shards+'개 파일':''}</span></span><span className="text-[11px] text-[#748196]">{fmt(o.bytes)}</span>{variant===o.id&&<Check size={14} className="text-[#C96442]"/>}</button>)}</div>
+     <div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="break-all text-[20px] font-bold tracking-[-.02em] text-[#24211D]">{detail.name||detail.id}</h3><div className="mt-1 break-all text-[11px] text-[#8A8176]">{detail.id}</div><div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[#7C7469]"><span>↓ {compactNumber(detail.downloads)}</span><span>♡ {compactNumber(detail.likes)}</span><span>{detail.architecture||'언어 모델'}</span>{detail.license&&<span>{detail.license}</span>}<span>{detail.options.length}개 배포 형식</span></div></div><a href={'https://huggingface.co/'+detail.id} target="_blank" rel="noreferrer" aria-label="Hugging Face에서 보기" className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold text-[#C96442] hover:bg-[#F7E8E1]">Hugging Face <ExternalLink size={14}/></a></div>
+     <p className="mt-4 text-[13px] leading-6 text-[#5C544A]">{readmeSummary||'Hugging Face 모델 카드에 설명이 없습니다. 파일 형식과 용량을 확인하세요.'}</p>
+     <div className="mt-5 rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-4"><div className="flex items-center justify-between gap-2"><strong className="text-[13px] text-[#3A342D]">모델 설명 · README</strong><span className="text-[10px] font-semibold text-[#A79C8E]">HUGGING FACE</span></div><p className="mt-2 whitespace-pre-wrap text-[12px] leading-6 text-[#5C544A]">{readmePlain.slice(0,900)||readmeSummary||'README가 비어 있습니다.'}</p>{readmePlain.length>900&&<details className="mt-2"><summary className="cursor-pointer text-[11px] font-semibold text-[#C96442]">README 전체 보기</summary><pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap text-[11px] leading-5 text-[#5C544A]">{readmePlain.slice(0,14000)}</pre></details>}</div>
+     <div className="mt-5 text-[13px] font-semibold text-[#3A342D]">다운로드할 파일 선택</div>
+     <div className="mt-2 max-h-56 overflow-auto rounded-xl border border-[#E7E0D5]">{detail.options.filter(o=>format==='all'||o.format===format).map(o=><button type="button" key={o.id} onClick={()=>setVariant(o.id)} className={'flex w-full items-center gap-3 border-b border-[#EFE9DF] px-3.5 py-3.5 text-left last:border-0 '+(variant===o.id?'bg-[#F7E8E1]':'hover:bg-[#FAF7F1]')}><span className="rounded bg-[#F3EEE5] px-2 py-1 text-[10px] font-semibold text-[#7C7469]">{o.format.toUpperCase()}</span><span className="min-w-0 flex-1 text-[13px] font-semibold text-[#3A342D]">{o.label}<span className="ml-2 text-[10px] font-normal text-[#8A8176]">{o.quantization&&o.quantization!==o.label?o.quantization:''}{o.shards>1?' · '+o.shards+'개 파일':''}</span></span><span className="text-[12px] text-[#5C544A]">{fmt(o.bytes)}</span>{variant===o.id&&<Check size={15} className="text-[#C96442]"/>}</button>)}</div>
      {!detail.options.length&&<p className="mt-3 text-[12px] text-amber-700">이 저장소에는 지원되는 GGUF·MLX 모델 파일이 없습니다.</p>}
-     {option&&<div className="mt-4 flex flex-wrap items-center gap-3 rounded-lg bg-[#f8f9fb] p-3">
-      <span className="text-[11px] text-[#68778a]">다운로드 용량 <strong>{fmt(option.bytes)}</strong></span>
+     {option&&<div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl bg-[#FAF7F1] p-3">
+      <span className="text-[12px] text-[#5C544A]">다운로드 용량 <strong>{fmt(option.bytes)}</strong></span>
       {existing?<button type="button" className={btn} onClick={()=>{setView('installed')}}><Check size={14}/> 설치됨 · 내 모델 보기</button>:
        <button type="button" className="flex h-8 items-center gap-2 rounded-lg bg-[#C96442] px-3 text-[11px] font-semibold text-white disabled:opacity-40" disabled={Boolean(working)||['resolving','downloading'].includes(selectedJob?.status||'')||detail.gated} onClick={()=>void safe('download',()=>post('/api/model-library/download',{repo:detail.id,optionId:option.id}))}><ArrowDownToLine size={14}/>{working==='download'?'요청 중':selectedJob?.status==='downloading'?'다운로드 중':'다운로드 시작'}</button>}
       {detail.gated&&<span className="text-[11px] text-amber-700">접근 승인 필요</span>}

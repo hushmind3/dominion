@@ -5,6 +5,7 @@ import {CapabilitiesPage} from './pages/Capabilities'
 import {MemoryPage} from './pages/Memory'
 import {WorkflowsPage} from './pages/Workflows'
 import {ChatPage} from './pages/Chat'
+import {VideoPage} from './pages/Video'
 import {ModelHub} from './pages/Models'
 import {AgentsPage,RoomsPage} from './pages/Agents'
 import {ExtensionsPage} from './pages/Extensions'
@@ -80,6 +81,7 @@ export default function App(){
     {page==='memory'&&<MemoryPage/>}
     {page==='workflows'&&<WorkflowsPage openSession={id=>navigate('chat',id)}/>}
     {page==='chat'&&<ChatPage sessionId={session} onSession={setSession} openModels={()=>navigate('models')}/>}
+    {page==='video'&&<VideoPage navigate={navigate}/>}
     {page==='models'&&<ModelHub/>}
     {page==='agents'&&<AgentsPage/>}
     {page==='rooms'&&<RoomsPage openSession={id=>navigate('chat',id)}/>}

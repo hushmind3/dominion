@@ -5,7 +5,7 @@ import {spawn} from 'node:child_process';
 import {WORKSPACE} from './config.mjs';
 import {all,get,put,log,bus} from './store.mjs';
 import {discoverMcp,callMcp} from './mcp.mjs';
-import {connections,connectorCall,githubRequest} from './oauth.mjs';
+import {connections,connectorCall,githubRequest,youtubeUpload} from './oauth.mjs';
 // A cancelled MCP invocation may already have modified a remote system; the
 // caller must journal the outcome as uncertain instead of treating it as undone.
 export async function awaitOrAbort(promise,signal){
@@ -32,6 +32,7 @@ export const builtin=[
  {name:'github_api',description:'Call the GitHub REST API as the connected GitHub account. Supports GET, POST, PATCH, PUT and DELETE with a path such as /user/repos or /repos/owner/name/issues. Write methods require approval.',parameters:params({method:{type:'string',enum:['GET','POST','PATCH','PUT','DELETE'],description:'HTTP method'},path:{type:'string',description:'GitHub API path beginning with /'},body:{type:'object',description:'Optional JSON body for write methods'}},['method','path'])},
  {name:'youtube_search',description:'Search YouTube videos using the connected Google account',parameters:params({query:{type:'string',description:'Search query'},maxResults:{type:'number',description:'1-50 results'}},['query'])},
  {name:'youtube_channels',description:'List the connected YouTube channels and statistics',parameters:params({})},
+ {name:'youtube_upload',description:'Upload a local video file to YouTube as the connected Google account. Requires explicit approval and YouTube upload scope.',parameters:params({path:{type:'string',description:'Absolute local video file path'},title:{type:'string',description:'Video title'},description:{type:'string',description:'Video description'},privacyStatus:{type:'string',enum:['private','unlisted','public'],description:'Privacy status'},tags:{type:'array',items:{type:'string'},description:'Optional tags'}},['path','title']),approval:true},
  {name:'memory_store',description:'Save a concise durable fact for future sessions',parameters:params({text:{type:'string'},scope:{type:'string'}},['text'])},
  {name:'memory_search',description:'Find saved knowledge relevant to a topic',parameters:params({query:{type:'string'}},['query'])},
  {name:'skill_propose',description:'Draft a reusable skill for user review and installation',parameters:params({name:{type:'string'},instructions:{type:'string'}},['name','instructions'])}
@@ -301,6 +302,7 @@ export async function executeTool(tool,args,onEvent=()=>{},context={}){
   }
   case 'youtube_search':result=await connectorCall('google','youtube_search',{q:args.query,maxResults:args.maxResults});break;
   case 'youtube_channels':result=await connectorCall('google','youtube_channels');break;
+  case 'youtube_upload':result=await youtubeUpload({path:args.path,title:args.title,description:args.description,privacyStatus:args.privacyStatus,tags:args.tags});break;
   case 'memory_store':result=put('memory',{text:String(args.text).slice(0,3000),scope:String(args.scope||'shared')});break;
   case 'memory_search':{
    const terms=String(args.query).toLowerCase().split(/\s+/).filter(Boolean);

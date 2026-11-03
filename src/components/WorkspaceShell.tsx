@@ -1,11 +1,11 @@
 import {useEffect,useMemo,useState} from 'react'
-import {Activity,Blocks,BookOpenText,Bot,ChevronDown,ChevronRight,Command,CommandIcon,Cpu,House,Layers3,Menu,MessageSquare,RadioTower,Search,Settings2,UsersRound,Workflow,X,Plus} from 'lucide-react'
+import {Activity,Blocks,BookOpenText,Bot,ChevronDown,ChevronRight,Clapperboard,Command,CommandIcon,Cpu,House,Layers3,Menu,MessageSquare,RadioTower,Search,Settings2,UsersRound,Workflow,X,Plus} from 'lucide-react'
 import {Button,TextInput} from './Primitives'
 
-export type PageId='home'|'chat'|'models'|'agents'|'rooms'|'workflows'|'memory'|'capabilities'|'extensions'|'connections'|'automations'|'activity'|'settings'
+export type PageId='home'|'chat'|'video'|'models'|'agents'|'rooms'|'workflows'|'memory'|'capabilities'|'extensions'|'connections'|'automations'|'activity'|'settings'
 type NavItem={id:PageId;label:string;icon:typeof House}
 export const navigation:{title:string;items:NavItem[];collapsible?:boolean}[]=[
- {title:'작업 공간',items:[{id:'chat',label:'채팅',icon:MessageSquare},{id:'models',label:'모델 관리',icon:Cpu},{id:'agents',label:'에이전트',icon:Bot}]},
+ {title:'작업 공간',items:[{id:'chat',label:'채팅',icon:MessageSquare},{id:'video',label:'영상',icon:Clapperboard},{id:'models',label:'모델 관리',icon:Cpu},{id:'agents',label:'에이전트',icon:Bot}]},
  {title:'확장',items:[{id:'capabilities',label:'연결 · 채널',icon:RadioTower},{id:'extensions',label:'MCP · 스킬',icon:Blocks},{id:'memory',label:'메모리',icon:BookOpenText}]},
  {title:'운영',items:[{id:'automations',label:'자동화',icon:Workflow},{id:'activity',label:'실행 기록',icon:Activity},{id:'settings',label:'설정',icon:Settings2}]},
  {title:'고급',collapsible:true,items:[{id:'rooms',label:'멀티 에이전트',icon:UsersRound},{id:'workflows',label:'반복 작업',icon:Workflow}]}

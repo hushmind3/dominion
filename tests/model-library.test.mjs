@@ -42,12 +42,14 @@ test('native catalog returns real repository fields and filters by format',async
  try{
   const fake=fakeHub();
   const m=new ModelLibrary({root,hub:'https://hf.test',fetcher:fake.fetcher});
-  const all=await m.catalog();
-  assert.deepEqual(fake.calls.filter(x=>x.path==='/api/models').map(x=>x.search),['GGUF','mlx']);
+  const chatOnly=await m.catalog();
+  assert.equal(chatOnly.length,1);
+  const all=await m.catalog({chatOnly:false});
+  assert.deepEqual(fake.calls.filter(x=>x.path==='/api/models').map(x=>x.search),['GGUF','mlx','GGUF','mlx']);
   assert.equal(all.length,2);
   assert.equal(all[0].downloads,2100);
   assert.equal(all[0].capabilities.reasoning,true);
-  const mlx=await m.catalog({format:'mlx'});
+  const mlx=await m.catalog({format:'mlx',chatOnly:false});
   assert.deepEqual(mlx.map(x=>x.id),['mlx-community/demo-2bit']);
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
