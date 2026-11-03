@@ -55,7 +55,7 @@ export class ExecutionRuntime {
       const extraTools=[],compatTools=[{name:'tool_discover',parameters:{type:'object',properties:{query:{type:'string'}},required:['query']}},...tools];
       const latestUser=prior.filter(x=>x.role==='user').at(-1)?.content||'';
       const evidenceRequired=tools.length>0&&likelyRequiresTools(latestUser);
-      let feedback='',repairs=0;
+      let feedback='',repairs=0,successfulWork=0;
       for(let iteration=0;iteration<maxIterations;iteration++){
         check();run.iterations=iteration+1;
         const nativeHistory=[{role:'system',content:system},...this.readHistory(sessionId).map(x=>this.convertMessage(x,speakerLabels))];
@@ -82,7 +82,7 @@ export class ExecutionRuntime {
             reply={...reply,content:'',tool_calls:[{id:runId+':compat:'+iteration,type:'function',function:{name:action.name,arguments:JSON.stringify(action.arguments)}}]};
             feedback='';repairs=0;
           }else if(toolMode==='compat'){
-            if(action.kind==='invalid'||(evidenceRequired&&run.toolCalls===0)){
+            if(action.kind==='invalid'||(evidenceRequired&&successfulWork===0)){
               feedback=action.kind==='invalid'?action.reason:'This request requires a real tool call. Choose an available tool instead of claiming completion.';
               emit('runtime.action_repair',{reason:feedback,attempt:++repairs});
               if(repairs>=3)throw Error('The model could not produce a valid tool action: '+feedback);
@@ -126,6 +126,8 @@ export class ExecutionRuntime {
             this.saveOperation({id:runId+':'+callId,runId,sessionId,callId,tool:call.function?.name||'',status:controller.signal.aborted?'uncertain':'failed',reason:message,finishedAt:new Date().toISOString()});
             onEvent({type:'tool_error',name:call.function?.name,callId,error:message});
           }
+          if(tool?.name!=='tool_discover'&&!output?.error&&
+             (typeof output?.exitCode!=='number'||output.exitCode===0))successfulWork++;
           // Store tool output even if cancellation arrives just after the call completes.
           this.saveMessage({session_id:sessionId,role:'tool',tool_call_id:callId,
             content:typeof output==='string'?output:JSON.stringify(output).slice(0,30000)});
