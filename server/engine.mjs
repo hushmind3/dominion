@@ -1,3 +1,5 @@
+import os from 'node:os';
+import path from 'node:path';
 import {all,get,put,remove,writeMessage,messages,log,bus,db} from './store.mjs';
 import {ExecutionRuntime} from './execution-runtime.mjs';
 import {streamCompletion,providerById} from './providers.mjs';
@@ -12,7 +14,9 @@ export function sessionMessages(id){if(!get('session',id))throw Error('Session n
 function systemFor(agent,goal=''){
  const enabledSkills=all('skill').filter(s=>s.enabled).slice(0,12).map(x=>'### '+x.name+'\n'+x.instructions).join('\n\n');
  const recentMemory=all('memory').filter(x=>x.scope==='shared'||x.scope===agent?.id).slice(0,16).map(x=>'- '+x.text).join('\n');
- return [agent?.systemPrompt||'You are a capable AI assistant.','You may use available tools. Do not claim to have performed a tool action unless it succeeded.',goal?'Current task: '+goal:'',recentMemory?'Relevant memory:\n'+recentMemory:'',enabledSkills?'Installed skills:\n'+enabledSkills:''].filter(Boolean).join('\n\n');
+ const home=os.homedir();
+ const paths='Computer paths: home='+home+'; Desktop='+path.join(home,'Desktop')+'; Documents='+path.join(home,'Documents')+'; Downloads='+path.join(home,'Downloads')+'. Use file_list/file_read/file_write with absolute paths for these folders, and shell_exec for real system commands. workspace_* tools only cover the workspace folder.';
+ return [agent?.systemPrompt||'You are a capable AI assistant.','You may use available tools. Do not claim to have performed a tool action unless it succeeded.',paths,goal?'Current task: '+goal:'',recentMemory?'Relevant memory:\n'+recentMemory:'',enabledSkills?'Installed skills:\n'+enabledSkills:''].filter(Boolean).join('\n\n');
 }
 function asOpenAI(row,speakerLabels=false){
  const v={role:row.role,content:row.content||''};
@@ -54,7 +58,7 @@ export function recoverExecutions(){
   put('execution_operation',{...op,status:'uncertain',reason:'Interrupted before tool result was persisted'});
  }
 }
-export async function runTurn({sessionId,agentId,providerId,model,input,systemOverride,reasoningLanguage,onEvent=()=>{},signal,toolsEnabled=true,speakerLabels=false,limits={}}){
+export async function runTurn({sessionId,agentId,providerId,model,input,systemOverride,reasoningLanguage,reasoningEffort,thinking,onEvent=()=>{},signal,toolsEnabled=true,speakerLabels=false,limits={}}){
  const sess=get('session',sessionId);if(!sess)throw Error('Session not found');
  if(executionRuntime.isActive(sessionId))throw Error('Session is already running');
  const agent=get('agent',agentId||sess.agentId)||null;
@@ -70,8 +74,10 @@ export async function runTurn({sessionId,agentId,providerId,model,input,systemOv
   put('session',{...sess,title,providerId:provider,model:modelId,lastActivity:new Date().toISOString()});
  }
  const summary=get('session_compaction',sessionId)?.summary;
- const system=(systemOverride||systemFor(agent))+(summary?'\n\nPrevious conversation context summary:\n'+summary:'')+(reasoningLanguage==='ko'?'\n\nWhen the provider exposes visible reasoning content, prefer explaining your thought process in Korean.':'');
- return executionRuntime.execute({sessionId,agentId:agent?.id,providerId:provider,model:modelId,system,onEvent,signal,toolsEnabled,speakerLabels,limits});
+ const policy=get('policy','default')||{};
+ const access=policy.autoApproveAll?'Full computer access is enabled. Use the real tools directly; do not ask for permission in text.':policy.autoApproveMcp?'Computer actions require approval except MCP tools.':'Computer actions require user approval.';
+ const system=(systemOverride||systemFor(agent))+(summary?'\n\nPrevious conversation context summary:\n'+summary:'')+'\n\n'+access+(reasoningLanguage==='ko'?'\n\nWhen the provider exposes visible reasoning content, prefer explaining your thought process in Korean.':'');
+ return executionRuntime.execute({sessionId,agentId:agent?.id,providerId:provider,model:modelId,system,onEvent,signal,toolsEnabled,speakerLabels,reasoningEffort,thinking,limits});
 }
 export function renameSession(id,title){
  const record=get('session',id),name=String(title||'').trim();

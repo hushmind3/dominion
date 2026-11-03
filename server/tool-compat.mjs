@@ -1,7 +1,7 @@
 // Text action adapter for small local models without native function calling.
 const clip=(v,n)=>String(v??'').slice(0,n);
 const isObject=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
-const builtins=new Set(['workspace_list','workspace_read','workspace_write','terminal_exec','web_search','memory_store','memory_search','skill_propose']);
+const builtins=new Set(['workspace_list','workspace_read','workspace_write','file_list','file_read','file_write','shell_exec','terminal_exec','web_search','http_fetch','memory_store','memory_search','skill_propose']);
 const discover={name:'tool_discover',description:'Find available tools, including connected MCP integrations',parameters:{type:'object',properties:{query:{type:'string',description:'What to search for'}},required:['query']}};
 const schema=t=>({name:t.name,description:clip(t.description||'',125),arguments:Object.fromEntries(Object.entries(t.parameters?.properties||{}).map(([key,value])=>[key,clip(value.description||value.type||'',80)])),required:t.parameters?.required||[]});
 export const selectCompatTools=(tools=[],extra=[])=>[discover,...tools.filter(t=>builtins.has(t.name)||extra.includes(t.name))].slice(0,18);
@@ -19,6 +19,8 @@ export function buildCompatMessages({system='',history=[],tools=[],extra=[],feed
   'Call ONE tool at a time. Wait for its actual result in the next message. Never claim actions succeeded without tool results.',
   'If a needed tool is not listed, call tool_discover with a short query and use its returned tool.',
   'Use only real tool names and argument keys. Prefer to act rather than merely describe actions.',
+  'For Desktop, Documents, Downloads or any path outside the workspace, use file_write/file_list/file_read with an ABSOLUTE path. Never use workspace_write for those locations.',
+  'For real system commands, installs or network operations, use shell_exec.',
   'TOOLS: '+JSON.stringify(selectCompatTools(tools,extra).map(schema)),
   'AGENT ROLE: '+clip(system,1700),
   ...(feedback?['FIX YOUR PRIOR OUTPUT: '+clip(feedback,1200)]:[])
@@ -37,10 +39,29 @@ export function buildCompatMessages({system='',history=[],tools=[],extra=[],feed
  return [{role:'system',content:lines.join('\n')},...short];
 }
 function extract(raw){
- let s=clip(raw,50000).trim();
- if(s.startsWith('\x60\x60\x60'))s=s.replace(/^\x60{3}(?:json)?\s*/i,'').replace(/\s*\x60{3}$/,'').trim();
+ const text=clip(raw,50000).trim();
+ const candidates=[];
+ let s=text;
+ if(s.startsWith('\x60\x60\x60'))s=s.replace(/^\x60{3}(?:json)?\s*/i,'').replace(/\s*\x60\x60\x60\s*$/,'').trim();
  if(s.startsWith('<tool_call>'))s=s.replace(/^<tool_call>\s*/,'').replace(/\s*<\/tool_call>$/,'').trim();
- return JSON.parse(s);
+ candidates.push(s);
+ const fence=s.match(/\x60{3}(?:json)?\s*([\s\S]*?)\x60{3}/i);
+ if(fence)candidates.push(fence[1].trim());
+ const start=s.indexOf('{');
+ if(start>=0){
+  let depth=0,inString=false,escaped=false;
+  for(let i=start;i<s.length;i++){
+   const ch=s[i];
+   if(inString){if(escaped)escaped=false;else if(ch==='\\')escaped=true;else if(ch==='"')inString=false;continue}
+   if(ch==='"'){inString=true;continue}
+   if(ch==='{')depth++;
+   else if(ch==='}'){depth--;if(depth===0){candidates.push(s.slice(start,i+1));break}}
+  }
+ }
+ for(const candidate of candidates){
+  try{return JSON.parse(candidate)}catch{}
+ }
+ throw Error('No JSON object found');
 }
 export function validateToolArguments(tool,args){
  if(!isObject(args))return 'Tool arguments must be an object';
@@ -63,19 +84,28 @@ export function validateToolArguments(tool,args){
 }
 export function parseCompatAction(raw,tools=[]){
  let value;
- try{value=extract(raw);}catch{return {kind:'invalid',reason:'Return exactly one valid JSON action (tool or final).'};}
- if(!isObject(value))return {kind:'invalid',reason:'Action must be a JSON object'};
- if(value.action==='final'){
-  if(typeof value.message!=='string'||!value.message.trim())return {kind:'invalid',reason:'final.message must be nonempty text'};
-  return {kind:'final',content:value.message};
+ try{value=extract(raw);}catch{
+  const text=clip(raw,8000).trim();
+  if(text&&!text.startsWith('{')&&!text.startsWith('[')&&!text.startsWith('\x60'))return {kind:'final',content:text};
+  return {kind:'invalid',reason:'Return exactly one valid JSON action (tool or final).'};
  }
- if(value.action!=='tool')return {kind:'invalid',reason:'action must be tool or final'};
- if(typeof value.name!=='string'||!isObject(value.arguments))return {kind:'invalid',reason:'tool action requires a tool name and arguments object'};
- const tool=tools.find(t=>t.name===value.name);
- if(!tool)return {kind:'invalid',reason:'Unknown tool '+clip(value.name,100)+'. Use tool_discover if needed.'};
- const validationError=validateToolArguments(tool,value.arguments);
+ if(!isObject(value))return {kind:'invalid',reason:'Action must be a JSON object'};
+ let argumentsValue=value.arguments??value.args??value.parameters??value.input;
+ if(typeof argumentsValue==='string'){try{argumentsValue=JSON.parse(argumentsValue)}catch{}}
+ const name=value.name??value.tool??value.tool_name;
+ const action=value.action??(name? 'tool':undefined);
+ if(action==='final'||action==='answer'||action==='respond'){
+  const message=value.message??value.content??value.answer;
+  if(typeof message!=='string'||!message.trim())return {kind:'invalid',reason:'final.message must be nonempty text'};
+  return {kind:'final',content:message};
+ }
+ if(action!=='tool')return {kind:'invalid',reason:'action must be tool or final'};
+ if(typeof name!=='string'||!isObject(argumentsValue))return {kind:'invalid',reason:'tool action requires a tool name and arguments object'};
+ const tool=tools.find(t=>t.name===name);
+ if(!tool)return {kind:'invalid',reason:'Unknown tool '+clip(name,100)+'. Use tool_discover if needed.'};
+ const validationError=validateToolArguments(tool,argumentsValue);
  if(validationError)return {kind:'invalid',reason:validationError};
- return {kind:'tool',name:tool.name,arguments:value.arguments};
+ return {kind:'tool',name:tool.name,arguments:argumentsValue};
 }
 export function likelyRequiresTools(text){
  const s=String(text||'');

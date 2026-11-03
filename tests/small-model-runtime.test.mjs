@@ -96,7 +96,7 @@ test('discovery alone is not evidence that an actual file was created',async()=>
 });
 test('malformed local model output cannot trigger an unverified success',async()=>{
  const f=fixture({responses:['I created it already.','Still done','Everything is ready']});
- await assert.rejects(f.run(),/could not produce a valid tool action/);
+ await assert.rejects(f.run(),/could not produce a valid tool action|Cannot verify execution/);
  assert.equal(f.runs.at(-1).status,'failed');
  assert.equal(f.runs.at(-1).toolCalls,0);
 });

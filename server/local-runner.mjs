@@ -88,7 +88,7 @@ class LocalRunner{
    if(!file)throw Error('GGUF weight file missing');
    const abs=model.source==='external'?model.externalPath:path.resolve(model.folder,file);
    if(model.source!=='external'&&!abs.startsWith(model.folder+path.sep))throw Error('Invalid model file path');
-   cmd=support.command;args=['-m',abs,'--host','127.0.0.1','--port',String(port),'--alias',name,'-c',String(contextSize),'--gpu-layers',gpu?'auto':'0','--no-webui'];
+   cmd=support.command;args=['-m',abs,'--host','127.0.0.1','--port',String(port),'--alias',name,'-c',String(contextSize),'--gpu-layers',gpu?'auto':'0','--jinja','--reasoning-format','deepseek','--no-webui'];
   }else{
    cmd=support.command;args=['-m','mlx_lm.server','--model',model.source==='external'?model.externalPath:model.folder,'--host','127.0.0.1','--port',String(port)];
   }

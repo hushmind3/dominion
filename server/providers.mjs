@@ -20,11 +20,13 @@ export async function availableModels(id){
  return (p.kind==='ollama'?(json.models||[]).map(m=>({id:m.name,name:m.name,size:m.size})):
  (json.data||json.models||[]).map(m=>({id:m.id||m.name,name:m.id||m.name}))).filter(m=>m.id);
 }
-export async function streamCompletion({providerId,model,messages,tools=[],onEvent,signal}){
+export async function streamCompletion({providerId,model,messages,tools=[],onEvent,signal,reasoningEffort,thinking}){
  const p=providerById(providerId),key=secretGet('provider:'+providerId);
  if(!model)throw Error('Choose a model first');
  const body={model,messages,stream:true,stream_options:{include_usage:true}};
  if(tools.length)body.tools=tools.map(t=>({type:'function',function:{name:t.name,description:t.description,parameters:t.parameters}}));
+ if(reasoningEffort)body.reasoning_effort=reasoningEffort;
+ if(thinking===false)body.chat_template_kwargs={enable_thinking:false};
  const response=await fetch(p.baseUrl+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',...(key?{Authorization:'Bearer '+key}:{})},body:JSON.stringify(body),signal:signal||AbortSignal.timeout(300000)});
  if(!response.ok)throw Error(p.name+' '+response.status+': '+(await response.text()).slice(0,900));
  if(!response.body)throw Error('Provider returned an empty stream');

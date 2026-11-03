@@ -9,6 +9,7 @@ import {pipeline} from 'node:stream/promises';
 import {DATA} from './config.mjs';
 
 const RELEASES='https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=10';
+const tarCommand=()=>process.platform==='win32'?path.join(process.env.SystemRoot||process.env.windir||'C:\\Windows','System32','tar.exe'):'tar';
 const MAX_ASSET_BYTES=2_000_000_000;
 const SUPPORTED_ARCH=['x64','arm64'];
 const executableName=platform=>platform==='win32'?'llama-server.exe':'llama-server';
@@ -135,7 +136,7 @@ export class LlamaInstaller{
     if('sha256:'+hash.digest('hex')!==asset.digest.toLowerCase())throw Error('SHA-256 mismatch: '+asset.name);
     this.progress.downloaded+=received;
     this.progress.status='extracting';this.progress.file=asset.name;
-    await runCommand('tar',['-xf',archive,'-C',stage]);
+    await runCommand(tarCommand(),['-xf',archive,'-C',stage]);
     await fsp.rm(archive,{force:true});
     this.progress.status='downloading';
    }

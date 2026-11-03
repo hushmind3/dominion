@@ -76,5 +76,5 @@ test('real gateway creates and retrieves agents, rooms, sessions and jobs', {tim
   assert.equal(response.status,200);
   assert.match(await response.text(),/fixed fixture answer/);
   response=await fetch(url+'/api/audit');assert.equal(response.status,200);
- }finally{child.kill('SIGTERM');await new Promise(resolve=>fake.close(resolve));fs.rmSync(base,{recursive:true,force:true});}
+ }finally{child.kill('SIGTERM');await new Promise(resolve=>fake.close(resolve));fs.rmSync(base,{recursive:true,force:true,maxRetries:10,retryDelay:200});}
 });

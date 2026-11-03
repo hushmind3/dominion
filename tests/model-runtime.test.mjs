@@ -11,7 +11,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const freePort=()=>new Promise(resolve=>{
  const s=net.createServer();s.listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(()=>resolve(p));});
 });
-test('native GGUF runtime starts without LM Studio, registers local provider, then unloads', {timeout:20000}, async()=>{
+test('native GGUF runtime starts without LM Studio, registers local provider, then unloads', {timeout:20000, skip: process.platform==='win32' ? 'POSIX shebang fixture is not a Windows executable' : false}, async()=>{
  const base=fs.mkdtempSync(path.join(os.tmpdir(),'dominion-native-runtime-'));
  const modelId='b'.repeat(24);
  const data=path.join(base,'state');
@@ -67,5 +67,5 @@ test('native GGUF runtime starts without LM Studio, registers local provider, th
    try{await fetch(host+'/api/model-library/runtime/unload',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});}catch{}
    server.kill('SIGTERM');
   }
- }finally{fs.rmSync(base,{recursive:true,force:true});}
+ }finally{fs.rmSync(base,{recursive:true,force:true,maxRetries:10,retryDelay:200});}
 });

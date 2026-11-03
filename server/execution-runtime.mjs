@@ -18,7 +18,7 @@ export class ExecutionRuntime {
     return true;
   }
   async execute({sessionId,agentId,providerId,model,system,onEvent=()=>{},signal,toolsEnabled=true,speakerLabels=false,
-    limits={}}){
+    reasoningEffort,thinking,limits={}}){
     if(this.#sessions.has(sessionId))throw Error('Session is already running');
     const controller=new AbortController(),start=Date.now(),runId=crypto.randomUUID();
     const maxIterations=clamp(limits.maxIterations,1,64,16);
@@ -64,7 +64,7 @@ export class ExecutionRuntime {
         const messages=toolMode==='compat'?buildCompatMessages({system,history:nativeHistory.slice(1),tools,extra:extraTools,feedback}):nativeHistory;
         emit('runtime.model_started',{iteration:iteration+1,toolMode});
         const call=mode=>this.complete({providerId,model,messages:mode==='compat'?buildCompatMessages({system,history:nativeHistory.slice(1),tools,extra:extraTools,feedback}):messages,
-          tools:mode==='compat'?[]:tools,signal:controller.signal,
+          tools:mode==='compat'?[]:tools,signal:controller.signal,reasoningEffort,thinking,
           onEvent:e=>{if(!controller.signal.aborted&&!(e.type==='text'&&(mode==='compat'||(evidenceRequired&&successfulWork===0))))onEvent(e);}});
         let reply;
         try{reply=await call(toolMode);}
