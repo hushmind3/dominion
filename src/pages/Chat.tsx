@@ -23,8 +23,8 @@ export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onS
   setBusy(true);setError('');setLive('');setThought('');setInput('');setToolStatus('');
   try{
    if(text.startsWith('/goal ')){
-    const j=await post('/api/jobs',{kind:'prompt',input:{prompt:text.slice(6),agentId,providerId,model}});
-    setToolStatus('백그라운드 작업 등록됨 · '+j.id.slice(0,8));
+    const j=await post<{id:string}>('/api/goals',{goal:text.slice(6).trim(),executor:{agentId,providerId,model}});
+    setToolStatus('목표 실행 등록됨 · '+j.id.slice(0,8)+' · 워크플로에서 진행 상황 확인');
     sessions.reload();return;
    }
    let id=current;
