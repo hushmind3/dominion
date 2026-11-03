@@ -55,7 +55,7 @@ try{
  })}));
  await page.goto(url,{waitUntil:'domcontentloaded'});
  await page.getByRole('heading',{name:'모든 지능을 한곳에서.'}).waitFor({timeout:10000});
- const nav=page.locator('aside[aria-label="주 메뉴"]');
+ const nav=page.locator('aside[aria-label="데스크톱 메뉴"]');
  await nav.waitFor();
  let wide=await nav.evaluate(e=>e.getBoundingClientRect().width);
  assert.ok(wide>200,'Default sidebar should be expanded: '+wide);
@@ -84,7 +84,7 @@ try{
  await page.getByText('UI Smoke Agent').first().waitFor({timeout:10000});
  await page.setViewportSize({width:390,height:844});
  await page.getByRole('button',{name:'사이드바 접기 또는 펼치기'}).click();
- const mobileNav=page.locator('aside[aria-label="주 메뉴"]');
+ const mobileNav=page.locator('aside[aria-label="모바일 메뉴"]');
  await mobileNav.getByRole('button',{name:'모델 라이브러리',exact:true}).click();
  await page.getByRole('heading',{name:'모델 라이브러리',exact:true}).waitFor();
  await page.screenshot({path:path.join(artifacts,'models-mobile.png'),fullPage:true});
