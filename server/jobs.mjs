@@ -1,8 +1,9 @@
 import {all,get,put,log,bus} from './store.mjs';
 import {runMeeting,runTurn,newSession} from './engine.mjs';
+import {runWorkflow} from './workflows.mjs';
 let working=false;
 export function enqueue(kind,input){
- if(!['meeting','prompt'].includes(kind))throw Error('Unsupported job');
+ if(!['meeting','prompt','workflow'].includes(kind))throw Error('Unsupported job');
  const job=put('job',{kind,input,status:'queued',createdAt:new Date().toISOString(),attempts:0});
  queueMicrotask(pump);return job;
 }
@@ -18,6 +19,7 @@ async function pump(){
    try{
     let result;
     if(job.kind==='meeting')result=await runMeeting(job.input.roomId,job.input.goal,emit);
+    else if(job.kind==='workflow')result=await runWorkflow(job,emit);
     else{
      const id=job.input.sessionId||newSession({title:job.input.prompt?.slice(0,60)||'자동 작업',agentId:job.input.agentId}).id;
      const msg=await runTurn({sessionId:id,agentId:job.input.agentId,providerId:job.input.providerId,model:job.input.model,input:job.input.prompt,onEvent:emit});
@@ -35,7 +37,7 @@ async function pump(){
 export function scheduleTick(){
  const now=Date.now();
  for(const s of all('automation').filter(x=>x.enabled&&x.nextAt&&new Date(x.nextAt).getTime()<=now)){
-  if(!['prompt','meeting'].includes(s.kind))continue;
+  if(!['prompt','meeting','workflow'].includes(s.kind))continue;
   enqueue(s.kind,s.input);
   put('automation',{...s,lastAt:new Date().toISOString(),nextAt:new Date(now+Math.max(1,Number(s.intervalMinutes)||1440)*60000).toISOString()});
  }

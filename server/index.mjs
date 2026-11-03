@@ -8,6 +8,7 @@ import {all,get,put,remove,messages,recentAudit,bus,pruneInbound} from './store.
 import {providers,saveProvider,availableModels,searchHuggingFace,modelFiles,downloadIntoLMStudio,lmDownloadStatus} from './providers.mjs';
 import {agents,sessions,newSession,runTurn,saveRoom} from './engine.mjs';
 import {enqueue,startJobs} from './jobs.mjs';
+import {workflows,saveWorkflow} from './workflows.mjs';
 import {mcpServers,saveMcp,deleteMcp,discoverMcp} from './mcp.mjs';
 import {builtin,toolsForModel,approvals,resolveApproval} from './tools.mjs';
 import {oauthProviders,oauthStart,oauthCallback,connections,connectorCall} from './oauth.mjs';
@@ -106,6 +107,15 @@ async function api(req,res,u){
  }
  const roomRun=url.match(/^\/api\/rooms\/([^/]+)\/run$/);
  if(roomRun&&method==='POST')return json(res,enqueue('meeting',{roomId:roomRun[1],goal:(await body(req)).goal}));
+ if(url==='/api/workflows'){
+  if(method==='GET')return json(res,workflows());
+  if(method==='POST')return json(res,saveWorkflow(await body(req)));
+ }
+ const flowRun=url.match(/^\/api\/workflows\/([^/]+)\/run$/);
+ if(flowRun&&method==='POST'){
+  if(!get('workflow',flowRun[1]))throw Error('Workflow not found');
+  return json(res,enqueue('workflow',{workflowId:flowRun[1],input:String((await body(req)).input||'')}));
+ }
  if(url==='/api/jobs'){
   if(method==='GET')return json(res,all('job'));
   if(method==='POST'){const x=await body(req);return json(res,enqueue(x.kind,x.input));}
@@ -113,7 +123,7 @@ async function api(req,res,u){
  if(url==='/api/automations'){
   if(method==='GET')return json(res,all('automation'));
   if(method==='POST'){
-   const x=await body(req);if(!['prompt','meeting'].includes(x.kind))throw Error('Invalid task kind');
+   const x=await body(req);if(!['prompt','meeting','workflow'].includes(x.kind))throw Error('Invalid task kind');
    return json(res,put('automation',{...x,id:x.id||crypto.randomUUID(),enabled:x.enabled!==false,nextAt:x.nextAt||new Date(Date.now()+3600000).toISOString()}));
   }
  }
@@ -171,12 +181,12 @@ async function api(req,res,u){
   const [,provider,action]=url.match(/^\/api\/connector\/(github|google)\/([^/]+)$/);
   return json(res,await connectorCall(provider,action));
  }
- const deleted=url.match(/^\/api\/(agents|rooms|skills|memories|automations|channels|mcp|providers)\/([^/]+)$/);
+ const deleted=url.match(/^\/api\/(agents|rooms|skills|memories|automations|workflows|channels|mcp|providers)\/([^/]+)$/);
  if(deleted&&method==='DELETE'){
   const kind=deleted[1],id=deleted[2];
   if(kind==='mcp')await deleteMcp(id);
   else if(kind==='channels')await deleteChannel(id);
-  else remove(({agents:'agent',rooms:'room',skills:'skill',memories:'memory',automations:'automation',providers:'provider'})[kind],id);
+  else remove(({agents:'agent',rooms:'room',skills:'skill',memories:'memory',automations:'automation',workflows:'workflow',providers:'provider'})[kind],id);
   return json(res,{ok:true});
  }
  return json(res,{error:'Not found',path:url},404);
