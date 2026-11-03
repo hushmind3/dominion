@@ -39,7 +39,8 @@ const executionRuntime=new ExecutionRuntime({
  complete:streamCompletion,discoverTools:toolsForModel,invokeTool:executeTool,
  getToolMode:(providerId,modelId)=>{
   const provider=providerById(providerId);
-  if(provider.toolMode)return provider.toolMode;
+  if(provider.kind==='anthropic')return 'native';
+   if(provider.toolMode)return provider.toolMode;
   if(provider.kind==='ollama'||(provider.local&&/(?:^|[^0-9])(?:[1-8](?:\.\d+)?)b(?:[^a-z]|$)/i.test(modelId)))return 'compat';
   return 'auto';
  },

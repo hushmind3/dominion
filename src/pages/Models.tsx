@@ -7,6 +7,7 @@ import {DialogBackdrop,DialogPanel} from '../components/Dialog'
 import {ModelExplorer} from '../components/ModelExplorer'
 
 const providerPresets=[
+ {name:'Anthropic',baseUrl:'https://api.anthropic.com/v1',kind:'anthropic',local:false},
  {name:'OpenAI',baseUrl:'https://api.openai.com/v1',kind:'openai',local:false},
  {name:'OpenRouter',baseUrl:'https://openrouter.ai/api/v1',kind:'openai',local:false},
  {name:'Groq',baseUrl:'https://api.groq.com/openai/v1',kind:'openai',local:false},
@@ -63,7 +64,7 @@ export function ModelHub(){
   {!modal&&error&&<Notice message={error}/>}
   {modal&&<DialogBackdrop onDismiss={()=>setModal(false)}><DialogPanel size="default">
    <div className="flex items-center justify-between border-b border-[#EFE9DF] p-4"><h2 className="text-[15px] font-bold">{edit?'연결 편집':'모델 서버 연결'}</h2><Button size="icon" variant="ghost" aria-label="닫기" onClick={()=>setModal(false)}><X size={16}/></Button></div>
-   <div className="grid gap-3 p-4"><FormField label="연결 이름"><TextInput value={name} onChange={e=>setName(e.target.value)} placeholder="예: 내 LM Studio"/></FormField><FormField label="API URL"><TextInput value={baseUrl} onChange={e=>setBaseUrl(e.target.value)} placeholder="http://127.0.0.1:1234/v1"/></FormField><FormField label="형식"><SelectInput value={kind} onChange={e=>setKind(e.target.value)}><option value="openai">OpenAI 호환</option><option value="ollama">Ollama</option></SelectInput></FormField><FormField label="API 키"><TextInput type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder="기존 키 유지 시 비워두기"/></FormField><label className="flex items-center gap-2 text-[12px]"><TextInput type="checkbox" checked={local} onChange={e=>setLocal(e.target.checked)}/> 로컬 서버</label>{error&&<Notice message={error}/>}</div>
+   <div className="grid gap-3 p-4"><FormField label="연결 이름"><TextInput value={name} onChange={e=>setName(e.target.value)} placeholder="예: 내 LM Studio"/></FormField><FormField label="API URL"><TextInput value={baseUrl} onChange={e=>setBaseUrl(e.target.value)} placeholder="http://127.0.0.1:1234/v1"/></FormField><FormField label="형식"><SelectInput value={kind} onChange={e=>setKind(e.target.value)}><option value="openai">OpenAI 호환</option><option value="anthropic">Anthropic 네이티브</option><option value="ollama">Ollama</option></SelectInput></FormField><FormField label="API 키"><TextInput type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder="기존 키 유지 시 비워두기"/></FormField><label className="flex items-center gap-2 text-[12px]"><TextInput type="checkbox" checked={local} onChange={e=>setLocal(e.target.checked)}/> 로컬 서버</label>{error&&<Notice message={error}/>}</div>
    <div className="flex justify-end gap-2 border-t border-[#EFE9DF] p-4"><Button onClick={()=>setModal(false)}>취소</Button><Button variant="primary" onClick={()=>void save()}><Check size={14}/> 저장</Button></div>
   </DialogPanel></DialogBackdrop>}
  </div>
