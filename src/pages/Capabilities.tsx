@@ -21,9 +21,9 @@ export function CapabilitiesPage({navigate}:{navigate:(page:Page)=>void}){
  const counts=useMemo(()=>Object.fromEntries(families.map(x=>[x.id,x.id==='all'?data.value.items.length:data.value.items.filter(v=>v.namespace===x.id).length])),[data.value.items]);
  const invoke=async(item:Item,operation:string)=>{setWorking(true);setError('');try{setResult(await post('/api/capabilities/'+item.namespace+'/'+item.id+'/'+operation,{}));void data.reload()}catch(e){setError((e as Error).message)}finally{setWorking(false)}};
  const openItem=(x:Item)=>{setDetails(x);setResult(null);setError('')};
- return <div className="content-wrap">
+ return <div className="mx-auto w-full max-w-[1320px] px-5 py-9 sm:px-8 lg:px-11 lg:pb-20">
   <Headline eyebrow="DOMINION CAPABILITY FABRIC" title="능력을 한곳에서 발견하고 실행하세요." description="모델, 메신저, MCP, 기억 스킬, OAuth 계정과 도구를 서로 다른 앱에서 복사하지 않고 하나의 독립 커널에서 조회합니다." actions={<Action variant="secondary" onClick={()=>data.reload()}><RefreshCw size={16}/> 다시 검색</Action>}/>
-  <div className="section-intro"><div className="section-intro-icon"><Layers3 size={22}/></div><div><strong>실행 가능한 능력과 카탈로그 항목을 구분합니다.</strong><p>이 화면은 실제 설정과 확장 매니페스트를 읽습니다. 준비되지 않은 채널은 코드가 없으므로 호출할 수 없으며, 모델은 실제 서버를 조회해 상태를 확인합니다.</p></div></div>
+  <div className="mb-8 flex items-center gap-4 rounded-2xl border border-blue-100 bg-blue-50 p-5"><div className="grid size-12 shrink-0 place-items-center rounded-xl bg-blue-100 text-blue-600"><Layers3 size={22}/></div><div><strong>실행 가능한 능력과 카탈로그 항목을 구분합니다.</strong><p>이 화면은 실제 설정과 확장 매니페스트를 읽습니다. 준비되지 않은 채널은 코드가 없으므로 호출할 수 없으며, 모델은 실제 서버를 조회해 상태를 확인합니다.</p></div></div>
   {data.error&&<Notice message={data.error}/>}
   <div className="cap-search"><Search size={18}/><TextInput placeholder="모든 모델 · 메신저 · 도구 통합 검색" value={query} onChange={e=>setQuery(e.target.value)}/></div>
   <div className="cap-tabs">{families.map(f=>{const Icon=f.icon;return <Button key={f.id} className={family===f.id?'active':''} onClick={()=>setFamily(f.id)}><Icon size={16}/>{f.label}<span>{counts[f.id]||0}</span></Button>})}</div>
@@ -36,9 +36,9 @@ export function CapabilitiesPage({navigate}:{navigate:(page:Page)=>void}){
     <div className="cap-tile-foot"><small>{item.status||'catalog'}</small><ArrowRight size={16}/></div>
    </Button>
   })}</div>
-  {!rows.length&&<Panel><div className="empty"><strong>해당 기능이 없습니다.</strong><p>연결된 계정과 확장 목록을 확인하세요.</p></div></Panel>}
+  {!rows.length&&<Panel><div className="flex min-h-40 flex-col items-center justify-center gap-2 p-7 text-center text-slate-500"><strong>해당 기능이 없습니다.</strong><p>연결된 계정과 확장 목록을 확인하세요.</p></div></Panel>}
   {details&&<div className="drawer-backdrop" onMouseDown={()=>setDetails(null)}><aside className="detail-drawer" onMouseDown={e=>e.stopPropagation()}>
-   <div className="drawer-head"><div><small>{details.namespace.toUpperCase()} · CAPABILITY</small><h2>{details.name}</h2></div><Button className="icon-button" onClick={()=>setDetails(null)}>✕</Button></div>
+   <div className="drawer-head"><div><small>{details.namespace.toUpperCase()} · CAPABILITY</small><h2>{details.name}</h2></div><Button size="icon" variant="ghost" onClick={()=>setDetails(null)}>✕</Button></div>
    <p className="drawer-intro">{details.description||'등록된 기능'}</p>
    <div className="setting-info"><span>연결 ID</span><strong>{details.id}</strong></div>
    <div className="setting-info"><span>상태</span><strong>{details.status||'catalog'}</strong></div>
