@@ -12,7 +12,7 @@
     "build": "vite build",
     "start": "node server/index.mjs",
     "test": "node --test --test-concurrency=1 tests/*.test.mjs",
-    "check": "tsc --noEmit && npm test && npm run build",
+    "check": "tsc --noEmit && npm test && npm run gate:engine && npm run build",
     "test:ui": "node scripts/ui-smoke.mjs",
     "gate:engine": "node scripts/engine-gate.mjs"
   },
