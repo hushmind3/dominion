@@ -76,7 +76,7 @@ try{
  await page.getByRole('button',{name:'대화',exact:true}).first().click();
  await page.getByLabel('메시지 입력').waitFor({timeout:10000});
  await page.getByRole('button',{name:'에이전트',exact:true}).first().click();
- await page.getByRole('button',{name:'에이전트 만들기'}).click();
+ await page.getByRole('button',{name:'에이전트 만들기'}).first().click();
  await page.getByRole('dialog',{name:'에이전트 만들기'}).waitFor();
  const dialog=page.getByRole('dialog',{name:'에이전트 만들기'});
  await dialog.getByLabel('이름').fill('UI Smoke Agent');
