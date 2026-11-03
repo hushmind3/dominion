@@ -9,7 +9,7 @@ import {all,get,put,remove,messages,recentAudit,bus,pruneInbound} from './store.
 import {providers,saveProvider,availableModels} from './providers.mjs';
 import {modelLibrary} from './model-library.mjs';
 import {localRunner} from './local-runner.mjs';
-import {agents,sessions,newSession,runTurn,saveRoom,executions,activeExecutions,cancelExecution,recoverExecutions} from './engine.mjs';
+import {agents,sessions,newSession,runTurn,saveRoom,executions,activeExecutions,cancelExecution,recoverExecutions,renameSession,clearSession,forkSession,compactSession} from './engine.mjs';
 import {updateAgentModels,normalizeAgentAliases} from './agent-admin.mjs';
 import {enqueue,startJobs} from './jobs.mjs';
 import {workflows,saveWorkflow} from './workflows.mjs';
@@ -126,6 +126,14 @@ async function api(req,res,u){
  if(url==='/api/sessions'){
   if(method==='GET')return json(res,sessions());
   if(method==='POST')return json(res,newSession(await body(req)));
+ }
+ const sessionCommand=url.match(/^\/api\/sessions\/([^/]+)\/(rename|clear|fork|compact)$/);
+ if(sessionCommand&&method==='POST'){
+  const [,id,operation]=sessionCommand;
+  if(operation==='rename')return json(res,renameSession(id,(await body(req)).title));
+  if(operation==='clear')return json(res,clearSession(id));
+  if(operation==='fork')return json(res,forkSession(id));
+  if(operation==='compact')return json(res,await compactSession(id,await body(req)));
  }
  const msgs=url.match(/^\/api\/sessions\/([^/]+)\/messages$/);
  if(msgs&&method==='GET')return json(res,messages(msgs[1]));
