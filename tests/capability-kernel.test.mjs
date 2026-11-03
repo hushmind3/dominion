@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {CapabilityKernel} from '../server/capability-kernel.mjs';
 import {capabilityInventory} from '../server/capability-sources.mjs';
+import {providers} from '../server/providers.mjs';
 test('generic kernel accepts independent domains without product-specific registrations',async()=>{
  const hub=new CapabilityKernel();
  hub.define('example',{id:'sample',name:'Sample',features:['search'],fields:[]},{echo:async x=>({echo:x})});
@@ -17,7 +18,7 @@ test('generic kernel accepts independent domains without product-specific regist
 test('live platform inventory joins channels, model providers, MCP and tools without duplicate placeholders',()=>{
  const items=capabilityInventory();
  assert.ok(items.some(x=>x.namespace==='channel'&&x.id==='telegram'));
- assert.ok(items.some(x=>x.namespace==='model'&&x.id==='lmstudio'));
+ assert.equal(items.filter(x=>x.namespace==='model').length,providers().length);
  assert.ok(items.some(x=>x.namespace==='tool'&&x.id==='workspace_read'));
  assert.ok(items.every(x=>Boolean(x.name)&&Boolean(x.namespace)));
 });
