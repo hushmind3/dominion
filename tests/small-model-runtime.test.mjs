@@ -28,7 +28,7 @@ function fixture({responses=[],mode='compat',failure=false}={}){
   getToolMode:()=>mode
  });
  const run=()=>runtime.execute({sessionId:'s',agentId:'a',providerId:'local',model:'4b-quantized',system:'Assistant for Korean tasks',onEvent:e=>events.push(e)});
- return {run,events,history,calls,operations,runs};
+ return {run,runtime,events,history,calls,operations,runs};
 }
 test('4B-compatible protocol runs real tool step and reports confirmed result',async()=>{
  const f=fixture({responses:[
@@ -106,4 +106,49 @@ test('ordinary Korean questions remain answerable without forcing tools',async()
  assert.equal(result.content,'안녕하세요.');
  assert.equal(likelyRequiresTools('안녕하세요?'),false);
  assert.ok(buildCompatMessages({system:'',history:[],tools}).length>=1);
+});
+
+test('a successful directory listing cannot prove a requested file write',async()=>{
+ const f=fixture({responses:[
+  '{"action":"tool","name":"workspace_list","arguments":{"path":""}}',
+  '{"action":"final","message":"파일을 작성했습니다."}',
+  '{"action":"tool","name":"workspace_write","arguments":{"path":"note.txt","content":"done"}}',
+  '{"action":"final","message":"작업이 완료되었습니다."}'
+ ]});
+ const result=await f.run();
+ assert.equal(result.content,'작업이 완료되었습니다.');
+ assert.equal(f.runs.at(-1).status,'completed');
+ assert.equal(f.runs.at(-1).toolCalls,2);
+ assert.ok(f.events.some(e=>e.type==='runtime.action_repair'));
+});
+test('unsuccessful tool output is recorded as failed and cannot verify completion',async()=>{
+ const f=fixture({responses:[
+  '{"action":"tool","name":"workspace_write","arguments":{"path":"note.txt","content":"attempt 1"}}',
+  '{"action":"final","message":"완료했습니다."}',
+  '{"action":"tool","name":"workspace_write","arguments":{"path":"note.txt","content":"attempt 2"}}',
+  '{"action":"final","message":"두 번째 시도로 완료했습니다."}'
+ ]});
+ let attempts=0;
+ f.runtime.invokeTool=async()=>++attempts===1?{exitCode:1,stderr:'Permission denied'}:{ok:true};
+ const result=await f.run();
+ assert.match(result.content,/두 번째 시도/);
+ assert.equal(f.operations[0].status,'failed');
+ assert.equal(f.operations.at(-1).status,'completed');
+ assert.ok(f.events.some(e=>e.type==='tool_error'));
+});
+test('native model cannot falsely finish after a read-only tool call',async()=>{
+ const f=fixture({mode:'native',responses:[
+  '{"action":"tool","name":"workspace_list","arguments":{"path":""}}',
+  'I created the file.', 'It is done.', 'Finished.'
+ ]});
+ await assert.rejects(f.run(),/Cannot verify execution/);
+ assert.equal(f.runs.at(-1).status,'failed');
+ assert.equal(f.runs.at(-1).toolCalls,1);
+ assert.ok(!f.events.some(e=>e.type==='runtime.completed'));
+});
+test('action requests do not silently succeed when execution tools are disabled',async()=>{
+ const f=fixture({responses:['{"action":"final","message":"완료"}']});
+ f.runtime.discoverTools=async()=>[];
+ await assert.rejects(f.run(),/no execution tools are enabled/);
+ assert.equal(f.runs.at(-1).status,'failed');
 });
