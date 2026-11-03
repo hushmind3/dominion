@@ -61,7 +61,7 @@ async function start(){
   await sleep(160);
  }
  if(!ready)throw Error('DOMINION gateway startup timed out: '+stderr);
- window=new BrowserWindow({title:'DOMINION',width:1460,height:940,minWidth:1280,minHeight:720,backgroundColor:'#f6f8fc',show:false,
+ window=new BrowserWindow({title:'DOMINION',width:760,height:850,minWidth:740,minHeight:650,backgroundColor:'#f6f8fc',show:false,
    webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true,preload:path.join(__dirname,'preload.cjs')}
  });
  session.defaultSession.setPermissionRequestHandler((_webContents,permission,callback)=>{
