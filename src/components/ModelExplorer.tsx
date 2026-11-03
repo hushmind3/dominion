@@ -7,7 +7,7 @@ type Option={id:string;format:'gguf'|'mlx';label:string;quantization:string;byte
 type Detail=Model&{revision:string;architecture:string;license:string;readme:string;options:Option[]}
 type Installed={id:string;repo:string;revision:string;optionId:string;format:'gguf'|'mlx';label:string;files:string[];bytes:number;installedAt:string}
 type Job={id:string;repo:string;optionId:string;status:string;downloaded:number;total:number;current:string;error:string}
-type Runtime={status:string;id?:string;repo?:string;name?:string;engine?:string;error?:string;capabilities?:{gguf:{available:boolean};mlx:{available:boolean};memory:{total:number;free:number;platform:string;arch:string};gpu?:{kind:string;total:number;free:number;source:string}|null}}}
+type Runtime={status:string;id?:string;repo?:string;name?:string;engine?:string;error?:string;capabilities?:{gguf:{available:boolean};mlx:{available:boolean};memory:{total:number;free:number;platform:string;arch:string};gpu?:{kind:string;total:number;free:number;source:string}|null}}
 const fmt=(n=0)=>n>=1e9?(n/1e9).toFixed(2)+' GB':n>=1e6?(n/1e6).toFixed(0)+' MB':n>=1e3?(n/1e3).toFixed(0)+' KB':n+' B'
 const compact=(n=0)=>n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(0)+'K':String(n)
 const same=(m:Installed,o:Option,detail:Detail)=>m.repo===detail.id&&m.optionId===o.id&&m.revision===detail.revision
