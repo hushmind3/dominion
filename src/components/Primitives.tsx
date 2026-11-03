@@ -5,17 +5,19 @@ const field='w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3.5 p
 
 export type ButtonProps=React.ButtonHTMLAttributes<HTMLButtonElement>&{
  variant?:'primary'|'secondary'|'ghost'|'danger'
+ size?:'default'|'sm'|'icon'
 }
-export const Button=forwardRef<HTMLButtonElement,ButtonProps>(function Button({className='',variant='secondary',type='button',...props},ref){
+export const Button=forwardRef<HTMLButtonElement,ButtonProps>(function Button({className='',variant='secondary',size='default',type='button',...props},ref){
  const tones={
   primary:'border-blue-600 bg-blue-600 text-white hover:bg-blue-700 shadow-sm',
   secondary:'border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
   ghost:'border-transparent bg-transparent text-slate-600 hover:bg-slate-100',
   danger:'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100'
  }
- const isIcon=/\b(icon-button|mobile-close)\b/.test(className)
+ const isIcon=size==='icon'||/\b(icon-button|mobile-close)\b/.test(className)
  const base=isIcon
   ?'inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-transparent text-slate-600 hover:bg-slate-100'
+  :size==='sm'?'inline-flex min-h-8 items-center justify-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors'
   :'inline-flex min-h-9 items-center justify-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-semibold transition-colors'
  return <button ref={ref} type={type} className={[base,!isIcon&&tones[variant],focus,'disabled:pointer-events-none disabled:opacity-50',className].filter(Boolean).join(' ')} {...props}/>
 })
