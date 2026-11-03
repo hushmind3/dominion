@@ -3,6 +3,7 @@ import {FormEvent,useEffect,useRef,useState,type KeyboardEvent} from 'react'
 import {ArrowRight,Bot,BrainCircuit,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,CornerDownLeft,History,LoaderCircle,MessageCircle,MoreHorizontal,Plus,Send,ShieldAlert,Sparkles,TerminalSquare,Trash2,X} from 'lucide-react'
 import {Agent,ChatMessage,ChatSession,Provider,get,post,streamChat} from '../api'
 import {Action,Empty,Notice,StateTag,useRemote} from '../components/UI'
+import {SlashMenu,slashCandidates,slashCommands,type SlashChoice} from '../components/SlashMenu'
 type Model={id:string;name:string}
 export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onSession:(x:string|undefined)=>void;openModels:()=>void}){
  const sessions=useRemote<ChatSession[]>('/api/sessions',[]);
@@ -12,40 +13,139 @@ export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onS
  const [messages,setMessages]=useState<ChatMessage[]>([]);
  const [input,setInput]=useState(''),[providerId,setProviderId]=useState('lmstudio'),[model,setModel]=useState(''),[agentId,setAgentId]=useState('general'),[models,setModels]=useState<Model[]>([]);
  const [modelError,setModelError]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[live,setLive]=useState(''),[thought,setThought]=useState(''),[thinking,setThinking]=useState(true),[reasoningKo,setReasoningKo]=useState(true),[showHistory,setShowHistory]=useState(true),[approval,setApproval]=useState<{id:string;tool:string;args:any}|null>(null),[toolStatus,setToolStatus]=useState('');
+ const [slashOpen,setSlashOpen]=useState(false),[slashActive,setSlashActive]=useState(0),[commandInfo,setCommandInfo]=useState('');
  const bottom=useRef<HTMLDivElement>(null),inputRef=useRef<HTMLTextAreaElement>(null);
+ const slashItems=slashOpen?slashCandidates(input,agents.value,models):[];
  useEffect(()=>{if(sessionId!==undefined)setCurrent(sessionId)},[sessionId]);
  useEffect(()=>{if(current){get<ChatMessage[]>('/api/sessions/'+current+'/messages').then(setMessages).catch(()=>{})}else setMessages([])},[current]);
  useEffect(()=>{let valid=true;setModels([]);setModelError('');if(!providerId)return;get<Model[]>('/api/providers/'+providerId+'/models').then(x=>{if(!valid)return;setModels(x);if(x.length)setModel(old=>x.some(m=>m.id===old)?old:x[0].id);else setModel('')}).catch(e=>{if(valid){setModelError(e.message);setModel('')}});return()=>{valid=false}},[providerId]);
  useEffect(()=>{bottom.current?.scrollIntoView({behavior:'smooth',block:'end'})},[messages,live,thought,toolStatus]);
  const pickSession=(s:ChatSession)=>{setCurrent(s.id);onSession(s.id);if(s.providerId)setProviderId(s.providerId);if(s.model)setModel(s.model);if(s.agentId)setAgentId(s.agentId);setLive('');setThought('');setError('')};
- const send=async(e?:FormEvent)=>{e?.preventDefault();const text=input.trim();if(!text||busy)return;
-  if(!providerId||!model){setError('모델 허브에서 실행 중인 모델이나 API 모델을 먼저 선택해주세요.');return}
-  setBusy(true);setError('');setLive('');setThought('');setInput('');setToolStatus('');
+ const resetLocal=()=>{
+  setCurrent(undefined);onSession(undefined);setMessages([]);setLive('');setThought('');setError('');
+ };
+ const executeCommand=async(text:string)=>{
+  const found=text.trim().match(/^\/([a-zA-Z]+)(?:\s+([\s\S]*))?$/);
+  if(!found){setError('명령어 형식이 올바르지 않습니다. /help로 확인하세요.');return;}
+  const name=found[1].toLowerCase(),arg=(found[2]||'').trim();
+  if(!slashCommands.some(x=>x.key===name)){setError('알 수 없는 명령어: /'+name+' · /help로 확인하세요.');return;}
+  if(['name','goal','model','agent'].includes(name)&&!arg){
+   setInput('/'+name+' ');setSlashOpen(name==='model'||name==='agent');inputRef.current?.focus();return;
+  }
+  setError('');setCommandInfo('');setInput('');setSlashOpen(false);
   try{
-   if(text.startsWith('/goal ')){
-    const j=await post<{id:string}>('/api/goals',{goal:text.slice(6).trim(),executor:{agentId,providerId,model}});
-    setToolStatus('목표 실행 등록됨 · '+j.id.slice(0,8)+' · 워크플로에서 진행 상황 확인');
-    sessions.reload();return;
+   if(name==='new'){resetLocal();setCommandInfo('새 대화를 시작합니다.');return;}
+   if(name==='history'){setShowHistory(true);await sessions.reload();setCommandInfo('왼쪽에 저장된 대화 기록을 표시했습니다.');return;}
+   if(name==='model'){
+    const found=models.find(x=>x.id===arg);if(!found)throw Error('현재 제공자에 등록되지 않은 모델입니다: '+arg);
+    setModel(found.id);setCommandInfo('모델 전환: '+found.id);return;
    }
+   if(name==='agent'){
+    const found=agents.value.find(x=>x.id===arg);if(!found)throw Error('등록되지 않은 에이전트입니다: '+arg);
+    setAgentId(found.id);setCommandInfo('에이전트 전환: '+found.name);return;
+   }
+   if(name==='think'){
+    const enabled=arg==='on'?true:arg==='off'?false:!thinking;
+    setThinking(enabled);setCommandInfo('추론 표시: '+(enabled?'켜짐':'꺼짐'));return;
+   }
+   if(name==='help'){setCommandInfo(slashCommands.map(x=>x.command+' · '+x.name).join('\n'));return;}
+   if(name==='stop'){
+    if(!current)throw Error('중지할 실행 세션이 없습니다.');
+    const answer=await post<{cancelled:boolean}>('/api/sessions/'+current+'/cancel',{});
+    setCommandInfo(answer.cancelled?'실행 중단 요청을 전달했습니다.':'현재 실행 중인 작업이 없습니다.');return;
+   }
+   if(name==='status'){
+    const state=await get<{agents:number;providers:number;jobs:number;executions:number}>('/api/status');
+    setCommandInfo('에이전트 '+state.agents+'개 · 제공자 '+state.providers+'개 · 실행 '+state.executions+'개 · 대기/진행 작업 '+state.jobs+'개');return;
+   }
+   if(name==='tools'){
+    const found=await get<{name:string}[]>('/api/tools');
+    setCommandInfo('사용 가능한 도구 '+found.filter(x=>x.name).length+'개\n'+found.filter(x=>x.name).map(x=>x.name).join(' · '));return;
+   }
+   if(name==='goal'){
+    if(!model||!providerId)throw Error('모델을 먼저 연결하세요.');
+    const goal=await post<{id:string}>('/api/goals',{goal:arg,executor:{agentId,providerId,model}});
+    setCommandInfo('자율 작업 등록: '+goal.id.slice(0,8)+' · 실행 기록에서 상태를 확인할 수 있습니다.');return;
+   }
+   if(['mcp','skills','memory','workflows','agents','settings'].includes(name)){
+    const route=name==='mcp'||name==='skills'?'extensions':name;
+    window.location.hash='#/'+route;return;
+   }
+   if(!current)throw Error('현재 세션이 없습니다. /new로 대화를 시작하세요.');
+   if(name==='name'){
+    await post('/api/sessions/'+current+'/rename',{title:arg});await sessions.reload();
+    setCommandInfo('대화 이름 변경: '+arg);return;
+   }
+   if(name==='clear'){
+    if(!window.confirm('현재 세션의 대화 기록을 지우시겠습니까?'))return;
+    await post('/api/sessions/'+current+'/clear',{});setMessages([]);setLive('');setThought('');
+    setCommandInfo('현재 대화 기록을 초기화했습니다.');return;
+   }
+   if(name==='fork'){
+    const copied=await post<ChatSession>('/api/sessions/'+current+'/fork',{});
+    setCurrent(copied.id);onSession(copied.id);await sessions.reload();
+    setCommandInfo('새 분기 세션을 만들었습니다: '+copied.title);return;
+   }
+   if(name==='compact'){
+    if(!model||!providerId)throw Error('컨텍스트 압축에 사용할 모델을 연결하세요.');
+    const result=await post<{summarized:number;remaining:number}>('/api/sessions/'+current+'/compact',{providerId,model});
+    setCommandInfo('컨텍스트 압축 완료 · 요약된 메시지 '+result.summarized+'개 · 최근 메시지 '+result.remaining+'개 유지');return;
+   }
+   if(name==='export'){
+    const exported=await get<ChatMessage[]>('/api/sessions/'+current+'/messages');
+    const blob=new Blob([JSON.stringify({sessionId:current,messages:exported},null,2)],{type:'application/json'});
+    const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download='dominion-session-'+current+'.json';
+    link.click();URL.revokeObjectURL(url);setCommandInfo('세션 JSON 파일을 내보냈습니다.');return;
+   }
+  }catch(e){setError((e as Error).message);}
+ };
+ const chooseSlash=(item:SlashChoice)=>{
+  setSlashActive(0);
+  if(item.submenu||item.requiresArg){
+   setInput(item.command+' ');setSlashOpen(Boolean(item.submenu));inputRef.current?.focus();return;
+  }
+  setSlashOpen(false);void executeCommand(item.command);
+ };
+ const send=async(e?:FormEvent)=>{
+  e?.preventDefault();const text=input.trim();if(!text)return;
+  if(text.startsWith('/')){
+   if(busy&&text!=='/stop')return;
+   await executeCommand(text);return;
+  }
+  if(busy)return;
+  if(!providerId||!model){setError('모델 허브에서 실행 중인 모델이나 API 모델을 먼저 선택해주세요.');return}
+  setBusy(true);setError('');setCommandInfo('');setLive('');setThought('');setInput('');setSlashOpen(false);setToolStatus('');
+  try{
    let id=current;
-   if(!id){const s=await post<ChatSession>('/api/sessions',{title:'새 대화',agentId,providerId,model});id=s.id;setCurrent(id);onSession(id);sessions.reload();}
+   if(!id){const session=await post<ChatSession>('/api/sessions',{title:'새 대화',agentId,providerId,model});id=session.id;setCurrent(id);onSession(id);sessions.reload();}
    const session=id;
    setMessages(old=>[...old,{id:'pending-'+Date.now(),session_id:session!,role:'user',content:text,created_at:new Date().toISOString()}]);
-   await streamChat({sessionId:session,agentId,providerId,model,input:text,toolsEnabled:true,reasoningLanguage:reasoningKo?'ko':undefined},x=>{
-    if(x.type==='text')setLive(old=>old+x.text);
-    if(x.type==='reasoning')setThought(old=>old+x.text);
-    if(x.type==='approval')setApproval({id:x.id,tool:x.tool,args:x.args});
-    if(x.type==='tool_start')setToolStatus('실행 중 · '+x.name);
-    if(x.type==='tool_end')setToolStatus('완료 · '+x.name);
-    if(x.type==='tool_error')setToolStatus('도구 오류 · '+x.error);
-    if(x.type==='assistant_saved'){void get<ChatMessage[]>('/api/sessions/'+session+'/messages').then(setMessages);setLive('');setThought('');}
-    if(x.type==='error')setError(x.message);
+   await streamChat({sessionId:session,agentId,providerId,model,input:text,toolsEnabled:true,reasoningLanguage:reasoningKo?'ko':undefined},event=>{
+    if(event.type==='text')setLive(old=>old+event.text);
+    if(event.type==='reasoning')setThought(old=>old+event.text);
+    if(event.type==='approval')setApproval({id:event.id,tool:event.tool,args:event.args});
+    if(event.type==='tool_start')setToolStatus('실행 중 · '+event.name);
+    if(event.type==='tool_end')setToolStatus('완료 · '+event.name);
+    if(event.type==='tool_error')setToolStatus('도구 오류 · '+event.error);
+    if(event.type==='assistant_saved'){void get<ChatMessage[]>('/api/sessions/'+session+'/messages').then(setMessages);setLive('');setThought('');}
+    if(event.type==='error')setError(event.message);
    });
    setMessages(await get<ChatMessage[]>('/api/sessions/'+session+'/messages'));sessions.reload();
   }catch(e){setError((e as Error).message)}finally{setBusy(false);setApproval(null);}
  };
  const approve=async(ok:boolean)=>{if(!approval)return;try{await post('/api/approvals',{id:approval.id,allow:ok});setApproval(null)}catch(e){setError((e as Error).message)}};
- const appendKey=(e:KeyboardEvent<HTMLTextAreaElement>)=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();void send()}};
+ const appendKey=(e:KeyboardEvent<HTMLTextAreaElement>)=>{
+  if(e.nativeEvent.isComposing)return;
+  if(slashOpen){
+   if(e.key==='Escape'){e.preventDefault();setSlashOpen(false);return;}
+   if(e.key==='ArrowDown'){e.preventDefault();setSlashActive(x=>slashItems.length?(x+1)%slashItems.length:0);return;}
+   if(e.key==='ArrowUp'){e.preventDefault();setSlashActive(x=>slashItems.length?(x+slashItems.length-1)%slashItems.length:0);return;}
+   if((e.key==='Enter'||e.key==='Tab')&&slashItems.length){
+    e.preventDefault();chooseSlash(slashItems[Math.min(slashActive,slashItems.length-1)]);return;
+   }
+  }
+  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();void send();}
+ };
  const selectedProvider=providers.value.find(x=>x.id===providerId);
  return <div className={'grid h-[calc(100vh-72px)] min-h-[560px] grid-cols-1 bg-white '+(showHistory?'md:grid-cols-[235px_minmax(0,1fr)]':'')}>
   <div className={'flex min-h-0 flex-col overflow-hidden border-r border-slate-200 bg-slate-50 max-md:hidden '+(!showHistory?'hidden':'')}>
@@ -60,7 +160,10 @@ export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onS
    <div className="sticky bottom-0 z-10 border-t border-slate-100 bg-white/95 p-4 backdrop-blur-sm">{approval&&<div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900"><div><ShieldAlert size={20}/><span><strong>컴퓨터 작업 승인 요청</strong><small>{approval.tool} · {JSON.stringify(approval.args).slice(0,150)}</small></span></div><div><Action variant="secondary" onClick={()=>approve(false)}>거부</Action><Action onClick={()=>approve(true)}><Check size={15}/> 실행 승인</Action></div></div>}
     {error&&<div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700"><CircleHelp size={16}/>{error}<Button onClick={()=>setError('')}><X size={14}/></Button></div>}
     {modelError&&!model&&<div className="mb-3 text-xs text-slate-500">모델 서버 미연결: {modelError} <Button onClick={openModels}>연결 관리 <ArrowRight size={13}/></Button></div>}
-    <form onSubmit={send} className="overflow-hidden rounded-2xl border border-slate-200 bg-white p-3 shadow-sm focus-within:border-blue-300 focus-within:ring-2 focus-within:ring-blue-100"><TextArea ref={inputRef} rows={2} placeholder="메시지를 입력하거나 /goal로 작업을 시작하세요..." value={input} onChange={e=>setInput(e.target.value)} onKeyDown={appendKey}/><div className="flex flex-wrap items-center justify-between gap-2"><div className="flex flex-wrap items-center gap-3"><label className="inline-flex items-center gap-2 text-xs text-slate-600"><TextInput type="checkbox" checked={reasoningKo} onChange={e=>setReasoningKo(e.target.checked)}/><BrainCircuit size={15}/> 한국어 추론 요청</label><SelectInput aria-label="에이전트" value={agentId} onChange={e=>setAgentId(e.target.value)}>{agents.value.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</SelectInput></div><Button className="grid size-10 shrink-0 place-items-center rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40" disabled={busy||!input.trim()} type="submit" title="보내기">{busy?<LoaderCircle size={19} className="animate-spin"/>:<Send size={19}/>}</Button></div></form><div className="mt-2 text-center text-[10px] text-slate-400"><span>모델이 제공한 추론 정보만 표시됩니다</span><span>Enter 전송 · Shift+Enter 줄바꿈</span></div>
+    {commandInfo&&<div role="status" className="mb-3 max-h-36 overflow-auto whitespace-pre-wrap rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs leading-6 text-slate-700">{commandInfo}</div>}
+    <div className="relative">
+    {slashOpen&&<SlashMenu items={slashItems} active={slashActive} onChoose={chooseSlash}/>}
+    <form onSubmit={send} className="overflow-hidden rounded-2xl border border-slate-200 bg-white p-3 shadow-sm focus-within:border-blue-300 focus-within:ring-2 focus-within:ring-blue-100"><TextArea ref={inputRef} rows={2} placeholder="메시지 입력 또는 / 명령어" value={input} onChange={e=>{const next=e.target.value;setInput(next);setSlashOpen(next.startsWith('/')&&!next.includes('\n'));setSlashActive(0)}} onKeyDown={appendKey} aria-controls="dominion-slash-menu" aria-expanded={slashOpen}/><div className="flex flex-wrap items-center justify-between gap-2"><div className="flex flex-wrap items-center gap-3"><label className="inline-flex items-center gap-2 text-xs text-slate-600"><TextInput type="checkbox" checked={reasoningKo} onChange={e=>setReasoningKo(e.target.checked)}/><BrainCircuit size={15}/> 한국어 추론 요청</label><SelectInput aria-label="에이전트" value={agentId} onChange={e=>setAgentId(e.target.value)}>{agents.value.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</SelectInput></div><Button className="grid size-10 shrink-0 place-items-center rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40" disabled={busy||!input.trim()} type="submit" title="보내기">{busy?<LoaderCircle size={19} className="animate-spin"/>:<Send size={19}/>}</Button></div></form></div><div className="mt-2 text-center text-[10px] text-slate-400"><span>모델이 제공한 추론 정보만 표시됩니다</span><span>Enter 전송 · Shift+Enter 줄바꿈</span></div>
    </div>
   </div>
  </div>
