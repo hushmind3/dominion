@@ -20,10 +20,10 @@ test('real gateway creates and retrieves agents, rooms, sessions and jobs', {tim
    await sleep(150);
   }
   assert.ok(ready,'Gateway did not start: '+err);
-  let response=await fetch(url+'/api/status');assert.equal(response.status,200);const status=await response.json();assert.ok(status.agents>=1);
-  response=await fetch(url+'/api/providers');assert.equal(response.status,200);const providers=await response.json();assert.ok(providers.some(x=>x.id==='lmstudio'));
+  let response=await fetch(url+'/api/status');assert.equal(response.status,200);const status=await response.json();assert.equal(status.agents,0);
+  response=await fetch(url+'/api/providers');assert.equal(response.status,200);const providers=await response.json();assert.deepEqual(providers,[]);
   response=await fetch(url+'/api/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'QA Agent',systemPrompt:'Independent testing'})});assert.equal(response.status,200);const agent=await response.json();assert.equal(agent.name,'QA Agent');
-  response=await fetch(url+'/api/rooms',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'Test Room',agentIds:['general',agent.id],rounds:2})});assert.equal(response.status,200);const room=await response.json();assert.equal(room.agentIds.length,2);
+  response=await fetch(url+'/api/rooms',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'Test Room',agentIds:[agent.id],rounds:2})});assert.equal(response.status,200);const room=await response.json();assert.equal(room.agentIds.length,1);
   response=await fetch(url+'/api/sessions',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});assert.equal(response.status,200);const session=await response.json();assert.ok(session.id);
   response=await fetch(url+'/api/sessions/'+session.id+'/messages');assert.deepEqual(await response.json(),[]);
   response=await fetch(url+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:session.id,input:'Hello',providerId:'',model:''})});assert.equal(response.status,200);const stream=await response.text();assert.match(stream,/No active AI model found/);
@@ -32,7 +32,7 @@ test('real gateway creates and retrieves agents, rooms, sessions and jobs', {tim
   const capabilities=await response.json();
   assert.ok(capabilities.items.some(x=>x.namespace==='channel'&&x.id==='telegram'&&x.available));
   assert.ok(capabilities.items.some(x=>x.namespace==='channel'&&x.id==='nostr'&&!x.available));
-  assert.ok(capabilities.items.some(x=>x.namespace==='model'&&x.id==='lmstudio'));
+  assert.ok(!capabilities.items.some(x=>x.namespace==='model'));
   response=await fetch(url+'/api/capabilities?family=channel');
   const channelCapabilities=await response.json();
   assert.ok(channelCapabilities.items.length>=26);
