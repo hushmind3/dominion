@@ -19,6 +19,7 @@ import {builtin,toolsForModel,approvals,resolveApproval,recoverApprovals} from '
 import {oauthProviders,oauthStart,oauthCallback,connections,connectorCall} from './oauth.mjs';
 import {channels,catalog,channelById,saveChannel,deleteChannel,diagnoseChannel,handleChannelWebhook,startChannels} from './channels.mjs';
 import {activeRoomStatus,stopRoomFlow,resetRoomFlow} from './room-orchestrator.mjs';
+import {commandDefinitions} from './commands.mjs';
 const json=(res,data,status=200)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
 const fail=(res,e)=>json(res,{error:String(e.message||e)},e.status||400);
 async function body(req){
@@ -209,6 +210,7 @@ async function api(req,res,u){
  }
  if(url==='/api/mcp/discover'&&method==='GET')return json(res,await discoverMcp());
  if(url==='/api/tools'&&method==='GET')return json(res,await toolsForModel());
+ if(url==='/api/commands'&&method==='GET')return json(res,commandDefinitions);
  if(url==='/api/approvals'&&method==='GET')return json(res,approvals());
  if(url==='/api/approvals'&&method==='POST'){const x=await body(req);return json(res,{ok:resolveApproval(x.id,x.allow)});}
  if(url==='/api/skills'){
