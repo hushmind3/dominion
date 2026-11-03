@@ -70,3 +70,27 @@ test('model loop budget terminates without silently marking success',async()=>{
  await assert.rejects(f.run({limits:{maxIterations:1}}),/iteration limit/);
  assert.equal(f.runs.at(-1).status,'failed');
 });
+
+test('native tool calls reject missing required arguments before any side effect',async()=>{
+ const initial=[{role:'user',content:'작업공간에 native.txt 파일을 만들어 주세요.'}];
+ const f=fixture([
+  {content:'',tool_calls:[{id:'bad',function:{name:'workspace_write',arguments:'{"path":"native.txt"}'}}]},
+  {content:'Saved the file.',tool_calls:[]},
+  {content:'',tool_calls:[{id:'good',function:{name:'workspace_write',arguments:'{"path":"native.txt","content":"verified"}'}}]},
+  {content:'Saved the file successfully.',tool_calls:[]}
+ ],initial);
+ const invocations=[];
+ f.runtime.getToolMode=()=> 'native';
+ f.runtime.discoverTools=async()=>[{name:'workspace_write',parameters:{
+  type:'object',properties:{path:{type:'string'},content:{type:'string'}},required:['path','content'],additionalProperties:false
+ }}];
+ f.runtime.invokeTool=async(_tool,args)=>{invocations.push(args);return {written:args.path};};
+ const result=await f.run();
+ assert.equal(result.content,'Saved the file successfully.');
+ assert.equal(invocations.length,1,'Invalid arguments must never reach the tool');
+ assert.equal(invocations[0].content,'verified');
+ assert.equal(f.operations.filter(o=>o.callId==='bad').at(-1).status,'failed');
+ assert.equal(f.operations.filter(o=>o.callId==='good').at(-1).status,'completed');
+ assert.ok(f.events.some(e=>e.type==='runtime.action_repair'));
+ assert.equal(f.runs.at(-1).status,'completed');
+});
