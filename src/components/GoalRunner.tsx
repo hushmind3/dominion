@@ -1,3 +1,4 @@
+import {Feedback,Skeleton} from './Feedback'
 import {useState} from 'react'
 import {Activity,ArrowRight,CheckCircle2,Clock3,Play,RefreshCw,RotateCcw,ShieldAlert,Square,Workflow} from 'lucide-react'
 import {post} from '../api'
@@ -63,18 +64,19 @@ export function GoalRunner(){
      <Button variant="primary" disabled={busy||!query.trim()} onClick={submit}><Play size={15}/> {busy?'처리 중':'목표 실행'}</Button>
     </div>
     {error&&<Notice message={error}/>}
-    {info&&<p className="mt-3 text-xs text-emerald-700" role="status">{info}</p>}
+    {info&&<Feedback message={info} kind="success" onDismiss={()=>setInfo('')}/>}
     <div className="mt-6 flex items-center justify-between border-b border-slate-100 pb-2">
      <h3 className="m-0 text-sm font-bold text-slate-800">실행 내역 <span className="text-slate-400">{runs.value.length}</span></h3>
      <Button variant="ghost" className="px-2 py-1 text-xs" onClick={()=>void runs.reload()}><RefreshCw size={13}/> 새로고침</Button>
     </div>
     <div className="mt-2 max-h-72 space-y-2 overflow-y-auto">
-     {runs.value.map(r=><Button key={r.id} type="button" variant="ghost" onClick={()=>setActive(r.id)} className={['flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition',
+     {runs.loading?<Skeleton lines={4}/>:runs.value.map(r=><Button key={r.id} type="button" variant="ghost" onClick={()=>setActive(r.id)} className={['flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition',
       selected?.id===r.id?'border-blue-300 bg-blue-50':'border-slate-200 bg-white hover:bg-slate-50'].join(' ')}>
       <span className={['rounded-md px-2 py-1 text-[11px] font-semibold',stateColor(r.status)].join(' ')}>{states[r.status]||r.status}</span>
       <span className="min-w-0 flex-1 truncate text-sm text-slate-700">{r.goal}</span><ArrowRight size={14} className="shrink-0 text-slate-400"/>
      </Button>)}
-     {!runs.value.length&&<p className="py-5 text-center text-xs text-slate-500">실행 기록이 없습니다.</p>}
+     {!runs.loading&&!runs.value.length&&<p className="py-5 text-center text-xs text-slate-500">실행 기록이 없습니다.</p>}
+     {runs.error&&<Feedback message={runs.error} kind="error"/>}
     </div>
    </div>
    <div className="min-w-0 border-t border-slate-200 pt-5 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
