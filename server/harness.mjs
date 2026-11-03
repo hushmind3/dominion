@@ -4,7 +4,7 @@ import {db,bus,all,get,put} from './store.mjs';
 import {WORKSPACE} from './config.mjs';
 import {newSession,runTurn} from './engine.mjs';
 import {streamCompletion} from './providers.mjs';
-import {likelyRequiresTools} from './tool-compat.mjs';
+import {likelyRequiresTools,requestedToolEffect,successfulToolEvidence} from './tool-compat.mjs';
 import {resolveModel} from './model-router.mjs';
 
 // The run snapshot and event are committed together; the SSE bus is notification only.
@@ -176,7 +176,7 @@ async function executeWithModel(r,step,feedback,signal){
   signal,onEvent:e=>{
    if(goal(r.id)?.status==='cancelled')throw Object.assign(Error('Goal cancelled'),{code:'CANCELLED'});
    if(e.type==='assistant_saved'){addUsage(r.id,e.usage);requireBudget(r.id);}
-   if(e.type==='tool_end'&&!e.result?.error&&(typeof e.result?.exitCode!=='number'||e.result.exitCode===0)){
+   if(e.type==='tool_end'&&successfulToolEvidence(e.name,e.result,requestedToolEffect(step.prompt))){
     toolCalls++;const ev={name:e.name,callId:e.callId,output:clip(JSON.stringify(e.result),1000)};evidence.push(ev);
     saveEvent(r.id,'tool.executed',{}, {stepId:step.id,attempt:step.attempts,name:e.name,callId:e.callId});
    }
@@ -197,7 +197,8 @@ async function checkArtifacts(step){
 async function reviewWithModel(r,step,result,signal){
  const files=await checkArtifacts(step);
  if(!files.ok)return {passed:false,reason:files.reason,mode:'deterministic'};
- if(step.requiresTools&&result.toolCalls===0)return {passed:false,reason:'Required tool execution has no successful evidence',mode:'deterministic'};
+ if(step.requiresTools&&(!result.toolCalls||!result.evidence.some(x=>successfulToolEvidence(x.name,{},requestedToolEffect(step.prompt)))))
+  return {passed:false,reason:'Required action has no matching successful tool evidence',mode:'deterministic'};
  if(!result.content.trim()&&files.findings.length===0)return {passed:false,reason:'No result or artifact',mode:'deterministic'};
  const reviewerConfig=r.reviewer||{};
  let reviewer=null;
@@ -282,6 +283,8 @@ export async function runGoal(id,deps={}){
     saveEvent(id,'review.started',{status:'reviewing'},{stepId:next.id,attempt});
     let verdict;
     if(output.error)verdict={passed:false,reason:output.error,mode:'execution-error'};
+    else if(active.requiresTools&&(!result.toolCalls||!result.evidence.some(x=>successfulToolEvidence(x.name,{},requestedToolEffect(active.prompt)))))
+     verdict={passed:false,reason:'Required action has no matching successful tool evidence',mode:'deterministic'};
     else verdict=await review(goal(id),active,result,signal);
     requireBudget(id);
     if(verdict.passed){
