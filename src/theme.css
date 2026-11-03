@@ -34,7 +34,6 @@
     outline-offset: 2px;
   }
   a { color: inherit; text-decoration: none; }
-  h1, h2, h3, h4 { color: var(--color-ink); }
   p, small, strong, span { overflow-wrap: break-word; }
   ::selection { background: #c7d7fe; color: #1e3a8a; }
   ::-webkit-scrollbar { width: 8px; height: 8px; }
