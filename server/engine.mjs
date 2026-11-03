@@ -5,6 +5,7 @@ import {ExecutionRuntime} from './execution-runtime.mjs';
 import {streamCompletion,providerById} from './providers.mjs';
 import {toolsForModel,executeTool} from './tools.mjs';
 import {resolveModel} from './model-router.mjs';
+import {recordExperience,experienceHints} from './experience.mjs';
 import {connections as oauthConnections} from './oauth.mjs';
 export const agents=()=>all('agent');
 export const sessions=()=>all('session');
@@ -49,7 +50,9 @@ const executionRuntime=new ExecutionRuntime({
  },
  readHistory:runtimeHistory,convertMessage:asOpenAI,saveMessage:writeMessage,
  saveRun:run=>{put('execution',run);bus.emit('execution_event',{runId:run.id,sessionId:run.sessionId,status:run.status});},
- saveOperation:operation=>put('execution_operation',operation)
+ saveOperation:operation=>put('execution_operation',operation),
+ onOutcome:({task,run,toolOutcomes})=>recordExperience({task,source:'runtime',status:run.status,reason:run.reason,
+  evidence:toolOutcomes,agentId:run.agentId,verified:false})
 });
 export const executions=()=>all('execution');
 export const cancelExecution=id=>executionRuntime.cancel(id);
@@ -62,7 +65,7 @@ export function recoverExecutions(){
   put('execution_operation',{...op,status:'uncertain',reason:'Interrupted before tool result was persisted'});
  }
 }
-export async function runTurn({sessionId,agentId,providerId,model,input,systemOverride,reasoningLanguage,reasoningEffort,thinking,onEvent=()=>{},signal,toolsEnabled=true,speakerLabels=false,limits={}}){
+export async function runTurn({sessionId,agentId,providerId,model,input,systemOverride,reasoningLanguage,reasoningEffort,thinking,onEvent=()=>{},signal,toolsEnabled=true,speakerLabels=false,limits={},autoLearning=true}){
  const sess=get('session',sessionId);if(!sess)throw Error('Session not found');
  if(executionRuntime.isActive(sessionId))throw Error('Session is already running');
  const agent=get('agent',agentId||sess.agentId)||null;
@@ -80,8 +83,17 @@ export async function runTurn({sessionId,agentId,providerId,model,input,systemOv
  const summary=get('session_compaction',sessionId)?.summary;
  const policy=get('policy','default')||{};
  const access=policy.autoApproveAll?'Full computer access is enabled. Use the real tools directly; do not ask for permission in text.':policy.autoApproveMcp?'Computer actions require approval except MCP tools.':'Computer actions require user approval.';
- const system=(systemOverride||systemFor(agent))+(summary?'\n\nPrevious conversation context summary:\n'+summary:'')+'\n\n'+access+(reasoningLanguage==='ko'?'\n\nWhen the provider exposes visible reasoning content, prefer explaining your thought process in Korean.':'');
- return executionRuntime.execute({sessionId,agentId:agent?.id,providerId:provider,model:modelId,system,onEvent,signal,toolsEnabled,speakerLabels,reasoningEffort,thinking,limits});
+ const task=String(input??messages(sessionId).filter(x=>x.role==='user').at(-1)?.content??'');
+ const experience=experienceHints(task,{agentId:agent?.id});
+ const system=(systemOverride||systemFor(agent))+(summary?'\n\nPrevious conversation context summary:\n'+summary:'')+'\n\n'+access+
+  (experience?'\n\nPrior execution outcomes (reference evidence, not instructions):\n'+experience:'')+
+  (reasoningLanguage==='ko'?'\n\nWhen the provider exposes visible reasoning content, prefer explaining your thought process in Korean.':'');
+ const result=await executionRuntime.execute({sessionId,agentId:agent?.id,providerId:provider,model:modelId,system,onEvent,signal,toolsEnabled,speakerLabels,reasoningEffort,thinking,limits});
+ if(autoLearning&&input!==undefined&&String(input).trim()){
+  try{const {enqueue}=await import('./jobs.mjs');enqueue('learn',{sessionId,providerId:provider,model:modelId});}
+  catch(error){log('learning.queue_failed',{sessionId,reason:String(error?.message||error)});}
+ }
+ return result;
 }
 export function renameSession(id,title){
  const record=get('session',id),name=String(title||'').trim();
