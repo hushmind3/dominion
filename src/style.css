@@ -159,3 +159,16 @@
 .cap-result pre{font-size:10px;line-height:1.6;max-height:300px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
 @media(max-width:1200px){.cap-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:600px){.cap-grid{grid-template-columns:1fr}}
+
+/* Agent roster operations and room-bound messenger connections */
+.bulk-model-panel{padding:21px;margin:18px 0;display:flex;flex-direction:column;gap:14px}
+.bulk-model-panel>p{color:#96a5bd;font-size:11px;margin:0;line-height:1.7}
+.bulk-model-controls{display:flex;align-items:end;gap:12px;flex-wrap:wrap}
+.bulk-model-controls>label:first-child{display:flex;align-items:center;gap:7px;padding-bottom:15px;white-space:nowrap;font-size:11px;color:#64758e}
+.bulk-model-controls .form-field{flex:1;min-width:150px}
+.agent-select{display:flex;align-items:center;margin-right:9px;cursor:pointer}
+.agent-select input{width:17px;height:17px;accent-color:#5a7be4}
+.channel-room-guide{display:flex;align-items:center;gap:11px;background:#f0f4ff;border:1px solid #e0e8fc;border-radius:12px;padding:12px}
+.channel-room-guide>svg{flex-shrink:0;color:#5a78df}
+.channel-room-guide strong{font-size:11px;color:#455c9b}
+.channel-room-guide p{margin:5px 0 0;font-size:10px;color:#8998b5;line-height:1.7}

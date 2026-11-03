@@ -5,7 +5,7 @@ import {Action,FormField,Headline,Notice,Panel,StateTag,Subheading,useRemote} fr
 
 type ChannelField={key:string;label:string;type:'secret'|'text'|'url';required?:boolean;placeholder?:string}
 type ChannelEntry={id:string;name:string;category:string;mode:string;description:string;docs:string;available:boolean;status:string;features:string[];fields:ChannelField[];instructions?:string[];requiresPublicUrl?:boolean}
-type Channel={id:string;name:string;kind:string;agentId:string;providerId:string;model:string;enabled:boolean;mentionOnly:boolean;status:string;runtimeError?:string;configured:boolean;missing?:string[];credentialsPresent:Record<string,boolean>;webhookPath?:string}
+type Channel={id:string;name:string;kind:string;agentId:string;providerId:string;model:string;enabled:boolean;mentionOnly:boolean;roomId?:string;roomPolicy?:string;status:string;runtimeError?:string;configured:boolean;missing?:string[];credentialsPresent:Record<string,boolean>;webhookPath?:string}
 type OAuthProvider={id:string;configured:boolean;scope:string}
 type Connection={id:string;provider:string;displayName:string;scopes:string;hasToken:boolean}
 const groups=[{id:'all',name:'전체'},{id:'messaging',name:'메신저'},{id:'workplace',name:'업무'},{id:'community',name:'커뮤니티'},{id:'decentralized',name:'분산형'}]
@@ -18,6 +18,7 @@ export function ConnectionsPage(){
  const oauth=useRemote<OAuthProvider[]>('/api/oauth/providers',[]);
  const accounts=useRemote<Connection[]>('/api/oauth/connections',[]);
  const agents=useRemote<any[]>('/api/agents',[]);
+ const rooms=useRemote<any[]>('/api/rooms',[]);
  const providers=useRemote<any[]>('/api/providers',[]);
  const [query,setQuery]=useState(''),[category,setCategory]=useState('all'),[view,setView]=useState<'channels'|'accounts'>('channels');
  const [editor,setEditor]=useState<{entry:ChannelEntry;record:any}|null>(null);
@@ -29,7 +30,7 @@ export function ConnectionsPage(){
  useEffect(()=>{const handler=(event:MessageEvent)=>{if(event.data==='dominion-oauth-complete'){void accounts.reload();setInfo('OAuth 연결이 완료되었습니다.')}};window.addEventListener('message',handler);return()=>window.removeEventListener('message',handler)},[]);
  const openEditor=(entry:ChannelEntry,existing?:Channel)=>{
   if(!entry.available)return;
-  const record:any=existing?{...existing}:{name:entry.name,kind:entry.id,enabled:false,mentionOnly:true,agentId:'general',providerId:'',model:''};
+  const record:any=existing?{...existing}:{name:entry.name,kind:entry.id,enabled:false,mentionOnly:true,roomId:'',roomPolicy:'all_or_named',agentId:'general',providerId:'',model:''};
   for(const field of entry.fields)if(field.type==='secret')record[field.key]='';
   setEditor({entry,record});setError('');
  };
@@ -70,7 +71,7 @@ export function ConnectionsPage(){
      <div className="directory-card-head"><div className={'directory-glyph '+entry.category}><MessageCircle size={23}/></div><span className={'directory-status '+(entry.available?'available':'planned')}>{entry.available?'드라이버 준비':'드라이버 미구현'}</span></div>
      <h3>{entry.name}</h3><p>{entry.description}</p>
      <div className="directory-caps">{entry.features.map(f=><span key={f}>{f}</span>)}<span>{entry.mode}</span></div>
-     {bindings.map(c=><div className="directory-binding" key={c.id}><div><strong>{c.name}</strong><small>{badge(c.status)}{c.runtimeError?' · '+c.runtimeError:''}</small>{probe[c.id]&&<small>{probe[c.id]}</small>}</div><div className={'binding-led '+(active(c.status)?'on':'')}/><button className="icon-button small" title="설정" onClick={()=>openEditor(entry,c)}><Settings2 size={16}/></button><button className="icon-button small" title="진단" onClick={()=>diagnose(c.id)}><Activity size={16}/></button><button className="icon-button small" title="삭제" onClick={async()=>{if(confirm(c.name+' 연결을 제거하시겠습니까?')){await del('/api/channels/'+c.id);void channels.reload()}}}><Trash2 size={15}/></button></div>)}
+     {bindings.map(c=><div className="directory-binding" key={c.id}><div ><strong>{c.name}</strong>{c.roomId&&<small>회의실 · {rooms.value.find(r=>r.id===c.roomId)?.name||'삭제된 회의실'}</small>}<small>{badge(c.status)}{c.runtimeError?' · '+c.runtimeError:''}</small>{probe[c.id]&&<small>{probe[c.id]}</small>}</div><div className={'binding-led '+(active(c.status)?'on':'')}/><button className="icon-button small" title="설정" onClick={()=>openEditor(entry,c)}><Settings2 size={16}/></button><button className="icon-button small" title="진단" onClick={()=>diagnose(c.id)}><Activity size={16}/></button><button className="icon-button small" title="삭제" onClick={async()=>{if(confirm(c.name+' 연결을 제거하시겠습니까?')){await del('/api/channels/'+c.id);void channels.reload()}}}><Trash2 size={15}/></button></div>)}
      <div className="directory-footer"><a href={entry.docs} target="_blank" rel="noreferrer">공식 문서 <ExternalLink size={13}/></a>{entry.available?<button onClick={()=>openEditor(entry)}><Plus size={15}/> {bindings.length?'계정 추가':'연결 설정'}</button>:<span className="not-implemented">준비 중 · 연결 불가</span>}</div>
     </Panel>})}
    </div>
@@ -87,6 +88,9 @@ export function ConnectionsPage(){
     <div className="section-intro"><div className="section-intro-icon"><MessageCircle size={21}/></div><div><strong>{editor.entry.name}</strong><p>{editor.entry.description}</p></div></div>
     <FormField label="연결 이름"><input className="field-input" value={editor.record.name||''} onChange={e=>setEditor({...editor,record:{...editor.record,name:e.target.value}})}/></FormField>
     {editor.entry.fields.map(field=><FormField key={field.key} label={field.label+(field.required?' *':'')} hint={field.type==='secret'&&editor.record.id?'기존 키는 표시하지 않습니다. 변경할 때만 입력하세요.':undefined}><input className="field-input" type={field.type==='secret'?'password':field.type==='url'?'url':'text'} value={editor.record[field.key]||''} placeholder={field.placeholder||''} onChange={e=>setEditor({...editor,record:{...editor.record,[field.key]:e.target.value}})}/></FormField>)}
+    <FormField label="응답 방식"><select className="field-input" value={editor.record.roomId||''} onChange={e=>setEditor({...editor,record:{...editor.record,roomId:e.target.value,mentionOnly:e.target.value?false:editor.record.mentionOnly}})}><option value="">단일 에이전트</option>{rooms.value.map(r=><option value={r.id} key={r.id}>회의실 · {r.name} ({r.agentIds?.length||0}명)</option>)}</select></FormField>
+    {editor.record.roomId&&<div className="channel-room-guide"><UsersRound size={19}/><div><strong>이 채널은 회의실 실행기로 연결됩니다.</strong><p>메시지를 1번 수신해 참여자들이 순서대로 공유 맥락에서 대화합니다. 이름을 부르면 해당 에이전트만, 이름이 없으면 전체가 응답하도록 설정할 수 있습니다.</p></div></div>}
+    {editor.record.roomId&&<FormField label="발언자 선택 정책"><select className="field-input" value={editor.record.roomPolicy||'all_or_named'} onChange={e=>setEditor({...editor,record:{...editor.record,roomPolicy:e.target.value}})}><option value="all_or_named">이름 지정 시 해당 인원 · 지정 없으면 전체</option><option value="named_only">이름을 지정한 에이전트만</option><option value="round_robin">회차마다 1명씩 돌아가며 발언</option></select></FormField>}
     <div className="form-two"><FormField label="에이전트"><select className="field-input" value={editor.record.agentId||'general'} onChange={e=>setEditor({...editor,record:{...editor.record,agentId:e.target.value}})}>{agents.value.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select></FormField><FormField label="모델 제공자"><select className="field-input" value={editor.record.providerId||''} onChange={e=>setEditor({...editor,record:{...editor.record,providerId:e.target.value}})}><option value="">에이전트 기본값</option>{providers.value.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></FormField></div>
     <FormField label="모델 ID · 선택"><input className="field-input" value={editor.record.model||''} onChange={e=>setEditor({...editor,record:{...editor.record,model:e.target.value}})} placeholder="에이전트 기본 모델 사용"/></FormField>
     <label className="checkbox-row"><input type="checkbox" checked={editor.record.mentionOnly!==false} onChange={e=>setEditor({...editor,record:{...editor.record,mentionOnly:e.target.checked}})}/> 그룹에서는 봇 멘션이 있을 때만 답변</label>
