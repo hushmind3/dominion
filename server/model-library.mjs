@@ -47,17 +47,28 @@ export class ModelLibrary{
   return this.hub+'/'+route+repo.split('/').map(encodeURIComponent).join('/');
  }
  async catalog({q='',format='',sort='downloads'}={}){
-  const u=new URL(this.hub+'/api/models');
-  u.searchParams.set('limit','40');
-  u.searchParams.set('sort',['downloads','likes','lastModified'].includes(sort)?sort:'downloads');
-  u.searchParams.set('direction','-1');
-  let search=String(q).trim().slice(0,100);
-  if(!search&&format==='gguf')search='GGUF';
-  if(!search&&format==='mlx')search='mlx';
-  if(search)u.searchParams.set('search',search);
-  const rows=await jsonResponse(await this.fetcher(u,{signal:AbortSignal.timeout(15000)}),'Hugging Face');
-  return rows.filter(x=>x.id&&REPO.test(x.id)).filter(x=>!format||format==='all'||(format==='gguf' ? /gguf/i.test(x.id+' '+(x.tags||[]).join(' ')) : /mlx/i.test(x.id+' '+(x.tags||[]).join(' '))))
-   .map(x=>this._summary(x));
+  const search=String(q).trim().slice(0,100);
+  const order=['downloads','likes','lastModified'].includes(sort)?sort:'downloads';
+  const terms=search?[search]:format==='gguf'?['GGUF']:format==='mlx'?['mlx']:['GGUF','mlx'];
+  const groups=await Promise.all(terms.map(async term=>{
+   const u=new URL(this.hub+'/api/models');
+   u.searchParams.set('limit','40');u.searchParams.set('sort',order);
+   u.searchParams.set('direction','-1');u.searchParams.set('search',term);
+   return jsonResponse(await this.fetcher(u,{signal:AbortSignal.timeout(15000)}),'Hugging Face');
+  }));
+  const map=new Map();
+  for(const x of groups.flat()){
+   if(!x.id||!REPO.test(x.id))continue;
+   const tagText=x.id+' '+(x.tags||[]).join(' ');
+   if(format==='gguf'&&!/gguf/i.test(tagText))continue;
+   if(format==='mlx'&&!/mlx/i.test(tagText))continue;
+   if(!search&&!/(gguf|mlx)/i.test(tagText))continue;
+   if(!map.has(x.id))map.set(x.id,x);
+  }
+  return [...map.values()].sort((a,b)=>{
+   if(order==='lastModified')return String(b.lastModified||'').localeCompare(String(a.lastModified||''));
+   return Number(b[order]||0)-Number(a[order]||0);
+  }).slice(0,40).map(x=>this._summary(x));
  }
  _summary(x){
   const tags=x.tags||[];
