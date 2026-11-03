@@ -257,6 +257,7 @@ export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onS
       <span className="text-[#B8AFA2]">/</span>
       <SelectInput aria-label="모델 선택" title={model||'모델 없음'} value={model} onChange={e=>setModel(e.target.value)} className="!w-[280px] !border-0 !bg-transparent !py-1 !text-[12px]"><option value="">{models.length?'모델 선택':'모델 없음'}</option>{models.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</SelectInput>
       <Button variant="ghost" size="sm" onClick={openModelMenu} title="설치된 로컬 모델 전환" aria-expanded={modelMenu} className="!border !border-[#E7E0D5] !bg-white !text-[#5C544A] hover:!bg-[#FAF7F1]"><HardDrive size={14}/><span className="hidden lg:inline">로컬 모델</span><ChevronDown size={12}/></Button>
+      <Button variant="ghost" size="sm" title="로컬 모델 내리기 · VRAM 해제" onClick={()=>void unloadModel()} disabled={unloading||!(selectedProvider?.local||runtime.status==='ready')} className="!border !border-[#E7E0D5] !bg-white !text-[#5C544A] hover:!bg-[#FAF7F1] disabled:opacity-40"><Power size={14}/><span className="hidden xl:inline">{unloading?'내리는 중':'모델 내리기'}</span></Button>
       {modelMenu&&<>
        <Button type="button" aria-label="모델 메뉴 닫기" className="fixed inset-0 z-40 !h-auto !w-auto cursor-default !rounded-none !border-0 !bg-transparent" onClick={()=>setModelMenu(false)}/>
        <div className="absolute left-0 top-full z-50 mt-2 w-[min(380px,calc(100vw-1.5rem))] overflow-hidden rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] shadow-[0_18px_50px_rgba(36,33,29,.14)]">
@@ -275,7 +276,6 @@ export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onS
     <div className="flex shrink-0 items-center gap-1">
      <span className={"hidden items-center gap-2 text-[10px] font-bold uppercase tracking-wider sm:inline-flex "+(model&&!modelError?"text-emerald-700":"text-[#9C9388]")}><i className={'size-1.5 rounded-full '+(model&&!modelError?'bg-emerald-500':'bg-slate-300')}/>{model&&!modelError?(selectedProvider?.local?"LOCAL ENGINE":"CLOUD / API"):"MODEL NOT READY"}</span>
      <Button variant="ghost" size="sm" disabled={!current||learning||busy} title="이 대화에서 기억과 스킬을 추출" onClick={()=>void learnSession()} className="!px-2"><BrainCircuit size={15}/><span className="hidden xl:inline">{learning?'학습 중':'학습'}</span></Button>
-     {(selectedProvider?.local||runtime.status==='ready')&&<Button size="icon" variant="ghost" title="모델 내리기 · VRAM 해제" onClick={()=>void unloadModel()} disabled={unloading}>{unloading?<LoaderCircle size={16} className="animate-spin"/>:<Power size={17}/>}</Button>}
      <Button size="icon" variant="ghost" title="모델 관리" onClick={openModels}><Compass size={18}/></Button>
     </div>
    </header>
