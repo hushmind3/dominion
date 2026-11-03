@@ -23,7 +23,7 @@ export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
  const setup=[
   {title:'모델 연결',detail:'로컬 모델 또는 API 제공자를 등록합니다',target:'models' as const,icon:Compass,done:providers.value.length>0},
   {title:'에이전트 구성',detail:'역할과 모델을 지정하여 실행 주체를 만듭니다',target:'agents' as const,icon:BrainCircuit,done:agents.value.length>0},
-  {title:'실행 시작',detail:'목표를 입력하거나 단계별 워크플로를 실행합니다',target:'workflows' as const,icon:Workflow,done:jobs.value.length>0}
+  {title:'실행 시작',detail:'대화, 에이전트, 단계별 워크플로에서 공통 엔진을 사용합니다',target:'workflows' as const,icon:Workflow,done:jobs.value.length>0}
  ]
  return <PageContainer className="!max-w-[1480px] !px-4 !py-6 sm:!px-8 lg:!px-10 lg:!py-8">
   <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
@@ -40,7 +40,7 @@ export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
     <p className="mb-7 mt-4 max-w-xl text-sm leading-7 text-slate-300">모델을 선택하고, 에이전트를 구성하고, 실제 작업을 실행하세요. 대화와 도구 실행 결과는 이 작업 공간에 기록됩니다.</p>
     <div className="flex flex-wrap gap-3">
      <Button variant="primary" className="!min-h-11 !border-blue-400 !bg-blue-500 !px-5 !font-bold hover:!bg-blue-400" onClick={()=>navigate('chat')}><MessageSquareMore size={17}/> 새 대화 <ArrowRight size={16}/></Button>
-     <Button variant="secondary" className="!min-h-11 !border-white/20 !bg-white/10 !px-5 !font-bold !text-white hover:!bg-white/20" onClick={()=>navigate('workflows')}><Play size={17}/> 목표 실행</Button>
+     <Button variant="secondary" className="!min-h-11 !border-white/20 !bg-white/10 !px-5 !font-bold !text-white hover:!bg-white/20" onClick={()=>navigate('workflows')}><Play size={17}/> 실행 엔진</Button>
     </div>
    </div>
    <div className="relative mt-9 flex flex-wrap gap-x-6 gap-y-2 border-t border-white/15 pt-4 text-[11px] text-slate-300"><span className="flex items-center gap-2"><ShieldCheck size={15} className="text-cyan-300"/> 로컬 우선 제어</span><span className="flex items-center gap-2"><Workflow size={15} className="text-cyan-300"/> 지속 작업 큐</span><span className="flex items-center gap-2"><BookOpenText size={15} className="text-cyan-300"/> 실행 이력 보존</span></div>
@@ -64,7 +64,7 @@ export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
     </section>
     <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
      <div className="mb-4 flex items-center justify-between gap-3"><h3 className="m-0 text-lg font-extrabold text-slate-900">최근 실행</h3><Button variant="ghost" size="sm" onClick={()=>navigate('activity')} className="!text-blue-600">전체 기록 <ArrowRight size={15}/></Button></div>
-     <div className="space-y-2">{latest.length?latest.map(job=><div key={job.id} className="flex min-w-0 items-center gap-3 rounded-xl border border-slate-100 px-3 py-3"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-600"><Activity size={16}/></span><div className="min-w-0 flex-1"><strong className="block truncate text-xs font-bold text-slate-800">{job.kind==='workflow'?'워크플로':job.kind==='meeting'?'그룹 회의':job.kind==='goal'?'자율 목표':'에이전트 작업'}</strong><small className="mt-1 block truncate text-[11px] text-slate-500">{job.input?.goal||job.input?.prompt||job.input?.workflowId||job.id}</small></div><StatusPill status={job.status}>{job.status}</StatusPill></div>):<div className="flex min-h-32 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 bg-slate-50/70 p-5 text-center"><Activity size={22} className="text-slate-400"/><strong className="text-xs text-slate-600">아직 실행 내역이 없습니다</strong><span className="text-[11px] text-slate-400">목표를 실행하면 작업 상태가 기록됩니다</span></div>}</div>
+     <div className="space-y-2">{latest.length?latest.map(job=><div key={job.id} className="flex min-w-0 items-center gap-3 rounded-xl border border-slate-100 px-3 py-3"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-600"><Activity size={16}/></span><div className="min-w-0 flex-1"><strong className="block truncate text-xs font-bold text-slate-800">{job.kind==='workflow'?'워크플로':job.kind==='meeting'?'그룹 회의':job.kind==='goal'?'자율 목표':'에이전트 작업'}</strong><small className="mt-1 block truncate text-[11px] text-slate-500">{job.input?.goal||job.input?.prompt||job.input?.workflowId||job.id}</small></div><StatusPill status={job.status}>{job.status}</StatusPill></div>):<div className="flex min-h-32 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 bg-slate-50/70 p-5 text-center"><Activity size={22} className="text-slate-400"/><strong className="text-xs text-slate-600">아직 실행 내역이 없습니다</strong><span className="text-[11px] text-slate-400">실행하면 작업 상태가 기록됩니다</span></div>}</div>
     </section>
    </div>
    <div className="flex min-w-0 flex-col gap-5">
