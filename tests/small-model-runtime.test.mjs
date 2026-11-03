@@ -133,7 +133,7 @@ test('unsuccessful tool output is recorded as failed and cannot verify completio
  f.runtime.invokeTool=async()=>++attempts===1?{exitCode:1,stderr:'Permission denied'}:{ok:true};
  const result=await f.run();
  assert.match(result.content,/두 번째 시도/);
- assert.equal(f.operations[0].status,'failed');
+ assert.equal(f.operations.filter(o=>o.callId===f.operations[0].callId).at(-1).status,'failed');
  assert.equal(f.operations.at(-1).status,'completed');
  assert.ok(f.events.some(e=>e.type==='tool_error'));
 });
