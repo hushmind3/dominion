@@ -1,4 +1,4 @@
-import {buildCompatMessages,parseCompatAction,selectCompatTools,discoverCompatibleTools,likelyRequiresTools} from './tool-compat.mjs';
+import {buildCompatMessages,parseCompatAction,discoverCompatibleTools,likelyRequiresTools,requestedToolEffect,successfulToolEvidence} from './tool-compat.mjs';
 // Shared runtime for chat, agents, meetings and workflows.
 // A workflow may call this runtime, but the runtime knows nothing about goals or plans.
 const clamp=(n,min,max,fallback)=>Number.isFinite(Number(n))?Math.max(min,Math.min(max,Math.trunc(Number(n)))):fallback;
@@ -48,22 +48,24 @@ export class ExecutionRuntime {
       const outstanding=prior.filter(x=>x.role==='assistant').flatMap(x=>x.tool_calls||[])
         .filter(x=>!answered.has(x.id));
       if(outstanding.length)throw Object.assign(Error('Unresolved tool calls require review before resuming'),{code:'INTERRUPTED'});
+      const latestUser=prior.filter(x=>x.role==='user').at(-1)?.content||'';
+      const evidenceRequired=likelyRequiresTools(latestUser);
+      const requiredEffect=requestedToolEffect(latestUser);
       const tools=await this.discoverTools(toolsEnabled);
       check();
+      if(evidenceRequired&&!tools.length)throw Error('This action needs tools, but no execution tools are enabled');
       let assistant=null,toolMode=tools.length?(this.getToolMode?.(providerId,model)||'auto'):'native';
       if(!['auto','native','compat'].includes(toolMode))toolMode='auto';
       const extraTools=[],compatTools=[{name:'tool_discover',parameters:{type:'object',properties:{query:{type:'string'}},required:['query']}},...tools];
-      const latestUser=prior.filter(x=>x.role==='user').at(-1)?.content||'';
-      const evidenceRequired=tools.length>0&&likelyRequiresTools(latestUser);
       let feedback='',repairs=0,successfulWork=0;
       for(let iteration=0;iteration<maxIterations;iteration++){
         check();run.iterations=iteration+1;
-        const nativeHistory=[{role:'system',content:system},...this.readHistory(sessionId).map(x=>this.convertMessage(x,speakerLabels))];
+        const nativeHistory=[{role:'system',content:system+(feedback?'\n\nTool execution correction: '+feedback:'')},...this.readHistory(sessionId).map(x=>this.convertMessage(x,speakerLabels))];
         const messages=toolMode==='compat'?buildCompatMessages({system,history:nativeHistory.slice(1),tools,extra:extraTools,feedback}):nativeHistory;
         emit('runtime.model_started',{iteration:iteration+1,toolMode});
         const call=mode=>this.complete({providerId,model,messages:mode==='compat'?buildCompatMessages({system,history:nativeHistory.slice(1),tools,extra:extraTools,feedback}):messages,
           tools:mode==='compat'?[]:tools,signal:controller.signal,
-          onEvent:e=>{if(!controller.signal.aborted&&!(mode==='compat'&&e.type==='text'))onEvent(e);}});
+          onEvent:e=>{if(!controller.signal.aborted&&!(e.type==='text'&&(mode==='compat'||(evidenceRequired&&successfulWork===0))))onEvent(e);}});
         let reply;
         try{reply=await call(toolMode);}
         catch(error){
@@ -82,21 +84,28 @@ export class ExecutionRuntime {
             reply={...reply,content:'',tool_calls:[{id:runId+':compat:'+iteration,type:'function',function:{name:action.name,arguments:JSON.stringify(action.arguments)}}]};
             feedback='';repairs=0;
           }else if(toolMode==='compat'){
-            if(action.kind==='invalid'||(evidenceRequired&&successfulWork===0)){
-              feedback=action.kind==='invalid'?action.reason:'This request requires a real tool call. Choose an available tool instead of claiming completion.';
+            if(action.kind==='invalid'){
+              feedback=action.reason;
               emit('runtime.action_repair',{reason:feedback,attempt:++repairs});
               if(repairs>=3)throw Error('The model could not produce a valid tool action: '+feedback);
               continue;
             }
             reply={...reply,content:action.content,tool_calls:[]};
-            onEvent({type:'text',text:action.content,runId});
-            feedback='';repairs=0;
-          }else if(toolMode==='auto'&&evidenceRequired&&run.toolCalls===0){
+          }else if(toolMode==='auto'&&evidenceRequired&&successfulWork===0){
             toolMode='compat';feedback='Use a real tool for the requested operation, not an unverified claim.';
             emit('runtime.tool_protocol_fallback',{reason:'Tool action was requested but model did not call a tool'});
             continue;
           }
         }
+        if(!reply.tool_calls?.length&&evidenceRequired&&successfulWork===0){
+          feedback='The requested action has no successful matching tool evidence ('+requiredEffect+'). Discovery, read-only calls for mutations, and failed commands do not count.';
+          emit('runtime.action_repair',{reason:feedback,attempt:++repairs});
+          if(repairs>=3)throw Error('Cannot verify execution: '+feedback);
+          if(toolMode==='auto')toolMode='compat';
+          continue;
+        }
+        if(!reply.tool_calls?.length&&toolMode==='compat')onEvent({type:'text',text:reply.content,runId});
+        feedback='';repairs=0;
         assistant=this.saveMessage({session_id:sessionId,role:'assistant',content:reply.content,
           reasoning:reply.reasoning_content,tool_calls:reply.tool_calls?.length?reply.tool_calls:null,agent_id:agentId});
         onEvent({type:'assistant_saved',message:assistant,usage:reply.usage,runId});
@@ -118,21 +127,22 @@ export class ExecutionRuntime {
               output={tools:discoverCompatibleTools(tools,args.query)};
               for(const result of output.tools)if(!extraTools.includes(result.name))extraTools.push(result.name);
             }else output=await this.invokeTool(tool,args,onEvent,{signal:controller.signal,runId,callId});
-            this.saveOperation({id:runId+':'+callId,runId,sessionId,callId,tool:tool.name,status:'completed',finishedAt:new Date().toISOString()});
-            onEvent({type:'tool_end',name:tool.name,callId,result:output});
+            const succeeded=successfulToolEvidence(tool.name,output);
+            this.saveOperation({id:runId+':'+callId,runId,sessionId,callId,tool:tool.name,status:succeeded?'completed':'failed',reason:succeeded?'':'Tool returned an unsuccessful result',finishedAt:new Date().toISOString()});
+            if(succeeded)onEvent({type:'tool_end',name:tool.name,callId,result:output});
+            else onEvent({type:'tool_error',name:tool.name,callId,error:'Tool returned an unsuccessful result'});
           }catch(error){
             const message=String(error?.message||error);
             output={error:message};
             this.saveOperation({id:runId+':'+callId,runId,sessionId,callId,tool:call.function?.name||'',status:controller.signal.aborted?'uncertain':'failed',reason:message,finishedAt:new Date().toISOString()});
             onEvent({type:'tool_error',name:call.function?.name,callId,error:message});
           }
-          if(tool?.name!=='tool_discover'&&!output?.error&&
-             (typeof output?.exitCode!=='number'||output.exitCode===0))successfulWork++;
+          if(successfulToolEvidence(tool?.name,output,requiredEffect))successfulWork++;
           // Store tool output even if cancellation arrives just after the call completes.
           this.saveMessage({session_id:sessionId,role:'tool',tool_call_id:callId,
             content:typeof output==='string'?output:JSON.stringify(output).slice(0,30000)});
           run.toolCalls++;
-          emit('runtime.tool_finished',{name:call.function?.name,callId,error:Boolean(output?.error)});
+          emit('runtime.tool_finished',{name:call.function?.name,callId,error:!successfulToolEvidence(tool?.name,output)});
           check();
         }
       }
