@@ -1,6 +1,7 @@
 import {all,put,get,remove,log,bus,claimInbound,finishInbound} from './store.mjs';
 import {secretSet,secretGet,hasSecret} from './vault.mjs';
 import {newSession,runTurn} from './engine.mjs';
+import {roomCommand,runRoomIngress,stopRoomFlow,resetRoomFlow} from './room-orchestrator.mjs';
 import {channelCatalog,channelDefinition,validateChannelConfiguration} from './channel-catalog.mjs';
 
 import {channelDriver,registryErrors} from './channel-registry.mjs';
@@ -41,7 +42,7 @@ export async function saveChannel(input){
  const id=input.id||crypto.randomUUID();
  const previous=get('channel',id);
  if(previous&&previous.kind!==entry.id)throw Error('To change the channel type, create a separate connection');
- const record={id,kind:entry.id,name:String(input.name||entry.name).slice(0,120),enabled:Boolean(input.enabled),agentId:String(input.agentId||'general'),providerId:String(input.providerId||''),model:String(input.model||''),mentionOnly:input.mentionOnly!==false};
+ const record={id,kind:entry.id,name:String(input.name||entry.name).slice(0,120),enabled:Boolean(input.enabled),roomId:String(input.roomId||''),roomPolicy:['all_or_named','named_only','round_robin'].includes(input.roomPolicy)?input.roomPolicy:'all_or_named',agentId:String(input.agentId||'general'),providerId:String(input.providerId||''),model:String(input.model||''),mentionOnly:input.mentionOnly!==false};
  for(const f of entry.fields.filter(f=>f.type!=='secret'))record[f.key]=input[f.key]===undefined?(previous?.[f.key]||''):String(input[f.key]||'').trim();
  const credentials=credentialValues(record);
  for(const f of entry.fields.filter(f=>f.type==='secret')){
@@ -49,6 +50,7 @@ export async function saveChannel(input){
   // An empty field means "keep existing", not erase it.
   if(typeof changed==='string'&&changed.trim())credentials[f.key]=changed.trim();
  }
+ if(record.roomId&&!get('room',record.roomId))throw Error('Selected room does not exist');
  if(record.enabled)validateChannelConfiguration(entry.id,record,credentials);
  await stopChannel(id);
  put('channel',record);
@@ -82,23 +84,43 @@ export async function deleteChannel(id){
 }
 async function dispatch(record,event){
  if(!event?.text?.trim()||!event.conversationId)return;
+ const command=record.roomId?roomCommand(event.text):null;
+ if(command){
+  const eventKey=event.messageId?record.id+':'+event.conversationId+':'+event.messageId:null;
+  if(eventKey&&!claimInbound(eventKey))return;
+  try{
+   if(command==='stop'){
+    const stopped=stopRoomFlow(record.id,event.conversationId);
+    await event.reply(stopped?'진행 중인 회의실 응답을 중단했습니다.':'진행 중인 회의실 응답이 없습니다.');
+   }else{
+    const state=resetRoomFlow(record.id,event.conversationId);
+    await event.reply('새 대화로 시작합니다. 이전 기록은 유지합니다. (세대 '+state.generation+')');
+   }
+   if(eventKey)finishInbound(eventKey,true);
+  }catch(e){if(eventKey)finishInbound(eventKey,false);log('channel.command_error',{channelId:record.id,error:safeError(e)});}
+  return;
+ }
  if(record.mentionOnly&&event.isGroup&&!event.mention)return;
  const key=record.id+':'+event.conversationId;
  const run=async()=>{
   const current=get('channel',record.id);
   if(!current?.enabled)return;
-  let session=all('session').find(s=>s.channelKey===key);
-  if(!session){
-   const s=newSession({title:record.name+' · '+event.conversationId,agentId:record.agentId,providerId:record.providerId,model:record.model});
-   session=put('session',{...s,channelKey:key});
-  }
   const inboundId=event.messageId?record.id+':'+event.conversationId+':'+event.messageId:null;
   if(inboundId&&!claimInbound(inboundId)){log('channel.duplicate_skipped',{channelId:record.id});return;}
   try{
-   log('channel.received',{channelId:record.id,kind:record.kind,conversationId:event.conversationId});
-   const assistant=await runTurn({sessionId:session.id,agentId:record.agentId,providerId:record.providerId,model:record.model,input:event.text});
-   const output=assistant.content?.trim();
-   if(output){await event.reply(output);log('channel.replied',{channelId:record.id,kind:record.kind,conversationId:event.conversationId});}
+   log('channel.received',{channelId:record.id,kind:record.kind,conversationId:event.conversationId,roomId:record.roomId||null});
+   if(record.roomId){
+    await runRoomIngress({record,event});
+   }else{
+    let session=all('session').find(s=>s.channelKey===key);
+    if(!session){
+     const s=newSession({title:record.name+' · '+event.conversationId,agentId:record.agentId,providerId:record.providerId,model:record.model});
+     session=put('session',{...s,channelKey:key});
+    }
+    const assistant=await runTurn({sessionId:session.id,agentId:record.agentId,providerId:record.providerId,model:record.model,input:event.text});
+    const output=assistant.content?.trim();
+    if(output){await event.reply(output);log('channel.replied',{channelId:record.id,kind:record.kind,conversationId:event.conversationId});}
+   }
    if(inboundId)finishInbound(inboundId,true);
   }catch(error){if(inboundId)finishInbound(inboundId,false);log('channel.dispatch_error',{channelId:record.id,kind:record.kind,error:safeError(error)});}
  };

@@ -15,6 +15,7 @@ import {mcpServers,saveMcp,deleteMcp,discoverMcp} from './mcp.mjs';
 import {builtin,toolsForModel,approvals,resolveApproval} from './tools.mjs';
 import {oauthProviders,oauthStart,oauthCallback,connections,connectorCall} from './oauth.mjs';
 import {channels,catalog,channelById,saveChannel,deleteChannel,diagnoseChannel,handleChannelWebhook,startChannels} from './channels.mjs';
+import {activeRoomStatus,stopRoomFlow,resetRoomFlow} from './room-orchestrator.mjs';
 const json=(res,data,status=200)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
 const fail=(res,e)=>json(res,{error:String(e.message||e)},e.status||400);
 async function body(req){
@@ -174,6 +175,13 @@ async function api(req,res,u){
  if(url==='/api/policy'){
   if(method==='GET')return json(res,get('policy','default')||{id:'default',autoApprove:[],autoApproveMcp:false,autoApproveAll:false});
   if(method==='POST'){const x=await body(req);return json(res,put('policy',{id:'default',autoApprove:Array.isArray(x.autoApprove)?x.autoApprove:[],autoApproveMcp:Boolean(x.autoApproveMcp),autoApproveAll:Boolean(x.autoApproveAll)}));}
+ }
+ const roomStatus=url.match(/^\/api\/room-conversations\/([^/]+)\/([^/]+)$/);
+ if(roomStatus&&method==='GET')return json(res,activeRoomStatus(roomStatus[1],roomStatus[2]));
+ const roomControl=url.match(/^\/api\/room-conversations\/([^/]+)\/([^/]+)\/(stop|reset)$/);
+ if(roomControl&&method==='POST'){
+  const [,cid,conversation,action]=roomControl;
+  return json(res,{ok:true,...(action==='reset'?resetRoomFlow(cid,conversation):{stopped:stopRoomFlow(cid,conversation)})});
  }
  if(url==='/api/channels/catalog'&&method==='GET')return json(res,catalog());
  if(url==='/api/channels'){
