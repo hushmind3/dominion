@@ -8,6 +8,7 @@ import {capabilityInventory,capabilityExecute} from './capability-sources.mjs';
 import {all,get,put,remove,messages,recentAudit,bus,pruneInbound} from './store.mjs';
 import {providers,saveProvider,availableModels,searchHuggingFace,modelFiles,downloadIntoLMStudio,lmDownloadStatus} from './providers.mjs';
 import {agents,sessions,newSession,runTurn,saveRoom} from './engine.mjs';
+import {updateAgentModels,normalizeAgentAliases} from './agent-admin.mjs';
 import {enqueue,startJobs} from './jobs.mjs';
 import {workflows,saveWorkflow} from './workflows.mjs';
 import {mcpServers,saveMcp,deleteMcp,discoverMcp} from './mcp.mjs';
@@ -80,7 +81,7 @@ async function api(req,res,u){
  if(url==='/api/events'&&method==='GET'){
   res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});
   send(res,{type:'connected'});
-  const listeners=['record','message','audit','job_event','approval','channel_status'].map(n=>{const fn=x=>send(res,{type:n,data:x});bus.on(n,fn);return [n,fn];});
+  const listeners=['record','message','audit','job_event','approval','channel_status','room_event'].map(n=>{const fn=x=>send(res,{type:n,data:x});bus.on(n,fn);return [n,fn];});
   const ping=setInterval(()=>send(res,{type:'ping'}),25000);
   req.on('close',()=>{clearInterval(ping);listeners.forEach(([n,fn])=>bus.off(n,fn));});
   return;
@@ -106,10 +107,11 @@ async function api(req,res,u){
   const sessionId=input.sessionId||newSession({agentId:input.agentId,providerId:input.providerId,model:input.model}).id;
   return stream(res,onEvent=>runTurn({...input,sessionId,onEvent}));
  }
+ if(url==='/api/agents/bulk-model'&&method==='POST')return json(res,updateAgentModels(await body(req)));
  if(url==='/api/agents'){
   if(method==='GET')return json(res,agents());
   if(method==='POST'){
-   const x=await body(req);return json(res,put('agent',{...x,id:x.id||crypto.randomUUID(),name:String(x.name||'Agent'),systemPrompt:String(x.systemPrompt||''),providerId:x.providerId||'',model:x.model||''}));
+   const x=await body(req);return json(res,put('agent',{...x,id:x.id||crypto.randomUUID(),name:String(x.name||'Agent'),systemPrompt:String(x.systemPrompt||''),aliases:normalizeAgentAliases(x.aliases),providerId:x.providerId||'',model:x.model||''}));
   }
  }
  if(url==='/api/rooms'){

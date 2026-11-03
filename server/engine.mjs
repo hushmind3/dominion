@@ -15,9 +15,10 @@ function systemFor(agent,goal=''){
  const recentMemory=all('memory').filter(x=>x.scope==='shared'||x.scope===agent?.id).slice(0,16).map(x=>'- '+x.text).join('\n');
  return [agent?.systemPrompt||'You are a capable AI assistant.','You may use available tools. Do not claim to have performed a tool action unless it succeeded.',goal?'Current task: '+goal:'',recentMemory?'Relevant memory:\n'+recentMemory:'',enabledSkills?'Installed skills:\n'+enabledSkills:''].filter(Boolean).join('\n\n');
 }
-function asOpenAI(row){
+function asOpenAI(row,speakerLabels=false){
  const v={role:row.role,content:row.content||''};
  if(row.role==='assistant'){
+   if(speakerLabels&&!row.tool_calls&&row.agent_id){const speaker=get('agent',row.agent_id);if(speaker)v.content='[Speaker: '+speaker.name+']\n'+v.content;}
    if(row.reasoning)v.reasoning_content=row.reasoning;
    if(row.tool_calls)v.tool_calls=row.tool_calls;
  }
@@ -25,7 +26,7 @@ function asOpenAI(row){
  return v;
 }
 const runningSessions=new Set();
-export async function runTurn({sessionId,agentId,providerId,model,input,systemOverride,reasoningLanguage,onEvent=()=>{},signal,toolsEnabled=true}){
+export async function runTurn({sessionId,agentId,providerId,model,input,systemOverride,reasoningLanguage,onEvent=()=>{},signal,toolsEnabled=true,speakerLabels=false}){
  const sess=get('session',sessionId);if(!sess)throw Error('Session not found');
  if(runningSessions.has(sessionId))throw Error('Session is already running');
  runningSessions.add(sessionId);
@@ -43,7 +44,7 @@ export async function runTurn({sessionId,agentId,providerId,model,input,systemOv
   const tools=await toolsForModel(toolsEnabled);
   let iterations=0;
   while(iterations++<8){
-   const history=[{role:'system',content:system},...messages(sessionId).map(asOpenAI)];
+   const history=[{role:'system',content:system},...messages(sessionId).map(row=>asOpenAI(row,speakerLabels))];
    const result=await streamCompletion({providerId:provider,model:modelId,messages:history,tools,onEvent,signal});
    const assistant=writeMessage({session_id:sessionId,role:'assistant',content:result.content,reasoning:result.reasoning_content,tool_calls:result.tool_calls.length?result.tool_calls:null,agent_id:agent?.id});
    onEvent({type:'assistant_saved',message:assistant,usage:result.usage});
@@ -67,7 +68,7 @@ export async function runTurn({sessionId,agentId,providerId,model,input,systemOv
 export function rooms(){return all('room');}
 export function saveRoom(data){
  const ids=Array.isArray(data.agentIds)?[...new Set(data.agentIds.map(String))]:[];
- return put('room',{id:data.id||crypto.randomUUID(),name:String(data.name||'새 회의실'),agentIds:ids,rounds:Math.max(1,Math.min(4,Number(data.rounds)||1)),sessionId:data.sessionId||null,description:String(data.description||'')});
+ return put('room',{id:data.id||crypto.randomUUID(),name:String(data.name||'새 회의실'),agentIds:ids,rounds:Math.max(1,Math.min(4,Number(data.rounds)||1)),maxTurns:Math.max(1,Math.min(60,Number(data.maxTurns)||12)),sessionId:data.sessionId||null,description:String(data.description||'')});
 }
 export async function runMeeting(roomId,goal,onEvent=()=>{}){
  let room=get('room',roomId);if(!room)throw Error('Room not found');
@@ -75,12 +76,14 @@ export async function runMeeting(roomId,goal,onEvent=()=>{}){
  const sessionId=room.sessionId||newSession({title:room.name,roomId}).id;
  if(!room.sessionId){room=put('room',{...room,sessionId});}
  writeMessage({session_id:sessionId,role:'user',content:'회의 의제: '+goal});
+ let turnCount=0;
  for(let round=0;round<room.rounds;round++){
   for(const aid of room.agentIds){
+   if(++turnCount>Math.max(1,Number(room.maxTurns)||12))break;
    const agent=get('agent',aid);if(!agent){onEvent({type:'skipped',agentId:aid});continue;}
    onEvent({type:'speaker',agentId:aid,round:round+1,name:agent.name});
    const prompt=systemFor(agent,'You are participant '+agent.name+' in a roundtable. Address the shared goal, react to prior speakers, and contribute an independent perspective. Do not impersonate other agents.');
-   await runTurn({sessionId,agentId:aid,providerId:agent.providerId,model:agent.model,systemOverride:prompt,onEvent});
+   await runTurn({sessionId,agentId:aid,providerId:agent.providerId,model:agent.model,systemOverride:prompt,onEvent,speakerLabels:true});
   }
  }
  log('meeting.completed',{roomId,sessionId});return {sessionId,roomId};
