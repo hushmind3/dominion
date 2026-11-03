@@ -11,13 +11,13 @@ test('pages use reusable design-system controls rather than raw form elements',(
    name+' contains a raw control instead of a shared primitive');
  }
 });
-test('design tokens are centralized and GoalRunner is part of workflows',()=>{
+test('design tokens are centralized and the execution monitor is part of workflows',()=>{
  const css=readFileSync('src/theme.css','utf8');
  for(const token of ['--color-brand:','--color-canvas:','--color-ink:','--radius-panel:'])assert.ok(css.includes(token));
  const primitive=readFileSync('src/components/Primitives.tsx','utf8');
  for(const name of ['Button','TextInput','TextArea','SelectInput','DataTable'])assert.ok(primitive.includes('export const '+name));
  const page=readFileSync('src/pages/Workflows.tsx','utf8');
- assert.ok(page.includes('<GoalRunner/>'));
+ assert.ok(page.includes('<ExecutionMonitor/>'));
 });
 
 test('common page layout utilities replace duplicated custom selectors',()=>{
