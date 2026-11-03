@@ -39,9 +39,9 @@ try{
  const firstNav=page.locator('aside nav button').first();
  assert.equal(await firstNav.evaluate(el=>getComputedStyle(el).borderTopWidth),'0px','Sidebar items should not render as bordered pills');
  const links=[
-  ['홈','home'],['대화','chat'],['모델 허브','models'],['에이전트','agents'],
-  ['그룹 · 회의실','rooms'],['워크플로','workflows'],['기억 라이브러리','memory'],
-  ['확장 허브','capabilities'],['MCP · 스킬','extensions'],['연결 · 채널','connections'],
+  ['대시보드','home'],['채팅','chat'],['모델 관리','models'],['에이전트','agents'],
+  ['멀티 에이전트','rooms'],['워크플로','workflows'],['메모리','memory'],
+  ['기능 허브','capabilities'],['MCP · 스킬','extensions'],['연결 · 채널','connections'],
   ['자동화','automations'],['실행 기록','activity'],['설정','settings']
  ];
  for(const [label,id] of links){
@@ -62,7 +62,7 @@ try{
    await page.getByRole('dialog').waitFor({state:'hidden'});
   }
   if(id==='models'){
-   await page.getByRole('button',{name:/제공자 추가/}).first().click();
+   await page.getByRole('button',{name:/API 연결 추가/}).first().click();
    await page.getByRole('dialog').waitFor();
    await page.keyboard.press('Escape');
    await page.getByRole('dialog').waitFor({state:'hidden'});
@@ -79,14 +79,14 @@ try{
  // A shared workspace URL must survive direct load and reload.
  await page.goto(origin+'/#/models',{waitUntil:'domcontentloaded'});
  await page.locator('aside nav button[aria-current="page"]').waitFor();
- assert.equal((await page.locator('aside nav button[aria-current="page"]').innerText()).trim(),'모델 허브','Deep-linked model route');
+ assert.equal((await page.locator('aside nav button[aria-current="page"]').innerText()).trim(),'모델 관리','Deep-linked model route');
  await page.reload({waitUntil:'domcontentloaded'});
- assert.equal((await page.locator('aside nav button[aria-current="page"]').innerText()).trim(),'모델 허브','Reload preserves route');
+ assert.equal((await page.locator('aside nav button[aria-current="page"]').innerText()).trim(),'모델 관리','Reload preserves route');
  // Command palette should be navigable without the pointer.
  await page.keyboard.press('Control+k');
  const palette=page.getByRole('dialog',{name:'빠른 이동'});
  await palette.waitFor();
- await page.getByRole('textbox',{name:'메뉴 검색'}).fill('대화');
+ await page.getByRole('textbox',{name:'메뉴 검색'}).fill('채팅');
  await page.keyboard.press('Enter');
  await palette.waitFor({state:'hidden'});
  assert.equal(new URL(page.url()).hash,'#/chat','Command palette navigates to selected workspace');
