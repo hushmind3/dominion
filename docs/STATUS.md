@@ -10,6 +10,7 @@
 | LLM API / tool calls / reasoning SSE | 작성 | 실제 LM Studio/DeepSeek 계정·모델 환경 아직 미검증 |
 | Hugging Face 검색/LM Studio 다운로드 | 작성 | 실제 사용자 PC 다운로드 미검증 |
 | MCP stdio/HTTP/Registry | 작성 | 외부 MCP 실제 프로세스 연결 미검증 |
+| 공통 실행 엔진 | 구현: 모델/도구 루프·취소·실행 장부·복구 마킹·실행 콘솔 | 모의 모델과 승인된 실제 파일 도구 통합 테스트 포함; 원격 MCP 부작용 중단 미검증 |
 | 에이전트/가변 회의실/작업 큐 | 작성 | 기본 생성 테스트 포함, 실제 모델 기반 회의 미검증 |
 | Telegram / Discord | 작성 | 사용자 봇 토큰 및 실제 채널 수신·발신 미검증 |
 | OAuth Google/GitHub | 작성 | 사용자의 OAuth 앱 자격증명 미설정/미검증 |
