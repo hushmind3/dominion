@@ -15,6 +15,8 @@
 
 메신저별 문서 URL과 드라이버/예정 상태는 [채널 조사표](CHANNEL_RESEARCH.md)에 있습니다. URL이 없는 행은 조사 완료로 표시하지 않습니다.
 
+공개된 사용자 저장소의 **실제 실행 코드까지 열어 비교**한 기록은 [SOURCE_COMPARISON.md](SOURCE_COMPARISON.md)에 있습니다. 모델 일괄 지정·수신/실행 분리·대화 세대·메신저 메시지 중복 방지의 원본 경로와 자체 구현 경로, 테스트를 1:1로 연결했습니다.
+
 ## 컴포넌트
 
 - `server/store.mjs`: SQLite WAL, `records`, `messages`, `audit` 테이블, 이벤트 버스.
@@ -24,7 +26,9 @@
 - `server/tools.mjs`: 내장 tool schema, 승인, sandbox-like workspace path 제한, 실제 툴 실행.
 - `server/engine.mjs`: 채팅 로그 활용, 에이전트별 시스템 프롬프트, 최대 8회 tool loop, 회의실.
 - `server/jobs.mjs`: persistent job queue, recovery, 일정 반복.
-- `server/channels.mjs`: Telegram Bot API & Discord gateway 구동.
+- `server/channels.mjs`: 채널별 독립 드라이버/공통 수신·작업 배분, room 연결, 메시지 중복 방지.
+- `server/room-orchestrator.mjs`: 그룹 발언자 라우팅, 대화 세대, 취소, 화자별 모델·발언 기록.
+- `server/agent-admin.mjs`: 동적 에이전트 로스터 및 원자적 모델 일괄 변경.
 - `server/oauth.mjs`: Google/GitHub OAuth & 최소 읽기 연결.
 - `server/index.mjs`: REST / SSE / 정적 파일.
 - `src/pages/*`: API 연결형 React 컴포넌트, mock data 미사용.
