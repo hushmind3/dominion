@@ -1,6 +1,6 @@
 {
   "name": "dominion",
-  "version": "0.1.0",
+  "version": "0.2.8",
   "private": true,
   "type": "module",
   "main": "desktop/main.cjs",
@@ -26,6 +26,8 @@
   "dependencies": {
     "@modelcontextprotocol/client": "^2.0.0",
     "@tailwindcss/vite": "^4.1.0",
+    "diff": "^9.0.0",
+    "isomorphic-git": "^1.44.10",
     "lucide-react": "^0.468.0",
     "npm": "^11.21.1",
     "react": "^19.2.0",

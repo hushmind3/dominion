@@ -43,7 +43,7 @@ try{
   ['채팅','chat'],['모델 관리','models'],['에이전트','agents'],['영상 제작','video'],
   ['연결 · 채널','capabilities'],['MCP · 스킬','extensions'],['메모리','memory'],
   ['자동화','automations'],['실행 기록','activity'],['설정','settings'],
-  ['멀티 에이전트','rooms'],['반복 작업','workflows']
+  ['멀티 에이전트','rooms'],['반복 작업','workflows'],['소스 개발','developer']
  ];
  for(const [label,id] of links){
   await page.locator('aside nav button').filter({hasText:label}).first().click();

@@ -6,6 +6,7 @@ import {WORKSPACE} from './config.mjs';
 import {all,get,put,log,bus} from './store.mjs';
 import {discoverMcp,callMcp} from './mcp.mjs';
 import {connections,connectorCall,githubRequest,youtubeUpload} from './oauth.mjs';
+import {devStatus,connectOrClone,setupSource,testSource,buildSource,packageSource,previewStart,previewStop,sourceDiff,sourceList,sourceRead,sourceWrite,waitDevJob} from './dev-studio.mjs';
 // A cancelled MCP invocation may already have modified a remote system; the
 // caller must journal the outcome as uncertain instead of treating it as undone.
 export async function awaitOrAbort(promise,signal){
@@ -35,7 +36,19 @@ export const builtin=[
  {name:'youtube_upload',description:'Upload a local video file to YouTube as the connected Google account. Requires explicit approval and YouTube upload scope.',parameters:params({path:{type:'string',description:'Absolute local video file path'},title:{type:'string',description:'Video title'},description:{type:'string',description:'Video description'},privacyStatus:{type:'string',enum:['private','unlisted','public'],description:'Privacy status'},tags:{type:'array',items:{type:'string'},description:'Optional tags'}},['path','title']),approval:true},
  {name:'memory_store',description:'Save a concise durable fact for future sessions',parameters:params({text:{type:'string'},scope:{type:'string'}},['text'])},
  {name:'memory_search',description:'Find saved knowledge relevant to a topic',parameters:params({query:{type:'string'}},['query'])},
- {name:'skill_propose',description:'Draft a reusable skill for user review and installation',parameters:params({name:{type:'string'},instructions:{type:'string'}},['name','instructions'])}
+ {name:'skill_propose',description:'Draft a reusable skill for user review and installation',parameters:params({name:{type:'string'},instructions:{type:'string'}},['name','instructions'])},
+ {name:'dev_status',description:'Check the connected DOMINION Git source workspace, installed dependencies, changed files, preview server and latest installer.',parameters:params({})},
+ {name:'dev_connect',description:'Connect an existing DOMINION source checkout or clone the Git repository into a separate development workspace. Never edits the installed app resources.',parameters:params({sourceDir:{type:'string',description:'Absolute source directory outside the installed app'},repoUrl:{type:'string'},branch:{type:'string'}}),approval:true},
+ {name:'dev_setup',description:'Install the source workspace development dependencies with the bundled npm runtime',parameters:params({}),approval:true},
+ {name:'dev_list',description:'List files in the connected DOMINION source workspace',parameters:params({path:{type:'string'}})},
+ {name:'dev_read',description:'Read a source file from the connected DOMINION workspace',parameters:params({path:{type:'string'}},['path'])},
+ {name:'dev_write',description:'Write a source file in the connected DOMINION workspace. Use this for real UI and engine changes, not the installed app resources.',parameters:params({path:{type:'string'},content:{type:'string'}},['path','content']),approval:true},
+ {name:'dev_diff',description:'Show changed files and unified diffs in the DOMINION source workspace',parameters:params({})},
+ {name:'dev_test',description:'Run the DOMINION source test suite in the connected workspace',parameters:params({}),approval:true},
+ {name:'dev_build',description:'Build the React UI from the connected DOMINION source workspace',parameters:params({}),approval:true},
+ {name:'dev_package',description:'Build a new Windows installer or macOS DMG from the connected DOMINION source workspace',parameters:params({}),approval:true},
+ {name:'dev_preview_start',description:'Start the source Vite dev server with HMR and return its preview URL',parameters:params({}),approval:true},
+ {name:'dev_preview_stop',description:'Stop the source Vite dev server',parameters:params({})}
 ];
 // SQLite stores the approval ledger; in-memory promises only wake live requests.
 const pending=new Map();
@@ -309,6 +322,18 @@ export async function executeTool(tool,args,onEvent=()=>{},context={}){
    result=all('memory').map(x=>({...x,score:terms.filter(t=>x.text.toLowerCase().includes(t)).length})).filter(x=>x.score).sort((a,b)=>b.score-a.score).slice(0,8);break;
   }
   case 'skill_propose':result=put('skill',{name:String(args.name).slice(0,80),instructions:String(args.instructions).slice(0,12000),enabled:false,status:'proposed'});break;
+  case 'dev_status':result=await devStatus();break;
+  case 'dev_connect':result=await connectOrClone({sourceDir:args.sourceDir,repoUrl:args.repoUrl,branch:args.branch});break;
+  case 'dev_setup':result=await waitDevJob(setupSource().id);break;
+  case 'dev_test':result=await waitDevJob(testSource().id);break;
+  case 'dev_build':result=await waitDevJob(buildSource().id);break;
+  case 'dev_package':result=await waitDevJob(packageSource().id);break;
+  case 'dev_preview_start':result=await previewStart();break;
+  case 'dev_preview_stop':result=await previewStop();break;
+  case 'dev_list':result=await sourceList(args.path||'');break;
+  case 'dev_read':result=await sourceRead(args.path);break;
+  case 'dev_write':result=await sourceWrite(args.path,args.content);break;
+  case 'dev_diff':result=await sourceDiff();break;
   default:throw Error('Tool not found: '+tool.name);
  }
  log('tool.executed',{name:tool.name,args:tool.name==='memory_store'?{scope:args.scope}:args,resultPreview:JSON.stringify(result).slice(0,250)});

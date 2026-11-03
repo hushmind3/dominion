@@ -11,6 +11,7 @@ import {AgentsPage,RoomsPage} from './pages/Agents'
 import {ExtensionsPage} from './pages/Extensions'
 import {ConnectionsPage} from './pages/Connections'
 import {OperationsPage} from './pages/Operations'
+import {DeveloperPage} from './pages/Developer'
 
 function locationState(){
  const raw=window.location.hash.replace(/^#\/?/,'')
@@ -96,6 +97,7 @@ export default function App(){
     {page==='rooms'&&<RoomsPage openSession={id=>navigate('chat',id)}/>}
     {page==='extensions'&&<ExtensionsPage/>}
     {page==='connections'&&<ConnectionsPage/>}
+    {page==='developer'&&<DeveloperPage/>}
     {(page==='automations'||page==='activity'||page==='settings')&&<OperationsPage section={page}/>}
    </div>
   </main>

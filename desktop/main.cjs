@@ -1,7 +1,8 @@
 'use strict';
 const {app,BrowserWindow,shell,dialog,session,ipcMain} = require('electron');
-const {spawn} = require('node:child_process');
+const {spawn,execFileSync} = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const net = require('node:net');
 const ROOT=path.resolve(__dirname,'..');
@@ -12,7 +13,7 @@ try{
  app.setName('dominion-desktop');
  app.setPath('userData',path.join(app.getPath('appData'),'dominion-desktop'));
 }catch{}
-let window=null,engine=null,quitting=false,enginePort=0;
+let window=null,engine=null,quitting=false,enginePort=0,previewWindow=null;
 if(!app.requestSingleInstanceLock()){app.quit();}
 else{
  app.on('second-instance',()=>{window?.restore();window?.focus();});
@@ -29,6 +30,78 @@ else{
 }
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function freePort(){return new Promise((resolve,reject)=>{const s=net.createServer();s.once('error',reject);s.listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(()=>resolve(p))})})}
+function openPreviewWindow(value){
+ const parsed=new URL(String(value||''));
+ if(!['127.0.0.1','localhost','::1'].includes(parsed.hostname))throw Error('로컬 미리보기 주소만 열 수 있습니다.');
+ if(previewWindow&&!previewWindow.isDestroyed()){
+  previewWindow.loadURL(parsed.toString());
+  previewWindow.show();
+  return {ok:true,url:parsed.toString()};
+ }
+ previewWindow=new BrowserWindow({title:'DOMINION · 개발 미리보기',width:1200,height:900,minWidth:700,minHeight:500,backgroundColor:'#f6f8fc',
+  webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true,preload:path.join(__dirname,'preload.cjs')}
+ });
+ previewWindow.webContents.setWindowOpenHandler(({url})=>{
+  try{if(new URL(url).protocol==='https:')void shell.openExternal(url)}catch{}
+  return {action:'deny'};
+ });
+ previewWindow.on('closed',()=>{previewWindow=null;});
+ previewWindow.loadURL(parsed.toString());
+ return {ok:true,url:parsed.toString()};
+}
+function applyUpdate(value){
+ const installer=path.resolve(String(value||''));
+ if(!fs.existsSync(installer))throw Error('설치 파일을 찾을 수 없습니다.');
+ if(process.platform==='win32'){
+  if(!installer.endsWith('DOMINION-Setup.exe'))throw Error('Windows 업데이트는 DOMINION-Setup.exe만 사용할 수 있습니다.');
+  const script=path.join(os.tmpdir(),'dominion-update-'+Date.now()+'.ps1');
+  const exe=process.execPath;
+  const logFile=path.join(os.tmpdir(),'dominion-update.log');
+  const ps=path.join(process.env.SystemRoot||'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe');
+  const q=value=>"'"+String(value).replace(/'/g,"''")+"'";
+  const task='DOMINIONUpdate'+Date.now();
+  fs.writeFileSync(script,[
+   "$ErrorActionPreference='Continue'",
+   "$log="+q(logFile),
+   "('helper start ' + (Get-Date -Format o)) | Out-File -FilePath $log -Append -Encoding utf8",
+   "Start-Sleep -Seconds 2",
+   "try {",
+   "  $p=Start-Process -FilePath "+q(installer)+" -ArgumentList '/S' -Wait -PassThru",
+   "  ('installer exit ' + $p.ExitCode) | Out-File -FilePath $log -Append -Encoding utf8",
+   "  Start-Sleep -Seconds 3",
+   "  for($i=0;$i -lt 8;$i++){",
+   "    try { Start-Process -FilePath "+q(exe)+"; ('started ' + (Get-Date -Format o)) | Out-File -FilePath $log -Append -Encoding utf8; break }",
+   "    catch { ('start retry ' + $i + ': ' + $_.Exception.Message) | Out-File -FilePath $log -Append -Encoding utf8; Start-Sleep -Seconds 3 }",
+   "  }",
+   "} catch { ($_.Exception.Message) | Out-File -FilePath $log -Append -Encoding utf8 }",
+   "& "+q(path.join(process.env.SystemRoot||'C:\\Windows','System32','schtasks.exe'))+" /Delete /TN "+q(task)+" /F | Out-Null",
+   "Remove-Item $PSCommandPath -Force -ErrorAction SilentlyContinue"
+  ].join('\r\n'),'utf8');
+  const schtasks=path.join(process.env.SystemRoot||'C:\\Windows','System32','schtasks.exe');
+  try{
+   execFileSync(schtasks,['/Create','/TN',task,'/TR','"'+ps+'" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "'+script+'"','/SC','ONCE','/ST','23:59','/F','/RL','LIMITED'],{windowsHide:true,stdio:'ignore'});
+   execFileSync(schtasks,['/Run','/TN',task],{windowsHide:true,stdio:'ignore'});
+  }catch{
+   const child=spawn(ps,['-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',script],{detached:true,windowsHide:true,stdio:'ignore'});
+   child.on('error',()=>{});child.unref();
+  }
+  setTimeout(()=>{quitting=true;app.quit();},300);
+  return {ok:true,installer,platform:process.platform,logFile};
+ }
+ if(process.platform==='darwin'){
+  if(!installer.endsWith('.dmg'))throw Error('macOS 업데이트는 DMG만 사용할 수 있습니다.');
+  const bundle=path.resolve(path.dirname(process.execPath),'..','..');
+  const script=path.join(os.tmpdir(),'dominion-update-'+Date.now()+'.sh');
+  const log='/tmp/dominion-update.log';
+  fs.writeFileSync(script,'#!/bin/sh\necho "helper start $(date)" >> "'+log+'"\nsleep 2\nmount=$(hdiutil attach "$1" -nobrowse | tail -1 | awk \'{print $3}\')\nrm -rf "'+bundle+'"\nditto "$mount/DOMINION.app" "'+bundle+'"\nhdiutil detach "$mount"\nsleep 3\ni=0\nwhile [ $i -lt 8 ]; do\n  if open "'+bundle+'"; then echo "started $(date)" >> "'+log+'"; break; fi\n  echo "start retry $i" >> "'+log+'"\n  i=$((i+1))\n  sleep 3\ndone\nrm -f "$0"\n','utf8');
+  fs.chmodSync(script,0o755);
+  const child=spawn('/bin/sh',[script,installer],{detached:true,stdio:'ignore'});
+  child.on('error',()=>{});child.unref();
+  setTimeout(()=>{quitting=true;app.quit();},300);
+  return {ok:true,installer,platform:process.platform,logFile:log};
+ }
+ throw Error('이 플랫폼은 자동 업데이트를 지원하지 않습니다.');
+}
 async function start(){
  ipcMain.removeHandler('dominion:pick-video');
  ipcMain.handle('dominion:pick-video',async()=>{
@@ -57,6 +130,15 @@ async function start(){
   });
   return answer.canceled?'':answer.filePaths[0]||'';
  });
+ ipcMain.removeHandler('dominion:pick-directory');
+ ipcMain.handle('dominion:pick-directory',async()=>{
+  const answer=await dialog.showOpenDialog(window||undefined,{title:'DOMINION 소스 작업공간 선택',properties:['openDirectory','createDirectory']});
+  return answer.canceled?'':answer.filePaths[0]||'';
+ });
+ ipcMain.removeHandler('dominion:open-preview');
+ ipcMain.handle('dominion:open-preview',async(_event,url)=>openPreviewWindow(url));
+ ipcMain.removeHandler('dominion:apply-update');
+ ipcMain.handle('dominion:apply-update',async(_event,installer)=>applyUpdate(installer));
  if(!DEV_URL&&!fs.existsSync(path.join(ROOT,'dist','index.html')))throw Error('Missing compiled UI. Run npm run build in the repository root.');
  enginePort=0;
  let origin=DEV_URL?DEV_URL.replace(/\/$/,''):'';
@@ -67,7 +149,7 @@ async function start(){
   enginePort=await freePort();
   engine=spawn(process.execPath,[path.join(ROOT,'server/index.mjs')],{
    cwd:ROOT,stdio:['ignore','pipe','pipe'],windowsHide:true,
-   env:{...process.env,ELECTRON_RUN_AS_NODE:'1',DOMINION_PORT:String(enginePort),DOMINION_HOST:'127.0.0.1',DOMINION_DATA:data,DOMINION_WORKSPACE:workspace}
+   env:{...process.env,ELECTRON_RUN_AS_NODE:'1',DOMINION_PORT:String(enginePort),DOMINION_HOST:'127.0.0.1',DOMINION_DATA:data,DOMINION_WORKSPACE:workspace,DOMINION_VERSION:app.getVersion()}
   });
   let stderr='';
   engine.stderr.on('data',d=>{stderr=(stderr+d.toString()).slice(-6000);});

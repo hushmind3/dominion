@@ -23,9 +23,11 @@ import {skillCatalog,skillCatalogMeta,importCatalogSkill} from './skill-catalog.
 import {builtin,toolsForModel,approvals,resolveApproval,recoverApprovals} from './tools.mjs';
 import {oauthProviders,oauthStart,oauthCallback,oauthCallbackBase,connections,connectorCall,saveOAuthApp,youtubeUpload} from './oauth.mjs';
 import {videoStatus,saveVideoConfig,startComfyUI,stopComfyUI,videoWorkflows,startVideoJob,videoJob,videoJobs,videoConfig,openVideoFile,openModelFolder} from './video-generator.mjs';
+import {devConfig,saveDevConfig,devStatus,connectOrClone,setupSource,testSource,buildSource,packageSource,devJobs,devJob,previewStart,previewStop,sourceDiff,sourceCommit,sourceList,sourceRead,sourceWrite,latestInstaller,validateUpdateInstaller} from './dev-studio.mjs';
 import {channels,catalog,channelById,saveChannel,deleteChannel,diagnoseChannel,handleChannelWebhook,startChannels} from './channels.mjs';
 import {activeRoomStatus,stopRoomFlow,resetRoomFlow} from './room-orchestrator.mjs';
 import {commandDefinitions} from './commands.mjs';
+const VERSION=process.env.DOMINION_VERSION||'0.1.0';
 const json=(res,data,status=200)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
 const fail=(res,e)=>json(res,{error:String(e.message||e)},e.status||400);
 async function body(req){
@@ -71,7 +73,7 @@ async function staticFile(req,res,u){
 }
 async function api(req,res,u){
  const url=u.pathname,method=req.method;
- if(url==='/api/health')return json(res,{ok:true,service:'dominion',version:'0.1.0',date:new Date().toISOString()});
+ if(url==='/api/health')return json(res,{ok:true,service:'dominion',version:VERSION,date:new Date().toISOString()});
  if(url.match(/^\/api\/oauth\/(github|google)\/callback$/)&&method==='GET'){
   try{
    const provider=url.split('/')[3];await oauthCallback(provider,u.searchParams.get('code'),u.searchParams.get('state'));
@@ -89,7 +91,7 @@ async function api(req,res,u){
   if(!['models','tools','activate','deactivate'].includes(operation))throw Error('Capability action not exposed via HTTP');
   return json(res,await capabilityExecute(family,id,operation,await body(req)));
  }
- if(url==='/api/status')return json(res,{version:'0.1.0',providers:providers().length,agents:agents().length,sessions:sessions().length,rooms:all('room').length,mcp:mcpServers().length,jobs:all('job').filter(x=>x.status==='running').length,executions:activeExecutions().length});
+ if(url==='/api/status')return json(res,{version:VERSION,providers:providers().length,agents:agents().length,sessions:sessions().length,rooms:all('room').length,mcp:mcpServers().length,jobs:all('job').filter(x=>x.status==='running').length,executions:activeExecutions().length});
  if(url==='/api/events'&&method==='GET'){
   res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});
   send(res,{type:'connected'});
@@ -243,6 +245,25 @@ async function api(req,res,u){
   if(method==='GET')return json(res,get('policy','default')||{id:'default',autoApprove:[],autoApproveMcp:false,autoApproveAll:false});
   if(method==='POST'){const x=await body(req);return json(res,put('policy',{id:'default',autoApprove:Array.isArray(x.autoApprove)?x.autoApprove:[],autoApproveMcp:Boolean(x.autoApproveMcp),autoApproveAll:Boolean(x.autoApproveAll)}));}
  }
+ if(url==='/api/dev/status'&&method==='GET')return json(res,await devStatus());
+ if(url==='/api/dev/config'&&method==='POST')return json(res,{config:saveDevConfig(await body(req)),status:await devStatus()});
+ if(url==='/api/dev/connect'&&method==='POST')return json(res,await connectOrClone(await body(req)));
+ if(url==='/api/dev/setup'&&method==='POST'){const job=setupSource();return json(res,{id:job.id,status:job.status},202);}
+ if(url==='/api/dev/test'&&method==='POST'){const job=testSource();return json(res,{id:job.id,status:job.status},202);}
+ if(url==='/api/dev/build'&&method==='POST'){const job=buildSource();return json(res,{id:job.id,status:job.status},202);}
+ if(url==='/api/dev/package'&&method==='POST'){const job=packageSource();return json(res,{id:job.id,status:job.status},202);}
+ if(url==='/api/dev/jobs'&&method==='GET')return json(res,devJobs());
+ const devJobMatch=url.match(/^\/api\/dev\/jobs\/([^/]+)$/);
+ if(devJobMatch&&method==='GET'){const job=devJob(devJobMatch[1]);return job?json(res,job):json(res,{error:'Job not found'},404);}
+ if(url==='/api/dev/diff'&&method==='GET')return json(res,await sourceDiff());
+ if(url==='/api/dev/commit'&&method==='POST')return json(res,await sourceCommit((await body(req)).message));
+ if(url==='/api/dev/files'&&method==='GET')return json(res,await sourceList(u.searchParams.get('path')||''));
+ if(url==='/api/dev/file'&&method==='GET')return json(res,await sourceRead(u.searchParams.get('path')||''));
+ if(url==='/api/dev/file'&&method==='POST'){const input=await body(req);return json(res,await sourceWrite(input.path,input.content));}
+ if(url==='/api/dev/preview/start'&&method==='POST')return json(res,await previewStart());
+ if(url==='/api/dev/preview/stop'&&method==='POST')return json(res,await previewStop());
+ if(url==='/api/dev/installer'&&method==='GET')return json(res,await latestInstaller());
+ if(url==='/api/dev/update'&&method==='POST')return json(res,await validateUpdateInstaller((await body(req)).installer));
  const roomStatus=url.match(/^\/api\/room-conversations\/([^/]+)\/([^/]+)$/);
  if(roomStatus&&method==='GET')return json(res,activeRoomStatus(roomStatus[1],roomStatus[2]));
  const roomControl=url.match(/^\/api\/room-conversations\/([^/]+)\/([^/]+)\/(stop|reset)$/);

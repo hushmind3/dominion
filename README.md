@@ -143,6 +143,15 @@ Vite가 `127.0.0.1:5173`, 게이트웨이가 `127.0.0.1:4317`에서 실행되고
 
 `v*` 태그를 푸시하면 GitHub Actions가 Windows/macOS 설치본을 빌드해 GitHub Releases에 업로드합니다. 현재 빌드는 **미서명**이며 macOS 공증도 없습니다. 상세 내용과 검증 기록은 [docs/DESKTOP.md](docs/DESKTOP.md)를 참고하세요.
 
+## 설치본에서 자기 소스 개발
+
+설치된 앱은 `고급 → 소스 개발`에서 별도 Git 소스 작업공간을 연결/클론하고, 에이전트에게 UI·엔진 수정을 요청할 수 있습니다. 테스트, 빌드, Vite HMR 미리보기, 설치 파일 생성, 업데이트 적용까지 앱 안에서 수행합니다. 설치된 `resources/app`은 직접 수정하지 않습니다.
+
+- 기본 소스 경로: `~/DOMINION Source/dominion`
+- Git: 앱에 포함된 `isomorphic-git` 사용 (시스템 Git 불필요)
+- 의존성: 앱에 포함된 npm + Electron Node 사용
+- 상세: [docs/DEV_STUDIO.md](docs/DEV_STUDIO.md)
+
 ## 실제 사용자 저장소 비교와 적용
 
 - [Hermes / OpenClaw 실제 소스 분석과 DOMINION 자체 구현 경로](docs/SOURCE_COMPARISON.md)
