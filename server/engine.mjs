@@ -1,4 +1,5 @@
-import {all,get,put,writeMessage,messages,log} from './store.mjs';
+import {all,get,put,writeMessage,messages,log,bus} from './store.mjs';
+import {ExecutionRuntime} from './execution-runtime.mjs';
 import {streamCompletion} from './providers.mjs';
 import {toolsForModel,executeTool} from './tools.mjs';
 export function agents(){
@@ -25,45 +26,36 @@ function asOpenAI(row,speakerLabels=false){
  if(row.role==='tool')v.tool_call_id=row.tool_call_id;
  return v;
 }
-const runningSessions=new Set();
-export async function runTurn({sessionId,agentId,providerId,model,input,systemOverride,reasoningLanguage,onEvent=()=>{},signal,toolsEnabled=true,speakerLabels=false}){
+const executionRuntime=new ExecutionRuntime({
+ complete:streamCompletion,discoverTools:toolsForModel,invokeTool:executeTool,
+ readHistory:messages,convertMessage:asOpenAI,saveMessage:writeMessage,
+ saveRun:run=>{put('execution',run);bus.emit('execution_event',{runId:run.id,sessionId:run.sessionId,status:run.status});},
+ saveOperation:operation=>put('execution_operation',operation)
+});
+export const executions=()=>all('execution');
+export const cancelExecution=id=>executionRuntime.cancel(id);
+export const activeExecutions=()=>executionRuntime.active();
+export function recoverExecutions(){
+ for(const run of executions().filter(x=>x.status==='running')){
+  put('execution',{...run,status:'interrupted',reason:'Process stopped; inspect unfinished tool calls before replay'});
+ }
+ for(const op of all('execution_operation').filter(x=>x.status==='started')){
+  put('execution_operation',{...op,status:'uncertain',reason:'Interrupted before tool result was persisted'});
+ }
+}
+export async function runTurn({sessionId,agentId,providerId,model,input,systemOverride,reasoningLanguage,onEvent=()=>{},signal,toolsEnabled=true,speakerLabels=false,limits={}}){
  const sess=get('session',sessionId);if(!sess)throw Error('Session not found');
- if(runningSessions.has(sessionId))throw Error('Session is already running');
- runningSessions.add(sessionId);
- try{
-  const agent=get('agent',agentId||sess.agentId)||agents().find(a=>a.id==='general');
-  const provider=providerId||sess.providerId||agent?.providerId;
-  const modelId=model||sess.model||agent?.model;
-  if(!provider||!modelId)throw Error('Select a provider and model in the model picker');
-  if(input!==undefined&&String(input).trim()){
-    writeMessage({session_id:sessionId,role:'user',content:String(input),agent_id:agent?.id});
-    const title=sess.title==='새 대화'?String(input).trim().slice(0,58):sess.title;
-    put('session',{...sess,title,providerId:provider,model:modelId,lastActivity:new Date().toISOString()});
-  }
-  const system=(systemOverride||systemFor(agent))+(reasoningLanguage==='ko'?'\n\nWhen the provider exposes visible reasoning content, prefer explaining your thought process in Korean.':'');
-  const tools=await toolsForModel(toolsEnabled);
-  let iterations=0;
-  while(iterations++<8){
-   const history=[{role:'system',content:system},...messages(sessionId).map(row=>asOpenAI(row,speakerLabels))];
-   const result=await streamCompletion({providerId:provider,model:modelId,messages:history,tools,onEvent,signal});
-   const assistant=writeMessage({session_id:sessionId,role:'assistant',content:result.content,reasoning:result.reasoning_content,tool_calls:result.tool_calls.length?result.tool_calls:null,agent_id:agent?.id});
-   onEvent({type:'assistant_saved',message:assistant,usage:result.usage});
-   if(!result.tool_calls.length){onEvent({type:'done',sessionId,usage:result.usage});return assistant;}
-   for(const call of result.tool_calls){
-    const tool=tools.find(x=>x.name===call.function.name);
-    let output;
-    try{
-     if(!tool)throw Error('Tool not enabled: '+call.function.name);
-     const args=JSON.parse(call.function.arguments||'{}');
-     onEvent({type:'tool_start',name:tool.name,args,callId:call.id});
-     output=await executeTool(tool,args,onEvent);
-     onEvent({type:'tool_end',name:tool.name,callId:call.id,result:output});
-    }catch(e){output={error:String(e.message||e)};onEvent({type:'tool_error',name:call.function.name,error:String(e.message||e)});}
-    writeMessage({session_id:sessionId,role:'tool',tool_call_id:call.id,content:typeof output==='string'?output:JSON.stringify(output).slice(0,30000)});
-   }
-  }
-  throw Error('Tool execution reached the 8-step ceiling; continue in a new turn');
- }finally{runningSessions.delete(sessionId);}
+ const agent=get('agent',agentId||sess.agentId)||agents().find(a=>a.id==='general');
+ const provider=providerId||sess.providerId||agent?.providerId;
+ const modelId=model||sess.model||agent?.model;
+ if(!provider||!modelId)throw Error('Select a provider and model in the model picker');
+ if(input!==undefined&&String(input).trim()){
+  writeMessage({session_id:sessionId,role:'user',content:String(input),agent_id:agent?.id});
+  const title=sess.title==='새 대화'?String(input).trim().slice(0,58):sess.title;
+  put('session',{...sess,title,providerId:provider,model:modelId,lastActivity:new Date().toISOString()});
+ }
+ const system=(systemOverride||systemFor(agent))+(reasoningLanguage==='ko'?'\n\nWhen the provider exposes visible reasoning content, prefer explaining your thought process in Korean.':'');
+ return executionRuntime.execute({sessionId,agentId:agent?.id,providerId:provider,model:modelId,system,onEvent,signal,toolsEnabled,speakerLabels,limits});
 }
 export function rooms(){return all('room');}
 export function saveRoom(data){
