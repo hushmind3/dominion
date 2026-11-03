@@ -1,4 +1,4 @@
-import {all,put,get,remove,log,bus} from './store.mjs';
+import {all,put,get,remove,log,bus,claimInbound,finishInbound} from './store.mjs';
 import {secretSet,secretGet,hasSecret} from './vault.mjs';
 import {newSession,runTurn} from './engine.mjs';
 import {channelCatalog,channelDefinition,validateChannelConfiguration} from './channel-catalog.mjs';
@@ -92,12 +92,15 @@ async function dispatch(record,event){
    const s=newSession({title:record.name+' · '+event.conversationId,agentId:record.agentId,providerId:record.providerId,model:record.model});
    session=put('session',{...s,channelKey:key});
   }
+  const inboundId=event.messageId?record.id+':'+event.conversationId+':'+event.messageId:null;
+  if(inboundId&&!claimInbound(inboundId)){log('channel.duplicate_skipped',{channelId:record.id});return;}
   try{
    log('channel.received',{channelId:record.id,kind:record.kind,conversationId:event.conversationId});
    const assistant=await runTurn({sessionId:session.id,agentId:record.agentId,providerId:record.providerId,model:record.model,input:event.text});
    const output=assistant.content?.trim();
    if(output){await event.reply(output);log('channel.replied',{channelId:record.id,kind:record.kind,conversationId:event.conversationId});}
-  }catch(error){log('channel.dispatch_error',{channelId:record.id,kind:record.kind,error:safeError(error)});}
+   if(inboundId)finishInbound(inboundId,true);
+  }catch(error){if(inboundId)finishInbound(inboundId,false);log('channel.dispatch_error',{channelId:record.id,kind:record.kind,error:safeError(error)});}
  };
  const prev=queues.get(key)||Promise.resolve();
  const next=prev.catch(()=>{}).then(run);

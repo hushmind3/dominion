@@ -4,7 +4,7 @@ import path from 'node:path';
 import {timingSafeEqual} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {HOST,PORT,ROOT,IS_LOCAL,ADMIN_TOKEN} from './config.mjs';
-import {all,get,put,remove,messages,recentAudit,bus} from './store.mjs';
+import {all,get,put,remove,messages,recentAudit,bus,pruneInbound} from './store.mjs';
 import {providers,saveProvider,availableModels,searchHuggingFace,modelFiles,downloadIntoLMStudio,lmDownloadStatus} from './providers.mjs';
 import {agents,sessions,newSession,runTurn,saveRoom} from './engine.mjs';
 import {enqueue,startJobs} from './jobs.mjs';
@@ -189,6 +189,6 @@ const server=http.createServer(async(req,res)=>{
   else await staticFile(req,res,u);
  }catch(e){if(!res.headersSent)fail(res,e);else{if(res.getHeader('Content-Type')?.includes('text/event-stream'))send(res,{type:'error',message:String(e)});res.end();}}
 });
-agents();startJobs();startChannels();
+pruneInbound();agents();startJobs();startChannels();
 server.listen(PORT,HOST,()=>console.log('DOMINION running at http://'+HOST+':'+PORT));
 process.on('SIGTERM',()=>server.close());

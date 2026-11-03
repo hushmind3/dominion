@@ -9,6 +9,16 @@ db.exec("CREATE TABLE IF NOT EXISTS records (kind TEXT NOT NULL,id TEXT NOT NULL
 db.exec("CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY,session_id TEXT NOT NULL,role TEXT NOT NULL,content TEXT NOT NULL DEFAULT '',reasoning TEXT NOT NULL DEFAULT '',agent_id TEXT,tool_calls TEXT,tool_call_id TEXT,created_at TEXT NOT NULL DEFAULT (datetime('now')));");
 db.exec("CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id,created_at,rowid);".replace(',rowid',''));
 db.exec("CREATE TABLE IF NOT EXISTS audit (id TEXT PRIMARY KEY,event TEXT NOT NULL,detail TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT (datetime('now')));");
+db.exec("CREATE TABLE IF NOT EXISTS inbound_events (id TEXT PRIMARY KEY,state TEXT NOT NULL,claimed_at INTEGER NOT NULL,finished_at INTEGER);");
+export function claimInbound(id){
+ const now=Date.now();
+ const r=db.prepare("INSERT INTO inbound_events(id,state,claimed_at) VALUES(?,'processing',?) ON CONFLICT(id) DO UPDATE SET state='processing',claimed_at=excluded.claimed_at,finished_at=NULL WHERE inbound_events.state='failed' OR (inbound_events.state='processing' AND inbound_events.claimed_at<?)").run(id,now,now-300000);
+ return r.changes>0;
+}
+export function finishInbound(id,succeeded=true){
+ db.prepare("UPDATE inbound_events SET state=?,finished_at=? WHERE id=?").run(succeeded?'completed':'failed',Date.now(),id);
+}
+export function pruneInbound(){db.prepare("DELETE FROM inbound_events WHERE finished_at IS NOT NULL AND finished_at<?").run(Date.now()-14*86400000);}
 export const bus = new EventEmitter(); bus.setMaxListeners(200);
 const parse = row => row ? {...JSON.parse(row.data),id:row.id,createdAt:row.created_at,updatedAt:row.updated_at} : null;
 export function all(kind) { return db.prepare("SELECT * FROM records WHERE kind=? ORDER BY updated_at DESC").all(kind).map(parse); }
