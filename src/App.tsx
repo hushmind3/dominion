@@ -2,6 +2,7 @@ import {useCallback,useEffect,useMemo,useState} from 'react'
 import {Activity,Blocks,BookOpenText,BrainCircuit,ChevronsUpDown,Compass,House,Layers3,Menu,MessageSquareMore,RadioTower,Search,Settings2,ShieldCheck,UsersRound,Workflow,X} from 'lucide-react'
 import {get} from './api'
 import {HomePage} from './pages/Home'
+import {CapabilitiesPage} from './pages/Capabilities'
 import {MemoryPage} from './pages/Memory'
 import {WorkflowsPage} from './pages/Workflows'
 import {ChatPage} from './pages/Chat'
@@ -10,10 +11,10 @@ import {AgentsPage,RoomsPage} from './pages/Agents'
 import {ExtensionsPage} from './pages/Extensions'
 import {ConnectionsPage} from './pages/Connections'
 import {OperationsPage} from './pages/Operations'
-type Page='home'|'chat'|'models'|'agents'|'rooms'|'workflows'|'memory'|'extensions'|'connections'|'automations'|'activity'|'settings'
+type Page='capabilities'|'home'|'chat'|'models'|'agents'|'rooms'|'workflows'|'memory'|'extensions'|'connections'|'automations'|'activity'|'settings'
 const groups:{title:string;items:{id:Page;label:string;icon:any}[]}[]=[
  {title:'WORKSPACE',items:[{id:'home',label:'홈',icon:House},{id:'chat',label:'대화',icon:MessageSquareMore},{id:'models',label:'모델 허브',icon:Compass},{id:'agents',label:'에이전트',icon:BrainCircuit},{id:'rooms',label:'그룹 · 회의실',icon:UsersRound},{id:'workflows',label:'워크플로',icon:Workflow},{id:'memory',label:'기억 라이브러리',icon:BookOpenText}]},
- {title:'CAPABILITIES',items:[{id:'extensions',label:'MCP · 스킬',icon:Blocks},{id:'connections',label:'연결 · 채널',icon:RadioTower},{id:'automations',label:'자동화',icon:Workflow}]},
+ {title:'CAPABILITIES',items:[{id:'capabilities',label:'확장 허브',icon:Layers3},{id:'extensions',label:'MCP · 스킬',icon:Blocks},{id:'connections',label:'연결 · 채널',icon:RadioTower},{id:'automations',label:'자동화',icon:Workflow}]},
  {title:'SYSTEM',items:[{id:'activity',label:'실행 기록',icon:Activity},{id:'settings',label:'설정',icon:Settings2}]}
 ]
 const labels=Object.fromEntries(groups.flatMap(g=>g.items.map(x=>[x.id,x.label])))
@@ -42,6 +43,7 @@ export default function App(){
   <main className="main-area">
    <header className="topbar"><div className="topbar-left"><button className="icon-button mobile-menu" onClick={()=>setSidebar(true)}><Menu size={21}/></button><span className="topbar-location">Workspace</span><span className="topbar-divider">/</span><strong>{labels[page]}</strong></div><div className="topbar-right"><button className="command-trigger" onClick={()=>{setPalette(true);setSearch('')}}><Search size={16}/> 빠른 이동 <kbd>⌘ K</kbd></button><span className="topbar-sep"/><div className={'topbar-status '+(online?'healthy':'unhealthy')}><span/>{online?'시스템 연결됨':'오프라인'}</div><button className="avatar" title="Personal workspace">D</button></div></header>
    <div className={'page-content page-'+page}>
+    {page==='capabilities'&&<CapabilitiesPage navigate={navigate}/>}
     {page==='home'&&<HomePage navigate={navigate}/>}
     {page==='memory'&&<MemoryPage/>}
     {page==='workflows'&&<WorkflowsPage openSession={id=>navigate('chat',id)}/>}
