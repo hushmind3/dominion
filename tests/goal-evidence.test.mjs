@@ -18,3 +18,24 @@ test('a goal with an executable action never succeeds on model prose alone',asyn
   db.prepare('DELETE FROM harness_runs WHERE id=?').run(run.id);
  }
 });
+
+test('a reviewer cannot approve a mutation with only read-only or discovery evidence',async()=>{
+ for(const evidence of [[{name:'workspace_list'}],[{name:'tool_discover'}],[]]){
+  const run=createGoal({goal:'Create an artifact and verify it',budget:{maxRepairs:0,maxReplans:0}});
+  let reviewerCalled=false;
+  try{
+   const result=await runGoal(run.id,{
+    plan:async()=>({steps:[{id:'write',prompt:'Create a file in the workspace',requiresTools:true}]}),
+    execute:async()=>({content:'File created.',toolCalls:1,evidence}),
+    review:async()=>{reviewerCalled=true;return {passed:true,mode:'independent-model'};}
+   });
+   assert.equal(result.status,'needs_review');
+   assert.match(result.reason,/matching successful tool evidence/);
+   assert.equal(reviewerCalled,false,'Invalid evidence must be rejected before the reviewer');
+   assert.ok(!goalEvents(run.id).some(e=>e.type==='workflow.completed'));
+  }finally{
+   db.prepare('DELETE FROM harness_events WHERE run_id=?').run(run.id);
+   db.prepare('DELETE FROM harness_runs WHERE id=?').run(run.id);
+  }
+ }
+});
