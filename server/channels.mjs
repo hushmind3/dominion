@@ -2,16 +2,8 @@ import {all,put,get,remove,log,bus} from './store.mjs';
 import {secretSet,secretGet,hasSecret} from './vault.mjs';
 import {newSession,runTurn} from './engine.mjs';
 import {channelCatalog,channelDefinition,validateChannelConfiguration} from './channel-catalog.mjs';
-import {verifyWebhook} from './channel-security.mjs';
-import * as telegram from './channel-drivers/telegram.mjs';
-import * as discord from './channel-drivers/discord.mjs';
-import * as slack from './channel-drivers/slack.mjs';
-import * as matrix from './channel-drivers/matrix.mjs';
-import * as signal from './channel-drivers/signal.mjs';
-import * as whatsapp from './channel-drivers/whatsapp.mjs';
-import * as line from './channel-drivers/line.mjs';
 
-const drivers={telegram,discord,slack,matrix,signal,whatsapp,line};
+import {channelDriver,registryErrors} from './channel-registry.mjs';
 const workers=new Map();
 const statuses=new Map();
 const queues=new Map();
@@ -114,7 +106,7 @@ async function dispatch(record,event){
 }
 export function startChannel(id){
  const record=get('channel',id);if(!record?.enabled)return;
- const driver=drivers[record.kind];if(!driver){emitStatus(id,'unavailable');return;}
+ const driver=channelDriver(record.kind);if(!driver){emitStatus(id,'unavailable');return;}
  const credentials=credentialValues(record);
  try{
   validateChannelConfiguration(record.kind,record,credentials);
@@ -129,9 +121,9 @@ export async function handleChannelWebhook(req,res,u){
  const match=u.pathname.match(/^\/api\/webhooks\/([a-f0-9-]{20,50})$/);
  if(!match)return false;
  const record=get('channel',match[1]);
- if(!record?.enabled||!['whatsapp','line'].includes(record.kind)){res.writeHead(404);res.end();return true;}
- const driver=drivers[record.kind],credentials=credentialValues(record);
- if(req.method==='GET'&&record.kind==='whatsapp'){
+ if(!record?.enabled||channelDefinition(record.kind)?.mode!=='webhook'){res.writeHead(404);res.end();return true;}
+ const driver=channelDriver(record.kind),credentials=credentialValues(record);
+ if(req.method==='GET'&&typeof driver?.verifyChallenge==='function'){
   const challenge=driver.verifyChallenge(u.searchParams,credentials);
   if(challenge===null){res.writeHead(403);res.end();return true;}
   res.writeHead(200,{'Content-Type':'text/plain'});res.end(challenge);return true;
@@ -140,7 +132,7 @@ export async function handleChannelWebhook(req,res,u){
  let bytes=0;const chunks=[];
  for await(const chunk of req){bytes+=chunk.length;if(bytes>1048576){res.writeHead(413);res.end();return true;}chunks.push(chunk);}
  const raw=Buffer.concat(chunks);
- if(!verifyWebhook(record.kind,req.headers,raw,credentials)){res.writeHead(401);res.end();return true;}
+ if(typeof driver.verifySignature!=='function'||!driver.verifySignature(req.headers,raw,credentials)){res.writeHead(401);res.end();return true;}
  let payload;try{payload=JSON.parse(raw.toString('utf8'));}catch{res.writeHead(400);res.end();return true;}
  const tasks=driver.inboundEvents(payload,{record,credentials,onMessage:event=>dispatch(record,event)});
  res.writeHead(200,{'Content-Type':'text/plain'});res.end('ok');
@@ -151,21 +143,11 @@ export async function handleChannelWebhook(req,res,u){
 }
 export async function diagnoseChannel(id){
  const record=get('channel',id);if(!record)throw Error('Channel not found');
- const credentials=credentialValues(record), definition=channelDefinition(record.kind);
+ const credentials=credentialValues(record);
  validateChannelConfiguration(record.kind,record,credentials);
- let url,headers={},method='GET';
- if(record.kind==='telegram')url='https://api.telegram.org/bot'+credentials.token+'/getMe';
- else if(record.kind==='discord'){url='https://discord.com/api/v10/users/@me';headers.Authorization='Bot '+credentials.token;}
- else if(record.kind==='slack'){url='https://slack.com/api/auth.test';method='POST';headers.Authorization='Bearer '+credentials.token;}
- else if(record.kind==='matrix'){url=record.homeserver.replace(/\/+$/,'')+'/_matrix/client/v3/account/whoami';headers.Authorization='Bearer '+credentials.token;}
- else if(record.kind==='whatsapp'){url='https://graph.facebook.com/'+record.graphVersion+'/'+encodeURIComponent(record.phoneNumberId)+'?fields=display_phone_number,verified_name';headers.Authorization='Bearer '+credentials.token;}
- else if(record.kind==='line'){url='https://api.line.me/v2/bot/info';headers.Authorization='Bearer '+credentials.token;}
- else if(record.kind==='signal'){return {id,status:statuses.get(id)?.status||'not_started',verified:false,message:'Local signal-cli bridge is configured; inspect its WebSocket connection status'};}
- else throw Error('Diagnostic unavailable');
- const response=await fetch(url,{method,headers,signal:AbortSignal.timeout(9000)});
- let payload={};try{payload=await response.json();}catch{}
- const ok=response.ok&&(payload.ok!==false);
- const detail={id,kind:record.kind,verified:ok,status:statuses.get(id)?.status||'not_started',message:ok?'Provider credentials accepted':'Provider rejected the credentials (HTTP '+response.status+')'};
- log('channel.diagnosed',{id,kind:record.kind,verified:ok,httpStatus:response.status});
- return detail;
+ const driver=channelDriver(record.kind);
+ if(typeof driver?.diagnose!=='function')return {id,kind:record.kind,verified:false,status:statuses.get(id)?.status||'not_started',message:'No diagnostic probe provided by the channel plugin'};
+ const probe=await driver.diagnose(record,credentials);
+ log('channel.diagnosed',{id,kind:record.kind,verified:Boolean(probe.verified),httpStatus:probe.httpStatus||null});
+ return {id,kind:record.kind,status:statuses.get(id)?.status||'not_started',...probe};
 }
