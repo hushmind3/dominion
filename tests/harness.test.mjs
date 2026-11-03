@@ -45,13 +45,13 @@ test('rejections create a bounded repair, then hold for review',async()=>{
 test('model call budget prevents starting any further step',async()=>{
  const item=createGoal({goal:'Enforce call budget',budget:{maxModelCalls:1}});
  try{
+  db.prepare('UPDATE harness_runs SET data=? WHERE id=?').run(JSON.stringify({...item,usage:{...item.usage,modelCalls:1}}),item.id);
   const result=await runGoal(item.id,{
-   plan:async()=>({steps:[{id:'s1',prompt:'Task',dependsOn:[]}]}),
+   plan:async()=>{throw Error('must never plan');},
    execute:async()=>{throw Error('must never run');}
   });
-  // A mock planner performs no provider calls. The real planner records calls.
-  assert.equal(result.status,'failed');
-  assert.ok(goalEvents(item.id).some(x=>x.type==='workflow.failed'));
+  assert.equal(result.status,'budget_exceeded');
+  assert.ok(goalEvents(item.id).some(x=>x.type==='budget.exceeded'));
  }finally{cleanup(item.id);}
 });
 test('restart marks unfinished work for review rather than rerunning side effects',()=>{
