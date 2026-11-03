@@ -1,6 +1,6 @@
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
 import {FormEvent,useEffect,useRef,useState,type KeyboardEvent} from 'react'
-import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,CornerDownLeft,HardDrive,History,LoaderCircle,MessageCircle,MoreHorizontal,Plus,Power,RefreshCw,ShieldAlert,ShieldCheck,SlidersHorizontal,Sparkles,TerminalSquare,Trash2,X} from 'lucide-react'
+import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,CornerDownLeft,HardDrive,List,LoaderCircle,MessageCircle,MoreHorizontal,Plus,Power,RefreshCw,ShieldAlert,ShieldCheck,SlidersHorizontal,Sparkles,TerminalSquare,Trash2,X} from 'lucide-react'
 import {Agent,ChatMessage,ChatSession,Provider,get,post,streamChat} from '../api'
 import {Action,Empty,Notice,StateTag,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommands,type SlashChoice} from '../components/SlashMenu'
@@ -24,7 +24,7 @@ export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onS
  const [current,setCurrent]=useState<string|undefined>(sessionId);
  const [messages,setMessages]=useState<ChatMessage[]>([]);
  const [input,setInput]=useState(''),[providerId,setProviderId]=useState(''),[model,setModel]=useState(''),[agentId,setAgentId]=useState('general'),[models,setModels]=useState<Model[]>([]);
- const [modelError,setModelError]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[live,setLive]=useState(''),[thought,setThought]=useState(''),[thinking,setThinking]=useState(false),[reasoningKo,setReasoningKo]=useState(true),[showReasoning,setShowReasoning]=useState(false),[showSettings,setShowSettings]=useState(false),[toolsEnabled,setToolsEnabled]=useState(true),[thinkingEnabled,setThinkingEnabled]=useState(true),[reasoningEffort,setReasoningEffort]=useState(''),[showHistory,setShowHistory]=useState(()=>{try{return localStorage.getItem('dominion.chat.sidebar')!=='0'}catch{return true}}),[approval,setApproval]=useState<{id:string;tool:string;args:any}|null>(null),[toolStatus,setToolStatus]=useState('');
+ const [modelError,setModelError]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[live,setLive]=useState(''),[thought,setThought]=useState(''),[thinking,setThinking]=useState(false),[reasoningKo,setReasoningKo]=useState(true),[showReasoning,setShowReasoning]=useState(false),[showSettings,setShowSettings]=useState(false),[toolsEnabled,setToolsEnabled]=useState(true),[thinkingEnabled,setThinkingEnabled]=useState(true),[reasoningEffort,setReasoningEffort]=useState(''),[showHistory,setShowHistory]=useState(()=>{try{if(window.innerWidth<768)return false;return localStorage.getItem('dominion.chat.sidebar')!=='0'}catch{return true}}),[approval,setApproval]=useState<{id:string;tool:string;args:any}|null>(null),[toolStatus,setToolStatus]=useState('');
  const [permissionMode,setPermissionMode]=useState<PermissionMode>('request'),[permissionOpen,setPermissionOpen]=useState(false),[permissionBusy,setPermissionBusy]=useState(false);
  const [modelMenu,setModelMenu]=useState(false),[installed,setInstalled]=useState<InstalledModel[]>([]),[modelsLoading,setModelsLoading]=useState(false),[runtime,setRuntime]=useState<Runtime>({status:'idle'}),[modelBusy,setModelBusy]=useState(''),[unloading,setUnloading]=useState(false),[learning,setLearning]=useState(false),[menuError,setMenuError]=useState('');
  const [slashOpen,setSlashOpen]=useState(false),[slashActive,setSlashActive]=useState(0),[commandInfo,setCommandInfo]=useState('');
@@ -35,7 +35,7 @@ export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onS
  useEffect(()=>{if(current){get<ChatMessage[]>('/api/sessions/'+current+'/messages').then(setMessages).catch(()=>{})}else setMessages([])},[current]);
  useEffect(()=>{let valid=true;setModels([]);setModelError('');if(!providerId)return;get<Model[]>('/api/providers/'+providerId+'/models').then(x=>{if(!valid)return;setModels(x);if(x.length)setModel(old=>x.some(m=>m.id===old)?old:x[0].id);else setModel('')}).catch(e=>{if(valid){setModelError(e.message);setModel('')}});return()=>{valid=false}},[providerId]);
  useEffect(()=>{bottom.current?.scrollIntoView({behavior:'smooth',block:'end'})},[messages,live,thought,toolStatus]);
- useEffect(()=>{try{localStorage.setItem('dominion.chat.sidebar',showHistory?'1':'0')}catch{}},[showHistory]);
+ useEffect(()=>{if(window.innerWidth<768)return;try{localStorage.setItem('dominion.chat.sidebar',showHistory?'1':'0')}catch{}},[showHistory]);
  useEffect(()=>{get<{autoApprove?:string[];autoApproveAll?:boolean}>('/api/policy').then(p=>{
   setPermissionMode(p.autoApproveAll?'full':(p.autoApprove||[]).includes('workspace_write')?'workspace':'request')
  }).catch(()=>{})},[]);
@@ -241,8 +241,9 @@ export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onS
  };
  const selectedProvider=providers.value.find(x=>x.id===providerId);
  const activePermission=permissionCopy[permissionMode];
- return <div className={'grid h-[calc(100dvh-64px)] min-h-[540px] grid-cols-1 bg-[#F6F3EC] '+(showHistory?'md:grid-cols-[232px_minmax(0,1fr)]':'')}>
-  <aside className={'flex min-h-0 flex-col overflow-hidden border-r border-[#E7E0D5] bg-[#FAF7F1] max-md:hidden '+(!showHistory?'hidden':'')}>
+ return <div className={'relative grid h-[calc(100dvh-64px)] min-h-[540px] grid-cols-1 bg-[#F6F3EC] '+(showHistory?'md:grid-cols-[232px_minmax(0,1fr)]':'')}>
+  {showHistory&&<Button type="button" aria-label="대화 목록 닫기" className="absolute inset-0 z-20 !h-auto !w-auto cursor-default !rounded-none !border-0 !bg-slate-900/30 md:hidden" onClick={()=>setShowHistory(false)}/>}
+  <aside className={'flex min-h-0 flex-col overflow-hidden border-r border-[#E7E0D5] bg-[#FAF7F1] '+(showHistory?'max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-30 max-md:w-[232px] max-md:shadow-2xl':'hidden')}>
    <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-5"><div className="min-w-0"><span className="block text-[10px] font-extrabold uppercase tracking-widest text-[#C96442]">CONVERSATIONS</span><strong className="mt-1 block text-sm text-[#3A342D]">최근 대화</strong></div><Button size="icon" variant="ghost" onClick={()=>{setCurrent(undefined);onSession(undefined);inputRef.current?.focus()}} title="새 대화"><Plus size={19}/></Button></div>
    <Button className="mx-3 mb-4 inline-flex items-center justify-center gap-2 rounded-xl border border-[#EED9CC] bg-[#F7E8E1] px-4 py-2.5 text-xs font-bold text-[#A94E30] hover:bg-[#F1DCCF]" onClick={()=>{setCurrent(undefined);onSession(undefined);setMessages([]);inputRef.current?.focus()}}><Plus size={17}/> 새 대화 시작</Button>
    <div className="min-h-0 flex-1 overflow-y-auto px-2">{sessions.value.filter(s=>!s.roomId).map(s=><Button onClick={()=>pickSession(s)} key={s.id} title={s.title} className={'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-xs text-[#7C7469] hover:bg-[#F7E8E1] '+(current===s.id?'bg-[#F7E8E1] font-bold text-[#A94E30]':'')}><MessageCircle size={15} className="shrink-0"/><span className="truncate">{s.title}</span></Button>)}{!sessions.value.length&&<div className="p-5 text-center text-xs text-[#9C9388]">첫 번째 대화를 시작해보세요.</div>}</div>
@@ -251,7 +252,7 @@ export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onS
   <div className="flex min-h-0 min-w-0 flex-col">
    <header className="relative flex h-16 shrink-0 items-center justify-between gap-2 border-b border-[#E7E0D5] bg-[#FFFDF9] px-4">
     <div className="flex min-w-0 items-center gap-1.5">
-      <Button size="icon" variant="ghost" onClick={()=>setShowHistory(x=>!x)} title={showHistory?'대화 목록 접기':'대화 목록 펼치기'} aria-label={showHistory?'대화 목록 접기':'대화 목록 펼치기'}><History size={18}/></Button>
+      <Button size="icon" variant="ghost" onClick={()=>setShowHistory(x=>!x)} title={showHistory?'대화 목록 접기':'대화 목록 펼치기'} aria-label={showHistory?'대화 목록 접기':'대화 목록 펼치기'}><List size={18}/></Button>
      <div className="relative flex min-w-0 items-center gap-1">
       <SelectInput aria-label="모델 제공자" title={selectedProvider?.name||'자동 선택'} value={providerId} onChange={e=>{setProviderId(e.target.value);setModel('')}} className="!w-[158px] !border-0 !bg-transparent !py-1 !text-[12px]"><option value="">자동 선택</option>{providers.value.filter(p=>p.enabled).map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</SelectInput>
       <span className="text-[#B8AFA2]">/</span>
