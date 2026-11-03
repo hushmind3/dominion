@@ -64,11 +64,11 @@ class LocalRunner{
   if(model.format==='gguf'){
    const file=model.files.find(x=>/\.gguf$/i.test(x));
    if(!file)throw Error('GGUF weight file missing');
-   const abs=path.resolve(model.folder,file);
-   if(!abs.startsWith(model.folder+path.sep))throw Error('Invalid model file path');
+   const abs=model.source==='external'?model.externalPath:path.resolve(model.folder,file);
+   if(model.source!=='external'&&!abs.startsWith(model.folder+path.sep))throw Error('Invalid model file path');
    cmd=support.command;args=['-m',abs,'--host','127.0.0.1','--port',String(port),'--alias',name,'-c',String(contextSize),'--gpu-layers',gpu?'auto':'0','--no-webui'];
   }else{
-   cmd=support.command;args=['-m','mlx_lm.server','--model',model.folder,'--host','127.0.0.1','--port',String(port)];
+   cmd=support.command;args=['-m','mlx_lm.server','--model',model.source==='external'?model.externalPath:model.folder,'--host','127.0.0.1','--port',String(port)];
   }
   this.state={status:'loading',id,repo:model.repo,format:model.format,name,port,engine:model.format==='gguf'?'llama.cpp':'mlx-lm',error:''};
   let child;

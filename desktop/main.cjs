@@ -1,5 +1,5 @@
 'use strict';
-const {app,BrowserWindow,shell,dialog,session} = require('electron');
+const {app,BrowserWindow,shell,dialog,session,ipcMain} = require('electron');
 const {spawn} = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -14,6 +14,16 @@ else{
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function freePort(){return new Promise((resolve,reject)=>{const s=net.createServer();s.once('error',reject);s.listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(()=>resolve(p))})})}
 async function start(){
+ ipcMain.removeHandler('dominion:pick-model');
+ ipcMain.handle('dominion:pick-model',async(_event,format)=>{
+  const folder=format==='mlx';
+  const answer=await dialog.showOpenDialog(window||undefined,{
+   title:folder?'MLX 모델 폴더 선택':'GGUF 모델 파일 선택',
+   properties:folder?['openDirectory']:['openFile'],
+   ...(folder?{}:{filters:[{name:'GGUF models',extensions:['gguf']} ]})
+  });
+  return answer.canceled?'':answer.filePaths[0]||'';
+ });
  if(!fs.existsSync(path.join(ROOT,'dist','index.html')))throw Error('Missing compiled UI. Run npm run build in the repository root.');
  enginePort=await freePort();
  const data=path.join(app.getPath('userData'),'runtime');
@@ -35,7 +45,7 @@ async function start(){
  }
  if(!ready)throw Error('DOMINION gateway startup timed out: '+stderr);
  window=new BrowserWindow({title:'DOMINION',width:1460,height:940,minWidth:780,minHeight:620,backgroundColor:'#f6f8fc',show:false,
-   webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true}
+   webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true,preload:path.join(__dirname,'preload.cjs')}
  });
  session.defaultSession.setPermissionRequestHandler((_webContents,permission,callback)=>{
   callback(permission==='clipboard-sanitized-write');

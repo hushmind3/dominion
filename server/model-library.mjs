@@ -228,6 +228,38 @@ export class ModelLibrary{
   try{await fsp.access(path.join(dir,'manifest.json'));}catch{throw Error('Model not installed');}
   await fsp.rm(dir,{recursive:true,force:true});return {ok:true};
  }
+
+ async importLocal({filePath}={}){
+  const value=String(filePath||'').trim();
+  if(!value||value.includes('\0'))throw Error('Select an existing model file or directory on the gateway computer');
+  const absolute=path.resolve(value);
+  const source=await fsp.stat(absolute);
+  let format,files,bytes;
+  if(source.isFile()&&/\.gguf$/i.test(absolute)){
+   const fd=await fsp.open(absolute,'r');
+   try{
+    const magic=Buffer.alloc(4);
+    const result=await fd.read(magic,0,4,0);
+    if(result.bytesRead!==4||magic.toString('ascii')!=='GGUF')throw Error('File is not a valid GGUF container');
+   }finally{await fd.close();}
+   format='gguf';files=[path.basename(absolute)];bytes=source.size;
+  }else if(source.isDirectory()){
+   const entries=await fsp.readdir(absolute,{withFileTypes:true});
+   if(!entries.some(x=>x.name==='config.json'&&x.isFile())||
+      !entries.some(x=>/\.safetensors$/i.test(x.name)&&x.isFile()))
+    throw Error('MLX directory requires config.json and .safetensors weights');
+   format='mlx';files=entries.filter(x=>x.isFile()&&(/\.safetensors$|\.json$|tokenizer|\.txt$|\.jinja$/i.test(x.name))).map(x=>x.name);
+   bytes=0;for(const name of files)bytes+=(await fsp.stat(path.join(absolute,name))).size;
+  }else throw Error('Choose a .gguf file or a directory containing MLX weights');
+  const id=createHash('sha256').update('external|'+absolute).digest('hex').slice(0,24);
+  const folder=this._dir(id);
+  await fsp.mkdir(folder,{recursive:true,mode:0o700});
+  const manifest={status:'installed',source:'external',externalPath:absolute,
+   repo:'Local / '+path.basename(absolute),revision:'local',optionId:'local:'+format,format,
+   label:path.basename(absolute),files,bytes,installedAt:new Date().toISOString()};
+  await fsp.writeFile(path.join(folder,'manifest.json'),JSON.stringify(manifest,null,2));
+  return {...manifest,id};
+ }
  async find(id){
   const found=(await this.installed()).find(x=>x.id===id);
   if(!found)throw Error('Installed model not found');
