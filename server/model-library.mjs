@@ -5,9 +5,8 @@ import {createHash} from 'node:crypto';
 import {once} from 'node:events';
 import {DATA} from './config.mjs';
 
-const REPO=/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const REPO=/^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}\/[A-Za-z0-9][A-Za-z0-9_.-]{0,95}$/;
 const HEX=/^[0-9a-f]{24}$/;
-const format=['gguf','mlx'];
 const MAX_TREE_PAGES=12;
 const quantFrom=name=>{
  const matches=name.toUpperCase().match(/(?:^|[-_.])(IQ[1-4](?:_[A-Z0-9]+)*|Q[1-8](?:_[A-Z0-9]+)*|TQ[12]|F16|BF16|FP16|FP8)(?=[-_.]|$)/g);
@@ -146,6 +145,7 @@ export class ModelLibrary{
     let complete=0;
     try{const stat=await fsp.stat(targetFile);if(expected&&stat.size===expected)complete=expected;}catch{}
     job.downloaded+=complete;
+    if(!complete){try{const partial=await fsp.stat(targetFile+'.part');job.downloaded+=Math.min(partial.size,expected||partial.size);}catch{}}
    }
    job.status='downloading';
    for(const name of files){
@@ -167,12 +167,15 @@ export class ModelLibrary{
  async _downloadFile(job,name,dest,expected){
   const partial=dest+'.part';
   let offset=0;try{offset=(await fsp.stat(partial)).size;}catch{}
-  if(expected&&offset>expected){await fsp.rm(partial,{force:true});offset=0;}
+  if(expected&&offset>expected){job.downloaded-=Math.min(offset,expected);await fsp.rm(partial,{force:true});offset=0;}
+  if(expected&&offset===expected){await fsp.rename(partial,dest);return;}
   const headers=offset?{Range:'bytes='+offset+'-'}:{};
   const u=this.url(job.repo,'')+'/resolve/'+job.revision+'/'+name.split('/').map(encodeURIComponent).join('/');
   const response=await this.fetcher(u,{headers,signal:job.controller.signal,redirect:'follow'});
   if(!response.ok||(![200,206].includes(response.status)))throw Error('Download HTTP '+response.status+' ('+name+')');
-  if(offset&&response.status!==206){offset=0;await fsp.rm(partial,{force:true});}
+  if(offset&&response.status!==206){job.downloaded-=offset;offset=0;await fsp.rm(partial,{force:true});}
+  const range=response.headers?.get('content-range');
+  if(offset&&response.status===206&&range&&!range.startsWith('bytes '+offset+'-'))throw Error('Incorrect resume range for '+name);
   const source=response.body;
   if(!source)throw Error('Empty download stream');
   const writer=fs.createWriteStream(partial,{flags:offset?'a':'w'});
