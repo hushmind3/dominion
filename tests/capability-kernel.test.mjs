@@ -17,7 +17,7 @@ test('generic kernel accepts independent domains without product-specific regist
 test('live platform inventory joins channels, model providers, MCP and tools without duplicate placeholders',()=>{
  const items=capabilityInventory();
  assert.ok(items.some(x=>x.namespace==='channel'&&x.id==='telegram'));
- assert.ok(items.some(x=>x.namespace==='model'&&x.id==='lmstudio'));
+ assert.ok(items.some(x=>x.namespace==='model'&&x.id==='dominion-native'));
  assert.ok(items.some(x=>x.namespace==='tool'&&x.id==='workspace_read'));
  assert.ok(items.every(x=>Boolean(x.name)&&Boolean(x.namespace)));
 });
