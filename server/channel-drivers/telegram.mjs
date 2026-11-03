@@ -18,11 +18,15 @@ export function start({record,credentials,onMessage,onStatus}){
     onStatus('connected');
     for(const update of updates){
      if(!active)break;
+     const m=update.message;
+     if(m?.text&&!m.from?.is_bot){
+      const id=String(m.chat.id);
+      const handled=await onMessage({conversationId:id,text:m.text,isGroup:m.chat.type!=='private',mention:/@\w+/.test(m.text),senderId:String(m.from?.id||''),messageId:String(m.message_id),reply:async text=>api('sendMessage',{chat_id:m.chat.id,text:text.slice(0,3900),reply_parameters:{message_id:m.message_id}})});
+      if(handled===false)throw Error('Telegram processing failed; cursor retained for retry');
+     }
+     // Confirm the update only after its delivery path was handled.
      offset=update.update_id+1;
      put('channel_cursor',{id:record.id,offset});
-     const m=update.message;if(!m?.text||m.from?.is_bot)continue;
-     const id=String(m.chat.id);
-     await onMessage({conversationId:id,text:m.text,isGroup:m.chat.type!=='private',mention:/@\w+/.test(m.text),senderId:String(m.from?.id||''),messageId:String(m.message_id),reply:async text=>api('sendMessage',{chat_id:m.chat.id,text:text.slice(0,3900),reply_parameters:{message_id:m.message_id}})});
     }
    }catch(e){
     if(active){onStatus('error',e);await delay(4000);}

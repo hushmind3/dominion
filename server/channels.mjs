@@ -83,11 +83,11 @@ export async function deleteChannel(id){
  return true;
 }
 async function dispatch(record,event){
- if(!event?.text?.trim()||!event.conversationId)return;
+ if(!event?.text?.trim()||!event.conversationId)return true;
  const command=record.roomId?roomCommand(event.text):null;
  if(command){
   const eventKey=event.messageId?record.id+':'+event.conversationId+':'+event.messageId:null;
-  if(eventKey&&!claimInbound(eventKey))return;
+  if(eventKey&&!claimInbound(eventKey))return true;
   try{
    if(command==='stop'){
     const stopped=stopRoomFlow(record.id,event.conversationId);
@@ -97,16 +97,16 @@ async function dispatch(record,event){
     await event.reply('새 대화로 시작합니다. 이전 기록은 유지합니다. (세대 '+state.generation+')');
    }
    if(eventKey)finishInbound(eventKey,true);
-  }catch(e){if(eventKey)finishInbound(eventKey,false);log('channel.command_error',{channelId:record.id,error:safeError(e)});}
-  return;
+  }catch(e){if(eventKey)finishInbound(eventKey,false);log('channel.command_error',{channelId:record.id,error:safeError(e)});return false;}
+  return true;
  }
- if(record.mentionOnly&&event.isGroup&&!event.mention)return;
+ if(record.mentionOnly&&event.isGroup&&!event.mention)return true;
  const key=record.id+':'+event.conversationId;
  const run=async()=>{
   const current=get('channel',record.id);
-  if(!current?.enabled)return;
+  if(!current?.enabled)return true;
   const inboundId=event.messageId?record.id+':'+event.conversationId+':'+event.messageId:null;
-  if(inboundId&&!claimInbound(inboundId)){log('channel.duplicate_skipped',{channelId:record.id});return;}
+  if(inboundId&&!claimInbound(inboundId)){log('channel.duplicate_skipped',{channelId:record.id});return true;}
   try{
    log('channel.received',{channelId:record.id,kind:record.kind,conversationId:event.conversationId,roomId:record.roomId||null});
    if(record.roomId){
@@ -122,12 +122,13 @@ async function dispatch(record,event){
     if(output){await event.reply(output);log('channel.replied',{channelId:record.id,kind:record.kind,conversationId:event.conversationId});}
    }
    if(inboundId)finishInbound(inboundId,true);
-  }catch(error){if(inboundId)finishInbound(inboundId,false);log('channel.dispatch_error',{channelId:record.id,kind:record.kind,error:safeError(error)});}
+   return true;
+  }catch(error){if(inboundId)finishInbound(inboundId,false);log('channel.dispatch_error',{channelId:record.id,kind:record.kind,error:safeError(error)});return false;}
  };
  const prev=queues.get(key)||Promise.resolve();
  const next=prev.catch(()=>{}).then(run);
  queues.set(key,next);
- try{await next;}finally{if(queues.get(key)===next)queues.delete(key);}
+ try{return await next;}finally{if(queues.get(key)===next)queues.delete(key);}
 }
 export function startChannel(id){
  const record=get('channel',id);if(!record?.enabled)return;

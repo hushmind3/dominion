@@ -17,22 +17,23 @@ export function start({record,credentials,onMessage,onStatus}){
     const batch=await matrix(url);
     onStatus('connected');
     const initial=!since;
-    since=batch.next_batch||since;
-    if(since)put('channel_cursor',{id:record.id,since});
+    const nextSince=batch.next_batch||since;
     // First sync is a snapshot, not a new user message.
-    if(initial)continue;
+    if(initial){since=nextSince;if(since)put('channel_cursor',{id:record.id,since});continue;}
     for(const [roomId,room] of Object.entries(batch.rooms?.join||{})){
      for(const event of room.timeline?.events||[]){
       if(event.type!=='m.room.message'||event.sender===userId||event.content?.msgtype!=='m.text'||!event.content.body)continue;
       if(event.content?.['m.relates_to']?.rel_type==='m.replace')continue;
       const text=event.content.body;
       const mention=text.includes(userId)||(event.content['m.mentions']?.user_ids||[]).includes(userId);
-      await onMessage({conversationId:roomId,text,isGroup:true,mention,senderId:event.sender,messageId:event.event_id,reply:async answer=>{
+      const handled=await onMessage({conversationId:roomId,text,isGroup:true,mention,senderId:event.sender,messageId:event.event_id,reply:async answer=>{
        const txn=crypto.randomUUID();
        await matrix('/rooms/'+encodeURIComponent(roomId)+'/send/m.room.message/'+txn,{method:'PUT',body:JSON.stringify({msgtype:'m.text',body:answer.slice(0,30000)})});
       }});
+      if(handled===false)throw Error('Matrix processing failed; sync token retained for retry');
      }
     }
+    since=nextSince;if(since)put('channel_cursor',{id:record.id,since});
    }catch(e){if(active){onStatus('error',e);await delay(4000);}}
   }
  })();
