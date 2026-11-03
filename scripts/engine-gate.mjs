@@ -8,12 +8,14 @@ const temporary=await mkdtemp(path.join(os.tmpdir(),'dominion-gate-'));
 process.env.DOMINION_DATA=path.join(temporary,'data');
 process.env.DOMINION_WORKSPACE=path.join(temporary,'workspace');
 
+let storeDb=null;
 try{
- const [{createGoal,runGoal,goal,goalEvents},{put},{builtin,executeTool}]=await Promise.all([
+ const [{createGoal,runGoal,goal,goalEvents},{put,db},{builtin,executeTool}]=await Promise.all([
   import('../server/harness.mjs'),
   import('../server/store.mjs'),
   import('../server/tools.mjs')
  ]);
+ storeDb=db;
  put('policy',{id:'default',autoApprove:['workspace_write'],autoApproveAll:false,autoApproveMcp:false});
  const filename='gate-evidence.txt',expected='DOMINION gate verified real workspace write';
  const good=createGoal({goal:'Create and verify a workspace file',budget:{maxSteps:1,maxRepairs:0,maxReplans:0}});
@@ -41,5 +43,11 @@ try{
  console.error('Engine gate failed: '+String(error?.stack||error));
  process.exitCode=1;
 }finally{
- await rm(temporary,{recursive:true,force:true});
+ try{storeDb?.close()}catch{}
+ let last=null;
+ for(let i=0;i<20;i++){
+  try{await rm(temporary,{recursive:true,force:true});last=null;break}
+  catch(error){last=error;await new Promise(resolve=>setTimeout(resolve,150));}
+ }
+ if(last){console.error('Engine gate cleanup failed: '+String(last?.message||last));process.exitCode=1;}
 }

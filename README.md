@@ -116,20 +116,32 @@ React / Tailwind UI ── HTTP/SSE ──> Node API Gateway
 
 새로 작성한 DOMINION 코드입니다. 과거 개인 저장소 또는 제3자 제품의 코드/페르소나/토큰을 복사하지 않았습니다. 라이선스는 별도 결정 전까지 명시적인 재배포 허가를 하지 않습니다. 본 저장소는 공개 상태이므로 비밀번호, 토큰, 개인 메시지나 모델 파일을 커밋하지 마세요.
 
-## Electron 데스크톱 실행
+## Electron 데스크톱 설치본과 개발 모드
 
-웹 콘솔과 독립적인 Electron 실행 진입점이 `desktop/`에 있습니다. macOS / Windows / Linux에서 별도 브라우저를 열지 않고 창으로 실행할 수 있습니다.
+설치 파일은 electron-builder로 생성합니다.
 
 ```bash
-npm install
-cd desktop
-npm install
-npm start
+npm ci
+npm run dist:win    # release/DOMINION-Setup.exe, release/DOMINION-Portable.exe
+npm run dist:mac    # release/DOMINION-<version>-arm64.dmg, ...-x64.dmg
 ```
 
-Electron 45에서 실행하면 내장 Node 프로세스가 DOMINION 게이트웨이를 직접 시작하고 앱 종료 시 함께 중지합니다. 앱 데이터는 OS의 사용자 데이터 디렉터리에 저장하며 작업 파일은 사용자 문서 폴더의 `DOMINION Workspace`에 보존합니다.
+- 설치형/포터블 모두 시스템 Node.js 없이 Electron 내장 Node로 게이트웨이를 실행합니다.
+- MCP의 `npx`는 앱에 포함된 npm과 Electron Node를 사용합니다.
+- 데이터는 `%APPDATA%\dominion-desktop\runtime` (Windows) 또는 `~/Library/Application Support/dominion-desktop/runtime` (macOS)에 보존됩니다.
+- 작업공간은 사용자 문서 폴더의 `DOMINION Workspace`를 계속 사용합니다.
 
-**현재 범위:** 소스 기반 Electron 실행 기능입니다. 서명된 설치 파일(`.dmg`, `.exe`) 배포, 자동 업데이트, 트레이 백그라운드 실행은 아직 추가하지 않았습니다.
+React HMR이 필요한 개발 모드:
+
+```bash
+npm ci
+npm --prefix desktop install
+npm run dev:desktop
+```
+
+Vite가 `127.0.0.1:5173`, 게이트웨이가 `127.0.0.1:4317`에서 실행되고 Electron은 Vite URL을 로드합니다.
+
+`v*` 태그를 푸시하면 GitHub Actions가 Windows/macOS 설치본을 빌드해 GitHub Releases에 업로드합니다. 현재 빌드는 **미서명**이며 macOS 공증도 없습니다. 상세 내용과 검증 기록은 [docs/DESKTOP.md](docs/DESKTOP.md)를 참고하세요.
 
 ## 실제 사용자 저장소 비교와 적용
 

@@ -1,5 +1,8 @@
+import path from 'node:path';
+import fs from 'node:fs';
 import {all,get,put,remove,log} from './store.mjs';
 import {secretGet,secretSet} from './vault.mjs';
+import {DATA,ROOT} from './config.mjs';
 const sessions=new Map();
 const label=x=>String(x).replace(/[^a-zA-Z0-9_]/g,'_').slice(0,35);
 export const mcpServers=()=>all('mcp').map(x=>({...x,hasToken:Boolean(secretGet('mcp:'+x.id))}));
@@ -15,6 +18,28 @@ export function saveMcp(input){
 }
 export async function disconnectMcp(id){const old=sessions.get(id);sessions.delete(id);if(old)await old.close().catch(()=>{});}
 export async function deleteMcp(id){await disconnectMcp(id);remove('mcp',id);}
+export function resolveStdioLaunch(record,baseEnv={...process.env}){
+ const command=String(record?.command||'');
+ const isNpx=process.platform==='win32'?/^npx(\.cmd)?$/i.test(command):command==='npx';
+ if(isNpx){
+  const cli=path.join(ROOT,'node_modules','npm','bin','npx-cli.js');
+  if(fs.existsSync(cli)){
+   const bin=path.join(DATA,'bin');
+   try{fs.mkdirSync(bin,{recursive:true,mode:0o700});}catch{}
+   const nodeShim=path.join(bin,process.platform==='win32'?'node.cmd':'node');
+   try{
+    if(process.platform==='win32')fs.writeFileSync(nodeShim,'@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n"'+process.execPath+'" %*\r\n');
+    else fs.writeFileSync(nodeShim,'#!/bin/sh\nELECTRON_RUN_AS_NODE=1 exec "'+process.execPath+'" "$@"\n',{mode:0o755});
+   }catch{}
+   return {
+    command:process.execPath,
+    args:[cli,...(record.args||[])],
+    env:{...baseEnv,ELECTRON_RUN_AS_NODE:'1',PATH:bin+path.delimiter+String(baseEnv.PATH||baseEnv.Path||''),npm_config_cache:path.join(DATA,'npm-cache'),npm_config_prefix:path.join(DATA,'npm-global'),npm_config_update_notifier:'false'}
+   };
+  }
+ }
+ return {command:record.command,args:record.args||[],env:{...baseEnv,...record.env}};
+}
 async function connect(record){
  const cached=sessions.get(record.id);if(cached)return cached;
  const {Client,StreamableHTTPClientTransport}=await import('@modelcontextprotocol/client');
@@ -24,7 +49,9 @@ async function connect(record){
    await client.connect(new StreamableHTTPClientTransport(new URL(record.url),token?{requestInit:{headers:{Authorization:'Bearer '+token}}}:{}));
  }else{
    const {StdioClientTransport}=await import('@modelcontextprotocol/client/stdio');
-   await client.connect(new StdioClientTransport({command:record.command,args:record.args||[],env:{...process.env,...record.env}}));
+   const baseEnv={...process.env,...record.env};
+   const launch=resolveStdioLaunch(record,baseEnv);
+   await client.connect(new StdioClientTransport({command:launch.command,args:launch.args,env:launch.env}));
  }
  sessions.set(record.id,client);return client;
 }

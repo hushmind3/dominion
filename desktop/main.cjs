@@ -5,11 +5,27 @@ const fs = require('node:fs');
 const path = require('node:path');
 const net = require('node:net');
 const ROOT=path.resolve(__dirname,'..');
+const DEV_URL=process.env.DOMINION_DEV_URL||'';
+const SMOKE=process.env.DOMINION_SMOKE==='1'||process.argv.includes('--smoke');
+const SMOKE_OUT=process.env.DOMINION_SMOKE_OUT||'';
+try{
+ app.setName('dominion-desktop');
+ app.setPath('userData',path.join(app.getPath('appData'),'dominion-desktop'));
+}catch{}
 let window=null,engine=null,quitting=false,enginePort=0;
 if(!app.requestSingleInstanceLock()){app.quit();}
 else{
  app.on('second-instance',()=>{window?.restore();window?.focus();});
- app.whenReady().then(start).catch(err=>{dialog.showErrorBox('DOMINION 시작 실패',String(err));app.quit()});
+ app.whenReady().then(start).catch(err=>{
+  const message=String(err?.stack||err);
+  if(SMOKE){
+   try{if(SMOKE_OUT)fs.writeFileSync(SMOKE_OUT,JSON.stringify({ok:false,error:message,resources:ROOT},null,2));}catch{}
+   console.error('DOMINION_SMOKE_FAIL '+message);
+   app.exit(1);
+   return;
+  }
+  dialog.showErrorBox('DOMINION 시작 실패',message);app.quit();
+ });
 }
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function freePort(){return new Promise((resolve,reject)=>{const s=net.createServer();s.once('error',reject);s.listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(()=>resolve(p))})})}
@@ -41,26 +57,41 @@ async function start(){
   });
   return answer.canceled?'':answer.filePaths[0]||'';
  });
- if(!fs.existsSync(path.join(ROOT,'dist','index.html')))throw Error('Missing compiled UI. Run npm run build in the repository root.');
- enginePort=await freePort();
+ if(!DEV_URL&&!fs.existsSync(path.join(ROOT,'dist','index.html')))throw Error('Missing compiled UI. Run npm run build in the repository root.');
+ enginePort=0;
+ let origin=DEV_URL?DEV_URL.replace(/\/$/,''):'';
  const data=path.join(app.getPath('userData'),'runtime');
  const workspace=path.join(app.getPath('documents'),'DOMINION Workspace');
  fs.mkdirSync(data,{recursive:true});fs.mkdirSync(workspace,{recursive:true});
- engine=spawn(process.execPath,[path.join(ROOT,'server/index.mjs')],{
-  cwd:ROOT,stdio:['ignore','pipe','pipe'],windowsHide:true,
-  env:{...process.env,ELECTRON_RUN_AS_NODE:'1',DOMINION_PORT:String(enginePort),DOMINION_HOST:'127.0.0.1',DOMINION_DATA:data,DOMINION_WORKSPACE:workspace}
- });
- let stderr='';
- engine.stderr.on('data',d=>{stderr=(stderr+d.toString()).slice(-6000);});
- engine.on('exit',(code,signal)=>{if(!quitting){dialog.showErrorBox('DOMINION Gateway 종료','Engine exited unexpectedly: '+code+' '+signal+'\n'+stderr);app.quit();}});
- const origin='http://127.0.0.1:'+enginePort;
- let ready=false;
- for(let i=0;i<100;i++){
-  if(engine.exitCode!==null)throw Error('Gateway exited: '+stderr);
-  try{const r=await fetch(origin+'/api/health',{signal:AbortSignal.timeout(500)});if(r.ok){ready=true;break}}catch{}
-  await sleep(160);
+ if(!DEV_URL){
+  enginePort=await freePort();
+  engine=spawn(process.execPath,[path.join(ROOT,'server/index.mjs')],{
+   cwd:ROOT,stdio:['ignore','pipe','pipe'],windowsHide:true,
+   env:{...process.env,ELECTRON_RUN_AS_NODE:'1',DOMINION_PORT:String(enginePort),DOMINION_HOST:'127.0.0.1',DOMINION_DATA:data,DOMINION_WORKSPACE:workspace}
+  });
+  let stderr='';
+  engine.stderr.on('data',d=>{stderr=(stderr+d.toString()).slice(-6000);});
+  engine.on('exit',(code,signal)=>{if(!quitting){dialog.showErrorBox('DOMINION Gateway 종료','Engine exited unexpectedly: '+code+' '+signal+'\n'+stderr);app.quit();}});
+  origin='http://127.0.0.1:'+enginePort;
+  let ready=false;
+  for(let i=0;i<100;i++){
+   if(engine.exitCode!==null)throw Error('Gateway exited: '+stderr);
+   try{const r=await fetch(origin+'/api/health',{signal:AbortSignal.timeout(500)});if(r.ok){ready=true;break}}catch{}
+   await sleep(160);
+  }
+  if(!ready)throw Error('DOMINION gateway startup timed out: '+stderr);
  }
- if(!ready)throw Error('DOMINION gateway startup timed out: '+stderr);
+ if(SMOKE){
+  const health=await (await fetch(origin+'/api/health',{signal:AbortSignal.timeout(5000)})).json();
+  const presets=await (await fetch(origin+'/api/mcp/presets',{signal:AbortSignal.timeout(5000)})).json();
+  const result={ok:health.ok===true,version:health.version||'',mcpPresets:Array.isArray(presets)?presets.length:-1,resources:ROOT,userData:app.getPath('userData'),node:process.versions.node,electron:process.versions.electron};
+  if(SMOKE_OUT)fs.writeFileSync(SMOKE_OUT,JSON.stringify(result,null,2));
+  console.log('DOMINION_SMOKE_OK '+JSON.stringify(result));
+  quitting=true;
+  if(engine&&!engine.killed)engine.kill();
+  app.exit(result.ok?0:1);
+  return;
+ }
  window=new BrowserWindow({title:'DOMINION',width:760,height:850,minWidth:740,minHeight:650,backgroundColor:'#f6f8fc',show:false,
    webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true,preload:path.join(__dirname,'preload.cjs')}
  });
