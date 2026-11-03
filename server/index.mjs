@@ -9,6 +9,7 @@ import {all,get,put,remove,messages,recentAudit,bus,pruneInbound} from './store.
 import {providers,saveProvider,availableModels} from './providers.mjs';
 import {modelLibrary} from './model-library.mjs';
 import {localRunner} from './local-runner.mjs';
+import {resolveModel} from './model-router.mjs';
 import {agents,sessions,newSession,runTurn,saveRoom,executions,activeExecutions,cancelExecution,recoverExecutions,renameSession,clearSession,forkSession,compactSession} from './engine.mjs';
 import {updateAgentModels,normalizeAgentAliases} from './agent-admin.mjs';
 import {enqueue,startJobs} from './jobs.mjs';
@@ -210,6 +211,7 @@ async function api(req,res,u){
  }
  if(url==='/api/mcp/discover'&&method==='GET')return json(res,await discoverMcp());
  if(url==='/api/tools'&&method==='GET')return json(res,await toolsForModel());
+ if(url==='/api/model-route'&&method==='GET')return json(res,await resolveModel());
  if(url==='/api/commands'&&method==='GET')return json(res,commandDefinitions);
  if(url==='/api/approvals'&&method==='GET')return json(res,approvals());
  if(url==='/api/approvals'&&method==='POST'){const x=await body(req);return json(res,{ok:resolveApproval(x.id,x.allow)});}
