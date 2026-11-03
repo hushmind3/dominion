@@ -4,6 +4,16 @@ import {spawn} from 'node:child_process';
 import {WORKSPACE} from './config.mjs';
 import {all,get,put,log,bus} from './store.mjs';
 import {discoverMcp,callMcp} from './mcp.mjs';
+// A cancelled MCP invocation may already have modified a remote system; the
+// caller must journal the outcome as uncertain instead of treating it as undone.
+export async function awaitOrAbort(promise,signal){
+ if(!signal)return promise;
+ signal.throwIfAborted();
+ let abort;
+ const interrupted=new Promise((_,reject)=>{abort=()=>reject(signal.reason||Error('Interrupted'));signal.addEventListener('abort',abort,{once:true});});
+ try{return await Promise.race([promise,interrupted]);}
+ finally{signal.removeEventListener('abort',abort);}
+}
 const params=(properties,required=[])=>({type:'object',properties,required,additionalProperties:false});
 export const builtin=[
  {name:'workspace_list',description:'List files and folders in the workspace',parameters:params({path:{type:'string',description:'Relative folder path'}})},
@@ -100,7 +110,7 @@ export async function executeTool(tool,args,onEvent=()=>{},context={}){
   const policy=get('policy','default')||{};
   if(!policy.autoApproveMcp && !(await allowed({...tool,approval:true},args,onEvent,signal,context)))throw Error('MCP tool denied');
   signal?.throwIfAborted();
-  const result=await callMcp(tool,args);
+  const result=await awaitOrAbort(callMcp(tool,args),signal);
   signal?.throwIfAborted();return result;
  }
  let result;
