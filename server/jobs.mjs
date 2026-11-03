@@ -1,10 +1,10 @@
 import {all,get,put,log,bus} from './store.mjs';
-import {runMeeting,runTurn,newSession} from './engine.mjs';
+import {runMeeting,runTurn,newSession,learnFromSession} from './engine.mjs';
 import {runWorkflow} from './workflows.mjs';
 import {runGoal,recoverGoals,goal} from './harness.mjs';
 let working=false;
 export function enqueue(kind,input){
- if(!['meeting','prompt','workflow','goal'].includes(kind))throw Error('Unsupported job');
+ if(!['meeting','prompt','workflow','goal','learn'].includes(kind))throw Error('Unsupported job');
  const job=put('job',{kind,input,status:'queued',createdAt:new Date().toISOString(),attempts:0});
  queueMicrotask(pump);return job;
 }
@@ -24,6 +24,7 @@ async function pump(){
     let result;
     if(job.kind==='meeting')result=await runMeeting(job.input.roomId,job.input.goal,emit);
     else if(job.kind==='goal')result=await runGoal(job.input.goalId);
+    else if(job.kind==='learn')result=await learnFromSession(job.input.sessionId,{providerId:job.input.providerId,model:job.input.model,automatic:true});
     else if(job.kind==='workflow')result=await runWorkflow(job,emit);
     else{
      const id=job.input.sessionId||newSession({title:job.input.prompt?.slice(0,60)||'자동 작업',agentId:job.input.agentId}).id;
