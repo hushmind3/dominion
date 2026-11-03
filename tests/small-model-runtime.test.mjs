@@ -76,6 +76,7 @@ test('tool discovery makes large external MCP catalogue accessible to tiny model
   '{"action":"tool","name":"mcp__git__list","arguments":{"repo":"test"}}',
   '{"action":"final","message":"브랜치를 확인했습니다."}'
  ]});
+ f.history[0].content='git 브랜치 목록을 조회해 주세요.';
  await f.run();
  assert.equal(f.runs.at(-1).toolCalls,2);
  assert.ok(f.calls[2].messages[0].content.includes('mcp__git__list'));
