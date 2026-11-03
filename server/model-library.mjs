@@ -28,7 +28,7 @@ function groupsFor(files,tags=[],repo=''){
  const isMlx=/mlx/i.test(repo)||tags.some(t=>/^(mlx|library_name:mlx|mlx-lm)$|mlx/i.test(t));
  const weights=files.filter(f=>/\.safetensors$/i.test(f.path)&&!/(optimizer|training|adapter)/i.test(f.path));
  if(isMlx&&weights.length){
-  const extras=files.filter(f=>/^(config\.json|generation_config\.json|tokenizer[^/]*|special_tokens_map\.json|vocab\.[^/]+|merges\.txt|preprocessor_config\.json|processor_config\.json|chat_template\.jinja|model\.safetensors\.index\.json|*.ignored)$/i.test(f.path));
+  const extras=files.filter(f=>/^(config\.json|generation_config\.json|tokenizer[^/]*|special_tokens_map\.json|vocab\.[^/]+|merges\.txt|preprocessor_config\.json|processor_config\.json|chat_template\.jinja|model\.safetensors\.index\.json)$/i.test(f.path));
   const chosen=[...weights,...extras];
   options.push({id:'mlx:all',format:'mlx',label:'MLX · model snapshot',quantization:quantFrom(repo)||'Repository',bytes:chosen.reduce((n,x)=>n+x.size,0),files:chosen.map(x=>x.path),shards:weights.length});
  }
