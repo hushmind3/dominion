@@ -35,7 +35,13 @@ function runtimeHistory(sessionId){
 }
 const executionRuntime=new ExecutionRuntime({
  complete:streamCompletion,discoverTools:toolsForModel,invokeTool:executeTool,
- getToolMode:providerId=>providerById(providerId).toolMode||'auto',
+ getToolMode:(providerId,modelId)=>{
+  const provider=providerById(providerId);
+  if(provider.toolMode)return provider.toolMode;
+  if(['lmstudio','ollama','dominion-native'].includes(providerId)||
+     (provider.local&&/(?:^|[^0-9])(?:[1-8](?:\.\d+)?)b(?:[^a-z]|$)/i.test(modelId)))return 'compat';
+  return 'auto';
+ },
  readHistory:runtimeHistory,convertMessage:asOpenAI,saveMessage:writeMessage,
  saveRun:run=>{put('execution',run);bus.emit('execution_event',{runId:run.id,sessionId:run.sessionId,status:run.status});},
  saveOperation:operation=>put('execution_operation',operation)
