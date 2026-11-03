@@ -1,84 +1,171 @@
-import {all,put,get,log} from './store.mjs';
-import {secretSet,secretGet} from './vault.mjs';
+import {all,put,get,remove,log,bus} from './store.mjs';
+import {secretSet,secretGet,hasSecret} from './vault.mjs';
 import {newSession,runTurn} from './engine.mjs';
+import {channelCatalog,channelDefinition,validateChannelConfiguration} from './channel-catalog.mjs';
+import {verifyWebhook} from './channel-security.mjs';
+import * as telegram from './channel-drivers/telegram.mjs';
+import * as discord from './channel-drivers/discord.mjs';
+import * as slack from './channel-drivers/slack.mjs';
+import * as matrix from './channel-drivers/matrix.mjs';
+import * as signal from './channel-drivers/signal.mjs';
+import * as whatsapp from './channel-drivers/whatsapp.mjs';
+import * as line from './channel-drivers/line.mjs';
+
+const drivers={telegram,discord,slack,matrix,signal,whatsapp,line};
 const workers=new Map();
-export const channels=()=>all('channel').map(x=>({...x,hasToken:Boolean(secretGet('channel:'+x.id))}));
-export async function saveChannel(data){
- if(!['telegram','discord'].includes(data.kind))throw Error('Unsupported channel');
- const id=data.id||crypto.randomUUID();
- const record=put('channel',{id,name:String(data.name||data.kind),kind:data.kind,enabled:data.enabled!==false,agentId:data.agentId||'general',providerId:data.providerId||'',model:data.model||'',mentionOnly:data.mentionOnly!==false});
- if(typeof data.token==='string')secretSet('channel:'+id,data.token);
+const statuses=new Map();
+const queues=new Map();
+function safeError(error){return String(error?.message||error||'').replace(/(bot\d+:)[A-Za-z0-9_-]+/g,'$1[REDACTED]').slice(0,320);}
+function emitStatus(id,status,error=''){
+ const value={id,status,error:error?safeError(error):'',at:new Date().toISOString()};
+ statuses.set(id,value);
+ bus.emit('channel_status',value);
+ if(status==='error')log('channel.runtime_error',{id,error:value.error});
+ return value;
+}
+export const catalog=()=>channelCatalog();
+function secretKey(id,key){return 'channel:'+id+':'+key;}
+export function credentialValues(record){
+ const entry=channelDefinition(record.kind);
+ const obj={};
+ if(!entry)return obj;
+ for(const f of entry.fields.filter(f=>f.type==='secret'))obj[f.key]=secretGet(secretKey(record.id,f.key))||(f.key==='token'?secretGet('channel:'+record.id):'');
+ return obj;
+}
+export function channels(){
+ return all('channel').map(record=>{
+  const entry=channelDefinition(record.kind);
+  const credentials=credentialValues(record);
+  const required=entry?.fields?.filter(f=>f.required)||[];
+  const missing=required.filter(f=>!(f.type==='secret'?credentials[f.key]:record[f.key])).map(f=>f.label);
+  return {...record,credentialsPresent:Object.fromEntries((entry?.fields||[]).filter(f=>f.type==='secret').map(f=>[f.key,Boolean(credentials[f.key])])),hasToken:Boolean(credentials.token),configured:!missing.length,missing,status:statuses.get(record.id)?.status||(record.enabled?'not_started':'disabled'),runtimeError:statuses.get(record.id)?.error||'',driverAvailable:Boolean(entry?.driver),webhookPath:entry?.mode==='webhook'?'/api/webhooks/'+record.id:null};
+ });
+}
+export function channelById(id){return channels().find(x=>x.id===id)||null;}
+export async function saveChannel(input){
+ const entry=channelDefinition(input.kind);
+ if(!entry)throw Error('Unknown channel type');
+ if(!entry.driver)throw Error('This channel has a catalog entry but no runtime driver yet');
+ const id=input.id||crypto.randomUUID();
+ const previous=get('channel',id);
+ if(previous&&previous.kind!==entry.id)throw Error('To change the channel type, create a separate connection');
+ const record={id,kind:entry.id,name:String(input.name||entry.name).slice(0,120),enabled:Boolean(input.enabled),agentId:String(input.agentId||'general'),providerId:String(input.providerId||''),model:String(input.model||''),mentionOnly:input.mentionOnly!==false};
+ for(const f of entry.fields.filter(f=>f.type!=='secret'))record[f.key]=input[f.key]===undefined?(previous?.[f.key]||''):String(input[f.key]||'').trim();
+ const credentials=credentialValues(record);
+ for(const f of entry.fields.filter(f=>f.type==='secret')){
+  const changed=input[f.key];
+  // An empty field means "keep existing", not erase it.
+  if(typeof changed==='string'&&changed.trim())credentials[f.key]=changed.trim();
+ }
+ if(record.enabled)validateChannelConfiguration(entry.id,record,credentials);
  await stopChannel(id);
+ put('channel',record);
+ for(const f of entry.fields.filter(f=>f.type==='secret')){
+  if(credentials[f.key])secretSet(secretKey(id,f.key),credentials[f.key]);
+ }
+ // Clear legacy token only once it has been migrated.
+ if(secretGet('channel:'+id)&&credentials.token)secretSet('channel:'+id,'');
+ log('channel.saved',{id,kind:entry.id,enabled:record.enabled});
  if(record.enabled)startChannel(id);
- return record;
+ else emitStatus(id,'disabled');
+ return channelById(id);
 }
 export async function stopChannel(id){
- const w=workers.get(id);if(w){workers.delete(id);w.stop();}return true;
+ const worker=workers.get(id);workers.delete(id);
+ if(worker){try{await worker.stop();}catch(error){log('channel.stop_error',{id,error:safeError(error)});}}
+ emitStatus(id,'stopped');
+ return true;
 }
-async function dispatch(record,conversationId,text,reply){
- const key=record.id+':'+conversationId;
- let session=all('session').find(x=>x.channelKey===key);
- if(!session){session=newSession({title:record.name+' '+conversationId,agentId:record.agentId,providerId:record.providerId,model:record.model});session=put('session',{...session,channelKey:key});}
- try{
-  let response='';
-  await runTurn({sessionId:session.id,agentId:record.agentId,providerId:record.providerId,model:record.model,input:text,onEvent:x=>{if(x.type==='text')response+=x.text;}});
-  if(response.trim())await reply(response.slice(0,1800));
- }catch(e){log('channel.error',{channelId:record.id,error:String(e)});}
+export async function deleteChannel(id){
+ const record=get('channel',id);
+ if(!record)return false;
+ await stopChannel(id);
+ for(const f of channelDefinition(record.kind)?.fields||[])if(f.type==='secret')secretSet(secretKey(id,f.key),'');
+ secretSet('channel:'+id,'');
+ remove('channel',id);
+ remove('channel_cursor',id);
+ statuses.delete(id);
+ log('channel.deleted',{id,kind:record.kind});
+ return true;
 }
-function telegram(record,token){
- let active=true,offset=0;
- const url='https://api.telegram.org/bot'+token+'/';
- async function api(method,body){
-  const r=await fetch(url+method,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(38000)});
-  if(!r.ok)throw Error('Telegram '+r.status);const d=await r.json();if(!d.ok)throw Error(d.description||'Telegram API error');return d.result;
- }
- (async()=>{
-  while(active){
-   try{
-    const rows=await api('getUpdates',{offset,timeout:25,allowed_updates:['message']});
-    for(const e of rows){offset=e.update_id+1;const m=e.message;if(!m?.text||m.from?.is_bot)continue;
-     const chatId=m.chat?.id, text=m.text.trim();
-     if(record.mentionOnly&&m.chat?.type!=='private'&&!text.includes('@'))continue;
-     await dispatch(record,String(chatId),text,answer=>api('sendMessage',{chat_id:chatId,text:answer}));
-    }
-   }catch(e){if(active){log('channel.telegram.retry',{id:record.id,error:String(e)});await new Promise(r=>setTimeout(r,5000));}}
+async function dispatch(record,event){
+ if(!event?.text?.trim()||!event.conversationId)return;
+ if(record.mentionOnly&&event.isGroup&&!event.mention)return;
+ const key=record.id+':'+event.conversationId;
+ const run=async()=>{
+  const current=get('channel',record.id);
+  if(!current?.enabled)return;
+  let session=all('session').find(s=>s.channelKey===key);
+  if(!session){
+   const s=newSession({title:record.name+' · '+event.conversationId,agentId:record.agentId,providerId:record.providerId,model:record.model});
+   session=put('session',{...s,channelKey:key});
   }
- })();
- return {stop:()=>{active=false;}};
-}
-function discord(record,token){
- let active=true,socket=null,heartbeat=null,lastSeq=null;
- const intents=(1<<9)|(1<<12)|(1<<15);
- const connect=()=>{
-  if(!active)return;
-  socket=new WebSocket('wss://gateway.discord.gg/?v=10&encoding=json');
-  socket.addEventListener('message',async e=>{
-   let d;try{d=JSON.parse(e.data);}catch{return;}
-   if(d.s!==null&&d.s!==undefined)lastSeq=d.s;
-   if(d.op===10){
-    heartbeat=setInterval(()=>{if(socket?.readyState===1)socket.send(JSON.stringify({op:1,d:lastSeq}));},d.d.heartbeat_interval);
-    socket.send(JSON.stringify({op:2,d:{token,intents,properties:{os:process.platform,browser:'dominion',device:'dominion'}}}));
-   }
-   if(d.op===0&&d.t==='MESSAGE_CREATE'){
-    const m=d.d;if(m.author?.bot||!m.content)return;
-    if(record.mentionOnly&&m.guild_id&&!(m.mentions||[]).some(x=>x.bot))return;
-    const reply=async text=>{
-     const r=await fetch('https://discord.com/api/v10/channels/'+m.channel_id+'/messages',{method:'POST',headers:{Authorization:'Bot '+token,'Content-Type':'application/json'},body:JSON.stringify({content:text.slice(0,1900)})});
-     if(!r.ok)throw Error('Discord send '+r.status);
-    };
-    await dispatch(record,String(m.channel_id),m.content,reply);
-   }
-  });
-  socket.addEventListener('close',()=>{clearInterval(heartbeat);if(active)setTimeout(connect,5000);});
-  socket.addEventListener('error',e=>log('channel.discord.error',{id:record.id,message:String(e.message||'socket error')}));
+  try{
+   log('channel.received',{channelId:record.id,kind:record.kind,conversationId:event.conversationId});
+   const assistant=await runTurn({sessionId:session.id,agentId:record.agentId,providerId:record.providerId,model:record.model,input:event.text});
+   const output=assistant.content?.trim();
+   if(output){await event.reply(output);log('channel.replied',{channelId:record.id,kind:record.kind,conversationId:event.conversationId});}
+  }catch(error){log('channel.dispatch_error',{channelId:record.id,kind:record.kind,error:safeError(error)});}
  };
- connect();
- return {stop:()=>{active=false;clearInterval(heartbeat);socket?.close();}};
+ const prev=queues.get(key)||Promise.resolve();
+ const next=prev.catch(()=>{}).then(run);
+ queues.set(key,next);
+ try{await next;}finally{if(queues.get(key)===next)queues.delete(key);}
 }
 export function startChannel(id){
  const record=get('channel',id);if(!record?.enabled)return;
- const token=secretGet('channel:'+id);if(!token){log('channel.missing_token',{id});return;}
- try{workers.set(id,record.kind==='telegram'?telegram(record,token):discord(record,token));log('channel.started',{id,kind:record.kind});}
- catch(e){log('channel.start_error',{id,error:String(e)});}
+ const driver=drivers[record.kind];if(!driver){emitStatus(id,'unavailable');return;}
+ const credentials=credentialValues(record);
+ try{
+  validateChannelConfiguration(record.kind,record,credentials);
+  emitStatus(id,'starting');
+  const worker=driver.start({record,credentials,onMessage:event=>dispatch(record,event),onStatus:(state,error)=>emitStatus(id,state,error)});
+  workers.set(id,worker);
+  log('channel.started',{id,kind:record.kind});
+ }catch(error){emitStatus(id,'error',error);}
 }
-export function startChannels(){for(const c of all('channel').filter(x=>x.enabled))startChannel(c.id);}
+export function startChannels(){for(const record of all('channel').filter(x=>x.enabled))startChannel(record.id);}
+export async function handleChannelWebhook(req,res,u){
+ const match=u.pathname.match(/^\/api\/webhooks\/([a-f0-9-]{20,50})$/);
+ if(!match)return false;
+ const record=get('channel',match[1]);
+ if(!record?.enabled||!['whatsapp','line'].includes(record.kind)){res.writeHead(404);res.end();return true;}
+ const driver=drivers[record.kind],credentials=credentialValues(record);
+ if(req.method==='GET'&&record.kind==='whatsapp'){
+  const challenge=driver.verifyChallenge(u.searchParams,credentials);
+  if(challenge===null){res.writeHead(403);res.end();return true;}
+  res.writeHead(200,{'Content-Type':'text/plain'});res.end(challenge);return true;
+ }
+ if(req.method!=='POST'){res.writeHead(405);res.end();return true;}
+ let bytes=0;const chunks=[];
+ for await(const chunk of req){bytes+=chunk.length;if(bytes>1048576){res.writeHead(413);res.end();return true;}chunks.push(chunk);}
+ const raw=Buffer.concat(chunks);
+ if(!verifyWebhook(record.kind,req.headers,raw,credentials)){res.writeHead(401);res.end();return true;}
+ let payload;try{payload=JSON.parse(raw.toString('utf8'));}catch{res.writeHead(400);res.end();return true;}
+ const tasks=driver.inboundEvents(payload,{record,credentials,onMessage:event=>dispatch(record,event)});
+ res.writeHead(200,{'Content-Type':'text/plain'});res.end('ok');
+ void Promise.allSettled(tasks).then(results=>{
+  results.forEach(x=>{if(x.status==='rejected')log('channel.webhook_dispatch_error',{id:record.id,error:safeError(x.reason)});});
+ });
+ return true;
+}
+export async function diagnoseChannel(id){
+ const record=get('channel',id);if(!record)throw Error('Channel not found');
+ const credentials=credentialValues(record), definition=channelDefinition(record.kind);
+ validateChannelConfiguration(record.kind,record,credentials);
+ let url,headers={},method='GET';
+ if(record.kind==='telegram')url='https://api.telegram.org/bot'+credentials.token+'/getMe';
+ else if(record.kind==='discord'){url='https://discord.com/api/v10/users/@me';headers.Authorization='Bot '+credentials.token;}
+ else if(record.kind==='slack'){url='https://slack.com/api/auth.test';method='POST';headers.Authorization='Bearer '+credentials.token;}
+ else if(record.kind==='matrix'){url=record.homeserver.replace(/\/+$/,'')+'/_matrix/client/v3/account/whoami';headers.Authorization='Bearer '+credentials.token;}
+ else if(record.kind==='whatsapp'){url='https://graph.facebook.com/'+record.graphVersion+'/'+encodeURIComponent(record.phoneNumberId)+'?fields=display_phone_number,verified_name';headers.Authorization='Bearer '+credentials.token;}
+ else if(record.kind==='line'){url='https://api.line.me/v2/bot/info';headers.Authorization='Bearer '+credentials.token;}
+ else if(record.kind==='signal'){return {id,status:statuses.get(id)?.status||'not_started',verified:false,message:'Local signal-cli bridge is configured; inspect its WebSocket connection status'};}
+ else throw Error('Diagnostic unavailable');
+ const response=await fetch(url,{method,headers,signal:AbortSignal.timeout(9000)});
+ let payload={};try{payload=await response.json();}catch{}
+ const ok=response.ok&&(payload.ok!==false);
+ const detail={id,kind:record.kind,verified:ok,status:statuses.get(id)?.status||'not_started',message:ok?'Provider credentials accepted':'Provider rejected the credentials (HTTP '+response.status+')'};
+ log('channel.diagnosed',{id,kind:record.kind,verified:ok,httpStatus:response.status});
+ return detail;
+}
