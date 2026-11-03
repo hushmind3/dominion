@@ -60,13 +60,13 @@ export function AppShell({page,onNavigate,onNewChat,online,running=0,pending=0,c
  },[toggle])
  const matching=useMemo(()=>items.filter(x=>x.label.toLowerCase().includes(query.trim().toLowerCase())),[query])
  return <div className="min-h-dvh bg-canvas">
-  <aside className={cx('fixed inset-y-0 left-0 z-40 hidden flex-col overflow-hidden bg-rail shadow-lg transition-[width] duration-200 lg:flex',collapsed?'w-[74px]':'w-[250px]')}>
+  <aside aria-label="데스크톱 메뉴" className={cx('fixed inset-y-0 left-0 z-40 hidden flex-col overflow-hidden bg-rail shadow-lg transition-[width] duration-200 lg:flex',collapsed?'w-[74px]':'w-[250px]')}>
    <SidebarContent page={page} collapsed={collapsed} onNavigate={navigate} running={running} pending={pending}/>
    <div className={cx('shrink-0 border-t border-white/10 p-4',collapsed?'flex justify-center':'')}>
     {collapsed?<span title={online?'서버 연결됨':'서버 오프라인'} className={cx('size-2.5 rounded-full',online?'bg-emerald-400':'bg-amber-400')}/>:<><div className="flex items-center gap-2.5"><span className={cx('size-2.5 shrink-0 rounded-full',online?'bg-emerald-400':'bg-amber-400')}/><span className="min-w-0"><strong className="block text-[11px] font-semibold text-slate-100">{online?'Gateway online':'Gateway offline'}</strong><small className="text-[10px] text-slate-400">{online?'Local runtime available':'서버 연결 상태 확인'}</small></span></div><p className="mt-4 flex items-center gap-1.5 text-[9px] tracking-wider text-slate-500"><ShieldCheck size={13}/> LOCAL FIRST · v0.1</p></>}
    </div>
   </aside>
-  {mobile&&<><button type="button" aria-label="메뉴 닫기" onClick={()=>setMobile(false)} className="fixed inset-0 z-40 bg-black/45 lg:hidden"/><aside className="fixed inset-y-0 left-0 z-50 flex w-[270px] flex-col bg-rail shadow-dialog lg:hidden"><SidebarContent page={page} collapsed={false} onNavigate={navigate} running={running} pending={pending}/><div className="border-t border-white/10 p-3"><Button variant="ghost" onClick={()=>setMobile(false)} className="!text-white">메뉴 닫기 <X size={15}/></Button></div></aside></>}
+  {mobile&&<><button type="button" aria-label="메뉴 닫기" onClick={()=>setMobile(false)} className="fixed inset-0 z-40 bg-black/45 lg:hidden"/><aside aria-label="모바일 메뉴" className="fixed inset-y-0 left-0 z-50 flex w-[270px] flex-col bg-rail shadow-dialog lg:hidden"><SidebarContent page={page} collapsed={false} onNavigate={navigate} running={running} pending={pending}/><div className="border-t border-white/10 p-3"><Button variant="ghost" onClick={()=>setMobile(false)} className="!text-white">메뉴 닫기 <X size={15}/></Button></div></aside></>}
   <div className={cx('min-h-dvh min-w-0 transition-[padding] duration-200',collapsed?'lg:pl-[74px]':'lg:pl-[250px]')}>
    <header className="sticky top-0 z-30 flex h-[68px] items-center justify-between gap-4 border-b border-line bg-white/95 px-4 backdrop-blur-md sm:px-6 lg:px-8">
     <div className="flex min-w-0 items-center gap-3">
