@@ -4,7 +4,7 @@ import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
 import {useState} from 'react'
 import {ArrowDown,ArrowRight,Check,ChevronRight,Layers3,Play,Plus,Settings2,Trash2,Workflow,X} from 'lucide-react'
 import {del,post} from '../api'
-import {GoalRunner} from '../components/GoalRunner'
+import {ExecutionMonitor} from '../components/ExecutionMonitor'
 import {Action,FormField,Headline,Notice,Panel,Subheading,useRemote} from '../components/UI'
 type Step={id?:string;name:string;prompt:string;agentId:string;providerId:string;model:string}
 type Flow={id?:string;name:string;description:string;steps:Step[]}
@@ -20,7 +20,7 @@ export function WorkflowsPage({openSession}:{openSession:(id:string)=>void}){
  const start=async(f:Flow)=>{if(!f.id)return;try{await post('/api/workflows/'+f.id+'/run',{input:inputs[f.id]||''});setInfo(f.name+' 실행 대기열에 등록되었습니다.');await jobs.reload()}catch(e){setError((e as Error).message)}};
  return <div className="mx-auto w-full max-w-[1320px] px-5 py-9 sm:px-8 lg:px-11 lg:pb-20"><Headline eyebrow="MULTI-STEP ORCHESTRATION" title="작업을 연결하면, 흐름이 됩니다." description="에이전트별 명령을 단계별로 연결하고 이전 단계의 출력을 다음 단계 입력으로 전달합니다. 실행 내용은 실제 DB에 남습니다." actions={<Action onClick={()=>{setError('');setEdit({name:'새 워크플로',description:'',steps:[emptyStep()]})}}><Plus size={17}/> 워크플로 생성</Action>}/>
  {error&&<Notice message={error}/>}
- <GoalRunner/>
+ <ExecutionMonitor/>
  {info&&<div className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><Check size={16}/>{info}</div>}
  <div className="mb-8 flex items-center gap-4 rounded-2xl border border-blue-100 bg-blue-50 p-5"><div className="grid size-12 shrink-0 place-items-center rounded-xl bg-blue-100 text-blue-600"><Workflow size={22}/></div><div><strong>순차 실행 · 상태 저장 · 실패 감지</strong><p>각 단계에서 {"{{input}}"}는 시작 입력, {"{{previous}}"}는 직전 단계 출력으로 치환됩니다. 실패하면 작업 상태가 기록되고 성공으로 표시하지 않습니다.</p></div></div>
  <Subheading title="등록된 워크플로" extra={<span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{flows.value.length} WORKFLOWS</span>}/>
