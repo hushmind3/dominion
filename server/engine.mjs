@@ -5,6 +5,7 @@ import {ExecutionRuntime} from './execution-runtime.mjs';
 import {streamCompletion,providerById} from './providers.mjs';
 import {toolsForModel,executeTool} from './tools.mjs';
 import {resolveModel} from './model-router.mjs';
+import {connections as oauthConnections} from './oauth.mjs';
 export const agents=()=>all('agent');
 export const sessions=()=>all('session');
 export function newSession(input={}){
@@ -16,7 +17,9 @@ function systemFor(agent,goal=''){
  const recentMemory=all('memory').filter(x=>x.scope==='shared'||x.scope===agent?.id).slice(0,16).map(x=>'- '+x.text).join('\n');
  const home=os.homedir();
  const paths='Computer paths: home='+home+'; Desktop='+path.join(home,'Desktop')+'; Documents='+path.join(home,'Documents')+'; Downloads='+path.join(home,'Downloads')+'. Use file_list/file_read/file_write with absolute paths for these folders, and shell_exec for real system commands. workspace_* tools only cover the workspace folder.';
- return [agent?.systemPrompt||'You are a capable AI assistant.','You may use available tools. Do not claim to have performed a tool action unless it succeeded.',paths,goal?'Current task: '+goal:'',recentMemory?'Relevant memory:\n'+recentMemory:'',enabledSkills?'Installed skills:\n'+enabledSkills:''].filter(Boolean).join('\n\n');
+ const accounts=oauthConnections().map(account=>account.provider+' ('+account.displayName+')');
+ const accountLine='Connected accounts: '+(accounts.length?accounts.join(', '):'none')+'. Use account_status, github_api and youtube_search/youtube_channels for real account actions; never claim account access without a successful tool result.';
+ return [agent?.systemPrompt||'You are a capable AI assistant.','You may use available tools. Do not claim to have performed a tool action unless it succeeded.',paths,accountLine,goal?'Current task: '+goal:'',recentMemory?'Relevant memory:\n'+recentMemory:'',enabledSkills?'Installed skills:\n'+enabledSkills:''].filter(Boolean).join('\n\n');
 }
 function asOpenAI(row,speakerLabels=false){
  const v={role:row.role,content:row.content||''};

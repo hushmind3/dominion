@@ -20,7 +20,7 @@ import {mcpServers,saveMcp,deleteMcp,discoverMcp} from './mcp.mjs';
 import {mcpPresets} from './mcp-presets.mjs';
 import {skillCatalog,skillCatalogMeta,importCatalogSkill} from './skill-catalog.mjs';
 import {builtin,toolsForModel,approvals,resolveApproval,recoverApprovals} from './tools.mjs';
-import {oauthProviders,oauthStart,oauthCallback,connections,connectorCall} from './oauth.mjs';
+import {oauthProviders,oauthStart,oauthCallback,oauthCallbackBase,connections,connectorCall,saveOAuthApp} from './oauth.mjs';
 import {channels,catalog,channelById,saveChannel,deleteChannel,diagnoseChannel,handleChannelWebhook,startChannels} from './channels.mjs';
 import {activeRoomStatus,stopRoomFlow,resetRoomFlow} from './room-orchestrator.mjs';
 import {commandDefinitions} from './commands.mjs';
@@ -101,7 +101,7 @@ async function api(req,res,u){
  }
  const modelMatch=url.match(/^\/api\/providers\/([^/]+)\/models$/);
  if(modelMatch&&method==='GET')return json(res,await availableModels(modelMatch[1]));
- if(url==='/api/model-library/catalog'&&method==='GET')return json(res,await modelLibrary.catalog({q:u.searchParams.get('q')||'',format:u.searchParams.get('format')||'',sort:u.searchParams.get('sort')||''}));
+ if(url==='/api/model-library/catalog'&&method==='GET')return json(res,await modelLibrary.catalog({q:u.searchParams.get('q')||'',format:u.searchParams.get('format')||'',sort:u.searchParams.get('sort')||'',limit:u.searchParams.get('limit')||80}));
  if(url==='/api/model-library/details'&&method==='GET')return json(res,await modelLibrary.detail(u.searchParams.get('id')||''));
  if(url==='/api/model-library/installed'&&method==='GET')return json(res,await modelLibrary.installed());
  if(url==='/api/model-library/jobs'&&method==='GET')return json(res,modelLibrary.jobsList());
@@ -257,10 +257,12 @@ async function api(req,res,u){
  const diagnostic=url.match(/^\/api\/channels\/([^/]+)\/diagnose$/);
  if(diagnostic&&method==='POST')return json(res,await diagnoseChannel(diagnostic[1]));
  if(url==='/api/oauth/providers'&&method==='GET')return json(res,oauthProviders());
+ const oauthApp=url.match(/^\/api\/oauth\/providers\/(github|google)$/);
+ if(oauthApp&&method==='POST')return json(res,saveOAuthApp(oauthApp[1],await body(req)));
  if(url==='/api/oauth/connections'&&method==='GET')return json(res,connections());
  if(url.match(/^\/api\/oauth\/(github|google)\/start$/)&&method==='GET'){
-  const provider=url.split('/')[3],origin='http://127.0.0.1:'+PORT;
-  return json(res,{url:oauthStart(provider,origin)});
+  const provider=url.split('/')[3];
+  return json(res,{url:oauthStart(provider,oauthCallbackBase())});
  }
  if(url.match(/^\/api\/connector\/(github|google)\/(repos|me|youtube_channels|youtube_search)$/)&&method==='GET'){
   const [,provider,action]=url.match(/^\/api\/connector\/(github|google)\/([^/]+)$/);
@@ -286,4 +288,20 @@ const server=http.createServer(async(req,res)=>{
 });
 pruneInbound();agents();recoverApprovals();recoverExecutions();startJobs();startChannels();
 server.listen(PORT,HOST,()=>console.log('DOMINION running at http://'+HOST+':'+PORT));
-process.on('SIGTERM',()=>server.close());
+const oauthPort=Number(new URL(oauthCallbackBase()).port||53682);
+const oauthServer=http.createServer(async(req,res)=>{
+ const u=new URL(req.url,'http://127.0.0.1');
+ const match=u.pathname.match(/^\/api\/oauth\/(github|google)\/callback$/);
+ if(!match){res.writeHead(404,{'Content-Type':'text/plain; charset=utf-8'});res.end('Not found');return}
+ try{
+  const connection=await oauthCallback(match[1],u.searchParams.get('code'),u.searchParams.get('state'));
+  res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});
+  res.end('<!doctype html><meta charset="utf-8"><title>Connected</title><body style="font:16px system-ui;padding:40px">'+connection.provider+' 계정 연결이 완료되었습니다. 창을 닫아도 됩니다.<script>try{window.opener?.postMessage("dominion-oauth-complete","*")}catch{};setTimeout(()=>window.close(),900)</script>');
+ }catch(error){
+  res.writeHead(400,{'Content-Type':'text/html; charset=utf-8'});
+  res.end('<!doctype html><meta charset="utf-8"><title>OAuth failed</title><body style="font:16px system-ui;padding:40px">OAuth 연결 실패: '+String(error?.message||error).replace(/[<>&]/g,'')+'</body>');
+ }
+});
+oauthServer.on('error',error=>console.error('OAuth callback relay unavailable:',error.message));
+oauthServer.listen(oauthPort,'127.0.0.1',()=>console.log('OAuth callback relay at http://127.0.0.1:'+oauthPort));
+process.on('SIGTERM',()=>{server.close();oauthServer.close()});

@@ -3,7 +3,7 @@ import {ArrowDownToLine,ArrowRight,Check,ChevronDown,CircleAlert,CloudDownload,C
 import {Button,SelectInput,TextInput} from './Primitives'
 import {get,post,del} from '../api'
 declare global {interface Window {dominionDesktop?:{pickModel:(format:'gguf'|'mlx')=>Promise<string>}}}
-type Catalog={id:string;downloads:number;likes:number;gated:boolean;updatedAt:string;description:string;task:string;tags:string[]}
+type Catalog={id:string;author:string;name:string;library:string;createdAt?:string;downloads:number;likes:number;gated:boolean;updatedAt:string;description:string;task:string;tags:string[]}
 type Option={id:string;format:'gguf'|'mlx';label:string;quantization:string;bytes:number;files:string[];shards:number}
 type Detail=Catalog&{revision:string;license:string;architecture:string;options:Option[];readme:string}
 type Installed={id:string;repo:string;optionId?:string;source?:string;externalPath?:string;format:'gguf'|'mlx';label:string;bytes:number;installedAt:string}
@@ -11,6 +11,16 @@ type Job={id:string;repo:string;optionId:string;status:string;downloaded:number;
 type Runtime={status:string;id?:string;repo?:string;engine?:string;name?:string;error?:string;setup?:{status:string;backend:string;downloaded:number;total:number;tag:string;file?:string;error:string};capabilities?:{gguf:{available:boolean;backend?:string;installable?:boolean};mlx:{available:boolean};memory:{total:number;free:number;platform?:string;arch?:string};gpu?:{kind:string;free:number}|null}}
 const fmt=(v=0)=>v>=1073741824?(v/1073741824).toFixed(1)+' GB':v>=1048576?(v/1048576).toFixed(0)+' MB':v>=1024?(v/1024).toFixed(0)+' KB':String(v)+' B'
 const shorten=(v:string,n=45)=>v.length>n?v.slice(0,n-3)+'…':v
+const compactNumber=(v=0)=>v>=1e6?(v/1e6).toFixed(1)+'M':v>=1e3?(v/1e3).toFixed(1)+'K':String(v)
+const updatedLabel=(value:string)=>value?new Date(value).toLocaleDateString():''
+const picks=[
+ {id:'bartowski/Qwen2.5-7B-Instruct-GGUF',label:'Qwen 2.5 7B',note:'범용 대화·도구 호출에 무난한 7B'},
+ {id:'bartowski/Qwen2.5-Coder-7B-Instruct-GGUF',label:'Qwen 2.5 Coder 7B',note:'코딩·에이전트 작업용 7B'},
+ {id:'bartowski/Mistral-Nemo-Instruct-2407-GGUF',label:'Mistral Nemo 12B',note:'긴 문맥과 다국어에 강한 12B'},
+ {id:'bartowski/DeepSeek-R1-Distill-Qwen-7B-GGUF',label:'DeepSeek R1 7B',note:'추론 특화蒸馏 7B'},
+ {id:'bartowski/Phi-3.5-mini-instruct-GGUF',label:'Phi 3.5 mini',note:'가볍고 빠른 3.8B'},
+ {id:'bartowski/gemma-2-9b-it-GGUF',label:'Gemma 2 9B',note:'Google 범용 instruction 9B'}
+] as const
 const viewTabs=[{id:'installed',label:'내 모델',icon:HardDrive},{id:'search',label:'모델 찾기',icon:Search},{id:'import',label:'로컬 모델 가져오기',icon:FolderOpen}] as const
 export function ModelExplorer(){
  const [view,setView]=useState<'installed'|'search'|'import'>('installed')
@@ -21,6 +31,7 @@ export function ModelExplorer(){
  const [format,setFormat]=useState('gguf')
  const [sort,setSort]=useState('downloads')
  const [catalog,setCatalog]=useState<Catalog[]>([])
+ const [limit,setLimit]=useState(80)
  const [selected,setSelected]=useState('')
  const [detail,setDetail]=useState<Detail|null>(null)
  const [variant,setVariant]=useState('')
@@ -44,13 +55,14 @@ export function ModelExplorer(){
   const timer=setTimeout(async()=>{
    setLoading(true)
    try{
-    const data=await get<Catalog[]>('/api/model-library/catalog?'+new URLSearchParams({q,format,sort}))
+    const data=await get<Catalog[]>('/api/model-library/catalog?'+new URLSearchParams({q,format,sort,limit:String(limit)}))
     if(valid){setCatalog(data);setSelected(s=>data.some(m=>m.id===s)?s:'');setError('')}
    }catch(e){if(valid)setError((e as Error).message)}
    finally{if(valid)setLoading(false)}
   },300)
   return()=>{valid=false;clearTimeout(timer)}
- },[view,q,format,sort])
+ },[view,q,format,sort,limit])
+ useEffect(()=>{setLimit(80)},[q,format,sort])
  useEffect(()=>{
   if(view!=='search'||!selected){setDetail(null);setVariant('');return}
   let active=true
@@ -119,11 +131,20 @@ export function ModelExplorer(){
    <p className="mt-2 text-[11px] text-[#8b97a7]">데스크톱 앱에서는 파일 선택창이 열립니다. 브라우저 접속은 게이트웨이 컴퓨터의 경로를 입력하세요.</p>
    <button type="button" disabled={!localPath.trim()||Boolean(working)} onClick={()=>void importLocal()} className="mt-5 flex h-9 items-center gap-2 rounded-lg bg-[#C96442] px-4 text-[12px] font-semibold text-white hover:bg-[#A94E30] disabled:opacity-40">{working==='import'?<LoaderCircle className="animate-spin" size={15}/>:<Check size={15}/>}모델 등록</button>
   </div>}
-  {view==='search'&&<div className="grid min-h-[480px] grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)]">
-   <div className="min-w-0 border-b border-[#e7eaf0] lg:border-b-0 lg:border-r">
-    <div className="p-3"><div className="flex items-center gap-2 rounded-lg border border-[#E7E0D5] px-3"><Search size={14} className="text-[#9C9388]"/><input value={q} onChange={e=>setQ(e.target.value)} placeholder="모델 이름 검색" className="h-9 w-full min-w-0 bg-transparent text-[12px] outline-none"/></div>
-    <div className="mt-2 flex gap-2"><SelectInput aria-label="형식" value={format} onChange={e=>setFormat(e.target.value)}><option value="all">전체</option><option value="gguf">GGUF</option><option value="mlx">MLX</option></SelectInput><SelectInput aria-label="정렬" value={sort} onChange={e=>setSort(e.target.value)}><option value="downloads">다운로드순</option><option value="likes">인기순</option><option value="lastModified">최신순</option></SelectInput></div></div>
-    <div className="max-h-[490px] overflow-y-auto border-t border-[#edf0f4]">{loading&&<div className="p-3 text-[11px] text-[#9C9388]"><LoaderCircle size={13} className="mr-2 inline animate-spin"/>검색 중</div>}{catalog.map(m=><button type="button" key={m.id} onClick={()=>setSelected(m.id)} className={'w-full border-b border-[#f0f2f6] px-4 py-3 text-left hover:bg-[#f6f8fd] '+(selected===m.id?'bg-[#F7E8E1]':'')}><div className="break-all text-[12px] font-semibold">{m.id}</div><div className="mt-1 text-[10px] text-[#8692a1]">↓ {m.downloads.toLocaleString()} · ♡ {m.likes.toLocaleString()}{m.gated?' · 접근 승인 필요':''}</div></button>)}{!catalog.length&&!loading&&<div className="p-6 text-center text-[12px] text-[#7C7469]">검색 결과가 없습니다.</div>}</div>
+  {view==='search'&&<div className="grid min-h-[560px] grid-cols-1 lg:grid-cols-[400px_minmax(0,1fr)]">
+   <div className="min-w-0 border-b border-[#E7E0D5] lg:border-b-0 lg:border-r">
+    <div className="border-b border-[#EFE9DF] p-4">
+     <div className="flex h-11 items-center gap-2 rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] px-3 focus-within:border-[#C96442]"><Search size={17} className="text-[#A79C8E]"/><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Hugging Face 모델 검색 (gemma, qwen, uncensored…)" className="h-full w-full min-w-0 bg-transparent text-[14px] outline-none placeholder:text-[#A79C8E]"/>{q&&<button type="button" aria-label="검색어 지우기" onClick={()=>setQ('')} className="rounded p-1 text-[#A79C8E] hover:bg-[#F3EEE5]"><X size={14}/></button>}</div>
+     <div className="mt-3 flex flex-wrap items-center gap-1.5">{[{id:'all',label:'전체'},{id:'gguf',label:'GGUF'},{id:'mlx',label:'MLX'}].map(item=><Button key={item.id} variant={format===item.id?'primary':'ghost'} onClick={()=>setFormat(item.id)} className="!px-3 !py-1.5 !text-[12px]">{item.label}</Button>)}<SelectInput aria-label="정렬" value={sort} onChange={e=>setSort(e.target.value)} className="!ml-auto !w-auto !py-1.5 !text-[12px]"><option value="downloads">다운로드순</option><option value="likes">인기순</option><option value="lastModified">최신순</option></SelectInput></div>
+     <div className="mt-2 flex items-center justify-between text-[11px] text-[#8A8176]"><span>{loading?'검색 중…':catalog.length+'개 결과'}</span><span>Hugging Face 실시간</span></div>
+    </div>
+    <div className="max-h-[610px] overflow-y-auto">
+     {!q&&<div className="border-b border-[#EFE9DF] p-3"><div className="mb-2 px-1 text-[11px] font-semibold text-[#8A8176]">에디터 추천</div><div className="grid gap-1.5">{picks.map(pick=><Button key={pick.id} variant="ghost" onClick={()=>setSelected(pick.id)} className="!h-auto w-full !justify-start gap-2.5 !border-0 rounded-xl px-2.5 py-2 text-left hover:bg-[#FAF7F1]"><span className="grid size-8 shrink-0 place-items-center rounded-lg bg-[#F7E8E1] text-[12px] font-bold text-[#C96442]">{pick.label.slice(0,1)}</span><span className="min-w-0 flex-1"><strong className="block truncate text-[12px] text-[#3A342D]">{pick.label}</strong><small className="block truncate text-[10px] text-[#8A8176]">{pick.note}</small></span><ArrowRight size={13} className="shrink-0 text-[#A79C8E]"/></Button>)}</div></div>}
+     {loading&&<div className="space-y-2 p-3">{[0,1,2,3].map(i=><div key={i} className="h-20 animate-pulse rounded-xl bg-[#FAF7F1]"/>)}</div>}
+     {!loading&&catalog.map(m=><button type="button" key={m.id} onClick={()=>setSelected(m.id)} className={'w-full border-b border-[#EFE9DF] px-4 py-3.5 text-left transition-colors hover:bg-[#FAF7F1] '+(selected===m.id?'bg-[#F7E8E1]':'')}><div className="flex items-start gap-3"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#F3EEE5] text-[13px] font-bold text-[#C96442]">{m.name.slice(0,1).toUpperCase()}</span><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><strong className="truncate text-[13px] text-[#24211D]">{m.name}</strong>{m.gated&&<span className="rounded bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700">gated</span>}</div><div className="mt-0.5 truncate text-[11px] text-[#8A8176]">{m.author} · {m.task||m.library||'model'}</div><p className="mt-1 line-clamp-2 text-[11px] leading-5 text-[#5C544A]">{m.description||'설명을 불러오는 중입니다.'}</p><div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-[#8A8176]"><span>↓ {compactNumber(m.downloads)}</span><span>♡ {compactNumber(m.likes)}</span><span>{updatedLabel(m.updatedAt)}</span><span className="rounded bg-[#F3EEE5] px-1.5 py-0.5 font-semibold">{/gguf/i.test(m.tags.join(' '))?'GGUF':'MLX'}</span></div></div></div></button>)}
+     {!loading&&!catalog.length&&<div className="p-8 text-center text-[12px] text-[#7C7469]">검색 결과가 없습니다.</div>}
+     {!loading&&catalog.length>0&&catalog.length>=limit&&<div className="p-3"><Button variant="secondary" className="w-full" onClick={()=>setLimit(limit+80)}>더 보기 · {catalog.length}개 표시 중</Button></div>}
+    </div>
    </div>
    <div className="min-w-0 p-4">
     {!selected?<div className="flex min-h-52 flex-col items-center justify-center gap-3 text-[12px] text-[#8d99a8]"><CloudDownload size={23}/>왼쪽에서 모델을 선택하세요.</div>:!detail?<div className="flex h-44 items-center justify-center text-[12px] text-[#8290a1]"><LoaderCircle size={17} className="mr-2 animate-spin"/>모델 상세 정보 불러오는 중</div>:<>

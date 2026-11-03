@@ -6,7 +6,7 @@ import {providers,availableModels} from './providers.mjs';
 import {mcpServers,discoverMcp} from './mcp.mjs';
 import {all,put,get} from './store.mjs';
 import {builtin} from './tools.mjs';
-import {oauthProviders} from './oauth.mjs';
+import {oauthProviders,oauthCallbackBase,connections as oauthConnections} from './oauth.mjs';
 
 const cleanId=v=>String(v).replace(/[^a-zA-Z0-9_-]/g,'_').toLowerCase().slice(0,65);
 kernel.feed('model',{
@@ -45,11 +45,11 @@ kernel.feed('skill',{
  }
 });
 kernel.feed('account',{
- list:()=>oauthProviders().map(x=>({
+ list:()=>{const accounts=oauthConnections();return oauthProviders().map(x=>({
   id:x.id,name:x.id==='github'?'GitHub':'Google',description:'OAuth connector',
-  status:x.configured?'configured':'requires_setup',available:Boolean(x.configured),
-  features:['oauth'],fields:[],origin:'oauth'
- }))
+  status:x.configured?'configured':'requires_setup',available:Boolean(x.configured),connected:accounts.some(account=>account.provider===x.id),
+  features:['oauth'],fields:[],origin:'oauth',callback:oauthCallbackBase()+'/api/oauth/'+x.id+'/callback'
+ }))}
 });
 kernel.feed('tool',{
  list:()=>builtin.map(x=>({

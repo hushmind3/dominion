@@ -5,6 +5,7 @@ import {spawn} from 'node:child_process';
 import {WORKSPACE} from './config.mjs';
 import {all,get,put,log,bus} from './store.mjs';
 import {discoverMcp,callMcp} from './mcp.mjs';
+import {connections,connectorCall,githubRequest} from './oauth.mjs';
 // A cancelled MCP invocation may already have modified a remote system; the
 // caller must journal the outcome as uncertain instead of treating it as undone.
 export async function awaitOrAbort(promise,signal){
@@ -27,6 +28,10 @@ export const builtin=[
  {name:'terminal_exec',description:'Run an executable with argument array in the workspace, without a shell',parameters:params({command:{type:'string'},args:{type:'array',items:{type:'string'}}},['command']),approval:true},
  {name:'web_search',description:'Search the public web for current information',parameters:params({query:{type:'string'}},['query'])},
  {name:'http_fetch',description:'Fetch a URL and return its readable text content',parameters:params({url:{type:'string',description:'HTTP or HTTPS URL'}},['url'])},
+ {name:'account_status',description:'List OAuth accounts connected to this platform and the integrations available to the model',parameters:params({})},
+ {name:'github_api',description:'Call the GitHub REST API as the connected GitHub account. Supports GET, POST, PATCH, PUT and DELETE with a path such as /user/repos or /repos/owner/name/issues. Write methods require approval.',parameters:params({method:{type:'string',enum:['GET','POST','PATCH','PUT','DELETE'],description:'HTTP method'},path:{type:'string',description:'GitHub API path beginning with /'},body:{type:'object',description:'Optional JSON body for write methods'}},['method','path'])},
+ {name:'youtube_search',description:'Search YouTube videos using the connected Google account',parameters:params({query:{type:'string',description:'Search query'},maxResults:{type:'number',description:'1-50 results'}},['query'])},
+ {name:'youtube_channels',description:'List the connected YouTube channels and statistics',parameters:params({})},
  {name:'memory_store',description:'Save a concise durable fact for future sessions',parameters:params({text:{type:'string'},scope:{type:'string'}},['text'])},
  {name:'memory_search',description:'Find saved knowledge relevant to a topic',parameters:params({query:{type:'string'}},['query'])},
  {name:'skill_propose',description:'Draft a reusable skill for user review and installation',parameters:params({name:{type:'string'},instructions:{type:'string'}},['name','instructions'])}
@@ -287,6 +292,15 @@ export async function executeTool(tool,args,onEvent=()=>{},context={}){
   case 'terminal_exec':result=await exec(args.command,args.args||[],signal);break;
   case 'web_search':result=await searchWeb(args.query,signal);break;
   case 'http_fetch':result=await fetchReadable(args.url,signal);break;
+  case 'account_status':result=connections().map(account=>({provider:account.provider,displayName:account.displayName,scopes:account.scopes,connectedAt:account.createdAt||null}));break;
+  case 'github_api':{
+   const method=String(args.method||'GET').toUpperCase();
+   if(method!=='GET'&&!(await allowed({...tool,approval:true},args,onEvent,signal,context)))throw Error('GitHub write approval denied');
+   result=await githubRequest(method,args.path,args.body);
+   break;
+  }
+  case 'youtube_search':result=await connectorCall('google','youtube_search',{q:args.query,maxResults:args.maxResults});break;
+  case 'youtube_channels':result=await connectorCall('google','youtube_channels');break;
   case 'memory_store':result=put('memory',{text:String(args.text).slice(0,3000),scope:String(args.scope||'shared')});break;
   case 'memory_search':{
    const terms=String(args.query).toLowerCase().split(/\s+/).filter(Boolean);

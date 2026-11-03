@@ -1,7 +1,6 @@
 import {useCallback,useEffect,useState} from 'react'
 import {get} from './api'
 import {WorkspaceSidebar,WorkspaceHeader,CommandPalette,navigation,type PageId} from './components/WorkspaceShell'
-import {HomePage} from './pages/Home'
 import {CapabilitiesPage} from './pages/Capabilities'
 import {MemoryPage} from './pages/Memory'
 import {WorkflowsPage} from './pages/Workflows'
@@ -16,7 +15,7 @@ function locationState(){
  const raw=window.location.hash.replace(/^#\/?/,'')
  const [name,query]=raw.split('?')
  const valid=navigation.some(group=>group.items.some(item=>item.id===name))
- return {page:(valid?name:'home') as PageId,session:new URLSearchParams(query||'').get('session')||undefined}
+ return {page:(valid?name:'chat') as PageId,session:new URLSearchParams(query||'').get('session')||undefined}
 }
 export default function App(){
  const [page,setPage]=useState<PageId>(()=>locationState().page)
@@ -77,7 +76,6 @@ export default function App(){
   <main className="ml-[216px] min-h-screen min-w-0 max-[859px]:ml-0">
    <WorkspaceHeader page={page} online={online} onMenu={()=>setSidebar(true)} onSearch={()=>setPalette(true)}/>
    <div className={'min-w-0 page-'+page}>
-    {page==='home'&&<HomePage navigate={navigate}/>}
     {page==='capabilities'&&<CapabilitiesPage navigate={navigate}/>}
     {page==='memory'&&<MemoryPage/>}
     {page==='workflows'&&<WorkflowsPage openSession={id=>navigate('chat',id)}/>}

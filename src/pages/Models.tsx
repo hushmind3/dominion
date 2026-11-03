@@ -8,6 +8,7 @@ import {ModelExplorer} from '../components/ModelExplorer'
 
 const providerPresets=[
  {name:'Anthropic',baseUrl:'https://api.anthropic.com/v1',kind:'anthropic',local:false},
+ {name:'Google Gemini',baseUrl:'https://generativelanguage.googleapis.com/v1beta/openai',kind:'openai',local:false},
  {name:'OpenAI',baseUrl:'https://api.openai.com/v1',kind:'openai',local:false},
  {name:'OpenRouter',baseUrl:'https://openrouter.ai/api/v1',kind:'openai',local:false},
  {name:'Groq',baseUrl:'https://api.groq.com/openai/v1',kind:'openai',local:false},
@@ -46,7 +47,7 @@ export function ModelHub(){
    <Button type="button" onClick={()=>open()} className="inline-flex h-8 items-center gap-2 rounded-lg border border-[#E1D9CC] bg-white px-3 text-[11px] font-semibold text-[#40506a] hover:bg-[#FAF7F1]"><Plus size={14}/> API 연결 추가</Button>
   </header>
   <section className="mb-5 rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-5 shadow-[0_1px_2px_rgba(36,33,29,.04)]">
-   <div className="mb-4 flex flex-wrap items-end justify-between gap-3"><div><h2 className="m-0 text-[17px] font-bold tracking-[-.02em] text-[#24211D]">제공자 빠른 연결</h2><p className="mt-1 text-[12px] text-[#7C7469]">API 키를 등록한 뒤 모델 목록으로 실제 연결을 확인합니다. OpenAI 호환 또는 Anthropic 네이티브를 지원합니다.</p></div><Button type="button" onClick={()=>open()} className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#E1D9CC] bg-[#FFFDF9] px-3 text-[12px] font-semibold text-[#3A342D] hover:bg-[#F7F2EA]"><Plus size={14}/> 직접 입력</Button></div>
+   <div className="mb-4 flex flex-wrap items-end justify-between gap-3"><div><h2 className="m-0 text-[17px] font-bold tracking-[-.02em] text-[#24211D]">제공자 빠른 연결</h2><p className="mt-1 text-[12px] text-[#7C7469]">여기는 <strong className="text-[#3A342D]">모델 API 키</strong>를 등록하는 곳입니다. Google/GitHub 로그인(OAuth)은 GitHub·YouTube 계정 연동이며 모델 키가 아닙니다. OpenAI 호환 또는 Anthropic 네이티브를 지원합니다.</p></div><Button type="button" onClick={()=>open()} className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#E1D9CC] bg-[#FFFDF9] px-3 text-[12px] font-semibold text-[#3A342D] hover:bg-[#F7F2EA]"><Plus size={14}/> 직접 입력</Button></div>
    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-5">{providerPresets.map(preset=>{const connected=configured(preset);return <div key={preset.name} className="flex min-w-0 items-center justify-between gap-2 rounded-xl border border-[#EFE9DF] bg-[#FAF7F1] px-3 py-2.5"><div className="min-w-0"><strong className="block truncate text-[12px] text-[#3A342D]">{preset.name}</strong><small className="block truncate text-[10px] text-[#A79C8E]">{preset.local?'로컬':'API 키 필요'}</small></div><Button variant={connected?'secondary':'primary'} disabled={connected} onClick={()=>openPreset(preset)} className="!px-2.5 !py-1 !text-[11px]">{connected?'등록됨':'등록'}</Button></div>})}</div>
   </section>
   <ModelExplorer/>

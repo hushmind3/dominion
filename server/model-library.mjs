@@ -39,22 +39,23 @@ const jsonResponse=async(res,source)=>{
 };
 export class ModelLibrary{
  constructor({root=path.join(DATA,'models'),hub='https://huggingface.co',fetcher=globalThis.fetch}={}){
-  this.root=root;this.hub=hub.replace(/\/$/,'');this.fetcher=fetcher;this.jobs=new Map();
+  this.root=root;this.hub=hub.replace(/\/$/,'');this.fetcher=fetcher;this.jobs=new Map();this.descriptions=new Map();
   fs.mkdirSync(root,{recursive:true,mode:0o700});
  }
  url(repo,route=''){
   if(!REPO.test(repo))throw Error('Invalid Hugging Face repository');
   return this.hub+'/'+route+repo.split('/').map(encodeURIComponent).join('/');
  }
- async catalog({q='',format='',sort='downloads'}={}){
-  const search=String(q).trim().slice(0,100);
+ async catalog({q='',format='',sort='downloads',limit=80}={}){
+  const search=String(q).trim().slice(0,120);
+  const max=Math.min(500,Math.max(20,Number(limit)||80));
   const order=['downloads','likes','lastModified'].includes(sort)?sort:'downloads';
   const terms=search?[search]:format==='gguf'?['GGUF']:format==='mlx'?['mlx']:['GGUF','mlx'];
   const groups=await Promise.all(terms.map(async term=>{
    const u=new URL(this.hub+'/api/models');
-   u.searchParams.set('limit','40');u.searchParams.set('sort',order);
+   u.searchParams.set('limit',String(max));u.searchParams.set('sort',order);
    u.searchParams.set('direction','-1');u.searchParams.set('search',term);
-   return jsonResponse(await this.fetcher(u,{signal:AbortSignal.timeout(15000)}),'Hugging Face');
+   return jsonResponse(await this.fetcher(u,{signal:AbortSignal.timeout(20000)}),'Hugging Face');
   }));
   const map=new Map();
   for(const x of groups.flat()){
@@ -65,16 +66,39 @@ export class ModelLibrary{
    if(!search&&!/(gguf|mlx)/i.test(tagText))continue;
    if(!map.has(x.id))map.set(x.id,x);
   }
-  return [...map.values()].sort((a,b)=>{
+  const items=[...map.values()].sort((a,b)=>{
    if(order==='lastModified')return String(b.lastModified||'').localeCompare(String(a.lastModified||''));
    return Number(b[order]||0)-Number(a[order]||0);
-  }).slice(0,40).map(x=>this._summary(x));
+  }).slice(0,max).map(x=>this._summary(x));
+  await Promise.allSettled(items.filter(item=>!item.description).slice(0,32).map(async item=>{
+   item.description=await this._description(item.id);
+  }));
+  return items;
  }
  _summary(x){
   const tags=x.tags||[];
-  return {id:x.id,downloads:x.downloads||0,likes:x.likes||0,updatedAt:x.lastModified||'',task:x.pipeline_tag||'',tags:tags.slice(0,22),
-   gated:Boolean(x.gated),description:String(x.cardData?.description||'').slice(0,500),
+  return {id:x.id,author:x.id.split('/')[0]||'',name:x.id.split('/').pop()||x.id,downloads:x.downloads||0,likes:x.likes||0,updatedAt:x.lastModified||'',createdAt:x.createdAt||'',task:x.pipeline_tag||'',library:x.library_name||'',tags:tags.slice(0,22),
+   gated:Boolean(x.gated),description:String(x.cardData?.description||x.cardData?.summary||x.description||'').slice(0,500),
    capabilities:{vision:tags.some(t=>/image-text-to-text|vision|visual-question-answering/i.test(t)),tools:tags.some(t=>/tool-use|function-calling|tool-calling/i.test(t)),reasoning:tags.some(t=>/reasoning|thinking/i.test(t))}};
+ }
+ async _description(repo){
+  const cached=this.descriptions.get(repo);
+  if(cached&&Date.now()-cached.at<10*60*1000)return cached.text;
+  try{
+   const url=this.hub+'/'+repo.split('/').map(encodeURIComponent).join('/')+'/raw/main/README.md';
+   const response=await this.fetcher(url,{signal:AbortSignal.timeout(8000)});
+   if(!response.ok)throw Error('README HTTP '+response.status);
+   let text=await response.text();
+   text=text.replace(/^---[\s\S]*?---/,'');
+   text=text.replace(/\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)/g,' ').replace(/!\[[^\]]*\]\([^)]*\)/g,' ').replace(/<[^>]+>/g,' ');
+   const paragraph=text.split('\n').map(line=>line.trim()).find(line=>line&&!line.startsWith('#')&&!line.startsWith('|')&&!line.startsWith('-')&&!line.startsWith('>')&&!line.startsWith('```'))||'';
+   const clean=paragraph.replace(/[*_`[\]]/g,'').replace(/\s+/g,' ').trim().slice(0,400);
+   this.descriptions.set(repo,{at:Date.now(),text:clean});
+   return clean;
+  }catch{
+   this.descriptions.set(repo,{at:Date.now(),text:''});
+   return '';
+  }
  }
  async _tree(repo,revision){
   const base=this.url(repo,'api/models/')+'/tree/'+encodeURIComponent(revision)+'?recursive=true&expand=false';

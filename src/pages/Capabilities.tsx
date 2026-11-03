@@ -1,11 +1,11 @@
 import {StatusPill} from '../components/StatusPill'
 import {Button,TextInput} from '../components/Primitives'
-import {useMemo,useState} from 'react'
+import {useEffect,useMemo,useState} from 'react'
 import {Activity,ArrowRight,Blocks,BookOpenText,BrainCircuit,Check,ChevronDown,Cloud,Compass,ExternalLink,KeyRound,Layers3,MessageCircle,RefreshCw,Search,ShieldCheck,SlidersHorizontal,TerminalSquare,Workflow} from 'lucide-react'
 import {get,post} from '../api'
 import {Action,FormField,Headline,Notice,Panel,Subheading,useRemote} from '../components/UI'
 type ChannelField={key:string;label:string;type:'secret'|'text'|'url';required?:boolean;placeholder?:string}
-type Item={namespace:string;id:string;sourceId?:string;name:string;description?:string;status?:string;available?:boolean;features?:string[];docs?:string;origin?:string;category?:string;mode?:string;fields?:ChannelField[];instructions?:string[]}
+type Item={namespace:string;id:string;sourceId?:string;name:string;description?:string;status?:string;available?:boolean;connected?:boolean;features?:string[];docs?:string;origin?:string;category?:string;mode?:string;fields?:ChannelField[];instructions?:string[];callback?:string}
 type Page='models'|'connections'|'extensions'|'memory'
 const families:{id:string;label:string;icon:any;page?:Page}[]=[
  {id:'all',label:'전체',icon:Layers3},
@@ -13,13 +13,13 @@ const families:{id:string;label:string;icon:any;page?:Page}[]=[
  {id:'model',label:'모델',icon:BrainCircuit,page:'models'},
  {id:'mcp',label:'MCP',icon:Blocks,page:'extensions'},
  {id:'skill',label:'스킬',icon:BookOpenText,page:'extensions'},
- {id:'account',label:'OAuth',icon:KeyRound,page:'connections'},
+ {id:'account',label:'계정 연동',icon:KeyRound,page:'connections'},
  {id:'tool',label:'내장 도구',icon:TerminalSquare,page:'extensions'}
 ]
 export function CapabilitiesPage({navigate}:{navigate:(page:Page)=>void}){
  const data=useRemote<{items:Item[];updatedAt:string}>('/api/capabilities',{items:[],updatedAt:''});
  const channels=useRemote<any[]>('/api/channels',[]);
- const [family,setFamily]=useState('all'),[query,setQuery]=useState(''),[showPlanned,setShowPlanned]=useState(false),[error,setError]=useState(''),[details,setDetails]=useState<Item|null>(null),[result,setResult]=useState<any>(null),[working,setWorking]=useState(false),[channelForm,setChannelForm]=useState<Record<string,string>>({}),[channelBusy,setChannelBusy]=useState(false),[refreshing,setRefreshing]=useState(false),[lastRefresh,setLastRefresh]=useState(''),[probe,setProbe]=useState<Record<string,string>>({});
+ const [family,setFamily]=useState('all'),[query,setQuery]=useState(''),[showPlanned,setShowPlanned]=useState(false),[error,setError]=useState(''),[details,setDetails]=useState<Item|null>(null),[result,setResult]=useState<any>(null),[working,setWorking]=useState(false),[channelForm,setChannelForm]=useState<Record<string,string>>({}),[channelBusy,setChannelBusy]=useState(false),[oauthForm,setOauthForm]=useState({clientId:'',clientSecret:''}),[oauthBusy,setOauthBusy]=useState(false),[oauthUrl,setOauthUrl]=useState(''),[refreshing,setRefreshing]=useState(false),[lastRefresh,setLastRefresh]=useState(''),[probe,setProbe]=useState<Record<string,string>>({});
  const visibleItems=data.value.items.filter(item=>item.namespace!=='channel'||item.available||showPlanned);
  const rows=useMemo(()=>visibleItems.filter(x=>(family==='all'||x.namespace===family)&&[x.name,x.namespace,x.description,x.id].join(' ').toLowerCase().includes(query.toLowerCase())),[data.value.items,family,query,showPlanned]);
  const counts=useMemo(()=>Object.fromEntries(families.map(x=>[x.id,x.id==='all'?visibleItems.length:visibleItems.filter(v=>v.namespace===x.id).length])),[data.value.items,showPlanned]);
@@ -29,11 +29,15 @@ export function CapabilitiesPage({navigate}:{navigate:(page:Page)=>void}){
   if(item.namespace==='channel')return {online:Boolean(item.available),label:item.available?'드라이버 준비':'드라이버 없음'};
   if(item.namespace==='model')return {online:Boolean(item.available),label:item.available?'등록됨':'비활성'};
   if(item.namespace==='mcp')return {online:Boolean(item.available),label:item.available?'등록됨':'비활성'};
-  if(item.namespace==='account')return {online:Boolean(item.available),label:item.available?'OAuth 설정됨':'설정 필요'};
+  if(item.namespace==='account')return {online:Boolean(item.connected),label:item.connected?'로그인됨':item.available?'OAuth 앱 설정됨':'설정 필요'};
   return {online:Boolean(item.available),label:item.available?'준비됨':'미설정'};
  };
  const invoke=async(item:Item,operation:string)=>{setWorking(true);setError('');try{setResult(await post('/api/capabilities/'+item.namespace+'/'+item.id+'/'+operation,{}));void data.reload()}catch(e){setError((e as Error).message)}finally{setWorking(false)}};
- const openItem=(x:Item)=>{setDetails(x);setResult(null);setError('');setChannelForm({name:x.namespace==='channel'?x.name:''})};
+ const openItem=(x:Item)=>{setDetails(x);setResult(null);setError('');setOauthUrl('');setOauthForm({clientId:'',clientSecret:''});setChannelForm({name:x.namespace==='channel'?x.name:''})};
+ useEffect(()=>{
+  const handler=(event:MessageEvent)=>{if(event.data==='dominion-oauth-complete'){void data.reload();setOauthUrl('');setDetails(current=>current&&current.namespace==='account'?{...current,connected:true}:current)}};
+  window.addEventListener('message',handler);return()=>window.removeEventListener('message',handler);
+ },[]);
  const refreshAll=async()=>{
   setRefreshing(true);
   try{await Promise.all([data.reload(),channels.reload()]);setLastRefresh(new Date().toLocaleTimeString())}finally{setRefreshing(false)}
@@ -55,8 +59,20 @@ export function CapabilitiesPage({navigate}:{navigate:(page:Page)=>void}){
   }catch(e){setError((e as Error).message)}finally{setChannelBusy(false)}
  };
  const connectAccount=async(provider:string)=>{
+  setOauthUrl('');setError('');
   const popup=window.open('','dominion_oauth','width=650,height=780');
-  try{const r=await get<{url:string}>('/api/oauth/'+provider+'/start');if(popup)popup.location.href=r.url;else window.location.href=r.url}catch(e){popup?.close();setError((e as Error).message)}
+  try{const r=await get<{url:string}>('/api/oauth/'+provider+'/start');if(popup)popup.location.href=r.url;else setOauthUrl(r.url)}
+  catch(e){popup?.close();setError((e as Error).message)}
+ };
+ const configureOAuth=async()=>{
+  if(!details||oauthBusy)return;
+  setOauthBusy(true);setError('');
+  try{
+   await post('/api/oauth/providers/'+details.id,oauthForm);
+   setDetails({...details,available:true});
+   await data.reload();
+   await connectAccount(details.id);
+  }catch(e){setError((e as Error).message)}finally{setOauthBusy(false)}
  };
  return <div className="mx-auto w-full max-w-[1320px] px-5 py-6 sm:px-8 lg:px-6 lg:pb-20">
   <Headline eyebrow="CONNECTION HUB" title="연결 · 채널" description="모델, MCP, 스킬, 메신저, OAuth 계정을 한곳에서 연결하고 실제 상태를 확인합니다." actions={<div className="flex items-center gap-3"><span className="text-[11px] text-[#8A8176]">{lastRefresh?'마지막 갱신 '+lastRefresh:'아직 갱신 전'}</span><Action variant="secondary" disabled={refreshing} onClick={()=>void refreshAll()}><RefreshCw size={16} className={refreshing?'animate-spin':''}/> {refreshing?'갱신 중':'새로고침'}</Action></div>}/>
@@ -92,14 +108,46 @@ export function CapabilitiesPage({navigate}:{navigate:(page:Page)=>void}){
     </div>:<p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-800">이 채널은 카탈로그에만 있고 실행 드라이버가 아직 없습니다. 실제 연결은 지원되는 채널에서만 가능합니다.</p>}
     {(details.instructions?.length||0)>0&&<ol className="mt-3 list-decimal space-y-1 pl-5 text-[11px] leading-5 text-[#7C7469]">{(details.instructions||[]).map((text,index)=><li key={index}>{text}</li>)}</ol>}
    </div>}
+   {details.namespace==='account'&&<div className="mt-4 border-t border-[#EFE9DF] pt-4">
+    <div className="mb-3 flex items-center justify-between gap-3"><strong className="text-sm">계정 연동 설정</strong><span className={'rounded-md px-2 py-1 text-[10px] font-semibold '+(details.available?'bg-emerald-50 text-emerald-700':'bg-amber-50 text-amber-700')}>{details.available?'설정됨':'설정 필요'}</span></div>
+    <p className="mb-3 rounded-lg border border-[#EED9CC] bg-[#F7E8E1] p-3 text-[11px] leading-5 text-[#A94E30]">이 로그인은 GitHub·YouTube 계정 연동 권한입니다. <strong>모델 API 키가 아닙니다.</strong> Gemini·OpenAI·Anthropic 모델 키는 모델 관리에서 등록하세요. <Button variant="ghost" className="!h-auto !p-0 !text-[11px] font-semibold text-[#C96442] underline" onClick={()=>{setDetails(null);navigate('models')}}>모델 API 키 등록</Button></p>
+    {!details.available&&<div className="grid gap-3">
+     <FormField label="Client ID"><TextInput value={oauthForm.clientId} onChange={e=>setOauthForm({...oauthForm,clientId:e.target.value})} placeholder={details.id==='github'?'GitHub OAuth App Client ID':'Google OAuth Client ID'}/></FormField>
+     <FormField label="Client Secret"><TextInput type="password" value={oauthForm.clientSecret} onChange={e=>setOauthForm({...oauthForm,clientSecret:e.target.value})} placeholder="Client Secret"/></FormField>
+     <p className="rounded-lg border border-[#EED9CC] bg-[#F7E8E1] p-3 text-[11px] leading-5 text-[#A94E30]">콜백 URL을 OAuth 앱에 그대로 등록하세요.<br/><code className="break-all">{details.callback||'http://127.0.0.1:53682/api/oauth/'+details.id+'/callback'}</code></p>
+     <Action disabled={oauthBusy} onClick={()=>void configureOAuth()}>{oauthBusy?'저장 중':'저장 후 인증'}</Action>
+    </div>}
+    {details.available&&<div className="grid gap-2">
+     <p className={'rounded-lg p-3 text-[12px] leading-5 '+(details.connected?'bg-emerald-50 text-emerald-700':'bg-[#FAF7F1] text-[#5C544A]')}>{details.connected?'로그인됨 · 모델이 이 계정으로 실제 도구를 사용할 수 있습니다.':'아직 로그인하지 않았습니다. 아래에서 인증하면 모델이 바로 사용할 수 있습니다.'}</p>
+     <p className="text-[12px] leading-5 text-[#5C544A]">사용 가능: {details.id==='github'?'GitHub 저장소·이슈·PR (github_api)':'YouTube 채널·검색 (youtube_search, youtube_channels)'}</p>
+     <p className="text-[11px] leading-5 text-[#8A8176]">콜백 URL: <code className="break-all">{details.callback||'http://127.0.0.1:53682/api/oauth/'+details.id+'/callback'}</code></p>
+     <Action variant="secondary" onClick={()=>void connectAccount(details.id)}>{details.connected?'다시 로그인':'계정 연결'}</Action>
+    </div>}
+    <details className="mt-2 rounded-lg border border-[#E7E0D5] bg-[#FAF7F1] p-3 text-[11px] leading-5 text-[#5C544A]">
+     <summary className="cursor-pointer font-semibold text-[#3A342D]">{details.id==='google'?'Google Client ID·Secret 발급 방법':'GitHub Client ID·Secret 발급 방법'}</summary>
+     {details.id==='google'?<ol className="mt-2 list-decimal space-y-1 pl-5">
+      <li>Google Cloud Console → API 및 서비스 → OAuth 동의 화면을 구성합니다.</li>
+      <li>YouTube Data API v3를 사용 설정합니다.</li>
+      <li>사용자 인증 정보 → OAuth 클라이언트 ID → 웹 애플리케이션을 만듭니다.</li>
+      <li>승인된 리디렉션 URI에 <code className="break-all">{details.callback||'http://127.0.0.1:53682/api/oauth/google/callback'}</code>를 등록합니다.</li>
+      <li>발급된 Client ID와 Client Secret을 위 칸에 붙여넣습니다.</li>
+      <li>테스트 모드라면 OAuth 동의 화면 → 테스트 사용자에 본인 Google 계정을 추가합니다.</li>
+     </ol>:<ol className="mt-2 list-decimal space-y-1 pl-5">
+      <li>GitHub → Settings → Developer settings → OAuth Apps → New OAuth App를 엽니다.</li>
+      <li>Authorization callback URL에 <code className="break-all">{details.callback||'http://127.0.0.1:53682/api/oauth/github/callback'}</code>를 등록합니다.</li>
+      <li>발급된 Client ID와 Client Secret을 위 칸에 붙여넣습니다.</li>
+     </ol>}
+     <a className="mt-2 inline-flex items-center gap-1 font-semibold text-[#C96442] hover:underline" href={details.id==='google'?'https://console.cloud.google.com/apis/credentials':'https://github.com/settings/developers'} target="_blank" rel="noreferrer">{details.id==='google'?'Google Cloud Console 열기':'GitHub OAuth Apps 열기'} <ExternalLink size={13}/></a>
+    </details>
+    {oauthUrl&&<a href={oauthUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#C96442] hover:underline">팝업이 막혔습니다. 인증 창 직접 열기 <ExternalLink size={14}/></a>}
+   </div>}
    {error&&<Notice message={error}/>}
    {result&&<Panel className="rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-4 text-sm leading-6"><strong>실제 실행 결과</strong><pre>{JSON.stringify(result,null,2).slice(0,12000)}</pre></Panel>}
    <div className="mt-5 flex flex-wrap justify-end gap-2">
     {details.namespace==='model'&&details.available&&<Action disabled={working} onClick={()=>invoke(details,'models')}><Activity size={16}/> 실제 모델 조회</Action>}
     {details.namespace==='mcp'&&details.available&&<Action disabled={working} onClick={()=>invoke(details,'tools')}><Activity size={16}/> MCP 도구 연결 검사</Action>}
     {details.namespace==='skill'&&<Action disabled={working} onClick={()=>invoke(details,details.available?'deactivate':'activate')}>{details.available?'스킬 비활성화':'스킬 활성화'}</Action>}
-    {details.namespace==='account'&&details.available&&<Action disabled={working} onClick={()=>void connectAccount(details.id)}><KeyRound size={16}/> 계정 연결</Action>}
-    {familesPage(details.namespace)&&details.namespace!=='channel'&&<Action variant="secondary" onClick={()=>{setDetails(null);navigate(familesPage(details.namespace)!)}}>설정 화면 열기 <ArrowRight size={16}/></Action>}
+    {familesPage(details.namespace)&&!['channel','account'].includes(details.namespace)&&<Action variant="secondary" onClick={()=>{setDetails(null);navigate(familesPage(details.namespace)!)}}>설정 화면 열기 <ArrowRight size={16}/></Action>}
    </div>
   </aside></div>}
  </div>
