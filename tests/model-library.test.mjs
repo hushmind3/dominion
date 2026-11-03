@@ -12,7 +12,7 @@ function fakeHub(){
  const calls=[];
  const fetcher=async(input,opts={})=>{
   const u=new URL(String(input)),p=decodeURIComponent(u.pathname);
-  calls.push({path:p,range:opts.headers?.Range});
+  calls.push({path:p,range:opts.headers?.Range,search:u.searchParams.get('search')});
   if(p==='/api/models')return Response.json([
    {id:'demo/Qwen-GGUF',downloads:2100,likes:90,lastModified:'2026-01-01',pipeline_tag:'text-generation',tags:['gguf','reasoning']},
    {id:'mlx-community/demo-2bit',downloads:110,likes:12,tags:['mlx']}
@@ -40,8 +40,10 @@ function fakeHub(){
 test('native catalog returns real repository fields and filters by format',async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'dominion-catalog-'));
  try{
-  const m=new ModelLibrary({root,hub:'https://hf.test',fetcher:fakeHub().fetcher});
+  const fake=fakeHub();
+  const m=new ModelLibrary({root,hub:'https://hf.test',fetcher:fake.fetcher});
   const all=await m.catalog();
+  assert.deepEqual(fake.calls.filter(x=>x.path==='/api/models').map(x=>x.search),['GGUF','mlx']);
   assert.equal(all.length,2);
   assert.equal(all[0].downloads,2100);
   assert.equal(all[0].capabilities.reasoning,true);
