@@ -160,23 +160,44 @@ function extractJsonObject(text){
  }
  return null;
 }
-export async function learnFromSession(id,{providerId,model}={}){
+const removeLearningSecrets=value=>String(value??'')
+ .replace(/(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|Bearer\s+\S+|AIza[A-Za-z0-9_-]{20,})/g,'[REDACTED]').trim();
+export async function learnFromSession(id,{providerId,model,automatic=false}={}){
  if(!get('session',id))throw Error('Session not found');
  if(!providerId||!model)throw Error('Select a connected model for learning');
- const history=messages(id).filter(row=>row.role==='user'||row.role==='assistant');
- if(history.length<2)throw Error('Not enough conversation to learn from');
- const transcript=history.slice(-40).map(row=>'['+row.role+'] '+String(row.content||'').slice(0,3000)).join('\n').slice(-30000);
+ const rows=messages(id);
+ const latest=rows.at(-1);
+ if(!latest||rows.filter(r=>r.role==='user'||r.role==='assistant').length<2)
+  return {sessionId:id,memories:[],skill:null,skipped:'not_enough_conversation'};
+ if(automatic&&get('learning_checkpoint',id)?.throughMessageId===latest.id)
+  return {sessionId:id,memories:[],skill:null,skipped:'already_processed'};
+ const transcript=rows.slice(-50).map(row=>{
+  const type=row.role==='tool'?'tool_result':row.role;
+  const details=row.tool_calls?.length?' [tools: '+row.tool_calls.map(c=>c.function?.name||'unknown').join(', ')+']':'';
+  return '['+type+'] '+removeLearningSecrets(String(row.content||'').slice(0,row.role==='tool'?600:2500))+details;
+ }).join('\n').slice(-35000);
  const response=await streamCompletion({providerId,model,tools:[],messages:[
-  {role:'system',content:'Extract durable knowledge from the conversation. Return ONE JSON object only: {"memories":[{"text":"...","scope":"shared"}],"skill":{"name":"...","instructions":"..."}} . Use null or an empty array when there is nothing durable. Memories must be stable user preferences, facts, decisions, or project constraints. Never include secrets, temporary details, tool output, or speculation. Skill instructions must be reusable and concise.'},
-  {role:'user',content:'Conversation:\n'+transcript}
+  {role:'system',content:'Extract durable reusable knowledge from the conversation and observed tool results. Return ONE JSON object only: {"memories":[{"text":"...","scope":"shared"}],"skill":{"name":"...","instructions":"..."}}. Use null or empty arrays when there is nothing durable. Only save stable user preferences, verified project decisions, or reusable lessons from actual observed outcomes. Do not convert an attempted tool call or unverified assistant assertion into a success. Do not store secrets, temporary details, speculation, or sensitive tool output. A skill is only a candidate until tested and approved. Be concise.'},
+  {role:'user',content:'Conversation and execution evidence:\n'+transcript}
  ]});
  const data=extractJsonObject(response.content);
  if(!data)throw Error('The model did not return valid learning JSON');
- const memories=(Array.isArray(data.memories)?data.memories:[]).filter(item=>item&&typeof item.text==='string'&&item.text.trim()).slice(0,10).map(item=>put('memory',{text:String(item.text).trim().slice(0,1000),scope:String(item.scope||'shared')}));
- let skill=null;
- if(data.skill&&typeof data.skill.name==='string'&&typeof data.skill.instructions==='string'&&data.skill.name.trim()&&data.skill.instructions.trim()){
-  skill=put('skill',{name:data.skill.name.trim().slice(0,80),instructions:data.skill.instructions.trim().slice(0,12000),enabled:false,status:'proposed'});
+ const known=new Set(all('memory').map(item=>String(item.text||'').trim().toLowerCase()));
+ const memories=[];
+ for(const item of (Array.isArray(data.memories)?data.memories:[]).slice(0,10)){
+  const value=removeLearningSecrets(item?.text).slice(0,1000),key=value.toLowerCase();
+  if(value.length<8||known.has(key)||value.includes('[REDACTED]'))continue;
+  known.add(key);
+  memories.push(put('memory',{text:value,scope:String(item.scope||'shared'),source:automatic?'auto-learning':'session-learning',sessionId:id}));
  }
+ let skill=null;
+ if(data.skill&&typeof data.skill.name==='string'&&typeof data.skill.instructions==='string'){
+  const name=removeLearningSecrets(data.skill.name).slice(0,80),instructions=removeLearningSecrets(data.skill.instructions).slice(0,12000);
+  if(name&&instructions&&!instructions.includes('[REDACTED]')&&
+   !all('skill').some(x=>x.name===name&&x.instructions===instructions))
+   skill=put('skill',{name,instructions,enabled:false,status:'proposed',source:automatic?'auto-learning':'session-learning',sessionId:id});
+ }
+ put('learning_checkpoint',{id,throughMessageId:latest.id,processedAt:new Date().toISOString(),automatic});
  return {sessionId:id,memories,skill,usage:response.usage};
 }
 export function rooms(){return all('room');}
