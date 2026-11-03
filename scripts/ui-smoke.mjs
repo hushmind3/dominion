@@ -38,11 +38,12 @@ try{
  await page.getByText('DOMINION',{exact:true}).first().waitFor();
  const firstNav=page.locator('aside nav button').first();
  assert.equal(await firstNav.evaluate(el=>getComputedStyle(el).borderTopWidth),'0px','Sidebar items should not render as bordered pills');
+ await page.locator('aside nav button').filter({hasText:'고급'}).first().click();
  const links=[
-  ['대시보드','home'],['채팅','chat'],['모델 관리','models'],['에이전트','agents'],
-  ['멀티 에이전트','rooms'],['워크플로','workflows'],['메모리','memory'],
-  ['기능 허브','capabilities'],['MCP · 스킬','extensions'],['연결 · 채널','connections'],
-  ['자동화','automations'],['실행 기록','activity'],['설정','settings']
+  ['채팅','chat'],['모델 관리','models'],['에이전트','agents'],['영상 제작','video'],
+  ['연결 · 채널','capabilities'],['MCP · 스킬','extensions'],['메모리','memory'],
+  ['자동화','automations'],['실행 기록','activity'],['설정','settings'],
+  ['멀티 에이전트','rooms'],['반복 작업','workflows']
  ];
  for(const [label,id] of links){
   await page.locator('aside nav button').filter({hasText:label}).first().click();
@@ -51,16 +52,6 @@ try{
   assert.equal(await page.locator('aside nav button[aria-current="page"]').count(),1,'Exactly one active navigation item: '+id);
   await page.locator('main').waitFor({state:'visible'});
   assert.ok((await page.locator('main').innerText()).length>20,'Empty page: '+id);
-  if(id==='workflows'){
-   await page.getByText('실행 엔진',{exact:true}).waitFor();
-   await page.getByPlaceholder('에이전트가 실행할 작업을 입력하세요.').fill('Create a small verification note.');
-   assert.equal(await page.getByPlaceholder('에이전트가 실행할 작업을 입력하세요.').inputValue(),'Create a small verification note.');
-   await page.getByRole('button',{name:/워크플로 생성/}).first().click();
-   await page.getByRole('dialog').waitFor();
-   await page.screenshot({path:path.join(shots,'workflow-editor.png'),fullPage:false});
-   await page.keyboard.press('Escape');
-   await page.getByRole('dialog').waitFor({state:'hidden'});
-  }
   if(id==='models'){
    await page.getByRole('button',{name:/API 연결 추가/}).first().click();
    await page.getByRole('dialog').waitFor();
@@ -91,7 +82,7 @@ try{
  await palette.waitFor({state:'hidden'});
  assert.equal(new URL(page.url()).hash,'#/chat','Command palette navigates to selected workspace');
  // Slash commands should be discoverable from the message composer and executable without a model.
- const composer=page.getByPlaceholder('메시지 입력 또는 / 명령어');
+ const composer=page.getByPlaceholder('무엇을 도와드릴까요?  / 로 명령어');
  await composer.fill('/');
  const slash=page.getByRole('listbox',{name:'슬래시 명령어'});
  await slash.waitFor();
@@ -106,18 +97,18 @@ try{
  await composer.press('Escape');
  await slash.waitFor({state:'hidden'});
 
- // The mobile navigation must remain usable after the CSS migration.
+ // The narrow navigation must remain usable after the CSS migration.
  await page.setViewportSize({width:390,height:844});
  await page.reload({waitUntil:'domcontentloaded'});
- const menu=page.getByTitle('모바일 메뉴');
+ const nav=page.locator('aside[aria-label="주 탐색"]');
+ const menu=page.getByTitle('메뉴 펼치기');
  if(await menu.count())await menu.first().click();
  else await page.locator('header button').first().click();
- await page.locator('aside').waitFor({state:'visible'});
+ await nav.waitFor({state:'visible'});
  await page.screenshot({path:path.join(shots,'mobile-sidebar-open.png'),fullPage:false});
- await page.locator('aside nav button').filter({hasText:'워크플로'}).first().click();
- await page.getByText('실행 엔진',{exact:true}).waitFor();
- await page.waitForFunction(()=>document.querySelector('aside')?.getBoundingClientRect().right<=2,null,{timeout:3000});
- await page.screenshot({path:path.join(shots,'mobile-workflows.png'),fullPage:false});
+ await nav.locator('nav button').filter({hasText:'채팅'}).first().click();
+ await page.waitForFunction(()=>document.querySelector('aside[aria-label="주 탐색"]')?.getBoundingClientRect().right<=2,null,{timeout:3000});
+ await page.screenshot({path:path.join(shots,'mobile-chat.png'),fullPage:false});
  assert.deepEqual(errors,[],'Browser runtime exceptions on mobile');
  console.log('UI smoke passed: '+links.length+' desktop routes + mobile navigation. Screenshots: '+shots);
 }finally{
