@@ -1,7 +1,7 @@
 import {useState} from 'react'
-import {Activity,Clock3,RefreshCw,Square,Terminal} from 'lucide-react'
+import {Activity,Clock3,Play,RefreshCw,Square,Terminal} from 'lucide-react'
 import {post} from '../api'
-import {Button} from './Primitives'
+import {Button,SelectInput,TextArea} from './Primitives'
 import {Panel,useRemote} from './UI'
 
 type Execution={
@@ -9,6 +9,7 @@ type Execution={
  status:string;startedAt:string;finishedAt?:string;reason?:string;
  iterations:number;modelCalls:number;toolCalls:number;tokens:number
 }
+type Agent={id:string;name:string;providerId:string;model:string}
 type Operation={id:string;callId:string;tool:string;status:string;startedAt:string;reason?:string}
 const labels:Record<string,string>={running:'실행 중',completed:'완료',cancelled:'취소',failed:'실패',
  interrupted:'중단됨',needs_review:'확인 필요',budget_exceeded:'예산 초과'}
@@ -25,9 +26,23 @@ function ToolHistory({id}:{id:string}){
 }
 export function ExecutionMonitor(){
  const runs=useRemote<Execution[]>('/api/executions',[])
+ const agents=useRemote<Agent[]>('/api/agents',[])
+ const [prompt,setPrompt]=useState(''),[agentChoice,setAgentChoice]=useState(''),[info,setInfo]=useState('')
  const [selected,setSelected]=useState<string|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('')
+ const availableAgents=agents.value.filter(x=>x.providerId&&x.model)
+ const executorId=availableAgents.some(x=>x.id===agentChoice)?agentChoice:availableAgents[0]?.id||''
  const current=runs.value.find(x=>x.id===selected)||runs.value[0]
  const count=runs.value.filter(x=>active(x.status)).length
+ const execute=async()=>{
+  if(!prompt.trim()||!executorId||busy)return
+  setBusy(true);setError('');setInfo('')
+  try{
+   await post('/api/jobs',{kind:'prompt',input:{prompt:prompt.trim(),agentId:executorId}})
+   setPrompt('');setInfo('실행 작업을 등록했습니다. 아래 기록에서 상태를 확인할 수 있습니다.')
+   await runs.reload()
+  }catch(e){setError((e as Error).message)}
+  finally{setBusy(false)}
+ }
  const cancel=async()=>{
   if(!current)return
   setBusy(true);setError('')
@@ -41,6 +56,18 @@ export function ExecutionMonitor(){
     <div><h2 className="m-0 text-lg font-bold text-slate-900">실행 엔진</h2><p className="m-0 text-xs text-slate-500">모델 추론 · 도구 호출 · 실행 기록 · 취소</p></div></div>
    <div className="flex items-center gap-3"><span className="text-xs font-semibold text-slate-600">{count}개 실행 중</span>
     <Button size="sm" variant="ghost" onClick={()=>void runs.reload()}><RefreshCw size={14}/> 새로고침</Button></div>
+  </div>
+  <div className="border-b border-slate-200 p-5">
+   <label className="mb-2 block text-sm font-semibold text-slate-800">실행 지시</label>
+   <TextArea rows={3} value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="에이전트가 실행할 작업을 입력하세요."/>
+   <div className="mt-3 flex flex-wrap items-center gap-2">
+    <SelectInput value={executorId} onChange={e=>setAgentChoice(e.target.value)} aria-label="실행할 에이전트">
+     {!availableAgents.length&&<option value="">연결된 에이전트 없음</option>}
+     {availableAgents.map(a=><option key={a.id} value={a.id}>{a.name} · {a.model}</option>)}
+    </SelectInput>
+    <Button variant="primary" disabled={busy||!executorId||!prompt.trim()} onClick={()=>void execute()}><Play size={15}/> 실행</Button>
+   </div>
+   {info&&<p className="mt-2 text-xs text-emerald-700">{info}</p>}
   </div>
   <div className="grid min-w-0 gap-5 p-5 lg:grid-cols-2">
    <div className="max-h-64 space-y-2 overflow-y-auto">
