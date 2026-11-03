@@ -28,3 +28,11 @@ test('common page layout utilities replace duplicated custom selectors',()=>{
   }
  }
 });
+
+test('CSS is syntactically balanced after removing migrated selectors',()=>{
+ const css=readFileSync('src/style.css','utf8');
+ let depth=0;
+ for(const c of css){if(c==='{')depth++;else if(c==='}')depth--;assert.ok(depth>=0,'Unexpected closing brace');}
+ assert.equal(depth,0);
+ assert.ok(css.length<60000,'Legacy CSS reduction regressed');
+});
