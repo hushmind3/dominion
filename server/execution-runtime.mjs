@@ -1,4 +1,4 @@
-import {buildCompatMessages,parseCompatAction,discoverCompatibleTools,likelyRequiresTools,requestedToolEffect,successfulToolEvidence} from './tool-compat.mjs';
+import {buildCompatMessages,parseCompatAction,discoverCompatibleTools,likelyRequiresTools,requestedToolEffect,successfulToolEvidence,validateToolArguments} from './tool-compat.mjs';
 // Shared runtime for chat, agents, meetings and workflows.
 // A workflow may call this runtime, but the runtime knows nothing about goals or plans.
 const clamp=(n,min,max,fallback)=>Number.isFinite(Number(n))?Math.max(min,Math.min(max,Math.trunc(Number(n)))):fallback;
@@ -122,6 +122,8 @@ export class ExecutionRuntime {
           try{
             if(!tool)throw Error('Tool not enabled: '+call.function?.name);
             const args=JSON.parse(call.function?.arguments||'{}');
+            const argumentError=validateToolArguments(tool,args);
+            if(argumentError)throw Error('Invalid tool arguments: '+argumentError);
             onEvent({type:'tool_start',name:tool.name,args,callId});
             if(tool.name==='tool_discover'){
               output={tools:discoverCompatibleTools(tools,args.query)};
