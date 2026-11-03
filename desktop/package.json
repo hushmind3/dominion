@@ -1,8 +1,8 @@
 {
   "name": "dominion-desktop",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "private": true,
-  "description": "DOMINION desktop host — launches the independent Node gateway",
+  "description": "DOMINION desktop host ??launches the independent Node gateway",
   "main": "main.cjs",
   "scripts": {
     "prestart": "npm --prefix .. run build",

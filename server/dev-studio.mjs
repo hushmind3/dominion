@@ -69,14 +69,34 @@ async function assertNoSymlink(target){
 async function packageInfo(dir){
  try{const data=JSON.parse(await fsp.readFile(path.join(dir,'package.json'),'utf8'));return {version:data.version||'',name:data.name||''};}catch{return {version:'',name:''};}
 }
+async function changedRows(dir){
+ const matrix=await git.statusMatrix({fs,dir});
+ const rows=[];
+ let headOid='';
+ try{headOid=await git.resolveRef({fs,dir,ref:'HEAD'})}catch{}
+ for(const row of matrix){
+  const [filepath,head,workdir,stage]=row;
+  if(head===workdir&&workdir===stage)continue;
+  if(await git.isIgnored({fs,dir,filepath}).catch(()=>false))continue;
+  if(head!==0&&workdir!==0&&headOid){
+   try{
+    const blob=await git.readBlob({fs,dir,oid:headOid,filepath});
+    const before=Buffer.from(blob.blob),after=await fsp.readFile(path.join(dir,filepath));
+    if(!before.includes(0)&&!after.includes(0)&&before.toString('utf8').replace(/\r\n/g,'\n')===after.toString('utf8').replace(/\r\n/g,'\n'))continue;
+    if(before.equals(after))continue;
+   }catch{}
+  }
+  rows.push(row);
+ }
+ return rows;
+}
 async function gitInfo(dir){
  if(!fs.existsSync(path.join(dir,'.git')))return {git:false,branch:'',commit:'',remote:'',dirty:0};
  try{
   const branch=await git.currentBranch({fs,dir,fullname:false})||'';
   const log=await git.log({fs,dir,depth:1});
   const remote=await git.getConfig({fs,dir,path:'remote.origin.url'}).catch(()=>'');
-  const matrix=await git.statusMatrix({fs,dir});
-  const dirty=matrix.filter(([,head,workdir,stage])=>head!==workdir||workdir!==stage).length;
+  const dirty=(await changedRows(dir)).length;
   return {git:true,branch,commit:log[0]?.oid||'',remote:remote||'',dirty};
  }catch(error){return {git:false,branch:'',commit:'',remote:'',dirty:0,error:String(error?.message||error)};}
 }
@@ -258,13 +278,14 @@ function freePort(){return new Promise((resolve,reject)=>{const server=net.creat
 export async function sourceDiff(){
  const config=devConfig();const dir=config.sourceDir;
  if(!fs.existsSync(path.join(dir,'.git')))throw Error('Git 저장소가 아닙니다.');
- const matrix=await git.statusMatrix({fs,dir});
+ const matrix=await changedRows(dir);
  const changes=[];let total=0;
+ let headOid='';try{headOid=await git.resolveRef({fs,dir,ref:'HEAD'})}catch{}
  for(const [filepath,head,workdir,stage] of matrix){
   if(head===workdir&&workdir===stage)continue;
   const absolute=sourcePath(filepath);
   let before='';
-  if(head!==0){try{const blob=await git.readBlob({fs,dir,oid:'HEAD',filepath});before=Buffer.from(blob.blob).toString('utf8');}catch{}}
+  if(head!==0&&headOid){try{const blob=await git.readBlob({fs,dir,oid:headOid,filepath});before=Buffer.from(blob.blob).toString('utf8');}catch{}}
   let after='';
   if(workdir!==0){try{after=await fsp.readFile(absolute,'utf8');}catch{}}
   const patch=createTwoFilesPatch('a/'+filepath,'b/'+filepath,before,after,'','',{context:3});
@@ -277,7 +298,7 @@ export async function sourceDiff(){
 export async function sourceCommit(message){
  const dir=devConfig().sourceDir;
  if(!String(message||'').trim())throw Error('커밋 메시지가 필요합니다.');
- const matrix=await git.statusMatrix({fs,dir});
+ const matrix=await changedRows(dir);
  for(const [filepath,head,workdir] of matrix){
   if(head===1&&workdir===1)continue;
   if(workdir===0)await git.remove({fs,dir,filepath});
