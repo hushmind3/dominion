@@ -45,6 +45,7 @@ export function recoverExecutions(){
 }
 export async function runTurn({sessionId,agentId,providerId,model,input,systemOverride,reasoningLanguage,onEvent=()=>{},signal,toolsEnabled=true,speakerLabels=false,limits={}}){
  const sess=get('session',sessionId);if(!sess)throw Error('Session not found');
+ if(executionRuntime.isActive(sessionId))throw Error('Session is already running');
  const agent=get('agent',agentId||sess.agentId)||agents().find(a=>a.id==='general');
  const provider=providerId||sess.providerId||agent?.providerId;
  const modelId=model||sess.model||agent?.model;
