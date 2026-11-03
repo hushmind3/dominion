@@ -1,3 +1,4 @@
+import {StatusPill} from '../components/StatusPill'
 import {Button,TextInput} from '../components/Primitives'
 import {useMemo,useState} from 'react'
 import {Activity,ArrowRight,Blocks,BookOpenText,BrainCircuit,Check,ChevronDown,Cloud,Compass,ExternalLink,KeyRound,Layers3,MessageCircle,RefreshCw,Search,ShieldCheck,SlidersHorizontal,TerminalSquare,Workflow} from 'lucide-react'
@@ -31,7 +32,7 @@ export function CapabilitiesPage({navigate}:{navigate:(page:Page)=>void}){
    const fam=families.find(f=>f.id===item.namespace);
    const Icon=fam?.icon||Layers3;
    return <Button className="flex min-w-0 flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-shadow hover:shadow-md" onClick={()=>openItem(item)} key={item.namespace+':'+item.id}>
-    <div className="flex items-start justify-between gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-xl bg-blue-50 text-blue-600"><Icon size={22}/></span><span className={'cap-state '+(item.available?'ready':'pending')}>{item.available?'사용 준비':'미설치 · 미설정'}</span></div>
+    <div className="flex items-start justify-between gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-xl bg-blue-50 text-blue-600"><Icon size={22}/></span><StatusPill status={item.available?'ready':'pending'}>{item.available?'사용 준비':'미설치 · 미설정'}</StatusPill></div>
     <strong>{item.name}</strong><p>{item.description||item.namespace+' integration'}</p><div className="flex flex-wrap gap-1.5"><span>{fam?.label||item.namespace}</span>{(item.features||[]).slice(0,2).map(f=><span key={f}>{f}</span>)}</div>
     <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-xs text-slate-500"><small>{item.status||'catalog'}</small><ArrowRight size={16}/></div>
    </Button>
