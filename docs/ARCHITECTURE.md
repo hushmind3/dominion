@@ -17,6 +17,19 @@
 
 공개된 사용자 저장소의 **실제 실행 코드까지 열어 비교**한 기록은 [SOURCE_COMPARISON.md](SOURCE_COMPARISON.md)에 있습니다. 모델 일괄 지정·수신/실행 분리·대화 세대·메신저 메시지 중복 방지의 원본 경로와 자체 구현 경로, 테스트를 1:1로 연결했습니다.
 
+## 공통 실행 엔진 (Execution Runtime)
+
+**실행 엔진이 코어이며, 목표 관리나 워크플로는 호출자입니다.**
+
+\`채팅 / 에이전트 / 회의 / 워크플로 / 자동화 → ExecutionRuntime → Model Adapter → Tool Dispatcher(MCP 포함) → Result Persistence → 다음 추론\`
+
+- 매 실행에 고유 run ID, 세션, 모델, 상태, 모델 호출/도구 호출/토큰 사용량을 저장한다.
+- 모델 호출, 도구 승인 대기, 터미널, 웹 검색 및 파일 쓰기에 취소 신호를 전달한다.
+- 기본 8회 모델 순환, 64회 도구 호출, 10만 토큰, 15분의 상한을 둔다. 상한은 제한된 범위 내에서 조절할 수 있다.
+- 도구 실행 의도를 결과보다 먼저 기록하고, 비정상 종료 시 미완료 호출을 미확정으로 표시한다. 과거 세션의 미응답 도구 호출을 자동 재실행하지 않는다.
+- UI의 실행 엔진 콘솔은 에이전트 작업을 큐에 등록하고 실제 실행 이력과 호출 기록을 조회한다.
+- 취소는 가능한 하위 도구로 전파하지만 외부 MCP 및 원격 API의 이미 시작된 부작용을 되돌리는 트랜잭션은 아니다. OS 프로세스 격리도 후속 구현 범위다.
+
 ## 컴포넌트
 
 - `server/store.mjs`: SQLite WAL, `records`, `messages`, `audit` 테이블, 이벤트 버스.
@@ -24,7 +37,8 @@
 - `server/providers.mjs`: 모델 목록, Hugging Face REST, LM Studio REST, OpenAI 호환 SSE.
 - `server/mcp.mjs`: MCP v2 세션, HTTP/stdio 클라이언트, 도구 발견·호출.
 - `server/tools.mjs`: 내장 tool schema, 승인, sandbox-like workspace path 제한, 실제 툴 실행.
-- `server/engine.mjs`: 채팅 로그 활용, 에이전트별 시스템 프롬프트, 최대 8회 tool loop, 회의실.
+- `server/execution-runtime.mjs`: 범용 실행 루프, 모델/도구 실행, 예산, 취소, 런타임 상태 체크포인트, 호출별 실행 장부. 특정 작업 유형을 알지 않는다.
+- `server/engine.mjs`: 채팅/에이전트/회의실 진입점. 모든 모델 턴을 공통 Runtime에 위임하며 세션 중복 실행을 방지한다.
 - `server/jobs.mjs`: persistent job queue, recovery, 일정 반복.
 - `server/channels.mjs`: 채널별 독립 드라이버/공통 수신·작업 배분, room 연결, 메시지 중복 방지.
 - `server/room-orchestrator.mjs`: 그룹 발언자 라우팅, 대화 세대, 취소, 화자별 모델·발언 기록.
