@@ -20,15 +20,15 @@ export function buildCompatMessages({system='',history=[],tools=[],extra=[],feed
   'If a needed tool is not listed, call tool_discover with a short query and use its returned tool.',
   'Use only real tool names and argument keys. Prefer to act rather than merely describe actions.',
   'TOOLS: '+JSON.stringify(selectCompatTools(tools,extra).map(schema)),
-  'AGENT ROLE: '+clip(system,2300),
+  'AGENT ROLE: '+clip(system,1700),
   ...(feedback?['FIX YOUR PRIOR OUTPUT: '+clip(feedback,1200)]:[])
  ];
- const last=history.slice(-12).map(m=>{
-  if(m.role==='tool')return {role:'user',content:'[TOOL RESULT '+clip(m.tool_call_id,80)+'] '+clip(m.content,1600)};
+ const last=history.slice(-10).map(m=>{
+  if(m.role==='tool')return {role:'user',content:'[TOOL RESULT '+clip(m.tool_call_id,80)+'] '+clip(m.content,1000)};
   if(m.role==='assistant'&&m.tool_calls?.length)return {role:'assistant',content:'[TOOL CALL] '+m.tool_calls.map(c=>clip(c.function?.name,100)+' '+clip(c.function?.arguments,550)).join('\n')};
-  return {role:m.role==='system'?'user':m.role,content:clip(m.content,4000)};
+  return {role:m.role==='system'?'user':m.role,content:clip(m.content,2200)};
  });
- let remaining=14500;const short=[];
+ let remaining=7000;const short=[];
  for(let i=last.length-1;i>=0;i--){
   if(remaining<=0)break;
   const m=last[i],part=m.content.slice(-remaining);
