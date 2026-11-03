@@ -12,3 +12,50 @@
 @media(max-width:1200px){.content-wrap{padding:34px 29px}.sidebar{width:225px}.main-area{margin-left:225px}.chat-layout{grid-template-columns:190px minmax(0,1fr)}.provider-grid,.agent-grid,.skills-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:850px){.sidebar{transform:translateX(-105%);transition:transform .25s;width:249px;box-shadow:9px 0 40px #16203c2d}.sidebar.mobile-open{transform:translateX(0)}.mobile-shade{display:block;position:fixed;inset:0;background:#111b344d;z-index:20}.mobile-close,.mobile-menu{display:grid;margin-left:auto}.main-area{margin-left:0}.topbar{padding:0 17px}.command-trigger{min-width:unset;font-size:0;border:0}.command-trigger kbd{display:none}.topbar-status{font-size:0}.content-wrap{padding:27px 19px}.page-heading h1{font-size:25px}.chat-layout{grid-template-columns:0 minmax(0,1fr)}.conversation-list{display:none}.chat-layout:has(.conversation-list.collapsed){grid-template-columns:1fr}.chat-toolbar{padding:0 15px}.chat-welcome{margin-top:7vh}.chat-welcome h1{font-size:32px}.chat-messages{padding:25px 16px}.composer-region{padding:8px 12px 14px}}
 @media(max-width:580px){.topbar-location,.topbar-divider,.topbar-sep{display:none}.topbar-right{gap:3px}.page-heading{flex-direction:column;align-items:flex-start}.heading-actions{width:100%}.stat-row{grid-template-columns:1fr;gap:9px}.provider-grid,.agent-grid,.skills-grid,.rooms-grid,.featured-grid,.integration-grid,.channels-grid,.settings-grid{grid-template-columns:1fr}.model-results{grid-template-columns:1fr}.model-result:nth-child(odd){border-right:0}.feature-hero-tag{display:none}.chat-welcome{margin-top:5vh}.chat-welcome h1{font-size:28px}.composer-caption span:last-child{display:none}.model-select select{max-width:115px}.integration-card{min-height:unset}.form-two,.participants-picker{grid-template-columns:1fr}.page-heading p{font-size:12px}.approval-banner{flex-direction:column;align-items:stretch}.chat-toolbar-right .model-live{display:none}}
+
+
+/* Data-driven channel directory */
+.directory-toolbar{display:flex;flex-direction:column;gap:14px;margin:25px 0}
+.directory-search{height:48px;border:1px solid #e3e9f5;border-radius:13px;display:flex;align-items:center;gap:10px;padding:0 16px;background:#fff;color:#9eacc1}
+.directory-search:focus-within{border-color:#acbff4;box-shadow:0 0 0 3px #e8eeff}
+.directory-search input{border:0;outline:none;background:transparent;width:100%;font-size:12px;color:#384862}
+.directory-filters{display:flex;align-items:center;gap:7px;flex-wrap:wrap;color:#8395b0}
+.directory-filters button{border:1px solid #e7edf5;background:#fff;color:#8594ad;border-radius:999px;padding:7px 13px;font-size:11px;transition:all .15s}
+.directory-filters button.active{background:#ebf1ff;color:#5272dc;border-color:#d5e1ff;font-weight:770}
+.directory-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.directory-card{min-height:253px;padding:22px;display:flex;flex-direction:column;transition:transform .18s,box-shadow .18s}
+.directory-card:hover{transform:translateY(-2px);box-shadow:0 12px 28px #354d8915}
+.directory-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.directory-glyph{width:47px;height:47px;border-radius:15px;display:grid;place-items:center;background:#edf2ff;color:#6079e0}
+.directory-glyph.workplace{background:#e7f7f5;color:#24a8a3}
+.directory-glyph.community{background:#fff2e9;color:#ea9561}
+.directory-glyph.decentralized{background:#f5edff;color:#9277c8}
+.directory-status{font-size:9px;border-radius:7px;padding:6px 8px;white-space:nowrap;font-weight:750}
+.directory-status.available{color:#258b69;background:#ebf9f1}
+.directory-status.planned{color:#919eb0;background:#f1f3f6}
+.directory-card h3{font-size:15px;font-weight:850;margin:18px 0 7px;color:#24334e}
+.directory-card>p{font-size:10.5px;line-height:1.6;color:#99a7bb;margin:0 0 12px;min-height:34px}
+.directory-caps{display:flex;flex-wrap:wrap;gap:5px;margin:0 0 15px}
+.directory-caps span{font-size:9px;border-radius:6px;color:#7182a0;background:#f3f6fb;padding:4px 7px}
+.directory-footer{margin-top:auto;padding-top:15px;border-top:1px solid #edf1f7;display:flex;gap:8px;align-items:center;justify-content:space-between}
+.directory-footer a,.directory-footer button{border:0;background:transparent;display:flex;align-items:center;gap:5px;color:#5775d7;font-size:10px;font-weight:740}
+.directory-footer button{padding:8px 10px;border-radius:9px;background:#eef3ff}
+.directory-footer button:hover{background:#dfe9ff}
+.not-implemented{font-size:10px;color:#9ca8b9}
+.directory-binding{display:flex;align-items:center;gap:2px;padding:9px 4px;margin-bottom:7px;border:1px solid #edf1f7;border-radius:10px;background:#fbfcff}
+.directory-binding>div:first-child{min-width:0;flex:1;display:flex;flex-direction:column;gap:3px}
+.directory-binding strong{font-size:10px;color:#415773;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.directory-binding small{font-size:9px;color:#95a3ba;overflow-wrap:anywhere}
+.binding-led{width:7px;height:7px;flex-shrink:0;border-radius:50%;background:#bdc8d5}
+.binding-led.on{background:#2dbc87;box-shadow:0 0 0 3px #dff7ed}
+.directory-binding .icon-button{width:24px;height:26px}
+.channel-modal .section-intro{margin-bottom:3px;padding:12px}
+.channel-webhook{display:flex;flex-direction:column;gap:6px;padding:11px 13px;background:#f2f6ff;border:1px solid #e3eafb;border-radius:10px}
+.channel-webhook strong,.channel-guide strong{font-size:11px;color:#5d6d8c}
+.channel-webhook code{overflow-wrap:anywhere;color:#425eaa;font-size:11px}
+.channel-webhook small{font-size:10px;color:#93a3bd}
+.channel-guide{padding:13px 16px;border-radius:12px;background:#f8fafc;border:1px solid #ebeff5}
+.channel-guide ol{padding-left:18px;margin:9px 0;line-height:1.8;font-size:10.5px;color:#7d8ca4}
+.channel-guide a{font-size:10px;color:#5476df;display:flex;align-items:center;gap:6px}
+@media(max-width:1200px){.directory-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:650px){.directory-grid{grid-template-columns:1fr}.directory-card{min-height:220px}}

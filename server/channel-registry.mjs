@@ -7,6 +7,7 @@ const here=path.dirname(fileURLToPath(import.meta.url));
 const roots=[path.join(here,'channel-plugins'),path.join(DATA,'channel-plugins')];
 const catalog=new Map(),drivers=new Map(),errors=new Map();
 const valid=/^[a-z0-9][a-z0-9_-]{1,50}$/;
+const fieldKey=/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/;
 const fieldTypes=new Set(['secret','text','url']);
 const modes=new Set(['polling','gateway','socket','webhook','external']);
 
@@ -15,7 +16,7 @@ function validateManifest(raw,folder){
  if(typeof raw.name!=='string'||!raw.name.trim())throw Error('Channel name required');
  if(!modes.has(raw.mode))throw Error('Invalid channel transport');
  if(!Array.isArray(raw.fields)||!Array.isArray(raw.features))throw Error('Channel fields/features must be arrays');
- if(raw.fields.some(f=>!valid.test(f.key)||!fieldTypes.has(f.type)||typeof f.label!=='string'))throw Error('Invalid configuration field');
+ if(raw.fields.some(f=>!fieldKey.test(f.key)||!fieldTypes.has(f.type)||typeof f.label!=='string'))throw Error('Invalid configuration field');
  if(!/^https:\/\//.test(raw.docs||''))throw Error('Each channel manifest must reference HTTPS documentation');
  return {...raw,status:'planned',available:false};
 }
