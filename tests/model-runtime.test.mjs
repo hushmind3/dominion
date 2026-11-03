@@ -9,7 +9,7 @@ import net from 'node:net';
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const freePort=()=>new Promise(resolve=>{
- const s=net.createServer();s.listen(0,'127.0.0.1',()=>s.close(()=>resolve(s.address()?.port||0)));
+ const s=net.createServer();s.listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(()=>resolve(p));});
 });
 test('native GGUF runtime starts without LM Studio, registers local provider, then unloads', {timeout:20000}, async()=>{
  const base=fs.mkdtempSync(path.join(os.tmpdir(),'dominion-native-runtime-'));
