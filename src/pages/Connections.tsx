@@ -1,3 +1,4 @@
+import {StatusPill} from '../components/StatusPill'
 import {Button,TextInput,SelectInput} from '../components/Primitives'
 import {useEffect,useMemo,useState} from 'react'
 import {Activity,ArrowRight,Check,ChevronRight,Cloud,ExternalLink,Filter,Globe2,Github,KeyRound,Link2,LockKeyhole,MessageCircle,Plus,RadioTower,Search,Settings2,ShieldCheck,Trash2,UsersRound,X} from 'lucide-react'
@@ -69,7 +70,7 @@ export function ConnectionsPage(){
    {registry.error&&<Notice message={registry.error}/>}
    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
     {filtered.map(entry=>{const bindings=channels.value.filter(c=>c.kind===entry.id);return <Panel key={entry.id} className="flex min-w-0 flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-     <div className="flex items-start justify-between gap-3"><div className={'directory-glyph '+entry.category}><MessageCircle size={23}/></div><span className={'directory-status '+(entry.available?'available':'planned')}>{entry.available?'드라이버 준비':'드라이버 미구현'}</span></div>
+     <div className="flex items-start justify-between gap-3"><div className={'directory-glyph '+entry.category}><MessageCircle size={23}/></div><StatusPill status={entry.available?'available':'planned'}>{entry.available?'드라이버 준비':'드라이버 미구현'}</StatusPill></div>
      <h3>{entry.name}</h3><p>{entry.description}</p>
      <div className="flex flex-wrap gap-1.5">{entry.features.map(f=><span key={f}>{f}</span>)}<span>{entry.mode}</span></div>
      {bindings.map(c=><div className="flex items-center gap-2 text-xs text-slate-500" key={c.id}><div ><strong>{c.name}</strong>{c.roomId&&<small>회의실 · {rooms.value.find(r=>r.id===c.roomId)?.name||'삭제된 회의실'}</small>}<small>{badge(c.status)}{c.runtimeError?' · '+c.runtimeError:''}</small>{probe[c.id]&&<small>{probe[c.id]}</small>}</div><div className={'binding-led '+(active(c.status)?'on':'')}/><Button size="icon" variant="ghost" title="설정" onClick={()=>openEditor(entry,c)}><Settings2 size={16}/></Button><Button size="icon" variant="ghost" title="진단" onClick={()=>diagnose(c.id)}><Activity size={16}/></Button><Button size="icon" variant="ghost" title="삭제" onClick={async()=>{if(confirm(c.name+' 연결을 제거하시겠습니까?')){await del('/api/channels/'+c.id);void channels.reload()}}}><Trash2 size={15}/></Button></div>)}
