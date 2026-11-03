@@ -9,7 +9,7 @@ import {all,get,put,remove,messages,recentAudit,bus,pruneInbound} from './store.
 import {providers,saveProvider,availableModels} from './providers.mjs';
 import {modelLibrary} from './model-library.mjs';
 import {localRunner} from './local-runner.mjs';
-import {agents,sessions,newSession,runTurn,saveRoom} from './engine.mjs';
+import {agents,sessions,newSession,runTurn,saveRoom,executions,activeExecutions,cancelExecution,recoverExecutions} from './engine.mjs';
 import {updateAgentModels,normalizeAgentAliases} from './agent-admin.mjs';
 import {enqueue,startJobs} from './jobs.mjs';
 import {workflows,saveWorkflow} from './workflows.mjs';
@@ -81,11 +81,11 @@ async function api(req,res,u){
   if(!['models','tools','activate','deactivate'].includes(operation))throw Error('Capability action not exposed via HTTP');
   return json(res,await capabilityExecute(family,id,operation,await body(req)));
  }
- if(url==='/api/status')return json(res,{version:'0.1.0',providers:providers().length,agents:agents().length,sessions:sessions().length,rooms:all('room').length,mcp:mcpServers().length,jobs:all('job').filter(x=>x.status==='running').length});
+ if(url==='/api/status')return json(res,{version:'0.1.0',providers:providers().length,agents:agents().length,sessions:sessions().length,rooms:all('room').length,mcp:mcpServers().length,jobs:all('job').filter(x=>x.status==='running').length,executions:activeExecutions().length});
  if(url==='/api/events'&&method==='GET'){
   res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});
   send(res,{type:'connected'});
-  const listeners=['record','message','audit','job_event','approval','channel_status','room_event','goal_event'].map(n=>{const fn=x=>send(res,{type:n,data:x});bus.on(n,fn);return [n,fn];});
+  const listeners=['record','message','audit','job_event','approval','channel_status','room_event','goal_event','execution_event'].map(n=>{const fn=x=>send(res,{type:n,data:x});bus.on(n,fn);return [n,fn];});
   const ping=setInterval(()=>send(res,{type:'ping'}),25000);
   req.on('close',()=>{clearInterval(ping);listeners.forEach(([n,fn])=>bus.off(n,fn));});
   return;
@@ -111,6 +111,18 @@ async function api(req,res,u){
  if(url==='/api/model-library/runtime'&&method==='GET')return json(res,{...localRunner.status(),capabilities:localRunner.capabilities()});
  if(url==='/api/model-library/runtime/load'&&method==='POST')return json(res,await localRunner.load(await body(req)));
  if(url==='/api/model-library/runtime/unload'&&method==='POST')return json(res,await localRunner.unload());
+ if(url==='/api/executions'&&method==='GET')return json(res,executions().slice(0,200));
+ if(url==='/api/executions/active'&&method==='GET')return json(res,activeExecutions());
+ const executionId=url.match(/^\/api\/executions\/([^/]+)$/);
+ if(executionId&&method==='GET'){
+  const run=get('execution',executionId[1]);return json(res,run||{error:'Execution not found'},run?200:404);
+ }
+ const executionOps=url.match(/^\/api\/executions\/([^/]+)\/operations$/);
+ if(executionOps&&method==='GET')return json(res,all('execution_operation').filter(x=>x.runId===executionOps[1]));
+ const executionCancel=url.match(/^\/api\/executions\/([^/]+)\/cancel$/);
+ if(executionCancel&&method==='POST')return json(res,{cancelled:cancelExecution(executionCancel[1])});
+ const sessionCancel=url.match(/^\/api\/sessions\/([^/]+)\/cancel$/);
+ if(sessionCancel&&method==='POST')return json(res,{cancelled:cancelExecution(sessionCancel[1])});
  if(url==='/api/sessions'){
   if(method==='GET')return json(res,sessions());
   if(method==='POST')return json(res,newSession(await body(req)));
@@ -248,6 +260,6 @@ const server=http.createServer(async(req,res)=>{
   else await staticFile(req,res,u);
  }catch(e){if(!res.headersSent)fail(res,e);else{if(res.getHeader('Content-Type')?.includes('text/event-stream'))send(res,{type:'error',message:String(e)});res.end();}}
 });
-pruneInbound();agents();startJobs();startChannels();
+pruneInbound();agents();recoverExecutions();startJobs();startChannels();
 server.listen(PORT,HOST,()=>console.log('DOMINION running at http://'+HOST+':'+PORT));
 process.on('SIGTERM',()=>server.close());
