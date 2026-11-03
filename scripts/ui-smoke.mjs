@@ -90,6 +90,22 @@ try{
  await page.keyboard.press('Enter');
  await palette.waitFor({state:'hidden'});
  assert.equal(new URL(page.url()).hash,'#/chat','Command palette navigates to selected workspace');
+ // Slash commands should be discoverable from the message composer and executable without a model.
+ const composer=page.getByPlaceholder('메시지 입력 또는 / 명령어');
+ await composer.fill('/');
+ const slash=page.getByRole('listbox',{name:'슬래시 명령어'});
+ await slash.waitFor();
+ assert.ok(await slash.getByRole('option').count()>=15,'Slash palette should expose real built-in commands');
+ await composer.fill('/sta');
+ await slash.getByRole('option').filter({hasText:'/status'}).first().waitFor();
+ await composer.press('Enter');
+ await page.getByRole('status').getByText(/에이전트.*제공자/).waitFor();
+ assert.equal(await composer.inputValue(),'','Executing /status should reset the composer');
+ await composer.fill('/model ');
+ await slash.waitFor();
+ await composer.press('Escape');
+ await slash.waitFor({state:'hidden'});
+
  // The mobile navigation must remain usable after the CSS migration.
  await page.setViewportSize({width:390,height:844});
  await page.reload({waitUntil:'domcontentloaded'});
