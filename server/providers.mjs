@@ -1,11 +1,19 @@
-import {all,get,put,log} from './store.mjs';
+import {all,get,put,remove,log} from './store.mjs';
 import {secretSet,secretGet,hasSecret} from './vault.mjs';
-const defaults=[
- {id:'lmstudio',name:'LM Studio',kind:'openai',baseUrl:'http://127.0.0.1:1234/v1',local:true,enabled:true},
- {id:'ollama',name:'Ollama',kind:'ollama',baseUrl:'http://127.0.0.1:11434/v1',local:true,enabled:true},
- {id:'deepseek',name:'DeepSeek',kind:'openai',baseUrl:'https://api.deepseek.com/v1',local:false,enabled:false}
+// The native engine is the only automatically configured model source.
+// Imported external endpoints remain available through explicit user setup.
+const legacyDefaults=[
+ {id:'lmstudio',name:'LM Studio',baseUrl:'http://127.0.0.1:1234/v1'},
+ {id:'ollama',name:'Ollama',baseUrl:'http://127.0.0.1:11434/v1'}
 ];
-for(const x of defaults)if(!get('provider',x.id))put('provider',x);
+for(const preset of legacyDefaults){
+ const existing=get('provider',preset.id);
+ if(existing&&existing.name===preset.name&&existing.baseUrl===preset.baseUrl&&!existing.description&&!hasSecret('provider:'+preset.id))remove('provider',preset.id);
+}
+if(!get('provider','dominion-native'))put('provider',{
+ id:'dominion-native',name:'DOMINION Local',kind:'openai',
+ baseUrl:'http://127.0.0.1:11491/v1',local:true,enabled:false
+});
 export const providers=()=>all('provider').map(p=>({...p,hasKey:hasSecret('provider:'+p.id)}));
 export function saveProvider(data){
  if(!data.name||!data.baseUrl)throw Error('Provider name and base URL required');
