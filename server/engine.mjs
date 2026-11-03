@@ -1,6 +1,6 @@
 import {all,get,put,remove,writeMessage,messages,log,bus,db} from './store.mjs';
 import {ExecutionRuntime} from './execution-runtime.mjs';
-import {streamCompletion} from './providers.mjs';
+import {streamCompletion,providerById} from './providers.mjs';
 import {toolsForModel,executeTool} from './tools.mjs';
 export function agents(){
  if(!get('agent','general'))put('agent',{id:'general',name:'General',description:'범용 작업 에이전트',systemPrompt:'You are a capable, practical assistant. Answer in the user language. Use tools to accomplish tasks when available.',providerId:'',model:'',color:'#5879e9'});
@@ -35,6 +35,7 @@ function runtimeHistory(sessionId){
 }
 const executionRuntime=new ExecutionRuntime({
  complete:streamCompletion,discoverTools:toolsForModel,invokeTool:executeTool,
+ getToolMode:providerId=>providerById(providerId).toolMode||'auto',
  readHistory:runtimeHistory,convertMessage:asOpenAI,saveMessage:writeMessage,
  saveRun:run=>{put('execution',run);bus.emit('execution_event',{runId:run.id,sessionId:run.sessionId,status:run.status});},
  saveOperation:operation=>put('execution_operation',operation)
