@@ -46,6 +46,9 @@ try{
  ];
  for(const [label,id] of links){
   await page.locator('aside nav button').filter({hasText:label}).first().click();
+  await page.waitForFunction(expected=>window.location.hash==='#/'+expected,id);
+  await page.locator('aside nav button[aria-current="page"]').waitFor();
+  assert.equal(await page.locator('aside nav button[aria-current="page"]').count(),1,'Exactly one active navigation item: '+id);
   await page.locator('main').waitFor({state:'visible'});
   assert.ok((await page.locator('main').innerText()).length>20,'Empty page: '+id);
   if(id==='workflows'){
@@ -73,6 +76,20 @@ try{
   await page.screenshot({path:path.join(shots,id+'.png'),fullPage:false});
  }
  assert.deepEqual(errors,[], 'Browser runtime exceptions across desktop routes');
+ // A shared workspace URL must survive direct load and reload.
+ await page.goto(origin+'/#/models',{waitUntil:'domcontentloaded'});
+ await page.locator('aside nav button[aria-current="page"]').waitFor();
+ assert.equal((await page.locator('aside nav button[aria-current="page"]').innerText()).trim(),'모델 허브','Deep-linked model route');
+ await page.reload({waitUntil:'domcontentloaded'});
+ assert.equal((await page.locator('aside nav button[aria-current="page"]').innerText()).trim(),'모델 허브','Reload preserves route');
+ // Command palette should be navigable without the pointer.
+ await page.keyboard.press('Control+k');
+ const palette=page.getByRole('dialog',{name:'빠른 이동'});
+ await palette.waitFor();
+ await page.getByRole('textbox',{name:'메뉴 검색'}).fill('대화');
+ await page.keyboard.press('Enter');
+ await palette.waitFor({state:'hidden'});
+ assert.equal(new URL(page.url()).hash,'#/chat','Command palette navigates to selected workspace');
  // The mobile navigation must remain usable after the CSS migration.
  await page.setViewportSize({width:390,height:844});
  await page.reload({waitUntil:'domcontentloaded'});
