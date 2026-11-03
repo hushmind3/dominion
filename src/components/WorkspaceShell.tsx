@@ -17,8 +17,8 @@ export function WorkspaceSidebar({page,open,collapsed,online,running,pending,onN
  useEffect(()=>{if(advancedItems.some(x=>x.id===page))setAdvancedOpen(true)},[page])
  useEffect(()=>{try{localStorage.setItem('dominion.nav.advanced',advancedOpen?'1':'0')}catch{}},[advancedOpen])
  return <>
-  {open&&<button type="button" className="fixed inset-0 z-40 bg-slate-900/40 min-[860px]:hidden" aria-label="메뉴 닫기" onClick={onClose}/>}
-  <aside aria-label="주 탐색" className={'fixed inset-y-0 left-0 z-50 flex w-[216px] flex-col border-r border-[#E0D8CC] bg-[#EFEAE1] text-[#4A443C] transition-transform duration-200 max-[859px]:-translate-x-full '+(collapsed?'min-[860px]:-translate-x-full ':'')+(open?'max-[859px]:translate-x-0':'')}>
+  {open&&<button type="button" className="fixed inset-0 z-40 bg-slate-900/40 min-[520px]:hidden" aria-label="메뉴 닫기" onClick={onClose}/>}
+  <aside aria-label="주 탐색" className={'fixed inset-y-0 left-0 z-50 flex w-[216px] flex-col border-r border-[#E0D8CC] bg-[#EFEAE1] text-[#4A443C] transition-transform duration-200 max-[519px]:-translate-x-full '+(collapsed?'min-[520px]:-translate-x-full ':'')+(open?'max-[519px]:translate-x-0':'')}>
    <div className="flex h-16 shrink-0 items-center gap-3 border-b border-[#E0D8CC] px-5">
     <div className="grid size-8 place-items-center rounded-xl bg-[#C96442] text-[17px] font-black text-white shadow-[0_4px_12px_rgba(201,100,66,.28)]">D</div>
     <div className="min-w-0 flex-1 text-[14px] font-extrabold tracking-[.14em] text-[#24211D]">DOMINION</div>

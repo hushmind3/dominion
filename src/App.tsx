@@ -29,7 +29,7 @@ export default function App(){
  const [pending,setPending]=useState(0)
  const toggleNav=useCallback(()=>{
   try{
-   if(window.innerWidth<860){setSidebar(open=>!open);return}
+   if(window.innerWidth<520){setSidebar(open=>!open);return}
    const next=!collapsed
    setCollapsed(next)
    try{localStorage.setItem('dominion.nav.collapsed',next?'1':'0')}catch{}
@@ -83,7 +83,7 @@ export default function App(){
  },[])
  return <div className="min-h-screen bg-[#F6F3EC] font-sans text-[#24211D]">
   <WorkspaceSidebar page={page} open={sidebar} collapsed={collapsed} online={online} running={running} pending={pending} onNavigate={navigate} onClose={()=>setSidebar(false)}/>
-  <main className={'min-h-screen min-w-0 transition-[margin] duration-200 '+(collapsed?'ml-0':'ml-[216px] max-[859px]:ml-0')}>
+  <main className={'min-h-screen min-w-0 transition-[margin] duration-200 '+(collapsed?'ml-0':'ml-[216px] max-[519px]:ml-0')}>
    <WorkspaceHeader page={page} online={online} collapsed={collapsed} onMenu={toggleNav} onSearch={()=>setPalette(true)}/>
    <div className={'min-w-0 page-'+page}>
     {page==='capabilities'&&<CapabilitiesPage navigate={navigate}/>}
