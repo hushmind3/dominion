@@ -73,3 +73,4 @@ test('real mock SSE provider -> planned goal -> approved workspace tool -> indep
   await new Promise(resolve=>server.close(resolve));
  }
 });
+
