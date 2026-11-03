@@ -58,10 +58,10 @@ export default function App(){
   stream.onmessage=event=>{
    try{
     const item=JSON.parse(event.data)
-    if(['record','message','job_event','audit','approval','channel_status','goal_event'].includes(item.type)){
+    if(['record','message','job_event','audit','approval','channel_status','goal_event','execution_event'].includes(item.type)){
      window.dispatchEvent(new Event('dominion-refresh'))
      if(item.type==='approval')void approvals()
-     if(item.type==='job_event'||item.type==='goal_event')void check()
+     if(item.type==='job_event'||item.type==='goal_event'||item.type==='execution_event')void check()
     }
    }catch{}
   }
