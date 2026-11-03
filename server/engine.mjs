@@ -2,9 +2,8 @@ import {all,get,put,writeMessage,messages,log} from './store.mjs';
 import {streamCompletion} from './providers.mjs';
 import {toolsForModel,executeTool} from './tools.mjs';
 export function agents(){
- const xs=all('agent');
- if(!xs.length){put('agent',{id:'general',name:'General',description:'범용 작업 에이전트',systemPrompt:'You are a capable, practical assistant. Answer in the user language. Use tools to accomplish tasks when available.',providerId:'',model:'',color:'#5879e9'});return all('agent');}
- return xs;
+ if(!get('agent','general'))put('agent',{id:'general',name:'General',description:'범용 작업 에이전트',systemPrompt:'You are a capable, practical assistant. Answer in the user language. Use tools to accomplish tasks when available.',providerId:'',model:'',color:'#5879e9'});
+ return all('agent');
 }
 export const sessions=()=>all('session');
 export function newSession(input={}){
