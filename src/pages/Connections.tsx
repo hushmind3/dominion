@@ -4,7 +4,7 @@ import {del,get,post} from '../api'
 import {Action,Empty,FormField,Headline,Notice,Panel,StateTag,Subheading,refresh,useRemote} from '../components/UI'
 type OAuthProvider={id:string;configured:boolean;scope:string}
 type Connection={id:string;provider:string;displayName:string;scopes:string;hasToken:boolean}
-type Channel={id:string;name:string;kind:'telegram'|'discord';agentId:string;providerId:string;model:string;mentionOnly:boolean;hasToken:boolean}
+type Channel={id:string;name:string;kind:'telegram'|'discord';agentId:string;providerId:string;model:string;mentionOnly:boolean;enabled:boolean;hasToken:boolean}
 export function ConnectionsPage(){
  const oauth=useRemote<OAuthProvider[]>('/api/oauth/providers',[]),accounts=useRemote<Connection[]>('/api/oauth/connections',[]),channels=useRemote<Channel[]>('/api/channels',[]);
  const agents=useRemote<any[]>('/api/agents',[]),providers=useRemote<any[]>('/api/providers',[]);
