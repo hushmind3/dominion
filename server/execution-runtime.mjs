@@ -6,8 +6,8 @@ const abortError=()=>Object.assign(Error('Execution cancelled'),{code:'CANCELLED
 export class ExecutionRuntime {
   #sessions=new Map();
   #runs=new Map();
-  constructor({complete,discoverTools,invokeTool,readHistory,convertMessage,saveMessage,saveRun,saveOperation,getToolMode}){
-    Object.assign(this,{complete,discoverTools,invokeTool,readHistory,convertMessage,saveMessage,saveRun,saveOperation,getToolMode});
+  constructor({complete,discoverTools,invokeTool,readHistory,convertMessage,saveMessage,saveRun,saveOperation,getToolMode,onOutcome}){
+    Object.assign(this,{complete,discoverTools,invokeTool,readHistory,convertMessage,saveMessage,saveRun,saveOperation,getToolMode,onOutcome});
   }
   isActive(sessionId){return this.#sessions.has(sessionId);}
   active(){return [...this.#runs.values()].map(x=>({runId:x.id,sessionId:x.sessionId,status:x.status}));}
@@ -21,6 +21,7 @@ export class ExecutionRuntime {
     reasoningEffort,thinking,limits={}}){
     if(this.#sessions.has(sessionId))throw Error('Session is already running');
     const controller=new AbortController(),start=Date.now(),runId=crypto.randomUUID();
+     let task='',toolOutcomes=[];
     const maxIterations=clamp(limits.maxIterations,1,64,16);
     const maxToolCalls=clamp(limits.maxToolCalls,1,512,64);
     const maxElapsedMs=clamp(limits.maxElapsedMs,1000,86400000,900000);
@@ -49,6 +50,7 @@ export class ExecutionRuntime {
         .filter(x=>!answered.has(x.id));
       if(outstanding.length)throw Object.assign(Error('Unresolved tool calls require review before resuming'),{code:'INTERRUPTED'});
       const latestUser=prior.filter(x=>x.role==='user').at(-1)?.content||'';
+       task=latestUser;
       const evidenceRequired=likelyRequiresTools(latestUser);
       const requiredEffect=requestedToolEffect(latestUser);
       const tools=await this.discoverTools(toolsEnabled);
@@ -143,6 +145,8 @@ export class ExecutionRuntime {
           // Store tool output even if cancellation arrives just after the call completes.
           this.saveMessage({session_id:sessionId,role:'tool',tool_call_id:callId,
             content:typeof output==='string'?output:JSON.stringify(output).slice(0,30000)});
+          toolOutcomes.push({name:call.function?.name||'',status:successfulToolEvidence(tool?.name,output)?'completed':'failed'});
+
           run.toolCalls++;
           emit('runtime.tool_finished',{name:call.function?.name,callId,error:!successfulToolEvidence(tool?.name,output)});
           check();
@@ -159,6 +163,7 @@ export class ExecutionRuntime {
       clearTimeout(deadline);
       signal?.removeEventListener('abort',externalAbort);
       run.finishedAt=new Date().toISOString();persisted();
+       if(toolOutcomes.length){try{this.onOutcome?.({task,run,toolOutcomes});}catch{}}
       this.#sessions.delete(sessionId);this.#runs.delete(runId);
     }
   }
