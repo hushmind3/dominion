@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS harness_events (
 CREATE INDEX IF NOT EXISTS harness_events_by_run ON harness_events(run_id,seq);`);
 
 const terminal=new Set(['completed','failed','needs_review','budget_exceeded','cancelled']);
+const activeGoals=new Map(); // Process-local cancellation handle for each durable goal.
 const limits={maxSteps:8,maxRepairs:2,maxModelCalls:36,maxTokens:100000,maxElapsedMs:900000};
 const limit=(v,floor,ceiling,defaultValue)=>Number.isFinite(Number(v))?Math.max(floor,Math.min(ceiling,Math.trunc(Number(v)))):defaultValue;
 const clip=(s,n=6000)=>String(s||'').slice(0,n);
@@ -69,7 +70,10 @@ export function resumeGoal(id){
 }
 export function cancelGoal(id){
  const r=goal(id);if(!r||terminal.has(r.status))throw Error('Goal is not active');
- return saveEvent(id,'workflow.cancelled',{status:'cancelled'});
+ // Abort inference, approvals and subprocesses through their shared signal.
+ const controller=activeGoals.get(id);
+ if(controller&&!controller.signal.aborted)controller.abort(Object.assign(Error('Goal cancelled'),{code:'CANCELLED'}));
+ return saveEvent(id,'workflow.cancelled',{status:'cancelled',reason:'Cancelled by user'});
 }
 function addUsage(id,usage={}){
  const r=goal(id),u=r.usage;
@@ -78,7 +82,8 @@ function addUsage(id,usage={}){
 }
 function requireBudget(id){
  const r=goal(id);
- if(!r||r.status==='cancelled')throw Error('Goal cancelled');
+ if(!r||r.status==='cancelled')throw Object.assign(Error('Goal cancelled'),{code:'CANCELLED'});
+ activeGoals.get(id)?.signal.throwIfAborted();
  const u=r.usage,b=r.budget;
  const elapsed=Date.now()-new Date(r.startedAt||r.createdAt).getTime();
  if(u.modelCalls>=b.maxModelCalls||u.tokens>=b.maxTokens||elapsed>=b.maxElapsedMs){
@@ -130,7 +135,7 @@ async function planWithModel(r){
  addUsage(r.id,response.usage);
  return extractJson(response.content);
 }
-async function executeWithModel(r,step,feedback){
+async function executeWithModel(r,step,feedback,signal){
  const selected=modelFor(step.agentId?{agentId:step.agentId}:r.executor,r.executor);
  const sessionId=newSession({agentId:selected.agentId,providerId:selected.providerId,model:selected.model,title:step.name}).id;
  let toolCalls=0;const evidence=[];
@@ -139,10 +144,10 @@ async function executeWithModel(r,step,feedback){
   (feedback?"\nPrevious verification failed: "+clip(feedback,1600)+"\nCorrect it and provide evidence.":'')+
   "\nExecute required tools, do not claim actions not performed. Conclude with a concise factual result.";
  const msg=await runTurn({sessionId,agentId:selected.agentId,providerId:selected.providerId,model:selected.model,input:prompt,
-  onEvent:e=>{
+  signal,onEvent:e=>{
    if(goal(r.id)?.status==='cancelled')throw Object.assign(Error('Goal cancelled'),{code:'CANCELLED'});
    if(e.type==='assistant_saved'){addUsage(r.id,e.usage);requireBudget(r.id);}
-   if(e.type==='tool_end'&&!e.result?.error){
+   if(e.type==='tool_end'&&!e.result?.error&&(typeof e.result?.exitCode!=='number'||e.result.exitCode===0)){
     toolCalls++;const ev={name:e.name,callId:e.callId,output:clip(JSON.stringify(e.result),1000)};evidence.push(ev);
     saveEvent(r.id,'tool.executed',{}, {stepId:step.id,attempt:step.attempts,name:e.name,callId:e.callId});
    }
@@ -160,7 +165,7 @@ async function checkArtifacts(step){
  }
  return {ok:true,findings};
 }
-async function reviewWithModel(r,step,result){
+async function reviewWithModel(r,step,result,signal){
  const files=await checkArtifacts(step);
  if(!files.ok)return {passed:false,reason:files.reason,mode:'deterministic'};
  if(step.requiresTools&&result.toolCalls===0)return {passed:false,reason:'Required tool execution has no successful evidence',mode:'deterministic'};
@@ -175,7 +180,8 @@ async function reviewWithModel(r,step,result){
  }
  if(!reviewer)return {passed:true,reason:'Evidence checks passed; independent model review not configured',mode:'evidence-only'};
  const prompt="Evaluate whether this output satisfies the task. Focus on evidence, not claims. Return JSON {\"passed\":true|false,\"reason\":\"...\"}.\nGoal: "+r.goal+"\nStep: "+step.prompt+"\nResult: "+clip(result.content,8000)+"\nTool evidence: "+JSON.stringify(result.evidence).slice(0,5000)+"\nArtifacts: "+JSON.stringify(files.findings);
- const response=await streamCompletion({providerId:reviewer.providerId,model:reviewer.model,messages:[{role:'system',content:'You are an independent result reviewer. Output JSON only.'},{role:'user',content:prompt}],tools:[]});
+ requireBudget(r.id);
+ const response=await streamCompletion({providerId:reviewer.providerId,model:reviewer.model,signal,messages:[{role:'system',content:'You are an independent result reviewer. Output JSON only.'},{role:'user',content:prompt}],tools:[]});
  addUsage(r.id,response.usage);
  const answer=extractJson(response.content);
  return {passed:answer.passed===true,reason:clip(answer.reason||'',1600),mode:'independent-model'};
@@ -186,6 +192,9 @@ function patchStep(id,stepId,changes,type,detail={}){
 }
 export async function runGoal(id,deps={}){
  let r=goal(id);if(!r||r.status!=='queued')throw Error('Goal is not queued');
+ if(activeGoals.has(id))throw Error('Goal is already running');
+ const controller=new AbortController(),signal=controller.signal;
+ activeGoals.set(id,controller);
  const planner=deps.plan||planWithModel,execute=deps.execute||executeWithModel,review=deps.review||reviewWithModel;
  try{
   if(r.steps.length){
@@ -207,7 +216,7 @@ export async function runGoal(id,deps={}){
     patchStep(id,next.id,{status:'running',attempts:attempt},'step.started',{attempt});
     const active=goal(id).steps.find(s=>s.id===next.id);
     let output;
-    try{output=await execute(goal(id),active,feedback);}
+    try{output=await execute(goal(id),active,feedback,signal);}
     catch(e){if(e.code==='BUDGET')throw e;output={content:'',toolCalls:0,evidence:[],error:String(e.message||e)};}
     requireBudget(id);
     const result={content:clip(output.content,30000),toolCalls:Number(output.toolCalls)||0,evidence:output.evidence||[],executor:output.executor||null};
@@ -216,7 +225,7 @@ export async function runGoal(id,deps={}){
     saveEvent(id,'review.started',{status:'reviewing'},{stepId:next.id,attempt});
     let verdict;
     if(output.error)verdict={passed:false,reason:output.error,mode:'execution-error'};
-    else verdict=await review(goal(id),active,result);
+    else verdict=await review(goal(id),active,result,signal);
     requireBudget(id);
     if(verdict.passed){
      patchStep(id,next.id,{status:'completed',output:result.content,evidence:result.evidence,reviewMode:verdict.mode},'step.completed',{attempt});
@@ -240,6 +249,8 @@ export async function runGoal(id,deps={}){
   const state=goal(id);
   if(e.code==='BUDGET'||state?.status==='budget_exceeded'||state?.status==='cancelled')return goal(id);
   return saveEvent(id,'workflow.failed',{status:'failed',reason:clip(e.message||e,2000)},{error:clip(e.message||e,2000)});
+ }finally{
+  activeGoals.delete(id);
  }
 }
 export function recoverGoals(){

@@ -15,7 +15,7 @@ import {enqueue,startJobs} from './jobs.mjs';
 import {workflows,saveWorkflow} from './workflows.mjs';
 import {goals,goal,goalEvents,createGoal,resumeGoal,cancelGoal} from './harness.mjs';
 import {mcpServers,saveMcp,deleteMcp,discoverMcp} from './mcp.mjs';
-import {builtin,toolsForModel,approvals,resolveApproval} from './tools.mjs';
+import {builtin,toolsForModel,approvals,resolveApproval,recoverApprovals} from './tools.mjs';
 import {oauthProviders,oauthStart,oauthCallback,connections,connectorCall} from './oauth.mjs';
 import {channels,catalog,channelById,saveChannel,deleteChannel,diagnoseChannel,handleChannelWebhook,startChannels} from './channels.mjs';
 import {activeRoomStatus,stopRoomFlow,resetRoomFlow} from './room-orchestrator.mjs';
@@ -268,6 +268,6 @@ const server=http.createServer(async(req,res)=>{
   else await staticFile(req,res,u);
  }catch(e){if(!res.headersSent)fail(res,e);else{if(res.getHeader('Content-Type')?.includes('text/event-stream'))send(res,{type:'error',message:String(e)});res.end();}}
 });
-pruneInbound();agents();recoverExecutions();startJobs();startChannels();
+pruneInbound();agents();recoverApprovals();recoverExecutions();startJobs();startChannels();
 server.listen(PORT,HOST,()=>console.log('DOMINION running at http://'+HOST+':'+PORT));
 process.on('SIGTERM',()=>server.close());
