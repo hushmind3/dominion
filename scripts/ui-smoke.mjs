@@ -52,9 +52,9 @@ try{
   await page.locator('main').waitFor({state:'visible'});
   assert.ok((await page.locator('main').innerText()).length>20,'Empty page: '+id);
   if(id==='workflows'){
-   await page.getByText('자율 목표 실행',{exact:true}).waitFor();
-   await page.locator('#new-goal').fill('Create a small verification note.');
-   assert.equal(await page.locator('#new-goal').inputValue(),'Create a small verification note.');
+   await page.getByText('실행 엔진',{exact:true}).waitFor();
+   await page.getByPlaceholder('에이전트가 실행할 작업을 입력하세요.').fill('Create a small verification note.');
+   assert.equal(await page.getByPlaceholder('에이전트가 실행할 작업을 입력하세요.').inputValue(),'Create a small verification note.');
    await page.getByRole('button',{name:/워크플로 생성/}).first().click();
    await page.getByRole('dialog').waitFor();
    await page.screenshot({path:path.join(shots,'workflow-editor.png'),fullPage:false});
@@ -99,7 +99,7 @@ try{
  await page.locator('aside').waitFor({state:'visible'});
  await page.screenshot({path:path.join(shots,'mobile-sidebar-open.png'),fullPage:false});
  await page.locator('aside nav button').filter({hasText:'워크플로'}).first().click();
- await page.getByText('자율 목표 실행',{exact:true}).waitFor();
+ await page.getByText('실행 엔진',{exact:true}).waitFor();
  await page.waitForFunction(()=>document.querySelector('aside')?.getBoundingClientRect().right<=2,null,{timeout:3000});
  await page.screenshot({path:path.join(shots,'mobile-workflows.png'),fullPage:false});
  assert.deepEqual(errors,[],'Browser runtime exceptions on mobile');
