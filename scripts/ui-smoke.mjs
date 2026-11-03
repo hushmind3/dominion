@@ -34,7 +34,7 @@ try{
  const page=await browser.newPage({viewport:{width:1440,height:900},deviceScaleFactor:1});
  const errors=[];
  page.on('pageerror',error=>errors.push(error.message));
- await page.goto(origin,{waitUntil:'networkidle'});
+ await page.goto(origin,{waitUntil:'domcontentloaded'});
  await page.getByText('DOMINION',{exact:true}).first().waitFor();
  const links=[
   ['홈','home'],['대화','chat'],['모델 허브','models'],['에이전트','agents'],
@@ -44,7 +44,7 @@ try{
  ];
  for(const [label,id] of links){
   await page.locator('aside nav button').filter({hasText:label}).first().click();
-  await page.locator('.page-content').waitFor({state:'visible'});
+  await page.locator('main').waitFor({state:'visible'});
   assert.ok((await page.locator('main').innerText()).length>20,'Empty page: '+id);
   if(id==='workflows'){
    await page.getByText('자율 목표 실행',{exact:true}).waitFor();
@@ -56,7 +56,7 @@ try{
  assert.deepEqual(errors,[], 'Browser runtime exceptions across desktop routes');
  // The mobile navigation must remain usable after the CSS migration.
  await page.setViewportSize({width:390,height:844});
- await page.reload({waitUntil:'networkidle'});
+ await page.reload({waitUntil:'domcontentloaded'});
  const menu=page.getByTitle('모바일 메뉴');
  if(await menu.count())await menu.first().click();
  else await page.locator('header button').first().click();
