@@ -11,7 +11,7 @@ const digest='sha256:'+'a'.repeat(64);
 const asset=(tag,name,size=40)=>({name,size,digest,browser_download_url:
  'https://github.com/ggml-org/llama.cpp/releases/download/'+tag+'/'+name});
 test('Windows NVIDIA installer resolves the official CUDA binary AND matching runtime DLL archive',()=>{
- const r={tag_name:'b55555',draft:false,prerelease:false,assets:[
+ const r={tag_name:'b55555',draft:false,prerelease:true,assets:[
   asset('b55555','llama-b55555-bin-win-cpu-x64.zip'),
   asset('b55555','llama-b55555-bin-win-cuda-12.4-x64.zip'),
   asset('b55555','cudart-llama-bin-win-cuda-12.4-x64.zip')

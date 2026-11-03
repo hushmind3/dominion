@@ -29,7 +29,7 @@ export function selectReleaseBundle(releases,{platform,arch,backend}){
   platform==='darwin'?[new RegExp('^llama-b\\d+-bin-macos-'+arch+'\\.tar\\.gz$')]:
   [/^llama-b\d+-bin-ubuntu-x64\.tar\.gz$/];
  for(const release of releases||[]){
-  if(!/^b\d+$/.test(release.tag_name||'')||release.draft||release.prerelease)continue;
+  if(!/^b\d+$/.test(release.tag_name||'')||release.draft)continue;
   const assets=pairs.map(regex=>(release.assets||[]).find(a=>regex.test(a.name)));
   if(assets.some(a=>!a))continue;
   if(assets.some(a=>!Number.isSafeInteger(a.size)||a.size<=0||a.size>MAX_ASSET_BYTES||
