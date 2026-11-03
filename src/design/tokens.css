@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+/* Single source of visual decisions. Feature screens own no CSS. */
+@theme {
+  --font-sans: "Pretendard", "SUIT", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --color-canvas: #f7f8fa;
+  --color-surface: #ffffff;
+  --color-ink: #191f28;
+  --color-muted: #4e5968;
+  --color-subtle: #8b95a1;
+  --color-line: #e7eaee;
+  --color-brand: #3182f6;
+  --color-brand-hover: #1b64da;
+  --color-brand-soft: #eaf3ff;
+  --color-rail: #111827;
+  --color-rail-hover: #1d2a40;
+  --color-positive: #138a5a;
+  --color-positive-soft: #e8f7ee;
+  --color-warning: #b36b20;
+  --color-warning-soft: #fff5e8;
+  --color-negative: #bd4252;
+  --color-negative-soft: #fff0f2;
+  --shadow-panel: 0 3px 15px rgba(23,38,60,.045);
+  --shadow-dialog: 0 22px 80px rgba(13,24,43,.22);
+}
+@layer base {
+  html { font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+  body { background: var(--color-canvas); color: var(--color-ink); margin: 0; }
+  button, input, select, textarea { font: inherit; }
+  button { cursor: pointer; }
+  button:disabled { cursor: not-allowed; }
+  :focus-visible { outline: 3px solid #95c3ff; outline-offset: 2px; }
+  ::selection { background: #d9eaff; }
+}

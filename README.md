@@ -1,14 +1,12 @@
 # DOMINION
 
-> **당신의 모델, 당신의 도구, 당신의 실행 환경.**
->
-> 독립적으로 구현한 로컬 우선 범용 AI 워크스페이스 — React 19 / TypeScript / Tailwind CSS 4 / Node.js 24 / SQLite / MCP v2.
+로컬 우선 범용 AI 워크스페이스. **React 19 · TypeScript · Tailwind CSS 4 · Node.js 24 · SQLite · MCP**.
 
-DOMINION은 LM Studio, OpenClaw, Hermes, OpenCode의 소스를 결합한 래퍼가 아닙니다. 모델 선택·대화·도구 실행·기억·에이전트 회의·메신저 연동·작업 큐·자동화의 **실행 로직은 이 저장소의 독립적인 코드**로 구현합니다. 외부 프로그램은 선택적으로 연결하는 도구 또는 모델 공급자입니다.
+모델 검색·다운로드, 채팅, 에이전트, 회의실, 자동화, 메신저 및 외부 API 연결을 단일 UI에서 관리합니다. 외부 도구를 설치했다는 이유만으로 그 기능을 자체 구현했다고 표현하지 않습니다.
 
-## 즉시 실행
+## 바로 실행하기
 
-요구 사항: **Node.js 24.12+**, npm, Git. macOS / Windows / Linux에서 Node 서버와 React 화면을 실행합니다.
+요구 사항: Node.js **24.12+**, npm, Git.
 
 ```bash
 git clone https://github.com/hushmind3/dominion.git
@@ -17,111 +15,77 @@ npm install
 npm run dev
 ```
 
-브라우저에서 **http://127.0.0.1:5173**을 여세요. 프로덕션 모드는 `npm run build && npm start`, 주소는 **http://127.0.0.1:4317**입니다.
+개발 화면은 `http://127.0.0.1:5173`입니다. 배포 모드는 `npm run build && npm start`이며 `http://127.0.0.1:4317`을 사용합니다.
 
-기본 실행은 로컬입니다. `npm run dev`는 Node API 서버와 Vite 개발 서버를 동시에 실행합니다. 선택적 설정은 `.env.example`을 참고해 루트 `.env`를 만드세요. 데이터는 `runtime/`, 에이전트 작업 파일은 `workspace/`에 저장됩니다. 이 두 경로와 API 키는 Git에 업로드되지 않습니다.
-
-**실제 모델 연결**
-
-1. LM Studio 앱에서 모델을 설치·로드하고 **Local Server**를 시작합니다. 일반적인 OpenAI 호환 기본 주소는 `http://127.0.0.1:1234/v1`입니다.
-2. 또는 Ollama를 켜고 `http://127.0.0.1:11434/v1`로 연결합니다.
-3. DOMINION → **모델 허브**에서 연결 확인. **대화**에서 제공자/모델을 고른 후 메시지를 보내세요.
-4. 클라우드 모델은 **모델 허브 → 제공자 추가**에서 OpenAI 호환 Base URL과 API Key를 설정합니다. 키는 로컬 서버의 AES-256-GCM 저장소에 보관됩니다.
-
-## 현재 구현된 엔진
-
-| 영역 | 동작하는 구현 |
-| --- | --- |
-| 대화 | 실제 OpenAI 호환 `/chat/completions` SSE 스트리밍, 토큰·추론 텍스트 표시, 세션 영속화, 모델 선택 |
-| 모델 허브 | Hugging Face 검색·상세정보·README·실제 GGUF/MLX 버전 목록, Node 독립 다운로드·재개·삭제, 설치된 모델을 로컬 추론 엔진으로 실행 |
-| 로컬/클라우드 | LM Studio, Ollama, OpenAI 호환 API 공급자 등록, 키 암호화, 모델 목록 조회 |
-| 에이전트 | 인원 제한 없는 개별 에이전트 등록, 역할·시스템 프롬프트·모델 설정 |
-| 회의 | 가변 참가자/라운드, 한 회의 세션에 발언 누적, 모델 기반 순차 토론 |
-| 도구 | 실제 도구 호출 루프, 로컬 작업공간 파일 읽기·쓰기, 터미널 실행, SearXNG 검색, 기억/스킬 제안 |
-| MCP | 공식 MCP v2 클라이언트, stdio 및 Streamable HTTP 연결, 도구 발견·호출, Registry 검색, 설치·제거 UI |
-| 기억 | SQLite에 지속 저장되는 명시적 기억 검색과 스킬 제안/승인·적용 |
-| 메신저 | Telegram Bot API long polling, Discord Gateway WebSocket + REST 응답 |
-| 인증 | GitHub/Google OAuth 앱 연결과 토큰 암호화, GitHub 읽기·YouTube 채널 API 기초 연결 |
-| 자동화 | DB 기반 영속 작업 큐, 프로세스 재시작 시 복구, 반복 예약, 로그/감사 원장 |
-| UI | React/TypeScript/Tailwind 4, 반응형 사이드바, 명령 팔레트, 모델·에이전트·회의·MCP·계정·작업 관리 |
-| 보안 | 루프백 기본 바인딩, 원격 접근 토큰 필요, 도구 승인 게이트, 작업공간 경로 제한, 서버 전용 비밀저장소 |
-
-### 중요: 무엇까지 연결되었나
-
-- **실제 동작은 환경에 의존합니다.** 로컬 모델을 로드하지 않았거나 API 키가 없으면 답변을 만들어 내지 않습니다. 모델이 출력한 추론만 보여줍니다. '한국어 추론' 옵션은 한국어로 제공해 달라는 요청이지 자동 번역 기능이 아닙니다.
-- **컴퓨터 제어**: 파일·터미널 도구는 자체 구현. 브라우저 클릭·스크린샷은 **Playwright MCP를 별도 등록**해 수행할 수 있습니다. 독립적인 화면 인식/마우스/키보드 실행 엔진 및 원격 데스크톱은 아직 구현하지 않았습니다.
-- **MCP 등록**은 실제 실행 연결을 시도합니다. 설치된 패키지의 정상 작동 여부는 사용자 컴퓨터에서 확인해야 합니다. 외부 MCP 패키지의 권한과 출처를 검토하세요.
-- **Google/YouTube**는 현재 OAuth 연결과 읽기 API 예제만 동작하도록 작성했습니다. 'Google 계정 하나로 모든 구글 서비스 쓰기'는 서비스별 OAuth 범위와 API 어댑터가 더 필요합니다.
-- **무료 모델/API**는 각 공급자가 제공하는 무료 엔드포인트를 직접 연결할 수 있도록 만든 것이지 별도의 무료 API 크레딧을 발급하지 않습니다.
-- **스케줄러**는 DOMINION 서버가 켜져 있을 때 실행됩니다. 컴퓨터 절전 중 작업을 이어서 처리하려면 상시 실행되는 별도 서버가 필요합니다.
-- **결제·구독·크레딧 측정, Electron 패키징, 원격 멀티테넌트 서비스, 네이티브 컴퓨터-비전 조작**은 이 초기 실행 버전에 포함되지 않습니다. README에서 완성된 기능으로 표시하지 않습니다.
-
-## 독립 모델 라이브러리 (GGUF / MLX)
-
-DOMINION의 **모델 허브 → 모델 탐색**에서 Hugging Face의 공개 모델을 검색합니다. 검색 결과를 선택하면 GGUF 양자화 파일 또는 MLX 체크포인트 파일 묶음, 다운로드 용량, 리포지터리 README가 표시됩니다.
-
-1. 원하는 형식·버전을 선택하고 **다운로드**합니다. Node 서버가 파일을 직접 받고 `runtime/models/<model-id>/`에 저장하며, 진행률과 **일시정지 / 재개 / 중단**을 지원합니다. 배포 파일의 원본 커밋 해시를 고정합니다.
-2. **설치된 모델**에서 보유한 모델, 용량, 형식을 확인하거나 파일을 삭제합니다. 완료된 설치 목록은 서버 재시작 후에도 유지됩니다. 재시작 전에 중단된 다운로드는 같은 버전을 다시 선택하면 `.part` 파일을 이어받습니다.
-3. **실행**을 누르면 로컬 추론 런타임을 실행한 뒤 `DOMINION Local` 제공자를 활성화합니다. 대화에서 해당 제공자와 모델을 선택해 사용할 수 있습니다.
-
-모델 **다운로드·관리·UI는 LM Studio에 의존하지 않습니다.** 텍스트 생성 계산은 설치된 런타임을 사용합니다. GGUF는 `llama-server` (llama.cpp), MLX는 Apple Silicon의 `python3 -m mlx_lm.server` (`mlx-lm` 패키지) 실행 파일이 필요합니다. 찾지 못하면 DOMINION 화면에 실행 불가 상태가 표시되며 설치된 파일은 그대로 유지됩니다. 별도 바이너리가 필요한 추론 계산까지 Node 자체가 구현했다고 주장하지 않습니다.
-
-환경변수 `DOMINION_LLAMA_SERVER`와 `DOMINION_MLX_PYTHON`으로 실행 파일 경로를 지정할 수 있습니다. 컨텍스트 길이, GGUF GPU 자동 오프로딩 여부는 모델 실행 전 지정할 수 있습니다. 모든 MLX 체크포인트의 실행 호환성, GPU 완전 오프로딩, 모델의 도구 사용 능력은 저장소 메타데이터만으로 보장되지 않습니다. 승인/인증이 필요한 gated 모델의 다운로드는 지원되지 않습니다.
-
-## 명령
-
-```bash
-npm run dev          # Node API + Vite
-npm run dev:server   # API만
-npm run build        # React 생산 빌드
-npm start            # dist/ 제공
-npm test             # Node 테스트
-npm run check        # TypeScript + Node 테스트 + 빌드
-```
-
-## 아키텍처
+## 🧩 컴포넌트 아키텍처
 
 ```text
-React / Tailwind UI ── HTTP/SSE ──> Node API Gateway
-                                        │
-                    ┌───────────────────┼───────────────────┐
-                    │                   │                   │
-               Agent Runtime        Provider Hub         Tool Bus
-                    │                   │                   │
-              Meeting / Jobs      Local / Cloud       MCP / Workspace
-                    │                   │                   │
-               SQLite Ledger     OpenAI compatible    Approval / Audit
-                    │
-              Memory / Skills / Encrypted Vault
-                    │
-            Telegram / Discord / OAuth
+src/design/
+  tokens.css        Tailwind v4 @theme · 색상/타이포/표면/그림자
+  Primitives.tsx    버튼 · 입력 · 선택 · 토글 · 카드 · 표 · 모달 · 드로어
+                    공용 레이아웃 · 탭 · 배지 · 프로그레스 · 빈 상태
+  AppShell.tsx      데스크톱 접기/펼치기 · 모바일 메뉴 · 빠른 이동
+  useResource.ts    API 상태/오류/재조회 공통 로직
+
+src/features/
+  Home.tsx          실제 작업공간 개요
+  Models.tsx        모델 검색 · 설치 · 다운로드 · 실행 · 외부 API
+  Chat.tsx          SSE 채팅 · 모델 선택 · 도구 승인 · 대화 세션
+  ChatParts.tsx     메시지·세션·입력 UI 컴포넌트
+  Agents.tsx        에이전트 · 그룹 회의
+  Workflows.tsx     순차 작업
+  Memory.tsx        지속 기억
+  Connections.tsx   메신저 · OAuth
+  Extensions.tsx    MCP · 스킬
+  Capabilities.tsx  실행 가능한 기능 목록
+  Operations.tsx    자동화 · 실행 기록 · 권한
+
+src/pages/          화면 구현 없이 feature를 재노출하는 라우트 경계
+src/style.css       사용하지 않는 빈 레거시 파일
 ```
 
-자세한 구현 경계는 [아키텍처](docs/ARCHITECTURE.md), 실제 원문 링크가 있는 [조사 근거 장부](docs/RESEARCH_LEDGER.md), [26종 채널별 출처와 구현 상태](docs/CHANNEL_RESEARCH.md)를 참고하세요. 검증 상황은 [docs/STATUS.md](docs/STATUS.md)에 기록합니다.
+화면별 손 CSS 대신 **공통 디자인 컴포넌트와 Tailwind 유틸리티**를 사용합니다. UI 색상·간격의 기준은 `src/design/tokens.css`에 정의되어 있습니다. 모든 페이지는 공유 UI 조합으로 구성됩니다.
 
-## 라이선스와 저장소 취급
+## 모델 라이브러리 · 실제 지원 범위
 
-새로 작성한 DOMINION 코드입니다. 과거 개인 저장소 또는 제3자 제품의 코드/페르소나/토큰을 복사하지 않았습니다. 라이선스는 별도 결정 전까지 명시적인 재배포 허가를 하지 않습니다. 본 저장소는 공개 상태이므로 비밀번호, 토큰, 개인 메시지나 모델 파일을 커밋하지 마세요.
+DOMINION 모델 라이브러리는 Hugging Face 공개 모델 저장소를 검색하여 파일/메타데이터를 가져오고, Node 백엔드가 모델 파일을 **자체 다운로드·저장·관리**합니다.
 
-## Electron 데스크톱 실행
+- GGUF 양자화별 파일 선택, MLX safetensors 스냅샷 묶음 선택
+- 디스크 크기, README, 원본 리비전 확인
+- 다운로드 진행률, 일시정지, 재개, 중단, 로컬 모델 삭제
+- 설치 파일 목록 영속 저장(`runtime/models`)
+- 로컬 모델 실행 상태, RAM·VRAM 추정 정보
+- 챗 화면에서 실제로 실행 중인 모델/외부 API 모델 선택
 
-웹 콘솔과 독립적인 Electron 실행 진입점이 `desktop/`에 있습니다. macOS / Windows / Linux에서 별도 브라우저를 열지 않고 창으로 실행할 수 있습니다.
+**추론 계산 라이브러리는 별도입니다.** GGUF는 호환 `llama-server` 실행 파일(llama.cpp 기반), Apple Silicon MLX는 `python3 -m mlx_lm.server` (`mlx-lm`)을 호출합니다. 해당 바이너리·패키지가 없으면 설치한 모델을 보존하면서 실행 버튼을 비활성화합니다. DOMINION은 추론 커널 전체를 처음부터 구현한 엔진이라고 주장하지 않습니다.
+
+- `DOMINION_LLAMA_SERVER`: GGUF 추론 서버 실행 파일 경로
+- `DOMINION_MLX_PYTHON`: MLX용 Python 실행 파일 경로
+- gated 모델, 인증이 필요한 파일, 모델 전용 커스텀 커널·미지원 양자화는 추가 호환성 작업이 필요합니다.
+- 일부 모델은 표준 추론 서버 대신 해당 모델 제작사가 배포한 전용 커널을 필요로 합니다.
+- GGUF 모델이 여러 개의 샤드로 배포되는 경우 별도의 런타임 지원 확인이 필요합니다.
+
+클라우드/원격 모델은 모델 라이브러리의 **외부 API · 선택 사항**에서 추가할 수 있습니다. 기본 앱 설치를 전제로 하거나 외부 프로그램을 자동 등록하지 않습니다.
+
+## 실행과 검증
 
 ```bash
-npm install
-cd desktop
-npm install
-npm start
+npm run dev            # React 개발 화면 + Node API
+npm run check          # TypeScript, Node 테스트, 배포 빌드
+npm run test:ui         # 실제 Chrome 기반 브라우저 스모크 테스트
+npm start               # 컴파일된 웹 화면과 API 제공
 ```
 
-Electron 45에서 실행하면 내장 Node 프로세스가 DOMINION 게이트웨이를 직접 시작하고 앱 종료 시 함께 중지합니다. 앱 데이터는 OS의 사용자 데이터 디렉터리에 저장하며 작업 파일은 사용자 문서 폴더의 `DOMINION Workspace`에 보존합니다.
+`tests/frontend-contract.test.mjs`는 **src/style.css = 0바이트**, 페이지의 직접 DOM 컨트롤/손 CSS 없음, 디자인 토큰 정의를 자동 검증합니다.
 
-**현재 범위:** 소스 기반 Electron 실행 기능입니다. 서명된 설치 파일(`.dmg`, `.exe`) 배포, 자동 업데이트, 트레이 백그라운드 실행은 아직 추가하지 않았습니다.
+`tests/ui-browser-smoke.mjs`는 데스크톱 사이드바 접기·펼치기, 모델 목록과 버전 선택, 채팅 입력, 에이전트 생성, 모바일 탐색을 실제 헤드리스 Chrome에서 검사합니다. 브라우저 검사의 모델 메타데이터는 재현 가능한 테스트 응답을 사용합니다.
 
-## 실제 사용자 저장소 비교와 적용
+백엔드 자동검사는 네트워크와 디바이스를 모의하므로 **실제 Mac/Windows에서 GPU에 모델을 로드하고 텍스트를 생성한 검증을 대신하지는 않습니다.**
 
-- [Hermes / OpenClaw 실제 소스 분석과 DOMINION 자체 구현 경로](docs/SOURCE_COMPARISON.md)
-- 메신저 연결에서 로컬/클라우드 모델 호출을 분리한 독립 회의실 실행기: `server/room-orchestrator.mjs`
-- 자유로운 화자 수, 이름/별칭 호출, 중단·세대 초기화, 모델 일괄 변경을 DB와 React UI에 연결했습니다.
+## 데이터와 보안
 
-참고 프로젝트의 사용자 계정 토큰·설정·브라우저 프로필·모델 가중치·대화 기록은 가져오지 않습니다.
+실행 파일은 `workspace/`, 로컬 데이터베이스 및 모델 파일은 `runtime/`에 저장됩니다. 환경 설정은 `.env`로 관리할 수 있습니다. 원격 바인딩은 `DOMINION_ADMIN_TOKEN`이 필요합니다. 도구 승인과 모델 제공자 인증 정보는 서버에서 관리합니다.
+
+현재 백엔드는 Node.js의 FastAPI 없는 직접 HTTP/SSE 구현입니다. 본 저장소는 공개 상태이며 개인 토큰·대화 데이터·모델 파일을 커밋하지 않아야 합니다.
+
+자세한 기존 기술 문서는 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/STATUS.md](docs/STATUS.md)를 참고하세요.
