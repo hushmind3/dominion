@@ -226,7 +226,13 @@ async function start(){
   if(params.isEditable){
    items.push({role:'cut',label:'잘라내기'},{role:'copy',label:'복사'},{role:'paste',label:'붙여넣기'},{type:'separator'},{role:'selectAll',label:'전체 선택'});
   }else if(params.selectionText){
-   items.push({label:'복사',click:()=>clipboard.writeText(params.selectionText)},{type:'separator'},{role:'selectAll',label:'전체 선택'});
+   const text=params.selectionText;
+   items.push(
+    {label:'복사',click:()=>clipboard.writeText(text)},
+    {label:'Google로 번역',click:()=>{void shell.openExternal('https://translate.google.com/?sl=auto&tl=ko&text='+encodeURIComponent(text.slice(0,1800)))}},
+    {label:'검색',click:()=>{void shell.openExternal('https://www.google.com/search?q='+encodeURIComponent(text.slice(0,400)))}},
+    {type:'separator'},{role:'selectAll',label:'전체 선택'}
+   );
   }
   if(params.linkURL){
    if(items.length)items.push({type:'separator'});
