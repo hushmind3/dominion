@@ -5,6 +5,7 @@ import path from 'node:path';
 import {timingSafeEqual} from 'node:crypto';
 import {googleTranslate,pickFolder} from './system-util.mjs';
 import {handleAgentRoutes} from './routes/agents.mjs';
+import {handleVideoRoutes} from './routes/video.mjs';
 import {fileURLToPath} from 'node:url';
 import {HOST,PORT,ROOT,IS_LOCAL,ADMIN_TOKEN,DATA} from './config.mjs';
 import {capabilityInventory,capabilityExecute} from './capability-sources.mjs';
@@ -78,6 +79,7 @@ async function staticFile(req,res,u){
 async function api(req,res,u){
  const url=u.pathname,method=req.method;
  if(await handleAgentRoutes({url,method,res,json,body}))return;
+ if(await handleVideoRoutes({url,method,res,json,body}))return;
  if(url==='/api/health')return json(res,{ok:true,service:'dominion',version:VERSION,date:new Date().toISOString()});
  if(url.match(/^\/api\/oauth\/(github|google)\/callback$/)&&method==='GET'){
   try{
@@ -359,45 +361,7 @@ async function api(req,res,u){
  if(channelId&&method==='GET')return json(res,channelById(channelId[1])||{error:'Channel not found'});
  const diagnostic=url.match(/^\/api\/channels\/([^/]+)\/diagnose$/);
  if(diagnostic&&method==='POST')return json(res,await diagnoseChannel(diagnostic[1]));
- if(url==='/api/video/status'&&method==='GET')return json(res,await videoStatus());
- if(url==='/api/video/config'&&method==='POST')return json(res,await saveVideoConfig(await body(req)));
- if(url==='/api/video/start'&&method==='POST')return json(res,await startComfyUI());
- if(url==='/api/video/stop'&&method==='POST')return json(res,await stopComfyUI(await body(req)));
- if(url==='/api/video/reveal'&&method==='POST')return json(res,openVideoFile((await body(req)).file));
- if(url==='/api/video/open-models'&&method==='POST')return json(res,openModelFolder());
- if(url==='/api/video/open-workflows'&&method==='POST')return json(res,openWorkflowFolder());
- if(url==='/api/system/pick-folder'&&method==='POST'){
-  const {prompt='폴더 선택'}=await body(req);
-  return json(res,{path:await pickFolder(String(prompt))});
- }
 
- if(url==='/api/video/outputs'&&method==='GET')return json(res,videoOutputs());
- if(url==='/api/video/locations'&&method==='GET')return json(res,videoLocations());
- if(url==='/api/video/models'&&method==='GET')return json(res,await videoModelOptions());
- if(url==='/api/video/catalog'&&method==='GET')return json(res,await searchVideoModels({q:u.searchParams.get('q')||'',limit:u.searchParams.get('limit')||30}));
- if(url==='/api/video/files'&&method==='GET')return json(res,await videoRepoFiles(u.searchParams.get('repo')||''));
- if(url==='/api/video/download'&&method==='POST')return json(res,startVideoDownload(await body(req)));
- const vdl=url.match(/^\/api\/video\/download\/([^/]+)$/);
- if(vdl&&method==='GET')return json(res,videoDownloadJob(vdl[1])||{});
-
- if(url==='/api/video/workflows'&&method==='GET')return json(res,videoWorkflows());
- if(url==='/api/video/generate'&&method==='POST')return json(res,await startVideoJob(await body(req)),202);
- if(url==='/api/video/jobs'&&method==='GET')return json(res,videoJobs());
- const videoJobMatch=url.match(/^\/api\/video\/jobs\/([^/]+)$/);
- if(videoJobMatch&&method==='GET'){const job=videoJob(videoJobMatch[1]);return json(res,job||{error:'Video job not found'},job?200:404)}
- const videoFile=url.match(/^\/api\/video\/files\/([^/]+)$/);
- if(videoFile&&method==='GET'){
-  const filename=path.basename(decodeURIComponent(videoFile[1]));
-  const file=path.join(videoConfig().outputDir,filename);
-  if(!file.startsWith(videoConfig().outputDir+path.sep))return json(res,{error:'Invalid file'},400);
-  try{
-   const stat=await fs.stat(file);
-   if(!stat.isFile())throw Error('Not a file');
-   const type=/\.webm$/i.test(filename)?'video/webm':/\.gif$/i.test(filename)?'image/gif':/\.webp$/i.test(filename)?'image/webp':'video/mp4';
-   res.writeHead(200,{'Content-Type':type,'Content-Length':stat.size,'Cache-Control':'no-store'});
-   fsSync.createReadStream(file).pipe(res);return;
-  }catch{return json(res,{error:'Video file not found'},404)}
- }
  if(url==='/api/youtube/status'&&method==='GET'){
   const account=connections().find(x=>x.provider==='google');
   return json(res,{connected:Boolean(account),uploadAllowed:Boolean(account&&String(account.scopes||'').includes('youtube.upload')),account:account?{displayName:account.displayName,scopes:account.scopes}:null,uploads:[...youtubeJobs.values()].slice(-20)});
