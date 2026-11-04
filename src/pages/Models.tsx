@@ -18,6 +18,7 @@ const providerPresets=[
  {name:'Together',baseUrl:'https://api.together.xyz/v1',kind:'openai',local:false},
  {name:'Perplexity',baseUrl:'https://api.perplexity.ai',kind:'openai',local:false},
  {name:'LM Studio',baseUrl:'http://127.0.0.1:1234/v1',kind:'openai',local:true},
+ {name:'OpenCode Go',baseUrl:'http://127.0.0.1:4399/v1',kind:'openai',local:true},
  {name:'Ollama',baseUrl:'http://127.0.0.1:11434/v1',kind:'ollama',local:true}
 ]
 export function ModelHub(){

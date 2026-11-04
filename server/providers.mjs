@@ -157,3 +157,16 @@ async function streamAnthropic({provider,key,model,messages,tools,onEvent,signal
  out.usage={prompt_tokens:inputTokens,completion_tokens:outputTokens,total_tokens:inputTokens+outputTokens};
  return out;
 }
+
+// First-run convenience: if no provider is configured and a local OpenAI-compatible
+// gateway is already running on this machine, register it instead of showing "no model".
+export async function ensureLocalGateway({name='OpenCode Go',baseUrl='http://127.0.0.1:4399/v1'}={}){
+ if(all('provider').length)return null;
+ try{
+  const response=await fetch(baseUrl.replace(/\/$/,'')+'/models',{signal:AbortSignal.timeout(2500)});
+  if(!response.ok)return null;
+  const data=await response.json();
+  if(!Array.isArray(data?.data)||!data.data.length)return null;
+  return saveProvider({name,baseUrl,kind:'openai',local:true,enabled:true,apiKey:'',description:'로컬 게이트웨이 자동 등록'});
+ }catch{return null}
+}

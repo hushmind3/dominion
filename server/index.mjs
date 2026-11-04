@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {HOST,PORT,ROOT,IS_LOCAL,ADMIN_TOKEN} from './config.mjs';
 import {capabilityInventory,capabilityExecute} from './capability-sources.mjs';
 import {all,get,put,remove,messages,recentAudit,bus,pruneInbound} from './store.mjs';
-import {providers,saveProvider,availableModels} from './providers.mjs';
+import {providers,saveProvider,availableModels,ensureLocalGateway} from './providers.mjs';
 import {modelLibrary} from './model-library.mjs';
 import {localRunner} from './local-runner.mjs';
 import {resolveModel} from './model-router.mjs';
@@ -355,7 +355,7 @@ const server=http.createServer(async(req,res)=>{
  }catch(e){if(!res.headersSent)fail(res,e);else{if(res.getHeader('Content-Type')?.includes('text/event-stream'))send(res,{type:'error',message:String(e)});res.end();}}
 });
 pruneInbound();agents();recoverApprovals();recoverExecutions();startJobs();startChannels();
-server.listen(PORT,HOST,()=>console.log('DOMINION running at http://'+HOST+':'+PORT));
+void ensureLocalGateway();server.listen(PORT,HOST,()=>console.log('DOMINION running at http://'+HOST+':'+PORT));
 const oauthPort=Number(new URL(oauthCallbackBase()).port||53682);
 const oauthServer=http.createServer(async(req,res)=>{
  const u=new URL(req.url,'http://127.0.0.1');
