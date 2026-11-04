@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/client": "^2.0.0",
+    "@noble/curves": "^2.4.0",
     "@tailwindcss/vite": "^4.1.0",
     "diff": "^9.0.0",
     "isomorphic-git": "^1.44.10",

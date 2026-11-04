@@ -5,6 +5,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {all,put} from './store.mjs';
+import {DATA,WORKSPACE} from './config.mjs';
 
 const cache={at:0,items:[],paths:new Map()};
 const binCache=new Map();
@@ -34,6 +35,9 @@ function walkSkillFiles(dir,depth=0,found=[]){
 function sourceRoots(){
  const local=process.env.LOCALAPPDATA||path.join(os.homedir(),'AppData','Local');
  const roots=[];
+ for(const [dir,label] of [[path.join(DATA,'skills'),'DOMINION'], [path.join(WORKSPACE,'skills'),'워크스페이스'], [path.join(os.homedir(),'.dominion','skills'),'DOMINION 사용자']]){
+  if(exists(dir))roots.push({dir,source:'DOMINION',label});
+ }
  const openclawBase=path.join(local,'OpenClawRuntime');
  for(const entry of safeReaddir(openclawBase)){
   if(!/^node-v/i.test(entry.name))continue;

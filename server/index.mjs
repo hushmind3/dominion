@@ -14,6 +14,7 @@ import {resolveModel} from './model-router.mjs';
 import {runIntent,cancelSessionIntent} from './native-intent.mjs';
 import {agents,sessions,newSession,runTurn,saveRoom,executions,activeExecutions,cancelExecution,recoverExecutions,renameSession,clearSession,forkSession,compactSession,learnFromSession} from './engine.mjs';
 import {updateAgentModels,normalizeAgentAliases} from './agent-admin.mjs';
+import {strategyStats,strategyGuidance} from './experience.mjs';
 import {enqueue,startJobs} from './jobs.mjs';
 import {workflows,saveWorkflow} from './workflows.mjs';
 import {goals,goal,goalEvents,createGoal,resumeGoal,cancelGoal} from './harness.mjs';
@@ -106,7 +107,7 @@ async function api(req,res,u){
  }
  const modelMatch=url.match(/^\/api\/providers\/([^/]+)\/models$/);
  if(modelMatch&&method==='GET')return json(res,await availableModels(modelMatch[1]));
- if(url==='/api/model-library/catalog'&&method==='GET')return json(res,await modelLibrary.catalog({q:u.searchParams.get('q')||'',format:u.searchParams.get('format')||'',sort:u.searchParams.get('sort')||'',limit:u.searchParams.get('limit')||80,chatOnly:u.searchParams.get('chat')!=='0'}));
+ if(url==='/api/model-library/catalog'&&method==='GET')return json(res,await modelLibrary.catalog({q:u.searchParams.get('q')||'',format:u.searchParams.get('format')||'',sort:u.searchParams.get('sort')||'',limit:u.searchParams.get('limit')||80,chatOnly:u.searchParams.get('chat')!=='0',maxParams:u.searchParams.get('maxParams')||0}));
  if(url==='/api/model-library/details'&&method==='GET')return json(res,await modelLibrary.detail(u.searchParams.get('id')||''));
  if(url==='/api/model-library/installed'&&method==='GET')return json(res,await modelLibrary.installed());
  if(url==='/api/model-library/jobs'&&method==='GET')return json(res,modelLibrary.jobsList());
@@ -227,6 +228,9 @@ async function api(req,res,u){
  if(url==='/api/tools'&&method==='GET')return json(res,await toolsForModel());
  if(url==='/api/model-route'&&method==='GET')return json(res,await resolveModel());
  if(url==='/api/commands'&&method==='GET')return json(res,commandDefinitions);
+ if(url==='/api/experience/strategies'&&method==='GET'){
+  return json(res,{strategies:strategyStats(),guidance:strategyGuidance()});
+ }
  if(url==='/api/approvals'&&method==='GET')return json(res,approvals());
  if(url==='/api/approvals'&&method==='POST'){const x=await body(req);return json(res,{ok:resolveApproval(x.id,x.allow)});}
  if(url==='/api/skills'){

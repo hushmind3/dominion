@@ -24,6 +24,7 @@ export function ModelExplorer(){
  const [format,setFormat]=useState('gguf')
  const [sort,setSort]=useState('downloads')
  const [chatOnly,setChatOnly]=useState(true)
+ const [maxParams,setMaxParams]=useState('')
  const [catalog,setCatalog]=useState<Catalog[]>([])
  const [limit,setLimit]=useState(80)
  const [selected,setSelected]=useState('')
@@ -49,14 +50,14 @@ export function ModelExplorer(){
   const timer=setTimeout(async()=>{
    setLoading(true)
    try{
-    const data=await get<Catalog[]>('/api/model-library/catalog?'+new URLSearchParams({q,format,sort,limit:String(limit),chat:chatOnly?'1':'0'}))
+    const data=await get<Catalog[]>('/api/model-library/catalog?'+new URLSearchParams({q,format,sort,limit:String(limit),chat:chatOnly?'1':'0',maxParams}))
     if(valid){setCatalog(data);setSelected(s=>data.some(m=>m.id===s)?s:'');setError('')}
    }catch(e){if(valid)setError((e as Error).message)}
    finally{if(valid)setLoading(false)}
   },300)
   return()=>{valid=false;clearTimeout(timer)}
- },[view,q,format,sort,limit,chatOnly])
- useEffect(()=>{setLimit(80)},[q,format,sort,chatOnly])
+ },[view,q,format,sort,limit,chatOnly,maxParams])
+ useEffect(()=>{setLimit(80)},[q,format,sort,chatOnly,maxParams])
  useEffect(()=>{
   if(view!=='search'||!selected){setDetail(null);setVariant('');return}
   let active=true
@@ -131,7 +132,7 @@ export function ModelExplorer(){
    <div className="min-w-0 border-b border-[#E7E0D5] lg:border-b-0 lg:border-r">
     <div className="border-b border-[#EFE9DF] p-4">
      <div className="flex h-11 items-center gap-2 rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] px-3 focus-within:border-[#C96442]"><Search size={17} className="text-[#A79C8E]"/><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Hugging Face 모델 검색 (gemma, qwen, uncensored…)" className="h-full w-full min-w-0 bg-transparent text-[14px] outline-none placeholder:text-[#A79C8E]"/>{q&&<button type="button" aria-label="검색어 지우기" onClick={()=>setQ('')} className="rounded p-1 text-[#A79C8E] hover:bg-[#F3EEE5]"><X size={14}/></button>}</div>
-     <div className="mt-3 flex flex-wrap items-center gap-1.5">{[{id:'all',label:'전체'},{id:'gguf',label:'GGUF'},{id:'mlx',label:'MLX'}].map(item=><Button key={item.id} variant={format===item.id?'primary':'ghost'} onClick={()=>setFormat(item.id)} className="!px-3 !py-1.5 !text-[12px]">{item.label}</Button>)}<Button variant={chatOnly?'primary':'ghost'} onClick={()=>setChatOnly(value=>!value)} className="!px-3 !py-1.5 !text-[12px]">대화 모델만</Button><SelectInput aria-label="정렬" value={sort} onChange={e=>setSort(e.target.value)} className="!ml-auto !w-auto !py-1.5 !text-[12px]"><option value="downloads">다운로드순</option><option value="likes">인기순</option><option value="lastModified">최신순</option></SelectInput></div>
+     <div className="mt-3 flex flex-wrap items-center gap-1.5">{[{id:'all',label:'전체'},{id:'gguf',label:'GGUF'},{id:'mlx',label:'MLX'}].map(item=><Button key={item.id} variant={format===item.id?'primary':'ghost'} onClick={()=>setFormat(item.id)} className="!px-3 !py-1.5 !text-[12px]">{item.label}</Button>)}<Button variant={chatOnly?'primary':'ghost'} onClick={()=>setChatOnly(value=>!value)} className="!px-3 !py-1.5 !text-[12px]">대화 모델만</Button><SelectInput aria-label="모델 크기" value={maxParams} onChange={e=>setMaxParams(e.target.value)} className="!w-auto !py-1.5 !text-[12px]"><option value="">크기 전체</option><option value="1">1B 이하</option><option value="2">2B 이하</option><option value="3">3B 이하</option><option value="4">4B 이하</option><option value="8">8B 이하</option></SelectInput><SelectInput aria-label="정렬" value={sort} onChange={e=>setSort(e.target.value)} className="!ml-auto !w-auto !py-1.5 !text-[12px]"><option value="downloads">다운로드순</option><option value="likes">인기순</option><option value="lastModified">최신순</option><option value="params">작은 모델순</option></SelectInput></div>
      <div className="mt-2 flex items-center justify-between text-[11px] text-[#8A8176]"><span>{loading?'검색 중…':catalog.length+'개 모델'}</span><span>Hugging Face 실시간</span></div>
     </div>
     <div className="max-h-[610px] overflow-y-auto">

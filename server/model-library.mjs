@@ -13,6 +13,12 @@ const quantFrom=name=>{
  return matches?.at(-1)?.replace(/^[-_.]/,'')||'';
 };
 const safely=(s)=>typeof s==='string'&&s.length<400&&!s.includes('\\')&&!s.includes('\0')&&!s.startsWith('/')&&s.split('/').every(x=>x&&x!=='.'&&x!=='..');
+// Parameter count from the repository name (e.g. "Llama-3.2-3B-Instruct" -> 3).
+const paramsFrom=value=>{
+ // "35B-A3B" is a 35B MoE with 3B active: the active count must not pass a size filter.
+ const matches=[...String(value||'').matchAll(/(?<![aA])(\d+(?:\.\d+)?)\s*[bB](?![A-Za-z0-9])/g)].map(m=>Number(m[1])).filter(n=>n>=0.1&&n<=2000);
+ return matches.length?Math.max(...matches):0;
+};
 function groupsFor(files,tags=[],repo=''){
  const ggufs=files.filter(x=>/\.gguf$/i.test(x.path));
  const groups=new Map();
@@ -46,14 +52,16 @@ export class ModelLibrary{
   if(!REPO.test(repo))throw Error('Invalid Hugging Face repository');
   return this.hub+'/'+route+repo.split('/').map(encodeURIComponent).join('/');
  }
- async catalog({q='',format='',sort='downloads',limit=80,chatOnly=true}={}){
+ async catalog({q='',format='',sort='downloads',limit=80,chatOnly=true,maxParams=0}={}){
   const search=String(q).trim().slice(0,120);
   const max=Math.min(500,Math.max(20,Number(limit)||80));
   const order=['downloads','likes','lastModified'].includes(sort)?sort:'downloads';
   const terms=search?[search]:format==='gguf'?['GGUF']:format==='mlx'?['mlx']:['GGUF','mlx'];
+  // A size filter must look past the top-download list: fetch a wider window, then trim.
+  const fetchLimit=Number(maxParams)>0?Math.min(500,max*8):max;
   const groups=await Promise.all(terms.map(async term=>{
    const u=new URL(this.hub+'/api/models');
-   u.searchParams.set('limit',String(max));u.searchParams.set('sort',order);
+   u.searchParams.set('limit',String(fetchLimit));u.searchParams.set('sort',order);
    u.searchParams.set('direction','-1');u.searchParams.set('search',term);
    return jsonResponse(await this.fetcher(u,{signal:AbortSignal.timeout(20000)}),'Hugging Face');
   }));
@@ -70,7 +78,9 @@ export class ModelLibrary{
    if(!search&&!/(gguf|mlx)/i.test(tagText))continue;
    if(!map.has(x.id))map.set(x.id,x);
   }
-  const items=[...map.values()].sort((a,b)=>{
+  const sizeLimit=Number(maxParams)>0?Number(maxParams):0;
+  const items=[...map.values()].filter(x=>!sizeLimit||paramsFrom(x.id)&&paramsFrom(x.id)<=sizeLimit).sort((a,b)=>{
+   if(order==='params')return (paramsFrom(a.id)||9999)-(paramsFrom(b.id)||9999);
    if(order==='lastModified')return String(b.lastModified||'').localeCompare(String(a.lastModified||''));
    return Number(b[order]||0)-Number(a[order]||0);
   }).slice(0,max).map(x=>this._summary(x));

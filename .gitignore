@@ -5,6 +5,7 @@ release/
 .env.*
 !.env.example
 runtime/
+workspace/
 *.log
 .DS_Store
 *.tsbuildinfo

@@ -14,11 +14,15 @@ function safeError(error){return String(error?.message||error||'').replace(/(bot
 function emitStatus(id,status,error=''){
  const value={id,status,error:error?safeError(error):'',at:new Date().toISOString()};
  statuses.set(id,value);
+ // Persist only a real successful connection: this is the evidence used to call a driver "verified".
+ if(status==='connected'){put('channel_health',{id,lastConnectedAt:value.at,kind:get('channel',id)?.kind||''});
+  const kind=get('channel',id)?.kind;
+  if(kind)put('driver_health',{id:kind,lastConnectedAt:value.at,channelId:id});}
  bus.emit('channel_status',value);
  if(status==='error')log('channel.runtime_error',{id,error:value.error});
  return value;
 }
-export const catalog=()=>channelCatalog();
+export const catalog=()=>channelCatalog().map(entry=>({...entry,verifiedAt:get('driver_health',entry.id)?.lastConnectedAt||''}));
 function secretKey(id,key){return 'channel:'+id+':'+key;}
 export function credentialValues(record){
  const entry=channelDefinition(record.kind);
@@ -33,7 +37,8 @@ export function channels(){
   const credentials=credentialValues(record);
   const required=entry?.fields?.filter(f=>f.required)||[];
   const missing=required.filter(f=>!(f.type==='secret'?credentials[f.key]:record[f.key])).map(f=>f.label);
-  return {...record,credentialsPresent:Object.fromEntries((entry?.fields||[]).filter(f=>f.type==='secret').map(f=>[f.key,Boolean(credentials[f.key])])),hasToken:Boolean(credentials.token),configured:!missing.length,missing,status:statuses.get(record.id)?.status||(record.enabled?'not_started':'disabled'),runtimeError:statuses.get(record.id)?.error||'',driverAvailable:Boolean(entry?.available),webhookPath:entry?.mode==='webhook'?'/api/webhooks/'+record.id:null};
+  const health=get('channel_health',record.id)||null;
+  return {...record,lastConnectedAt:health?.lastConnectedAt||'',credentialsPresent:Object.fromEntries((entry?.fields||[]).filter(f=>f.type==='secret').map(f=>[f.key,Boolean(credentials[f.key])])),hasToken:Boolean(credentials.token),configured:!missing.length,missing,status:statuses.get(record.id)?.status||(record.enabled?'not_started':'disabled'),runtimeError:statuses.get(record.id)?.error||'',driverAvailable:Boolean(entry?.available),webhookPath:entry?.mode==='webhook'?'/api/webhooks/'+record.id:null};
  });
 }
 export function channelById(id){return channels().find(x=>x.id===id)||null;}

@@ -57,5 +57,10 @@ kernel.feed('tool',{
   features:['agent_tool'],fields:[],origin:'builtin'
  }))
 });
-export const capabilityInventory=(family)=>kernel.list(family);
+export const capabilityInventory=(family)=>{
+ const rows=kernel.list(family);
+ // Channel drivers report a verification stamp only after a real successful connection.
+ for(const row of rows)if(row.namespace==='channel')row.verifiedAt=get('driver_health',row.id)?.lastConnectedAt||'';
+ return rows;
+};
 export const capabilityExecute=(family,id,operation,input)=>kernel.invoke(family,id,operation,input);
