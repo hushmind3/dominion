@@ -251,13 +251,13 @@ export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onS
   </aside>
   <div className="flex min-h-0 min-w-0 flex-col">
    <header className="relative flex h-16 shrink-0 items-center justify-between gap-2 border-b border-[#E7E0D5] bg-[#FFFDF9] px-4">
-    <div className="flex min-w-0 items-center gap-1.5">
+    <div className="flex min-w-0 flex-1 items-center gap-1.5">
       <Button size="icon" variant="ghost" onClick={()=>setShowHistory(x=>!x)} title={showHistory?'대화 목록 접기':'대화 목록 펼치기'} aria-label={showHistory?'대화 목록 접기':'대화 목록 펼치기'}><List size={18}/></Button>
      <div className="relative flex min-w-0 items-center gap-1">
-      <SelectInput aria-label="모델 제공자" title={selectedProvider?.name||'자동 선택'} value={providerId} onChange={e=>{setProviderId(e.target.value);setModel('')}} className="!w-[158px] !border-0 !bg-transparent !py-1 !text-[12px]"><option value="">자동 선택</option>{providers.value.filter(p=>p.enabled).map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</SelectInput>
+      <SelectInput aria-label="모델 제공자" title={selectedProvider?.name||'자동 선택'} value={providerId} onChange={e=>{setProviderId(e.target.value);setModel('')}} className="!w-[124px] !border-0 !bg-transparent !py-1 !pr-6 !text-[12px]"><option value="">자동 선택</option>{providers.value.filter(p=>p.enabled).map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</SelectInput>
       <span className="text-[#B8AFA2]">/</span>
-      <SelectInput aria-label="모델 선택" title={model||'모델 없음'} value={model} onChange={e=>setModel(e.target.value)} className="!w-[280px] !border-0 !bg-transparent !py-1 !text-[12px]"><option value="">{models.length?'모델 선택':'모델 없음'}</option>{models.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</SelectInput>
-      <Button variant="ghost" size="sm" onClick={openModelMenu} title="설치된 로컬 모델 전환" aria-expanded={modelMenu} className="!border !border-[#E7E0D5] !bg-white !text-[#5C544A] hover:!bg-[#FAF7F1]"><HardDrive size={14}/><span className="hidden lg:inline">로컬 모델</span><ChevronDown size={12}/></Button>
+      <SelectInput aria-label="모델 선택" title={model||'모델 없음'} value={model} onChange={e=>setModel(e.target.value)} className="!w-[196px] !border-0 !bg-transparent !py-1 !pr-6 !text-[12px]"><option value="">{models.length?'모델 선택':'모델 없음'}</option>{models.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</SelectInput>
+      <Button variant="ghost" size="sm" onClick={openModelMenu} title="설치된 로컬 모델 전환" className="ml-auto !border !border-[#E7E0D5] !bg-white !text-[#5C544A] hover:!bg-[#FAF7F1]" aria-expanded={modelMenu}><HardDrive size={14}/><span className="hidden lg:inline">로컬 모델</span><ChevronDown size={12}/></Button>
       <Button variant="ghost" size="sm" title="로컬 모델 내리기 · VRAM 해제" onClick={()=>void unloadModel()} disabled={unloading||!(selectedProvider?.local||runtime.status==='ready')} className="!border !border-[#E7E0D5] !bg-white !text-[#5C544A] hover:!bg-[#FAF7F1] disabled:opacity-40"><Power size={14}/><span className="hidden xl:inline">{unloading?'내리는 중':'모델 내리기'}</span></Button>
       {modelMenu&&<>
        <Button type="button" aria-label="모델 메뉴 닫기" className="fixed inset-0 z-40 !h-auto !w-auto cursor-default !rounded-none !border-0 !bg-transparent" onClick={()=>setModelMenu(false)}/>
