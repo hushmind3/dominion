@@ -3,7 +3,7 @@ import fsSync from 'node:fs';
 import path from 'node:path';
 import {videoStatus,saveVideoConfig,startComfyUI,stopComfyUI,videoWorkflows,startVideoJob,videoJob,videoJobs,videoConfig,openVideoFile,openModelFolder,openWorkflowFolder,searchVideoModels,videoOutputs,videoLocations,videoModelOptions,videoRepoFiles,startVideoDownload,videoDownloadJob} from '../video-generator.mjs';
 
-export async function handleVideoRoutes({url,method,res,json,body}){
+export async function handleVideoRoutes({url,method,res,json,body,req}){
  if(url==='/api/video/status'&&method==='GET')return json(res,await videoStatus());
  if(url==='/api/video/config'&&method==='POST')return json(res,await saveVideoConfig(await body(req)));
  if(url==='/api/video/start'&&method==='POST')return json(res,await startComfyUI());
@@ -42,5 +42,17 @@ export async function handleVideoRoutes({url,method,res,json,body}){
    res.writeHead(200,{'Content-Type':type,'Content-Length':stat.size,'Cache-Control':'no-store'});
    fsSync.createReadStream(file).pipe(res);return;
   }catch{return json(res,{error:'Video file not found'},404)}
- } return false;
+ }
+ if(url==='/api/video/workflows/import'&&method==='POST'){
+  const input=await body(req);
+  const source=String(input.source||'');
+  const config=videoConfig();
+  if(!source||!fs.existsSync(source))throw Error('업로드된 파일을 찾을 수 없습니다');
+  fs.mkdirSync(config.workflowDir,{recursive:true});
+  const name=path.basename(source).replace(/[^\w.-]+/g,'_');
+  const target=path.join(config.workflowDir,name.endsWith('.json')?name:name+'.json');
+  fs.copyFileSync(source,target);
+  return json(res,{ok:true,name:path.basename(target),workflows:videoWorkflows()});
+ }
+ return false;
 }

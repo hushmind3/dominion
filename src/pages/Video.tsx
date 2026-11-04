@@ -85,7 +85,6 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
   setUploadTitle((videoJob.title||videoJob.prompt).slice(0,90))
   setUploadDescription(videoJob.prompt)
  }
- const pick=async()=>{const bridge=(window as any).dominionDesktop;if(!bridge?.pickVideo){setError('파일 선택 창은 설치 앱에서만 열립니다. 영상 파일 경로를 직접 입력하세요.');return}try{const picked=await bridge.pickVideo();if(picked){setUploadFile(picked);if(!uploadTitle)setUploadTitle(String(picked).split(/[\\/]/).pop()?.replace(/\.[^.]+$/,'')||'')}}catch(e){setError((e as Error).message)}}
  const startUpload=async()=>{
   if(!youtube.value.uploadAllowed){setError('Google 계정을 YouTube 업로드 권한으로 먼저 연결하세요.');return}
   if(!uploadFile.trim()||!uploadTitle.trim()){setError('영상 파일과 제목을 입력하세요.');return}
@@ -140,7 +139,17 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
       <li>2. <b>Save (API Format)</b>으로 저장합니다 (일반 Save는 인식되지 않습니다)</li>
       <li>3. 받은 .json 파일을 아래 폴더에 넣고 <b>다시 확인</b>을 누릅니다</li>
      </ol>
-     <div className="mt-2 flex flex-wrap items-center gap-2"><Button variant="secondary" onClick={()=>void post('/api/video/open-workflows',{}).catch(e=>setError((e as Error).message))}>워크플로 폴더 열기</Button><Button variant="ghost" onClick={()=>void video.reload()}>다시 확인</Button><span className="text-[10px] text-[#8A8176]">{prettyPath(video.value.config.workflowDir)}</span></div>
+     <div className="mt-2 flex flex-wrap items-center gap-2"><label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-[#E1D9CC] bg-[#FFFDF9] px-3 py-2 text-[12px] font-semibold text-[#3A342D] hover:bg-[#F7F2EA]">
+           JSON 파일 열기
+           <input type="file" className="hidden" accept=".json,application/json" onChange={async(e)=>{
+             const file=e.target.files?.[0];if(!file)return;
+             try{
+               const up=await fetch('/api/upload?name='+encodeURIComponent(file.name),{method:'POST',body:file}).then(r=>r.json());
+               await post('/api/video/workflows/import',{source:up.path});
+               await video.reload();
+             }catch(err){setError((err as Error).message)}
+           }}/>
+         </label><Button variant="ghost" onClick={()=>void video.reload()}>다시 확인</Button><span className="text-[10px] text-[#8A8176]">{prettyPath(video.value.config.workflowDir)}</span></div>
     </div>}
   </>}
   <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,380px)]">
