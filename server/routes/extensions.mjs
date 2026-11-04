@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+import {DATA} from "../config.mjs";
 import {all,get,put} from "../store.mjs";
 import {secretGet} from "../vault.mjs";
 import {resolveModel} from "../model-router.mjs";
@@ -5,7 +8,7 @@ import {mcpServers,saveMcp,deleteMcp,discoverMcp} from "../mcp.mjs";
 import {mcpPresets} from "../mcp-presets.mjs";
 import {skillCatalog,skillCatalogMeta,importCatalogSkill,importSkillsFromRepo} from "../skill-catalog.mjs";
 
-export async function handleExtensionRoutes({url,method,res,json,body,u}){
+export async function handleExtensionRoutes({url,method,res,json,body,u,req}){
   if (url === "/api/translate/config" && method === "GET")
     return json(
       res,
@@ -286,6 +289,20 @@ export async function handleExtensionRoutes({url,method,res,json,body,u}){
         return a;
       }, {}),
     });
+  }
+  if (url === "/api/upload" && method === "POST") {
+    const name = String(u.searchParams.get("name") || "upload.bin").replace(/[^\w.-]+/g, "_");
+    const dir = path.join(DATA, "uploads");
+    fs.mkdirSync(dir, { recursive: true });
+    const target = path.join(dir, Date.now() + "-" + name);
+    await new Promise((resolve, reject) => {
+      const out = fs.createWriteStream(target);
+      req.pipe(out);
+      out.on("finish", resolve);
+      out.on("error", reject);
+      req.on("error", reject);
+    });
+    return json(res, { path: target, name });
   }
   return false;
 }

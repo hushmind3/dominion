@@ -410,7 +410,7 @@ export function AgentsPage() {
                     <input
                       type="file"
                       className="hidden"
-                      accept="image/png,image/jpeg,image/webp"
+                      accept="image/*"
                       onChange={(e) => {
                         const file = e.target.files?.[0];
                         if (!file) return;

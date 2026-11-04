@@ -259,7 +259,7 @@ async function api(req, res, u) {
   if (await handleAgentRoutes({ url, method, res, json, body })) return;
   if (await handleVideoRoutes({ url, method, res, json, body })) return;
   if (await handleOAuthRoutes({ url, method, res, json, body })) return;
-  if (await handleExtensionRoutes({ url, method, res, json, body, u })) return;
+  if (await handleExtensionRoutes({ url, method, res, json, body, u, req })) return;
   if (url === "/api/health")
     return json(res, {
       ok: true,
