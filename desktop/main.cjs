@@ -29,6 +29,19 @@ else{
  });
 }
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+function windowStateFile(){return path.join(app.getPath('userData'),'window-state.json')}
+function loadWindowBounds(){
+ try{
+  const saved=JSON.parse(fs.readFileSync(windowStateFile(),'utf8'));
+  if(!saved||!Number.isFinite(saved.width)||!Number.isFinite(saved.height))return null;
+  const bounds={width:Math.max(740,saved.width),height:Math.max(650,saved.height)};
+  if(Number.isFinite(saved.x)&&Number.isFinite(saved.y)){bounds.x=saved.x;bounds.y=saved.y;}
+  return bounds;
+ }catch{return null}
+}
+function saveWindowBounds(win){
+ try{fs.writeFileSync(windowStateFile(),JSON.stringify(win.getNormalBounds()))}catch{}
+}
 function freePort(){return new Promise((resolve,reject)=>{const s=net.createServer();s.once('error',reject);s.listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(()=>resolve(p))})})}
 function openPreviewWindow(value){
  const parsed=new URL(String(value||''));
@@ -174,7 +187,7 @@ async function start(){
   app.exit(result.ok?0:1);
   return;
  }
- window=new BrowserWindow({title:'DOMINION',width:760,height:850,minWidth:740,minHeight:650,backgroundColor:'#f6f8fc',show:false,
+ window=new BrowserWindow({title:'DOMINION',...(loadWindowBounds()||{width:1340,height:850}),minWidth:740,minHeight:650,backgroundColor:'#f6f8fc',show:false,
    webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true,preload:path.join(__dirname,'preload.cjs')}
  });
  session.defaultSession.setPermissionRequestHandler((_webContents,permission,callback)=>{
@@ -197,6 +210,7 @@ async function start(){
   }
  });
  window.once('ready-to-show',()=>window.show());
+ window.on('close',()=>saveWindowBounds(window));
  await window.loadURL(origin);
  app.on('activate',()=>{if(BrowserWindow.getAllWindows().length===0)void start();});
 }
