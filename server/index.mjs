@@ -4,7 +4,7 @@ import fsSync from 'node:fs';
 import path from 'node:path';
 import {timingSafeEqual} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
-import {HOST,PORT,ROOT,IS_LOCAL,ADMIN_TOKEN} from './config.mjs';
+import {HOST,PORT,ROOT,IS_LOCAL,ADMIN_TOKEN,DATA} from './config.mjs';
 import {capabilityInventory,capabilityExecute} from './capability-sources.mjs';
 import {all,get,put,remove,messages,recentAudit,bus,pruneInbound} from './store.mjs';
 import {providers,saveProvider,availableModels,ensureLocalGateway} from './providers.mjs';
@@ -306,6 +306,12 @@ async function api(req,res,u){
  if(url==='/api/skill-catalog'&&method==='GET')return json(res,skillCatalog({q:u.searchParams.get('q')||'',category:u.searchParams.get('category')||'',source:u.searchParams.get('source')||'',limit:u.searchParams.get('limit')||500}));
  if(url==='/api/skill-catalog/meta'&&method==='GET')return json(res,skillCatalogMeta());
  if(url==='/api/skill-catalog/import'&&method==='POST')return json(res,await importCatalogSkill((await body(req)).id));
+ if(url==='/api/memory/overview'&&method==='GET'){
+  const rows=all('memory');
+  const byType={};const bySource={};
+  for(const row of rows){byType[row.type||'미분류']=(byType[row.type||'미분류']||0)+1;bySource[row.source||'manual']=(bySource[row.source||'manual']||0)+1;}
+  return json(res,{path:path.join(DATA,'dominion.sqlite'),table:'records (kind=memory)',total:rows.length,byType,bySource,status:rows.reduce((a,r)=>{const k=r.status||'active';a[k]=(a[k]||0)+1;return a},{})});
+ }
  if(url==='/api/memories'){
   if(method==='GET')return json(res,all('memory'));
   if(method==='POST'){const x=await body(req);return json(res,put('memory',{...x,id:x.id||crypto.randomUUID(),text:String(x.text||'')}));}
