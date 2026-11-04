@@ -43,7 +43,7 @@ function contradictory(a,b){
  const common=[...aa].filter(t=>bb.has(t)).length;
  return common>=3 && common/Math.max(1,Math.min(aa.size,bb.size))>=0.48;
 }
-export function persistMemory({text,scope='shared',source='manual',sessionId='',status='active'}={}){
+export function persistMemory({text,scope='shared',source='manual',sessionId='',status='active',type='',importance=0}={}){
  const value=String(text??'').replace(/\s+/g,' ').trim().slice(0,1000);
  if(value.length<8||/\[REDACTED\]/.test(value))return {record:null,action:'skipped'};
  const ownScope=String(scope||'shared'),records=all('memory').filter(x=>(x.scope||'shared')===ownScope&&x.status!=='superseded');
@@ -57,7 +57,7 @@ export function persistMemory({text,scope='shared',source='manual',sessionId='',
   // Conflicting facts stay visible, but neither is silently fed into prompts.
   for(const old of conflicts)put('memory',{...old,status:'needs_review',reason:'Contradictory new memory candidate'});
  }
- const row=put('memory',{text:value,scope:ownScope,source,sessionId,status:conflicts.length?'needs_review':status,
+ const row=put('memory',{text:value,scope:ownScope,source,sessionId,type:String(type||''),importance:Number(importance)||0,status:conflicts.length?'needs_review':status,
   reason:conflicts.length?'Conflicts with prior memory: '+conflicts.map(x=>x.id).join(', '):'',
   seenCount:1,createdAt:new Date().toISOString()});
  return {record:row,action:conflicts.length?'conflict':'created'};
@@ -84,7 +84,8 @@ export function retrieveMemories(query,{agentId='',limit=8}={}){
   .slice(0,Math.max(0,Math.min(limit,20)))
   .map(({_features,...row})=>row);
 }
+const typeLabel={fact:'사실',preference:'선호',decision:'결정',procedure:'절차'};
 export function memoryContext(query,{agentId='',limit=8}={}){
  return retrieveMemories(query,{agentId,limit})
-  .map(x=>'- '+String(x.text).slice(0,900)).join('\n').slice(0,4500);
+  .map(x=>'- '+String(x.text).slice(0,900)+(x.type&&typeLabel[x.type]?' ('+typeLabel[x.type]+')':'')).join('\n').slice(0,4500);
 }

@@ -179,7 +179,7 @@ export async function learnFromSession(id,{providerId,model,automatic=false}={})
   return '['+type+'] '+removeLearningSecrets(String(row.content||'').slice(0,row.role==='tool'?600:2500))+details;
  }).join('\n').slice(-35000);
  const response=await streamCompletion({providerId,model,tools:[],messages:[
-  {role:'system',content:'Extract durable reusable knowledge from the conversation and observed tool results. Return ONE JSON object only: {"memories":[{"text":"...","scope":"shared"}],"skill":{"name":"...","instructions":"..."}}. Use null or empty arrays when there is nothing durable. Only save stable user preferences, verified project decisions, or reusable lessons from actual observed outcomes. Do not convert an attempted tool call or unverified assistant assertion into a success. Do not store secrets, temporary details, speculation, or sensitive tool output. A skill is only a candidate until tested and approved. Be concise.'},
+  {role:'system',content:'대화와 실제 도구 실행 결과에서 오래 쓸 지식을 뽑아라. JSON 하나만 출력: {"memories":[{"text":"...","type":"fact|preference|decision|procedure","importance":0.0,"scope":"shared"}],"skill":{"name":"...","instructions":"..."}}. text는 반드시 한국어로 쓴다. type은 사실/선호/결정/절차 중 하나. importance는 0~1. 저장할 게 없으면 빈 배열/null. 확실한 사용자 선호, 검증된 결정, 실제 결과에서 얻은 교훈만 저장한다. 시도만 한 도구 호출이나 검증 안 된 주장을 성공으로 바꾸지 마라. 비밀·임시정보·추측·민감한 도구 출력은 저장하지 마라. skill은 검증 전 후보일 뿐이다. 간결하게.'},
   {role:'user',content:'Conversation and execution evidence:\n'+transcript}
  ]});
  const data=extractJsonObject(response.content);
@@ -188,6 +188,7 @@ export async function learnFromSession(id,{providerId,model,automatic=false}={})
  for(const item of (Array.isArray(data.memories)?data.memories:[]).slice(0,10)){
   const value=removeLearningSecrets(item?.text).slice(0,1000);
   const saved=persistMemory({text:value,scope:String(item?.scope||'shared'),
+   type:String(item?.type||''),importance:Number(item?.importance)||0,
    source:automatic?'auto-learning':'session-learning',sessionId:id});
   if(saved.action==='created'||saved.action==='conflict')memories.push(saved.record);
  }
