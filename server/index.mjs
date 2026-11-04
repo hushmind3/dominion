@@ -23,7 +23,7 @@ import {mcpPresets} from './mcp-presets.mjs';
 import {skillCatalog,skillCatalogMeta,importCatalogSkill} from './skill-catalog.mjs';
 import {builtin,toolsForModel,approvals,resolveApproval,recoverApprovals} from './tools.mjs';
 import {oauthProviders,oauthStart,oauthCallback,oauthCallbackBase,connections,connectorCall,saveOAuthApp,youtubeUpload} from './oauth.mjs';
-import {videoStatus,saveVideoConfig,startComfyUI,stopComfyUI,videoWorkflows,startVideoJob,videoJob,videoJobs,videoConfig,openVideoFile,openModelFolder} from './video-generator.mjs';
+import {videoStatus,saveVideoConfig,startComfyUI,stopComfyUI,videoWorkflows,startVideoJob,videoJob,videoJobs,videoConfig,openVideoFile,openModelFolder,openWorkflowFolder,searchVideoModels,videoOutputs,videoLocations,videoModelOptions,videoRepoFiles,startVideoDownload,videoDownloadJob} from './video-generator.mjs';
 import {devConfig,saveDevConfig,devStatus,connectOrClone,setupSource,testSource,buildSource,packageSource,devJobs,devJob,previewStart,previewStop,sourceDiff,sourceCommit,sourceList,sourceRead,sourceWrite,latestInstaller,validateUpdateInstaller} from './dev-studio.mjs';
 import {channels,catalog,channelById,saveChannel,deleteChannel,diagnoseChannel,handleChannelWebhook,startChannels} from './channels.mjs';
 import {activeRoomStatus,stopRoomFlow,resetRoomFlow} from './room-orchestrator.mjs';
@@ -285,11 +285,26 @@ async function api(req,res,u){
  const diagnostic=url.match(/^\/api\/channels\/([^/]+)\/diagnose$/);
  if(diagnostic&&method==='POST')return json(res,await diagnoseChannel(diagnostic[1]));
  if(url==='/api/video/status'&&method==='GET')return json(res,await videoStatus());
- if(url==='/api/video/config'&&method==='POST')return json(res,saveVideoConfig(await body(req)));
+ if(url==='/api/video/config'&&method==='POST')return json(res,await saveVideoConfig(await body(req)));
  if(url==='/api/video/start'&&method==='POST')return json(res,await startComfyUI());
  if(url==='/api/video/stop'&&method==='POST')return json(res,await stopComfyUI(await body(req)));
  if(url==='/api/video/reveal'&&method==='POST')return json(res,openVideoFile((await body(req)).file));
  if(url==='/api/video/open-models'&&method==='POST')return json(res,openModelFolder());
+ if(url==='/api/video/open-workflows'&&method==='POST')return json(res,openWorkflowFolder());
+ if(url==='/api/system/pick-folder'&&method==='POST'){
+  const {prompt='폴더 선택'}=await body(req);
+  return json(res,{path:await pickFolder(String(prompt))});
+ }
+
+ if(url==='/api/video/outputs'&&method==='GET')return json(res,videoOutputs());
+ if(url==='/api/video/locations'&&method==='GET')return json(res,videoLocations());
+ if(url==='/api/video/models'&&method==='GET')return json(res,await videoModelOptions());
+ if(url==='/api/video/catalog'&&method==='GET')return json(res,await searchVideoModels({q:u.searchParams.get('q')||'',limit:u.searchParams.get('limit')||30}));
+ if(url==='/api/video/files'&&method==='GET')return json(res,await videoRepoFiles(u.searchParams.get('repo')||''));
+ if(url==='/api/video/download'&&method==='POST')return json(res,startVideoDownload(await body(req)));
+ const vdl=url.match(/^\/api\/video\/download\/([^/]+)$/);
+ if(vdl&&method==='GET')return json(res,videoDownloadJob(vdl[1])||{});
+
  if(url==='/api/video/workflows'&&method==='GET')return json(res,videoWorkflows());
  if(url==='/api/video/generate'&&method==='POST')return json(res,await startVideoJob(await body(req)),202);
  if(url==='/api/video/jobs'&&method==='GET')return json(res,videoJobs());
@@ -345,6 +360,21 @@ async function api(req,res,u){
   return json(res,{ok:true});
  }
  return json(res,{error:'Not found',path:url},404);
+}
+async function pickFolder(prompt){
+ const title=String(prompt||'폴더 선택').replace(/["\\]/g,'');
+ if(process.platform==='darwin'){
+  const script=`POSIX path of (choose folder with prompt "${title}")`;
+  const {stdout}=await execFileAsync('osascript',['-e',script]);
+  return String(stdout||'').trim();
+ }
+ if(process.platform==='win32'){
+  const ps=`Add-Type -AssemblyName System.Windows.Forms; $d=New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description='${title}'; if($d.ShowDialog() -eq 'OK'){Write-Output $d.SelectedPath}`;
+  const {stdout}=await execFileAsync('powershell',['-NoProfile','-Command',ps]);
+  return String(stdout||'').trim();
+ }
+ const {stdout}=await execFileAsync('sh',['-c',`zenity --file-selection --directory --title="${title}" 2>/dev/null || kdialog --getexistingdirectory 2>/dev/null`]);
+ return String(stdout||'').trim();
 }
 const server=http.createServer(async(req,res)=>{
  try{
