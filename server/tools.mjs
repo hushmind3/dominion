@@ -23,7 +23,7 @@ export const builtin=[
  {name:'workspace_list',description:'List files and folders in the workspace',parameters:params({path:{type:'string',description:'Relative folder path'}})},
  {name:'workspace_read',description:'Read a UTF-8 file from the workspace',parameters:params({path:{type:'string'}},['path'])},
  {name:'workspace_write',description:'Write a UTF-8 file into the workspace (workspace-relative path only)',parameters:params({path:{type:'string'},content:{type:'string'}},['path','content']),approval:true},
- {name:'file_list',description:'List any folder on this computer using an absolute path (Desktop, Documents, Downloads, drives)',parameters:params({path:{type:'string',description:'Absolute folder path, for example C:\\\\Users\\\\name\\\\Desktop'}},['path'])},
+ {name:'file_list',description:'List any folder on this computer using an absolute path (Desktop, Documents, Downloads, drives)',parameters:params({path:{type:'string',description:'Absolute folder path, for example /Users/name/Desktop'}},['path'])},
  {name:'file_read',description:'Read any UTF-8 text file on this computer using an absolute path',parameters:params({path:{type:'string',description:'Absolute file path'}},['path'])},
  {name:'file_write',description:'Create or overwrite a file anywhere on this computer using an absolute path. Use this for Desktop and other folders outside the workspace.',parameters:params({path:{type:'string',description:'Absolute file path'},content:{type:'string',description:'UTF-8 text content'}},['path','content']),approval:true},
  {name:'shell_exec',description:'Run a full shell command on this computer and return stdout/stderr. Use for real system operations, installs, network commands and scripting.',parameters:params({command:{type:'string',description:'Shell command line'},cwd:{type:'string',description:'Optional absolute working directory'}},['command']),approval:true},
@@ -136,7 +136,7 @@ function expandPath(value){
  const raw=String(value||'').trim();
  if(!raw)throw Error('Absolute path required');
  const expanded=raw.replace(/^~(?=$|[\\/])/,os.homedir());
- if(!path.isAbsolute(expanded))throw Error('Use an absolute path, for example C:\\Users\\name\\Desktop\\file.txt');
+ if(!path.isAbsolute(expanded))throw Error('Use an absolute path, for example /Users/name/Desktop/file.txt');
  return path.resolve(expanded);
 }
 const decodeEntities=text=>String(text).replace(/&(#\d+|#x[0-9a-f]+|amp|lt|gt|quot|apos|nbsp);/gi,(m,e)=>{

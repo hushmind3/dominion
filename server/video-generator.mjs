@@ -13,13 +13,14 @@ import {all,get,put,log} from './store.mjs';
 const jobs=new Map();
 const execFileAsync=promisify(execFile);
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const venvPython=dir=>{const candidates=process.platform==='win32'?[path.join(dir,'.venv','Scripts','python.exe')]:[path.join(dir,'.venv','bin','python3'),path.join(dir,'.venv','bin','python')];return candidates.find(file=>fs.existsSync(file))||candidates[0];};
 let managedComfyPid=0;
 
 export function videoConfig(){
  const stored=get('video_config','default')||{};
  return {
   comfyUrl:String(stored.comfyUrl||'http://127.0.0.1:8188').replace(/\/$/,''),
-  comfyDir:path.resolve(String(stored.comfyDir||'C:\\ComfyUI')),
+  comfyDir:path.resolve(String(stored.comfyDir||(process.platform==='win32'?'C:\\ComfyUI':path.join(os.homedir(),'ComfyUI')))),
   workflowDir:path.resolve(String(stored.workflowDir||path.join(WORKSPACE,'video-workflows'))),
   outputDir:path.resolve(String(stored.outputDir||path.join(os.homedir(),'Videos','DOMINION')))
  };
@@ -101,7 +102,7 @@ export async function videoStatus(){
  const workflows=videoWorkflows();
  const models=requiredModels(config,workflows);
  const installedModels=installedVideoModels(config,workflows);
- return {config,comfy,installed:fs.existsSync(path.join(config.comfyDir,'main.py'))&&fs.existsSync(path.join(config.comfyDir,'.venv','Scripts','python.exe')),workflows,models,modelsReady:models.length>0&&models.every(model=>model.present),installedModels,jobs:videoJobs().slice(-12)};
+ return {config,comfy,installed:fs.existsSync(path.join(config.comfyDir,'main.py'))&&fs.existsSync(venvPython(config.comfyDir)),workflows,models,modelsReady:models.length>0&&models.every(model=>model.present),installedModels,jobs:videoJobs().slice(-12)};
 }
 function revealInShell(args){
  const explorer=path.join(process.env.WINDIR||'C:\\Windows','explorer.exe');
@@ -120,7 +121,7 @@ export function openModelFolder(){
 export async function startComfyUI(){
  const config=videoConfig();
  try{const response=await fetch(config.comfyUrl+'/system_stats',{signal:AbortSignal.timeout(1500)});if(response.ok)return {started:false,already:true}}catch{}
- const python=path.join(config.comfyDir,'.venv','Scripts','python.exe');
+ const python=venvPython(config.comfyDir);
  const main=path.join(config.comfyDir,'main.py');
  if(!fs.existsSync(python)||!fs.existsSync(main))throw Error('ComfyUI가 '+config.comfyDir+'에 설치되어 있지 않습니다.');
  const port=new URL(config.comfyUrl).port||'8188';

@@ -56,7 +56,7 @@ export function ConnectionsPage(){
   setError('');const popup=window.open('','dominion_oauth','width=650,height=780');
   try{const r=await get<{url:string}>('/api/oauth/'+id+'/start');if(popup)popup.location.href=r.url;else window.location.href=r.url}catch(e){popup?.close();setError((e as Error).message)}
  };
- return <div className="mx-auto w-full max-w-[1320px] px-5 py-6 sm:px-8 lg:px-6 lg:pb-20">
+ return <div className="mx-auto w-full max-w-[1320px] px-5 py-4 sm:px-7 lg:px-6 lg:pb-8">
   <Headline eyebrow="CHANNEL & INTEGRATION HUB" title="연결할 수 있는 모든 세계." description="메신저는 카탈로그에서 자동 발견합니다. 설치된 드라이버와 실제 인증 상태를 따로 표시합니다." actions={<Action variant="secondary" onClick={()=>{void registry.reload();void channels.reload()}}><Activity size={16}/> 상태 새로고침</Action>}/>
   <div className="mb-5 grid grid-cols-1 gap-4 md:grid-cols-3">
    <div className="flex items-center gap-4 rounded-xl border border-[#E7E0D5] bg-white p-5 shadow-sm"><span className="grid size-12 place-items-center rounded-xl bg-violet-50 text-violet-600"><Globe2 size={20}/></span><div><small>발견된 플랫폼</small><strong>{registry.value.length}</strong></div></div>

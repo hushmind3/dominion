@@ -74,16 +74,16 @@ export function DeveloperPage(){
   }catch(e){setError((e as Error).message)}
  }
  const s=status.value
- return <div className="mx-auto w-full max-w-[1280px] px-5 py-6 sm:px-8 lg:px-6 lg:pb-20">
+ return <div className="mx-auto w-full max-w-[1280px] px-5 py-4 sm:px-7 lg:px-6 lg:pb-8">
   <Headline eyebrow="SELF DEVELOPMENT" title="소스 개발 스튜디오 v0.2.9" description="설치된 앱과 분리된 Git 소스 작업공간에서 UI·엔진을 수정하고, 테스트·빌드·미리보기·설치본 업데이트까지 실행하는 자기 개발 스튜디오입니다." actions={<Button variant="secondary" onClick={()=>{void status.reload();void loadDiff()}}><RefreshCw size={16}/> 상태 새로고침</Button>}/>
   {error&&<Notice message={error}/>}
   {message&&<div className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><Check size={16}/>{message}</div>}
   <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
-   <div className="grid min-w-0 gap-5">
+   <div className="grid min-w-0 gap-4">
     <Panel className="min-w-0 p-5">
      <Subheading title="작업공간" extra={<StateTag online={s.exists&&s.git}>{s.exists?s.git?'Git 연결됨':'소스만 있음':'미연결'}</StateTag>}/>
      <div className="grid gap-3">
-      <FormField label="소스 폴더" hint="설치된 앱의 resources 폴더가 아닌 별도 경로를 사용합니다."><div className="flex gap-2"><TextInput value={sourceDir} onChange={e=>setSourceDir(e.target.value)} placeholder="C:\\Users\\me\\DOMINION Source\\dominion"/><Button variant="secondary" className="shrink-0 whitespace-nowrap" onClick={()=>void pickSource()}>폴더 선택</Button></div></FormField>
+      <FormField label="소스 폴더" hint="설치된 앱의 resources 폴더가 아닌 별도 경로를 사용합니다."><div className="flex gap-2"><TextInput value={sourceDir} onChange={e=>setSourceDir(e.target.value)} placeholder="예: ~/DOMINION Source/dominion"/><Button variant="secondary" className="shrink-0 whitespace-nowrap" onClick={()=>void pickSource()}>폴더 선택</Button></div></FormField>
       <FormField label="Git 저장소"><TextInput value={repoUrl} onChange={e=>setRepoUrl(e.target.value)} placeholder="https://github.com/hushmind3/dominion.git"/></FormField>
       <FormField label="브랜치"><TextInput value={branch} onChange={e=>setBranch(e.target.value)} placeholder="main"/></FormField>
       <div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={()=>void saveConfig()}>설정 저장</Button><Button variant="primary" disabled={busy==='connect'||!sourceDir.trim()} onClick={()=>void connect()}>{busy==='connect'?'연결 중':'연결 / 클론'}</Button></div>
@@ -109,7 +109,7 @@ export function DeveloperPage(){
      {diff?.changes.length?<div className="grid max-h-[420px] gap-2 overflow-auto">{diff.changes.map(change=><details key={change.path} className="rounded-lg border border-[#EFE9DF] bg-[#FAF7F1] p-2"><summary className="cursor-pointer text-[11px] font-semibold text-[#5C544A]">{change.status} · {change.path}</summary><pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all text-[10px] leading-4 text-[#3A342D]">{change.patch}</pre></details>)}</div>:<p className="text-[11px] text-[#8A8176]">변경된 파일이 없습니다.</p>}
     </Panel>
    </div>
-   <div className="grid min-w-0 gap-5">
+   <div className="grid min-w-0 gap-4">
     <Panel className="min-w-0 p-5">
      <Subheading title="작업 로그" extra={<Terminal size={18}/>}/>
      {job?<div><div className="mb-2 flex items-center gap-2"><StateTag online={job.status==='completed'}>{job.status}</StateTag><span className="text-[11px] text-[#8A8176]">{job.kind}</span></div><pre className="max-h-[520px] min-h-40 overflow-auto whitespace-pre-wrap break-all rounded-xl bg-[#24211D] p-3 text-[10px] leading-5 text-[#E7E0D5]">{job.logs.join('\n')||'로그 대기 중...'}</pre></div>:<p className="text-[11px] text-[#8A8176]">개발 작업을 실행하면 로그가 표시됩니다.</p>}

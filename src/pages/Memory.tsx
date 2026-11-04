@@ -11,7 +11,7 @@ export function MemoryPage(){
  const filtered=useMemo(()=>memories.value.filter(x=>(x.text+' '+x.scope).toLowerCase().includes(query.toLowerCase())),[memories.value,query]);
  const save=async()=>{if(!text.trim())return;try{await post('/api/memories',{text:text.trim(),scope});setText('');setError('');setNotice('기억이 저장되었습니다.');void memories.reload()}catch(e){setError((e as Error).message)}};
  const drop=async(id:string)=>{if(!confirm('이 기억을 삭제할까요?'))return;try{await del('/api/memories/'+id);void memories.reload()}catch(e){setError((e as Error).message)}};
- return <div className="mx-auto w-full max-w-[1320px] px-5 py-6 sm:px-8 lg:px-6 lg:pb-20">
+ return <div className="mx-auto w-full max-w-[1320px] px-5 py-4 sm:px-7 lg:px-6 lg:pb-8">
   <Headline eyebrow="MEMORY LIBRARY" title="기억을 지식으로." description="기억은 로컬 SQLite에 저장되고 에이전트의 다음 실행에 참고됩니다. 자동 학습·자기개선은 별개 기능입니다."/>
   {error&&<Notice message={error}/>}
   {notice&&<div className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><Check size={16}/>{notice}</div>}

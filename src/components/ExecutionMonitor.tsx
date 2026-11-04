@@ -69,7 +69,7 @@ export function ExecutionMonitor(){
    </div>
    {info&&<p className="mt-2 text-xs text-emerald-700">{info}</p>}
   </div>
-  <div className="grid min-w-0 gap-5 p-5 lg:grid-cols-2">
+  <div className="grid min-w-0 gap-4 p-5 lg:grid-cols-2">
    <div className="max-h-64 space-y-2 overflow-y-auto">
     {runs.value.map(r=><Button key={r.id} variant="ghost" onClick={()=>setSelected(r.id)}
      className={'!flex !w-full !items-center !justify-between !gap-2 !rounded-lg !border !px-3 !py-3 !text-left '+(current?.id===r.id?'!border-blue-300 !bg-[#F7E8E1]':'!border-[#E7E0D5]')}>

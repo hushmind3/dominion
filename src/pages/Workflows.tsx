@@ -18,7 +18,7 @@ export function WorkflowsPage({openSession}:{openSession:(id:string)=>void}){
  const move=(index:number,change:number)=>{if(!edit||index+change<0||index+change>=edit.steps.length)return;const steps=[...edit.steps];[steps[index],steps[index+change]]=[steps[index+change],steps[index]];setEdit({...edit,steps})};
  const save=async()=>{if(!edit||saving)return;setSaving(true);setError('');try{await post('/api/workflows',edit);setEdit(null);setInfo('워크플로가 저장되었습니다.');await flows.reload()}catch(e){setError((e as Error).message)}finally{setSaving(false)}};
  const start=async(f:Flow)=>{if(!f.id)return;try{await post('/api/workflows/'+f.id+'/run',{input:inputs[f.id]||''});setInfo(f.name+' 실행 대기열에 등록되었습니다.');await jobs.reload()}catch(e){setError((e as Error).message)}};
- return <div className="mx-auto w-full max-w-[1320px] px-5 py-6 sm:px-8 lg:px-6 lg:pb-20"><Headline eyebrow="REPEATABLE AUTOMATION" title="반복 작업" description="여러 단계를 순서대로 실행하는 자동화입니다. 각 단계는 에이전트와 지시문을 가지며, 이전 단계의 결과를 다음 단계로 넘깁니다." actions={<Action onClick={()=>{setError('');setEdit({name:'새 반복 작업',description:'',steps:[emptyStep()]})}}><Plus size={17}/> 반복 작업 만들기</Action>}/>
+ return <div className="mx-auto w-full max-w-[1320px] px-5 py-4 sm:px-7 lg:px-6 lg:pb-8"><Headline eyebrow="REPEATABLE AUTOMATION" title="반복 작업" description="여러 단계를 순서대로 실행하는 자동화입니다. 각 단계는 에이전트와 지시문을 가지며, 이전 단계의 결과를 다음 단계로 넘깁니다." actions={<Action onClick={()=>{setError('');setEdit({name:'새 반복 작업',description:'',steps:[emptyStep()]})}}><Plus size={17}/> 반복 작업 만들기</Action>}/>
  {error&&<Notice message={error}/>}
  <ExecutionMonitor/>
  {info&&<div className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><Check size={16}/>{info}</div>}
