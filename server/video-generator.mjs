@@ -9,6 +9,7 @@ import {Readable} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import {WORKSPACE} from './config.mjs';
 import {all,get,put,log} from './store.mjs';
+import {secretSet,secretGet,hasSecret} from './vault.mjs';
 
 const jobs=new Map();
 const execFileAsync=promisify(execFile);
@@ -18,7 +19,12 @@ let managedComfyPid=0;
 
 export function videoConfig(){
  const stored=get('video_config','default')||{};
+ const engine=['comfyui','openai','custom'].includes(stored.engine)?stored.engine:'comfyui';
  return {
+  engine,
+  videoApiUrl:String(stored.videoApiUrl||'https://api.openai.com/v1').replace(/\/$/,''),
+  videoModel:String(stored.videoModel||'sora-2'),
+  hasVideoKey:engine==='comfyui'?false:hasSecret('video:api'),
   comfyUrl:String(stored.comfyUrl||'http://127.0.0.1:8188').replace(/\/$/,''),
   comfyDir:path.resolve(String(stored.comfyDir||(process.platform==='win32'?'C:\\ComfyUI':path.join(os.homedir(),'ComfyUI')))),
   workflowDir:path.resolve(String(stored.workflowDir||path.join(WORKSPACE,'video-workflows'))),
@@ -180,6 +186,11 @@ function finishStop(stored,count){
 export function saveVideoConfig(input={}){
  const current=videoConfig();
  const next={...current,...input};
+ if(typeof input.videoApiKey==='string'&&input.videoApiKey.trim())secretSet('video:api',input.videoApiKey.trim());
+ if(input.engine&&['comfyui','openai','custom'].includes(input.engine))next.engine=input.engine;
+ if(input.videoApiUrl)next.videoApiUrl=String(input.videoApiUrl).replace(/\/$/,'');
+ if(input.videoModel)next.videoModel=String(input.videoModel);
+ delete next.videoApiKey;
  if(input.comfyDir)next.comfyDir=path.resolve(String(input.comfyDir));
  if(input.workflowDir)next.workflowDir=path.resolve(String(input.workflowDir));
  if(input.outputDir)next.outputDir=path.resolve(String(input.outputDir));
@@ -228,8 +239,58 @@ function workflowFile(name){
  if(!file.startsWith(config.workflowDir+path.sep)||!fs.existsSync(file))throw Error('Workflow file not found');
  return file;
 }
+async function apiRequest(config,pathname,options={}){
+ const response=await fetch(config.videoApiUrl+pathname,{...options,headers:{Authorization:'Bearer '+String(secretGet('video:api')||''),...(options.body?{'Content-Type':'application/json'}:{}),...(options.headers||{})},signal:AbortSignal.timeout(120000)});
+ const text=await response.text();
+ if(!response.ok)throw Error('영상 API '+response.status+': '+text.slice(0,400));
+ try{return JSON.parse(text)}catch{return {}}
+}
+async function startApiVideoJob(input,config){
+ if(!hasSecret('video:api'))throw Error('영상 엔진 API 키를 먼저 등록하세요.');
+ const prompt=String(input.prompt||'').trim();
+ if(!prompt)throw Error('영상 프롬프트를 입력하세요.');
+ const width=Number(input.width)||720,height=Number(input.height)||1280;
+ const seconds=Math.max(1,Math.min(60,Number(input.seconds)||4));
+ const now=new Date(),pad=value=>String(value).padStart(2,'0');
+ const stamp=now.getFullYear()+pad(now.getMonth()+1)+pad(now.getDate())+'-'+pad(now.getHours())+pad(now.getMinutes());
+ const job={id:crypto.randomUUID(),status:'queued',progress:0,engine:config.engine,workflow:'',title:String(input.title||prompt).slice(0,100),prompt:prompt.slice(0,300),width,height,seconds,fps:0,frames:0,seed:0,
+  filenameBase:stamp+'-'+slugify(String(input.title||prompt)),createdAt:new Date().toISOString()};
+ jobs.set(job.id,job);put('video_job',job);
+ try{
+  const created=await apiRequest(config,'/videos',{method:'POST',body:JSON.stringify({model:config.videoModel,prompt,size:width+'x'+height,seconds})});
+  job.remoteId=created.id||'';
+  job.status=created.status==='completed'?'completed':'running';
+  put('video_job',job);
+  if(job.status!=='completed')void pollApiVideoJob(job,config);
+  return job;
+ }catch(error){job.status='failed';job.error=String(error?.message||error);put('video_job',job);throw error;}
+}
+async function pollApiVideoJob(job,config){
+ const started=Date.now();
+ while(Date.now()-started<45*60*1000){
+  await sleep(5000);
+  try{
+   const state=await apiRequest(config,'/videos/'+encodeURIComponent(job.remoteId));
+   const status=String(state.status||'').toLowerCase();
+   if(state.progress!==undefined)job.progress=Number(state.progress)||job.progress;
+   if(status==='failed'||status==='cancelled'){job.status='failed';job.error=state.error?.message||'영상 생성 실패';put('video_job',job);return}
+   if(status==='completed'){
+    const response=await fetch(config.videoApiUrl+'/videos/'+encodeURIComponent(job.remoteId)+'/content',{headers:{Authorization:'Bearer '+String(secretGet('video:api')||'')},signal:AbortSignal.timeout(300000)});
+    if(!response.ok)throw Error('영상 다운로드 HTTP '+response.status);
+    const filename=job.filenameBase+'.mp4';
+    const target=path.join(config.outputDir,filename);
+    await pipeline(Readable.fromWeb(response.body),fs.createWriteStream(target));
+    job.status='completed';job.progress=100;job.filename=filename;job.path=target;job.bytes=fs.statSync(target).size;
+    put('video_job',job);return;
+   }
+   job.status='running';put('video_job',job);
+  }catch(error){job.error=String(error?.message||error);put('video_job',job);}
+ }
+ job.status='failed';job.error='영상 생성 시간 초과';put('video_job',job);
+}
 export async function startVideoJob(input={}){
  const config=videoConfig();ensureDirs(config);
+ if(config.engine!=='comfyui')return startApiVideoJob(input,config);
  const file=workflowFile(input.workflow);
  const raw=JSON.parse(await fsp.readFile(file,'utf8'));
  if(!hasPromptToken(raw))throw Error('이 워크플로에는 {{prompt}} 자리표시자가 없습니다. ComfyUI에서 API 형식으로 저장한 JSON에 {{prompt}}, {{negative}}, {{width}}, {{height}}, {{frames}}, {{fps}}, {{seed}}를 넣어주세요.');
