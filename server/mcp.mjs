@@ -1,4 +1,5 @@
 import path from 'node:path';
+import os from 'node:os';
 import fs from 'node:fs';
 import {all,get,put,remove,log} from './store.mjs';
 import {secretGet,secretSet} from './vault.mjs';
@@ -17,7 +18,27 @@ export function saveMcp(input){
  sessions.delete(id);log('mcp.saved',{id});return v;
 }
 export async function disconnectMcp(id){const old=sessions.get(id);sessions.delete(id);if(old)await old.close().catch(()=>{});}
-export async function deleteMcp(id){await disconnectMcp(id);remove('mcp',id);}
+function removePackageCache(command,args){
+ if(process.platform==='win32')return;
+ if(!/^npx(\.cmd)?$/i.test(String(command||'')))return;
+ const pkg=(args||[]).map(String).find(a=>/^(@[\w.-]+\/)?[\w.-]+$/.test(a)&&!a.startsWith('-'));
+ if(!pkg)return;
+ const base=path.join(os.homedir(),'.npm','_npx');
+ let dirs=[];
+ try{dirs=fs.readdirSync(base,{withFileTypes:true}).filter(d=>d.isDirectory()).map(d=>d.name);}catch{return}
+ for(const dir of dirs){
+  const target=path.join(base,dir,'node_modules',pkg);
+  if(fs.existsSync(target)){
+   try{fs.rmSync(target,{recursive:true,force:true});log('mcp.cache_removed',{pkg,dir});}catch{}
+  }
+ }
+}
+export async function deleteMcp(id){
+ const record=get('mcp',id);
+ await disconnectMcp(id);
+ if(record)removePackageCache(record.command,record.args);
+ remove('mcp',id);
+}
 export function resolveStdioLaunch(record,baseEnv={...process.env}){
  const command=String(record?.command||'');
  const isNpx=process.platform==='win32'?/^npx(\.cmd)?$/i.test(command):command==='npx';

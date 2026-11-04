@@ -3,6 +3,7 @@ import {Check,Clapperboard,ExternalLink,LoaderCircle,Play,Power,RefreshCw,Upload
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
 import {Action,FormField,Headline,Notice,Panel,StateTag,Subheading,useRemote} from '../components/UI'
 import {get,post} from '../api'
+import {t} from '../i18n'
 
 type Workflow={id:string;name:string;bytes:number}
 type VideoJob={id:string;status:string;progress:number;title?:string;prompt:string;width:number;height:number;frames:number;fps:number;seconds?:number;seed:number;error?:string;result?:{file:string;filename:string;url:string}}
@@ -93,9 +94,9 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
   catch(e){setError((e as Error).message)}finally{setUploading(false)}
  }
  return <div className="mx-auto w-full max-w-[1400px] overflow-x-hidden px-5 py-4 sm:px-7 lg:px-6 lg:pb-8">
-  <Headline eyebrow="VIDEO PRODUCTION" title="영상 제작" description="영상 모델(ComfyUI 워크플로)을 선택해 쇼츠를 생성하고 YouTube에 올립니다. 채팅 모델과는 별개입니다." actions={<div className="flex items-center gap-2"><Button variant="secondary" onClick={()=>void connectGoogle()}>YouTube 계정 연동</Button><Button variant="secondary" disabled={refreshing} onClick={async()=>{setRefreshing(true);try{await Promise.allSettled([video.reload(),youtube.reload()])}finally{setRefreshing(false)}}}><RefreshCw size={16} className={refreshing?'animate-spin':''}/> {refreshing?'새로고침 중':'상태 새로고침'}</Button></div>}/>
+  <Headline eyebrow="VIDEO PRODUCTION" title={t('video.title')} description={t('video.description')} actions={<div className="flex items-center gap-2"><Button variant="secondary" onClick={()=>void connectGoogle()}>YouTube 계정 연동</Button><Button variant="secondary" disabled={refreshing} onClick={async()=>{setRefreshing(true);try{await Promise.allSettled([video.reload(),youtube.reload()])}finally{setRefreshing(false)}}}><RefreshCw size={16} className={refreshing?'animate-spin':''}/> {refreshing?t('video.refreshing'):t('video.refresh')}</Button></div>}/>
   {error&&<Notice message={error}/>}
-  <div className="mb-3 flex flex-wrap items-center gap-2"><Button variant={tab==='create'?'primary':'ghost'} onClick={()=>setTab('create')}>영상 생성</Button><Button variant={tab==='settings'?'primary':'ghost'} onClick={()=>setTab('settings')}>설정</Button></div>
+  <div className="mb-3 flex flex-wrap items-center gap-2"><Button variant={tab==='create'?'primary':'ghost'} onClick={()=>setTab('create')}>{t('video.tab.create')}</Button><Button variant={tab==='settings'?'primary':'ghost'} onClick={()=>setTab('settings')}>{t('video.tab.settings')}</Button></div>
   {tab==='settings'&&<>
   <Panel className="mb-4 p-4">
    <div className="flex flex-wrap items-center justify-between gap-3">

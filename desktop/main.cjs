@@ -1,5 +1,5 @@
 'use strict';
-const {app,BrowserWindow,shell,dialog,session,ipcMain} = require('electron');
+const {app,BrowserWindow,shell,dialog,session,ipcMain,Menu,clipboard} = require('electron');
 const {spawn,execFileSync} = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -17,7 +17,14 @@ let window=null,engine=null,quitting=false,enginePort=0,previewWindow=null;
 if(!app.requestSingleInstanceLock()){app.quit();}
 else{
  app.on('second-instance',()=>{window?.restore();window?.focus();});
- app.whenReady().then(start).catch(err=>{
+ app.whenReady().then(()=>{
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+   {role:'appMenu'},{role:'fileMenu'},{role:'editMenu'},
+   {label:'보기',submenu:[{role:'reload',label:'새로고침'},{role:'forceReload',label:'강제 새로고침'},{role:'toggleDevTools',label:'개발자 도구'},{type:'separator'},{role:'resetZoom',label:'확대 초기화'},{role:'zoomIn',label:'확대'},{role:'zoomOut',label:'축소'},{type:'separator'},{role:'togglefullscreen',label:'전체 화면'}]},
+   {role:'windowMenu'}
+  ]));
+  return start();
+ }).catch(err=>{
   const message=String(err?.stack||err);
   if(SMOKE){
    try{if(SMOKE_OUT)fs.writeFileSync(SMOKE_OUT,JSON.stringify({ok:false,error:message,resources:ROOT},null,2));}catch{}
@@ -190,6 +197,10 @@ async function start(){
  window=new BrowserWindow({title:'DOMINION',...(loadWindowBounds()||{width:1340,height:850}),minWidth:740,minHeight:650,backgroundColor:'#f6f8fc',show:false,
    webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true,preload:path.join(__dirname,'preload.cjs')}
  });
+ session.defaultSession.on('will-download',(_event,item)=>{
+  const target=path.join(app.getPath('downloads'),item.getFilename());
+  item.setSavePath(target);
+ });
  session.defaultSession.setPermissionRequestHandler((_webContents,permission,callback)=>{
   callback(permission==='clipboard-sanitized-write');
  });
@@ -208,6 +219,23 @@ async function start(){
    e.preventDefault();
    try{if(new URL(url).protocol==='https:')void shell.openExternal(url)}catch{}
   }
+ });
+ window.webContents.on('context-menu',(_event,params)=>{
+  const items=[];
+  if(params.isEditable){
+   items.push({role:'cut',label:'잘라내기'},{role:'copy',label:'복사'},{role:'paste',label:'붙여넣기'},{type:'separator'},{role:'selectAll',label:'전체 선택'});
+  }else if(params.selectionText){
+   items.push({label:'복사',click:()=>clipboard.writeText(params.selectionText)},{type:'separator'},{role:'selectAll',label:'전체 선택'});
+  }
+  if(params.linkURL){
+   if(items.length)items.push({type:'separator'});
+   items.push({label:'링크 열기',click:()=>{void shell.openExternal(params.linkURL)}});
+   items.push({label:'링크 주소 복사',click:()=>clipboard.writeText(params.linkURL)});
+  }
+  if(params.mediaType==='image'){
+   items.push({label:'이미지 복사',click:()=>window.webContents.copyImageAt(params.x,params.y)});
+  }
+  if(items.length)Menu.buildFromTemplate(items).popup({window});
  });
  window.once('ready-to-show',()=>window.show());
  window.on('close',()=>saveWindowBounds(window));

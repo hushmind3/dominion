@@ -33,25 +33,14 @@ function walkSkillFiles(dir,depth=0,found=[]){
 }
 
 function sourceRoots(){
- const local=process.env.LOCALAPPDATA||path.join(os.homedir(),'AppData','Local');
+ // Only Dominion-owned folders are scanned: no other agent runtime is a skill source.
  const roots=[];
- for(const [dir,label] of [[path.join(DATA,'skills'),'DOMINION'], [path.join(WORKSPACE,'skills'),'워크스페이스'], [path.join(os.homedir(),'.dominion','skills'),'DOMINION 사용자']]){
+ for(const [dir,label] of [[path.join(DATA,'skills'),'DOMINION'],[path.join(WORKSPACE,'skills'),'워크스페이스'],[path.join(os.homedir(),'.dominion','skills'),'DOMINION 사용자']]){
   if(exists(dir))roots.push({dir,source:'DOMINION',label});
  }
- const openclawBase=path.join(local,'OpenClawRuntime');
- for(const entry of safeReaddir(openclawBase)){
-  if(!/^node-v/i.test(entry.name))continue;
-  for(const folder of ['skills','custodian-skills']){
-   const dir=path.join(openclawBase,entry.name,'node_modules','openclaw',folder);
-   if(exists(dir))roots.push({dir,source:'OpenClaw',label:folder});
-  }
- }
+ // Existing installations on this machine (read-only catalog entries, nothing is modified).
  const pluginSkills=path.join(os.homedir(),'.openclaw','plugin-skills');
  if(exists(pluginSkills))roots.push({dir:pluginSkills,source:'OpenClaw plugin',label:'plugin-skills'});
- for(const [folder,label] of [['skills','Hermes'],['optional-skills','Hermes optional']]){
-  const dir=path.join(local,'hermes','hermes-agent',folder);
-  if(exists(dir))roots.push({dir,source:label,label:folder});
- }
  return roots;
 }
 
@@ -163,4 +152,36 @@ export async function importCatalogSkill(id){
  const existing=all('skill').find(skill=>skill.name===name);
  const record=put('skill',{...(existing||{}),id:existing?.id||crypto.randomUUID(),name,instructions,enabled:true,status:'installed',source:'catalog',sourcePath:file,importedAt:new Date().toISOString()});
  return {skill:record,file};
+}
+
+
+// Import skills from any public GitHub repository that follows the SKILL.md convention.
+export async function importSkillsFromRepo(repo,{limit=60}={}){
+ const match=String(repo||'').trim().match(/^(?:https:\/\/github\.com\/)?([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/);
+ if(!match)throw Error('owner/repo 형식으로 입력하세요');
+ const [,owner,name]=match;
+ const headers={'Accept':'application/vnd.github+json','User-Agent':'dominion'};
+ const meta=await fetch(`https://api.github.com/repos/${owner}/${name}`,{headers,signal:AbortSignal.timeout(15000)});
+ if(!meta.ok)throw Error('GitHub 저장소를 찾을 수 없습니다 ('+meta.status+')');
+ const info=await meta.json();
+ const branch=info.default_branch||'main';
+ const tree=await fetch(`https://api.github.com/repos/${owner}/${name}/git/trees/${encodeURIComponent(branch)}?recursive=1`,{headers,signal:AbortSignal.timeout(20000)});
+ if(!tree.ok)throw Error('저장소 트리를 읽을 수 없습니다 ('+tree.status+')');
+ const data=await tree.json();
+ const files=(data.tree||[]).filter(x=>x.type==='blob'&&/SKILL\.md$/i.test(x.path)).slice(0,Math.max(1,Math.min(Number(limit)||60,200)));
+ const added=[];const skipped=[];
+ for(const file of files){
+  try{
+   const raw=await fetch(`https://raw.githubusercontent.com/${owner}/${name}/${branch}/${file.path}`,{signal:AbortSignal.timeout(15000)});
+   if(!raw.ok){skipped.push(file.path);continue}
+   const text=await raw.text();
+   const {meta:front,body}=parseFrontmatter(text);
+   const title=String(front.name||path.posix.basename(path.posix.dirname(file.path))||'').trim().slice(0,80);
+   const instructions=String(body||'').trim().slice(0,12000);
+   if(!title||!instructions){skipped.push(file.path);continue}
+   if(all('skill').some(x=>x.name===title)){skipped.push(file.path);continue}
+   added.push(put('skill',{name:title,instructions,enabled:false,status:'proposed',source:'github:'+owner+'/'+name,sourcePath:file.path}));
+  }catch{skipped.push(file.path)}
+ }
+ return {repo:owner+'/'+name,branch,found:files.length,added:added.length,skills:added.map(x=>({id:x.id,name:x.name})),skipped:skipped.slice(0,20)};
 }

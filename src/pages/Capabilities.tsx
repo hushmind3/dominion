@@ -10,17 +10,13 @@ type Page='models'|'connections'|'extensions'|'memory'
 const families:{id:string;label:string;icon:any;page?:Page}[]=[
  {id:'all',label:'전체',icon:Layers3},
  {id:'channel',label:'메신저',icon:MessageCircle,page:'connections'},
- {id:'model',label:'모델',icon:BrainCircuit,page:'models'},
- {id:'mcp',label:'MCP',icon:Blocks,page:'extensions'},
- {id:'skill',label:'스킬',icon:BookOpenText,page:'extensions'},
- {id:'account',label:'계정 연동',icon:KeyRound,page:'connections'},
  {id:'tool',label:'내장 도구',icon:TerminalSquare,page:'extensions'}
 ]
 export function CapabilitiesPage({navigate}:{navigate:(page:Page)=>void}){
  const data=useRemote<{items:Item[];updatedAt:string}>('/api/capabilities',{items:[],updatedAt:''});
  const channels=useRemote<any[]>('/api/channels',[]);
  const [family,setFamily]=useState('all'),[query,setQuery]=useState(''),[showPlanned,setShowPlanned]=useState(false),[error,setError]=useState(''),[details,setDetails]=useState<Item|null>(null),[result,setResult]=useState<any>(null),[working,setWorking]=useState(false),[channelForm,setChannelForm]=useState<Record<string,string>>({}),[channelBusy,setChannelBusy]=useState(false),[oauthForm,setOauthForm]=useState({clientId:'',clientSecret:''}),[oauthBusy,setOauthBusy]=useState(false),[oauthUrl,setOauthUrl]=useState(''),[refreshing,setRefreshing]=useState(false),[lastRefresh,setLastRefresh]=useState(''),[probe,setProbe]=useState<Record<string,string>>({});
- const visibleItems=data.value.items.filter(item=>item.namespace!=='channel'||item.available||showPlanned);
+ const visibleItems=data.value.items.filter(item=>['channel','tool'].includes(item.namespace)&&(item.namespace!=='channel'||item.available||showPlanned));
  const rows=useMemo(()=>visibleItems.filter(x=>(family==='all'||x.namespace===family)&&[x.name,x.namespace,x.description,x.id].join(' ').toLowerCase().includes(query.toLowerCase())),[data.value.items,family,query,showPlanned]);
  const counts=useMemo(()=>Object.fromEntries(families.map(x=>[x.id,x.id==='all'?visibleItems.length:visibleItems.filter(v=>v.namespace===x.id).length])),[data.value.items,showPlanned]);
  const statusFor=(item:Item)=>{
@@ -75,7 +71,7 @@ export function CapabilitiesPage({navigate}:{navigate:(page:Page)=>void}){
   }catch(e){setError((e as Error).message)}finally{setOauthBusy(false)}
  };
  return <div className="mx-auto w-full max-w-[1320px] px-5 py-4 sm:px-7 lg:px-6 lg:pb-8">
-  <Headline eyebrow="CONNECTION HUB" title="연결 · 채널" description="모델, MCP, 스킬, 메신저, OAuth 계정을 한곳에서 연결하고 실제 상태를 확인합니다." actions={<div className="flex items-center gap-3"><span className="text-[11px] text-[#8A8176]">{lastRefresh?'마지막 갱신 '+lastRefresh:'아직 갱신 전'}</span><Action variant="secondary" disabled={refreshing} onClick={()=>void refreshAll()}><RefreshCw size={16} className={refreshing?'animate-spin':''}/> {refreshing?'갱신 중':'새로고침'}</Action></div>}/>
+  <Headline eyebrow="CONNECTION HUB" title="연결 · 채널" description="메신저 채널과 내장 도구만 이 화면에서 확인합니다. 모델은 모델 관리, MCP·스킬은 MCP·스킬, 계정은 설정에서 다룹니다." actions={<div className="flex items-center gap-3"><span className="text-[11px] text-[#8A8176]">{lastRefresh?'마지막 갱신 '+lastRefresh:'아직 갱신 전'}</span><Action variant="secondary" disabled={refreshing} onClick={()=>void refreshAll()}><RefreshCw size={16} className={refreshing?'animate-spin':''}/> {refreshing?'갱신 중':'새로고침'}</Action></div>}/>
   <Panel className="mb-5 p-4"><Subheading title="실제 연결" extra={<span className="text-[11px] text-[#8A8176]">{channels.value.length}개</span>}/>{channels.value.length?<div className="grid gap-2">{channels.value.map((channel:any)=><div key={channel.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] px-3 py-2.5"><div className="min-w-0"><strong className="text-[12px] text-[#3A342D]">{channel.name}</strong><small className="ml-2 text-[11px] text-[#8A8176]">{channel.kind} · {channel.status}{channel.runtimeError?' · '+channel.runtimeError:''}</small>{probe[channel.id]&&<small className="ml-2 text-[11px] text-[#C96442]">{probe[channel.id]}</small>}</div><div className="flex items-center gap-2"><span className={'size-2 rounded-full '+(channel.status==='connected'?'bg-emerald-500':'bg-[#B8AFA2]')}/><Button size="sm" variant="ghost" onClick={()=>void diagnoseLive(channel.id)}>진단</Button></div></div>)}</div>:<p className="text-[12px] text-[#8A8176]">아직 연결된 채널이 없습니다. 아래 카탈로그에서 사용할 채널을 선택해 설정하세요.</p>}</Panel>
   <div className="mb-5 flex items-center gap-4 rounded-xl border border-[#EED9CC] bg-[#F7E8E1] p-5"><div className="grid size-12 shrink-0 place-items-center rounded-xl bg-[#F1DCCF] text-[#C96442]"><Layers3 size={22}/></div><div><strong>실제 연결과 카탈로그를 구분합니다.</strong><p><b>검증됨</b> = 실제 연결에 성공한 기록이 있음. <b>연결 코드 있음</b> = 코드는 있으나 아직 연결 성공 기록 없음. <b>연결 코드 없음</b> = 코드 자체가 없어 설정할 수 없음. 위쪽은 실제로 저장·실행 중인 연결, 아래는 연결 후보 목록입니다.</p></div></div>
   {data.error&&<Notice message={data.error}/>}
