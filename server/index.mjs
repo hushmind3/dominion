@@ -6,6 +6,7 @@ import {timingSafeEqual} from 'node:crypto';
 import {googleTranslate,pickFolder} from './system-util.mjs';
 import {handleAgentRoutes} from './routes/agents.mjs';
 import {handleVideoRoutes} from './routes/video.mjs';
+import {handleOAuthRoutes} from './routes/oauth.mjs';
 import {fileURLToPath} from 'node:url';
 import {HOST,PORT,ROOT,IS_LOCAL,ADMIN_TOKEN,DATA} from './config.mjs';
 import {capabilityInventory,capabilityExecute} from './capability-sources.mjs';
@@ -80,6 +81,7 @@ async function api(req,res,u){
  const url=u.pathname,method=req.method;
  if(await handleAgentRoutes({url,method,res,json,body}))return;
  if(await handleVideoRoutes({url,method,res,json,body}))return;
+ if(await handleOAuthRoutes({url,method,res,json,body}))return;
  if(url==='/api/health')return json(res,{ok:true,service:'dominion',version:VERSION,date:new Date().toISOString()});
  if(url.match(/^\/api\/oauth\/(github|google)\/callback$/)&&method==='GET'){
   try{
@@ -378,14 +380,6 @@ async function api(req,res,u){
  if(url==='/api/youtube/uploads'&&method==='GET')return json(res,[...youtubeJobs.values()].slice(-20));
  const youtubeJob=url.match(/^\/api\/youtube\/uploads\/([^/]+)$/);
  if(youtubeJob&&method==='GET'){const job=youtubeJobs.get(youtubeJob[1]);return json(res,job||{error:'Upload not found'},job?200:404)}
- if(url==='/api/oauth/providers'&&method==='GET')return json(res,oauthProviders());
- const oauthApp=url.match(/^\/api\/oauth\/providers\/(github|google)$/);
- if(oauthApp&&method==='POST')return json(res,saveOAuthApp(oauthApp[1],await body(req)));
- if(url==='/api/oauth/connections'&&method==='GET')return json(res,connections());
- if(url.match(/^\/api\/oauth\/(github|google)\/start$/)&&method==='GET'){
-  const provider=url.split('/')[3];
-  return json(res,{url:oauthStart(provider,oauthCallbackBase())});
- }
  if(url.match(/^\/api\/connector\/(github|google)\/(repos|me|youtube_channels|youtube_search)$/)&&method==='GET'){
   const [,provider,action]=url.match(/^\/api\/connector\/(github|google)\/([^/]+)$/);
   return json(res,await connectorCall(provider,action));
