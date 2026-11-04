@@ -123,6 +123,7 @@ function applyUpdate(value){
  throw Error('이 플랫폼은 자동 업데이트를 지원하지 않습니다.');
 }
 async function start(){
+ if(window&&!window.isDestroyed()){window.show();window.focus();return;}
  ipcMain.removeHandler('dominion:pick-video');
  ipcMain.handle('dominion:pick-video',async()=>{
   const answer=await dialog.showOpenDialog(window||undefined,{title:'업로드할 영상 선택',properties:['openFile'],filters:[{name:'Video',extensions:['mp4','mov','webm','mkv','avi','m4v']}]});
@@ -160,12 +161,12 @@ async function start(){
  ipcMain.removeHandler('dominion:apply-update');
  ipcMain.handle('dominion:apply-update',async(_event,installer)=>applyUpdate(installer));
  if(!DEV_URL&&!fs.existsSync(path.join(ROOT,'dist','index.html')))throw Error('Missing compiled UI. Run npm run build in the repository root.');
- enginePort=0;
  let origin=DEV_URL?DEV_URL.replace(/\/$/,''):'';
+ if(!DEV_URL&&engine&&!engine.killed&&enginePort)origin='http://127.0.0.1:'+enginePort;
  const data=path.join(app.getPath('userData'),'runtime');
  const workspace=path.join(app.getPath('documents'),'DOMINION Workspace');
  fs.mkdirSync(data,{recursive:true});fs.mkdirSync(workspace,{recursive:true});
- if(!DEV_URL){
+ if(!DEV_URL&&!(engine&&!engine.killed&&enginePort)){
   enginePort=await freePort();
   engine=spawn(process.execPath,[path.join(ROOT,'server/index.mjs')],{
    cwd:ROOT,stdio:['ignore','pipe','pipe'],windowsHide:true,
@@ -240,8 +241,8 @@ async function start(){
  window.once('ready-to-show',()=>window.show());
  window.on('close',()=>saveWindowBounds(window));
  await window.loadURL(origin);
- app.on('activate',()=>{if(BrowserWindow.getAllWindows().length===0)void start();});
 }
+app.on('activate',()=>{if(BrowserWindow.getAllWindows().length===0)void start();else{const w=BrowserWindow.getAllWindows()[0];w.show();w.focus();}});
 app.on('window-all-closed',()=>{if(process.platform!=='darwin')app.quit();});
 let quitStopping=false;
 app.on('before-quit',(event)=>{
