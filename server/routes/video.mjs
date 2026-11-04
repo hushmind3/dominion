@@ -54,5 +54,17 @@ export async function handleVideoRoutes({url,method,res,json,body,req}){
   fs.copyFileSync(source,target);
   return json(res,{ok:true,name:path.basename(target),workflows:videoWorkflows()});
  }
+
+ if(url==='/api/video/models/import'&&method==='POST'){
+  const input=await body(req);
+  const source=String(input.source||'');
+  const config=videoConfig();
+  if(!source||!fs.existsSync(source))throw Error('업로드된 파일을 찾을 수 없습니다');
+  const dir=path.join(config.comfyDir,'models');
+  fs.mkdirSync(dir,{recursive:true});
+  const name=path.basename(source);
+  fs.copyFileSync(source,path.join(dir,name));
+  return json(res,{ok:true,name});
+ }
  return false;
 }

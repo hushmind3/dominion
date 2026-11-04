@@ -185,7 +185,19 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
      {dlJob&&<div className="mt-2 rounded-lg border border-[#E7E0D5] bg-[#FFFDF9] p-2 text-[10px] text-[#5C544A]"><div className="flex justify-between"><span className="truncate">{dlJob.name}</span><span>{dlJob.status==='completed'?'완료':dlJob.status==='failed'?'실패':Math.round((dlJob.downloaded||0)/Math.max(1,dlJob.total||1)*100)+'%'}</span></div>{dlJob.status==='downloading'&&<div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[#F3EEE5]"><div className="h-full bg-[#C96442]" style={{width:Math.max(2,Math.round((dlJob.downloaded||0)/Math.max(1,dlJob.total||1)*100))+'%'}}/></div>}{dlJob.error&&<p className="text-rose-600">{dlJob.error}</p>}</div>}
      {!hf.length&&!hfBusy&&<p className="mt-2 text-[10px] text-[#8A8176]">검색하면 영상 모델만 표시됩니다. 받은 모델은 ComfyUI/models 폴더에 넣으세요.</p>}
     </div>
-    <div className="mt-3 flex flex-wrap gap-2"><Button variant="secondary" onClick={()=>void openModels()}>모델 폴더 열기</Button><Button variant="ghost" onClick={()=>void video.reload()}>다시 확인</Button></div>
+    <div className="mt-3 flex flex-wrap gap-2"><label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-[#E1D9CC] bg-[#FFFDF9] px-3 py-2 text-[12px] font-semibold text-[#3A342D] hover:bg-[#F7F2EA]">
+          모델 파일 열기
+          <input type="file" className="hidden" multiple accept=".safetensors,.gguf,.ckpt,.pt,.bin" onChange={async(e)=>{
+            const files=Array.from(e.target.files||[]);
+            for(const file of files){
+              try{
+                const up=await fetch('/api/upload?name='+encodeURIComponent(file.name),{method:'POST',body:file}).then(r=>r.json());
+                await post('/api/video/models/import',{source:up.path});
+              }catch(err){setError((err as Error).message)}
+            }
+            await video.reload();
+          }}/>
+        </label><Button variant="ghost" onClick={()=>void video.reload()}>다시 확인</Button></div>
     </Panel></>}
 
    </div>

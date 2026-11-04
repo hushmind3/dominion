@@ -138,7 +138,7 @@ export function openWorkflowFolder(){
  const dir=videoConfig().workflowDir;
  fs.mkdirSync(dir,{recursive:true});
  if(process.platform==='win32')revealInShell([dir]);
- else if(process.platform==='darwin')spawn('open',['-a','Finder',dir],{detached:true,stdio:'ignore'}).unref();
+ else if(process.platform==='darwin')execFile('osascript',['-e','tell application "Finder" to open POSIX file "'+dir+'"; activate'],()=>{});
  else spawn('xdg-open',[dir],{detached:true,stdio:'ignore'}).unref();
  return {ok:true,path:dir};
 }
@@ -146,7 +146,7 @@ export function openModelFolder(){
  const models=path.join(videoConfig().comfyDir,'models');
  fs.mkdirSync(models,{recursive:true});
  if(process.platform==='win32')revealInShell([models]);
- else if(process.platform==='darwin')spawn('open',['-a','Finder',models],{detached:true,stdio:'ignore'}).unref();
+ else if(process.platform==='darwin')execFile('osascript',['-e','tell application "Finder" to open POSIX file "'+models+'"; activate'],()=>{});
  else spawn('xdg-open',[models],{detached:true,stdio:'ignore'}).unref();
  return {ok:true,path:models};
 }
