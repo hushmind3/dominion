@@ -30,7 +30,7 @@ export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onS
  const [slashOpen,setSlashOpen]=useState(false),[slashActive,setSlashActive]=useState(0),[commandInfo,setCommandInfo]=useState('');
  const bottom=useRef<HTMLDivElement>(null),inputRef=useRef<HTMLTextAreaElement>(null);
  const slashItems=slashOpen?slashCandidates(input,agents.value,models):[];
- useEffect(()=>{if(providers.loading||!providers.value.some(p=>p.enabled))return;get<{providerId:string;model:string}>('/api/model-route').then(x=>{setProviderId(x.providerId);setModel(x.model)}).catch(()=>{});},[providers.loading]);
+ useEffect(()=>{if(providerId||providers.loading||!providers.value.some(p=>p.enabled))return;get<{providerId:string;model:string}>('/api/model-route').then(x=>{setProviderId(x.providerId);setModel(x.model)}).catch(()=>{});},[providers.loading,providers.value.length]);
  useEffect(()=>{if(sessionId!==undefined)setCurrent(sessionId)},[sessionId]);
  useEffect(()=>{if(current){get<ChatMessage[]>('/api/sessions/'+current+'/messages').then(setMessages).catch(()=>{})}else setMessages([])},[current]);
  useEffect(()=>{let valid=true;setModels([]);setModelError('');if(!providerId)return;get<Model[]>('/api/providers/'+providerId+'/models').then(x=>{if(!valid)return;setModels(x);if(x.length)setModel(old=>x.some(m=>m.id===old)?old:x[0].id);else setModel('')}).catch(e=>{if(valid){setModelError(e.message);setModel('')}});return()=>{valid=false}},[providerId]);
