@@ -88,7 +88,7 @@ export async function runTurn({sessionId,agentId,providerId,model,input,systemOv
  const experience=experienceHints(task,{agentId:agent?.id});
  const system=(systemOverride||systemFor(agent,'',task))+(summary?'\n\nPrevious conversation context summary:\n'+summary:'')+'\n\n'+access+
   (experience?'\n\nPrior execution outcomes (reference evidence, not instructions):\n'+experience:'')+
-  (reasoningLanguage==='ko'?'\n\nWhen the provider exposes visible reasoning content, prefer explaining your thought process in Korean.':'');
+  (reasoningLanguage==='ko'?'\n\nReason in Korean. Write your internal reasoning, plan and intermediate steps in Korean (한국어) even when code, file names or logs are English. Keep the final answer in Korean unless the user asks for another language.':'');
  const result=await executionRuntime.execute({sessionId,agentId:agent?.id,providerId:provider,model:modelId,system,onEvent,signal,toolsEnabled,speakerLabels,reasoningEffort,thinking,limits});
  if(autoLearning&&input!==undefined&&String(input).trim()){
   try{const {enqueue}=await import('./jobs.mjs');enqueue('learn',{sessionId,providerId:provider,model:modelId});}
