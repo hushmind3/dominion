@@ -396,31 +396,48 @@ export function AgentsPage() {
                   placeholder="별칭1, 별칭2"
                 />
               </FormField>
-              <FormField label="프로필 이미지" hint="PNG/JPEG/WebP · 저장 후 카드에 표시됩니다">
+              <FormField label="프로필 이미지" hint="PNG/JPEG/WebP · 카드에 표시됩니다">
                 <div className="flex items-center gap-3">
+                  <div className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-xl border border-[#E7E0D5] bg-[#FAF7F1]">
+                    {edit.avatar ? (
+                      <img src={edit.avatar} alt="" className="size-14 object-cover" />
+                    ) : (
+                      <Bot size={22} className="text-[#C96442]" />
+                    )}
+                  </div>
+                  <label className="cursor-pointer rounded-xl border border-[#E1D9CC] bg-[#FFFDF9] px-3 py-2 text-[12px] font-semibold text-[#3A342D] hover:bg-[#F7F2EA]">
+                    이미지 선택
+                    <input
+                      type="file"
+                      className="hidden"
+                      accept="image/png,image/jpeg,image/webp"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                          const image = String(reader.result || "");
+                          if (!edit.id) {
+                            setEdit({ ...edit, avatar: image });
+                            return;
+                          }
+                          void post("/api/agents/" + edit.id + "/avatar", { image })
+                            .then((r: any) => setEdit({ ...edit, avatar: r.avatar }))
+                            .catch((err: any) => setError(err.message));
+                        };
+                        reader.readAsDataURL(file);
+                      }}
+                    />
+                  </label>
                   {edit.avatar && (
-                    <img src={edit.avatar} alt="" className="size-12 rounded-xl object-cover" />
+                    <Button
+                      variant="ghost"
+                      className="!px-2 !text-[11px] text-[#A94E30]"
+                      onClick={() => setEdit({ ...edit, avatar: "" })}
+                    >
+                      제거
+                    </Button>
                   )}
-                  <input
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-                      const reader = new FileReader();
-                      reader.onload = () => {
-                        const image = String(reader.result || "");
-                        if (!edit.id) {
-                          setEdit({ ...edit, avatar: image });
-                          return;
-                        }
-                        void post("/api/agents/" + edit.id + "/avatar", { image })
-                          .then((r: any) => setEdit({ ...edit, avatar: r.avatar }))
-                          .catch((err: any) => setError(err.message));
-                      };
-                      reader.readAsDataURL(file);
-                    }}
-                  />
                 </div>
               </FormField>
               <FormField label="시스템 프롬프트">
