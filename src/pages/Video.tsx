@@ -166,7 +166,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
      </div>
     </Panel>}
     {tab==='settings'&&<><Panel className="min-w-0 p-5"><Subheading title="영상 모델 · 워크플로" extra={<span className="text-[11px] text-[#8A8176]">{video.value.workflows.length}개</span>}/><p className="mb-2 text-[11px] leading-5 text-[#5C544A]">워크플로는 <b>영상을 만드는 순서를 적은 설계도 파일(.json)</b>입니다. ComfyUI에서 노드를 연결해 만든 뒤 <b>Save (API Format)</b>으로 저장하면 생깁니다.</p><SelectInput value={workflow} onChange={e=>setWorkflow(e.target.value)}>{video.value.workflows.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</SelectInput>{!video.value.workflows.length&&<p className="mt-2 text-[11px] text-[#8A8176]">워크플로 JSON을 폴더에 넣으면 여기에 나타납니다.</p>}</Panel>
-    <Panel className="min-w-0 p-5">
+    {engine==='comfyui'&&<Panel className="min-w-0 p-5">
      <Subheading title="영상 모델 파일" extra={<StateTag online={Boolean(video.value.modelsReady)}>{video.value.modelsReady?'준비됨':(video.value.models||[]).length?'확인 필요':'워크플로 필요'}</StateTag>}/>
      <p className="text-[11px] leading-5 text-[#5C544A]">ComfyUI가 아래 폴더의 모델 파일을 자동으로 인식합니다. 워크플로가 참조하는 파일 이름과 같아야 합니다.</p>
      <code className="mt-2 block break-all rounded-lg bg-[#FAF7F1] p-2 text-[11px] text-[#A94E30]">{prettyPath((video.value.config.comfyDir||'~/ComfyUI').replace(/\\+$/,'')+'/models')}</code>
@@ -198,7 +198,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
             await video.reload();
           }}/>
         </label><Button variant="ghost" onClick={()=>void video.reload()}>다시 확인</Button></div>
-    </Panel></>}
+    </Panel>}</>}
 
    </div>
    {tab==='create'&&<div className="grid min-w-0 content-start gap-4">
