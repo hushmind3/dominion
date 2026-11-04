@@ -34,7 +34,14 @@ export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onS
  useEffect(()=>{if(sessionId!==undefined)setCurrent(sessionId)},[sessionId]);
  useEffect(()=>{if(current){get<ChatMessage[]>('/api/sessions/'+current+'/messages').then(setMessages).catch(()=>{})}else setMessages([])},[current]);
  useEffect(()=>{let valid=true;setModels([]);setModelError('');if(!providerId)return;get<Model[]>('/api/providers/'+providerId+'/models').then(x=>{if(!valid)return;setModels(x);if(x.length)setModel(old=>x.some(m=>m.id===old)?old:x[0].id);else setModel('')}).catch(e=>{if(valid){setModelError(e.message);setModel('')}});return()=>{valid=false}},[providerId]);
- useEffect(()=>{bottom.current?.scrollIntoView({behavior:'smooth',block:'end'})},[messages,live,thought,toolStatus]);
+ useEffect(()=>{
+  const el=document.querySelector('[data-chat-scroll]') as HTMLElement|null;
+  if(el){
+    const nearBottom=el.scrollHeight-el.scrollTop-el.clientHeight<120;
+    if(!nearBottom)return;
+  }
+  bottom.current?.scrollIntoView({behavior:'auto',block:'end'});
+},[messages,live,thought,toolStatus]);
  useEffect(()=>{if(window.innerWidth<768)return;try{localStorage.setItem('dominion.chat.sidebar',showHistory?'1':'0')}catch{}},[showHistory]);
  useEffect(()=>{get<{autoApprove?:string[];autoApproveAll?:boolean}>('/api/policy').then(p=>{
   setPermissionMode(p.autoApproveAll?'full':(p.autoApprove||[]).includes('workspace_write')?'workspace':'request')
@@ -280,7 +287,7 @@ export function ChatPage({sessionId,onSession,openModels}:{sessionId?:string;onS
      <Button size="icon" variant="ghost" title="모델 관리" onClick={openModels}><Cpu size={18}/></Button>
     </div>
    </header>
-   <div className="min-h-0 flex-1 overflow-y-auto scroll-smooth">{!messages.length&&!busy?<div className="mx-auto flex min-h-full max-w-xl flex-col justify-center px-5 py-8">
+   <div data-chat-scroll className="min-h-0 flex-1 overflow-y-auto">{!messages.length&&!busy?<div className="mx-auto flex min-h-full max-w-xl flex-col justify-center px-5 py-8">
     <div className="mb-6 flex items-center gap-3"><span className="grid size-11 place-items-center rounded-2xl bg-[#F7E8E1] text-[#C96442]"><Sparkles size={22}/></span><div><h1 className="text-[24px] font-bold tracking-[-.03em] text-[#24211D]">새 대화</h1><p className="mt-1 text-[13px] text-[#8A8176]">질문하거나 컴퓨터에서 실행할 작업을 지시하세요.</p></div></div>
     <div className="rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-5"><div className="mb-2 text-[11px] font-semibold text-[#8A8176]">예시 명령</div>{['현재 폴더의 파일 목록을 보여줘','작업공간에 README.md 파일을 만들어줘','새 프로젝트의 구조를 설계해줘'].map(t=><Button type="button" key={t} onClick={()=>{setInput(t);inputRef.current?.focus()}} className="flex w-full items-center justify-between border-t border-[#eef1f5] px-2 py-3 text-left text-[12px] text-[#4d5d73] hover:bg-[#FFFDF9]">{t}<ArrowRight size={14} className="shrink-0 text-[#9C9388]"/></Button>)}</div>
     {!model&&<Button type="button" onClick={openModels} className="mt-4 inline-flex items-center gap-2 self-start text-[12px] font-semibold text-[#5574d7]"><Compass size={15}/> 모델을 먼저 연결하기 <ArrowRight size={14}/></Button>}
