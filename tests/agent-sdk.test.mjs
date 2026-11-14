@@ -111,3 +111,36 @@ test('run rejects missing prompts and unknown sessions',async()=>{
  await assert.rejects(thread.run(''),/nonempty/);
  assert.throws(()=>f.sdk.resumeThread('missing'),/not found/);
 });
+
+test('SDK tasks use the real host goal lifecycle and persistent event API',()=>{
+ const f=fixture(),host=f.sdk.host,store=new Map(),queued=[];
+ host.createGoal=input=>{
+  const row={id:'goal-1',goal:input.goal,status:'queued'};store.set(row.id,row);return row;
+ };
+ host.getGoal=id=>store.get(id);
+ host.listGoals=()=>[...store.values()];
+ host.getGoalEvents=id=>[{runId:id,type:'workflow.queued'}];
+ host.enqueue=(kind,input)=>{queued.push({kind,input});return {id:'job-'+queued.length};};
+ host.resumeGoal=id=>{const row={...store.get(id),status:'queued'};store.set(id,row);return row;};
+ host.cancelGoal=id=>{const row={...store.get(id),status:'cancelled'};store.set(id,row);return row;};
+ const task=f.sdk.startTask({goal:'Implement and verify software'});
+ assert.equal(task.id,'goal-1');
+ assert.equal(task.jobId,'job-1');
+ assert.equal(task.snapshot().status,'queued');
+ assert.equal(task.events()[0].type,'workflow.queued');
+ assert.equal(f.sdk.listTasks()[0].id,'goal-1');
+ const resumed=f.sdk.resumeTask('goal-1');
+ resumed.resume();
+ assert.equal(queued.length,2);
+ assert.equal(resumed.cancel().status,'cancelled');
+ assert.equal(resumed.snapshot().status,'cancelled');
+});
+test('thread option persistence excludes unexpected credentials and metadata',()=>{
+ const f=fixture();
+ const thread=f.sdk.startThread({agentId:'manager',apiKey:'NOT_FOR_SQLITE',
+  extraSensitiveProperty:'PRIVATE',delegates:['researcher']});
+ const row=f.sessions.get(thread.id);
+ assert.equal(row.sdkOptions.apiKey,undefined);
+ assert.equal(row.sdkOptions.extraSensitiveProperty,undefined);
+ assert.equal(row.sdkOptions.delegates[0],'researcher');
+});
