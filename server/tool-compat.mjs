@@ -4,7 +4,13 @@ const isObject=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
 const builtins=new Set(['workspace_list','workspace_read','workspace_write','file_list','file_read','file_write','shell_exec','terminal_exec','web_search','http_fetch','account_status','github_api','youtube_search','youtube_channels','youtube_upload','memory_store','memory_search','skill_propose']);
 const discover={name:'tool_discover',description:'Find available tools, including connected MCP integrations',parameters:{type:'object',properties:{query:{type:'string',description:'What to search for'}},required:['query']}};
 const schema=t=>({name:t.name,description:clip(t.description||'',125),arguments:Object.fromEntries(Object.entries(t.parameters?.properties||{}).map(([key,value])=>[key,clip(value.description||value.type||'',80)])),required:t.parameters?.required||[]});
-export const selectCompatTools=(tools=[],extra=[])=>[discover,...tools.filter(t=>builtins.has(t.name)||extra.includes(t.name))].slice(0,18);
+// Custom SDK tools and dynamically discovered MCP tools must not disappear behind
+// the fixed built-in list when a small local model uses the text-action protocol.
+export const selectCompatTools=(tools=[],extra=[])=>{
+ const priority=tools.filter(t=>extra.includes(t.name));
+ const baseline=tools.filter(t=>builtins.has(t.name)&&!extra.includes(t.name));
+ return [discover,...priority,...baseline].slice(0,18);
+};
 export function discoverCompatibleTools(tools=[],query=''){
  const words=String(query).toLowerCase().split(/\s+/).filter(Boolean);
  const sorted=tools.map(t=>({t,score:words.reduce((s,w)=>s+(t.name.toLowerCase().includes(w)?3:0)+((t.description||'').toLowerCase().includes(w)?1:0),0)})).sort((a,b)=>b.score-a.score);
