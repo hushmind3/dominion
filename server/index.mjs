@@ -5,6 +5,7 @@ import path from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import { googleTranslate, pickFolder } from "./system-util.mjs";
 import { handleAgentRoutes } from "./routes/agents.mjs";
+import { handleRsiRoutes } from "./routes/rsi.mjs";
 import { handleVideoRoutes } from "./routes/video.mjs";
 import { handleOAuthRoutes } from "./routes/oauth.mjs";
 import { handleExtensionRoutes } from "./routes/extensions.mjs";
@@ -292,6 +293,7 @@ async function api(req, res, u) {
       { error: "Unauthorized. Set X-Dominion-Token or use local origin." },
       401,
     );
+  if (await handleRsiRoutes({ url, method, res, json, body, req })) return;
   if (url === "/api/capabilities" && method === "GET") {
     const family = u.searchParams.get("family") || undefined;
     return json(res, {
