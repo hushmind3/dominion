@@ -3,6 +3,7 @@ import {Check,Code2,Eye,GitCommit,Hammer,Package,Play,RefreshCw,Square,Terminal,
 import {Button,TextInput} from '../components/Primitives'
 import {Action,FormField,Headline,Notice,Panel,StateTag,Subheading,useRemote} from '../components/UI'
 import {get,post} from '../api'
+import {RsiPanel} from '../components/RsiPanel'
 
 type DevStatus={
  config:{sourceDir:string;repoUrl:string;branch:string;previewPort:number};
@@ -78,6 +79,7 @@ export function DeveloperPage(){
   <Headline eyebrow="SELF DEVELOPMENT" title="소스 개발 스튜디오 v0.2.9" description="설치된 앱과 분리된 Git 소스 작업공간에서 UI·엔진을 수정하고, 테스트·빌드·미리보기·설치본 업데이트까지 실행하는 자기 개발 스튜디오입니다." actions={<Button variant="secondary" onClick={()=>{void status.reload();void loadDiff()}}><RefreshCw size={16}/> 상태 새로고침</Button>}/>
   {error&&<Notice message={error}/>}
   {message&&<div className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><Check size={16}/>{message}</div>}
+  <RsiPanel/>
   <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
    <div className="grid min-w-0 gap-4">
     <Panel className="min-w-0 p-5">
