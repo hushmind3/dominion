@@ -26,6 +26,20 @@ for await (const event of events) console.log(event.type,event);
 
 `run()` returns `{threadId,runId,finalResponse,items,usage}`; `runStreamed()` returns `{events:AsyncGenerator}`. Cancellation uses `AbortSignal` or `thread.cancel()`. Tools are real: a finished answer is not evidence of a successful file write.
 
+Long-running, verified tasks use the existing durable goal harness, not a separate vendor agent:
+
+```js
+const task=dominionSdk.startTask({
+  goal:'Implement the requested project change and verify the deliverable',
+  budget:{maxSteps:8,maxRepairs:2,maxModelCalls:36}
+});
+console.log(task.id,task.jobId,task.snapshot(),task.events());
+const restored=dominionSdk.resumeTask(task.id);
+// Resume only after reviewing a needs_review state:
+// restored.resume();
+// restored.cancel();
+```
+
 SDK developers can register real tools without altering the model provider interface:
 
 ```js
@@ -42,7 +56,13 @@ Registered tools enter the SAME execution loop and tool-call ledger. New SDK too
 ## Authenticated local HTTP access
 
 ```text
-GET  /api/sdk/status\nGET  /api/sdk/tasks\nPOST /api/sdk/tasks                        {goal,planner,executor,reviewer,budget}\nGET  /api/sdk/tasks/:id\nGET  /api/sdk/tasks/:id/events\nPOST /api/sdk/tasks/:id/resume\nPOST /api/sdk/tasks/:id/cancel
+GET  /api/sdk/status
+GET  /api/sdk/tasks
+POST /api/sdk/tasks                        {goal,planner,executor,reviewer,budget}
+GET  /api/sdk/tasks/:id
+GET  /api/sdk/tasks/:id/events
+POST /api/sdk/tasks/:id/resume
+POST /api/sdk/tasks/:id/cancel
 GET  /api/sdk/threads
 POST /api/sdk/threads                      {agentId,providerId,model,delegates,limits}
 GET  /api/sdk/threads/:id
