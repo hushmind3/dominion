@@ -1,4 +1,5 @@
 import {buildCompatMessages,parseCompatAction,discoverCompatibleTools,likelyRequiresTools,requestedToolEffect,successfulToolEvidence,validateToolArguments} from './tool-compat.mjs';
+import {executeToolBatch} from './tool-scheduler.mjs';
 // Shared runtime for chat, agents, meetings and workflows.
 // A workflow may call this runtime, but the runtime knows nothing about goals or plans.
 const clamp=(n,min,max,fallback)=>Number.isFinite(Number(n))?Math.max(min,Math.min(max,Math.trunc(Number(n)))):fallback;
@@ -113,16 +114,21 @@ export class ExecutionRuntime {
         onEvent({type:'assistant_saved',message:assistant,usage:reply.usage,runId});
         emit('runtime.model_finished',{iteration:iteration+1,toolCalls:reply.tool_calls?.length||0,toolMode});
         if(!reply.tool_calls?.length){run.status='completed';emit('runtime.completed');onEvent({type:'done',sessionId,usage:reply.usage,runId});return assistant;}
-        for(const [index,call] of reply.tool_calls.entries()){
+        // One model response can request several tools. Run independent reads concurrently;
+        // enforce a barrier around writes, shell commands and unknown/MCP effects.
+        // Preserve tool_call_id and persist outputs in the model's declared order.
+        if(run.toolCalls+reply.tool_calls.length>maxToolCalls)
+          throw Object.assign(Error('Tool call limit exceeded'),{code:'BUDGET'});
+        const batch=await executeToolBatch(reply.tool_calls,async(call,index)=>{
           check();
-          if(run.toolCalls>=maxToolCalls)throw Object.assign(Error('Tool call limit exceeded'),{code:'BUDGET'});
           const callId=call.id||runId+':'+iteration+':'+index;
           const tool=compatTools.find(x=>x.name===call.function?.name);
-          this.saveOperation({id:runId+':'+callId,runId,sessionId,callId,tool:call.function?.name||'',status:'started',startedAt:new Date().toISOString()});
-          emit('runtime.tool_started',{name:call.function?.name,callId});
+          const name=call.function?.name||'';
+          this.saveOperation({id:runId+':'+callId,runId,sessionId,callId,tool:name,status:'started',startedAt:new Date().toISOString()});
+          emit('runtime.tool_started',{name,callId});
           let output;
           try{
-            if(!tool)throw Error('Tool not enabled: '+call.function?.name);
+            if(!tool)throw Error('Tool not enabled: '+name);
             const args=JSON.parse(call.function?.arguments||'{}');
             const argumentError=validateToolArguments(tool,args);
             if(argumentError)throw Error('Invalid tool arguments: '+argumentError);
@@ -132,25 +138,31 @@ export class ExecutionRuntime {
               for(const result of output.tools)if(!extraTools.includes(result.name))extraTools.push(result.name);
             }else output=await this.invokeTool(tool,args,onEvent,{signal:controller.signal,runId,callId});
             const succeeded=successfulToolEvidence(tool.name,output);
-            this.saveOperation({id:runId+':'+callId,runId,sessionId,callId,tool:tool.name,status:succeeded?'completed':'failed',reason:succeeded?'':'Tool returned an unsuccessful result',finishedAt:new Date().toISOString()});
+            this.saveOperation({id:runId+':'+callId,runId,sessionId,callId,tool:tool.name,
+              status:succeeded?'completed':'failed',reason:succeeded?'':'Tool returned an unsuccessful result',finishedAt:new Date().toISOString()});
             if(succeeded)onEvent({type:'tool_end',name:tool.name,callId,result:output});
             else onEvent({type:'tool_error',name:tool.name,callId,error:'Tool returned an unsuccessful result'});
           }catch(error){
             const message=String(error?.message||error);
             output={error:message};
-            this.saveOperation({id:runId+':'+callId,runId,sessionId,callId,tool:call.function?.name||'',status:controller.signal.aborted?'uncertain':'failed',reason:message,finishedAt:new Date().toISOString()});
-            onEvent({type:'tool_error',name:call.function?.name,callId,error:message});
+            this.saveOperation({id:runId+':'+callId,runId,sessionId,callId,tool:name,
+              status:controller.signal.aborted?'uncertain':'failed',reason:message,finishedAt:new Date().toISOString()});
+            onEvent({type:'tool_error',name,callId,error:message});
           }
+          return {callId,name,tool,output};
+        },{signal:controller.signal,maxReadConcurrency:clamp(limits.maxParallelReadTools,1,16,4)});
+        for(const {callId,name,tool,output} of batch){
+          // Cancellation can race with an already finished external tool. Persist
+          // each returned result; never silently retry uncertain side effects.
           if(successfulToolEvidence(tool?.name,output,requiredEffect))successfulWork++;
-          // Store tool output even if cancellation arrives just after the call completes.
           this.saveMessage({session_id:sessionId,role:'tool',tool_call_id:callId,
             content:typeof output==='string'?output:JSON.stringify(output).slice(0,30000)});
-          toolOutcomes.push({name:call.function?.name||'',status:successfulToolEvidence(tool?.name,output)?'completed':'failed'});
-
+          const succeeded=successfulToolEvidence(tool?.name,output);
+          toolOutcomes.push({name,status:succeeded?'completed':'failed'});
           run.toolCalls++;
-          emit('runtime.tool_finished',{name:call.function?.name,callId,error:!successfulToolEvidence(tool?.name,output)});
-          check();
+          emit('runtime.tool_finished',{name,callId,error:!succeeded});
         }
+        check();
       }
       throw Object.assign(Error('Model iteration limit reached'),{code:'LIMIT'});
     }catch(error){
