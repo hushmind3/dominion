@@ -110,7 +110,9 @@ async function frozenDigest(dir){
 async function evaluate(dir,mode,seconds,signal){
  const npm=path.join(dir,'node_modules','npm','bin','npm-cli.js');
  if(mode==='npm-test')await fs.access(npm);
- const args=mode==='npm-test'?[npm,'test']:['--test','tests'];
+ const testFiles=(await fs.readdir(path.join(dir,'tests'))).filter(name=>name.endsWith('.test.mjs')).sort().map(name=>'tests/'+name);
+ if(mode==='node-tests'&&!testFiles.length)throw error('No frozen Node test files found');
+ const args=mode==='npm-test'?[npm,'test']:['--test','--test-concurrency=1',...testFiles];
  const out=await command(process.execPath,args,dir,{signal,timeoutMs:seconds*1000});
  return {passed:out.code===0,exitCode:out.code,output:redact(out.stdout+'\n'+out.stderr)};
 }
