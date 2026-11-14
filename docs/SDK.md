@@ -42,7 +42,7 @@ Registered tools enter the SAME execution loop and tool-call ledger. New SDK too
 ## Authenticated local HTTP access
 
 ```text
-GET  /api/sdk/status
+GET  /api/sdk/status\nGET  /api/sdk/tasks\nPOST /api/sdk/tasks                        {goal,planner,executor,reviewer,budget}\nGET  /api/sdk/tasks/:id\nGET  /api/sdk/tasks/:id/events\nPOST /api/sdk/tasks/:id/resume\nPOST /api/sdk/tasks/:id/cancel
 GET  /api/sdk/threads
 POST /api/sdk/threads                      {agentId,providerId,model,delegates,limits}
 GET  /api/sdk/threads/:id
