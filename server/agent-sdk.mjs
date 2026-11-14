@@ -116,14 +116,17 @@ export class DominionSDK {
 
 function normalizeOptions(input={}){
   required(plainObject(input),'Thread options must be an object');
-  const opts={...input,
+  // Persist only serializable, public execution options. In particular an API key,
+  // arbitrary request metadata or a function handler must never enter SQLite.
+  const opts={
     agentId:text(input.agentId),providerId:text(input.providerId),model:text(input.model),
     title:text(input.title),depth:bounded(input.depth,0,6),
     maxDelegateDepth:bounded(input.maxDelegateDepth,2,6),
     maxDelegations:bounded(input.maxDelegations,4,12),
     delegates:Array.isArray(input.delegates)?[...new Set(input.delegates.filter(x=>typeof x==='string'))].slice(0,24):[],
     toolNames:Array.isArray(input.toolNames)?[...new Set(input.toolNames.filter(x=>typeof x==='string'))].slice(0,64):[],
-    toolsEnabled:input.toolsEnabled!==false,limits:plainObject(input.limits)?input.limits:{}
+    toolsEnabled:input.toolsEnabled!==false,limits:plainObject(input.limits)?input.limits:{},
+    parentSessionId:text(input.parentSessionId),parentRunId:text(input.parentRunId)
   };
   return opts;
 }
