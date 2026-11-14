@@ -53,6 +53,9 @@ export const builtin=[
 ];
 // SQLite stores the approval ledger; in-memory promises only wake live requests.
 const pending=new Map();
+export async function approveCustomTool(tool,args,onEvent=()=>{},context={}){
+ return allowed(tool,args,onEvent,context.signal,context);
+}
 export const approvals=()=>all('approval').filter(x=>x.status==='pending'||x.status==='interrupted');
 export function recoverApprovals(){
  for(const record of all('approval').filter(x=>x.status==='pending')){
