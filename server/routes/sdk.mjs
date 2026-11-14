@@ -9,7 +9,7 @@ export async function handleSdkRoutes({url,method,req,res,json,body}){
   return true;
  }
  if(url==='/api/sdk/tasks'){
-  if(method==='GET'){json(res,all('job').filter(x=>x.kind==='goal').slice(0,100));return true;}
+  if(method==='GET'){json(res,dominionSdk.listTasks());return true;}
   if(method==='POST'){
    const task=dominionSdk.startTask(await body(req));
    json(res,{id:task.id,jobId:task.jobId,status:task.snapshot()?.status},201);return true;
