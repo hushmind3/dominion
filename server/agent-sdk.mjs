@@ -99,7 +99,8 @@ export class DominionSDK {
             const result=await child.run(prompt,{signal:callContext.signal,limits:{
               maxIterations:Math.min(8,opts.limits.maxIterations||8),
               maxToolCalls:Math.min(32,opts.limits.maxToolCalls||32)
-            }});
+            },onEvent:event=>onEvent({type:'sdk.delegate.event',parentSessionId:thread.id,
+              childSessionId:child.id,agentId:target.id,event})});
             onEvent({type:'sdk.delegate.completed',childSessionId:child.id,agentId:target.id,runId:result.runId});
             return {agentId:target.id,childSessionId:child.id,runId:result.runId,
               finalResponse:result.finalResponse};
