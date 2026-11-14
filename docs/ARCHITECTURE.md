@@ -42,7 +42,7 @@
 - `server/execution-runtime.mjs`: 범용 실행 루프, 모델/도구 실행, 예산, 취소, 런타임 상태 체크포인트, 호출별 실행 장부. 특정 작업 유형을 알지 않는다.
 - `server/engine.mjs`: 채팅/에이전트/회의실 진입점. 모든 모델 턴을 공통 Runtime에 위임하며 세션 중복 실행을 방지한다.
 - `server/jobs.mjs`: persistent job queue, recovery, 일정 반복.
-- `server/agent-sdk.mjs`, `server/native-sdk.mjs`, `server/routes/sdk.mjs`: 런타임 독립형 공개 SDK API, 영속 thread, 이벤트 스트리밍, 사용자 도구, 위임 하위 에이전트 및 인증된 HTTP/SSE 경로. [SDK 구조](SDK.md).
+- `server/agent-sdk.mjs`, `server/native-sdk.mjs`, `server/routes/sdk.mjs`: 런타임 독립형 공개 SDK API, 영속 thread, Goal 작업 API, 이벤트 스트리밍, 사용자 도구, 위임 하위 에이전트 및 인증된 HTTP/SSE 경로. [SDK 구조](SDK.md).
 - `server/tool-scheduler.mjs`: 독립 관찰형 도구의 제한된 병렬 실행과 변경 도구 직렬 배리어.
 - `server/rsi-engine.mjs`, `server/routes/rsi.mjs`: 모델이 생성한 소스 후보를 Git worktree에서 검증하는 RSI 실험 실행기. 후보 편집과 동결 테스트·검증·승인·후손 기록을 분리하며 실제 적용은 명시적 fast-forward 채택. `src/components/RsiPanel.tsx`에서 실행·확인.
 - `server/channels.mjs`: 채널별 독립 드라이버/공통 수신·작업 배분, room 연결, 메시지 중복 방지.
