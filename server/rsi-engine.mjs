@@ -206,9 +206,6 @@ export async function runExperiment(id){
    '-m','RSI candidate: '+short(row.goal,70)],signal);
   const candidateCommit=await git(candidate,['rev-parse','HEAD'],signal);
   transition(id,'pending_approval',{validation,candidateCommit,reason:'Frozen tests passed; adoption awaits approval'});
-  recordExperience({task:row.goal,source:'rsi',status:'completed',
-   reason:'Tests passed in isolated candidate; not yet adopted',
-   strategy:proposed.strategy,verified:true,evidence:[{name:'frozen-tests',status:'completed'}]});
   return getRow(id);
  }catch(e){
   if(getRow(id)?.status!=='cancelled')transition(id,'failed',{reason:redact(e.message||e)});
@@ -225,6 +222,9 @@ export async function acceptExperiment(id){
  await git(row.sourceDir,['merge','--ff-only',row.candidateCommit]);
  if(await git(row.sourceDir,['rev-parse','HEAD'])!==row.candidateCommit)throw error('Adopted HEAD mismatch');
  log('rsi.accepted',{id,commit:row.candidateCommit});
+ recordExperience({task:row.goal,source:'rsi',status:'completed',
+  reason:'Frozen tests passed and candidate was adopted',
+  strategy:row.strategy,verified:true,evidence:[{name:'frozen-tests',status:'completed'}]});
  return transition(id,'accepted',{adoptedCommit:row.candidateCommit,acceptedAt:new Date().toISOString(),reason:'Fast-forward adopted'});
 }
 export function cancelExperiment(id){
