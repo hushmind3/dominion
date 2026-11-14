@@ -19,7 +19,7 @@ export class ExecutionRuntime {
     return true;
   }
   async execute({sessionId,agentId,providerId,model,system,onEvent=()=>{},signal,toolsEnabled=true,speakerLabels=false,
-    reasoningEffort,thinking,limits={}}){
+    reasoningEffort,thinking,limits={},sdkTools=[],sdkInvoke}){
     if(this.#sessions.has(sessionId))throw Error('Session is already running');
     const controller=new AbortController(),start=Date.now(),runId=crypto.randomUUID();
      let task='',toolOutcomes=[];
@@ -54,12 +54,19 @@ export class ExecutionRuntime {
        task=latestUser;
       const evidenceRequired=likelyRequiresTools(latestUser);
       const requiredEffect=requestedToolEffect(latestUser);
-      const tools=await this.discoverTools(toolsEnabled);
+      const available=await this.discoverTools(toolsEnabled);
+      const sdkNames=new Set();
+      for(const entry of sdkTools){
+        if(!entry?.name||available.some(item=>item.name===entry.name)||sdkNames.has(entry.name)||entry.name==='tool_discover')
+          throw Error('SDK tool conflicts with existing tool: '+entry?.name);
+        sdkNames.add(entry.name);
+      }
+      const tools=toolsEnabled?[...available,...sdkTools]:[];
       check();
       if(evidenceRequired&&!tools.length)throw Error('This action needs tools, but no execution tools are enabled');
       let assistant=null,toolMode=tools.length?(this.getToolMode?.(providerId,model)||'auto'):'native';
       if(!['auto','native','compat'].includes(toolMode))toolMode='auto';
-      const extraTools=[],compatTools=[{name:'tool_discover',parameters:{type:'object',properties:{query:{type:'string'}},required:['query']}},...tools];
+      const extraTools=sdkTools.map(item=>item.name),compatTools=[{name:'tool_discover',parameters:{type:'object',properties:{query:{type:'string'}},required:['query']}},...tools];
       let feedback='',repairs=0,successfulWork=0;
       for(let iteration=0;iteration<maxIterations;iteration++){
         check();run.iterations=iteration+1;
@@ -136,7 +143,9 @@ export class ExecutionRuntime {
             if(tool.name==='tool_discover'){
               output={tools:discoverCompatibleTools(tools,args.query)};
               for(const result of output.tools)if(!extraTools.includes(result.name))extraTools.push(result.name);
-            }else output=await this.invokeTool(tool,args,onEvent,{signal:controller.signal,runId,callId});
+             }else if(sdkInvoke&&sdkTools.includes(tool))
+              output=await sdkInvoke(tool,args,onEvent,{signal:controller.signal,runId,callId});
+            else output=await this.invokeTool(tool,args,onEvent,{signal:controller.signal,runId,callId});
             const succeeded=successfulToolEvidence(tool.name,output);
             this.saveOperation({id:runId+':'+callId,runId,sessionId,callId,tool:tool.name,
               status:succeeded?'completed':'failed',reason:succeeded?'':'Tool returned an unsuccessful result',finishedAt:new Date().toISOString()});
