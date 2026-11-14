@@ -6,6 +6,7 @@ import { timingSafeEqual } from "node:crypto";
 import { googleTranslate, pickFolder } from "./system-util.mjs";
 import { handleAgentRoutes } from "./routes/agents.mjs";
 import { handleRsiRoutes } from "./routes/rsi.mjs";
+import { handleSdkRoutes } from "./routes/sdk.mjs";
 import { handleVideoRoutes } from "./routes/video.mjs";
 import { handleOAuthRoutes } from "./routes/oauth.mjs";
 import { handleExtensionRoutes } from "./routes/extensions.mjs";
@@ -294,6 +295,7 @@ async function api(req, res, u) {
       401,
     );
   if (await handleRsiRoutes({ url, method, res, json, body, req })) return;
+  if (await handleSdkRoutes({ url, method, res, json, body, req })) return;
   if (url === "/api/capabilities" && method === "GET") {
     const family = u.searchParams.get("family") || undefined;
     return json(res, {
