@@ -59,6 +59,10 @@ npm run dev
 - **스케줄러**는 DOMINION 서버가 켜져 있을 때 실행됩니다. 컴퓨터 절전 중 작업을 이어서 처리하려면 상시 실행되는 별도 서버가 필요합니다.
 - **결제·구독·크레딧 측정, Electron 패키징, 원격 멀티테넌트 서비스, 네이티브 컴퓨터-비전 조작**은 이 초기 실행 버전에 포함되지 않습니다. README에서 완성된 기능으로 표시하지 않습니다.
 
+## 챔피온: 자체 Agent SDK (2026-11-14)
+
+외부 CLI/SDK 없이 기존 도미니언 엔진을 재사용하는 **1차 Agent SDK**를 추가했습니다. 지속 Thread와 resume, `run()`/`runStreamed()`, 사용자 정의 도구, 기본 승인 연동, 제한된 하위 에이전트 위임, 인증된 REST/SSE 진입점을 제공합니다. 코드 경로: `server/routes/sdk.mjs → server/native-sdk.mjs → server/agent-sdk.mjs → server/engine.mjs → server/execution-runtime.mjs`. 공식 SDK 구현과의 소스별 비교, 사용 예, 미검증 범위는 [SDK 구조와 사용법](docs/SDK.md)에 기록했습니다. 전체 CI·실제 LLM/OS 실행까지 완료했다고 주장하지 않습니다.
+
 ## 챔피온: 격리 RSI 코드 개선 (2026-11-14)
 
 **소스 개발 → 격리 RSI 실험실**에서 개선 목표와 수정 허용 파일을 지정하면, 에이전트 모델이 소스 편집 후보를 생성하고 독립된 Git worktree에서 기준본과 동일한 동결 테스트를 수행합니다. 테스트 통과 후보를 Git 커밋으로 남기고, **사용자가 승인할 때만** 원본 브랜치를 fast-forward로 갱신합니다. 승인한 결과를 부모로 다시 실험할 수 있으며, 이전 실행의 전략·검증 경험을 이어받습니다.
