@@ -49,7 +49,7 @@ export function createExperiment(input={}){
 }
 function command(bin,args,cwd,{signal,timeoutMs=30000}={}){
  return new Promise((resolve,reject)=>{
-  const child=spawn(bin,args,{cwd,windowsHide:true,env:{...process.env,GIT_TERMINAL_PROMPT:'0'},
+  const child=spawn(bin,args,{cwd,windowsHide:true,env:{...process.env,GIT_TERMINAL_PROMPT:'0',ELECTRON_RUN_AS_NODE:'1'},
    stdio:['ignore','pipe','pipe']});
   let stdout='',stderr='',done=false;
   const kill=()=>{try{child.kill('SIGKILL')}catch{}};
