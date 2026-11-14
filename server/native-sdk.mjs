@@ -1,7 +1,7 @@
 import {DominionSDK} from './agent-sdk.mjs';
 import {newSession,runTurn,sessionMessages,cancelExecution} from './engine.mjs';
 import {get} from './store.mjs';
-import {createGoal,goal,resumeGoal,cancelGoal,goalEvents} from './harness.mjs';
+import {createGoal,goal,goals,resumeGoal,cancelGoal,goalEvents} from './harness.mjs';
 import {enqueue} from './jobs.mjs';
 
 // The SDK uses DOMINION's existing model, MCP, approval, audit and SQLite engines.
@@ -14,5 +14,5 @@ export const dominionSdk=new DominionSDK({
  getAgent:id=>get('agent',id),
  getExecution:id=>get('execution',id),
  cancel:cancelExecution,
- createGoal,getGoal:goal,resumeGoal,cancelGoal,getGoalEvents:goalEvents,enqueue
+ createGoal,getGoal:goal,listGoals:goals,resumeGoal,cancelGoal,getGoalEvents:goalEvents,enqueue
 });
