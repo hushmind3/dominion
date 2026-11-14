@@ -41,6 +41,20 @@ export class DominionSDK {
       model:overrides.model??row.sdkOptions?.model??row.model});
     return new DominionThread(this,row.id,opts);
   }
+  startTask(input){
+    required(typeof this.host.createGoal==='function'&&typeof this.host.enqueue==='function',
+      'This SDK host does not expose durable goal jobs');
+    const options=typeof input==='string'?{goal:input}:input;
+    required(plainObject(options)&&text(options.goal).trim(),'Task goal required');
+    const row=this.host.createGoal(options);
+    const job=this.host.enqueue('goal',{goalId:row.id});
+    return new DominionTask(this,row.id,job?.id);
+  }
+  resumeTask(id){
+    required(typeof this.host.getGoal==='function','This SDK host does not expose durable goals');
+    required(this.host.getGoal(String(id)),'SDK task not found: '+id);
+    return new DominionTask(this,String(id));
+  }
   _toolsFor(thread,onEvent){
     const opts=thread.options, custom=[],handlers=new Map();
     if(opts.toolsEnabled===false)return {custom,handlers};
@@ -173,5 +187,24 @@ export class DominionThread {
       options.signal?.removeEventListener('abort',abort);
       await task;
     }
+  }
+}
+
+export class DominionTask {
+  constructor(sdk,id,jobId=null){this.sdk=sdk;this.id=id;this.jobId=jobId;}
+  snapshot(){return this.sdk.host.getGoal?.(this.id)??null;}
+  events(){return this.sdk.host.getGoalEvents?.(this.id)??[];}
+  resume(){
+    const host=this.sdk.host;
+    required(typeof host.resumeGoal==='function'&&typeof host.enqueue==='function',
+      'This SDK host cannot resume tasks');
+    const goal=host.resumeGoal(this.id);
+    const job=host.enqueue('goal',{goalId:goal.id});
+    this.jobId=job?.id;
+    return goal;
+  }
+  cancel(){
+    required(typeof this.sdk.host.cancelGoal==='function','This SDK host cannot cancel tasks');
+    return this.sdk.host.cancelGoal(this.id);
   }
 }
