@@ -41,6 +41,7 @@ export class DominionSDK {
       model:overrides.model??row.sdkOptions?.model??row.model});
     return new DominionThread(this,row.id,opts);
   }
+  listTasks(){return this.host.listGoals?.()??[];}
   startTask(input){
     required(typeof this.host.createGoal==='function'&&typeof this.host.enqueue==='function',
       'This SDK host does not expose durable goal jobs');
