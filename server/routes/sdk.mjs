@@ -8,6 +8,23 @@ export async function handleSdkRoutes({url,method,req,res,json,body}){
     runStreamed:true,delegation:true,customTools:true,externalSdkRequired:false});
   return true;
  }
+ if(url==='/api/sdk/tasks'){
+  if(method==='GET'){json(res,all('job').filter(x=>x.kind==='goal').slice(0,100));return true;}
+  if(method==='POST'){
+   const task=dominionSdk.startTask(await body(req));
+   json(res,{id:task.id,jobId:task.jobId,status:task.snapshot()?.status},201);return true;
+  }
+ }
+ const taskMatch=url.match(/^\/api\/sdk\/tasks\/([^/]+)(?:\/(events|resume|cancel))?$/);
+ if(taskMatch){
+  const [,id,action]=taskMatch;
+  let task;
+  try{task=dominionSdk.resumeTask(id);}catch{json(res,{error:'SDK task not found'},404);return true;}
+  if(method==='GET'&&!action){json(res,task.snapshot());return true;}
+  if(method==='GET'&&action==='events'){json(res,task.events());return true;}
+  if(method==='POST'&&action==='resume'){json(res,task.resume());return true;}
+  if(method==='POST'&&action==='cancel'){json(res,task.cancel());return true;}
+ }
  if(url==='/api/sdk/threads'){
   if(method==='GET'){
    json(res,all('session').filter(x=>x.sdkOptions).map(x=>({
