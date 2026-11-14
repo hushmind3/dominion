@@ -42,6 +42,7 @@
 - `server/execution-runtime.mjs`: 범용 실행 루프, 모델/도구 실행, 예산, 취소, 런타임 상태 체크포인트, 호출별 실행 장부. 특정 작업 유형을 알지 않는다.
 - `server/engine.mjs`: 채팅/에이전트/회의실 진입점. 모든 모델 턴을 공통 Runtime에 위임하며 세션 중복 실행을 방지한다.
 - `server/jobs.mjs`: persistent job queue, recovery, 일정 반복.
+- `server/rsi-engine.mjs`, `server/routes/rsi.mjs`: 모델이 생성한 소스 후보를 Git worktree에서 검증하는 RSI 실험 실행기. 후보 편집과 동결 테스트·검증·승인·후손 기록을 분리하며 실제 적용은 명시적 fast-forward 채택. `src/components/RsiPanel.tsx`에서 실행·확인.
 - `server/channels.mjs`: 채널별 독립 드라이버/공통 수신·작업 배분, room 연결, 메시지 중복 방지.
 - `server/room-orchestrator.mjs`: 그룹 발언자 라우팅, 대화 세대, 취소, 화자별 모델·발언 기록.
 - `server/agent-admin.mjs`: 동적 에이전트 로스터 및 원자적 모델 일괄 변경.
@@ -53,7 +54,7 @@
 
 - SQLite 싱글 프로세스/서버 모델. 수천 명 동시 사용자용 다중 테넌시, Redis/PG, 분산 워커/요금측정 없음.
 - 회의실은 순차 에이전트 발언 구조, 진정한 병렬성·비동기 자유발화/자발적 스케줄 변경은 차기 과제.
-- 기억은 명시적 텍스트 매칭과 스킬 재사용. 의미 기반 장기기억, 자동 리플렉션, 자기 코드 개선·롤백·평가 루프는 미구현.
+- 기억은 명시적 텍스트 매칭과 스킬 재사용. 초기 비가중치 RSI 실험의 소스 후보 생성·분리 평가·승인 채택·전략 계승은 구현되었지만, OS 격리 샌드박스·교차 영역 재귀 개선·자동 롤백·독립 품질심사·의미 기반 기억은 미완성. [RSI 실제 경로](RSI.md) 참고.
 - Playwright MCP 연결로 UI 조작 기능을 가져올 수 있으나 플랫폼 고유 컴퓨터 비전·화면 탐지·보안 컨테이너는 아직 아님.
 - GitHub OAuth 어댑터는 저장소 목록과 프로필 읽기. 커밋/이슈/PR 쓰기는 별도 도구 개발이 필요.
 - YouTube OAuth는 읽기 스코프만 요청. 영상 업로드/댓글 수정 기능을 주장하지 않는다.
