@@ -27,7 +27,8 @@ export class DominionSDK {
     const opts=normalizeOptions(options);
     const row=this.host.createSession({
       agentId:opts.agentId,providerId:opts.providerId,model:opts.model,
-      title:opts.title||'SDK thread',sdkOptions:opts
+      title:opts.title||'SDK thread',sdkOptions:opts,
+      parentSessionId:opts.parentSessionId||null,parentRunId:opts.parentRunId||null
     });
     return new DominionThread(this,row.id,opts);
   }
