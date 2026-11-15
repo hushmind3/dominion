@@ -106,6 +106,21 @@ pub fn limits(body: &Value) -> Result<Value, String> {
 /// gains per unit cost. Failed and inconclusive attempts remain in the denominator.
 /// The active `selfimprove.search` algorithm decides the ranking rule; the
 /// default reproduces the original measured-cost UCB policy.
+/// Neither arm compiling means no A/B performance comparison occurred.
+/// Keep the infrastructure defect in the lineage without attributing a
+/// baseline "victory" or a quality regression to the edited candidate.
+fn paired_winner(eligible:bool,candidate_status:&str,evaluation:&Value)->&'static str {
+    if evaluation["baselineBuildOk"]==false {
+        "inconclusive"
+    } else if eligible {
+        "candidate"
+    } else if candidate_status=="rejected" {
+        "baseline"
+    } else {
+        "inconclusive"
+    }
+}
+
 fn search_features(history: &[Value], domain: &str, objective: &str) -> BTreeMap<String, f64> {
     let rows = history
         .iter()
@@ -113,6 +128,9 @@ fn search_features(history: &[Value], domain: &str, objective: &str) -> BTreeMap
         .collect::<Vec<_>>();
     let attempts = rows.len() as f64;
     let accepted = rows.iter().filter(|row| row["accepted"] == true).count() as f64;
+    let infrastructure_failures=rows.iter().filter(|row|
+        row["evaluation"]["verdict"]=="build_failed"
+        && row["evaluation"]["baselineBuildOk"]==false).count() as f64;
     let regressions = rows
         .iter()
         .filter(|row| row["evaluation"]["verdict"] == "regressed")
@@ -176,6 +194,8 @@ fn search_features(history: &[Value], domain: &str, objective: &str) -> BTreeMap
         ("attempts".to_string(), attempts),
         ("accepted".to_string(), accepted),
         ("regressions".to_string(), regressions),
+        ("infrastructureFailures".to_string(), infrastructure_failures),
+        ("evaluableAttempts".to_string(), (attempts-infrastructure_failures).max(0.0)),
         ("inconclusive".to_string(), inconclusive),
         ("novelty".to_string(), if attempts == 0.0 { 1.0 } else { 0.0 }),
         ("successRate".to_string(), success_rate),
@@ -3570,13 +3590,9 @@ async fn run_loop(
                     let eligible = candidate["status"] == "verified"
                         && candidate["evaluation"]["metrics"]["eligible"] == true
                         && generation["pairedRevalidated"]==true && design_complete;
-                    let winner = if eligible {
-                        "candidate"
-                    } else if candidate["status"] == "rejected" {
-                        "baseline"
-                    } else {
-                        "inconclusive"
-                    };
+                    let winner=paired_winner(eligible,
+                        candidate["status"].as_str().unwrap_or(""),
+                        &generation["evaluation"]);
                     record["comparison"] = json!({"attempt":attempt,"candidateId":id,"winner":winner,
                         "metrics":candidate["evaluation"]["metrics"],"baselineCommit":head,
                         "evaluationId":candidate["evaluation"]["id"],"canSelectCandidate":eligible});
@@ -5584,6 +5600,23 @@ mod tests {
         }
         assert_eq!(research_artifacts(&state,"s").len(),1);
         let _=std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn unavailable_evaluator_never_counts_as_baseline_quality_win() {
+        let environment=json!({"verdict":"build_failed","baselineBuildOk":false,
+            "candidateBuildOk":false});
+        assert_eq!(paired_winner(false,"rejected",&environment),"inconclusive");
+        let candidate_build_failed=json!({"verdict":"build_failed",
+            "baselineBuildOk":true,"candidateBuildOk":false});
+        assert_eq!(paired_winner(false,"rejected",&candidate_build_failed),"baseline");
+        let improved=json!({"baselineBuildOk":true,"candidateBuildOk":true});
+        assert_eq!(paired_winner(true,"verified",&improved),"candidate");
+        let history=vec![json!({"domain":"memory","evaluation":environment,
+            "accepted":false,"tokens":200})];
+        let features=search_features(&history,"memory","memory");
+        assert_eq!(features["infrastructureFailures"],1.0);
+        assert_eq!(features["evaluableAttempts"],0.0);
     }
 
     #[test]
