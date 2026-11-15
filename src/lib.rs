@@ -5,6 +5,7 @@ pub mod engine;
 pub mod runtime;
 pub mod store;
 pub mod mcp;
+pub mod provider;
 
 pub use runtime::{DominionConfig, DominionSdk, RuntimeError, TaskInput, TaskRecord, TaskEvent};
 
@@ -17,6 +18,7 @@ use tokio::sync::broadcast;
 pub struct AppState {
     pub(crate) store: store::Store,
     pub(crate) mcp: Arc<mcp::Mcp>,
+    pub(crate) provider: provider::ModelClient,
     pub(crate) bus: broadcast::Sender<Value>,
     pub(crate) http: reqwest::Client,
     pub(crate) workspace: PathBuf,
