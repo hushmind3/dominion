@@ -7,6 +7,7 @@ const apiTarget=process.env.DOMINION_API_URL||'http://127.0.0.1:4317'
 const webRoot=dirname(fileURLToPath(import.meta.url))
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  resolve: { alias: { '@dominion/sdk': resolve(webRoot,'../sdk/typescript/src/index.ts') } },
   server: {
     // Shared SDK source lives beside web/: allow only its source directory,
     // not an arbitrary parent filesystem tree, in the development server.
