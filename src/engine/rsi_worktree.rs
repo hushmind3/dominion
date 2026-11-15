@@ -1087,6 +1087,12 @@ pub(crate) async fn compare_at(context:&JobContext,id:&str,source:&Path,_runner_
     if meta_required {updated["metaEvaluation"]=meta_receipt;}
     let verdict=updated["evaluation"]["metrics"]["verdict"].clone();
     let metrics=updated["evaluation"]["metrics"].clone();
+    // Preserve bounded compiler output for failed paired builds. Without
+    // this diagnostic, a genuine Windows toolchain failure is indistinguishable
+    // from a candidate that merely regressed under frozen tests.
+    let build_diagnostics=if verdict=="build_failed" {
+        report["buildDiagnostics"].clone()
+    } else {Value::Null};
     // This evaluation came from a real local script invocation, not a
     // client-supplied verdict. It is still host execution, not a VM sandbox.
     updated["pairedComparisonComplete"]=json!(true);
@@ -1094,6 +1100,9 @@ pub(crate) async fn compare_at(context:&JobContext,id:&str,source:&Path,_runner_
     updated["evaluation"]["evidenceSha256"]=json!(evidence_sha);
     updated["evaluation"]["baselineTreeSha"]=report["baselineTreeSha"].clone();
     updated["evaluation"]["candidateTreeSha"]=report["candidateTreeSha"].clone();
+    if !build_diagnostics.is_null() {
+        updated["evaluation"]["buildDiagnostics"]=build_diagnostics.clone();
+    }
     state.store.put("rsi_candidate",&updated)
         .ok_or("A/B 평가 후보 갱신에 실패했습니다.")?;
     state.store.put("rsi_evaluation",&updated["evaluation"]);
@@ -1143,6 +1152,7 @@ pub(crate) async fn compare_at(context:&JobContext,id:&str,source:&Path,_runner_
     Ok(json!({
         "candidateId":id,"candidateStatus":updated["status"],
         "verdict":verdict,"metrics":metrics,
+        "buildDiagnostics":build_diagnostics,
         // Descendant rule induction and matched policy tournaments consume
         // the generation-level comparison receipt. Without this verified
         // origin they silently discard every neutral/rejected counterexample,
