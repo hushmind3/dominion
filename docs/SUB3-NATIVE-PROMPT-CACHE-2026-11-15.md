@@ -34,3 +34,6 @@ The Codex WebSocket transport already refused to replay uncertain request delive
 Tests include a real loopback TCP socket receiving a Chat Completions POST and dropping before any reply, asserting no duplicate generation; Anthropic loopback 400 unsupported-hint rejection followed by one uncached retry and durable provider capability memory; and two Anthropic request turns with identical static cache prefix and different task inputs, recording cache-read/write usage into the Rust job record.
 
 These are deterministic protocol fixtures, not commercial model-account benchmarks or measured monetary savings. Source edits keep vendor functionality inside Dominion's Rust engine.
+## Executed CI verification
+
+Focused [GitHub Actions run 43693114690](https://github.com/hushmind3/dominion-rust/actions/runs/43693114690) succeeded on code commit `e9174a539f5fdcd83471c6cb7f38444b0eb9da2f`: 45 Rust SDK tests, 60 native Rust host/protocol tests (including Anthropic cache, provider incompatibility and disconnected POST), 15 interactive Codex WS tests, and 1 workflow recovery test: **121/121 Rust tests passed**. The production GUI passed TypeScript checking and Vite build; standalone TypeScript SDK compiled and passed **7/7 Node tests**. No paid provider account, released-product CI or monetary savings benchmark was exercised.
