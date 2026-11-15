@@ -4,6 +4,37 @@ use crate::state::AppState;
 use axum::{body::to_bytes,extract::{Path,State},http::StatusCode,response::{IntoResponse,Response},Json};
 use serde_json::{json,Value};
 use super::{approvals,jobs,response::error};
+use crate::engine::gateway;
+
+/// Keep the main frontend's provider selector honest: a model entry must
+/// support this native Rust tool protocol *before* queueing an owner task.
+/// No probe API call is made and no paid generation is consumed.
+fn native_panel_provider(state:&AppState,provider_id:Option<&str>)->Result<String,String>{
+    let supported=|route:&gateway::Route|{
+        route.kind!="cli" && route.tool_mode!="compat"
+            && (route.kind!="codex" || route.account_id.is_some())
+    };
+    if let Some(id)=provider_id.filter(|id|!id.is_empty()){
+        let route=gateway::resolve(state,id,None)?;
+        if !supported(&route) {
+            return Err("선택한 제공자는 Rust 자율 작업용 네이티브 도구 호출을 지원하지 않습니다. 모델 설정에서 네이티브 도구 모델을 선택하세요.".into());
+        }
+        return Ok(route.id);
+    }
+    // Respect the product's default provider when it actually works.
+    if let Ok(route)=gateway::resolve(state,"",None) {
+        if supported(&route){return Ok(route.id);}
+    }
+    // The frontend labels this choice 'Automatic selection'. Skip models
+    // that would fail their very first native tool call; preserve order.
+    for provider in state.store.all("provider"){
+        if let Ok(route)=gateway::route_from_provider(state,&provider,None){
+            if supported(&route){return Ok(route.id);}
+        }
+    }
+    Err("자동 작업에 연결된 네이티브 도구 지원 모델이 없습니다. 모델 설정에서 제공자를 연결해 주세요.".into())
+}
+
 
 fn prompt_job(state:&AppState,id:&str)->Option<Value>{
     state.store.get("job",id).filter(|j|j["kind"]=="prompt")
@@ -63,7 +94,11 @@ fn project(state:&AppState,job:&Value)->Value{
 }
 pub async fn list(State(state):State<AppState>)->Json<Value>{
     let mut rows=state.store.all("job").into_iter()
-        .filter(|j|j["kind"]=="prompt").collect::<Vec<_>>();
+        // Other menus may create prompt jobs; do not show unrelated chat,
+        // workflow, automation or private-source work in this UI panel.
+        .filter(|j|j["kind"]=="prompt"
+            && j["input"]["clientSurface"]=="native_agent_panel")
+        .collect::<Vec<_>>();
     rows.sort_by(|a,b|b["queuedAt"].as_str().unwrap_or("")
         .cmp(a["queuedAt"].as_str().unwrap_or("")));
     Json(json!(rows.iter().take(30).map(|j|project(&state,j)).collect::<Vec<_>>()))
@@ -82,11 +117,13 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
     if verify.len()>2048 {
         return error(StatusCode::BAD_REQUEST,"검증 명령이 너무 깁니다.");
     }
+    let id=match native_panel_provider(&state,body["providerId"].as_str()){
+        Ok(id)=>id,
+        Err(message)=>return error(StatusCode::BAD_REQUEST,&message),
+    };
     let mut input=json!({"prompt":instruction,"toolsEnabled":true,
-        "toolsExecutionEnabled":true});
-    if let Some(p)=body["providerId"].as_str().filter(|s|!s.is_empty()){
-        input["providerId"]=json!(p);
-    }
+        "toolsExecutionEnabled":true,"providerId":id,
+        "clientSurface":"native_agent_panel"});
     if !verify.is_empty(){
         input["acceptanceChecks"]=json!([{"type":"command_succeeded",
             "command":verify}]);
