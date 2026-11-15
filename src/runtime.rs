@@ -483,6 +483,10 @@ impl DominionSdk {
         ->Result<crate::video::Video,RuntimeError>{
         self.state.videos.change_scene(id,index,change).await.map_err(RuntimeError)
     }
+    pub async fn video_image(&self,id:uuid::Uuid,index:usize,data_url:&str)
+        ->Result<crate::video::Video,RuntimeError>{
+        self.state.videos.set_scene_image(id,index,data_url).await.map_err(RuntimeError)
+    }
     pub async fn video_render(&self,id:uuid::Uuid)
         ->Result<crate::video::Video,RuntimeError>{
         self.state.videos.start(id).await.map_err(RuntimeError)
