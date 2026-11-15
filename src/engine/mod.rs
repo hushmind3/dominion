@@ -2,6 +2,7 @@ pub mod goal_control;
 pub mod native_agent;
 pub mod native_model;
 pub mod native_codex_ws;
+pub mod native_cache;
 pub mod native_stream;
 pub mod adaptation_loop;
 pub mod distill;
