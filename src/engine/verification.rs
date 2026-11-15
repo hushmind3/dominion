@@ -809,7 +809,10 @@ mod verified_patch_tests {
     async fn actual_rust_tool_write_produces_a_verifiable_sha_receipt() {
         use crate::engine::tools::{self,ToolContext};
         let (state,dir)=state();
-        let goal="Create src/fixed.rs file";
+        // This test checks stale edit receipts, not bare desired-state
+        // creation. An explicit update must reject externally changed bytes;
+        // "Create" legitimately succeeds once the requested file exists.
+        let goal="Update src/fixed.rs file";
         let checks=prepare_acceptance_checks(&state,goal);
         std::fs::create_dir_all(dir.join("src")).unwrap();
         let args=json!({"path":"src/fixed.rs","content":"pub fn fixed()->bool{true}\n"});
