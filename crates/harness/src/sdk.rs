@@ -172,6 +172,7 @@ impl AgentSdk {
     pub fn set_journal(&mut self, journal: FileJournal) { self.journal = Some(journal); }
     pub fn set_verifier(&mut self, verifier: Box<dyn Verifier>) { self.verifier = Some(verifier); }
     pub fn cancel_handle(&self) -> Arc<AtomicBool> { Arc::clone(&self.cancellation) }
+    pub fn set_cancel_handle(&mut self, handle: Arc<AtomicBool>) { self.cancellation = handle; }
 
     /// Approval is scoped to ONE pending call id, not the whole permission class.
     pub fn approve_once(&mut self, call_id: impl Into<String>) {
