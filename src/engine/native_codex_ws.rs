@@ -325,7 +325,12 @@ pub(crate) async fn generate(
         let mut wire=body.clone();
         wire["type"]=json!("response.create");
         wire["input"]=input.clone();
-        wire["stream"]=json!(true);
+        // response.create streams by transport definition; unlike HTTP,
+        // WebSocket events must not carry the HTTP-only stream flag.
+        if let Some(fields)=wire.as_object_mut() {
+            fields.remove("stream");
+            fields.remove("background");
+        }
         wire["store"]=json!(false);
         wire["client_metadata"]=json!({"session_id":session,"thread_id":session});
         if let Some(id)=previous {
@@ -514,6 +519,8 @@ mod tests {
             let first=match socket.next().await.unwrap().unwrap(){
                 Message::Text(t)=>serde_json::from_str::<Value>(&t).unwrap(),_=>panic!()};
             assert!(first.get("previous_response_id").is_none());
+            assert!(first.get("stream").is_none(),"WebSocket response.create has no HTTP-only stream flag");
+            assert_eq!(first["store"],false);
             assert_eq!(first["input"].as_array().unwrap().len(),2);
             socket.send(Message::Text(completed("resp-1",Some("call-1")).to_string().into())).await.unwrap();
             let second=match socket.next().await.unwrap().unwrap(){
