@@ -488,6 +488,15 @@ pub async fn run(state: AppState, id: String) {
             return;
         };
         let message = Value::Object(message.clone());
+        // A model's tool-call arguments are historical evidence too.
+        // Commit the entire assistant reply BEFORE any proposed side effect.
+        // The ledger can then reconstruct an interrupted turn exactly.
+        if let Err(error)=state.record_event(&id,"model_reply",
+            json!({"step":step+1,"message":message})) {
+            settle(&state,&id,"needs_review","",verified_writes,
+                Some(format!("모델 실행 기록 저장 실패: {error}")));
+            return;
+        }
         let calls = message["tool_calls"].as_array().cloned().unwrap_or_default();
         // A correction arriving during an in-flight model request supersedes
         // every not-yet-started tool call. Keep tool/result pairs complete.
