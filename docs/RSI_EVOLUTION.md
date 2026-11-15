@@ -54,7 +54,7 @@ A descendant inherits the previous generation's logged **actual baseline/candida
 
 Each candidate must pass its original tests, strictly improve the original score, and (when configured) also pass and improve the independent numeric validation score. Rust compares eligible candidates by validation score when present, then training score, then original candidate order for deterministic ties. Exactly one winning candidate is adopted; eligible but lower-ranked candidates become `rejected` in the persisted trial record, as do validation-failing proposals. There is no Pareto frontier or external benchmark success-rate claim yet.
 
-The JSON run record includes `candidate_groups` (all attempted UUIDs grouped by generation), `candidates` (index, training/validation baseline and candidate scores, eligibility, rejection reason), `descendants` (only adopted winners), and sum of **all proposal** metered model costs rather than only the champion's cost.
+The JSON run record includes `candidate_groups` (all attempted UUIDs grouped by generation), `candidates` (index, training/validation baseline and candidate scores, eligibility, rejection reason), `descendants` (only adopted winners), and sum of **all proposal** metered model costs rather than only the champion's cost. The frozen training and validation **baseline** evidence is reused among siblings only when its recorded Git SHA equals the current base; every contender's own test and validator are executed afresh. A real-process integration fixture checks 8 test-command executions for the adopted seed and 2 sibling candidates (rather than 10 without baseline reuse).
 
 ## Persistence, budget and failure behavior
 
