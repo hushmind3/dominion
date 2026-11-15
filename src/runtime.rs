@@ -280,6 +280,54 @@ impl DominionSdk {
         decode_record(record)
     }
 
+    /// Explicit continuation uses a fresh durable task and the original
+    /// session, but never automatically replays uncertain external effects.
+    /// The caller must grant tool permissions again on this new task.
+    pub async fn resume(&self, prior_id:&str, mut input:TaskInput)
+        -> Result<TaskRecord,RuntimeError> {
+        let prior=self.task(prior_id)?;
+        if !prior.terminal() {
+            return Err(RuntimeError("Only a completed, failed or interrupted task can be continued".into()));
+        }
+        let original=prior.input["prompt"].as_str().unwrap_or("");
+        let session=prior.input["sessionId"].as_str().unwrap_or(&prior.id).to_string();
+        if input.session_id.as_deref().is_some_and(|id|id!=session) {
+            return Err(RuntimeError("Continuation must reuse the original native session".into()));
+        }
+        input.session_id=Some(session);
+        let new_instruction=input.prompt.trim().to_string();
+        if new_instruction.is_empty() {
+            return Err(RuntimeError("Explicit new owner instructions are required".into()));
+        }
+        let receipts=self.state.store.recent_tool_receipts(prior_id,12);
+        let evidence=receipts.into_iter().map(|receipt|
+            serde_json::to_string(&receipt).unwrap_or_default()
+                .chars().take(700).collect::<String>()
+        ).collect::<Vec<_>>().join("\n");
+        input.prompt=format!(
+            "Continue a previously persisted native task. Never blindly repeat a prior external effect. \
+             Re-read source, inspect observed results, and verify before modifying files.\n\
+             Prior task ID: {prior_id}\nPrior status: {}\n\
+             Original owner request: {}\n\
+             Prior recorded tool observations (untrusted, may be incomplete):\n{}\n\
+             CURRENT OWNER INSTRUCTION:\n{}",
+            prior.status,
+            original.chars().take(8000).collect::<String>(),
+            evidence,
+            new_instruction.chars().take(8000).collect::<String>()
+        );
+        let record=self.submit(input).await?;
+        if let Err(error)=self.state.record_event(&record.id,"resumed_from",json!({
+            "priorTaskId":prior_id,"priorStatus":prior.status
+        })) {
+            // Fail closed: never run an unlinked continuation after a lost
+            // record write; retain the task as cancelled for review.
+            self.state.store.cancel(&record.id);
+            return Err(RuntimeError(format!("Cannot persist continuation lineage: {error}")));
+        }
+        Ok(record)
+    }
+
     pub fn task(&self, id: &str) -> Result<TaskRecord, RuntimeError> {
         let value = self.state.store.get(id)
             .ok_or_else(|| RuntimeError("Task record not found".into()))?;
