@@ -1002,7 +1002,8 @@ mod tests {
                         text.contains("CobaltThistleMarker")) {
                         json!({"role":"assistant","content":"Recovered exact archival proof."})
                     }else{
-                        let indexed=&receipt["results"][0];
+                        let indexed=receipt["results"].as_array().unwrap().iter()
+                            .find(|item|item["kind"]=="tool").unwrap();
                         json!({"role":"assistant","content":null,"tool_calls":[{
                             "id":"reinspect-record","type":"function","function":{
                                 "name":"task_receipt","arguments":json!({
