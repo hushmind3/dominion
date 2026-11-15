@@ -5,7 +5,7 @@ use axum::{extract::{Path, State}, http::StatusCode, response::{IntoResponse, Re
 use dominion_harness::{
     openai::OpenAiProvider,
     sdk::{AgentSdk, CommandVerifier, FileJournal, RunStatus, Session},
-    tools::{ListDir, ReadFile, Shell, Workspace, WriteFile},
+    tools::{ListDir, PatchFile, ReadFile, Shell, Workspace, WriteFile},
     Decision, Limits, Permission, Policy, ToolSpec,
 };
 use serde::Deserialize;
@@ -188,6 +188,7 @@ async fn execute(state: AppState, id: String, approved: Option<String>) -> Resul
             Box::new(ReadFile(Workspace::new(&workdir)?)),
             Box::new(ListDir(Workspace::new(&workdir)?)),
             Box::new(WriteFile(Workspace::new(&workdir)?)),
+            Box::new(PatchFile(Workspace::new(&workdir)?)),
             Box::new(Shell { workspace: Workspace::new(&workdir)?, timeout_secs: 300 }),
         ];
         let specs = tools.iter().map(|tool| tool.spec()).collect();
