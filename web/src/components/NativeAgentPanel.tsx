@@ -2,8 +2,17 @@ import {useEffect, useState} from 'react'
 import {Check, Play, RefreshCw, ShieldAlert, Square, Sparkles} from 'lucide-react'
 import {get, post, type Provider} from '../api'
 import {useLocale} from '../i18n'
-import type {AgentRun as SdkRun, PlanningMode} from '../../../packages/sdk-typescript/src/index'
 
+type SdkState = {state: string; detail?: {call_id?: string; tool?: string}}
+type SdkRun = {
+ id: string; status: string; instruction: string; answer?: string; error?: string;
+ checkpoint?: {
+  state?: SdkState; rounds?: number; toolCalls?: number; answer?: string;
+  usage?: {prompt_tokens:number; completion_tokens:number; cached_prompt_tokens:number};
+  pendingCall?: {id:string; name:string; arguments:unknown} | null;
+  events?: {kind:string; detail:unknown}[];
+ } | null
+}
 const running = new Set(['queued', 'running'])
 const stopPolling = new Set(['completed','failed','cancelled','exhausted','denied','awaiting_approval','interrupted','in_doubt'])
 const stateNames:Record<string,[string,string]>={
@@ -20,13 +29,6 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const [instruction,setInstruction]=useState('')
  const [providerId,setProviderId]=useState('')
  const [verification,setVerification]=useState('')
- const [planningMode,setPlanningMode]=useState<PlanningMode>('automatic')
- const [tokenBudget,setTokenBudget]=useState(120000)
- const [maxRounds,setMaxRounds]=useState(24)
- const [mcpEnabled,setMcpEnabled]=useState(false)
- const [skillsEnabled,setSkillsEnabled]=useState(true)
- const [webEnabled,setWebEnabled]=useState(false)
- const [subagentsEnabled,setSubagentsEnabled]=useState(false)
  const [observation,setObservation]=useState('')
  const [run,setRun]=useState<SdkRun|null>(null)
  const [busy,setBusy]=useState(false)
@@ -52,8 +54,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   try{
    const created=await post<SdkRun>('/api/sdk/runs',{
     instruction:instruction.trim(),providerId:providerId||undefined,
-    verifyCommand:verification.trim()||undefined,
-    planningMode,maxTotalTokens:tokenBudget,maxRounds,mcpEnabled,skillsEnabled,webEnabled,subagentsEnabled
+    verifyCommand:verification.trim()||undefined
    })
    setRun(created)
   }catch(e){setError((e as Error).message)}
@@ -114,43 +115,14 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     </button>
    </div>
    <details className="text-[11px] text-[#746A5F]">
-    <summary className="cursor-pointer select-none">{en?'Advanced: planning, token limit and verification':'고급 설정: 작업 계획 · 토큰 한도 · 결과 검증'}</summary>
+    <summary className="cursor-pointer select-none">{en?'Optional: verify the result with a command':'선택 사항: 명령어로 결과 검증'}</summary>
     <label className="mt-2 block" htmlFor="sdk-verify">
      {en?'Verification command (runs after the agent finishes)':'검증 명령어 (작업 결과를 확인할 때 실행)'}
     </label>
     <input id="sdk-verify" value={verification} onChange={e=>setVerification(e.target.value)}
      maxLength={2048} placeholder="cargo test"
      className="mt-1 h-9 w-full rounded-lg border border-[#E7E0D5] px-3 text-[12px]"/>
-   <div className="mt-3 grid gap-3 sm:grid-cols-3">
-      <label className="flex flex-col gap-1">{en?'Task planning':'작업 계획'}
-       <select value={planningMode} onChange={e=>setPlanningMode(e.target.value as PlanningMode)}
-        className="h-9 rounded-lg border border-[#E7E0D5] bg-white px-2 text-[12px]">
-        <option value="automatic">{en?'Automatic':'자동 판단'}</option>
-        <option value="always">{en?'Always':'항상 사용'}</option>
-        <option value="never">{en?'Off':'사용 안 함'}</option>
-       </select>
-      </label>
-      <label className="flex flex-col gap-1">{en?'Reported token cap':'보고된 토큰 한도'}
-       <input type="number" min={1000} max={2000000} step={1000}
-        value={tokenBudget} onChange={e=>setTokenBudget(Math.max(1000,Math.min(2000000,Number(e.target.value)||1000)))}
-        className="h-9 rounded-lg border border-[#E7E0D5] px-2 text-[12px]"/>
-      </label>
-      <label className="flex flex-col gap-1">{en?'Maximum model rounds':'최대 모델 판단 횟수'}
-       <input type="number" min={1} max={80} value={maxRounds}
-        onChange={e=>setMaxRounds(Math.max(1,Math.min(80,Number(e.target.value)||1)))}
-        className="h-9 rounded-lg border border-[#E7E0D5] px-2 text-[12px]"/>
-      </label>
-     </div>
-     <div className="mt-3 flex flex-wrap gap-4 text-[11px]">
-      <label className="flex items-center gap-1.5"><input type="checkbox" checked={mcpEnabled} onChange={e=>setMcpEnabled(e.target.checked)}/>{en?'Use configured MCP tools':'연결한 MCP 도구 사용'}</label>
-      <label className="flex items-center gap-1.5"><input type="checkbox" checked={skillsEnabled} onChange={e=>setSkillsEnabled(e.target.checked)}/>{en?'Read installed skills':'설치된 스킬 참조'}</label>
-      <label className="flex items-center gap-1.5"><input type="checkbox" checked={webEnabled} onChange={e=>setWebEnabled(e.target.checked)}/>{en?'Public web research (approval required)':'공개 웹 조사 (실행 승인 필요)'}</label>
-      <label className="flex items-center gap-1.5"><input type="checkbox" checked={subagentsEnabled} onChange={e=>setSubagentsEnabled(e.target.checked)}/>{en?'Delegate tasks to agents (approval required)':'다른 에이전트에 작업 위임 (승인 필요)'}</label>
-     </div>
-     <p className="mt-2 text-[10px] text-[#84796B]">
-      {en?'Token caps apply to provider-reported usage before the next call; the final reply can exceed the cap.':'토큰 한도는 제공자 보고 사용량을 기준으로 다음 호출 전에 적용됩니다. 마지막 응답은 한도를 초과할 수 있습니다.'}
-     </p>
-    </details>
+   </details>
    {error&&<p role="alert" className="rounded-lg bg-[#FFF3EE] p-3 text-[11px] text-[#A54027]">{error}</p>}
    {run&&<div className="rounded-xl border border-[#E7E0D5] bg-[#FCFBF9] p-3">
     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -161,17 +133,6 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     </p>}
     </div>
     <p className="mt-2 line-clamp-2 text-[11px] text-[#766F67]">{run.instruction}</p>
-     {(run.checkpoint?.plan?.steps?.length??0)>0&&<div className="mt-3 rounded-lg border border-[#E7E0D5] bg-white p-3">
-      <p className="mb-2 text-[11px] font-semibold">{en?'Execution plan':'실행 계획'} · {en?'Revision':'수정'} {run.checkpoint!.plan.revision}</p>
-      <ol className="space-y-1.5">
-       {run.checkpoint!.plan.steps.map(step=><li key={step.id} className="flex gap-2 text-[11px]">
-        <span aria-hidden="true" className={step.status==='completed'?'text-emerald-700':step.status==='in_progress'?'text-[#AE5337]':'text-[#84796B]'}>
-         {step.status==='completed'?'✓':step.status==='in_progress'?'●':'○'}
-        </span>
-        <span className="break-words">{step.description}</span>
-       </li>)}
-      </ol>
-     </div>
     {events.length>0&&<div className="mt-3 space-y-1 border-t border-[#E7E0D5] pt-2">
      {events.map((event,i)=><p key={i} className="text-[11px] text-[#82796D]">
       {event.kind==='tool_started'?(en?'Running tool':'도구 실행'):
