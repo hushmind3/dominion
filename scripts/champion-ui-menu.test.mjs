@@ -17,7 +17,12 @@ const collections=source('src/api/collections.rs')
 const router=source('src/api/mod.rs')
 const notice=source('web/src/components/ImprovementNotice.tsx')
 const goals=source('web/src/pages/AutonomousGoals.tsx')
-const goalApi=source('src/api/goals.rs')
+const goalApi=[
+  source('src/api/goals/lifecycle.rs'),
+  source('src/api/goals/recovery.rs'),
+  source('src/api/goals/worktree.rs'),
+].join('\n')
+const goalApiWiring=source('src/api/goals.rs')
 const goalJobs=source('src/engine/jobs.rs')
 const video=source('web/src/pages/Video.tsx')
 const filmRetake=source('web/src/pages/video/FilmRetake.tsx')
@@ -27,7 +32,12 @@ const filmEngine=source('src/engine/video/film.rs')
 const ltxEngine=source('src/engine/video/ltx.rs')
 const verification=source('src/engine/verification.rs')
 const progress=source('src/engine/goals/progress.rs')
-const goalsEngine=source('src/engine/goals.rs')
+const goalsEngine=[
+  source('src/engine/goals/runner.rs'),
+  source('src/engine/goals/completion.rs'),
+  source('src/engine/goals/tests.rs'),
+].join('\n')
+const goalsEngineWiring=source('src/engine/goals.rs')
 const pricing=source('src/engine/video/pricing.rs')
 const store=source('src/db.rs')
 const flowEngine=source('src/engine/workflows.rs')
@@ -113,6 +123,7 @@ test('reviewed autonomous goal resumes from durable job checkpoint without repla
  assert.match(goals,/\+'\/resume'/)
  assert.match(goals,/acknowledgeUnknownEffects:true/)
  assert.match(router,/\/api\/goals\/:id\/resume/)
+ assert.match(goalApiWiring,/pub use recovery::\{resume_goal,steer_goal\}/)
  assert.match(goalApi,/pub async fn resume_goal/)
  assert.match(goalApi,/old_checkpoint\["inFlight"\]/)
  assert.match(goalApi,/enqueue_goal_resume/)
@@ -155,6 +166,8 @@ test('passing command receipt expires after a later successful source edit',()=>
 })
 
 test('goal admission is atomic and stalls depend on real tool effects',()=>{
+ assert.ok(goalApiWiring.includes('mod lifecycle;'))
+ assert.ok(goalsEngineWiring.includes('pub use runner::run;'))
  assert.ok(goalApi.includes('state.store.transaction(&['))
  assert.ok(goalApi.includes('("goal".to_string(),goal.clone())'))
  assert.ok(goalApi.includes('("job".to_string(),job.clone())'))
