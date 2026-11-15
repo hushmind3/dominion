@@ -13,6 +13,7 @@ on:
       - 'src/engine/native_agent.rs'
       - 'src/engine/workflows.rs'
       - 'src/engine/jobs.rs'
+      - 'web/src/components/NativeAgentPanel.tsx'
   workflow_dispatch:
 
 permissions:
@@ -36,3 +37,13 @@ jobs:
         run: cargo test --manifest-path Cargo.toml --bin dominion-rust native_ -- --nocapture
       - name: Test replay-safe workflow step recovery through host storage
         run: cargo test --manifest-path Cargo.toml --bin dominion-rust recover_new_workflow_reuses_durable_rust_sdk_child -- --nocapture
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.12.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Compile the actual main-based GUI against the Rust job API client
+        run: |
+          npm ci --prefix web
+          npm run typecheck --prefix web
+          npm run build --prefix web
