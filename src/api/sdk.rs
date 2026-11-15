@@ -129,9 +129,9 @@ fn launch(state: AppState, id: String, approved: Option<String>) -> Result<(), S
             }
         }
         let result = execute(state.clone(), id.clone(), approved).await;
-        let (status, patch) = match result {
+        let patch = match result {
             Ok(session) => {
-                let status = match session.status {
+                let status = match &session.status {
                     RunStatus::Completed => "completed",
                     RunStatus::AwaitingApproval { .. } => "awaiting_approval",
                     RunStatus::InDoubt { .. } => "in_doubt",
@@ -141,11 +141,11 @@ fn launch(state: AppState, id: String, approved: Option<String>) -> Result<(), S
                     RunStatus::Exhausted { .. } => "exhausted",
                     RunStatus::Failed { .. } => "failed",
                 };
-                (status, json!({"status":status,"rounds":session.rounds,
+                json!({"status":status,"rounds":session.rounds,
                     "toolCalls":session.tool_calls,"answer":session.final_text(),
-                    "runState":session.status}))
+                    "runState":session.status})
             }
-            Err(message) => ("failed",json!({"status":"failed","error":message})),
+            Err(message) => json!({"status":"failed","error":message}),
         };
         if !state.is_cancelled(&lock_id) {
             if let Some(mut record) = state.store.get("sdk_run", &id) {
@@ -159,7 +159,6 @@ fn launch(state: AppState, id: String, approved: Option<String>) -> Result<(), S
         } else if let Some(saved) = state.store.get("sdk_run", &id) {
             state.bus.record("sdk_run", &saved);
         }
-        let _ = status;
     });
     Ok(())
 }
