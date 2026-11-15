@@ -516,6 +516,21 @@ impl Store {
 
     /// Read the most recent persisted tool receipts before an explicit retry.
     /// These are observations, never an instruction to repeat side effects.
+    /// Read one already-observed tool result from the current task.
+    /// Bounded results help restore compressed context without repeating effects.
+    pub fn tool_receipt(&self,task_id:&str,call_id:&str)->Option<Value>{
+        if call_id.is_empty()||call_id.len()>200{return None;}
+        let conn=self.conn.lock().ok()?;
+        let serialized: String=conn.query_row(
+            "SELECT data FROM events
+             WHERE task_id=?1 AND kind='tool_result'
+               AND json_extract(data,'$.detail.callId')=?2
+             ORDER BY seq DESC LIMIT 1",
+            params![task_id,call_id],|row|row.get(0)
+        ).ok()?;
+        serde_json::from_str(&serialized).ok()
+    }
+
     pub fn recent_tool_receipts(&self,id:&str,limit:usize)->Vec<Value>{
         let Ok(conn)=self.conn.lock() else {return vec![]};
         let Ok(mut stmt)=conn.prepare(
@@ -619,6 +634,16 @@ mod tests {
         assert_eq!(db.get(id).unwrap()["costKrw"],json!(4.0));
     }
 
+    #[test]
+    fn persisted_tool_receipt_is_scoped_to_the_task_and_call(){
+        let db=new_store();
+        db.append_event("task-a","tool_result",
+            json!({"callId":"call-1","outcome":{"ok":true,"value":"old observation"}})).unwrap();
+        assert!(db.tool_receipt("task-b","call-1").is_none());
+        assert!(db.tool_receipt("task-a","call-2").is_none());
+        assert_eq!(db.tool_receipt("task-a","call-1").unwrap()["detail"]["outcome"]["value"],
+            "old observation");
+    }
     #[test]
     fn event_cursor_does_not_repeat_prior_records() {
         let db = new_store();
