@@ -33,7 +33,7 @@ React web UI ─────► web/src/api.ts ───────────
 ## Evaluation / evidence
 - Rust unit cases added to `src/events.rs` (8 concurrent emitters × 80 events) and `src/api/system.rs` (1,100-event paginated replay, expired cursor over 2,600 writes).
 - TypeScript tests in `sdk/typescript/tests/sdk.test.mjs` cover routing, auth, denied paths, provider errors, UTF-8 split SSE, no chat retry, cursor resumption, job polling and abort.
-- A local preliminary TypeScript test prototype passed 8/8. The exact published head has **not** been exercised by CI or full Rust test run in this session; Rust integration and live-model reliability remain to be established. No benchmark score or savings are asserted.
+- A local preliminary TypeScript test prototype passed 9/9. The exact published head has **not** been exercised by CI or full Rust test run in this session; Rust integration and live-model reliability remain to be established. No benchmark score or savings are asserted.
 - CI completion, real-provider E2E, sustained event soak and video output quality measurements remain follow-up checks; they are not simulated by mock tests.
 
 ## UI / SDK compatibility
@@ -41,3 +41,7 @@ The `web/src/api.ts` façade maintains existing GUI exports (including `request`
 
 ## 2026 implementation references
 Patterns were compared with the published [OpenAI Agents JS streaming lifecycle](https://openai.github.io/openai-agents-js/guides/streaming/), [Hermes code/architecture](https://github.com/NousResearch/hermes-agent) and [MCP TypeScript transport](https://github.com/modelcontextprotocol/typescript-sdk). Those projects inform ideas; no foreign agent harness or API policy is imported into DOMINION.
+
+## Native engine evolution — 2026-11-15
+
+The primary public SDK is Rust (`src/lib.rs`, `src/sdk.rs`); TypeScript is an optional /api client. The desktop and Rust consumers boot the same runtime. `src/engine/autonomy.rs` runs bounded evidence-driven repair cycles for ordinary prompt jobs; the specialized detached RSI verifier remains separate. `src/engine/jobs.rs::steer` persists owner instructions for the next model boundary; `src/api/jobs.rs` adapts the same engine method. GUI exposes step receipts, revisioned steering and model usage token deltas. See [frontier comparison](FRONTIER-COMPARISON-SUB2-2026-11-15.md).
