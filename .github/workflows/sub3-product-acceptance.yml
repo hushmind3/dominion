@@ -79,7 +79,9 @@ jobs:
           cargo test --test e2e existing_file_creation_preserves_contents_without_model_calls -- --test-threads=1
           cargo test --test e2e empty_file_creation_uses_one_model_call_and_no_paid_final_summary -- --test-threads=1
       - name: Main's independent Rust harness unit and integration contracts
-        run: cargo test -p dominion-harness -- --nocapture
+        run: |
+          cargo test -p dominion-harness -- --nocapture
+          cargo test --bin dominion-rust api::sdk::tests -- --nocapture
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
