@@ -1970,121 +1970,31 @@ async fn run_turn_body(
             .as_ref()
             .and_then(|algorithm| algorithm["implementation"].as_str())
             .unwrap_or("as-written");
-        let mut round_calls = completion.tool_calls.clone();
-        if ordering_kernel == "read-first" {
-            round_calls.sort_by_key(|call| !tool_is_read_only(&call.name));
+        // Preserve provider-declared order. Reads may be parallel only while
+        // adjacent: a write, shell command or delegation is a hard barrier.
+        let round_calls = completion.tool_calls.clone();
+        if ordering_kernel == "read-first"
+            && round_calls.iter().any(|call| !tool_is_read_only(&call.name))
+        {
+            crate::engine::algorithms::mark_unrated(
+                state, execution_id, "execution.ordering",
+                "effect ordering barrier preserved",
+            );
         }
         let combination = crate::engine::algorithms::choose_for_agent(
-            state,
-            "tool.combination",
-            request.agent_id.as_deref(),
-            None,
+            state, "tool.combination", request.agent_id.as_deref(), None,
         );
-        if combination
-            .as_ref()
-            .and_then(|algorithm| algorithm["implementation"].as_str())
-            == Some("parallel-reads")
-        {
-            let read_calls = round_calls
-                .iter()
-                .filter(|call| tool_is_read_only(&call.name))
-                .cloned()
-                .collect::<Vec<_>>();
-            if read_calls.len() >= 2 {
-                // Only this applicable run owns a combination usage record;
-                // a single read is not a combination measurement.
-                let _ = crate::engine::algorithms::choose_for_agent(
-                    state,
-                    "tool.combination",
-                    request.agent_id.as_deref(),
-                    Some(execution_id),
-                );
-                let base_seq = op_seq;
-                op_seq += read_calls.len() as u64;
-                let mut futures = Vec::new();
-                let mut valid_calls = Vec::new();
-                for (offset, call) in read_calls.iter().enumerate() {
-                    match serde_json::from_str::<Value>(&call.arguments) {
-                        Ok(arguments) => {
-                            valid_calls.push((call.clone(), offset));
-                            futures.push(dispatch_tool_call(
-                                state,
-                                tx,
-                                &session,
-                                request,
-                                session_id,
-                                execution_id,
-                                call,
-                                arguments,
-                                metrics,
-                                base_seq + offset as u64 + 1,
-                                round,
-                                offset,
-                                provider.tool_mode == "compat",
-                                "model",
-                                None,
-                                None,
-                                None,
-                            ));
-                        }
-                        Err(error) => {
-                            // Every tool_call needs a matching tool message.
-                            // Dropping a malformed read would leave the next
-                            // provider round with an unanswered call id.
-                            messages.push(json!({
-                                "role":"tool",
-                                "tool_call_id":call.id,
-                                "content":json!({
-                                    "error":format!("invalid tool arguments: {error}")
-                                }).to_string(),
-                            }));
-                            crate::engine::algorithms::mark_signal(
-                                state, execution_id, "tool.selection", false,
-                            );
-                            crate::engine::algorithms::mark_signal(
-                                state, execution_id, "recovery.strategy", false,
-                            );
-                            mark_tool_argument_signal(state, request, execution_id, false);
-                        }
-                    }
-                }
-                let results = futures_util::future::join_all(futures).await;
-                // A dispatch can complete while the tool itself failed
-                // (`Ok((value, false, content))`). Combination credit requires
-                // every combined read to actually succeed.
-                crate::engine::algorithms::mark_signal(
-                    state,
-                    execution_id,
-                    "tool.combination",
-                    results.iter().all(|result| {
-                        result.as_ref().is_ok_and(|(_, ok, _)| *ok)
-                    }),
-                );
-                for ((call, _offset), result) in valid_calls.iter().zip(results.into_iter()) {
-                    let (content, ok) = match result {
-                        Ok((_value, ok, content)) => (content, ok),
-                        Err(error) => (json!({"error":error}).to_string(), false),
-                    };
-                    messages.push(json!({
-                        "role":"tool","tool_call_id":call.id,"content":content,
-                    }));
-                    crate::engine::algorithms::mark_signal(
-                        state, execution_id, "tool.selection", ok,
-                    );
-                    crate::engine::algorithms::mark_signal(
-                        state, execution_id, "recovery.strategy", ok,
-                    );
-                }
-                round_calls.retain(|call| !tool_is_read_only(&call.name));
-            }
-        }
+        let parallel_reads = combination.as_ref()
+            .and_then(|algorithm| algorithm["implementation"].as_str()) == Some("parallel-reads");
+        let mut dispatched =
+            std::collections::HashMap::<usize, Result<(Value, bool, String), String>>::new();
         let mut ordering_used = false;
         let mut ordering_ok = true;
         let mut rsi_patch_written = false;
         for (call_index, call) in round_calls.iter().enumerate() {
             // A disconnected SSE client must not stop work already promised by
             // the model; explicit cancel and budgets remain the stop signals.
-            if !budget.charge_proposal() {
+            if !dispatched.contains_key(&call_index) && !budget.charge_proposal() {
                 return Err(format!(
                     "도구 제안 예산({}회)을 초과했습니다.",
                     max_tools.saturating_mul(2)
@@ -2304,32 +2214,62 @@ async fn run_turn_body(
                     )
                 }));
             }
-            if !budget.charge_tool() {
-                return Err(format!(
-                    "도구 호출 제한({MAX_TOOL_CALLS}회)을 초과했습니다."
-                ));
-            }
-            op_seq += 1;
-            let (result, ok, tool_content) = dispatch_tool_call(
-                state,
-                tx,
-                &session,
-                request,
-                session_id,
-                execution_id,
-                call,
-                arguments.clone(),
-                metrics,
-                op_seq,
-                round,
-                call_index,
-                provider.tool_mode == "compat",
-                "model",
-                None,
-                None,
-                None,
-            )
-            .await?;
+            let (result, ok, tool_content) = if let Some(result) = dispatched.remove(&call_index) {
+                result?
+            } else {
+                if !budget.charge_tool() {
+                    mark_budget_exhausted(state, execution_id);
+                    return Err(format!("도구 호출 제한({max_tools}회)을 초과했습니다."));
+                }
+                let mut end = call_index + 1;
+                if parallel_reads && tool_is_read_only(&call.name) {
+                    let candidate_end = adjacent_read_batch_end(&round_calls, call_index, 4);
+                    let completed = state.store.all("execution_operation").into_iter()
+                        .filter(|op| op["runId"].as_str() == Some(execution_id)
+                            && op["status"].as_str() == Some("completed"))
+                        .collect::<Vec<_>>();
+                    while end < candidate_end {
+                        if !parallel_read_admitted(
+                            &round_calls[end], &session, &round_tools,
+                            &strategy_candidates, &request.input, &completed,
+                        ) || !budget.can_execute_tool() {
+                            break;
+                        }
+                        if !budget.charge_proposal() || !budget.charge_tool() {
+                            break;
+                        }
+                        end += 1;
+                    }
+                }
+                let mut futures = Vec::new();
+                for index in call_index..end {
+                    let parsed = if index == call_index {
+                        arguments.clone()
+                    } else {
+                        // Preflight admission already validated a JSON object.
+                        serde_json::from_str::<Value>(&round_calls[index].arguments)
+                            .map_err(|error| format!("도구 인수 해석 실패: {error}"))?
+                    };
+                    op_seq += 1;
+                    futures.push(dispatch_tool_call(
+                        state, tx, &session, request, session_id, execution_id,
+                        &round_calls[index], parsed, metrics, op_seq, round, index,
+                        provider.tool_mode == "compat", "model", None, None, None,
+                    ));
+                }
+                let results = futures_util::future::join_all(futures).await;
+                if end > call_index + 1 {
+                    crate::engine::algorithms::mark_signal(
+                        state, execution_id, "tool.combination",
+                        results.iter().all(|result| result.as_ref().is_ok_and(|(_, ok, _)| *ok)),
+                    );
+                }
+                for (index, result) in (call_index..end).zip(results) {
+                    dispatched.insert(index, result);
+                }
+                dispatched.remove(&call_index)
+                    .ok_or_else(|| "도구 배치 결과가 없습니다.".to_string())??
+            };
             ordering_used = true;
             if !ok {
                 ordering_ok = false;
@@ -3032,6 +2972,43 @@ fn restore_program_state(
         json!({"from": source_id, "to": execution_id, "revision": program["revision"]}),
     );
     Ok(())
+}
+
+/// Limits parallel reads to a contiguous observation-only segment.
+/// No batch can overtake a write, shell command or other effect.
+pub(super) fn adjacent_read_batch_end(
+    calls: &[ToolCall], start: usize, max_batch: usize,
+) -> usize {
+    if start >= calls.len() { return calls.len(); }
+    let mut end = start + 1;
+    if !tool_is_read_only(&calls[start].name) { return end; }
+    while end < calls.len()
+        && end - start < max_batch
+        && tool_is_read_only(&calls[end].name)
+    {
+        end += 1;
+    }
+    end
+}
+
+/// A future read cannot bypass enforced procedures or RSI tool permissions.
+fn parallel_read_admitted(
+    call: &ToolCall, session: &Value, definitions: &[Value],
+    strategies: &[Value], input: &str, completed: &[Value],
+) -> bool {
+    if !tool_is_read_only(&call.name)
+        || (session["rsiRun"] == true && !rsi_tool_advertised(&call.name, definitions)) {
+        return false;
+    }
+    let Ok(arguments) = serde_json::from_str::<Value>(&call.arguments) else { return false; };
+    if !arguments.is_object() { return false; }
+    !strategies.iter().any(|strategy| {
+        (strategy["enforce"] == true || strategy["verification"]["enforce"] == true)
+            && crate::engine::procedure::applies(strategy, input, Some(&call.name), Some(&arguments))
+            && crate::engine::procedure::missing_requirement(
+                strategy, &call.name, &arguments, completed,
+            ).is_some()
+    })
 }
 
 fn tool_is_read_only(name: &str) -> bool {
