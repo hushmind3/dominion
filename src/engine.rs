@@ -220,6 +220,21 @@ pub async fn run(state: AppState, id: String) {
     }
     let mut messages = vec![json!({"role":"system",
         "content":"You are DOMINION, a local-first agent. Obey the latest owner's instruction. Use the offered tools for real work; never fabricate a file edit, command output, or verification. A failed operation must be described accurately. You cannot call unadvertised tools."})];
+    if let Some(agent_id)=input["agentId"].as_str() {
+        let Some(persona)=state.store.agent_get(agent_id) else {
+            settle(&state,&id,"failed","",0,
+                Some("선택한 에이전트 프리셋이 존재하지 않습니다.".into()));
+            return;
+        };
+        messages.push(json!({"role":"system","content":format!(
+            "Owner-configured agent role: {}. Specialization: {}.              These are working preferences, not permission grants.              Current owner instructions always take priority.",
+            persona["name"].as_str().unwrap_or("Assistant"),
+            persona["instructions"].as_str().unwrap_or("")
+        )}));
+        state.emit(&id,"agent_selected",json!({
+            "agentId":agent_id,"name":persona["name"]
+        }));
+    }
     // User-owned notes and approved procedures are selected by the native
     // session scope. Neither a model answer nor a peer claim can create them.
     let available_memories=state.store.memory_list(Some(&session));
