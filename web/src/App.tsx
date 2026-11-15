@@ -12,7 +12,7 @@ const NativeImprovements=lazy(()=>import('./pages/NativeWorkspace').then(x=>({de
 const NativeKnowledge=lazy(()=>import('./pages/NativeWorkspace').then(x=>({default:x.NativeKnowledge})))
 const NativeConnections=lazy(()=>import('./pages/NativeWorkspace').then(x=>({default:x.NativeConnections})))
 const AgentsPage=lazy(()=>import('./pages/NativeAgents').then(x=>({default:x.NativeAgents})))
-const WorkflowsPage=lazy(()=>import('./pages/Workflows').then(x=>({default:x.WorkflowsPage})))
+const WorkflowsPage=lazy(()=>import('./pages/NativeWorkflows').then(x=>({default:x.NativeWorkflows})))
 const ExtensionsPage=lazy(()=>import('./pages/Extensions').then(x=>({default:x.ExtensionsPage})))
 const DeveloperPage=lazy(()=>import('./pages/Developer').then(x=>({default:x.DeveloperPage})))
 
@@ -51,8 +51,8 @@ export default function App(){
  const [online,setOnline]=useState(false)
  const [running,setRunning]=useState(0)
  const [build,setBuild]=useState<{branch:string;commit:string}|null>(null)
- const navigate=useCallback((next:PageId)=>{
-  const hash='#/'+next
+ const navigate=useCallback((next:PageId,taskId?:string)=>{
+  const hash='#/'+next+(taskId?'?task='+encodeURIComponent(taskId):'')
   if(window.location.hash!==hash)window.history.pushState(null,'',hash)
   setPage(next);setMobile(false);setPalette(false)
  },[])
@@ -95,7 +95,7 @@ export default function App(){
       {(['models','connections','settings'] as PageId[]).includes(page)&&<NativeConnections/>}
       {page==='activity'&&<NativeTasks/>}
       {page==='agents'&&<AgentsPage/>}
-      {page==='workflows'&&<WorkflowsPage openSession={()=>navigate('chat')}/>}
+      {page==='workflows'&&<WorkflowsPage openSession={id=>navigate('chat',id)}/>}
       {page==='extensions'&&<ExtensionsPage/>}
       {page==='developer'&&<DeveloperPage/>}
       {page==='automations'&&<NativeTasks/>}
