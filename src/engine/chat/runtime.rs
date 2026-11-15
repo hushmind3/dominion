@@ -939,6 +939,12 @@ async fn run_turn_body(
         // ranges can be re-read on demand without a second summarizer model.
         let history_budget=if session["sdkUiPolicy"].is_object() {
             Some(provider_history_budget.unwrap_or(56_000).min(56_000))
+        }else if session["rsiRun"]!=true && !is_room {
+            // Main Chat stores the full transcript in SQLite. Sending 40
+            // past messages at a possible 400 kB each turn mostly repeats
+            // old tool output; retrieval and /compact remain available.
+            // Do not apply this work-chat bound to RSI source research.
+            Some(provider_history_budget.unwrap_or(96_000).min(96_000))
         }else{provider_history_budget};
         let history_messages = history(
             state,session_id,request.agent_id.as_deref(),history_budget,
