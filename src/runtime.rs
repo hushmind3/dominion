@@ -354,16 +354,16 @@ impl DominionSdk {
         if input.prompt.len()>32_000 {
             return Err(RuntimeError("Continuation context is too long; provide a shorter new instruction".into()));
         }
-        let record=self.submit(input).await?;
-        if let Err(error)=self.state.record_event(&record.id,"resumed_from",json!({
-            "priorTaskId":prior_id,"priorStatus":prior.status
-        })) {
-            // Fail closed: never run an unlinked continuation after a lost
-            // record write; retain the task as cancelled for review.
-            self.state.store.cancel(&record.id);
-            return Err(RuntimeError(format!("Cannot persist continuation lineage: {error}")));
+        if input.cost_budget_krw.is_some() && !self.state.provider.can_meter_paid_cost(){
+            return Err(RuntimeError(
+                "Remote paid model budget needs configured input/output rates".into()));
         }
-        Ok(record)
+        let (key,payload)=input.normalized()?;
+        // Atomic transaction: a resumed task cannot be claimed while its
+        // verified ancestry is missing, including after a sudden crash.
+        let (record,_)=self.state.store.submit_continuation(
+            &key,&payload,prior_id,&prior.status).map_err(RuntimeError)?;
+        decode_record(record)
     }
 
     /// User-defined role presets only supply model-facing instructions.
