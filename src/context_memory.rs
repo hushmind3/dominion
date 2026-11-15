@@ -361,10 +361,19 @@ impl Store {
                         }
                         if data["outcome"]["ok"]==true &&
                             data["outcome"]["receipt"]["verified"]==true {
-                            verified.push(json!({"callId":call,
-                                "path":data["outcome"]["receipt"]["path"],
-                                "sha256":data["outcome"]["receipt"]["sha256"],
-                                "sourceSeq":seq}));
+                            if let Some(changes)=data["outcome"]["receipt"]["changes"].as_array(){
+                                for change in changes.iter().filter(|value|value["verified"]==true){
+                                    verified.push(json!({"callId":call,
+                                        "path":change["path"],
+                                        "sha256":change["sha256"],"sourceSeq":seq,
+                                        "batch":true}));
+                                }
+                            }else{
+                                verified.push(json!({"callId":call,
+                                    "path":data["outcome"]["receipt"]["path"],
+                                    "sha256":data["outcome"]["receipt"]["sha256"],
+                                    "sourceSeq":seq}));
+                            }
                         }
                     },
                     "plan"=>last_plan=json!({"sourceSeq":seq,
@@ -456,6 +465,28 @@ mod tests{
         assert!(db.context_search("shared",outside,"PomegranateSearchMarker",5).is_empty());
         drop(db);std::fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn multi_file_batch_receipts_are_reconstructed_as_distinct_verified_changes(){
+        let db=Store::open(std::path::Path::new(":memory:")).unwrap();
+        let (record,_)=db.submit("multi-file-snapshot-2026",
+            &json!({"prompt":"edit source"})).unwrap();
+        let id=record["id"].as_str().unwrap();
+        db.append_event(id,"tool_start",json!({
+            "callId":"batch-1","name":"workspace_replace_many"
+        })).unwrap();
+        db.append_event(id,"tool_result",json!({
+            "callId":"batch-1","name":"workspace_replace_many",
+            "outcome":{"ok":true,"receipt":{"verified":true,"fileCount":2,
+                "changes":[{"path":"a.rs","sha256":"one","verified":true},
+                    {"path":"b.rs","sha256":"two","verified":true}]}}
+        })).unwrap();
+        let snapshot=db.context_recovery_snapshot(id).unwrap();
+        assert_eq!(snapshot["verifiedSourceChanges"].as_array().unwrap().len(),2);
+        assert_eq!(snapshot["verifiedSourceChanges"][0]["path"],"a.rs");
+        assert_eq!(snapshot["verifiedSourceChanges"][1]["sha256"],"two");
+        assert_eq!(snapshot["uncertainToolCalls"].as_array().unwrap().len(),0);
+    }
+
     #[test]
     fn recovery_snapshot_marks_uncertain_effects_without_claiming_success(){
         let db=Store::open(std::path::Path::new(":memory:")).unwrap();
