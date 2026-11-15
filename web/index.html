@@ -14,6 +14,7 @@
     <div class="rail-head">WORKSPACE</div>
     <a class="rail-item selected" href="/" aria-current="page">✦ <span>작업 실행</span></a>
     <a class="rail-item" href="#groups">◉ <span>그룹 대화</span></a>
+    <a class="rail-item" href="#videos">▣ <span>영상 제작</span></a>
     <a class="rail-item" href="#history">▤ <span>실행 기록</span></a>
     <div class="rail-note">자체 Rust 엔진<br>로컬 저장 · 모델 직접 연결</div>
     <div class="rail-footer"><span id="engineLed" class="led"></span><span id="connection">서버 연결 확인 중</span></div>
@@ -105,6 +106,49 @@
           </div>
         </form>
         <button id="groupNext" class="primary" type="button">에이전트 다음 발언 실행</button>
+      </section>
+      <section class="history" id="videos" aria-labelledby="videoTitle">
+        <div class="section-top">
+          <div><span class="eyebrow">VIDEO STUDIO</span><h2 id="videoTitle">영상 제작</h2></div>
+          <button id="refreshVideos" class="ghost" type="button">영상 목록 새로고침 ↻</button>
+        </div>
+        <p>장면을 저장한 뒤 렌더링해 MP4를 만듭니다. 로컬 영상은 FFmpeg가 필요합니다.</p>
+        <form id="videoCreate" class="advanced">
+          <div class="advanced-row">
+            <label>영상 만들 내용
+              <input id="videoPrompt" required maxlength="10000" placeholder="예: 제품 사용법을 3개 장면으로 보여 주세요">
+            </label>
+            <label>렌더링 방식
+              <select id="videoBackend">
+                <option value="local">내 컴퓨터 · 장면 영상</option>
+                <option value="veo">Veo · 별도 API 비용 발생</option>
+              </select>
+            </label>
+          </div>
+          <details>
+            <summary>장면을 직접 지정하기 (모델 호출 생략)</summary>
+            <div class="advanced-row">
+              <label>장면 제목 <input id="videoHeading" maxlength="160" placeholder="예: 첫 장면"></label>
+              <label>화면 문구 및 내레이션 <input id="videoNarration" maxlength="1000" placeholder="예: 처음 사용할 때의 모습"></label>
+              <label>길이 (초) <input id="videoSeconds" type="number" min="2" max="30" value="4"></label>
+            </div>
+          </details>
+          <button class="secondary" type="submit">영상 프로젝트 만들기</button>
+        </form>
+        <div class="advanced-row">
+          <label>저장된 영상
+            <select id="videoSelect" aria-label="저장된 영상 선택">
+              <option value="">영상을 선택하세요</option>
+            </select>
+          </label>
+          <span id="videoStatus" class="muted" aria-live="polite">아직 선택된 영상이 없습니다.</span>
+        </div>
+        <div id="videoScenes" class="timeline" aria-label="저장된 영상 장면"></div>
+        <div class="steer-row">
+          <button id="videoRender" class="primary" type="button">영상 렌더링 시작</button>
+          <button id="videoCheck" class="secondary" type="button">상태 확인</button>
+          <a id="videoDownload" class="secondary" href="#" hidden>완성된 MP4 받기</a>
+        </div>
       </section>
       <section class="history" id="history" aria-labelledby="historyTitle">
         <div class="section-top"><div><span class="eyebrow">HISTORY</span><h2 id="historyTitle">최근 작업</h2></div><button id="refresh" class="ghost" type="button">새로고침 ↻</button></div>
