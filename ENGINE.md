@@ -185,3 +185,5 @@ Rust SDK 자체가 계획·실행·검증·복구의 상태기계입니다. 실�
 ## 네이티브 작업별 공급자 토큰/캐시 측정 (2026-11-15)
 
 `native_stream::Assembler`는 SSE 공급자의 사용량·캐시 통계를 터미널 응답까지 유지하며, `native_model::reported_usage`가 Chat/Responses/Anthropic별 입력·출력·캐시 토큰을 읽습니다. `native_model::record_job_usage`가 완료된 공급자 응답만 `Store.job.nativeModelUsage`와 `native.model_usage` 감사 기록에 누적합니다. `native_agent::Kernel`은 실행 소유권·사용자 승인·기존 체크포인트를 그대로 보유합니다. `GET /api/jobs/:id`에서 실제 측정값과 미보고 호출 수가 노출되고 React 자율 작업 UI와 `sdk/typescript/src/index.ts::NativeModelUsage`가 이를 직접 사용합니다. 누락된 제공자 사용량은 0비용으로 처리하지 않습니다. `docs/SUB3-NATIVE-METERING-2026-11-15.md` 및 [집중 CI #43691823640](https://github.com/hushmind3/dominion-rust/actions/runs/43691823640) 참조.
+
+자율 작업 GUI의 토큰 예산 입력은 `web/src/components/NativeAgentPanel.tsx::launch` → `POST /api/jobs`의 `input.tokenBudget` → `src/api/jobs.rs::create` → `input.limits.maxEstimatedTokens` → `dominion_sdk::harness::Kernel::run`로 이어집니다. `nativeState.chargedTokens`는 커널이 통제하는 예산 계정이며 `nativeModelUsage`는 공급자 실측 사용량으로 따로 표시합니다.
