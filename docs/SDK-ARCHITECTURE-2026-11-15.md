@@ -123,3 +123,8 @@ The independent `dominion-agent-sdk::Kernel` now runs the owner's required exact
 ### Long-run, source-aligned context projection and retrieval
 
 `Kernel::run_from` now uses `context::project` instead of sending only the most recent fixed-length observation tail. It retains complete durable `Snapshot.receipts`, safely projects recent/failure/index/digest views, and serves two bounded kernel-local read-only retrieval tools. Native host tools and approval boundaries are unchanged. See `docs/SUB3-DURABLE-CONTEXT-2026-11-15.md` for actual comparison source paths, data flow, test cases and remaining gaps.
+
+
+### Native model tool-call route (source implementation)
+
+`Kernel::run_from` now calls `Model::complete_with_tools` with host-advertised `ToolSpec`s and durable receipts. `ConfiguredModel` delegates to `engine/native_model.rs` for OpenAI-compatible, Anthropic and Codex native tool-call protocols; local/compat text model routes keep `Model::complete` and the existing JSON planner. Native calls become typed `Decision.actions` and pass through `scheduler::arrange` and the same production approval/journal/execution/acceptance pipeline. No upstream vendor agent runtime is used. See `docs/SUB3-NATIVE-FUNCTION-CALLS-2026-11-15.md` for source mapping, protocol notes and test boundaries.

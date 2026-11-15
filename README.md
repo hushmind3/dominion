@@ -216,3 +216,8 @@ DOMINION now includes the native Rust SDK-side automatic acceptance/repair contr
 ### Durable model context + historical evidence retrieval (sub3)
 
 The Rust agent kernel now separates persisted source/tool receipts from the bounded model-visible context. A live planner can query `dominion_receipt_search` and `dominion_receipt_read` to recover an older compiler failure or file observation even after hundreds of later tools, without rerunning the original effect. Source provenance and limitations: [Durable context design](docs/SUB3-DURABLE-CONTEXT-2026-11-15.md). The existing `/api/jobs` endpoint and main-based GUI use this same Rust kernel.
+
+
+### Native provider function calls in the Rust SDK (sub3, 2026-11-15)
+
+The default `/api/jobs` native agent path now supports provider-native typed tool calls for OpenAI-compatible chat completions, Anthropic Messages and Codex Responses. `Model::complete_with_tools` returns typed `Action` IDs into the independent Rust kernel, preserving ordinary owner approval, permission, checkpoint and validation controls; compatible local/text-only models keep the prior JSON decision mode. The real provider/request adapters are implemented in `src/engine/native_model.rs`, not embedded vendor agent runners. See [source-level design](docs/SUB3-NATIVE-FUNCTION-CALLS-2026-11-15.md). Live third-party credential and performance benchmarks are independent future validation.

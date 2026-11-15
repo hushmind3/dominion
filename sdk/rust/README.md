@@ -58,3 +58,8 @@ Native `Kernel::run` and `Kernel::resume` own verification-command scheduling as
 ### Context preservation across long agent runs
 
 The SDK's Rust-native, read-only `dominion_receipt_search` and `dominion_receipt_read` tools expose bounded lookup of this run's durable receipts to the planner without reissuing external operations. Recent tool output, past failures and operation IDs are projected with explicit size budgets. Their full authoritative JSON remains in `Snapshot.receipts` across `Kernel::resume`. The native `/api/jobs` and GUI execution path inherit this automatically. See `docs/SUB3-DURABLE-CONTEXT-2026-11-15.md`.
+
+
+### Provider-native function calls (backwards-compatible)
+
+The exported `Model` trait now offers optional `complete_with_tools(system, prompt, tool_specs, durable_receipts)` returning `ModelTurn { reply, decision }` and a `supports_native_tools()` flag. Text-only implementations require **no changes** and retain `complete()`; native adapters decode provider `tool_calls` into typed `Decision.actions`, preserving tool call IDs and JSON objects. The `Kernel` still decides dispatch and validation. Actual host wire adapters and protocol fixtures live under `src/engine/native_model.rs`. See `docs/SUB3-NATIVE-FUNCTION-CALLS-2026-11-15.md`.

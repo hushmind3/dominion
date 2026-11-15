@@ -475,4 +475,110 @@ mod tests {
         task.abort();
     }
 
+    #[tokio::test]
+    async fn native_real_http_provider_through_rust_kernel_executes_actual_file_tool() {
+        use axum::{routing::post,Router,Json};
+        use dominion_sdk::harness::{
+            BoxFuture,Criterion,Decision,Evidence,Journal,Kernel,Limits,Model,
+            ModelReply,ModelTurn,RunRequest,Snapshot,Status,Strategy,ToolSpec,Tools,
+        };
+        use std::{path::PathBuf,sync::Mutex};
+        struct HttpModel{state:AppState}
+        impl Model for HttpModel {
+            fn complete<'a>(&'a self,_:&'a str,_:&'a str)
+                ->BoxFuture<'a,Result<ModelReply,String>> {
+                Box::pin(async{Err("Native lane must not be replaced by text JSON".into())})
+            }
+            fn supports_native_tools(&self)->bool{true}
+            fn complete_with_tools<'a>(&'a self,system:&'a str,prompt:&'a str,
+                tools:&'a [ToolSpec],history:&'a [Receipt])
+                ->BoxFuture<'a,Result<ModelTurn,String>> {
+                Box::pin(async move {
+                    super::complete(&self.state,"native-wire-test","model-mock",
+                        "integration-session",system,prompt,tools,history).await
+                })
+            }
+        }
+        struct RealReader {path:PathBuf,calls:Mutex<usize>}
+        impl Tools for RealReader {
+            fn definitions(&self)->Vec<ToolSpec>{vec![tool()]}
+            fn execute<'a>(&'a self,action:&'a Action)->BoxFuture<'a,Result<Value,String>>{
+                Box::pin(async move {
+                    if action.tool!="workspace_read" {return Err("unauthorized tool".into());}
+                    *self.calls.lock().unwrap()+=1;
+                    let content=std::fs::read_to_string(&self.path)
+                        .map_err(|e|e.to_string())?;
+                    Ok(json!({"path":action.arguments["path"],"content":content}))
+                })
+            }
+        }
+        struct UnusedEvidence;
+        impl Evidence for UnusedEvidence {
+            fn check<'a>(&'a self,_:&'a Criterion)->BoxFuture<'a,Result<bool,String>>{
+                Box::pin(async{Ok(true)})
+            }
+        }
+        #[derive(Default)]
+        struct Persistent{states:Mutex<Vec<Snapshot>>}
+        impl Journal for Persistent {
+            fn save(&self,s:&Snapshot)->Result<(),String>{
+                self.states.lock().unwrap().push(s.clone());Ok(())
+            }
+        }
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr=listener.local_addr().unwrap();
+        let app=Router::new().route("/v1/chat/completions",
+            post(|Json(body):Json<Value>| async move {
+                let saw_result=body["messages"].as_array().is_some_and(|msgs|
+                    msgs.iter().any(|m|m["role"]=="tool"));
+                if saw_result {
+                    assert!(body["messages"].to_string().contains("hello from real file"));
+                    Json(json!({"choices":[{"finish_reason":"stop",
+                        "message":{"role":"assistant",
+                            "content":"I inspected the file and saw hello from real file"}}],
+                        "usage":{"prompt_tokens":22,"completion_tokens":8}}))
+                } else {
+                    assert!(body["tools"].as_array().is_some_and(|tools|
+                        tools.iter().any(|t|t["function"]["name"]=="workspace_read")));
+                    Json(json!({"choices":[{"finish_reason":"tool_calls",
+                        "message":{"role":"assistant","content":null,"tool_calls":[{
+                            "id":"call_real_read","type":"function",
+                            "function":{"name":"workspace_read",
+                                "arguments":"{\"path\":\"artifact.txt\"}"}
+                        }]}}],"usage":{"prompt_tokens":30,"completion_tokens":7}}))
+                }
+            }));
+        let task=tokio::spawn(async move {axum::serve(listener,app).await.unwrap();});
+        let state=mock_state(&format!("http://{addr}/v1"),"openai");
+        let root=std::env::temp_dir().join(format!(
+            "dominion-native-physical-file-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let file=root.join("artifact.txt");
+        std::fs::write(&file,"hello from real file").unwrap();
+        let model=HttpModel{state};
+        let writer=RealReader{path:file,calls:Mutex::new(0)};
+        let journal=Persistent::default();
+        let kernel=Kernel{model:&model,tools:&writer,evidence:&UnusedEvidence,
+            journal:&journal};
+        let req=RunRequest {
+            id:"native-http-real-file".into(),
+            instruction:"Read artifact.txt and report its actual content".into(),
+            owner_instructions:String::new(),strategy:Strategy::Balanced,
+            limits:Limits{max_steps:6,max_model_calls:6,max_estimated_tokens:100_000,
+                max_parallel_reads:2,max_result_chars:1200},
+            allowed_tools:vec!["workspace_read".into()],checks:vec![],
+            require_evidence:true,
+        };
+        let result=kernel.run(req).await.unwrap();
+        assert!(matches!(result.status,Status::Completed),"{result:?}");
+        assert_eq!(*writer.calls.lock().unwrap(),1);
+        assert_eq!(result.model_calls,2);
+        assert!(result.answer.as_deref().unwrap().contains("hello from real file"));
+        assert_eq!(result.receipts[0].id,"call_real_read");
+        assert!(journal.states.lock().unwrap().iter().any(|snapshot|
+            snapshot.in_flight.iter().any(|action|action.id=="call_real_read")));
+        task.abort();
+        let _=std::fs::remove_dir_all(&root);
+    }
+
 }
