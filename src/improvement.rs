@@ -343,7 +343,7 @@ mod tests {
         git(&root,&["reset","--hard","HEAD"]).await.unwrap();
         // A command can cleanly check out a different commit and leave no
         // unstaged tracked diff. The frozen HEAD must still match.
-        let verdict=service.measure(&root,"git checkout --orphan temporary && git reset --hard",None).await;
+        let verdict=service.measure(&root,"git -c user.name=Test -c user.email=test@example.com commit --allow-empty -m altered",None).await;
         assert!(verdict.unwrap_err().contains("modified the tracked tree"));
         let _=fs::remove_dir_all(&root).await;
     }
