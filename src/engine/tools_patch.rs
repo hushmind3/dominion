@@ -187,9 +187,9 @@ fn apply_hunks(source:&str,hunks:&[Hunk])->Result<String,String>{
     if source.is_empty(){lines.clear();}
     let mut cursor=0usize;
     for (index,hunk) in hunks.iter().enumerate(){
-        if hunk.old.is_empty() && !hunk.at_end{
-            return Err(format!("Patch hunk {} has no matching context",index+1));
-        }
+        // Codex supports insertion-only @@ hunks. With no old lines,
+        // the insertion point is the start of the file (or after an
+        // explicit context anchor), not an ambiguous global text search.
         let mut from=cursor;
         if !hunk.anchor.is_empty(){
             let Some(position)=(cursor..lines.len()).find(|&i|
@@ -198,7 +198,9 @@ fn apply_hunks(source:&str,hunks:&[Hunk])->Result<String,String>{
             from=position;
         }
         let candidates=if hunk.old.is_empty(){
-            vec![lines.len()]
+            vec![if hunk.at_end{lines.len()}else if hunk.anchor.is_empty(){
+                cursor
+            }else{from.saturating_add(1).min(lines.len())}]
         }else if hunk.old.len()>lines.len(){
             Vec::new()
         }else{
@@ -483,6 +485,18 @@ mod tests{
         assert!(apply_blocking(&root,escape).is_err());
         let _=fs::remove_dir_all(root);
     }
+    #[test]
+    fn codex_insertion_only_hunk_is_supported(){
+        let root=root();
+        fs::write(root.join("head.rs"),"fn existing() {}\n").unwrap();
+        let patch="*** Begin Patch\n*** Update File: head.rs\n@@\n+// added first\n*** End Patch";
+        let result=apply_blocking(&root,patch).unwrap();
+        assert_eq!(result["status"],"completed","{result}");
+        assert_eq!(fs::read_to_string(root.join("head.rs")).unwrap(),
+            "// added first\nfn existing() {}\n");
+        let _=fs::remove_dir_all(root);
+    }
+
     #[test]
     fn repeated_context_is_refused_without_any_mutation(){
         let root=root();
