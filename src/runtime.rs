@@ -454,12 +454,17 @@ impl DominionSdk {
         if input.allow_write || input.allow_shell || input.allow_mcp || input.allow_subagents {
             return Err(RuntimeError("Child research cannot elevate tool permissions".into()));
         }
-        if self.state.store.child_tasks(parent_id).len()>=3 {
+        let children=self.state.store.child_tasks(parent_id);
+        if children.len()>=3 {
             return Err(RuntimeError("At most 3 independent child tasks per parent".into()));
         }
         let allowed=parent.input["tokenBudget"].as_u64().unwrap_or(40000);
-        let used=self.state.store.family_token_usage(parent_id);
-        let remaining=allowed.saturating_sub(used);
+        // Reserve each child's full budget when admitting it, not merely its
+        // currently spent tokens. Parallel delegates cannot overbook the cap.
+        let reserved=children.iter().map(|child|
+            child["input"]["tokenBudget"].as_u64().unwrap_or(2000)
+        ).sum::<u64>();
+        let remaining=allowed.saturating_sub(parent.tokens).saturating_sub(reserved);
         if remaining<256 {
             return Err(RuntimeError("Parent family token budget exhausted".into()));
         }
@@ -469,9 +474,15 @@ impl DominionSdk {
         }
         input.token_budget=Some(requested);
         input.max_steps=Some(input.max_steps.unwrap_or(6).min(8));
-        // Every child owns a separate native transcript and cannot learn the
-        // parent's private chat history without explicit delegation text.
-        input.session_id=Some(uuid::Uuid::new_v4().to_string());
+        // Derive a stable transcript from the idempotency key: repeating a
+        // previously acknowledged tool call cannot open a second child session.
+        let key=input.request_id.clone()
+            .unwrap_or_else(||uuid::Uuid::new_v4().to_string());
+        let seed=format!("{parent_id}/{key}");
+        use sha2::Digest;
+        let digest=sha2::Sha256::digest(seed.as_bytes());
+        input.session_id=Some(format!("child-{digest:x}"));
+        input.request_id=Some(key);
         let (key,mut payload)=input.normalized()?;
         payload["parentId"]=json!(parent_id);
         let (record,created)=self.state.store.submit(&key,&payload).map_err(RuntimeError)?;
