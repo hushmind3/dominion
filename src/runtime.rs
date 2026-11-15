@@ -47,6 +47,15 @@ impl From<String> for RuntimeError {
     fn from(value: String) -> Self { Self(value) }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all="camelCase")]
+pub struct AcceptanceCommand {
+    pub program:String,
+    pub args:Vec<String>,
+}
+
+/// Rust owns the verification specification and does not interpret it as a
+/// shell command or accept arbitrary executable names from model output.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskInput {
@@ -67,6 +76,10 @@ pub struct TaskInput {
     pub allow_subagents: bool,
     #[serde(default)]
     pub require_evidence: bool,
+    /// Exact executable+argv acceptance checks, optionally supplied by the
+    /// owner. They supersede conservative manifest-based autodetection.
+    #[serde(default)]
+    pub acceptance_checks: Vec<AcceptanceCommand>,
     #[serde(default)]
     pub max_steps: Option<u64>,
     #[serde(default)]
@@ -94,6 +107,21 @@ impl TaskInput {
             if !(8..=128).contains(&key.len()) || !key.bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_') {
                 return Err(RuntimeError("Invalid idempotency key".into()));
+            }
+        }
+        if self.acceptance_checks.len()>4 {
+            return Err(RuntimeError("Only four acceptance checks are allowed".into()));
+        }
+        if !self.acceptance_checks.is_empty() && !self.allow_shell {
+            return Err(RuntimeError(
+                "Explicit acceptance checks require allowShell permission".into()
+            ));
+        }
+        for check in &self.acceptance_checks {
+            if !crate::engine::verification::acceptable(&check.program,&check.args){
+                return Err(RuntimeError(format!(
+                    "Unapproved acceptance executable or argument: {}",check.program
+                )));
             }
         }
         if !(1..=24).contains(&self.max_steps.unwrap_or(12)) {
@@ -133,6 +161,7 @@ impl TaskInput {
             "allowMcp": self.allow_mcp,
             "allowSubagents": self.allow_subagents,
             "requireEvidence": self.require_evidence,
+            "acceptanceChecks": self.acceptance_checks,
             "maxSteps": self.max_steps.unwrap_or(12),
             "tokenBudget": self.token_budget.unwrap_or(40_000),
             "costBudgetKrw": self.cost_budget_krw,
@@ -653,6 +682,18 @@ mod tests {
             .validate().is_err());
         assert!(TaskInput {prompt:"ok".into(),token_budget:Some(128),..Default::default()}
             .validate().is_err());
+        assert!(TaskInput{
+            prompt:"fix calculator".into(),acceptance_checks:vec![
+                AcceptanceCommand{program:"node".into(),
+                    args:vec!["--test".into(),"calc.test.js".into()]}],
+            ..Default::default()
+        }.validate().is_err());
+        assert!(TaskInput{
+            prompt:"fix calculator".into(),allow_shell:true,acceptance_checks:vec![
+                AcceptanceCommand{program:"node".into(),
+                    args:vec!["--test".into(),"calc.test.js".into()]}],
+            ..Default::default()
+        }.validate().is_ok());
     }
     #[tokio::test]
     async fn rust_sdk_executes_verified_work_without_http_frontend() {
