@@ -413,6 +413,7 @@ dependencies = [
 name = "dominion-rust"
 version = "0.3.0"
 dependencies = [
+ "dominion-agent-sdk",
  "dominion-sdk",
  "async-stream",
  "axum",
