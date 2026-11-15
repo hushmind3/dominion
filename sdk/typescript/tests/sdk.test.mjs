@@ -134,3 +134,21 @@ test('owner steering uses the same native job and revision contract',async()=>{
   assert.equal(call.init.headers.get('X-Dominion-Token'),'token');
   assert.deepEqual(JSON.parse(call.init.body),{instruction:'Check the actual tests'});
 });
+
+test('video SDK preserves render budget and returns engine work receipts',async()=>{
+  let route,request;
+  const client=new Dominion({fetch:async(url,init)=>{
+    route=url;request=JSON.parse(init.body);
+    return json({id:'vid-1',kind:'video',status:'queued',engine:'comfyui',
+      maxNewScenes:0,renderWorkload:{frames:240,pixelFrames:55_296_000,
+        megapixelFrames:55,estimatedMoneyCost:null,unit:'pixel_frames_not_currency'}});
+  }});
+  const result=await client.video.create({brief:'Same actor in a city',
+    engine:'comfyui',duration:15,reuseVideoJobId:'previous',
+    regenerateScenes:[],maxNewScenes:0});
+  assert.equal(route,'http://127.0.0.1:4317/api/video/jobs');
+  assert.equal(request.maxNewScenes,0);
+  assert.equal(request.reuseVideoJobId,'previous');
+  assert.equal(result.renderWorkload.megapixelFrames,55);
+  assert.equal(result.renderWorkload.estimatedMoneyCost,null);
+});
