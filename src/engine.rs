@@ -265,7 +265,8 @@ pub async fn run(state: AppState, id: String) {
                 state.emit(&id,"model_usage",json!({"phase":"planning",
                     "model":planning_reply.model,"inputTokens":planning_reply.input_tokens,
                     "outputTokens":planning_reply.output_tokens,
-                    "cachedTokens":planning_reply.cached_tokens,"estimatedKrw":planning_reply.cost_krw}));
+                    "cachedTokens":planning_reply.cached_tokens,"usageEstimated":planning_reply.usage_estimated,
+                     "estimatedKrw":planning_reply.cost_krw}));
                 if let Some(plan) = strategy::extract_plan(&planning_reply.raw) {
                     messages.insert(1,json!({"role":"system","content":format!(
                         "Provisional execution checklist. Adapt to observed results.\\n{plan}"
@@ -346,7 +347,8 @@ pub async fn run(state: AppState, id: String) {
         state.emit(&id,"model_usage",json!({"phase":"execute",
             "model":reply.model,"inputTokens":reply.input_tokens,
             "outputTokens":reply.output_tokens,
-            "cachedTokens":reply.cached_tokens,"estimatedKrw":reply.cost_krw}));
+            "cachedTokens":reply.cached_tokens,"usageEstimated":reply.usage_estimated,
+             "estimatedKrw":reply.cost_krw}));
         let response = reply.raw;
         if state.store.cancelled(&id) {
             settle(&state,&id,"cancelled","",verified_writes,None);
@@ -420,7 +422,8 @@ pub async fn run(state: AppState, id: String) {
                         state.emit(&id,"model_usage",json!({"phase":"verification",
                             "model":verdict.model,"inputTokens":verdict.input_tokens,
                             "outputTokens":verdict.output_tokens,
-                            "cachedTokens":verdict.cached_tokens,"estimatedKrw":verdict.cost_krw}));
+                            "cachedTokens":verdict.cached_tokens,"usageEstimated":verdict.usage_estimated,
+                             "estimatedKrw":verdict.cost_krw}));
                         let review=strategy::parse_review(&verdict.raw);
                         state.emit(&id,"verification",json!({
                             "complete":review.as_ref().map(|item|item.complete),
