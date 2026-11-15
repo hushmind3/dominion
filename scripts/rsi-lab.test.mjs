@@ -5,6 +5,28 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
+import {parseCargoTestArtifacts,parseTestInventory} from './rsi-result-format.mjs';
+test('exact libtest discovery tolerates Windows CRLF without changing test identity',()=>{
+ const lines=['cases::zero_boundary: test','cases::negative_one: test',
+   'cases::positive_one: test','3 tests, 0 benchmarks'];
+ for(const delimiter of ['\\n','\\r\\n']){
+  const output=lines.join(delimiter).replaceAll('\\r','\r').replaceAll('\\n','\n');
+  assert.deepEqual(parseTestInventory(output),lines.slice(0,3).map(x=>x.slice(0,-6)));
+ }
+ assert.deepEqual(parseTestInventory('cases::zero_boundary: test  \\r\\n'.replaceAll('\\r','\r').replaceAll('\\n','\n')),
+  ['cases::zero_boundary']);
+});
+test('cargo executable artifacts are recovered from Windows and Unix JSON lines',()=>{
+ const rows=[
+  JSON.stringify({reason:'compiler-artifact',profile:{test:true},executable:'C:\\\\temp\\\\cases.exe'}),
+  JSON.stringify({reason:'compiler-artifact',profile:{test:false},executable:'ignored'}),
+  JSON.stringify({reason:'compiler-artifact',profile:{test:true},executable:'/tmp/tests'}),
+  JSON.stringify({reason:'compiler-artifact',profile:{test:true},executable:'/tmp/tests'}),
+ ];
+ assert.deepEqual(parseCargoTestArtifacts(rows.join('\r\n')),
+  ['C:\\\\temp\\\\cases.exe','/tmp/tests']);
+});
+
 const runner=fileURLToPath(new URL('./rsi-lab.mjs',import.meta.url));
 test('portable runner applies exact patches in isolated worktrees and cleans up paths with spaces',()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'rsi portable 한글 '));
