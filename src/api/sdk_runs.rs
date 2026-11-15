@@ -49,16 +49,40 @@ fn pending(state:&AppState,job:&Value)->Option<Value>{
         && a["id"].as_str().is_some_and(|id|
             state.approvals.lock().unwrap().contains_key(id)))
 }
+/// Only offer the two manual-observation buttons for a *single* uncertain
+/// tool. A paid model outcome or generic verification failure is not a tool
+/// effect the owner can safely reconcile.
+fn reconciliable_tool(job:&Value)->bool{
+    job["status"]=="needs_review"
+        && job["cancelRequested"]!=true
+        && job["nativeState"]["status"]=="needs_review"
+        && job["nativeState"]["modelInFlight"]!=true
+        && job["nativeState"]["inFlight"].as_array()
+            .is_some_and(|calls|calls.len()==1
+                && !job["nativeState"]["receipts"].as_array().is_some_and(|receipts|
+                    receipts.iter().any(|r|r["id"]==calls[0]["id"])))
+}
+fn safe_native_resume(job:&Value)->bool{
+    matches!(job["status"].as_str(),Some("failed"|"interrupted"))
+        && job["nativeState"]["status"]=="running"
+        && job["nativeState"]["modelInFlight"]!=true
+        && job["nativeState"]["inFlight"].as_array().is_some_and(Vec::is_empty)
+        && job["nativeInFlight"]!=true && job["cancelRequested"]!=true
+}
 fn project(state:&AppState,job:&Value)->Value{
     let snapshot=&job["nativeState"];
     let result=&job["result"];
     let awaiting=pending(state,job);
     let status=if awaiting.is_some(){"awaiting_approval"}else {
         match job["status"].as_str().unwrap_or("queued"){
-            "needs_review"=>"in_doubt",
+            "needs_review" if reconciliable_tool(job)=>"in_doubt",
+            "needs_review" if snapshot["error"].as_str()
+                .is_some_and(|e|e.contains("budget")||e.contains("limit"))=>"exhausted",
+            "needs_review"=>"denied",
+            "failed"|"interrupted" if safe_native_resume(job)=>"interrupted",
+            "failed"|"interrupted"=>"denied",
             "queued"=>"queued","running"=>"running",
             "completed"=>"completed","cancelled"=>"cancelled",
-            "failed"=>"failed","interrupted"=>"interrupted",
             other=>other
         }
     };
@@ -70,11 +94,37 @@ fn project(state:&AppState,job:&Value)->Value{
     }else {Value::Null};
     let approval=awaiting.map(|a|json!({"id":a["id"],
         "name":a["tool"],"arguments":a["args"]})).unwrap_or(Value::Null);
-    let events=job["events"].as_array().cloned().unwrap_or_default()
+    let mut events=job["events"].as_array().cloned().unwrap_or_default()
         .into_iter().map(|event|json!({
             "kind":event["kind"].as_str().or_else(||event["type"].as_str())
                 .unwrap_or("event"),"detail":event
         })).collect::<Vec<_>>();
+    if events.is_empty() {
+        // The kernel already persisted these receipts and in-flight intents
+        // while running. Project their *real* progress, not synthetic timers.
+        if let Some(receipts)=snapshot["receipts"].as_array(){
+            for receipt in receipts.iter().rev().take(3).rev(){
+                events.push(json!({"kind":if receipt["success"]==true {
+                    "tool_completed"
+                }else{"tool_failed"},
+                    "detail":{"tool":receipt["tool"],"step":receipt["step"],
+                        "operationId":receipt["id"]}
+                }));
+            }
+        }
+        if snapshot["modelInFlight"]==true {
+            events.push(json!({"kind":"model_started","detail":{
+                "phase":"in_flight","modelCall":snapshot["modelCalls"]
+            }}));
+        }
+        if let Some(calls)=snapshot["inFlight"].as_array(){
+            for call in calls.iter().take(3){
+                events.push(json!({"kind":"tool_started",
+                    "detail":{"tool":call["tool"],"operationId":call["id"]}
+                }));
+            }
+        }
+    }
     json!({
         "id":job["id"],"status":status,
         "instruction":job["input"]["prompt"],
@@ -175,13 +225,7 @@ pub async fn resume(State(state):State<AppState>,Path(id):Path<String>)->Respons
     let Some(job)=prompt_job(&state,&id) else {
         return error(StatusCode::NOT_FOUND,"SDK 작업을 찾지 못했습니다.");
     };
-    let snap=&job["nativeState"];
-    let replay_safe=matches!(job["status"].as_str(),Some("failed"|"interrupted"))
-        && snap["status"]=="running"
-        && snap["modelInFlight"]!=true
-        && snap["inFlight"].as_array().is_some_and(Vec::is_empty)
-        && job["nativeInFlight"]!=true && job["cancelRequested"]!=true;
-    if !replay_safe {
+    if !safe_native_resume(&job) {
         return error(StatusCode::CONFLICT,
             "확정되지 않은 실행이 있거나 커널이 종료됐습니다. 상태를 확인하고 새 작업으로 시작하세요.");
     }
