@@ -33,5 +33,7 @@ jobs:
       - run: npm run typecheck --prefix web
       - run: npm run build --prefix web
       - run: node --check scripts/rsi-lab.mjs
+      - run: node --check scripts/rsi-measure.mjs
+      - run: node --check scripts/rsi-git-path.mjs
       - run: node --test scripts/rsi-lab.test.mjs
       - run: cargo test --release
