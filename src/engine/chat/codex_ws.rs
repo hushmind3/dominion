@@ -14,6 +14,7 @@ use super::{Completion, ProviderRef};
 use crate::state::AppState;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
@@ -71,9 +72,16 @@ pub(super) fn item_signature(item: &Value) -> (String, String) {
         _ => {
             let role = item["role"].as_str().unwrap_or("").to_string();
             if let Some(parts) = item["content"].as_array() {
-                if parts.iter().any(|part| part["type"] == "input_image") {
-                    // Image identity, detail and ordering are part of history.
-                    return (role, json!(parts).to_string());
+                let text_only = parts.iter().all(|part| {
+                    matches!(part["type"].as_str(), Some("text" | "input_text" | "output_text"))
+                        && part["text"].as_str().is_some()
+                });
+                if !text_only {
+                    // Image/audio/video/unknown parts affect context identity.
+                    // Hash the full ordered payload so binary/base64 media do
+                    // not stay duplicated in the process-wide chain registry.
+                    let serialized = serde_json::to_vec(parts).unwrap_or_default();
+                    return (role, format!("structured:{:x}", Sha256::digest(serialized)));
                 }
             }
             let text = item["content"]
@@ -85,6 +93,7 @@ pub(super) fn item_signature(item: &Value) -> (String, String) {
                         .collect::<Vec<_>>()
                         .join("")
                 })
+                .or_else(|| item["content"].as_str().map(str::to_string))
                 .unwrap_or_default();
             (role, text)
         }
@@ -722,6 +731,24 @@ mod tests {
             item_signature(&item("user", "next")),
         ];
         assert_eq!(plan_chain(&chain, &incoming), Plan::Full);
+    }
+
+    #[test]
+    fn replacing_audio_or_opaque_content_invalidates_the_chain() {
+        let original=json!({"role":"user","content":[
+            {"type":"input_text","text":"transcribe"},
+            {"type":"input_audio","input_audio":{"data":"AA==","format":"wav"}}
+        ]});
+        let mut changed=original.clone();
+        changed["content"][1]["input_audio"]["data"]=json!("AQ==");
+        let original_signature=item_signature(&original);
+        let changed_signature=item_signature(&changed);
+        assert_ne!(original_signature,changed_signature);
+        assert!(original_signature.1.starts_with("structured:"));
+        assert!(!original_signature.1.contains("AA=="),"do not retain inline media in registry");
+        assert_eq!(plan_chain(&[original_signature],&[changed_signature,item_signature(&item("user","next"))]),Plan::Full);
+        assert_ne!(item_signature(&json!({"role":"user","content":"text a"})),
+                   item_signature(&json!({"role":"user","content":"text b"})));
     }
 
     #[test]
