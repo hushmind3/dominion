@@ -177,14 +177,13 @@ export class Dominion{
       ]);
       while(true){
         if(options.signal?.aborted)throw aborted();
-        const run=await this.nativeRuns.getWithSignal(runId,options.signal);
+        const run=await this.request<NativeRun>(
+          'GET','/api/sdk/runs/'+id(runId),undefined,options.signal);
         if(actionable.has(run.status))return run;
         if(Date.now()>=deadline)throw new DominionStreamError('Native run wait timed out');
         await sleep(Math.min(interval,deadline-Date.now()),options.signal);
       }
-    },
-    getWithSignal:(runId:string,signal?:AbortSignal)=>this.request<NativeRun>(
-      'GET','/api/sdk/runs/'+id(runId),undefined,signal)
+    }
   };
   readonly workflows={
     list:()=>this.request<Workflow[]>('GET','/api/workflows'),
