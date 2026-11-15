@@ -203,6 +203,10 @@ Rust SDK 자체가 계획·실행·검증·복구의 상태기계입니다. 실�
 
 **RSI 최종 테스트 게이트:** [GitHub Actions #43697949313](https://github.com/hushmind3/dominion-rust/actions/runs/43697949313)에서 Rust SDK·호스트·RSI·Codex·복구 **223/223**, Node 실 Git/Cargo A/B **2/2**, TypeScript SDK **7/7**, 프런트 타입 검사·빌드 통과. 실제 후손 바이너리 실행과 채택/브랜치 검증 테스트를 포함하며 유료 제공자 호출을 통한 자동 RSI 장기 운용의 검증으로 확대 해석하지 않습니다.
 
+## 2026년 비용 최적화: 캐시 인식형 도구 컨텍스트 편집
+
+`chat::provider::stream_completion_once_body` 및 `stream_anthropic_once`에서 `fit_tool_context`를 호출하고 큰 옛 읽기 결과만 예산압력·최소 절감량 기준으로 편집합니다. 사용자/시스템 메시지·도구 호출 ID·실행 증거의 저장소 원본은 그대로 유지하며 감사 이벤트 `chat.context_edit_prepared`에 과금이 아닌 **예상 전송문자 절감량**을 기록합니다. 반복 ID 대응·실제 Anthropic HTTP 전송 검증과 외부 원문 링크: [Context Editing 구현 문서](docs/SUB3-2026-CONTEXT-EDITING.md).
+
 ## 메인 기준 런타임·검증 정합성 (2026-11-15)
 
 `run_turn`의 도구 실행은 선언 순서와 효과 장벽을 보존하며, 안전한 연속 읽기 배치만 허용합니다. `history`는 완료 순서에 관계없이 도구 ID별 관찰을 복원합니다. 메인의 한국어 파일 검증과 원어 선택도 반영했습니다. 구체적인 수정 함수·검증 범위는 [메인 기능 보존 기록](docs/SUB3-MAIN-PARITY-2026-11-15.md)에 있습니다. 메인 API 210/210과 UI 56/56 파일의 정적 일치를 확인했습니다. [제품 집중 CI #43712789490](https://github.com/hushmind3/dominion-rust/actions/runs/43712789490)에서 Rust 컴파일/채팅/수행 결과 검증/FFprobe가 검증한 H.264 MP4/실제 HTTP 10개/웹 빌드를 통과했습니다. [SDK·RSI CI #43711861791](https://github.com/hushmind3/dominion-rust/actions/runs/43711861791)도 통과했습니다. 상용 모델 요금·전체 HTTP 동등성은 아직 미측정입니다.
