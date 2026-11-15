@@ -71,6 +71,9 @@ pub struct TaskInput {
     pub max_steps: Option<u64>,
     #[serde(default)]
     pub token_budget: Option<u64>,
+    /// Optional measured spend ceiling using configured provider KRW rates.
+    #[serde(default)]
+    pub cost_budget_krw: Option<f64>,
     #[serde(default)]
     pub planning_mode: Option<String>,
 }
@@ -95,6 +98,10 @@ impl TaskInput {
         if !(256..=500_000).contains(&self.token_budget.unwrap_or(40_000)) {
             return Err(RuntimeError("tokenBudget must be 256..=500000".into()));
         }
+        if self.cost_budget_krw.is_some_and(|value|
+            !value.is_finite() || !(0.0..=10_000_000.0).contains(&value)) {
+            return Err(RuntimeError("costBudgetKrw must be between 0 and 10000000".into()));
+        }
         if self.planning_mode.as_deref().is_some_and(
             |value| !matches!(value,"auto"|"always"|"never")
         ) {
@@ -117,6 +124,7 @@ impl TaskInput {
             "requireEvidence": self.require_evidence,
             "maxSteps": self.max_steps.unwrap_or(12),
             "tokenBudget": self.token_budget.unwrap_or(40_000),
+            "costBudgetKrw": self.cost_budget_krw,
             "planningMode": self.planning_mode.unwrap_or_else(||"auto".into()),
         });
         Ok((key, payload))
@@ -135,6 +143,8 @@ pub struct TaskRecord {
     pub cancel_requested: bool,
     pub steps: u64,
     pub tokens: u64,
+    #[serde(default)]
+    pub cost_krw: f64,
     pub created_at: String,
 }
 
@@ -187,6 +197,9 @@ impl DominionSdk {
             config.model_url.clone(),config.model_name.clone(),config.api_key.clone()
         );
         main.input_krw_per_million=rate("DOMINION_INPUT_KRW_PER_MILLION");
+        main.cached_input_krw_per_million=env::var("DOMINION_CACHED_INPUT_KRW_PER_MILLION")
+            .ok().and_then(|value|value.parse::<f64>().ok())
+            .unwrap_or(main.input_krw_per_million);
         main.output_krw_per_million=rate("DOMINION_OUTPUT_KRW_PER_MILLION");
         let economy = env::var("DOMINION_ECONOMY_MODEL_URL").ok().map(|endpoint| {
             let mut cheap = crate::provider::ModelConfig::basic(
@@ -195,6 +208,10 @@ impl DominionSdk {
                 env::var("DOMINION_ECONOMY_API_KEY").ok()
             );
             cheap.input_krw_per_million=rate("DOMINION_ECONOMY_INPUT_KRW_PER_MILLION");
+            cheap.cached_input_krw_per_million=
+                env::var("DOMINION_ECONOMY_CACHED_INPUT_KRW_PER_MILLION")
+                    .ok().and_then(|value|value.parse::<f64>().ok())
+                    .unwrap_or(cheap.input_krw_per_million);
             cheap.output_krw_per_million=rate("DOMINION_ECONOMY_OUTPUT_KRW_PER_MILLION");
             cheap
         });
