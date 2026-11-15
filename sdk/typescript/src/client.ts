@@ -211,8 +211,8 @@ export class DominionClient {
           // never advance the cursor until a real committed event is observed.
           if (event.type === "replay_gap") {
             if (event.requiresStateRefresh !== true
-              || !Number.isSafeInteger(event.firstAvailableSeq)
               || typeof event.firstAvailableSeq !== "number"
+              || !Number.isSafeInteger(event.firstAvailableSeq)
               || event.firstAvailableSeq < 1)
               throw new DominionProtocolError("Invalid event retention-gap signal");
             yield event;
