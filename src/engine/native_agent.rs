@@ -95,10 +95,8 @@ impl Tools for NativeTools {
             ).await {
                 Err("Tool execution was not approved".to_string())
             } else if action.tool.starts_with("mcp__") {
-                let result=mcp::call(&self.state,&action.tool,&action.arguments).await;
-                result.and_then(|value| if value["isError"]==true {
-                    Err(format!("MCP tool error: {}",value))
-                } else {Ok(value)})
+                mcp::call(&self.state,&action.tool,&action.arguments).await
+                    .and_then(|value|verified_tool_result(&action.tool,value))
             } else {
                 let context=tools::ToolContext {
                     workspace:&self.workspace, store:&self.state.store,
@@ -421,6 +419,8 @@ mod native_result_tests {
     fn wrapped_tool_errors_are_not_success_evidence() {
         assert!(verified_tool_result("http_fetch",json!({"statusCode":503,"body":"fail"})).is_err());
         assert!(verified_tool_result("mcp__server__op",json!({"isError":true})).is_err());
+        assert!(verified_tool_result("mcp__server__op",json!({"statusCode":503})).is_err());
+        assert!(verified_tool_result("mcp__server__op",json!({"error":"denied"})).is_err());
         assert!(verified_tool_result("workspace_write",json!({"success":false})).is_err());
         assert!(verified_tool_result("workspace_read",json!({"content":"ok"})).is_ok());
     }

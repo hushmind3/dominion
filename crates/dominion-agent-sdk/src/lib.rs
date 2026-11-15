@@ -7,7 +7,8 @@
 use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::{HashMap, HashSet}, future::Future, pin::Pin};
+use std::{collections::HashMap, future::Future, pin::Pin};
+mod scheduler;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -286,7 +287,6 @@ impl Kernel<'_> {
             serde_json::to_string(&definitions).map_err(|e| e.to_string())?,
             request.strategy, request.owner_instructions
         );
-        let mut seen = HashSet::<String>::new();
         let mut invalid = 0usize;
         self.journal.save(&run)?;
         'steps: for step in 0..request.limits.max_steps {
@@ -353,7 +353,7 @@ impl Kernel<'_> {
             );
             self.journal.save(&run)?;
             let decision = match decode(&reply.content) {
-                Ok(d) => { invalid = 0; d },
+                Ok(d) => d,
                 Err(error) => {
                     invalid += 1;
                     run.checks = vec![CheckResult {
@@ -413,36 +413,39 @@ impl Kernel<'_> {
                 continue;
             }
             if decision.actions.len() > 12 {
-                run.stop(Status::NeedsReview, "Model requested too many tool actions in one step");
+                invalid += 1;
+                run.checks = vec![CheckResult {
+                    criterion: Criterion {kind:CriterionKind::ToolSucceeded,path:None,
+                        contains:None,tool:Some("dispatch_plan".into())},
+                    satisfied:false,
+                    explanation:"At most 12 tool actions may be proposed in one model step".into(),
+                }];
                 self.journal.save(&run)?;
-                return Ok(run);
+                if invalid >= 3 { break; }
+                continue;
             }
-            let mut batch: Vec<Action> = Vec::new();
-            for action in decision.actions {
-                if action.id.trim().is_empty() || action.id.len() > 128
-                    || !seen.insert(action.id.clone()) {
-                    run.stop(Status::NeedsReview, "Invalid or duplicate tool operation id");
+            // The Rust SDK, not the model, owns the dependency graph and
+            // read-only concurrency. Invalid batches are sent back for
+            // replanning without dispatching partial side effects.
+            let groups = match scheduler::arrange(
+                decision.actions, &tools, &run.receipts,
+                request.limits.max_parallel_reads,
+            ) {
+                Ok(groups) => groups,
+                Err(error) => {
+                    invalid += 1;
+                    run.checks = vec![CheckResult {
+                        criterion: Criterion {kind:CriterionKind::ToolSucceeded,path:None,
+                            contains:None,tool:Some("dispatch_plan".into())},
+                        satisfied:false, explanation:error,
+                    }];
                     self.journal.save(&run)?;
-                    return Ok(run);
+                    if invalid >= 3 { break; }
+                    continue;
                 }
-                if !tools.contains_key(&action.tool) {
-                    run.stop(Status::NeedsReview, format!("Tool not authorized: {}", action.tool));
-                    self.journal.save(&run)?;
-                    return Ok(run);
-                }
-                if action.depends_on.iter().any(|dep| !run.receipts.iter().any(|r| &r.id == dep && r.success)) {
-                    run.stop(Status::NeedsReview, format!("Missing successful dependency for {}", action.id));
-                    self.journal.save(&run)?;
-                    return Ok(run);
-                }
-                batch.push(action);
-            }
-            // Do not run a later operation while a prior write's outcome is unknown.
-            let mut cursor = 0;
-            while cursor < batch.len() {
-                // Check again just before each tool batch. A correction made
-                // after planning cannot authorize stale commands, even if an
-                // earlier read batch has already completed.
+            };
+            invalid = 0;
+            for group in groups {
                 if self.journal.directive(&request.id)? != current_directive {
                     run.checks.push(CheckResult {
                         criterion: Criterion {kind:CriterionKind::ToolSucceeded,
@@ -458,37 +461,61 @@ impl Kernel<'_> {
                     self.journal.save(&run)?;
                     return Ok(run);
                 }
-                let mut end = cursor + 1;
-                if tools[&batch[cursor].tool].read_only {
-                    while end < batch.len() && end-cursor < request.limits.max_parallel_reads
-                        && tools[&batch[end].tool].read_only {
-                        end += 1;
-                    }
-                }
-                let selected = batch[cursor..end].to_vec();
-                run.in_flight = selected.clone();
-                // Write-ahead receipt: fail closed if SQLite cannot commit.
-                self.journal.save(&run)?;
-                let results = join_all(selected.iter().map(|action| self.tools.execute(action))).await;
-                for (action, outcome) in selected.iter().zip(results) {
-                    let (success, result) = match outcome {
-                        Ok(data) => (true, data),
-                        Err(error) => (false, json!({"error":error}))
-                    };
-                    run.receipts.push(Receipt {
-                        id:action.id.clone(), tool:action.tool.clone(), arguments:action.arguments.clone(),
-                        success, result, step:run.step
+                let mut ready = Vec::new();
+                let mut skipped_any = false;
+                for action in group {
+                    let failed_dependency = action.depends_on.iter().find(|dependency| {
+                        !run.receipts.iter().any(|receipt|
+                            &receipt.id == *dependency && receipt.success)
                     });
+                    if let Some(dependency) = failed_dependency {
+                        skipped_any = true;
+                        run.receipts.push(Receipt {
+                            id:action.id.clone(),tool:action.tool.clone(),
+                            arguments:action.arguments.clone(),success:false,
+                            result:json!({"skipped":true,
+                                "reason":format!("Dependency {dependency} was not successful")}),
+                            step:run.step,
+                        });
+                    } else { ready.push(action); }
                 }
-                run.in_flight.clear();
                 self.journal.save(&run)?;
+                if !ready.is_empty() {
+                    run.in_flight = ready.clone();
+                    // Durable write-ahead marker: fail closed if storage fails.
+                    self.journal.save(&run)?;
+                    let results = join_all(ready.iter().map(|action| self.tools.execute(action))).await;
+                    for (action, outcome) in ready.iter().zip(results) {
+                        let (success, result) = match outcome {
+                            Ok(data) => (true, data),
+                            Err(error) => (false, json!({"error":error}))
+                        };
+                        skipped_any |= !success;
+                        run.receipts.push(Receipt {
+                            id:action.id.clone(), tool:action.tool.clone(),
+                            arguments:action.arguments.clone(),
+                            success, result, step:run.step,
+                        });
+                    }
+                    run.in_flight.clear();
+                    self.journal.save(&run)?;
+                }
                 if matches!(request.strategy,Strategy::VerifyFirst) && !request.checks.is_empty() {
-                    // Feedback is based on observed filesystem/tool receipts,
-                    // not the model grading its own optimistic answer.
                     run.checks=self.verify(&request,&run).await;
                     self.journal.save(&run)?;
                 }
-                cursor = end;
+                if skipped_any {
+                    // Replan against observed failures; never continue with
+                    // writes derived from a stale or partially failed plan.
+                    run.checks.push(CheckResult {
+                        criterion: Criterion {kind:CriterionKind::ToolSucceeded,path:None,
+                            contains:None,tool:Some("failed_tool_batch".into())},
+                        satisfied:false,
+                        explanation:"A tool failed or a dependency was skipped. Inspect receipts and replan".into(),
+                    });
+                    self.journal.save(&run)?;
+                    continue 'steps;
+                }
             }
         }
         run.stop(Status::NeedsReview, "Step, model or decision-repair limit reached");
