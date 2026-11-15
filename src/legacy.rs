@@ -2,7 +2,8 @@
 //! Preserves the original JSON documents as inert archives; only selected
 //! owner-authored records become active in the new native tables.
 //! Does not import credentials, API tokens or executable jobs.
-use rusqlite::{params, Connection, OpenFlags};
+use rusqlite::{params, Connection, OpenFlags, types::ValueRef};
+use base64::Engine as _;
 use serde_json::{json, Value};
 use std::path::Path;
 
@@ -104,9 +105,13 @@ pub(crate) fn import(
             kind TEXT NOT NULL,id TEXT NOT NULL,data TEXT NOT NULL,
             PRIMARY KEY(kind,id)
         );
+        CREATE TABLE IF NOT EXISTS legacy_messages(
+            id TEXT PRIMARY KEY,session_id TEXT NOT NULL,data TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS legacy_imports(
             source TEXT PRIMARY KEY,imported_at TEXT NOT NULL,
-            archived INTEGER NOT NULL,messages INTEGER NOT NULL,
+            archived INTEGER NOT NULL,archived_messages INTEGER NOT NULL,
+            messages INTEGER NOT NULL,
             agents INTEGER NOT NULL,memories INTEGER NOT NULL,skills INTEGER NOT NULL
         );
     ").map_err(|e|e.to_string())?;
@@ -147,37 +152,63 @@ pub(crate) fn import(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages')",
         [],|row|row.get(0)).map_err(|e|e.to_string())?;
     let mut messages=0u64;
+    let mut archived_messages=0u64;
     if has_messages {
-        let mut stmt=origin.prepare(
-            "SELECT session_id,role,content FROM messages ORDER BY created_at,id"
-        ).map_err(|e|e.to_string())?;
+        let mut stmt=origin.prepare("SELECT * FROM messages ORDER BY created_at,id")
+            .map_err(|e|e.to_string())?;
+        let columns=stmt.column_names().iter().map(|name|name.to_string())
+            .collect::<Vec<_>>();
         let rows=stmt.query_map([],|row|{
-            Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?))
+            let mut record=serde_json::Map::new();
+            for (i,key) in columns.iter().enumerate(){
+                let field=match row.get_ref(i)?{
+                    ValueRef::Null=>Value::Null,
+                    ValueRef::Integer(value)=>json!(value),
+                    ValueRef::Real(value)=>json!(value),
+                    ValueRef::Text(value)=>json!(String::from_utf8_lossy(value)),
+                    ValueRef::Blob(value)=>json!({"binaryBase64":
+                        base64::engine::general_purpose::STANDARD.encode(value)}),
+                };
+                record.insert(key.clone(),field);
+            }
+            Ok(Value::Object(record))
         }).map_err(|e|e.to_string())?;
         for item in rows {
-            let (session,role,content)=item.map_err(|e|e.to_string())?;
-            // Historical output is a transcript, never new tool or command authority.
-            if !(role=="user"||role=="assistant") || session.is_empty() ||
-                session.len()>128 || content.is_empty() {continue;}
+            let document=item.map_err(|e|e.to_string())?;
+            let session=document["session_id"].as_str().unwrap_or("");
+            let id=document["id"].as_str().map(str::to_string)
+                .unwrap_or_else(||Uuid::new_v4().to_string());
+            tx.execute("INSERT OR IGNORE INTO legacy_messages(id,session_id,data)
+                VALUES(?1,?2,?3)",params![id,session,document.to_string()])
+                .map_err(|e|e.to_string())?;
+            archived_messages+=1;
+            let role=document["role"].as_str().unwrap_or("");
+            let content=document["content"].as_str().unwrap_or("");
+            // Do not promote historical tool or system messages into a new
+            // owner-authorized model conversation, but keep them archived.
+            if !(role=="user"||role=="assistant")||session.is_empty()||
+                session.len()>128||content.is_empty(){continue;}
             tx.execute("INSERT INTO messages(session_id,role,content) VALUES(?1,?2,?3)",
                 params![session,role,content]).map_err(|e|e.to_string())?;
             messages+=1;
         }
     }
     let at=chrono::Utc::now().to_rfc3339();
-    tx.execute("INSERT INTO legacy_imports(source,imported_at,archived,messages,agents,memories,skills)
-               VALUES(?1,?2,?3,?4,?5,?6,?7)",
-        params![source_id,at,archived,messages,agents,memories,skills])
+    tx.execute("INSERT INTO legacy_imports(source,imported_at,archived,archived_messages,messages,agents,memories,skills)
+               VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+        params![source_id,at,archived,archived_messages,messages,agents,memories,skills])
         .map_err(|e|e.to_string())?;
     tx.commit().map_err(|e|e.to_string())?;
     Ok(json!({"alreadyImported":false,"source":source_id,"archived":archived,
-        "messages":messages,"agents":agents,"memories":memories,"skills":skills,
+        "messages":messages,"archivedMessages":archived_messages,
+        "agents":agents,"memories":memories,"skills":skills,
         "keysImported":0,"jobsStarted":0}))
 }
 
 #[cfg(test)]
 mod tests{
     use super::*;
+    use uuid::Uuid;
     #[test]
     fn old_records_are_archived_but_only_owner_data_becomes_active(){
         let root=std::env::temp_dir().join(format!("dominion-main-import-{}",uuid::Uuid::new_v4()));
@@ -206,6 +237,7 @@ mod tests{
         let first=target.import_legacy(&source,&root.join("new.sqlite")).unwrap();
         assert_eq!(first["archived"],4);
         assert_eq!(first["messages"],1);
+        assert_eq!(first["archivedMessages"],1);
         assert_eq!(target.agents().len(),1);
         assert_eq!(target.skill_list()[0]["enabled"],false);
         assert_eq!(target.memory_list(None)[0]["content"],"항상 검증");
