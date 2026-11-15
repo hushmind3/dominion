@@ -160,6 +160,114 @@ ui.steer.addEventListener('click',async()=>{
     ui.instruction.value='';notice('지시가 저장됐습니다. 다음 모델 단계에서 반영됩니다.');
   }catch(e){notice(e.message);}
 });
+async function loadMemories(){
+  const session=byId('memoryScope').value==='session'
+    ? byId('memorySession').value.trim():null;
+  const query=session?'?sessionId='+encodeURIComponent(session):'';
+  const items=await api('/api/memory'+query);
+  const rows=byId('memoryRows');
+  rows.replaceChildren();
+  if(!items.length){
+    const empty=document.createElement('p');empty.textContent='저장된 기억이 없습니다.';
+    rows.append(empty);return;
+  }
+  for(const item of items){
+    const card=document.createElement('div');card.className='task';
+    const label=document.createElement('strong');
+    label.textContent=(item.sessionId?'대화 전용':'공통')+' · '+item.kind;
+    const content=document.createElement('p');
+    content.textContent=item.content;
+    const mute=document.createElement('button');
+    mute.type='button';mute.className='ghost';
+    mute.textContent=item.status==='active'?'이 기억 사용 중지':'비활성';
+    mute.disabled=item.status!=='active';
+    mute.addEventListener('click',async()=>{
+      try{
+        await api('/api/memory/'+encodeURIComponent(item.id)+'/disable','POST',{});
+        await loadMemories();
+      }catch(error){notice(error.message);}
+    });
+    card.append(label,content,mute);
+    rows.append(card);
+  }
+}
+async function loadSkills(){
+  const items=await api('/api/skills');
+  const rows=byId('skillRows');
+  rows.replaceChildren();
+  if(!items.length){
+    const empty=document.createElement('p');empty.textContent='저장된 스킬이 없습니다.';
+    rows.append(empty);return;
+  }
+  for(const item of items){
+    const card=document.createElement('div');card.className='task';
+    const title=document.createElement('strong');
+    title.textContent=item.name+' · '+(item.trigger||'모든 대화');
+    const description=document.createElement('p');
+    description.textContent=item.instructions;
+    const toggle=document.createElement('button');
+    toggle.type='button';toggle.className='secondary';
+    toggle.textContent=item.enabled?'스킬 비활성화':'검토 후 스킬 활성화';
+    toggle.addEventListener('click',async()=>{
+      try{
+        await api('/api/skills/'+encodeURIComponent(item.id)+'/enable',
+          'POST',{enabled:!item.enabled});
+        await loadSkills();
+      }catch(error){notice(error.message);}
+    });
+    card.append(title,description,toggle);
+    rows.append(card);
+  }
+}
+async function refreshKnowledge(){
+  await Promise.all([loadMemories(),loadSkills()]);
+}
+byId('memoryCreate').addEventListener('submit',async event=>{
+  event.preventDefault();
+  const scope=byId('memoryScope').value;
+  const session=scope==='session'?byId('memorySession').value.trim():null;
+  if(scope==='session'&&!session){
+    notice('대화 전용 기억을 저장하려면 대화 ID를 입력하세요.');return;
+  }
+  try{
+    await api('/api/memory','POST',{
+      content:byId('memoryContent').value.trim(),
+      kind:byId('memoryKind').value,
+      sessionId:session
+    });
+    byId('memoryContent').value='';
+    await loadMemories();
+    notice('기억이 저장됐습니다. 관련 대화에서 자동 검색됩니다.');
+  }catch(error){notice(error.message);}
+});
+byId('skillCreate').addEventListener('submit',async event=>{
+  event.preventDefault();
+  try{
+    await api('/api/skills','POST',{
+      name:byId('skillName').value.trim(),
+      trigger:byId('skillTrigger').value.trim(),
+      instructions:byId('skillInstructions').value.trim(),
+      enabled:false
+    });
+    byId('skillName').value='';
+    byId('skillInstructions').value='';
+    byId('skillTrigger').value='';
+    await loadSkills();
+    notice('스킬 초안이 저장됐습니다. 검토 후 활성화하세요.');
+  }catch(error){notice(error.message);}
+});
+byId('memoryScope').addEventListener('change',async()=>{
+  try{await loadMemories();}catch(error){notice(error.message);}
+});
+byId('memorySession').addEventListener('change',async()=>{
+  if(byId('memoryScope').value==='session'){
+    try{await loadMemories();}catch(error){notice(error.message);}
+  }
+});
+byId('refreshKnowledge').addEventListener('click',async()=>{
+  try{await refreshKnowledge();notice('');}catch(error){notice(error.message);}
+});
+
 let selectedImprovement = null;
 let improvementBusy = false;
 
@@ -527,6 +635,7 @@ byId('refreshGroups').addEventListener('click',async()=>{
     await refreshGroups();
     await refreshVideos();
     await refreshImprovements();
+    await refreshKnowledge();
   }catch(error){
     ui.connection.textContent='서버 연결 끊김';notice(error.message);
   }
