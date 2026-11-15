@@ -1477,6 +1477,20 @@ async fn stream_codex_once(
             return Ok(completion);
         }
         Err(super::codex_ws::WsError::Fatal(message)) => return Err(message),
+        Err(super::codex_ws::WsError::Uncertain(message)) => {
+            // An accepted WebSocket generation may already be billed even if
+            // no delta arrived. Do not switch to HTTP or another provider.
+            continuity["incrementalTransport"]=json!({
+                "wire":"websocket","mode":"outcome-uncertain",
+                "replayed":false,"modelBilling":"unknown"
+            });
+            return Err(format!("Codex 모델 응답 미확정(자동 재시도 중단): {message}"));
+        }
+        Err(super::codex_ws::WsError::ChainRejected(message)) => {
+            // Normally stream() retries this explicit server rejection on a
+            // fresh socket; do not infer success if recovery also fails.
+            return Err(message);
+        },
         Err(super::codex_ws::WsError::HintRejected(reason)) => {
             super::continuity::note_hint(state,provider,super::continuity::CacheWire::Key,false,400);
             continuity["incrementalTransport"]=json!({"wire":"http","mode":"full-fallback","fallbackReason":reason});
