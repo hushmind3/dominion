@@ -7186,3 +7186,67 @@ fn codex_receives_uploaded_image_and_file_contents() {
     assert!(parts.iter().any(|part| part["type"] == "input_image"
         && part["image_url"] == format!("data:image/png;base64,{image_data}")), "{seen:?}");
 }
+
+#[test]
+fn existing_file_creation_preserves_contents_without_model_calls() {
+    let _serial = serial();
+    let (port, requests) = scripted_provider(|_| panic!("existing file must not require a model call"));
+    let app = TestApp::new(port, "native");
+    std::fs::write(app._root.join("existing.md"), "preserve these bytes").unwrap();
+    let stream = app.chat(&json!({"input":"existing.md 파일을 만들어줘","autoLearning":false}));
+    assert!(stream.contains("assistant_saved"), "{stream}");
+    assert!(stream.contains("파일이 이미 있습니다"), "{stream}");
+    assert_eq!(std::fs::read_to_string(app._root.join("existing.md")).unwrap(), "preserve these bytes");
+    assert!(requests.lock().unwrap().is_empty());
+    let execution = &app.get("/api/executions")[0];
+    assert_eq!(execution["modelCalls"], 0, "{execution}");
+    assert_eq!(execution["toolCalls"], 0, "{execution}");
+    assert_eq!(execution["deterministicShortcut"]["kind"], "file_already_exists", "{execution}");
+    let messages = app.get(&format!("/api/sessions/{}/messages", execution["sessionId"].as_str().unwrap()));
+    let last = messages.as_array().unwrap().last().unwrap();
+    assert_eq!(last["metadata"]["completionSource"], "existing_artifact");
+    assert_eq!(last["metadata"]["usage"]["totalTokens"], 0);
+}
+
+#[test]
+fn empty_file_creation_uses_one_model_call_and_no_paid_final_summary() {
+    let _serial = serial();
+    let (port, requests) = scripted_provider(|request| {
+        if request["messages"].as_array().unwrap().iter().any(|message|
+            message["role"] == "user" && message["content"].as_str().is_some_and(|text|text.contains("방금 만든 파일"))) {
+            return vec![json!({"choices":[{"delta":{"content":"empty-once.md"},"finish_reason":"stop"}]})];
+        }
+        let tools = request["tools"].as_array().expect("creation tools");
+        assert!(tools.len() <= 5, "unrelated tool schemas: {tools:?}");
+        assert!(!tools.iter().any(|tool| tool["function"]["name"] == "web_search"));
+        vec![json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"create-once","type":"function",
+            "function":{"name":"workspace_write","arguments":"{\"path\":\"empty-once.md\",\"content\":\"\"}"}}]},"finish_reason":"tool_calls"}],
+            "usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120}})]
+    });
+    let app = TestApp::new(port, "native");
+    app.post("/api/policy", &json!({"autoApproveAll":true}));
+    let stream = app.chat(&json!({"input":"empty-once.md 파일을 만들어줘","autoLearning":false}));
+    assert!(stream.contains("assistant_saved"), "{stream}");
+    assert!(!stream.contains("acceptance_retry"), "{stream}");
+    assert_eq!(std::fs::metadata(app._root.join("empty-once.md")).unwrap().len(), 0);
+    assert_eq!(requests.lock().unwrap().len(), 1);
+    let execution = &app.get("/api/executions")[0];
+    assert_eq!(execution["modelCalls"], 1, "{execution}");
+    assert_eq!(execution["toolCalls"], 1, "{execution}");
+    let messages = app.get(&format!("/api/sessions/{}/messages", execution["sessionId"].as_str().unwrap()));
+    let last = messages.as_array().unwrap().last().unwrap();
+    assert_eq!(last["metadata"]["completionSource"], "verified_artifact");
+    assert_eq!(last["metadata"]["usage"]["totalTokens"], 120);
+    let followup = app.chat(&json!({"sessionId":execution["sessionId"],
+        "input":"방금 만든 파일 이름만 말해줘","toolsEnabled":false,"autoLearning":false}));
+    assert!(followup.contains("assistant_saved"), "{followup}");
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured.len(), 2);
+    let history = captured[1]["messages"].as_array().unwrap();
+    let call = history.iter().position(|message| message["tool_calls"].as_array().is_some_and(|calls|!calls.is_empty())).unwrap();
+    let result = history.iter().position(|message| message["role"] == "tool").unwrap();
+    let summary = history.iter().position(|message| message["role"] == "assistant"
+        && message["content"].as_str().is_some_and(|text|text.contains("파일을 만들었습니다"))).unwrap();
+    assert!(call < result && result < summary, "tool exchange must precede the host summary: {history:?}");
+}
+

@@ -846,6 +846,9 @@ async fn run_turn_body(
             .filter(|seconds|*seconds>0).map(std::time::Duration::from_secs)
             .unwrap_or(std::time::Duration::from_secs(365*24*3600))
     }else{MAX_ELAPSED};
+    let simple_creation_target=if !session["roomId"].is_string() && session["rsiRun"]!=true {
+        simple_file_creation(state,&request.input,&acceptance)
+    }else{None};
     let mut tool_definitions = if request.tools_enabled && request.tools_execution_enabled {
         tools::definitions()
     } else {
@@ -871,6 +874,30 @@ async fn run_turn_body(
     if tool_discovery_applies(is_room, session["rsiRun"] == true) {
         tool_definitions = select_tool_definitions(tool_definitions, &request.input, &discovery);
     }
+    if let Some(path)=&simple_creation_target{
+        // A bounded single-file goal needs only file and shell capabilities.
+        // Avoid sending unrelated web, memory, MCP and delegation schemas.
+        let root=state.config.workspace.canonicalize()
+            .unwrap_or_else(|_|state.config.workspace.clone());
+        let inside=path.starts_with(&root);
+        tool_definitions=tools::definitions().into_iter().filter(|definition|{
+            let name=tool_name(definition);
+            matches!(name,"shell_exec"|"terminal_exec") || if inside{
+                matches!(name,"workspace_list"|"workspace_read"|"workspace_write")
+            }else{
+                matches!(name,"file_list"|"file_read"|"file_write")
+            }
+        }).collect();
+        if !request.tools_enabled || !request.tools_execution_enabled{
+            tool_definitions.clear();
+        }
+        crate::engine::algorithms::mark_unrated(
+            state,execution_id,"tool.discovery","single-file creation");
+        if let Some(mut execution)=state.store.get("execution",execution_id){
+            execution["contextPolicy"]=json!("single-file-creation");
+            state.store.put("execution",&execution);
+        }
+    }
     if session["rsiRun"]==true {
         tool_definitions.retain(|definition| tools::rsi_allowed(tool_name(definition)));
     }
@@ -880,7 +907,7 @@ async fn run_turn_body(
     if !session["sdkUiPolicy"].is_null(){
         tool_definitions.retain(|definition|
             tools::ui_tool_allowed(&session["sdkUiPolicy"],tool_name(definition)));
-        if session["rsiRun"]!=true {
+        if session["rsiRun"]!=true && simple_creation_target.is_none() {
             // Home NativeAgentPanel is an ordinary task interface, not an RSI
             // playground. Keep task-critical capabilities but do not spend
             // the first provider call listing every unrelated native tool.
@@ -1322,11 +1349,37 @@ async fn run_turn_body(
     let mut rsi_last_program_phase = String::new();
     let mut rsi_last_rule_id = String::new();
 
+    if let Some(path)=simple_creation_target.as_ref().filter(|path|
+        std::fs::metadata(path).is_ok_and(|m|m.is_file())
+        && !strategy_candidates.iter().any(|strategy|
+            strategy["verification"]["type"]=="procedure"
+            && crate::engine::procedure::applies(
+                strategy,&request.input,None,None))){
+        // Existing contents already satisfy "create this file". Preserve the
+        // bytes and answer with zero billable model/tool calls. Never claim
+        // that this attempt wrote a pre-existing artifact.
+        final_content=format!(
+            "파일이 이미 있습니다: `{}`. 내용을 유지했습니다.",path.display());
+        acceptance_passed=true;
+        finished=true;
+        metadata["completionSource"]=json!("existing_artifact");
+        if let Some(mut execution)=state.store.get("execution",execution_id){
+            execution["deterministicShortcut"]=json!({
+                "kind":"file_already_exists","modelCalls":0,"tokens":0
+            });
+            execution["artifactVerification"]=json!({
+                "path":path,"exists":true,"verified":true
+            });
+            state.store.put("execution",&execution)
+                .ok_or("파일 확인 결과를 저장할 수 없습니다.")?;
+        }
+        let _=tx.send(json!({"type":"text","text":final_content}));
+    }
     let mut program_finished = program_policy.is_none();
     // `toolsEnabled` controls whether the model may call tools. It is not an
     // execution permission for the Rust harness; harness nodes use the same
     // approval, cancellation and budget policy as model tool calls.
-    let harness_messages = if request.tools_execution_enabled {
+    let harness_messages = if request.tools_execution_enabled && !finished {
         run_harness_nodes(
         state,
         tx,
@@ -2699,6 +2752,21 @@ async fn run_turn_body(
                         "content": "모든 검증 조건이 충족되었습니다. 추가 도구 호출 없이 최종 답변만 작성하세요."
                     }));
                     let _ = tx.send(json!({"type": "acceptance_passed"}));
+                    if let Some(path)=simple_creation_target.as_ref().filter(|path|
+                        std::fs::metadata(path).is_ok_and(|m|m.is_file() && m.len()==0)
+                        && !strategy_candidates.iter().any(|strategy|
+                            strategy["verification"]["type"]=="procedure"
+                            && crate::engine::procedure::applies(
+                                strategy,&request.input,None,None))){
+                        // Actual file existence has been observed. A second
+                        // paid provider call to say "done" adds no evidence.
+                        final_content=format!("파일을 만들었습니다: `{}`",path.display());
+                        metadata["completionSource"]=json!("verified_artifact");
+                        continuation_projection=None;
+                        finished=true;
+                        let _=tx.send(json!({"type":"text","text":final_content}));
+                        break;
+                    }
                 }
             }
         }
@@ -5240,6 +5308,18 @@ fn record_soft_tool_error(
 struct ActionReview {
     gaps: Vec<String>,
     next_action: Option<String>,
+}
+
+fn simple_file_creation(
+    state:&AppState,input:&str,acceptance:&Option<(String,Value)>
+)->Option<std::path::PathBuf>{
+    if !verification::simple_file_creation_goal(input){return None;}
+    let (_,checks)=acceptance.as_ref()?;
+    let checks=checks.as_array()?;
+    let [check]=checks.as_slice() else{return None;};
+    if check["type"]!="file_exists" || check["inferred"]!=true
+        || check["creationOnly"]!=true{return None;}
+    verification::resolve_path(state,check["path"].as_str()?).ok()
 }
 
 /// Deterministic single-step file work should not pay for an extra planner
