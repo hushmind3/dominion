@@ -71,6 +71,21 @@ impl Session {
     fn event(&mut self, kind: &str, detail: Value) {
         self.events.push(SdkEvent { kind: kind.into(), detail });
     }
+
+    /// Only an operator can resolve a potentially executed tool after a crash.
+    /// This never reruns a side effect; the recorded observation becomes the
+    /// corresponding tool result before the next model turn.
+    pub fn reconcile_observation(&mut self, observation: Value) -> Result<(), String> {
+        if !matches!(self.status, RunStatus::InDoubt { .. }) {
+            return Err("session is not awaiting tool reconciliation".into());
+        }
+        let call = self.in_flight.take().ok_or("no uncertain tool call")?;
+        let result = json!({"manuallyReconciled":true,"observation":observation});
+        self.messages.push(Message::tool_result(call.id.clone(), result.to_string()));
+        self.event("tool_reconciled", json!({"id":call.id,"tool":call.name}));
+        self.status = RunStatus::Ready;
+        Ok(())
+    }
 }
 
 pub enum Verification {
@@ -182,10 +197,7 @@ impl AgentSdk {
     /// Explicit recovery after an uncertain side effect. An operator must
     /// inspect the workspace; neither choice is silently inferred.
     pub fn reconcile(&mut self, state: &mut Session, result: Value) -> Result<(), String> {
-        let call = state.in_flight.take().ok_or("no uncertain tool call to reconcile")?;
-        state.messages.push(Message::tool_result(call.id.clone(), result.to_string()));
-        state.event("tool_reconciled", json!({"id":call.id,"tool":call.name}));
-        state.status = RunStatus::Ready;
+        state.reconcile_observation(result)?;
         self.persist(state)
     }
 
