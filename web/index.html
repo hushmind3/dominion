@@ -37,6 +37,7 @@
             <label class="switch"><input id="write" type="checkbox"><span>파일 수정 허용</span></label>
             <label class="switch"><input id="shell" type="checkbox"><span>검사 명령 허용</span></label>
             <label class="switch"><input id="mcp" type="checkbox"><span>외부 연결 도구 허용</span></label>
+            <label class="switch"><input id="subagents" type="checkbox"><span>보조 에이전트 협업</span></label>
             <label class="switch"><input id="evidence" type="checkbox"><span>수정 증거 필수</span></label>
           </div>
           <button class="primary" id="run" type="submit"><span>실행 시작</span><span>↗</span></button>
@@ -74,6 +75,8 @@
           <div class="steer-row"><input id="instruction" placeholder="다음 모델 단계에 반영할 지시를 입력하세요"><button id="steer" type="button" class="secondary">지시 전달</button></div>
         </div>
         <div class="timeline-title">실행 이벤트</div>
+        <div class="steer-row"><button id="showChildren" type="button" class="ghost">보조 에이전트 진행 보기</button></div>
+        <ol id="children" class="timeline" aria-label="보조 작업 진행 상태"></ol>
         <ol id="timeline" class="timeline" aria-label="이벤트 기록"></ol>
       </section>
       <section class="history" id="groups" aria-labelledby="groupTitle">
