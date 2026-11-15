@@ -1761,7 +1761,19 @@ mod tests {
         assert_eq!(result["turns"], 1);
         assert_eq!(result["yieldedToMessageId"], "new-owner");
         server.abort(); let _=server.await;
-        drop(state); std::fs::remove_dir_all(dir).unwrap();
+        drop(state);
+        // Windows can retain the SQLite file briefly while an in-flight
+        // provider callback releases its connection. Await cleanup rather
+        // than treating a transient sharing violation as a room failure.
+        let mut cleaned = false;
+        for _ in 0..50 {
+            if !dir.exists() || std::fs::remove_dir_all(&dir).is_ok() {
+                cleaned = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert!(cleaned, "room fixture directory remained locked: {}", dir.display());
     }
     #[tokio::test]
     async fn stopped_generation_and_uncertain_turns_never_replay() {
