@@ -128,6 +128,34 @@ fn may_dispatch_native_action(job:Option<&Value>, expected_directive:&Value,
             && job["nativeDirective"]==*expected_directive)
 }
 
+/// Operator reconciliation cannot serve as a permissionless success token.
+fn manual_recovery_guard(job:&Value,specs:&[ToolSpec],action:&Action)->Result<(),String>{
+    let observation=&job["nativeOwnerObservation"];
+    if observation["applied"]!=true || observation["requiresInspection"]!=true {
+        return Ok(());
+    }
+    if observation["tool"]==action.tool && observation["arguments"]==action.arguments {
+        return Err("An operator-observed applied tool effect cannot be repeated automatically".into());
+    }
+    let read_only=specs.iter().find(|spec|spec.name==action.tool)
+        .is_some_and(|spec|spec.read_only);
+    if read_only {return Ok(());}
+    let receipts=job["nativeState"]["receipts"].as_array()
+        .ok_or("Manually reconciled run is missing durable receipts")?;
+    let Some(index)=receipts.iter().rposition(|r|r["id"]==observation["actionId"]) else {
+        return Err("Manually reconciled action receipt missing; no further writes".into());
+    };
+    let inspected=receipts.iter().skip(index+1).any(|receipt|{
+        receipt["success"]==true && receipt["result"]["operatorObservedApplied"]!=true
+        && receipt["tool"].as_str().is_some_and(|tool|
+            specs.iter().any(|spec|spec.name==tool&&spec.read_only))
+    });
+    if !inspected {
+        return Err("Read-only inspection is required after an applied uncertain effect before another mutation".into());
+    }
+    Ok(())
+}
+
 impl Tools for NativeTools {
     fn definitions(&self) -> Vec<ToolSpec> { self.tool_specs.clone() }
     fn execute<'a>(&'a self, action: &'a Action) -> BoxFuture<'a, Result<Value, String>> {
@@ -135,6 +163,9 @@ impl Tools for NativeTools {
             if !self.tools_enabled {
                 return Err("The owner disabled tools for this run".into());
             }
+            let current=self.state.store.get("job",&self.run_id)
+                .ok_or("Native run record disappeared during tool dispatch")?;
+            manual_recovery_guard(&current,&self.tool_specs,action)?;
             let operation_id=format!("native-op-{}-{}",self.run_id,action.id);
             let op=json!({
                 "id": operation_id, "runId": self.run_id,
@@ -620,6 +651,35 @@ mod native_result_tests {
         assert_eq!(job["cancelRequested"],true);
         assert_eq!(job["status"],"cancelled");
         let _=std::fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn reconciled_applied_effect_must_be_inspected_before_any_mutation_or_retry(){
+        let specs=vec![
+            ToolSpec{name:"workspace_read_range".into(),description:"read".into(),
+                schema:json!({}),read_only:true},
+            ToolSpec{name:"workspace_write".into(),description:"write".into(),
+                schema:json!({}),read_only:false},
+        ];
+        let repeated=Action{id:"new-id".into(),tool:"workspace_write".into(),
+            arguments:json!({"path":"file.txt","content":"same"}),depends_on:vec![]};
+        let new_write=Action{id:"next".into(),tool:"workspace_write".into(),
+            arguments:json!({"path":"another.txt"}),depends_on:vec![]};
+        let read=Action{id:"read".into(),tool:"workspace_read_range".into(),
+            arguments:json!({"path":"file.txt"}),depends_on:vec![]};
+        let mut job=json!({"nativeOwnerObservation":{"applied":true,
+            "requiresInspection":true,"actionId":"original",
+            "tool":"workspace_write","arguments":repeated.arguments},
+            "nativeState":{"receipts":[{"id":"original","success":false,
+                "tool":"workspace_write"}]}});
+        assert!(manual_recovery_guard(&job,&specs,&read).is_ok());
+        assert!(manual_recovery_guard(&job,&specs,&repeated).is_err());
+        assert!(manual_recovery_guard(&job,&specs,&new_write).is_err());
+        job["nativeState"]["receipts"].as_array_mut().unwrap().push(json!({
+            "id":"read1","success":true,"tool":"workspace_read_range",
+            "result":{"content":"file.txt"}
+        }));
+        assert!(manual_recovery_guard(&job,&specs,&new_write).is_ok());
+        assert!(manual_recovery_guard(&job,&specs,&repeated).is_err());
     }
     #[test]
     fn pending_approval_respects_live_owner_changes_and_cancel() {
