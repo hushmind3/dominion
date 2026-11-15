@@ -159,7 +159,15 @@ pub fn evolve(history: &[Value], payoff: fn(&Value) -> f64) -> Value {
         let revision=genome.revision();
         let entry=cohorts.entry(revision).or_insert((genome,0,0.0,0));
         entry.1+=1;
-        let causal_reward=payoff(row).clamp(0.0,1.0);
+        // Older observations without a revision retain their historical
+        // fallback behavior. A modern observation that declares a revision
+        // must match the executable genome before earning UCB reward too.
+        let revision_matches=row["editPolicy"]["revision"].as_str()
+            .is_none_or(|declared|declared==revision.as_str());
+        let causal_reward=if revision_matches {
+            let measured=payoff(row);
+            if measured.is_finite() { measured.clamp(0.0,1.0) } else { 0.0 }
+        } else { 0.0 };
         entry.2+=causal_reward;
         if row["accepted"]==true && row["evidenceVerified"]==true
             && causal_reward>=0.95 {entry.3+=1;}
