@@ -17,12 +17,17 @@ struct ConfiguredModel {
     model: String,
     session: String,
     run_id: String,
+    route_binding: String,
     allow_fallback: bool,
 }
 impl Model for ConfiguredModel {
     fn complete<'a>(&'a self, system: &'a str, prompt: &'a str)
         -> BoxFuture<'a, Result<ModelReply, String>> {
         Box::pin(async move {
+            let current=gateway::resolve(&self.state,&self.provider,Some(&self.model))?;
+            if crate::engine::native_routing::binding(&current)!=self.route_binding {
+                return Err("Native model endpoint changed after route pinning; review required".into());
+            }
             let content = if self.allow_fallback {
                 llm::complete_with_fallback_for_session(
                     &self.state, &self.provider, &self.model, system, prompt, &self.session
@@ -47,6 +52,9 @@ impl Model for ConfiguredModel {
     ) -> BoxFuture<'a,Result<ModelTurn,String>> {
         Box::pin(async move {
             let route=gateway::resolve(&self.state,&self.provider,Some(&self.model))?;
+            if crate::engine::native_routing::binding(&route)!=self.route_binding {
+                return Err("Native provider route changed during job; no paid generation was sent".into());
+            }
             if route.kind=="cli" || route.tool_mode=="compat" {
                 // Text-only and legacy local models retain the independent
                 // Rust structured JSON planner without claiming native tools.
@@ -313,7 +321,32 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
         agent.as_ref().and_then(|a|a["providerId"].as_str()).unwrap_or("")
     } else {provider};
     let chosen_model=requested_model.or_else(||agent.as_ref().and_then(|a|a["model"].as_str()));
-    let route=gateway::resolve(&context.state,provider,chosen_model)?;
+    // Pinned source of truth: a recovered job must never reprice/reselect a
+    // different provider after an already-authorized model/tool operation.
+    let previous_route=job["nativeRoute"].as_object();
+    let (route,route_record)=if let Some(saved)=previous_route {
+        let saved=Value::Object(saved.clone());
+        let id=saved["providerId"].as_str().ok_or("Pinned native provider ID missing")?;
+        let name=saved["model"].as_str().ok_or("Pinned native model missing")?;
+        let route=gateway::resolve(&context.state,id,Some(name))?;
+        if saved["binding"].as_str()!=Some(
+            crate::engine::native_routing::binding(&route).as_str()) {
+            return Err("Native job provider/model endpoint was changed after checkpoint; manual review required".into());
+        }
+        (route,saved)
+    }else{
+        crate::engine::native_routing::choose(
+            &context.state,provider,chosen_model,&input["nativeRoutingPolicy"],
+            task,input["ownerInstructions"].as_str().unwrap_or(""))?
+    };
+    if previous_route.is_none() {
+        context.checkpoint(json!({"nativeRoute":route_record}))?;
+        context.state.store.audit("native.route.selected",json!({
+            "jobId":context.job_id,"providerId":route.id,"model":route.model,
+            "selection":route_record["selection"],"currency":"KRW",
+            "routePinned":true
+        }));
+    }
     let session = if let Some(id)=job["sessionId"].as_str().or_else(||input["sessionId"].as_str()) {
         id.to_string()
     } else {
@@ -412,6 +445,7 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
         state:context.state.clone(),provider:route.id.clone(),
         model:route.model.clone(),session:session.clone(),
         run_id:context.job_id.clone(),
+        route_binding:crate::engine::native_routing::binding(&route),
         allow_fallback:input["allowFallback"].as_bool().unwrap_or(false),
     };
     let host_tools=NativeTools {
