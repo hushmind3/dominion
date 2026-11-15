@@ -332,3 +332,20 @@ async fn dropping_auxiliary_call_preserves_uncertain_paid_intent() {
         .next_round(&mut budget, host.store.as_ref())
         .is_err());
 }
+
+#[tokio::test]
+async fn cancelled_execution_never_enters_product_initialization() {
+    let mut host = Fixture::new();
+    host.store.cancelled.store(true, Ordering::SeqCst);
+    assert!(host.drive(4).await.is_err());
+    assert!(host.trace.is_empty());
+}
+
+#[tokio::test]
+async fn uncertain_paid_call_cannot_restart_product_initialization() {
+    let mut host = Fixture::new();
+    host.store.saved.lock().unwrap().model_in_flight = true;
+    assert!(host.drive(4).await.is_err());
+    assert!(host.trace.is_empty());
+    assert!(host.store.saved.lock().unwrap().model_in_flight);
+}

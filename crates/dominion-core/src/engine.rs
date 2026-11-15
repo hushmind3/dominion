@@ -123,6 +123,19 @@ pub struct Engine;
 impl Engine {
     /// This is the sole agent loop for every product entry point.
     pub async fn drive<H: Host>(host: &mut H, mut ctx: Context<'_>) -> Result<(), String> {
+        ctx.check_cancelled()?;
+        if ctx.snapshot.native.status != crate::domain::RunStatus::Running {
+            return Err("실행 중인 네이티브 프레임만 진행할 수 있습니다.".into());
+        }
+        if ctx.snapshot.model_in_flight
+            || ctx.snapshot.native.in_flight.is_some()
+            || !ctx.snapshot.native.read_batch_in_flight.is_empty()
+            || !ctx.snapshot.native.queued_calls.is_empty()
+        {
+            return Err(
+                "이전 실행 결과를 확인하기 전에는 초기화나 모델 호출을 재개할 수 없습니다.".into(),
+            );
+        }
         ctx.journal.save(&ctx.snapshot)?;
         ctx.phase("initialize")?;
         let mut complete = host.initialize(&mut ctx).await? == Flow::Complete;
