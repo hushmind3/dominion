@@ -7,6 +7,27 @@ mod continuity;
 mod room_context;
 
 pub(crate) fn estimate_text_tokens(text:&str)->u64 {room_context::estimate(text) as u64}
+
+/// Native SDK shares the persistent GUI-visible approval gate.
+/// The model cannot grant itself write or shell permissions.
+pub(crate) async fn approve_native_tool(
+    state: &crate::state::AppState,
+    session_id: &str,
+    name: &str,
+    args: &serde_json::Value,
+    run_id: &str,
+    operation_id: &str,
+) -> bool {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    let approved = approval::request_approval(
+        state, &tx, session_id, name, args, run_id, operation_id, None
+    ).await;
+    drop(tx);
+    let _ = drain.await;
+    approved
+}
+
 mod evidence;
 pub(crate) use evidence::prepare_owner_action;
 mod protocol;

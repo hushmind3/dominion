@@ -150,7 +150,7 @@ pub fn recover(state: &AppState) {
         let flagged = [
             "/inFlight",
             "/promptState/inFlight",
-            "/nativeHarness/inFlight",
+            "/nativeInFlight",
             "/rsiCompareInFlight",
             "/rsiEvolutionInFlight",
             "/roomState/inFlight",
@@ -542,7 +542,7 @@ pub(crate) async fn run_prompt(context: &JobContext, job: &Value) -> Result<Valu
         return Err("작업 입력(prompt)이 비어 있습니다.".into());
     }
     if !input["rsiSourceDir"].is_string() {
-        return crate::engine::native_harness::run(context, job).await;
+        return crate::engine::native_agent::run(context, job).await;
     }
     if let Some(result) = job.pointer("/promptState/result") {
         return Ok(result.clone());
