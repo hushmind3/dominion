@@ -76,6 +76,8 @@ pub struct TaskInput {
     pub cost_budget_krw: Option<f64>,
     #[serde(default)]
     pub planning_mode: Option<String>,
+    #[serde(default)]
+    pub model_tier: Option<String>,
 }
 
 impl TaskInput {
@@ -102,6 +104,10 @@ impl TaskInput {
             !value.is_finite() || !(0.0..=10_000_000.0).contains(&value)) {
             return Err(RuntimeError("costBudgetKrw must be between 0 and 10000000".into()));
         }
+        if self.model_tier.as_deref().is_some_and(|tier|
+            !matches!(tier,"auto"|"economy"|"quality")) {
+            return Err(RuntimeError("modelTier must be auto, economy, or quality".into()));
+        }
         if self.planning_mode.as_deref().is_some_and(
             |value| !matches!(value,"auto"|"always"|"never")
         ) {
@@ -126,6 +132,7 @@ impl TaskInput {
             "tokenBudget": self.token_budget.unwrap_or(40_000),
             "costBudgetKrw": self.cost_budget_krw,
             "planningMode": self.planning_mode.unwrap_or_else(||"auto".into()),
+            "modelTier": self.model_tier.unwrap_or_else(||"auto".into()),
         });
         Ok((key, payload))
     }
