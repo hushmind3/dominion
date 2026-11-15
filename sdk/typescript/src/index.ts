@@ -2,7 +2,7 @@
  * Public SDK for the SAME /api/* Axum Rust server as the Dominion GUI.
  * No second agent engine, shadow job state or /api/v1 prototype endpoints.
  */
-export type JobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type JobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'needs_review' | 'interrupted';
 export type RecordItem = { id: string; [key: string]: unknown };
 export interface Job extends RecordItem {
   kind: string; status: JobStatus; input: Record<string, unknown>;
@@ -253,7 +253,7 @@ export class Dominion {
     while(true) {
       if(options.signal?.aborted) throw options.signal.reason??abortError();
       const job=await this.jobs.get(key,options);
-      if(['completed','failed','cancelled'].includes(job.status)) return job;
+      if(['completed','failed','cancelled','needs_review','interrupted'].includes(job.status)) return job;
       const remaining=deadline-Date.now();
       if(remaining<=0) throw new DominionError(408,'Timed out waiting for durable job');
       await sleep(Math.min(interval,remaining),options.signal);

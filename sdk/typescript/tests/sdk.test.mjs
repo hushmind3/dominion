@@ -81,6 +81,13 @@ test('waitForJob polls persisted Rust state and reaches a terminal state',async(
   assert.equal(job.status,'completed');
   assert.equal(calls,3);
 });
+test('waitForJob returns when owner review is needed instead of polling forever',async()=>{
+  const client=new Dominion({fetch:async()=>json({
+    id:'j',kind:'prompt',input:{tokenBudget:1024},status:'needs_review'
+  })});
+  const job=await client.waitForJob('j',{timeoutMs:200});
+  assert.equal(job.status,'needs_review');
+});
 test('abort ends durable polling before any network request',async()=>{
   const controller=new AbortController();controller.abort();
   let calls=0;
