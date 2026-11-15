@@ -1,6 +1,7 @@
 use crate::AppState;
 mod files;
 mod strategy;
+mod schema_router;
 pub(crate) mod context;
 mod semantic;
 pub(crate) mod verification;
@@ -8,7 +9,7 @@ pub(crate) mod verification;
 mod acceptance_tests;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{path::{Component, Path, PathBuf}, process::Stdio, time::Duration};
+use std::{collections::HashSet, path::{Component, Path, PathBuf}, process::Stdio, time::Duration};
 use tokio::{process::Command, time::timeout};
 
 fn scoped_path(root: &Path, name: &str, write: bool) -> Result<PathBuf, String> {
@@ -34,7 +35,7 @@ fn scoped_path(root: &Path, name: &str, write: bool) -> Result<PathBuf, String> 
     Ok(candidate)
 }
 
-fn specs(allow_write: bool, allow_shell: bool, allow_subagents: bool) -> Vec<Value> {
+fn specs(allow_write: bool, allow_shell: bool, allow_subagents: bool, allow_mcp:bool) -> Vec<Value> {
     let mut result = vec![json!({
         "type":"function","function":{
             "name":"workspace_read",
@@ -135,6 +136,16 @@ fn specs(allow_write: bool, allow_shell: bool, allow_subagents: bool) -> Vec<Val
                 },"required":["program","args"],"additionalProperties":false}
             }
         }));
+    }
+    if allow_mcp {
+        result.push(json!({"type":"function","function":{
+            "name":"tool_discover",
+            "description":"Find eligible external MCP capabilities by name or keyword. Results contain brief descriptions; selected full argument schemas become callable on the NEXT model turn. If a needed tool is missing from your visible list, call this discovery tool instead of inventing an invocation.",
+            "parameters":{"type":"object","additionalProperties":false,
+                "properties":{"query":{"type":"string","minLength":2,"maxLength":300},
+                    "limit":{"type":"integer","minimum":1,"maximum":8}},
+                "required":["query"]}
+        }}));
     }
     if allow_subagents {
         result.push(json!({"type":"function","function":{
@@ -359,7 +370,7 @@ pub async fn run(state: AppState, id: String) {
             "owner_explicit"
         }else{"manifest_autodetect"}
     }));
-    let mut available = specs(allow_write,allow_shell,allow_subagents);
+    let mut available = specs(allow_write,allow_shell,allow_subagents,allow_mcp);
     if allow_mcp {
         available.extend(state.mcp.definitions().await);
     }
@@ -409,6 +420,9 @@ pub async fn run(state: AppState, id: String) {
     let mut receipts: Vec<Value> = Vec::new();
     let mut active_instruction = prompt.clone();
     let mut owner_redirected = false;
+    // A discovery call promotes only tools present in the permission-scoped
+    // native catalog. Their schemas remain available on future agent steps.
+    let mut promoted_tools:HashSet<String>=HashSet::new();
     let planning = strategy::PlanningPolicy::from_setting(
         input["planningMode"].as_str().unwrap_or("auto")
     );
@@ -520,8 +534,32 @@ pub async fn run(state: AppState, id: String) {
                 "retrievedOwnerSources":found.len()
             }));
         }
-        let declarations=serde_json::to_vec(&available).map(|v|v.len())
-            .unwrap_or(usize::MAX);
+        let selection=match schema_router::select(
+            &available,&active_instruction,&promoted_tools,
+            schema_router::max_schema_bytes(context_limit)
+        ) {
+            Ok(selection)=>selection,
+            Err(error)=>{
+                state.emit(&id,"tool_schema_rejected",json!({
+                    "reason":error,"step":step+1
+                }));
+                settle(&state,&id,"needs_review","",verified_writes,
+                    Some(format!("도구 선택 및 문맥 예산 검증 실패: {error}")));
+                return;
+            }
+        };
+        let declarations=selection.selected_bytes;
+        state.emit(&id,"tool_schema_routed",json!({
+            "step":step+1,
+            "catalogCount":available.len(),"advertisedCount":selection.tools.len(),
+            "catalogBytes":selection.complete_bytes,
+            "advertisedBytes":selection.selected_bytes,
+            "omittedCount":selection.omitted,
+            "mcpTools":selection.selected_mcp,
+            "promotedCount":promoted_tools.len(),
+            "source":"deterministic_native_router"
+        }));
+        let exposed=selection.tools;
         let Some(mut message_budget)=context_limit.checked_sub(declarations.saturating_add(2048))
             .filter(|remaining|*remaining>=2048) else {
             settle(&state,&id,"needs_review","",verified_writes,
@@ -575,7 +613,7 @@ pub async fn run(state: AppState, id: String) {
                 "routing":if economical {"economy"}else{"quality"},
                 "pressureRetry":attempt
             }));
-            match state.provider.complete(&projected.messages,&available,economical).await{
+            match state.provider.complete(&projected.messages,&exposed,economical).await{
                 Ok(value)=>break value,
                 Err(error)=>{
                     let overflow=context::is_context_overflow(&error);
@@ -822,7 +860,32 @@ pub async fn run(state: AppState, id: String) {
                     Some(format!("도구 실행 기록을 저장하지 못했습니다: {error}")));
                 return;
             }
-            let outcome = if tool_name=="subagent_spawn" && allow_subagents {
+            let advertised=exposed.iter().any(|tool|
+                schema_router::name(tool)==Some(tool_name));
+            let outcome = if !advertised {
+                // Never dispatch a fabricated or stale MCP function alias,
+                // even when it still exists in the full permission catalog.
+                Err(format!("Tool '{tool_name}' was not advertised in this model turn. Use tool_discover to obtain a current schema before calling it."))
+            } else if tool_name=="tool_discover" && allow_mcp {
+                let query=arguments["query"].as_str().unwrap_or("").trim();
+                if query.chars().count()<2 || query.len()>300 {
+                    Err("tool_discover requires a query of 2..300 UTF-8 bytes".into())
+                } else {
+                    let limit=arguments["limit"].as_u64().unwrap_or(5).clamp(1,8) as usize;
+                    let result=schema_router::discover(&available,query,limit);
+                    for entry in result["tools"].as_array().into_iter().flatten() {
+                        if let Some(alias)=entry["name"].as_str(){
+                            promoted_tools.insert(alias.to_owned());
+                        }
+                    }
+                    state.emit(&id,"tool_schema_promoted",json!({
+                        "count":result["tools"].as_array().map(Vec::len).unwrap_or(0),
+                        "query":query,
+                        "catalogCount":result["eligibleMcpTools"]
+                    }));
+                    Ok(result)
+                }
+            } else if tool_name=="subagent_spawn" && allow_subagents {
                 let instruction=arguments["task"].as_str().unwrap_or("").trim();
                 let role=arguments["role"].as_str().unwrap_or("Independent research assistant").trim();
                 if instruction.is_empty() || instruction.len()>8000 || role.len()>200 {
