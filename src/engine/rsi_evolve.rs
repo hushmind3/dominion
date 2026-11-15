@@ -5336,7 +5336,7 @@ mod tests {
             "unverified summaries cannot earn a successful improvement reward");
         assert_eq!(edit_method_reward(&json!({"candidateId":"c",
             "evaluation":{"verdict":"inconclusive","metrics":{"improvedHoldouts":0}}})),0.0);
-        assert_eq!(edit_method_reward(&json!({"candidateId":"c",
+        assert_eq!(edit_method_reward(&json!({"candidateId":"c","pairedEvidenceVerified":true,
             "evaluation":{"source":"server_invoked_local_paired_git_worktrees",
                 "verdict":"inconclusive","metrics":{"improvedHoldouts":0}}})),0.10);
         assert_eq!(edit_method_reward(&json!({"accepted":false,"candidateId":null})),0.0);
@@ -6724,6 +6724,59 @@ mod tests {
         }});
         assert!(score_domain(&candidate,&features).is_some(),
             "a registered model-authored formula must not silently fall back at runtime");
+    }
+
+    #[test]
+    fn replayed_neutral_pair_trains_zero_gain_without_faking_an_improvement() {
+        let (state,root)=state();
+        let base="a".repeat(40);
+        let plan=(0..8).map(|n|json!({"id":format!("case-{n}"),
+            "domain":"memory","holdout":n<3,"metrics":[]}))
+            .collect::<Vec<_>>();
+        let raw=(0..8).map(|n|json!({"id":format!("case-{n}"),
+            "baselinePass":true,"candidatePass":true}))
+            .collect::<Vec<_>>();
+        let metrics=crate::engine::rsi::evaluate_cases(&plan,&raw,"harness").unwrap();
+        assert_eq!(metrics["eligible"],false);
+        let hash="e".repeat(64);
+        let patch="p".repeat(64);
+        let report=json!({"baseCommit":base,"patchSha256":patch,
+            "oracleVersion":"frozen-v1","reportSha256":hash,
+            "baselineBuildOk":true,"candidateBuildOk":true,"cases":raw});
+        let candidate=json!({"id":"neutral-paired","target":"harness",
+            "status":"inconclusive","baseCommit":base,
+            "patchSha256":patch,"oracleVersion":"frozen-v1","cases":plan,
+            "evaluation":{"source":"server_invoked_local_paired_git_worktrees",
+                "evidenceSha256":hash,"metrics":metrics,
+                "verdict":metrics["verdict"]}});
+        state.store.put("rsi_candidate",&candidate).unwrap();
+        state.store.put("rsi_pair",&json!({
+            "id":"rsi-pair-neutral-paired","candidateId":"neutral-paired",
+            "runner":"local_gitrepo_not_os_sandbox",
+            "evidenceSha256":hash,"report":report,
+            "metrics":metrics,"verdict":metrics["verdict"]
+        })).unwrap();
+        let mut row=json!({"jobId":"measured-job","candidateId":"neutral-paired",
+            "generatorCommit":base,"accepted":false,
+            "evaluation":{"source":"server_invoked_local_paired_git_worktrees",
+                "evidenceSha256":hash,"metrics":metrics}});
+        let enriched=history_with_verified_payoffs(&state,&[row.clone()]);
+        assert_eq!(enriched[0]["pairedEvidenceVerified"],true);
+        assert_eq!(enriched[0]["measuredImprovedHoldouts"],0);
+        assert_eq!(enriched[0]["evidenceVerified"],false);
+        assert_eq!(enriched[0]["verifiedHoldoutGains"],0);
+        row["evaluation"]["evidenceSha256"]=json!("f".repeat(64));
+        assert_eq!(history_with_verified_payoffs(&state,&[row]) [0]
+            ["pairedEvidenceVerified"],false);
+        let mut pair=state.store.get("rsi_pair","rsi-pair-neutral-paired").unwrap();
+        pair["report"]["cases"][0]["candidatePass"]=json!(false);
+        state.store.put("rsi_pair",&pair).unwrap();
+        let restored=json!({"candidateId":"neutral-paired",
+            "generatorCommit":base,"accepted":false,
+            "evaluation":{"evidenceSha256":hash}});
+        assert_eq!(history_with_verified_payoffs(&state,&[restored])[0]
+            ["pairedEvidenceVerified"],false);
+        let _=std::fs::remove_dir_all(root);
     }
 
     #[test]
