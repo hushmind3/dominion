@@ -62,7 +62,7 @@ POST /api/jobs → api/jobs.rs → engine/jobs.rs::enqueue → SQLite job
 
 ## 검증의 수준
 - **코드 추가:** Rust 자율 루프의 결정을 검증하는 단위 테스트(검증 조건, 외부 효과로 인한 중단, 시도 한도, 사용자 지시 revision), 이벤트 복구 3개 경로 및 workspace_patch 증거 시험.
-- **로컬 실행 확인:** TypeScript SDK 모의 HTTP/SSE 테스트 8/8 통과. 이는 TypeScript 전송 파서의 한정된 검증이며 Rust 실모델/전체 E2E 성능의 검증으로 대체하지 않는다.
+- **로컬 실행 확인:** TypeScript SDK 모의 HTTP/SSE 테스트 9/9 통과. 이는 TypeScript 전송 파서의 한정된 검증이며 Rust 실모델/전체 E2E 성능의 검증으로 대체하지 않는다.
 - **미실행:** 본 작업 환경에 Rust toolchain이 없어 Rust 테스트/클리피/제품 빌드를 실행하지 못했다. `web` 의존성 설치도 없어 전체 React 타입 검사는 미실행. 병렬 서브에이전트·SWE-bench Verified·실제 사용자 동선/영상 품질·원가 비교도 미측정이다.
 - **최종 판정 보류:** 프런티어 경쟁은 제품 통합 후 동일 모델·작업·도구·예산·하드웨어의 실제 결과로 해야 한다. 별/문서/테스트 개수만으로 동급을 주장하지 않는다.
 
