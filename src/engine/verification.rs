@@ -101,7 +101,7 @@ impl Ledger {
     /// All known mutations, including uncertain/failed attempts, invalidate
     /// earlier green tests. Read-only searches never invalidate them.
     pub fn observe(&mut self,tool:&str,args:&Value,outcome:&Value){
-        let mutating=matches!(tool,"workspace_write"|"workspace_replace")
+        let mutating=matches!(tool,"workspace_write"|"workspace_replace"|"workspace_replace_many")
             || tool.starts_with("mcp__")
             || (tool=="workspace_check" && args["program"]=="cargo"
                 && args["args"][0]=="fmt");
