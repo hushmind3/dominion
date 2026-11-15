@@ -66,3 +66,34 @@ test('native SDK steering and session binding share real Rust API contracts',asy
       maxSteps:60,strategy:'verify_first',requireEvidence:true,allowFallback:false}
   });
 });
+
+test('native run controls share the real Rust autonomous UI job routes',async()=>{
+  const calls=[];
+  const sdk=new Dominion({adminToken:'owner-token',fetch:async(url,init)=>{
+    calls.push({url,init});
+    return reply({id:'native/1',instruction:'Fix tests',status:'running'});
+  }});
+  await sdk.nativeRuns.list();
+  await sdk.nativeRuns.start({instruction:'Fix tests',providerId:'p1',maxRounds:8,verifyCommand:'cargo test'});
+  await sdk.nativeRuns.get('native/1');
+  await sdk.nativeRuns.approve('native/1','approval/3');
+  await sdk.nativeRuns.cancel('native/1');
+  await sdk.nativeRuns.resume('native/1');
+  await sdk.nativeRuns.reconcile('native/1',{applied:false,details:'Workspace checked'});
+  assert.deepEqual(calls.map(call=>new URL(call.url).pathname),[
+    '/api/sdk/runs','/api/sdk/runs','/api/sdk/runs/native%2F1',
+    '/api/sdk/runs/native%2F1/approve','/api/sdk/runs/native%2F1/cancel',
+    '/api/sdk/runs/native%2F1/resume','/api/sdk/runs/native%2F1/reconcile'
+  ]);
+  assert.deepEqual(JSON.parse(calls[1].init.body),{
+    instruction:'Fix tests',providerId:'p1',maxRounds:8,verifyCommand:'cargo test'
+  });
+  assert.deepEqual(JSON.parse(calls[3].init.body),{callId:'approval/3'});
+  assert.deepEqual(JSON.parse(calls[6].init.body),{applied:false,details:'Workspace checked'});
+  assert.ok(calls.every(call=>call.init.headers['X-Dominion-Token']==='owner-token'));
+});
+test('native approval conflict is never turned into optimistic success',async()=>{
+  const sdk=new Dominion({fetch:async()=>reply({error:'Approval expired'},409)});
+  await assert.rejects(()=>sdk.nativeRuns.approve('n1','expired'),error=>
+    error instanceof DominionApiError&&error.status===409);
+});
