@@ -205,3 +205,7 @@ DM·음성·파일 첨부·슬래시 명령·Gateway 실시간 이벤트는 이�
 - `src/api/system.rs::events`: bounded paginated replay, gap notification and live recovery. `/api/events?after=` and `Last-Event-ID` share the cursor; expired history emits `event_gap` and asks clients to resynchronize state.
 - `sdk/typescript/src/index.ts`: independently consumable, typed client for **the same** Rust `/api/*` endpoints, including job polling, approval, room idempotency, video, RSI, and abortable SSE/chat. `web/src/api.ts` shares transport and chat parser.
 - [Implementation trace and evidence](docs/SUB2-SDK-DURABLE-EVENTS-2026-11-15.md). Unit tests added; no live provider benchmark claimed.
+
+### Autonomous Rust execution path
+
+`POST /api/jobs` / `sdk::Dominion::submit` → `engine::jobs::run_prompt` → `engine::autonomy::execute` → `engine::run_quiet_outcome` → `engine::verification::check_acceptance` → bounded repair or `needs_review`. Owner steering uses engine CAS on the original job (`POST /api/jobs/:id/steer` or `sdk::Dominion::steer`). Dynamic acceptance checks include subsequently steered file objectives. Per-attempt tokens come from audited SQLite model usage. Non-repeatable external side effects are never treated as safe to retry. See [source comparison](docs/FRONTIER-COMPARISON-SUB2-2026-11-15.md).
