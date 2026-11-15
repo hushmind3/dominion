@@ -14,7 +14,9 @@ fn pending(state:&AppState,job:&Value)->Option<Value>{
     state.store.all("approval").into_iter().find(|a|
         a["sessionId"].as_str()==Some(session)
         && a["status"]=="pending"
-        && a["runId"]==job["id"])
+        && a["runId"]==job["id"]
+        && a["id"].as_str().is_some_and(|id|
+            state.approvals.lock().unwrap().contains_key(id)))
 }
 fn project(state:&AppState,job:&Value)->Value{
     let snapshot=&job["nativeState"];
@@ -283,6 +285,8 @@ mod tests{
         state.store.put("approval",&json!({"id":"approved-call",
             "status":"pending","sessionId":"native-session","runId":"sdk-job",
             "tool":"workspace_write","args":{"path":"src/lib.rs"}})).unwrap();
+        let (sender,receiver)=tokio::sync::oneshot::channel();
+        state.approvals.lock().unwrap().insert("approved-call".into(),sender);
         let denied=approve(State(state.clone()),Path("sdk-job".into()),
             Json(json!({"callId":"another-call"}))).await;
         assert_eq!(denied.status(),StatusCode::CONFLICT);
@@ -296,9 +300,27 @@ mod tests{
             Json(json!({"callId":"approved-call"}))).await;
         assert_eq!(allowed.status(),StatusCode::OK);
         assert_eq!(state.store.get("approval","approved-call").unwrap()["status"],"approved");
+        assert_eq!(receiver.await.unwrap(),true,
+            "Main UI approval must deliver the decision to a genuine live Rust tool waiter");
         assert_eq!(approve(State(state.clone()),Path("sdk-job".into()),
             Json(json!({"callId":"approved-call"}))).await.status(),StatusCode::CONFLICT,
             "a decided tool must not be approved a second time");
+        let _=std::fs::remove_dir_all(root);
+    }
+    #[tokio::test]
+    async fn main_ui_does_not_offer_dead_orphaned_tool_approval(){
+        let (state,root)=temporary_state();
+        state.store.put("job",&json!({"id":"orphan-ui","kind":"prompt",
+            "status":"running","sessionId":"s-1",
+            "input":{"prompt":"Edit an old file"}})).unwrap();
+        state.store.put("approval",&json!({"id":"orphaned",
+            "status":"pending","runId":"orphan-ui","sessionId":"s-1",
+            "tool":"workspace_write","args":{"path":"f"}})).unwrap();
+        assert_eq!(view(&state,&state.store.get("job","orphan-ui").unwrap())["status"],
+            "running");
+        assert_eq!(approve(State(state.clone()),Path("orphan-ui".into()),
+            Json(json!({"callId":"orphaned"}))).await.status(),StatusCode::CONFLICT);
+        assert_eq!(state.store.get("approval","orphaned").unwrap()["status"],"pending");
         let _=std::fs::remove_dir_all(root);
     }
     #[tokio::test]
