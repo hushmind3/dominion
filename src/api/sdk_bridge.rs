@@ -59,10 +59,16 @@ fn status_for_panel(job: &Value, pending: bool) -> &'static str {
 
 fn public_view(state: &AppState, job: &Value) -> Value {
     let session = job["sessionId"].as_str().unwrap_or("");
+    // A persisted approval may outlive its in-process waiter after a crash.
+    // The main UI's Approve button must be shown only for a real pending
+    // Rust tool call that can actually consume the owner's answer.
+    let live_approvals=state.approvals.lock().unwrap().keys().cloned()
+        .collect::<std::collections::HashSet<_>>();
     let pending = state.store.all("approval").into_iter().find(|record| {
         !session.is_empty()
             && record["sessionId"] == session
             && record["status"] == "pending"
+            && record["id"].as_str().is_some_and(|id|live_approvals.contains(id))
     });
     let steps = job.pointer("/autonomousState/receipts")
         .and_then(Value::as_array).cloned().unwrap_or_default();
@@ -428,6 +434,26 @@ mod tests {
             crate::db::Store::open(&config.db_path()).unwrap(),
             crate::vault::Vault::open(&config.key_path()))
     }
+    #[test]
+    fn stale_restart_approval_does_not_show_an_unusable_main_ui_button(){
+        let state=state();
+        let session=state.store.put("session",&json!({"title":"Run"})).unwrap();
+        let session_id=session["id"].as_str().unwrap().to_string();
+        let job=engine::jobs::enqueue(&state,"prompt",json!({
+            "prompt":"Edit the file","uiSource":SOURCE,"autonomous":true
+        })).unwrap();
+        let id=job["id"].as_str().unwrap().to_string();
+        let running=state.store.patch_if("job",&id,"status",&json!("queued"),
+            &json!({"status":"running","sessionId":session_id})).unwrap();
+        state.store.put("approval",&json!({
+            "id":"old-call","status":"pending","sessionId":session_id,
+            "tool":"workspace_write","args":{"path":"a.txt"}
+        })).unwrap();
+        let view=public_view(&state,&running);
+        assert_eq!(view["status"],"running");
+        assert_eq!(view["checkpoint"]["pendingCall"],Value::Null);
+    }
+
     #[test]
     fn main_ui_progress_is_driven_by_persisted_operations_not_mock_events(){
         let state=state();
