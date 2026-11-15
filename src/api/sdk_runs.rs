@@ -186,6 +186,82 @@ pub async fn reconcile(
 #[cfg(test)]
 mod tests{
     use super::*;
+    fn temporary_state()->(AppState,std::path::PathBuf){
+        let root=std::env::temp_dir().join(format!("sdk-main-route-{}",uuid::Uuid::new_v4()));
+        let cfg=crate::config::Config{port:0,data_dir:root.join("data"),
+            web_dir:root.join("web"),workspace:root.join("work")};
+        let state=AppState::new(cfg.clone(),
+            crate::db::Store::open(&cfg.db_path()).unwrap(),
+            crate::vault::Vault::open(&cfg.key_path()));
+        (state,root)
+    }
+    #[tokio::test]
+    async fn pinned_main_ui_creates_a_real_validated_rust_job_and_can_cancel(){
+        let (state,root)=temporary_state();
+        let response=create(State(state.clone()),Json(json!({
+            "instruction":"Inspect Rust code and verify the result",
+            "verifyCommand":"cargo test --workspace"
+        }))).await;
+        assert_eq!(response.status(),StatusCode::ACCEPTED);
+        let bytes=to_bytes(response.into_body(),1024*1024).await.unwrap();
+        let shown:Value=serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(shown["status"],"queued");
+        assert_eq!(shown["instruction"],"Inspect Rust code and verify the result");
+        let id=shown["id"].as_str().unwrap();
+        let job=state.store.get("job",id).unwrap();
+        assert_eq!(job["kind"],"prompt");
+        assert_eq!(job["input"]["checks"][0]["type"],"tool_succeeded");
+        assert_eq!(job["input"]["checks"][0]["tool"],"shell_exec");
+        assert_eq!(job["input"]["checks"][0]["contains"],"cargo test --workspace");
+        let Json(listed)=list(State(state.clone())).await;
+        assert_eq!(listed[0]["id"],id);
+        assert_eq!(one(State(state.clone()),Path(id.into())).await.status(),StatusCode::OK);
+        let stopped=cancel(State(state.clone()),Path(id.into())).await;
+        assert_eq!(stopped.status(),StatusCode::OK);
+        assert_eq!(state.store.get("job",id).unwrap()["status"],"cancelled");
+        assert_eq!(cancel(State(state.clone()),Path("missing".into())).await.status(),
+            StatusCode::NOT_FOUND);
+        let _=std::fs::remove_dir_all(root);
+    }
+    #[tokio::test]
+    async fn main_ui_approval_is_bound_to_the_actual_pending_native_tool_call(){
+        let (state,root)=temporary_state();
+        state.store.put("job",&json!({"id":"sdk-job","kind":"prompt",
+            "status":"running","sessionId":"native-session",
+            "input":{"prompt":"Inspect before editing"}})).unwrap();
+        state.store.put("approval",&json!({"id":"approved-call",
+            "status":"pending","sessionId":"native-session","runId":"sdk-job",
+            "tool":"workspace_write","args":{"path":"src/lib.rs"}})).unwrap();
+        let denied=approve(State(state.clone()),Path("sdk-job".into()),
+            Json(json!({"callId":"another-call"}))).await;
+        assert_eq!(denied.status(),StatusCode::CONFLICT);
+        assert_eq!(state.store.get("approval","approved-call").unwrap()["status"],"pending");
+        let shown=one(State(state.clone()),Path("sdk-job".into())).await;
+        let displayed:Value=serde_json::from_slice(
+            &to_bytes(shown.into_body(),1024*1024).await.unwrap()).unwrap();
+        assert_eq!(displayed["status"],"awaiting_approval");
+        assert_eq!(displayed["checkpoint"]["pendingCall"]["id"],"approved-call");
+        let allowed=approve(State(state.clone()),Path("sdk-job".into()),
+            Json(json!({"callId":"approved-call"}))).await;
+        assert_eq!(allowed.status(),StatusCode::OK);
+        assert_eq!(state.store.get("approval","approved-call").unwrap()["status"],"approved");
+        assert_eq!(approve(State(state.clone()),Path("sdk-job".into()),
+            Json(json!({"callId":"approved-call"}))).await.status(),StatusCode::CONFLICT,
+            "a decided tool must not be approved a second time");
+        let _=std::fs::remove_dir_all(root);
+    }
+    #[tokio::test]
+    async fn uncertain_native_effects_cannot_be_replayed_as_a_main_ui_resume(){
+        let (state,root)=temporary_state();
+        state.store.put("job",&json!({"id":"uncertain","kind":"prompt",
+            "status":"failed","input":{"prompt":"Alter a project"},
+            "nativeInFlight":true,"nativeState":{"status":"running",
+                "modelInFlight":true,"inFlight":[{"name":"workspace_write"}]}})).unwrap();
+        let response=resume(State(state.clone()),Path("uncertain".into())).await;
+        assert_eq!(response.status(),StatusCode::CONFLICT);
+        assert_eq!(state.store.get("job","uncertain").unwrap()["status"],"failed");
+        let _=std::fs::remove_dir_all(root);
+    }
     #[test]
     fn main_frontend_projects_real_native_state_without_fake_tokens(){
         let root=std::env::temp_dir().join(format!("sdk-main-ui-{}",uuid::Uuid::new_v4()));
