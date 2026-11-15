@@ -293,6 +293,7 @@ impl DominionSdk {
         let state = AppState {
             store, bus, mcp, provider, groups, videos, improvements,
             workspace,
+            workspace_write_lock:Arc::new(tokio::sync::Mutex::new(())),
             model_name: config.model_name,
         };
         let sdk = Self { state };
