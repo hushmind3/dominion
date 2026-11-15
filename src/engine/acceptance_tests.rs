@@ -189,6 +189,11 @@ async fn wrong_multifile_repair_receives_real_test_failure_and_fixes_it(){
     let traffic=Arc::new(Mutex::new(Vec::<Value>::new()));
     let inspected=traffic.clone();
     let (url,server)=server_for(move |turn,body|{
+        let diagnostic=body["messages"].as_array().is_some_and(|history|
+            history.iter().any(|entry|entry["role"]=="user" &&
+                entry["content"].as_str().is_some_and(|text|
+                    text.contains("NATIVE CODE VERIFICATION FAILED") &&
+                    (text.contains("ERR_ASSERTION")||text.contains("not ok")))));
         inspected.lock().unwrap().push(body);
         match turn{
             0=>model_message(vec![
@@ -197,7 +202,8 @@ async fn wrong_multifile_repair_receives_real_test_failure_and_fixes_it(){
             ]),
             1=>edit("wrong-fix","x + 1","x + 2"),
             2=>final_message("The code is finished."),
-            3=>edit("fix-diagnostic","x + 2","x + 3"),
+            3 if diagnostic=>edit("fix-diagnostic","x + 2","x + 3"),
+            3=>final_message("I could not diagnose the failing check."),
             _=>final_message("The corrected source passed its real tests.")
         }
     }).await;
