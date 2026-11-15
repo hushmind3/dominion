@@ -106,3 +106,14 @@ test("typed client uses the native A-B-A evolution routes and exact budget",asyn
     target_files:["src/a.rs","src/b.rs"]
   });
 });
+
+test("stop requests use the native persisted evolution action, never client cancellation",async()=>{
+ const calls=[];
+ const client=new DominionClient({fetch:async(url,init)=>{
+   calls.push([new URL(url).pathname,init.method,JSON.parse(init.body)]);
+   return json({id:"run-2026",status:"running",stop_requested:true});
+ }});
+ const run=await client.evolutionStop("run-2026");
+ assert.equal(run.stop_requested,true);
+ assert.deepEqual(calls,[["/api/evolutions/run-2026/stop","POST",{}]]);
+});
