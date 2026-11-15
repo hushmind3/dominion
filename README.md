@@ -160,3 +160,14 @@ Contributions are welcome — particularly **reproducible bug reports, test case
 - Never include API keys, bot tokens, private conversations, or other secrets in reports.
 
 **License:** [Apache 2.0](LICENSE) · **한국어:** [README.ko.md](README.ko.md)
+
+
+## 🧩 SDKs and public Rust API (dominion-sub3)
+
+Two independent clients now target the same **native Dominion Rust execution engine** as the React desktop UI:
+
+- [Rust SDK](sdk/rust/README.md) — `dominion-sdk` reusable crate, with jobs, sessions, approvals, rooms, videos, RSI, durable event streams and chat streaming.
+- [TypeScript SDK](sdk/typescript/README.md) — `@dominion-ai/sdk` reusable package with typed resources, reconnection, abort support and durable job waiting.
+- [SDK contract and 2026 architecture comparison](docs/SDK-ARCHITECTURE-2026-11-15.md).
+
+Both clients use the actual `/api/*` routes from `src/api/mod.rs`, optional `X-Dominion-Token`, and Rust-owned model, tool, memory and checkpoint logic. They do not embed an external provider's agent harness. The SDKs are source packages; they have not yet been published to crates.io/npm. Rust compile and live-provider integration remain to be verified on an environment with the requisite runtime.
