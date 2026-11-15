@@ -3,7 +3,7 @@ fn now_ms()->u64 { chrono::Utc::now().timestamp_millis().max(0) as u64 }
 use serde::{Deserialize,Serialize};
 use serde_json::{json,Value};
 use std::{collections::{HashMap,HashSet},path::{Path,PathBuf},process::Stdio,sync::Arc,time::Duration};
-use tokio::{fs,process::Command,sync::Mutex};
+use tokio::{fs,io::AsyncWriteExt,process::Command,sync::Mutex};
 use uuid::Uuid;
 #[derive(Clone,Debug,Serialize,Deserialize)]
 pub struct Scene { pub heading:String, pub narration:String, pub seconds:u32 }
@@ -228,11 +228,41 @@ fn validate_scenes(scenes:&[Scene])->Result<(),String>{
     if total>180 {return Err("video duration exceeds 180 seconds".into());}
     Ok(())
 }
+/// Prefer Piper's offline neural speech when a local voice is configured.
+/// It uses no per-character cloud API and runs on typical CPU-only machines.
+/// The explicit eSpeak fallback keeps rendering available without a large model.
 async fn make_speech(dir:&Path,text:&str,voice:&Path)->bool{
-    if std::env::var("DOMINION_DISABLE_TTS").ok().as_deref()==Some("true"){return false;}
+    if std::env::var("DOMINION_DISABLE_TTS").ok().as_deref()==Some("true")
+        || text.trim().is_empty(){return false;}
+    if let Ok(model)=std::env::var("DOMINION_PIPER_MODEL") {
+        let model=Path::new(&model);
+        if model.is_file() {
+            let binary=std::env::var("DOMINION_PIPER_BIN")
+                .unwrap_or_else(|_|"piper".into());
+            let mut command=Command::new(binary);
+            command.current_dir(dir).arg("--model").arg(model)
+                .arg("--output_file").arg(voice).stdin(Stdio::piped())
+                .stdout(Stdio::null()).stderr(Stdio::piped()).kill_on_drop(true);
+            if let Ok(mut child)=command.spawn() {
+                if let Some(mut input)=child.stdin.take() {
+                    let completed=tokio::time::timeout(Duration::from_secs(60),async{
+                        input.write_all(text.as_bytes()).await?;
+                        input.write_all(b"\n").await?;
+                        drop(input);
+                        child.wait_with_output().await
+                    }).await;
+                    if matches!(completed,Ok(Ok(output)) if output.status.success())
+                        && fs::metadata(voice).await.is_ok_and(|meta|meta.len()>44) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
     let mut command=Command::new("espeak");
     command.current_dir(dir).arg("-s").arg("155").arg("-w").arg(voice).arg(text);
     invoke(command,Duration::from_secs(20)).await.is_ok()
+        && fs::metadata(voice).await.is_ok_and(|meta|meta.len()>44)
 }
 async fn invoke(mut command:Command,deadline:Duration)->Result<(),String>{
     command.stdout(Stdio::null()).stderr(Stdio::piped()).kill_on_drop(true);
