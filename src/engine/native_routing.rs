@@ -274,6 +274,9 @@ mod tests {
         let s=state();
         add(&s,"base",Some(0.90),Some(1000.0),0.0);
         add(&s,"cached",Some(0.92),Some(2000.0),0.0);
+        let mut priced=s.store.get("provider","cached").unwrap();
+        priced["nativeRouting"]["pricesKRWPerMillion"]["cachedInput"]=json!(100.0);
+        s.store.put("provider",&priced);
         let cached=gateway::resolve(&s,"cached",None).unwrap();
         let r=binding(&cached);
         let policy=json!({"mode":"quality_cost","minQuality":0.8,"maxQualityDrop":0.1});
