@@ -210,10 +210,14 @@ pub async fn run(state: AppState, id: String) {
     let session = input["sessionId"].as_str().unwrap_or(&id).to_string();
     let allow_write = input["allowWrite"] == true;
     let allow_shell = input["allowShell"] == true;
+    let allow_mcp = input["allowMcp"] == true;
     let require_evidence = input["requireEvidence"] == true;
     let steps = input["maxSteps"].as_u64().unwrap_or(12).clamp(1,24);
     let token_budget = input["tokenBudget"].as_u64().unwrap_or(40_000).clamp(256,500_000);
-    let available = specs(allow_write,allow_shell);
+    let mut available = specs(allow_write,allow_shell);
+    if allow_mcp {
+        available.extend(state.mcp.definitions().await);
+    }
     let mut messages = vec![json!({"role":"system",
         "content":"You are DOMINION, a local-first agent. Obey the latest owner's instruction. Use the offered tools for real work; never fabricate a file edit, command output, or verification. A failed operation must be described accurately. You cannot call unadvertised tools."})];
     messages.extend(state.store.history(&session, 12));
@@ -407,13 +411,25 @@ pub async fn run(state: AppState, id: String) {
             let arguments = call["function"]["arguments"].as_str()
                 .and_then(|s| serde_json::from_str::<Value>(s).ok())
                 .unwrap_or(Value::Null);
-            state.emit(&id,"tool_start",json!({"name":tool_name,"callId":tool_id}));
-            let outcome = tool(&state,tool_name,&arguments,allow_write,allow_shell).await
-                .and_then(|receipt| {
-                    if tool_name == "workspace_check" && receipt["success"] == false {
-                        Err(format!("검사 명령 실패: {receipt}"))
-                    } else { Ok(receipt) }
-                });
+            // Persist intent before every possible external effect. Crash
+            // recovery quarantines incomplete runs rather than replaying them.
+            if let Err(error)=state.record_event(&id,"tool_start",
+                json!({"name":tool_name,"callId":tool_id,"arguments":arguments})) {
+                settle(&state,&id,"needs_review","",verified_writes,
+                    Some(format!("도구 실행 기록을 저장하지 못했습니다: {error}")));
+                return;
+            }
+            let outcome = if tool_name.starts_with("mcp__") && allow_mcp {
+                state.mcp.call(&crate::mcp::ToolCall {
+                    id:tool_id.clone(),name:tool_name.into(),arguments:arguments.clone()
+                }).await.map(|response|json!({"content":response}))
+            } else {
+                tool(&state,tool_name,&arguments,allow_write,allow_shell).await
+            }.and_then(|receipt| {
+                if tool_name == "workspace_check" && receipt["success"] == false {
+                    Err(format!("검사 명령 실패: {receipt}"))
+                } else { Ok(receipt) }
+            });
             if matches!(tool_name, "workspace_write" | "workspace_replace") && outcome.as_ref()
                 .is_ok_and(|v|v["verified"]==true) {
                 verified_writes += 1;
@@ -422,8 +438,12 @@ pub async fn run(state: AppState, id: String) {
                 Ok(receipt) => json!({"ok":true,"receipt":receipt}),
                 Err(error) => json!({"ok":false,"error":error}),
             };
-            state.emit(&id,"tool_result",json!({"name":tool_name,"callId":tool_id,
-                "outcome":value}));
+            if let Err(error)=state.record_event(&id,"tool_result",
+                json!({"name":tool_name,"callId":tool_id,"outcome":value})) {
+                settle(&state,&id,"needs_review","",verified_writes,
+                    Some(format!("도구 결과가 기록되지 않았습니다. 재실행하지 마세요: {error}")));
+                return;
+            }
             receipts.push(json!({"tool":tool_name,"outcome":value}));
             if receipts.len()>80 { receipts.remove(0); }
             messages.push(json!({"role":"tool","tool_call_id":tool_id,
