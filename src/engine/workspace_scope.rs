@@ -21,7 +21,7 @@ pub fn resolve(state:&AppState,requested:&str)->Result<PathBuf,String>{
     if !directory.is_dir(){
         return Err("작업 폴더는 이미 존재하는 디렉터리여야 합니다.".into());
     }
-    if directory.parent().is_none_or(|parent|parent==directory){
+    if directory.parent().is_none_or(|parent|parent==directory.as_path()){
         return Err("전체 디스크 루트는 작업 폴더로 지정할 수 없습니다.".into());
     }
     if let Ok(data)=state.config.data_dir.canonicalize(){

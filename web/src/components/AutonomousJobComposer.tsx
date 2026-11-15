@@ -83,7 +83,7 @@ export function AutonomousJobComposer({agents,providers,recentWorkspaces,onCreat
       </SelectInput>
      </label>
      <label className="grid gap-1 text-xs font-semibold">{t('ops.compose.tokenBudget')}
-      <TextInput type="number" min={1024} max={2000000} step={1024}
+      <TextInput type="number" min={1024} max={2000000} step={1}
        value={tokenBudget} placeholder={t('ops.compose.tokenBudgetPlaceholder')}
        onChange={e=>setTokenBudget(e.target.value)}/>
       <small className="font-normal text-[#7C7469]">{t('ops.compose.tokenBudgetHelp')}</small>

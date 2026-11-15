@@ -141,6 +141,10 @@ The agent execution engine is written in **Rust**. Node.js is used to build the 
 
 **Technical docs:** [Engine](ENGINE.md) · [Documentation index](docs/INDEX.md) · [Self-improvement execution contract](docs/RSI-MAIN-INTEGRATION-2026-11-12.md).
 
+## 💰 Per-job provider token ceilings
+
+A user may set `input.tokenBudget` (1,024–2,000,000 tokens) when starting an autonomous job. The Rust worker records a job-owned ceiling relative to the session's current usage; the native model runtime checks prior measured use and estimates the next model input before another billable provider call, and reduces the requested output limit to fit the balance. The Activity page shows consumed versus configured budget, and the TypeScript/native Rust SDKs expose the same input. Exhaustion goes to `needs_review` rather than a loop of further paid retries. A provider's final actual usage can exceed the estimate, and separately delegated jobs do not yet share one strict atomic cost reservation ledger: this is a model-call admission budget, not a billing guarantee.
+
 ## 🎯 Start, steer and replace a running autonomous task
 
 The **Activity** page now exposes the native task cycle without requiring a developer-oriented command line. Enter a goal and start a real Rust prompt job; agent, model, verification command and retry limit are optional advanced settings. The same Activity card displays its live goal and lets you **Add requirement** or **Replace goal** without creating a second job.
