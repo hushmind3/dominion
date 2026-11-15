@@ -145,6 +145,171 @@ pub async fn replace(
     }))
 }
 
+/// Range-based source reading handles repository files larger than the
+/// legacy 64 KiB all-or-nothing read limit. Each response is bounded and
+/// identifies the exact source revision by its SHA-256 digest.
+pub fn read_lines(root:&Path,raw:&str,start:u64,count:u64)->Result<Value,String>{
+    let path=super::scoped_path(root,raw,false)?;
+    let metadata=std::fs::metadata(&path).map_err(|e|e.to_string())?;
+    if metadata.len()>12*1024*1024{
+        return Err("Source file exceeds 12 MiB indexed-read limit".into());
+    }
+    if !(1..=1_000_000).contains(&start)||!(1..=160).contains(&count){
+        return Err("Read range must have startLine 1..1000000, maxLines 1..160".into());
+    }
+    let bytes=std::fs::read(&path).map_err(|e|e.to_string())?;
+    let revision=format!("{:x}",Sha256::digest(&bytes));
+    let content=String::from_utf8(bytes).map_err(|_|"Source must be UTF-8")?;
+    let start_index=start.saturating_sub(1) as usize;
+    let mut output=String::new();
+    let mut emitted=0usize;
+    let mut total_lines=0usize;
+    for (index,line) in content.lines().enumerate(){
+        total_lines=index+1;
+        if index<start_index{continue;}
+        if emitted>=count as usize||output.len()>=18000{continue;}
+        let next=format!("{}: {}\n",index+1,line);
+        if output.len().saturating_add(next.len())>20000{continue;}
+        output.push_str(&next);emitted+=1;
+    }
+    let next=(start_index+emitted<total_lines).then_some(start+emitted as u64);
+    Ok(json!({"path":raw,"startLine":start,"returnedLines":emitted,
+        "totalLines":total_lines,"nextLine":next,
+        "revisionSha256":revision,"content":output,
+        "truncated":next.is_some()}))
+}
+
+#[derive(Debug)]
+struct StagedEdit {
+    name:String,
+    file:PathBuf,
+    stage:PathBuf,
+    backup:PathBuf,
+    original:Vec<u8>,
+    updated:Vec<u8>,
+    old_sha:String,
+    new_sha:String,
+}
+/// Verify all source revisions and exact hunks BEFORE changing any file;
+/// stage every new body beside its original, then atomically replace the
+/// individual files. On a mid-commit failure, restore previous backup files.
+/// The entire batch is one tool intent/receipt in the persistent event log.
+pub async fn replace_many(root:&Path,edits:&[Value])->Result<Value,String>{
+    use std::collections::HashSet;
+    if edits.is_empty()||edits.len()>8{
+        return Err("Multi-file edit requires 1..8 separate exact replacements".into());
+    }
+    let mut prepared=Vec::<StagedEdit>::new();
+    let mut known=HashSet::new();
+    let batch=uuid::Uuid::new_v4().simple().to_string();
+    for (index,entry) in edits.iter().enumerate(){
+        let name=entry["path"].as_str().ok_or("Each edit requires a source path")?;
+        let old=entry["old"].as_str().filter(|v|!v.is_empty())
+            .ok_or("Each edit requires non-empty prior source text")?;
+        let new=entry["new"].as_str().ok_or("Each edit requires replacement text")?;
+        if !known.insert(name.to_string()){
+            return Err("One file may appear only once per atomic edit".into());
+        }
+        let file=super::scoped_path(root,name,false)?;
+        if std::fs::symlink_metadata(&file).map_err(|e|e.to_string())?
+            .file_type().is_symlink(){
+            return Err("Atomic edits refuse symlink source files".into());
+        }
+        let original=tokio::fs::read(&file).await.map_err(|e|e.to_string())?;
+        if original.len()>262_144{return Err("Atomic edit file too large".into());}
+        let old_sha=format!("{:x}",Sha256::digest(&original));
+        if entry["sha256"].as_str().is_some_and(|sha|sha!=old_sha){
+            return Err(format!("Stale source digest for {name}; re-read before editing"));
+        }
+        let text=std::str::from_utf8(&original)
+            .map_err(|_|"Atomic edit requires UTF-8 source")?;
+        if text.matches(old).count()!=1{
+            return Err(format!("Atomic edit for {name} needs exactly one matching original span"));
+        }
+        let updated=text.replacen(old,new,1).into_bytes();
+        if updated.len()>524_288{
+            return Err("Atomic edit output exceeds 512 KiB".into());
+        }
+        let new_sha=format!("{:x}",Sha256::digest(&updated));
+        let parent=file.parent().ok_or("Missing file directory")?;
+        let stage=parent.join(format!(".dominion-stage-{batch}-{index}"));
+        let backup=parent.join(format!(".dominion-backup-{batch}-{index}"));
+        prepared.push(StagedEdit{
+            name:name.into(),file,stage,backup,original,updated,old_sha,new_sha
+        });
+    }
+    // No source has changed. Stage all outputs using create_new to avoid
+    // clobbering unrelated files, and ensure bytes reach storage before swap.
+    let mut staged=Vec::<usize>::new();
+    for (index,entry) in prepared.iter().enumerate(){
+        let result=async{
+            use tokio::io::AsyncWriteExt;
+            let mut output=tokio::fs::OpenOptions::new()
+                .create_new(true).write(true).open(&entry.stage).await
+                .map_err(|e|e.to_string())?;
+            output.write_all(&entry.updated).await.map_err(|e|e.to_string())?;
+            output.sync_all().await.map_err(|e|e.to_string())
+        }.await;
+        if let Err(error)=result{
+            for i in staged {
+                let _=tokio::fs::remove_file(&prepared[i].stage).await;
+            }
+            let _=tokio::fs::remove_file(&entry.stage).await;
+            return Err(format!("Could not stage atomic source changes: {error}"));
+        }
+        staged.push(index);
+    }
+    for entry in &prepared {
+        let current=tokio::fs::read(&entry.file).await.map_err(|e|e.to_string())?;
+        if current!=entry.original {
+            for stage in &prepared{let _=tokio::fs::remove_file(&stage.stage).await;}
+            return Err("Source was concurrently modified; no staged edit was adopted".into());
+        }
+    }
+    let mut committed=Vec::<usize>::new();
+    let mut failed=None;
+    for (index,entry) in prepared.iter().enumerate(){
+        if let Err(error)=tokio::fs::rename(&entry.file,&entry.backup).await{
+            failed=Some(format!("Cannot preserve original: {error}"));break;
+        }
+        if let Err(error)=tokio::fs::rename(&entry.stage,&entry.file).await{
+            let _=tokio::fs::rename(&entry.backup,&entry.file).await;
+            failed=Some(format!("Could not adopt staged file: {error}"));break;
+        }
+        committed.push(index);
+        match tokio::fs::read(&entry.file).await{
+            Ok(bytes) if bytes==entry.updated=>{},
+            _=>{failed=Some(format!("Atomic edit readback failed for {}",entry.name));break;}
+        }
+    }
+    if let Some(error)=failed{
+        let mut rollback_errors=Vec::new();
+        for index in committed.into_iter().rev(){
+            let item=&prepared[index];
+            if let Err(err)=tokio::fs::remove_file(&item.file).await{
+                rollback_errors.push(format!("{}: {err}",item.name));continue;
+            }
+            if let Err(err)=tokio::fs::rename(&item.backup,&item.file).await{
+                rollback_errors.push(format!("{}: {err}",item.name));
+            }
+        }
+        for item in &prepared{let _=tokio::fs::remove_file(&item.stage).await;}
+        return Err(format!(
+            "{error}. Rollback {}. Inspect remaining .dominion-backup files before retry.",
+            if rollback_errors.is_empty(){"attempted".into()}
+            else{format!("incomplete: {}",rollback_errors.join("; "))}
+        ));
+    }
+    for entry in &prepared{
+        let _=tokio::fs::remove_file(&entry.backup).await;
+    }
+    let changes=prepared.iter().map(|entry|json!({
+        "path":entry.name,"oldSha256":entry.old_sha,"sha256":entry.new_sha,
+        "bytes":entry.updated.len(),"verified":true
+    })).collect::<Vec<_>>();
+    Ok(json!({"verified":true,"changes":changes,"fileCount":prepared.len(),
+        "change":"staged-exact-multi-file"}))
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,6 +325,48 @@ mod tests {
         assert!(list(&temp, "../").is_err());
         let _ = std::fs::remove_dir_all(temp);
     }
+    #[test]
+    fn ranged_source_read_returns_stable_revision_for_large_files(){
+        let root=std::env::temp_dir().join(format!("dominion-range-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let text=(1..=9000).map(|line|format!("line-{line}: function implementation\n"))
+            .collect::<String>();
+        std::fs::write(root.join("big.rs"),text).unwrap();
+        let source=read_lines(&root,"big.rs",8900,24).unwrap();
+        assert_eq!(source["startLine"],8900);
+        assert_eq!(source["returnedLines"],24);
+        assert!(source["content"].as_str().unwrap().contains("line-8900"));
+        assert_eq!(source["nextLine"],8924);
+        assert_eq!(source["revisionSha256"].as_str().unwrap().len(),64);
+        assert!(read_lines(&root,"../outside",1,10).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn multi_file_edits_are_prevalidated_and_readback_verified(){
+        let root=std::env::temp_dir().join(format!("dominion-multi-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.rs"),"alpha 1\n").unwrap();
+        std::fs::write(root.join("b.rs"),"beta 2\n").unwrap();
+        let invalid=vec![
+            json!({"path":"a.rs","old":"alpha 1","new":"alpha 3"}),
+            json!({"path":"b.rs","old":"unknown","new":"beta 4"})
+        ];
+        assert!(replace_many(&root,&invalid).await.is_err());
+        assert_eq!(std::fs::read_to_string(root.join("a.rs")).unwrap(),"alpha 1\n");
+        assert_eq!(std::fs::read_to_string(root.join("b.rs")).unwrap(),"beta 2\n");
+        let valid=vec![
+            json!({"path":"a.rs","old":"alpha 1","new":"alpha 3"}),
+            json!({"path":"b.rs","old":"beta 2","new":"beta 4"})
+        ];
+        let receipt=replace_many(&root,&valid).await.unwrap();
+        assert_eq!(receipt["fileCount"],2);
+        assert_eq!(receipt["changes"][0]["verified"],true);
+        assert_eq!(std::fs::read_to_string(root.join("a.rs")).unwrap(),"alpha 3\n");
+        assert_eq!(std::fs::read_to_string(root.join("b.rs")).unwrap(),"beta 4\n");
+        assert!(replace_many(&root,&valid).await.is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[tokio::test]
     async fn bounded_replace_refuses_ambiguous_and_stale_updates() {
         let temp = std::env::temp_dir().join(format!("dominion-edit-{}", uuid::Uuid::new_v4()));
