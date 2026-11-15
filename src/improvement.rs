@@ -253,6 +253,7 @@ impl Improvements {
         // The pinned Git tree is the only candidate eligible for adoption.
         // An evaluator that rewrites tracked sources would score a different
         // program than the committed one. Generated, ignored files remain OK.
+        let head_before=git(dir,&["rev-parse","HEAD"]).await?;
         let before=git(dir,&["status","--porcelain","--untracked-files=no"]).await?;
         if !before.trim().is_empty(){
             return Err("Frozen evaluator started from a modified tracked tree".into());
@@ -264,8 +265,9 @@ impl Improvements {
             if let Some(scoring)=scoring {Some(parse_score(&score(dir,scoring).await?)?)} else {None}
         }else{None};
         let after=git(dir,&["status","--porcelain","--untracked-files=no"]).await?;
-        if !after.trim().is_empty(){
-            return Err("Independent evaluator modified tracked sources; score does not describe frozen commit".into());
+        let head_after=git(dir,&["rev-parse","HEAD"]).await?;
+        if !after.trim().is_empty() || head_before!=head_after {
+            return Err("Independent evaluator modified the tracked tree or commit; score is not frozen".into());
         }
         Ok(Measurement{tests_passed,score:value,log:log.chars().take(2000).collect()})
     }
@@ -337,7 +339,12 @@ mod tests {
             workspace.join(format!("frozen-store-{}",Uuid::new_v4())),workspace.clone()
         ).await.unwrap();
         let verdict=service.measure(&root,"printf '2\\n' > code.txt",None).await;
-        assert!(verdict.unwrap_err().contains("modified tracked sources"));
+        assert!(verdict.unwrap_err().contains("modified the tracked tree"));
+        git(&root,&["reset","--hard","HEAD"]).await.unwrap();
+        // A command can cleanly check out a different commit and leave no
+        // unstaged tracked diff. The frozen HEAD must still match.
+        let verdict=service.measure(&root,"git checkout --orphan temporary && git reset --hard",None).await;
+        assert!(verdict.unwrap_err().contains("modified the tracked tree"));
         let _=fs::remove_dir_all(&root).await;
     }
     #[test]
