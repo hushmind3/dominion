@@ -1,7 +1,7 @@
 //! Deterministic integration tests for the public Rust kernel (no paid model calls).
 use dominion_agent_sdk::{
     Action, BoxFuture, Evidence, Journal, Kernel, Limits, Model, ModelReply,
-    RunRequest, Snapshot, Status, Strategy, ToolSpec, Tools,
+    Receipt, RunRequest, Snapshot, Status, Strategy, ToolSpec, Tools,
 };
 use serde_json::{json, Value};
 use std::{collections::{HashSet, VecDeque}, sync::{Arc, Mutex}};
@@ -126,4 +126,47 @@ async fn malformed_dependencies_never_hit_host_tools(){
     let result=kernel.run(request("rejected-graph")).await.unwrap();
     assert!(matches!(result.status,Status::Completed));
     assert_eq!(*tools.called.lock().unwrap(),vec!["corrected"]);
+}
+
+#[tokio::test]
+async fn safe_checkpoint_resumes_without_replaying_prior_tool_effects(){
+    let req=request("resume-clean");
+    let mut saved=Snapshot::from_request(&req);
+    saved.step=2;
+    saved.model_calls=2;
+    saved.charged_tokens=300;
+    saved.receipts.push(Receipt {
+        id:"already_done".into(),tool:"read".into(),arguments:json!({}),
+        success:true,result:json!({"inspected":true}),step:1,
+    });
+    let model=ScriptedModel::new(vec![decide(json!([]),Some("Continued from receipt"))]);
+    let tools=RecordingTools::new(&[]);
+    let journal=RecordingJournal::default();
+    let kernel=Kernel{model:&model,tools:&tools,evidence:&AlwaysTrueEvidence,journal:&journal};
+    let result=kernel.resume(req,saved).await.unwrap();
+    assert!(matches!(result.status,Status::Completed));
+    assert_eq!(result.step,3);
+    assert_eq!(result.model_calls,3);
+    assert_eq!(result.receipts.len(),1);
+    assert!(tools.called.lock().unwrap().is_empty());
+}
+#[tokio::test]
+async fn checkpoint_identity_and_unknown_effects_fail_closed(){
+    let req=request("resume-validation");
+    let model=ScriptedModel::new(vec![]);
+    let tools=RecordingTools::new(&[]);
+    let journal=RecordingJournal::default();
+    let kernel=Kernel{model:&model,tools:&tools,evidence:&AlwaysTrueEvidence,journal:&journal};
+    let mut wrong=Snapshot::from_request(&req);
+    wrong.id="different-job".into();
+    assert!(kernel.resume(req.clone(),wrong).await.is_err());
+    let mut in_flight=Snapshot::from_request(&req);
+    in_flight.in_flight.push(Action{id:"not-yet-confirmed".into(),tool:"write".into(),
+        arguments:json!({}),depends_on:vec![]});
+    assert!(kernel.resume(req.clone(),in_flight).await.is_err());
+    let mut model_pending=Snapshot::from_request(&req);
+    model_pending.model_in_flight=true;
+    assert!(kernel.resume(req,model_pending).await.is_err());
+    assert!(tools.called.lock().unwrap().is_empty());
+    assert!(journal.snapshots.lock().unwrap().is_empty());
 }

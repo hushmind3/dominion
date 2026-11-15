@@ -243,15 +243,28 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
         })).and_then(|saved|saved["id"].as_str().map(str::to_string))
             .ok_or("Could not save native agent session")?
     };
-    // A fresh job cannot inherit the previous epoch's cancellation state.
-    context.checkpoint(json!({"sessionId":session,"nativeInFlight":false}))?;
-    let existing=context.state.store.get("job",&context.job_id)
-        .and_then(|j|j.get("nativeState").cloned());
-    if let Some(previous)=existing {
-        // Until external side-effect reconciliation is complete, an
-        // interrupted native job is never auto-resubmitted.
-        return Ok(json!({"status":"needs_review","reason":"기존 Rust 실행 기록을 확인한 뒤 새 작업을 시작하세요.",
+    // Recovered work must retain its original uncertainty marker. Reset it
+    // only for brand-new jobs, never before checking prior external effects.
+    let prior_job=context.state.store.get("job",&context.job_id);
+    let previous=prior_job.as_ref().and_then(|j|j.get("nativeState").cloned());
+    let uncertain=prior_job.as_ref().is_some_and(|j|j["nativeInFlight"]==true);
+    if previous.is_some() {
+        context.checkpoint(json!({"sessionId":session}))?;
+    } else {
+        context.checkpoint(json!({"sessionId":session,"nativeInFlight":false}))?;
+    }
+    if uncertain {
+        return Ok(json!({"status":"needs_review",
+            "reason":"재시작 중 도구 또는 모델 호출 결과가 불명확합니다. 기존 실행 기록을 확인하세요.",
             "snapshot":previous}));
+    }
+    let resume_snapshot=previous.map(|value|serde_json::from_value::<Snapshot>(value)
+        .map_err(|e|format!("Invalid native checkpoint: {e}"))).transpose()?;
+    if resume_snapshot.as_ref().is_some_and(|saved|
+        !saved.in_flight.is_empty() || saved.model_in_flight) {
+        return Ok(json!({"status":"needs_review",
+            "reason":"확정되지 않은 외부 실행이 있어 자동 재개를 중단했습니다.",
+            "snapshot":resume_snapshot}));
     }
     let caps=if input["limits"].is_object() {
         serde_json::from_value::<Limits>(input["limits"].clone())
@@ -327,20 +340,38 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
     };
     let evidence=FsEvidence{workspace:context.state.config.workspace.clone()};
     let journal=DurableJournal{context};
-    context.state.store.put_if_absent("execution",&json!({
-        "id":context.job_id,"status":"running","sessionId":session,
-        "task":task,"startedAt":chrono::Utc::now().to_rfc3339()
-    })).ok_or("Could not persist native execution")?;
+    if let Some(existing)=context.state.store.get("execution",&context.job_id) {
+        if existing["sessionId"].as_str()!=Some(session.as_str()) {
+            return Err("Recovered execution session does not match the original".into());
+        }
+        if existing["status"]=="interrupted" {
+            context.state.store.patch_if("execution",&context.job_id,
+                "status",&json!("interrupted"),&json!({
+                    "status":"running","resumedAt":chrono::Utc::now().to_rfc3339()
+                })).ok_or("Could not resume interrupted execution record")?;
+        }
+    } else {
+        context.state.store.put_if_absent("execution",&json!({
+            "id":context.job_id,"status":"running","sessionId":session,
+            "task":task,"startedAt":chrono::Utc::now().to_rfc3339()
+        })).ok_or("Could not persist native execution")?;
+    }
     // Keep native SDK tasks visible in the same session store as chat.
     let source_message=json!({
         "id":format!("native-user-{}",context.job_id),
         "session_id":session,"role":"user","content":task,
         "metadata":{"authorKind":"owner","source":"rust-sdk","jobId":context.job_id}
     });
-    context.state.store.write_message(&source_message)
-        .ok_or("Could not persist owner instruction before native execution")?;
+    if context.state.store.message(source_message["id"].as_str().unwrap_or("")).is_none() {
+        context.state.store.write_message(&source_message)
+            .ok_or("Could not persist owner instruction before native execution")?;
+    }
     let kernel=Kernel{model:&model,tools:&host_tools,evidence:&evidence,journal:&journal};
-    let snapshot=kernel.run(request).await?;
+    let snapshot=if let Some(saved)=resume_snapshot {
+        kernel.resume(request,saved).await?
+    } else {
+        kernel.run(request).await?
+    };
     let status=serde_json::to_value(&snapshot.status).unwrap_or(json!("needs_review"));
     if let Some(answer)=snapshot.answer.as_deref() {
         let final_message=json!({
@@ -348,8 +379,10 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
             "session_id":session,"role":"assistant","content":answer,
             "metadata":{"authorKind":"agent","source":"rust-sdk","jobId":context.job_id}
         });
-        context.state.store.write_message(&final_message)
-            .ok_or("Could not persist final native agent answer")?;
+        if context.state.store.message(final_message["id"].as_str().unwrap_or("")).is_none() {
+            context.state.store.write_message(&final_message)
+                .ok_or("Could not persist final native agent answer")?;
+        }
     }
     let persisted=context.state.store.patch_if("execution",&context.job_id,
         "status",&json!("running"),&json!({

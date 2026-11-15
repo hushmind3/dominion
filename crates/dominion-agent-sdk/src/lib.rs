@@ -256,8 +256,35 @@ fn owner_requires_effect(text: &str) -> bool {
 
 impl Kernel<'_> {
     pub async fn run(&self, request: RunRequest) -> Result<Snapshot, String> {
+        self.run_from(request, None).await
+    }
+
+    /// Continue only from a committed, exact-job checkpoint. Nothing already
+    /// recorded is replayed, including completed read calls and paid model
+    /// generations. Unknown external effects require explicit reconciliation.
+    pub async fn resume(&self, request: RunRequest, saved: Snapshot) -> Result<Snapshot, String> {
+        self.run_from(request, Some(saved)).await
+    }
+
+    async fn run_from(&self, request: RunRequest, saved: Option<Snapshot>)
+        -> Result<Snapshot, String> {
         request.validate()?;
-        let mut run = Snapshot::from_request(&request);
+        let mut run = if let Some(saved) = saved {
+            if saved.id != request.id || saved.instruction != request.instruction {
+                return Err("Checkpoint does not match the requested task identity".into());
+            }
+            if !saved.in_flight.is_empty() || saved.model_in_flight {
+                return Err("Checkpoint has an uncertain tool or model outcome; manual review required".into());
+            }
+            if saved.step > request.limits.max_steps ||
+                saved.model_calls > request.limits.max_model_calls {
+                return Err("Checkpoint exceeds the current execution limits".into());
+            }
+            if !matches!(saved.status, Status::Running) {
+                return Ok(saved);
+            }
+            saved
+        } else { Snapshot::from_request(&request) };
         let specs = self.tools.definitions();
         let mut tools = HashMap::new();
         for spec in specs {
@@ -289,7 +316,7 @@ impl Kernel<'_> {
         );
         let mut invalid = 0usize;
         self.journal.save(&run)?;
-        'steps: for step in 0..request.limits.max_steps {
+        'steps: for step in run.step..request.limits.max_steps {
             if self.journal.cancelled(&request.id) {
                 run.stop(Status::Cancelled, "Owner cancelled execution");
                 self.journal.save(&run)?;
