@@ -49,6 +49,15 @@ impl Dominion {
         let vault=Vault::open(&config.key_path());
         let state=AppState::new(config,store,vault);
         migrations::run(&state)?;
+        // CLI OAuth device waiters are process-local. The native SDK must
+        // preserve the desktop's interrupted-login recovery behavior.
+        if let Some(mut login)=state.store.get("codex_login","codex"){
+            if matches!(login["status"].as_str(),Some("pending"|"device_pending")){
+                login["status"]=json!("error");
+                login["message"]=json!("서버가 재시작되어 로그인을 다시 시작해야 합니다.");
+                state.store.put("codex_login",&login);
+            }
+        }
         Ok(Self{state,started:Arc::new(AtomicBool::new(false))})
     }
     pub(crate) fn from_config(config:Config)->Result<Self,String>{Self::open(config.into())}
@@ -102,7 +111,8 @@ impl Dominion {
         ]{
             if let Some(value)=value.filter(|s|!s.trim().is_empty()){input[name]=json!(value);}
         }
-        engine::jobs::enqueue(&self.state,"prompt",input).ok_or("cannot persist job".into())
+        engine::jobs::enqueue(&self.state,"prompt",input)
+            .ok_or_else(|| "cannot persist job".to_string())
     }
     /// Claim a queued job through the same worker path, never a duplicate runner.
     pub fn schedule_now(&self,id:&str)->Result<(),String>{
