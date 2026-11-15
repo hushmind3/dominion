@@ -231,7 +231,7 @@ export function SelfImprovementPage(){
    <div className="flex flex-wrap items-center justify-between gap-4"><div><h2 className="text-lg font-bold">버튼 한 번으로 시스템 자기개선</h2>
     <p className="mt-2 text-[13px] text-[#5C544A]">{enabled.find(p=>p.id===providerId)?.name||'서비스 확인 중'} · <strong>{model||'모델 확인 중'}</strong></p>
     <p className="mt-2 text-[12px] text-[#7C7469]">전체 코드 탐색 → 시스템 재설계 → 후속 작업 A/B 평가 → {selection==='automatic'?'자동 채택':'직접 선택'} → 새 개선기로 재실행</p>
-    <p className="mt-1 text-[11px] text-[#81786B]">{selection==='automatic'?'서로 다른 2개 분야에서 실측 개선이 쌓이면 후손 실행기가 A → B → A 재검증을 탐색합니다.':'자동 교차 개선 탐색은 꺼져 있습니다.'}</p></div>
+    <p className="mt-1 text-[11px] text-[#81786B]">{selection==='automatic'&&!request.trim()?'서로 다른 2개 분야에서 실측 개선이 쌓이면 후손 실행기가 A → B → A 재검증을 탐색합니다.':'사용자 지정 목표 또는 수동 선택을 우선하며 자동 교차 개선 탐색은 실행하지 않습니다.'}</p></div>
     <Button variant="primary" onClick={()=>void start()} disabled={busy||working||installing||!providerId||!model.trim()}>
      {busy||working||installing?<LoaderCircle size={16} className="animate-spin"/>:<Play size={16}/>}{installing?'프로그램에 반영 중':working?'자기개선 실행 중':'자기개선 시작'}</Button></div>
    <div className="mt-4 grid gap-3 sm:grid-cols-2"><FormField label="연결된 서비스"><SelectInput value={providerId} disabled={working||busy} onChange={e=>{setProviderId(e.target.value);setModel(enabled.find(p=>p.id===e.target.value)?.model||'');if(!enabled.find(p=>p.id===e.target.value)?.local)setLocalOnly(false)}}>

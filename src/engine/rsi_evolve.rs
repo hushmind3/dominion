@@ -4253,15 +4253,18 @@ pub fn plan_generation_from_file(path:&str)->Result<(),String> {
         && input["rsiAutonomous"]==true && !explicit {
         crate::engine::rsi_transfer::audit_history(&state,&history)
     }else{Value::Null};
+    // The owner chose autonomous, whole-system exploration at campaign start.
+    // A later residual-objective text must not prevent returning to a domain
+    // whose earlier gain has been independently measured.
     let cycle_return=cycle_audit["nextReturnDomain"].as_str()
-        .filter(|domain|DOMAINS.contains(domain) && allowed.contains(domain))
+        .filter(|domain|DOMAINS.contains(domain))
         .map(str::to_string);
     let architecture_target=if explicit
         || (paired_descendant_target(input) && cycle_return.is_none()) {
         Value::Null
     }else{
         frontier.iter().find(|row|row["domain"].as_str().is_some_and(|domain|
-            allowed.contains(&domain) &&
+            (allowed.contains(&domain)||cycle_return.as_deref()==Some(domain)) &&
             cycle_return.as_deref().or(inherited.as_deref()).is_none_or(|pinned|pinned==domain)))
             .cloned().unwrap_or(Value::Null)
     };
