@@ -7,6 +7,8 @@ export interface TaskInput {
   /** Explicit permission grants for this run. Both default to false. */
   allowWrite?: boolean;
   allowShell?: boolean;
+  /** Explicit consent to expose operator-configured MCP tools in this run. */
+  allowMcp?: boolean;
   /** Require a verified file write before reporting successful completion. */
   requireEvidence?: boolean;
   maxSteps?: number;
