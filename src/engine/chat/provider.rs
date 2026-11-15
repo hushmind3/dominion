@@ -1090,7 +1090,7 @@ async fn stream_completion_once_body(
     } else {
         prompt_tokens + completion_tokens
     };
-    crate::engine::gateway::record_usage_tokens(
+    crate::engine::gateway::record_usage_tokens_cached(
         state,
         &provider.id,
         &provider.model,
@@ -1101,6 +1101,7 @@ async fn stream_completion_once_body(
         completion_tokens,
         total_tokens,
         !completion.usage_exact,
+        completion.cached_prompt_tokens,
     );
     Ok(completion)
 }
@@ -1462,7 +1463,7 @@ async fn stream_codex_once(
             let mut completion = outcome.completion;
             fill_estimated_usage(messages,tools,&mut completion);
             continuity["incrementalTransport"] = outcome.transport;
-            crate::engine::gateway::record_usage_tokens(
+            crate::engine::gateway::record_usage_tokens_cached(
                 state,
                 &provider.id,
                 &provider.model,
@@ -1473,6 +1474,7 @@ async fn stream_codex_once(
                 completion.completion_tokens,
                 completion.usage,
                 !completion.usage_exact,
+                completion.cached_prompt_tokens,
             );
             return Ok(completion);
         }
@@ -1627,7 +1629,7 @@ async fn stream_codex_once(
         return Err("Codex 스트림이 완료 신호 없이 종료되었습니다.".into());
     }
     fill_estimated_usage(messages,tools,&mut completion);
-    crate::engine::gateway::record_usage_tokens(
+    crate::engine::gateway::record_usage_tokens_cached(
         state,
         &provider.id,
         &provider.model,
@@ -1638,6 +1640,7 @@ async fn stream_codex_once(
         completion.completion_tokens,
         completion.usage,
         !completion.usage_exact,
+        completion.cached_prompt_tokens,
     );
     Ok(completion)
 }
@@ -1847,7 +1850,7 @@ async fn stream_anthropic_once(
     completion.usage = completion.prompt_tokens + output_tokens;
     completion.usage_exact = input_reported&&output_reported;
     fill_estimated_usage(messages,&tools,&mut completion);
-    crate::engine::gateway::record_usage_tokens(
+    crate::engine::gateway::record_usage_tokens_cached(
         state,
         &provider.id,
         &provider.model,
@@ -1858,6 +1861,7 @@ async fn stream_anthropic_once(
         completion.completion_tokens,
         completion.usage,
         !completion.usage_exact,
+        completion.cached_prompt_tokens,
     );
     Ok(completion)
 }
