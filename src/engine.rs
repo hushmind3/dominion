@@ -692,8 +692,8 @@ pub async fn run(state: AppState, id: String) {
             // Never accept an old green check after a newer edit or any
             // uncertain source modification. Feed real diagnostics to the
             // same Rust model loop for bounded autonomous repair.
-            if verified_writes>0 && allow_shell &&
-                strategy::source_change_requested(&active_instruction) {
+            if allow_shell && (!expected_checks.is_empty() ||
+                (verified_writes>0 && strategy::source_change_requested(&active_instruction))) {
                 if strict_checks && expected_checks.is_empty() {
                     settle(&state,&id,"needs_review",&text,verified_writes,
                         Some("No runnable acceptance test was found. Supply an explicit acceptanceChecks command.".into()));
