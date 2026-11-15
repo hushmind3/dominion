@@ -78,12 +78,55 @@ pub async fn status(State(state): State<AppState>) -> Json<Value> {
     }))
 }
 
+/// Drain the bounded SQLite event log in pages. A one-page replay silently
+/// skipped older records when a reconnect had >500 pending events.
+fn durable_replay(bus: &crate::events::Bus, after: u64) -> Vec<Value> {
+    const PAGE: usize = 500;
+    const MAX_BATCH: usize = 3_000; // > durable 2000 (+ pruning interval)
+    let mut cursor = after;
+    let mut result = Vec::new();
+    while result.len() < MAX_BATCH {
+        let page = bus.replay(cursor, PAGE);
+        let count = page.len();
+        if count == 0 {
+            break;
+        }
+        for item in page {
+            let seq = item["seq"].as_u64().unwrap_or(0);
+            if seq <= cursor {
+                continue;
+            }
+            if seq > cursor.saturating_add(1) {
+                // The durable log is intentionally bounded. Never imply that
+                // an expired cursor received a complete event history.
+                result.push(gap_event(cursor, seq));
+            }
+            cursor = seq;
+            result.push(item);
+        }
+        if count < PAGE {
+            break;
+        }
+    }
+    result
+}
+
+fn gap_event(after: u64, first_available: u64) -> Value {
+    json!({
+        "type": "event_gap",
+        "seq": first_available.saturating_sub(1),
+        "resumedAfter": after,
+        "firstAvailable": first_available,
+        "missed": first_available.saturating_sub(after.saturating_add(1)),
+        "resyncRequired": true
+    })
+}
+
 pub async fn events(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    // Reconnect contract: `?after=<seq>` or the SSE `Last-Event-ID` header.
     let after = params
         .get("after")
         .and_then(|value| value.parse::<u64>().ok())
@@ -95,33 +138,45 @@ pub async fn events(
         })
         .unwrap_or(0);
     let bus = state.bus.clone();
-    let backlog = bus.replay(after, 500);
+    // Subscribe before replay so writes during page reads enter the receiver.
     let mut receiver = bus.subscribe();
     let stream = async_stream::stream! {
         let mut last = after;
-        for value in backlog {
+        for value in durable_replay(&bus, last) {
             let seq = value["seq"].as_u64().unwrap_or(0);
-            last = last.max(seq);
+            if seq <= last { continue; }
+            last = seq;
             yield Ok(Event::default().id(seq.to_string()).data(value.to_string()));
         }
         loop {
             match receiver.recv().await {
                 Ok(value) => {
                     let seq = value["seq"].as_u64().unwrap_or(0);
-                    if seq <= last {
-                        continue;
+                    if seq <= last { continue; }
+                    if seq > last.saturating_add(1) {
+                        // Recover the entire durable interval, not only the
+                        // first 500 records. A late live value is deduplicated.
+                        for previous in durable_replay(&bus, last) {
+                            let previous_seq = previous["seq"].as_u64().unwrap_or(0);
+                            if previous_seq <= last { continue; }
+                            last = previous_seq;
+                            yield Ok(Event::default().id(last.to_string()).data(previous.to_string()));
+                        }
                     }
-                    last = seq;
-                    yield Ok(Event::default().id(seq.to_string()).data(value.to_string()));
+                    if seq > last.saturating_add(1) {
+                        let gap = gap_event(last, seq);
+                        last = seq - 1;
+                        yield Ok(Event::default().id(last.to_string()).data(gap.to_string()));
+                    }
+                    if seq > last {
+                        last = seq;
+                        yield Ok(Event::default().id(seq.to_string()).data(value.to_string()));
+                    }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                    // The live buffer is bounded. Replay the gap from the
-                    // durable log instead of silently dropping writes.
-                    for value in bus.replay(last, 500) {
+                    for value in durable_replay(&bus, last) {
                         let seq = value["seq"].as_u64().unwrap_or(0);
-                        if seq <= last {
-                            continue;
-                        }
+                        if seq <= last { continue; }
                         last = seq;
                         yield Ok(Event::default().id(seq.to_string()).data(value.to_string()));
                     }
@@ -131,6 +186,36 @@ pub async fn events(
         }
     };
     Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+}
+
+#[cfg(test)]
+mod event_replay_tests {
+    use super::*;
+    #[test]
+    fn multi_page_reconnect_preserves_all_retained_records() {
+        let store = crate::db::Store::open(std::path::Path::new(":memory:")).unwrap();
+        let bus = crate::events::Bus::new(store);
+        for n in 0..1100 { bus.emit(json!({"type":"tick","index":n})); }
+        let events = durable_replay(&bus, 0);
+        assert_eq!(events.len(), 1100);
+        assert_eq!(events.first().unwrap()["seq"], 1);
+        assert_eq!(events.last().unwrap()["seq"], 1100);
+        assert!(events.iter().all(|event| event["type"] != "event_gap"));
+    }
+    #[test]
+    fn expired_cursor_is_explicit_gap_not_silent_data_loss() {
+        let store = crate::db::Store::open(std::path::Path::new(":memory:")).unwrap();
+        let bus = crate::events::Bus::new(store);
+        for n in 0..2600 { bus.emit(json!({"type":"tick","index":n})); }
+        let events = durable_replay(&bus, 0);
+        assert_eq!(events[0]["type"], "event_gap");
+        assert_eq!(events[0]["resyncRequired"], true);
+        assert_eq!(
+            events[0]["seq"].as_u64().unwrap() + 1,
+            events[1]["seq"].as_u64().unwrap()
+        );
+        assert_eq!(events.last().unwrap()["seq"], 2600);
+    }
 }
 
 pub async fn audit_log(State(state): State<AppState>) -> Json<Value> {
