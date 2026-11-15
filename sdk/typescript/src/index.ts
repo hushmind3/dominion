@@ -113,6 +113,24 @@ export interface ImprovementTrial {
   parent: string | null;
   reflection: string | null;
 }
+export type MemoryKind = 'fact' | 'correction' | 'preference' | 'procedure';
+export interface MemoryRecord {
+  id: string;
+  sessionId: string | null;
+  content: string;
+  source: 'owner';
+  kind: MemoryKind;
+  status: 'active' | 'inactive';
+  createdAt: string;
+}
+export interface SkillRecord {
+  id: string;
+  name: string;
+  trigger: string;
+  instructions: string;
+  enabled: boolean;
+  createdAt: string;
+}
 export interface ClientOptions {
   baseUrl?: string;
   fetch?: typeof fetch;
@@ -229,6 +247,33 @@ export class DominionClient {
   }
   improvementDescendant(id: string, signal?: AbortSignal) {
     return this.request<ImprovementTrial>('/api/improvements/'+encodeURIComponent(id)+'/descendant','POST',{},signal);
+  }
+  memoryList(sessionId?: string, signal?: AbortSignal) {
+    const query=sessionId ? '?sessionId='+encodeURIComponent(sessionId):'';
+    return this.request<MemoryRecord[]>('/api/memory'+query,'GET',undefined,signal);
+  }
+  memorySearch(query: string, sessionId?: string, signal?: AbortSignal) {
+    const params=new URLSearchParams({query});
+    if(sessionId) params.set('sessionId',sessionId);
+    return this.request<MemoryRecord[]>('/api/memory/search?'+params,'GET',undefined,signal);
+  }
+  remember(content: string, kind: MemoryKind='fact', sessionId?: string, signal?: AbortSignal) {
+    return this.request<MemoryRecord>('/api/memory','POST',
+      {content,kind,sessionId:sessionId??null},signal);
+  }
+  memoryDisable(id: string, signal?: AbortSignal) {
+    return this.request<{ok:boolean}>('/api/memory/'+encodeURIComponent(id)+'/disable','POST',{},signal);
+  }
+  skillList(signal?: AbortSignal) {
+    return this.request<SkillRecord[]>('/api/skills','GET',undefined,signal);
+  }
+  skillCreate(name: string, instructions: string, trigger='', enabled=false, signal?: AbortSignal) {
+    return this.request<SkillRecord>('/api/skills','POST',
+      {name,instructions,trigger,enabled},signal);
+  }
+  skillEnable(id:string, enabled:boolean, signal?: AbortSignal) {
+    return this.request<{ok:boolean}>('/api/skills/'+encodeURIComponent(id)+'/enable',
+      'POST',{enabled},signal);
   }
   /**
    * Reconnect only a read-only GET. The cursor is based on committed event seq;
