@@ -3467,15 +3467,19 @@ fn select_panel_tool_definitions(definitions:Vec<Value>,query:&str)->Vec<Value>{
     let text=query.to_lowercase();
     let mentions=|terms:&[&str]|terms.iter().any(|word|text.contains(word));
     let external_file=mentions(&["절대경로","외부 폴더","다른 드라이브",
-        "outside workspace","absolute path","c:\\","/home/","/users/","/mnt/"]);
+        "outside workspace","absolute path","c:\\","d:\\","/home/","/users/",
+        "/mnt/","/tmp/","/var/","/etc/","/workspace/"]);
     let wants_memory=mentions(&["기억","메모리","memory","remember"]);
     let wants_save_memory=mentions(&["기억해","기억해 둬","메모리에 저장",
         "remember this","save memory"]);
     let wants_skill=mentions(&["스킬","skill","재사용 절차","reusable procedure"]);
     let wants_browser=mentions(&["브라우저","browser","웹페이지","웹사이트","사이트",
-        "click the page","스크린샷","screenshot","ui test","e2e test"]);
+        "웹 검색","웹에서","네이버","구글","접속","페이지 이동",
+        "click the page","스크린샷","screenshot","ui test","e2e test",
+        "open url","visit url","website","web page"]);
     let wants_github=mentions(&["깃허브","github","git push","git commit",
-        "커밋","풀 리퀘스트","pull request","이슈 생성","issue 생성"]);
+        "커밋","푸시","레포지토리","리포지토리","repository",
+        "풀 리퀘스트","pull request","이슈 생성","issue 생성"]);
     let wants_accounts=mentions(&["연결 계정","로그인 계정","oauth","connected account"]);
     definitions.into_iter().filter(|definition|{
         match tool_name(definition){
@@ -6854,6 +6858,11 @@ mod harness_tool_selection_tests {
         for name in ["github_api","browser_control","memory_store"]{
             assert!(names.contains(&name),"{name} explicitly requested");
         }
+        let web=select_panel_tool_definitions(vec![
+            json!({"function":{"name":"browser_control"}}),
+            json!({"function":{"name":"workspace_read"}}),
+        ],"네이버에서 사이트에 접속해 가격을 확인해");
+        assert!(web.iter().any(|definition|tool_name(definition)=="browser_control"));
     }
 
     #[test]
