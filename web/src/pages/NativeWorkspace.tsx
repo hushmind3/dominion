@@ -336,7 +336,7 @@ export function NativeImprovements(){
      <p className={'mt-1 '+subtle}>{run.target_files.join(' → ')} · 세대당 {run.candidates_per_generation||1}개 후보 · 모델 비용 {fmtKrw(run.spent_krw)} / {fmtKrw(run.cost_budget_krw)}</p>
      <div className={'mt-2 '+row}>{run.descendants.map((id,i)=><Button key={id} size="sm" variant="ghost" onClick={()=>setActive(id)}>{i+1}세대 채택</Button>)}</div>
      {(run.candidates||[]).length>0&&<div className="mt-3 grid gap-2">{(run.candidates||[]).map(item=><div key={item.trial_id} className="rounded-lg border border-[#ECE5DB] bg-[#F8F6F1] p-2">
-       <div className="flex flex-wrap items-center justify-between gap-2"><Button size="sm" variant="ghost" onClick={()=>setActive(item.trial_id)}>{item.generation+1}세대 · 후보 {item.proposal_index+1}</Button><span className={subtle}>{run.descendants.includes(item.trial_id)?'채택':item.eligible?'검증 통과 · 경쟁 결과 대기':'제외'}</span></div>
+       <div className="flex flex-wrap items-center justify-between gap-2"><Button size="sm" variant="ghost" onClick={()=>setActive(item.trial_id)}>{item.generation+1}세대 · 후보 {item.proposal_index+1}</Button><span className={subtle}>{run.descendants.includes(item.trial_id)?'채택':item.eligible?(run.status==='running'?'검증 통과 · 경쟁 진행 중':'검증 통과 · 미채택'):'제외'}</span></div>
        <p className={subtle}>훈련 {item.training_score??'—'} · 독립 검증 {item.validation_score??'—'} (기준 {item.validation_baseline_score??'—'})</p>
        {item.reason&&<p className={subtle}>{item.reason}</p>}
      </div>)}</div>}
