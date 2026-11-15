@@ -70,3 +70,17 @@ No local Rust toolchain or full CI was available in the present session, so thes
 ## GitHub Actions verification request (2026-11-15)
 
 This commit explicitly requests the existing push-triggered CI workflow on the current Sub2 HEAD, including the Ubuntu/macOS/Windows release-mode Rust tests and web typecheck/build. No UI files or application configuration have been changed. CI conclusions must be read from GitHub Actions and are not presumed here.
+
+
+## Windows native execution and cross-platform test hygiene — 2026-11-16
+
+This continuation is intentionally restricted to the `dominion-sub2` branch and leaves all UI assets untouched.
+
+- `rsi_worktree::git_compatible_path` is used for Git worktree CLI destinations when Windows canonical paths carry `\\?\` extended-length prefixes; the native filesystem `PathBuf` stays unchanged.
+- Compiler-assisted RSI suggestions normalize Rust compiler span separators before matching the independent `git diff --name-only` allowlist.
+- Native skill installation avoids a case-insensitive source-to-itself copy; local GGUF IDs and unsafe audit findings use slash-normalized identifiers.
+- Tests now drop the owning SQLite-backed `AppState`/`Store` and worker contexts before deleting temporary test directories, fixing the Windows file-lock lifecycle rather than skipping assertions.
+- `.gitattributes` explicitly pins Rust source line endings to LF for deterministic source-driven RSI mutation checks on Windows. This is a repository source contract, not a UI change.
+- Existing end-to-end chat fixture retains a bounded but Windows-realistic deadline.
+
+Verification is the existing cross-platform GitHub Actions `cargo test --release` matrix, web checks and script tests. No tests are excluded, no platform jobs are disabled, and no runner result is claimed before its actual completion.
