@@ -11,6 +11,8 @@ export interface TaskInput {
   requireEvidence?: boolean;
   maxSteps?: number;
   tokenBudget?: number;
+  /** Extra model planning turn only when needed (auto), always, or never. */
+  planningMode?: 'auto' | 'always' | 'never';
 }
 export type TaskStatus = "queued" | "running" | "completed" |
   "failed" | "cancelled" | "needs_review";
