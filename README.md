@@ -28,7 +28,7 @@ The configured model must already exist. A remote provider can be configured wit
 | Sequential durable workflows using the same Rust task engine | /api/workflows, /api/workflows/:id/runs, /api/workflow-runs/:id |
 | Multi-participant model discussions with distinct participant economy settings | /api/groups |
 | Video storyboard, manual scenes, image-driven motion, local MP4 and optional paid Veo | /api/videos and per-scene edit/image/render paths |
-| Isolated source improvement trials, independent measurements, explicit adoption and descendants | /api/improvements |
+| Isolated source improvement trials, independent measurements, Git-pinned candidate lineage, explicit adoption and descendants | /api/improvements |
 | Scoped memory and explicitly activated skills | /api/memory, /api/skills |
 | Read-only provider information and native/MCP tool discovery | /api/providers, /api/tools |
 | Main React navigation, user profile and event inspector | web/src/App.tsx, web/src/pages/NativeWorkspace.tsx, NativeAgents.tsx, NativeWorkflows.tsx, NativeSystem.tsx |

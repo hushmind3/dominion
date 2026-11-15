@@ -179,7 +179,13 @@ impl Improvements {
         fs::write(&actual,&text).await.map_err(|e|e.to_string())?;
         git(candidate,&["add","--",&item.target_file]).await?;
         execute("git",&["-c","user.name=Dominion","-c","user.email=dominion@localhost","commit","-m","dominion: candidate improvement"],candidate,45).await?;
-        item.candidate_commit=Some(git(candidate,&["rev-parse","HEAD"]).await?.trim().to_string());
+        let commit=git(candidate,&["rev-parse","HEAD"]).await?.trim().to_string();
+        // Detached candidate worktrees are removed after evaluation. Without a
+        // durable ref, Git garbage collection may erase their commits before
+        // approval, adoption or descendant lineage verification.
+        let candidate_ref=format!("refs/dominion/improvements/{}",item.id);
+        git(candidate,&["update-ref",&candidate_ref,&commit]).await?;
+        item.candidate_commit=Some(commit);
         item.proposal=Some(format!("{} bytes -> {} bytes",original.len(),text.len()));
         item.cost_krw=reply.cost_krw;
         self.put(item.clone()).await?;
@@ -216,6 +222,12 @@ impl Improvements {
         if Some(head.trim())!=item.base_commit.as_deref(){return Err("repository HEAD changed since evaluation; refusing adoption".into());}
         if !git(&repo,&["status","--porcelain"]).await?.is_empty(){return Err("repository has uncommitted changes".into());}
         let commit=item.candidate_commit.as_deref().ok_or("missing candidate commit")?;
+        let candidate_ref=format!("refs/dominion/improvements/{}",item.id);
+        let pinned=git(&repo,&["rev-parse",&candidate_ref]).await
+            .map_err(|e|format!("candidate lineage ref unavailable: {e}"))?;
+        if pinned.trim()!=commit {
+            return Err("candidate lineage ref differs from the independently evaluated commit".into());
+        }
         execute("git",&["-c","user.name=Dominion","-c","user.email=dominion@localhost","cherry-pick",commit],&repo,45).await?;
         item.status=ImprovementStatus::Adopted;item.updated_at_ms=now_ms();
         self.put(item).await
@@ -290,6 +302,13 @@ mod full_cycle_tests {
         assert!(result.accepted);
         assert_eq!(result.baseline.as_ref().unwrap().score,Some(0.0));
         assert_eq!(result.candidate.as_ref().unwrap().score,Some(1.0));
+        // A detached candidate must survive worktree removal and aggressive GC.
+        let candidate_ref=format!("refs/dominion/improvements/{}",item.id);
+        let pinned=git(&repo,&["rev-parse",&candidate_ref]).await.unwrap();
+        assert_eq!(Some(pinned.trim()),result.candidate_commit.as_deref());
+        git(&repo,&["gc","--prune=now"]).await.unwrap();
+        let after_gc=git(&repo,&["cat-file","-t",pinned.trim()]).await.unwrap();
+        assert_eq!(after_gc.trim(),"commit");
         let adopted=service.adopt(item.id).await.unwrap();
         assert_eq!(adopted.status,ImprovementStatus::Adopted);
         assert_eq!(fs::read_to_string(repo.join("score.txt")).await.unwrap(),"1\n");

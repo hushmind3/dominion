@@ -79,7 +79,7 @@ Provider-cached prefixes are preserved where possible. Automatic prompt caching 
 
 Local videos are deterministic FFmpeg compositions at 1280x720, containing owner-provided animated images, titles, carefully wrapped captions, and optional locally synthesized Piper/eSpeak audio. Per-scene file invalidation prevents paying to regenerate unchanged clips; portable MP4 replacement retains the previous artifact until the new one has been successfully renamed. External Veo calls require a configured positive cost rate and per-video KRW ceiling before the next billable scene. The storyboard, local clips, audio, remote operation references and output path are persisted.
 
-Improvement experiments are source-edit proposals isolated from the primary checkout, with frozen baseline comparison, test/score evidence and explicit adoption. No model weight-training pipeline is part of RSI. Current loop requires fuller cross-domain feedback and held-out evaluation before any frontier-ranking claim.
+Improvement experiments are source-edit proposals isolated from the primary checkout, with frozen baseline comparison, test/score evidence and explicit adoption. Accepted candidates are pinned under a Git `refs/dominion/improvements/<UUID>` ref before their detached worktree is removed; adoption verifies the pinned commit matches the independently evaluated candidate. This retains candidate ancestry through Git garbage collection and prevents an orphaned SHA from silently breaking the descendant path. No model weight-training pipeline is part of RSI. Current loop requires fuller cross-domain feedback and held-out evaluation before any frontier-ranking claim.
 
 ## Migration and known limits
 
