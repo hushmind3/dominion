@@ -34,6 +34,14 @@
 
 ---
 
+## Native Rust agent SDK (2026-11-15 development path)
+
+The primary **agent SDK and execution kernel are Rust**, located in [`crates/harness/src/sdk.rs`](crates/harness/src/sdk.rs). The Home screen includes an **Autonomous work** panel backed by the same Rust kernel through [`/api/sdk/runs`](docs/HARNESS.md), not a model-specific external agent SDK. The native CLI is `dominion-harness`; TypeScript is an optional integration client, not the governing engine.
+
+The Rust path supports recorded model/tool rounds, exact-match file edits, one-call approvals, on-disk checkpoints, explicit reconciliation after uncertain effects, cancellation and optional command-based independent verification with repair attempts. See [execution details, API routes, tests, limitations, and current frontier comparisons](docs/HARNESS.md).
+
+**Scope disclosure:** The existing chat, group rooms, video and RSI runtime paths are **not yet fully migrated** to this SDK; completing their integration, token/cost accounting, provider-specific adapters and OS sandboxing remains part of the work. A model's final answer without a configured verifier is recorded as *not independently verified*. This change has not been locally compiled or benchmarked in the current development environment.
+
 ## What is DOMINION?
 
 **DOMINION is an AI agent tool, not another AI model or a token-reselling service.**
