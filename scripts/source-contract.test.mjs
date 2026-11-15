@@ -127,3 +127,24 @@ test('native coding source acceptance is the Rust completion path',()=>{
  assert.ok(api.includes('workspace_replace_many'))
  assert.ok(api.includes('workspace_read_lines'))
 });
+
+test('recursive improvement is Rust-owned, persisted, scored and visible across all clients',()=>{
+ const core=readFileSync(join(root,'src/improvement.rs'),'utf8')
+ const evolution=readFileSync(join(root,'src/improvement/evolution.rs'),'utf8')
+ const runtime=readFileSync(join(root,'src/runtime.rs'),'utf8')
+ const api=readFileSync(join(root,'src/api.rs'),'utf8')
+ const sdk=readFileSync(join(root,'sdk/typescript/src/index.ts'),'utf8')
+ const ui=readFileSync(join(root,'web/src/pages/NativeWorkspace.tsx'),'utf8')
+ assert.ok(core.includes('fn is_better('))
+ assert.ok(core.includes('adopt_internal('))
+ assert.ok(evolution.includes('pub async fn evolution_start('))
+ assert.ok(evolution.includes('advance_evolution('))
+ assert.ok(evolution.includes('workspace_write_lock.lock().await'))
+ assert.ok(evolution.includes('put_evolution(run.clone())'))
+ assert.ok(evolution.includes('bounded_evolution_can_improve_a_then_b_then_a_with_real_git_evaluation'))
+ assert.ok(api.includes('/api/improvements/:id/evolution'))
+ assert.ok(api.includes('/api/evolutions/:id'))
+ assert.ok(runtime.includes('improvement_evolution_start('))
+ assert.ok(sdk.includes('improvementEvolutionStart('))
+ assert.ok(ui.includes('연속 진화 · A→B→A'))
+});
