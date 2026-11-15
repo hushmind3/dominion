@@ -176,3 +176,12 @@ Both clients use the actual `/api/*` routes from `src/api/mod.rs`, optional `X-D
 ### Main frontend adopted by sub3 (2026-11-15)
 
 The dashboard and execution-monitor design come from `main`. The autonomous-work panel retains the main UI while calling sub3's existing `/api/jobs` and `/api/approvals` APIs and the native Rust SDK kernel. No separate `/api/sdk/runs` loop is introduced. A new job is created for retries after uncertain or failed effects; the UI does not claim the old process was resumed in-place. See [SDK architecture](docs/SDK-ARCHITECTURE-2026-11-15.md).
+
+
+### 2026-11-15 Rust-first agent execution improvements (sub3)
+
+The independent native Rust kernel is in `crates/dominion-agent-sdk`. The `dominion-sdk` Rust package re-exports this actual kernel; `sdk/typescript` remains a secondary typed HTTP/SSE client, not an agent runtime. The React frontend retains the `main` user interface, with its autonomous-work panel adapted to the native Rust `/api/jobs` and `/api/approvals` routes.
+
+Recent sub3 commits add a dependency-aware Rust tool scheduler (bounded read concurrency and strictly ordered effects), failure-triggered replanning, structured MCP error checking and clean-checkpoint `Kernel::resume`. Previously completed tool effects cannot be replayed automatically after a crash, and unknown outcomes go to owner review. Deterministic kernel scheduling and recovery integration tests are committed in `crates/dominion-agent-sdk/tests`.
+
+**Validation state:** source and connector-level route checks completed; no Rust toolchain is installed in the current execution environment, so these new Rust tests, browser runtime checks and live-provider exercises are still unverified. Full CI and SWE-bench remain deferred until whole-product integration and generated-file cleanup are complete.

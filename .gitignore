@@ -8,3 +8,10 @@ web/dist
 /bench
 
 .dominion/
+
+# Generated work products stay outside the tracked source tree.
+**/*.tsbuildinfo
+**/node_modules/
+**/dist/
+**/target/
+**/.vite/
