@@ -45,9 +45,15 @@ impl BudgetLedger {
         self.local_proposals = tools;
     }
 
+    /// Assign a unique round sequence while charging the shared budget.
+    /// Reading before charging would race on parallel branches.
     pub fn next_round(&mut self) -> Option<usize> {
-        let round = self.usage.lock().unwrap().rounds;
-        self.charge_round().then_some(round)
+        let mut usage = self.usage.lock().unwrap();
+        if usage.rounds >= self.max_rounds || self.expired() { return None; }
+        let round = usage.rounds;
+        usage.rounds += 1;
+        self.local_rounds += 1;
+        Some(round)
     }
 
     pub fn charge_round(&mut self) -> bool {
@@ -133,6 +139,25 @@ mod tests {
         root.merge_usage(&b);
         assert_eq!(root.snapshot()["tools"], 3);
         assert!(!root.charge_tool());
+    }
+
+    #[test]
+    fn concurrent_branches_receive_unique_round_numbers_without_overspending() {
+        let root = BudgetLedger::new(400, 1, Duration::from_secs(60));
+        let threads = (0..8).map(|_| {
+            let mut branch = root.branch();
+            std::thread::spawn(move || {
+                let mut rounds = Vec::new();
+                while let Some(round) = branch.next_round() { rounds.push(round); }
+                rounds
+            })
+        }).collect::<Vec<_>>();
+        let mut all = threads.into_iter()
+            .flat_map(|thread|thread.join().unwrap())
+            .collect::<Vec<_>>();
+        all.sort_unstable();
+        assert_eq!(all, (0..400).collect::<Vec<_>>());
+        assert_eq!(root.snapshot()["rounds"],400);
     }
 
     #[test]
