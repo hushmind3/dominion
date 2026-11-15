@@ -247,6 +247,92 @@ impl Store {
         out
     }
 
+    /// Reconstruct an auditable continuation snapshot from durable native
+    /// events rather than a possibly hallucinated assistant summary. A
+    /// started-but-unfinished tool remains uncertain: never auto-replay it.
+    pub fn context_recovery_snapshot(&self,prior_id:&str)->Result<Value,String>{
+        use std::collections::{BTreeMap,HashSet};
+        let prior=self.get(prior_id).ok_or("Source task missing")?;
+        let mut open=BTreeMap::<String,Value>::new();
+        let mut receipts=Vec::<Value>::new();
+        let mut verified=Vec::<Value>::new();
+        let mut last_plan=Value::Null;
+        let mut last_owner_correction=Value::Null;
+        let mut scanned=0usize;
+        let mut cursor=0_u64;
+        let mut seen=HashSet::new();
+        loop{
+            let events=self.events_after(prior_id,cursor,500);
+            if events.is_empty(){break;}
+            let count=events.len();
+            for entry in events{
+                let seq=entry["seq"].as_u64().unwrap_or(cursor);
+                cursor=cursor.max(seq);
+                scanned+=1;
+                let data=&entry["detail"];
+                match entry["type"].as_str().unwrap_or(""){
+                    "tool_start"=>{
+                        let call=data["callId"].as_str().unwrap_or("");
+                        if !call.is_empty(){
+                            open.insert(call.into(),json!({"callId":call,
+                                "tool":data["name"],"sourceSeq":seq,
+                                "status":"effect_uncertain_until_receipt"}));
+                        }
+                    },
+                    "tool_result"=>{
+                        let call=data["callId"].as_str().unwrap_or("");
+                        if !call.is_empty(){
+                            open.remove(call);
+                            if seen.insert(call.to_string()) {
+                                receipts.push(json!({"callId":call,"tool":data["name"],
+                                    "sourceSeq":seq,"ok":data["outcome"]["ok"],
+                                    "readbackVerified":data["outcome"]["receipt"]["verified"],
+                                    "sourceTaskId":prior_id}));
+                            }
+                        }
+                        if data["outcome"]["ok"]==true &&
+                            data["outcome"]["receipt"]["verified"]==true {
+                            verified.push(json!({"callId":call,
+                                "path":data["outcome"]["receipt"]["path"],
+                                "sha256":data["outcome"]["receipt"]["sha256"],
+                                "sourceSeq":seq}));
+                        }
+                    },
+                    "plan"=>last_plan=json!({"sourceSeq":seq,
+                        "text":data["text"].as_str().unwrap_or("")
+                            .chars().take(700).collect::<String>()}),
+                    "instruction_applied"=>last_owner_correction=json!({
+                        "sourceSeq":seq,
+                        "text":data["text"].as_str().unwrap_or("")
+                            .chars().take(1000).collect::<String>()
+                    }),
+                    _=>{}
+                }
+            }
+            if count<500||scanned>=5000{break;}
+        }
+        let uncertain=open.into_values().take(24).collect::<Vec<_>>();
+        let last_receipts=receipts.iter().rev().take(16).cloned()
+            .collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>();
+        let trusted_writes=verified.iter().rev().take(16).cloned()
+            .collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>();
+        Ok(json!({
+            "priorTaskId":prior_id,"priorStatus":prior["status"],
+            "lastCursor":cursor,"partial":scanned>=5000,
+            "eventCountScanned":scanned,
+            "uncertainToolCalls":uncertain,
+            "recentReceiptPointers":last_receipts,
+            "verifiedSourceChanges":trusted_writes,
+            "latestOwnerCorrection":last_owner_correction,
+            "previousProvisionalPlan":last_plan,
+            "priorResult":prior["result"],
+            "priorError":prior["error"],
+            "effectReplayAllowed":false,
+            "evidenceLookup":"context_search or task_receipt(sourceTaskId,callId)",
+            "source":"read_only_verified_native_event_log"
+        }))
+    }
+
     /// Deterministic fallback: preserve explicit owner constraints even when
     /// the summarizing provider fails, never synthesizing an instruction.
     pub fn context_fallback_owner(&self,session:&str,items:&[Value])->usize{
@@ -301,6 +387,27 @@ mod tests{
         assert!(db.context_search("shared",outside,"PomegranateSearchMarker",5).is_empty());
         drop(db);std::fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn recovery_snapshot_marks_uncertain_effects_without_claiming_success(){
+        let db=Store::open(std::path::Path::new(":memory:")).unwrap();
+        let (task,_)=db.submit("recovery-snapshot-2026",
+            &json!({"prompt":"change files"})).unwrap();
+        let id=task["id"].as_str().unwrap();
+        db.append_event(id,"plan",json!({"text":"Read and verify first"})).unwrap();
+        db.append_event(id,"tool_start",json!({"callId":"changed","name":"workspace_write"})).unwrap();
+        db.append_event(id,"tool_result",json!({"callId":"changed",
+            "name":"workspace_write","outcome":{"ok":true,"receipt":{
+                "path":"a.rs","sha256":"sha-a","verified":true}}})).unwrap();
+        db.append_event(id,"tool_start",json!({"callId":"unreturned",
+            "name":"workspace_replace"})).unwrap();
+        let snapshot=db.context_recovery_snapshot(id).unwrap();
+        assert_eq!(snapshot["verifiedSourceChanges"][0]["path"],"a.rs");
+        assert_eq!(snapshot["uncertainToolCalls"][0]["callId"],"unreturned");
+        assert_eq!(snapshot["effectReplayAllowed"],false);
+        assert!(snapshot["recentReceiptPointers"][0]["sourceSeq"].is_number());
+        assert_eq!(snapshot["previousProvisionalPlan"]["text"],"Read and verify first");
+    }
+
     #[test]
     fn only_exact_owner_quotes_become_checkpoint_facts(){
         let db=Store::open(std::path::Path::new(":memory:")).unwrap();
