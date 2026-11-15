@@ -6,7 +6,7 @@
 use crate::{engine::{chat, gateway, jobs::JobContext, llm, mcp, tools, verification}, state::AppState};
 use dominion_sdk::harness::{
     Action, BoxFuture, Criterion, CriterionKind, Evidence, Journal, Kernel,
-    Limits, Model, ModelReply, RunRequest, Snapshot, Strategy, ToolSpec, Tools,
+    Limits, Model, ModelReply, ModelTurn, Receipt, RunRequest, Snapshot, Strategy, ToolSpec, Tools,
 };
 use serde_json::{json, Value};
 use std::{path::{Component, Path, PathBuf}, collections::HashSet};
@@ -34,6 +34,24 @@ impl Model for ConfiguredModel {
             // This adapter's helper API already records provider-reported
             // usage centrally. None explicitly means the kernel must estimate.
             Ok(ModelReply {content, input_tokens: None, output_tokens: None})
+        })
+    }
+    fn complete_with_tools<'a>(
+        &'a self, system:&'a str, prompt:&'a str,
+        schemas:&'a [ToolSpec], receipts:&'a [Receipt],
+    ) -> BoxFuture<'a,Result<ModelTurn,String>> {
+        Box::pin(async move {
+            let route=gateway::resolve(&self.state,&self.provider,Some(&self.model))?;
+            if route.kind=="cli" || route.tool_mode=="compat" {
+                // Text-only and legacy local models retain the independent
+                // Rust structured JSON planner without claiming native tools.
+                let reply=self.complete(system,prompt).await?;
+                return Ok(ModelTurn{reply,decision:None});
+            }
+            crate::engine::native_model::complete(
+                &self.state,&self.provider,&self.model,&self.session,
+                system,prompt,schemas,receipts,
+            ).await
         })
     }
 }

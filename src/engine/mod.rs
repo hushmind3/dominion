@@ -1,5 +1,6 @@
 pub mod goal_control;
 pub mod native_agent;
+pub mod native_model;
 pub mod adaptation_loop;
 pub mod distill;
 pub mod effect;

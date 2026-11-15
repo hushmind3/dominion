@@ -136,9 +136,35 @@ pub struct ModelReply {
     #[serde(default)] pub output_tokens: Option<u64>,
 }
 
+/// One provider-native assistant turn. A structured tool request is already a
+/// typed Decision; it is never decoded from an invented JSON text wrapper.
+/// `decision: None` retains compatibility with local/legacy text-only models.
+#[derive(Clone, Debug)]
+pub struct ModelTurn {
+    pub reply: ModelReply,
+    pub decision: Option<Decision>,
+}
+
 pub trait Model: Send + Sync {
     fn complete<'a>(&'a self, system: &'a str, prompt: &'a str)
         -> BoxFuture<'a, Result<ModelReply, String>>;
+
+    /// Native function/tool-call lane. Providers receive real host tool
+    /// schemas and the durable receipt transcript; the default retains
+    /// backwards-compatible JSON planning for text-only local routes.
+    /// Every actual tool still runs through the same Rust kernel scheduler.
+    fn complete_with_tools<'a>(
+        &'a self,
+        system: &'a str,
+        prompt: &'a str,
+        _tools: &'a [ToolSpec],
+        _receipts: &'a [Receipt],
+    ) -> BoxFuture<'a, Result<ModelTurn, String>> {
+        Box::pin(async move {
+            let reply=self.complete(system,prompt).await?;
+            Ok(ModelTurn{reply,decision:None})
+        })
+    }
 }
 pub trait Tools: Send + Sync {
     fn definitions(&self) -> Vec<ToolSpec>;
@@ -320,6 +346,8 @@ impl Kernel<'_> {
         }
         let mut sorted_tools = tools.values().collect::<Vec<_>>();
         sorted_tools.sort_by(|a,b|a.name.cmp(&b.name));
+        let model_tool_specs=sorted_tools.iter().map(|spec|(*spec).clone())
+            .collect::<Vec<_>>();
         let definitions: Vec<Value> = sorted_tools.into_iter().map(|spec| json!({
             "name":spec.name,
             "description":if matches!(request.strategy,Strategy::LowCost) {
@@ -393,14 +421,20 @@ impl Kernel<'_> {
             }
             run.model_in_flight = true;
             self.journal.save(&run)?;
-            let reply = match self.model.complete(&active_system, &prompt).await {
-                Ok(reply) => reply,
+            let turn = match self.model.complete_with_tools(
+                &active_system, &prompt, &model_tool_specs, &run.receipts,
+            ).await {
+                Ok(turn) => turn,
                 Err(error) => {
                     run.stop(Status::NeedsReview, format!("Model unavailable: {error}"));
                     self.journal.save(&run)?;
                     return Ok(run);
                 }
             };
+            // The model's native function calls are validated by the same
+            // kernel-owned scheduler, authorization and durable checkpoints.
+            let native_decision=turn.decision;
+            let reply=turn.reply;
             run.model_calls += 1;
             // Persist the fact that generation ended before deciding next actions.
             // If this checkpoint fails, no actions are dispatched.
@@ -410,7 +444,7 @@ impl Kernel<'_> {
                     .saturating_add(reply.output_tokens.unwrap_or_else(|| estimate_tokens(&reply.content)))
             );
             self.journal.save(&run)?;
-            let decision = match decode(&reply.content) {
+            let decision = match native_decision.map_or_else(||decode(&reply.content),Ok) {
                 Ok(d) => d,
                 Err(error) => {
                     invalid += 1;
