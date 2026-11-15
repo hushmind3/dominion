@@ -178,12 +178,20 @@ export default function App(){
     }
    }catch{}
   }
+  // A reconnect older than SQLite retention cannot reconstruct every delta.
+  // Refresh authoritative pages and counters; do not fabricate missed events.
+  const onReplayGap=()=>{
+   window.dispatchEvent(new Event('dominion-refresh'))
+   void approvals()
+   void check()
+  }
+  stream.addEventListener('replay_gap',onReplayGap)
   const shortcuts=(e:KeyboardEvent)=>{
    if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();setPalette(open=>!open)}
    if(e.key==='Escape')setPalette(false)
   }
   window.addEventListener('keydown',shortcuts)
-  return()=>{mounted=false;clearInterval(poll);clearTimeout(refreshTimer);stream.close();window.removeEventListener('keydown',shortcuts)}
+  return()=>{mounted=false;clearInterval(poll);clearTimeout(refreshTimer);stream.removeEventListener('replay_gap',onReplayGap);stream.close();window.removeEventListener('keydown',shortcuts)}
  },[])
  return <OwnerProfileProvider><div className="min-h-dvh bg-[#F6F3EC] font-sans text-[#24211D]">
    <ContextMenu />

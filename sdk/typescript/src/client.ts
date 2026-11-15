@@ -206,6 +206,18 @@ export class DominionClient {
         );
         for await (const frame of decodeSse(stream)) {
           const event = parseSseJson<ServerEvent>(frame);
+          // Retention gaps are control events without an SSE id or a durable seq.
+          // Deliver them to callers so they can re-fetch authoritative records;
+          // never advance the cursor until a real committed event is observed.
+          if (event.type === "replay_gap") {
+            if (event.requiresStateRefresh !== true
+              || !Number.isSafeInteger(event.firstAvailableSeq)
+              || typeof event.firstAvailableSeq !== "number"
+              || event.firstAvailableSeq < 1)
+              throw new DominionProtocolError("Invalid event retention-gap signal");
+            yield event;
+            continue;
+          }
           const seq = event.seq ?? (frame.id ? Number(frame.id) : NaN);
           if (!Number.isSafeInteger(seq) || seq < 1)
             throw new DominionProtocolError("Durable SSE event has an invalid sequence");

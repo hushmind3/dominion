@@ -114,6 +114,31 @@ test("durable event watch reconnects from the last seen cursor and drops duplica
   ]);
 });
 
+test("durable event watch delivers retention gap before the first retained record", async () => {
+  let requests = 0;
+  const sdk = new DominionClient({fetch: async () => {
+    requests++;
+    return sse(
+      'event: replay_gap\ndata: {"type":"replay_gap","after":17,"firstAvailableSeq":1024,"requiresStateRefresh":true}\n\n',
+      'id: 1024\ndata: {"seq":1024,"type":"record"}\n\n');
+  }});
+  const received = [];
+  for await (const event of sdk.watchEvents({after:17,reconnect:false})) received.push(event);
+  assert.deepEqual(received.map(event => event.type), ["replay_gap","record"]);
+  assert.equal(received[0].requiresStateRefresh,true);
+  assert.equal(received[0].firstAvailableSeq,1024);
+  assert.equal(received[1].seq,1024);
+  assert.equal(requests,1);
+});
+
+test("malformed retention gap is rejected rather than silently skipped", async () => {
+  const sdk = new DominionClient({fetch: async () => sse(
+    'event: replay_gap\ndata: {"type":"replay_gap","requiresStateRefresh":true}\n\n')});
+  await assert.rejects(async () => {
+    for await (const _ of sdk.watchEvents({reconnect:false})) {}
+  }, DominionProtocolError);
+});
+
 test("malformed durable event does not become an endless reconnect loop", async () => {
   let count = 0;
   const sdk = new DominionClient({fetch: async () => {

@@ -2,7 +2,7 @@ use crate::db::Store;
 use serde_json::{json, Value};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 use tokio::sync::broadcast;
 
@@ -14,6 +14,8 @@ pub struct Bus {
     sender: broadcast::Sender<Value>,
     store: Store,
     seq: Arc<AtomicU64>,
+    /// Serialize allocation, persistence and broadcast in one logical order.
+    dispatch: Arc<Mutex<()>>,
 }
 
 impl Bus {
@@ -24,10 +26,15 @@ impl Bus {
             sender,
             store,
             seq: Arc::new(AtomicU64::new(seq)),
+            dispatch: Arc::new(Mutex::new(())),
         }
     }
 
     pub fn emit(&self, mut value: Value) {
+        // Assigning a sequence before waiting for SQLite lets a parallel
+        // writer persist and publish seq N+1 before seq N. One gate keeps
+        // the durable log and live notification in the same order.
+        let _dispatch = self.dispatch.lock().unwrap();
         let seq = self.seq.fetch_add(1, Ordering::SeqCst) + 1;
         value["seq"] = json!(seq);
         self.store.append_event(seq, &value);
@@ -53,6 +60,31 @@ impl Bus {
     /// Replays durable events after `after` (exclusive). Used on reconnect.
     pub fn replay(&self, after: u64, limit: usize) -> Vec<Value> {
         self.store.events_after(after, limit)
+    }
+
+    /// Drain the bounded SQLite event history in successive windows. The HTTP
+    /// SSE endpoint must not stop at the first 500 rows and silently skip all
+    /// remaining historical events when it transitions to live broadcast.
+    /// 4096 exceeds the maximum retained log (~2256 rows), but also bounds
+    /// a catch-up attempt if writers keep producing new events continuously.
+    pub fn replay_available(&self, after: u64) -> Vec<Value> {
+        let mut cursor = after;
+        let mut events = Vec::new();
+        while events.len() < 4096 {
+            let batch = self.replay(cursor, 500);
+            let count = batch.len();
+            if count == 0 { break; }
+            let previous = cursor;
+            for event in batch {
+                let Some(seq) = event["seq"].as_u64() else { continue };
+                if seq > cursor {
+                    cursor = seq;
+                    events.push(event);
+                }
+            }
+            if count < 500 || cursor == previous { break; }
+        }
+        events
     }
 }
 
@@ -82,6 +114,55 @@ mod tests {
         let restarted = Bus::new(store);
         restarted.emit(json!({"type":"fourth"}));
         assert_eq!(restarted.replay(3, 10)[0]["seq"], 4);
+    }
+
+    #[test]
+    fn parallel_emitters_publish_in_the_same_order_as_the_sqlite_ledger() {
+        let bus=Bus::new(store());
+        let mut receiver=bus.subscribe();
+        let handles=(0..8).map(|worker|{
+            let bus=bus.clone();
+            std::thread::spawn(move||{
+                for index in 0..30 {bus.emit(json!({"type":"step","worker":worker,"index":index}));}
+            })
+        }).collect::<Vec<_>>();
+        for handle in handles {handle.join().unwrap();}
+        let replay=bus.replay_available(0);
+        assert_eq!(replay.len(),240);
+        let observed=(0..240).map(|_|receiver.try_recv().unwrap()["seq"].as_u64().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(observed,
+            replay.iter().map(|item|item["seq"].as_u64().unwrap()).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn reconnect_replays_all_retained_events_in_order_without_500_row_holes() {
+        let bus=Bus::new(store());
+        for index in 0..900 {
+            bus.emit(json!({"type":"step","index":index}));
+        }
+        let recovered=bus.replay_available(0);
+        assert_eq!(recovered.len(),900);
+        assert_eq!(recovered.first().unwrap()["seq"],1);
+        assert_eq!(recovered.last().unwrap()["seq"],900);
+        assert!(recovered.windows(2).all(|w| w[1]["seq"].as_u64()==
+            w[0]["seq"].as_u64().map(|n| n+1)));
+        assert_eq!(bus.replay_available(899).len(),1);
+        assert!(bus.replay_available(900).is_empty());
+    }
+
+    #[test]
+    fn reconnect_after_retention_pruning_starts_at_actual_first_available() {
+        let bus=Bus::new(store());
+        for index in 0..2800 {
+            bus.emit(json!({"type":"step","index":index}));
+        }
+        let recovered=bus.replay_available(1);
+        assert!(!recovered.is_empty());
+        assert!(recovered.first().unwrap()["seq"].as_u64().unwrap()>1);
+        assert_eq!(recovered.last().unwrap()["seq"],2800);
+        assert!(recovered.windows(2).all(|w| w[1]["seq"].as_u64()==
+            w[0]["seq"].as_u64().map(|n| n+1)));
     }
 
     #[test]
