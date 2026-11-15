@@ -8,6 +8,7 @@ use crate::{
     state::AppState,
 };
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{
     path::{Path, PathBuf},
     time::Duration,
@@ -266,6 +267,34 @@ pub fn output_path(state: &AppState, id: &str) -> Result<PathBuf, String> {
     }
     Ok(path)
 }
+/// A scene boundary is explicit: caller-supplied scene list or blank-line
+/// separated paragraphs. Single-paragraph prompts retain the old workflow.
+fn storyboard_scenes(body: &Value) -> Result<Vec<String>,String> {
+    let scenes=if let Some(array)=body["scenes"].as_array(){
+        array.iter().map(|item|item.as_str().unwrap_or("").trim().to_string())
+            .collect::<Vec<_>>()
+    }else{
+        body["brief"].as_str().unwrap_or("")
+            .split("\n\n").map(str::trim).filter(|text|!text.is_empty())
+            .map(str::to_string).collect::<Vec<_>>()
+    };
+    if scenes.len()>8 || scenes.iter().any(|scene|
+        scene.is_empty() || scene.len()>4000){
+        return Err("장면은 최대 8개이며, 각 장면은 1~4000바이트여야 합니다.".into());
+    }
+    Ok(scenes)
+}
+
+fn scene_key(render:&Value,workflow:&Value,scene:&str,index:usize)->String {
+    let contract=json!({"render":render,"workflow":workflow,"scene":scene,
+        "index":index,"version":1});
+    format!("{:x}",Sha256::digest(contract.to_string().as_bytes()))
+}
+fn file_sha256(file:&Path)->Result<String,String>{
+    let bytes=std::fs::read(file).map_err(|e|e.to_string())?;
+    Ok(format!("{:x}",Sha256::digest(&bytes)))
+}
+
 pub fn public_job(job: &Value) -> Value {
     let id = job["id"].as_str().unwrap_or("");
     let ready = job["kind"] == "video" && job["status"] == "completed";
@@ -346,14 +375,37 @@ pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
         _ => (360, 640),
     });
     let seed = if seed == -1 {
-        // Freeze one seed for this job so a safe retry uses identical input.
-        i64::from(u32::from_be_bytes(uuid::Uuid::new_v4().as_bytes()[..4].try_into().unwrap()))
+        // A partial regeneration reuses the previous project's frozen seed.
+        // Otherwise fingerprints differ and every unchanged scene would
+        // mistakenly be re-rendered at full GPU cost.
+        body["reuseVideoJobId"].as_str()
+            .and_then(|id|state.store.get("job",id))
+            .and_then(|job|job["input"]["render"]["seed"].as_i64())
+            .unwrap_or_else(||i64::from(u32::from_be_bytes(
+                uuid::Uuid::new_v4().as_bytes()[..4].try_into().unwrap())))
     } else {
         seed
     };
+    // A multi-scene ComfyUI project is completed with FFmpeg without
+    // requiring any premium video API or a high-end user GPU.
+    if engine=="comfyui" && storyboard_scenes(body)?.len()>1 && ffmpeg(state).is_none(){
+        return Err("여러 장면 결합에는 FFmpeg가 필요합니다.".into());
+    }
+    if let Some(old_id)=body["reuseVideoJobId"].as_str().filter(|v|!v.is_empty()){
+        uuid::Uuid::parse_str(old_id).map_err(|_|"재사용할 영상 ID가 올바르지 않습니다.")?;
+        if state.store.get("job",old_id)
+            .is_none_or(|previous|previous["kind"]!="video"
+                || previous["input"]["engine"]!="comfyui"){
+            return Err("재사용할 기존 ComfyUI 영상 작업이 없습니다.".into());
+        }
+    }
     let input = json!({
         "brief":brief, "title":title, "engine":engine, "duration":duration,
         "aspectRatio":aspect, "config":cfg, "publish":false,
+        "scenes":storyboard_scenes(body)?,
+        "continuity":body["continuity"].as_str().unwrap_or("").chars().take(2000).collect::<String>(),
+        "reuseVideoJobId":body["reuseVideoJobId"].as_str().unwrap_or(""),
+        "regenerateScenes":body["regenerateScenes"].as_array().cloned().unwrap_or_default(),
         "render":{"prompt":brief,"negative":negative_prompt,"negativePrompt":negative_prompt,
                   "duration":duration,"width":width,"height":height,"fps":fps,"frames":duration*fps,"seed":seed}
     });
@@ -748,12 +800,156 @@ async fn comfy(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, Str
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
 }
+/// Keep each generated clip and its input fingerprint. A failed or cancelled
+/// project can reuse verified, unchanged clips in a fresh job rather than
+/// paying for the same GPU work again. Assembly uses local FFmpeg.
+async fn comfy_storyboard(ctx:&JobContext,input:&Value,root:&Path)->Result<Value,String>{
+    let scenes=input["scenes"].as_array().ok_or("장면 목록이 없습니다.")?;
+    ctx.checkpoint(json!({"videoState":{"scenes":scenes,"sceneTotal":scenes.len()},
+        "phase":"storyboard","progress":5}))?;
+    let encoder=ffmpeg_from_config(&input["config"])
+        .ok_or("다중 장면 영상에 FFmpeg가 필요합니다.")?;
+    let mut index_file=String::new();
+    let mut reused=0usize;
+    let mut rendered=0usize;
+    let mut render_seconds=0.0_f64;
+    let previous=input["reuseVideoJobId"].as_str().filter(|id|!id.is_empty())
+        .and_then(|id|directory(&ctx.state,id).ok());
+    let force=input["regenerateScenes"].as_array().cloned().unwrap_or_default();
+    let total=scenes.len();
+    for (index,scene) in scenes.iter().enumerate(){
+        ctx.checkpoint(json!({"phase":"rendering",
+            "progress":(10+index*65/total) as u64,
+            "videoState":{"sceneIndex":index,"sceneTotal":total,
+                "renderedScenes":rendered,"reusedScenes":reused}}))?;
+        let text=scene.as_str().ok_or("장면 텍스트가 없습니다.")?;
+        let scene_dir=root.join(format!("scene-{index:02}"));
+        std::fs::create_dir_all(&scene_dir).map_err(|e|e.to_string())?;
+        let seconds=input["duration"].as_u64().unwrap_or(15)
+            .div_ceil(total as u64).clamp(3,180);
+        let mut scene_input=input.clone();
+        scene_input["brief"]=json!(text);
+        scene_input["duration"]=json!(seconds);
+        let continuity=input["continuity"].as_str().unwrap_or("").trim();
+        let prompt=if continuity.is_empty(){text.to_string()}else{
+            format!("Consistent identity and visual style: {continuity}. Scene: {text}")
+        };
+        scene_input["render"]["prompt"]=json!(prompt);
+        scene_input["render"]["duration"]=json!(seconds);
+        let fps=scene_input["render"]["fps"].as_u64().unwrap_or(16);
+        // Freeze a distinct, reproducible seed for every independent scene.
+        let base_seed=input["render"]["seed"].as_i64().unwrap_or(0);
+        scene_input["render"]["seed"]=json!(base_seed.saturating_add(index as i64));
+        scene_input["render"]["frames"]=json!(seconds.saturating_mul(fps));
+        let config=&scene_input["config"];
+        let workflow=if config["comfyWorkflow"].is_object(){
+            config["comfyWorkflow"].clone()
+        }else{
+            workflow_for(config["videoModel"].as_str().unwrap_or(""),
+                config["steps"].as_u64().unwrap_or(20).clamp(1,60))
+                .ok_or("영상 모델이 설정되지 않았습니다.")?
+        };
+        let signature=scene_key(&scene_input["render"],&workflow,text,index);
+        let target=scene_dir.join("output.mp4");
+        let manifest=scene_dir.join("manifest.json");
+        let forced=force.iter().any(|value|value.as_u64()==Some(index as u64));
+        let mut used_previous=false;
+        if !forced {
+            if let Some(old_root)=previous.as_ref(){
+                let source_dir=old_root.join(format!("scene-{index:02}"));
+                let source=source_dir.join("output.mp4");
+                let recorded=std::fs::read_to_string(source_dir.join("manifest.json"))
+                    .ok().and_then(|text|serde_json::from_str::<Value>(&text).ok());
+                if let Some(recorded)=recorded {
+                    let canonical_root=old_root.canonicalize().ok();
+                    let canonical_source=source.canonicalize().ok();
+                    let in_root=canonical_source.as_ref()
+                        .zip(canonical_root.as_ref())
+                        .is_some_and(|(source,root)|source.starts_with(root));
+                    if in_root && recorded["fingerprint"]==signature
+                        && source.metadata().is_ok_and(|metadata|metadata.len()>100)
+                        && file_sha256(&source).ok().as_deref()==recorded["sha256"].as_str()
+                    {
+                        std::fs::copy(&source,&target).map_err(|e|e.to_string())?;
+                        std::fs::copy(source_dir.join("manifest.json"),&manifest)
+                            .map_err(|e|e.to_string())?;
+                        reused+=1;
+                        used_previous=true;
+                    }
+                }
+            }
+        }
+        if !used_previous {
+            let started=std::time::Instant::now();
+            comfy(ctx,&scene_input,&scene_dir).await?;
+            render_seconds+=started.elapsed().as_secs_f64();
+            if target.metadata().map_err(|e|e.to_string())?.len()<=100 {
+                return Err("생성된 개별 장면이 비어 있습니다.".into());
+            }
+            // Save the durable, content-addressed provenance after successful
+            // download; never trust an unfinished mp4 from a crashed task.
+            let proof=json!({"fingerprint":signature,"sha256":file_sha256(&target)?,
+                "sceneIndex":index,"seconds":seconds,"engine":"comfyui"});
+            std::fs::write(&manifest,proof.to_string()).map_err(|e|e.to_string())?;
+            rendered+=1;
+        }
+        index_file.push_str(&format!("file 'scene-{index:02}/output.mp4'\n"));
+        ctx.checkpoint(json!({"phase":"rendering",
+            "progress":(10+(index+1)*65/total) as u64,
+            "videoState":{"sceneIndex":index+1,"sceneTotal":total,
+                "renderedScenes":rendered,"reusedScenes":reused}}))?;
+    }
+    std::fs::write(root.join("scene-concat.txt"),index_file)
+        .map_err(|e|e.to_string())?;
+    progress(ctx,"assembling",82)?;
+    let mut command=tokio::process::Command::new(&encoder);
+    command.current_dir(root).args(["-hide_banner","-loglevel","error",
+        "-nostdin","-y","-f","concat","-safe","1","-i","scene-concat.txt",
+        "-c","copy","-movflags","+faststart","output.part.mp4"]);
+    let output=tools::run_command(&mut command,Duration::from_secs(600)).await?;
+    if !output.status.success(){
+        // Input clips can differ in codec metadata. Re-encode locally rather
+        // than discarding already generated scenes and paying for them again.
+        let mut fallback=tokio::process::Command::new(&encoder);
+        fallback.current_dir(root).args(["-hide_banner","-loglevel","error",
+            "-nostdin","-y","-f","concat","-safe","1","-i","scene-concat.txt",
+            "-c:v","libx264","-preset","veryfast","-crf","22",
+            "-c:a","aac","-movflags","+faststart","output.part.mp4"]);
+        let reencoded=tools::run_command(&mut fallback,Duration::from_secs(600)).await?;
+        if !reencoded.status.success(){
+            return Err(format!("장면 병합 실패: {}",
+                String::from_utf8_lossy(&reencoded.stderr)
+                    .chars().take(1000).collect::<String>()));
+        }
+    }
+    std::fs::rename(root.join("output.part.mp4"),root.join("output.mp4"))
+        .map_err(|e|e.to_string())?;
+    progress(ctx,"quality_check",96)?;
+    let actual_duration=probe_duration(&encoder.with_file_name("ffprobe"),
+        &root.join("output.mp4")).await;
+    let size=std::fs::metadata(root.join("output.mp4"))
+        .map_err(|e|e.to_string())?.len();
+    if size<=100 || actual_duration.is_some_and(|seconds|seconds<=0.1){
+        return Err("완성 영상의 크기 또는 길이가 유효하지 않습니다.".into());
+    }
+    Ok(json!({"engine":"comfyui","mode":"storyboard",
+        "sceneCount":total,"renderedScenes":rendered,"reusedScenes":reused,
+        "renderSeconds":render_seconds,
+        "duration":actual_duration,
+        "provenance":"content-addressed segment manifests",
+        "assembly":"local ffmpeg concat"}))
+}
+
 pub async fn run(ctx: &JobContext, job: &Value) -> Result<Value, String> {
     let dir = directory(&ctx.state, &ctx.job_id)?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let input = &job["input"];
     let result = if input["engine"] == "comfyui" {
-        comfy(ctx, input, &dir).await
+        if input["scenes"].as_array().is_some_and(|items|items.len()>1){
+            comfy_storyboard(ctx,input,&dir).await
+        }else{
+            comfy(ctx, input, &dir).await
+        }
     } else {
         native(ctx, input, &dir).await
     };
@@ -970,6 +1166,33 @@ mod tests {
         assert!(bytes.len() > 10000);
         std::fs::remove_dir_all(dir).unwrap();
     }
+    #[test]
+    fn multiline_storyboard_is_bounded_and_keeps_scene_order() {
+        let input=json!({"brief":"첫 번째 장면
+
+두 번째 장면
+
+세 번째 장면"});
+        assert_eq!(storyboard_scenes(&input).unwrap(),
+            vec!["첫 번째 장면","두 번째 장면","세 번째 장면"]);
+        assert_eq!(storyboard_scenes(&json!({"brief":"단일 장면"})).unwrap().len(),1);
+        assert!(storyboard_scenes(&json!({"scenes":[1,"scene"]})).is_err());
+        assert!(storyboard_scenes(&json!({"scenes":["a","b","c","d","e","f","g","h","i"]})).is_err());
+    }
+
+    #[test]
+    fn unchanged_scene_fingerprints_are_stable_and_scene_specific() {
+        let render=json!({"prompt":"same character","seed":101,"width":512});
+        let workflow=json!({"node":{"class_type":"KSampler","inputs":{"seed":101}}});
+        let first=scene_key(&render,&workflow,"landscape",0);
+        assert_eq!(first,scene_key(&render,&workflow,"landscape",0));
+        assert_ne!(first,scene_key(&render,&workflow,"landscape",1));
+        assert_ne!(first,scene_key(&render,&workflow,"portrait",0));
+        let mut next=render.clone();
+        next["seed"]=json!(102);
+        assert_ne!(first,scene_key(&next,&workflow,"landscape",0));
+    }
+
     #[test]
     fn template_substitution_never_changes_json_structure() {
         let mut value = json!({"1":{"inputs":{"text":"{{prompt}}","seconds":"{{duration}}"}}});
