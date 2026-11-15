@@ -90,6 +90,7 @@ export interface VideoRecord {
   status: VideoStatus;
   backend: VideoBackend;
   cost_krw: number;
+  budget_krw: number;
   output: string | null;
   error: string | null;
   render_seconds: number;
@@ -98,6 +99,7 @@ export interface VideoRequest {
   prompt: string;
   scenes?: VideoScene[];
   backend?: VideoBackend;
+  budget_krw?: number;
 }
 export interface ImprovementRequest {
   repository: string;
