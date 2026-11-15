@@ -3,7 +3,7 @@
 //! The Rust job worker, GUI and external TypeScript client all call this exact
 //! execution path. Existing provider, vault, SQLite, MCP, tool and approval
 //! implementations are adapters, not owners of the new agent loop.
-use crate::{engine::{chat, gateway, jobs::JobContext, llm, mcp, tools}, state::AppState};
+use crate::{engine::{chat, gateway, jobs::JobContext, llm, mcp, tools, verification}, state::AppState};
 use dominion_sdk::harness::{
     Action, BoxFuture, Criterion, CriterionKind, Evidence, Journal, Kernel,
     Limits, Model, ModelReply, RunRequest, Snapshot, Strategy, ToolSpec, Tools,
@@ -294,12 +294,20 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
     }
     context_instructions.push_str("\nCurrent owner's explicit instructions take precedence:\n");
     context_instructions.push_str(input["ownerInstructions"].as_str().unwrap_or(""));
+    // Pure conversation need not pretend to have tool evidence. Coding,
+    // navigation and external operations remain evidence-gated by default.
+    let actionable = verification::looks_actionable(task) || {
+        let lower=task.to_lowercase();
+        ["구현","개발","리팩토링","테스트","검증","검색","찾아","고쳐",
+         "implement","refactor","test","search","browse","inspect repository"]
+            .iter().any(|word|lower.contains(word))
+    };
     let request=RunRequest {
         id:context.job_id.clone(),instruction:task.to_string(),
         owner_instructions:context_instructions,
         strategy:strategy(&input["strategy"]),
         limits:caps,allowed_tools:allowed,checks,
-        require_evidence:input["requireEvidence"].as_bool().unwrap_or(true),
+        require_evidence:input["requireEvidence"].as_bool().unwrap_or(actionable),
     };
     request.validate()?;
     let model=ConfiguredModel {
