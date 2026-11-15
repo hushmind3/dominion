@@ -69,6 +69,7 @@ export function NativeTasks({home=false}:{home?:boolean}){
   checkKind==='npm'?[{program:'npm',args:['test','--silent']}]:
   checkKind==='node'?[{program:'node',args:['--test',testFile.trim()]}]:[]
  const latestAcceptance=events.filter(event=>event.type==='acceptance_result').at(-1)
+ const latestSchemaRoute=events.filter(event=>event.type==='tool_schema_routed').at(-1)
  useEffect(()=>{if(!active)return;let done=false;const load=()=>{void get<Run[]>('/api/tasks/'+encodeURIComponent(active)+'/children').then(v=>{if(!done)setChildren(v)}).catch(()=>{if(!done)setChildren([])})}
   load();return()=>{done=true}
  },[active])
@@ -142,6 +143,22 @@ export function NativeTasks({home=false}:{home?:boolean}){
      <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-bold">실행 진행</h2><Status value={selected.status}/></div>
      <div className="my-4 grid grid-cols-2 gap-3 rounded-xl bg-[#F6F3EC] p-3 text-center text-[12px] sm:grid-cols-4"><div>단계<strong className="block text-lg">{selected.steps}</strong></div><div>토큰<strong className="block text-lg">{selected.tokens.toLocaleString()}</strong></div><div>추정 비용<strong className="block text-lg">{fmtKrw(selected.costKrw)}</strong></div><div>상태<strong className="block text-sm">{selected.cancelRequested?'중단 요청됨':selected.status}</strong></div></div>
      {selected.error&&<InlineError error={selected.error}/>}
+     {latestSchemaRoute&&<div className="mb-3 rounded-xl border border-[#E7E0D5] bg-white p-3 text-[12px]">
+      <strong className="block">🔎 도구 자동 선택 · 실제 모델 요청</strong>
+      <p className="mt-1 text-[#6F675D]">
+       등록 {Number(latestSchemaRoute.detail?.catalogCount??0)}개 중
+       {' '}{Number(latestSchemaRoute.detail?.advertisedCount??0)}개 도구 스키마만 전달
+      </p>
+      <p className="mt-1 text-[#8B8175]">
+       JSON 스키마 {Number(latestSchemaRoute.detail?.advertisedBytes??0).toLocaleString('ko-KR')}B
+       {' / 전체 '}{Number(latestSchemaRoute.detail?.catalogBytes??0).toLocaleString('ko-KR')}B
+       {' · '}선택 제외 {Number(latestSchemaRoute.detail?.omittedCount??0)}개
+      </p>
+      <p className="mt-1 text-[11px] text-[#8B8175]">
+       MCP 도구는 필요할 때 검색해 불러옵니다. 이 수치는 JSON 크기이며
+       실제 청구 토큰과 원가는 제공자 계측값으로 별도 확인합니다.
+      </p>
+     </div>}
      {latestAcceptance&&<div className="mb-3 rounded-xl border border-[#E7E0D5] bg-white p-3 text-[12px]">
       <strong className="block">🧪 실파일 코드 검증 {latestAcceptance.detail?.success===true?'· 통과':'· 실패 / 자동 수정 대상'}</strong>
       <p className="mt-1 text-[#6F675D]">{String(latestAcceptance.detail?.check||'검증 명령')}</p>
