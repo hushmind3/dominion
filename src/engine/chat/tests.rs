@@ -424,12 +424,12 @@ async fn ordinary_chat_runs_native_tools_through_the_imported_rust_kernel() {
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let saved = tokio::time::timeout(Duration::from_secs(5), run_turn(&state, &request, &tx))
         .await.unwrap().unwrap().unwrap();
-    assert_eq!(saved["metadata"]["runtime"], "dominion-agent-sdk");
+    assert_eq!(saved["metadata"]["runtime"], "dominion-core");
     let execution = state.store.all("execution").pop().unwrap();
-    assert_eq!(execution["kernelState"]["status"], "completed");
+    assert_eq!(execution["kernelState"]["native"]["status"], "completed");
     assert_eq!(execution["kernelState"]["receipts"].as_array().unwrap().len(), 2);
     assert_eq!(execution["budget"]["tools"], 2);
-    assert!(execution["kernelState"]["inFlight"].as_array().unwrap().is_empty());
+    assert!(execution["kernelState"]["native"]["in_flight"].is_null());
     let captured = requests.lock().unwrap();
     assert_eq!(captured.len(), 2);
     let evidence = captured[1]["messages"].as_array().unwrap().iter()

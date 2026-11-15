@@ -397,6 +397,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dominion-core"
+version = "0.3.0"
+dependencies = [
+ "futures-util",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "dominion-harness"
 version = "0.1.0"
 dependencies = [
@@ -415,8 +427,7 @@ dependencies = [
  "base64 0.22.1",
  "chacha20poly1305",
  "chrono",
- "dominion-agent-sdk",
- "dominion-harness",
+ "dominion-core",
  "futures-util",
  "rand 0.8.8",
  "reqwest",
@@ -2161,6 +2172,7 @@ checksum = "4a0e2d11620c50695fe12bbbfde96b3477fe606e7284c22d505c12ce51214514"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
+ "serde_core",
  "wasm-bindgen",
 ]
 

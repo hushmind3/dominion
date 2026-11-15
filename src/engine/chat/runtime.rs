@@ -626,6 +626,11 @@ async fn run_turn_body(
             })
             .or_else(|| acceptance_source.as_deref().and_then(|text| prepare_owner_action(state, text)))
     };
+    if let Some(command)=session["nativeSdkVerifyCommand"].as_str().filter(|s|!s.trim().is_empty()){
+        let (text,mut checks)=acceptance.take().unwrap_or_else(||(request.input.clone(),json!([])));
+        if let Some(items)=checks.as_array_mut(){items.push(json!({"type":"command_succeeded","command":command}));}
+        acceptance=Some((text,checks));
+    }
     // An ambiguous literal replacement cannot be frozen into one expected
     // hash. Drop only that unverifiable check so the model still gets a turn;
     // the task then remains observable but is not reported as verified.
@@ -706,7 +711,7 @@ async fn run_turn_body(
         .unwrap_or((2, 2));
     let mut op_seq = 0u64;
 
-    let mut metadata = json!({"runtime":"dominion-agent-sdk","authorKind":"agent","roomId":session.get("roomId"),"replyToMessageId":reply_to,"executionId":execution_id,"taskId":task_id,"reasoningLanguageRequested":request.reasoning_language,"reasoningLanguageEffective":request.effective_reasoning_language(),"reasoningTranslated":false});
+    let mut metadata = json!({"runtime":"dominion-core","authorKind":"agent","roomId":session.get("roomId"),"replyToMessageId":reply_to,"executionId":execution_id,"taskId":task_id,"reasoningLanguageRequested":request.reasoning_language,"reasoningLanguageEffective":request.effective_reasoning_language(),"reasoningTranslated":false});
 
     let mut provider = select_provider(state, request, &session)?;
     let allow_provider_fallback = session["rsiRun"]!=true;
@@ -730,6 +735,13 @@ async fn run_turn_body(
     } else if session["rsiRun"] == true {
         // Unfocused source discovery still needs the regular edit budget.
         max_rounds = max_rounds.max(16);
+    }
+    if let Some(limit)=session["nativeSdkMaxRounds"].as_u64(){
+        let used=state.store.all("execution").iter().filter(|run|run["sessionId"]==session_id&&run["id"]!=execution_id)
+            .map(|run|run["modelCalls"].as_u64().unwrap_or(0)).sum::<u64>();
+        let remaining=limit.clamp(1,80).saturating_sub(used);
+        if remaining==0{return Err("SDK의 누적 모델 호출 한도에 도달했습니다.".into());}
+        max_rounds=remaining as usize;
     }
     let mut max_tools = budget_algorithm
         .as_ref()
@@ -1201,14 +1213,9 @@ async fn run_turn_body(
     let mut rsi_last_rule_id = String::new();
 
     let _kernel_checkpoint = KernelCheckpoint { state, execution_id, budget: budget.clone() };
-    let mut kernel_state = dominion_agent_sdk::Snapshot::from_request(&dominion_agent_sdk::RunRequest {
-        id: execution_id.to_string(), instruction: request.input.clone(),
-        owner_instructions: String::new(), strategy: dominion_agent_sdk::Strategy::Balanced,
-        limits: dominion_agent_sdk::Limits::default(), allowed_tools: vec![], checks: vec![],
-        require_evidence: false,
-    });
+    let mut kernel_state = dominion_core::hosted::Snapshot::new(execution_id, &bounded_contract_intent(&request.input), max_rounds)?;
     let kernel_journal = ChatKernelJournal { state, execution_id, session_id, generation };
-    dominion_agent_sdk::Journal::save(&kernel_journal, &kernel_state)?;
+    dominion_core::hosted::Journal::save(&kernel_journal, &kernel_state)?;
     if let Some(path) = simple_creation_target.as_ref().filter(|path|
         std::fs::metadata(path).is_ok_and(|metadata|metadata.is_file())
             && !strategy_candidates.iter().any(|strategy|
@@ -1251,9 +1258,11 @@ async fn run_turn_body(
         Vec::new()
     };
     messages.extend(harness_messages);
+    kernel_state=load_native_checkpoint(state,execution_id,&request.input)?;
 
     while !finished {
-        let Some(round) = budget.next_round() else { break; };
+        kernel_state=load_native_checkpoint(state,execution_id,&request.input)?;
+        let Some(round) = kernel_state.next_round(&mut budget, &kernel_journal)? else { break; };
         if budget.expired() {
             return Err("실행 시간 제한(10분)을 초과했습니다.".into());
         }
@@ -1569,9 +1578,9 @@ async fn run_turn_body(
             counters.model_calls += 1;
             counters.iterations = round as u32 + 1;
         }
-        kernel_state.model_in_flight = true;
-        kernel_state.model_calls = metrics.lock().unwrap().model_calls as usize;
-        dominion_agent_sdk::Journal::save(&kernel_journal, &kernel_state)?;
+        kernel_state=load_native_checkpoint(state,execution_id,&request.input)?;
+        kernel_state.native.advertised_tools=round_tools.clone();
+        kernel_state.begin_model(&kernel_journal)?;
         let completion_result = stream_completion(
             state,
             &client,
@@ -1595,8 +1604,7 @@ async fn run_turn_body(
             }
         }
         let (mut completion, selected_provider) = completion_result?;
-        kernel_state.model_in_flight = false;
-        dominion_agent_sdk::Journal::save(&kernel_journal, &kernel_state)?;
+        kernel_state.finish_model(&kernel_journal)?;
         if selected_provider.id != provider.id {
             // The streamed response came from a fallback route; later rounds
             // must continue on that route rather than retrying the dead one.
@@ -2273,8 +2281,8 @@ async fn run_turn_body(
                 }
                 let mut end = call_index + 1;
                 if parallel_reads && tool_is_read_only(&call.name) {
-                    let candidate_end = dominion_agent_sdk::runtime::read_batch_end(
-                        &round_calls, call_index, 4, |call| tool_is_read_only(&call.name),
+                    let candidate_end = dominion_core::hosted::read_batch_end(
+                        &round_calls, call_index, 4, |call| tool_is_read_only(&call.name) && dominion_core::journal::parallel_safe(&call.name),
                     );
                     while end < candidate_end {
                         let next = &round_calls[end];
@@ -2296,7 +2304,7 @@ async fn run_turn_body(
                 kernel_state.step = round + 1;
                 kernel_state.model_calls = metrics.lock().unwrap().model_calls as usize;
                 kernel_state.charged_tokens = total_tokens;
-                let actions = prepared.iter().map(|(index, _, args)| dominion_agent_sdk::Action {
+                let actions = prepared.iter().map(|(index, _, args)| dominion_core::hosted::Action {
                     id: format!("{round}:{}", round_calls[*index].id),
                     tool: round_calls[*index].name.clone(), arguments: args.clone(), depends_on: vec![],
                 }).collect::<Vec<_>>();
@@ -2304,8 +2312,9 @@ async fn run_turn_body(
                     state, tx, session: &session, request, session_id, execution_id,
                     metrics, prepared: &prepared, calls: &round_calls, round,
                     compat: provider.tool_mode == "compat",
+                    definitions: &round_tools,
                 };
-                let results = dominion_agent_sdk::dispatch_batch(
+                let results = dominion_core::hosted::dispatch_batch(
                     &mut kernel_state, &actions, &dispatcher, &kernel_journal,
                 ).await?;
                 if prepared.len() > 1 {
@@ -2508,12 +2517,10 @@ async fn run_turn_body(
         return Err("모델이 빈 응답을 반환했습니다.".into());
     }
 
-    kernel_state.status = dominion_agent_sdk::Status::Completed;
-    kernel_state.answer = Some(final_content.clone());
+    kernel_state=load_native_checkpoint(state,execution_id,&request.input)?;
     kernel_state.model_calls = metrics.lock().unwrap().model_calls as usize;
     kernel_state.charged_tokens = total_tokens;
-    dominion_agent_sdk::Journal::save(&kernel_journal, &kernel_state)?;
-
+    kernel_state.complete(final_content.clone(), &kernel_journal)?;
 
     if let Some(mut execution) = state.store.get("execution", execution_id) {
         execution["acceptancePassed"] = json!(acceptance_passed);
@@ -2529,7 +2536,7 @@ async fn run_turn_body(
                 .collect::<Vec<_>>()
         );
         execution["budget"] = budget.snapshot();
-        execution["runtime"] = json!("dominion-agent-sdk");
+        execution["runtime"] = json!("dominion-core");
         state.store.put("execution", &execution);
     }
     // Attach the usage to the message so every client can show what the turn
@@ -3049,17 +3056,36 @@ fn restore_program_state(
     Ok(())
 }
 
+fn load_native_checkpoint(state:&AppState,execution_id:&str,input:&str)->Result<dominion_core::hosted::Snapshot,String>{
+    match state.store.get("execution",execution_id).and_then(|record|record.get("kernelState").cloned()){
+        Some(value) if value.get("native").is_some()=>serde_json::from_value(value).map_err(|e|format!("Rust 코어 체크포인트 손상: {e}")),
+        _=>dominion_core::hosted::Snapshot::new(execution_id,&bounded_contract_intent(input),80),
+    }
+}
+
+/// Explicit product-program branches are native child frames. Independent
+/// branches retain their concurrency and shared parent budget; no two workers
+/// mutate the same native checkpoint or invent additional budget.
+struct ChatToolJournal<'a>{state:&'a AppState,execution_id:&'a str,frame_id:&'a str,session_id:&'a str,generation:u64}
+impl dominion_core::hosted::Journal for ChatToolJournal<'_>{
+    fn save(&self,snapshot:&dominion_core::hosted::Snapshot)->Result<(),String>{
+        self.state.store.put("native_frame",&json!({"id":self.frame_id,"parentExecutionId":self.execution_id,"sessionId":self.session_id,"runtime":"dominion-core","kernelState":snapshot})).ok_or("네이티브 실행 프레임을 저장하지 못했습니다.")?;Ok(())
+    }
+    fn cancelled(&self,_:&str)->bool{self.state.is_cancelled(self.session_id)||self.state.cancellation_generation(self.session_id)!=self.generation}
+}
+
 struct ChatKernelJournal<'a> {
     state: &'a AppState,
     execution_id: &'a str,
     session_id: &'a str,
     generation: u64,
 }
-impl dominion_agent_sdk::Journal for ChatKernelJournal<'_> {
-    fn save(&self, snapshot: &dominion_agent_sdk::Snapshot) -> Result<(), String> {
+impl dominion_core::hosted::Journal for ChatKernelJournal<'_> {
+    fn save(&self, snapshot: &dominion_core::hosted::Snapshot) -> Result<(), String> {
         let mut execution = self.state.store.get("execution", self.execution_id)
             .ok_or("Rust 코어 실행 기록이 없습니다.")?;
-        execution["runtime"] = json!("dominion-agent-sdk");
+        execution["runtime"] = json!("dominion-core");
+        execution["modelCalls"]=json!(execution["modelCalls"].as_u64().unwrap_or(0).max(snapshot.model_calls as u64));
         execution["kernelState"] = serde_json::to_value(snapshot).map_err(|error| error.to_string())?;
         self.state.store.put("execution", &execution)
             .ok_or("Rust 코어 체크포인트를 저장할 수 없습니다.")?;
@@ -3083,11 +3109,13 @@ struct ChatKernelDispatcher<'a> {
     calls: &'a [ToolCall],
     round: usize,
     compat: bool,
+    definitions: &'a [Value],
 }
-impl dominion_agent_sdk::Dispatcher for ChatKernelDispatcher<'_> {
+impl dominion_core::hosted::Dispatcher for ChatKernelDispatcher<'_> {
     type Output = (Value, bool, String);
-    fn execute<'a>(&'a self, action: &'a dominion_agent_sdk::Action)
-        -> dominion_agent_sdk::BoxFuture<'a, Result<dominion_agent_sdk::DispatchResult<Self::Output>, String>> {
+    fn definitions(&self)->Vec<Value>{self.definitions.to_vec()}
+    fn execute<'a>(&'a self, action: &'a dominion_core::hosted::Action)
+        -> dominion_core::hosted::BoxFuture<'a, Result<dominion_core::hosted::DispatchResult<Self::Output>, String>> {
         Box::pin(async move {
             let (index, seq, _) = self.prepared.iter().find(|(index, _, _)|
                 action.id == format!("{}:{}", self.round, self.calls[*index].id))
@@ -3097,7 +3125,7 @@ impl dominion_agent_sdk::Dispatcher for ChatKernelDispatcher<'_> {
                 self.execution_id, &self.calls[*index], action.arguments.clone(),
                 self.metrics, *seq, self.round, *index, self.compat, "model", None, None, None,
             ).await?;
-            Ok(dominion_agent_sdk::DispatchResult {
+            Ok(dominion_core::hosted::DispatchResult {
                 success: output.1, observation: output.0.clone(), output,
             })
         })
@@ -3107,12 +3135,12 @@ impl dominion_agent_sdk::Dispatcher for ChatKernelDispatcher<'_> {
 struct KernelCheckpoint<'a> {
     state: &'a AppState,
     execution_id: &'a str,
-    budget: dominion_agent_sdk::runtime::BudgetLedger,
+    budget: dominion_core::budget::BudgetLedger,
 }
 impl Drop for KernelCheckpoint<'_> {
     fn drop(&mut self) {
         if let Some(mut execution) = self.state.store.get("execution", self.execution_id) {
-            execution["runtime"] = json!("dominion-agent-sdk");
+            execution["runtime"] = json!("dominion-core");
             execution["budget"] = self.budget.snapshot();
             self.state.store.put("execution", &execution);
         }
@@ -4431,138 +4459,11 @@ async fn deterministic_tool(
     op_seq: u64,
     metrics: &std::sync::Mutex<Metrics>,
 ) -> Result<(Value, Value), String> {
-    let mut operations = state
-        .store
-        .all("execution_operation")
-        .into_iter()
-        .filter(|operation| operation["sessionId"].as_str() == Some(session_id))
-        .collect::<Vec<_>>();
-    operations.reverse();
-    let effect = crate::engine::effect::prepare(session_id, tool, arguments, &operations);
-    let operation_id = format!("{execution_id}:frozen:{op_seq}:{tool}");
-    let started_at = chrono::Utc::now().to_rfc3339();
-    let started = std::time::Instant::now();
-    let _ = tx.send(json!({"type":"tool_start","name":tool,"id":operation_id}));
-    let allowed = if tools::requires_approval(tool) {
-        request_approval(
-            state,
-            tx,
-            session_id,
-            tool,
-            arguments,
-            execution_id,
-            &operation_id,
-            None,
-        )
-        .await
-    } else {
-        true
-    };
-    let initial_state = if allowed { "started" } else { "denied" };
-    state
-        .store
-        .put(
-            "execution_operation",
-            &json!({
-                "id": operation_id, "runId": execution_id, "sessionId": session_id,
-                "callId": operation_id, "tool": tool, "arguments": arguments,
-                "opSeq": op_seq, "origin": "deterministic_shortcut",
-                "effectId": effect["effectId"],
-                "resourceKey": effect["resourceKey"],
-                "requestDigest": effect["requestDigest"],
-                "beforeVersion": effect["beforeVersion"],
-                "effectState": initial_state,
-                "toolReceipt": {
-                    "effectId": effect["effectId"], "tool": tool,
-                    "requestDigest": effect["requestDigest"],
-                    "resourceKey": effect["resourceKey"],
-                    "status": initial_state, "verified": false,
-                    "verifier": {"kind": "pending", "revision": "effect-v1"},
-                    "beforeVersion": effect["beforeVersion"], "startedAt": started_at,
-                },
-                "status": "running", "startedAt": started_at,
-            }),
-        )
-        .ok_or("결정적 실행 시작을 저장할 수 없습니다.")?;
-    let (mut result, ok) = if allowed {
-        let context = ToolContext {
-            workspace: &state.config.workspace,
-            store: &state.store,
-            state,
-            session_id,
-            agent_id: request.agent_id.as_deref(),
-            tools_enabled: request.tools_enabled,
-            tools_execution_enabled: request.tools_execution_enabled,
-        };
-        match tools::execute(&context, tool, arguments, execution_id).await {
-            Ok(value) => {
-                let ok = tool_succeeded(&value);
-                (value, ok)
-            }
-            Err(error) => (json!({"error": error}), false),
-        }
-    } else {
-        (json!({"error":"Denied by the user"}), false)
-    };
-    // checked_write finds the last observed version on the operation record,
-    // not inside the tool result. Keep that contract identical to the normal
-    // dispatch path so the opt-in guard can see this read.
-    let file_observation = if matches!(
-        tool,
-        "workspace_read" | "workspace_read_range" | "file_read" | "workspace_replace" | "workspace_replace_range" | "workspace_write"
-    ) {
-        result
-            .as_object_mut()
-            .and_then(|value| value.remove("fileObservation"))
-    } else {
-        None
-    };
-    {
-        let mut counters = metrics.lock().unwrap();
-        counters.tool_calls += 1;
-        counters.tool_elapsed_ms += started.elapsed().as_millis() as u64;
-    }
-    let sealed = crate::engine::effect::seal(
-        &state.config.workspace,
-        tool,
-        arguments,
-        &result,
-        ok,
-        !allowed,
-        false,
-        &effect,
-    )
-    .await;
-    let operation = state
-        .store
-        .put(
-            "execution_operation",
-            &json!({
-                "id": operation_id, "runId": execution_id, "sessionId": session_id,
-                "callId": operation_id, "tool": tool, "arguments": arguments,
-                "result": result, "fileObservation": file_observation,
-                "opSeq": op_seq, "origin": "deterministic_shortcut",
-                "effectId": effect["effectId"],
-                "resourceKey": effect["resourceKey"],
-                "requestDigest": effect["requestDigest"],
-                "beforeVersion": effect["beforeVersion"],
-                "effectState": sealed["effectState"],
-                "observedVersion": sealed["observedVersion"],
-                "toolReceipt": sealed["toolReceipt"],
-                "status": if ok { "completed" } else { "failed" },
-                "startedAt": started_at,
-                "finishedAt": chrono::Utc::now().to_rfc3339(),
-            }),
-        )
-        .ok_or("결정적 실행 결과를 저장하지 못했습니다.")?;
-    state.bus.record("execution_operation", &operation);
-    let _ = tx.send(json!({
-        "type": if ok { "tool_end" } else { "tool_error" },
-        "name": tool,
-        "id": operation_id,
-        "result": operation["result"],
-    }));
-    Ok((operation["result"].clone(), operation))
+    let session=state.store.get("session",session_id).unwrap_or_else(||json!({}));
+    let call=ToolCall{id:format!("frozen-{op_seq}-{tool}"),name:tool.into(),arguments:arguments.to_string()};
+    let (result,_,_)=dispatch_tool_call(state,tx,&session,request,session_id,execution_id,&call,arguments.clone(),metrics,op_seq,0,op_seq as usize,false,"deterministic_shortcut",None,None,None).await?;
+    let operation=state.store.get("execution_operation",&format!("{execution_id}:0:{op_seq}:{}",call.id)).ok_or("결정적 실행 기록이 없습니다.")?;
+    Ok((result,operation))
 }
 
 /// Records what was already applied when a later write cannot proceed. The
@@ -4774,6 +4675,23 @@ async fn dispatch_tool_call(
     .unwrap_or_default();
     let arguments = normalize_tool_arguments(arguments, &argument_strategy);
     crate::engine::algorithms::mark_signal(state, execution_id, "tool.arguments", true);
+    // Programs/adaptations enter the same sub4 journal as model calls. The
+    // model dispatcher has already recorded its whole read batch. Product
+    // program branches receive child frames linked to this execution.
+    let frame_id=format!("{execution_id}:{origin}:{round}:{call_index}:{}",call.id);
+    let native_journal=ChatToolJournal{state,execution_id,frame_id:&frame_id,session_id,generation:state.cancellation_generation(session_id)};
+    let native_call=dominion_core::domain::ToolCall{id:format!("{origin}:{round}:{call_index}:{}",call.id),name:call.name.clone(),arguments:arguments.clone()};
+    let mut native_frame=if origin!="model"{
+        if state.store.get("native_frame",&frame_id).is_some(){return Err("이미 기록된 실행 프레임입니다. 결과를 먼저 확인하세요.".into());}
+        let mut frame=dominion_core::hosted::Snapshot::new(&frame_id,&bounded_contract_intent(&request.input),1)?;
+        frame.native.parent_run_id=uuid::Uuid::parse_str(execution_id).ok();
+        dominion_core::journal::validate_new_calls(&frame.native,std::slice::from_ref(&native_call))?;
+        frame.native.queued_calls=vec![native_call.clone()];
+        frame.native.messages.push(json!({"role":"assistant","content":"","tool_calls":[{"id":native_call.id,"type":"function","function":{"name":native_call.name,"arguments":native_call.arguments.to_string()}}]}));
+        dominion_core::journal::begin(&mut frame.native,&native_call)?;
+        dominion_core::hosted::Journal::save(&native_journal,&frame)?;Some(frame)
+    }else{None};
+
     // Record what the effect would be before asking for approval or running it.
     // Only mutating calls need the session history scan.
     let mut effect_operations = if crate::engine::effect::is_effectful(&call.name, &arguments) {
@@ -5042,6 +4960,13 @@ async fn dispatch_tool_call(
         }))
         .ok_or("도구 결과 메시지를 저장할 수 없습니다.")?;
     state.bus.message(&saved);
+    if let Some(frame)=native_frame.as_mut(){
+        let observed=if ok{Ok(result.to_string())}else{Err(result.to_string())};
+        dominion_core::journal::finish(&mut frame.native,&native_call,&observed,false)?;
+        frame.receipts.push(dominion_core::hosted::Receipt{id:native_call.id,tool:native_call.name,arguments:native_call.arguments,success:ok,result:result.clone(),step:round});
+        frame.native.status=if ok{dominion_core::domain::RunStatus::Completed}else{dominion_core::domain::RunStatus::Failed};
+        dominion_core::hosted::Journal::save(&native_journal,frame)?;
+    }
     Ok((result, ok, tool_content))
 }
 
@@ -5634,6 +5559,12 @@ pub(super) fn finalize_execution(
         }
     }
     let status = record["status"].as_str().unwrap_or("failed").to_string();
+    if record["kernelState"]["native"].is_object(){
+        let uncertain=record["kernelState"]["modelInFlight"]==true
+            ||!record["kernelState"]["native"]["in_flight"].is_null()
+            ||record["kernelState"]["native"]["read_batch_in_flight"].as_array().is_some_and(|v|!v.is_empty());
+        record["kernelState"]["native"]["status"]=json!(if uncertain{"paused"}else{match status.as_str(){"completed"=>"completed","cancelled"=>"cancelled",_=>"failed"}});
+    }
     if record["kernelState"].is_object() {
         record["kernelState"]["status"] = json!(match status.as_str() {
             "completed" => "completed", "cancelled" => "cancelled", _ => "failed",

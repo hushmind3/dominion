@@ -1,5 +1,5 @@
 //! Product adapter to the shared Dominion Rust execution kernel.
-pub use dominion_agent_sdk::runtime::BudgetLedger;
+pub use dominion_core::budget::BudgetLedger;
 
 #[cfg(test)]
 mod tests {

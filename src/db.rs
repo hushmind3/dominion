@@ -263,6 +263,15 @@ impl Store {
         .flatten()
     }
 
+    /// Persist a manual observation and its native execution state together.
+    /// No resume can see a resolved effect with an unresolved checkpoint.
+    pub fn put_native_observation(&self, records: &[(&str, Value)]) -> Result<(), String> {
+        let mut conn=self.conn.lock().unwrap();
+        let tx=conn.transaction().map_err(|e|e.to_string())?;
+        for (kind,value) in records {upsert_tx(&tx,kind,value)?;}
+        tx.commit().map_err(|e|e.to_string())
+    }
+
     pub fn put(&self, kind: &str, value: &Value) -> Option<Value> {
         let object = value.as_object()?;
         let id = object

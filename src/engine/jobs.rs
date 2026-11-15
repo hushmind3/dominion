@@ -212,9 +212,25 @@ pub fn recover(state: &AppState) {
             }
         }
     }
+    // Native sub4 frames share SQLite with the product. Recovery records
+    // uncertain effects; it never starts a second runtime or replays writes.
+    for mut frame in state.store.all("native_frame"){
+        if let Ok(mut snapshot)=serde_json::from_value::<dominion_core::hosted::Snapshot>(frame["kernelState"].clone()){
+            if !snapshot.native.terminal(){
+                dominion_core::journal::recover(&mut snapshot.native);
+                frame["kernelState"]=serde_json::to_value(snapshot).unwrap_or(Value::Null);
+                frame["recoveredAt"]=json!(chrono::Utc::now().to_rfc3339());
+                state.store.put("native_frame",&frame);
+            }
+        }
+    }
     for execution in state.store.all("execution") {
         if execution.get("status").and_then(|value| value.as_str()) == Some("running") {
             let mut updated = execution.clone();
+            if let Ok(mut snapshot)=serde_json::from_value::<dominion_core::hosted::Snapshot>(updated["kernelState"].clone()){
+                dominion_core::journal::recover(&mut snapshot.native);
+                updated["kernelState"]=serde_json::to_value(snapshot).unwrap_or(Value::Null);
+            }
             updated["status"] = json!("interrupted");
             updated["phase"] = json!("interrupted");
             updated["phaseUpdatedAt"] = json!(chrono::Utc::now().to_rfc3339());

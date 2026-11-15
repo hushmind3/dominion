@@ -7277,3 +7277,50 @@ fn empty_file_creation_uses_one_model_call_and_no_paid_final_summary() {
         && message["content"].as_str().is_some_and(|text|text.contains("파일을 만들었습니다"))).unwrap();
     assert!(call < result && result < summary, "tool exchange must precede the host summary: {history:?}");
 }
+
+
+#[test]
+fn native_sdk_shares_chat_harness_sqlite_and_single_file_completion(){
+    let _serial=serial();
+    let (port,requests)=scripted_provider(|_|vec![json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"sdk-write","type":"function","function":{"name":"workspace_write","arguments":"{\"path\":\"sdk-one.md\",\"content\":\"\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":40,"completion_tokens":10,"total_tokens":50}})]);
+    let app=TestApp::new(port,"native");
+    app.post("/api/policy",&json!({"autoApproveAll":true}));
+    let run=app.post("/api/sdk/runs",&json!({"instruction":"sdk-one.md 파일을 만들어줘"}));
+    let id=run["id"].as_str().expect("SDK run ID");
+    let mut final_run=Value::Null;
+    for _ in 0..100{
+        final_run=app.get(&format!("/api/sdk/runs/{id}"));
+        if matches!(final_run["status"].as_str(),Some("completed"|"failed")){break;}
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    assert_eq!(final_run["status"],"completed","{final_run}");
+    assert_eq!(std::fs::metadata(app._root.join("sdk-one.md")).unwrap().len(),0);
+    assert_eq!(requests.lock().unwrap().len(),1);
+    let execution=&app.get("/api/executions")[0];
+    assert_eq!(execution["runtime"],"dominion-core");
+    assert_eq!(execution["kernelState"]["native"]["status"],"completed");
+    assert_eq!(execution["kernelState"]["receipts"].as_array().unwrap().len(),1);
+    assert_eq!(final_run["checkpoint"]["usage"]["prompt_tokens"],40);
+    assert!(app._root.join("runtime").join("dominion.sqlite").is_file());
+    assert!(!app._root.join("runtime").join("sdk-runs").exists(),"SDK must not create a second file-backed execution store");
+}
+
+
+#[test]
+fn native_sdk_approval_resolves_the_shared_chat_waiter_without_restarting_the_model(){
+    let _serial=serial();
+    let (port,requests)=scripted_provider(|_|vec![json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"sdk-approved-write","type":"function","function":{"name":"workspace_write","arguments":"{\"path\":\"sdk-approved.md\",\"content\":\"\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":40,"completion_tokens":10,"total_tokens":50}})]);
+    let app=TestApp::new(port,"native");
+    let run=app.post("/api/sdk/runs",&json!({"instruction":"sdk-approved.md 파일을 만들어줘"}));
+    let id=run["id"].as_str().unwrap();let mut view=Value::Null;
+    for _ in 0..100{view=app.get(&format!("/api/sdk/runs/{id}"));if view["status"]=="awaiting_approval"{break;}std::thread::sleep(Duration::from_millis(20));}
+    assert_eq!(view["status"],"awaiting_approval","{view}");
+    assert!(!app._root.join("sdk-approved.md").exists());
+    let call=view["checkpoint"]["pendingCall"]["id"].clone();
+    app.post(&format!("/api/sdk/runs/{id}/approve"),&json!({"callId":call}));
+    for _ in 0..100{view=app.get(&format!("/api/sdk/runs/{id}"));if matches!(view["status"].as_str(),Some("completed"|"failed")){break;}std::thread::sleep(Duration::from_millis(20));}
+    assert_eq!(view["status"],"completed","{view}");
+    assert!(app._root.join("sdk-approved.md").is_file());
+    assert_eq!(requests.lock().unwrap().len(),1,"approval must resume the same native execution");
+    assert_eq!(app.get("/api/executions").as_array().unwrap().len(),1);
+}
