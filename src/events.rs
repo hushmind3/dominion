@@ -2,7 +2,7 @@ use crate::db::Store;
 use serde_json::{json, Value};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 use tokio::sync::broadcast;
 
@@ -14,6 +14,8 @@ pub struct Bus {
     sender: broadcast::Sender<Value>,
     store: Store,
     seq: Arc<AtomicU64>,
+    // Ordering is atomic across allocation, SQLite persistence AND broadcast.
+    emit_gate: Arc<Mutex<()>>,
 }
 
 impl Bus {
@@ -24,10 +26,15 @@ impl Bus {
             sender,
             store,
             seq: Arc::new(AtomicU64::new(seq)),
+            emit_gate: Arc::new(Mutex::new(())),
         }
     }
 
     pub fn emit(&self, mut value: Value) {
+        // The fetch-add alone did not serialize parallel writers: a later event
+        // could reach SQLite/broadcast first and older seq would be skipped on
+        // a cursor-based consumer. The lock belongs to this shared Bus clone.
+        let _emit_guard = self.emit_gate.lock().unwrap();
         let seq = self.seq.fetch_add(1, Ordering::SeqCst) + 1;
         value["seq"] = json!(seq);
         self.store.append_event(seq, &value);
@@ -82,6 +89,28 @@ mod tests {
         let restarted = Bus::new(store);
         restarted.emit(json!({"type":"fourth"}));
         assert_eq!(restarted.replay(3, 10)[0]["seq"], 4);
+    }
+
+    #[test]
+    fn concurrent_writers_preserve_strict_event_order() {
+        let bus = Bus::new(store());
+        let mut threads = Vec::new();
+        for worker in 0..8 {
+            let clone = bus.clone();
+            threads.push(std::thread::spawn(move || {
+                for index in 0..80 {
+                    clone.emit(json!({"type":"tick","worker":worker,"index":index}));
+                }
+            }));
+        }
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        let events = bus.replay(0, 800);
+        assert_eq!(events.len(), 640);
+        for (index, item) in events.iter().enumerate() {
+            assert_eq!(item["seq"].as_u64(), Some(index as u64 + 1));
+        }
     }
 
     #[test]
