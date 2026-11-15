@@ -127,10 +127,8 @@ pub(super) fn system_prompt_with_manifest_at(
         scope.agent_id.as_deref().unwrap_or(""),
         &serde_json::to_string(&items).unwrap_or_default(),
     ]);
-    if request.reasoning_language.as_deref() == Some("ko") {
-        prompt.push_str(
-            "\n\nWrite every internal reasoning / thinking step in Korean (한국어).              The final answer must also be in Korean unless the user asks otherwise.",
-        );
+    if request.effective_reasoning_language() == Some("ko") {
+        prompt.push_str("\n\n언어 지침: 추론·생각의 설명과 최종 답변은 한국어로 작성하십시오. 도구 실행 뒤 이어지는 추론도 한국어로 유지하십시오. 코드·명령어·파일명·고유명사는 원문을 유지하고, 사용자가 다른 언어를 명시하면 그 요청을 따르십시오.");
     }
     if let Some(extra) = &request.system_override {
         prompt.push_str("\n\n");
