@@ -514,13 +514,12 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let store=crate::store::Store::open(&root.join("state.sqlite")).unwrap();
         let (bus,_)=tokio::sync::broadcast::channel(128);
-        (AppState {store,bus,http:reqwest::Client::new(),
+        (AppState {store,bus,
             mcp:std::sync::Arc::new(crate::mcp::Mcp::new(vec![]).unwrap()),
             provider:crate::provider::ModelClient::new(
                 crate::provider::ModelConfig::basic(url.clone(),"mock".into(),None),None
             ).unwrap(),
-            workspace:root.clone(),model_url:url,model_name:"mock".into(),
-            api_key:None},root)
+            workspace:root.clone(),model_name:"mock".into()},root)
     }
 
     #[tokio::test]
