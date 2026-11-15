@@ -1083,7 +1083,20 @@ fn schedule_automations(state: &AppState) {
         if !matches!(job_kind, "prompt" | "workflow" | "room" | "learn") {
             continue;
         }
-        enqueue(state, job_kind, input);
+        // A scheduler restart between enqueue and nextAt persistence must
+        // NOT start the same due occurrence twice. The stable ID is bound to
+        // this automation and its exact scheduled time, not the wall clock.
+        let Some(automation_id)=automation["id"].as_str() else {continue;};
+        let run_id=format!("automation-{}",
+            crate::engine::memory::stable_id(&[automation_id,next_at]));
+        if enqueue_once(state,&run_id,job_kind,input).is_none(){
+            // A conflicting persisted occurrence is safer than double
+            // execution: leave nextAt intact for operator inspection.
+            state.store.audit("automation.enqueue_conflict",json!({
+                "automationId":automation_id,"dueAt":next_at,"jobId":run_id
+            }));
+            continue;
+        }
         let mut updated = automation.clone();
         let interval = automation
             .get("intervalMinutes")
@@ -1139,6 +1152,32 @@ mod tests {
         assert!(resume_owner_instruction(&json!({"resumeCount":1,"resumeEvidence":{
             "source":"owner_attestation","applied":true,"details":"Already done"
         }}),"Goal").is_err());
+    }
+
+    #[test]
+    fn scheduled_automation_occurrence_is_not_duplicated_after_restart_replay(){
+        let state=temp_state();
+        let due="2026-01-01T00:00:00Z";
+        let automation=state.store.put("automation",&json!({
+            "id":"schedule-a","enabled":true,"nextAt":due,
+            "intervalMinutes":1440,"kind":"prompt",
+            "input":{"prompt":"Read the project status","agentId":"worker-a"}
+        })).unwrap();
+        let id=automation["id"].as_str().unwrap().to_string();
+        schedule_automations(&state);
+        let jobs=state.store.all("job");
+        assert_eq!(jobs.len(),1);
+        assert_eq!(jobs[0]["status"],"queued");
+        // Simulate a crash before the nextAt update becomes durable: the
+        // old due occurrence is seen again, but it keeps the same job ID.
+        let mut reopened=state.store.get("automation",&id).unwrap();
+        reopened["nextAt"]=json!(due);
+        state.store.put("automation",&reopened).unwrap();
+        schedule_automations(&state);
+        assert_eq!(state.store.all("job").len(),1);
+        // A genuinely new scheduled occurrence still receives a new ID.
+        let after=state.store.get("automation",&id).unwrap();
+        assert_ne!(after["nextAt"],json!(due));
     }
 
     #[test]
