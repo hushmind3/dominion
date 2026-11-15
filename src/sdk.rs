@@ -102,20 +102,26 @@ impl Dominion {
     }
     /// Write a native engine job without starting an external agent or API wrapper.
     pub fn submit(&self,prompt:Prompt)->Result<Value,String>{
-        self.submit_scoped(prompt,None)
+        self.submit_with_options(prompt,None,None)
     }
     /// Run one task in a chosen existing repository without changing the
     /// global default for other jobs. A separate method retains source
     /// compatibility with callers constructing the existing Prompt struct.
     pub fn submit_in_workspace(&self,prompt:Prompt,workspace:impl Into<PathBuf>)
         ->Result<Value,String>{
-        self.submit_scoped(prompt,Some(workspace.into()))
+        self.submit_with_options(prompt,Some(workspace.into()),None)
     }
-    fn submit_scoped(&self,prompt:Prompt,workspace_dir:Option<PathBuf>)
-        ->Result<Value,String>{
+    /// Per-job native execution options without introducing a second agent
+    /// runtime or changing the public Prompt struct's fields.
+    pub fn submit_with_options(
+        &self,prompt:Prompt,workspace_dir:Option<PathBuf>,token_budget:Option<u64>
+    )->Result<Value,String>{
         let instruction=prompt.instruction.trim();
         if instruction.is_empty()||instruction.len()>64_000 {
             return Err("instruction must contain 1..64000 bytes".into());
+        }
+        if token_budget.is_some_and(|amount|!(1024..=2_000_000).contains(&amount)){
+            return Err("token_budget must be 1024..2000000".into());
         }
         let workspace=workspace_dir.as_ref()
             .map(|path|crate::engine::workspace_scope::resolve(&self.state,
@@ -143,6 +149,9 @@ impl Dominion {
         });
         if let Some(path)=workspace{
             input["workspaceDir"]=json!(path.to_string_lossy().to_string());
+        }
+        if let Some(budget)=token_budget{
+            input["tokenBudget"]=json!(budget);
         }
         for (name,value) in [
             ("agentId",prompt.agent_id),("providerId",prompt.provider_id),
