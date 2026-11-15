@@ -162,16 +162,22 @@ pub fn read_lines(root:&Path,raw:&str,start:u64,count:u64)->Result<Value,String>
     let revision=format!("{:x}",Sha256::digest(&bytes));
     let content=String::from_utf8(bytes).map_err(|_|"Source must be UTF-8")?;
     let start_index=start.saturating_sub(1) as usize;
+    let total_lines=content.lines().count();
     let mut output=String::new();
     let mut emitted=0usize;
-    let mut total_lines=0usize;
-    for (index,line) in content.lines().enumerate(){
-        total_lines=index+1;
-        if index<start_index{continue;}
-        if emitted>=count as usize||output.len()>=18000{continue;}
-        let next=format!("{}: {}\n",index+1,line);
-        if output.len().saturating_add(next.len())>20000{continue;}
-        output.push_str(&next);emitted+=1;
+    for (index,line) in content.lines().enumerate().skip(start_index)
+        .take(count as usize){
+        // Huge/minified lines must still advance the page cursor. Preserve
+        // UTF-8 boundaries and report truncation rather than getting stuck
+        // forever at the same startLine.
+        let mut boundary=12_000.min(line.len());
+        while !line.is_char_boundary(boundary){boundary-=1;}
+        let snippet=&line[..boundary];
+        let suffix=if boundary<line.len(){" [… line clipped …]"}else{""};
+        let next=format!("{}: {}{}\n",index+1,snippet,suffix);
+        if output.len().saturating_add(next.len())>20_000{break;}
+        output.push_str(&next);
+        emitted+=1;
     }
     let next=(start_index+emitted<total_lines).then_some(start+emitted as u64);
     Ok(json!({"path":raw,"startLine":start,"returnedLines":emitted,
@@ -351,6 +357,12 @@ mod tests {
         assert_eq!(source["nextLine"],8924);
         assert_eq!(source["revisionSha256"].as_str().unwrap().len(),64);
         assert!(read_lines(&root,"../outside",1,10).is_err());
+        std::fs::write(root.join("minified.js"),
+            format!("{}\nsecond-line\n","언어🔍".repeat(12000))).unwrap();
+        let first=read_lines(&root,"minified.js",1,4).unwrap();
+        assert_eq!(first["returnedLines"],2);
+        assert!(first["content"].as_str().unwrap().contains("line clipped"));
+        assert!(first["content"].as_str().unwrap().contains("second-line"));
         std::fs::remove_dir_all(root).unwrap();
     }
     #[tokio::test]
