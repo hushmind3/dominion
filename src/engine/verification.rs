@@ -520,3 +520,16 @@ mod inference_tests {
         assert_eq!(checks.len(), 2, "{checks:?}");
     }
 }
+
+#[cfg(test)]
+mod sub2_action_evidence_tests {
+    use super::*;
+    #[test]
+    fn workspace_patch_is_recognized_as_a_write_not_a_read() {
+        let patch=json!({"tool":"workspace_replace_range",
+            "arguments":{"path":"src/lib.rs"}, "result":{"success":true}});
+        assert!(is_action_evidence(&patch));
+        let failed=json!({"tool":"workspace_replace_range","result":{"success":false}});
+        assert!(!is_action_evidence(&failed));
+    }
+}
