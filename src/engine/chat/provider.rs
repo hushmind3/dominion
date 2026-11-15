@@ -504,7 +504,7 @@ fn edit_stale_read_context(messages: &mut [Value], capacity: usize, schema_chars
         let saving = size.saturating_sub(escaped_content_chars(&compact));
         if saving > 1000 { candidates.push((index, compact, saving)); }
     }
-    let minimum = capacity.saturating_div(12).clamp(8_000, 24_000);
+    let minimum = (capacity / 12).clamp(8_000, 24_000);
     if candidates.iter().map(|(_, _, saving)| saving).sum::<usize>() < minimum {
         return 0;
     }
@@ -2188,6 +2188,66 @@ mod tests {
         fit_tool_context(&api, &mut api_messages, 500);
         assert_eq!(api_messages, original, "large API receives full evidence");
         assert_eq!(original[1]["content"].as_str().unwrap().chars().count(), 40_000);
+    }
+
+    #[test]
+    fn cache_aware_context_editing_saves_old_reads_but_retains_effects_and_recent_results() {
+        let mut original = vec![json!({"role":"system","content":"standing owner task"})];
+        let entries = [
+            ("a", "workspace_read", "A".repeat(22_000)),
+            ("b", "file_read", "B".repeat(22_000)),
+            ("write", "workspace_write", "WRITE_PROOF".repeat(600)),
+            ("error", "workspace_read", json!({"error":"tool failed","details":"e".repeat(6_000)}).to_string()),
+            ("new1", "workspace_read", "X".repeat(5_000)),
+            ("new2", "workspace_read", "Y".repeat(5_000)),
+            ("new3", "workspace_read", "Z".repeat(5_000)),
+        ];
+        for (id, name, content) in entries {
+            original.push(json!({"role":"assistant","content":"","tool_calls":[{
+                "id":id,"type":"function",
+                "function":{"name":name,"arguments":"{}"}
+            }]}));
+            original.push(json!({"role":"tool","tool_call_id":id,"content":content}));
+        }
+        let before_chars=original.to_string().chars().count();
+        let mut edited=original.clone();
+        let saved=edit_stale_read_context(&mut edited, before_chars + 2_000, 0);
+        assert!(saved > 30_000, "expected material reduction, got {saved}");
+        assert!(edited.to_string().chars().count() < before_chars - 30_000);
+        assert!(edited[2]["content"].as_str().unwrap().contains("compacted"));
+        assert!(edited[4]["content"].as_str().unwrap().contains("compacted"));
+        for at in [6,8,10,12,14] {
+            assert_eq!(edited[at],original[at], "write, error and newest reads stay exact");
+        }
+        for at in (1..original.len()).step_by(2) {
+            assert_eq!(edited[at],original[at], "tool calls and IDs stay paired");
+        }
+        assert_eq!(original[2]["content"].as_str().unwrap().len(),22_000,
+            "durable context must never be mutated");
+        let mut short=original.clone();
+        assert_eq!(edit_stale_read_context(&mut short,before_chars * 2,0),0);
+        assert_eq!(short,original, "avoid breaking prompt cache far below threshold");
+    }
+
+    #[test]
+    fn old_tool_error_and_write_receipt_are_never_context_edited() {
+        let mut messages=vec![json!({"role":"system","content":"task"})];
+        for (id,name,content) in [
+            ("w","workspace_write","updated".repeat(6_000)),
+            ("e","workspace_read",json!({"error":"bad","details":"z".repeat(10_000)}).to_string()),
+            ("a","workspace_read","new result".repeat(200)),
+            ("b","workspace_read","new result".repeat(200)),
+            ("c","workspace_read","new result".repeat(200)),
+        ] {
+            messages.push(json!({"role":"assistant","content":"","tool_calls":[{
+                "id":id,"type":"function","function":{"name":name,"arguments":"{}"}
+            }]}));
+            messages.push(json!({"role":"tool","tool_call_id":id,"content":content}));
+        }
+        let original=messages.clone();
+        let _=edit_stale_read_context(&mut messages,30_000,0);
+        assert_eq!(messages[2],original[2]);
+        assert_eq!(messages[4],original[4]);
     }
 
     #[test]
