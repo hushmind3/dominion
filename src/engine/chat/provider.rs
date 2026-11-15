@@ -464,13 +464,30 @@ fn edit_stale_read_context(messages: &mut [Value], capacity: usize, schema_chars
         .map(escaped_content_chars).sum::<usize>());
     if total <= capacity.saturating_mul(3) / 4 { return 0; }
 
-    let mut names = std::collections::HashMap::<String, String>::new();
-    for message in messages.iter().filter(|m| m["role"] == "assistant") {
-        for call in message["tool_calls"].as_array().into_iter().flatten() {
-            if let (Some(id), Some(name)) = (call["id"].as_str(),
-                call["function"]["name"].as_str().or_else(|| call["name"].as_str())) {
-                names.insert(id.to_owned(), name.to_owned());
+    // IDs are only unique within their assistant tool batch. Providers may
+    // reuse an ID in a later turn: never reclassify an older WRITE as a READ.
+    let mut pending = std::collections::HashMap::<String, String>::new();
+    let mut names_by_result = std::collections::HashMap::<usize, String>::new();
+    for (index, message) in messages.iter().enumerate() {
+        match message["role"].as_str() {
+            Some("assistant") => {
+                pending.clear();
+                for call in message["tool_calls"].as_array().into_iter().flatten() {
+                    if let (Some(id), Some(name)) = (call["id"].as_str(),
+                        call["function"]["name"].as_str().or_else(|| call["name"].as_str())) {
+                        pending.insert(id.to_owned(), name.to_owned());
+                    }
+                }
             }
+            Some("tool") => {
+                if let Some(id) = message["tool_call_id"].as_str() {
+                    if let Some(name) = pending.remove(id) {
+                        names_by_result.insert(index, name);
+                    }
+                }
+            }
+            Some("user") => pending.clear(),
+            _ => {}
         }
     }
     let mut recent = 0usize;
@@ -480,7 +497,7 @@ fn edit_stale_read_context(messages: &mut [Value], capacity: usize, schema_chars
         recent += 1;
         if recent <= 3 { continue; }
         let Some(id) = message["tool_call_id"].as_str() else { continue; };
-        let Some(tool) = names.get(id) else { continue; };
+        let Some(tool) = names_by_result.get(&index) else { continue; };
         if !matches!(tool.as_str(), "workspace_read" | "workspace_read_range"
             | "workspace_list" | "file_read" | "file_list" | "web_search" | "http_fetch") {
             continue;
@@ -2227,6 +2244,29 @@ mod tests {
         let mut short=original.clone();
         assert_eq!(edit_stale_read_context(&mut short,before_chars * 2,0),0);
         assert_eq!(short,original, "avoid breaking prompt cache far below threshold");
+    }
+
+    #[test]
+    fn reused_tool_ids_never_reclassify_an_earlier_write_as_a_read() {
+        let mut rows=vec![json!({"role":"system","content":"task"})];
+        for (id,name,text) in [
+            ("reused","workspace_write","WRITE_PROOF".repeat(4_000)),
+            ("reused","workspace_read","READ_RESULT".repeat(4_000)),
+            ("r1","workspace_read","new".repeat(2_000)),
+            ("r2","workspace_read","new".repeat(2_000)),
+            ("r3","workspace_read","new".repeat(2_000)),
+        ] {
+            rows.push(json!({"role":"assistant","content":"","tool_calls":[{
+                "id":id,"function":{"name":name,"arguments":"{}"},"type":"function"
+            }]}));
+            rows.push(json!({"role":"tool","tool_call_id":id,"content":text}));
+        }
+        let original=rows.clone();
+        let saved=edit_stale_read_context(&mut rows,40_000,0);
+        assert!(saved>8_000, "older read should be compacted");
+        assert_eq!(rows[2],original[2], "earlier write output cannot be cleared");
+        assert!(rows[4]["content"].as_str().unwrap().contains("compacted"),
+            "the newer read with the same ID is a separate operation");
     }
 
     #[test]
