@@ -31,6 +31,7 @@ pub struct EvolutionRun {
     pub completed_generations:usize,
     pub cost_budget_krw:f64,
     pub spent_krw:f64,
+    #[serde(default)] pub stop_requested:bool,
     pub stop_reason:Option<String>,
     pub created_at_ms:u64,
     pub updated_at_ms:u64,
@@ -59,16 +60,50 @@ pub(super) async fn load(root:&Path)->Result<HashMap<Uuid,EvolutionRun>,String>{
     Ok(runs)
 }
 
+async fn save(root:&Path,run:&EvolutionRun)->Result<(),String>{
+    let dir=root.join("evolutions");
+    let temp=dir.join(format!("{}.tmp",run.id));
+    let destination=dir.join(format!("{}.json",run.id));
+    fs::write(&temp,serde_json::to_vec(run).map_err(|e|e.to_string())?)
+        .await.map_err(|e|e.to_string())?;
+    fs::rename(temp,destination).await.map_err(|e|e.to_string())?;
+    Ok(())
+}
+
 impl Improvements {
-    async fn put_evolution(&self,run:EvolutionRun)->Result<EvolutionRun,String>{
-        let dir=self.root.join("evolutions");
-        let temp=dir.join(format!("{}.tmp",run.id));
-        let destination=dir.join(format!("{}.json",run.id));
-        fs::write(&temp,serde_json::to_vec(&run).map_err(|e|e.to_string())?)
-            .await.map_err(|e|e.to_string())?;
-        fs::rename(temp,destination).await.map_err(|e|e.to_string())?;
-        self.lineages.lock().await.insert(run.id,run.clone());
+    async fn put_evolution(&self,mut run:EvolutionRun)->Result<EvolutionRun,String>{
+        // Serialize disk+memory updates; never erase a newer stop request
+        // with a worker's older progress snapshot.
+        let mut records=self.lineages.lock().await;
+        if let Some(previous)=records.get(&run.id){
+            run.stop_requested|=previous.stop_requested;
+            if previous.status!=EvolutionStatus::Running && run.status==EvolutionStatus::Running{
+                return Err("Cannot overwrite terminal evolution with running progress".into());
+            }
+        }
+        save(&self.root,&run).await?;
+        records.insert(run.id,run.clone());
         Ok(run)
+    }
+    pub async fn evolution_stop(&self,id:Uuid)->Result<EvolutionRun,String>{
+        let mut records=self.lineages.lock().await;
+        let mut run=records.get(&id).cloned().ok_or("Evolution not found")?;
+        if run.status!=EvolutionStatus::Running{return Ok(run);}
+        run.stop_requested=true;
+        run.updated_at_ms=now_ms();
+        save(&self.root,&run).await?;
+        records.insert(run.id,run.clone());
+        Ok(run)
+    }
+    async fn should_stop_evolution(&self,run:&mut EvolutionRun)->bool{
+        let requested=self.lineages.lock().await.get(&run.id)
+            .is_some_and(|stored|stored.stop_requested);
+        if requested {
+            run.stop_requested=true;
+            run.status=EvolutionStatus::NeedsReview;
+            run.stop_reason=Some("Owner requested stop; no further candidate is adopted".into());
+        }
+        requested
     }
     pub async fn evolutions(&self)->Vec<EvolutionRun>{
         let mut list:Vec<_>=self.lineages.lock().await.values().cloned().collect();
@@ -141,7 +176,7 @@ impl Improvements {
             status:EvolutionStatus::Running,max_generations:request.max_generations,
             target_files:targets,descendants:Vec::new(),completed_generations:0,
             cost_budget_krw:request.cost_budget_krw,spent_krw:0.0,
-            stop_reason:None,created_at_ms:now,updated_at_ms:now};
+            stop_requested:false,stop_reason:None,created_at_ms:now,updated_at_ms:now};
         if let Err(error)=self.put_evolution(run.clone()).await{
             self.repository_active.lock().await.remove(&parent.repository);
             return Err(error);
@@ -158,8 +193,9 @@ impl Improvements {
                 run.stop_reason=Some(error);
             }
             run.updated_at_ms=now_ms();
-            let _=service.put_evolution(run).await;
+            drop(_workspace_lease);
             service.repository_active.lock().await.remove(&parent.repository);
+            let _=service.put_evolution(run).await;
         });
         self.evolution(run_id).await.ok_or("Evolution record not committed".into())
     }
@@ -175,6 +211,7 @@ impl Improvements {
         }
         let mut adopted=seed.clone();
         for target in run.target_files.clone(){
+            if self.should_stop_evolution(run).await{return Ok(());}
             if run.spent_krw>=run.cost_budget_krw{
                 run.status=EvolutionStatus::NeedsReview;
                 run.stop_reason=Some("Cumulative measured model spending reached the approved ceiling".into());
@@ -206,6 +243,7 @@ impl Improvements {
             run.spent_krw+=assessed.cost_krw;
             run.updated_at_ms=now_ms();
             self.put_evolution(run.clone()).await?;
+            if self.should_stop_evolution(run).await{return Ok(());}
             // An upstream provider might charge during a request. Never auto-
             // adopt after measuring that the fixed ceiling was exceeded.
             if run.spent_krw>run.cost_budget_krw{
@@ -374,7 +412,7 @@ mod tests {
             status:EvolutionStatus::Running,max_generations:2,
             target_files:vec!["a.txt".into(),"b.txt".into()],descendants:Vec::new(),
             completed_generations:0,cost_budget_krw:100.0,spent_krw:0.0,
-            stop_reason:None,created_at_ms:now,updated_at_ms:now};
+            stop_requested:false,stop_reason:None,created_at_ms:now,updated_at_ms:now};
         service.put_evolution(run.clone()).await.unwrap();
         let restored=Improvements::open(root.join("records"),root.clone()).await.unwrap();
         let state=restored.evolution(run.id).await.unwrap();
