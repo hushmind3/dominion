@@ -227,7 +227,7 @@ mod tests {
             "a single large newest receipt must not empty the low-cost context");
         assert_eq!(projection.recent.last().unwrap()["id"],"r7");
         assert!(projection.recent.last().unwrap()["result"].to_string().contains("FINAL_DIAGNOSTIC"));
-        let serialized=projection.recent.to_string();
+        let serialized=serde_json::to_string(&projection.recent).unwrap();
         assert!(serialized.chars().count()<4000,
             "bounded projection must respect the low-cost evidence budget");
     }
