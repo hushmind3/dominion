@@ -976,6 +976,8 @@ pub(crate) async fn compare_at(context:&JobContext,id:&str,source:&Path,_runner_
     std::fs::write(&patch_file,patch).map_err(|e|e.to_string())?;
     let runner=output_dir.join("rsi-lab.mjs");
     std::fs::write(&runner,include_str!("../../scripts/rsi-lab.mjs")).map_err(|e|e.to_string())?;
+    std::fs::write(output_dir.join("rsi-result-format.mjs"),
+        include_str!("../../scripts/rsi-result-format.mjs")).map_err(|e|e.to_string())?;
     std::fs::write(output_dir.join("rsi-measure.mjs"),include_str!("../../scripts/rsi-measure.mjs")).map_err(|e|e.to_string())?;
     let meta_required=candidate["cases"].as_array().is_some_and(|cases|
         cases.iter().any(crate::engine::rsi_meta::is_case));
@@ -1076,6 +1078,7 @@ pub(crate) async fn compare_at(context:&JobContext,id:&str,source:&Path,_runner_
     // Carry the runner-owned diagnostic into the candidate and next generation;
     // the verdict remains based solely on frozen measurements.
     updated["evaluation"]["buildDiagnostics"]=report["buildDiagnostics"].clone();
+    updated["evaluation"]["caseDiagnostics"]=report["caseDiagnostics"].clone();
     state.store.put("rsi_candidate",&updated)
         .ok_or("A/B 평가 후보 갱신에 실패했습니다.")?;
     state.store.put("rsi_evaluation",&updated["evaluation"]);
@@ -1134,7 +1137,9 @@ pub(crate) async fn compare_at(context:&JobContext,id:&str,source:&Path,_runner_
         "evidenceSha256":evidence_sha,
         "pairedCases":report["cases"].as_array().map(Vec::len).unwrap_or(0),
         "performanceImprovementClaimed":metrics["metricGains"].as_u64().unwrap_or(0)>0,
-        "measurementScope":"frozen_native_cases_only"
+        "measurementScope":"frozen_native_cases_only",
+        "buildDiagnostics":report["buildDiagnostics"],
+        "caseDiagnostics":report["caseDiagnostics"]
     }))
 }
 
