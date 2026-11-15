@@ -251,15 +251,7 @@ async fn tool(state: &AppState, current_task: &str, current_session: &str,
         "workspace_write" if allow_write => {
             let path = args["path"].as_str().ok_or("파일 경로가 필요합니다.")?;
             let content = args["content"].as_str().ok_or("파일 내용이 필요합니다.")?;
-            if content.len() > 131_072 { return Err("쓰기 크기 한도를 초과했습니다.".into()); }
-            let file = scoped_path(&state.workspace, path, true)?;
-            tokio::fs::write(&file, content).await.map_err(|e| e.to_string())?;
-            let observed = tokio::fs::read(&file).await.map_err(|e| e.to_string())?;
-            let expected = Sha256::digest(content.as_bytes());
-            let actual = Sha256::digest(&observed);
-            if actual != expected { return Err("작성 후 파일 검증이 실패했습니다.".into()); }
-            Ok(json!({"path":path,"bytes":observed.len(),
-                "sha256":format!("{actual:x}"),"verified":true}))
+            files::write(&state.workspace, path, content).await
         }
         "workspace_check" if allow_shell => {
             let program = args["program"].as_str().ok_or("프로그램 이름이 필요합니다.")?;

@@ -104,45 +104,118 @@ pub fn search(root: &Path, query: &str, directory_path: &str) -> Result<Value, S
     Ok(json!({"hits":hits,"filesScanned":scanned,"truncated":truncated || hits.len()>=60}))
 }
 
+/// Route a single exact replacement through the same staged, permission-
+/// preserving and rollback-aware transaction used for multi-file edits.
 pub async fn replace(
     root: &Path, path: &str, old: &str, new: &str, expected_sha: Option<&str>
 ) -> Result<Value, String> {
     if old.is_empty() || old.len() > 65_536 || new.len() > 131_072 {
         return Err("replacement size is invalid".into());
     }
-    let file = super::scoped_path(root, path, false)?;
-    let bytes = tokio::fs::read(&file).await.map_err(|error| error.to_string())?;
-    if bytes.len() > 262_144 { return Err("file is too large for bounded edit".into()); }
-    let before = Sha256::digest(&bytes);
-    let before_hex = format!("{before:x}");
-    if expected_sha.is_some_and(|expected| expected != before_hex) {
-        return Err("file changed since inspection; inspect again before editing".into());
-    }
-    let content = String::from_utf8(bytes).map_err(|_| "replacement needs UTF-8 file")?;
-    let occurrences = content.matches(old).count();
-    if occurrences != 1 {
-        return Err(format!("exact replacement requires one match, found {occurrences}"));
-    }
-    let changed = content.replacen(old, new, 1);
-    if changed.len() > 524_288 { return Err("result exceeds file edit limit".into()); }
-    // Recheck the original before writing: stale edits must not silently win.
-    let current = tokio::fs::read(&file).await.map_err(|error| error.to_string())?;
-    if Sha256::digest(&current) != before {
-        return Err("file changed concurrently; refusing to overwrite".into());
-    }
-    tokio::fs::write(&file, changed.as_bytes()).await.map_err(|error| error.to_string())?;
-    let observed = tokio::fs::read(&file).await.map_err(|error| error.to_string())?;
-    let after = Sha256::digest(&observed);
-    if observed != changed.as_bytes() {
-        return Err("file write verification failed".into());
-    }
+    let batch = replace_many(root, &[json!({
+        "path": path, "old": old, "new": new, "sha256": expected_sha
+    })]).await?;
+    let change = &batch["changes"][0];
     Ok(json!({
-        "path":path,
-        "oldSha256":before_hex,
-        "sha256":format!("{after:x}"),
-        "bytes":observed.len(),
-        "verified":true,
-        "change":"exact-replace"
+        "path": path, "oldSha256": change["oldSha256"],
+        "sha256": change["sha256"], "bytes": change["bytes"],
+        "verified": true, "change": "exact-replace"
+    }))
+}
+
+/// A new/overwritten source file is never truncated in place. Prepare and
+/// sync a same-directory staging file, verify that the inspected predecessor
+/// is unchanged, and restore its original bytes if adoption or readback fails.
+/// This is crash-recoverable best-effort single-file adoption, not a
+/// cross-process transaction or a sandbox.
+pub async fn write(root: &Path, path: &str, content: &str) -> Result<Value, String> {
+    use std::io::ErrorKind;
+    use tokio::io::AsyncWriteExt;
+    if content.len() > 131_072 {
+        return Err("file write exceeds 128 KiB".into());
+    }
+    let file = super::scoped_path(root, path, true)?;
+    let prior = match tokio::fs::symlink_metadata(&file).await {
+        Ok(meta) => {
+            if !meta.file_type().is_file() || meta.file_type().is_symlink() {
+                return Err("Source must be a regular file, not a symlink".into());
+            }
+            Some((tokio::fs::read(&file).await.map_err(|e| e.to_string())?,
+                meta.permissions()))
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => None,
+        Err(error) => return Err(error.to_string())
+    };
+    let parent = file.parent().ok_or("Missing source parent directory")?;
+    let nonce = uuid::Uuid::new_v4().simple().to_string();
+    let stage = parent.join(format!(".dominion-stage-{nonce}"));
+    let backup = parent.join(format!(".dominion-backup-{nonce}"));
+    let staged = async {
+        let mut output = tokio::fs::OpenOptions::new()
+            .create_new(true).write(true).open(&stage).await
+            .map_err(|e| e.to_string())?;
+        output.write_all(content.as_bytes()).await.map_err(|e| e.to_string())?;
+        output.sync_all().await.map_err(|e| e.to_string())?;
+        if let Some((_, permissions)) = &prior {
+            tokio::fs::set_permissions(&stage, permissions.clone()).await
+                .map_err(|e| e.to_string())?;
+        }
+        Ok::<(), String>(())
+    }.await;
+    if let Err(error) = staged {
+        let _ = tokio::fs::remove_file(&stage).await;
+        return Err(format!("Cannot stage workspace file: {error}"));
+    }
+
+    let current = match tokio::fs::read(&file).await {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == ErrorKind::NotFound => None,
+        Err(error) => {
+            let _ = tokio::fs::remove_file(&stage).await;
+            return Err(error.to_string());
+        }
+    };
+    if current.as_deref() != prior.as_ref().map(|(data,_)| data.as_slice()) {
+        let _ = tokio::fs::remove_file(&stage).await;
+        return Err("Source changed after staging; refusing stale overwrite".into());
+    }
+    if prior.is_some() {
+        if let Err(error) = tokio::fs::rename(&file, &backup).await {
+            let _ = tokio::fs::remove_file(&stage).await;
+            return Err(format!("Cannot back up existing source: {error}"));
+        }
+    }
+    if let Err(error) = tokio::fs::rename(&stage, &file).await {
+        let restore = if prior.is_some() {
+            tokio::fs::rename(&backup, &file).await
+                .err().map(|e| format!("; original retained in backup: {e}"))
+                .unwrap_or_default()
+        } else { String::new() };
+        let _ = tokio::fs::remove_file(&stage).await;
+        return Err(format!("Cannot adopt staged source: {error}{restore}"));
+    }
+    let observed = tokio::fs::read(&file).await;
+    if !matches!(&observed, Ok(bytes) if bytes == content.as_bytes()) {
+        let removal_error = tokio::fs::remove_file(&file).await.err()
+            .map(|e| format!("; failed to remove invalid source: {e}"))
+            .unwrap_or_default();
+        let restore_error = if prior.is_some() {
+            tokio::fs::rename(&backup, &file).await.err()
+                .map(|e| format!("; original retained in backup: {e}"))
+                .unwrap_or_default()
+        } else { String::new() };
+        return Err(format!("Source write readback failed{removal_error}{restore_error}"));
+    }
+    if prior.is_some() {
+        let _ = tokio::fs::remove_file(&backup).await;
+    }
+    let bytes = observed.map_err(|e| e.to_string())?;
+    Ok(json!({
+        "path": path, "bytes": bytes.len(),
+        "sha256": format!("{:x}", Sha256::digest(&bytes)),
+        "previousSha256": prior.as_ref().map(|(data,_)|
+            format!("{:x}", Sha256::digest(data))),
+        "verified": true, "change": "staged-write"
     }))
 }
 
@@ -388,6 +461,40 @@ mod tests {
         assert_eq!(std::fs::read_to_string(root.join("a.rs")).unwrap(),"alpha 3\n");
         assert_eq!(std::fs::read_to_string(root.join("b.rs")).unwrap(),"beta 4\n");
         assert!(replace_many(&root,&valid).await.is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn standalone_writes_and_replacements_preserve_original_permissions_and_receipts() {
+        let root=std::env::temp_dir().join(format!("dominion-safe-write-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let file=root.join("source.sh");
+        std::fs::write(&file,"original\n").unwrap();
+        #[cfg(unix)] {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&file,std::fs::Permissions::from_mode(0o750)).unwrap();
+        }
+        let created=write(&root,"source.sh","updated\n").await.unwrap();
+        assert_eq!(created["verified"],true);
+        assert_eq!(created["change"],"staged-write");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(),"updated\n");
+        let digest=created["sha256"].as_str().unwrap();
+        assert!(replace(&root,"source.sh","updated","broken",Some("stale")).await.is_err());
+        assert_eq!(std::fs::read_to_string(&file).unwrap(),"updated\n");
+        let fixed=replace(&root,"source.sh","updated","fixed",Some(digest)).await.unwrap();
+        assert_eq!(fixed["verified"],true);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(),"fixed\n");
+        #[cfg(unix)] {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,0o750);
+        }
+        let created_new=write(&root,"new.rs","fn new_file() {}\n").await.unwrap();
+        assert!(created_new["previousSha256"].is_null());
+        assert_eq!(std::fs::read_to_string(root.join("new.rs")).unwrap(),
+            "fn new_file() {}\n");
+        let debris=std::fs::read_dir(&root).unwrap().filter_map(Result::ok)
+            .any(|e|e.file_name().to_string_lossy().starts_with(".dominion-"));
+        assert!(!debris,"successful edits leave no staging or backup files");
         std::fs::remove_dir_all(root).unwrap();
     }
 
