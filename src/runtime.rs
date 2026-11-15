@@ -374,6 +374,38 @@ impl DominionSdk {
     }
 }
 
+impl DominionSdk {
+    /// An isolated candidate never changes the checkout until explicitly
+    /// adopted and independently scored against the frozen reference.
+    pub async fn improvement_create(&self,input:crate::improvement::NewImprovement)
+        ->Result<crate::improvement::Improvement,RuntimeError>{
+        self.state.improvements.create(input).await.map_err(RuntimeError)
+    }
+    pub async fn improvement_list(&self)->Vec<crate::improvement::Improvement>{
+        self.state.improvements.list().await
+    }
+    pub async fn improvement_get(&self,id:uuid::Uuid)
+        ->Result<crate::improvement::Improvement,RuntimeError>{
+        self.state.improvements.get(id).await
+            .ok_or_else(||RuntimeError("Improvement trial not found".into()))
+    }
+    pub async fn improvement_evaluate(&self,id:uuid::Uuid)
+        ->Result<crate::improvement::Improvement,RuntimeError>{
+        let enabled=std::env::var("DOMINION_ENABLE_SHELL")
+            .as_deref()==Ok("true");
+        self.state.improvements.start(self.state.provider.clone(),id,enabled)
+            .await.map_err(RuntimeError)
+    }
+    pub async fn improvement_adopt(&self,id:uuid::Uuid)
+        ->Result<crate::improvement::Improvement,RuntimeError>{
+        self.state.improvements.adopt(id).await.map_err(RuntimeError)
+    }
+    pub async fn improvement_descendant(&self,id:uuid::Uuid)
+        ->Result<crate::improvement::Improvement,RuntimeError>{
+        self.state.improvements.descendant(id).await.map_err(RuntimeError)
+    }
+}
+
 fn decode_record(value: Value) -> Result<TaskRecord, RuntimeError> {
     serde_json::from_value(value).map_err(|error| RuntimeError(error.to_string()))
 }
