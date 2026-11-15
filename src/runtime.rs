@@ -78,6 +78,8 @@ pub struct TaskInput {
     pub planning_mode: Option<String>,
     #[serde(default)]
     pub model_tier: Option<String>,
+    #[serde(default)]
+    pub agent_id: Option<String>,
 }
 
 impl TaskInput {
@@ -103,6 +105,9 @@ impl TaskInput {
         if self.cost_budget_krw.is_some_and(|value|
             !value.is_finite() || !(0.0..=10_000_000.0).contains(&value)) {
             return Err(RuntimeError("costBudgetKrw must be between 0 and 10000000".into()));
+        }
+        if self.agent_id.as_deref().is_some_and(|id|id.trim().is_empty()||id.len()>128) {
+            return Err(RuntimeError("Invalid agentId".into()));
         }
         if self.model_tier.as_deref().is_some_and(|tier|
             !matches!(tier,"auto"|"economy"|"quality")) {
@@ -133,6 +138,7 @@ impl TaskInput {
             "costBudgetKrw": self.cost_budget_krw,
             "planningMode": self.planning_mode.unwrap_or_else(||"auto".into()),
             "modelTier": self.model_tier.unwrap_or_else(||"auto".into()),
+            "agentId": self.agent_id,
         });
         Ok((key, payload))
     }
@@ -343,6 +349,17 @@ impl DominionSdk {
             return Err(RuntimeError(format!("Cannot persist continuation lineage: {error}")));
         }
         Ok(record)
+    }
+
+    /// User-defined role presets only supply model-facing instructions.
+    /// Model execution, permissions and completion remain in this Rust SDK.
+    pub fn agents(&self)->Vec<Value>{self.state.store.agents()}
+    pub fn agent_create(&self,name:&str,description:&str,instructions:&str)
+        -> Result<Value,RuntimeError>{
+        self.state.store.agent_save(name,description,instructions).map_err(RuntimeError)
+    }
+    pub fn agent_delete(&self,id:&str)->Result<bool,RuntimeError>{
+        self.state.store.agent_delete(id).map_err(RuntimeError)
     }
 
     pub fn task(&self, id: &str) -> Result<TaskRecord, RuntimeError> {
