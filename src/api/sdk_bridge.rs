@@ -205,14 +205,48 @@ pub async fn approve(
     ).await
 }
 
-/// A failed or interrupted model turn may have performed a write. A UI click
-/// must not replay it without a durable operation-level continuation receipt.
+/// A previously interrupted turn can be retried only after the owner
+/// explicitly reconciled its unknown effects as NOT APPLIED. This is a new
+/// authorized attempt on the same job/session, not blind crash replay.
 pub async fn resume(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    if panel_job(&state, &id).is_none() {
+    let Some(job) = panel_job(&state, &id) else {
         return error(StatusCode::NOT_FOUND, "해당 자동 작업을 찾을 수 없습니다.");
+    };
+    if job["status"] != "failed"
+        || job["reconciliation"]["source"] != "owner_attestation"
+        || job["reconciliation"]["applied"] != false
+        || job["cancelRequested"] == true
+    {
+        return error(StatusCode::CONFLICT,
+            "미확정 도구 실행은 자동 재개할 수 없습니다. 먼저 실제 결과를 확인하고 미적용으로 기록하세요.");
     }
-    error(StatusCode::CONFLICT,
-        "도구 실행 결과를 확인하기 전에는 중단된 작업을 재실행하지 않습니다. 실행 기록을 확인한 뒤 새 작업으로 이어서 진행하세요.")
+    let resumed = job["resumeCount"].as_u64().unwrap_or(0);
+    if resumed >= 2 {
+        return error(StatusCode::CONFLICT,
+            "재개 한도를 초과했습니다. 검증 기록을 확인한 뒤 새로운 작업을 시작하세요.");
+    }
+    let patch = json!({
+        "status": "queued",
+        "error": null,
+        "result": null,
+        "finishedAt": null,
+        "startedAt": null,
+        "recovered": false,
+        "resumeCount": resumed + 1,
+        "reconciliation": null,
+        "promptState": {"inFlight": false},
+        "autonomousState": null,
+    });
+    match state.store.patch_if("job", &id, "status", &json!("failed"), &patch) {
+        Some(saved) => {
+            state.bus.record("job", &saved);
+            state.store.audit("job.owner_authorized_resume", json!({
+                "jobId":id,"resumeCount":resumed+1,
+            }));
+            Json(public_view(&state, &saved)).into_response()
+        }
+        None => error(StatusCode::CONFLICT, "다른 실행기가 작업 상태를 변경했습니다."),
+    }
 }
 
 /// Owner reconciliation is explicitly owner-attested, NEVER engine-verified.
@@ -318,5 +352,29 @@ mod tests {
         assert_eq!(stored["status"], "completed");
         assert_eq!(stored["reconciliation"]["verifiedByEngine"], false);
         assert_eq!(stored["result"]["verified"], false);
+    }
+    #[tokio::test]
+    async fn interrupted_effect_requires_owner_attestation_before_resume() {
+        let state=state();
+        let job=engine::jobs::enqueue(&state,"prompt",json!({
+            "prompt":"Fix the source", "uiSource":SOURCE, "autonomous":true
+        })).unwrap();
+        let id=job["id"].as_str().unwrap().to_string();
+        state.store.patch_if("job",&id,"status",&json!("queued"),&json!({
+            "status":"needs_review","promptState":{"inFlight":true},
+            "autonomousState":{"receipts":[{"outcome":"needs_review","toolSuccess":["shell_exec"],"toolErrors":[]}]}
+        }));
+        assert_eq!(resume(State(state.clone()),Path(id.clone())).await.status(),StatusCode::CONFLICT);
+        assert_eq!(reconcile(State(state.clone()),Path(id.clone()),Json(json!({
+            "applied":false,"details":"The remote operation did not happen"
+        }))).await.status(),StatusCode::OK);
+        let resumed=resume(State(state.clone()),Path(id.clone())).await;
+        assert_eq!(resumed.status(),StatusCode::OK);
+        let record=state.store.get("job",&id).unwrap();
+        assert_eq!(record["status"],"queued");
+        assert_eq!(record["promptState"]["inFlight"],false);
+        assert_eq!(record["resumeCount"],1);
+        assert_eq!(record["autonomousState"],Value::Null);
+        assert_eq!(resume(State(state.clone()),Path(id.clone())).await.status(),StatusCode::CONFLICT);
     }
 }
