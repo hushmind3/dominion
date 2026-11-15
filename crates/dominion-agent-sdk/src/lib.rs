@@ -325,6 +325,39 @@ fn owner_requires_effect(text: &str) -> bool {
         .iter().any(|word| t.contains(word))
 }
 
+/// Resolve dependencies inside one model decision without throwing away a
+/// valid plan merely because its predecessor is proposed in the same turn.
+/// Keep unrelated operations in their original order; move an operation only
+/// when an explicit dependency requires it. A failed historical receipt counts
+/// as resolved for ordering, but never as permission to execute its dependents.
+fn order_actions(actions: Vec<Action>, receipts: &[Receipt]) -> Result<Vec<Action>, String> {
+    let declared: HashSet<String> = actions.iter().map(|action| action.id.clone()).collect();
+    let mut resolved: HashSet<String> =
+        receipts.iter().map(|receipt| receipt.id.clone()).collect();
+    for action in &actions {
+        for dependency in &action.depends_on {
+            if !declared.contains(dependency) && !resolved.contains(dependency) {
+                return Err(format!(
+                    "Unknown tool dependency for {}: {}", action.id, dependency
+                ));
+            }
+        }
+    }
+    let mut pending = actions;
+    let mut ordered = Vec::with_capacity(pending.len());
+    while !pending.is_empty() {
+        let Some(index) = pending.iter().position(|action|
+            action.depends_on.iter().all(|dep| resolved.contains(dep))
+        ) else {
+            return Err("Cyclic tool dependencies in model decision".into());
+        };
+        let next = pending.remove(index);
+        resolved.insert(next.id.clone());
+        ordered.push(next);
+    }
+    Ok(ordered)
+}
+
 impl Kernel<'_> {
     pub async fn run(&self, request: RunRequest) -> Result<Snapshot, String> {
         request.validate()?;
@@ -507,13 +540,16 @@ impl Kernel<'_> {
                     self.journal.save(&run)?;
                     return Ok(run);
                 }
-                if action.depends_on.iter().any(|dep| !run.receipts.iter().any(|r| &r.id == dep && r.success)) {
-                    run.stop(Status::NeedsReview, format!("Missing successful dependency for {}", action.id));
+                batch.push(action);
+            }
+            let batch = match order_actions(batch, &run.receipts) {
+                Ok(ordered) => ordered,
+                Err(error) => {
+                    run.stop(Status::NeedsReview, error);
                     self.journal.save(&run)?;
                     return Ok(run);
                 }
-                batch.push(action);
-            }
+            };
             // Do not run a later operation while a prior write's outcome is unknown.
             let mut cursor = 0;
             while cursor < batch.len() {
@@ -535,10 +571,41 @@ impl Kernel<'_> {
                     self.journal.save(&run)?;
                     return Ok(run);
                 }
-                let end = runtime::read_batch_end(
+                let mut end = runtime::read_batch_end(
                     &batch, cursor, request.limits.max_parallel_reads,
                     |action| tools[&action.tool].read_only,
                 );
+                // Parallel reads must be independent. A read depending on a
+                // sibling's result waits for that sibling's durable receipt.
+                for index in cursor..end {
+                    if batch[index].depends_on.iter().any(|dependency|
+                        !run.receipts.iter().any(|receipt|
+                            &receipt.id == dependency && receipt.success)
+                    ) {
+                        end = index;
+                        break;
+                    }
+                }
+                if end == cursor {
+                    // The predecessor was already attempted and failed (or
+                    // skipped). Record the dependent as skipped, not as a tool
+                    // invocation, so the model can replan without side effects.
+                    let action = &batch[cursor];
+                    let dependencies: Vec<&str> = action.depends_on.iter()
+                        .filter(|dependency| !run.receipts.iter().any(|receipt|
+                            &receipt.id == *dependency && receipt.success))
+                        .map(String::as_str).collect();
+                    run.receipts.push(Receipt {
+                        id: action.id.clone(), tool: action.tool.clone(),
+                        arguments: action.arguments.clone(), success: false,
+                        result: json!({"skipped":true,"reason":"failed_dependency",
+                            "dependencies":dependencies}),
+                        step: run.step,
+                    });
+                    self.journal.save(&run)?;
+                    cursor += 1;
+                    continue;
+                }
                 let selected = batch[cursor..end].to_vec();
                 if !budget.reserve_tools(selected.len()) {
                     run.stop(Status::NeedsReview, "Tool execution budget exhausted");
