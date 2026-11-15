@@ -766,6 +766,9 @@ fn search_code_index(
         if file["indexId"].as_str()!=Some(index_id) {continue;}
         let path=file["path"].as_str().unwrap_or("");
         if session["rsiRun"]==true && !crate::engine::rsi::safe_path(path) {continue;}
+        // Deleted/renamed runtime files may remain in an older SQLite index.
+        // A cached symbol is navigation data, not evidence its source exists.
+        if !resolve_workspace(ctx.workspace,path).is_ok_and(|path|path.is_file()){continue;}
         let rank=score(path);
         if rank>0 {matches.push((rank,json!({"path":path,"kind":"file","name":path,"line":1})));}
         for symbol in file["symbols"].as_array().into_iter().flatten() {
@@ -1855,6 +1858,8 @@ mod tests {
         use crate::vault::Vault;
         let dir = std::env::temp_dir().join(format!("dominion-code-search-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(dir.join("src/engine")).unwrap();
+        std::fs::write(dir.join("src/engine/rsi_evolve.rs"),"fn run_loop() {}\nfn record_rsi_lesson() {}\n").unwrap();
         let config = Config {
             port: 0,
             data_dir: dir.clone(),
@@ -1912,6 +1917,9 @@ mod tests {
             .unwrap()
             .iter()
             .any(|row| row["kind"] == "file"));
+        std::fs::remove_file(dir.join("src/engine/rsi_evolve.rs")).unwrap();
+        let removed=search_code_index(&ctx,"run_loop",10).unwrap();
+        assert_eq!(removed["matchCount"],0,"deleted runtime must not reappear through cached symbols: {removed}");
         let _ = std::fs::remove_dir_all(dir);
     }
 
