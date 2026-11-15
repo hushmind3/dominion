@@ -1,0 +1,210 @@
+//! Compatibility API for the frontend pinned to main commit 879dc23d.
+//! Delegates to the existing Rust jobs and approval engines: no second harness.
+use crate::state::AppState;
+use axum::{body::to_bytes,extract::{Path,State},http::StatusCode,response::{IntoResponse,Response},Json};
+use serde_json::{json,Value};
+use super::{approvals,jobs,response::error};
+
+fn prompt_job(state:&AppState,id:&str)->Option<Value>{
+    state.store.get("job",id).filter(|j|j["kind"]=="prompt")
+}
+fn pending(state:&AppState,job:&Value)->Option<Value>{
+    let session=job["sessionId"].as_str()?;
+    if job["status"]!="running" {return None;}
+    state.store.all("approval").into_iter().find(|a|
+        a["sessionId"].as_str()==Some(session)
+        && a["status"]=="pending"
+        && a["runId"]==job["id"])
+}
+fn project(state:&AppState,job:&Value)->Value{
+    let snapshot=&job["nativeState"];
+    let result=&job["result"];
+    let awaiting=pending(state,job);
+    let status=if awaiting.is_some(){"awaiting_approval"}else {
+        match job["status"].as_str().unwrap_or("queued"){
+            "needs_review"=>"in_doubt",
+            "queued"=>"queued","running"=>"running",
+            "completed"=>"completed","cancelled"=>"cancelled",
+            "failed"=>"failed","interrupted"=>"interrupted",
+            other=>other
+        }
+    };
+    let m=&job["nativeModelUsage"];
+    let usage=if m["reportedCalls"].as_u64().unwrap_or(0)>0 {
+        json!({"prompt_tokens":m["inputTokens"].as_u64().unwrap_or(0),
+            "completion_tokens":m["outputTokens"].as_u64().unwrap_or(0),
+            "cached_prompt_tokens":m["cacheReadTokens"].as_u64().unwrap_or(0)})
+    }else {Value::Null};
+    let approval=awaiting.map(|a|json!({"id":a["id"],
+        "name":a["tool"],"arguments":a["args"]})).unwrap_or(Value::Null);
+    let events=job["events"].as_array().cloned().unwrap_or_default()
+        .into_iter().map(|event|json!({
+            "kind":event["kind"].as_str().or_else(||event["type"].as_str())
+                .unwrap_or("event"),"detail":event
+        })).collect::<Vec<_>>();
+    json!({
+        "id":job["id"],"status":status,
+        "instruction":job["input"]["prompt"],
+        "answer":result["answer"].as_str().or_else(||snapshot["answer"].as_str()),
+        "error":job["error"].as_str()
+            .or_else(||result["reason"].as_str())
+            .or_else(||snapshot["error"].as_str()),
+        "checkpoint":{
+            "state":{"state":status},
+            "rounds":snapshot["step"].as_u64().unwrap_or(0),
+            "toolCalls":snapshot["receipts"].as_array().map(Vec::len)
+                .or_else(||result["toolCalls"].as_u64().map(|n|n as usize)).unwrap_or(0),
+            "answer":snapshot["answer"],"usage":usage,
+            "pendingCall":approval,"events":events
+        }
+    })
+}
+pub async fn list(State(state):State<AppState>)->Json<Value>{
+    let mut rows=state.store.all("job").into_iter()
+        .filter(|j|j["kind"]=="prompt").collect::<Vec<_>>();
+    rows.sort_by(|a,b|b["queuedAt"].as_str().unwrap_or("")
+        .cmp(a["queuedAt"].as_str().unwrap_or("")));
+    Json(json!(rows.iter().take(30).map(|j|project(&state,j)).collect::<Vec<_>>()))
+}
+pub async fn one(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    match prompt_job(&state,&id){
+        Some(job)=>Json(project(&state,&job)).into_response(),
+        None=>error(StatusCode::NOT_FOUND,"SDK 작업을 찾지 못했습니다.")
+    }
+}
+pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Response{
+    let Some(instruction)=body["instruction"].as_str()
+        .filter(|s|!s.trim().is_empty()&&s.len()<=64000)
+    else{return error(StatusCode::BAD_REQUEST,"작업 지시를 입력하세요.");};
+    let verify=body["verifyCommand"].as_str().map(str::trim).unwrap_or("");
+    if verify.len()>2048 {
+        return error(StatusCode::BAD_REQUEST,"검증 명령이 너무 깁니다.");
+    }
+    let mut input=json!({"prompt":instruction,"toolsEnabled":true,
+        "toolsExecutionEnabled":true});
+    if let Some(p)=body["providerId"].as_str().filter(|s|!s.is_empty()){
+        input["providerId"]=json!(p);
+    }
+    if !verify.is_empty(){
+        input["acceptanceChecks"]=json!([{"type":"command_succeeded",
+            "command":verify}]);
+        input["ownerInstructions"]=json!(format!(
+            "사용자가 검증 명령을 지정했습니다: {verify}. 작업을 마친 뒤 실행하고 결과를 확인하세요."
+        ));
+    }
+    // The same validated job creation endpoint used by the public TS SDK.
+    let response=jobs::create(State(state.clone()),
+        Json(json!({"kind":"prompt","input":input}))).await;
+    let status=response.status();
+    if !status.is_success(){return response;}
+    let bytes=match to_bytes(response.into_body(),1024*1024).await {
+        Ok(b)=>b,Err(_)=>return error(StatusCode::INTERNAL_SERVER_ERROR,
+            "작업 응답을 읽지 못했습니다.")
+    };
+    match serde_json::from_slice::<Value>(&bytes){
+        Ok(job)=>(status,Json(project(&state,&job))).into_response(),
+        Err(_)=>error(StatusCode::INTERNAL_SERVER_ERROR,
+            "작업 응답이 올바르지 않습니다.")
+    }
+}
+pub async fn cancel(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    if prompt_job(&state,&id).is_none(){
+        return error(StatusCode::NOT_FOUND,"SDK 작업을 찾지 못했습니다.");
+    }
+    let response=jobs::cancel(State(state.clone()),Path(id.clone())).await;
+    if !response.status().is_success(){return response;}
+    one(State(state),Path(id)).await
+}
+pub async fn approve(
+    State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>
+)->Response{
+    let Some(job)=prompt_job(&state,&id) else {
+        return error(StatusCode::NOT_FOUND,"SDK 작업을 찾지 못했습니다.");
+    };
+    let Some(a)=pending(&state,&job) else {
+        return error(StatusCode::CONFLICT,"승인 대기 중인 실제 도구 호출이 없습니다.");
+    };
+    if body["callId"]!=a["id"] {
+        return error(StatusCode::CONFLICT,"승인 대상 도구 ID가 변경되었습니다.");
+    }
+    let response=approvals::resolve_approval(
+        State(state.clone()),Json(json!({"id":a["id"],"allow":true}))).await;
+    if !response.status().is_success(){return response;}
+    one(State(state),Path(id)).await
+}
+pub async fn resume(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    let Some(job)=prompt_job(&state,&id) else {
+        return error(StatusCode::NOT_FOUND,"SDK 작업을 찾지 못했습니다.");
+    };
+    let snap=&job["nativeState"];
+    let replay_safe=matches!(job["status"].as_str(),Some("failed"|"interrupted"))
+        && snap["status"]=="running"
+        && snap["modelInFlight"]!=true
+        && snap["inFlight"].as_array().is_some_and(Vec::is_empty)
+        && job["nativeInFlight"]!=true && job["cancelRequested"]!=true;
+    if !replay_safe {
+        return error(StatusCode::CONFLICT,
+            "확정되지 않은 실행이 있거나 커널이 종료됐습니다. 상태를 확인하고 새 작업으로 시작하세요.");
+    }
+    let Some(updated)=state.store.patch_if("job",&id,"status",&job["status"],
+        &json!({"status":"queued","availableAt":null,"error":null,
+            "attempts":0,"recovered":true})) else {
+        return error(StatusCode::CONFLICT,"재개 중 작업 상태가 바뀌었습니다.");
+    };
+    state.store.audit("sdk.main_ui_safe_resume",json!({"jobId":id}));
+    state.bus.record("job",&updated);
+    Json(project(&state,&updated)).into_response()
+}
+pub async fn reconcile(
+    State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>
+)->Response{
+    let Some(job)=prompt_job(&state,&id) else {
+        return error(StatusCode::NOT_FOUND,"SDK 작업을 찾지 못했습니다.");
+    };
+    if job["status"]!="needs_review"{
+        return error(StatusCode::CONFLICT,"수동 확인 대상이 아닙니다.");
+    }
+    let Some(details)=body["details"].as_str()
+        .filter(|s|!s.trim().is_empty()&&s.len()<=8192)
+    else{return error(StatusCode::BAD_REQUEST,"확인한 결과를 입력하세요.");};
+    let Some(applied)=body["applied"].as_bool() else{
+        return error(StatusCode::BAD_REQUEST,"적용 여부가 필요합니다.");
+    };
+    let observation=json!({"applied":applied,"details":details,
+        "recordedAt":chrono::Utc::now().to_rfc3339(),
+        "kind":"owner_observation_not_execution_proof"});
+    let Some(updated)=state.store.patch_if("job",&id,"status",&json!("needs_review"),
+        &json!({"nativeOwnerObservation":observation})) else {
+        return error(StatusCode::CONFLICT,"작업 상태가 변경되었습니다.");
+    };
+    state.store.audit("sdk.main_ui_reconciled_observation",
+        json!({"jobId":id,"applied":applied,"replayed":false}));
+    state.bus.record("job",&updated);
+    // Do not translate a human observation into a fake completed state.
+    Json(project(&state,&updated)).into_response()
+}
+#[cfg(test)]
+mod tests{
+    use super::*;
+    #[test]
+    fn main_frontend_projects_real_native_state_without_fake_tokens(){
+        let root=std::env::temp_dir().join(format!("sdk-main-ui-{}",uuid::Uuid::new_v4()));
+        let cfg=crate::config::Config{port:0,data_dir:root.join("data"),
+            web_dir:root.join("web"),workspace:root.join("work")};
+        let state=AppState::new(cfg.clone(),
+            crate::db::Store::open(&cfg.db_path()).unwrap(),
+            crate::vault::Vault::open(&cfg.key_path()));
+        let job=json!({"id":"j","kind":"prompt","status":"running",
+            "input":{"prompt":"Fix the code"},"nativeState":{
+                "step":2,"receipts":[{"tool":"workspace_read_range"}]}});
+        let shown=project(&state,&job);
+        assert_eq!(shown["status"],"running");
+        assert_eq!(shown["instruction"],"Fix the code");
+        assert_eq!(shown["checkpoint"]["toolCalls"],1);
+        assert!(shown["checkpoint"]["usage"].is_null());
+        let mut needs=job;
+        needs["status"]=json!("needs_review");
+        assert_eq!(project(&state,&needs)["status"],"in_doubt");
+        let _=std::fs::remove_dir_all(root);
+    }
+}
