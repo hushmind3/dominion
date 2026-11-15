@@ -26,6 +26,10 @@
 - `src/api/sdk_runs.rs::create`는 메인 실행 계약의 `model`, `maxRounds`를 실제 `jobs::create`의 모델·예산 입력으로 연결한다.
 - `src/engine/video.rs`의 무API 네이티브 영상은 장면별 테마/미세 줌과 Windows 오프라인 System.Speech 경로를 추가한다. GitHub Ubuntu 집중 검증의 실제 MP4 테스트가 통과했으며, Windows 음성 품질 자체는 별도 검증이 필요하다.
 
+### 실제 FFmpeg 강제·HTTP 통합 재검증
+
+[최종 제품 검증 #43712789490](https://github.com/hushmind3/dominion-rust/actions/runs/43712789490) **성공**. FFmpeg/FFprobe를 runner에 필수로 준비하고 `DOMINION_REQUIRE_VIDEO_FFMPEG=1`로 무조건 실제 비디오를 생성합니다. MP4 출력은 ffprobe가 H.264·720×1280 스트림이라고 확인합니다. Rust 채팅 **19/19**, 파일 검증 **3/3**, 영상 **1/1**, 실제 HTTP·모의 모델 기반 연동 **10/10**, 프런트엔드 타입 검사·빌드를 통과했습니다. 첫 HTTP 실패에서 발견된 잘못된 도구 인수 오류 메시지를 수정하여 모델이 오류를 보고 적절히 복구하게 했습니다. `Cargo.lock`도 새 Rust 직접 의존성과 일치시켰습니다.
+
 ## 검증되지 않은 범위
 
 정적 경로 일치가 전체 동작의 완전 동등성을 증명하지는 않는다. 라이브 상용 제공자별 실제 청구 비용, Windows 오프라인 음성의 환경별 사용 가능성, 공개 프런티어 벤치마크, 전체 99개 HTTP e2e 사례 및 유료 모델을 이용한 장기 다세대 RSI 완주는 여기서 완료를 주장하지 않는다.
