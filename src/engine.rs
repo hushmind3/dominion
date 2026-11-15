@@ -872,16 +872,34 @@ pub async fn run(state: AppState, id: String) {
                     Err("tool_discover requires a query of 2..300 UTF-8 bytes".into())
                 } else {
                     let limit=arguments["limit"].as_u64().unwrap_or(5).clamp(1,8) as usize;
-                    let result=schema_router::discover(&available,query,limit);
-                    for entry in result["tools"].as_array().into_iter().flatten() {
+                    let mut result=schema_router::discover(&available,query,limit);
+                    // Promotion is an admission decision, not a promise that
+                    // every listed candidate will fit. Replace the previous
+                    // discovery set, promote only schemas which fit, and
+                    // truthfully report the actual next-turn availability.
+                    let mut next=HashSet::new();
+                    let mut activated=Vec::new();
+                    let ceiling=schema_router::max_schema_bytes(context_limit);
+                    for entry in result["tools"].as_array().into_iter().flatten(){
                         if let Some(alias)=entry["name"].as_str(){
-                            promoted_tools.insert(alias.to_owned());
+                            let mut proposal=next.clone();
+                            proposal.insert(alias.to_owned());
+                            if schema_router::select(
+                                &available,&active_instruction,&proposal,ceiling
+                            ).is_ok(){
+                                next=proposal;
+                                activated.push(alias.to_owned());
+                            }
                         }
                     }
+                    promoted_tools=next;
+                    result["promoted"]=json!(activated);
+                    result["schemaBudgetBytes"]=json!(ceiling);
                     state.emit(&id,"tool_schema_promoted",json!({
-                        "count":result["tools"].as_array().map(Vec::len).unwrap_or(0),
+                        "count":activated.len(),
                         "query":query,
-                        "catalogCount":result["eligibleMcpTools"]
+                        "catalogCount":result["eligibleMcpTools"],
+                        "schemaBudgetBytes":ceiling
                     }));
                     Ok(result)
                 }
