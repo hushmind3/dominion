@@ -10,6 +10,7 @@ pub mod group;
 pub mod video;
 pub mod veo;
 pub mod improvement;
+pub mod knowledge;
 
 pub use runtime::{DominionConfig, DominionSdk, RuntimeError, TaskInput, TaskRecord, TaskEvent};
 
