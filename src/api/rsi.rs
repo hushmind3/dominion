@@ -521,6 +521,9 @@ pub async fn start(State(state): State<AppState>, Json(body): Json<Value>) -> Re
         // source search after independent adoption of the original goal.
         "rsiExpandAfterGain": continuous && body["expandAfterGain"] == true
             && body["selectionPolicy"] == "automatic",
+        "rsiCrossDomainCycle": continuous && body["crossDomainCycle"] == true
+            && body["expandAfterGain"] == true
+            && body["selectionPolicy"] == "automatic",
         "rsiNativeInduction": continuous && body["nativeInduction"] == true
             && body["selectionPolicy"] == "automatic",
         "rsiStopAfterProof": continuous && body["stopAfterProof"] == true

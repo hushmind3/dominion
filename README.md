@@ -36,7 +36,7 @@
 
 ## What is DOMINION?
 
-RSI experimental adoption is bound to frozen paired evaluation. The evaluator records the candidate's pre-oracle Git tree and checks it against adopted descendants. Each system-evolution generation also verifies its spawned executable hash and controller identity before candidate promotion. Rust independently reconstructs the frozen candidate's Git tree before launching the paired evaluator; details are in [the Sub2 tree-proof note](docs/SUB2-RSI-TREE-PROOF-2026-11-15.md) and [the spawned-worker note](docs/SUB2-RSI-DESCENDANT-2026-11-15.md).
+RSI experimental adoption is bound to frozen paired evaluation. The evaluator records the candidate's pre-oracle Git tree and checks it against adopted descendants. Each system-evolution generation also verifies its spawned executable hash and controller identity before candidate promotion. Rust independently reconstructs the frozen candidate's Git tree before launching the paired evaluator; details are in [the Sub2 tree-proof note](docs/SUB2-RSI-TREE-PROOF-2026-11-15.md) and [the spawned-worker note](docs/SUB2-RSI-DESCENDANT-2026-11-15.md). In automatic system evolution, the rebuilt descendant may select a measured A→B→A return experiment from independently verified history, with an immutable coordinator guard and [an explicit cross-domain audit](docs/SUB2-RSI-CROSS-DOMAIN-2026-11-15.md).
 
 
 **DOMINION is an AI agent tool, not another AI model or a token-reselling service.**

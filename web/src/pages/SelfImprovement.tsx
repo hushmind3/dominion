@@ -185,7 +185,7 @@ export function SelfImprovementPage(){
   try{
    const job=await post<{id:string;status:string}>('/api/rsi/start',{
     providerId,model,...(!continuing&&reportedIssue?{issueId:reportedIssue.id}:{}),evaluationProfileId:continuing?campaign?.evaluationProfile?.id||'default':evaluationProfileId,localOnly:localOnly||workload==='night',...(continuing&&campaign?{continueFrom:campaign.id}:{request}),mode:'continuous',confirmation:'START_RSI_EVOLUTION',
-    selectionPolicy:selection,evolutionTarget:'system',applyWhenFinished:true,expandAfterGain:true,nativeInduction:false,reasoningEffort:'low',maxAttempts:budget.maxAttempts,tokenBudget:budget.tokenBudget,timeBudgetSeconds:budget.timeBudgetSeconds
+    selectionPolicy:selection,evolutionTarget:'system',applyWhenFinished:true,expandAfterGain:true,crossDomainCycle:selection==='automatic',nativeInduction:false,reasoningEffort:'low',maxAttempts:budget.maxAttempts,tokenBudget:budget.tokenBudget,timeBudgetSeconds:budget.timeBudgetSeconds
    })
    setSetupMode(false);setJobId(job.id);setCampaign({id:job.id,status:job.status,phase:'preparing_lab'});setInstall(null);setSettingsOpen(false)
    try{localStorage.setItem(SAVED,job.id)}catch{}
@@ -230,7 +230,8 @@ export function SelfImprovementPage(){
   <Panel className="p-5 sm:p-7">
    <div className="flex flex-wrap items-center justify-between gap-4"><div><h2 className="text-lg font-bold">버튼 한 번으로 시스템 자기개선</h2>
     <p className="mt-2 text-[13px] text-[#5C544A]">{enabled.find(p=>p.id===providerId)?.name||'서비스 확인 중'} · <strong>{model||'모델 확인 중'}</strong></p>
-    <p className="mt-2 text-[12px] text-[#7C7469]">전체 코드 탐색 → 시스템 재설계 → 후속 작업 A/B 평가 → {selection==='automatic'?'자동 채택':'직접 선택'} → 새 개선기로 재실행</p></div>
+    <p className="mt-2 text-[12px] text-[#7C7469]">전체 코드 탐색 → 시스템 재설계 → 후속 작업 A/B 평가 → {selection==='automatic'?'자동 채택':'직접 선택'} → 새 개선기로 재실행</p>
+    <p className="mt-1 text-[11px] text-[#81786B]">{selection==='automatic'?'서로 다른 2개 분야에서 실측 개선이 쌓이면 후손 실행기가 A → B → A 재검증을 탐색합니다.':'자동 교차 개선 탐색은 꺼져 있습니다.'}</p></div>
     <Button variant="primary" onClick={()=>void start()} disabled={busy||working||installing||!providerId||!model.trim()}>
      {busy||working||installing?<LoaderCircle size={16} className="animate-spin"/>:<Play size={16}/>}{installing?'프로그램에 반영 중':working?'자기개선 실행 중':'자기개선 시작'}</Button></div>
    <div className="mt-4 grid gap-3 sm:grid-cols-2"><FormField label="연결된 서비스"><SelectInput value={providerId} disabled={working||busy} onChange={e=>{setProviderId(e.target.value);setModel(enabled.find(p=>p.id===e.target.value)?.model||'');if(!enabled.find(p=>p.id===e.target.value)?.local)setLocalOnly(false)}}>

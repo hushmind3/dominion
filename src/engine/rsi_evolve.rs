@@ -3150,6 +3150,19 @@ async fn run_loop(
                 || plan["historyCount"].as_u64()!=Some(history.len() as u64) {
                 return Err("후손 계획과 실행 소스·세대 계보가 다릅니다.".into());
             }
+            if assigned_measured_target(&child_input).is_some_and(|assigned|
+                plan["domain"].as_str()!=Some(assigned)) {
+                let independently_replayed=crate::engine::rsi_transfer::audit_history(
+                    &context.state,&history);
+                if child_input["rsiCrossDomainCycle"]!=true
+                    || child_input["rsiAutonomous"]!=true
+                    || plan["crossDomainReturn"]["source"]!="v3_frozen_paired_A_B_return"
+                    || plan["crossDomainReturn"]["generatorCommit"]!=head
+                    || plan["crossDomainReturn"]["domain"]!=plan["domain"]
+                    || independently_replayed["nextReturnDomain"]!=plan["domain"] {
+                    return Err("재빌드된 후손이 독립 측정된 목표를 근거 없이 바꾸려 했습니다.".into());
+                }
+            }
             if plan["systemBlueprint"]["generatorCommit"]!=head
                 || plan["systemBlueprint"]["historyCount"].as_u64()!=Some(history.len() as u64)
                 || plan["systemBlueprint"]["architecture"].as_array().is_none_or(|items|
@@ -4143,6 +4156,16 @@ fn select_generation_strategy(
 /// this exact adopted revision. A descendant can synthesize its OWN edit
 /// policy, but its speculative search selector must not silently overwrite
 /// the measured objective before testing the next candidate.
+/// A measured target remains assigned even if a compiled descendant chooses
+/// a different domain. Do not make its protection depend on the field that a
+/// potentially changed descendant is allowed to replace.
+fn assigned_measured_target(input:&Value)->Option<&str>{
+    (input["rsiSourceScopeExpanded"]==true
+        && input["rsiDecisionInput"]["basis"]=="independently_measured_post_adoption_target")
+        .then(||input["rsiDecisionInput"]["targetDomain"].as_str())
+        .flatten().filter(|domain|DOMAINS.contains(domain))
+}
+
 fn paired_descendant_target(input:&Value)->bool {
     input["rsiSourceScopeExpanded"]==true
         && input["rsiDecisionInput"]["basis"]==
@@ -4223,15 +4246,33 @@ pub fn plan_generation_from_file(path:&str)->Result<(),String> {
         crate::engine::rsi_system::inherited_domain(&history)
     }else{None};
     let allowed=candidate_domains(&objective);
-    let architecture_target=if explicit || paired_descendant_target(input) {Value::Null}else{
+    // Only the currently running, compiled descendant computes the cycle
+    // return target from replayed, v3-frozen A/B receipts. The resident
+    // coordinator has no authority to guess a new target from domain labels.
+    let cycle_audit=if input["rsiCrossDomainCycle"]==true
+        && input["rsiAutonomous"]==true && !explicit {
+        crate::engine::rsi_transfer::audit_history(&state,&history)
+    }else{Value::Null};
+    let cycle_return=cycle_audit["nextReturnDomain"].as_str()
+        .filter(|domain|DOMAINS.contains(domain) && allowed.contains(domain))
+        .map(str::to_string);
+    let architecture_target=if explicit
+        || (paired_descendant_target(input) && cycle_return.is_none()) {
+        Value::Null
+    }else{
         frontier.iter().find(|row|row["domain"].as_str().is_some_and(|domain|
-            allowed.contains(&domain) && inherited.as_deref().is_none_or(|pinned|pinned==domain)))
+            allowed.contains(&domain) &&
+            cycle_return.as_deref().or(inherited.as_deref()).is_none_or(|pinned|pinned==domain)))
             .cloned().unwrap_or(Value::Null)
     };
-    let successor_hint=if explicit || paired_descendant_target(input) {
+    let successor_hint=if cycle_return.is_some() {
+        cycle_return.clone()
+    }else if explicit || paired_descendant_target(input) {
         system_evolution_target_hint(input,snapshot["attempt"].as_u64().unwrap_or(0))
     }else{inherited.or_else(||architecture_target["domain"].as_str().map(str::to_string))};
-    let trial=if paired_descendant_target(input) {None} else {
+    // Avoid biasing an A→B→A recheck with a different pending algorithm
+    // trial. The unchanged trial remains in the durable campaign ledger.
+    let trial=if paired_descendant_target(input) || cycle_return.is_some() {None} else {
         input["rsiTrialAlgorithmId"].as_str().map(str::to_string)
     };
     let (domain,selection,strategy)=select_generation_strategy(
@@ -4277,6 +4318,9 @@ pub fn plan_generation_from_file(path:&str)->Result<(),String> {
         "systemBlueprint":system_blueprint,
         "improvementDirective":directive,
         "archiveSelection":archive,
+        "crossDomainReturn":cycle_return.as_ref().map(|domain|
+            json!({"domain":domain,"source":"v3_frozen_paired_A_B_return",
+                "generatorCommit":commit})),
         "editPolicy":edit_policy
     }));
     Ok(())
@@ -4311,7 +4355,7 @@ mod system_evolution_handoff_tests {
 /// MUST NOT recompute and replace the compiled descendant's design. Verify the
 /// exact generation and immutable source identity before any paid operation.
 fn validated_descendant_controller(
-    input:&Value,history:&[Value],commit:&str,
+    input:&Value,history:&[Value],commit:&str,verified_return_domain:Option<&str>,
 )->Result<Option<(String,&'static str,Value)>,String>{
     if input["rsiSystemEvolution"]!=true {return Ok(None);}
     // A separately assigned downstream coding task has a pinned target and
@@ -4365,8 +4409,15 @@ fn validated_descendant_controller(
         && input["rsiFocusFiles"]!=plan["focusFiles"] {
         return Err("후손이 선택한 소스가 worker 실행 전에 변경됐습니다.".into());
     }
-    if paired_descendant_target(input) && input["rsiDecisionInput"]["targetDomain"]!=domain {
-        return Err("검증된 세대 간 목표를 후손 제어기가 무시했습니다.".into());
+    if assigned_measured_target(input).is_some_and(|assigned|assigned!=domain) {
+        let cycle=&plan["crossDomainReturn"];
+        if input["rsiCrossDomainCycle"]!=true || input["rsiAutonomous"]!=true
+            || cycle["source"]!="v3_frozen_paired_A_B_return"
+            || cycle["generatorCommit"]!=commit
+            || cycle["domain"]!=domain
+            || verified_return_domain!=Some(domain) {
+            return Err("독립 측정된 목표를 바꾸려면 후손의 A→B→A 계획과 원본 평가 증거가 일치해야 합니다.".into());
+        }
     }
     Ok(Some((domain.to_string(),selection,plan["strategy"].clone())))
 }
@@ -4401,30 +4452,47 @@ mod descendant_controller_contract_tests {
             "rsiControllerPlan":plan
         });
         let history=vec![json!({"attempt":1})];
-        let validated=validated_descendant_controller(&input,&history,&commit)
+        let validated=validated_descendant_controller(&input,&history,&commit,None)
             .unwrap().unwrap();
         assert_eq!(validated.0,"learning");
         assert_eq!(validated.2["id"],"descendant-search");
         let mut hijacked=input.clone();
         hijacked["rsiSelectedDomain"]=json!("improver");
-        assert!(validated_descendant_controller(&hijacked,&history,&commit).is_err());
+        assert!(validated_descendant_controller(&hijacked,&history,&commit,None).is_err());
         let mut stale=input.clone();
         stale["rsiControllerPlan"]["generatorCommit"]=json!("old");
-        assert!(validated_descendant_controller(&stale,&history,&commit).is_err());
+        assert!(validated_descendant_controller(&stale,&history,&commit,None).is_err());
         let manual=json!({"rsiSystemEvolution":true,"rsiAutoFocus":false,
             "rsiGeneratorSourceDir":"/pinned/source","rsiFocusFiles":["src/engine/memory.rs"],
             "rsiSystemBlueprint":{"source":"compiled_descendant_system_blueprint_v1",
                 "generatorCommit":commit},
             "rsiImprovementDirective":{"mode":"discover"}});
-        assert!(validated_descendant_controller(&manual,&history,&commit)
+        assert!(validated_descendant_controller(&manual,&history,&commit,None)
             .unwrap().is_none(),"assigned downstream coding uses the normal compiled worker");
         let mut unsafe_manual=manual;
         unsafe_manual["rsiGeneratorSourceDir"]=Value::Null;
-        assert!(validated_descendant_controller(&unsafe_manual,&history,&commit).is_err(),
+        assert!(validated_descendant_controller(&unsafe_manual,&history,&commit,None).is_err(),
             "unplanned self-evolution cannot bypass the compiled controller");
+        let mut measured=input.clone();
+        measured["rsiCrossDomainCycle"]=json!(true);
+        measured["rsiAutonomous"]=json!(true);
+        measured["rsiSourceScopeExpanded"]=json!(true);
+        measured["rsiDecisionInput"]=json!({"basis":"independently_measured_post_adoption_target",
+            "targetDomain":"memory"});
+        measured["rsiSelectedDomain"]=json!("learning");
+        assert!(assigned_measured_target(&measured)==Some("memory"));
+        measured["rsiControllerPlan"]["crossDomainReturn"]=json!({
+            "domain":"learning","source":"v3_frozen_paired_A_B_return",
+            "generatorCommit":commit});
+        assert!(validated_descendant_controller(&measured,&history,&commit,None).is_err(),
+            "model-claimed cross-domain return must not pass without replay");
+        assert!(validated_descendant_controller(&measured,&history,&commit,Some("learning")).is_ok(),
+            "a separately re-audited domain may override an older optimization hint");
+        measured["rsiCrossDomainCycle"]=json!(false);
+        assert!(validated_descendant_controller(&measured,&history,&commit,Some("learning")).is_err());
         let mut wrong_method=input;
         wrong_method["rsiEditPolicy"]["revision"]=json!("parent");
-        assert!(validated_descendant_controller(&wrong_method,&history,&commit).is_err());
+        assert!(validated_descendant_controller(&wrong_method,&history,&commit,None).is_err());
     }
 }
 
@@ -4501,7 +4569,11 @@ pub async fn worker(job_id: &str) -> Result<(), String> {
         .filter(|domain| DOMAINS.contains(domain))
         .map(str::to_string);
     let commit=job["input"]["rsiGeneratorCommit"].as_str().unwrap_or("").to_string();
-    let delegated=validated_descendant_controller(&job["input"],&history,&commit)?;
+    let audited_return=if job["input"]["rsiCrossDomainCycle"]==true {
+        crate::engine::rsi_transfer::audit_history(&state,&history)
+    }else{Value::Null};
+    let delegated=validated_descendant_controller(&job["input"],&history,&commit,
+        audited_return["nextReturnDomain"].as_str())?;
     let (mut domain, mut domain_selection, mut strategy)=if let Some(plan)=delegated {
         plan
     }else{
