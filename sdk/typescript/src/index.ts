@@ -150,3 +150,6 @@ export class DominionClient {
     }
   }
 }
+
+export { DominionRuntime, DominionThread } from './runtime.js';
+export type { ThreadOptions, RunOptions, RunResult, StreamedRun } from './runtime.js';
