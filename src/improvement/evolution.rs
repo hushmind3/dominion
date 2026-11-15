@@ -8,6 +8,7 @@ use serde::{Deserialize,Serialize};
 use std::{collections::HashMap,path::Path,sync::Arc};
 use tokio::fs;
 use uuid::Uuid;
+mod tournament;
 
 #[derive(Clone,Debug,Serialize,Deserialize,PartialEq,Eq)]
 #[serde(rename_all="snake_case")]
@@ -18,8 +19,21 @@ pub struct NewEvolution {
     pub max_generations:usize,
     pub cost_budget_krw:f64,
     #[serde(default)] pub target_files:Vec<String>,
+    #[serde(default="super::default_candidate_count")] pub candidates_per_generation:usize,
+    #[serde(default)] pub validation_command:Option<String>,
 }
 
+#[derive(Clone,Debug,Serialize,Deserialize)]
+pub struct CandidateRecord {
+    pub trial_id:Uuid,
+    pub generation:usize,
+    pub proposal_index:usize,
+    pub training_score:Option<f64>,
+    pub validation_baseline_score:Option<f64>,
+    pub validation_score:Option<f64>,
+    pub eligible:bool,
+    pub reason:Option<String>,
+}
 #[derive(Clone,Debug,Serialize,Deserialize)]
 pub struct EvolutionRun {
     pub id:Uuid,
@@ -27,6 +41,10 @@ pub struct EvolutionRun {
     pub status:EvolutionStatus,
     pub max_generations:usize,
     pub target_files:Vec<String>,
+    #[serde(default="super::default_candidate_count")] pub candidates_per_generation:usize,
+    #[serde(default)] pub validation_command:Option<String>,
+    #[serde(default)] pub candidate_groups:Vec<Vec<Uuid>>,
+    #[serde(default)] pub candidates:Vec<CandidateRecord>,
     pub descendants:Vec<Uuid>,
     pub completed_generations:usize,
     pub cost_budget_krw:f64,
@@ -135,6 +153,14 @@ impl Improvements {
         if !(1..=4).contains(&request.max_generations){
             return Err("Evolution must request 1..4 bounded generations".into());
         }
+        if !(1..=4).contains(&request.candidates_per_generation) {
+            return Err("Each generation must evaluate 1..4 candidate proposals".into());
+        }
+        if let Some(command)=&request.validation_command {
+            if command.trim().is_empty()||command.len()>2048 {
+                return Err("Validation score command must be 1..2048 characters".into());
+            }
+        }
         if !request.cost_budget_krw.is_finite() ||
             !(1.0..=1_000_000.0).contains(&request.cost_budget_krw){
             return Err("Evolution requires an explicit positive KRW cost ceiling".into());
@@ -181,7 +207,10 @@ impl Improvements {
         let now=now_ms();
         let run=EvolutionRun{id:Uuid::new_v4(),starting_trial:parent_id,
             status:EvolutionStatus::Running,max_generations:request.max_generations,
-            target_files:targets,descendants:Vec::new(),completed_generations:0,
+            target_files:targets,candidates_per_generation:request.candidates_per_generation,
+            validation_command:request.validation_command,
+            candidate_groups:Vec::new(),candidates:Vec::new(),
+            descendants:Vec::new(),completed_generations:0,
             cost_budget_krw:request.cost_budget_krw,spent_krw:0.0,
             stop_requested:false,stop_reason:None,created_at_ms:now,updated_at_ms:now};
         if let Err(error)=self.put_evolution(run.clone()).await{
@@ -221,49 +250,19 @@ impl Improvements {
             if self.should_stop_evolution(run).await{return Ok(());}
             if run.spent_krw>=run.cost_budget_krw{
                 run.status=EvolutionStatus::NeedsReview;
-                run.stop_reason=Some("Cumulative measured model spending reached the approved ceiling".into());
+                run.stop_reason=Some("Cumulative metered model spending reached the approved ceiling".into());
                 return Ok(());
             }
-            let descendant=self.create(NewImprovement{
-                repository:adopted.repository.clone(),target_file:target,
-                instruction:adopted.instruction.clone(),test_command:adopted.test_command.clone(),
-                score_command:adopted.score_command.clone(),parent:Some(adopted.id)
-            }).await?;
-            run.descendants.push(descendant.id);
-            run.updated_at_ms=now_ms();
-            self.put_evolution(run.clone()).await?;
-            let mut current=descendant;
-            current.status=ImprovementStatus::Running;
-            current.updated_at_ms=now_ms();
-            self.put(current.clone()).await?;
-            if let Err(error)=self.evaluate(model,current).await {
-                if let Some(mut failed)=self.get(*run.descendants.last().unwrap()).await{
-                    failed.status=ImprovementStatus::Failed;
-                    failed.error=Some(error.clone());
-                    failed.updated_at_ms=now_ms();
-                    let _=self.put(failed).await;
-                }
-                return Err(error);
-            }
-            let proposal_id=*run.descendants.last().ok_or("No descendant recorded")?;
-            let assessed=self.get(proposal_id).await.ok_or("Candidate evaluation disappeared")?;
-            run.spent_krw+=assessed.cost_krw;
-            run.updated_at_ms=now_ms();
-            self.put_evolution(run.clone()).await?;
+            let selected=self.tournament_generation(model,&adopted,&target,run).await?;
+            if run.status!=EvolutionStatus::Running{return Ok(());}
             if self.should_stop_evolution(run).await{return Ok(());}
-            // An upstream provider might charge during a request. Never auto-
-            // adopt after measuring that the fixed ceiling was exceeded.
-            if run.spent_krw>run.cost_budget_krw{
+            let Some(proposal_id)=selected else {
                 run.status=EvolutionStatus::NeedsReview;
-                run.stop_reason=Some("Generation exceeded measured KRW ceiling; candidate not adopted".into());
+                run.stop_reason=Some("No independently verified winning candidate in this generation".into());
                 return Ok(());
-            }
-            if assessed.status!=ImprovementStatus::Evaluated || !assessed.accepted{
-                run.status=EvolutionStatus::NeedsReview;
-                run.stop_reason=Some("Independent evaluator found no verified gain; chain stopped".into());
-                return Ok(());
-            }
+            };
             adopted=self.adopt_internal(proposal_id,true).await?;
+            run.descendants.push(proposal_id);
             run.completed_generations+=1;
             run.updated_at_ms=now_ms();
             self.put_evolution(run.clone()).await?;
@@ -337,7 +336,7 @@ mod tests {
         let blocked=lease.lock().await;
         let run=service.evolution_start(model.clone(),seed.id,NewEvolution{
             max_generations:2,cost_budget_krw:100.0,
-            target_files:vec!["b.txt".into(),"a.txt".into()]
+            target_files:vec!["b.txt".into(),"a.txt".into()],candidates_per_generation:1,validation_command:None
         },true).await.unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(80)).await;
         assert!(service.evolution(run.id).await.unwrap().descendants.is_empty(),
@@ -369,7 +368,7 @@ mod tests {
         let hold=lease.lock().await;
         let stopped=service.evolution_start(model.clone(),second.id,NewEvolution{
             max_generations:1,cost_budget_krw:100.0,
-            target_files:vec!["a.txt".into()]
+            target_files:vec!["a.txt".into()],candidates_per_generation:1,validation_command:None
         },true).await.unwrap();
         let stop_receipt=service.evolution_stop(stopped.id).await.unwrap();
         assert!(stop_receipt.stop_requested);
@@ -394,7 +393,7 @@ mod tests {
         rate.output_krw_per_million=1_000_000.0;
         let priced=crate::provider::ModelClient::new(rate,None).unwrap();
         let limited=service.evolution_start(priced,second.id,NewEvolution{
-            max_generations:1,cost_budget_krw:1.0,target_files:vec!["a.txt".into()]
+            max_generations:1,cost_budget_krw:1.0,target_files:vec!["a.txt".into()],candidates_per_generation:1,validation_command:None
         },true).await.unwrap();
         let mut bounded=None;
         for _ in 0..150 {
@@ -425,7 +424,7 @@ mod tests {
                 "unpriced".into(),None),None
         ).unwrap();
         let error=service.evolution_start(model,Uuid::new_v4(),NewEvolution{
-            max_generations:1,cost_budget_krw:10.0,target_files:vec![]
+            max_generations:1,cost_budget_krw:10.0,target_files:vec![],candidates_per_generation:1,validation_command:None
         },true).await.unwrap_err();
         assert!(error.contains("KRW rates"));
         fs::remove_dir_all(root).await.unwrap();
@@ -438,7 +437,9 @@ mod tests {
         let now=now_ms();
         let run=EvolutionRun{id:Uuid::new_v4(),starting_trial:Uuid::new_v4(),
             status:EvolutionStatus::Running,max_generations:2,
-            target_files:vec!["a.txt".into(),"b.txt".into()],descendants:Vec::new(),
+            target_files:vec!["a.txt".into(),"b.txt".into()],
+            candidates_per_generation:1,validation_command:None,
+            candidate_groups:Vec::new(),candidates:Vec::new(),descendants:Vec::new(),
             completed_generations:0,cost_budget_krw:100.0,spent_krw:0.0,
             stop_requested:false,stop_reason:None,created_at_ms:now,updated_at_ms:now};
         service.put_evolution(run.clone()).await.unwrap();

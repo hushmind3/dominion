@@ -19,11 +19,14 @@ pub struct Improvement {
     pub instruction:String, pub test_command:String, pub score_command:Option<String>,
     pub status:ImprovementStatus, pub base_commit:Option<String>,pub candidate_commit:Option<String>,
     #[serde(default)] pub adopted_commit:Option<String>,
+    #[serde(default)] pub proposal_index:usize,
+    #[serde(default="default_candidate_count")] pub proposal_count:usize,
     pub baseline:Option<Measurement>,pub candidate:Option<Measurement>,pub proposal:Option<String>,
     pub reflection:Option<String>,pub accepted:bool,pub cost_krw:f64,pub error:Option<String>,
     pub created_at_ms:u64,pub updated_at_ms:u64,
 }
 #[derive(Deserialize)]
+fn default_candidate_count()->usize{1}
 pub struct NewImprovement {
     pub repository:String, pub target_file:String, pub instruction:String,
     pub test_command:String, pub score_command:Option<String>, pub parent:Option<Uuid>,
@@ -140,6 +143,7 @@ impl Improvements {
         self.put(Improvement{id:Uuid::new_v4(),parent:input.parent,repository:input.repository,target_file:input.target_file,
             instruction:input.instruction,test_command:input.test_command,score_command:input.score_command,status,
             base_commit:None,candidate_commit:None,adopted_commit:None,
+            proposal_index:0,proposal_count:1,
             baseline:None,candidate:None,proposal:None,reflection:None,
             accepted:false,cost_krw:0.0,error:None,created_at_ms:now,updated_at_ms:now}).await
     }
@@ -223,11 +227,22 @@ impl Improvements {
         if fs::metadata(&actual).await.map_err(|e|e.to_string())?.len()>100_000{return Err("target file exceeds 100 KB".into());}
         let original=fs::read_to_string(&actual).await.map_err(|e|e.to_string())?;
         let inherited=if let Some(parent)=item.parent { self.get(parent).await.and_then(|p|p.reflection).unwrap_or_default() }else{String::new()};
+        let strategies=[
+            "Preserve the existing interface; favor a minimal algorithmic improvement.",
+            "Explore a different implementation strategy while preserving behavior.",
+            "Prioritize structural simplicity and lower resource usage.",
+            "Try an alternative algorithm with the same tests and contracts."
+        ];
+        let selected=strategies[item.proposal_index.min(strategies.len()-1)];
         let prompts=vec![
             json!({"role":"system","content":"Propose one concrete, improved version of the supplied source file. Return ONLY the complete new source text, without markdown fences. Do not alter tests or evaluation scripts. Prefer minimal maintainable improvements. You are optimizing a fixed program against independent tests and a frozen scoring command. Do not game the metric or weaken safety checks."}),
-            json!({"role":"user","content":format!("Improvement objective:\n{}\nInherited measured lessons:\n{}\nFile: {}\nCurrent contents:\n{}",item.instruction,inherited,item.target_file,original)})
+            json!({"role":"user","content":format!("Improvement objective:\n{}\nInherited measured lessons:\n{}\nSearch alternative {} of {}: {}\nFile: {}\nCurrent contents:\n{}",item.instruction,inherited,item.proposal_index+1,item.proposal_count,selected,item.target_file,original)})
         ];
         let reply=model.complete(&prompts,&[],false).await?;
+        // Persist metered cost immediately, even when Git staging or later
+        // independent evaluation fails; lost proposals still cost money.
+        item.cost_krw=reply.cost_krw;
+        self.put(item.clone()).await?;
         if reply.text.is_empty() || reply.text.len()>150_000 || reply.text==original {return Err("model did not propose a distinct bounded candidate".into());}
         let text=reply.text.trim().strip_prefix("```").map(|s|s.trim_start_matches(|c:char|c!='\n').trim_start_matches('\n').trim_end_matches("```").trim().to_string()).unwrap_or(reply.text);
         if text.is_empty(){return Err("candidate is empty".into());}
@@ -242,7 +257,6 @@ impl Improvements {
         git(candidate,&["update-ref",&candidate_ref,&commit]).await?;
         item.candidate_commit=Some(commit);
         item.proposal=Some(format!("{} bytes -> {} bytes",original.len(),text.len()));
-        item.cost_krw=reply.cost_krw;
         self.put(item.clone()).await?;
         let baseline=self.measure(reference,&item.test_command,item.score_command.as_deref()).await;
         let candidate_measure=self.measure(candidate,&item.test_command,item.score_command.as_deref()).await;
