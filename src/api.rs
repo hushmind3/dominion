@@ -1,4 +1,4 @@
-use crate::{engine, AppState};
+use crate::AppState;
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -6,23 +6,9 @@ use axum::{
     routing::{get, post},
     Json, Router
 };
-use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, convert::Infallible, time::Duration};
 use tower_http::services::ServeDir;
-
-#[derive(Deserialize)]
-#[serde(rename_all="camelCase")]
-struct Submit {
-    request_id: String,
-    prompt: String,
-    session_id: Option<String>,
-    #[serde(default)] allow_write: bool,
-    #[serde(default)] allow_shell: bool,
-    #[serde(default)] require_evidence: bool,
-    max_steps: Option<u64>,
-    token_budget: Option<u64>,
-}
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -50,36 +36,23 @@ async fn one(State(state):State<AppState>,Path(id):Path<String>) -> Response {
     }
 }
 async fn submit(State(state):State<AppState>,Json(raw):Json<Value>) -> Response {
-    let Ok(input) = serde_json::from_value::<Submit>(raw) else {
+    let Ok(input) = serde_json::from_value::<crate::runtime::TaskInput>(raw) else {
         return (StatusCode::BAD_REQUEST,Json(json!({"error":"작업 입력 형식이 잘못됐습니다."}))).into_response();
     };
-    if !(8..=128).contains(&input.request_id.len()) ||
-        !input.request_id.bytes().all(|c| c.is_ascii_alphanumeric() || c==b'-' || c==b'_') ||
-        input.prompt.trim().is_empty() || input.prompt.len()>32_000 ||
-        input.session_id.as_deref().is_some_and(|id| id.len()>128 || id.is_empty()) ||
-        !(1..=24).contains(&input.max_steps.unwrap_or(12)) ||
-        !(256..=500_000).contains(&input.token_budget.unwrap_or(40_000)) {
-        return (StatusCode::BAD_REQUEST,Json(json!({"error":"작업 ID, 내용 또는 실행 한도가 잘못됐습니다."}))).into_response();
+    // An HTTP caller owns the retry key. Otherwise a lost response could
+    // enqueue duplicate model charges and external tool side effects.
+    if input.request_id.is_none() {
+        return (StatusCode::BAD_REQUEST,Json(json!({"error":"requestId가 필요합니다."}))).into_response();
     }
-    let normalized = json!({
-        "prompt":input.prompt.trim(),
-        "sessionId":input.session_id,
-        "allowWrite":input.allow_write,
-        "allowShell":input.allow_shell,
-        "requireEvidence":input.require_evidence,
-        "maxSteps":input.max_steps.unwrap_or(12),
-        "tokenBudget":input.token_budget.unwrap_or(40_000)
-    });
-    match state.store.submit(&input.request_id,&normalized) {
-        Ok((record,created)) => {
-            if created {
-                let next = state.clone();
-                let id = record["id"].as_str().unwrap_or("").to_string();
-                tokio::spawn(async move { engine::run(next,id).await; });
-            }
-            (StatusCode::ACCEPTED,Json(record)).into_response()
+    let sdk = crate::runtime::DominionSdk::from_state(state);
+    match sdk.submit(input).await {
+        Ok(record) => (StatusCode::ACCEPTED,Json(json!(record))).into_response(),
+        Err(error) => {
+            let code = if error.0.contains("서로 다른 작업") {
+                StatusCode::CONFLICT
+            } else { StatusCode::BAD_REQUEST };
+            (code,Json(json!({"error":error.to_string()}))).into_response()
         }
-        Err(message) => (StatusCode::CONFLICT,Json(json!({"error":message}))).into_response()
     }
 }
 async fn cancel(State(state):State<AppState>,Path(id):Path<String>) -> Response {
