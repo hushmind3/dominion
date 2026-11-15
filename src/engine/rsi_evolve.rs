@@ -25,6 +25,8 @@ pub const DOMAINS: &[&str] = &["memory", "tools", "context", "learning", "models
 #[path = "rsi/planner/search.rs"]
 mod planner_search;
 use planner_search::search_strategy;
+#[cfg(test)]
+use planner_search::{search_features,score_domain};
 pub(crate) use planner_search::{objective_matches, candidate_domains, scored_domains, select_domain};
 pub use planner_search::{limits};
 #[path = "rsi/learning/edit_policy.rs"]
