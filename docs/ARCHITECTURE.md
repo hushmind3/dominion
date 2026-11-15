@@ -33,6 +33,7 @@ Only Rust decides task admission, planning, model turns, side effects, explicit 
 | --- | --- | --- |
 | SDK / task lifecycle | src/runtime.rs, src/store.rs | NativeWorkspace.tsx |
 | Agent model/tool loop | src/engine.rs, src/engine/files.rs, src/engine/strategy.rs | Task event stream |
+| Source revision checks and real test-driven repair | src/engine/verification.rs, src/engine/files.rs, src/engine/acceptance_tests.rs | NativeWorkspace.tsx test settings and diagnostics |
 | Verified long-term semantic context | src/engine/context.rs, src/engine/semantic.rs, src/context_memory.rs, src/store.rs | Evidence inspector and task_receipt/context_search tools |
 | Provider routing and usage | src/provider.rs | NativeSystem.tsx models |
 | MCP | src/mcp.rs | NativeSystem.tsx extensions |
@@ -51,6 +52,12 @@ The original main React source and look are preserved; old API-incompatible page
 ### Proof-preserving context management
 
 The completed native context feature is documented in [docs/CONTEXT_EVIDENCE.md](CONTEXT_EVIDENCE.md), including the exact invariants, hard encoded-byte budgets, parent/child tool graph parsing, deterministic projections and SHA-256 source/projection receipts. The task_receipt and session_history tools retrieve persisted UTF-8 byte pages; no effects are replayed. A resumed task's lineage is committed atomically before any worker can claim it. Projected bytes are neither billed-token counts nor claims about external frontier success rates.
+
+### Native coding acceptance loop
+
+The second focused feature is documented in [docs/CODING_ACCEPTANCE.md](CODING_ACCEPTANCE.md). Owner-specified \`acceptanceChecks\` and conservative manifest autodetection are validated in Rust before execution. Code-editing tools retain verified source hashes. At the model's proposed finish, the Rust verifier requires real passing process exit codes after the last source mutation; on failure, the exact diagnostic is persisted and sent back into a bounded repair turn. No previous green check can certify a newer revision, and unchanged failing code is not automatically rechecked.
+
+A workspace lease protects an entire mutating execution from other local Dominion tasks through final acceptance, while read-only tasks remain concurrent. \`workspace_read_lines\` permits large source inspection. \`workspace_replace_many\` prevalidates and stages up to 8 exact source edits, uses readback checks and best-effort rollback. This does not constitute a cross-process sandbox or filesystem-wide atomic transaction. \`acceptance_complete\` is a Rust-issued durable event and the persisted final task result contains the exact command proof.
 
 ## Session consistency
 
