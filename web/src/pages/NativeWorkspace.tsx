@@ -11,8 +11,8 @@ type Member = {name:string;role:string;economy?:boolean}
 type Group = {id:string;topic:string;participants:Member[];messages:{speaker:string;content:string;at_ms:number}[];status:string;rounds:number;max_rounds:number;cost_krw:number;budget_krw:number}
 type Scene = {heading:string;narration:string;seconds:number}
 type Video = {id:string;prompt:string;status:string;scenes:Scene[];backend:string;error?:string|null;output?:string|null;cost_krw:number;budget_krw:number;images?:Record<string,string>}
-type Trial = {id:string;repository:string;target_file:string;instruction:string;status:string;accepted:boolean;cost_krw:number;error?:string|null;baseline?:{score?:number;tests_passed:boolean};candidate?:{score?:number;tests_passed:boolean}}
-type EvolutionCandidate = {trial_id:string;generation:number;proposal_index:number;training_score:number|null;validation_baseline_score:number|null;validation_score:number|null;eligible:boolean;reason?:string|null}
+type Trial = {id:string;repository:string;target_file:string;instruction:string;status:string;accepted:boolean;cost_krw:number;strategy_id?:string|null;strategy_feedback?:string|null;error?:string|null;baseline?:{score?:number;tests_passed:boolean};candidate?:{score?:number;tests_passed:boolean}}
+type EvolutionCandidate = {trial_id:string;generation:number;proposal_index:number;strategy_id?:string|null;training_baseline_score?:number|null;model_cost_krw?:number;training_score:number|null;validation_baseline_score:number|null;validation_score:number|null;eligible:boolean;reason?:string|null}
 type Evolution = {id:string;starting_trial:string;status:string;max_generations:number;target_files:string[];candidates_per_generation?:number;validation_command?:string|null;candidate_groups?:string[][];candidates?:EvolutionCandidate[];descendants:string[];completed_generations:number;cost_budget_krw:number;spent_krw:number;stop_requested?:boolean;stop_reason?:string|null}
 type Memory = {id:string;content:string;kind:string;status:string;sessionId?:string|null}
 type Skill = {id:string;name:string;trigger:string;instructions:string;enabled:boolean}
@@ -24,6 +24,7 @@ const panel='p-4 sm:p-5'
 const subtle='text-[12px] text-[#7C7469]'
 const row='flex flex-wrap items-center gap-2'
 const fmtKrw=(n:number)=>Math.round(n||0).toLocaleString('ko-KR')+'원'
+const methodName=(id?:string|null)=>({minimal:'최소 수정',alternative:'대체 구현',simplify:'구조 단순화',algorithm:'알고리즘 교체'} as Record<string,string>)[id||'']||'기본 탐색'
 const errText=(e:unknown)=>e instanceof Error?e.message:String(e)
 function Section({children,className=''}:{children:ReactNode;className?:string}){return <Panel className={panel+' '+className}>{children}</Panel>}
 function InlineError({error}:{error:string}){return <Notice message={error}/>}
@@ -332,6 +333,7 @@ export function NativeImprovements(){
     <div><LoadingButton busy={op.busy} type="submit" variant="primary"><Plus size={14}/> 개선 후보 생성</LoadingButton></div>
    </form></Section>
    {selected&&<Section><div className="flex items-center justify-between"><h2 className="font-bold">{selected.target_file}</h2><Status value={selected.status}/></div><p className={'my-2 '+subtle}>{selected.instruction}</p>
+    {selected.strategy_id&&<p className={'mb-2 '+subtle}>적용 방법: {methodName(selected.strategy_id)}{selected.strategy_feedback?' · '+selected.strategy_feedback:''}</p>}
     <div className="grid grid-cols-2 gap-2 rounded-xl bg-[#F7F3EC] p-3 text-[12px]"><div>기준 측정<pre>{selected.baseline?JSON.stringify(selected.baseline,null,2):'대기'}</pre></div><div>후보 측정<pre>{selected.candidate?JSON.stringify(selected.candidate,null,2):'대기'}</pre></div></div>
     {selected.error&&<InlineError error={selected.error}/>}
     <div className={'mt-3 '+row}><LoadingButton busy={op.busy||selected.status!=='awaiting_approval'} onClick={()=>void act('evaluate')}>독립 평가</LoadingButton><LoadingButton busy={op.busy||selected.status!=='evaluated'} variant="primary" onClick={()=>void act('adopt')}>검증 후보 채택</LoadingButton><LoadingButton busy={op.busy||selected.status!=='adopted'} onClick={()=>void act('descendant')}>후손 실험</LoadingButton></div>
@@ -353,8 +355,8 @@ export function NativeImprovements(){
      <p className={'mt-1 '+subtle}>{run.target_files.join(' → ')} · 세대당 {run.candidates_per_generation||1}개 후보 · 모델 비용 {fmtKrw(run.spent_krw)} / {fmtKrw(run.cost_budget_krw)}</p>
      <div className={'mt-2 '+row}>{run.descendants.map((id,i)=><Button key={id} size="sm" variant="ghost" onClick={()=>setActive(id)}>{i+1}세대 채택</Button>)}</div>
      {(run.candidates||[]).length>0&&<div className="mt-3 grid gap-2">{(run.candidates||[]).map(item=><div key={item.trial_id} className="rounded-lg border border-[#ECE5DB] bg-[#F8F6F1] p-2">
-       <div className="flex flex-wrap items-center justify-between gap-2"><Button size="sm" variant="ghost" onClick={()=>setActive(item.trial_id)}>{item.generation+1}세대 · 후보 {item.proposal_index+1}</Button><span className={subtle}>{run.descendants.includes(item.trial_id)?'채택':item.eligible?(run.status==='running'?'검증 통과 · 경쟁 진행 중':'검증 통과 · 미채택'):'제외'}</span></div>
-       <p className={subtle}>훈련 {item.training_score??'—'} · 독립 검증 {item.validation_score??'—'} (기준 {item.validation_baseline_score??'—'})</p>
+       <div className="flex flex-wrap items-center justify-between gap-2"><Button size="sm" variant="ghost" onClick={()=>setActive(item.trial_id)}>{item.generation+1}세대 · 후보 {item.proposal_index+1} · {methodName(item.strategy_id)}</Button><span className={subtle}>{run.descendants.includes(item.trial_id)?'채택':item.eligible?(run.status==='running'?'검증 통과 · 경쟁 진행 중':'검증 통과 · 미채택'):'제외'}</span></div>
+       <p className={subtle}>훈련 {item.training_baseline_score??'—'} → {item.training_score??'—'} · 독립 검증 {item.validation_baseline_score??'—'} → {item.validation_score??'—'} · 제안 비용 {fmtKrw(item.model_cost_krw||0)}</p>
        {item.reason&&<p className={subtle}>{item.reason}</p>}
      </div>)}</div>}
      {run.stop_reason&&<InlineError error={run.stop_reason}/>}

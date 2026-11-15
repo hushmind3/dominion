@@ -161,6 +161,8 @@ export interface ImprovementTrial {
   adopted_commit: string | null;
   proposal_index?: number;
   proposal_count?: number;
+  strategy_id?: string | null;
+  strategy_feedback?: string | null;
 }
 export interface EvolutionRequest {
   max_generations: number;
@@ -175,6 +177,11 @@ export interface EvolutionCandidate {
   trial_id: string;
   generation: number;
   proposal_index: number;
+  strategy_id?: 'minimal' | 'alternative' | 'simplify' | 'algorithm' | null;
+  scope_fingerprint?: string | null;
+  family_fingerprint?: string | null;
+  training_baseline_score?: number | null;
+  model_cost_krw?: number;
   training_score: number | null;
   validation_baseline_score: number | null;
   validation_score: number | null;

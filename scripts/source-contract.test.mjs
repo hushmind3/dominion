@@ -147,6 +147,10 @@ test('recursive improvement is Rust-owned, persisted, scored and visible across 
  assert.ok(tournament.includes('async fn holdout('))
  assert.ok(tournament.includes('real_git_competition_rejects_high_training_score'))
  assert.ok(tournament.includes('winner=choose('))
+ const meta=readFileSync(join(root,'src/improvement/evolution/strategy.rs'),'utf8')
+ assert.ok(meta.includes('pub(super) fn select('))
+ assert.ok(meta.includes('fn explores_methods_before_exploiting_verified_strategy()'))
+ assert.ok(tournament.includes('strategy_feedback=Some('))
  assert.ok(evolution.includes('candidates_per_generation'))
  assert.ok(api.includes('/api/improvements/:id/evolution'))
  assert.ok(api.includes('/api/evolutions/:id'))
@@ -157,6 +161,7 @@ test('recursive improvement is Rust-owned, persisted, scored and visible across 
  assert.ok(ui.includes('연속 진화 · A→B→A'))
  assert.ok(ui.includes('세대당 후보 경쟁 수'))
  assert.ok(ui.includes('검증용 별도 점수 명령'))
+ assert.ok(ui.includes('methodName(item.strategy_id)'))
 });
 
 test('owner stop is persisted in the Rust RSI engine and exposed to typed clients',()=>{
