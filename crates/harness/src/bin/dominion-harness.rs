@@ -3,6 +3,7 @@ use dominion_harness::openai::OpenAiProvider;
 use dominion_harness::sdk::{AgentSdk, CommandVerifier, FileJournal, RunStatus, Session};
 use dominion_harness::tools::{ListDir, PatchFile, ReadFile, Shell, Workspace, WriteFile};
 use dominion_harness::{Decision, Limits, Permission, Policy, Tool, ToolSpec};
+use serde_json::json;
 use std::path::PathBuf;
 
 struct CliPolicy { allow_write: bool, allow_shell: bool }
@@ -28,7 +29,7 @@ fn main() {
     if enabled(&args, "--help") {
         eprintln!("dominion-harness --base-url URL --model MODEL --task TEXT [--workdir DIR]
   [--allow-write] [--allow-shell] [--verify-command COMMAND]
-  [--checkpoint FILE] [--resume] [--approve-call ID] [--max-rounds N]
+  [--checkpoint FILE] [--resume] [--approve-call ID] [--max-rounds N]\n  [--reconcile-details TEXT] [--reconcile-applied]
   The provider key is read from DOMINION_HARNESS_KEY (or --api-key).
   --resume requires the original --checkpoint FILE; no tool is replayed after an uncertain crash.");
         return;
@@ -107,6 +108,21 @@ fn main() {
             .duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
         Session::new(format!("{}-{stamp}", std::process::id()), system, task)
     };
+    if let Some(details) = arg(&args, "--reconcile-details") {
+        if details.trim().is_empty() {
+            eprintln!("--reconcile-details must describe inspected results");
+            std::process::exit(2);
+        }
+        let observation = json!({
+            "operatorConfirmed":true,
+            "applied":enabled(&args, "--reconcile-applied"),
+            "details":details,
+        });
+        if let Err(error) = session.reconcile_observation(observation) {
+            eprintln!("manual reconciliation rejected: {error}");
+            std::process::exit(2);
+        }
+    }
     if let Some(journal) = checkpoint { sdk.set_journal(journal); }
     if let Some(call_id) = arg(&args, "--approve-call") { sdk.approve_once(call_id); }
     if let Err(error) = sdk.run(&mut session) {
