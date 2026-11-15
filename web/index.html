@@ -16,6 +16,7 @@
     <a class="rail-item" href="#groups">◉ <span>그룹 대화</span></a>
     <a class="rail-item" href="#videos">▣ <span>영상 제작</span></a>
     <a class="rail-item" href="#improvement">◇ <span>자기개선 실험</span></a>
+    <a class="rail-item" href="#knowledge">▧ <span>기억·스킬</span></a>
     <a class="rail-item" href="#history">▤ <span>실행 기록</span></a>
     <div class="rail-note">자체 Rust 엔진<br>로컬 저장 · 모델 직접 연결</div>
     <div class="rail-footer"><span id="engineLed" class="led"></span><span id="connection">서버 연결 확인 중</span></div>
@@ -198,6 +199,44 @@
           <button id="improvementAdopt" class="primary" type="button">검증된 후보 채택</button>
           <button id="improvementDescendant" class="ghost" type="button">다음 세대 실험 만들기</button>
         </div>
+      </section>
+      <section class="history" id="knowledge" aria-labelledby="knowledgeTitle">
+        <div class="section-top">
+          <div><span class="eyebrow">MEMORY & SKILLS</span><h2 id="knowledgeTitle">기억과 스킬</h2></div>
+          <button id="refreshKnowledge" type="button" class="ghost">새로고침 ↻</button>
+        </div>
+        <p>중요한 사용자 지시는 기억으로 저장하고, 반복 작업 방법은 스킬로 만드세요. 스킬은 활성화한 것만 사용됩니다.</p>
+        <form id="memoryCreate" class="advanced">
+          <div class="advanced-row">
+            <label>기억 내용 <input id="memoryContent" required maxlength="4096" placeholder="예: 답변은 한국어로 작성"></label>
+            <label>기억 종류 <select id="memoryKind">
+              <option value="preference">사용자 선호</option>
+              <option value="fact">기억할 사실</option>
+              <option value="correction">사용자 정정</option>
+              <option value="procedure">작업 규칙</option>
+            </select></label>
+            <label>적용 범위 <select id="memoryScope">
+              <option value="global">내 모든 대화</option>
+              <option value="session">지정된 대화에만</option>
+            </select></label>
+            <label>대화 ID <input id="memorySession" maxlength="128" placeholder="대화별 범위에서 사용"></label>
+          </div>
+          <button type="submit" class="secondary">기억 저장하기</button>
+        </form>
+        <div id="memoryRows" class="tasks" aria-live="polite"></div>
+        <form id="skillCreate" class="advanced">
+          <div class="advanced-row">
+            <label>스킬 이름 <input id="skillName" required maxlength="100" placeholder="예: 코드 검토"></label>
+            <label>사용할 상황 (쉼표로 구분)
+              <input id="skillTrigger" maxlength="200" placeholder="예: 코드,리팩토링">
+            </label>
+          </div>
+          <label>실행 방법과 주의사항
+            <textarea id="skillInstructions" maxlength="12000" required placeholder="예: 먼저 소스를 읽고 변경 전후 테스트를 비교한 다음 결과를 보고"></textarea>
+          </label>
+          <button type="submit" class="secondary">비활성 스킬 초안 저장</button>
+        </form>
+        <div id="skillRows" class="tasks" aria-live="polite"></div>
       </section>
       <section class="history" id="history" aria-labelledby="historyTitle">
         <div class="section-top"><div><span class="eyebrow">HISTORY</span><h2 id="historyTitle">최근 작업</h2></div><button id="refresh" class="ghost" type="button">새로고침 ↻</button></div>
