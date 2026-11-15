@@ -59,7 +59,7 @@ fn public_view(state: &AppState, record: Value) -> Value {
             "state":snapshot.status,
             "rounds":snapshot.rounds,
             "toolCalls":snapshot.tool_calls,
-            "usage":snapshot.usage,
+            "usage":if snapshot.usage_reports > 0 { Some(snapshot.usage) } else { None },
             "events":snapshot.events,
             "pendingCall":snapshot.pending_calls.first(),
             "answer":snapshot.final_text(),
@@ -146,7 +146,8 @@ fn launch(state: AppState, id: String, approved: Option<String>) -> Result<(), S
                     RunStatus::Failed { .. } => "failed",
                 };
                 json!({"status":status,"rounds":session.rounds,
-                    "toolCalls":session.tool_calls,"usage":session.usage,
+                    "toolCalls":session.tool_calls,
+                    "usage":if session.usage_reports > 0 { Some(session.usage) } else { None },
                     "answer":session.final_text(),
                     "runState":session.status})
             }
@@ -195,7 +196,12 @@ async fn execute(state: AppState, id: String, approved: Option<String>) -> Resul
         ];
         let specs = tools.iter().map(|tool| tool.spec()).collect();
         let mut engine = AgentSdk::new(
-            Box::new(OpenAiProvider::new(route.base_url, route.api_key, route.model).with_tools(specs)),
+            Box::new(OpenAiProvider::new(
+                if route.kind == "ollama" && !route.base_url.ends_with("/v1") {
+                    format!("{}/v1", route.base_url.trim_end_matches('/'))
+                } else { route.base_url },
+                route.api_key, route.model,
+            ).with_tools(specs)),
             Box::new(ProductPolicy),
             Limits { max_rounds: rounds, max_tool_calls: 160, ..Limits::default() },
         );
