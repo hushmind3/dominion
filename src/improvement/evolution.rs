@@ -9,6 +9,10 @@ use std::{collections::HashMap,path::Path,sync::Arc};
 use tokio::fs;
 use uuid::Uuid;
 mod tournament;
+mod strategy;
+pub(super) fn strategy_hint(id:Option<&str>,index:usize)->&'static str{
+    strategy::hint(id,index)
+}
 
 #[derive(Clone,Debug,Serialize,Deserialize,PartialEq,Eq)]
 #[serde(rename_all="snake_case")]
@@ -28,6 +32,11 @@ pub struct CandidateRecord {
     pub trial_id:Uuid,
     pub generation:usize,
     pub proposal_index:usize,
+    #[serde(default)] pub strategy_id:Option<String>,
+    #[serde(default)] pub scope_fingerprint:Option<String>,
+    #[serde(default)] pub family_fingerprint:Option<String>,
+    #[serde(default)] pub training_baseline_score:Option<f64>,
+    #[serde(default)] pub model_cost_krw:f64,
     pub training_score:Option<f64>,
     pub validation_baseline_score:Option<f64>,
     pub validation_score:Option<f64>,

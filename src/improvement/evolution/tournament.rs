@@ -24,6 +24,18 @@ impl Improvements {
         run.candidate_groups.push(Vec::new());
         self.put_evolution(run.clone()).await?;
         let mut evaluated=Vec::<CandidateRecord>::new();
+        let (scope,family)=super::strategy::scopes(
+            &adopted.repository,&adopted.instruction,&adopted.test_command,
+            adopted.score_command.as_deref().unwrap_or(""),
+            run.validation_command.as_deref().unwrap_or(""),target
+        );
+        let past=self.lineages.lock().await.values()
+            .flat_map(|evolution|evolution.candidates.iter().cloned()).collect::<Vec<_>>();
+        // Freeze selection before this generation's first proposal. A sibling
+        // cannot learn another sibling's holdout before its own model call.
+        let choices=super::strategy::select(
+            &past,&scope,&family,run.candidates_per_generation
+        );
         let mut shared_baseline:Option<(String,Measurement)>=None;
         let mut shared_validation:Option<(String,Measurement)>=None;
         for proposal_index in 0..run.candidates_per_generation {
@@ -43,6 +55,8 @@ impl Improvements {
             }).await?;
             trial.proposal_index=proposal_index;
             trial.proposal_count=run.candidates_per_generation;
+            trial.strategy_id=Some(choices[proposal_index].id.into());
+            trial.strategy_feedback=Some(choices[proposal_index].feedback.clone());
             trial.status=ImprovementStatus::Running;
             trial.updated_at_ms=now_ms();
             self.put(trial.clone()).await?;
@@ -70,6 +84,11 @@ impl Improvements {
             run.spent_krw+=result_trial.cost_krw;
             let mut candidate=CandidateRecord{
                 trial_id:trial.id,generation,proposal_index,
+                strategy_id:trial.strategy_id.clone(),
+                scope_fingerprint:Some(scope.clone()),
+                family_fingerprint:Some(family.clone()),
+                training_baseline_score:result_trial.baseline.as_ref().and_then(|x|x.score),
+                model_cost_krw:result_trial.cost_krw,
                 training_score:result_trial.candidate.as_ref().and_then(|x|x.score),
                 validation_baseline_score:None,validation_score:None,
                 eligible:result_trial.status==ImprovementStatus::Evaluated && result_trial.accepted,
@@ -306,9 +325,13 @@ mod tests {
     #[test]
     fn independent_validation_beats_training_and_ties_are_stable(){
         let a=CandidateRecord{trial_id:Uuid::new_v4(),generation:0,proposal_index:0,
+            strategy_id:None,scope_fingerprint:None,family_fingerprint:None,
+            training_baseline_score:None,model_cost_krw:0.0,
             training_score:Some(9.0),validation_baseline_score:Some(0.0),
             validation_score:Some(1.0),eligible:true,reason:None};
         let b=CandidateRecord{trial_id:Uuid::new_v4(),generation:0,proposal_index:1,
+            strategy_id:None,scope_fingerprint:None,family_fingerprint:None,
+            training_baseline_score:None,model_cost_krw:0.0,
             training_score:Some(5.0),validation_baseline_score:Some(0.0),
             validation_score:Some(3.0),eligible:true,reason:None};
         assert_eq!(choose(&[a.clone(),b.clone()]).unwrap().trial_id,b.trial_id);

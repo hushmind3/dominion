@@ -21,6 +21,8 @@ pub struct Improvement {
     #[serde(default)] pub adopted_commit:Option<String>,
     #[serde(default)] pub proposal_index:usize,
     #[serde(default="default_candidate_count")] pub proposal_count:usize,
+    #[serde(default)] pub strategy_id:Option<String>,
+    #[serde(default)] pub strategy_feedback:Option<String>,
     pub baseline:Option<Measurement>,pub candidate:Option<Measurement>,pub proposal:Option<String>,
     pub reflection:Option<String>,pub accepted:bool,pub cost_krw:f64,pub error:Option<String>,
     pub created_at_ms:u64,pub updated_at_ms:u64,
@@ -143,7 +145,7 @@ impl Improvements {
         self.put(Improvement{id:Uuid::new_v4(),parent:input.parent,repository:input.repository,target_file:input.target_file,
             instruction:input.instruction,test_command:input.test_command,score_command:input.score_command,status,
             base_commit:None,candidate_commit:None,adopted_commit:None,
-            proposal_index:0,proposal_count:1,
+            proposal_index:0,proposal_count:1,strategy_id:None,strategy_feedback:None,
             baseline:None,candidate:None,proposal:None,reflection:None,
             accepted:false,cost_krw:0.0,error:None,created_at_ms:now,updated_at_ms:now}).await
     }
@@ -245,16 +247,12 @@ impl Improvements {
         if fs::metadata(&actual).await.map_err(|e|e.to_string())?.len()>100_000{return Err("target file exceeds 100 KB".into());}
         let original=fs::read_to_string(&actual).await.map_err(|e|e.to_string())?;
         let inherited=if let Some(parent)=item.parent { self.get(parent).await.and_then(|p|p.reflection).unwrap_or_default() }else{String::new()};
-        let strategies=[
-            "Preserve the existing interface; favor a minimal algorithmic improvement.",
-            "Explore a different implementation strategy while preserving behavior.",
-            "Prioritize structural simplicity and lower resource usage.",
-            "Try an alternative algorithm with the same tests and contracts."
-        ];
-        let selected=strategies[item.proposal_index.min(strategies.len()-1)];
+        let selected=evolution::strategy_hint(item.strategy_id.as_deref(),item.proposal_index);
+        let policy_feedback=item.strategy_feedback.as_deref()
+            .unwrap_or("No past verified strategy evidence.");
         let prompts=vec![
             json!({"role":"system","content":"Propose one concrete, improved version of the supplied source file. Return ONLY the complete new source text, without markdown fences. Do not alter tests or evaluation scripts. Prefer minimal maintainable improvements. You are optimizing a fixed program against independent tests and a frozen scoring command. Do not game the metric or weaken safety checks."}),
-            json!({"role":"user","content":format!("Improvement objective:\n{}\nInherited measured lessons:\n{}\nSearch alternative {} of {}: {}\nFile: {}\nCurrent contents:\n{}",item.instruction,inherited,item.proposal_index+1,item.proposal_count,selected,item.target_file,original)})
+            json!({"role":"user","content":format!("Improvement objective:\n{}\nInherited measured lessons:\n{}\nSearch alternative {} of {}: {}\nPrior method evidence: {}\nFile: {}\nCurrent contents:\n{}",item.instruction,inherited,item.proposal_index+1,item.proposal_count,selected,policy_feedback,item.target_file,original)})
         ];
         let reply=model.complete(&prompts,&[],false).await?;
         // Persist metered cost immediately, even when Git staging or later
