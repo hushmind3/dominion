@@ -339,3 +339,43 @@ mod tests {
         assert_eq!(ProductPolicy.decide(&spec(Permission::Dangerous)), Decision::Deny);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn main_independent_harness_queues_a_real_rust_run() {
+        use axum::body::to_bytes;
+        let root=std::env::temp_dir().join(format!(
+            "dominion-main-harness-parity-{}",uuid::Uuid::new_v4()));
+        let config=crate::config::Config{
+            port:0,data_dir:root.join("data"),
+            web_dir:root.join("web"),workspace:root.join("work")};
+        std::fs::create_dir_all(&config.workspace).unwrap();
+        let state=AppState::new(config.clone(),
+            crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        state.store.put("provider",&json!({
+            "id":"main-rust-harness","name":"Main Harness Fixture",
+            "kind":"openai","enabled":true,"toolMode":"native","model":"test-model",
+            "baseUrl":"http://127.0.0.1:9/v1"
+        })).unwrap();
+        let response=start(State(state.clone()),Json(Start{
+            instruction:"Inspect a file and verify it".into(),
+            provider_id:Some("main-rust-harness".into()),model:Some("test-model".into()),
+            verify_command:None,max_rounds:Some(3),
+        })).await;
+        assert_eq!(response.status(),StatusCode::ACCEPTED);
+        let payload=to_bytes(response.into_body(),1024*1024).await.unwrap();
+        let view:Value=serde_json::from_slice(&payload).unwrap();
+        let id=view["id"].as_str().unwrap().to_string();
+        let record=state.store.get("sdk_run",&id).expect("real Rust harness record");
+        assert_eq!(record["maxRounds"],3);
+        assert_eq!(record["model"],"test-model");
+        assert_eq!(record["instruction"],"Inspect a file and verify it");
+        let detail=one(State(state.clone()),Path(id.clone())).await;
+        assert_eq!(detail.status(),StatusCode::OK);
+        state.cancel_session(&format!("sdk:{id}"));
+        let _=std::fs::remove_dir_all(root);
+    }
+}
