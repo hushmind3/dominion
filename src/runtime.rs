@@ -68,6 +68,10 @@ pub struct TaskInput {
     pub allow_write: bool,
     #[serde(default)]
     pub allow_shell: bool,
+    /// Host process (legacy compatible) or fail-closed OS-isolated shell
+    /// commands. This applies to both model tools and acceptance checks.
+    #[serde(default)]
+    pub shell_isolation: Option<String>,
     /// Explicit run-level consent to use configured external MCP tools.
     #[serde(default)]
     pub allow_mcp: bool,
@@ -111,6 +115,13 @@ impl TaskInput {
         }
         if self.acceptance_checks.len()>4 {
             return Err(RuntimeError("Only four acceptance checks are allowed".into()));
+        }
+        if self.shell_isolation.as_deref().is_some_and(
+            |mode|!matches!(mode,"host"|"isolated")) {
+            return Err(RuntimeError("shellIsolation must be host or isolated".into()));
+        }
+        if self.shell_isolation.as_deref()==Some("isolated") && !self.allow_shell {
+            return Err(RuntimeError("Isolated checks require allowShell=true".into()));
         }
         if !self.acceptance_checks.is_empty() && !self.allow_shell {
             return Err(RuntimeError(
@@ -158,6 +169,7 @@ impl TaskInput {
             "sessionId": self.session_id,
             "allowWrite": self.allow_write,
             "allowShell": self.allow_shell,
+            "shellIsolation": self.shell_isolation.unwrap_or_else(||"host".into()),
             "allowMcp": self.allow_mcp,
             "allowSubagents": self.allow_subagents,
             "requireEvidence": self.require_evidence,
@@ -717,6 +729,18 @@ mod tests {
                     args:vec!["--test".into(),"calc.test.js".into()]}],
             ..Default::default()
         }.validate().is_ok());
+        assert!(TaskInput{
+            prompt:"read project".into(),
+            shell_isolation:Some("isolated".into()),..Default::default()
+        }.validate().is_err());
+        assert!(TaskInput{
+            prompt:"test project".into(),allow_shell:true,
+            shell_isolation:Some("isolated".into()),..Default::default()
+        }.validate().is_ok());
+        assert!(TaskInput{
+            prompt:"test project".into(),allow_shell:true,
+            shell_isolation:Some("unknown".into()),..Default::default()
+        }.validate().is_err());
     }
     #[tokio::test]
     async fn rust_sdk_executes_verified_work_without_http_frontend() {
@@ -813,5 +837,12 @@ mod tests {
         assert_eq!(normalized["sessionId"], "workspace-session");
         assert_eq!(normalized["allowWrite"], false);
         assert_eq!(normalized["maxSteps"], 12);
+        assert_eq!(normalized["shellIsolation"],"host");
+        let (_,isolated)=TaskInput{
+            prompt:"check source".into(),allow_shell:true,
+            shell_isolation:Some("isolated".into()),..Default::default()
+        }.normalized().unwrap();
+        assert_eq!(isolated["shellIsolation"],"isolated");
+        assert_eq!(isolated["allowShell"],true);
     }
 }
