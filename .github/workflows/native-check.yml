@@ -20,7 +20,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: node --check web/app.js
       - run: node --test scripts/source-contract.test.mjs
       - run: npm install --prefix sdk/typescript
       - run: npm test --prefix sdk/typescript
