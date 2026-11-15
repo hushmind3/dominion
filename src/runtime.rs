@@ -304,6 +304,11 @@ impl DominionSdk {
     /// Queue a task. A repeated request key with the same payload returns the
     /// existing record, never a second execution or provider charge.
     pub async fn submit(&self, input: TaskInput) -> Result<TaskRecord, RuntimeError> {
+        if input.cost_budget_krw.is_some() && !self.state.provider.can_meter_paid_cost() {
+            return Err(RuntimeError(
+                "Paid model KRW limits require configured input/output rates for every remote provider".into()
+            ));
+        }
         let (key, payload) = input.normalized()?;
         let (record, _) = self.state.store.submit(&key, &payload).map_err(RuntimeError)?;
         decode_record(record)
