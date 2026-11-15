@@ -22,11 +22,21 @@ pub struct Prompt {
     pub instruction:String,pub agent_id:Option<String>,
     pub provider_id:Option<String>,pub model:Option<String>,
     pub reasoning_effort:Option<String>,pub tools_enabled:bool,
+    pub autonomous:bool,pub max_autonomous_attempts:u8,
+    pub execution_strategy:ExecutionStrategy,
+}
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub enum ExecutionStrategy { Focused, Conservative }
+impl ExecutionStrategy {
+    fn as_str(self)->&'static str{match self{
+        Self::Focused=>"focused",Self::Conservative=>"conservative"
+    }}
 }
 impl Prompt {
     pub fn new(instruction:impl Into<String>)->Self{
         Self{instruction:instruction.into(),agent_id:None,provider_id:None,model:None,
-            reasoning_effort:None,tools_enabled:true}
+            reasoning_effort:None,tools_enabled:true,autonomous:true,
+            max_autonomous_attempts:3,execution_strategy:ExecutionStrategy::Focused}
     }
 }
 
@@ -104,7 +114,15 @@ impl Dominion {
         if let Some(effort)=prompt.reasoning_effort.as_deref(){
             if !engine::reasoning::valid_effort(effort){return Err("invalid reasoning effort".into());}
         }
-        let mut input=json!({"prompt":instruction,"toolsEnabled":prompt.tools_enabled});
+        if !(1..=6).contains(&prompt.max_autonomous_attempts){
+            return Err("max_autonomous_attempts must be 1..6".into());
+        }
+        let mut input=json!({
+            "prompt":instruction,"toolsEnabled":prompt.tools_enabled,
+            "autonomous":prompt.autonomous,
+            "maxAutonomousAttempts":prompt.max_autonomous_attempts,
+            "executionStrategy":prompt.execution_strategy.as_str(),
+        });
         for (name,value) in [
             ("agentId",prompt.agent_id),("providerId",prompt.provider_id),
             ("model",prompt.model),("reasoningEffort",prompt.reasoning_effort),
