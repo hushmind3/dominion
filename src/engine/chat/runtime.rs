@@ -822,7 +822,10 @@ async fn run_turn_body(
         max_rounds = max_rounds.max(16);
     }
     if let Some(rounds)=session["sdkUiPolicy"]["maxRounds"].as_u64(){
-        max_rounds=max_rounds.min(rounds.clamp(1,80) as usize);
+        // This option is exposed by the main Home auto-work API. A 24-round
+        // user ceiling must not be silently replaced by the general 8-round
+        // chat default; the token/elapsed ceilings still bound real spend.
+        max_rounds=rounds.clamp(1,80) as usize;
     }
     let mut max_tools = budget_algorithm
         .as_ref()
@@ -877,6 +880,12 @@ async fn run_turn_body(
     if !session["sdkUiPolicy"].is_null(){
         tool_definitions.retain(|definition|
             tools::ui_tool_allowed(&session["sdkUiPolicy"],tool_name(definition)));
+        if session["rsiRun"]!=true {
+            // Home NativeAgentPanel is an ordinary task interface, not an RSI
+            // playground. Keep task-critical capabilities but do not spend
+            // the first provider call listing every unrelated native tool.
+            tool_definitions=select_panel_tool_definitions(tool_definitions,&request.input);
+        }
     }
     let compiled = if is_room {
         let source = source_message_id.or(reply_to.as_deref()).ok_or("응답할 원문이 없습니다.")?;
@@ -921,13 +930,18 @@ async fn run_turn_body(
             Some(&strategy_candidates),
             Some(execution_id),
         );
+        let provider_history_budget=provider.context_tokens.map(|tokens| {
+            ((tokens as usize).saturating_mul(3)).clamp(8_000, 400_000)
+        });
+        // Preserve the complete persisted transcript but stop resending up
+        // to 400 kB of prior tool output on every Home autonomous round.
+        // The latest tools and owner request remain available, and old file
+        // ranges can be re-read on demand without a second summarizer model.
+        let history_budget=if session["sdkUiPolicy"].is_object() {
+            Some(provider_history_budget.unwrap_or(56_000).min(56_000))
+        }else{provider_history_budget};
         let history_messages = history(
-            state,
-            session_id,
-            request.agent_id.as_deref(),
-            provider.context_tokens.map(|tokens| {
-                ((tokens as usize).saturating_mul(3)).clamp(8_000, 400_000)
-            }),
+            state,session_id,request.agent_id.as_deref(),history_budget,
         )?;
         (prompt_context, history_messages)
     };
@@ -1633,6 +1647,22 @@ async fn run_turn_body(
         )?{
             provider.max_output_tokens=Some(provider.max_output_tokens.unwrap_or(8192).min(limit));
         }
+        if let Some(limit)=session["sdkUiPolicy"]["maxTotalTokens"].as_u64(){
+            // The Home UI's ceiling covers the entire task, not only turns
+            // that already finished. Reserve this call's input estimate and
+            // maximum output BEFORE entering a billable provider request.
+            let used=state.store.session_usage(session_id)["totalTokens"]
+                .as_u64().unwrap_or(0).saturating_add(total_tokens);
+            let estimated_input=super::room_context::input_estimate(
+                &wire_messages,&round_tools) as u64;
+            let remaining=limit.saturating_sub(used).saturating_sub(estimated_input);
+            if remaining<256{
+                mark_budget_exhausted(state,execution_id);
+                return Err("전체 토큰 한도에 도달했습니다. 새 모델 요청을 중단했습니다.".into());
+            }
+            provider.max_output_tokens=Some(
+                provider.max_output_tokens.unwrap_or(8192).min(remaining));
+        }
         if let Some(available_at_turn_start)=job_token_remaining{
             // Account for the actual tokens consumed by preceding model calls
             // in THIS turn and reserve this call's estimated input before
@@ -1654,14 +1684,9 @@ async fn run_turn_body(
             counters.model_calls += 1;
             counters.iterations = round as u32 + 1;
         }
-        // Caps are persistent across autonomous repair turns; the currently
-        // in-flight provider call may overrun its cap, but another cannot start.
-        if let Some(limit)=session["sdkUiPolicy"]["maxTotalTokens"].as_u64(){
-            if state.store.session_usage(session_id)["totalTokens"].as_u64().unwrap_or(0)>=limit {
-                mark_budget_exhausted(state,execution_id);
-                return Err("전체 토큰 한도에 도달했습니다.".into());
-            }
-        }
+        // The total token budget was checked against next-call input and
+        // reserved output above. The round ceiling is separately persistent
+        // across model turns and autonomous repair attempts.
         if let Some(limit)=session["sdkUiPolicy"]["maxRounds"].as_u64(){
             if state.store.session_usage(session_id)["calls"].as_u64().unwrap_or(0)>=limit {
                 mark_budget_exhausted(state,execution_id);
@@ -3411,6 +3436,48 @@ fn select_room_tools(
     }
     scored.truncate(8);
     scored.into_iter().map(|(_, definition)| definition).collect()
+}
+
+
+/*
+ * Main Home-panel tool inventory projection.
+ *
+ * A long-running autonomous coding job still needs the complete native
+ * read/edit/test toolchain. Only unrelated domains are omitted: their huge
+ * schemas were previously re-sent on every model round even when disabled
+ * in the UI. Explicit user intent restores optional native capabilities;
+ * enabled MCP definitions remain eligible and are not silently discarded.
+ */
+fn select_panel_tool_definitions(definitions:Vec<Value>,query:&str)->Vec<Value>{
+    let text=query.to_lowercase();
+    let mentions=|terms:&[&str]|terms.iter().any(|word|text.contains(word));
+    let external_file=mentions(&["절대경로","외부 폴더","다른 드라이브",
+        "outside workspace","absolute path","c:\\","/home/","/users/","/mnt/"]);
+    let wants_memory=mentions(&["기억","메모리","memory","remember"]);
+    let wants_save_memory=mentions(&["기억해","기억해 둬","메모리에 저장",
+        "remember this","save memory"]);
+    let wants_skill=mentions(&["스킬","skill","재사용 절차","reusable procedure"]);
+    let wants_browser=mentions(&["브라우저","browser","웹페이지","사이트 클릭",
+        "click the page","스크린샷","screenshot","웹사이트 접속"]);
+    let wants_github=mentions(&["깃허브","github","pull request","이슈 생성","issue 생성"]);
+    let wants_accounts=mentions(&["연결 계정","로그인 계정","oauth","connected account"]);
+    definitions.into_iter().filter(|definition|{
+        match tool_name(definition){
+            // The user-visible work UI already exposes its own capability
+            // flags; this projection is deliberately about advertised schema
+            // cost, not executable permissions.
+            "file_list"|"file_read"|"file_write"=>external_file,
+            "memory_store"=>wants_save_memory,
+            "memory_search"=>wants_memory,
+            "skill_propose"=>wants_skill,
+            "browser_control"=>wants_browser,
+            "github_api"=>wants_github,
+            "account_status"=>wants_accounts,
+            // Tools with user-selectable policy already filtered by
+            // ui_tool_allowed; preserve them when the owner opts in.
+            _=>true,
+        }
+    }).collect()
 }
 
 fn select_tool_definitions(
@@ -6744,6 +6811,34 @@ mod cancellation_drain_tests {
 mod harness_tool_selection_tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn main_home_tool_projection_keeps_code_working_without_unrelated_schemas(){
+        let catalog=["workspace_read","workspace_read_range","code_search",
+            "workspace_apply_patch","workspace_replace_range","shell_exec",
+            "file_read","memory_store","memory_search","browser_control",
+            "github_api","skill_propose","account_status","mcp__git__search"]
+            .iter().map(|name|json!({"type":"function","function":{"name":name,
+                "description":"heavy schema","parameters":{"type":"object"}}}))
+            .collect::<Vec<_>>();
+        let projection=select_panel_tool_definitions(catalog.clone(),
+            "프로젝트 버그를 수정하고 cargo test를 실행해");
+        let names=projection.iter().map(tool_name).collect::<Vec<_>>();
+        for name in ["workspace_read","code_search","workspace_apply_patch",
+            "workspace_replace_range","shell_exec","mcp__git__search"]{
+            assert!(names.contains(&name),"{name} must remain available");
+        }
+        for name in ["memory_store","browser_control","github_api",
+            "file_read","skill_propose","account_status"]{
+            assert!(!names.contains(&name),"{name} is unrelated");
+        }
+        let wanted=select_panel_tool_definitions(catalog,
+            "깃허브 이슈와 브라우저 스크린샷을 읽고 메모리에 저장해");
+        let names=wanted.iter().map(tool_name).collect::<Vec<_>>();
+        for name in ["github_api","browser_control","memory_store"]{
+            assert!(names.contains(&name),"{name} explicitly requested");
+        }
+    }
 
     #[test]
     fn core_coding_tool_selection_advertises_native_multi_file_patch(){

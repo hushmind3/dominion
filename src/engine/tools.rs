@@ -140,6 +140,12 @@ pub fn parallel_read_only_tool(name:&str)->bool{
 /// The UI's optional capabilities are a persisted execution policy.
 pub fn ui_tool_allowed(policy:&Value,name:&str)->bool{
     if policy.is_null(){return true;}
+    // The Home auto-work feature must not advertise tools reserved for the
+    // separate RSI screen; their schemas are large and their authority is
+    // intentionally not granted in an ordinary user task.
+    if matches!(name,"algorithm_propose"|"unsafe_audit"|
+        "rsi_system_plan"|"rsi_method_propose"){return false;}
+    if name.starts_with("skill_") && policy["skillsEnabled"]==false{return false;}
     if name.starts_with("mcp__") && policy["mcpEnabled"]!=true{return false;}
     if matches!(name,"web_search"|"http_fetch") && policy["webEnabled"]!=true{return false;}
     if matches!(name,"delegate_task"|"delegate_parallel"|"task_status"|"task_result")
@@ -2329,6 +2335,9 @@ mod tests {
         assert!(!ui_tool_allowed(&policy,"mcp__service__tool"));
         assert!(!ui_tool_allowed(&policy,"web_search"));
         assert!(!ui_tool_allowed(&policy,"delegate_parallel"));
+        assert!(!ui_tool_allowed(&json!({"skillsEnabled":false}),"skill_propose"));
+        assert!(!ui_tool_allowed(&json!({"skillsEnabled":true}),"rsi_system_plan"));
+        assert!(ui_tool_allowed(&json!({"skillsEnabled":true}),"workspace_apply_patch"));
     }
     #[cfg(unix)]
     async fn wait_for_marker(path: &Path) {
