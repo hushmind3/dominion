@@ -32,6 +32,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/improvements/:id/evaluate",post(improvement_evaluate))
         .route("/api/improvements/:id/adopt",post(improvement_adopt))
         .route("/api/improvements/:id/descendant",post(improvement_descendant))
+        .route("/api/memory",get(memory_list).post(memory_create))
+        .route("/api/memory/search",get(memory_search))
+        .route("/api/memory/:id/disable",post(memory_disable))
+        .route("/api/skills",get(skill_list).post(skill_create))
+        .route("/api/skills/:id/enable",post(skill_enable))
         .fallback_service(ServeDir::new("web"))
         .with_state(state)
 }
@@ -330,5 +335,66 @@ async fn improvement_descendant(State(state):State<AppState>,Path(id):Path<Strin
     match sdk.improvement_descendant(id).await{
         Ok(item)=>(StatusCode::CREATED,Json(json!(item))).into_response(),
         Err(error)=>(StatusCode::CONFLICT,Json(json!({"error":error.to_string()}))).into_response()
+    }
+}
+
+async fn memory_list(State(state):State<AppState>,
+    Query(params):Query<HashMap<String,String>>)->Json<Value>{
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    Json(json!(sdk.memory_list(params.get("sessionId").map(String::as_str))))
+}
+async fn memory_create(State(state):State<AppState>,Json(body):Json<Value>)->Response{
+    let Some(content)=body["content"].as_str() else {
+        return (StatusCode::BAD_REQUEST,Json(json!({"error":"기억 내용이 필요합니다."}))).into_response()
+    };
+    let session=body["sessionId"].as_str();
+    let kind=body["kind"].as_str().unwrap_or("fact");
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.remember(session,content,kind){
+        Ok(memory)=>(StatusCode::CREATED,Json(memory)).into_response(),
+        Err(error)=>(StatusCode::BAD_REQUEST,Json(json!({"error":error.to_string()}))).into_response()
+    }
+}
+async fn memory_search(State(state):State<AppState>,
+    Query(params):Query<HashMap<String,String>>)->Json<Value>{
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    Json(json!(sdk.memory_search(
+        params.get("sessionId").map(String::as_str),
+        params.get("query").map(String::as_str).unwrap_or(""),
+        params.get("limit").and_then(|s|s.parse::<usize>().ok())
+            .unwrap_or(8).min(10)
+    )))
+}
+async fn memory_disable(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.memory_disable(&id){
+        Ok(changed)=>Json(json!({"ok":changed})).into_response(),
+        Err(error)=>(StatusCode::BAD_REQUEST,Json(json!({"error":error.to_string()}))).into_response()
+    }
+}
+async fn skill_list(State(state):State<AppState>)->Json<Value>{
+    Json(json!(crate::runtime::DominionSdk::from_state(state).skill_list()))
+}
+async fn skill_create(State(state):State<AppState>,Json(body):Json<Value>)->Response{
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.skill_create(
+        body["name"].as_str().unwrap_or(""),
+        body["trigger"].as_str().unwrap_or(""),
+        body["instructions"].as_str().unwrap_or(""),
+        body["enabled"].as_bool().unwrap_or(false)
+    ){
+        Ok(skill)=>(StatusCode::CREATED,Json(skill)).into_response(),
+        Err(error)=>(StatusCode::BAD_REQUEST,Json(json!({"error":error.to_string()}))).into_response()
+    }
+}
+async fn skill_enable(State(state):State<AppState>,
+    Path(id):Path<String>,Json(body):Json<Value>)->Response{
+    let Some(enabled)=body["enabled"].as_bool() else {
+        return (StatusCode::BAD_REQUEST,Json(json!({"error":"enabled true/false를 지정하세요."}))).into_response()
+    };
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.skill_enable(&id,enabled){
+        Ok(changed)=>Json(json!({"ok":changed})).into_response(),
+        Err(error)=>(StatusCode::BAD_REQUEST,Json(json!({"error":error.to_string()}))).into_response()
     }
 }
