@@ -57,6 +57,7 @@ fn public_view(state: &AppState, record: Value) -> Value {
             "rounds":snapshot.rounds,
             "toolCalls":snapshot.tool_calls,
             "events":snapshot.events,
+            "pendingCall":snapshot.pending_calls.first(),
             "answer":snapshot.final_text(),
         })
     }).unwrap_or(Value::Null);
