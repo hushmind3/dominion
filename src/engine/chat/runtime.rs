@@ -750,6 +750,9 @@ async fn run_turn_body(
             .filter(|seconds|*seconds>0).map(std::time::Duration::from_secs)
             .unwrap_or(std::time::Duration::from_secs(365*24*3600))
     }else{MAX_ELAPSED};
+    let simple_creation_target = if !session["roomId"].is_string() && session["rsiRun"] != true {
+        simple_file_creation(state, &request.input, &acceptance)
+    } else { None };
     let mut tool_definitions = if request.tools_enabled && request.tools_execution_enabled {
         tools::definitions()
     } else {
@@ -773,6 +776,28 @@ async fn run_turn_body(
     };
     if tool_discovery_applies(is_room, session["rsiRun"] == true) {
         tool_definitions = select_tool_definitions(tool_definitions, &request.input, &discovery);
+    }
+    if simple_creation_target.is_some() {
+        // A concrete file creation has no use for web, memory, delegation or
+        // RSI schemas. Keep native file access and shell fallback available.
+        let workspace_root = state.config.workspace.canonicalize()
+            .unwrap_or_else(|_|state.config.workspace.clone());
+        let inside_workspace = simple_creation_target.as_ref().is_some_and(|path|
+            path.starts_with(&workspace_root));
+        tool_definitions = tools::definitions().into_iter().filter(|definition| {
+            let name = tool_name(definition);
+            matches!(name, "shell_exec" | "terminal_exec") || if inside_workspace {
+                matches!(name, "workspace_list" | "workspace_read" | "workspace_write")
+            } else {
+                matches!(name, "file_list" | "file_read" | "file_write")
+            }
+        }).collect();
+        if !request.tools_enabled || !request.tools_execution_enabled { tool_definitions.clear(); }
+        crate::engine::algorithms::mark_unrated(state, execution_id, "tool.discovery", "single-file task catalog");
+        if let Some(mut execution) = state.store.get("execution", execution_id) {
+            execution["contextPolicy"] = json!("single-file-creation");
+            state.store.put("execution", &execution);
+        }
     }
     if session["rsiRun"]==true {
         tool_definitions.retain(|definition| tools::rsi_allowed(tool_name(definition)));
@@ -2418,6 +2443,25 @@ async fn run_turn_body(
                         "content": "모든 검증 조건이 충족되었습니다. 추가 도구 호출 없이 최종 답변만 작성하세요."
                     }));
                     let _ = tx.send(json!({"type": "acceptance_passed"}));
+                    if let Some(path) = simple_creation_target.as_ref().filter(|path|
+                        std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file() && metadata.len() == 0)
+                        && !strategy_candidates.iter().any(|strategy|
+                            strategy["verification"]["type"] == "procedure"
+                                && crate::engine::procedure::applies(strategy, &request.input, None, None))) {
+                        // The native action has already finished and the host
+                        // verified the exact owner-bound artifact. Reporting
+                        // that fact does not require another paid model turn.
+                        final_content = format!("파일을 만들었습니다: `{}`", path.display());
+                        metadata["completionSource"] = json!("verified_artifact");
+                        // This provider projection predates the just-finished
+                        // tool exchange. Let the next turn derive that full
+                        // exchange from the durable transcript before adding
+                        // this host-generated summary to the working view.
+                        continuation_projection = None;
+                        let _ = tx.send(json!({"type":"text","text":final_content}));
+                        finished = true;
+                        break;
+                    }
                 }
             }
         }
@@ -5008,6 +5052,22 @@ fn record_soft_tool_error(
 struct ActionReview {
     gaps: Vec<String>,
     next_action: Option<String>,
+}
+
+fn simple_file_creation(
+    state: &AppState, input: &str, acceptance: &Option<(String, Value)>,
+) -> Option<std::path::PathBuf> {
+    let lower = input.to_lowercase();
+    if input.chars().count() > 240 || input.contains('\n')
+        || !["만들", "생성", "create"].iter().any(|word|lower.contains(word))
+        || ["그리고", "다음", "한 뒤", "후에", "then", "after", ";", "내용", "적어", "써", "저장", "테스트", "빌드", "다운로드", "복사", "수정", "편집", "write", "with", "containing", "copy", "download"]
+            .iter().any(|word|lower.contains(word)) { return None; }
+    let (_, checks) = acceptance.as_ref()?;
+    let checks = checks.as_array()?;
+    let [check] = checks.as_slice() else { return None; };
+    if check["type"] != "file_changed" || check["inferred"] != true
+        || !check["baseline"].is_null() { return None; }
+    crate::engine::verification::resolve_path(state, check["path"].as_str()?).ok()
 }
 
 /// Deterministic single-step file work should not pay for an extra planner

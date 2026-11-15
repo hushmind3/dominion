@@ -7214,3 +7214,45 @@ fn compound_shell_file_creation_finishes_without_false_repair_or_reviewer() {
     let chat = captured.iter().find(|request| request["tools"].as_array().is_some_and(|tools| !tools.is_empty())).unwrap();
     assert!(chat["messages"][0]["content"].as_str().unwrap().contains("언어 지침: 추론"));
 }
+
+#[test]
+fn empty_file_creation_uses_one_model_call_and_no_paid_final_summary() {
+    let _serial = serial();
+    let (port, requests) = scripted_provider(|request| {
+        if request["messages"].as_array().unwrap().iter().any(|message|
+            message["role"] == "user" && message["content"].as_str().is_some_and(|text|text.contains("방금 만든 파일"))) {
+            return vec![json!({"choices":[{"delta":{"content":"empty-once.md"},"finish_reason":"stop"}]})];
+        }
+        let tools = request["tools"].as_array().expect("creation tools");
+        assert!(tools.len() <= 5, "unrelated tool schemas: {tools:?}");
+        assert!(!tools.iter().any(|tool| tool["function"]["name"] == "web_search"));
+        vec![json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"create-once","type":"function",
+            "function":{"name":"workspace_write","arguments":"{\"path\":\"empty-once.md\",\"content\":\"\"}"}}]},"finish_reason":"tool_calls"}],
+            "usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120}})]
+    });
+    let app = TestApp::new(port, "native");
+    app.post("/api/policy", &json!({"autoApproveAll":true}));
+    let stream = app.chat(&json!({"input":"empty-once.md 파일을 만들어줘","autoLearning":false}));
+    assert!(stream.contains("assistant_saved"), "{stream}");
+    assert!(!stream.contains("acceptance_retry"), "{stream}");
+    assert_eq!(std::fs::metadata(app._root.join("empty-once.md")).unwrap().len(), 0);
+    assert_eq!(requests.lock().unwrap().len(), 1);
+    let execution = &app.get("/api/executions")[0];
+    assert_eq!(execution["modelCalls"], 1, "{execution}");
+    assert_eq!(execution["toolCalls"], 1, "{execution}");
+    let messages = app.get(&format!("/api/sessions/{}/messages", execution["sessionId"].as_str().unwrap()));
+    let last = messages.as_array().unwrap().last().unwrap();
+    assert_eq!(last["metadata"]["completionSource"], "verified_artifact");
+    assert_eq!(last["metadata"]["usage"]["totalTokens"], 120);
+    let followup = app.chat(&json!({"sessionId":execution["sessionId"],
+        "input":"방금 만든 파일 이름만 말해줘","toolsEnabled":false,"autoLearning":false}));
+    assert!(followup.contains("assistant_saved"), "{followup}");
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured.len(), 2);
+    let history = captured[1]["messages"].as_array().unwrap();
+    let call = history.iter().position(|message| message["tool_calls"].as_array().is_some_and(|calls|!calls.is_empty())).unwrap();
+    let result = history.iter().position(|message| message["role"] == "tool").unwrap();
+    let summary = history.iter().position(|message| message["role"] == "assistant"
+        && message["content"].as_str().is_some_and(|text|text.contains("파일을 만들었습니다"))).unwrap();
+    assert!(call < result && result < summary, "tool exchange must precede the host summary: {history:?}");
+}
