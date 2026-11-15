@@ -22,6 +22,8 @@ pub struct Prompt {
     pub instruction:String,pub agent_id:Option<String>,
     pub provider_id:Option<String>,pub model:Option<String>,
     pub reasoning_effort:Option<String>,pub verify_command:Option<String>,pub tools_enabled:bool,
+    /// Optional existing absolute directory to execute this job in.
+    pub workspace_dir:Option<PathBuf>,
     pub autonomous:bool,pub max_autonomous_attempts:u8,
     pub execution_strategy:ExecutionStrategy,
 }
@@ -36,6 +38,7 @@ impl Prompt {
     pub fn new(instruction:impl Into<String>)->Self{
         Self{instruction:instruction.into(),agent_id:None,provider_id:None,model:None,
             reasoning_effort:None,verify_command:None,tools_enabled:true,autonomous:true,
+            workspace_dir:None,
             max_autonomous_attempts:3,execution_strategy:ExecutionStrategy::Focused}
     }
 }
@@ -106,6 +109,10 @@ impl Dominion {
         if instruction.is_empty()||instruction.len()>64_000 {
             return Err("instruction must contain 1..64000 bytes".into());
         }
+        let workspace=prompt.workspace_dir.as_ref()
+            .map(|path|crate::engine::workspace_scope::resolve(&self.state,
+                path.to_str().ok_or("workspace_dir must be Unicode")?))
+            .transpose()?;
         if let Some(agent)=prompt.agent_id.as_deref(){
             if self.state.store.get("agent",agent).is_none(){
                 return Err("unknown agent".into());
@@ -126,6 +133,9 @@ impl Dominion {
             "maxAutonomousAttempts":prompt.max_autonomous_attempts,
             "executionStrategy":prompt.execution_strategy.as_str(),
         });
+        if let Some(path)=workspace{
+            input["workspaceDir"]=json!(path.to_string_lossy().to_string());
+        }
         for (name,value) in [
             ("agentId",prompt.agent_id),("providerId",prompt.provider_id),
             ("model",prompt.model),("reasoningEffort",prompt.reasoning_effort),

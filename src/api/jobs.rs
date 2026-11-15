@@ -14,6 +14,16 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
             for key in ["agentId","providerId","model","reasoningEffort"]{if let Some(v)=input[key].as_str().filter(|s|!s.is_empty()){value[key]=json!(v);}}
             if let Some(v)=input["thinking"].as_bool(){value["thinking"]=json!(v);}
             if let Some(v)=input["autonomous"].as_bool(){value["autonomous"]=json!(v);}
+            if let Some(raw)=input.get("workspaceDir"){
+                let Some(path)=raw.as_str() else {
+                    return error(StatusCode::BAD_REQUEST,"작업 폴더는 절대경로 문자열이어야 합니다.");
+                };
+                let selected=match engine::workspace_scope::resolve(&state,path){
+                    Ok(path)=>path,
+                    Err(message)=>return error(StatusCode::BAD_REQUEST,&message),
+                };
+                value["workspaceDir"]=json!(selected.to_string_lossy().to_string());
+            }
             if let Some(command)=input.get("verifyCommand"){
                 let Some(command)=command.as_str().filter(|command|command.len()<=2048)else{
                     return error(StatusCode::BAD_REQUEST,"검증 명령은 최대 2048자 문자열입니다.");

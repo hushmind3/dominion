@@ -633,6 +633,15 @@ pub(crate) async fn run_prompt(context: &JobContext, job: &Value) -> Result<Valu
             json!({"status":"needs_review","reason":"중단된 프롬프트 작업 결과를 확인해야 합니다."}),
         );
     }
+    // A selected project is validated again at claim time: it may have been
+    // moved or removed since the request was queued. Each job gets a cloned
+    // configuration; the global workspace and other jobs do not change.
+    let selected_workspace=if let Some(path)=input["workspaceDir"].as_str(){
+        if input["rsiSourceDir"].is_string(){
+            return Err("일반 작업 폴더 선택과 RSI 분리 작업공간을 함께 지정할 수 없습니다.".into());
+        }
+        Some(crate::engine::workspace_scope::resolve(&context.state,path)?)
+    }else{None};
     let rsi_workspace = if input["rsiSourceDir"].is_string() {
         Some(crate::engine::rsi_worktree::prepare(context,&input).await?)
     } else { None };
@@ -648,6 +657,13 @@ pub(crate) async fn run_prompt(context: &JobContext, job: &Value) -> Result<Valu
         None => context.state.store.put("session",&json!({"title":prompt.chars().take(40).collect::<String>(),"agentId":input.get("agentId")}))
             .and_then(|session|session["id"].as_str().map(str::to_string)).ok_or("작업 세션을 저장할 수 없습니다.")?,
     };
+    if let Some(workspace)=&selected_workspace{
+        if let Some(mut session)=context.state.store.get("session",&session_id){
+            session["workspaceDir"]=json!(workspace.to_string_lossy().to_string());
+            context.state.store.put("session",&session)
+                .ok_or("선택한 작업 폴더를 세션에 저장할 수 없습니다.")?;
+        }
+    }
     if input["uiSource"]=="native_sdk_panel" {
         let mut session=context.state.store.get("session",&session_id)
             .ok_or("사용자 작업 세션을 찾을 수 없습니다.")?;
@@ -743,6 +759,9 @@ pub(crate) async fn run_prompt(context: &JobContext, job: &Value) -> Result<Valu
     // captures the real diff and verifier evidence before removing that copy.
     let mut scoped_state = context.state.clone();
     if let Some(worktree)=&rsi_workspace {scoped_state.config.workspace=worktree.path.clone();}
+    else if let Some(workspace)=selected_workspace {
+        scoped_state=crate::engine::workspace_scope::scope(&context.state,workspace);
+    }
     // An independently accepted ancestor already supplied an executable
     // improvement procedure and measured next-domain target. Run that
     // procedure FIRST, rather than letting a new model turn overwrite its
@@ -776,7 +795,10 @@ pub(crate) async fn run_prompt(context: &JobContext, job: &Value) -> Result<Valu
     // Ordinary prompt jobs use the native verifier-driven execution cycle.
     // Detached RSI generations keep their own independent worktree verifier.
     let autonomous_result=if rsi_workspace.is_none() && input["autonomous"]!=false {
-        Some(crate::engine::autonomy::execute(context,&request,&request.input,&input).await?)
+        let mut scoped_context=context.clone();
+        scoped_context.state=scoped_state.clone();
+        Some(crate::engine::autonomy::execute(
+            &scoped_context,&request,&request.input,&input).await?)
     }else{None};
     let mut message=if autonomous_result.is_some() || preflight_native.is_some(){
         // A native source operator is not a model invocation, and must not
