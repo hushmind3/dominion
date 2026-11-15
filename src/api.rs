@@ -18,6 +18,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/tasks/:id/cancel",post(cancel))
         .route("/api/tasks/:id/steer",post(steer))
         .route("/api/tasks/:id/events",get(events))
+        .route("/api/groups",get(group_list).post(group_create))
+        .route("/api/groups/:id",get(group_get))
+        .route("/api/groups/:id/messages",post(group_say))
+        .route("/api/groups/:id/next",post(group_next))
         .fallback_service(ServeDir::new("web"))
         .with_state(state)
 }
@@ -139,4 +143,52 @@ async fn events(
         }
     };
     Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))).into_response()
+}
+
+fn parse_room(id:&str)->Result<uuid::Uuid,Response>{
+    uuid::Uuid::parse_str(id).map_err(|_|(StatusCode::BAD_REQUEST,
+        Json(json!({"error":"올바른 회의실 ID가 필요합니다."}))).into_response())
+}
+async fn group_list(State(state):State<AppState>)->Json<Value>{
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    Json(json!(sdk.group_list().await))
+}
+async fn group_create(State(state):State<AppState>,Json(body):Json<Value>)->Response{
+    let input=match serde_json::from_value::<crate::group::NewRoom>(body){
+        Ok(value)=>value,
+        Err(error)=>return (StatusCode::BAD_REQUEST,Json(json!({"error":error.to_string()}))).into_response()
+    };
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.group_create(input).await{
+        Ok(room)=>(StatusCode::CREATED,Json(json!(room))).into_response(),
+        Err(error)=>(StatusCode::BAD_REQUEST,Json(json!({"error":error.to_string()}))).into_response()
+    }
+}
+async fn group_get(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    let id=match parse_room(&id){Ok(id)=>id,Err(error)=>return error};
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.group_get(id).await{
+        Ok(room)=>Json(json!(room)).into_response(),
+        Err(error)=>(StatusCode::NOT_FOUND,Json(json!({"error":error.to_string()}))).into_response()
+    }
+}
+async fn group_say(State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>)->Response{
+    let id=match parse_room(&id){Ok(id)=>id,Err(error)=>return error};
+    let input=match serde_json::from_value::<crate::group::Say>(body){
+        Ok(value)=>value,
+        Err(error)=>return (StatusCode::BAD_REQUEST,Json(json!({"error":error.to_string()}))).into_response()
+    };
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.group_say(id,input.content).await{
+        Ok(room)=>Json(json!(room)).into_response(),
+        Err(error)=>(StatusCode::BAD_REQUEST,Json(json!({"error":error.to_string()}))).into_response()
+    }
+}
+async fn group_next(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    let id=match parse_room(&id){Ok(id)=>id,Err(error)=>return error};
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.group_next(id).await{
+        Ok(room)=>Json(json!(room)).into_response(),
+        Err(error)=>(StatusCode::BAD_GATEWAY,Json(json!({"error":error.to_string()}))).into_response()
+    }
 }
