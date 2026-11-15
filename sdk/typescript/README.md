@@ -32,3 +32,7 @@ Contract: /api/* (NOT /api/v1/*), X-Dominion-Token optional admin header (NOT Be
 An SDK client needs a running local DOMINION server; it does not bundle a model, and it never holds vendor tokens. HTTP tests mock the server; a real-provider integration test requires explicitly configured credentials.
 
 Mid-run owner steering is `sdk.jobs.steer(jobId, instruction)`, which invokes the Rust kernel via `POST /api/jobs/:id/directive`. The JS client never executes native tools or owns task states.
+
+## Native job token and prompt-cache usage (2026-11-15)
+
+`Dominion.jobs.get(id)` returns the Rust-owned `Job.nativeModelUsage?: NativeModelUsage` field when the native provider has settled calls. `inputTokens`/`outputTokens` and `cacheReadTokens`/`cacheWriteTokens` are measured provider-reported totals; `reportedCalls` and `unreportedCalls` distinguish known and unknown bills. `nativeState.chargedTokens` remains the independent Rust SDK planner/budget metric and may estimate usage when the provider omits it. The TypeScript client does not retry an unknown-billing Codex request or run its own agent. The actual Rust REST/GUI integration and [2026 focused tests](https://github.com/hushmind3/dominion-rust/actions/runs/43691823640) passed with 115 Rust cases, 7 standalone SDK cases, frontend typecheck/build. See [provider metering architecture](../../docs/SUB3-NATIVE-METERING-2026-11-15.md).
