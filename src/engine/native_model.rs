@@ -184,30 +184,124 @@ fn parse_codex(value:&Value)->Result<ModelTurn,String> {
     finish(parts.join("\n"),actions,value["usage"]["input_tokens"].as_u64(),
         value["usage"]["output_tokens"].as_u64())
 }
-/// Codex ChatGPT OAuth's /responses endpoint requires streaming. Assemble
-/// completed items from events; accept only the terminal completed response.
+// Keep the legacy completed-event fixture helper for cross-version Codex
+// SSE regression tests; the production network path is incremental.
+#[cfg(test)]
 fn parse_codex_events(raw:&str)->Result<Value,String> {
-    let mut completion=None;
-    let normalized=raw.replace("\r\n","\n");
-    for frame in normalized.split("\n\n") {
-        for line in frame.lines() {
-            let Some(data)=line.strip_prefix("data:").map(str::trim) else {continue;};
-            if data=="[DONE]" {continue;}
-            let Ok(value)=serde_json::from_str::<Value>(data) else {continue;};
-            match value["type"].as_str() {
-                Some("response.completed") =>completion=Some(value["response"].clone()),
-                Some("response.failed"|"response.incomplete"|"error")=>
-                    return Err(format!("Codex generation failed: {}",value["response"]["error"]["message"]
-                        .as_str().or_else(||value["error"]["message"].as_str())
-                        .unwrap_or("incomplete response"))),
-                _=>{}
+    use crate::engine::native_stream::{Assembler,Packet,SseDecoder,Wire};
+    let mut decoder=SseDecoder::default();
+    let mut assembler=Assembler::new(Wire::Codex);
+    for event in decoder.push(raw.as_bytes())? {
+        let _=assembler.feed(event)?;
+    }
+    decoder.end()?;
+    assembler.finish()
+}
+
+/// The model stream is observable but NOT executable: pending tool arguments
+/// remain untrusted until the provider delivers its terminal success event.
+/// Progress can be persisted under the existing job ID; an interrupted model
+/// generation retains the kernel's model_in_flight checkpoint.
+struct StreamProgress<'a> {
+    state:Option<&'a AppState>,
+    session:&'a str,
+    job_id:Option<&'a str>,
+    protocol:&'static str,
+    events:usize,
+    visible:String,
+    calls:Vec<Value>,
+}
+impl StreamProgress<'_> {
+    fn record(&self,stage:&str)->Result<(),String> {
+        let (Some(state),Some(job_id))=(self.state,self.job_id)else{return Ok(());};
+        let saved=state.store.patch_if("job",job_id,"status",&json!("running"),
+            &json!({"nativeStream":{
+                "stage":stage,"protocol":self.protocol,"events":self.events,
+                "visibleTail":self.visible,"pendingCalls":self.calls,
+                "executable":false
+            }})).ok_or("Could not persist native model stream progress")?;
+        state.bus.record("job",&saved);
+        Ok(())
+    }
+    fn check_live(&self)->Result<(),String> {
+        let (Some(state),Some(job_id))=(self.state,self.job_id)else{return Ok(());};
+        if state.is_cancelled(self.session)
+            || state.store.get("job",job_id).is_none_or(|job|
+                job["cancelRequested"]==true || job["status"]!="running"){
+            return Err("Owner cancelled native model generation".into());
+        }
+        Ok(())
+    }
+    fn updates(&mut self,changes:Vec<crate::engine::native_stream::Update>)
+        ->Result<(),String> {
+        for change in changes {
+            self.events+=1;
+            match change {
+                crate::engine::native_stream::Update::Text(text)=>{
+                    self.visible.push_str(&text);
+                    if self.visible.chars().count()>1600 {
+                        self.visible=self.visible.chars().rev().take(1600)
+                            .collect::<Vec<_>>().into_iter().rev().collect();
+                    }
+                    if let (Some(state),Some(id))=(self.state,self.job_id) {
+                        state.bus.emit(json!({"type":"job_event","jobId":id,
+                            "event":{"type":"model_delta","text":text}}));
+                    }
+                }
+                crate::engine::native_stream::Update::ToolStarted{id,name}=>{
+                    if self.calls.len()<80
+                        && !self.calls.iter().any(|call|call["id"]==id){
+                        self.calls.push(json!({"id":id,"name":name}));
+                        if let (Some(state),Some(job_id))=(self.state,self.job_id){
+                            state.bus.emit(json!({"type":"job_event","jobId":job_id,
+                                "event":{"type":"model_tool_pending","id":id,"name":name}}));
+                        }
+                    }
+                    self.record("receiving")?;
+                }
+            }
+            // Throttle disk writes; still stream each text delta to live UI.
+            if self.events%24==0 {self.record("receiving")?;}
+        }
+        Ok(())
+    }
+}
+async fn receive_stream(
+    response:reqwest::Response,
+    protocol:crate::engine::native_stream::Wire,
+    state:Option<&AppState>,session:&str,job_id:Option<&str>,
+)->Result<Value,String> {
+    use crate::engine::native_stream::{Assembler,SseDecoder,Wire};
+    let name=match protocol {Wire::Chat=>"chat",Wire::Anthropic=>"anthropic",Wire::Codex=>"codex"};
+    let mut progress=StreamProgress{state,session,job_id,protocol:name,
+        events:0,visible:String::new(),calls:Vec::new()};
+    progress.record("receiving")?;
+    let mut decoder=SseDecoder::default();
+    let mut assembly=Assembler::new(protocol);
+    let mut stream=response.bytes_stream();
+    let result=async {
+        while let Some(chunk)=stream.next().await {
+            progress.check_live()?;
+            let chunk=chunk.map_err(|e|format!("Native {name} SSE transport interrupted: {e}"))?;
+            for packet in decoder.push(&chunk)? {
+                let updates=assembly.feed(packet)?;
+                progress.updates(updates)?;
             }
         }
+        decoder.end()?;
+        let value=assembly.finish()?;
+        progress.record("settled")?;
+        Ok::<Value,String>(value)
+    }.await;
+    if result.is_err() {
+        // Persist the aborted model's partial-visible output, without ever
+        // marking uncommitted tool calls as authorized or executed.
+        let _=progress.record("interrupted");
     }
-    completion.ok_or("Codex stream ended without response.completed".into())
+    result
 }
 async fn send_codex(state:&AppState,route:&gateway::Route,client:&reqwest::Client,
-    body:&Value)->Result<Value,String> {
+    body:&Value,session:&str,job_id:Option<&str>)->Result<Value,String> {
     let account=route.account_id.as_deref()
         .ok_or("Codex account ID missing; reconnect in model settings")?;
     let access=codex_oauth::fresh_access(state,client,&route.id,&route.api_key).await?;
@@ -228,22 +322,11 @@ async fn send_codex(state:&AppState,route:&gateway::Route,client:&reqwest::Clien
         let error=response.text().await.unwrap_or_default();
         return Err(format!("Codex native HTTP {status}: {}",clip(&error,600)));
     }
-    let mut stream=response.bytes_stream();
-    let mut bytes=Vec::new();
-    while let Some(chunk)=stream.next().await {
-        let chunk=chunk.map_err(|e|format!("Codex native event stream failed: {e}"))?;
-        if bytes.len().saturating_add(chunk.len())>12_000_000 {
-            return Err("Codex native response stream exceeded the 12 MB safety bound".into());
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    // UTF-8 characters may straddle arbitrary HTTP chunk boundaries.
-    let text=String::from_utf8(bytes)
-        .map_err(|_|"Non-UTF8 Codex event stream")?;
-    parse_codex_events(&text)
+    receive_stream(response,crate::engine::native_stream::Wire::Codex,
+        Some(state),session,job_id).await
 }
 async fn send_anthropic(route:&gateway::Route,client:&reqwest::Client,
-    body:&Value)->Result<Value,String> {
+    body:&Value,state:&AppState,session:&str,job_id:Option<&str>)->Result<Value,String> {
     gateway::reserve_generation(&route.base_url,&route.model,route.requests_per_minute)?;
     let _slot=gateway::acquire(&route.base_url,route.local).await;
     let response=gateway::benchmark_request(client.post(route.endpoint("/messages")))
@@ -258,13 +341,29 @@ async fn send_anthropic(route:&gateway::Route,client:&reqwest::Client,
         let error=response.text().await.unwrap_or_default();
         return Err(format!("Anthropic native HTTP {status}: {}",clip(&error,600)));
     }
-    response.json::<Value>().await.map_err(|e|format!("Anthropic native response error: {e}"))
+    if response.headers().get(reqwest::header::CONTENT_TYPE)
+        .and_then(|header|header.to_str().ok())
+        .is_some_and(|content|content.contains("text/event-stream")) {
+        receive_stream(response,crate::engine::native_stream::Wire::Anthropic,
+            Some(state),session,job_id).await
+    }else{
+        response.json::<Value>().await
+            .map_err(|e|format!("Anthropic native response error: {e}"))
+    }
 }
 /// This is the sole native model-to-kernel bridge. The kernel retains
 /// control of tool validation, scheduling, approvals, verification and replay.
 pub(crate) async fn complete(
     state:&AppState,provider_id:&str,model_id:&str,session:&str,
     system:&str,prompt:&str,tools:&[ToolSpec],receipts:&[Receipt],
+)->Result<ModelTurn,String> {
+    complete_with_run(state,provider_id,model_id,session,
+        system,prompt,tools,receipts,None).await
+}
+pub(crate) async fn complete_with_run(
+    state:&AppState,provider_id:&str,model_id:&str,session:&str,
+    system:&str,prompt:&str,tools:&[ToolSpec],receipts:&[Receipt],
+    job_id:Option<&str>,
 )->Result<ModelTurn,String> {
     let route=gateway::resolve(state,provider_id,Some(model_id))?;
     let client=reqwest::Client::new();
@@ -283,9 +382,10 @@ pub(crate) async fn complete(
         "anthropic"=>json!({"model":route.model,"system":system,
             "messages":anthropic_messages(system,prompt,receipts),
             "tools":definitions,"max_tokens":route.max_output_tokens.unwrap_or(8192),
-            "stream":false}),
+            "stream":true}),
         _=>json!({"model":route.model,"messages":chat_messages(system,prompt,receipts),
-            "tools":definitions,"tool_choice":"auto","stream":false,
+            "tools":definitions,"tool_choice":"auto","stream":true,
+            "stream_options":{"include_usage":true},
             "max_tokens":route.max_output_tokens.unwrap_or(8192)}),
     };
     // DeepSeek/Reflection may require a reasoning_content field even on
@@ -301,8 +401,8 @@ pub(crate) async fn complete(
         }
     }
     let value=match wire {
-        "codex"=>send_codex(state,&route,&client,&body).await?,
-        "anthropic"=>send_anthropic(&route,&client,&body).await?,
+        "codex"=>send_codex(state,&route,&client,&body,session,job_id).await?,
+        "anthropic"=>send_anthropic(&route,&client,&body,state,session,job_id).await?,
         _=>{
             let response=gateway::send(&route,&client,&body,Duration::from_secs(240)).await?;
             if !response.response.status().is_success(){
@@ -310,7 +410,17 @@ pub(crate) async fn complete(
                 let error=response.response.text().await.unwrap_or_default();
                 return Err(format!("Native model HTTP {status}: {}",clip(&error,600)));
             }
-            response.response.json::<Value>().await.map_err(|e|e.to_string())?
+            if response.response.headers().get(reqwest::header::CONTENT_TYPE)
+                .and_then(|h|h.to_str().ok())
+                .is_some_and(|mime|mime.contains("text/event-stream")) {
+                receive_stream(response.response,
+                    crate::engine::native_stream::Wire::Chat,
+                    Some(state),session,job_id).await?
+            }else{
+                // Self-hosted OpenAI-compatible servers may ignore stream=true.
+                // Accept their complete JSON result without fabricating SSE.
+                response.response.json::<Value>().await.map_err(|e|e.to_string())?
+            }
         }
     };
     let usage=if wire=="chat" {gateway::usage_from(&value)}
@@ -424,7 +534,7 @@ mod tests {
         let addr=listener.local_addr().unwrap();
         let app=Router::new().route("/v1/chat/completions",
             post(|Json(body):Json<Value>| async move {
-                assert_eq!(body["stream"],false);
+                assert_eq!(body["stream"],true);
                 assert_eq!(body["tools"][0]["function"]["name"],"workspace_read");
                 assert_eq!(body["messages"][2]["tool_calls"][0]["id"],"call_1");
                 assert_eq!(body["messages"][3]["role"],"tool");
@@ -457,7 +567,7 @@ mod tests {
         let addr=listener.local_addr().unwrap();
         let app=Router::new().route("/v1/messages",
             post(|Json(body):Json<Value>| async move {
-                assert_eq!(body["stream"],false);
+                assert_eq!(body["stream"],true);
                 assert_eq!(body["tools"][0]["name"],"workspace_read");
                 assert_eq!(body["messages"][1]["content"][0]["type"],"tool_use");
                 assert_eq!(body["messages"][2]["content"][0]["type"],"tool_result");
@@ -579,6 +689,124 @@ mod tests {
             snapshot.in_flight.iter().any(|action|action.id=="call_real_read")));
         task.abort();
         let _=std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn native_stream_chat_http_fragmented_calls_are_durable_and_unexecuted() {
+        use axum::{routing::post,Router,Json,body::{Body,Bytes},http::Response};
+        use futures_util::stream;
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr=listener.local_addr().unwrap();
+        let app=Router::new().route("/v1/chat/completions",
+            post(|Json(body):Json<Value>| async move {
+                assert_eq!(body["stream"],true);
+                assert_eq!(body["stream_options"]["include_usage"],true);
+                let parts=vec![
+                    json!({"choices":[{"index":0,"delta":{"tool_calls":[{
+                        "index":0,"id":"stream_call","function":{"name":"workspace_read",
+                            "arguments":"{\"path\":\""}}]}}]}),
+                    json!({"choices":[{"index":0,"delta":{"tool_calls":[{
+                        "index":0,"function":{"arguments":"src/한글.rs\"}"}}]}}]}),
+                    json!({"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}),
+                    json!({"choices":[],"usage":{"prompt_tokens":41,"completion_tokens":7}}),
+                ];
+                let mut data=parts.into_iter().map(|p|format!("data: {p}\r\n\r\n"))
+                    .collect::<String>().into_bytes();
+                data.extend_from_slice(b"data: [DONE]\r\n\r\n");
+                let chunks=data.chunks(5)
+                    .map(|c|Ok::<Bytes,std::convert::Infallible>(Bytes::copy_from_slice(c)))
+                    .collect::<Vec<_>>();
+                Response::builder().header("content-type","text/event-stream")
+                    .body(Body::from_stream(stream::iter(chunks))).unwrap()
+            }));
+        let task=tokio::spawn(async move{axum::serve(listener,app).await.unwrap();});
+        let state=mock_state(&format!("http://{addr}/v1"),"openai");
+        state.store.put("job",&json!({
+            "id":"stream-job","status":"running","cancelRequested":false,
+            "kind":"prompt","input":{"prompt":"Read a source file"}
+        }));
+        let model=complete_with_run(&state,"native-wire-test","model-mock","s-1",
+            "You are a model","{}",&[tool()],&[],Some("stream-job")).await.unwrap();
+        assert_eq!(model.reply.input_tokens,Some(41));
+        let a=&model.decision.unwrap().actions[0];
+        assert_eq!(a.id,"stream_call");
+        assert_eq!(a.arguments["path"],"src/한글.rs");
+        let saved=state.store.get("job","stream-job").unwrap();
+        assert_eq!(saved["nativeStream"]["stage"],"settled");
+        assert_eq!(saved["nativeStream"]["protocol"],"chat");
+        assert_eq!(saved["nativeStream"]["executable"],false);
+        assert_eq!(saved["nativeStream"]["pendingCalls"][0]["name"],"workspace_read");
+        assert!(!saved["nativeStream"].to_string().contains("src/한글.rs"),
+            "Partial generated tool arguments must not leak into progress");
+        task.abort();
+    }
+    #[tokio::test]
+    async fn native_stream_anthropic_http_partial_tool_input_settles() {
+        use axum::{routing::post,Router,Json,body::{Body,Bytes},http::Response};
+        use futures_util::stream;
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr=listener.local_addr().unwrap();
+        let app=Router::new().route("/v1/messages",
+            post(|Json(body):Json<Value>| async move {
+                assert_eq!(body["stream"],true);
+                let parts=vec![
+                    json!({"type":"message_start","message":{"usage":{"input_tokens":18}}}),
+                    json!({"type":"content_block_start","index":0,
+                        "content_block":{"type":"tool_use","id":"toolu_live",
+                            "name":"workspace_read","input":{}}}),
+                    json!({"type":"content_block_delta","index":0,
+                        "delta":{"type":"input_json_delta","partial_json":"{\"path\":\""}}),
+                    json!({"type":"content_block_delta","index":0,
+                        "delta":{"type":"input_json_delta","partial_json":"README.md\"}"}}),
+                    json!({"type":"content_block_stop","index":0}),
+                    json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},
+                        "usage":{"output_tokens":12}}),
+                    json!({"type":"message_stop"}),
+                ];
+                let data=parts.into_iter().map(|p|format!("event: x\ndata: {p}\n\n"))
+                    .collect::<String>();
+                let parts=data.as_bytes().chunks(7)
+                    .map(|c|Ok::<Bytes,std::convert::Infallible>(Bytes::copy_from_slice(c)))
+                    .collect::<Vec<_>>();
+                Response::builder().header("content-type","text/event-stream")
+                    .body(Body::from_stream(stream::iter(parts))).unwrap()
+            }));
+        let task=tokio::spawn(async move{axum::serve(listener,app).await.unwrap();});
+        let state=mock_state(&format!("http://{addr}/v1"),"anthropic");
+        let result=complete(&state,"native-wire-test","model-mock","s-2",
+            "You are a model","{}",&[tool()],&[]).await.unwrap();
+        assert_eq!(result.reply.input_tokens,Some(18));
+        let action=&result.decision.unwrap().actions[0];
+        assert_eq!(action.id,"toolu_live");
+        assert_eq!(action.arguments["path"],"README.md");
+        task.abort();
+    }
+    #[tokio::test]
+    async fn native_stream_interrupted_sse_never_becomes_executable_tool_call() {
+        use axum::{routing::post,Router,Json,body::Body,http::Response};
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr=listener.local_addr().unwrap();
+        let app=Router::new().route("/v1/chat/completions",
+            post(|Json(_body):Json<Value>| async move {
+                let partial=json!({"choices":[{"index":0,"delta":{"tool_calls":[{
+                    "index":0,"id":"never_execute",
+                    "function":{"name":"shell_exec","arguments":"{\"command\":\""}}]}}]});
+                let body=format!("data: {partial}\n\n");
+                Response::builder().header("content-type","text/event-stream")
+                    .body(Body::from(body)).unwrap()
+            }));
+        let task=tokio::spawn(async move{axum::serve(listener,app).await.unwrap();});
+        let state=mock_state(&format!("http://{addr}/v1"),"openai");
+        state.store.put("job",&json!({"id":"partial-stream-job",
+            "status":"running","cancelRequested":false,"kind":"prompt"}));
+        let error=complete_with_run(&state,"native-wire-test","model-mock","s-3",
+            "You are a model","{}",&[tool()],&[],Some("partial-stream-job"))
+            .await.unwrap_err();
+        assert!(error.contains("terminal completion"),"{error}");
+        let saved=state.store.get("job","partial-stream-job").unwrap();
+        assert_eq!(saved["nativeStream"]["stage"],"interrupted");
+        assert_eq!(saved["nativeStream"]["executable"],false);
+        task.abort();
     }
 
 }

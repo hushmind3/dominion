@@ -8,11 +8,13 @@ type AgentJob = {
  id:string; kind:string; status:string; sessionId?:string; createdAt?:string; queuedAt?:string;
  input?:{prompt?:string;providerId?:string;checks?:{type?:string;tool?:string;contains?:string}[]};
  nativeState?:{step?:number;modelCalls?:number;chargedTokens?:number;receipts?:{tool?:string;success?:boolean}[];error?:string};
+ nativeStream?:{stage?:string;protocol?:string;events?:number;visibleTail?:string;pendingCalls?:{id:string;name:string}[];executable?:boolean};
  result?:{answer?:string;reason?:string;toolCalls?:number;modelCalls?:number};error?:string;
 }
 type Approval = {id:string;status:string;sessionId?:string;tool?:string;args?:unknown}
 type SdkRun = {
  id:string;status:string;instruction:string;providerId?:string;answer?:string;error?:string;verification?:string;
+ stream?:AgentJob['nativeStream'];
  checkpoint?:{rounds?:number;toolCalls?:number;answer?:string;
   usage?:{prompt_tokens:number;completion_tokens:number;cached_prompt_tokens:number};
   pendingCall?:{id:string;name:string;arguments:unknown}|null;
@@ -36,6 +38,7 @@ function present(job:AgentJob,approvals:Approval[]=[]):SdkRun{
   id:job.id,status,instruction:job.input?.prompt??'',providerId:job.input?.providerId,
   verification:job.input?.checks?.find(c=>c.type==='tool_succeeded'&&c.tool==='shell_exec')?.contains,
   answer:job.result?.answer,error:job.error??job.result?.reason??job.nativeState?.error,
+  stream:job.nativeStream,
   checkpoint:{
    rounds:job.nativeState?.step??job.nativeState?.modelCalls??job.result?.modelCalls??0,
    toolCalls:job.result?.toolCalls??receipts.length,
@@ -186,6 +189,14 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     </p>}
     </div>
     <p className="mt-2 line-clamp-2 text-[11px] text-[#766F67]">{run.instruction}</p>
+    {run.stream&&['receiving','interrupted'].includes(run.stream.stage??'')&&<div role="status" aria-live="polite" className="mt-3 rounded-lg border border-[#E7E0D5] bg-white p-3 text-[11px]">
+     <p className="font-semibold text-[#726B64]">{en?'Model is generating':'모델 응답 생성 중'} · {run.stream.protocol??'AI'} · {run.stream.events??0} {en?'updates':'회 갱신'}</p>
+     {run.stream.visibleTail&&<pre className="mt-2 max-h-36 overflow-y-auto whitespace-pre-wrap break-words text-[#655D54]">{run.stream.visibleTail}</pre>}
+     {(run.stream.pendingCalls?.length??0)>0&&<p className="mt-2 text-[#9B6D4E]">
+      {en?'Pending model tool calls (not executed yet)':'모델이 준비 중인 도구 호출 (실행 전)'}: {run.stream.pendingCalls?.map(c=>c.name).join(', ')}
+     </p>}
+     {run.stream.stage==='interrupted'&&<p className="mt-2 text-[#A54027]">{en?'Generation interrupted; review before retrying':'생성 중단 · 재실행 전 확인 필요'}</p>}
+    </div>}
     {events.length>0&&<div className="mt-3 space-y-1 border-t border-[#E7E0D5] pt-2">
      {events.map((event,i)=><p key={i} className="text-[11px] text-[#82796D]">
       {event.kind==='tool_started'?(en?'Running tool':'도구 실행'):

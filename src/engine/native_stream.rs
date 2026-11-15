@@ -1,0 +1,448 @@
+//! Incremental provider-native SSE decoding and tool-call assembly.
+//!
+//! Transport byte boundaries never define event boundaries. Native calls are
+//! executable ONLY after a complete terminal provider event, validated JSON
+//! arguments, and a subsequent independent Rust-kernel approval.
+use serde_json::{json,Value};
+use std::collections::BTreeMap;
+
+const MAX_LINE_BYTES:usize=256*1024;
+const MAX_EVENT_BYTES:usize=2*1024*1024;
+const MAX_TOTAL_BYTES:usize=32*1024*1024;
+const MAX_NATIVE_CALLS:usize=80;
+const MAX_ARGUMENT_BYTES:usize=1024*1024;
+
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub(crate) enum Wire {Chat,Anthropic,Codex}
+
+#[derive(Debug)]
+pub(crate) enum Packet {Data(Value),Done}
+
+#[derive(Default)]
+pub(crate) struct SseDecoder {
+    line:Vec<u8>, event:Vec<u8>, total:usize, done:bool,
+}
+impl SseDecoder {
+    /// Emits only blank-line-terminated SSE events, even if the transport
+    /// splits a multibyte Unicode scalar or a JSON argument between chunks.
+    pub(crate) fn push(&mut self, bytes:&[u8])->Result<Vec<Packet>,String>{
+        self.total=self.total.checked_add(bytes.len())
+            .filter(|n|*n<=MAX_TOTAL_BYTES)
+            .ok_or("Native SSE transport exceeded 32 MiB")?;
+        if self.done && !bytes.is_empty(){return Err("Data after terminal SSE [DONE]".into());}
+        let mut packets=Vec::new();
+        for &byte in bytes {
+            if byte!=b'\n' {
+                self.line.push(byte);
+                if self.line.len()>MAX_LINE_BYTES {
+                    return Err("Native SSE event line exceeded 256 KiB".into());
+                }
+                continue;
+            }
+            if self.line.last()==Some(&b'\r') {self.line.pop();}
+            let line=std::str::from_utf8(&self.line)
+                .map_err(|_|"Invalid UTF-8 inside SSE event")?;
+            if line.is_empty(){
+                if !self.event.is_empty(){
+                    let raw=std::str::from_utf8(&self.event)
+                        .map_err(|_|"Invalid SSE JSON UTF-8")?;
+                    let packet=if raw.trim()=="[DONE]" {
+                        self.done=true;Packet::Done
+                    }else {
+                        Packet::Data(serde_json::from_str(raw)
+                            .map_err(|e|format!("Invalid native SSE JSON: {e}"))?)
+                    };
+                    packets.push(packet);
+                    self.event.clear();
+                }
+            }else if let Some(data)=line.strip_prefix("data:"){
+                if !self.event.is_empty(){self.event.push(b'\n');}
+                self.event.extend_from_slice(data.strip_prefix(' ').unwrap_or(data).as_bytes());
+                if self.event.len()>MAX_EVENT_BYTES {
+                    return Err("Native SSE event exceeded 2 MiB".into());
+                }
+            }
+            self.line.clear();
+        }
+        Ok(packets)
+    }
+    pub(crate) fn end(&self)->Result<(),String> {
+        if !self.line.is_empty() || !self.event.is_empty(){
+            return Err("Native stream disconnected during an incomplete SSE frame".into());
+        }
+        Ok(())
+    }
+}
+#[derive(Default,Debug)]
+struct Call {id:String,name:String,args:String}
+impl Call {
+    fn append(&mut self,value:&Value)->Result<(),String> {
+        if let Some(id)=value["id"].as_str(){
+            if self.id.len()+id.len()>256{return Err("Native call ID exceeds limit".into());}
+            self.id.push_str(id);
+        }
+        if let Some(name)=value["function"]["name"].as_str(){
+            if self.name.len()+name.len()>256{return Err("Native call name exceeds limit".into());}
+            self.name.push_str(name);
+        }
+        if let Some(args)=value["function"]["arguments"].as_str(){
+            if self.args.len()+args.len()>MAX_ARGUMENT_BYTES {
+                return Err("Native call argument stream exceeds 1 MiB".into());
+            }
+            self.args.push_str(args);
+        }
+        Ok(())
+    }
+}
+#[derive(Debug)]
+enum Block {Text(String),Tool{id:String,name:String,partial:String,initial:Value}}
+#[derive(Debug)]
+pub(crate) enum Update {
+    Text(String),
+    ToolStarted {id:String,name:String},
+}
+#[derive(Debug)]
+pub(crate) struct Assembler {
+    wire:Wire,
+    done:bool,
+    chat_finish:Option<String>,
+    text:String,
+    calls:BTreeMap<usize,Call>,
+    blocks:BTreeMap<usize,Block>,
+    prompt_tokens:Option<u64>,
+    output_tokens:Option<u64>,
+    anthropic_stop:Option<String>,
+    codex_response:Option<Value>,
+}
+impl Assembler {
+    pub(crate) fn new(wire:Wire)->Self {
+        Self {wire,done:false,chat_finish:None,text:String::new(),
+            calls:BTreeMap::new(),blocks:BTreeMap::new(),
+            prompt_tokens:None,output_tokens:None,anthropic_stop:None,
+            codex_response:None}
+    }
+    pub(crate) fn feed(&mut self,packet:Packet)->Result<Vec<Update>,String>{
+        if self.done{return Err("Native stream delivered events after terminal completion".into());}
+        let mut updates=Vec::new();
+        let event=match packet {
+            Packet::Done=>{
+                if self.wire!=Wire::Chat {
+                    return Err("Unexpected [DONE] for non-Chat native stream".into());
+                }
+                self.done=true;
+                return Ok(updates);
+            }
+            Packet::Data(value)=>value,
+        };
+        match self.wire {
+            Wire::Chat=>self.chat(&event,&mut updates)?,
+            Wire::Anthropic=>self.anthropic(&event,&mut updates)?,
+            Wire::Codex=>self.codex(&event,&mut updates)?,
+        }
+        Ok(updates)
+    }
+    fn chat(&mut self,event:&Value,updates:&mut Vec<Update>)->Result<(),String>{
+        if let Some(tokens)=event["usage"]["prompt_tokens"].as_u64(){
+            self.prompt_tokens=Some(tokens);
+        }
+        if let Some(tokens)=event["usage"]["completion_tokens"].as_u64(){
+            self.output_tokens=Some(tokens);
+        }
+        for choice in event["choices"].as_array().into_iter().flatten(){
+            if choice["index"].as_u64().unwrap_or(0)!=0 {continue;}
+            if let Some(reason)=choice["finish_reason"].as_str(){
+                if self.chat_finish.is_some(){return Err("Duplicate Chat finish event".into());}
+                match reason {
+                    "stop"|"tool_calls"=>self.chat_finish=Some(reason.into()),
+                    _=>return Err(format!("Native Chat stopped without a complete tool turn: {reason}")),
+                }
+            }
+            if let Some(delta)=choice["delta"]["content"].as_str(){
+                self.append_text(delta,updates)?;
+            }
+            for tool in choice["delta"]["tool_calls"].as_array().into_iter().flatten(){
+                let idx=tool["index"].as_u64().ok_or("Native Chat tool delta has no index")?;
+                let idx=usize::try_from(idx).map_err(|_|"Native Chat tool index overflow")?;
+                if idx>=MAX_NATIVE_CALLS {return Err("Native tool call index exceeds limit".into());}
+                let entry=self.calls.entry(idx).or_default();
+                entry.append(tool)?;
+                if !entry.id.is_empty() && !entry.name.is_empty()
+                    && entry.args.len()==tool["function"]["arguments"].as_str().unwrap_or("").len()
+                {
+                    updates.push(Update::ToolStarted{id:entry.id.clone(),name:entry.name.clone()});
+                }
+            }
+        }
+        Ok(())
+    }
+    fn append_text(&mut self,delta:&str,updates:&mut Vec<Update>)->Result<(),String>{
+        if self.text.len().saturating_add(delta.len())>MAX_EVENT_BYTES{
+            return Err("Native assistant text exceeds 2 MiB".into());
+        }
+        self.text.push_str(delta);
+        if !delta.is_empty(){updates.push(Update::Text(delta.into()));}
+        Ok(())
+    }
+    fn anthropic(&mut self,event:&Value,updates:&mut Vec<Update>)->Result<(),String>{
+        match event["type"].as_str().unwrap_or("") {
+            "message_start"=>{
+                self.prompt_tokens=event["message"]["usage"]["input_tokens"].as_u64();
+            }
+            "content_block_start"=>{
+                let idx=event["index"].as_u64().ok_or("Anthropic content block missing index")?;
+                let idx=usize::try_from(idx).map_err(|_|"Anthropic block index overflow")?;
+                if idx>=MAX_NATIVE_CALLS{return Err("Anthropic content block index too large".into());}
+                if self.blocks.contains_key(&idx){return Err("Duplicate Anthropic block index".into());}
+                let block=&event["content_block"];
+                let entry=match block["type"].as_str() {
+                    Some("text")=>Block::Text(block["text"].as_str().unwrap_or("").into()),
+                    Some("tool_use")=>{
+                        let id=block["id"].as_str().filter(|v|!v.is_empty())
+                            .ok_or("Anthropic native tool missing ID")?.to_string();
+                        let name=block["name"].as_str().filter(|v|!v.is_empty())
+                            .ok_or("Anthropic native tool missing name")?.to_string();
+                        updates.push(Update::ToolStarted{id:id.clone(),name:name.clone()});
+                        Block::Tool{id,name,partial:String::new(),initial:block["input"].clone()}
+                    }
+                    _=>return Err("Unknown Anthropic content block in agent stream".into()),
+                };
+                self.blocks.insert(idx,entry);
+            }
+            "content_block_delta"=>{
+                let idx=event["index"].as_u64().ok_or("Anthropic content delta missing index")? as usize;
+                let block=self.blocks.get_mut(&idx).ok_or("Anthropic delta without block start")?;
+                match (block,event["delta"]["type"].as_str()) {
+                    (Block::Text(text),Some("text_delta"))=>{
+                        let delta=event["delta"]["text"].as_str().unwrap_or("");
+                        if text.len()+delta.len()>MAX_EVENT_BYTES{return Err("Anthropic text too long".into());}
+                        text.push_str(delta);
+                        if !delta.is_empty(){updates.push(Update::Text(delta.into()));}
+                    }
+                    (Block::Tool{partial,..},Some("input_json_delta"))=>{
+                        let delta=event["delta"]["partial_json"].as_str().unwrap_or("");
+                        if partial.len()+delta.len()>MAX_ARGUMENT_BYTES {
+                            return Err("Anthropic tool arguments exceed 1 MiB".into());
+                        }
+                        partial.push_str(delta);
+                    }
+                    _=>return Err("Anthropic delta does not match content block".into()),
+                }
+            }
+            "content_block_stop"=>{
+                let idx=event["index"].as_u64().ok_or("Anthropic block stop missing index")? as usize;
+                if !self.blocks.contains_key(&idx){
+                    return Err("Anthropic block stop without start".into());
+                }
+            }
+            "message_delta"=>{
+                if let Some(reason)=event["delta"]["stop_reason"].as_str(){
+                    match reason {
+                        "end_turn"|"tool_use"=>self.anthropic_stop=Some(reason.into()),
+                        _=>return Err(format!("Anthropic native generation stopped: {reason}")),
+                    }
+                }
+                if let Some(output)=event["usage"]["output_tokens"].as_u64(){
+                    self.output_tokens=Some(output);
+                }
+            }
+            "message_stop"=>{
+                if self.anthropic_stop.is_none(){
+                    return Err("Anthropic message ended without stop reason".into());
+                }
+                self.done=true;
+            }
+            "ping"=>{},
+            "error"=>return Err(format!("Anthropic native stream failed: {}",event["error"])),
+            _=>{},
+        }
+        Ok(())
+    }
+    fn codex(&mut self,event:&Value,updates:&mut Vec<Update>)->Result<(),String>{
+        match event["type"].as_str().unwrap_or("") {
+            "response.output_text.delta"=>{
+                let delta=event["delta"].as_str().unwrap_or("");
+                self.append_text(delta,updates)?;
+            }
+            "response.output_item.added"=>{
+                let item=&event["item"];
+                if item["type"]=="function_call"{
+                    if let (Some(id),Some(name))=(item["call_id"].as_str(),
+                        item["name"].as_str()){
+                        updates.push(Update::ToolStarted{id:id.into(),name:name.into()});
+                    }
+                }
+            }
+            "response.completed"=>{
+                let response=&event["response"];
+                if response["status"]!="completed" {
+                    return Err("Codex response.completed has non-completed status".into());
+                }
+                self.prompt_tokens=response["usage"]["input_tokens"].as_u64();
+                self.output_tokens=response["usage"]["output_tokens"].as_u64();
+                self.codex_response=Some(response.clone());
+                self.done=true;
+            }
+            "response.failed"|"response.incomplete"|"error"=>{
+                return Err(format!("Codex native stream failed: {}",
+                    event["response"]["error"]["message"].as_str()
+                        .or_else(||event["error"]["message"].as_str())
+                        .or_else(||event["response"]["incomplete_details"]["reason"].as_str())
+                        .unwrap_or("unknown provider error")));
+            }
+            _=>{},
+        }
+        Ok(())
+    }
+    /// Convert only fully settled streams to the same provider-specific
+    /// response structures expected by existing typed tool-call decoders.
+    pub(crate) fn finish(self)->Result<Value,String>{
+        if !self.done{return Err("Native stream ended before its terminal completion event".into());}
+        match self.wire {
+            Wire::Codex=>self.codex_response
+                .ok_or("Codex missing settled response".into()),
+            Wire::Chat=>{
+                let finish=self.chat_finish.ok_or("Chat [DONE] without finish_reason")?;
+                if finish=="stop" && !self.calls.is_empty(){
+                    return Err("Chat emitted tool calls but declared text completion".into());
+                }
+                let mut calls=Vec::new();
+                for (_,c) in self.calls {
+                    if c.id.is_empty()||c.name.is_empty()||c.args.is_empty(){
+                        return Err("Incomplete native tool call at Chat terminal event".into());
+                    }
+                    calls.push(json!({"id":c.id,"type":"function",
+                        "function":{"name":c.name,"arguments":c.args}}));
+                }
+                if finish=="tool_calls" && calls.is_empty(){
+                    return Err("Chat finished with tool_calls but provided none".into());
+                }
+                Ok(json!({"choices":[{"index":0,"finish_reason":finish,
+                    "message":{"role":"assistant","content":self.text,
+                        "tool_calls":calls}}],
+                    "usage":{"prompt_tokens":self.prompt_tokens,
+                        "completion_tokens":self.output_tokens}}))
+            }
+            Wire::Anthropic=>{
+                let mut blocks=Vec::new();
+                for (_,item) in self.blocks {
+                    match item {
+                        Block::Text(text)=>blocks.push(json!({"type":"text","text":text})),
+                        Block::Tool{id,name,partial,initial}=>{
+                            let input=if partial.is_empty(){initial}else{
+                                serde_json::from_str::<Value>(&partial)
+                                    .map_err(|e|format!("Incomplete Anthropic tool JSON: {e}"))?
+                            };
+                            if !input.is_object(){
+                                return Err("Anthropic tool arguments must be an object".into());
+                            }
+                            blocks.push(json!({"type":"tool_use","id":id,
+                                "name":name,"input":input}));
+                        }
+                    }
+                }
+                Ok(json!({"type":"message","stop_reason":self.anthropic_stop,
+                    "content":blocks,"usage":{"input_tokens":self.prompt_tokens,
+                        "output_tokens":self.output_tokens}}))
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn encode(value:Value)->Vec<u8> {
+        format!("data: {}\r\n\r\n",value).into_bytes()
+    }
+    #[test]
+    fn transport_splits_unicode_and_sse_headers_without_losing_tool_json() {
+        let mut dec=SseDecoder::default();
+        let payload=encode(json!({"choices":[{"index":0,"delta":{"content":"한글🧠"}}]}));
+        let mut events=vec![];
+        for byte in payload {events.extend(dec.push(&[byte]).unwrap());}
+        assert_eq!(events.len(),1);
+        let mut a=Assembler::new(Wire::Chat);
+        let updates=a.feed(events.pop().unwrap()).unwrap();
+        assert!(matches!(&updates[0],Update::Text(t) if t=="한글🧠"));
+    }
+    #[test]
+    fn interleaved_chat_tool_calls_commit_only_after_done() {
+        let mut a=Assembler::new(Wire::Chat);
+        for event in [
+            json!({"choices":[{"index":0,"delta":{"tool_calls":[
+                {"index":1,"id":"idB","function":{"name":"workspace_read","arguments":"{\"p"}},
+                {"index":0,"id":"idA","function":{"name":"workspace_read","arguments":"{\"p"}}
+            ]}}]}),
+            json!({"choices":[{"index":0,"delta":{"tool_calls":[
+                {"index":0,"function":{"arguments":"ath\":\"a\"}"}},
+                {"index":1,"function":{"arguments":"ath\":\"b\"}"}}
+            ]}}]}),
+            json!({"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}),
+        ] {a.feed(Packet::Data(event)).unwrap();}
+        assert!(a.finish().is_err(),"No tool is executable before terminal [DONE]");
+        let mut a=Assembler::new(Wire::Chat);
+        for event in [
+            json!({"choices":[{"index":0,"delta":{"tool_calls":[
+                {"index":1,"id":"idB","function":{"name":"workspace_read","arguments":"{\"p"}},
+                {"index":0,"id":"idA","function":{"name":"workspace_read","arguments":"{\"p"}}
+            ]}}]}),
+            json!({"choices":[{"index":0,"delta":{"tool_calls":[
+                {"index":0,"function":{"arguments":"ath\":\"a\"}"}},
+                {"index":1,"function":{"arguments":"ath\":\"b\"}"}}
+            ]}}]}),
+            json!({"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}),
+        ] {a.feed(Packet::Data(event)).unwrap();}
+        a.feed(Packet::Done).unwrap();
+        let v=a.finish().unwrap();
+        assert_eq!(v["choices"][0]["message"]["tool_calls"][0]["id"],"idA");
+        assert_eq!(v["choices"][0]["message"]["tool_calls"][1]["id"],"idB");
+    }
+    #[test]
+    fn anthropic_partial_json_and_settlement() {
+        let mut a=Assembler::new(Wire::Anthropic);
+        for item in [
+            json!({"type":"message_start","message":{"usage":{"input_tokens":14}}}),
+            json!({"type":"content_block_start","index":0,
+                "content_block":{"type":"tool_use","id":"tool_1","name":"workspace_read","input":{}}}),
+            json!({"type":"content_block_delta","index":0,
+                "delta":{"type":"input_json_delta","partial_json":"{\"path\":\""}}),
+            json!({"type":"content_block_delta","index":0,
+                "delta":{"type":"input_json_delta","partial_json":"src/lib.rs\"}"}}),
+            json!({"type":"content_block_stop","index":0}),
+            json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},
+                "usage":{"output_tokens":9}}),
+            json!({"type":"message_stop"}),
+        ] {a.feed(Packet::Data(item)).unwrap();}
+        let settled=a.finish().unwrap();
+        assert_eq!(settled["content"][0]["input"]["path"],"src/lib.rs");
+        assert_eq!(settled["usage"]["input_tokens"],14);
+    }
+    #[test]
+    fn codex_full_response_is_required_before_any_tool_execution() {
+        let mut a=Assembler::new(Wire::Codex);
+        a.feed(Packet::Data(json!({"type":"response.output_item.done",
+            "item":{"type":"function_call","call_id":"call_1",
+                "name":"shell_exec","arguments":"{}"}}))).unwrap();
+        assert!(a.finish().is_err());
+        let mut a=Assembler::new(Wire::Codex);
+        a.feed(Packet::Data(json!({"type":"response.completed",
+            "response":{"status":"completed","output":[{"type":"function_call",
+                "call_id":"call_1","name":"workspace_read","arguments":"{}"}]}}))).unwrap();
+        assert_eq!(a.finish().unwrap()["output"][0]["call_id"],"call_1");
+    }
+    #[test]
+    fn errors_incomplete_frames_and_bad_limits_fail_closed() {
+        let mut d=SseDecoder::default();
+        assert!(d.push(b"data: {\"type\":\"partial\"").unwrap().is_empty());
+        assert!(d.end().is_err());
+        let mut a=Assembler::new(Wire::Chat);
+        a.feed(Packet::Data(json!({"choices":[{"index":0,
+            "finish_reason":"length","delta":{"content":"partial"}}]}))).unwrap_err();
+        let mut b=Assembler::new(Wire::Anthropic);
+        assert!(b.feed(Packet::Data(json!({"type":"error",
+            "error":{"message":"temporarily overloaded"}}))).is_err());
+        let mut c=Assembler::new(Wire::Codex);
+        assert!(c.feed(Packet::Data(json!({"type":"response.incomplete",
+            "response":{"incomplete_details":{"reason":"max_output_tokens"}}}))).is_err());
+    }
+}

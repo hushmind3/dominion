@@ -16,6 +16,7 @@ struct ConfiguredModel {
     provider: String,
     model: String,
     session: String,
+    run_id: String,
     allow_fallback: bool,
 }
 impl Model for ConfiguredModel {
@@ -52,9 +53,9 @@ impl Model for ConfiguredModel {
                 let reply=self.complete(system,prompt).await?;
                 return Ok(ModelTurn{reply,decision:None});
             }
-            crate::engine::native_model::complete(
+            crate::engine::native_model::complete_with_run(
                 &self.state,&self.provider,&self.model,&self.session,
-                system,prompt,schemas,receipts,
+                system,prompt,schemas,receipts,Some(&self.run_id),
             ).await
         })
     }
@@ -394,6 +395,7 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
     let model=ConfiguredModel {
         state:context.state.clone(),provider:route.id.clone(),
         model:route.model.clone(),session:session.clone(),
+        run_id:context.job_id.clone(),
         allow_fallback:input["allowFallback"].as_bool().unwrap_or(false),
     };
     let host_tools=NativeTools {
