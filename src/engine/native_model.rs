@@ -10,6 +10,75 @@ use futures_util::StreamExt;
 use serde_json::{json,Value};
 use std::{collections::HashSet,time::Duration};
 
+
+#[derive(Clone, Copy, Debug, Default)]
+struct NativeReportedUsage {
+    input: Option<u64>, output: Option<u64>,
+    cache_read: Option<u64>, cache_write: Option<u64>,
+}
+/// Chat and Responses include cached input in their total; Anthropic
+/// reports cache reads and cache writes separately from input_tokens.
+fn reported_usage(wire:&str,value:&Value)->NativeReportedUsage {
+    let u=&value["usage"];
+    let cache_read=match wire {
+        "anthropic"=>u["cache_read_input_tokens"].as_u64(),
+        "codex"=>u["input_tokens_details"]["cached_tokens"].as_u64(),
+        _=>u["prompt_tokens_details"]["cached_tokens"].as_u64()
+            .or_else(||u["prompt_token_details"]["cached_tokens"].as_u64())
+    };
+    let cache_write=if wire=="anthropic" {
+        u["cache_creation_input_tokens"].as_u64()
+    }else{None};
+    let input=if wire=="anthropic" {
+        u["input_tokens"].as_u64().map(|n|n.saturating_add(cache_read.unwrap_or(0))
+            .saturating_add(cache_write.unwrap_or(0)))
+    }else if wire=="codex" {u["input_tokens"].as_u64()}
+    else{u["prompt_tokens"].as_u64()};
+    let output=if wire=="chat" {u["completion_tokens"].as_u64()}
+        else{u["output_tokens"].as_u64()};
+    NativeReportedUsage{input,output,cache_read,cache_write}
+}
+/// Job-scoped durable measured-only ledger. Unknown provider usage is not free.
+fn record_job_usage(state:&AppState,job_id:Option<&str>,session:&str,
+    route:&gateway::Route,usage:NativeReportedUsage)->Result<(),String> {
+    let Some(id)=job_id else{return Ok(())};
+    let job=state.store.get("job",id).ok_or("Native usage job disappeared")?;
+    let old=&job["nativeModelUsage"];
+    let add=|field:&str,n:u64|old[field].as_u64().unwrap_or(0).saturating_add(n);
+    let known=usage.input.is_some()&&usage.output.is_some();
+    let cache_known=usage.cache_read.is_some()||usage.cache_write.is_some();
+    let input=usage.input.unwrap_or(0);
+    let output=usage.output.unwrap_or(0);
+    let ledger=json!({
+        "inputTokens":add("inputTokens",input),
+        "outputTokens":add("outputTokens",output),
+        "totalTokens":add("totalTokens",input.saturating_add(output)),
+        "cacheReadTokens":add("cacheReadTokens",usage.cache_read.unwrap_or(0)),
+        "cacheWriteTokens":add("cacheWriteTokens",usage.cache_write.unwrap_or(0)),
+        "reportedCalls":add("reportedCalls",u64::from(known)),
+        "unreportedCalls":add("unreportedCalls",u64::from(!known)),
+        "cacheReportedCalls":add("cacheReportedCalls",u64::from(cache_known)),
+        "last":{"providerId":route.id,"model":route.model,
+            "inputTokens":usage.input,"outputTokens":usage.output,
+            "cacheReadTokens":usage.cache_read,"cacheWriteTokens":usage.cache_write,
+            "providerReported":known},
+        "source":"provider_reported_partial_when_available",
+        "estimated":false
+    });
+    let saved=state.store.patch_if("job",id,"status",&json!("running"),
+        &json!({"nativeModelUsage":ledger}))
+        .ok_or("Provider usage could not be persisted for the running job")?;
+    state.bus.record("job",&saved);
+    state.store.audit("native.model_usage",json!({
+        "jobId":id,"sessionId":session,"providerId":route.id,"model":route.model,
+        "inputTokens":usage.input,"outputTokens":usage.output,
+        "cacheReadTokens":usage.cache_read,"cacheWriteTokens":usage.cache_write,
+        "providerReported":known,"cacheReported":cache_known,
+        "estimated":false,"currencyCost":null
+    }));
+    Ok(())
+}
+
 fn clip(text:&str,cap:usize)->String {
     if text.chars().count()<=cap {return text.into();}
     let head=text.chars().take(cap/3).collect::<String>();
