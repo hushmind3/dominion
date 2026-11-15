@@ -21,6 +21,7 @@ pub mod policy;
 pub mod tools;
 pub mod provider;
 pub mod tool;
+pub mod sdk;
 
 pub use context::ContextBudget;
 pub use policy::{AllowAll, Decision, DenyWrites, Policy, ReadOnlyPolicy};
@@ -28,10 +29,14 @@ pub use provider::{ModelReply, Provider};
 pub use tool::{Permission, Tool, ToolCall, ToolSpec};
 
 /// One conversation entry, independent of any provider's wire format.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ToolCall>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,17 +48,18 @@ pub enum Role {
 }
 
 impl Message {
-    pub fn system(content: impl Into<String>) -> Self {
-        Self { role: Role::System, content: content.into() }
+    fn plain(role: Role, content: impl Into<String>) -> Self {
+        Self { role, content: content.into(), tool_calls: Vec::new(), tool_call_id: None }
     }
-    pub fn user(content: impl Into<String>) -> Self {
-        Self { role: Role::User, content: content.into() }
+    pub fn system(content: impl Into<String>) -> Self { Self::plain(Role::System, content) }
+    pub fn user(content: impl Into<String>) -> Self { Self::plain(Role::User, content) }
+    pub fn assistant(content: impl Into<String>) -> Self { Self::plain(Role::Assistant, content) }
+    pub fn tool(content: impl Into<String>) -> Self { Self::plain(Role::Tool, content) }
+    pub fn assistant_calls(content: impl Into<String>, tool_calls: Vec<ToolCall>) -> Self {
+        Self { role: Role::Assistant, content: content.into(), tool_calls, tool_call_id: None }
     }
-    pub fn assistant(content: impl Into<String>) -> Self {
-        Self { role: Role::Assistant, content: content.into() }
-    }
-    pub fn tool(content: impl Into<String>) -> Self {
-        Self { role: Role::Tool, content: content.into() }
+    pub fn tool_result(call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self { role: Role::Tool, content: content.into(), tool_calls: Vec::new(), tool_call_id: Some(call_id.into()) }
     }
 }
 
@@ -177,7 +183,7 @@ impl<P: Provider> Harness<P> {
             if !content.is_empty() {
                 events.push(Event::AssistantText(content.clone()));
             }
-            messages.push(Message::assistant(content));
+            messages.push(Message::assistant_calls(content, calls.clone()));
 
             if calls.is_empty() {
                 stop = StopReason::Completed;
@@ -191,7 +197,7 @@ impl<P: Provider> Harness<P> {
                 tool_calls += 1;
                 let Some(tool) = self.tools.get_mut(&call.name) else {
                     let result = format!("unknown tool: {}", call.name);
-                    messages.push(Message::tool(result.clone()));
+                    messages.push(Message::tool_result(call.id.clone(), result.clone()));
                     events.push(Event::ToolFinished {
                         name: call.name,
                         ok: false,
@@ -212,7 +218,7 @@ impl<P: Provider> Harness<P> {
                                 Decision::Allow => "allowed",
                             }
                         );
-                        messages.push(Message::tool(result.clone()));
+                        messages.push(Message::tool_result(call.id.clone(), result.clone()));
                         events.push(Event::Denied {
                             name: spec.name,
                             permission: spec.permission,
@@ -236,7 +242,7 @@ impl<P: Provider> Harness<P> {
                     ok,
                     preview: truncate(&text, 200),
                 });
-                messages.push(Message::tool(text));
+                messages.push(Message::tool_result(call.id.clone(), text));
             }
             // A denied or unapproved tool ends the run: the caller must
             // surface the pending decision instead of continuing silently.
