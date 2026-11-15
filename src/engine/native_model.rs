@@ -670,7 +670,7 @@ mod tests {
         assert_eq!(c.decision.unwrap().actions[0].id,"call_5");
     }
     #[test]
-    fn provider_usage_correctly_counts_cached_input_and_distinguishes_missing_fields() {
+    fn native_provider_usage_correctly_counts_cached_input_and_distinguishes_missing_fields() {
         let codex=reported_usage("codex",&json!({"usage":{
             "input_tokens":400,"output_tokens":100,
             "input_tokens_details":{"cached_tokens":300}}}));
@@ -952,7 +952,8 @@ mod tests {
                     json!({"choices":[{"index":0,"delta":{"tool_calls":[{
                         "index":0,"function":{"arguments":"src/한글.rs\"}"}}]}}]}),
                     json!({"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}),
-                    json!({"choices":[],"usage":{"prompt_tokens":41,"completion_tokens":7}}),
+                    json!({"choices":[],"usage":{"prompt_tokens":41,"completion_tokens":7,
+                        "prompt_tokens_details":{"cached_tokens":28}}}),
                 ];
                 let mut data=parts.into_iter().map(|p|format!("data: {p}\r\n\r\n"))
                     .collect::<String>().into_bytes();
@@ -978,6 +979,10 @@ mod tests {
         let saved=state.store.get("job","stream-job").unwrap();
         assert_eq!(saved["nativeStream"]["stage"],"settled");
         assert_eq!(saved["nativeStream"]["protocol"],"chat");
+        assert_eq!(saved["nativeModelUsage"]["inputTokens"],41);
+        assert_eq!(saved["nativeModelUsage"]["outputTokens"],7);
+        assert_eq!(saved["nativeModelUsage"]["cacheReadTokens"],28);
+        assert_eq!(saved["nativeModelUsage"]["reportedCalls"],1);
         assert_eq!(saved["nativeStream"]["executable"],false);
         assert_eq!(saved["nativeStream"]["pendingCalls"][0]["name"],"workspace_read");
         assert!(!saved["nativeStream"].to_string().contains("src/한글.rs"),
@@ -994,7 +999,8 @@ mod tests {
             post(|Json(body):Json<Value>| async move {
                 assert_eq!(body["stream"],true);
                 let parts=vec![
-                    json!({"type":"message_start","message":{"usage":{"input_tokens":18}}}),
+                    json!({"type":"message_start","message":{"usage":{"input_tokens":18,
+                        "cache_read_input_tokens":80,"cache_creation_input_tokens":30}}}),
                     json!({"type":"content_block_start","index":0,
                         "content_block":{"type":"tool_use","id":"toolu_live",
                             "name":"workspace_read","input":{}}}),
@@ -1019,7 +1025,7 @@ mod tests {
         let state=mock_state(&format!("http://{addr}/v1"),"anthropic");
         let result=complete(&state,"native-wire-test","model-mock","s-2",
             "You are a model","{}",&[tool()],&[]).await.unwrap();
-        assert_eq!(result.reply.input_tokens,Some(18));
+        assert_eq!(result.reply.input_tokens,Some(128));
         let action=&result.decision.unwrap().actions[0];
         assert_eq!(action.id,"toolu_live");
         assert_eq!(action.arguments["path"],"README.md");
