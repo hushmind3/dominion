@@ -508,7 +508,7 @@ mod tests {
         (url,arrival)
     }
 
-    fn mock_state(url:String) -> (AppState,std::path::PathBuf) {
+    async fn mock_state(url:String) -> (AppState,std::path::PathBuf) {
         let root=std::env::temp_dir().join(
             format!("dominion-runtime-test-{}",uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
@@ -516,8 +516,7 @@ mod tests {
         let (bus,_)=tokio::sync::broadcast::channel(128);
         (AppState {store,bus,
             mcp:std::sync::Arc::new(crate::mcp::Mcp::new(vec![]).unwrap()),
-            groups:std::sync::Arc::new(tokio::runtime::Handle::current().block_on(
-                crate::group::Groups::open(root.join("groups"))).unwrap()),
+            groups:std::sync::Arc::new(crate::group::Groups::open(root.join("groups")).await.unwrap()),
             provider:crate::provider::ModelClient::new(
                 crate::provider::ModelConfig::basic(url.clone(),"mock".into(),None),None
             ).unwrap(),
@@ -527,7 +526,7 @@ mod tests {
     #[tokio::test]
     async fn mock_model_writes_file_and_rust_verifies_real_bytes() {
         let (url,_)=mock_provider(false).await;
-        let (state,root)=mock_state(url);
+        let (state,root)=mock_state(url).await;
         let input=json!({"prompt":"Create verified.txt","sessionId":null,
             "allowWrite":true,"allowShell":false,"requireEvidence":true,
             "maxSteps":4,"tokenBudget":2000});
@@ -548,7 +547,7 @@ mod tests {
     #[tokio::test]
     async fn mid_request_owner_instruction_prevents_unstarted_file_write() {
         let (url,arrival)=mock_provider(true).await;
-        let (state,root)=mock_state(url);
+        let (state,root)=mock_state(url).await;
         let input=json!({"prompt":"Create verified.txt","sessionId":null,
             "allowWrite":true,"allowShell":false,"requireEvidence":false,
             "maxSteps":4,"tokenBudget":2000});
