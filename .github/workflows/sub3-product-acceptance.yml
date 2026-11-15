@@ -40,6 +40,7 @@ jobs:
         run: |
           cargo test --bin dominion-rust engine::chat::provider::tests::cache_aware_context_editing_saves_old_reads_but_retains_effects_and_recent_results -- --nocapture
           cargo test --bin dominion-rust engine::chat::provider::tests::old_tool_error_and_write_receipt_are_never_context_edited -- --nocapture
+          cargo test --bin dominion-rust engine::chat::provider::tests::reused_tool_ids_never_reclassify_an_earlier_write_as_a_read -- --nocapture
           cargo test --bin dominion-rust engine::chat::provider::tests::anthropic_native_stream_translates_messages_tools_and_usage -- --nocapture
       - name: Artifact verification contracts
         run: cargo test --bin dominion-rust engine::verification -- --nocapture
