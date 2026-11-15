@@ -76,6 +76,40 @@ const latest=await client.workflowRun(run.id)
 
 Native endpoints also support owner-defined discussion rooms, local or optional paid videos, isolated improvement experiments, memory and skills. Keep secrets in the runtime's server-side configuration; they are never returned by providerCatalog.
 
+## Autonomous coding with real acceptance checks
+
+~~~ts
+const repaired=await client.submit({
+  requestId:crypto.randomUUID(),
+  prompt:'Fix calc.js, inspect the failing test and repair until it passes',
+  allowWrite:true,
+  allowShell:true,
+  requireEvidence:true,
+  planningMode:'auto',
+  maxSteps:8,
+  acceptanceChecks:[{
+    program:'node',
+    args:['--test','calc.test.js']
+  }]
+})
+for await (const event of client.watch(repaired.id)) {
+  if (event.type==='acceptance_result') {
+    console.log('actual test:', event.detail.check,
+      event.detail.success, event.detail.exitCode)
+  }
+  if (event.type==='repair_required') {
+    console.log('repair stage:',event.detail.revision)
+  }
+  if (event.type==='finished')break
+}
+const final=await client.task(repaired.id)
+console.log(final.status,final.result?.acceptance)
+~~~
+
+The check list contains executable and argument-array pairs, never a shell command string. The native Rust runtime validates up to four explicit checks; without one it may select a conservative Cargo/npm test from an existing project manifest. Only a real passing test **after the last source change** constitutes verified acceptance. Failed code gets the recorded stderr/stdout and another bounded repair opportunity, not a fabricated green result. The Rust runtime serializes mutating tasks sharing its workspace until acceptance. Read-only tasks can still run concurrently.
+
+The main React workspace exposes the same check selection in its advanced task options. The implementation and actual Node integration tests are documented in [Native coding acceptance](../../docs/CODING_ACCEPTANCE.md). A green test on a tiny fixture is not an independent SWE-bench performance claim.
+
 ## Native evidence-backed context inspection
 
 ~~~ts
