@@ -687,7 +687,12 @@ pub(crate) async fn run_prompt(context: &JobContext, job: &Value) -> Result<Valu
             }
         }else{None}
     }else{None};
-    let mut message=if preflight_native.is_some(){
+    // Ordinary prompt jobs use the native verifier-driven execution cycle.
+    // Detached RSI generations keep their own independent worktree verifier.
+    let autonomous_result=if rsi_workspace.is_none() && input["autonomous"]!=false {
+        Some(crate::engine::autonomy::execute(context,&request,&request.input,&input).await?)
+    }else{None};
+    let mut message=if autonomous_result.is_some() || preflight_native.is_some(){
         // A native source operator is not a model invocation, and must not
         // be credited to the model in tool or token accounting.
         Ok(None)
@@ -829,6 +834,8 @@ pub(crate) async fn run_prompt(context: &JobContext, job: &Value) -> Result<Valu
         output["repairError"]=repair_failure;
         output["previousAttempts"]=json!(attempts);
         output
+    } else if let Some(result)=autonomous_result {
+        result
     } else {
         let message=message?;
         json!({
