@@ -111,7 +111,8 @@ impl Store {
                 .map_err(|e|e.to_string())?;
             let cols=stmt.query_map([],|row|row.get::<_,String>(1))
                 .map_err(|e|e.to_string())?;
-            cols.filter_map(Result::ok).any(|col|col=="superseded_by")
+            let present=cols.filter_map(Result::ok).any(|col|col=="superseded_by");
+            present
         };
         if !has_supersession{
             conn.execute("ALTER TABLE context_facts ADD COLUMN superseded_by INTEGER",[])
