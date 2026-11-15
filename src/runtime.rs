@@ -59,6 +59,9 @@ pub struct TaskInput {
     pub allow_write: bool,
     #[serde(default)]
     pub allow_shell: bool,
+    /// Explicit run-level consent to use configured external MCP tools.
+    #[serde(default)]
+    pub allow_mcp: bool,
     #[serde(default)]
     pub require_evidence: bool,
     #[serde(default)]
@@ -106,6 +109,7 @@ impl TaskInput {
             "sessionId": self.session_id,
             "allowWrite": self.allow_write,
             "allowShell": self.allow_shell,
+            "allowMcp": self.allow_mcp,
             "requireEvidence": self.require_evidence,
             "maxSteps": self.max_steps.unwrap_or(12),
             "tokenBudget": self.token_budget.unwrap_or(40_000),
@@ -172,8 +176,9 @@ impl DominionSdk {
         // Uncertain external tool effects are never replayed after a crash.
         store.recover().map_err(RuntimeError)?;
         let (bus, _) = broadcast::channel(2048);
+        let mcp = std::sync::Arc::new(crate::mcp::Mcp::from_env().map_err(RuntimeError)?);
         let state = AppState {
-            store, bus,
+            store, bus, mcp,
             http: reqwest::Client::builder().timeout(Duration::from_secs(90))
                 .build().map_err(|error| RuntimeError(error.to_string()))?,
             workspace,
