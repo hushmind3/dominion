@@ -42,6 +42,25 @@ export interface PromptJobInput {
   };
 }
 export interface WorkflowJobInput { kind: 'workflow'; input: { workflowId: string; input?: unknown } }
+/** Bounded, opt-in GPU budget measured in NEW remote scene renders. */
+export interface VideoJobInput {
+  brief: string; title?: string; engine?: 'native'|'comfyui';
+  duration?: number; aspectRatio?: '9:16'|'16:9'|'1:1';
+  scenes?: string[]; continuity?: string; fps?: number;
+  width?: number; height?: number; seed?: number; negativePrompt?: string;
+  reuseVideoJobId?: string; regenerateScenes?: number[];
+  /** 0 forbids paid new scenes, while SHA256-verified previous scenes can be reused. */
+  maxNewScenes?: number;
+}
+export interface VideoJob extends RecordItem {
+  kind: 'video'|'youtube_upload'; status: JobStatus;
+  engine?: 'native'|'comfyui'; title?: string; outputUrl?: string|null;
+  maxNewScenes?: number|null; result?: unknown;
+  renderWorkload?: {
+    frames: number; pixelFrames: number; megapixelFrames: number;
+    estimatedMoneyCost: null; unit: 'pixel_frames_not_currency';
+  };
+}
 export type CreateJobInput = PromptJobInput | WorkflowJobInput;
 export interface ClientOptions { baseUrl?: string; token?: string; fetch?: typeof globalThis.fetch }
 export interface RequestOptions { signal?: AbortSignal }
@@ -191,9 +210,9 @@ export class Dominion {
     status: (options?:RequestOptions) => this.request<unknown>('GET','/api/video/status',undefined,options),
     config: (options?:RequestOptions) => this.request<unknown>('GET','/api/video/config',undefined,options),
     saveConfig: (input:Record<string,unknown>,options?:RequestOptions) => this.request<unknown>('POST','/api/video/config',input,options),
-    list: (options?:RequestOptions) => this.request<Job[]>('GET','/api/video/jobs',undefined,options),
-    get: (key:string,options?:RequestOptions) => this.request<Job>('GET','/api/video/jobs/'+id(key),undefined,options),
-    create: (input:Record<string,unknown>,options?:RequestOptions) => this.request<Job>('POST','/api/video/jobs',input,options),
+    list: (options?:RequestOptions) => this.request<VideoJob[]>('GET','/api/video/jobs',undefined,options),
+    get: (key:string,options?:RequestOptions) => this.request<VideoJob>('GET','/api/video/jobs/'+id(key),undefined,options),
+    create: (input:VideoJobInput,options?:RequestOptions) => this.request<VideoJob>('POST','/api/video/jobs',input,options),
     outputs: (options?:RequestOptions) => this.request<unknown[]>('GET','/api/video/outputs',undefined,options),
     download: async (key:string,options?:RequestOptions) => {
       const response = await this.raw('/api/video/jobs/'+id(key)+'/content',{signal:options?.signal});
