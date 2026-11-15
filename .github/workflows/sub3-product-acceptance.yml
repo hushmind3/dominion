@@ -36,6 +36,11 @@ jobs:
         run: cargo check --bin dominion-rust
       - name: Chat and durable tool-order regressions
         run: cargo test --bin dominion-rust engine::chat::tests -- --nocapture
+      - name: Cache-aware context editing and Anthropic request integration
+        run: |
+          cargo test --bin dominion-rust engine::chat::provider::tests::cache_aware_context_editing_saves_old_reads_but_retains_effects_and_recent_results -- --nocapture
+          cargo test --bin dominion-rust engine::chat::provider::tests::old_tool_error_and_write_receipt_are_never_context_edited -- --nocapture
+          cargo test --bin dominion-rust engine::chat::provider::tests::anthropic_native_stream_translates_messages_tools_and_usage -- --nocapture
       - name: Artifact verification contracts
         run: cargo test --bin dominion-rust engine::verification -- --nocapture
       - name: Require FFmpeg binaries before media test
