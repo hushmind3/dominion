@@ -48,6 +48,10 @@ fn status_for_panel(job: &Value, pending: bool) -> &'static str {
         "running" => "running",
         "completed" => "completed",
         "cancelled" => "cancelled",
+        "needs_review" if job["result"]["reason"].as_str().is_some_and(|reason|{
+            reason.contains("토큰 예산") || reason.contains("토큰 한도")
+                || reason.contains("token budget")
+        }) => "exhausted",
         "needs_review" => "in_doubt",
         _ => "failed",
     }
@@ -66,6 +70,33 @@ fn public_view(state: &AppState, job: &Value) -> Value {
         step["toolSuccess"].as_array().map_or(0, Vec::len)
             + step["toolErrors"].as_array().map_or(0, Vec::len)
     }).sum();
+    // The main UI polls this endpoint while the model is still inside its
+    // first attempt. Waiting for a finished autonomous receipt leaves both
+    // the round count and tool activity stuck at zero for long operations.
+    // Read the existing engine-owned execution/operation records instead of
+    // fabricating progress from queued job metadata.
+    let origin=job["queuedAt"].as_str().unwrap_or("");
+    let executions=if session.is_empty(){Vec::new()}else{
+        state.store.all("execution").into_iter().filter(|run|
+            run["sessionId"].as_str()==Some(session)
+                && run["startedAt"].as_str().is_some_and(|at|at>=origin)
+        ).collect::<Vec<_>>()
+    };
+    let round_progress=executions.iter().map(|run|
+        run["iterations"].as_u64().unwrap_or(0) as usize
+    ).sum::<usize>();
+    let known_runs=executions.iter().filter_map(|run|
+        run["id"].as_str().map(str::to_string)
+    ).collect::<std::collections::HashSet<_>>();
+    let mut operations=if known_runs.is_empty(){Vec::new()}else{
+        state.store.all("execution_operation").into_iter().filter(|op|
+            op["runId"].as_str().is_some_and(|id|known_runs.contains(id))
+        ).collect::<Vec<_>>()
+    };
+    operations.sort_by(|a,b|a["startedAt"].as_str().unwrap_or("")
+        .cmp(b["startedAt"].as_str().unwrap_or(""))
+        .then_with(||a["opSeq"].as_u64().cmp(&b["opSeq"].as_u64())));
+    let tool_count=calls.max(operations.len());
     let usage = if session.is_empty() { Value::Null } else {
         let stats = state.store.session_usage(session);
         if stats["calls"].as_u64().unwrap_or(0) == 0 {
@@ -83,9 +114,22 @@ fn public_view(state: &AppState, job: &Value) -> Value {
         "name": record["tool"],
         "arguments": record["args"],
     }));
-    let events: Vec<Value> = steps.iter().map(|step| json!({
-        "kind": "autonomous_step", "detail": step,
-    })).collect();
+    let events: Vec<Value> = if operations.is_empty(){
+        steps.iter().rev().take(4).rev().map(|step|json!({
+            "kind": if step["outcome"]=="accepted" {"verified"} else {"model_started"},
+            "detail":step
+        })).collect()
+    }else{
+        // The frontend already renders "tool_started". Each event below is
+        // backed by a stored native operation, including in-progress calls.
+        operations.iter().rev().take(4).rev().map(|op|json!({
+            "kind":"tool_started",
+            "detail":{
+                "id":op["id"],"tool":op["tool"],"status":op["status"],
+                "at":op["startedAt"]
+            }
+        })).collect()
+    };
     let answer = if session.is_empty() { Value::Null } else {
         let message_id = job.pointer("/result/messageId").and_then(Value::as_str);
         state.store.messages(session).into_iter().rev()
@@ -109,8 +153,8 @@ fn public_view(state: &AppState, job: &Value) -> Value {
         "createdAt": job["createdAt"],
         "checkpoint": {
             "state": {"state": status},
-            "rounds": steps.len(),
-            "toolCalls": calls,
+            "rounds": steps.len().max(round_progress),
+            "toolCalls": tool_count,
             "usage": usage,
             "pendingCall": pending_call,
             "events": events,
@@ -380,6 +424,43 @@ mod tests {
             crate::db::Store::open(&config.db_path()).unwrap(),
             crate::vault::Vault::open(&config.key_path()))
     }
+    #[test]
+    fn main_ui_progress_is_driven_by_persisted_operations_not_mock_events(){
+        let state=state();
+        let session=state.store.put("session",&json!({"title":"UI work"})).unwrap();
+        let session_id=session["id"].as_str().unwrap().to_owned();
+        let job=engine::jobs::enqueue(&state,"prompt",json!({
+            "prompt":"Inspect project","uiSource":SOURCE,"autonomous":true
+        })).unwrap();
+        let id=job["id"].as_str().unwrap().to_owned();
+        let updated=state.store.patch_if("job",&id,"status",&json!("queued"),
+            &json!({"status":"running","sessionId":session_id})).unwrap();
+        let execution=state.store.put("execution",&json!({
+            "sessionId":session_id,"status":"running",
+            "startedAt":"2026-11-16T10:00:00Z","iterations":2
+        })).unwrap();
+        state.store.put("execution_operation",&json!({
+            "runId":execution["id"],"sessionId":session_id,
+            "tool":"workspace_read","status":"running",
+            "opSeq":1,"startedAt":"2026-11-16T10:00:01Z"
+        })).unwrap();
+        let view=public_view(&state,&updated);
+        assert_eq!(view["checkpoint"]["rounds"],2);
+        assert_eq!(view["checkpoint"]["toolCalls"],1);
+        assert_eq!(view["checkpoint"]["events"][0]["kind"],"tool_started");
+        assert_eq!(view["checkpoint"]["events"][0]["detail"]["tool"],"workspace_read");
+    }
+
+    #[test]
+    fn main_ui_budget_review_has_its_existing_limit_reached_state(){
+        let job=json!({"status":"needs_review","result":{
+            "reason":"사용자가 설정한 작업 토큰 예산에 도달했습니다."
+        }});
+        assert_eq!(status_for_panel(&job,false),"exhausted");
+        assert_eq!(status_for_panel(&json!({"status":"needs_review",
+            "result":{"reason":"Remote side effect unknown"}}),false),"in_doubt");
+    }
+
     #[test]
     fn main_ui_reads_real_prompt_job_and_requires_genuine_approval() {
         let state = state();
