@@ -37,7 +37,9 @@ fn native_panel_provider(state:&AppState,provider_id:Option<&str>)->Result<Strin
 
 
 fn prompt_job(state:&AppState,id:&str)->Option<Value>{
-    state.store.get("job",id).filter(|j|j["kind"]=="prompt")
+    state.store.get("job",id).filter(|j|
+        j["kind"]=="prompt"
+            && j["input"]["clientSurface"]=="native_agent_panel")
 }
 fn pending(state:&AppState,job:&Value)->Option<Value>{
     let session=job["sessionId"].as_str()?;
@@ -405,6 +407,12 @@ mod tests{
         assert_eq!(after[0]["instruction"],"Inspect a project");
         assert_eq!(state.store.get("job","from-chat-or-automation").unwrap()
             ["status"],"completed","other menu's durable job must remain intact");
+        assert_eq!(one(State(state.clone()),
+            Path("from-chat-or-automation".into())).await.status(),
+            StatusCode::NOT_FOUND,"one menu cannot resume or cancel another menu's job");
+        assert_eq!(cancel(State(state.clone()),
+            Path("from-chat-or-automation".into())).await.status(),
+            StatusCode::NOT_FOUND);
         let _=std::fs::remove_dir_all(root);
     }
     #[tokio::test]
@@ -412,7 +420,7 @@ mod tests{
         let (state,root)=temporary_state();
         state.store.put("job",&json!({"id":"sdk-job","kind":"prompt",
             "status":"running","sessionId":"native-session",
-            "input":{"prompt":"Inspect before editing"}})).unwrap();
+            "input":{"prompt":"Inspect before editing","clientSurface":"native_agent_panel"}})).unwrap();
         state.store.put("approval",&json!({"id":"approved-call",
             "status":"pending","sessionId":"native-session","runId":"sdk-job",
             "tool":"workspace_write","args":{"path":"src/lib.rs"}})).unwrap();
@@ -480,7 +488,7 @@ mod tests{
         let (state,root)=temporary_state();
         state.store.put("job",&json!({"id":"orphan-ui","kind":"prompt",
             "status":"running","sessionId":"s-1",
-            "input":{"prompt":"Edit an old file"}})).unwrap();
+            "input":{"prompt":"Edit an old file","clientSurface":"native_agent_panel"}})).unwrap();
         state.store.put("approval",&json!({"id":"orphaned",
             "status":"pending","runId":"orphan-ui","sessionId":"s-1",
             "tool":"workspace_write","args":{"path":"f"}})).unwrap();
@@ -497,7 +505,7 @@ mod tests{
         let id="reconcile-job";
         let original=json!({"id":id,"kind":"prompt","status":"needs_review",
             "sessionId":"s-reconcile","nativeInFlight":true,
-            "input":{"prompt":"Write result.txt"},
+            "input":{"prompt":"Write result.txt","clientSurface":"native_agent_panel"},
             "nativeState":{"id":id,"status":"needs_review",
                 "instruction":"Write result.txt","plan":[],"step":2,
                 "modelCalls":1,"chargedTokens":1200,"receipts":[],
@@ -546,7 +554,7 @@ mod tests{
         let id="uncertain-paid";
         state.store.put("job",&json!({"id":id,"kind":"prompt",
             "status":"needs_review","nativeInFlight":true,
-            "input":{"prompt":"Create a new project"},
+            "input":{"prompt":"Create a new project","clientSurface":"native_agent_panel"},
             "nativeState":{"id":id,"status":"needs_review",
                 "instruction":"Create a new project","plan":[],"step":1,
                 "modelCalls":0,"chargedTokens":0,"receipts":[],
@@ -563,7 +571,7 @@ mod tests{
     async fn uncertain_native_effects_cannot_be_replayed_as_a_main_ui_resume(){
         let (state,root)=temporary_state();
         state.store.put("job",&json!({"id":"uncertain","kind":"prompt",
-            "status":"failed","input":{"prompt":"Alter a project"},
+            "status":"failed","input":{"prompt":"Alter a project","clientSurface":"native_agent_panel"},
             "nativeInFlight":true,"nativeState":{"status":"running",
                 "modelInFlight":true,"inFlight":[{"name":"workspace_write"}]}})).unwrap();
         let response=resume(State(state.clone()),Path("uncertain".into())).await;
