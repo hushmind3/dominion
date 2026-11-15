@@ -131,6 +131,24 @@ fn add_explicit_verifier(checks: &mut Value, command: Option<&str>) -> Result<()
     Ok(())
 }
 
+/// A passing build/test from before the most recent workspace edit is stale.
+/// The verifier must be run again on the final bytes, not on an earlier draft.
+fn verification_after_last_edit(command:&str, evidence:&[Value])->bool {
+    let last_edit=evidence.iter().enumerate().filter_map(|(index,item)|{
+        (verification::successful_evidence(item) && matches!(
+            verification::tool_name(item),
+            "workspace_write"|"workspace_replace"|"workspace_replace_range"|"file_write"
+        )).then_some(index)
+    }).last();
+    let last_pass=evidence.iter().enumerate().filter_map(|(index,item)|
+        verification::command_matches(item,command).then_some(index)).last();
+    match (last_edit,last_pass){
+        (_,None)=>false,
+        (Some(edit),Some(pass))=>pass>edit,
+        (None,Some(_))=>true,
+    }
+}
+
 /// Called by the existing durable prompt worker. The job stays one operation;
 /// all intermediate rounds share its session, cancellation and audit records.
 pub async fn execute(
@@ -216,6 +234,11 @@ pub async fn execute(
             .map(|msg|msg["id"].clone()).unwrap_or(Value::Null);
         all_evidence.extend(stats.evidence.iter().cloned());
         let mut gaps=verification::check_acceptance(&ctx.state,goal,&checks,&all_evidence);
+        if let Some(command)=verify_command {
+            if !verification_after_last_edit(command,&all_evidence) {
+                gaps.push("최종 파일 변경 이후 검증 명령이 성공한 증거가 없습니다. 마지막 변경본으로 명령을 다시 실행하세요.".into());
+            }
+        }
         // If the owner steered while a long model turn was executing, never
         // complete based on the previous instruction snapshot.
         let steering_after=ctx.state.store.get("job",&ctx.job_id)
@@ -364,6 +387,18 @@ mod tests{
         assert!(add_explicit_verifier(&mut checks,Some(&"x".repeat(2049))).is_err());
         let mut full=json!(vec![json!({"type":"file_exists","path":"some.rs"});20]);
         assert!(add_explicit_verifier(&mut full,Some("cargo test")).is_err());
+    }
+    #[test]
+    fn verifier_must_run_after_the_last_successful_source_mutation(){
+        let test=json!({"tool":"shell_exec","arguments":{"command":"cargo test"},
+            "result":{"exitCode":0}});
+        let edit=json!({"tool":"workspace_replace_range",
+            "result":{"success":true}});
+        assert!(!verification_after_last_edit("cargo test",&[]));
+        assert!(verification_after_last_edit("cargo test",&[test.clone()]));
+        assert!(!verification_after_last_edit("cargo test",&[test.clone(),edit.clone()]));
+        assert!(verification_after_last_edit("cargo test",&[edit.clone(),test.clone()]));
+        assert!(verification_after_last_edit("cargo test",&[edit,test.clone(),test]));
     }
     #[test]
     fn conservative_strategy_stops_on_partial_write_plus_provider_error(){
