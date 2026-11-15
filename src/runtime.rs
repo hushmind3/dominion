@@ -205,8 +205,14 @@ impl DominionSdk {
         let videos = std::sync::Arc::new(
             crate::video::Videos::open(video_dir).await.map_err(RuntimeError)?
         );
+        let improvement_dir = config.database.parent().unwrap_or(std::path::Path::new("."))
+            .join("improvements");
+        let improvements = std::sync::Arc::new(
+            crate::improvement::Improvements::open(improvement_dir,workspace.clone())
+                .await.map_err(RuntimeError)?
+        );
         let state = AppState {
-            store, bus, mcp, provider, groups, videos,
+            store, bus, mcp, provider, groups, videos, improvements,
             workspace,
             model_name: config.model_name,
         };
