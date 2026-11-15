@@ -516,7 +516,7 @@ async fn say_scenes(
         let seconds = probe_duration(&ffprobe, &path).await?;
         if seconds < 0.2 { return None; }
         durations.push((seconds + 0.35).max(1.0));
-        list.push_str(&format!("file '{file}'\\n"));
+        list.push_str(&format!("file '{file}'\n"));
     }
     std::fs::write(dir.join("narration.txt"), list).ok()?;
     let status = tokio::process::Command::new(encoder)
