@@ -54,51 +54,10 @@ async fn serve(mut config: Config, open_browser: bool, parent_bound: bool) -> Re
             config.data_dir.display()
         )
     })?;
-    let store = Store::open(&config.db_path()).map_err(|error| {
-        format!(
-            "cannot open database {}: {error}",
-            config.db_path().display()
-        )
-    })?;
-    let vault = Vault::open(&config.key_path());
-    let state = AppState::new(config.clone(), store, vault);
-    migrations::run(&state)?;
-    // OAuth polls live in memory; a restart cannot complete an in-flight
-    // login, so do not leave a stale device code visible in the UI.
-    if let Some(mut login) = state.store.get("codex_login", "codex") {
-        if matches!(
-            login["status"].as_str(),
-            Some("pending" | "device_pending")
-        ) {
-            login["status"] = serde_json::json!("error");
-            login["message"] = serde_json::json!(
-                "서버가 재시작되어 로그인을 다시 시작해야 합니다."
-            );
-            state.store.put("codex_login", &login);
-        }
-    }
-    engine::jobs::recover(&state);
-    engine::wake::recover(&state);
-    engine::improve::recover_finalizations(&state);
-    engine::improve::schedule_experiments(&state);
-    engine::algorithms::seed(&state);
-    engine::policy::meta_improve(&state);
-    engine::policy::propose_candidates(&state);
-    engine::jobs::start(state.clone());
-    engine::maintenance::start(state.clone());
-    {
-        let refresh_state = state.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(45)).await;
-            loop {
-                let _ = crate::api::providers::refresh_free_catalog(&refresh_state).await;
-                tokio::time::sleep(std::time::Duration::from_secs(6 * 60 * 60)).await;
-            }
-        });
-    }
-    engine::scheduler::start(state.clone());
-    engine::discord::start(state.clone());
-    engine::telegram::start(state.clone());
+    // Server and embedded Rust consumers now use the same native SDK engine.
+    let runtime = crate::sdk::Dominion::from_config(config.clone())?;
+    runtime.start()?;
+    let state = runtime.shared_state();
     let app = api::router(state);
     println!(
         "DOMINION (rust engine) listening on http://127.0.0.1:{}",
