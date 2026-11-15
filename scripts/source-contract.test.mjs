@@ -148,3 +148,16 @@ test('recursive improvement is Rust-owned, persisted, scored and visible across 
  assert.ok(sdk.includes('improvementEvolutionStart('))
  assert.ok(ui.includes('연속 진화 · A→B→A'))
 });
+
+test('owner stop is persisted in the Rust RSI engine and exposed to typed clients',()=>{
+ const core=readFileSync(join(root,'src/improvement/evolution.rs'),'utf8')
+ const api=readFileSync(join(root,'src/api.rs'),'utf8')
+ const sdk=readFileSync(join(root,'sdk/typescript/src/index.ts'),'utf8')
+ const ui=readFileSync(join(root,'web/src/pages/NativeWorkspace.tsx'),'utf8')
+ assert.ok(core.includes('pub async fn evolution_stop('))
+ assert.ok(core.includes('should_stop_evolution(run).await'))
+ assert.ok(core.includes('save(&self.root,&run).await'))
+ assert.ok(api.includes('/api/evolutions/:id/stop'))
+ assert.ok(sdk.includes('evolutionStop('))
+ assert.ok(ui.includes("stopEvolution(run.id)"))
+});
