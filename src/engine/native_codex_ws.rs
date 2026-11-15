@@ -371,7 +371,8 @@ mod tests {
             requests_per_minute:None,account_id:Some("account".into()),
         }
     }
-    fn state()->(AppState,PathBuf) {
+    fn state()->(AppState,PathBuf,String) {
+        let job_id=format!("native-ws-job-{}",uuid::Uuid::new_v4());
         let root=std::env::temp_dir().join(format!("dominion-native-ws-{}",
             uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
@@ -380,9 +381,9 @@ mod tests {
         let store=Store::open(&cfg.db_path()).unwrap();
         let vault=Vault::open(&cfg.key_path());
         let app=AppState::new(cfg,store,vault);
-        app.store.put("job",&json!({"id":"job-test","kind":"prompt",
+        app.store.put("job",&json!({"id":job_id,"kind":"prompt",
             "status":"running","cancelRequested":false}));
-        (app,root)
+        (app,root,job_id)
     }
     fn body(text:&str,receipts:&[Receipt])->Value {
         json!({"model":"test-model","instructions":"owner directives",
@@ -432,7 +433,7 @@ mod tests {
     async fn native_tool_roundtrip_reuses_one_socket_and_only_new_receipt() {
         let (listener,base)=listener().await;
         let route=route(base);
-        let (state,root)=state();
+        let (state,root,job_id)=state();
         let server=tokio::spawn(async move {
             let mut socket=accept_socket(&listener).await;
             let first=match socket.next().await.unwrap().unwrap(){
@@ -450,18 +451,18 @@ mod tests {
             socket.send(Message::Text(completed("resp-2",None).to_string().into())).await.unwrap();
         });
         let first=generate(&state,&route,"account","token",&body("step1",&[]),
-            "session","job-test",&[]).await.unwrap();
+            "session",&job_id,&[]).await.unwrap();
         assert_eq!(first["id"],"resp-1");
         let receipts=[receipt("call-1")];
         let second=generate(&state,&route,"account","token",&body("step2",&receipts),
-            "session","job-test",&receipts).await.unwrap();
+            "session",&job_id,&receipts).await.unwrap();
         assert_eq!(second["id"],"resp-2");
         server.await.unwrap();
         let audits=state.store.recent_audit(10);
         assert!(audits.iter().any(|a|a["event"]=="native.codex_ws.turn"
             && a["detail"]["mode"]=="delta"
             && a["detail"]["newToolReceipts"]==1));
-        forget_job("job-test");
+        forget_job(&job_id);
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -469,7 +470,7 @@ mod tests {
     async fn eof_before_first_delta_has_unknown_billing_and_no_retry() {
         let (listener,base)=listener().await;
         let route=route(base);
-        let (state,root)=state();
+        let (state,root,job_id)=state();
         let (tx,mut rx)=tokio::sync::mpsc::unbounded_channel();
         let server=tokio::spawn(async move{
             let mut socket=accept_socket(&listener).await;
@@ -478,7 +479,7 @@ mod tests {
             socket.close(None).await.unwrap();
         });
         let result=generate(&state,&route,"account","token",&body("hello",&[]),
-            "session","job-test",&[]).await;
+            "session",&job_id,&[]).await;
         assert!(matches!(result,Err(WsError::Uncertain(_))));
         rx.recv().await.unwrap();
         assert!(rx.try_recv().is_err(),"unknown delivery must not replay the model");
@@ -486,7 +487,7 @@ mod tests {
             a["event"]=="native.codex_ws.uncertain"
             && a["detail"]["replayed"]==false));
         server.await.unwrap();
-        forget_job("job-test");
+        forget_job(&job_id);
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -494,7 +495,7 @@ mod tests {
     async fn settled_response_without_identity_is_uncertain_and_never_retried() {
         let (listener,base)=listener().await;
         let route=route(base);
-        let (state,root)=state();
+        let (state,root,job_id)=state();
         let (tx,mut requests)=tokio::sync::mpsc::unbounded_channel();
         let server=tokio::spawn(async move {
             let mut socket=accept_socket(&listener).await;
@@ -504,16 +505,16 @@ mod tests {
                 .to_string().into())).await.unwrap();
         });
         let result=generate(&state,&route,"account","token",&body("first",&[]),
-            "session","job-test",&[]).await;
+            "session",&job_id,&[]).await;
         assert!(matches!(result,Err(WsError::Uncertain(_))));
         requests.recv().await.unwrap();
         assert!(requests.try_recv().is_err(),"missing ID cannot trigger paid replay");
         assert!(state.store.recent_audit(10).iter().any(|a|
             a["event"]=="native.codex_ws.uncertain" && a["detail"]["modelBilling"]=="unknown"));
-        assert_eq!(state.store.get("job","job-test").unwrap()["nativeStream"]["stage"],
+        assert_eq!(state.store.get("job",&job_id).unwrap()["nativeStream"]["stage"],
             "interrupted");
         server.await.unwrap();
-        forget_job("job-test");
+        forget_job(&job_id);
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -521,7 +522,7 @@ mod tests {
     async fn stalled_native_socket_obeys_owner_cancellation_without_retry() {
         let (listener,base)=listener().await;
         let route=route(base);
-        let (state,root)=state();
+        let (state,root,job_id)=state();
         let (notice,mut sent)=tokio::sync::mpsc::unbounded_channel();
         let server=tokio::spawn(async move {
             let mut socket=accept_socket(&listener).await;
@@ -531,7 +532,7 @@ mod tests {
         });
         let request=body("slow task",&[]);
         let run=generate(&state,&route,"account","token",&request,
-            "session","job-test",&[]);
+            "session",&job_id,&[]);
         let cancel=async {
             sent.recv().await.unwrap();
             // Also let the socket finish its initial send before cancellation.
@@ -545,7 +546,7 @@ mod tests {
         assert!(state.store.recent_audit(10).iter().any(|a|
             a["event"]=="native.codex_ws.uncertain"));
         server.abort();
-        forget_job("job-test");
+        forget_job(&job_id);
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -553,7 +554,7 @@ mod tests {
     async fn explicit_missing_previous_response_recovers_by_full_replay() {
         let (listener,base)=listener().await;
         let route=route(base);
-        let (state,root)=state();
+        let (state,root,job_id)=state();
         let server=tokio::spawn(async move {
             let mut socket=accept_socket(&listener).await;
             let _first=socket.next().await.unwrap().unwrap();
@@ -572,13 +573,13 @@ mod tests {
             new_socket.send(Message::Text(completed("resp-new",None).to_string().into())).await.unwrap();
         });
         generate(&state,&route,"account","token",&body("first",&[]),
-            "session","job-test",&[]).await.unwrap();
+            "session",&job_id,&[]).await.unwrap();
         let receipts=[receipt("call-1")];
         let done=generate(&state,&route,"account","token",&body("second",&receipts),
-            "session","job-test",&receipts).await.unwrap();
+            "session",&job_id,&receipts).await.unwrap();
         assert_eq!(done["id"],"resp-new");
         server.await.unwrap();
-        forget_job("job-test");
+        forget_job(&job_id);
         std::fs::remove_dir_all(root).unwrap();
     }
 }
