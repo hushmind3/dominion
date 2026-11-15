@@ -96,7 +96,8 @@ fn collect(path: &Path, source: &str, findings: &mut Vec<String>) {
         if justified(&lines, index) {
             continue;
         }
-        findings.push(format!("{}:{}", path.display(), index + 1));
+        // Stable slash paths are part of the machine-readable audit result.
+        findings.push(format!("{}:{}",path.to_string_lossy().replace('\\',"/"),index + 1));
     }
 }
 

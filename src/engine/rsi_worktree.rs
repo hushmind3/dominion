@@ -191,6 +191,24 @@ pub struct Worktree {
     pub path: PathBuf,
     pub base: String,
 }
+
+/// Git for Windows does not accept Win32 extended-length prefixes for
+/// worktree CLI path arguments. Keep the OS-native PathBuf for actual I/O
+/// and only normalize its string representation at the Git boundary.
+pub(crate) fn git_compatible_path(path:&Path)->String{
+    let value=path.to_string_lossy();
+    #[cfg(windows)]
+    {
+        if let Some(unc)=value.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{}",unc);
+        }
+        if let Some(drive)=value.strip_prefix(r"\\?\") {
+            return drive.to_string();
+        }
+    }
+    value.into_owned()
+}
+
 fn digest(value:&str)->String {
     format!("{:x}",Sha256::digest(value.as_bytes()))
 }
@@ -310,7 +328,8 @@ pub async fn prepare(context:&JobContext,input:&Value)->Result<Worktree,String>{
         return Err("원본에 다른 변경사항이 있어 자기개선 작업을 시작하지 않았습니다.".into());
     }
     let path=std::env::temp_dir().join(format!("dominion-rsi-{}",uuid::Uuid::new_v4()));
-    let name=path.to_str().ok_or("분리 작업공간 경로를 읽을 수 없습니다.")?;
+    let path_arg=git_compatible_path(&path);
+    let name=path_arg.as_str();
     // Detached Git worktree, not a new branch; the running server checkout stays pristine.
     git(&source,&["worktree","add","--detach",name,base]).await?;
     if let Some(id)=input["rsiInheritedCandidateId"].as_str().filter(|id|!id.is_empty()) {

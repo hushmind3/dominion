@@ -36,16 +36,19 @@ fn suggestions(output: &[u8], changed: &BTreeSet<String>) -> Vec<Suggestion> {
                 if span["suggestion_applicability"] != "MachineApplicable" {
                     continue;
                 }
-                let Some(path) = span["file_name"].as_str() else { continue };
-                if !rsi::safe_path(path) || !changed.contains(path) { continue; }
+                // rustc emits backslash-separated paths on Windows, while
+                // Git diff --name-only always reports slash-separated paths.
+                let Some(raw_path) = span["file_name"].as_str() else { continue };
+                let path=raw_path.replace('\\',"/");
+                if !rsi::safe_path(&path) || !changed.contains(&path) { continue; }
                 let Some(start) = span["byte_start"].as_u64().and_then(|n| usize::try_from(n).ok()) else { continue };
                 let Some(end) = span["byte_end"].as_u64().and_then(|n| usize::try_from(n).ok()) else { continue };
                 let Some(replacement) = span["suggested_replacement"].as_str() else { continue };
                 if start > end || replacement.len() > 512 { continue; }
-                let key = (path.to_string(), start, end, replacement.to_string());
+                let key = (path.clone(), start, end, replacement.to_string());
                 if seen.insert(key) {
                     found.push(Suggestion {
-                        path: path.to_string(), start, end,
+                        path: path.clone(), start, end,
                         replacement: replacement.to_string(),
                     });
                 }
@@ -179,6 +182,8 @@ mod tests {
             &changed);
         assert_eq!(accepted.len(), 1);
         assert_eq!(accepted[0].replacement, "*");
+        assert_eq!(suggestions(&diagnostic(r"src\engine\decompose.rs",4,4,"MachineApplicable"),&changed).len(),1,
+            "Windows rustc relative paths must match Git's slash-normalized names");
         assert!(suggestions(
             &diagnostic("src/engine/decompose.rs", 4, 4, "MaybeIncorrect"),
             &changed).is_empty());

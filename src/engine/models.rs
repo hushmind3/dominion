@@ -350,11 +350,14 @@ pub fn installed(state: &AppState) -> Vec<Value> {
                     std::fs::metadata(format!("{prefix}-{index:05}-of-{total:05}.gguf"))
                         .map(|m| m.len()).unwrap_or(0)).sum()
             } else { metadata.len() };
+            // API IDs are platform-neutral, unlike filesystem paths.
+            // A model copied from macOS must be selectable on Windows by
+            // the same persisted ID (including its split-GGUF shard group).
             let relative = path
                 .strip_prefix(&dir)
                 .unwrap_or(&path)
                 .to_string_lossy()
-                .to_string();
+                .replace('\\', "/");
             let file = path
                 .file_name()
                 .map(|value| value.to_string_lossy().to_string())

@@ -1012,12 +1012,16 @@ mod tests {
         let outside = std::env::temp_dir().join(format!("dominion-out-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(&outside, "outside").unwrap();
+        // Windows CI normally runs without CreateSymbolicLink privileges.
+        // Only assert traversal rejection after an actual link was created.
         #[cfg(unix)]
-        std::os::unix::fs::symlink(&outside, dir.join("link.txt")).unwrap();
-        assert!(matches!(
-            read_workspace_file(&dir, "link.txt"),
-            FileRead::Unknown
-        ));
+        {
+            std::os::unix::fs::symlink(&outside, dir.join("link.txt")).unwrap();
+            assert!(matches!(
+                read_workspace_file(&dir, "link.txt"),
+                FileRead::Unknown
+            ));
+        }
         let big = "x".repeat((MAX_PROCEDURE_FILE_BYTES + 1) as usize);
         std::fs::write(dir.join("big.txt"), big).unwrap();
         assert!(matches!(

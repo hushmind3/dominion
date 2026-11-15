@@ -798,6 +798,7 @@ pub async fn run(context: &JobContext, job: &Value) -> Result<Value, String> {
     std::fs::create_dir_all(&parent).map_err(|e| e.to_string())?;
     let parent = std::fs::canonicalize(parent).map_err(|e| e.to_string())?;
     let lab = parent.join(format!("lab-{}", uuid::Uuid::new_v4()));
+    let lab_git_path=crate::engine::rsi_worktree::git_compatible_path(&lab);
     context.checkpoint(json!({"rsiEvolutionInFlight":true,"rsiPhase":"preparing_lab"}))?;
     git(
         context,
@@ -806,7 +807,7 @@ pub async fn run(context: &JobContext, job: &Value) -> Result<Value, String> {
             "worktree",
             "add",
             "--detach",
-            lab.to_str().ok_or("실험 경로 오류")?,
+            lab_git_path.as_str(),
             base,
         ],
     )

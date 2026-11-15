@@ -164,7 +164,15 @@ fn install(state: &AppState, source_dir: &Path) -> Result<Value, String> {
         })
         .collect();
     let target = state.config.data_dir.join("skills").join(&slug);
-    copy_dir(source_dir, &target).map_err(|error| format!("스킬 복사 실패: {error}"))?;
+    // Case-insensitive filesystems can resolve skills/reviewer and
+    // skills/Reviewer to the exact same directory. Copying a file over
+    // itself fails with ERROR_SHARING_VIOLATION on Windows and risks
+    // corrupting the source. Preserve the original verified bytes.
+    let same_directory=target.canonicalize().ok().zip(source_dir.canonicalize().ok())
+        .is_some_and(|(target,source)|target==source);
+    if !same_directory {
+        copy_dir(source_dir, &target).map_err(|error| format!("스킬 복사 실패: {error}"))?;
+    }
 
     let record = state.store.put(
         "skill",
