@@ -316,7 +316,7 @@ mod tests{
         state.store.put("approval",&json!({"id":"orphaned",
             "status":"pending","runId":"orphan-ui","sessionId":"s-1",
             "tool":"workspace_write","args":{"path":"f"}})).unwrap();
-        assert_eq!(view(&state,&state.store.get("job","orphan-ui").unwrap())["status"],
+        assert_eq!(project(&state,&state.store.get("job","orphan-ui").unwrap())["status"],
             "running");
         assert_eq!(approve(State(state.clone()),Path("orphan-ui".into()),
             Json(json!({"callId":"orphaned"}))).await.status(),StatusCode::CONFLICT);
