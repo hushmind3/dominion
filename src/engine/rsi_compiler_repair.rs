@@ -37,12 +37,16 @@ fn suggestions(output: &[u8], changed: &BTreeSet<String>) -> Vec<Suggestion> {
                     continue;
                 }
                 let Some(path) = span["file_name"].as_str() else { continue };
-                if !rsi::safe_path(path) || !changed.contains(path) { continue; }
+                // rustc emits native OS separators. Normalize ONLY before
+                // checking the strict relative source allowlist; absolute or
+                // parent-traversal paths must remain forbidden.
+                let path = path.replace('\\', "/");
+                if !rsi::safe_path(&path) || !changed.contains(&path) { continue; }
                 let Some(start) = span["byte_start"].as_u64().and_then(|n| usize::try_from(n).ok()) else { continue };
                 let Some(end) = span["byte_end"].as_u64().and_then(|n| usize::try_from(n).ok()) else { continue };
                 let Some(replacement) = span["suggested_replacement"].as_str() else { continue };
                 if start > end || replacement.len() > 512 { continue; }
-                let key = (path.to_string(), start, end, replacement.to_string());
+                let key = (path.clone(), start, end, replacement.to_string());
                 if seen.insert(key) {
                     found.push(Suggestion {
                         path: path.to_string(), start, end,
@@ -178,6 +182,11 @@ mod tests {
             &diagnostic("src/engine/decompose.rs", 4, 4, "MachineApplicable"),
             &changed);
         assert_eq!(accepted.len(), 1);
+        // Windows compiler JSON contains a backslash-separated source path.
+        let win=diagnostic("src\\engine\\decompose.rs",4,4,"MachineApplicable");
+        assert_eq!(suggestions(&win,&changed).len(),1);
+        let traversal=diagnostic("src\\..\\secrets.rs",4,4,"MachineApplicable");
+        assert!(suggestions(&traversal,&changed).is_empty());
         assert_eq!(accepted[0].replacement, "*");
         assert!(suggestions(
             &diagnostic("src/engine/decompose.rs", 4, 4, "MaybeIncorrect"),

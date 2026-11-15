@@ -1013,11 +1013,16 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(&outside, "outside").unwrap();
         #[cfg(unix)]
-        std::os::unix::fs::symlink(&outside, dir.join("link.txt")).unwrap();
-        assert!(matches!(
-            read_workspace_file(&dir, "link.txt"),
-            FileRead::Unknown
-        ));
+        {
+            std::os::unix::fs::symlink(&outside, dir.join("link.txt")).unwrap();
+            assert!(matches!(read_workspace_file(&dir, "link.txt"), FileRead::Unknown));
+        }
+        // Windows runners may lack SeCreateSymbolicLinkPrivilege. When the
+        // OS permits creating a real symlink, it must still be rejected.
+        #[cfg(windows)]
+        if std::os::windows::fs::symlink_file(&outside, dir.join("link.txt")).is_ok() {
+            assert!(matches!(read_workspace_file(&dir, "link.txt"), FileRead::Unknown));
+        }
         let big = "x".repeat((MAX_PROCEDURE_FILE_BYTES + 1) as usize);
         std::fs::write(dir.join("big.txt"), big).unwrap();
         assert!(matches!(

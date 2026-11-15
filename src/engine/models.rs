@@ -350,11 +350,12 @@ pub fn installed(state: &AppState) -> Vec<Value> {
                     std::fs::metadata(format!("{prefix}-{index:05}-of-{total:05}.gguf"))
                         .map(|m| m.len()).unwrap_or(0)).sum()
             } else { metadata.len() };
+            // Public model IDs must be stable across POSIX and Windows.
             let relative = path
                 .strip_prefix(&dir)
                 .unwrap_or(&path)
                 .to_string_lossy()
-                .to_string();
+                .replace(std::path::MAIN_SEPARATOR, "/");
             let file = path
                 .file_name()
                 .map(|value| value.to_string_lossy().to_string())
@@ -426,7 +427,7 @@ fn mlx_model_from_dir(dir: &Path, root: &Path) -> Option<Value> {
                 .strip_prefix(root)
                 .ok()?
                 .to_string_lossy()
-                .to_string();
+                .replace(std::path::MAIN_SEPARATOR, "/");
             Some(json!({
                 "id": format!("mlx:{repo}"),
                 "repo": repo,
