@@ -130,7 +130,7 @@ impl Ledger {
         !checks.is_empty()&&checks.iter().all(|check|
             self.current(check).is_some_and(|item|item.success))
     }
-    pub fn current_failure(&self,checks:&[Check])->Option<(&Check,&Attempt)>{
+    pub fn current_failure<'a>(&'a self,checks:&'a [Check])->Option<(&'a Check,&'a Attempt)>{
         checks.iter().find_map(|check|
             self.current(check).filter(|item|!item.success).map(|item|(check,item)))
     }
