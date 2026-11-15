@@ -378,6 +378,22 @@ impl DominionSdk {
         self.state.store.agent_delete(id).map_err(RuntimeError)
     }
 
+    /// Owner-facing evidence inspector, shared by the public HTTP API and
+    /// external SDK. Searches only this persisted task's own native session
+    /// and exact, transaction-linked ancestors.
+    pub fn context_inspect(&self,id:&str,query:&str)->Result<Value,RuntimeError>{
+        if query.len()>400 {return Err(RuntimeError("Context query exceeds 400 bytes".into()));}
+        let task=self.task(id)?;
+        let session=task.input["sessionId"].as_str().unwrap_or(&task.id);
+        let facts=self.state.store.context_checkpoint(session,query,8000);
+        let hits=self.state.store.context_search(session,id,query,12);
+        let snapshot=self.state.store.context_recovery_snapshot(id)
+            .map_err(RuntimeError)?;
+        Ok(json!({"taskId":id,"sessionId":session,"facts":facts,
+            "results":hits,"executionState":snapshot,
+            "source":"native_durable_context"}))
+    }
+
     pub fn task(&self, id: &str) -> Result<TaskRecord, RuntimeError> {
         let value = self.state.store.get(id)
             .ok_or_else(|| RuntimeError("Task record not found".into()))?;
