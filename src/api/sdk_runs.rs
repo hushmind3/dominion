@@ -64,12 +64,16 @@ fn reconciliable_tool(job:&Value)->bool{
                 && !job["nativeState"]["receipts"].as_array().is_some_and(|receipts|
                     receipts.iter().any(|r|r["id"]==calls[0]["id"])))
 }
-fn safe_native_resume(job:&Value)->bool{
+fn safe_native_resume(state:&AppState,job:&Value)->bool{
     matches!(job["status"].as_str(),Some("failed"|"interrupted"))
         && job["nativeState"]["status"]=="running"
         && job["nativeState"]["modelInFlight"]!=true
         && job["nativeState"]["inFlight"].as_array().is_some_and(Vec::is_empty)
         && job["nativeInFlight"]!=true && job["cancelRequested"]!=true
+        // Do not trust only the snapshot: a separately journaled host effect
+        // may still have an unknown outcome after a torn write/checkpoint.
+        && !state.store.all("execution_operation").iter().any(|operation|
+            operation["runId"]==job["id"] && operation["outcomeUnknown"]==true)
 }
 fn project(state:&AppState,job:&Value)->Value{
     let snapshot=&job["nativeState"];
@@ -81,7 +85,7 @@ fn project(state:&AppState,job:&Value)->Value{
             "needs_review" if snapshot["error"].as_str()
                 .is_some_and(|e|e.contains("budget")||e.contains("limit"))=>"exhausted",
             "needs_review"=>"denied",
-            "failed"|"interrupted" if safe_native_resume(job)=>"interrupted",
+            "failed"|"interrupted" if safe_native_resume(state,job)=>"interrupted",
             "failed"|"interrupted"=>"denied",
             "queued"=>"queued","running"=>"running",
             "completed"=>"completed","cancelled"=>"cancelled",
@@ -227,7 +231,7 @@ pub async fn resume(State(state):State<AppState>,Path(id):Path<String>)->Respons
     let Some(job)=prompt_job(&state,&id) else {
         return error(StatusCode::NOT_FOUND,"SDK 작업을 찾지 못했습니다.");
     };
-    if !safe_native_resume(&job) {
+    if !safe_native_resume(&state,&job) {
         return error(StatusCode::CONFLICT,
             "확정되지 않은 실행이 있거나 커널이 종료됐습니다. 상태를 확인하고 새 작업으로 시작하세요.");
     }
@@ -481,6 +485,13 @@ mod tests{
         working["nativeInFlight"]=json!(true);
         assert_eq!(project(&state,&working)["status"],"denied",
             "unsafe failed tasks must not display a non-working Resume button");
+        working["nativeInFlight"]=json!(false);
+        state.store.put("execution_operation",&json!({
+            "id":"unresolved-host-effect","runId":"live","status":"interrupted",
+            "tool":"shell_exec","outcomeUnknown":true
+        })).unwrap();
+        assert_eq!(project(&state,&working)["status"],"denied",
+            "unresolved operation journal must outrank a clean-looking SDK snapshot");
         let _=std::fs::remove_dir_all(root);
     }
     #[tokio::test]
