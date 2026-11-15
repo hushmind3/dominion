@@ -863,6 +863,127 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn native_openai_disconnected_post_never_replays_a_paid_model_call() {
+        use tokio::io::AsyncReadExt;
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr=listener.local_addr().unwrap();
+        let server=tokio::spawn(async move {
+            let (mut socket,_)=listener.accept().await.unwrap();
+            let mut buf=[0u8;4096];
+            let read=socket.read(&mut buf).await.unwrap();
+            assert!(read>0);
+            assert!(String::from_utf8_lossy(&buf[..read]).contains("POST /v1/chat/completions"));
+            drop(socket); // Provider may have received the paid POST.
+            tokio::time::timeout(Duration::from_millis(950),listener.accept())
+                .await.is_ok()
+        });
+        let state=mock_state(&format!("http://{addr}/v1"),"openai");
+        let id=format!("native-unknown-post-{}",uuid::Uuid::new_v4());
+        state.store.put("job",&json!({"id":id,"kind":"prompt",
+            "status":"running","nativeInFlight":true}));
+        let result=complete_with_run(&state,"native-wire-test","model-mock","session",
+            "owner rules","current task",&[tool()],&[],Some(&id)).await;
+        assert!(result.unwrap_err().contains("not replayed"),
+            "an interrupted POST must not use the gateway's helper-call retry");
+        assert!(!server.await.unwrap(),
+            "one native model turn must never send a second paid POST after EOF");
+        assert_eq!(state.store.get("job",&id).unwrap()["nativeInFlight"],true,
+            "the Rust kernel owns uncertain-model recovery after the call fails");
+    }
+    #[tokio::test]
+    async fn native_anthropic_cache_negotiates_only_explicit_rejection_then_remembers_provider() {
+        use axum::{routing::post,Router,Json,http::StatusCode};
+        use std::sync::{Arc,Mutex};
+        let seen=Arc::new(Mutex::new(Vec::<Value>::new()));
+        let observed=seen.clone();
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr=listener.local_addr().unwrap();
+        let router=Router::new().route("/v1/messages",post(move |Json(body):Json<Value>|{
+            let observed=observed.clone();
+            async move {
+                let hinted=body["system"].is_array();
+                observed.lock().unwrap().push(body);
+                if hinted {
+                    (StatusCode::BAD_REQUEST,Json(json!({"error":{
+                        "param":"system.0.cache_control",
+                        "message":"cache_control not supported"}})))
+                }else{
+                    (StatusCode::OK,Json(json!({"content":[{
+                        "type":"text","text":"settled without cache"}],
+                        "usage":{"input_tokens":25,"output_tokens":5}})))
+                }
+            }
+        }));
+        let server=tokio::spawn(async move{axum::serve(listener,router).await.unwrap();});
+        let state=mock_state(&format!("http://{addr}/v1"),"anthropic");
+        let stable="stable owner role and security rules ".repeat(340);
+        for turn in ["step A","step B"] {
+            let result=complete(&state,"native-wire-test","model-mock",
+                "session-cache",&stable,turn,&[tool()],&[]).await.unwrap();
+            assert_eq!(result.reply.content,"settled without cache");
+        }
+        let records=seen.lock().unwrap().clone();
+        assert_eq!(records.len(),3,
+            "only the explicit pre-generation cache rejection may retry a call");
+        assert!(records[0]["system"].is_array());
+        assert_eq!(records[0]["tools"][0]["cache_control"]["type"],"ephemeral");
+        assert!(records[1]["system"].is_string());
+        assert!(records[2]["system"].is_string(),
+            "unsupported cache hints must remain disabled for this provider/model");
+        assert_eq!(records[0]["messages"],records[1]["messages"]);
+        assert_ne!(records[1]["messages"],records[2]["messages"]);
+        server.abort();
+    }
+    #[tokio::test]
+    async fn native_anthropic_cache_reads_reach_durable_job_meter_not_just_http_headers() {
+        use axum::{routing::post,Router,Json};
+        use std::sync::{Arc,Mutex};
+        let seen=Arc::new(Mutex::new(Vec::<Value>::new()));
+        let observed=seen.clone();
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr=listener.local_addr().unwrap();
+        let router=Router::new().route("/v1/messages",post(move |Json(body):Json<Value>|{
+            let observed=observed.clone();
+            async move {
+                let index={
+                    let mut rows=observed.lock().unwrap();
+                    rows.push(body);
+                    rows.len()
+                };
+                Json(json!({"content":[{"type":"text","text":"done"}],
+                    "usage":{"input_tokens":30,"output_tokens":9,
+                        "cache_creation_input_tokens":if index==1{500}else{0},
+                        "cache_read_input_tokens":if index==2{500}else{0}}}))
+            }
+        }));
+        let server=tokio::spawn(async move{axum::serve(listener,router).await.unwrap();});
+        let state=mock_state(&format!("http://{addr}/v1"),"anthropic");
+        let id=format!("native-cache-meter-{}",uuid::Uuid::new_v4());
+        state.store.put("job",&json!({"id":id,"kind":"prompt",
+            "status":"running","nativeInFlight":true}));
+        let stable="stable owner system and behavior ".repeat(340);
+        for turn in ["first unique owner task","second unique owner task"] {
+            let result=complete_with_run(&state,"native-wire-test","model-mock",
+                "session-cache",&stable,turn,&[tool()],&[],Some(&id)).await.unwrap();
+            assert_eq!(result.reply.input_tokens,Some(530),
+                "Anthropic cache creation/read must count towards kernel token budget");
+        }
+        let recorded=state.store.get("job",&id).unwrap()["nativeModelUsage"].clone();
+        assert_eq!(recorded["inputTokens"],1060);
+        assert_eq!(recorded["outputTokens"],18);
+        assert_eq!(recorded["cacheReadTokens"],500);
+        assert_eq!(recorded["cacheWriteTokens"],500);
+        assert_eq!(recorded["reportedCalls"],2);
+        let rows=seen.lock().unwrap();
+        assert_eq!(rows.len(),2);
+        assert_eq!(rows[0]["tools"],rows[1]["tools"]);
+        assert_eq!(rows[0]["system"],rows[1]["system"]);
+        assert_ne!(rows[0]["messages"],rows[1]["messages"]);
+        assert_eq!(rows[0]["system"][0]["cache_control"]["type"],"ephemeral");
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn native_real_http_provider_through_rust_kernel_executes_actual_file_tool() {
         use axum::{routing::post,Router,Json};
         use dominion_sdk::harness::{
