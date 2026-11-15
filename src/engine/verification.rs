@@ -342,7 +342,7 @@ pub(crate) fn is_action_evidence(item: &Value) -> bool {
         return false;
     }
     match tool_name(item) {
-        "workspace_write" | "file_write" => true,
+        "workspace_write" | "file_write" | "workspace_replace" | "workspace_replace_range" => true,
         "shell_exec" | "terminal_exec" => {
             let args = item
                 .get("arguments")
