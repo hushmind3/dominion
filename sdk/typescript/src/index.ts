@@ -12,6 +12,8 @@ export interface TaskInput {
   /** Explicit permission grants for this run. Both default to false. */
   allowWrite?: boolean;
   allowShell?: boolean;
+  /** Shell checks run on the host (legacy) or must use a real isolated OS backend. */
+  shellIsolation?: 'host' | 'isolated';
   /** Explicit consent to expose operator-configured MCP tools in this run. */
   allowMcp?: boolean;
   /** Permit bounded native read-only child workers. */
@@ -57,6 +59,15 @@ export interface NativeWorkflow {
 export interface NativeWorkflowRun {
   id:string;workflowId:string;requestId:string;status:'queued'|'running'|'completed'|'failed'|'needs_review';
   currentStep:number;tasks:string[];error:string|null;createdAt:string;updatedAt:string;
+}
+export interface NativeSandboxCapability {
+  available:boolean;
+  backend:string|null;
+  scope:'shell_only';
+  network?:'closed';
+  filesystem?:'workspace-write';
+  note?:string;
+  reason?:string;
 }
 export interface NativeProviderConfig {
   id:string;model:string;origin:string;keyConfigured:boolean;
@@ -314,6 +325,10 @@ export class DominionClient {
     return this.request<NativeContextEvidence>(
       '/api/tasks/'+encodeURIComponent(taskId)+'/context?q='+encodeURIComponent(query),
       'GET',undefined,signal);
+  }
+  /** Inspect real local shell isolation capabilities before opting in. */
+  sandboxCapability(signal?:AbortSignal) {
+    return this.request<NativeSandboxCapability>('/api/sandbox','GET',undefined,signal);
   }
   providerCatalog(signal?:AbortSignal) {
     return this.request<{models:NativeProviderConfig[];default:string}>('/api/providers','GET',undefined,signal);
