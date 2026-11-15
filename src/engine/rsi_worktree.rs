@@ -1072,6 +1072,10 @@ pub(crate) async fn compare_at(context:&JobContext,id:&str,source:&Path,_runner_
     updated["evaluation"]["evidenceSha256"]=json!(evidence_sha);
     updated["evaluation"]["baselineTreeSha"]=report["baselineTreeSha"].clone();
     updated["evaluation"]["candidateTreeSha"]=report["candidateTreeSha"].clone();
+    // A frozen paired experiment must expose WHY each arm failed to compile.
+    // Carry the runner-owned diagnostic into the candidate and next generation;
+    // the verdict remains based solely on frozen measurements.
+    updated["evaluation"]["buildDiagnostics"]=report["buildDiagnostics"].clone();
     state.store.put("rsi_candidate",&updated)
         .ok_or("A/B 평가 후보 갱신에 실패했습니다.")?;
     state.store.put("rsi_evaluation",&updated["evaluation"]);
