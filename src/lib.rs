@@ -20,11 +20,8 @@ pub struct AppState {
     pub(crate) mcp: Arc<mcp::Mcp>,
     pub(crate) provider: provider::ModelClient,
     pub(crate) bus: broadcast::Sender<Value>,
-    pub(crate) http: reqwest::Client,
     pub(crate) workspace: PathBuf,
-    pub(crate) model_url: String,
     pub(crate) model_name: String,
-    pub(crate) api_key: Option<String>,
 }
 
 impl AppState {
