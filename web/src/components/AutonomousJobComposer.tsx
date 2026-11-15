@@ -1,4 +1,4 @@
-import {useState} from 'react'
+import {useState,type FormEvent} from 'react'
 import {post} from '../api'
 import {t} from '../i18n'
 import {Button,SelectInput,TextArea,TextInput} from './Primitives'
@@ -16,7 +16,7 @@ export function AutonomousJobComposer({agents,providers,onCreated}:{
  const [busy,setBusy]=useState(false)
  const [error,setError]=useState('')
  const [notice,setNotice]=useState('')
- const submit=async(event:React.FormEvent<HTMLFormElement>)=>{
+ const submit=async(event:FormEvent<HTMLFormElement>)=>{
   event.preventDefault()
   if(!goal.trim()||busy)return
   setBusy(true);setError('');setNotice('')

@@ -612,7 +612,9 @@ mod tests {
         assert!(!verified_episode_receipt(&candidate,&fake));
         fake=receipt.clone();fake["episodes"][0]["frozenOracleSha256"]=json!("0".repeat(64));
         assert!(!verified_episode_receipt(&candidate,&fake));
-        fake=receipt.clone();fake["episodes"][0]["subjectReport"]["cases"][1]["baselinePass"]=json!(false);
+        fake=receipt.clone();fake["episodes"][0]["subjectReport"]["cases"][1]["candidatePass"]=json!(false);
+        // Candidate guard failures cannot retain an unchanged positive
+        // measured score. Baseline failures are valid negative outcomes.
         assert!(!verified_episode_receipt(&candidate,&fake));
         fake=receipt.clone();fake["episodes"][0]["gradingError"]=json!("missing frozen test");
         assert!(!verified_episode_receipt(&candidate,&fake));

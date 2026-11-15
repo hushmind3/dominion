@@ -141,6 +141,14 @@ The agent execution engine is written in **Rust**. Node.js is used to build the 
 
 **Technical docs:** [Engine](ENGINE.md) · [Documentation index](docs/INDEX.md) · [Self-improvement execution contract](docs/RSI-MAIN-INTEGRATION-2026-11-12.md).
 
+## 🎯 Start, steer and replace a running autonomous task
+
+The **Activity** page now exposes the native task cycle without requiring a developer-oriented command line. Enter a goal and start a real Rust prompt job; agent, model, verification command and retry limit are optional advanced settings. The same Activity card displays its live goal and lets you **Add requirement** or **Replace goal** without creating a second job.
+
+The native Rust `jobs::steer_with_mode` and `autonomy::execute` apply owner revisions at the next model-turn boundary. Goal replacement recalculates the task plan and acceptance criteria and prevents stale evidence from claiming success for the new objective. Prior receipts and uncertain external side effects remain tracked; the current shell/tool invocation is not interrupted. The stable `POST /api/jobs/{id}/steer` endpoint is shared by the React GUI and `@dominion/sdk` (`jobs.steer()` and `jobs.replaceGoal()`), without importing a competing agent harness.
+
+See [2026 source-guided harness comparison](docs/AGENT-HARNESS-2026.md) and [TypeScript SDK contract](sdk/typescript/README.md).
+
 ## 🦀 Native Rust SDK and autonomous execution
 
 **Rust is Dominion's primary engine and SDK.** The desktop, HTTP API and external Rust consumers use the same native lifecycle in `src/sdk.rs` (`Dominion::open / start / submit / steer / wait`). This keeps model selection, tools, durable jobs, memory and permissions under Dominion's control, independently of any vendor's agent SDK.

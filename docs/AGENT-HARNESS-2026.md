@@ -1,0 +1,48 @@
+# Dominion 2026 — Source-Guided Agent Harness and SDK Development
+
+**Reviewed:** 2026-11-15. **Branch:** `dominion-sub2`. **Decision:** Rust is the execution-policy authority; React and TypeScript SDK share the existing native Axum API.
+
+This is a code inspection and a shipped implementation slice, not a claim that Dominion has matched any other system on SWE-bench Verified or production task success. GitHub stars/forks are discovery signals, **not performance measures**.
+
+## Source comparison: US, China and community
+
+| Project | Relevant inspected public source | Practical insight | Dominion implementation boundary |
+| --- | --- | --- | --- |
+| [OpenAI Codex](https://github.com/openai/codex/blob/main/codex-rs/core/src/session/turn_input.rs) | Rust `codex-rs/core/src/session/turn_input.rs`: explicit start-or-steer admission, live turn and persistent setting lifecycle | Owner input must not race stale completion or silently overwrite a running tool | Native Rust revisioned CAS gate and next-turn handling; no Codex runtime dependency |
+| [Qwen Code](https://github.com/QwenLM/qwen-code/blob/main/packages/core/src/core/client.ts) | `packages/core/src/core/client.ts`: `Steer` control type and `getSteerInput` around tool/model control; core isolated from frontends | Let the core own task state while different interfaces steer the same job | One Rust state machine exposed through GUI and TypeScript, not duplicated JavaScript scheduling |
+| [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/sdk/README.md) | `packages/sdk/README.md`: complete harness runtime available to external processes via newline-delimited JSON-RPC SDK | SDK should control real jobs, not hide a distinct remote assistant behind a client wrapper | Direct `@dominion/sdk` HTTP commands map onto genuine Rust durable jobs; no DeepSeek harness embedded |
+| [OpenClaw](https://github.com/openclaw/openclaw/blob/main/docs/tools/subagents.md) | `docs/tools/subagents.md`: bounded subagent tools, session isolation, visibility and cancellation | Isolation and permission inheritance must be explicit in future delegated subtasks | Existing Dominion room/task/session policies remain native; the new steering feature does not widen subagent privileges |
+| [Hermes Agent](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/memory-providers.md) | `website/docs/user-guide/features/memory-providers.md`: memory provider plugins and session-scoped injection | Memory and context should be pluggable without lock-in to the model-provider harness | Dominion's local SQLite/memory and tools are retained; no new externally controlled memory execution path |
+| [Claude Code / Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview) | Public SDK contract: tools, hooks, permissions, sessions | End-user controls must be available in the application, not just in developer SDK callbacks | Activity GUI exposes goal creation and correction. Rust still owns approvals and model selection |
+
+At review time, public GitHub repositories reported approximately **135k** Codex stars, **30k** Qwen Code, **281k** DeepSeek Harness, **394k** OpenClaw and **263k** Hermes Agent (2026-11-15). These are not standardized downloads or adoption measurements and cannot establish which harness is smartest.
+
+### Architecture tradeoffs
+
+- External agent SDK embedding gives quick feature access but lets external policies own the plan/tool loop; Dominion keeps the loop, permission checks, recorded tool effects and model routing in Rust.
+- Streaming input directly into a running tool risks duplicated external side effects; the owner revision is applied **after** the current model-turn boundary and checked again before final job completion.
+- Adding an owner constraint is different from replacing a task. Both now have explicit semantics. A replacement invalidates obsolete planning/verifier conditions while preserving historical audit and no-replay information.
+- Operator-facing UX is not a developer dashboard: optional advanced controls, a natural-language task composer and direct in-place correction let users stay in the Activity page.
+
+## Implemented end-to-end contract
+
+1. `web/src/components/AutonomousJobComposer.tsx`: starts real `POST /api/jobs` prompt work with `autonomous:true`, optional model/agent/verification settings.
+2. `src/engine/jobs.rs`: `steer_with_mode` stores append/replace revisions under existing `steeringGate` optimistic concurrency and rejects late/completed updates.
+3. `src/api/jobs.rs`: stable `POST /api/jobs/{id}/steer`, including backwards-compatible append mode.
+4. `src/engine/autonomy.rs`: reconstructs authoritative goal, replans, replaces obsolete acceptance checks and scopes evidence by replacement epoch; preserves historical side-effects and receipts.
+5. `web/src/pages/Operations.tsx` + `web/src/components/JobSteering.tsx`: Activity shows active goal, work phase and simple steering modes.
+6. `sdk/typescript/src/index.ts`: `jobs.steer()` and `jobs.replaceGoal()` use identical native API, with request contract coverage in `sdk/typescript/tests/sdk.test.mjs`.
+7. `web/src/i18n/ko.ts` and `en.ts`: bilingual user-facing labels and help text.
+
+### Behavioral guarantees and limitations
+
+- Append preserves the initial user goal; replace supersedes it and earlier appended instructions; subsequent additions remain in force. The immutable original prompt is preserved as the audit input.
+- A concurrent owner steering revision prevents a stale completion from closing the job. There is no mid-tool interruption or automatic replay of uncertain side effects.
+- Existing verification command and tool permission policies remain intact. Replaced goals do **not** reuse old tool evidence as proof of completion.
+- This vertical slice is **not** a full frontier platform certification, completed SWE-bench Verified run, production deployment, or real paid multi-generation intelligence gain.
+
+### Cleanup and validation scope
+
+Changes stay within the existing Rust prompt worker, API, React Activity UI and TypeScript client; no competing vendor runtime, generated assets, new database, parallel policy engine or obsolete endpoint. Tests added cover CAS, goal replacement precedence and exact SDK HTTP payload. One pre-existing RSI meta-test expected a failed baseline guard to invalidate the entire test; its assertion was corrected to test **candidate** guard regression (baseline failures already legitimately count as measured zero). A prior Windows CI run also exposed filesystem sharing violations across multiple test fixture cleanup paths; that separate cross-platform fixture problem must not be described as a successful run.
+
+Only after source cleanup should CI/typecheck results be used to verify the integration. A frontier-level benchmark comparison belongs after core runtime capability is functionally complete.
