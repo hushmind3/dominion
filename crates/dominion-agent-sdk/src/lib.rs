@@ -224,10 +224,15 @@ fn observation_succeeded(value: &Value) -> bool {
     {
         return false;
     }
-    for field in ["exitCode", "exit"] {
+    for field in ["exitCode", "exit", "exit_code"] {
         if value.get(field).and_then(Value::as_i64).is_some_and(|code| code != 0) {
             return false;
         }
+    }
+    if value.get("status").and_then(Value::as_str).is_some_and(|status|
+        matches!(status, "error" | "failed" | "cancelled" | "denied" | "timeout")
+    ) {
+        return false;
     }
     true
 }
@@ -413,6 +418,7 @@ impl Kernel<'_> {
         );
         let mut seen = HashSet::<String>::new();
         let mut invalid = 0usize;
+        let mut no_progress_replies = 0usize;
         self.journal.save(&run)?;
         let mut budget = runtime::BudgetLedger::new(
             request.limits.max_steps.min(request.limits.max_model_calls),
@@ -539,9 +545,19 @@ impl Kernel<'_> {
                         });
                     }
                 }
+                // Repeated prose with no executable actions cannot satisfy an
+                // unfulfilled action goal. Limit paid retries before returning
+                // to the owner with an explicit needs-review status.
+                no_progress_replies += 1;
+                if no_progress_replies >= 3 {
+                    run.stop(Status::NeedsReview,
+                        "Three model replies produced no actionable progress or valid completion");
+                }
                 self.journal.save(&run)?;
+                if no_progress_replies >= 3 { return Ok(run); }
                 continue;
             }
+            no_progress_replies = 0;
             if decision.actions.len() > 12 {
                 run.stop(Status::NeedsReview, "Model requested too many tool actions in one step");
                 self.journal.save(&run)?;
