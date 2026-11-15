@@ -5892,6 +5892,12 @@ mod tests {
             "evaluation":{"source":"server_invoked_local_paired_git_worktrees","metrics":{"eligible":false}}});
         assert!(adopt(&context, &lab, &candidate, &base).await.is_err());
         candidate["evaluation"]["metrics"]["eligible"] = json!(true);
+        // In the real path the paired runner reconstructs the candidate
+        // source Git tree and persists its SHA. The fixture must present
+        // that same actual tree instead of inventing an adoption receipt.
+        let measured_tree=crate::engine::rsi_worktree::reconstructed_patch_tree(
+            &lab,&base,candidate["patch"].as_str().unwrap()).await.unwrap();
+        candidate["evaluation"]["candidateTreeSha"]=json!(measured_tree);
         let accepted = adopt(&context, &lab, &candidate, &base).await.unwrap();
         assert_ne!(accepted, base);
         assert_eq!(
