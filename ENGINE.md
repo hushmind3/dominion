@@ -181,3 +181,7 @@ Rust SDK 자체가 계획·실행·검증·복구의 상태기계입니다. 실�
 ## 자율 작업 Codex WebSocket 연속성 (2026-11-15)
 
 `/api/jobs` → `jobs::run_prompt` → `native_agent::run` → `dominion_sdk::Kernel` → `native_model::complete_with_run` → `native_codex_ws::generate`가 실제 호출 경로입니다. 동일 작업의 정상 완료 응답 ID와 실제 도구 영수증을 연결해 입력을 증분 전송하고, 체인 불일치·만료·문맥 증가 시 저장된 영수증으로 전체 요청을 재구성합니다. 네트워크 전달 결과가 불확실하면 재생하지 않고 `nativeInFlight` 및 감사 기록으로 검토하게 합니다. `native.codex_ws.turn`, `native.codex_ws.uncertain`, `native.codex_ws.context_rebase`는 전송 모드·불확실 비용·문맥 교체 경로를 설명합니다. 세부 설계와 공식 2026년 프로토콜 비교: `docs/SUB3-NATIVE-CODEX-WS-2026-11-15.md`.
+
+## 네이티브 작업별 공급자 토큰/캐시 측정 (2026-11-15)
+
+`native_stream::Assembler`는 SSE 공급자의 사용량·캐시 통계를 터미널 응답까지 유지하며, `native_model::reported_usage`가 Chat/Responses/Anthropic별 입력·출력·캐시 토큰을 읽습니다. `native_model::record_job_usage`가 완료된 공급자 응답만 `Store.job.nativeModelUsage`와 `native.model_usage` 감사 기록에 누적합니다. `native_agent::Kernel`은 실행 소유권·사용자 승인·기존 체크포인트를 그대로 보유합니다. `GET /api/jobs/:id`에서 실제 측정값과 미보고 호출 수가 노출되고 React 자율 작업 UI와 `sdk/typescript/src/index.ts::NativeModelUsage`가 이를 직접 사용합니다. 누락된 제공자 사용량은 0비용으로 처리하지 않습니다. `docs/SUB3-NATIVE-METERING-2026-11-15.md` 및 [집중 CI #43691823640](https://github.com/hushmind3/dominion-rust/actions/runs/43691823640) 참조.
