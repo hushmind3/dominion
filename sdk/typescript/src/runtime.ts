@@ -16,6 +16,7 @@ export interface ThreadOptions {
   requireEvidence?: boolean;
   maxSteps?: number;
   tokenBudget?: number;
+  planningMode?: 'auto' | 'always' | 'never';
 }
 
 export interface RunOptions extends Partial<Omit<TaskInput, 'prompt' | 'sessionId'>> {
@@ -78,6 +79,7 @@ export class DominionThread {
       requireEvidence: options.requireEvidence ?? false,
       maxSteps: options.maxSteps,
       tokenBudget: options.tokenBudget,
+      planningMode: options.planningMode ?? 'auto',
     };
   }
 
