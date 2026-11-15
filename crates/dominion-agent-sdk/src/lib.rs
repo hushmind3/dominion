@@ -213,6 +213,25 @@ pub async fn dispatch_batch<D: Dispatcher>(
     Ok(outputs)
 }
 
+/// A transport-level Ok only confirms that the adapter returned JSON.
+/// Tool protocols may encode failures inside an otherwise successful response.
+fn observation_succeeded(value: &Value) -> bool {
+    if value.get("isError").and_then(Value::as_bool) == Some(true)
+        || value.get("ok").and_then(Value::as_bool) == Some(false)
+        || value.get("success").and_then(Value::as_bool) == Some(false)
+        || value.get("error").is_some_and(|error|
+            !error.is_null() && error.as_str() != Some(""))
+    {
+        return false;
+    }
+    for field in ["exitCode", "exit"] {
+        if value.get(field).and_then(Value::as_i64).is_some_and(|code| code != 0) {
+            return false;
+        }
+    }
+    true
+}
+
 struct PlannerDispatcher<'a>(&'a dyn Tools);
 impl Dispatcher for PlannerDispatcher<'_> {
     type Output = Value;
@@ -220,7 +239,8 @@ impl Dispatcher for PlannerDispatcher<'_> {
         -> BoxFuture<'a, Result<DispatchResult<Value>, String>> {
         Box::pin(async move {
             let observation = self.0.execute(action).await?;
-            Ok(DispatchResult { output: observation.clone(), observation, success: true })
+            let success = observation_succeeded(&observation);
+            Ok(DispatchResult { output: observation.clone(), observation, success })
         })
     }
 }
