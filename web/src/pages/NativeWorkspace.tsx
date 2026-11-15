@@ -339,7 +339,7 @@ export function NativeImprovements(){
        <div className="flex flex-wrap items-center justify-between gap-2"><Button size="sm" variant="ghost" onClick={()=>setActive(item.trial_id)}>{item.generation+1}세대 · 후보 {item.proposal_index+1}</Button><span className={subtle}>{run.descendants.includes(item.trial_id)?'채택':item.eligible?'검증 통과 · 경쟁 결과 대기':'제외'}</span></div>
        <p className={subtle}>훈련 {item.training_score??'—'} · 독립 검증 {item.validation_score??'—'} (기준 {item.validation_baseline_score??'—'})</p>
        {item.reason&&<p className={subtle}>{item.reason}</p>}
-     </div>)}</div>
+     </div>)}</div>}
      {run.stop_reason&&<InlineError error={run.stop_reason}/>}
     </div>)}</div>
    </Section>}
