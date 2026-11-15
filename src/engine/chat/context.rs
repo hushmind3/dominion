@@ -449,10 +449,19 @@ pub(super) fn render_history(
                     .iter()
                     .take_while(|row| row["role"] == "tool" && row["agent_id"].as_str() == agent_id)
                     .collect();
-                let valid = calls.len() == results.len()
-                    && calls.iter().zip(&results).all(|(call, result)| {
-                        call["id"].as_str().is_some() && call["id"] == result["tool_call_id"]
-                    });
+                // Results are committed when tools finish, not in model call order.
+                // Correlate by identity so parallel completion and safe scheduling
+                // never make durable evidence disappear on the following turn.
+                let mut seen = std::collections::HashSet::new();
+                let ordered = calls.iter().map(|call| {
+                    let id = call["id"].as_str()?;
+                    if !seen.insert(id) { return None; }
+                    let mut matches = results.iter().filter(|row| row["tool_call_id"] == id);
+                    let result = matches.next().copied()?;
+                    matches.next().is_none().then_some(result)
+                }).collect::<Option<Vec<_>>>();
+                let valid = calls.len() == results.len() && ordered.is_some();
+                let results = ordered.unwrap_or_default();
                 if valid {
                     let mut assistant = json!({"role":"assistant","content":content,"tool_calls":calls});
                     if let Some(reasoning) = stored_reasoning(message) {
