@@ -271,8 +271,10 @@ pub async fn dispatch_batch<D: Dispatcher>(
         for (action, outcome) in group.iter().zip(results) {
             let (success, observation, output) = match outcome {
                 Ok(result) if result.success => (true, result.observation, Ok(result.output)),
-                Ok(result) => (false, result.observation,
-                    Err(format!("Tool {} reported an unsuccessful result", action.id))),
+                // A completed tool can report failure without a transport error.
+                // Preserve its host result so the model sees the observation and
+                // can repair the task. The durable receipt remains unsuccessful.
+                Ok(result) => (false, result.observation, Ok(result.output)),
                 Err(error) => (false, json!({"error":error.clone()}), Err(error)),
             };
             group_failed |= !success;
