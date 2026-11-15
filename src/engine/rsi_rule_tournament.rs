@@ -2,7 +2,7 @@
 //! A source patch only supplies a reward after the existing paired evaluator
 //! validates it; competing controllers are matched on exact source and model.
 use serde_json::{json,Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 fn scope(row:&Value)->Option<String>{
     let mut values=Vec::new();
@@ -13,7 +13,8 @@ fn scope(row:&Value)->Option<String>{
     Some(json!(values).to_string())
 }
 fn comparable(row:&Value)->bool {
-    row["jobId"].as_str().is_some_and(|s|!s.is_empty())
+    row["generatorCommit"].as_str().is_some_and(|s| s.len()==40 && s.bytes().all(|b|b.is_ascii_hexdigit()))
+        && row["jobId"].as_str().is_some_and(|s|!s.is_empty())
         && row["tokens"].as_u64().is_some_and(|v|v>0)
         && row["editPolicy"]["revision"].as_str().is_some_and(|s|!s.is_empty())
         && row["candidateId"].as_str().is_some_and(|s|!s.is_empty())
@@ -21,35 +22,67 @@ fn comparable(row:&Value)->bool {
         && row["evaluation"]["metrics"].is_object()
 }
 
-/// Each comparison context contributes at most one evaluation per revision;
-/// retries of one policy cannot be cherry-picked into superiority evidence.
-/// Two independent matching contexts must favor the challenger without a
-/// contrary pair. This only promotes methods: no source adoption bypass.
+/// Compare policies only across independently measured generator revisions.
+/// Repeated runs of one policy/source are conservatively scored at their
+/// *lowest* payoff, rather than rewarding a cherry-picked lucky retry.
+/// Reusing a job or candidate in different contexts invalidates both contexts;
+/// changing the task label cannot manufacture a second independent trial.
+/// No policy tournament can directly adopt a source patch.
 pub fn compare(rows:&[&Value],reward:fn(&Value)->f64)->Value {
-    let mut cohorts=BTreeMap::<String,BTreeMap<String,f64>>::new();
+    type Observation = (String,String,f64); // job, candidate, measured reward
+    let mut cohorts=BTreeMap::<String,BTreeMap<String,Vec<Observation>>>::new();
+    let mut sources=BTreeMap::<String,String>::new();
+    let mut job_contexts=BTreeMap::<String,BTreeSet<String>>::new();
+    let mut candidate_contexts=BTreeMap::<String,BTreeSet<String>>::new();
     for row in rows {
         if !comparable(row) {continue;}
         let Some(context)=scope(row) else {continue;};
+        let measured=reward(row);
+        if !measured.is_finite() {continue;}
         let revision=row["editPolicy"]["revision"].as_str().unwrap();
-        cohorts.entry(context).or_default()
-            .entry(revision.to_string())
-            .or_insert_with(||reward(row).clamp(0.0,1.0));
+        let job=row["jobId"].as_str().unwrap().to_string();
+        let candidate=row["candidateId"].as_str().unwrap().to_string();
+        sources.insert(context.clone(),row["generatorCommit"].as_str().unwrap().to_string());
+        job_contexts.entry(job.clone()).or_default().insert(context.clone());
+        candidate_contexts.entry(candidate.clone()).or_default().insert(context.clone());
+        cohorts.entry(context).or_default().entry(revision.to_string())
+            .or_default().push((job,candidate,measured.clamp(0.0,1.0)));
     }
-    let mut contests=BTreeMap::<(String,String),(u64,u64,u64)>::new();
-    for cohort in cohorts.values() {
+
+    // A single source commit must not produce two independent wins by changing
+    // the objective/partition label. Conflicting outcomes on the same source
+    // become a tie, rather than whichever row was visited first.
+    let mut by_source=BTreeMap::<(String,String),BTreeMap<String,u8>>::new();
+    for (context,cohort) in &cohorts {
+        let reused=cohort.values().flatten().any(|(job,candidate,_)|
+            job_contexts.get(job).is_some_and(|contexts|contexts.len()>1)
+            || candidate_contexts.get(candidate).is_some_and(|contexts|contexts.len()>1));
+        if reused {continue;}
+        let source=&sources[context];
         let policies=cohort.iter().collect::<Vec<_>>();
-        for (index,&(left,lr)) in policies.iter().enumerate() {
-            for &(right,rr) in policies.iter().skip(index+1) {
-                let entry=contests.entry((left.to_string(),right.to_string())).or_default();
-                if *lr-*rr>0.25 {entry.0+=1;}
-                else if *rr-*lr>0.25 {entry.1+=1;}
-                else {entry.2+=1;}
+        for (index,(left,left_rows)) in policies.iter().enumerate() {
+            for (right,right_rows) in policies.iter().skip(index+1) {
+                // Two revisions cannot be a matched experiment if they cite
+                // the same worker job or candidate artifact.
+                if left_rows.iter().any(|(job,candidate,_)|
+                    right_rows.iter().any(|(other_job,other_candidate,_)|
+                        job==other_job || candidate==other_candidate)) {continue;}
+                let lr=left_rows.iter().map(|row|row.2).fold(f64::INFINITY,f64::min);
+                let rr=right_rows.iter().map(|row|row.2).fold(f64::INFINITY,f64::min);
+                let outcome=if lr-rr>0.25 {1} else if rr-lr>0.25 {2} else {0};
+                let prior=by_source.entry(((*left).clone(),(*right).clone()))
+                    .or_default().entry(source.clone()).or_insert(outcome);
+                if *prior!=outcome {*prior=0;}
             }
         }
     }
+
     let mut selected=None::<(String,String,u64)>;
     let mut comparisons=Vec::new();
-    for ((a,b),(wins_a,wins_b,ties)) in contests {
+    for ((a,b),sources) in by_source {
+        let wins_a=sources.values().filter(|&&outcome|outcome==1).count() as u64;
+        let wins_b=sources.values().filter(|&&outcome|outcome==2).count() as u64;
+        let ties=sources.values().filter(|&&outcome|outcome==0).count() as u64;
         let champion=if wins_a>=2 && wins_b==0 {
             Some((a.clone(),b.clone(),wins_a))
         }else if wins_b>=2 && wins_a==0 {
@@ -83,7 +116,8 @@ mod tests {
     fn trial(job:&str,rev:&str,commit:&str,model:&str,accepted:bool)->Value{
         json!({"jobId":job,"tokens":2300,"candidateId":job,
             "accepted":accepted,"evidenceVerified":accepted,
-            "generatorCommit":commit,"generatorModel":model,
+            "generatorCommit":if commit=="sha1" {"a".repeat(40)} else if commit=="sha2" {"b".repeat(40)} else {commit.to_string()},
+            "generatorModel":model,
             "generatorProviderId":"p","objectiveId":"goal",
             "knowledgePartition":"space",
             "editPolicy":{"revision":rev},
@@ -121,4 +155,64 @@ mod tests {
         let refs=cases.iter().collect::<Vec<_>>();
         assert_eq!(compare(&refs,reward)["promotion"],false);
     }
+    #[test]
+    fn same_source_with_new_objective_is_not_a_second_independent_win(){
+        let mut cases=vec![
+            trial("a","base","sha1","m",false),
+            trial("b","child","sha1","m",true),
+            trial("c","base","sha1","m",false),
+            trial("d","child","sha1","m",true),
+        ];
+        cases[2]["objectiveId"]=json!("different-goal");
+        cases[3]["objectiveId"]=json!("different-goal");
+        let refs=cases.iter().collect::<Vec<_>>();
+        assert_eq!(compare(&refs,reward)["promotion"],false);
+        let comparison=&compare(&refs,reward)["comparisons"][0];
+        assert_eq!(comparison["matchedContexts"],1);
+    }
+
+    #[test]
+    fn retries_cannot_cherry_pick_success_and_order_does_not_matter(){
+        let mut cases=vec![
+            trial("a","base","sha1","m",false),
+            trial("b","child","sha1","m",true),
+            trial("b2","child","sha1","m",false),
+            trial("c","base","sha2","m",false),
+            trial("d","child","sha2","m",true),
+        ];
+        let refs=cases.iter().collect::<Vec<_>>();
+        assert_eq!(compare(&refs,reward)["promotion"],false);
+        cases.reverse();
+        let refs=cases.iter().collect::<Vec<_>>();
+        assert_eq!(compare(&refs,reward)["promotion"],false);
+    }
+
+    #[test]
+    fn shared_jobs_or_candidates_cannot_create_independent_evidence(){
+        let mut cases=vec![
+            trial("a","base","sha1","m",false),
+            trial("b","child","sha1","m",true),
+            trial("c","base","sha2","m",false),
+            trial("d","child","sha2","m",true),
+        ];
+        assert_eq!(compare(&cases.iter().collect::<Vec<_>>(),reward)["promotion"],true);
+        cases[2]["jobId"]=json!("a");
+        assert_eq!(compare(&cases.iter().collect::<Vec<_>>(),reward)["promotion"],false);
+        cases[2]["jobId"]=json!("c");
+        cases[3]["candidateId"]=json!("b");
+        assert_eq!(compare(&cases.iter().collect::<Vec<_>>(),reward)["promotion"],false);
+    }
+
+    #[test]
+    fn non_finite_rewards_are_not_competition_evidence(){
+        let cases=vec![
+            trial("a","base","sha1","m",false),
+            trial("b","child","sha1","m",true),
+            trial("c","base","sha2","m",false),
+            trial("d","child","sha2","m",true),
+        ];
+        let refs=cases.iter().collect::<Vec<_>>();
+        assert_eq!(compare(&refs,|v| if v["accepted"]==true {f64::NAN} else {0.0})["promotion"],false);
+    }
+
 }
