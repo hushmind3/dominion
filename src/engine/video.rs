@@ -291,8 +291,18 @@ fn scene_key(render:&Value,workflow:&Value,scene:&str,index:usize)->String {
     format!("{:x}",Sha256::digest(contract.to_string().as_bytes()))
 }
 fn file_sha256(file:&Path)->Result<String,String>{
-    let bytes=std::fs::read(file).map_err(|e|e.to_string())?;
-    Ok(format!("{:x}",Sha256::digest(&bytes)))
+    use std::io::Read;
+    // Video clips may be hundreds of MiB. Hash with a fixed-size buffer so
+    // provenance checks do not allocate the full clip into process memory.
+    let mut source=std::fs::File::open(file).map_err(|e|e.to_string())?;
+    let mut digest=Sha256::new();
+    let mut chunk=[0u8;64*1024];
+    loop {
+        let count=source.read(&mut chunk).map_err(|e|e.to_string())?;
+        if count==0{break;}
+        digest.update(&chunk[..count]);
+    }
+    Ok(format!("{:x}",digest.finalize()))
 }
 
 pub fn public_job(job: &Value) -> Value {
@@ -1193,6 +1203,16 @@ mod tests {
         assert_ne!(first,scene_key(&next,&workflow,"landscape",0));
     }
 
+    #[test]
+    fn video_provenance_uses_streaming_sha256_for_large_files(){
+        let dir=std::env::temp_dir().join(format!("dominion-video-hash-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path=dir.join("clip.mp4");
+        let bytes=vec![42u8; 131_095];
+        std::fs::write(&path,&bytes).unwrap();
+        assert_eq!(file_sha256(&path).unwrap(),format!("{:x}",Sha256::digest(&bytes)));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn template_substitution_never_changes_json_structure() {
         let mut value = json!({"1":{"inputs":{"text":"{{prompt}}","seconds":"{{duration}}"}}});
