@@ -5,6 +5,8 @@ on:
     branches: [dominion-sub3]
     paths:
       - '.github/workflows/sub3-product-acceptance.yml'
+      - 'Cargo.toml'
+      - 'crates/dominion-agent-sdk/**'
       - 'src/engine/chat/**'
       - 'src/engine/video.rs'
       - 'src/api/video.rs'
