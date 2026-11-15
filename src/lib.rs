@@ -11,6 +11,7 @@ pub mod video;
 pub mod veo;
 pub mod improvement;
 pub mod knowledge;
+pub mod context_memory;
 pub mod legacy;
 pub mod workflows;
 
