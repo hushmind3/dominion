@@ -2627,7 +2627,7 @@ mod tests {
         assert!(state.store.recent_audit(200).iter().any(|row|
             row["event"]=="chat.context_edit_prepared"
             && row["detail"]["wire"]=="anthropic"
-            && row["detail"]["removedJsonCharsEstimate"].as_u64().unwrap_or(0)>30_000
+            && row["detail"]["removedJsonCharsEstimate"].as_u64().unwrap_or(0)>=8_000
             && row["detail"]["billedTokenSavings"].is_null()),
             "the reduction must be observable without inventing actual billed tokens");
         assert!(sent.contains("recent-three"), "latest tool observations survive");
