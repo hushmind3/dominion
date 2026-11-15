@@ -42,6 +42,8 @@ All operations use **real** `/api/*` endpoints. The Rust engine performs plannin
 
 `npm test` builds TypeScript and runs mocked-fetch contract tests for endpoint matching, auth, SSE fragmentation, duplicate suppression, interruption and persistence polling. They **do not** establish a live model run, server CI pass, or external production reliability.
 
+This TypeScript package is auxiliary; the embedded native Rust SDK in `src/sdk.rs` owns the engine and is the primary integration layer. `jobs.steer(id, instruction)` persists a new owner instruction for the next Rust model turn. `jobs.create({kind:'prompt', input:{prompt, autonomous:true, maxAutonomousAttempts:3, executionStrategy:'focused'}})` requests the native verifier/replan loop.
+
 The initial SDK surface is explicit and versioned rather than pretending to cover every experimental backend endpoint; new operations should be mapped to their Rust handler and tested before publication.
 
 2026 reference patterns reviewed: [Hermes architecture](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/developer-guide/architecture.md), [OpenAI Agents streaming lifecycle](https://openai.github.io/openai-agents-js/guides/streaming/), [MCP transport cancellation/reconnection](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/packages/client/src/client/streamableHttp.ts). Implementation uses Dominion's own contract.
