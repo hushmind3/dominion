@@ -1,0 +1,26 @@
+name: Native build and public client contracts
+
+on:
+  push:
+    branches: [dominion-champion]
+  workflow_dispatch:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test
+  client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check web/app.js
+      - run: node --test scripts/source-contract.test.mjs
+      - run: npm install --prefix sdk/typescript
+      - run: npm test --prefix sdk/typescript
