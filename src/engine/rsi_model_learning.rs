@@ -240,6 +240,7 @@ pub(crate) fn compared_preference(model:&Value,a:&Value,b:&Value)->Option<std::c
 /// compete on the SAME committed harness and frozen paired evaluation.
 /// No third-party API weights are rewritten: the whole agent is the unit
 /// whose next-generation improvement productivity is measured.
+#[cfg(test)]
 pub(crate) fn generator_competition(
     state:&crate::state::AppState,history:&[Value],
     input:&Value,commit:&str,attempt:u64,allow_autonomous:bool
@@ -341,6 +342,7 @@ pub(crate) fn generator_competition(
 /// A configured local backend can remain in a registry after its process
 /// exits. It is NOT an available model. Validate a proposed challenger at
 /// the real inference endpoint before permitting a source generation.
+#[cfg(test)]
 pub(crate) async fn live_generator_competition(
     state:&crate::state::AppState,history:&[Value],
     input:&Value,commit:&str,attempt:u64,allow_autonomous:bool
@@ -387,6 +389,7 @@ pub(crate) async fn live_generator_competition(
 }
 /// A worker can verify the actual model call receives exactly the decision
 /// the parent stored; it may then learn a better decision rule in source.
+#[cfg(test)]
 pub(crate) fn competition_matches(plan:&Value,input:&Value)->bool{
     let mut data=plan.clone();
     let Some(row)=data.as_object_mut()else{return false};row.remove("revision");
