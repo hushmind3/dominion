@@ -479,14 +479,14 @@ async fn run_turn_with_policy(
             .filter(|seconds|*seconds>0).map(std::time::Duration::from_secs)
             .unwrap_or(std::time::Duration::from_secs(365*24*3600))
     }else{MAX_ELAPSED};
-    let result = tokio::select! {
-        result = tokio::time::timeout(turn_limit, run_turn_body(state, &request, tx, &session_id, &metrics, &execution_id, &task_id, record_input, generation, source_message_id)) =>
-            result.unwrap_or_else(|_| Err("설정한 실행 시간 제한을 초과했습니다.".into())),
-        // A closed SSE client must not destroy work already in flight. The turn
-        // keeps running in its spawned task; only an explicit cancel or the
-        // elapsed budget stops it. Results stay durable for later reads.
-        _ = wait_cancelled(state, &session_id, generation) => Err("실행이 중단되었습니다.".into()),
-    };
+    // Cancellation is immediate for stalled model calls. When a native tool
+    // is already executing, preserve its live future long enough to settle
+    // its durable receipt; never drop it and pretend the effect was undone.
+    let result = supervise_tool_cancellation(
+        state, &session_id, &execution_id, generation, turn_limit,
+        run_turn_body(state, &request, tx, &session_id, &metrics, &execution_id,
+            &task_id, record_input, generation, source_message_id),
+    ).await;
     finish_attempt(state, &execution_id, &result, &metrics);
     close_pending_approvals(state, &session_id);
 
@@ -527,6 +527,88 @@ async fn run_turn_with_policy(
         }
     }
     result
+}
+
+const TOOL_CANCEL_DRAIN_LIMIT: Duration=Duration::from_secs(60);
+
+/// Preserve uncertainty rather than mark an aborted external effect as
+/// successfully rolled back. This function is used only when the running
+/// dispatch could not supply its own durable completion receipt.
+fn mark_unsettled_tools(state:&AppState,execution_id:&str,reason:&str)->usize{
+    let mut count=0;
+    for operation in state.store.all("execution_operation"){
+        if operation["runId"].as_str()!=Some(execution_id)
+            || operation["status"]!="running" {continue;}
+        let Some(id)=operation["id"].as_str()else{continue;};
+        if let Some(saved)=state.store.patch_if(
+            "execution_operation",id,"status",&json!("running"),
+            &json!({
+                "status":"needs_review","outcomeUnknown":true,
+                "effectState":"effect_unknown",
+                "phase":"interrupted","reason":reason,
+                "finishedAt":chrono::Utc::now().to_rfc3339(),
+            })
+        ){
+            state.bus.record("execution_operation",&saved);
+            count+=1;
+        }
+    }
+    if count>0{
+        state.store.audit("tool.unsettled_after_cancel",json!({
+            "executionId":execution_id,"count":count,"reason":reason,
+        }));
+    }
+    count
+}
+
+fn has_live_tools(state:&AppState,execution_id:&str)->bool{
+    state.store.all("execution_operation").iter().any(|operation|
+        operation["runId"].as_str()==Some(execution_id)
+            && operation["status"]=="running")
+}
+
+/// A top-level select! otherwise drops the entire model/tool future on
+/// cancellation, defeating the inner scheduler's drain-on-cancel guarantee.
+async fn supervise_tool_cancellation<F>(
+    state:&AppState,session_id:&str,execution_id:&str,
+    generation:u64,turn_limit:Duration,body:F
+)->Result<Option<Value>,String>
+where F:std::future::Future<Output=Result<Option<Value>,String>>{
+    let mut body=std::pin::pin!(body);
+    let limit=tokio::time::sleep(turn_limit);
+    let mut limit=std::pin::pin!(limit);
+    tokio::select!{
+        result=&mut body=>result,
+        _=&mut limit=>{
+            mark_unsettled_tools(state,execution_id,
+                "턴 시간 제한 도달: 외부 도구 실행 결과를 확인하지 못했습니다.");
+            Err("설정한 실행 시간 제한을 초과했습니다.".into())
+        }
+        _=wait_cancelled(state,session_id,generation)=>{
+            if !has_live_tools(state,execution_id) {
+                return Err("실행이 중단되었습니다.".into());
+            }
+            state.store.audit("tool.cancellation_draining",json!({
+                "executionId":execution_id,"sessionId":session_id,
+                "maxWaitSeconds":TOOL_CANCEL_DRAIN_LIMIT.as_secs(),
+            }));
+            // The normal tool dispatcher keeps executing and records its
+            // result while the cancelled epoch stops subsequent calls.
+            match tokio::time::timeout(TOOL_CANCEL_DRAIN_LIMIT,&mut body).await{
+                Ok(_)=>{
+                    state.store.audit("tool.cancellation_drained",json!({
+                        "executionId":execution_id,"sessionId":session_id,
+                    }));
+                    Err("실행이 중단되었습니다.".into())
+                }
+                Err(_)=>{
+                    let unknown=mark_unsettled_tools(state,execution_id,
+                        "취소 후 도구 결과 회수 제한을 초과했습니다.");
+                    Err(format!("실행이 중단되었습니다. {unknown}개 도구 결과가 불확실하여 검토가 필요합니다."))
+                }
+            }
+        }
+    }
 }
 
 async fn wait_cancelled(state: &AppState, session_id: &str, generation: u64) {
@@ -6522,6 +6604,101 @@ mod outcome_tests {
             determine_task_outcome(&execution("failed", true, json!("check"))),
             TaskOutcome::Failed
         );
+    }
+}
+
+#[cfg(test)]
+mod cancellation_drain_tests {
+    use super::*;
+    use std::sync::{Arc,atomic::{AtomicBool,Ordering}};
+    fn state()->(AppState,std::path::PathBuf){
+        let dir=std::env::temp_dir().join(format!("dominion-cancel-{}",uuid::Uuid::new_v4()));
+        let config=crate::config::Config{
+            port:0,data_dir:dir.join("db"),web_dir:dir.join("web"),workspace:dir.clone(),
+        };
+        let state=AppState::new(config.clone(),
+            crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        (state,dir)
+    }
+    #[tokio::test]
+    async fn cancellation_drains_inflight_tool_and_preserves_completed_receipt(){
+        let (state,dir)=state();
+        let ready=Arc::new(AtomicBool::new(false));
+        let started=ready.clone();
+        let update=state.clone();
+        let future=async move{
+            update.store.put("execution_operation",&json!({
+                "id":"operation-1","runId":"run-1","status":"running",
+                "effectState":"started","tool":"github_api",
+            }));
+            started.store(true,Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            update.store.patch_if("execution_operation","operation-1",
+                "status",&json!("running"),&json!({
+                    "status":"completed","effectState":"applied","result":{"ok":true},
+                }));
+            Ok(None)
+        };
+        let cancel=state.clone();
+        let seen=ready.clone();
+        tokio::spawn(async move{
+            while !seen.load(Ordering::SeqCst){
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+            cancel.cancel_session("session-1");
+        });
+        let generation=state.cancellation_generation("session-1");
+        let result=supervise_tool_cancellation(
+            &state,"session-1","run-1",generation,Duration::from_secs(2),future,
+        ).await;
+        assert!(result.unwrap_err().contains("중단"));
+        let operation=state.store.get("execution_operation","operation-1").unwrap();
+        assert_eq!(operation["status"],"completed");
+        assert_ne!(operation["outcomeUnknown"],true);
+        let _=std::fs::remove_dir_all(dir);
+    }
+    #[tokio::test]
+    async fn idle_model_cancel_is_immediate_and_does_not_fabricate_tool_results(){
+        let (state,dir)=state();
+        let cancel=state.clone();
+        let generation=state.cancellation_generation("session-1");
+        tokio::spawn(async move{
+            tokio::time::sleep(Duration::from_millis(12)).await;
+            cancel.cancel_session("session-1");
+        });
+        let start=std::time::Instant::now();
+        let result=supervise_tool_cancellation(
+            &state,"session-1","run-2",generation,
+            Duration::from_secs(2),
+            std::future::pending::<Result<Option<Value>,String>>(),
+        ).await;
+        assert!(result.unwrap_err().contains("중단"));
+        assert!(start.elapsed()<Duration::from_secs(1));
+        assert!(state.store.all("execution_operation").is_empty());
+        let _=std::fs::remove_dir_all(dir);
+    }
+    #[tokio::test]
+    async fn timeout_seals_unknown_outcomes_without_replaying_effects(){
+        let (state,dir)=state();
+        let future=async{
+            state.store.put("execution_operation",&json!({
+                "id":"operation-3","runId":"run-3","status":"running",
+                "effectState":"started","tool":"mcp__external__write",
+            }));
+            std::future::pending::<Result<Option<Value>,String>>().await
+        };
+        let generation=state.cancellation_generation("session-3");
+        let error=supervise_tool_cancellation(
+            &state,"session-3","run-3",generation,
+            Duration::from_millis(20),future,
+        ).await.unwrap_err();
+        assert!(error.contains("시간 제한"));
+        let op=state.store.get("execution_operation","operation-3").unwrap();
+        assert_eq!(op["status"],"needs_review");
+        assert_eq!(op["outcomeUnknown"],true);
+        assert_eq!(op["effectState"],"effect_unknown");
+        let _=std::fs::remove_dir_all(dir);
     }
 }
 
