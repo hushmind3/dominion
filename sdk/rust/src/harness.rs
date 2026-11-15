@@ -211,7 +211,8 @@ pub async fn run<D: Driver>(
         cp.in_flight = false;
         cp.last_message_id = observed.message_id.clone().or(cp.last_message_id);
         cp.evidence.extend(observed.evidence.into_iter().take(100));
-        if cp.evidence.len() > 400 { cp.evidence.drain(..cp.evidence.len() - 400); }
+        let evidence_len = cp.evidence.len();
+        if evidence_len > 400 { cp.evidence.drain(..evidence_len - 400); }
         cp.phase = Phase::Verifying;
         driver.checkpoint(&cp).await?;
         // Intermediate steps are not complete merely because an answer exists.

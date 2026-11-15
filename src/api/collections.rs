@@ -31,7 +31,6 @@ pub fn store_kind(route_kind: &str) -> &str {
         "channels" => "channel",
         "jobs" => "job",
         "executions" => "execution",
-        "goals" => "goal",
         other => other,
     }
 }

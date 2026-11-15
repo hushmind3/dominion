@@ -166,3 +166,8 @@ DM·음성·파일 첨부·슬래시 명령·Gateway 실시간 이벤트는 이�
 - [Hermes 스킬](https://hermes-agent.nousresearch.com/docs/user-guide/features/skills)
 - [Discord 메시지 API](https://docs.discord.com/developers/resources/message)
 - [Discord 요청 제한](https://docs.discord.com/developers/topics/rate-limits)
+
+
+## 독립 Rust SDK와 실행 경로 (2026-11-15)
+
+Rust SDK 자체가 계획·실행·검증·복구의 상태기계입니다. 실제 src/engine/native_harness.rs는 모델·도구·SQLite·검증의 Driver입니다. 일반 /api/jobs는 이 엔진을 호출하고 React와 TypeScript SDK도 동일한 상태를 읽습니다. 사용자 원문이 모든 단계에서 우선하고 중단된 외부 실행은 자동 재실행하지 않습니다. RSI의 분리된 독립 평가는 기존 경로로 유지합니다. 자세한 내용은 docs/SDK-ARCHITECTURE-2026-11-15.md 참조.

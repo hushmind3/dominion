@@ -153,8 +153,6 @@ pub fn recover(state: &AppState) {
             "/nativeHarness/inFlight",
             "/rsiCompareInFlight",
             "/rsiEvolutionInFlight",
-            "/goalState/inFlight",
-            "/goalState/reviewPending",
             "/roomState/inFlight",
             "/workflowState/inFlight",
             "/discordState/inFlight",

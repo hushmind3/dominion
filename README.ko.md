@@ -159,7 +159,7 @@ Bring your own API credentials or connect a local model, then use a Rust-native 
 
 도미니언 자체 Rust 엔진과 동일한 API·작업 상태를 사용하는 별도 SDK를 추가했습니다.
 
-- [Rust SDK](sdk/rust/README.md): `dominion-sdk` — 작업, 세션, 승인, 그룹대화, 영상, RSI, 채팅/SSE 이벤트 스트림.
+- [Rust SDK](sdk/rust/README.md): `dominion-sdk` — 독립 Rust 하네스 코어(계획·실행·검증·복구·재계획)와 선택형 HTTP 클라이언트.
 - [TypeScript SDK](sdk/typescript/README.md): `@dominion-ai/sdk` — 타입 기반 API, 스트림 재접속, 작업 상태/취소·완료 대기.
 - [구조·2026 프런티어 비교](docs/SDK-ARCHITECTURE-2026-11-15.md).
 

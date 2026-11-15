@@ -164,9 +164,9 @@ Contributions are welcome — particularly **reproducible bug reports, test case
 
 ## 🧩 SDKs and public Rust API (dominion-sub3)
 
-Two independent clients now target the same **native Dominion Rust execution engine** as the React desktop UI:
+The native Rust SDK core and companion TypeScript client now target the same **native Dominion Rust execution engine** as the React desktop UI:
 
-- [Rust SDK](sdk/rust/README.md) — `dominion-sdk` reusable crate, with jobs, sessions, approvals, rooms, videos, RSI, durable event streams and chat streaming.
+- [Rust SDK](sdk/rust/README.md) — `dominion-sdk` reusable native harness with independent planning, verification, recovery and optional HTTP client.
 - [TypeScript SDK](sdk/typescript/README.md) — `@dominion-ai/sdk` reusable package with typed resources, reconnection, abort support and durable job waiting.
 - [SDK contract and 2026 architecture comparison](docs/SDK-ARCHITECTURE-2026-11-15.md).
 

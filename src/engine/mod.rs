@@ -92,7 +92,7 @@ pub struct TurnStats {
     pub evidence: Vec<Value>,
 }
 
-/// Runs a turn and collects tool evidence for the goal harness.
+/// Runs a turn and collects real tool evidence for the native Rust SDK harness.
 pub async fn run_quiet_outcome(
     state: &AppState,
     request: &chat::TurnRequest,

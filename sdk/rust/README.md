@@ -1,32 +1,15 @@
-# DOMINION Rust SDK
+# Dominion Native Rust SDK
 
-Public Rust SDK for the existing independent DOMINION engine. The SDK is a standalone reusable crate, not an external agent runner. Planning, tools, memory, approval decisions, RSI and job recovery remain Rust engine responsibilities. Both the desktop UI and the SDK use the same server API and persisted state.
+**The Rust SDK is the primary agent harness.** The reusable harness module owns task planning, real execution scheduling, verification, bounded retry/replan, durable checkpoints and unreplayed uncertain side effects. The HTTP client in lib.rs is optional.
 
-Add as a path dependency:
+Use it from another Rust application with this path dependency:
 
     dominion-sdk = { path = "sdk/rust" }
 
-Example:
+Then implement the provider-neutral dominion_sdk::harness::Driver trait using that application's model, tool, storage, verification and cancellation services. Call dominion_sdk::harness::run with the owner's task and policy. The host must persist each checkpoint before external tool effects.
 
-    use dominion_sdk::Dominion;
-    use std::time::Duration;
+The DOMINION production adapter, src/engine/native_harness.rs, is an actual Driver implementation: model planning through the native router, execution through the native Rust agent tool/approval/runtime, deterministic acceptance through the native verifier, and checkpoints through the SQLite-backed job queue. GUI tasks and TypeScript SDK both target that path via /api/jobs. The separately isolated RSI generation/independent acceptance path remains in place.
 
-    #[tokio::main]
-    async fn main() -> Result<(), Box<dyn std::error::Error>> {
-        let sdk = Dominion::local();
-        let job = sdk.submit_prompt("Inspect and improve my repository", None).await?;
-        let final_job = sdk.wait_job(&job.id, Duration::from_secs(120), Duration::from_secs(1)).await?;
-        println!("{}: {:?}", final_job.status, final_job.result);
-        Ok(())
-    }
+The client methods in sdk/rust/src/lib.rs optionally connect to an existing Rust engine at 127.0.0.1:4317 for jobs, sessions, approvals, rooms, video, RSI, chat SSE and replayable events. They are secondary to the native harness.
 
-The actual backend routes are defined in src/api/mod.rs. Host/port default: 127.0.0.1:4317. Optional admin authentication uses the X-Dominion-Token header. There is no /api/v1 rewrite and no separate harness state.
-
-- Prompt and workflow jobs, polling and cancellation
-- Live chat SSE with terminal frame detection
-- Durable /api/events replay with sequence deduplication
-- Session, provider, agent, room, approval, execution, video and RSI entry points
-- Structured HTTP error type; URL-safe identifiers
-- Minimal dependencies; no model vendor SDK
-
-Validation: cargo test --manifest-path sdk/rust/Cargo.toml (environment with Rust toolchain). Unit tests cover URL encoding, SSE framing and job terminal states. Full integration requires the running main Rust server plus configured model.
+No vendor SDK owns the loop. No goals.rs and no /api/goals API. Tests for the core cover verified repair, pre-effect checkpoint barriers and cancellation. Run cargo test --manifest-path sdk/rust/Cargo.toml and cargo test --manifest-path Cargo.toml in a Rust development environment. Live model and server tests remain outstanding. See docs/SDK-ARCHITECTURE-2026-11-15.md.
