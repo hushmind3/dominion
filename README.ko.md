@@ -174,3 +174,8 @@ Rust 대화 전송 계층은 `previous_response_not_found`처럼 명시적으로
 ### 자율 작업의 제공자별 모델 문맥 상한 (서브3)
 
 `native_model::fit_native_context`는 모델 호출 직전에 제공자의 설정된 문맥 용량과 출력 예약량을 확인하고, 오래된 도구 호출·결과를 **쌍 단위**로 덜어냅니다. 사용자의 현재 목표·시스템 지시·도구 정의는 잘라내지 않고, 전체 도구 영수증은 Rust SDK에 보존해 재검색할 수 있습니다. 필수 입력만으로 문맥을 초과하면 유료 모델 요청 전에 중단하며, 생략 건수와 추정 입력량을 기록합니다. 최신 [GitHub Actions #43689095869](https://github.com/hushmind3/dominion-rust/actions/runs/43689095869)에서 Rust SDK 45개, 네이티브 호스트 43개, Codex WebSocket 15개, 복구 1개 등 **104/104** 통과하고 프런트 타입 검사·빌드도 성공했습니다. 상세 내용은 [장기 문맥 설계](docs/SUB3-DURABLE-CONTEXT-2026-11-15.md)를 참조하십시오.
+
+
+### 자율 에이전트 Codex WebSocket 세션 연속성 (서브3, 2026-11-15)
+
+`/api/jobs`의 실제 Rust 실행 커널에 `src/engine/native_codex_ws.rs`를 연결했습니다. 모델이 완료한 응답 ID를 기준으로 **직접 실행해 영수증이 남은 도구 결과**와 최신 작업 상태만 다음 WebSocket 요청에 보냅니다. 세션·문맥이 달라지거나 이전 응답이 만료되면 안전하게 전체 문맥을 다시 구성합니다. 요청의 성공 여부가 불명확하면 HTTP·다른 모델로 자동 중복 생성하지 않고 검토 상태를 보존합니다. 설정된 모델 문맥 한도에 가까워지면 제공자가 보고한 토큰을 바탕으로 응답 체인을 새로 시작합니다. Rust의 권한·승인·검증·저장·복구 구조와 TypeScript SDK/API·GUI는 기존 경로를 그대로 사용합니다. 상세 구현과 검증 범위: [서브3 Codex 자율 작업 WebSocket](docs/SUB3-NATIVE-CODEX-WS-2026-11-15.md).
