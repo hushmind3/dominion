@@ -1288,6 +1288,8 @@ mod tests {
         let items = list(&state, "r1");
         assert_eq!(items.len(), 1, "{items:?}");
         assert_eq!(items[0]["type"], "claim", "{items:?}");
+        // Keep the test's temporary SQLite files from leaking across CI runs.
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
