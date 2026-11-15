@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
-import {parseCargoTestArtifacts,parseTestInventory} from './rsi-result-format.mjs';
+import {parseCargoTestArtifacts,parseTestInventory,pairedBuildTarget} from './rsi-result-format.mjs';
 test('exact libtest discovery tolerates Windows CRLF without changing test identity',()=>{
  const lines=['cases::zero_boundary: test','cases::negative_one: test',
    'cases::positive_one: test','3 tests, 0 benchmarks'];
@@ -25,6 +25,18 @@ test('cargo executable artifacts are recovered from Windows and Unix JSON lines'
  ];
  assert.deepEqual(parseCargoTestArtifacts(rows.join('\r\n')),
   ['C:\\\\temp\\\\cases.exe','/tmp/tests']);
+});
+
+test('short Windows A/B Cargo paths retain isolation and stable campaign caches',()=>{
+ const long=path.join(os.tmpdir(),'long-nested-dominion-runtime','rsi-paired-build',
+  'campaign-'+('x'.repeat(90)));
+ const left=pairedBuildTarget(long,'baseline','win32',os.tmpdir());
+ const right=pairedBuildTarget(long,'candidate','win32',os.tmpdir());
+ assert.ok(left.length<long.length,'Windows cache must escape deeply nested data roots');
+ assert.notEqual(left,right,'paired arms must not share compiler products');
+ assert.equal(left,pairedBuildTarget(long,'baseline','win32',os.tmpdir()));
+ assert.equal(pairedBuildTarget(long,'baseline','linux',os.tmpdir()),path.join(long,'baseline'));
+ assert.throws(()=>pairedBuildTarget(long,'unknown','win32',os.tmpdir()));
 });
 
 const runner=fileURLToPath(new URL('./rsi-lab.mjs',import.meta.url));
