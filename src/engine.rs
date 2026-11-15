@@ -810,6 +810,92 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn context_overflow_does_not_repeat_an_identical_paid_request(){
+        use axum::{http::StatusCode,routing::post,Json,Router};
+        use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
+        let counter=Arc::new(AtomicUsize::new(0));
+        let calls=counter.clone();
+        let app=Router::new().route("/v1/chat/completions",post(
+            move ||{
+                let calls=calls.clone();
+                async move {
+                    calls.fetch_add(1,Ordering::SeqCst);
+                    (StatusCode::BAD_REQUEST,Json(json!({
+                        "error":{"code":"context_length_exceeded"}
+                    })))
+                }
+            }
+        ));
+        let listener=tokio::net::TcpListener::bind(("127.0.0.1",0)).await.unwrap();
+        let url=format!("http://{}/v1/chat/completions",listener.local_addr().unwrap());
+        let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap()});
+        let (state,root)=mock_state(url).await;
+        let (task,_)=state.store.submit("small-overflow-2026",
+            &json!({"prompt":"Say hello","planningMode":"never",
+                "maxSteps":3,"tokenBudget":2000})).unwrap();
+        let id=task["id"].as_str().unwrap().to_owned();
+        run(state.clone(),id.clone()).await;
+        let record=state.store.get(&id).unwrap();
+        assert_eq!(record["status"],"needs_review");
+        assert_eq!(counter.load(Ordering::SeqCst),1,
+            "An unchanged projected request must not be sent twice");
+        server.abort();
+        let _=std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn provider_context_pressure_retries_only_after_real_projection_reduction(){
+        use axum::{http::StatusCode,routing::post,Json,Router};
+        use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
+        let counter=Arc::new(AtomicUsize::new(0));
+        let calls=counter.clone();
+        let app=Router::new().route("/v1/chat/completions",post(
+            move ||{
+                let calls=calls.clone();
+                async move{
+                    let call=calls.fetch_add(1,Ordering::SeqCst);
+                    if call==0 {
+                        (StatusCode::BAD_REQUEST,Json(json!({
+                            "error":{"code":"context_length_exceeded"}
+                        })))
+                    }else{
+                        (StatusCode::OK,Json(json!({
+                            "choices":[{"message":{"role":"assistant",
+                                "content":"Compressed context accepted."}}],
+                            "usage":{"prompt_tokens":100,"completion_tokens":20}
+                        })))
+                    }
+                }
+            }
+        ));
+        let listener=tokio::net::TcpListener::bind(("127.0.0.1",0)).await.unwrap();
+        let url=format!("http://{}/v1/chat/completions",listener.local_addr().unwrap());
+        let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap()});
+        let (state,root)=mock_state(url).await;
+        for n in 0..15 {
+            state.store.add_message("long-history","assistant",
+                &format!("{n}:{}", "context".repeat(2400)));
+        }
+        let (task,_)=state.store.submit("pressure-success-2026",
+            &json!({"prompt":"Summarize earlier facts","sessionId":"long-history",
+                "planningMode":"never","maxSteps":2,"tokenBudget":10000})).unwrap();
+        let id=task["id"].as_str().unwrap().to_owned();
+        run(state.clone(),id.clone()).await;
+        let record=state.store.get(&id).unwrap();
+        assert_eq!(record["status"],"completed","provider result: {record}");
+        assert_eq!(counter.load(Ordering::SeqCst),2);
+        let events=state.store.events_after(&id,0,200);
+        let projected=events.iter().filter(|event|event["type"]=="context_projected")
+            .collect::<Vec<_>>();
+        assert_eq!(projected.len(),2);
+        assert!(projected[1]["detail"]["modelBytes"].as_u64().unwrap()
+            <projected[0]["detail"]["modelBytes"].as_u64().unwrap());
+        assert!(events.iter().any(|event|event["type"]=="context_pressure_retry"));
+        server.abort();
+        let _=std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn resumed_task_can_read_prior_receipt_but_not_an_unrelated_task(){
         let (url,_)=mock_provider(false).await;
         let (state,root)=mock_state(url).await;
