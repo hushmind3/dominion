@@ -8,6 +8,9 @@ export interface Job extends RecordItem {
   kind: string; status: JobStatus; input: Record<string, unknown>;
   attempts?: number; stepIndex?: number; stepTotal?: number;
   sessionId?: string; error?: string; result?: unknown;
+  steeringRevision?: number;
+  steering?: Array<{revision:number;instruction:string;mode?:'append'|'replace'}>;
+  autonomousState?: {phase?:string;activeGoal?:string;attempt?:number;plan?:unknown;verification?:unknown};
 }
 export interface Execution extends RecordItem { status: string; sessionId?: string; startedAt?: string; finishedAt?: string }
 export interface Agent extends RecordItem { name: string; systemPrompt?: string; providerId?: string; model?: string }
@@ -144,7 +147,10 @@ export class Dominion {
     get: (key: string, options?: RequestOptions) => this.request<Job>('GET','/api/jobs/'+id(key),undefined,options),
     create: (input: CreateJobInput, options?: RequestOptions) => this.request<Job>('POST','/api/jobs',input,options),
     cancel: (key: string, options?: RequestOptions) => this.request<Job>('POST','/api/jobs/'+id(key)+'/cancel',{},options),
-    steer: (key: string, instruction: string, options?: RequestOptions) => this.request<{jobId:string;steeringRevision:number;appliesAt:string}>('POST','/api/jobs/'+id(key)+'/steer',{instruction},options),
+    /** Add a new binding instruction to the current goal. */
+    steer: (key: string, instruction: string, options?: RequestOptions) => this.request<{jobId:string;steeringRevision:number;mode:'append';appliesAt:string}>('POST','/api/jobs/'+id(key)+'/steer',{instruction},options),
+    /** Replace unfinished work in the SAME durable Rust job. */
+    replaceGoal: (key: string, instruction: string, options?: RequestOptions) => this.request<{jobId:string;steeringRevision:number;mode:'replace';appliesAt:string}>('POST','/api/jobs/'+id(key)+'/steer',{instruction,mode:'replace'},options),
   };
   readonly executions = {
     list: (limit=200,offset=0,options?:RequestOptions) => this.request<Execution[]>('GET','/api/executions?limit='+limit+'&offset='+offset,undefined,options),

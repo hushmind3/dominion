@@ -89,6 +89,18 @@ test('abort ends durable polling before any network request',async()=>{
   assert.equal(calls,0);
 });
 
+test('owner replacement uses the existing job and explicit replace mode',async()=>{
+  let last;
+  const client=new Dominion({fetch:async(url,init)=>{
+    last={url,body:JSON.parse(init.body)};
+    return json({jobId:'same',steeringRevision:2,mode:'replace',appliesAt:'next_model_turn'});
+  }});
+  const result=await client.jobs.replaceGoal('same','Make a presentation instead');
+  assert.equal(result.mode,'replace');
+  assert.equal(result.steeringRevision,2);
+  assert.equal(last.url,'http://127.0.0.1:4317/api/jobs/same/steer');
+  assert.deepEqual(last.body,{instruction:'Make a presentation instead',mode:'replace'});
+});
 test('owner steering uses the same native job and revision contract',async()=>{
   let call;
   const d=new Dominion({token:'token',fetch:async(url,init)=>{
