@@ -431,6 +431,23 @@ impl Store {
         Ok(event)
     }
 
+    /// Read the most recent persisted tool receipts before an explicit retry.
+    /// These are observations, never an instruction to repeat side effects.
+    pub fn recent_tool_receipts(&self,id:&str,limit:usize)->Vec<Value>{
+        let Ok(conn)=self.conn.lock() else {return vec![]};
+        let Ok(mut stmt)=conn.prepare(
+            "SELECT data FROM events WHERE task_id=?1 AND kind='tool_result'
+             ORDER BY seq DESC LIMIT ?2"
+        ) else {return vec![]};
+        let Ok(rows)=stmt.query_map(params![id,limit.clamp(1,20) as i64],|row|
+            row.get::<_,String>(0)) else {return vec![]};
+        let mut out=rows.filter_map(Result::ok)
+            .filter_map(|raw|serde_json::from_str::<Value>(&raw).ok())
+            .collect::<Vec<_>>();
+        out.reverse();
+        out
+    }
+
     pub fn events_after(&self, id: &str, after: u64, limit: usize) -> Vec<Value> {
         let Ok(conn) = self.conn.lock() else { return Vec::new() };
         let Ok(mut stmt) = conn.prepare(
