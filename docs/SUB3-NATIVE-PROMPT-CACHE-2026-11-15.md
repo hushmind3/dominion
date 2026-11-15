@@ -2,7 +2,7 @@
 
 ## Production execution path
 
-NativeAgentPanel → POST /api/jobs → jobs::run_prompt → native_agent::run → dominion_sdk::Kernel::{run,resume} → ConfiguredModel::complete_with_tools → native_model::complete_with_run → native_cache / gateway::send_once → native_stream::Assembler → kernel approval and durable receipts.
+Main 879dc23d NativeAgentPanel → POST /api/sdk/runs → src/api/sdk_runs.rs → validated jobs::create → jobs::run_prompt → native_agent::run → dominion_sdk::Kernel::{run,resume} → ConfiguredModel::complete_with_tools → native_model::complete_with_run → native_cache / gateway::send_once → native_stream::Assembler → durable receipts. Public /api/jobs and the TypeScript SDK use the same Rust kernel.
 
 Dominion Rust remains the sole owner of planning, tool dispatch, authorization, verification and checkpoints. There is no imported agent harness.
 
