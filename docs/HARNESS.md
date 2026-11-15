@@ -1,6 +1,6 @@
 # Dominion Rust SDK / Autonomous Runtime (2026-11-15)
 
-**실제 소스 진입점**: `crates/harness/src/sdk.rs` (공개 Rust 라이브러리), `crates/harness/src/bin/dominion-harness.rs` (CLI), `src/api/sdk.rs` (제품 API), `web/src/components/NativeAgentPanel.tsx` (홈 화면). **주 엔진과 SDK는 Rust**이며 TypeScript/React는 API 클라이언트 UI입니다. 기존 `Harness`형 루프(`crates/harness/src/lib.rs`)는 이전 코드 호환을 위해 남아 있으나 새 CLI와 새 제품 자동 작업은 `sdk::AgentSdk`가 실행합니다.
+**실제 소스 진입점**: `crates/harness/src/sdk.rs` (공개 Rust 라이브러리), `crates/harness/src/bin/dominion-harness.rs` (CLI), `src/api/sdk.rs` (제품 API), `web/src/components/NativeAgentPanel.tsx` (홈 화면). **주 엔진과 SDK는 Rust**이며 TypeScript/React는 API 클라이언트 UI입니다. 기존에 별도로 존재하던 `Harness::run` 루프는 미사용 중복 코드로 확인되어 제거했으며, 라이브러리의 공개 실행기는 `sdk::AgentSdk` 한 경로입니다.
 
 ## 실제 실행 경로
 
@@ -8,8 +8,8 @@
 2. `src/api/sdk.rs`에서 Dominion의 기존 모델 설정을 `engine::gateway::resolve`로 읽습니다. OpenAI-호환 제공자에서만 현재 Rust SDK 실행을 시작합니다. 별도 에이전트/외부 SDK의 하네스는 호출하지 않습니다.
 3. `sdk::AgentSdk`가 모델 호출 → 요청된 도구 확인 → `Policy` 결정 → 실행 → 모델에 정확한 도구 호출 ID와 결과를 제공하는 반복 루프를 소유합니다. `Provider`, `Tool`, `Policy`, `Verifier`를 모두 Rust 트레이트로 교체할 수 있습니다.
 4. 쓰기(`fs_write`, `fs_patch`)·명령 실행(`shell`)은 제품 API에서 도구 호출 ID별 승인이 필요합니다. 읽기(`fs_read`, `fs_list`)는 허용합니다. GUI는 승인 전에 호출 인자를 보여줍니다.
-5. `FileJournal`이 라운드, 도구 호출, 대기열, 메시지, 실행 이벤트를 `runtime/sdk-runs/{id}.json`에 저장합니다(`DOMINION_DATA` 사용 시 해당 디렉터리). 실행 직전에 `in_flight`를 영속화하며, 중단된 부작용은 자동 재실행하지 않습니다. 사용자가 실제 상태를 확인해 `reconcile` API로 기록한 뒤 재개할 수 있습니다.
-6. 검증 명령이 있으면 Rust `CommandVerifier`가 실제 워크스페이스에서 실행합니다. 검증 실패는 모델에 결과를 되돌려 수정/재검증하게 합니다. 검증기가 없으면 `completed`이며 이벤트의 `independentlyVerified=false`로 구분합니다. 종료 상태만으로 테스트 통과를 주장하지 않습니다.
+5. `FileJournal`이 라운드, 도구 호출, 대기열, 메시지, 실행 이벤트를 `runtime/sdk-runs/{id}.json`에 저장합니다(`DOMINION_DATA` 사용 시 해당 디렉터리). 실행 직전에 `in_flight`를 영속화하며, 중단된 부작용은 자동 재실행하지 않습니다. 완료된 도구 호출 ID와 인자·응답도 기록하여 모델의 중복 호출이 재실행되지 않게 합니다. 사용자가 실제 상태를 확인해 `reconcile` API로 기록한 뒤 재개할 수 있습니다.
+6. 검증 명령이 있으면 Rust `CommandVerifier`가 실제 워크스페이스에서 실행합니다. 검증 실패는 모델에 결과를 되돌려 수정/재검증하게 합니다. 검증기가 없으면 `completed`이며 이벤트의 `independentlyVerified=false`로 구분합니다. 종료 상태만으로 테스트 통과를 주장하지 않습니다. 제공자가 실제로 보고한 입력·출력·캐시 토큰만 누적하고 보고되지 않은 경우 사용량을 미표시합니다.
 
 ## 공개 API (제품)
 
