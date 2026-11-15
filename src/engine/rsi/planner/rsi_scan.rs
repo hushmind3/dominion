@@ -42,7 +42,7 @@ fn job_targets(kind: &str) -> Vec<&'static str> {
         "prompt" | "chat" | "chat_turn" => vec!["src/engine/chat/runtime.rs"],
         "rsi_compare" => vec!["src/engine/rsi_worktree.rs"],
         "workflow" => vec!["src/engine/workflows.rs"],
-        "goal" => vec!["src/engine/goals.rs"],
+        "goal" => vec!["src/engine/goals/runner.rs", "src/engine/goals/completion.rs"],
         "learning" => vec!["src/engine/learning.rs", "src/engine/memory.rs"],
         _ => vec!["src/engine/jobs.rs"],
     }
@@ -319,4 +319,18 @@ pub fn report(state: &AppState) -> Value {
         "checked": checks.len(),
         "generatedAt": chrono::Utc::now().to_rfc3339(),
     })
+}
+
+#[cfg(test)]
+mod goal_target_tests {
+    use super::job_targets;
+    #[test]
+    fn goal_failure_targets_are_real_native_modules(){
+        let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let targets=job_targets("goal");
+        assert_eq!(targets.len(),2);
+        for file in targets {
+            assert!(root.join(file).is_file(),"RSI target no longer exists: {file}");
+        }
+    }
 }
