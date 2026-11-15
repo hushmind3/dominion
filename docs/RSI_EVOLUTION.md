@@ -17,7 +17,7 @@ Content-Type: application/json
 }
 ```
 
-The result is an `EvolutionRun` with a durable UUID and initial `running` state. Observe it with `GET /api/evolutions/{uuid}` or `GET /api/evolutions`. The Rust and TypeScript SDKs expose identical operations. The React research lab shows each descendant, planned file order, verified adoption count, status, estimated KRW spent, and stop reason.
+The result is an `EvolutionRun` with a durable UUID and initial `running` state. Observe it with `GET /api/evolutions/{uuid}` or `GET /api/evolutions`. To stop further changes, call `POST /api/evolutions/{uuid}/stop`. The Rust worker persists `stop_requested` immediately and checks it before each generation and before adopting a completed candidate. An already executing model/evaluator call may finish, but no later generation is admitted after the request is observed. The Rust and TypeScript SDKs expose identical operations. The React research lab shows each descendant, planned file order, verified adoption count, status, estimated KRW spent, and stop reason.
 
 ## Actual fixed-evaluator lineage
 
@@ -57,7 +57,7 @@ A descendant inherits the previous generation's logged **actual baseline/candida
 
 The source includes a reproducible Rust integration test `bounded_evolution_can_improve_a_then_b_then_a_with_real_git_evaluation`: a fixture model proposes the next number while real Git worktrees, real shell score/test commands, frozen-baseline comparison, adoption, two descendants, file contents and persistence are checked. This verifies that `a.txt` changes to 1 for the seed, then `b.txt` changes to 1, then `a.txt` changes to 2. The restored lineage reports two adopted generations. The model is mocked for deterministic proposals; **Git and evaluator commands are not mocked**.
 
-Additional tests verify interruption handling, evaluator rejection when tracked files or HEAD change, and TypeScript client routing. `scripts/source-contract.test.mjs` checks the Rust SDK/HTTP/React/TypeScript path, and the branch's GitHub Actions workflow runs Rust, Node and frontend checks.
+Additional tests verify interruption handling, explicit stop while the native workspace lease is held (no candidate starts), refusal to auto-adopt candidates that breach the measured KRW limit, evaluator rejection when tracked files or HEAD change, and TypeScript client routing. `scripts/source-contract.test.mjs` checks the Rust SDK/HTTP/React/TypeScript path, and the branch's GitHub Actions workflow runs Rust, Node and frontend checks.
 
 ## Comparative engineering basis
 
