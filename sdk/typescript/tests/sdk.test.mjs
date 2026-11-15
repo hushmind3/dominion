@@ -118,3 +118,26 @@ test('SSE still rejects a single oversized frame',async()=>{
     for await(const event of sdk.events()){void event;}
   },error=>error instanceof DominionStreamError&&error.message.includes('larger than 2 MiB'));
 });
+
+test('native run wait returns at approval/recovery instead of hanging for completion',async()=>{
+  let reads=0;
+  const sdk=new Dominion({fetch:async()=>{
+    reads++;
+    return reply({
+      id:'r',instruction:'Improve code',
+      status:reads===1?'running':'awaiting_approval',
+      checkpoint:{pendingCall:{id:'approval1',name:'workspace_write',arguments:{path:'x'}}}
+    });
+  }});
+  const result=await sdk.nativeRuns.wait('r',{intervalMs:100,timeoutMs:1000});
+  assert.equal(result.status,'awaiting_approval');
+  assert.equal(result.checkpoint.pendingCall.id,'approval1');
+  assert.equal(reads,2);
+  const cancelled=new AbortController();cancelled.abort();
+  await assert.rejects(()=>sdk.nativeRuns.wait('r',{signal:cancelled.signal}),error=>error.name==='AbortError');
+  assert.equal(reads,2,'aborted waits must not send a request');
+});
+test('native wait exposes manual recovery and does not infer task success',async()=>{
+  const sdk=new Dominion({fetch:async()=>reply({id:'r2',instruction:'Edit',status:'in_doubt'})});
+  assert.equal((await sdk.nativeRuns.wait('r2',{timeoutMs:100})).status,'in_doubt');
+});
