@@ -270,7 +270,10 @@ mod tests {
             ),None
         ).unwrap();
         let dir=root.join("records");
-        let service=Arc::new(Improvements::open(dir.clone(),workspace.clone()).await.unwrap());
+        let lease=Arc::new(tokio::sync::Mutex::new(()));
+        let service=Arc::new(Improvements::open_with_lease(
+            dir.clone(),workspace.clone(),Arc::clone(&lease)
+        ).await.unwrap());
         let seed=service.create(NewImprovement{
             repository:"repo".into(),target_file:"a.txt".into(),
             instruction:"Improve the objective without changing the evaluator".into(),
@@ -286,10 +289,15 @@ mod tests {
         assert_eq!(service.get(seed.id).await.unwrap().status,ImprovementStatus::Evaluated);
         let seed=service.adopt(seed.id).await.unwrap();
         assert!(seed.adopted_commit.is_some());
+        let blocked=lease.lock().await;
         let run=service.evolution_start(model.clone(),seed.id,NewEvolution{
             max_generations:2,cost_budget_krw:100.0,
             target_files:vec!["b.txt".into(),"a.txt".into()]
         },true).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+        assert!(service.evolution(run.id).await.unwrap().descendants.is_empty(),
+            "Evolution must not start while another native writer holds the lease");
+        drop(blocked);
         let mut completed=None;
         for _ in 0..180 {
             let current=service.evolution(run.id).await.unwrap();
