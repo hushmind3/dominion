@@ -153,8 +153,8 @@ mod tests {
         let temp = std::env::temp_dir().join(format!("dominion-files-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(temp.join("src")).unwrap();
         std::fs::write(temp.join("src").join("main.rs"), "fn main() { println!(\"hello\"); }").unwrap();
-        let list = list(&temp, ".").unwrap();
-        assert_eq!(list["files"][0], "src/main.rs");
+        let listing = list(&temp, ".").unwrap();
+        assert_eq!(listing["files"][0], "src/main.rs");
         let hits = search(&temp, "println!", ".").unwrap();
         assert_eq!(hits["hits"][0]["path"], "src/main.rs");
         assert!(list(&temp, "../").is_err());
