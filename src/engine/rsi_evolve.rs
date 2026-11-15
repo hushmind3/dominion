@@ -3878,6 +3878,14 @@ pub(crate) async fn adopt(
     let _ = std::fs::remove_file(file);
     applied?;
     git(context, lab, &["add", "--all"]).await?;
+    // The promoted code must equal the Git tree frozen by the independent
+    // evaluator. A textual diff SHA alone cannot attest runnable source.
+    let staged_tree=git(context,lab,&["write-tree"]).await?;
+    if candidate["evaluation"]["candidateTreeSha"].as_str()
+        !=Some(staged_tree.as_str()) {
+        let _=git(context,lab,&["reset","--hard",base]).await;
+        return Err("실험 채택 코드와 독립 평가 Git 트리가 일치하지 않습니다.".into());
+    }
     git(
         context,
         lab,
