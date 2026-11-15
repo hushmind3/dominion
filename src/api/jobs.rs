@@ -14,11 +14,48 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
             for key in ["agentId","providerId","model","reasoningEffort"]{if let Some(v)=input[key].as_str().filter(|s|!s.is_empty()){value[key]=json!(v);}}
             if let Some(v)=input["thinking"].as_bool(){value["thinking"]=json!(v);}
             if let Some(v)=input["toolsExecutionEnabled"].as_bool(){value["toolsExecutionEnabled"]=json!(v);}
-            if let Some(v)=input["planning"].as_bool(){value["planning"]=json!(v);}
-            for key in ["maxSteps","maxAttempts"] { if let Some(v)=input[key].as_u64() { value[key]=json!(v.clamp(1,12)); } }
+            // Rust SDK owns the agent loop, tools and evidence. Client may set
+            // bounded policies but never mutable execution states or receipts.
+            let max_steps = input["maxSteps"].as_u64().unwrap_or(24).clamp(1,200);
+            let attempts = input["maxAttempts"].as_u64().unwrap_or(3).clamp(1,6);
+            let max_calls = input["maxModelCalls"].as_u64()
+                .unwrap_or(max_steps.saturating_mul(attempts)).clamp(1,250);
+            value["limits"] = json!({
+                "maxSteps":max_steps,
+                "maxModelCalls":max_calls,
+                "maxEstimatedTokens":input["tokenBudget"].as_u64().unwrap_or(100_000).clamp(1,20_000_000),
+                "maxParallelReads":input["parallelReads"].as_u64().unwrap_or(4).clamp(1,16),
+                "maxResultChars":input["maxResultChars"].as_u64().unwrap_or(3000).clamp(128,16384)
+            });
+            if let Some(strategy)=input["strategy"].as_str() {
+                if !matches!(strategy,"balanced"|"verify_first"|"low_cost") {
+                    return error(StatusCode::BAD_REQUEST,"지원하지 않는 실행 전략입니다.");
+                }
+                value["strategy"]=json!(strategy);
+            }
+            if let Some(owner)=input["ownerInstructions"].as_str() {
+                if owner.len()>32_000 {return error(StatusCode::BAD_REQUEST,"추가 지시가 너무 깁니다.");}
+                value["ownerInstructions"]=json!(owner);
+            }
+            if let Some(items)=input.get("allowedTools") {
+                let Some(items)=items.as_array().filter(|items| items.len()<=64&&items.iter().all(|item|
+                    item.as_str().is_some_and(|s|!s.is_empty()&&s.len()<=128&&s.chars().all(|c|
+                        c.is_ascii_alphanumeric()||matches!(c,'_'|'-'|'.')))))
+                else{return error(StatusCode::BAD_REQUEST,"허용 도구 목록을 확인하세요.");};
+                value["allowedTools"]=json!(items);
+            }
             if let Some(checks)=input.get("acceptanceChecks") {
-                if let Err(message)=engine::verification::validate_criteria(checks) { return error(StatusCode::BAD_REQUEST,message); }
-                value["acceptanceChecks"]=checks.clone();
+                if let Err(message)=engine::verification::validate_criteria(checks) {
+                    return error(StatusCode::BAD_REQUEST,message);
+                }
+                let valid=checks.as_array().is_some_and(|list|list.iter().all(|item|
+                    matches!(item["type"].as_str(),
+                        Some("file_exists"|"file_absent"|"file_contains"|"tool_succeeded"))));
+                if !valid {return error(StatusCode::BAD_REQUEST,"Rust SDK가 지원하는 검증 조건을 선택하세요.");}
+                value["checks"]=checks.clone();
+            }
+            if let Some(v)=input["requireEvidence"].as_bool() {
+                value["requireEvidence"]=json!(v);
             }
             if let Some(id)=value["agentId"].as_str(){if state.store.get("agent",id).is_none(){return error(StatusCode::BAD_REQUEST,"실행 에이전트를 찾을 수 없습니다.");}}
             value
@@ -42,4 +79,24 @@ pub async fn cancel(State(state):State<AppState>,Path(id):Path<String>)->Respons
     match state.store.patch_if("job",&id,"status",&job["status"],&json!({"status":"cancelled","cancelRequested":true,"finishedAt":chrono::Utc::now().to_rfc3339()})){
         Some(saved)=>{state.bus.record("job",&saved);Json(saved).into_response()},None=>state.store.get("job",&id).map(|j|Json(j).into_response()).unwrap_or_else(||error(StatusCode::CONFLICT,"작업 상태가 변경되었습니다."))
     }
+}
+
+/// Accept the owner's mid-task correction at a safe Rust SDK step boundary.
+/// The user directive never grants additional tool privileges.
+pub async fn directive(
+    State(state):State<AppState>, Path(id):Path<String>, Json(body):Json<Value>
+)->Response {
+    let Some(instruction)=body["instruction"].as_str().map(str::trim)
+        .filter(|text|!text.is_empty()&&text.len()<=16_000)
+    else {return error(StatusCode::BAD_REQUEST,"작업 변경 지시가 필요합니다.");};
+    let Some(job)=state.store.get("job",&id)
+    else {return error(StatusCode::NOT_FOUND,"작업을 찾을 수 없습니다.");};
+    if job["kind"]!="prompt"||!matches!(job["status"].as_str(),Some("queued"|"running")){
+        return error(StatusCode::CONFLICT,"진행 중인 일반 작업에만 새 지시를 전달할 수 있습니다.");
+    }
+    let Some(updated)=state.store.patch_if("job",&id,"status",&job["status"],&json!({
+        "nativeDirective":instruction,"directiveUpdatedAt":chrono::Utc::now().to_rfc3339()
+    })) else {return error(StatusCode::CONFLICT,"작업 상태가 변경되었습니다.");};
+    state.bus.record("job",&updated);
+    Json(json!({"ok":true,"jobId":id,"directive":instruction})).into_response()
 }
