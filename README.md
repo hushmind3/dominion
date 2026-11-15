@@ -28,7 +28,7 @@ The configured model must already exist. A remote provider can be configured wit
 | Sequential durable workflows using the same Rust task engine | /api/workflows, /api/workflows/:id/runs, /api/workflow-runs/:id |
 | Multi-participant model discussions with distinct participant economy settings | /api/groups |
 | Video storyboard, manual scenes, image-driven motion, local MP4 and optional paid Veo | /api/videos and per-scene edit/image/render paths |
-| Isolated source improvement trials, independent measurements, Git-pinned candidate lineage, explicit adoption and descendants | /api/improvements |
+| Independently scored source trials, durable A→B→A evolution, verified Git lineage | /api/improvements, /api/evolutions |
 | Scoped memory and explicitly activated skills | /api/memory, /api/skills |
 | Read-only provider information and native/MCP tool discovery | /api/providers, /api/tools |
 | Main React navigation, user profile and event inspector | web/src/App.tsx, web/src/pages/NativeWorkspace.tsx, NativeAgents.tsx, NativeWorkflows.tsx, NativeSystem.tsx |
@@ -45,6 +45,14 @@ The first focused native capability is the **evidence-grounded long-context engi
 Set DOMINION_CONTEXT_MAX_BYTES to configure the total encoded model-request context envelope (default 96000 bytes; includes tool schemas and reserved protocol overhead). This is not a tokenizer-derived context window or measured model-performance advantage.
 
 The implementation, exact tool interfaces, failure modes and test evidence are documented in **[Bounded evidence context](docs/CONTEXT_EVIDENCE.md)**. The GitHub native test workflow has passed 59 Rust tests with a real SQLite and filesystem, mock-provider end-to-end evidence retrieval, and the TypeScript SDK contract. Any further feature is separate from this tested subsystem.
+
+## Bounded A→B→A code evolution
+
+A separately evaluated and **adopted** improvement can seed 1–4 automatic generations through `POST /api/improvements/:id/evolution`, the Rust/TypeScript SDK, or the main React RSI lab. Provide `max_generations`, `cost_budget_krw` and optional ordered `target_files` (for example `["src/a.rs","src/b.rs","src/a.rs"]`). The repository, objective, tests and numeric scoring command remain frozen. Each model-proposed candidate is measured in separate Git worktrees, admitted only after an independently proven improvement, pinned in Git and passed to the next generation with its measured lessons.
+
+The lineage record persists candidate IDs, adoption count, budget use and stop conditions; interrupted work remains `needs_review` and does not replay uncertain paid or destructive effects. The same native workspace lock prevents interference with ordinary agent coding tasks, while the operator controls when an entire chain begins. Cost ceilings use metered provider estimates and can be exceeded inside one remote call; evaluator shells remain operator-approved and are not a hardened sandbox.
+
+See **[Native RSI evolution architecture and test evidence](docs/RSI_EVOLUTION.md)** for exact API inputs, real Git integration tests, failure behavior and limitations.
 
 ## Native self-repairing code acceptance (second focused capability)
 
@@ -98,6 +106,6 @@ npm test --prefix sdk/typescript
 cargo test
 ~~~
 
-Tests are present in source for native execution, cost, persistence, context, workflow, video and migration. **The current GitHub connector execution environment did not run Rust compilation or a full browser smoke test.** Those must pass before performance and cost claims. Historical advanced pages remain in web/src as migration references rather than active broken screens; full desktop packaging, model-management UI, complex workflow branching, multi-user service hardening, frontier-grade autonomous success-rate measurement and generative cinematic quality remain open product work.
+Tests are present in source for native execution, cost, persistence, context, workflow, video and migration. **GitHub Actions executes Rust compilation/tests and Node/TypeScript/frontend checks on the champion branch**, while real-provider benchmarking and full interactive browser smoke testing remain separate work. These tests do not establish external frontier performance or actual API invoices. Historical advanced pages remain in web/src as migration references rather than active broken screens; full desktop packaging, model-management UI, complex workflow branching, multi-user service hardening, frontier-grade autonomous success-rate measurement and generative cinematic quality remain open product work.
 
 See docs/ARCHITECTURE.md and sdk/typescript/README.md. Benchmark only after all source paths and tests are verified.
