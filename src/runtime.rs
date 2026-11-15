@@ -573,6 +573,22 @@ impl DominionSdk {
         ->Result<crate::improvement::Improvement,RuntimeError>{
         self.state.improvements.descendant(id).await.map_err(RuntimeError)
     }
+    pub async fn improvement_evolution_start(
+        &self,id:uuid::Uuid,options:crate::improvement::NewEvolution
+    )->Result<crate::improvement::EvolutionRun,RuntimeError>{
+        let enabled=std::env::var("DOMINION_ENABLE_SHELL").as_deref()==Ok("true");
+        self.state.improvements.evolution_start(
+            self.state.provider.clone(),id,options,enabled
+        ).await.map_err(RuntimeError)
+    }
+    pub async fn evolution_list(&self)->Vec<crate::improvement::EvolutionRun>{
+        self.state.improvements.evolutions().await
+    }
+    pub async fn evolution_get(&self,id:uuid::Uuid)
+        ->Result<crate::improvement::EvolutionRun,RuntimeError>{
+        self.state.improvements.evolution(id).await
+            .ok_or_else(||RuntimeError("Evolution run not found".into()))
+    }
 }
 
 impl DominionSdk {
