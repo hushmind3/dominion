@@ -1,7 +1,7 @@
 //! Native Rust SDK executable entry point. TypeScript is not required.
 use dominion_harness::openai::OpenAiProvider;
 use dominion_harness::sdk::{AgentSdk, CommandVerifier, FileJournal, RunStatus, Session};
-use dominion_harness::tools::{ListDir, ReadFile, Shell, Workspace, WriteFile};
+use dominion_harness::tools::{ListDir, PatchFile, ReadFile, Shell, Workspace, WriteFile};
 use dominion_harness::{Decision, Limits, Permission, Policy, Tool, ToolSpec};
 use std::path::PathBuf;
 
@@ -60,7 +60,10 @@ fn main() {
         Box::new(ReadFile(Workspace::new(&workdir).unwrap())),
         Box::new(ListDir(Workspace::new(&workdir).unwrap())),
     ];
-    if allow_write { tools.push(Box::new(WriteFile(Workspace::new(&workdir).unwrap()))); }
+    if allow_write {
+        tools.push(Box::new(WriteFile(Workspace::new(&workdir).unwrap())));
+        tools.push(Box::new(PatchFile(Workspace::new(&workdir).unwrap())));
+    }
     if allow_shell { tools.push(Box::new(Shell { workspace, timeout_secs: 300 })); }
     let specs = tools.iter().map(|tool| tool.spec()).collect();
     let key = arg(&args, "--api-key")
