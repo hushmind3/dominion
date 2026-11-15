@@ -158,7 +158,10 @@ pub async fn execute(
         let mut decision=decide(config.strategy,has_checks,&gaps,
             latest_error.as_deref(),&all_evidence,attempt,config.attempts);
         if owner_changed {
-            decision=if attempt+1<config.attempts {
+            // A new owner instruction never overrides the no-replay boundary
+            // for a possibly non-idempotent external action.
+            decision=if attempt+1<config.attempts
+                && !side_effect_unknown(&all_evidence) {
                 Decision::Repair
             }else{Decision::Review};
         }
