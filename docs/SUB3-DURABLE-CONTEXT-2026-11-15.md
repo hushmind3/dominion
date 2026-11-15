@@ -57,3 +57,8 @@ The JSON results from all kernel-local calls are also persisted as ordinary `Rec
 ## Remaining frontier gaps
 
 This implements **one real capability family**: durable context projection and model-driven retrieval for long tasks. It is not a parity claim for Codex's native Responses streaming, model/server-side compaction, provider prompt caching, dynamic tool schema negotiation, concurrency-controlled subagents, or broad long-run coding benchmark performance. The TypeScript SDK remains a remote client of the same Rust job path.
+
+
+## LowCost viewport overflow correction (2026-11-15 follow-up)
+
+The previous latest-first loop stopped entirely when an individual recent receipt was larger than its remaining viewport. In LowCost mode the configured per-result clip can exceed two thirds of the total evidence-surface budget, yielding **zero recent observations** despite a durable successful tool result. The projection now progressively clips that single receipt against its **serialized JSON size** before moving to the next item. New regression checks preserve the latest compiler diagnostic under large, quote-heavy output while respecting the LowCost bound. Neither durable data nor caller tool receipts are changed, and no summarization API is invoked. This is a bounded evidence correction, not an exact provider token counter or proof of end-to-end long-horizon recall accuracy.
