@@ -22,7 +22,7 @@ const goalApi=[
   source('src/api/goals/recovery.rs'),
   source('src/api/goals/worktree.rs'),
 ].join('\n')
-const goalApiWiring=source('src/api/goals.rs')
+const goalApiWiring=source('src/api/goals/mod.rs')
 const goalJobs=source('src/engine/jobs.rs')
 const video=source('web/src/pages/Video.tsx')
 const filmRetake=source('web/src/pages/video/FilmRetake.tsx')
@@ -37,7 +37,7 @@ const goalsEngine=[
   source('src/engine/goals/completion.rs'),
   source('src/engine/goals/tests.rs'),
 ].join('\n')
-const goalsEngineWiring=source('src/engine/goals.rs')
+const goalsEngineWiring=source('src/engine/goals/mod.rs')
 const pricing=source('src/engine/video/pricing.rs')
 const store=source('src/db.rs')
 const flowEngine=source('src/engine/workflows.rs')
