@@ -11,18 +11,29 @@ export interface NativeModelUsage {
  inputTokens:number;outputTokens:number;totalTokens:number;
  cacheReadTokens:number;cacheWriteTokens:number;
  reportedCalls:number;unreportedCalls:number;cacheReportedCalls:number;
+ configuredCostKRW?:number;pricedCalls?:number;unpricedCalls?:number;
+ configuredPriceCurrency?:'KRW';costBasis?:string;
  source:string;estimated:false;
  last?:{providerId:string;model:string;inputTokens:number|null;
   outputTokens:number|null;cacheReadTokens:number|null;cacheWriteTokens:number|null;
   providerReported:boolean};
 }
+/** Fixed model identity and nonsecret price snapshot for one native job. */
+export interface NativeRouteSelection {
+ providerId:string;model:string;binding:string;kind?:string;
+ currency:'KRW';priceSource:string;
+ pricesKRWPerMillion?:{input:number;output:number;cachedInput?:number;cacheWrite?:number}|null;
+ selection?:{mode:string;reason?:string;requestedMode?:string;
+  estimatedPerTurnKRW?:number;selectedQuality?:number;qualifiedCandidates?:number};
+}
+export type RoutingMode='default'|'quality_cost';
 export interface Job extends RecordItem {kind:string;status:string;input?:unknown;result?:unknown;error?:string;sessionId?:string;stepIndex?:number;stepTotal?:number;
- nativeModelUsage?:NativeModelUsage;nativeState?:{chargedTokens?:number;modelCalls?:number;modelInFlight?:boolean}}
+ nativeRoute?:NativeRouteSelection;nativeModelUsage?:NativeModelUsage;nativeState?:{chargedTokens?:number;modelCalls?:number;modelInFlight?:boolean}}
 export interface Approval extends RecordItem {status:string;sessionId?:string;tool?:string;args?:unknown}
 export interface EngineEvent {seq:number;type:string;kind?:string;record?:RecordItem;removed?:string;approval?:Approval;[key:string]:unknown}
 export interface ChatEvent {type:string;[key:string]:unknown}
 export interface ChatRequest {sessionId:string;agentId:string;input:string;providerId?:string;model?:string;toolsEnabled?:boolean;toolsExecutionEnabled?:boolean;autoLearning?:boolean;reasoningEffort?:string;reasoningLanguage?:string;thinking?:boolean}
-export type CreateJob={kind:'prompt';input:{prompt:string;sessionId?:string;agentId?:string;providerId?:string;model?:string;toolsEnabled?:boolean;reasoningEffort?:string;thinking?:boolean;maxSteps?:number;maxAttempts?:number;maxModelCalls?:number;tokenBudget?:number;parallelReads?:number;strategy?:"balanced"|"verify_first"|"low_cost";ownerInstructions?:string;allowedTools?:string[];acceptanceChecks?:unknown[];requireEvidence?:boolean;allowFallback?:boolean}}|{kind:'workflow';input:{workflowId:string;input?:string}};
+export type CreateJob={kind:'prompt';input:{prompt:string;sessionId?:string;agentId?:string;providerId?:string;model?:string;toolsEnabled?:boolean;reasoningEffort?:string;thinking?:boolean;maxSteps?:number;maxAttempts?:number;maxModelCalls?:number;tokenBudget?:number;parallelReads?:number;strategy?:"balanced"|"verify_first"|"low_cost";ownerInstructions?:string;allowedTools?:string[];acceptanceChecks?:unknown[];requireEvidence?:boolean;allowFallback?:boolean;routingMode?:RoutingMode;minQuality?:number;maxQualityDrop?:number}}|{kind:'workflow';input:{workflowId:string;input?:string}};
 export interface Options {baseUrl?:string;adminToken?:string;fetch?:typeof globalThis.fetch}
 export interface WaitOptions {signal?:AbortSignal;intervalMs?:number;timeoutMs?:number}
 export interface StreamOptions {after?:number;signal?:AbortSignal}
