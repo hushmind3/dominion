@@ -75,9 +75,10 @@ async function* frames(body:ReadableStream<Uint8Array>):AsyncGenerator<unknown>{
     while(true){
       const {done,value}=await reader.read();if(done)break;
       buffer+=decoder.decode(value,{stream:true});
-      if(buffer.length>2*1024*1024)throw new DominionStreamError('SSE frame larger than 2 MiB');
+      // Coalesced packets may contain multiple independent, bounded SSE frames.
       let match:RegExpExecArray|null;
       while((match=/\r\n\r\n|\n\n|\r\r/.exec(buffer))){
+        if(match.index>2*1024*1024)throw new DominionStreamError('SSE frame larger than 2 MiB');
         const raw=buffer.slice(0,match.index).replace(/^\uFEFF/,'');
         buffer=buffer.slice(match.index+match[0].length);
         const data=raw.split(/\r\n|\r|\n/).filter(x=>x.startsWith('data:'))
@@ -86,6 +87,7 @@ async function* frames(body:ReadableStream<Uint8Array>):AsyncGenerator<unknown>{
         try{yield JSON.parse(data) as unknown;}
         catch{throw new DominionStreamError('Invalid JSON in SSE frame');}
       }
+      if(buffer.length>2*1024*1024)throw new DominionStreamError('SSE frame larger than 2 MiB');
     }
   }finally{await reader.cancel().catch(()=>undefined);reader.releaseLock();}
 }
