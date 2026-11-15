@@ -13,6 +13,8 @@ use tower_http::services::{ServeDir, ServeFile};
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/health",get(health))
+        .route("/api/providers",get(providers))
+        .route("/api/tools",get(tools_catalog))
         .route("/api/settings/owner-profile",get(owner_profile).post(save_owner_profile))
         .route("/api/agents",get(agents).post(agent_create))
         .route("/api/agents/:id",axum::routing::delete(agent_delete))
@@ -59,6 +61,35 @@ pub fn router(state: AppState) -> Router {
 async fn health(State(state):State<AppState>) -> Json<Value> {
     Json(json!({"ok":true,"engine":"rust","model":state.model_name,
         "workspace":state.workspace.to_string_lossy(),"localOnly":true}))
+}
+async fn providers(State(state):State<AppState>)->Json<Value>{
+    Json(state.provider.catalog())
+}
+async fn tools_catalog(State(state):State<AppState>)->Json<Value>{
+    let builtins=[
+        ("workspace_read","Read UTF-8 workspace files","read"),
+        ("workspace_list","Inspect workspace file inventory","read"),
+        ("workspace_search","Search source content","read"),
+        ("workspace_replace","Verified exact source edit","write"),
+        ("workspace_write","Verified local source write","write"),
+        ("workspace_check","Run approved local tests","shell"),
+        ("subagent_spawn","Delegate bounded native worker","delegate"),
+        ("subagent_status","Inspect native child status","read")
+    ];
+    let mut tools=builtins.into_iter().map(|(name,description,permission)|json!({
+        "name":name,"description":description,"permission":permission,
+        "source":"native"
+    })).collect::<Vec<_>>();
+    let mcp=state.mcp.definitions().await;
+    for descriptor in mcp{
+        let function=&descriptor["function"];
+        tools.push(json!({
+            "name":function["name"],"description":function["description"],
+            "parameters":function["parameters"],"permission":"mcp",
+            "source":"mcp"
+        }));
+    }
+    Json(json!({"tools":tools,"mcpServers":state.mcp.server_count()}))
 }
 async fn agents(State(state):State<AppState>)->Json<Value>{
     Json(json!(crate::runtime::DominionSdk::from_state(state).agents()))
