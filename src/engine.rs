@@ -517,6 +517,7 @@ mod tests {
         (AppState {store,bus,
             mcp:std::sync::Arc::new(crate::mcp::Mcp::new(vec![]).unwrap()),
             groups:std::sync::Arc::new(crate::group::Groups::open(root.join("groups")).await.unwrap()),
+            videos:std::sync::Arc::new(crate::video::Videos::open(root.join("videos")).await.unwrap()),
             provider:crate::provider::ModelClient::new(
                 crate::provider::ModelConfig::basic(url.clone(),"mock".into(),None),None
             ).unwrap(),
