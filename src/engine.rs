@@ -201,6 +201,23 @@ pub async fn run(state: AppState, id: String) {
     }
     let mut messages = vec![json!({"role":"system",
         "content":"You are DOMINION, a local-first agent. Obey the latest owner's instruction. Use the offered tools for real work; never fabricate a file edit, command output, or verification. A failed operation must be described accurately. You cannot call unadvertised tools."})];
+    // User-owned notes and approved procedures are selected by the native
+    // session scope. Neither a model answer nor a peer claim can create them.
+    let available_memories=state.store.memory_list(Some(&session));
+    let selected_memories=crate::knowledge::recall(
+        &available_memories,&prompt,Some(&session),8
+    );
+    let selected_skills=crate::knowledge::active_skills(
+        &state.store.skill_list(),&prompt,6
+    );
+    if let Some(reference)=crate::knowledge::context(&selected_memories,&selected_skills){
+        messages.push(json!({"role":"system","content":reference}));
+        state.emit(&id,"context_selected",json!({
+            "memoryCount":selected_memories.len(),
+            "skillNames":selected_skills.iter()
+                .filter_map(|skill|skill["name"].as_str()).collect::<Vec<_>>()
+        }));
+    }
     messages.extend(state.store.history(&session, 12));
     messages.push(json!({"role":"user","content":prompt}));
     state.store.add_message(&session,"user",&prompt);
