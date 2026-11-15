@@ -1,4 +1,4 @@
-import {useEffect,useState} from 'react'
+import {useState} from 'react'
 import {Activity,Clock3,Play,RefreshCw,Square,Terminal} from 'lucide-react'
 import {post} from '../api'
 import {Button,SelectInput,TextArea} from './Primitives'
@@ -12,7 +12,6 @@ type Execution={
  iterations:number;modelCalls:number;toolCalls:number;tokens:number
 }
 type Agent={id:string;name:string;providerId:string;model:string}
-type TaskJob={id:string;kind:string;status:string;queuedAt?:string;sessionId?:string;input?:{prompt?:string;limits?:{maxSteps?:number}};nativeState?:{status?:string;step?:number;modelCalls?:number;chargedTokens?:number;checks?:unknown[];plan?:string[];receipts?:{tool:string;success:boolean}[];error?:string};modelCalls?:number;estimatedTokens?:number;result?:{verificationGaps?:string[];messageId?:string;sessionId?:string};nativeHarness?:{phase?:string;stepIndex?:number;stepTotal?:number;attempt?:number;gaps?:string[];history?:unknown[]}}
 type Operation={id:string;callId:string;tool:string;status:string;startedAt:string;reason?:string}
 const labels:Record<string,LocaleKey>={running:'em.status.running',completed:'em.status.completed',cancelled:'em.status.cancelled',failed:'em.status.failed',interrupted:'em.status.interrupted',needs_review:'em.status.needs_review',budget_exceeded:'em.status.budget_exceeded'}
 const active=(s:string)=>s==='running'
@@ -27,18 +26,11 @@ function ToolHistory({id}:{id:string}){
  </div>
 }
 export function ExecutionMonitor(){
- const lang=useLocale()
+ useLocale()
  const runs=useRemote<Execution[]>('/api/executions',[])
- const jobs=useRemote<TaskJob[]>('/api/jobs',[])
  const agents=useRemote<Agent[]>('/api/agents',[])
  const [prompt,setPrompt]=useState(''),[agentChoice,setAgentChoice]=useState(''),[info,setInfo]=useState('')
  const [selected,setSelected]=useState<string|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('')
- const [directiveText,setDirectiveText]=useState('');
- const [selectedJob,setSelectedJob]=useState<string|null>(null),[depth,setDepth]=useState<'auto'|'thorough'>('auto')
- const taskJobs=jobs.value.filter(job=>job.kind==='prompt').sort((a,b)=>(b.queuedAt||'').localeCompare(a.queuedAt||'')).slice(0,10)
- const activeTask=taskJobs.find(job=>job.id===selectedJob)||taskJobs[0]
- const pendingTasks=taskJobs.some(job=>job.status==='queued'||job.status==='running')
- useEffect(()=>{if(!pendingTasks)return;const timer=setInterval(()=>{void jobs.reload();void runs.reload()},2000);return ()=>clearInterval(timer)},[pendingTasks,jobs.reload,runs.reload])
  const availableAgents=agents.value.filter(x=>x.providerId&&x.model)
  const executorId=availableAgents.some(x=>x.id===agentChoice)?agentChoice:availableAgents[0]?.id||''
  const current=runs.value.find(x=>x.id===selected)||runs.value[0]
@@ -47,23 +39,11 @@ export function ExecutionMonitor(){
   if(!prompt.trim()||!executorId||busy)return
   setBusy(true);setError('');setInfo('')
   try{
-   const created=await post<{id:string}>('/api/jobs',{kind:'prompt',input:{prompt:prompt.trim(),agentId:executorId,maxSteps:depth==='thorough'?60:24,maxAttempts:depth==='thorough'?5:3,strategy:depth==='thorough'?'verify_first':'balanced'}})
-   setSelectedJob(created.id);setPrompt('');setInfo(t('em.queued'))
-   await jobs.reload();await runs.reload()
+   await post('/api/jobs',{kind:'prompt',input:{prompt:prompt.trim(),agentId:executorId}})
+   setPrompt('');setInfo(t('em.queued'))
+   await runs.reload()
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
- }
- const steerJob=async()=>{
-  if(!activeTask||!directiveText.trim())return
-  setBusy(true);setError('')
-  try{await post('/api/jobs/'+encodeURIComponent(activeTask.id)+'/directive',{instruction:directiveText.trim()});setDirectiveText('');await jobs.reload()}
-  catch(e){setError((e as Error).message)}finally{setBusy(false)}
- }
- const cancelJob=async()=>{
-  if(!activeTask||!['queued','running'].includes(activeTask.status))return
-  setBusy(true);setError('')
-  try{await post('/api/jobs/'+encodeURIComponent(activeTask.id)+'/cancel',{});await jobs.reload()}
-  catch(e){setError((e as Error).message)}finally{setBusy(false)}
  }
  const cancel=async()=>{
   if(!current)return
@@ -87,48 +67,10 @@ export function ExecutionMonitor(){
      {!availableAgents.length&&<option value="">{t('em.noAgents')}</option>}
      {availableAgents.map(a=><option key={a.id} value={a.id}>{a.name} · {a.model}</option>)}
     </SelectInput>
-    <SelectInput value={depth} onChange={event=>setDepth(event.target.value as 'auto'|'thorough')} aria-label={lang==='ko'?'작업 수행 방식':'Task effort'}>
-     <option value="auto">{lang==='ko'?'자동 진행':'Automatic'}</option>
-     <option value="thorough">{lang==='ko'?'깊이 있게 진행':'Thorough'}</option>
-    </SelectInput>
     <Button variant="primary" disabled={busy||!executorId||!prompt.trim()} onClick={()=>void execute()}><Play size={15}/> {t('em.run')}</Button>
    </div>
    {info&&<p className="mt-2 text-xs text-emerald-700">{info}</p>}
   </div>
-  <section className="border-b border-[#E7E0D5] p-5" aria-label={lang==='ko'?'자율 작업 진행':'Autonomous task progress'}>
-   <div className="mb-3 flex items-center justify-between gap-2"><strong className="text-sm">{lang==='ko'?'자율 작업 진행':'Autonomous tasks'}</strong>
-    <Button size="sm" variant="ghost" onClick={()=>void jobs.reload()}><RefreshCw size={14}/> {t('em.refresh')}</Button></div>
-   {taskJobs.length===0?<p className="text-xs text-[#7C7469]">{lang==='ko'?'작업을 맡기면 계획부터 결과 검증까지 여기에 표시됩니다.':'Submit a task to see its plan, progress and verified outcome.'}</p>:
-   <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-    <div className="max-h-56 space-y-2 overflow-auto">{taskJobs.map(job=><Button key={job.id} variant="ghost" onClick={()=>setSelectedJob(job.id)}
-     className={'!flex !w-full !items-center !justify-between !gap-3 !rounded-lg !border !px-3 !py-2 !text-left '+(activeTask?.id===job.id?'!border-[#C96442] !bg-[#FAF7F1]':'!border-[#E7E0D5]')}>
-     <span className="min-w-0 flex-1 truncate text-xs">{job.input?.prompt||job.id}</span>
-     <span className="shrink-0 text-xs">{labels[job.status]?t(labels[job.status]):job.status==='queued'?(lang==='ko'?'대기':'Queued'):job.status}</span></Button>)}</div>
-    {activeTask&&<div className="rounded-lg border border-[#E7E0D5] p-3 text-xs">
-     <div className="flex items-center justify-between gap-2"><strong>{lang==='ko'?'실제 작업 상태':'Actual task state'}</strong>
-      <span>{activeTask.nativeState?.status||activeTask.nativeHarness?.phase||activeTask.status}</span></div>
-     <p className="mt-2 text-[#7C7469]">{lang==='ko'?'진행 단계':'Step'} {activeTask.nativeState?.step??activeTask.nativeHarness?.stepIndex??0} / {activeTask.input?.limits?.maxSteps??'—'}</p>
-     <p className="mt-1 text-[#7C7469]">{lang==='ko'?'모델 호출':'Model calls'}: {activeTask.modelCalls??activeTask.nativeState?.modelCalls??0}</p>
-     <p className="mt-1 text-[#7C7469]">{lang==='ko'?'검증 가능한 도구 실행':'Recorded tool executions'}: {activeTask.nativeState?.receipts?.length||0}</p>
-     <p className="mt-1 text-[#7C7469]">{lang==='ko'?'추정 토큰':'Estimated tokens'}: {(activeTask.estimatedTokens??activeTask.nativeState?.chargedTokens??0).toLocaleString()}</p>
-     {Boolean(activeTask.nativeState?.plan?.length)&&<div className="mt-3 space-y-1" aria-label={lang==='ko'?'작업 계획':'Task plan'}>
-      {activeTask.nativeState?.plan?.slice(0,10).map((step,index)=><div key={index} className="flex gap-2 rounded-md bg-[#FAF7F1] px-2 py-1.5">
-       <span className="shrink-0 font-semibold">{activeTask.status==='completed'||index+1<(activeTask.nativeState?.step??0)?'✓':index+1===activeTask.nativeState?.step?'●':'○'}</span>
-       <span className="min-w-0 break-words">{step}</span>
-      </div>)}
-     </div>}
-     {(activeTask.nativeState?.error||'')&&activeTask.status!=='running'&&
-      <p role="alert" className="mt-2 break-words rounded-lg bg-[#FFF5E7] p-2 text-amber-900">{activeTask.nativeState?.error}</p>
-     {((activeTask.result?.verificationGaps||activeTask.nativeHarness?.gaps)||[]).length>0&&
-      <div role="alert" className="mt-2 rounded-lg bg-[#FFF5E7] p-2 text-amber-900">
-       <strong>{lang==='ko'?'확인이 필요한 내용':'Needs review'}</strong>
-       {((activeTask.result?.verificationGaps||activeTask.nativeHarness?.gaps)||[]).slice(0,3).map((gap,i)=><p className="mt-1 break-words" key={i}>{gap}</p>)}
-      </div>}
-     {['queued','running'].includes(activeTask.status)&&<div className="mt-3 flex flex-wrap items-center gap-2"><TextArea rows={2} value={directiveText} onChange={e=>setDirectiveText(e.target.value)} placeholder={lang==='ko'?'진행 중 새 지시를 입력하세요':'Change instructions while running'}/><Button disabled={busy||!directiveText.trim()} onClick={()=>void steerJob()}>{lang==='ko'?'지시 반영':'Steer'}</Button></div>}
-     {['queued','running'].includes(activeTask.status)&&<Button className="mt-3" variant="danger" disabled={busy} onClick={()=>void cancelJob()}><Square size={14}/>{lang==='ko'?'작업 중단':'Stop task'}</Button>}
-    </div>}
-   </div>}
-  </section>
   <div className="grid min-w-0 gap-4 p-5 lg:grid-cols-2">
    <div className="max-h-64 space-y-2 overflow-y-auto">
     {runs.value.map(r=><Button key={r.id} variant="ghost" onClick={()=>setSelected(r.id)}

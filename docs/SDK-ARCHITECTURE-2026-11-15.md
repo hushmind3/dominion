@@ -65,8 +65,15 @@ The canonical Rust SDK is now `dominion_sdk::harness`, re-exporting a provider-i
 - `src/engine/jobs.rs::run_prompt` delegates **normal** tasks directly to `native_agent::run`; special RSI experiments keep their isolated existing source-edit/holdout implementation.
 - Read-only tool operations are bounded and may execute in parallel; side-effecting tools are ordered and require the real Rust approval policy.
 - `POST /api/jobs/:id/directive` supplies a user correction; the kernel checks for it before model and tool batches and rejects stale work.
-- `web/src/components/ExecutionMonitor.tsx` shows the actual `nativeState` and allows owner steering; the TS SDK is a client only.
+- `web/src/components/ExecutionMonitor.tsx` uses main's original execution-monitor interface. `web/src/components/NativeAgentPanel.tsx` keeps main's autonomous-work presentation while reading the same sub3 Rust `job` journal and `/api/approvals`; it does not start a second agent loop. Mid-task steering remains available via `POST /api/jobs/:id/directive` and the TypeScript SDK.
 - The wrapper checks command `exitCode` and structured errors before writing a successful tool receipt.
 - The previous goal-specific runner was not recreated, and no Goals API is present.
 
 Validation status: new Rust unit tests exist in the imported kernel and production adapter; compilation and live provider tasks are still outstanding on the available machine. Root Cargo lock and local Rust SDK dependency graph were updated. Do not infer frontier parity from committed source alone.
+
+
+## Frontend decision (2026-11-15)
+
+The `dominion-sub3` branch adopts **main's frontend**: the main versions of `web/src/pages/Home.tsx` and `web/src/components/ExecutionMonitor.tsx`, plus its `NativeAgentPanel` layout. The panel's transport is adapted to sub3's production `/api/jobs` and `/api/approvals` endpoints rather than copying main's separate `/api/sdk/runs` engine. The optional verification command becomes an explicit native agent execution instruction (subject to tool permissions and actual observed exit code), not a claimed post-run command hook. Failed-run retry and in-doubt reconciliation each create a **new** journaled job; neither blindly replays prior external side effects.
+
+Static integration: main frontend page/panel paths → `/api/jobs` → `src/api/jobs.rs` → `src/engine/jobs.rs::run_prompt` → `src/engine/native_agent.rs` → `dominion-sdk` kernel. Approval path: panel → `/api/approvals` → `src/api/approvals.rs` → native Rust approval waiter. The frontend source has been aligned; a live browser/Rust build test is not yet recorded.

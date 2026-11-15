@@ -171,3 +171,8 @@ The native Rust SDK core and companion TypeScript client now target the same **n
 - [SDK contract and 2026 architecture comparison](docs/SDK-ARCHITECTURE-2026-11-15.md).
 
 Both clients use the actual `/api/*` routes from `src/api/mod.rs`, optional `X-Dominion-Token`, and Rust-owned model, tool, memory and checkpoint logic. They do not embed an external provider's agent harness. The SDKs are source packages; they have not yet been published to crates.io/npm. Rust compile and live-provider integration remain to be verified on an environment with the requisite runtime.
+
+
+### Main frontend adopted by sub3 (2026-11-15)
+
+The dashboard and execution-monitor design come from `main`. The autonomous-work panel retains the main UI while calling sub3's existing `/api/jobs` and `/api/approvals` APIs and the native Rust SDK kernel. No separate `/api/sdk/runs` loop is introduced. A new job is created for retries after uncertain or failed effects; the UI does not claim the old process was resumed in-place. See [SDK architecture](docs/SDK-ARCHITECTURE-2026-11-15.md).
