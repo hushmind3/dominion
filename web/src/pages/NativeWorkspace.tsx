@@ -161,16 +161,16 @@ export function NativeDashboard({navigate}:{navigate:(page:'chat'|'rooms'|'video
 }
 export function NativeGroups(){
  const data=useCollection<Group[]>('/api/groups',[])
- const [active,setActive]=useState(''),[topic,setTopic]=useState(''),[names,setNames]=useState(['설계자','검토자']),[roles,setRoles]=useState(['구조와 사용자 경험을 제안','오류와 개선점을 검토']),[budget,setBudget]=useState(5000),[input,setInput]=useState('')
+ const [active,setActive]=useState(''),[topic,setTopic]=useState(''),[names,setNames]=useState(['설계자','검토자']),[roles,setRoles]=useState(['구조와 사용자 경험을 제안','오류와 개선점을 검토']),[economy,setEconomy]=useState([false,true]),[budget,setBudget]=useState(5000),[input,setInput]=useState('')
  const op=useOperation();const selected=data.value.find(x=>x.id===active)
  const mutate=async(id:string,segment:string,payload:unknown={})=>{const item=await op.run(()=>post<Group>('/api/groups/'+encodeURIComponent(id)+segment,payload));if(item){data.setValue(old=>old.map(x=>x.id===item.id?item:x));return item}}
- const create=async(e:FormEvent)=>{e.preventDefault();const item=await op.run(()=>post<Group>('/api/groups',{topic,participants:names.map((name,i)=>({name,role:roles[i],economy:false})),budget_krw:budget,max_rounds:12}));if(item){setActive(item.id);void data.reload()}}
+ const create=async(e:FormEvent)=>{e.preventDefault();const item=await op.run(()=>post<Group>('/api/groups',{topic,participants:names.map((name,i)=>({name,role:roles[i],economy:economy[i]})),budget_krw:budget,max_rounds:12}));if(item){setActive(item.id);void data.reload()}}
  return <Page title="멀티모델 그룹 대화" description="참가자별 역할·공유 문맥·발언 순서를 Rust가 관리합니다. 다음 발언을 선택할 때 모델을 호출합니다." eyebrow="MULTI AGENT">
   <div className={layout}>
    <div className="grid content-start gap-4">
     <Section><h2 className="mb-3 text-[14px] font-bold">새 회의실</h2><form onSubmit={e=>void create(e)} className="grid gap-3">
      <FormField label="대화 주제"><TextInput required value={topic} onChange={e=>setTopic(e.target.value)}/></FormField>
-     <div className="grid gap-3 sm:grid-cols-2">{[0,1].map(i=><div key={i} className="grid gap-2"><FormField label={'참가자 '+(i+1)+' 이름'}><TextInput required value={names[i]} onChange={e=>setNames(v=>v.map((s,n)=>n===i?e.target.value:s))}/></FormField><FormField label="역할"><TextArea required value={roles[i]} onChange={e=>setRoles(v=>v.map((s,n)=>n===i?e.target.value:s))}/></FormField></div>)}</div>
+     <div className="grid gap-3 sm:grid-cols-2">{[0,1].map(i=><div key={i} className="grid gap-2"><FormField label={'참가자 '+(i+1)+' 이름'}><TextInput required value={names[i]} onChange={e=>setNames(v=>v.map((s,n)=>n===i?e.target.value:s))}/></FormField><FormField label="역할"><TextArea required value={roles[i]} onChange={e=>setRoles(v=>v.map((s,n)=>n===i?e.target.value:s))}/></FormField><label className="flex items-center gap-2 text-[12px]"><input type="checkbox" checked={economy[i]} onChange={e=>setEconomy(v=>v.map((s,n)=>n===i?e.target.checked:s))}/>절약형 모델 사용</label></div>)}</div>
      <FormField label="예산 (원)"><TextInput type="number" min={0} max={1000000} value={budget} onChange={e=>setBudget(Number(e.target.value))}/></FormField>
      <div><LoadingButton busy={op.busy} type="submit" variant="primary"><Plus size={14}/> 회의실 만들기</LoadingButton></div></form>
     </Section>
@@ -183,7 +183,7 @@ export function NativeGroups(){
     </Section>}
     <InlineError error={op.error}/>
    </div>
-   <Section><div className="mb-3 flex justify-between"><h2 className="text-[13px] font-bold">저장된 회의실</h2><Button size="sm" variant="ghost" onClick={()=>void data.reload()}><RefreshCw size={13}/></Button></div><InlineError error={data.error}/><div className="grid gap-2">{data.value.map(item=><ListButton selected={active===item.id} onClick={()=>setActive(item.id)} key={item.id}><strong>{item.topic}</strong><p className={subtle}>{item.participants.map(p=>p.name).join(' · ')} · {item.rounds}라운드</p></ListButton>)}</div></Section>
+   <Section><div className="mb-3 flex justify-between"><h2 className="text-[13px] font-bold">저장된 회의실</h2><Button size="sm" variant="ghost" onClick={()=>void data.reload()}><RefreshCw size={13}/></Button></div><InlineError error={data.error}/><div className="grid gap-2">{data.value.map(item=><ListButton selected={active===item.id} onClick={()=>setActive(item.id)} key={item.id}><strong>{item.topic}</strong><p className={subtle}>{item.participants.map(p=>p.name+(p.economy?' (절약형)':' (품질형)')).join(' · ')} · {item.rounds}라운드</p></ListButton>)}</div></Section>
   </div>
  </Page>
 }
