@@ -6,16 +6,34 @@
 
 use serde_json::{json, Value};
 
-/// Mean absolute error and signed bias over rows that actually carried a forecast.
+/// Forecast training uses the evaluator's measured outcome, never a cached
+/// error/bias field that can be stale after replay or rewritten by a child.
+fn measured_holdout_gain(row:&Value)->Option<f64>{
+    if row["evaluation"]["source"]!="server_invoked_local_paired_git_worktrees"
+        || row["evaluation"]["metrics"]["eligible"]!=true {
+        return None;
+    }
+    row["evaluation"]["metrics"]["improvedHoldouts"]
+        .as_u64().map(|gain| gain as f64)
+}
+
+/// Reconstruct signed error from the forecast made before the run and the
+/// frozen paired measurement. Missing, non-finite and unmeasured rows are
+/// not treated as improvements or calibration evidence.
 fn stats<'a>(rows: impl Iterator<Item = &'a Value>) -> Option<(f64, f64)> {
     let (mut error, mut bias, mut count) = (0.0, 0.0, 0u64);
     for row in rows {
-        let Some(row_error) = row["forecast"]["error"].as_f64() else { continue };
-        error += row_error;
-        bias += row["forecast"]["bias"].as_f64().unwrap_or(0.0);
-        count += 1;
+        let (Some(predicted),Some(actual))=(
+            row["forecast"]["predictedImprovedHoldouts"].as_f64(),
+            measured_holdout_gain(row)
+        ) else {continue};
+        if !predicted.is_finite() || predicted<0.0 {continue;}
+        let delta=predicted-actual;
+        error+=delta.abs();
+        bias+=delta;
+        count+=1;
     }
-    (count > 0).then(|| (error / count as f64, bias / count as f64))
+    (count>0).then(||(error/count as f64,bias/count as f64))
 }
 
 /// Measured forecast error and signed bias for a domain.
@@ -33,18 +51,17 @@ pub(crate) fn domain_error(history: &[Value], domain: &str) -> (f64, f64) {
 /// stops re-committing the same overestimate. Without measurements the forecast
 /// is zero and explicitly labelled `no_measured_history`.
 pub(crate) fn forecast_next(history: &[Value], domain: &str, basis: &str) -> Value {
-    let domain_rows = history
-        .iter()
-        .filter(|row| row["forecast"]["domain"].as_str() == Some(domain))
+    // Prefer observed outcomes in the chosen domain, even if that domain
+    // has not yet accumulated a previous explicit forecast. Fall back to
+    // other domains only if there are no measured local trials at all.
+    let measured=history.iter()
+        .filter(|row|measured_holdout_gain(row).is_some())
         .collect::<Vec<_>>();
-    let measured = history
-        .iter()
-        .filter(|row| row["evaluation"]["metrics"]["improvedHoldouts"].as_u64().is_some())
+    let domain_rows=measured.iter().copied()
+        .filter(|row|row["domain"].as_str()==Some(domain))
         .collect::<Vec<_>>();
-    let pool = if domain_rows.is_empty() { &measured } else { &domain_rows };
-    let actuals = pool
-        .iter()
-        .filter_map(|row| row["evaluation"]["metrics"]["improvedHoldouts"].as_f64())
+    let pool=if domain_rows.is_empty(){&measured}else{&domain_rows};
+    let actuals=pool.iter().filter_map(|row|measured_holdout_gain(row))
         .collect::<Vec<_>>();
     if actuals.is_empty() {
         return json!({
@@ -57,7 +74,8 @@ pub(crate) fn forecast_next(history: &[Value], domain: &str, basis: &str) -> Val
         });
     }
     let mean = actuals.iter().sum::<f64>() / actuals.len() as f64;
-    let measured_error = stats(domain_rows.iter().copied());
+    let measured_error=stats(domain_rows.iter().copied().filter(|row|
+        row["forecast"]["domain"].as_str()==Some(domain)));
     let (prior_error, bias) = measured_error.unwrap_or((0.0, 0.0));
     json!({
         "domain": domain,
@@ -74,12 +92,17 @@ pub(crate) fn forecast_next(history: &[Value], domain: &str, basis: &str) -> Val
 /// Returns false when either side lacks a number, so an unmeasured or
 /// unpreceded generation never earns a prediction-error record.
 pub(crate) fn attach(generation: &mut Value, prior: &Value) -> bool {
-    let Some(expected) = prior["expectedImprovedHoldouts"].as_f64() else {
+    let Some(expected)=prior["expectedImprovedHoldouts"].as_f64() else {
         return false;
     };
-    let Some(actual) = generation["evaluation"]["metrics"]["improvedHoldouts"].as_f64() else {
+    let Some(actual)=measured_holdout_gain(generation) else {
         return false;
     };
+    if !expected.is_finite() || expected<0.0
+        || prior["domain"].as_str().is_none()
+        || prior["domain"]!=generation["domain"] {
+        return false;
+    }
     generation["forecast"] = json!({
         "domain": prior["domain"],
         "predictedImprovedHoldouts": expected,
@@ -100,10 +123,10 @@ mod tests {
         vec![
             json!({"domain":"memory","forecast":{"domain":"memory","predictedImprovedHoldouts":3.0,
                 "actualImprovedHoldouts":1.0,"error":2.0,"bias":2.0},
-                "evaluation":{"metrics":{"improvedHoldouts":1}}}),
+                "evaluation":{"source":"server_invoked_local_paired_git_worktrees","metrics":{"eligible":true,"improvedHoldouts":1}}}),
             json!({"domain":"memory","forecast":{"domain":"memory","predictedImprovedHoldouts":3.0,
                 "actualImprovedHoldouts":2.0,"error":1.0,"bias":1.0},
-                "evaluation":{"metrics":{"improvedHoldouts":2}}}),
+                "evaluation":{"source":"server_invoked_local_paired_git_worktrees","metrics":{"eligible":true,"improvedHoldouts":2}}}),
         ]
     }
 
@@ -134,7 +157,7 @@ mod tests {
 
     #[test]
     fn attach_needs_both_a_forecast_and_a_measurement() {
-        let mut generation = json!({"evaluation":{"metrics":{"improvedHoldouts":2}}});
+        let mut generation = json!({"domain":"memory","evaluation":{"source":"server_invoked_local_paired_git_worktrees","metrics":{"eligible":true,"improvedHoldouts":2}}});
         assert!(!attach(&mut generation, &json!({})));
         assert!(generation.get("forecast").is_none());
         let prior = json!({"domain":"memory","expectedImprovedHoldouts":3.0,"basis":"measured_domain_history"});
@@ -142,4 +165,44 @@ mod tests {
         assert_eq!(generation["forecast"]["error"].as_f64(), Some(1.0));
         assert_eq!(generation["forecast"]["bias"].as_f64(), Some(1.0));
     }
+    #[test]
+    fn cached_error_and_bias_cannot_poison_calibration(){
+        let mut rows=history();
+        rows[0]["forecast"]["error"]=json!(99999.0);
+        rows[1]["forecast"]["bias"]=json!(-99999.0);
+        assert_eq!(domain_error(&rows,"memory"),(1.5,1.5));
+        rows[0]["evaluation"]["source"]=json!("model_claim");
+        assert_eq!(domain_error(&rows,"memory"),(1.0,1.0));
+    }
+
+    #[test]
+    fn measured_domain_outcomes_precede_unrelated_forecasts(){
+        let mut rows=history();
+        rows.push(json!({"domain":"tools",
+            "evaluation":{"source":"server_invoked_local_paired_git_worktrees",
+                "metrics":{"eligible":true,"improvedHoldouts":7}}}));
+        let forecast=forecast_next(&rows,"tools","retry");
+        assert_eq!(forecast["basis"],"measured_domain_history");
+        assert_eq!(forecast["expectedImprovedHoldouts"],7.0);
+        // Invalid evaluator results are not trusted as cross-domain history.
+        rows[2]["evaluation"]["source"]=json!("model_claim");
+        let forecast=forecast_next(&rows,"tools","retry");
+        assert_eq!(forecast["basis"],"measured_global_history");
+        assert_eq!(forecast["expectedImprovedHoldouts"],1.5);
+    }
+
+    #[test]
+    fn off_domain_or_unverified_results_do_not_train_predictor(){
+        let prior=json!({"domain":"memory",
+            "expectedImprovedHoldouts":3.0,"basis":"measured_domain_history"});
+        let mut generation=json!({"domain":"tools",
+            "evaluation":{"source":"server_invoked_local_paired_git_worktrees",
+                "metrics":{"eligible":true,"improvedHoldouts":1}}});
+        assert!(!attach(&mut generation,&prior));
+        generation["domain"]=json!("memory");
+        generation["evaluation"]["metrics"]["eligible"]=json!(false);
+        assert!(!attach(&mut generation,&prior));
+        assert!(generation.get("forecast").is_none());
+    }
+
 }
