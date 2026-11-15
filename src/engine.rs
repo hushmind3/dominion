@@ -520,6 +520,7 @@ mod tests {
         let store=crate::store::Store::open(&root.join("state.sqlite")).unwrap();
         let (bus,_)=tokio::sync::broadcast::channel(128);
         (AppState {store,bus,http:reqwest::Client::new(),
+            mcp:std::sync::Arc::new(crate::mcp::Mcp::new(vec![]).unwrap()),
             workspace:root.clone(),model_url:url,model_name:"mock".into(),
             api_key:None},root)
     }
