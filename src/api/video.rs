@@ -35,7 +35,8 @@ pub async fn status(State(state): State<AppState>) -> Json<Value> {
     let cfg = video::config(&state);
     let executable = video::ffmpeg(&state);
     let reachable = comfy_reachable(cfg["comfyUrl"].as_str().unwrap_or("")).await;
-    let built_in = video::video_models(&state).iter()
+    let model_inventory = video::video_models(&state);
+    let built_in = model_inventory.iter()
         .any(|model| model["id"] == cfg["videoModel"] && model["available"] == true);
     let comfy = reachable && (cfg["comfyWorkflow"].is_object() || built_in);
     let workflows = workflows_from_config(&cfg);
@@ -54,8 +55,8 @@ pub async fn status(State(state): State<AppState>) -> Json<Value> {
             {"id":"comfyui","name":"ComfyUI","available":comfy,"reason":if comfy{""}else{"서버와 API 워크플로 설정 필요"}}
         ],
         "jobs": jobs,
-        "models": [],
-        "modelsReady": false,
+        "models": model_inventory,
+        "modelsReady": built_in,
         "workflows": workflows,
         "installed": reachable
     }))
