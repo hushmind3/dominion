@@ -138,6 +138,17 @@ The agent execution engine is written in **Rust**. Node.js is used to build the 
 
 **Technical docs:** [Engine](ENGINE.md) · [Documentation index](docs/INDEX.md) · [Self-improvement execution contract](docs/RSI-MAIN-INTEGRATION-2026-11-12.md).
 
+## 🔌 TypeScript SDK — same Rust engine, external apps and GUI
+
+DOMINION includes a typed [TypeScript SDK](sdk/typescript/README.md) to run work, inspect durable jobs, stream chat, manage rooms/approvals/video, and receive reconnectable execution events from **the existing Rust `/api/*` handlers**. The React GUI shares this transport rather than maintaining a separate harness or incompatible execution semantics.
+
+```bash
+npm install --prefix sdk/typescript
+npm test --prefix sdk/typescript
+```
+
+See [Sub2 integration and event recovery trace](docs/SUB2-SDK-DURABLE-EVENTS-2026-11-15.md) for concrete handlers, replay behavior, tests and verification limits. SDK is pre-release; external code should use the versioned package surface and its documented endpoints.
+
 ## 🚧 Project status
 
 DOMINION is an **active developer preview**, not a managed SaaS or a fully validated commercial agent product.
