@@ -270,7 +270,19 @@ impl Videos {
             .arg("-f").arg("concat").arg("-safe").arg("0").arg("-i").arg("concat.txt")
             .arg("-c").arg("copy").arg(&tmp);
         invoke(merge,Duration::from_secs(120)).await?;
-        fs::rename(&tmp,&final_name).await.map_err(|e|e.to_string())?;
+        // Portable atomic-ish replacement on Windows as well as POSIX.
+        // Keep the last successful artifact recoverable if a rename fails.
+        let old=directory.join("previous.mp4");
+        let had_previous=fs::metadata(&final_name).await.is_ok();
+        if had_previous {
+            let _=fs::remove_file(&old).await;
+            fs::rename(&final_name,&old).await.map_err(|e|e.to_string())?;
+        }
+        if let Err(error)=fs::rename(&tmp,&final_name).await {
+            if had_previous {let _=fs::rename(&old,&final_name).await;}
+            return Err(error.to_string());
+        }
+        if had_previous {let _=fs::remove_file(old).await;}
         Ok(format!("{id}/finished.mp4"))
     }
     pub async fn output_path(&self,id:Uuid)->Result<PathBuf,String>{
