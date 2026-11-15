@@ -29,14 +29,9 @@ run(['cat-file','-e',base+'^{commit}'],root);
 // macOS can expose /var as an alias of /private/var. Git registers
 // canonical worktree paths; compare the same physical path on cleanup.
 const temp=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'dominion-rsi-')));
-// Git worktree porcelain reports Windows paths with forward slashes, whereas
-// Node's path.join returns backslashes; macOS may report /private/var aliases.
-const physicalKey=value=>{
- let resolved;
- try{resolved=fs.realpathSync(value)}catch{resolved=path.resolve(value)}
- let key=resolved.replaceAll('\\','/').replace(/^\/\/\?\//,'').replace(/\/$/,'');
- return process.platform==='win32'?key.toLowerCase():key;
-};
+// A unique physical experiment basename is stable across Windows slash
+// conventions, macOS /private aliases, and Git's canonical path printing.
+const labIdentity=path.basename(temp);
 const created=[];
 try{
  for(const arm of ['baseline','candidate']){
@@ -65,27 +60,20 @@ try{
 }finally{
  // Never delete worktree directories behind Git's back: that leaves
  // registered metadata in the owner's repo and poisons future RSI runs.
- const registered=run(['worktree','list','--porcelain'],root)
+ // Git owns the canonical worktree names, not Node's os.tmpdir spelling.
+ // Filter by this run's unpredictable basename instead of comparing the two
+ // runtimes' path strings. Never remove another run's worktree.
+ const owned=()=>run(['worktree','list','--porcelain'],root)
   .split('\n').filter(line=>line.startsWith('worktree '))
-  .map(line=>line.slice('worktree '.length));
- const byPhysicalPath=new Map(registered.map(dir=>[physicalKey(dir),dir]));
+  .map(line=>line.slice('worktree '.length))
+  .filter(registeredPath=>registeredPath.includes(labIdentity));
  const failures=[];
- for(const dir of created.reverse()){
-  const registeredPath=byPhysicalPath.get(physicalKey(dir));
-  if(registeredPath){
-   try{run(['worktree','remove','--force',registeredPath],root)}
-   catch(error){failures.push(dir+': '+error.message)}
-  }
+ for(const registeredPath of owned()){
+  try{run(['worktree','remove','--force',registeredPath],root)}
+  catch(error){failures.push(registeredPath+': '+error.message)}
  }
- // Never turn a successful evaluation into a silent leaked worktree. This
- // guard also catches path-normalization errors across Git/Node runtimes.
- const remaining=run(['worktree','list','--porcelain'],root)
-  .split('\n').filter(line=>line.startsWith('worktree '))
-  .map(line=>line.slice('worktree '.length));
- const remainingKeys=new Set(remaining.map(physicalKey));
- for(const dir of created)if(remainingKeys.has(physicalKey(dir))){
-  failures.push('Git registration remains: '+dir);
- }
+ const remaining=owned();
+ if(remaining.length)failures.push('Git registrations remain: '+remaining.join(', '));
  if(failures.length)throw Error('RSI worktree cleanup failed; preserved lab for review: '+failures.join('; '));
  fs.rmSync(temp,{recursive:true,force:true});
 }
