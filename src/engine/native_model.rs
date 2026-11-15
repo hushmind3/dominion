@@ -916,6 +916,11 @@ mod tests {
         }));
         let server=tokio::spawn(async move{axum::serve(listener,router).await.unwrap();});
         let state=mock_state(&format!("http://{addr}/v1"),"anthropic");
+        // The fixture runs on loopback: explicitly enable cache support,
+        // which real local proxies must also declare to receive hints.
+        let mut provider=state.store.get("provider","native-wire-test").unwrap();
+        provider["capabilities"]=json!({"promptCaching":true});
+        state.store.put("provider",&provider);
         let stable="stable owner role and security rules ".repeat(340);
         for turn in ["step A","step B"] {
             let result=complete(&state,"native-wire-test","model-mock",
@@ -958,6 +963,11 @@ mod tests {
         }));
         let server=tokio::spawn(async move{axum::serve(listener,router).await.unwrap();});
         let state=mock_state(&format!("http://{addr}/v1"),"anthropic");
+        // The fixture runs on loopback: explicitly enable cache support,
+        // which real local proxies must also declare to receive hints.
+        let mut provider=state.store.get("provider","native-wire-test").unwrap();
+        provider["capabilities"]=json!({"promptCaching":true});
+        state.store.put("provider",&provider);
         let id=format!("native-cache-meter-{}",uuid::Uuid::new_v4());
         state.store.put("job",&json!({"id":id,"kind":"prompt",
             "status":"running","nativeInFlight":true}));
