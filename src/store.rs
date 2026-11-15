@@ -1,6 +1,6 @@
 use rusqlite::{params, Connection, Row};
 use serde_json::{json, Value};
-use std::{path::Path, sync::{Arc, Mutex}};
+use std::{collections::HashSet,path::Path, sync::{Arc, Mutex}};
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -518,6 +518,20 @@ impl Store {
     /// These are observations, never an instruction to repeat side effects.
     /// Read one already-observed tool result from the current task.
     /// Bounded results help restore compressed context without repeating effects.
+    /// Source-of-truth index for citations in a model-facing context.
+    /// Only already committed receipts can be shortened with a retrieval
+    /// pointer. A model cannot fabricate an indexed call by naming it.
+    pub fn tool_receipt_ids(&self,task_id:&str)->HashSet<String>{
+        let Ok(conn)=self.conn.lock() else{return HashSet::new()};
+        let Ok(mut statement)=conn.prepare(
+            "SELECT json_extract(data,'$.detail.callId') FROM events
+             WHERE task_id=?1 AND kind='tool_result'"
+        ) else{return HashSet::new()};
+        let Ok(rows)=statement.query_map([task_id],|row|row.get::<_,String>(0))
+            else{return HashSet::new()};
+        rows.filter_map(Result::ok).filter(|id|!id.is_empty()).collect()
+    }
+
     pub fn tool_receipt(&self,task_id:&str,call_id:&str)->Option<Value>{
         if call_id.is_empty()||call_id.len()>200{return None;}
         let conn=self.conn.lock().ok()?;
@@ -568,12 +582,33 @@ impl Store {
         let Ok(mut stmt) = conn.prepare(
             "SELECT role,content FROM messages WHERE session_id=?1 ORDER BY seq DESC LIMIT ?2"
         ) else { return Vec::new() };
-        let Ok(rows) = stmt.query_map(params![session_id,limit.min(40) as i64],
+        let Ok(rows) = stmt.query_map(params![session_id,limit.clamp(1,512) as i64],
             |row| Ok(json!({"role":row.get::<_,String>(0)?,"content":row.get::<_,String>(1)?}))
         ) else { return Vec::new() };
         let mut result: Vec<Value> = rows.filter_map(Result::ok).collect();
         result.reverse();
         result
+    }
+
+    /// Recover earlier user/assistant messages in exact persisted order.
+    /// A caller always supplies its own current session, never an arbitrary
+    /// target session or a model-provided foreign identifier.
+    pub fn history_page(&self,session_id:&str,before:Option<u64>,limit:usize)->Vec<Value>{
+        let Ok(conn)=self.conn.lock() else {return vec![]};
+        let Ok(mut statement)=conn.prepare(
+            "SELECT seq,role,content FROM messages
+             WHERE session_id=?1 AND seq<?2 ORDER BY seq DESC LIMIT ?3"
+        ) else {return vec![]};
+        let upper=before.unwrap_or(i64::MAX as u64).min(i64::MAX as u64) as i64;
+        let Ok(rows)=statement.query_map(
+            params![session_id,upper,limit.clamp(1,20) as i64],
+            |row|Ok(json!({
+                "seq":row.get::<_,i64>(0)?,
+                "role":row.get::<_,String>(1)?,
+                "content":row.get::<_,String>(2)?
+            }))
+        ) else{return vec![]};
+        rows.filter_map(Result::ok).collect()
     }
 
     pub fn add_message(&self, session_id: &str, role: &str, content: &str) {
@@ -634,6 +669,21 @@ mod tests {
         assert_eq!(db.get(id).unwrap()["costKrw"],json!(4.0));
     }
 
+    #[test]
+    fn receipt_index_contains_only_committed_same_task_results(){
+        let db=new_store();
+        db.append_event("run-a","tool_start",json!({"callId":"call-a"})).unwrap();
+        assert!(!db.tool_receipt_ids("run-a").contains("call-a"));
+        db.append_event("run-b","tool_result",
+            json!({"callId":"other","outcome":{"ok":true}})).unwrap();
+        db.append_event("run-a","tool_result",
+            json!({"callId":"call-a","outcome":{"ok":true}})).unwrap();
+        let ids=db.tool_receipt_ids("run-a");
+        assert_eq!(ids.len(),1);
+        assert!(ids.contains("call-a"));
+        assert!(!ids.contains("other"));
+        assert_eq!(db.history_page("missing",None,10).len(),0);
+    }
     #[test]
     fn persisted_tool_receipt_is_scoped_to_the_task_and_call(){
         let db=new_store();
