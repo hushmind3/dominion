@@ -637,3 +637,79 @@ mod native_result_tests {
     }
 
 }
+
+
+#[cfg(test)]
+mod native_quality_route_end_to_end_tests {
+    use super::*;
+    use crate::{config::Config,db::Store,vault::Vault};
+    #[tokio::test]
+    async fn native_owner_cost_route_selects_quality_gated_model_pins_checkpoint_and_prices_real_http_usage() {
+        use axum::{routing::post,Json,Router};
+        use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
+        let count=Arc::new(AtomicUsize::new(0));
+        let seen=count.clone();
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr=listener.local_addr().unwrap();
+        let app=Router::new().route("/v1/chat/completions",
+            post(move |Json(body):Json<Value>| {
+                let seen=seen.clone();
+                async move {
+                    seen.fetch_add(1,Ordering::SeqCst);
+                    assert_eq!(body["model"],"cheap-qualified");
+                    Json(json!({"choices":[{"finish_reason":"stop",
+                        "message":{"role":"assistant","content":"Hello from pinned Rust route."}}],
+                        "usage":{"prompt_tokens":100,"completion_tokens":20,
+                            "prompt_tokens_details":{"cached_tokens":50}}}))
+                }
+            }));
+        let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap();});
+        let dir=std::env::temp_dir().join(format!("dominion-native-select-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=Config{port:0,data_dir:dir.clone(),web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()));
+        for (id,model,quality,input,output) in [
+            ("weak","cheap-weak",0.25,50.0,100.0),
+            ("good","cheap-qualified",0.91,1_000_000.0,2_000_000.0),
+            ("excellent","expensive",0.98,5_000_000.0,10_000_000.0),
+        ]{
+            state.store.put("provider",&json!({"id":id,"name":id,
+                "baseUrl":format!("http://{addr}/v1"),"enabled":true,
+                "kind":"openai","local":true,"toolMode":"native","model":model,
+                "nativeRouting":{"model":model,"quality":quality,
+                    "pricesKRWPerMillion":{"input":input,"output":output,
+                        "cachedInput":if id=="good" {500_000.0}else{input}}}}));
+        }
+        let id=format!("native-route-{}",uuid::Uuid::new_v4());
+        let job=state.store.put("job",&json!({"id":id,
+            "kind":"prompt","status":"running","input":{
+                "prompt":"Say a brief greeting","toolsEnabled":false,"requireEvidence":false,
+                "nativeRoutingPolicy":{"mode":"quality_cost",
+                    "minQuality":0.80,"maxQualityDrop":0.10}
+            }})).unwrap();
+        let context=crate::engine::jobs::JobContext::new(state.clone(),id.clone());
+        let result=run(&context,&job).await.unwrap();
+        assert_eq!(result["status"],"completed");
+        assert!(result["answer"].as_str().unwrap().contains("pinned Rust route"));
+        let saved=state.store.get("job",&id).unwrap();
+        assert_eq!(saved["nativeRoute"]["providerId"],"good");
+        assert_eq!(saved["nativeRoute"]["model"],"cheap-qualified");
+        assert_eq!(saved["nativeRoute"]["selection"]["mode"],"quality_cost");
+        assert_eq!(saved["nativeModelUsage"]["inputTokens"],100);
+        assert_eq!(saved["nativeModelUsage"]["cacheReadTokens"],50);
+        assert_eq!(saved["nativeModelUsage"]["configuredCostKRW"],115.0);
+        assert_eq!(saved["nativeModelUsage"]["pricedCalls"],1);
+        assert_eq!(count.load(Ordering::SeqCst),1);
+        // Revisions to the provider's endpoint are never admitted as a
+        // continuation of the already-paid, durable task.
+        let mut changed=state.store.get("provider","good").unwrap();
+        changed["baseUrl"]=json!("http://127.0.0.1:9/v1");
+        state.store.put("provider",&changed);
+        let error=run(&context,&saved).await.unwrap_err();
+        assert!(error.contains("manual review"),"{error}");
+        assert_eq!(count.load(Ordering::SeqCst),1);
+        server.abort();
+        let _=std::fs::remove_dir_all(dir);
+    }
+}
