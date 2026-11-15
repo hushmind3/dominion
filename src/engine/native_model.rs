@@ -280,7 +280,18 @@ async fn receive_stream(
     let mut assembly=Assembler::new(protocol);
     let mut stream=response.bytes_stream();
     let result=async {
-        while let Some(chunk)=stream.next().await {
+        loop {
+            // A stalled provider must not trap an owner-cancelled job for the
+            // entire HTTP request timeout. Poll cancellation independently
+            // of the server's next streamed byte.
+            let next=tokio::select! {
+                chunk=stream.next()=>chunk,
+                _=tokio::time::sleep(Duration::from_millis(250))=>{
+                    progress.check_live()?;
+                    continue;
+                },
+            };
+            let Some(chunk)=next else {break};
             progress.check_live()?;
             let chunk=chunk.map_err(|e|format!("Native {name} SSE transport interrupted: {e}"))?;
             for packet in decoder.push(&chunk)? {
@@ -806,6 +817,46 @@ mod tests {
         let saved=state.store.get("job","partial-stream-job").unwrap();
         assert_eq!(saved["nativeStream"]["stage"],"interrupted");
         assert_eq!(saved["nativeStream"]["executable"],false);
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn native_stream_owner_cancel_interrupts_a_stalled_provider_without_tool_execution() {
+        use axum::{routing::post,Router,Json,body::{Body,Bytes},http::Response};
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr=listener.local_addr().unwrap();
+        let app=Router::new().route("/v1/chat/completions",
+            post(|Json(_body):Json<Value>| async move {
+                let packet=json!({"choices":[{"index":0,
+                    "delta":{"content":"I am reviewing the source"}}]});
+                let body=async_stream::stream! {
+                    yield Ok::<Bytes,std::convert::Infallible>(
+                        Bytes::from(format!("data: {packet}\n\n")));
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                };
+                Response::builder().header("content-type","text/event-stream")
+                    .body(Body::from_stream(body)).unwrap()
+            }));
+        let task=tokio::spawn(async move{axum::serve(listener,app).await.unwrap();});
+        let state=mock_state(&format!("http://{addr}/v1"),"openai");
+        state.store.put("job",&json!({"id":"cancel-stream-job",
+            "status":"running","cancelRequested":false,"kind":"prompt"}));
+        let model_state=state.clone();
+        let model=tokio::spawn(async move {
+            complete_with_run(&model_state,"native-wire-test","model-mock","cancel-session",
+                "You are a model","{}",&[tool()],&[],Some("cancel-stream-job")).await
+        });
+        tokio::time::sleep(Duration::from_millis(450)).await;
+        state.store.patch_if("job","cancel-stream-job","cancelRequested",&json!(false),
+            &json!({"cancelRequested":true})).unwrap();
+        let result=tokio::time::timeout(Duration::from_secs(4),model)
+            .await.expect("Owner cancellation should not wait for the provider's 30-second stall")
+            .unwrap();
+        let error=result.unwrap_err();
+        assert!(error.contains("Owner cancelled"),"{error}");
+        let job=state.store.get("job","cancel-stream-job").unwrap();
+        assert_eq!(job["nativeStream"]["stage"],"interrupted");
+        assert_eq!(job["nativeStream"]["executable"],false);
         task.abort();
     }
 

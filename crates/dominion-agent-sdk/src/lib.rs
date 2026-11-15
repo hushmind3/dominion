@@ -440,7 +440,17 @@ impl Kernel<'_> {
             ).await {
                 Ok(turn) => turn,
                 Err(error) => {
-                    run.stop(Status::NeedsReview, format!("Model unavailable: {error}"));
+                    if self.journal.cancelled(&request.id) {
+                        // Cancellation before the provider's terminal model
+                        // event is not permission to replay that paid call.
+                        // The cancelled job itself is terminal.
+                        run.model_in_flight=false;
+                        run.stop(Status::Cancelled,"Owner cancelled native model generation");
+                    } else {
+                        // Unknown partial model output remains explicitly
+                        // in-flight, prohibiting automatic paid replay.
+                        run.stop(Status::NeedsReview,format!("Model unavailable: {error}"));
+                    }
                     self.journal.save(&run)?;
                     return Ok(run);
                 }

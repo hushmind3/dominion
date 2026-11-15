@@ -4,7 +4,7 @@
 //! executable ONLY after a complete terminal provider event, validated JSON
 //! arguments, and a subsequent independent Rust-kernel approval.
 use serde_json::{json,Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap,BTreeSet};
 
 const MAX_LINE_BYTES:usize=256*1024;
 const MAX_EVENT_BYTES:usize=2*1024*1024;
@@ -95,7 +95,7 @@ impl Call {
     }
 }
 #[derive(Debug)]
-enum Block {Text(String),Tool{id:String,name:String,partial:String,initial:Value}}
+enum Block {Text(String),Tool{id:String,name:String,partial:String,initial:Value},Ignored}
 #[derive(Debug)]
 pub(crate) enum Update {
     Text(String),
@@ -109,6 +109,7 @@ pub(crate) struct Assembler {
     text:String,
     calls:BTreeMap<usize,Call>,
     blocks:BTreeMap<usize,Block>,
+    closed:BTreeSet<usize>,
     prompt_tokens:Option<u64>,
     output_tokens:Option<u64>,
     anthropic_stop:Option<String>,
@@ -117,7 +118,7 @@ pub(crate) struct Assembler {
 impl Assembler {
     pub(crate) fn new(wire:Wire)->Self {
         Self {wire,done:false,chat_finish:None,text:String::new(),
-            calls:BTreeMap::new(),blocks:BTreeMap::new(),
+            calls:BTreeMap::new(),blocks:BTreeMap::new(),closed:BTreeSet::new(),
             prompt_tokens:None,output_tokens:None,anthropic_stop:None,
             codex_response:None}
     }
@@ -153,7 +154,18 @@ impl Assembler {
             if let Some(reason)=choice["finish_reason"].as_str(){
                 if self.chat_finish.is_some(){return Err("Duplicate Chat finish event".into());}
                 match reason {
-                    "stop"|"tool_calls"=>self.chat_finish=Some(reason.into()),
+                    "stop"|"tool_calls"=>{
+                        self.chat_finish=Some(reason.into());
+                        if reason=="tool_calls" {
+                            for call in self.calls.values() {
+                                if !call.id.is_empty() && !call.name.is_empty() {
+                                    updates.push(Update::ToolStarted{
+                                        id:call.id.clone(),name:call.name.clone()
+                                    });
+                                }
+                            }
+                        }
+                    }
                     _=>return Err(format!("Native Chat stopped without a complete tool turn: {reason}")),
                 }
             }
@@ -166,11 +178,6 @@ impl Assembler {
                 if idx>=MAX_NATIVE_CALLS {return Err("Native tool call index exceeds limit".into());}
                 let entry=self.calls.entry(idx).or_default();
                 entry.append(tool)?;
-                if !entry.id.is_empty() && !entry.name.is_empty()
-                    && entry.args.len()==tool["function"]["arguments"].as_str().unwrap_or("").len()
-                {
-                    updates.push(Update::ToolStarted{id:entry.id.clone(),name:entry.name.clone()});
-                }
             }
         }
         Ok(())
@@ -196,6 +203,7 @@ impl Assembler {
                 let block=&event["content_block"];
                 let entry=match block["type"].as_str() {
                     Some("text")=>Block::Text(block["text"].as_str().unwrap_or("").into()),
+                    Some("thinking"|"redacted_thinking")=>Block::Ignored,
                     Some("tool_use")=>{
                         let id=block["id"].as_str().filter(|v|!v.is_empty())
                             .ok_or("Anthropic native tool missing ID")?.to_string();
@@ -210,8 +218,12 @@ impl Assembler {
             }
             "content_block_delta"=>{
                 let idx=event["index"].as_u64().ok_or("Anthropic content delta missing index")? as usize;
+                if self.closed.contains(&idx) {
+                    return Err("Anthropic delta after content block stop".into());
+                }
                 let block=self.blocks.get_mut(&idx).ok_or("Anthropic delta without block start")?;
                 match (block,event["delta"]["type"].as_str()) {
+                    (Block::Ignored,_)=>{},
                     (Block::Text(text),Some("text_delta"))=>{
                         let delta=event["delta"]["text"].as_str().unwrap_or("");
                         if text.len()+delta.len()>MAX_EVENT_BYTES{return Err("Anthropic text too long".into());}
@@ -230,8 +242,8 @@ impl Assembler {
             }
             "content_block_stop"=>{
                 let idx=event["index"].as_u64().ok_or("Anthropic block stop missing index")? as usize;
-                if !self.blocks.contains_key(&idx){
-                    return Err("Anthropic block stop without start".into());
+                if !self.blocks.contains_key(&idx) || !self.closed.insert(idx) {
+                    return Err("Duplicate or unknown Anthropic block stop".into());
                 }
             }
             "message_delta"=>{
@@ -248,6 +260,9 @@ impl Assembler {
             "message_stop"=>{
                 if self.anthropic_stop.is_none(){
                     return Err("Anthropic message ended without stop reason".into());
+                }
+                if self.blocks.len()!=self.closed.len(){
+                    return Err("Anthropic message ended with an unclosed tool/content block".into());
                 }
                 self.done=true;
             }
@@ -327,6 +342,7 @@ impl Assembler {
                 for (_,item) in self.blocks {
                     match item {
                         Block::Text(text)=>blocks.push(json!({"type":"text","text":text})),
+                        Block::Ignored=>{},
                         Block::Tool{id,name,partial,initial}=>{
                             let input=if partial.is_empty(){initial}else{
                                 serde_json::from_str::<Value>(&partial)
@@ -355,7 +371,7 @@ mod tests {
         format!("data: {}\r\n\r\n",value).into_bytes()
     }
     #[test]
-    fn transport_splits_unicode_and_sse_headers_without_losing_tool_json() {
+    fn native_sse_transport_splits_unicode_and_json() {
         let mut dec=SseDecoder::default();
         let payload=encode(json!({"choices":[{"index":0,"delta":{"content":"한글🧠"}}]}));
         let mut events=vec![];
@@ -366,7 +382,7 @@ mod tests {
         assert!(matches!(&updates[0],Update::Text(t) if t=="한글🧠"));
     }
     #[test]
-    fn interleaved_chat_tool_calls_commit_only_after_done() {
+    fn native_sse_interleaved_tool_calls_commit_only_after_done() {
         let mut a=Assembler::new(Wire::Chat);
         for event in [
             json!({"choices":[{"index":0,"delta":{"tool_calls":[
@@ -398,7 +414,7 @@ mod tests {
         assert_eq!(v["choices"][0]["message"]["tool_calls"][1]["id"],"idB");
     }
     #[test]
-    fn anthropic_partial_json_and_settlement() {
+    fn native_sse_anthropic_partial_json_and_settlement() {
         let mut a=Assembler::new(Wire::Anthropic);
         for item in [
             json!({"type":"message_start","message":{"usage":{"input_tokens":14}}}),
@@ -418,7 +434,7 @@ mod tests {
         assert_eq!(settled["usage"]["input_tokens"],14);
     }
     #[test]
-    fn codex_full_response_is_required_before_any_tool_execution() {
+    fn native_sse_codex_requires_terminal_full_response() {
         let mut a=Assembler::new(Wire::Codex);
         a.feed(Packet::Data(json!({"type":"response.output_item.done",
             "item":{"type":"function_call","call_id":"call_1",
@@ -431,7 +447,38 @@ mod tests {
         assert_eq!(a.finish().unwrap()["output"][0]["call_id"],"call_1");
     }
     #[test]
-    fn errors_incomplete_frames_and_bad_limits_fail_closed() {
+    fn native_sse_anthropic_thinking_is_ignored_and_unclosed_tools_are_rejected() {
+        let mut ok=Assembler::new(Wire::Anthropic);
+        let events=[
+            json!({"type":"message_start","message":{"usage":{"input_tokens":100}}}),
+            json!({"type":"content_block_start","index":0,
+                "content_block":{"type":"thinking","thinking":""}}),
+            json!({"type":"content_block_delta","index":0,
+                "delta":{"type":"thinking_delta","thinking":"private reasoning"}}),
+            json!({"type":"content_block_stop","index":0}),
+            json!({"type":"content_block_start","index":1,
+                "content_block":{"type":"text","text":""}}),
+            json!({"type":"content_block_delta","index":1,
+                "delta":{"type":"text_delta","text":"Ready"}}),
+            json!({"type":"content_block_stop","index":1}),
+            json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},
+                "usage":{"output_tokens":6}}),
+            json!({"type":"message_stop"}),
+        ];
+        for item in events {ok.feed(Packet::Data(item)).unwrap();}
+        let value=ok.finish().unwrap();
+        assert_eq!(value["content"][0]["text"],"Ready");
+        assert_eq!(value["content"].as_array().unwrap().len(),1);
+        let mut incomplete=Assembler::new(Wire::Anthropic);
+        incomplete.feed(Packet::Data(json!({"type":"content_block_start","index":0,
+            "content_block":{"type":"tool_use","id":"tool_0","name":"shell_exec","input":{}}}))).unwrap();
+        incomplete.feed(Packet::Data(json!({"type":"message_delta",
+            "delta":{"stop_reason":"tool_use"}}))).unwrap();
+        assert!(incomplete.feed(Packet::Data(json!({"type":"message_stop"}))).is_err(),
+            "Unclosed partial tool calls may never be scheduled");
+    }
+    #[test]
+    fn native_sse_fail_closed_on_errors_and_missing_terminal() {
         let mut d=SseDecoder::default();
         assert!(d.push(b"data: {\"type\":\"partial\"").unwrap().is_empty());
         assert!(d.end().is_err());

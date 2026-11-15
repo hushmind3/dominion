@@ -105,3 +105,41 @@ async fn provider_native_unauthorized_calls_are_rejected_before_host_effect() {
     assert_eq!(*writer.called.lock().unwrap(),vec!["valid_call"]);
     assert!(result.checks.iter().all(|c|c.satisfied));
 }
+
+#[tokio::test]
+async fn explicit_owner_cancel_during_generation_is_terminal_not_replayed() {
+    use std::sync::{Arc,atomic::{AtomicBool,Ordering}};
+    struct CancelledModel {flag:Arc<AtomicBool>}
+    impl Model for CancelledModel {
+        fn complete<'a>(&'a self,_:&'a str,_:&'a str)
+            ->BoxFuture<'a,Result<ModelReply,String>> {
+            Box::pin(async move {
+                self.flag.store(true,Ordering::SeqCst);
+                Err("Native model stream stopped after owner cancellation".into())
+            })
+        }
+    }
+    struct CancelJournal {
+        flag:Arc<AtomicBool>,
+        saved:Mutex<Vec<Snapshot>>,
+    }
+    impl Journal for CancelJournal {
+        fn save(&self,s:&Snapshot)->Result<(),String>{
+            self.saved.lock().unwrap().push(s.clone());Ok(())
+        }
+        fn cancelled(&self,_:&str)->bool {
+            self.flag.load(Ordering::SeqCst)
+        }
+    }
+    let flag=Arc::new(AtomicBool::new(false));
+    let model=CancelledModel{flag:flag.clone()};
+    let journal=CancelJournal{flag,saved:Mutex::new(Vec::new())};
+    let host=Writer{called:Mutex::new(Vec::new())};
+    let kernel=Kernel{model:&model,tools:&host,evidence:&NoFileChecks,journal:&journal};
+    let result=kernel.run(request()).await.unwrap();
+    assert!(matches!(result.status,Status::Cancelled));
+    assert!(!result.model_in_flight);
+    assert!(host.called.lock().unwrap().is_empty());
+    assert!(matches!(journal.saved.lock().unwrap().last().unwrap().status,
+        Status::Cancelled));
+}
