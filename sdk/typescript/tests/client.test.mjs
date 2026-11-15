@@ -89,7 +89,9 @@ test("typed client uses the native A-B-A evolution routes and exact budget",asyn
   }});
   const started=await client.improvementEvolutionStart("seed-2026",{
     max_generations:2,cost_budget_krw:900,
-    target_files:["src/a.rs","src/b.rs"]
+    target_files:["src/a.rs","src/b.rs"],
+    candidates_per_generation:2,
+    validation_command:"node scripts/validate-score.mjs"
   });
   const list=await client.evolutionList();
   const single=await client.evolutionGet("run-2026");
@@ -103,7 +105,9 @@ test("typed client uses the native A-B-A evolution routes and exact budget",asyn
   ]);
   assert.deepEqual(calls[0].body,{
     max_generations:2,cost_budget_krw:900,
-    target_files:["src/a.rs","src/b.rs"]
+    target_files:["src/a.rs","src/b.rs"],
+    candidates_per_generation:2,
+    validation_command:"node scripts/validate-score.mjs"
   });
 });
 
