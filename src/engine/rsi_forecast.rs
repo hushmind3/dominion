@@ -41,7 +41,8 @@ fn stats<'a>(rows: impl Iterator<Item = &'a Value>) -> Option<(f64, f64)> {
 /// Only generations that actually carried a forecast contribute. A domain with
 /// no forecast history reports zeros rather than a fabricated confidence.
 pub(crate) fn domain_error(history: &[Value], domain: &str) -> (f64, f64) {
-    stats(history.iter().filter(|row| row["domain"] == domain))
+    stats(history.iter().filter(|row| row["domain"] == domain
+        && row["forecast"]["domain"] == domain))
         .unwrap_or((0.0, 0.0))
 }
 
