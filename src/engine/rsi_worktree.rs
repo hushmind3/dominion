@@ -1021,6 +1021,18 @@ pub(crate) async fn compare_at(context:&JobContext,id:&str,source:&Path,_runner_
     }
     path_parts.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()));
     let path = std::env::join_paths(path_parts).map_err(|e|e.to_string())?;
+    // MSVC link.exe can fail with LNK1181 once a generated .obj path exceeds
+    // MAX_PATH. The canonicalized data directory plus Cargo release/build
+    // subdirectories can cross that limit even after stripping the extended prefix.
+    // Keep a stable, campaign-scoped cache directly under the user temp root
+    // on Windows; the Node runner adds separate baseline/candidate directories.
+    let build_cache=if cfg!(windows) {
+        let identity=digest(&format!("{}:{}",state.config.data_dir.display(),context.job_id));
+        std::env::temp_dir().join(format!("drb-{}",&identity[..16]))
+    } else {
+        std::fs::canonicalize(&state.config.data_dir).map_err(|e|e.to_string())?
+            .join("rsi-paired-build").join(&context.job_id)
+    };
     let mut command=Command::new(node_executable());
     command.current_dir(&source).arg(&runner)
         .arg(candidate["baseCommit"].as_str().unwrap_or(""))
@@ -1030,8 +1042,7 @@ pub(crate) async fn compare_at(context:&JobContext,id:&str,source:&Path,_runner_
         // propagates CARGO_TARGET_DIR to the MSVC linker, which cannot use
         // these paths as ordinary .obj arguments (LNK1181). Normalize only
         // the child-process environment, retaining canonical paths for I/O.
-        .env("RSI_BUILD_CACHE",git_compatible_path(&std::fs::canonicalize(&state.config.data_dir)
-            .map_err(|e|e.to_string())?.join("rsi-paired-build").join(&context.job_id)));
+        .env("RSI_BUILD_CACHE",git_compatible_path(&build_cache));
     let outcome=crate::engine::rsi_evolve::command(context,command,Duration::from_secs(1200)).await?;
     if !outcome.status.success() {
         return Err(format!("독립 A/B 실험 실행 실패: {}",String::from_utf8_lossy(&outcome.stderr)
