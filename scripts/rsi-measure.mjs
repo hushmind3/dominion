@@ -4,14 +4,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
-import {parseCargoTestArtifacts,parseTestInventory} from './rsi-result-format.mjs';
+import {parseCargoTestArtifacts,parseTestInventory,pairedBuildTarget} from './rsi-result-format.mjs';
 const root=process.env.RSI_TEMP;
 const plan=JSON.parse(fs.readFileSync(process.env.RSI_PLAN,'utf8'));
 const hash=data=>crypto.createHash('sha256').update(data).digest('hex');
 const logs=[];
 const run=(exe,args,cwd)=>{
  const result=spawnSync(exe,args,{cwd,encoding:'utf8',timeout:360000,maxBuffer:8*1024*1024,
-  env:{...process.env,CARGO_TARGET_DIR:path.join(process.env.RSI_BUILD_CACHE||path.join(root,'build'),path.basename(cwd))}});
+  env:{...process.env,CARGO_TARGET_DIR:pairedBuildTarget(
+   process.env.RSI_BUILD_CACHE||path.join(root,'build'),path.basename(cwd))}});
  const text=(result.stdout||'')+'\n'+(result.stderr||'');
  logs.push(text.slice(-80000));
  return {ok:result.status===0&&!result.error,text,stdout:result.stdout||'',
@@ -36,9 +37,18 @@ for(const label of ['baseline','candidate']){
   // A boolean build_failed cannot teach a descendant WHAT to repair, and
   // hiding the diagnostics also makes cross-platform regressions opaque.
   if(!built.ok||binaries.length===0){
+   // Cargo JSON diagnostics carry the actual compiler failure; the tail of
+   // stderr alone often contains only the secondary 'could not compile'.
+   const compilerErrors=built.stdout.split(/\r?\n/).flatMap(line=>{
+    try{const event=JSON.parse(line);return event.reason==='compiler-message'&&
+     event.message?.level==='error'?[event.message.rendered||event.message.message]:[];}
+    catch{return []}
+   });
    const lines=built.text.split(/\r?\n/);
-   const first=lines.findIndex(line=>/^(?:error(?:\[[A-Z]\d+\])?:|fatal error:|error:)/i.test(line.trim()));
-   const focused=first>=0?lines.slice(Math.max(0,first-1),first+19).join('\n'):
+   const plain=line=>line.replace(/\x1b\[[0-9;]*m/g,'').trim();
+   const first=lines.findIndex(line=>/^(?:error(?:\[[A-Z]\d+\])?:|fatal error:)/i.test(plain(line)));
+   const focused=compilerErrors.length?compilerErrors.slice(0,4).join('\n'):
+    first>=0?lines.slice(Math.max(0,first-1),first+19).join('\n'):
     built.text.slice(-3000);
    buildDiagnostics[label]={exitCode:built.exitCode,
     error:built.error||(binaries.length===0&&built.ok?'No test executable produced':null),
