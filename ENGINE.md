@@ -187,3 +187,8 @@ Rust SDK 자체가 계획·실행·검증·복구의 상태기계입니다. 실�
 `native_stream::Assembler`는 SSE 공급자의 사용량·캐시 통계를 터미널 응답까지 유지하며, `native_model::reported_usage`가 Chat/Responses/Anthropic별 입력·출력·캐시 토큰을 읽습니다. `native_model::record_job_usage`가 완료된 공급자 응답만 `Store.job.nativeModelUsage`와 `native.model_usage` 감사 기록에 누적합니다. `native_agent::Kernel`은 실행 소유권·사용자 승인·기존 체크포인트를 그대로 보유합니다. `GET /api/jobs/:id`에서 실제 측정값과 미보고 호출 수가 노출되고 React 자율 작업 UI와 `sdk/typescript/src/index.ts::NativeModelUsage`가 이를 직접 사용합니다. 누락된 제공자 사용량은 0비용으로 처리하지 않습니다. `docs/SUB3-NATIVE-METERING-2026-11-15.md` 및 [집중 CI #43691823640](https://github.com/hushmind3/dominion-rust/actions/runs/43691823640) 참조.
 
 자율 작업 GUI의 토큰 예산 입력은 `web/src/components/NativeAgentPanel.tsx::launch` → `POST /api/jobs`의 `input.tokenBudget` → `src/api/jobs.rs::create` → `input.limits.maxEstimatedTokens` → `dominion_sdk::harness::Kernel::run`로 이어집니다. `nativeState.chargedTokens`는 커널이 통제하는 예산 계정이며 `nativeModelUsage`는 공급자 실측 사용량으로 따로 표시합니다.
+
+
+## 네이티브 프롬프트 캐시와 재전송 금지 (2026-11-15)
+
+`/api/jobs` → `native_agent::run` → `dominion_sdk::Kernel` → `native_model::complete_with_run`가 기존 실행 경로입니다. OpenAI 호환 Chat 전송은 `gateway::send_once`로 분리해 네트워크 오류 후 내부 HTTP POST 재시도 없이 커널의 `model_in_flight` 검토 상태를 보존합니다. Anthropic Messages는 `native_cache::hinted`가 긴 고정 도구·시스템 접두사에만 `cache_control`을 부착합니다. 명시적 400/422 미지원 오류가 나온 때에만 캐시 힌트를 벗기고 요청을 1회 재시도하며, 비지원 모델/제공자 결과를 24시간 저장합니다. 사용량 실측은 기존 `nativeModelUsage` 장부에서 제공자 보고값을 읽습니다. 상세: `docs/SUB3-NATIVE-PROMPT-CACHE-2026-11-15.md`.
