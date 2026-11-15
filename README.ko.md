@@ -65,16 +65,20 @@
 
 > **개발자 프리뷰** · 소스코드와 실행 방법을 공개하는 단계입니다. 모든 OS·모델·채널 조합의 실사용 안정성을 보장하지 않으며, 자기개선(RSI)은 별도의 실험 기능입니다. 현재 [GitHub Releases](https://github.com/hushmind3/dominion-rust/releases)에서 사전 빌드된 배포 파일을 제공하지 않으므로 아래의 소스 실행 안내를 먼저 확인해 주세요.
 
-## 🔌 TypeScript SDK — GUI와 동일한 Rust 실행 엔진
+## 🦀 Rust SDK가 본체인 자율 실행 플랫폼
 
-외부 Node.js·TypeScript 프로그램에서 DOMINION 작업·에이전트·회의·영상·승인·실행 이벤트를 사용할 수 있는 [TypeScript SDK](sdk/typescript/README.md)를 추가했습니다. 별도의 에이전트 엔진을 설치하거나 외부 SDK에 실행을 위임하는 구조가 아니라, GUI와 SDK가 **동일한 Rust `/api/*`** 핸들러를 호출합니다.
+도미니온의 실행 주체는 **Rust SDK와 자체 하네스**입니다. `src/sdk.rs`의 `Dominion::open / start / submit / steer / wait`가 기존 Rust 실행 엔진·도구·기억·권한·SQLite 작업 상태를 직접 이용합니다. GUI와 TypeScript SDK는 외부 연동 및 사용자 편의를 위한 보조 인터페이스입니다.
+
+일반 작업은 Rust가 목표를 실행하고 도구 증거와 실제 파일 조건을 검사합니다. 실패한 검증 항목에 한정해 수정 시도를 계속하며, 외부 부작용이 의심되는 작업은 자동 재실행하지 않습니다. 실행 중 추가한 사용자 지시는 같은 작업 기록에 저장되어 다음 모델 턴에 반영됩니다. GUI에는 자율 실행 여부·최대 시도·검증 기록·사용 토큰·중단과 지시 추가를 노출합니다.
 
 ```bash
 npm install --prefix sdk/typescript
 npm test --prefix sdk/typescript
 ```
 
-작업 상태·중단·회복과 이벤트 순서 개선은 [서브2 엔진/SDK 연결 문서](docs/SUB2-SDK-DURABLE-EVENTS-2026-11-15.md)에 정리했습니다. 이벤트 이력 만료는 `event_gap`으로 표시하며, 채팅 POST 재실행은 자동으로 하지 않습니다. SDK는 개발용 초기 버전입니다.
+[2026년 프런티어 실행 구조 비교](docs/FRONTIER-COMPARISON-SUB2-2026-11-15.md) · [실제 연결·복구 경로](docs/SUB2-SDK-DURABLE-EVENTS-2026-11-15.md)
+
+**검증 범위:** TypeScript SDK 로컬 모의 전송 테스트는 9개 통과했습니다. Rust 엔진의 전체 빌드, 실모델 장기 실행, SWE-bench Verified 동급 비교, 영상 품질·비용 평가를 완료한 상태는 아닙니다.
 
 ## ✨ 주요 기능
 
