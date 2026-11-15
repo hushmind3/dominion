@@ -118,3 +118,8 @@ The independent `dominion-agent-sdk::Kernel` now runs the owner's required exact
 
 **Total executed Rust cases in this narrow gate: 58 passed / 0 failed.** Full product CI, live-model coding success, live-browser UI, paid provider budget, and SWE-bench remain independently unverified. The regular full CI workflow was not invoked by this gate; verification is a dedicated `sub3-rust-sdk-check.yml` workflow and is scoped to core/host/UI validation. This narrows one proven execution capability, not a declaration that all of Dominion or its coding intelligence is frontier-equivalent.
 
+
+
+### Long-run, source-aligned context projection and retrieval
+
+`Kernel::run_from` now uses `context::project` instead of sending only the most recent fixed-length observation tail. It retains complete durable `Snapshot.receipts`, safely projects recent/failure/index/digest views, and serves two bounded kernel-local read-only retrieval tools. Native host tools and approval boundaries are unchanged. See `docs/SUB3-DURABLE-CONTEXT-2026-11-15.md` for actual comparison source paths, data flow, test cases and remaining gaps.

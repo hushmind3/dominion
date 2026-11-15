@@ -211,3 +211,8 @@ DOMINION now includes the native Rust SDK-side automatic acceptance/repair contr
 
 **Total executed Rust cases in this narrow gate: 58 passed / 0 failed.** Full product CI, live-model coding success, live-browser UI, paid provider budget, and SWE-bench remain independently unverified. The regular full CI workflow was not invoked by this gate; verification is a dedicated `sub3-rust-sdk-check.yml` workflow and is scoped to core/host/UI validation. This narrows one proven execution capability, not a declaration that all of Dominion or its coding intelligence is frontier-equivalent.
 
+
+
+### Durable model context + historical evidence retrieval (sub3)
+
+The Rust agent kernel now separates persisted source/tool receipts from the bounded model-visible context. A live planner can query `dominion_receipt_search` and `dominion_receipt_read` to recover an older compiler failure or file observation even after hundreds of later tools, without rerunning the original effect. Source provenance and limitations: [Durable context design](docs/SUB3-DURABLE-CONTEXT-2026-11-15.md). The existing `/api/jobs` endpoint and main-based GUI use this same Rust kernel.

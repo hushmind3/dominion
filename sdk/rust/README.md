@@ -53,3 +53,8 @@ Native `Kernel::run` and `Kernel::resume` own verification-command scheduling as
 
 **Total executed Rust cases in this narrow gate: 58 passed / 0 failed.** Full product CI, live-model coding success, live-browser UI, paid provider budget, and SWE-bench remain independently unverified. The regular full CI workflow was not invoked by this gate; verification is a dedicated `sub3-rust-sdk-check.yml` workflow and is scoped to core/host/UI validation. This narrows one proven execution capability, not a declaration that all of Dominion or its coding intelligence is frontier-equivalent.
 
+
+
+### Context preservation across long agent runs
+
+The SDK's Rust-native, read-only `dominion_receipt_search` and `dominion_receipt_read` tools expose bounded lookup of this run's durable receipts to the planner without reissuing external operations. Recent tool output, past failures and operation IDs are projected with explicit size budgets. Their full authoritative JSON remains in `Snapshot.receipts` across `Kernel::resume`. The native `/api/jobs` and GUI execution path inherit this automatically. See `docs/SUB3-DURABLE-CONTEXT-2026-11-15.md`.

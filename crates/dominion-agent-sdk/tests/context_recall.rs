@@ -57,7 +57,7 @@ fn request()->RunRequest {
         id:"long-context".into(),instruction:"Recall initial error, no external operations".into(),
         owner_instructions:"Keep all exact evidence available".into(),
         strategy:Strategy::Balanced,limits:Limits{
-            max_steps:12,max_model_calls:12,max_estimated_tokens:1_000_000,
+            max_steps:64,max_model_calls:64,max_estimated_tokens:1_000_000,
             max_parallel_reads:4,max_result_chars:1200,
         },allowed_tools:vec![],checks:vec![],require_evidence:false}
 }
@@ -72,8 +72,9 @@ fn turn(actions:Vec<Value>,answer:Option<&str>)->Value {
 async fn a_long_run_can_search_and_read_evicted_tool_evidence_without_reexecution() {
     let request=request();
     let mut saved=Snapshot::from_request(&request);
-    saved.step=1;
-    saved.model_calls=1;
+    saved.step=30;
+    saved.model_calls=30;
+    saved.charged_tokens=5000;
     saved.receipts.push(Receipt{id:"failure-from-step-one".into(),
         tool:"shell_exec".into(),arguments:json!({"command":"cargo test"}),
         success:false,result:json!({"stderr":"EARLY_DIAGNOSTIC: trait bound not satisfied",
@@ -82,7 +83,7 @@ async fn a_long_run_can_search_and_read_evicted_tool_evidence_without_reexecutio
         saved.receipts.push(Receipt{id:format!("read-{index}"),tool:"workspace_read".into(),
             arguments:json!({"path":format!("src/file{index}.rs")}),
             success:true,result:json!({"content":"source".repeat(900)}),
-            step:1});
+            step:index/8+2});
     }
     let model=Scripted::new(vec![
         turn(vec![action("find","dominion_receipt_search",json!({
