@@ -223,6 +223,10 @@ pub async fn dispatch_batch<D: Dispatcher>(
     if !run.in_flight.is_empty() {
         return Err("이전 도구 실행의 결과를 먼저 확인해야 합니다.".into());
     }
+    // A new owner directive invalidates the entire pending batch.
+    // Recheck between checkpoints: earlier tool receipts remain durable,
+    // but no later side effect may execute under the abandoned instruction.
+    let planned_directive = journal.directive(&run.id)?;
     let mut ids = HashSet::new();
     for action in actions {
         if action.id.trim().is_empty() || !ids.insert(&action.id)
@@ -240,6 +244,9 @@ pub async fn dispatch_batch<D: Dispatcher>(
         if journal.cancelled(&run.id) {
             return Err("실행이 취소되었습니다.".into());
         }
+        if journal.directive(&run.id)? != planned_directive {
+            return Err("작업 지시가 변경되어 기존 도구 계획을 중단했습니다.".into());
+        }
         let end = runtime::read_batch_end(
             actions, cursor, dispatcher.max_parallel_reads().clamp(1, 16),
             |action| dispatcher.is_read_only(action),
@@ -248,6 +255,17 @@ pub async fn dispatch_batch<D: Dispatcher>(
         run.in_flight = group.to_vec();
         // Persist intent before starting any tool. A failed save dispatches nothing.
         journal.save(run)?;
+        // An instruction may change between planning and the durable fence.
+        // No tool has run yet, so release the fence and stop cleanly.
+        let cancelled = journal.cancelled(&run.id);
+        let redirected = journal.directive(&run.id)? != planned_directive;
+        if cancelled || redirected {
+            run.in_flight.clear();
+            journal.save(run)?;
+            return Err(if cancelled {"실행이 취소되었습니다."} else {
+                "작업 지시가 변경되어 기존 도구 계획을 중단했습니다."
+            }.into());
+        }
         let results = join_all(group.iter().map(|action| dispatcher.execute(action))).await;
         let mut group_failed = false;
         for (action, outcome) in group.iter().zip(results) {
