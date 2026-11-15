@@ -464,6 +464,7 @@ fn choose_transformation(source: &str, measured: impl Fn(&str)->bool) -> Option<
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     #[test]
     fn source_transformations_are_line_ending_independent() {
         // A frozen pre-optimized source is essential: the current product may
