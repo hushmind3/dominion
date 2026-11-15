@@ -121,3 +121,27 @@ test("stop requests use the native persisted evolution action, never client canc
  assert.equal(run.stop_requested,true);
  assert.deepEqual(calls,[["/api/evolutions/run-2026/stop","POST",{}]]);
 });
+
+
+test("sandbox readiness is read-only and strict policy is sent to Rust unchanged",async()=>{
+  const calls=[];
+  const client=new DominionClient({fetch:async(url,init)=>{
+    calls.push({path:new URL(url).pathname,method:init.method,
+      input:init.body?JSON.parse(init.body):null});
+    if(calls.length===1)return json({available:false,backend:null,scope:"shell_only",
+      reason:"No available sandbox backend"});
+    return json({id:"task-isolated",status:"queued"});
+  }});
+  const readiness=await client.sandboxCapability();
+  assert.equal(readiness.available,false);
+  await client.submit({requestId:"strict-2026",prompt:"run tests",
+    allowShell:true,shellIsolation:"isolated"});
+  await client.resume("task-old",{requestId:"strict-resume",prompt:"retry safely",
+    allowShell:true,shellIsolation:"isolated"});
+  assert.deepEqual(calls.map(c=>[c.path,c.method]),[
+    ["/api/sandbox","GET"],["/api/tasks","POST"],
+    ["/api/tasks/task-old/resume","POST"]
+  ]);
+  assert.equal(calls[1].input.shellIsolation,"isolated");
+  assert.equal(calls[2].input.shellIsolation,"isolated");
+});
