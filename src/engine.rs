@@ -40,10 +40,22 @@ fn specs(allow_write: bool, allow_shell: bool, allow_subagents: bool) -> Vec<Val
     })];
     result.push(json!({"type":"function","function":{
         "name":"task_receipt",
-        "description":"Restore a previously persisted tool observation by its call ID after context compaction. This is read-only and cannot replay a tool effect.",
+        "description":"Read an exact byte page from a durable previous tool observation. Offsets and SHA-256 allow reconstruction without replaying an external effect.",
         "parameters":{"type":"object","properties":{
-            "callId":{"type":"string"}
+            "callId":{"type":"string"},
+            "offsetBytes":{"type":"integer","minimum":0},
+            "maxBytes":{"type":"integer","minimum":16,"maximum":8192}
         },"required":["callId"],"additionalProperties":false}
+    }}));
+    result.push(json!({"type":"function","function":{
+        "name":"session_history",
+        "description":"Search the current native session's older owner and assistant messages, including those omitted from model context. Use beforeSeq to page backward or messageSeq to retrieve one exact archived message.",
+        "parameters":{"type":"object","properties":{
+            "beforeSeq":{"type":"integer","minimum":1},
+            "messageSeq":{"type":"integer","minimum":1},
+            "offsetBytes":{"type":"integer","minimum":0},
+            "maxBytes":{"type":"integer","minimum":16,"maximum":8192}
+        },"additionalProperties":false}
     }}));
     result.push(json!({
         "type":"function","function":{
@@ -125,19 +137,42 @@ fn allowed_check(program: &str, args: &[String]) -> bool {
     }
 }
 
-async fn tool(state: &AppState, current_task: &str, name: &str, args: &Value,
-    allow_write: bool, allow_shell: bool) -> Result<Value, String> {
+async fn tool(state: &AppState, current_task: &str, current_session: &str,
+    name: &str, args: &Value, allow_write: bool, allow_shell: bool) -> Result<Value, String> {
     match name {
         "task_receipt" => {
             let call_id=args["callId"].as_str().ok_or("Call identifier required")?;
             let receipt=state.store.tool_receipt(current_task,call_id)
                 .ok_or("A persisted receipt with that call ID was not found for this task")?;
-            let output=receipt.to_string();
-            if output.len()>16000 {
-                Ok(json!({"callId":call_id,"truncated":true,
-                    "summary":output.chars().take(12000).collect::<String>(),
-                    "note":"Full event remains persisted in SQLite"}))
-            }else {Ok(receipt)}
+            let offset=args["offsetBytes"].as_u64().unwrap_or(0)
+                .min(usize::MAX as u64) as usize;
+            let max=args["maxBytes"].as_u64().unwrap_or(4096)
+                .min(usize::MAX as u64) as usize;
+            context::receipt_page(&receipt,offset,max)
+        },
+        "session_history" => {
+            let seq=args["messageSeq"].as_u64();
+            if let Some(seq)=seq {
+                let message=state.store.history_message(current_session,seq)
+                    .ok_or("Archived message not found in this session")?;
+                let offset=args["offsetBytes"].as_u64().unwrap_or(0)
+                    .min(usize::MAX as u64) as usize;
+                let max=args["maxBytes"].as_u64().unwrap_or(4096)
+                    .min(usize::MAX as u64) as usize;
+                return context::history_page(&message,offset,max);
+            }
+            let before=args["beforeSeq"].as_u64();
+            let list=state.store.history_page(current_session,before,6);
+            let items=list.iter().map(|message|{
+                let full=message["content"].as_str().unwrap_or("");
+                let excerpt=full.chars().take(300).collect::<String>();
+                json!({"seq":message["seq"],"role":message["role"],
+                    "contentExcerpt":excerpt,"totalBytes":full.len(),
+                    "hasMore":full.chars().count()>300})
+            }).collect::<Vec<_>>();
+            let next=list.last().and_then(|message|message["seq"].as_u64());
+            Ok(json!({"messages":items,"nextBeforeSeq":next,
+                "scope":"current_session_only","readOnly":true}))
         },
         "workspace_list" => {
             files::list(&state.workspace, args["path"].as_str().unwrap_or("."))
@@ -270,7 +305,9 @@ pub async fn run(state: AppState, id: String) {
                 .filter_map(|skill|skill["name"].as_str()).collect::<Vec<_>>()
         }));
     }
-    messages.extend(state.store.history(&session, 12));
+    // Context selection, not an arbitrary 12-message SQLite cutoff, now
+    // determines what enters the next model request.
+    messages.extend(state.store.history(&session, 256));
     messages.push(json!({"role":"user","content":prompt}));
     state.store.add_message(&session,"user",&prompt);
     state.emit(&id,"running",json!({"sessionId":session,"model":state.model_name}));
@@ -348,29 +385,83 @@ pub async fn run(state: AppState, id: String) {
                 return;
             }
         }
-        // Compact only the outbound projection. Tool call/result pairs and
-        // original session evidence remain intact for later verification.
-        let context_limit=std::env::var("DOMINION_CONTEXT_MAX_CHARS").ok()
+        // Full source history never changes. Budget both the tool declarations
+        // AND the message JSON before the read-only provider request.
+        let context_limit=std::env::var("DOMINION_CONTEXT_MAX_BYTES")
+            .or_else(|_|std::env::var("DOMINION_CONTEXT_MAX_CHARS")).ok()
             .and_then(|value|value.parse::<usize>().ok())
-            .unwrap_or(48_000).clamp(16_000,256_000);
-        let projected=context::project(&messages,context_limit);
-        if projected.omitted_messages>0 || projected.projected_chars<projected.original_chars {
-            state.emit(&id,"context_projected",json!({
-                "originalChars":projected.original_chars,
-                "modelChars":projected.projected_chars,
-                "omittedMessages":projected.omitted_messages
-            }));
-        }
+            .unwrap_or(96_000).clamp(8192,2_000_000);
+        let declarations=serde_json::to_vec(&available).map(|v|v.len())
+            .unwrap_or(usize::MAX);
+        let Some(mut message_budget)=context_limit.checked_sub(declarations.saturating_add(2048))
+            .filter(|remaining|*remaining>=2048) else {
+            settle(&state,&id,"needs_review","",verified_writes,
+                Some("도구 목록과 필수 프로토콜 크기가 모델 문맥 예산을 초과했습니다.".into()));
+            return;
+        };
         let economical=strategy::use_economy(model_tier,&active_instruction,
             allow_write,require_evidence);
-        state.emit(&id,"model_step",json!({"step":step+1,"limit":steps,
-            "modelContextChars":projected.projected_chars,
-            "routing":if economical {"economy"}else{"quality"}}));
-        let reply = match state.provider.complete(&projected.messages,&available,economical).await {
-            Ok(value) => value,
-            Err(error) => {
-                settle(&state,&id,"failed","",verified_writes,Some(error));
-                return;
+        let durable=state.store.tool_receipt_ids(&id);
+        let mut attempt=0usize;
+        // The provider request has no side effects from model-proposed tools.
+        // A canonical context overflow may therefore retry with a *smaller*
+        // read-only projection; no tool effect is ever replayed here.
+        let reply=loop {
+            let projected=match context::project(&messages,message_budget,&durable){
+                Ok(view)=>view,
+                Err(error)=>{
+                    state.emit(&id,"context_rejected",json!({
+                        "message":error,"byteBudget":message_budget
+                    }));
+                    settle(&state,&id,"needs_review","",verified_writes,
+                        Some(format!("문맥 보존 검증 실패: {error}")));
+                    return;
+                }
+            };
+            state.emit(&id,"context_projected",json!({
+                "sourceSha256":projected.source_sha256,
+                "projectionSha256":projected.projection_sha256,
+                "originalBytes":projected.original_bytes,
+                "modelBytes":projected.projected_bytes,
+                "budgetBytes":message_budget,
+                "schemaBytes":declarations,
+                "omittedMessages":projected.omitted_messages,
+                "clippedReceipts":projected.clipped_receipts,
+                "retainedOwnerMessages":projected.retained_owner_messages,
+                "recoverableCallIds":projected.recoverable_call_ids,
+                "pressureRetry":attempt
+            }));
+            state.emit(&id,"model_step",json!({
+                "step":step+1,"limit":steps,
+                "modelContextBytes":projected.projected_bytes,
+                "routing":if economical {"economy"}else{"quality"},
+                "pressureRetry":attempt
+            }));
+            match state.provider.complete(&projected.messages,&available,economical).await{
+                Ok(value)=>break value,
+                Err(error)=>{
+                    let overflow=context::is_context_overflow(&error);
+                    if !overflow || attempt>=2 || message_budget<=4096 ||
+                        state.store.cancelled(&id) {
+                        settle(&state,&id,"failed","",verified_writes,Some(error));
+                        return;
+                    }
+                    let smaller=(message_budget*2/3).max(4096);
+                    if smaller>=message_budget {
+                        settle(&state,&id,"needs_review","",verified_writes,
+                            Some("Context pressure did not permit a smaller safe request".into()));
+                        return;
+                    }
+                    state.emit(&id,"context_pressure_retry",json!({
+                        "previousBudgetBytes":message_budget,
+                        "newBudgetBytes":smaller,
+                        "attempt":attempt+1,
+                        "reason":"provider_rejected_context_window",
+                        "billingNote":"Provider may charge for failed attempts; usage not reported"
+                    }));
+                    message_budget=smaller;
+                    attempt+=1;
+                }
             }
         };
         let tokens = reply.raw["usage"]["total_tokens"].as_u64()
@@ -566,7 +657,7 @@ pub async fn run(state: AppState, id: String) {
                     id:tool_id.clone(),name:tool_name.into(),arguments:arguments.clone()
                 }).await.map(|response|json!({"content":response}))
             } else {
-                tool(&state,&id,tool_name,&arguments,allow_write,allow_shell).await
+                tool(&state,&id,&session,tool_name,&arguments,allow_write,allow_shell).await
             }.and_then(|receipt| {
                 if tool_name == "workspace_check" && receipt["success"] == false {
                     Err(format!("검사 명령 실패: {receipt}"))
