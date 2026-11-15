@@ -14,3 +14,18 @@
 `cargo test --release`
 
 The synthetic fixture tests validate failure-closed identity gates. Genuine multi-generation fixed-model capability improvement requires separately captured real execution, independent frozen comparison, adoption and a successor run. This change does not claim that experiment has already passed.
+
+## CI integration regression repaired
+
+The `tests/fixtures/rsi-generation-worker.rs` test driver writes **synthetic**
+source/edit receipts for the model-free lineage integration tests. Both
+controlled proposal variants now record the actual frozen
+`job.input.rsiBaseCommit`; they use the same origin-version gate as real
+`rsi_worktree::finish` evidence. No bypass is added to the independent evaluator.
+
+The room tool-selection fixture now supplies `workspace_apply_patch` to the
+candidate definition list before asserting it is selected for a write task.
+The runtime selector correctly cannot return a tool definition that it was
+never given. The regression was observed on macOS and Ubuntu in
+GitHub Actions run `43690229138`; the fix targets the failed assertions while
+leaving production tool routing unchanged.

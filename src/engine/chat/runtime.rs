@@ -6756,6 +6756,7 @@ mod harness_tool_selection_tests {
         let definitions = vec![
             json!({"type":"function","function":{"name":"workspace_read","description":"Read a workspace file"}}),
             json!({"type":"function","function":{"name":"workspace_write","description":"Write a workspace file"}}),
+            json!({"type":"function","function":{"name":"workspace_apply_patch","description":"Apply a multi-file workspace patch"}}),
             json!({"type":"function","function":{"name":"shell_exec","description":"Run a shell command"}}),
             json!({"type":"function","function":{"name":"web_search","description":"Search the web"}}),
             json!({"type":"function","function":{"name":"memory_store","description":"Store a memory"}}),

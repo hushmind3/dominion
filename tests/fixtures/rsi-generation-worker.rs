@@ -75,7 +75,8 @@ fn produce_boundary_patch(db: &Connection, job: &mut Value, learned: Option<&str
         "paths":["src/main.rs"],"cases":job["input"]["rsiFrozenCases"],"oracleVersion":"controlled-boundary-v1",
         "rsiJobId":job["id"]}));
     put(db, "rsi_run", &json!({"id":format!("rsi-run-{}",job["id"].as_str().unwrap()),
-        "candidateId":id,"checksPassed":true,"sourceClean":true,"diffSha256":hash}));
+        "candidateId":id,"checksPassed":true,"sourceClean":true,
+        "baseCommit":job["input"]["rsiBaseCommit"],"diffSha256":hash}));
     job["result"] = json!({"status":"completed","rsi":{"candidateId":id,"checksPassed":true,"diffBytes":patch.len()}});
 }
 
@@ -119,7 +120,8 @@ fn produce_comment_patch(db: &Connection, job: &mut Value) {
         "paths":["src/main.rs"],"cases":job["input"]["rsiFrozenCases"],"oracleVersion":"controlled-comment-v1",
         "rsiJobId":job["id"]}));
     put(db, "rsi_run", &json!({"id":format!("rsi-run-{}",job["id"].as_str().unwrap()),
-        "candidateId":id,"checksPassed":true,"sourceClean":true,"diffSha256":hash}));
+        "candidateId":id,"checksPassed":true,"sourceClean":true,
+        "baseCommit":job["input"]["rsiBaseCommit"],"diffSha256":hash}));
     job["result"] = json!({"status":"completed","rsi":{"candidateId":id,"checksPassed":true,"diffBytes":patch.len()}});
 }
 
