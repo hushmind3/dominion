@@ -1,3 +1,4 @@
+pub mod autonomy;
 pub mod goal_control;
 pub mod adaptation_loop;
 pub mod distill;
