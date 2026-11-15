@@ -15,6 +15,7 @@
     <a class="rail-item selected" href="/" aria-current="page">✦ <span>작업 실행</span></a>
     <a class="rail-item" href="#groups">◉ <span>그룹 대화</span></a>
     <a class="rail-item" href="#videos">▣ <span>영상 제작</span></a>
+    <a class="rail-item" href="#improvement">◇ <span>자기개선 실험</span></a>
     <a class="rail-item" href="#history">▤ <span>실행 기록</span></a>
     <div class="rail-note">자체 Rust 엔진<br>로컬 저장 · 모델 직접 연결</div>
     <div class="rail-footer"><span id="engineLed" class="led"></span><span id="connection">서버 연결 확인 중</span></div>
@@ -148,6 +149,54 @@
           <button id="videoRender" class="primary" type="button">영상 렌더링 시작</button>
           <button id="videoCheck" class="secondary" type="button">상태 확인</button>
           <a id="videoDownload" class="secondary" href="#" hidden>완성된 MP4 받기</a>
+        </div>
+      </section>
+      <section class="history" id="improvement" aria-labelledby="improvementTitle">
+        <div class="section-top">
+          <div><span class="eyebrow">SELF IMPROVEMENT</span><h2 id="improvementTitle">자기개선 실험</h2></div>
+          <button id="refreshImprovements" class="ghost" type="button">실험 목록 새로고침 ↻</button>
+        </div>
+        <p>원본 소스와 후보를 별도 Git 작업공간에서 시험한 다음, 측정 결과를 보고 채택하세요.</p>
+        <details class="advanced">
+          <summary>새 개선 실험 설정</summary>
+          <form id="improvementCreate">
+            <div class="advanced-row">
+              <label>Git 저장소 경로 (작업공간 기준)
+                <input id="improvementRepo" required placeholder="예: my-project">
+              </label>
+              <label>개선할 파일
+                <input id="improvementFile" required placeholder="예: src/main.rs">
+              </label>
+              <label>개선 지시
+                <input id="improvementInstruction" required maxlength="8000" placeholder="예: 처리 속도를 높이고 기존 동작을 보존">
+              </label>
+            </div>
+            <div class="advanced-row">
+              <label>검증할 테스트 명령
+                <input id="improvementTest" required placeholder="예: cargo test">
+              </label>
+              <label>점수 명령 (선택)
+                <input id="improvementScore" placeholder="예: node scripts/score.mjs">
+              </label>
+            </div>
+            <p>평가 실행에는 별도의 셸 허용 설정과 명시적 실행 동작이 필요합니다.</p>
+            <button type="submit" class="secondary">격리된 개선 후보 만들기</button>
+          </form>
+        </details>
+        <div class="advanced-row">
+          <label>저장된 실험
+            <select id="improvementSelect" aria-label="개선 실험 선택">
+              <option value="">선택하세요</option>
+            </select>
+          </label>
+          <span id="improvementStatus" class="muted" aria-live="polite"></span>
+        </div>
+        <div id="improvementEvidence" class="output"></div>
+        <div class="steer-row">
+          <button id="improvementEvaluate" class="secondary" type="button">원본과 후보 비교 실행</button>
+          <button id="improvementRefresh" class="ghost" type="button">평가 결과 확인</button>
+          <button id="improvementAdopt" class="primary" type="button">검증된 후보 채택</button>
+          <button id="improvementDescendant" class="ghost" type="button">다음 세대 실험 만들기</button>
         </div>
       </section>
       <section class="history" id="history" aria-labelledby="historyTitle">
