@@ -147,6 +147,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/sdk/runs/:id", get(sdk::one))
         .route("/api/sdk/runs/:id/resume", post(sdk::resume))
         .route("/api/sdk/runs/:id/approve", post(sdk::approve))
+        .route("/api/sdk/runs/:id/reconcile", post(sdk::reconcile))
         .route("/api/sdk/runs/:id/cancel", post(sdk::cancel))
         .route("/api/jobs",get(jobs::list).post(jobs::create))
         .route("/api/jobs/:id",get(jobs::one))
