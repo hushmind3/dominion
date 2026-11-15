@@ -23,9 +23,9 @@ fn digest(parts:&[&str])->String{
 }
 /// Exact evaluator scope plus related-file scope. Different scoring contracts
 /// cannot poison each other's learned selection policy.
-pub(super) fn scopes(repo:&str,goal:&str,tests:&str,score:&str,holdout:&str,file:&str)
+pub(super) fn scopes(repo:&str,objective:&str,tests:&str,score:&str,holdout:&str,file:&str)
     ->(String,String){
-    let family=digest(&[repo,goal,tests,score,holdout]);
+    let family=digest(&[repo,objective,tests,score,holdout]);
     let specific=digest(&[&family,file]);
     (specific,family)
 }
