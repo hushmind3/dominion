@@ -12,6 +12,7 @@ on:
       - 'src/api/jobs.rs'
       - 'src/engine/native_agent.rs'
       - 'src/engine/native_model.rs'
+      - 'src/engine/native_codex_ws.rs'
       - 'src/engine/chat/codex_ws.rs'
       - 'src/engine/chat/provider.rs'
       - 'src/engine/workflows.rs'
