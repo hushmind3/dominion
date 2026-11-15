@@ -235,7 +235,7 @@ fn parse_codex_events(raw:&str)->Result<Value,String> {
 /// remain untrusted until the provider delivers its terminal success event.
 /// Progress can be persisted under the existing job ID; an interrupted model
 /// generation retains the kernel's model_in_flight checkpoint.
-struct StreamProgress<'a> {
+pub(crate) struct StreamProgress<'a> {
     state:Option<&'a AppState>,
     session:&'a str,
     job_id:Option<&'a str>,
@@ -244,8 +244,11 @@ struct StreamProgress<'a> {
     visible:String,
     calls:Vec<Value>,
 }
-impl StreamProgress<'_> {
-    fn record(&self,stage:&str)->Result<(),String> {
+impl<'a> StreamProgress<'a> {
+    pub(crate) fn new(state:Option<&'a AppState>,session:&'a str,job_id:Option<&'a str>,protocol:&'static str)->Self {
+        Self {state,session,job_id,protocol,events:0,visible:String::new(),calls:Vec::new()}
+    }
+    pub(crate) fn record(&self,stage:&str)->Result<(),String> {
         let (Some(state),Some(job_id))=(self.state,self.job_id)else{return Ok(());};
         let saved=state.store.patch_if("job",job_id,"status",&json!("running"),
             &json!({"nativeStream":{
@@ -256,7 +259,7 @@ impl StreamProgress<'_> {
         state.bus.record("job",&saved);
         Ok(())
     }
-    fn check_live(&self)->Result<(),String> {
+    pub(crate) fn check_live(&self)->Result<(),String> {
         let (Some(state),Some(job_id))=(self.state,self.job_id)else{return Ok(());};
         if state.is_cancelled(self.session)
             || state.store.get("job",job_id).is_none_or(|job|
@@ -265,7 +268,7 @@ impl StreamProgress<'_> {
         }
         Ok(())
     }
-    fn updates(&mut self,changes:Vec<crate::engine::native_stream::Update>)
+    pub(crate) fn updates(&mut self,changes:Vec<crate::engine::native_stream::Update>)
         ->Result<(),String> {
         for change in changes {
             self.events+=1;
