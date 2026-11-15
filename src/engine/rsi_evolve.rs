@@ -4589,13 +4589,28 @@ pub async fn worker(job_id: &str) -> Result<(), String> {
     let result = jobs::run_prompt(&context, &job).await;
     match result {
         Ok(value) => {
-            context.checkpoint(json!({"status":"completed","result":value}))?;
+            // "Ok" means the worker returned a durable report, NOT that
+            // the edit compiled or passed independent verification. A
+            // needs_review/failed result must never be rewritten as completed.
+            let status=worker_result_status(&value);
+            context.checkpoint(json!({"status":status,"result":value}))?;
             Ok(())
         }
         Err(error) => {
             context.checkpoint(json!({"status":"failed","error":error}))?;
             Err(error)
         }
+    }
+}
+/// A completed subprocess is not automatically a successful source edit.
+/// Keep the actual verifier outcome visible to the coordinator and operator.
+fn worker_result_status(value:&Value)->&'static str {
+    match value["status"].as_str() {
+        Some("completed")=>"completed",
+        Some("needs_review")=>"needs_review",
+        Some("failed")=>"failed",
+        Some("cancelled")=>"cancelled",
+        _=>"needs_review",
     }
 }
 
@@ -4617,6 +4632,18 @@ mod tests {
             crate::vault::Vault::open(&config.key_path()),
         );
         (state, root)
+    }
+    #[test]
+    fn native_rsi_worker_returns_actual_verifier_status_not_optimistic_completion() {
+        assert_eq!(worker_result_status(&json!({"status":"completed",
+            "rsi":{"checksPassed":true}})),"completed");
+        for status in ["needs_review","failed","cancelled"] {
+            assert_eq!(worker_result_status(&json!({"status":status,
+                "rsi":{"checksPassed":false}})),status);
+        }
+        assert_eq!(worker_result_status(&json!({"rsi":{
+            "checksPassed":false,"captureError":"no actual source diff"}})),"needs_review");
+        assert_eq!(worker_result_status(&json!({"status":"running"})),"needs_review");
     }
     fn parent(state: &AppState) -> JobContext {
         state.store.put("job",&json!({"id":"campaign","kind":"rsi_evolve","status":"running","input":{"rsiNativeApproved":true}})).unwrap();
