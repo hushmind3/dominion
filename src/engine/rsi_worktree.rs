@@ -204,6 +204,45 @@ async fn git(dir:&Path, args:&[&str])->Result<String,String>{
 fn valid_sha(value:&str)->bool {
     value.len()==40 && value.bytes().all(|byte|byte.is_ascii_hexdigit())
 }
+/// Recreate the exact candidate Git tree from immutable base and patch without
+/// ever touching the owner's index or checkout. The evaluator's JSON tree
+/// receipt is independently checked against this Rust-owned reconstruction.
+/// This same path is also used at publication, so both gates have one meaning.
+async fn reconstructed_patch_tree(source:&Path,base:&str,patch:&str)->Result<String,String>{
+    if !valid_sha(base) || patch.is_empty() {
+        return Err("동결된 기준 커밋과 실제 후보 패치가 필요합니다.".into());
+    }
+    let temporary=std::env::temp_dir().join(format!("dominion-rsi-index-{}",uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temporary).map_err(|e|e.to_string())?;
+    let patch_file=temporary.join("candidate.patch");
+    let isolated_index=temporary.join("index");
+    let result=async {
+        std::fs::write(&patch_file,patch).map_err(|e|e.to_string())?;
+        let patch_path=patch_file.to_str().ok_or("패치 파일 경로가 유효하지 않습니다.")?;
+        let mut tree=String::new();
+        for args in [
+            vec!["read-tree",base],
+            vec!["apply","--cached",patch_path],
+            vec!["write-tree"],
+        ]{
+            let mut command=Command::new("git");
+            command.current_dir(source).args(args).env("GIT_INDEX_FILE",&isolated_index);
+            let output=run(command,GIT_LIMIT).await?;
+            if !output.status.success(){
+                return Err(format!("후보 Git 트리 재구성 실패: {}",
+                    String::from_utf8_lossy(&output.stderr).chars().take(800).collect::<String>()));
+            }
+            tree=String::from_utf8_lossy(&output.stdout).trim().to_string();
+        }
+        let baseline=git(source,&["rev-parse",&format!("{base}^{{tree}}")]).await?;
+        if !valid_sha(&tree) || tree==baseline {
+            return Err("후보 패치가 유효한 변경 트리를 생성하지 않았습니다.".into());
+        }
+        Ok(tree)
+    }.await;
+    let _=std::fs::remove_dir_all(&temporary);
+    result
+}
 /// Preload an independently measured, rejected patch into the next
 /// generation's disposable checkout. This patch does NOT update the accepted
 /// source revision: its child must change actual code and beat the ORIGINAL
@@ -843,32 +882,18 @@ pub async fn apply_campaign_to_sub(state:&crate::state::AppState,id:&str,expecte
     for commit in commits.lines() {
         let candidate=candidates.iter().find(|c|c["experimentAdoption"]["commit"]==commit
             && c["status"]=="verified" && c["evaluation"]["metrics"]["eligible"]==true
-            && c["evaluation"]["source"]=="server_invoked_local_paired_git_worktrees")
-            .ok_or("검증되지 않은 커밋이 섞여 있어 적용하지 않았습니다.")?;
+            && c["evaluation"]["source"]=="server_invoked_local_paired_git_worktrees"
+            && rsi::verified_pair_receipt(state,c))
+            .ok_or("독립 평가 증거가 재검산되지 않는 커밋이 있어 적용하지 않았습니다.")?;
         let parent=git(&source,&["rev-parse",&format!("{commit}^")]).await?;
         if candidate["baseCommit"]!=parent {return Err("검증한 기준과 채택 계보가 다릅니다.".into());}
         let patch=candidate["patch"].as_str().ok_or("검증 패치 없음")?;
         if digest(patch)!=candidate["patchSha256"].as_str().unwrap_or("") {return Err("검증 패치 해시가 다릅니다.".into());}
-        let temp=std::env::temp_dir().join(format!("dominion-rsi-publish-{}",uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&temp).map_err(|e|e.to_string())?;
-        let patch_path=temp.join("candidate.patch");
-        std::fs::write(&patch_path,patch).map_err(|e|e.to_string())?;
-        let checked=async {
-            let mut tree=String::new();
-            for args in [vec!["read-tree".to_string(),parent.clone()],
-                vec!["apply".into(),"--cached".into(),patch_path.to_string_lossy().to_string()],vec!["write-tree".into()]] {
-                let mut cmd=Command::new("git");
-                cmd.current_dir(&source).args(args).env("GIT_INDEX_FILE",temp.join("index"));
-                let out=run(cmd,GIT_LIMIT).await?;
-                if !out.status.success(){return Err("검증 패치를 재구성하지 못했습니다.".to_string());}
-                tree=String::from_utf8_lossy(&out.stdout).trim().to_string();
-            }
-            if tree!=git(&source,&["rev-parse",&format!("{commit}^{{tree}}")]).await? {
-                return Err("실제 채택 코드가 검증 패치와 다릅니다.".into());
-            }
-            Ok::<(),String>(())
-        }.await;
-        let _=std::fs::remove_dir_all(temp);checked?;
+        let tree=reconstructed_patch_tree(&source,&parent,patch).await?;
+        if tree!=git(&source,&["rev-parse",&format!("{commit}^{{tree}}")]).await?
+            || candidate["evaluation"]["candidateTreeSha"]!=tree {
+            return Err("실제 채택 코드가 동결 평가 트리·패치 재구성과 일치하지 않습니다.".into());
+        }
     }
     if commits.is_empty() {return Err("적용할 검증 변경이 없습니다.".into());}
     if git(&source,&["rev-parse","HEAD"]).await?!=base
@@ -916,15 +941,21 @@ pub(crate) async fn compare_at(context:&JobContext,id:&str,source:&Path,_runner_
     let prior=state.store.get("rsi_run",
         &format!("rsi-run-{}",candidate["rsiJobId"].as_str().unwrap_or("")))
         .ok_or("모델이 생성한 후보의 원본 실행 증거가 없습니다.")?;
-    if prior["candidateId"]!=candidate["id"]||prior["checksPassed"]!=true {
-        return Err("컴파일 검사를 통과한 현재 실행 후보만 A/B 실험을 실행합니다.".into());
+    if prior["candidateId"]!=candidate["id"] || prior["checksPassed"]!=true
+        || prior["sourceClean"]!=true || prior["diffSha256"]!=candidate["patchSha256"]
+        || prior["baseCommit"]!=candidate["baseCommit"] {
+        return Err("기준 소스·패치 해시·검사 증거가 일치한 후보만 A/B 실험을 실행합니다.".into());
     }
     if !git(source,&["status","--porcelain","--untracked-files=no"]).await?.is_empty(){
         return Err("비교할 기준 작업공간에 추적 중인 변경이 있습니다.".into());
     }
     // Older frozen candidates remain evaluable after the checkout advances.
     // Both lab variants are created from candidate.baseCommit, never HEAD.
-    git(source,&["cat-file","-e",&format!("{}^{{commit}}",candidate["baseCommit"].as_str().ok_or("기준 커밋 없음")?)]).await?;
+    let base=candidate["baseCommit"].as_str().ok_or("기준 커밋 없음")?;
+    git(source,&["cat-file","-e",&format!("{base}^{{commit}}")]).await?;
+    // Independent Rust-owned reconstruction before compiling any candidate.
+    // The evaluator's claim cannot replace the Git index proof.
+    let expected_tree=reconstructed_patch_tree(source,base,patch).await?;
     let output_dir=state.config.data_dir.join("rsi-paired")
         .join(format!("{}-{}",id,uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&output_dir).map_err(|e|e.to_string())?;
@@ -986,6 +1017,17 @@ pub(crate) async fn compare_at(context:&JobContext,id:&str,source:&Path,_runner_
         || report["oracleVersion"]!=candidate["oracleVersion"] {
         return Err("원본·패치·평가 기준 또는 실행 증거의 해시가 일치하지 않습니다.".into());
     }
+    // A report is eligible only when the same candidate bytes ran under
+    // the unmodified frozen oracle and match a second, isolated Git index.
+    let baseline_tree=git(source,&["rev-parse",&format!("{base}^{{tree}}")]).await?;
+    let valid_tree=|value:&Value|value.as_str().is_some_and(|sha|
+        sha.len()==40 && sha.bytes().all(|b|b.is_ascii_hexdigit()));
+    if report["runner"]!="balanced-frozen-rsi-lab-v3"
+        || report["baselineTreeSha"]!=baseline_tree
+        || !valid_tree(&report["candidateTreeSha"])
+        || report["candidateTreeSha"]!=expected_tree {
+        return Err("평가기가 실행한 Git 트리와 Rust가 독립 재구성한 후보 코드가 다릅니다.".into());
+    }
     let mut evidence_sha=evidence_sha;
     let mut meta_receipt=Value::Null;
     if meta_required {
@@ -1018,6 +1060,8 @@ pub(crate) async fn compare_at(context:&JobContext,id:&str,source:&Path,_runner_
     updated["pairedComparisonComplete"]=json!(true);
     updated["evaluation"]["source"]=json!("server_invoked_local_paired_git_worktrees");
     updated["evaluation"]["evidenceSha256"]=json!(evidence_sha);
+    updated["evaluation"]["baselineTreeSha"]=report["baselineTreeSha"].clone();
+    updated["evaluation"]["candidateTreeSha"]=report["candidateTreeSha"].clone();
     state.store.put("rsi_candidate",&updated)
         .ok_or("A/B 평가 후보 갱신에 실패했습니다.")?;
     state.store.put("rsi_evaluation",&updated["evaluation"]);
