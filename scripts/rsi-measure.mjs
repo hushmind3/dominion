@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
+import {parseCargoTestArtifacts,parseTestInventory} from './rsi-result-format.mjs';
 const root=process.env.RSI_TEMP;
 const plan=JSON.parse(fs.readFileSync(process.env.RSI_PLAN,'utf8'));
 const hash=data=>crypto.createHash('sha256').update(data).digest('hex');
@@ -23,15 +24,14 @@ const verifyOracle=()=>{if(oracle&&hash(fs.readFileSync(plan.oracleFixture))!==p
 // Fresh targets keep both compiled variants alive for interleaved AB/BA runs.
 const variants={};
 const buildDiagnostics={};
+const caseDiagnostics={};
 for(const label of ['baseline','candidate']){
  const dir=path.join(root,label);
  if(oracle){
   fs.appendFileSync(path.join(dir,'src/main.rs'),`\n#[cfg(test)]\n#[path=${JSON.stringify(plan.oracleFixture)}]\nmod rsi_frozen_oracle;\n`);
  }
  const built=run(process.env.DOMINION_CARGO||'cargo',['test','--release','--all-targets','--no-run','--message-format=json'],dir);
- const binaries=built.stdout.split('\n').flatMap(line=>{
-  try{const v=JSON.parse(line);return v.reason==='compiler-artifact'&&v.profile?.test&&v.executable?[v.executable]:[]}catch{return []}
- });
+ const binaries=parseCargoTestArtifacts(built.stdout);
  // Preserve actionable compiler failures in the signed paired report.
   // A boolean build_failed cannot teach a descendant WHAT to repair, and
   // hiding the diagnostics also makes cross-platform regressions opaque.
@@ -48,8 +48,8 @@ for(const label of ['baseline','candidate']){
  if(built.ok)for(const binary of new Set(binaries)){
   const listed=run(binary,['--list','--format','terse'],dir);
   if(!listed.ok)throw Error('Cannot enumerate tests');
-  for(const line of listed.stdout.split('\n'))if(line.endsWith(': test')){
-   const name=line.slice(0,-6);tests.set(name,[...(tests.get(name)||[]),binary]);
+  for(const name of parseTestInventory(listed.stdout)){
+   tests.set(name,[...(tests.get(name)||[]),binary]);
   }
  }
  variants[label]={dir,ok:built.ok&&binaries.length>0,tests};
@@ -65,10 +65,21 @@ for(const spec of plan.cases){
    verifyOracle();
    const variant=variants[label], arm=arms[label];
    const binaries=variant.tests.get(spec.filter)||[];
-   if(!variant.ok||binaries.length!==1){arm.pass=false;continue}
+   if(!variant.ok||binaries.length!==1){
+    arm.pass=false;
+    caseDiagnostics[spec.id]??={};
+    caseDiagnostics[spec.id][label]=!variant.ok?'compile_failed':
+     binaries.length===0?'exact_test_not_discovered':`ambiguous_exact_test_${binaries.length}`;
+    continue;
+   }
    const result=run(binaries[0],[spec.filter,'--exact','--nocapture','--test-threads=1'],variant.dir);
    const passed=result.ok&&/test result: ok\. 1 passed; 0 failed/.test(result.text);
    arm.pass&&=passed;
+   if(!passed){
+    caseDiagnostics[spec.id]??={};
+    caseDiagnostics[spec.id][label]={exitCode:result.exitCode,
+     output:result.text.slice(-1200)};
+   }
    if(metrics.length&&passed){
     const entries=result.stdout.split('\n').filter(line=>line.includes('DOMINION_RSI_METRIC '));
     if(entries.length!==1){arm.pass=false;continue}
@@ -120,6 +131,6 @@ const report={baseCommit:process.env.RSI_BASE_SHA,patchSha256:hash(fs.readFileSy
  baselineTreeSha:process.env.RSI_BASE_TREE_SHA,candidateTreeSha:process.env.RSI_CANDIDATE_TREE_SHA,
  oracleVersion:plan.oracleVersion,oracleSha256:plan.oracleSha256||null,runner:'balanced-frozen-rsi-lab-v3',
  reportSha256:hash(evidence),baselineBuildOk:variants.baseline.ok,candidateBuildOk:variants.candidate.ok,
-  buildDiagnostics,cases};
+  buildDiagnostics,caseDiagnostics,cases};
 fs.writeFileSync(process.env.RSI_REPORT,JSON.stringify(report,null,2)+'\n');
 console.log(JSON.stringify({report:process.env.RSI_REPORT,pairedCases:cases.length}));
