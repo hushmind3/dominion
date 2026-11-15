@@ -18,6 +18,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/tasks/:id",get(one))
         .route("/api/tasks/:id/cancel",post(cancel))
         .route("/api/tasks/:id/steer",post(steer))
+        .route("/api/tasks/:id/resume",post(resume))
         .route("/api/tasks/:id/events",get(events))
         .route("/api/tasks/:id/children",get(subagent_children))
         .route("/api/tasks/:id/delegate",post(subagent_delegate))
@@ -93,6 +94,20 @@ async fn submit(State(state):State<AppState>,Json(raw):Json<Value>) -> Response 
             } else { StatusCode::BAD_REQUEST };
             (code,Json(json!({"error":error.to_string()}))).into_response()
         }
+    }
+}
+async fn resume(State(state):State<AppState>,Path(id):Path<String>,
+    Json(raw):Json<Value>) -> Response {
+    let Ok(input)=serde_json::from_value::<crate::runtime::TaskInput>(raw) else {
+        return (StatusCode::BAD_REQUEST,Json(json!({"error":"새 작업 입력이 필요합니다."}))).into_response();
+    };
+    if input.request_id.is_none() {
+        return (StatusCode::BAD_REQUEST,Json(json!({"error":"requestId가 필요합니다."}))).into_response();
+    }
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.resume(&id,input).await {
+        Ok(record)=>(StatusCode::ACCEPTED,Json(json!(record))).into_response(),
+        Err(error)=>(StatusCode::CONFLICT,Json(json!({"error":error.to_string()}))).into_response()
     }
 }
 async fn cancel(State(state):State<AppState>,Path(id):Path<String>) -> Response {
