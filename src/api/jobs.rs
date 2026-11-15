@@ -54,6 +54,9 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
                 if !valid {return error(StatusCode::BAD_REQUEST,"Rust SDK가 지원하는 검증 조건을 선택하세요.");}
                 value["checks"]=checks.clone();
             }
+            if let Some(v)=input["allowFallback"].as_bool() {
+                value["allowFallback"]=json!(v);
+            }
             if let Some(v)=input["requireEvidence"].as_bool() {
                 value["requireEvidence"]=json!(v);
             }

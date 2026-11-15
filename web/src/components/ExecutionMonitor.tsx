@@ -47,7 +47,7 @@ export function ExecutionMonitor(){
   if(!prompt.trim()||!executorId||busy)return
   setBusy(true);setError('');setInfo('')
   try{
-   const created=await post<{id:string}>('/api/jobs',{kind:'prompt',input:{prompt:prompt.trim(),agentId:executorId,maxSteps:depth==='thorough'?60:24,maxAttempts:depth==='thorough'?5:3}})
+   const created=await post<{id:string}>('/api/jobs',{kind:'prompt',input:{prompt:prompt.trim(),agentId:executorId,maxSteps:depth==='thorough'?60:24,maxAttempts:depth==='thorough'?5:3,strategy:depth==='thorough'?'verify_first':'balanced'}})
    setSelectedJob(created.id);setPrompt('');setInfo(t('em.queued'))
    await jobs.reload();await runs.reload()
   }catch(e){setError((e as Error).message)}

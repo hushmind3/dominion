@@ -16,14 +16,21 @@ struct ConfiguredModel {
     provider: String,
     model: String,
     session: String,
+    allow_fallback: bool,
 }
 impl Model for ConfiguredModel {
     fn complete<'a>(&'a self, system: &'a str, prompt: &'a str)
         -> BoxFuture<'a, Result<ModelReply, String>> {
         Box::pin(async move {
-            let content = llm::complete_for_session(
-                &self.state, &self.provider, &self.model, system, prompt, &self.session
-            ).await?;
+            let content = if self.allow_fallback {
+                llm::complete_with_fallback_for_session(
+                    &self.state, &self.provider, &self.model, system, prompt, &self.session
+                ).await?.0
+            } else {
+                llm::complete_for_session(
+                    &self.state, &self.provider, &self.model, system, prompt, &self.session
+                ).await?
+            };
             // This adapter's helper API already records provider-reported
             // usage centrally. None explicitly means the kernel must estimate.
             Ok(ModelReply {content, input_tokens: None, output_tokens: None})
@@ -313,6 +320,7 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
     let model=ConfiguredModel {
         state:context.state.clone(),provider:route.id.clone(),
         model:route.model.clone(),session:session.clone(),
+        allow_fallback:input["allowFallback"].as_bool().unwrap_or(false),
     };
     let host_tools=NativeTools {
         state:context.state.clone(),workspace:context.state.config.workspace.clone(),
