@@ -213,7 +213,7 @@ impl AgentSdk {
                     self.persist(state)?;
                     return Ok(());
                 }
-                let Some(tool) = self.tools.get_mut(&call.name) else {
+                let Some(spec) = self.tools.get(&call.name).map(|tool| tool.spec()) else {
                     state.pending_calls.remove(0);
                     state.messages.push(Message::tool_result(call.id.clone(),
                         json!({"error":format!("unknown tool: {}", call.name)}).to_string()));
@@ -221,7 +221,6 @@ impl AgentSdk {
                     self.persist(state)?;
                     continue;
                 };
-                let spec = tool.spec();
                 let decision = self.policy.decide(&spec);
                 if decision == Decision::Deny {
                     state.status = RunStatus::Denied { tool: spec.name };
@@ -241,7 +240,9 @@ impl AgentSdk {
                 state.event("tool_started", json!({"id":call.id,"tool":call.name}));
                 // Durability barrier BEFORE any possible external side effect.
                 self.persist(state)?;
-                let result = tool.invoke(&call.arguments);
+                let result = self.tools.get_mut(&call.name)
+                    .expect("registered tool must exist until dispatch")
+                    .invoke(&call.arguments);
                 let (ok, text) = match result {
                     Ok(value) => (true, value.to_string()),
                     Err(error) => (false, json!({"error": error}).to_string()),
