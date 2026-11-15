@@ -48,3 +48,7 @@ This is loopback protocol integration, **not** a paid ChatGPT-subscription crede
 - [OpenAI Responses WebSocket mode (2026)](https://developers.openai.com/api/docs/guides/websocket-mode): connection-local `previous_response_id`, 60-minute lifetime, store=false recovery, chain forks.
 - [OpenAI conversation state](https://developers.openai.com/api/docs/guides/conversation-state): continued response context and billable input tokens.
 - [Codex native model client](https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs): session/turn-scoped WebSocket ownership and continuation. Dominion independently implements its own job chain and does not invoke this external client.
+
+## Executed focused verification (2026-11-15)
+
+[GitHub Actions run 43690699582](https://github.com/hushmind3/dominion-rust/actions/runs/43690699582), code commit `50768a5f395ecbff0ef70d1b69d6fe27ffb0f2b5`: completed successfully. The log contains 45 Rust SDK cases, 51 filtered native host/transport cases, 15 separately filtered interactive Codex socket cases, and one workflow recovery case: **112 passed, 0 failed**. Frontend TypeScript typecheck and Vite production build also passed. Native WS fixtures include canonical tool-output continuation, explicit missing-previous replay, partial/unknown delivery, job cancellation both before send and during a stalled receive, unknown terminal ID, and context rebase selection. No commercial model token-cost claim or full release CI result is inferred from these fixtures.
