@@ -129,12 +129,24 @@ pub(crate) fn project(receipts:&[Receipt], strategy:Strategy, max_result_chars:u
     let mut recent=Vec::new();
     let mut budget=cap*2/3;
     for receipt in receipts[recent_start..].iter().rev() {
-        let result=clip(&receipt.result.to_string(),per_result*2/5,per_result*3/5);
-        let item=json!({"id":receipt.id,"tool":receipt.tool,"step":receipt.step,
-            "success":receipt.success,"arguments":clip(&receipt.arguments.to_string(),180,100),
-            "result":result});
-        let size=item.to_string().chars().count();
-        if size>budget {break;}
+        let full=receipt.result.to_string();
+        let args=clip(&receipt.arguments.to_string(),180,100);
+        // The LowCost viewport may be smaller than a single max-size tool
+        // observation. Shrink that observation to fit rather than losing the
+        // newest evidence *and every older receipt* after the first oversize.
+        // Measure serialized JSON (escaped quotes/newlines count too).
+        let mut allowance=per_result.min(budget.saturating_sub(96));
+        let mut selected=None;
+        for _ in 0..12 {
+            if allowance<32 {break;}
+            let result=clip(&full,allowance*2/5,allowance*3/5);
+            let item=json!({"id":receipt.id,"tool":receipt.tool,"step":receipt.step,
+                "success":receipt.success,"arguments":args,"result":result});
+            let size=item.to_string().chars().count();
+            if size<=budget {selected=Some((item,size));break;}
+            allowance=allowance*3/4;
+        }
+        let Some((item,size))=selected else {break;};
         budget-=size;
         recent.push(item);
     }
@@ -205,6 +217,21 @@ mod tests {
         assert_eq!(read["text"].as_str().unwrap().chars().count(),200);
         assert!(read["nextChar"].is_number());
     }
+    #[test]
+    fn low_cost_large_latest_receipt_is_clipped_not_silently_discarded() {
+        let data=(0..8).map(|i|receipt(&format!("r{i}"),i+1,true,
+            json!({"stderr":format!("{}FINAL_DIAGNOSTIC","\\\"".repeat(1200))})))
+            .collect::<Vec<_>>();
+        let projection=project(&data,Strategy::LowCost,3200);
+        assert!(!projection.recent.is_empty(),
+            "a single large newest receipt must not empty the low-cost context");
+        assert_eq!(projection.recent.last().unwrap()["id"],"r7");
+        assert!(projection.recent.last().unwrap()["result"].to_string().contains("FINAL_DIAGNOSTIC"));
+        let serialized=projection.recent.to_string();
+        assert!(serialized.chars().count()<4000,
+            "bounded projection must respect the low-cost evidence budget");
+    }
+
     #[test]
     fn preserve_failure_when_recent_successful_reads_drown_it_out() {
         let mut data=vec![receipt("failed-build",1,false,
