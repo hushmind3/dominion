@@ -3,6 +3,7 @@ mod files;
 mod strategy;
 pub(crate) mod context;
 mod semantic;
+pub(crate) mod verification;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{path::{Component, Path, PathBuf}, process::Stdio, time::Duration};
@@ -289,12 +290,38 @@ pub async fn run(state: AppState, id: String) {
     let steps = input["maxSteps"].as_u64().unwrap_or(12).clamp(1,24);
     let token_budget = input["tokenBudget"].as_u64().unwrap_or(40_000).clamp(256,500_000);
     let cost_budget_krw = input["costBudgetKrw"].as_f64();
+    // Acceptance is selected from real local manifests or explicit owner
+    // executable+argv checks. No model-proposed command is admitted here.
+    let expected_checks=match verification::selection(
+        &state.workspace,&input["acceptanceChecks"],
+        allow_write && allow_shell && strategy::source_change_requested(&prompt)
+    ){
+        Ok(checks)=>checks,
+        Err(error)=>{
+            settle(&state,&id,"failed","",0,Some(error));
+            return;
+        }
+    };
+    if !expected_checks.is_empty() && !allow_shell {
+        settle(&state,&id,"failed","",0,
+            Some("Accepted source checks require explicit shell permission".into()));
+        return;
+    }
+    let strict_checks=allow_write && allow_shell &&
+        strategy::source_change_requested(&prompt) && require_evidence;
+    state.emit(&id,"acceptance_selected",json!({
+        "checks":expected_checks.iter().map(verification::Check::label).collect::<Vec<_>>(),
+        "required":strict_checks,
+        "origin":if input["acceptanceChecks"].as_array().is_some_and(|a|!a.is_empty()){
+            "owner_explicit"
+        }else{"manifest_autodetect"}
+    }));
     let mut available = specs(allow_write,allow_shell,allow_subagents);
     if allow_mcp {
         available.extend(state.mcp.definitions().await);
     }
     let mut messages = vec![json!({"role":"system",
-        "content":"You are DOMINION, a local-first agent. Obey the latest owner's instruction. Use the offered tools for real work; never fabricate a file edit, command output, or verification. A failed operation must be described accurately. You cannot call unadvertised tools."})];
+        "content":"You are DOMINION, a native Rust coding agent. Respect the newest owner instructions and granted permissions. Inspect source, make scoped exact edits and validate the final workspace. If a test fails, read the actual stderr/stdout, identify its source cause and repair before finishing. An earlier passing check cannot establish success after later edits. Never fabricate file edits, command output or verification, and never call unadvertised tools."})];
     if let Some(agent_id)=input["agentId"].as_str() {
         let Some(persona)=state.store.agent_get(agent_id) else {
             settle(&state,&id,"failed","",0,
@@ -334,6 +361,7 @@ pub async fn run(state: AppState, id: String) {
     state.store.add_message(&session,"user",&prompt);
     state.emit(&id,"running",json!({"sessionId":session,"model":state.model_name}));
     let mut verified_writes = 0_u64;
+    let mut proof=verification::Ledger::default();
     let mut total_calls = 0_u64;
     let mut receipts: Vec<Value> = Vec::new();
     let mut active_instruction = prompt.clone();
@@ -609,6 +637,57 @@ pub async fn run(state: AppState, id: String) {
                     Some("요청한 변경을 입증하는 실제 파일 수정 기록이 없습니다.".into()));
                 return;
             }
+            // A compiler/test exit code is independent of a model's claim.
+            // Never accept an old green check after a newer edit or any
+            // uncertain source modification. Feed real diagnostics to the
+            // same Rust model loop for bounded autonomous repair.
+            if verified_writes>0 && allow_shell &&
+                strategy::source_change_requested(&active_instruction) {
+                if strict_checks && expected_checks.is_empty() {
+                    settle(&state,&id,"needs_review",&text,verified_writes,
+                        Some("No runnable acceptance test was found. Supply an explicit acceptanceChecks command.".into()));
+                    return;
+                }
+                if !expected_checks.is_empty() {
+                    match verification::audit(
+                        &state,&id,&session,&expected_checks,&mut proof,&mut receipts
+                    ).await {
+                        Ok(Some((check,failure)))=>{
+                            let feedback=verification::repair_feedback(
+                                &check,&failure,proof.revision);
+                            state.emit(&id,"repair_required",json!({
+                                "failedCheck":check.label(),"revision":proof.revision,
+                                "nextStep":step+2,"stepsRemaining":steps-(step+1)
+                            }));
+                            if step+1<steps {
+                                messages.push(message);
+                                messages.push(json!({"role":"user","content":feedback}));
+                                continue;
+                            }
+                            settle(&state,&id,"needs_review",&text,verified_writes,
+                                Some(feedback));
+                            return;
+                        },
+                        Ok(None)=>{
+                            if !proof.complete(&expected_checks){
+                                settle(&state,&id,"needs_review",&text,verified_writes,
+                                    Some("Source acceptance did not produce complete fresh proof".into()));
+                                return;
+                            }
+                            state.emit(&id,"acceptance_complete",json!({
+                                "checks":expected_checks.iter().map(verification::Check::label)
+                                    .collect::<Vec<_>>(),
+                                "revision":proof.revision,"passed":true
+                            }));
+                        },
+                        Err(error)=>{
+                            settle(&state,&id,"needs_review",&text,verified_writes,
+                                Some(format!("Source acceptance could not be saved: {error}")));
+                            return;
+                        }
+                    }
+                }
+            }
             // For complex work a separate model critique may demand further
             // corrections. It cannot override the native evidence check.
             if strategy::complex(&active_instruction) && strategy::action_requested(&active_instruction)
@@ -735,17 +814,16 @@ pub async fn run(state: AppState, id: String) {
                 }).await.map(|response|json!({"content":response}))
             } else {
                 tool(&state,&id,&session,tool_name,&arguments,allow_write,allow_shell).await
-            }.and_then(|receipt| {
-                if tool_name == "workspace_check" && receipt["success"] == false {
-                    Err(format!("검사 명령 실패: {receipt}"))
-                } else { Ok(receipt) }
-            });
+            };
             if matches!(tool_name, "workspace_write" | "workspace_replace") && outcome.as_ref()
                 .is_ok_and(|v|v["verified"]==true) {
                 verified_writes += 1;
             }
             let value = match outcome {
-                Ok(receipt) => json!({"ok":true,"receipt":receipt}),
+                Ok(receipt) => json!({
+                    "ok":tool_name!="workspace_check" || receipt["success"]==true,
+                    "receipt":receipt
+                }),
                 Err(error) => json!({"ok":false,"error":error}),
             };
             if let Err(error)=state.record_event(&id,"tool_result",
@@ -754,6 +832,7 @@ pub async fn run(state: AppState, id: String) {
                     Some(format!("도구 결과가 기록되지 않았습니다. 재실행하지 마세요: {error}")));
                 return;
             }
+            proof.observe(tool_name,&arguments,&value);
             receipts.push(json!({"tool":tool_name,"outcome":value}));
             if receipts.len()>80 { receipts.remove(0); }
             messages.push(json!({"role":"tool","tool_call_id":tool_id,
