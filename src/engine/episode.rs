@@ -297,7 +297,7 @@ mod tests {
                 .len(),
             3
         );
-        std::fs::remove_dir_all(dir).unwrap();
+        crate::test_support::cleanup_dir(dir);
     }
 
     #[test]
@@ -310,7 +310,7 @@ mod tests {
         let episode = state.store.get("task_episode", "task-room-1").unwrap();
         assert_eq!(episode["rootOutcome"], "unknown");
         assert_eq!(episode["rootFinal"], true);
-        std::fs::remove_dir_all(dir).unwrap();
+        crate::test_support::cleanup_dir(dir);
     }
 
     #[test]
@@ -325,6 +325,6 @@ mod tests {
         )
         .is_none());
         assert_eq!(state.store.count("task_episode"), 0);
-        std::fs::remove_dir_all(dir).unwrap();
+        crate::test_support::cleanup_dir(dir);
     }
 }

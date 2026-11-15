@@ -171,7 +171,7 @@ mod tests {
             "do-not-touch"
         );
         assert!(!root.join("secret.key").exists());
-        std::fs::remove_dir_all(root).unwrap();
+        crate::test_support::cleanup_dir(root);
     }
     #[tokio::test]
     async fn native_parent_eof_drops_server_even_with_a_live_sse_client() {

@@ -327,7 +327,7 @@ mod tests {
             assert!(outputs(&s).is_empty());
         }
         assert!(video::enqueue(&s, &json!({"brief":"x","duration":900})).is_err());
-        std::fs::remove_dir_all(s.config.data_dir.clone()).unwrap();
+        crate::test_support::cleanup_dir(s.config.data_dir.clone());
     }
     #[tokio::test]
     async fn native_pipeline_produces_a_real_playable_container() {
@@ -370,6 +370,6 @@ mod tests {
             video::output_path(&s, &id).is_err(),
             "unfinished job must not be served"
         );
-        std::fs::remove_dir_all(s.config.data_dir.clone()).unwrap();
+        crate::test_support::cleanup_dir(s.config.data_dir.clone());
     }
 }

@@ -8,6 +8,8 @@ mod migrations;
 mod platform;
 mod state;
 mod vault;
+#[cfg(test)]
+mod test_support;
 
 #[tokio::main]
 async fn main() {
