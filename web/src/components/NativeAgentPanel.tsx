@@ -12,7 +12,7 @@ type NativeMeasuredUsage = {
 }
 type RoutingPolicy={mode:'default'|'quality_cost';minQuality:number;maxQualityDrop:number}
 type PinnedNativeRoute={providerId:string;model:string;
- selection?:{mode?:string;reason?:string;estimatedPerTurnKRW?:number;selectedQuality?:number;qualifiedCandidates?:number}}
+ selection?:{mode?:string;requestedMode?:string;reason?:string;estimatedPerTurnKRW?:number;selectedQuality?:number;qualifiedCandidates?:number}}
 type AgentJob = {
  id:string; kind:string; status:string; sessionId?:string; createdAt?:string; queuedAt?:string;
  input?:{prompt?:string;providerId?:string;checks?:{type?:string;tool?:string;contains?:string}[];limits?:{maxEstimatedTokens?:number};nativeRoutingPolicy?:RoutingPolicy};
