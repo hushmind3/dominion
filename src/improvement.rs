@@ -25,8 +25,8 @@ pub struct Improvement {
     pub reflection:Option<String>,pub accepted:bool,pub cost_krw:f64,pub error:Option<String>,
     pub created_at_ms:u64,pub updated_at_ms:u64,
 }
-#[derive(Deserialize)]
 fn default_candidate_count()->usize{1}
+#[derive(Deserialize)]
 pub struct NewImprovement {
     pub repository:String, pub target_file:String, pub instruction:String,
     pub test_command:String, pub score_command:Option<String>, pub parent:Option<Uuid>,
