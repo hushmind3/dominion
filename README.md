@@ -144,6 +144,8 @@ The agent execution engine is written in **Rust**. Node.js is used to build the 
 
 **Proof-carrying code edits:** native workspace tools record whether bytes actually changed and their post-write SHA-256. The Rust verifier rehashes the current file, rejects no-op/fabricated writes, and requires a successful post-edit test when the owner supplied no explicit file or command check. Failing checks are fed back into bounded replanning, never converted into a false green job. See [verified patch implementation](docs/SUB2-VERIFIED-PATCH-2026-11-15.md).
 
+Persisted parallel tool replies are now reconstructed by original model call ID in the Rust context compiler. Out-of-order completion rows no longer disappear from the next model turn; partial and duplicate tool rows remain excluded from provider wire history. Tests reproduce both states. [Execution history contract](docs/SUB2-TOOL-BARRIERS-2026-11-15.md).
+
 Native crash/cancel recovery now checks for in-flight operation receipts before requeueing an interrupted job; a cancelled turn attempts to drain started native tools, persists completed receipts and marks timed-out unknown effects for owner review. DB read errors no longer imply an empty live-operation set. This is exercised by cancellation, timeout and restart regression tests. [Detailed contract](docs/SUB2-TOOL-BARRIERS-2026-11-15.md).
 
 Native tool execution now preserves the original model-call order across exclusive write/shell/MCP barriers while running adjacent independent reads in bounded parallel groups (up to four calls). A real mock-provider regression asserts that reads after a write observe new bytes, not stale pre-write content. [Source-grounded scheduler design](docs/SUB2-TOOL-BARRIERS-2026-11-15.md).
