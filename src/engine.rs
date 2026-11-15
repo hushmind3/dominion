@@ -175,21 +175,7 @@ async fn tool(state: &AppState, name: &str, args: &Value,
 
 async fn completion(state: &AppState, messages: &[Value], tools: &[Value])
     -> Result<Value, String> {
-    let body = if tools.is_empty() {
-        json!({"model":state.model_name,"messages":messages,"stream":false})
-    } else {
-        json!({"model":state.model_name,"messages":messages,
-            "tools":tools,"tool_choice":"auto","stream":false})
-    };
-    let mut request = state.http.post(&state.model_url).json(&body);
-    if let Some(key) = &state.api_key { request = request.bearer_auth(key); }
-    let response = request.send().await.map_err(|e| format!("모델 연결 오류: {e}"))?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!("모델 HTTP {}: {}",status.as_u16(),body.chars().take(500).collect::<String>()));
-    }
-    response.json::<Value>().await.map_err(|e| format!("모델 응답 형식 오류: {e}"))
+    state.provider.complete_raw(messages,tools).await
 }
 
 fn settle(state: &AppState, id: &str, status: &str, answer: &str,
@@ -521,6 +507,9 @@ mod tests {
         let (bus,_)=tokio::sync::broadcast::channel(128);
         (AppState {store,bus,http:reqwest::Client::new(),
             mcp:std::sync::Arc::new(crate::mcp::Mcp::new(vec![]).unwrap()),
+            provider:crate::provider::ModelClient::new(
+                crate::provider::ModelConfig::basic(url.clone(),"mock".into(),None),None
+            ).unwrap(),
             workspace:root.clone(),model_url:url,model_name:"mock".into(),
             api_key:None},root)
     }
