@@ -119,7 +119,8 @@ impl Store {
             let mut stmt=conn.prepare("PRAGMA table_info(tasks)").map_err(|e|e.to_string())?;
             let cols=stmt.query_map([],|row|row.get::<_,String>(1))
                 .map_err(|e|e.to_string())?;
-            cols.filter_map(Result::ok).any(|name|name=="cost_krw")
+            let present=cols.filter_map(Result::ok).any(|name|name=="cost_krw");
+            present
         };
         if !has_cost {
             conn.execute("ALTER TABLE tasks ADD COLUMN cost_krw REAL NOT NULL DEFAULT 0",[])
