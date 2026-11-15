@@ -141,7 +141,7 @@ impl Videos {
             let clip=directory.join(format!("scene-{index}.mp4"));
             if fs::metadata(&clip).await.is_ok(){continue;}
             let textfile=directory.join(format!("scene-{index}.txt"));
-            let text=format!("{}\n\n{}",scene.heading,scene.narration);
+            let text=scene_caption(scene);
             fs::write(&textfile,&text).await.map_err(|e|e.to_string())?;
             let voice=directory.join(format!("scene-{index}.wav"));
             let speech=make_speech(&directory,&scene.narration,&voice).await;
@@ -216,6 +216,35 @@ impl Videos {
         Ok(self.root.join(path))
     }
 }
+/// Caption text must fit inside the fixed video frame. Full narration stays
+/// in the audio track and metadata; onscreen copy is a legible synopsis.
+fn scene_caption(scene:&Scene)->String {
+    let heading=scene.heading.trim().chars().take(34).collect::<String>();
+    let mut lines=vec![];
+    let mut line=String::new();
+    let mut width=0usize;
+    let mut clipped=false;
+    for character in scene.narration.trim().chars() {
+        if character=='\n' || character=='\r' {
+            if !line.is_empty(){lines.push(std::mem::take(&mut line));}
+            width=0;
+            if lines.len()>=2 {clipped=true;break;}
+            continue;
+        }
+        let cells=if character.is_ascii(){1}else{2};
+        if width+cells>38 {
+            lines.push(std::mem::take(&mut line));
+            width=0;
+            if lines.len()>=2 {clipped=true;break;}
+        }
+        line.push(character);
+        width+=cells;
+    }
+    if lines.len()<2 && !line.is_empty(){lines.push(line);}
+    let mut subtitle=lines.join("\n");
+    if clipped {subtitle.push('…');}
+    if subtitle.is_empty(){heading}else{format!("{heading}\n\n{subtitle}")}
+}
 fn validate_scenes(scenes:&[Scene])->Result<(),String>{
     if scenes.is_empty()||scenes.len()>12{return Err("video needs 1..12 scenes".into());}
     let mut total=0u32;
@@ -274,6 +303,16 @@ async fn invoke(mut command:Command,deadline:Duration)->Result<(),String>{
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn readable_caption_keeps_voice_text_outside_the_visual_layout(){
+        let scene=Scene{heading:"제품 사용 가이드".into(),
+            narration:"아주 긴 설명을 여러 화면에 걸쳐서 읽기 어렵도록 반복하는 것보다 화면에는 핵심 문장만 보여주어야 합니다. ".repeat(20),
+            seconds:6};
+        let caption=scene_caption(&scene);
+        assert!(caption.lines().count()<=4);
+        assert!(caption.len()<200);
+        assert!(caption.contains("제품 사용 가이드"));
+    }
     #[test]
     fn caps_video_duration(){
         let scenes=(0..7).map(|_|Scene{heading:"Scene".into(),narration:"Voice".into(),seconds:30}).collect::<Vec<_>>();
