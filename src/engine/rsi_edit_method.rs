@@ -144,8 +144,10 @@ pub(crate) fn history_with_verified_payoffs(state:&AppState,history:&[Value])->V
         let Some(candidate)=state.store.get("rsi_candidate",id) else {return enriched;};
         if candidate["baseCommit"]!=row["generatorCommit"]
             || candidate["evaluation"]["source"]!="server_invoked_local_paired_git_worktrees"
-            || candidate["evaluation"]["evidenceSha256"]!=row["evaluation"]["evidenceSha256"]
-            || !row["evaluation"]["evidenceSha256"].is_string() {
+            || (row["evaluation"]["evidenceSha256"].is_string()
+                && candidate["evaluation"]["evidenceSha256"]!=row["evaluation"]["evidenceSha256"])
+            || (row["accepted"]!=true
+                && !row["evaluation"]["evidenceSha256"].is_string()) {
             return enriched;
         }
         // A rejected or neutral paired patch can train a zero-gain forecast,
