@@ -94,17 +94,19 @@ impl OpenAiProvider {
 impl Provider for OpenAiProvider {
     fn complete(&mut self, messages: &[Message]) -> Result<ModelReply, String> {
         self.usage = None;
-        if self.api_key.is_empty() && !self.base_url.starts_with("http://127.0.0.1") {
+        let local = reqwest::Url::parse(&self.base_url).ok()
+            .is_some_and(|url| matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1")));
+        if self.api_key.is_empty() && !local {
             return Err("api key가 필요합니다.".into());
         }
-        let response = reqwest::blocking::Client::builder()
+        let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(120))
-            .build()
-            .map_err(|error| error.to_string())?
-            .post(format!("{}/chat/completions", self.base_url))
-            .bearer_auth(&self.api_key)
-            .json(&self.payload(messages))
-            .send()
+            .build().map_err(|error| error.to_string())?;
+        let request = client.post(format!("{}/chat/completions", self.base_url))
+            .json(&self.payload(messages));
+        let request = if self.api_key.is_empty() { request }
+            else { request.bearer_auth(&self.api_key) };
+        let response = request.send()
             .map_err(|error| format!("provider 요청 실패: {error}"))?;
         let status = response.status();
         let body: Value = response
@@ -137,11 +139,16 @@ impl Provider for OpenAiProvider {
 
 /// Parse a chat-completions response into the harness reply shape.
 pub fn parse_reply(body: &Value) -> Result<ModelReply, String> {
-    let message = body
-        .pointer("/choices/0/message")
-        .ok_or("provider 응답에 message가 없습니다.")?;
+    let choice = body.pointer("/choices/0").ok_or("provider 응답에 choices가 없습니다.")?;
+    if choice["finish_reason"] == "length" {
+        return Err("provider stopped at token length limit; incomplete output".into());
+    }
+    let message = choice.get("message").ok_or("provider 응답에 message가 없습니다.")?;
     let content = message["content"].as_str().unwrap_or("").to_string();
     let mut calls = Vec::new();
+    if message.get("tool_calls").is_some_and(|value| !value.is_null() && !value.is_array()) {
+        return Err("provider tool_calls must be an array".into());
+    }
     if let Some(raw_calls) = message.get("tool_calls").and_then(Value::as_array) {
         for call in raw_calls {
             let id = call["id"].as_str().filter(|id| !id.is_empty())
@@ -149,17 +156,25 @@ pub fn parse_reply(body: &Value) -> Result<ModelReply, String> {
             let name = call.pointer("/function/name").and_then(Value::as_str)
                 .filter(|name| !name.is_empty())
                 .ok_or("provider tool name is missing")?;
-            let raw = call.pointer("/function/arguments").and_then(Value::as_str)
+            let raw = call.pointer("/function/arguments")
                 .ok_or("provider tool arguments are missing")?;
-            let arguments: Value = serde_json::from_str(raw)
-                .map_err(|error| format!("provider sent invalid tool arguments: {error}"))?;
+            let arguments: Value = if let Some(text) = raw.as_str() {
+                serde_json::from_str(text)
+                    .map_err(|error| format!("provider sent invalid tool arguments: {error}"))?
+            } else { raw.clone() };
             if !arguments.is_object() {
                 return Err("provider tool arguments must be a JSON object".into());
+            }
+            if calls.iter().any(|previous: &ToolCall| previous.id == id) {
+                return Err(format!("provider sent duplicate tool call id: {id}"));
             }
             calls.push(ToolCall { id: id.into(), name: name.into(), arguments });
         }
     }
     if calls.is_empty() {
+        if choice["finish_reason"] == "tool_calls" {
+            return Err("provider reported tool_calls without executable calls".into());
+        }
         Ok(ModelReply::Final { content })
     } else {
         Ok(ModelReply::Assistant { content, tool_calls: calls })
@@ -228,6 +243,21 @@ mod tests {
         let argument_text = payload["messages"][1]["tool_calls"][0]["function"]["arguments"].as_str().unwrap();
         assert_eq!(serde_json::from_str::<Value>(argument_text).unwrap(), json!({"path":"a.txt"}));
         assert_eq!(payload["messages"][2]["tool_call_id"], "call_42");
+    }
+
+    #[test]
+    fn refuses_truncated_model_response_instead_of_fake_success() {
+        let response = json!({"choices":[{"finish_reason":"length","message":{"content":"partial"}}]});
+        assert!(parse_reply(&response).unwrap_err().contains("incomplete"));
+    }
+
+    #[test]
+    fn repeated_tool_ids_in_one_model_turn_are_rejected() {
+        let response = json!({"choices":[{"message":{"tool_calls":[
+            {"id":"id1","function":{"name":"fs_read","arguments":"{}"}},
+            {"id":"id1","function":{"name":"fs_read","arguments":"{}"}}
+        ]}}]});
+        assert!(parse_reply(&response).unwrap_err().contains("duplicate"));
     }
 
     #[test]
