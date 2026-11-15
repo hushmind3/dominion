@@ -186,9 +186,19 @@ export function NativeGroups(){
 export function NativeVideos(){
  const data=useCollection<Video[]>('/api/videos',[])
  const [active,setActive]=useState(''),[prompt,setPrompt]=useState(''),[backend,setBackend]=useState('local'),[heading,setHeading]=useState(''),[narration,setNarration]=useState(''),[seconds,setSeconds]=useState(4)
+ const [editing,setEditing]=useState<number|null>(null),[editHeading,setEditHeading]=useState(''),[editNarration,setEditNarration]=useState(''),[editSeconds,setEditSeconds]=useState(4)
  const op=useOperation();const selected=data.value.find(x=>x.id===active)
  const create=async(e:FormEvent)=>{e.preventDefault();const scenes=heading.trim()&&narration.trim()?[{heading,narration,seconds}]:undefined
   const item=await op.run(()=>post<Video>('/api/videos',{prompt,backend,scenes}));if(item){setActive(item.id);void data.reload()}}
+ const beginEdit=(index:number,scene:Scene)=>{
+  setEditing(index);setEditHeading(scene.heading);setEditNarration(scene.narration);setEditSeconds(scene.seconds)
+ }
+ const saveScene=async(e:FormEvent)=>{e.preventDefault();if(editing===null||!active)return
+  const item=await op.run(()=>post<Video>('/api/videos/'+encodeURIComponent(active)+'/scenes/'+editing,{
+   heading:editHeading,narration:editNarration,seconds:editSeconds
+  }))
+  if(item){setEditing(null);data.setValue(old=>old.map(x=>x.id===item.id?item:x))}
+ }
  const render=async()=>{const item=await op.run(()=>post<Video>('/api/videos/'+encodeURIComponent(active)+'/render',{}));if(item){data.setValue(old=>old.map(x=>x.id===item.id?item:x));void data.reload()}}
  useEffect(()=>{if(!active||selected?.status!=='rendering')return;const timer=setInterval(()=>{void data.reload()},3000);return()=>clearInterval(timer)},[active,selected?.status,data.reload])
  return <Page title="영상 스튜디오" description="장면 구성, 로컬 MP4 렌더링 또는 사용자가 선택한 외부 영상 모델을 연결합니다." eyebrow="VIDEO STUDIO"><div className={layout}>
@@ -200,14 +210,22 @@ export function NativeVideos(){
     <div><LoadingButton busy={op.busy} type="submit" variant="primary"><Clapperboard size={14}/> 프로젝트 만들기</LoadingButton></div>
    </form></Section>
    {selected&&<Section><div className="flex items-center justify-between"><h2 className="font-bold">{selected.prompt}</h2><Status value={selected.status}/></div><p className={'my-2 '+subtle}>제작 비용: {fmtKrw(selected.cost_krw)} · 방식: {selected.backend}</p>
-    <div className="my-4 grid gap-2">{selected.scenes.map((scene,i)=><div key={i} className="rounded-lg border border-[#EFE9DF] p-3 text-[12px]"><strong>{i+1}. {scene.heading}</strong><p className="mt-1">{scene.narration}</p><small>{scene.seconds}초</small></div>)}</div>
+    <div className="my-4 grid gap-2">{selected.scenes.map((scene,i)=><div key={i} className="rounded-lg border border-[#EFE9DF] p-3 text-[12px]"><div className="flex items-center justify-between gap-2"><strong>{i+1}. {scene.heading}</strong><Button size="sm" variant="ghost" onClick={()=>beginEdit(i,scene)}>수정</Button></div><p className="mt-1 whitespace-pre-wrap">{scene.narration}</p><small>{scene.seconds}초</small></div>)}</div>
+    {editing!==null&&<form onSubmit={e=>void saveScene(e)} className="mb-4 grid gap-2 rounded-xl bg-[#F6F3EC] p-3">
+     <h3 className="font-semibold">{editing+1}번 장면 수정</h3>
+     <FormField label="장면 제목"><TextInput required value={editHeading} maxLength={180} onChange={e=>setEditHeading(e.target.value)}/></FormField>
+     <FormField label="내레이션"><TextArea value={editNarration} maxLength={1000} onChange={e=>setEditNarration(e.target.value)}/></FormField>
+     <FormField label="길이 (초)"><TextInput type="number" min={2} max={30} value={editSeconds} onChange={e=>setEditSeconds(Number(e.target.value))}/></FormField>
+     <p className={subtle}>수정한 장면 클립만 무효화하고 나머지 클립은 재사용합니다. 외부 영상 모델을 선택한 경우 수정 장면에 새 API 요금이 발생할 수 있습니다.</p>
+     <div className="flex gap-2"><LoadingButton busy={op.busy} type="submit" variant="primary">장면 저장</LoadingButton><Button onClick={()=>setEditing(null)}>취소</Button></div>
+    </form>}
     {selected.error&&<InlineError error={selected.error}/>}
     <div className={row}><LoadingButton busy={op.busy||selected.status==='rendering'} variant="primary" onClick={()=>void render()}><Play size={14}/> 렌더링</LoadingButton><Button onClick={()=>void data.reload()}><RefreshCw size={14}/> 상태 확인</Button>
     {selected.status==='completed'&&<a className="inline-flex items-center gap-2 rounded-lg border border-[#E7E0D5] bg-white px-4 py-2 text-[12px] font-semibold" href={'/api/videos/'+encodeURIComponent(active)+'/content'} download><Download size={14}/> MP4 받기</a>}</div>
    </Section>}
    <InlineError error={op.error}/>
   </div>
-  <Section><div className="mb-3 flex justify-between"><h2 className="font-bold">영상 프로젝트</h2><Button size="sm" variant="ghost" onClick={()=>void data.reload()}><RefreshCw size={14}/></Button></div><InlineError error={data.error}/><div className="grid gap-2">{data.value.map(item=><ListButton selected={active===item.id} onClick={()=>setActive(item.id)} key={item.id}><strong>{item.prompt}</strong><p className={subtle}>{item.status} · {item.scenes.length}개 장면</p></ListButton>)}</div></Section>
+  <Section><div className="mb-3 flex justify-between"><h2 className="font-bold">영상 프로젝트</h2><Button size="sm" variant="ghost" onClick={()=>void data.reload()}><RefreshCw size={14}/></Button></div><InlineError error={data.error}/><div className="grid gap-2">{data.value.map(item=><ListButton selected={active===item.id} onClick={()=>{setActive(item.id);setEditing(null)}} key={item.id}><strong>{item.prompt}</strong><p className={subtle}>{item.status} · {item.scenes.length}개 장면</p></ListButton>)}</div></Section>
  </div></Page>
 }
 export function NativeImprovements(){
