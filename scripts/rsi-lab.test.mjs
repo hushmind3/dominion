@@ -63,7 +63,7 @@ test('real Rust A/B runner compiles both frozen revisions and measures actual be
   const base=git('rev-parse','HEAD');
   const evidence=path.join(root,'paired evidence');fs.mkdirSync(evidence);
   fs.writeFileSync(path.join(evidence,'patch.diff'),
-   'diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn fixed() -> bool { false }\n+pub fn fixed() -> bool { true }\n');
+   'diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,2 +1,2 @@\n-pub fn fixed() -> bool { false }\n+pub fn fixed() -> bool { true }\n #[cfg(test)] mod tests {\n');
   fs.writeFileSync(path.join(evidence,'plan.json'),JSON.stringify({
    oracleVersion:'real-rust-paired-v1',cases:[
     {id:'regression',domain:'tools',holdout:true,filter:'tests::regression'},
