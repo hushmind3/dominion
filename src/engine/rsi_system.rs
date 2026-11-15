@@ -29,6 +29,12 @@ fn source_inventory(root:&Path)->Vec<Value> {
             let Ok(file)=fs::canonicalize(entry.path()) else {continue};
             if !file.starts_with(&root){continue;}
             if file.is_dir() {
+                // Scanning compiled targets or dependencies inflates both
+                // source inventories and subsequent model context.
+                if matches!(file.file_name().and_then(|name| name.to_str()),
+                    Some("target" | "node_modules" | ".git" | "runtime")) {
+                    continue;
+                }
                 pending.push(file);
                 continue;
             }
