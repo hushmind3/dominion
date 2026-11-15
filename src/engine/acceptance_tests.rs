@@ -76,6 +76,61 @@ fn trace<'a>(state:&'a AppState,id:&str)->Vec<Value>{
     state.store.events_after(id,0,300)
 }
 #[tokio::test]
+async fn concurrent_coding_tasks_hold_the_workspace_lease_until_source_acceptance(){
+    use tokio::time::{sleep,Duration};
+    let active=Arc::new(AtomicUsize::new(0));
+    let peak=Arc::new(AtomicUsize::new(0));
+    let observed=active.clone();
+    let max_seen=peak.clone();
+    let app=Router::new().route("/v1/chat/completions",post(
+        move |Json(body):Json<Value>|{
+            let observed=observed.clone();
+            let max_seen=max_seen.clone();
+            async move{
+                let running=observed.fetch_add(1,Ordering::SeqCst)+1;
+                max_seen.fetch_max(running,Ordering::SeqCst);
+                sleep(Duration::from_millis(55)).await;
+                observed.fetch_sub(1,Ordering::SeqCst);
+                let messages=body["messages"].as_array().cloned().unwrap_or_default();
+                let finished=messages.iter().any(|item|item["role"]=="tool");
+                let prompt=messages.iter().find(|m|m["role"]=="user")
+                    .and_then(|m|m["content"].as_str()).unwrap_or("");
+                let file=if prompt.contains("one.txt"){"one.txt"}else{"two.txt"};
+                let message=if finished{
+                    final_message("Wrote requested workspace output.")
+                }else{model_message(vec![function_call(file,"workspace_write",
+                    json!({"path":file,"content":file}))])};
+                Json(json!({"choices":[{"message":message}],
+                    "usage":{"prompt_tokens":150,"completion_tokens":30}}))
+            }
+        }
+    ));
+    let listener=tokio::net::TcpListener::bind(("127.0.0.1",0)).await.unwrap();
+    let url=format!("http://{}/v1/chat/completions",listener.local_addr().unwrap());
+    let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap()});
+    let (state,root)=fixture(url,"1").await;
+    let (first,_)=state.store.submit("lease-one-2026",&json!({
+        "prompt":"Create one.txt","allowWrite":true,
+        "requireEvidence":true,"planningMode":"never","maxSteps":4
+    })).unwrap();
+    let (second,_)=state.store.submit("lease-two-2026",&json!({
+        "prompt":"Create two.txt","allowWrite":true,
+        "requireEvidence":true,"planningMode":"never","maxSteps":4
+    })).unwrap();
+    let a=first["id"].as_str().unwrap().to_string();
+    let b=second["id"].as_str().unwrap().to_string();
+    tokio::join!(run(state.clone(),a.clone()),run(state.clone(),b.clone()));
+    assert_eq!(state.store.get(&a).unwrap()["status"],"completed");
+    assert_eq!(state.store.get(&b).unwrap()["status"],"completed");
+    assert_eq!(peak.load(Ordering::SeqCst),1,
+        "No model/edit/verification of a second writer may interleave");
+    assert_eq!(std::fs::read_to_string(root.join("one.txt")).unwrap(),"one.txt");
+    assert_eq!(std::fs::read_to_string(root.join("two.txt")).unwrap(),"two.txt");
+    server.abort();
+    let _=std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn wrong_multifile_repair_receives_real_test_failure_and_fixes_it(){
     let traffic=Arc::new(Mutex::new(Vec::<Value>::new()));
     let inspected=traffic.clone();
