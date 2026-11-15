@@ -1,4 +1,6 @@
 use crate::provider::ModelClient;
+mod evolution;
+pub use evolution::{EvolutionRun,EvolutionStatus,NewEvolution};
 fn now_ms()->u64 { chrono::Utc::now().timestamp_millis().max(0) as u64 }
 use serde::{Deserialize,Serialize};
 use serde_json::json;
@@ -27,7 +29,9 @@ pub struct NewImprovement {
 }
 pub struct Improvements {
     root:PathBuf, workspace:PathBuf,
-    items:Mutex<HashMap<Uuid,Improvement>>,active:Mutex<HashSet<Uuid>>
+    items:Mutex<HashMap<Uuid,Improvement>>,active:Mutex<HashSet<Uuid>>,
+    repository_active:Mutex<HashSet<String>>,
+    lineages:Mutex<HashMap<Uuid,EvolutionRun>>,
 }
 fn relative(raw:&str)->Result<&Path,String>{
     if raw.is_empty()||raw.len()>1024||raw.as_bytes().contains(&0){return Err("invalid relative path".into());}
@@ -81,7 +85,9 @@ impl Improvements {
             }
             items.insert(item.id,item);
         }
-        Ok(Self{root,workspace,items:Mutex::new(items),active:Mutex::new(HashSet::new())})
+        let lineages=evolution::load(&root).await?;
+        Ok(Self{root,workspace,items:Mutex::new(items),active:Mutex::new(HashSet::new()),
+            repository_active:Mutex::new(HashSet::new()),lineages:Mutex::new(lineages)})
     }
     async fn put(&self,item:Improvement)->Result<Improvement,String>{
         let mut lock=self.items.lock().await;
@@ -104,7 +110,10 @@ impl Improvements {
         if let Some(parent)=input.parent{
             let parent=self.get(parent).await.ok_or("parent experiment not found")?;
             if parent.status!=ImprovementStatus::Adopted{return Err("parent trial must be adopted before a descendant".into());}
-            if parent.repository!=input.repository || parent.target_file!=input.target_file {return Err("descendant repository and file must match parent".into());}
+            if parent.repository!=input.repository || parent.test_command!=input.test_command ||
+                parent.score_command!=input.score_command || parent.instruction!=input.instruction {
+                return Err("descendant must keep the repository, objective and independent evaluator frozen".into());
+            }
         }
         let root=self.workspace.canonicalize().map_err(|e|e.to_string())?;
         let repository=root.join(relative(&input.repository)?);
@@ -121,9 +130,24 @@ impl Improvements {
         if !shell_enabled{return Err("DOMINION_ENABLE_SHELL=true is required to execute approved evaluation commands".into());}
         {let mut busy=self.active.lock().await;if !busy.insert(id){return Err("evaluation already active".into());}}
         let Some(mut item)=self.get(id).await else {self.active.lock().await.remove(&id);return Err("trial not found".into());};
-        if item.status!=ImprovementStatus::AwaitingApproval{self.active.lock().await.remove(&id);return Err("trial is not awaiting approval".into());}
+        if item.status!=ImprovementStatus::AwaitingApproval{
+            self.active.lock().await.remove(&id);
+            return Err("trial is not awaiting approval".into());
+        }
+        {
+            let mut leased=self.repository_active.lock().await;
+            if !leased.insert(item.repository.clone()){
+                self.active.lock().await.remove(&id);
+                return Err("another evolution or evaluation is already using this repository".into());
+            }
+        }
+        let repository=item.repository.clone();
         item.status=ImprovementStatus::Running;item.updated_at_ms=now_ms();
-        if let Err(e)=self.put(item.clone()).await{self.active.lock().await.remove(&id);return Err(e);}
+        if let Err(error)=self.put(item.clone()).await {
+            self.active.lock().await.remove(&id);
+            self.repository_active.lock().await.remove(&repository);
+            return Err(error);
+        }
         let service=Arc::clone(self);
         tokio::spawn(async move{
             let result=service.evaluate(&model,item).await;
@@ -134,6 +158,7 @@ impl Improvements {
                 }
             }
             service.active.lock().await.remove(&id);
+            service.repository_active.lock().await.remove(&repository);
         });
         self.get(id).await.ok_or("trial missing after start".into())
     }
@@ -149,9 +174,20 @@ impl Improvements {
         let trial_root=trial_root.canonicalize().map_err(|e|e.to_string())?;
         let reference=trial_root.join("baseline");
         let candidate=trial_root.join("candidate");
+        let mut created=Vec::<PathBuf>::new();
         for destination in [&reference,&candidate]{
-            let path=destination.to_str().ok_or("invalid worktree path")?;
-            git(&repo,&["worktree","add","--detach",path,&head]).await?;
+            let attempt=async {
+                let path=destination.to_str().ok_or("invalid worktree path")?;
+                git(&repo,&["worktree","add","--detach",path,&head]).await?;
+                Ok::<(),String>(())
+            }.await;
+            if let Err(error)=attempt {
+                for dir in &created {
+                    if let Some(path)=dir.to_str(){let _=git(&repo,&["worktree","remove","--force",path]).await;}
+                }
+                return Err(format!("Could not isolate both evaluation worktrees: {error}"));
+            }
+            created.push(destination.to_path_buf());
         }
         let result=self.evaluate_worktrees(model,&mut item,&reference,&candidate).await;
         for dir in [&reference,&candidate] {
@@ -203,18 +239,39 @@ impl Improvements {
         Ok(())
     }
     async fn measure(&self,dir:&Path,tests:&str,scoring:Option<&str>)->Result<Measurement,String>{
+        // The pinned Git tree is the only candidate eligible for adoption.
+        // An evaluator that rewrites tracked sources would score a different
+        // program than the committed one. Generated, ignored files remain OK.
+        let before=git(dir,&["status","--porcelain","--untracked-files=no"]).await?;
+        if !before.trim().is_empty(){
+            return Err("Frozen evaluator started from a modified tracked tree".into());
+        }
         let result=score(dir,tests).await;
         let tests_passed=result.is_ok();
         let log=result.unwrap_or_else(|error|error);
         let value=if tests_passed {
             if let Some(scoring)=scoring {Some(parse_score(&score(dir,scoring).await?)?)} else {None}
         }else{None};
+        let after=git(dir,&["status","--porcelain","--untracked-files=no"]).await?;
+        if !after.trim().is_empty(){
+            return Err("Independent evaluator modified tracked sources; score does not describe frozen commit".into());
+        }
         Ok(Measurement{tests_passed,score:value,log:log.chars().take(2000).collect()})
     }
     pub async fn adopt(&self,id:Uuid)->Result<Improvement,String>{
+        self.adopt_internal(id,false).await
+    }
+    pub(super) async fn adopt_internal(&self,id:Uuid,under_lineage_lease:bool)->Result<Improvement,String>{
         if self.active.lock().await.contains(&id){return Err("trial still active".into());}
         let mut item=self.get(id).await.ok_or("trial not found")?;
         if item.status!=ImprovementStatus::Evaluated || !item.accepted{return Err("candidate has not outperformed frozen evaluation".into());}
+        let leased=self.repository_active.lock().await.contains(&item.repository);
+        if leased && !under_lineage_lease {
+            return Err("repository is held by an active evaluation or evolution".into());
+        }
+        if !leased && under_lineage_lease {
+            return Err("evolution lost its exclusive repository lease".into());
+        }
         let root=self.workspace.canonicalize().map_err(|e|e.to_string())?;
         let repo=root.join(relative(&item.repository)?).canonicalize().map_err(|e|e.to_string())?;
         if !repo.starts_with(&root){return Err("repository escapes workspace".into());}
@@ -251,6 +308,24 @@ mod tests {
         let better=Measurement{tests_passed:true,score:Some(0.9),log:String::new()};
         assert!(!is_better(&base,&worse));assert!(is_better(&base,&better));
         assert!(!is_better(&base,&Measurement{tests_passed:false,score:Some(1.0),log:String::new()}));
+    }
+    #[tokio::test]
+    async fn frozen_evaluation_rejects_modified_tracked_source(){
+        if Command::new("git").arg("--version").output().await.is_err(){return;}
+        let root=std::env::temp_dir().join(format!("dominion-frozen-{}",Uuid::new_v4()));
+        fs::create_dir_all(&root).await.unwrap();
+        git(&root,&["init"]).await.unwrap();
+        fs::write(root.join("code.txt"),"1\n").await.unwrap();
+        git(&root,&["add","code.txt"]).await.unwrap();
+        execute("git",&["-c","user.name=Test","-c","user.email=test@example.com",
+            "commit","-m","baseline"],&root,30).await.unwrap();
+        let workspace=root.parent().unwrap().to_path_buf();
+        let service=Improvements::open(
+            workspace.join(format!("frozen-store-{}",Uuid::new_v4())),workspace.clone()
+        ).await.unwrap();
+        let verdict=service.measure(&root,"printf '2\\n' > code.txt",None).await;
+        assert!(verdict.unwrap_err().contains("modified tracked sources"));
+        let _=fs::remove_dir_all(&root).await;
     }
     #[test]
     fn rejects_traversal(){assert!(relative("../outside").is_err());assert!(relative("/root").is_err());}
