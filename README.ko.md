@@ -179,3 +179,5 @@ Rust 대화 전송 계층은 `previous_response_not_found`처럼 명시적으로
 ### 자율 에이전트 Codex WebSocket 세션 연속성 (서브3, 2026-11-15)
 
 `/api/jobs`의 실제 Rust 실행 커널에 `src/engine/native_codex_ws.rs`를 연결했습니다. 모델이 완료한 응답 ID를 기준으로 **직접 실행해 영수증이 남은 도구 결과**와 최신 작업 상태만 다음 WebSocket 요청에 보냅니다. 세션·문맥이 달라지거나 이전 응답이 만료되면 안전하게 전체 문맥을 다시 구성합니다. 요청의 성공 여부가 불명확하면 HTTP·다른 모델로 자동 중복 생성하지 않고 검토 상태를 보존합니다. 설정된 모델 문맥 한도에 가까워지면 제공자가 보고한 토큰을 바탕으로 응답 체인을 새로 시작합니다. Rust의 권한·승인·검증·저장·복구 구조와 TypeScript SDK/API·GUI는 기존 경로를 그대로 사용합니다. 상세 구현과 검증 범위: [서브3 Codex 자율 작업 WebSocket](docs/SUB3-NATIVE-CODEX-WS-2026-11-15.md).
+
+**자율 작업 WebSocket 집중 검증:** [GitHub Actions #43690699582](https://github.com/hushmind3/dominion-rust/actions/runs/43690699582)에서 Rust SDK·네이티브 호스트·대화용 WebSocket·워크플로 복구 **112/112 통과**, TypeScript 타입 검사와 Vite 빌드도 성공했습니다. 실제 유료 Codex 계정 호출, 청구 토큰 절감률, 장기 작업 벤치마크는 별도로 측정해야 합니다.
