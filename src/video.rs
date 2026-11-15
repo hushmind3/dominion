@@ -395,6 +395,27 @@ mod tests {
         assert!(validate_scenes(&scenes).is_err());
     }
     #[tokio::test]
+    async fn local_image_upload_never_reuses_the_wrong_scene(){
+        let root=std::env::temp_dir().join(format!("dominion-photo-{}",Uuid::new_v4()));
+        let model=ModelClient::new(crate::provider::ModelConfig::basic(
+            "http://127.0.0.1:11434/v1/chat/completions".into(),"local".into(),None),None).unwrap();
+        let video_store=Videos::open(root.clone()).await.unwrap();
+        let video=video_store.create(&model,NewVideo{
+            prompt:"Video with owner photo".into(),
+            scenes:Some(vec![Scene{heading:"First".into(),narration:"Hello".into(),seconds:2},
+                Scene{heading:"Second".into(),narration:"World".into(),seconds:2}]),
+            backend:None,budget_krw:None
+        }).await.unwrap();
+        let photo="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/BikAAAAASUVORK5CYII=";
+        let saved=video_store.set_scene_image(video.id,1,photo).await.unwrap();
+        assert_eq!(saved.images.get(&1).map(String::as_str),Some("scene-1.png"));
+        assert!(!saved.images.contains_key(&0));
+        assert!(video_store.set_scene_image(video.id,0,
+            "data:image/png;base64,AAAA").await.is_err());
+        assert_eq!(saved.scenes.len(),2);
+        fs::remove_dir_all(root).await.unwrap();
+    }
+    #[tokio::test]
     async fn persists_scene_revisions(){
         let dir=std::env::temp_dir().join(format!("dominion-video-test-{}",Uuid::new_v4()));
         let store=Videos::open(dir.clone()).await.unwrap();
