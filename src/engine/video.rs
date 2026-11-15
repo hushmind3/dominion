@@ -342,6 +342,14 @@ pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
     if !(3..=180).contains(&duration) {
         return Err("영상 길이는 3~180초입니다.".into());
     }
+    if engine=="comfyui" {
+        let scenes=storyboard_scenes(body)?;
+        // Every scene needs at least three seconds. Reject impossible briefs
+        // instead of silently outputting a longer video than was requested.
+        if scenes.len()>1 && duration < (scenes.len() as u64).saturating_mul(3) {
+            return Err("요청한 영상 길이가 장면 수에 비해 짧습니다. 장면당 최소 3초가 필요합니다.".into());
+        }
+    }
     let aspect = body["aspectRatio"]
         .as_str()
         .or(cfg["aspectRatio"].as_str())
@@ -835,8 +843,10 @@ async fn comfy_storyboard(ctx:&JobContext,input:&Value,root:&Path)->Result<Value
         let text=scene.as_str().ok_or("장면 텍스트가 없습니다.")?;
         let scene_dir=root.join(format!("scene-{index:02}"));
         std::fs::create_dir_all(&scene_dir).map_err(|e|e.to_string())?;
-        let seconds=input["duration"].as_u64().unwrap_or(15)
-            .div_ceil(total as u64).clamp(3,180);
+        // Distribute remainders without inflating the requested total length.
+        // enqueue already checked duration >= 3 * scene_count.
+        let requested=input["duration"].as_u64().unwrap_or(15);
+        let seconds=requested/(total as u64)+u64::from((index as u64)<requested%(total as u64));
         let mut scene_input=input.clone();
         scene_input["brief"]=json!(text);
         scene_input["duration"]=json!(seconds);
@@ -1203,6 +1213,15 @@ mod tests {
         assert_ne!(first,scene_key(&next,&workflow,"landscape",0));
     }
 
+    #[test]
+    fn storyboard_duration_distribution_preserves_requested_total(){
+        for (total,seconds) in [(3u64,13u64),(7,21),(8,35)] {
+            let per_scene=(0..total).map(|i|
+                seconds/total+u64::from(i<seconds%total)).collect::<Vec<_>>();
+            assert_eq!(per_scene.iter().sum::<u64>(),seconds);
+            assert!(per_scene.iter().all(|duration|*duration>=3));
+        }
+    }
     #[test]
     fn video_provenance_uses_streaming_sha256_for_large_files(){
         let dir=std::env::temp_dir().join(format!("dominion-video-hash-{}",uuid::Uuid::new_v4()));
