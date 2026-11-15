@@ -8,6 +8,7 @@ type NativeMeasuredUsage = {
  inputTokens:number;outputTokens:number;totalTokens:number;
  cacheReadTokens:number;cacheWriteTokens:number;
  reportedCalls:number;unreportedCalls:number;cacheReportedCalls:number;
+ configuredCostKRW?:number;pricedCalls?:number;unpricedCalls?:number;
  source:string;estimated:false;
 }
 type RoutingPolicy={mode:'default'|'quality_cost';minQuality:number;maxQualityDrop:number}
@@ -18,7 +19,7 @@ type AgentJob = {
  input?:{prompt?:string;providerId?:string;checks?:{type?:string;tool?:string;contains?:string}[];limits?:{maxEstimatedTokens?:number};nativeRoutingPolicy?:RoutingPolicy};
  nativeState?:{step?:number;modelCalls?:number;chargedTokens?:number;receipts?:{tool?:string;success?:boolean}[];error?:string};
  nativeStream?:{stage?:string;protocol?:string;events?:number;visibleTail?:string;pendingCalls?:{id:string;name:string}[];executable?:boolean};
- nativeModelUsage?:NativeMeasuredUsage&{configuredCostKRW?:number;pricedCalls?:number;unpricedCalls?:number;configuredPriceCurrency?:string};
+ nativeModelUsage?:NativeMeasuredUsage;
  nativeRoute?:PinnedNativeRoute;
  result?:{answer?:string;reason?:string;toolCalls?:number;modelCalls?:number};error?:string;
 }
