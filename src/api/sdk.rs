@@ -120,9 +120,13 @@ fn launch(state: AppState, id: String, approved: Option<String>) -> Result<(), S
     if !state.begin_session(&lock_id) { return Err("이미 실행 중인 작업입니다.".into()); }
     tokio::spawn(async move {
         let _guard = state.session_guard(&lock_id);
-        if let Some(saved) = state.store.patch_if(
-            "sdk_run", &id, "status", &json!("queued"), &json!({"status":"running"})
-        ) { state.bus.record("sdk_run", &saved); }
+        if let Some(record) = state.store.get("sdk_run", &id) {
+            if !matches!(record["status"].as_str(), Some("completed" | "cancelled")) {
+                if let Some(saved) = state.store.patch_if(
+                    "sdk_run", &id, "status", &record["status"], &json!({"status":"running"})
+                ) { state.bus.record("sdk_run", &saved); }
+            }
+        }
         let result = execute(state.clone(), id.clone(), approved).await;
         let (status, patch) = match result {
             Ok(session) => {
@@ -175,6 +179,7 @@ async fn execute(state: AppState, id: String, approved: Option<String>) -> Resul
     let checkpoint = journal(&state, &id);
     let flag = Arc::new(AtomicBool::new(state.is_cancelled(&format!("sdk:{id}"))));
     active_flags().lock().unwrap().insert(id.clone(), Arc::clone(&flag));
+    let worker_id = id.clone();
     let result = tokio::task::spawn_blocking(move || {
         let mut tools: Vec<Box<dyn dominion_harness::Tool + Send>> = vec![
             Box::new(ReadFile(Workspace::new(&workdir)?)),
@@ -198,7 +203,7 @@ async fn execute(state: AppState, id: String, approved: Option<String>) -> Resul
         }
         if let Some(call_id) = approved { engine.approve_once(call_id); }
         let mut session = checkpoint.load()?.unwrap_or_else(|| Session::new(
-            id,
+            worker_id,
             "You are DOMINION's native Rust agent. Follow the exact user objective. Inspect before editing. Never pretend a tool succeeded. Verify work and repair failures.",
             instruction,
         ));
