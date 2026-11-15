@@ -4,6 +4,7 @@
 use crate::context::ContextBudget;
 use crate::policy::{Decision, Policy};
 use crate::{Limits, Message, ModelReply, Provider, Tool, ToolCall};
+use crate::provider::ModelUsage;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -52,6 +53,8 @@ pub struct Session {
     pub events: Vec<SdkEvent>,
     pub rounds: usize,
     pub tool_calls: usize,
+    #[serde(default)]
+    pub usage: ModelUsage,
     pub status: RunStatus,
 }
 
@@ -68,6 +71,7 @@ impl Session {
             events: Vec::new(),
             rounds: 0,
             tool_calls: 0,
+            usage: ModelUsage::default(),
             status: RunStatus::Ready,
         }
     }
@@ -333,6 +337,14 @@ impl AgentSdk {
                     return Ok(());
                 }
             };
+            if let Some(usage) = self.provider.take_usage() {
+                state.usage.add(usage);
+                state.event("model_usage", json!({
+                    "promptTokens":usage.prompt_tokens,
+                    "completionTokens":usage.completion_tokens,
+                    "cachedPromptTokens":usage.cached_prompt_tokens
+                }));
+            }
             let (content, calls) = match reply {
                 ModelReply::Assistant { content, tool_calls } => (content, tool_calls),
                 ModelReply::Final { content } => (content, Vec::new()),
