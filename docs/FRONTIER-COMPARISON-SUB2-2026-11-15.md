@@ -42,7 +42,7 @@ POST /api/jobs → api/jobs.rs → engine/jobs.rs::enqueue → SQLite job
                                     │
                          SQLite job / event_log
                                     │
-                            GUI 진행/검증/중단
+                            GUI 기본 실행 기록/취소; 세부 검증은 API/SDK
 ```
 
 - 원본 작업 지시와 추가 지시는 서로 덮어쓰지 않는다. `steeringRevision`은 별도 CAS 기록.
@@ -57,7 +57,7 @@ POST /api/jobs → api/jobs.rs → engine/jobs.rs::enqueue → SQLite job
 1. `src/lib.rs`, `src/sdk.rs`, `src/main.rs`, `src/bootstrap.rs`: Rust SDK 공개 진입점 및 단일 런타임 부팅.
 2. `src/engine/autonomy.rs`, `src/engine/jobs.rs`, `src/engine/verification.rs`: 단계별 재검증·재계획·중단/복구 정책.
 3. `src/api/jobs.rs`, `src/api/mod.rs`, `sdk/typescript/src/index.ts`: 동일 실행의 보조 API 어댑터.
-4. `web/src/components/ExecutionMonitor.tsx`: 비개발자용 자율 실행·중간 지시·검증 기록.
+4. `web/src/components/ExecutionMonitor.tsx`: 메인 브랜치 원본의 작업 실행·기록·중단 UI. 자율 실행 세부 설정·중간 지시·검증 영수증은 독립 Rust SDK/API로 제공하며 서브2 전용 화면 변경은 채택하지 않음.
 5. `src/events.rs`, `src/api/system.rs`: 순서 보장·분할 이벤트 재생 및 이력 만료 통지.
 
 ## 검증의 수준

@@ -151,7 +151,7 @@ sdk.start()?; // in a Tokio runtime
 let job = sdk.submit(Prompt::new("Inspect, fix and verify the code"))?;
 ```
 
-The [TypeScript SDK](sdk/typescript/README.md) is an **optional auxiliary client**, not a harness. GUI and TypeScript use the same Rust `/api/*` endpoints and recorded results. See [2026 frontier source comparison](docs/FRONTIER-COMPARISON-SUB2-2026-11-15.md) and [execution contract](docs/SUB2-SDK-DURABLE-EVENTS-2026-11-15.md). Frontier-equivalent performance is not yet benchmarked.
+The [TypeScript SDK](sdk/typescript/README.md) is an **optional auxiliary client**, not a harness. The `web/` frontend is adopted verbatim from the main branch and uses its own `web/src/api.ts` client; the optional TypeScript SDK is for external consumers. Both clients communicate with the same Rust `/api/*` runtime and persisted results. See [2026 frontier source comparison](docs/FRONTIER-COMPARISON-SUB2-2026-11-15.md) and [execution contract](docs/SUB2-SDK-DURABLE-EVENTS-2026-11-15.md). Frontier-equivalent performance is not yet benchmarked.
 
 ## 🚧 Project status
 
