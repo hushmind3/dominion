@@ -1346,6 +1346,13 @@ fn model_free_status(
     (None, "no-pricing-metadata")
 }
 
+// Legacy helper is exercised by compatibility tests only; production uses
+// the richer model_free_status function and its explicit evidence reason.
+#[cfg(test)]
+fn model_is_free(provider:&Value,kind:&str,base:&str,item:&Value,id:&str)->bool{
+    model_free_status(provider,kind,base,item,id).0==Some(true)
+}
+
 /// Verifies a provider without saving anything. The UI can test the key the
 /// owner just typed, so an invalid token is reported immediately instead of
 /// silently failing later during a room conversation.
