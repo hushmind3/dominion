@@ -277,7 +277,23 @@ fn settle(state: &AppState, id: &str, status: &str, answer: &str,
 }
 
 pub async fn run(state: AppState, id: String) {
+    // A single native workspace must never have overlapping mutating tasks.
+    // Hold the lease through the final real acceptance run and settlement,
+    // not merely while issuing write_file. Read-only tasks stay parallel.
+    let requires_exclusive=state.store.get(&id).is_some_and(|record|
+        record["input"]["allowWrite"]==true ||
+        record["input"]["allowShell"]==true ||
+        record["input"]["allowMcp"]==true);
+    let _workspace_lease=if requires_exclusive {
+        Some(state.workspace_write_lock.lock().await)
+    }else{None};
     if !state.store.claim(&id) { return; }
+    if requires_exclusive {
+        state.emit(&id,"workspace_lease",json!({
+            "scope":"native_runtime_workspace","exclusive":true,
+            "reason":"changes_and_acceptance_must_observe_a_stable_source_revision"
+        }));
+    }
     let Some(task) = state.store.get(&id) else { return };
     let input = &task["input"];
     let prompt = input["prompt"].as_str().unwrap_or("").to_string();
