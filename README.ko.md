@@ -164,3 +164,8 @@ Bring your own API credentials or connect a local model, then use a Rust-native 
 - [구조·2026 프런티어 비교](docs/SDK-ARCHITECTURE-2026-11-15.md).
 
 CLI 하네스나 타사 에이전트 실행기를 SDK에 넣지 않습니다. 실제 판단·도구·메모리·체크포인트는 `src/engine/`이 담당하고 SDK와 GUI는 `/api/*`에 연결됩니다. 두 패키지는 아직 패키지 레지스트리에 게시하지 않았으며 Rust SDK 컴파일과 실모델 통합 검증은 별도 환경에서 진행해야 합니다.
+
+
+### Codex WebSocket 세션·장기 문맥 보호 (서브3, 2026-11-15)
+
+Rust 대화 전송 계층은 `previous_response_not_found`처럼 명시적으로 거부된 체인의 안전한 전체 재전송과, 이미 모델에 전달됐을 수 있으나 완료를 확인하지 못한 요청을 구분합니다. 후자는 WebSocket/HTTP/다른 모델로 자동 중복 생성하지 않고 비용 미확정 감사 기록을 남깁니다. 이미지·음성 등 구조화 입력은 순서와 내용을 해시로 비교하며 원본 미디어를 연결 레지스트리에 중복 저장하지 않습니다. 독립 Rust SDK는 최신 대형 도구 결과가 LowCost 문맥 한도를 넘더라도 잘라서 표시하고 원본 영수증은 영구 검색·조회 대상으로 유지합니다. 상세: [Codex 전송](docs/SUB3-NATIVE-STREAM-2026-11-15.md), [장기 문맥](docs/SUB3-DURABLE-CONTEXT-2026-11-15.md). 전송량 추정은 실제 청구 토큰 절감 수치가 아니며 새 테스트의 CI 결과는 별도로 확인합니다.
