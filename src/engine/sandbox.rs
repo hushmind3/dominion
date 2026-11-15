@@ -218,6 +218,9 @@ fn launch(workspace:&Path,program:&str,args:&[String],mode:&str,
                 "--security-opt","no-new-privileges","--pids-limit","128",
                 "--memory","1536m","--cpus","2",
                 "--tmpfs","/tmp:rw,nosuid,size=134217728",
+                "--env","HOME=/workspace",
+                "--env","CARGO_TARGET_DIR=/workspace/target",
+                "--env","NPM_CONFIG_CACHE=/workspace/.cache/npm",
                 "--mount"].iter().map(OsString::from).collect::<Vec<_>>();
             parameters.push(mount.into());
             parameters.extend([OsString::from("--workdir"),
@@ -244,7 +247,7 @@ fn controlled_environment(command:&mut Command,isolated:bool,workspace:&Path){
     command.env("CI","true");
     // Contain package/build caches within the admitted workspace.
     command.env("CARGO_TARGET_DIR",workspace.join("target"));
-    command.env("NPM_CONFIG_CACHE",workspace.join(".npm-cache"));
+    command.env("NPM_CONFIG_CACHE",workspace.join(".cache").join("npm"));
 }
 /// Drain ALL bytes so a talkative test cannot deadlock on a full OS pipe,
 /// while retaining at most a bounded prefix in memory.
