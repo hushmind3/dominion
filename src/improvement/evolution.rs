@@ -357,6 +357,27 @@ mod tests {
         assert_eq!(second.base_commit,first.adopted_commit);
         assert_eq!(first.status,ImprovementStatus::Adopted);
         assert_eq!(second.status,ImprovementStatus::Adopted);
+        // Stop is an explicit, durable owner action. Holding the same global
+        // lease prevents any candidate from starting before stop is seen.
+        let hold=lease.lock().await;
+        let stopped=service.evolution_start(model.clone(),second.id,NewEvolution{
+            max_generations:1,cost_budget_krw:100.0,
+            target_files:vec!["a.txt".into()]
+        },true).await.unwrap();
+        let stop_receipt=service.evolution_stop(stopped.id).await.unwrap();
+        assert!(stop_receipt.stop_requested);
+        drop(hold);
+        let mut stopped_result=None;
+        for _ in 0..80 {
+            let current=service.evolution(stopped.id).await.unwrap();
+            if current.status!=EvolutionStatus::Running{stopped_result=Some(current);break;}
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let stopped_result=stopped_result.expect("Stopped evolution failed to settle");
+        assert_eq!(stopped_result.status,EvolutionStatus::NeedsReview);
+        assert_eq!(stopped_result.completed_generations,0);
+        assert!(stopped_result.descendants.is_empty());
+        assert_eq!(fs::read_to_string(repo.join("a.txt")).await.unwrap(),"2\n");
         // A paid provider's single request may overshoot the allowed
         // ceiling. Persist and show the candidate but never auto-adopt it.
         let mut rate=crate::provider::ModelConfig::basic(
