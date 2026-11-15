@@ -12,7 +12,7 @@ type NativeMeasuredUsage = {
 }
 type AgentJob = {
  id:string; kind:string; status:string; sessionId?:string; createdAt?:string; queuedAt?:string;
- input?:{prompt?:string;providerId?:string;checks?:{type?:string;tool?:string;contains?:string}[]};
+ input?:{prompt?:string;providerId?:string;checks?:{type?:string;tool?:string;contains?:string}[];limits?:{maxEstimatedTokens?:number}};
  nativeState?:{step?:number;modelCalls?:number;chargedTokens?:number;receipts?:{tool?:string;success?:boolean}[];error?:string};
  nativeStream?:{stage?:string;protocol?:string;events?:number;visibleTail?:string;pendingCalls?:{id:string;name:string}[];executable?:boolean};
  nativeModelUsage?:NativeMeasuredUsage;
@@ -20,9 +20,9 @@ type AgentJob = {
 }
 type Approval = {id:string;status:string;sessionId?:string;tool?:string;args?:unknown}
 type SdkRun = {
- id:string;status:string;instruction:string;providerId?:string;answer?:string;error?:string;verification?:string;
+ id:string;status:string;instruction:string;providerId?:string;answer?:string;error?:string;verification?:string;tokenBudget?:number;
  stream?:AgentJob['nativeStream'];
- checkpoint?:{rounds?:number;toolCalls?:number;answer?:string;
+ checkpoint?:{rounds?:number;toolCalls?:number;answer?:string;estimatedTokens?:number;
   usage?:NativeMeasuredUsage;
   pendingCall?:{id:string;name:string;arguments:unknown}|null;
   events?:{kind:string;detail:unknown}[]}
@@ -43,6 +43,7 @@ function present(job:AgentJob,approvals:Approval[]=[]):SdkRun{
  const receipts=job.nativeState?.receipts??[]
  return {
   id:job.id,status,instruction:job.input?.prompt??'',providerId:job.input?.providerId,
+  tokenBudget:job.input?.limits?.maxEstimatedTokens,
   verification:job.input?.checks?.find(c=>c.type==='tool_succeeded'&&c.tool==='shell_exec')?.contains,
   answer:job.result?.answer,error:job.error??job.result?.reason??job.nativeState?.error,
   stream:job.nativeStream,
@@ -51,6 +52,7 @@ function present(job:AgentJob,approvals:Approval[]=[]):SdkRun{
    toolCalls:job.result?.toolCalls??receipts.length,
    answer:job.result?.answer,
    usage:job.nativeModelUsage,
+   estimatedTokens:job.nativeState?.chargedTokens,
    pendingCall:pending?{id:pending.id,name:pending.tool??'tool',arguments:pending.args??{}}:null,
    events:receipts.slice(-4).map(x=>({kind:x.success?'verified':'tool_started',detail:x.tool??''}))
   }
@@ -69,6 +71,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const [instruction,setInstruction]=useState('')
  const [providerId,setProviderId]=useState('')
  const [verification,setVerification]=useState('')
+ const [budgetInput,setBudgetInput]=useState('100000')
  const [observation,setObservation]=useState('')
  const [run,setRun]=useState<SdkRun|null>(null)
  const [busy,setBusy]=useState(false)
@@ -80,7 +83,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     .sort((a,b)=>String(b.queuedAt??b.createdAt??'').localeCompare(String(a.queuedAt??a.createdAt??'')))[0]
    if(recent){
     const current=await loadRun(recent.id)
-    if(alive)setRun(current)
+    if(alive){setRun(current);if(current.tokenBudget)setBudgetInput(String(current.tokenBudget))}
    }
   }).catch(()=>{})
   return()=>{alive=false}
@@ -94,9 +97,11 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   },1500)
   return()=>{alive=false;clearInterval(timer)}
  },[run?.id,run?.status])
- const launch=async(prompt:string,extraInstructions?:string,verifyCommand?:string)=>{
+ const budget=()=>Math.max(1000,Math.min(20000000,Math.trunc(Number(budgetInput)||100000)))
+ const launch=async(prompt:string,extraInstructions?:string,verifyCommand?:string,limit=budget())=>{
   const created=await post<AgentJob>('/api/jobs',{kind:'prompt',input:{
    prompt,providerId:providerId||run?.providerId||undefined,
+   tokenBudget:limit,
    ...(extraInstructions?{ownerInstructions:extraInstructions}:{}),
    ...(verifyCommand?{acceptanceChecks:[{type:'command_succeeded',command:verifyCommand}]}:{})
   }})
@@ -128,7 +133,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     // A retry is a distinct job with its own fresh journal.
     await launch(run.instruction,
      'This is a fresh retry after an earlier run failed. Inspect the workspace before editing, and never assume earlier tools did or did not take effect.',
-     run.verification||verification.trim()||undefined)
+     run.verification||verification.trim()||undefined,run.tokenBudget??budget())
    }
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
@@ -141,7 +146,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    await launch(run.instruction,
     'Previous execution needs manual review. The operator inspected the effects and reports: '+(applied?'effect applied':'effect not applied')+
     '. Observation: '+details+'. Verify the actual workspace state before taking any further action; do not blindly replay prior changes.',
-    run.verification||verification.trim()||undefined)
+    run.verification||verification.trim()||undefined,run.tokenBudget??budget())
    setObservation('')
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
@@ -179,7 +184,14 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     </button>
    </div>
    <details className="text-[11px] text-[#746A5F]">
-    <summary className="cursor-pointer select-none">{en?'Optional: verify the result with a command':'선택 사항: 명령어로 결과 검증'}</summary>
+    <summary className="cursor-pointer select-none">{en?'Advanced: task token budget and result verification':'고급 설정: 작업 토큰 예산·결과 검증'}</summary>
+    <label className="mt-2 block" htmlFor="sdk-token-budget">
+     {en?'Rust agent token budget (estimated accounting; 1,000–20,000,000)':'Rust 에이전트 토큰 예산 (추정 기준 · 1,000~20,000,000)'}
+    </label>
+    <input id="sdk-token-budget" type="number" min={1000} max={20000000} step={1000}
+     value={budgetInput} onChange={e=>setBudgetInput(e.target.value)}
+     className="mt-1 h-9 w-56 max-w-full rounded-lg border border-[#E7E0D5] px-3 text-[12px]"/>
+    <p className="mt-1">{en?'The Rust kernel enforces this estimate-based limit. Provider-measured usage is displayed separately.':'Rust 커널이 추정 기준 예산을 적용합니다. 제공자 실측 토큰은 별도로 표시합니다.'}</p>
     <label className="mt-2 block" htmlFor="sdk-verify">
      {en?'Required verification command (must pass)':'필수 검증 명령어 (성공해야 완료)'}
     </label>
@@ -192,6 +204,10 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     <div className="flex flex-wrap items-center justify-between gap-2">
      <strong className="text-[12px]">{en?stateNames[status]?.[1]||status:stateNames[status]?.[0]||status}</strong>
      <span className="text-[11px] text-[#82796D]">{run.checkpoint?.rounds??0} {en?'rounds':'회 판단'} · {run.checkpoint?.toolCalls??0} {en?'actions':'회 도구 실행'}</span>
+    {run.tokenBudget&&<p className="mt-2 text-[11px] text-[#82796D]">
+     {en?'Kernel token budget':'커널 토큰 예산'}: {(run.checkpoint?.estimatedTokens??0).toLocaleString()} / {run.tokenBudget.toLocaleString()}
+     <span className="ml-1">{en?'(measured when available, otherwise estimated)':'(제공자 보고값 우선·누락 시 추정)'}</span>
+    </p>}
     {run.checkpoint?.usage&&<div className="mt-2 text-[11px] text-[#82796D]" aria-label={en?'Measured provider token usage':'제공자 측정 토큰 사용량'}>
      <p>{en?'Provider-reported (measured)':'제공자 보고값 (실측)'}: {run.checkpoint.usage.inputTokens.toLocaleString()} {en?'input':'입력'} · {run.checkpoint.usage.outputTokens.toLocaleString()} {en?'output':'출력'} · {run.checkpoint.usage.reportedCalls} {en?'reported calls':'회 보고'}</p>
      {run.checkpoint.usage.cacheReportedCalls>0&&<p className="mt-1">
