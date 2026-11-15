@@ -110,6 +110,18 @@ export class DominionThread {
     return {sessionId: this.id, taskId: record.id, record, events};
   }
 
+  /** Restart a completed or interrupted native task with a new instruction.
+   * No permission is silently recovered from the previous execution.
+   */
+  async continueFrom(previousTaskId: string, prompt: string, options: RunOptions = {}): Promise<StreamedRun> {
+    const {signal, after, ...overrides}=options;
+    const input: TaskInput = {...this.defaults,...overrides,prompt,sessionId:this.id};
+    const record=await this.client.resume(previousTaskId,input,signal);
+    this.latest=record.id;
+    return {sessionId:this.id,taskId:record.id,record,
+      events:this.untilFinished(record.id,after,signal)};
+  }
+
   private async *untilFinished(
     taskId: string, after: number | undefined, signal: AbortSignal | undefined,
   ): AsyncGenerator<TaskEvent> {
