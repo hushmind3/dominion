@@ -1,43 +1,41 @@
-# Dominion Runtime Architecture — 2026-11-15
+# Dominion Architecture — 2026-11-15
 
 ## One owner of execution
 
-```text
-Browser UI ────┐
-               ├── HTTP/SSE API → Rust task runtime → configured LLM
-TypeScript SDK ┘                    │
-                                   ├── local workspace tools
-                                   ├── owner correction/cancellation
-                                   └── SQLite tasks/events/transcript
-```
+~~~text
+Main React/Vite workspace ─┐
+                            ├─ HTTP / SSE ── native Rust SDK runtime ── model
+TypeScript SDK adapter ─────┘                     ├─ SQLite tasks and receipts
+                                                  ├─ permissioned tools
+                                                  ├─ group discussion
+                                                  ├─ video rendering
+                                                  ├─ improvement trials
+                                                  └─ memory and skills
+~~~
 
-The TypeScript package provides transport, types and a read-only reconnecting event stream. It does not independently decide which tool to run or when a task is complete.
+The main React/Vite presentation layer is preserved: responsive navigation, visual theme, i18n, reusable controls and existing page source. web/src/pages/NativeWorkspace.tsx replaces API-incompatible flows for the primary active workspaces with the champion native API. The UI is not its own agent runtime.
 
-The Rust worker claims one queued task with an atomic SQLite status transition. A repeated request ID cannot enqueue a second worker. Each model step reads the most recent queued user correction before sending the next request, checks cancellation before tool effects, and stores each tool observation before its next step. Verified file writes include a SHA-256 readback receipt.
+Vite builds to web/dist. The Rust loopback HTTP service uses ServeDir/ServeFile to serve the built React assets with an SPA index fallback; DOMINION_WEB_DIR overrides the build location. For development, the Vite proxy forwards /api to the Rust server.
 
-Task status is persisted independently from SSE subscribers. On restart, queued work is replayable; previously running work becomes `needs_review` because a remote effect could already have happened before a crash.
+## Source ownership
 
-## Source comparison informing the new boundaries
-
-- DeepSeek Harness (2026): event-backed sessions and agent-loop boundaries distinguish a persisted runtime from presentation. https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/core.md
-- Qwen Code (2026): HTTP clients and programmatic SDKs share a single execution core. https://github.com/QwenLM/qwen-code/blob/main/docs/developers/architecture.md
-- OpenAI Codex Rust source: native tool dispatch is isolated from agent-facing UI and provider transport. https://github.com/openai/codex/tree/main/codex-rs/core/src
-
-These are design comparisons, not borrowed execution policies or reproduced benchmarks.
-
-## Contracts and evidence
-
-| Path | Responsibility |
+| Surface | Source |
 | --- | --- |
-| `src/main.rs` | single loopback-bound Rust runtime and provider setup |
-| `src/api.rs` | validated task commands and replayable SSE |
-| `src/store.rs` | atomic SQLite admission, state, messages and receipts |
-| `src/engine.rs` | model requests, permissioned tool loop, verification and resource caps |
-| `web/index.html`, `web/app.js` | task submission, progress, corrections, cancellation and receipts |
-| `sdk/typescript/src/index.ts` | typed external HTTP/SSE access |
+| Native Rust SDK, task admission and concurrency | src/runtime.rs |
+| HTTP/SSE and static SPA hosting | src/api.rs |
+| Persisted execution and knowledge | src/store.rs |
+| Model / tool runtime | src/engine.rs |
+| Group discussion | src/group.rs |
+| Video | src/video.rs, src/veo.rs |
+| Isolated improvement experiments | src/improvement.rs |
+| Main visual shell and UX controls | web/src/App.tsx, web/src/components, web/src/theme.css |
+| Real Rust API page adapters | web/src/pages/NativeWorkspace.tsx |
+| External TypeScript transport | sdk/typescript |
 
-## Known boundaries
+## Runtime consistency and remaining migration
 
-The initial engine supports workspace file reads, opt-in verified writes, and opt-in constrained local test commands. Tool execution is sequential, not parallel. The model request is non-streaming; task events stream as durable SSE. The token cap stops **future** calls after a recorded provider usage report, but cannot undo an already billed request or infer missing usage.
+The Rust engine, not the UI, controls authorization, model turns and completion. Browser actions call the same task APIs as the external SDK, and per-task event streams replay persistent SQLite records. The frontend displays actual native records and does not invent model completions or video output.
 
-No real provider inference, paid invoice comparison, SWE-bench score, film output, distributed runner, or multi-user security audit is claimed by the source commit. Runtime tests need a Rust-equipped host. The first implementation emphasizes true native behavior rather than mock-complete feature surfaces.
+Not every imported main component has a matching champion Rust backend yet. Provider settings, detailed agent configuration, workflow design and some extensions are still missing end-to-end native API integration. The full legacy desktop packaging layer has not been adopted. This source integration does not constitute a compiled Rust build, verified browser E2E run or performance benchmark.
+
+Design references: DeepSeek Harness, Qwen Code and OpenAI Codex Rust sources from 2026. Comparisons informed boundaries and do not grant external engines decision authority.
