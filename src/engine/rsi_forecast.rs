@@ -9,12 +9,11 @@ use serde_json::{json, Value};
 /// Forecast training uses the evaluator's measured outcome, never a cached
 /// error/bias field that can be stale after replay or rewritten by a child.
 fn measured_holdout_gain(row:&Value)->Option<f64>{
-    if row["evaluation"]["source"]!="server_invoked_local_paired_git_worktrees"
-        || row["evaluation"]["metrics"]["eligible"]!=true {
-        return None;
-    }
-    row["evaluation"]["metrics"]["improvedHoldouts"]
-        .as_u64().map(|gain| gain as f64)
+    if row["pairedEvidenceVerified"]!=true { return None; }
+    // This observation is populated by history_with_verified_payoffs after
+    // replaying the original paired receipt. Rejected trials have zero gain;
+    // missing, forged or unmeasured trials have no training signal.
+    row["measuredImprovedHoldouts"].as_u64().map(|gain| gain as f64)
 }
 
 /// Reconstruct signed error from the forecast made before the run and the
@@ -124,9 +123,11 @@ mod tests {
         vec![
             json!({"domain":"memory","forecast":{"domain":"memory","predictedImprovedHoldouts":3.0,
                 "actualImprovedHoldouts":1.0,"error":2.0,"bias":2.0},
+                "pairedEvidenceVerified":true,"measuredImprovedHoldouts":1,
                 "evaluation":{"source":"server_invoked_local_paired_git_worktrees","metrics":{"eligible":true,"improvedHoldouts":1}}}),
             json!({"domain":"memory","forecast":{"domain":"memory","predictedImprovedHoldouts":3.0,
                 "actualImprovedHoldouts":2.0,"error":1.0,"bias":1.0},
+                "pairedEvidenceVerified":true,"measuredImprovedHoldouts":2,
                 "evaluation":{"source":"server_invoked_local_paired_git_worktrees","metrics":{"eligible":true,"improvedHoldouts":2}}}),
         ]
     }
@@ -158,7 +159,7 @@ mod tests {
 
     #[test]
     fn attach_needs_both_a_forecast_and_a_measurement() {
-        let mut generation = json!({"domain":"memory","evaluation":{"source":"server_invoked_local_paired_git_worktrees","metrics":{"eligible":true,"improvedHoldouts":2}}});
+        let mut generation = json!({"domain":"memory","pairedEvidenceVerified":true,"measuredImprovedHoldouts":2,"evaluation":{"source":"server_invoked_local_paired_git_worktrees","metrics":{"eligible":true,"improvedHoldouts":2}}});
         assert!(!attach(&mut generation, &json!({})));
         assert!(generation.get("forecast").is_none());
         let prior = json!({"domain":"memory","expectedImprovedHoldouts":3.0,"basis":"measured_domain_history"});
@@ -172,21 +173,21 @@ mod tests {
         rows[0]["forecast"]["error"]=json!(99999.0);
         rows[1]["forecast"]["bias"]=json!(-99999.0);
         assert_eq!(domain_error(&rows,"memory"),(1.5,1.5));
-        rows[0]["evaluation"]["source"]=json!("model_claim");
+        rows[0]["pairedEvidenceVerified"]=json!(false);
         assert_eq!(domain_error(&rows,"memory"),(1.0,1.0));
     }
 
     #[test]
     fn measured_domain_outcomes_precede_unrelated_forecasts(){
         let mut rows=history();
-        rows.push(json!({"domain":"tools",
-            "evaluation":{"source":"server_invoked_local_paired_git_worktrees",
+        rows.push(json!({"domain":"tools","pairedEvidenceVerified":true,
+            "measuredImprovedHoldouts":7,"evaluation":{"source":"server_invoked_local_paired_git_worktrees",
                 "metrics":{"eligible":true,"improvedHoldouts":7}}}));
         let forecast=forecast_next(&rows,"tools","retry");
         assert_eq!(forecast["basis"],"measured_domain_history");
         assert_eq!(forecast["expectedImprovedHoldouts"],7.0);
         // Invalid evaluator results are not trusted as cross-domain history.
-        rows[2]["evaluation"]["source"]=json!("model_claim");
+        rows[2]["pairedEvidenceVerified"]=json!(false);
         let forecast=forecast_next(&rows,"tools","retry");
         assert_eq!(forecast["basis"],"measured_global_history");
         assert_eq!(forecast["expectedImprovedHoldouts"],1.5);
@@ -196,14 +197,31 @@ mod tests {
     fn off_domain_or_unverified_results_do_not_train_predictor(){
         let prior=json!({"domain":"memory",
             "expectedImprovedHoldouts":3.0,"basis":"measured_domain_history"});
-        let mut generation=json!({"domain":"tools",
-            "evaluation":{"source":"server_invoked_local_paired_git_worktrees",
+        let mut generation=json!({"domain":"tools","pairedEvidenceVerified":true,
+            "measuredImprovedHoldouts":1,"evaluation":{"source":"server_invoked_local_paired_git_worktrees",
                 "metrics":{"eligible":true,"improvedHoldouts":1}}});
         assert!(!attach(&mut generation,&prior));
         generation["domain"]=json!("memory");
-        generation["evaluation"]["metrics"]["eligible"]=json!(false);
+        generation["pairedEvidenceVerified"]=json!(false);
         assert!(!attach(&mut generation,&prior));
         assert!(generation.get("forecast").is_none());
+    }
+
+    #[test]
+    fn failed_replayed_trials_reduce_expected_gain_instead_of_disappearing(){
+        let mut rows=history();
+        for _ in 0..4 {
+            rows.push(json!({"domain":"memory","pairedEvidenceVerified":true,
+                "measuredImprovedHoldouts":0,
+                "evaluation":{"source":"server_invoked_local_paired_git_worktrees",
+                    "metrics":{"eligible":false,"improvedHoldouts":0}}}));
+        }
+        let forecast=forecast_next(&rows,"memory","rejected_patch");
+        assert_eq!(forecast["basis"],"measured_domain_history");
+        // (1+2)/6 mean gain is .5; calibration penalizes the former optimism.
+        assert_eq!(forecast["expectedImprovedHoldouts"],0.0);
+        rows.last_mut().unwrap()["pairedEvidenceVerified"]=json!(false);
+        assert_eq!(forecast_next(&rows,"memory","rejected_patch")["expectedImprovedHoldouts"],0.0);
     }
 
 }
