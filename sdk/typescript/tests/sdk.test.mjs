@@ -88,3 +88,16 @@ test('abort ends durable polling before any network request',async()=>{
   await assert.rejects(d.waitForJob('j',{signal:controller.signal}),e=>e.name==='AbortError');
   assert.equal(calls,0);
 });
+
+test('owner steering uses the same native job and revision contract',async()=>{
+  let call;
+  const d=new Dominion({token:'token',fetch:async(url,init)=>{
+    call={url,init};
+    return json({jobId:'abc',steeringRevision:1,appliesAt:'next_model_turn'});
+  }});
+  const applied=await d.jobs.steer('abc','Check the actual tests');
+  assert.equal(applied.steeringRevision,1);
+  assert.equal(call.url,'http://127.0.0.1:4317/api/jobs/abc/steer');
+  assert.equal(call.init.headers.get('X-Dominion-Token'),'token');
+  assert.deepEqual(JSON.parse(call.init.body),{instruction:'Check the actual tests'});
+});
