@@ -298,8 +298,13 @@ async fn tool(state: &AppState, current_task: &str, current_session: &str,
 
 fn settle(state: &AppState, id: &str, status: &str, answer: &str,
     verified_writes: u64, error: Option<String>) {
+    let acceptance=if status=="completed" {state.store.last_acceptance(id)}
+        else {None};
+    let label=if acceptance.as_ref().is_some_and(|v|v["passed"]==true){
+        "source_sha256_and_fresh_command_checks"
+    }else{"workspace_readback_sha256_only"};
     let result = json!({"answer":answer,"verifiedWrites":verified_writes,
-        "verification":"workspace_readback_sha256"});
+        "verification":label,"acceptance":acceptance});
     if let Some(task) = state.store.finish(id,status,result,error) {
         state.emit(id,"finished",json!({"status":task["status"],
             "result":task["result"],"error":task["error"]}));
