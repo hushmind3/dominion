@@ -2224,14 +2224,10 @@ async fn run_turn_body(
                 let mut end = call_index + 1;
                 if parallel_reads && tool_is_read_only(&call.name) {
                     let candidate_end = adjacent_read_batch_end(&round_calls, call_index, 4);
-                    let completed = state.store.all("execution_operation").into_iter()
-                        .filter(|op| op["runId"].as_str() == Some(execution_id)
-                            && op["status"].as_str() == Some("completed"))
-                        .collect::<Vec<_>>();
                     while end < candidate_end {
                         if !parallel_read_admitted(
                             &round_calls[end], &session, &round_tools,
-                            &strategy_candidates, &request.input, &completed,
+                            &strategy_candidates, &request.input, &completed_operations,
                         ) || !budget.can_execute_tool() {
                             break;
                         }
@@ -2259,6 +2255,9 @@ async fn run_turn_body(
                 }
                 let results = futures_util::future::join_all(futures).await;
                 if end > call_index + 1 {
+                    let _ = crate::engine::algorithms::choose_for_agent(
+                        state, "tool.combination", request.agent_id.as_deref(), Some(execution_id),
+                    );
                     crate::engine::algorithms::mark_signal(
                         state, execution_id, "tool.combination",
                         results.iter().all(|result| result.as_ref().is_ok_and(|(_, ok, _)| *ok)),
