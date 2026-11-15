@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, future::Future, pin::Pin};
 mod scheduler;
 mod acceptance;
+mod context;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -220,13 +221,6 @@ fn estimate_tokens(text: &str) -> u64 {
     let unicode=text.chars().count().saturating_sub(ascii);
     ascii.div_ceil(4) as u64 + unicode as u64
 }
-fn shortened(value: &Value, max_chars: usize) -> String {
-    let content = value.to_string();
-    let total = content.chars().count();
-    if total <= max_chars { return content; }
-    let head: String = content.chars().take(max_chars).collect();
-    format!("{head} ... [truncated {total} chars; full receipt preserved]")
-}
 fn decode(content: &str) -> Result<Decision, String> {
     let raw = content.trim();
     // Some compatible model providers wrap structured output in a fenced
@@ -319,6 +313,11 @@ impl Kernel<'_> {
             }
             tools.insert(spec.name.clone(), spec);
         }
+        // Internal observation tools only read immutable same-run receipts.
+        // They never dispatch an external action or increase user permissions.
+        for spec in context::internal_specs() {
+            tools.insert(spec.name.clone(),spec);
+        }
         let mut sorted_tools = tools.values().collect::<Vec<_>>();
         sorted_tools.sort_by(|a,b|a.name.cmp(&b.name));
         let definitions: Vec<Value> = sorted_tools.into_iter().map(|spec| json!({
@@ -341,6 +340,9 @@ impl Kernel<'_> {
             Rust will execute outstanding exact tests. If a test fails, inspect the recorded \
             diagnostic, modify the source and propose completion again. A requested source \
             edit requires a workspace tool receipt with written=true. \
+            Previous tool outputs are still stored in the durable journal. \
+            Use dominion_receipt_search and dominion_receipt_read for prior details, \
+            never replay external effects merely to retrieve an observation. \
             Only call tools from this allowed catalog: {}. \
             Strategy: {:?}. Owner instructions: {}.",
             serde_json::to_string(&definitions).map_err(|e| e.to_string())?,
@@ -358,22 +360,18 @@ impl Kernel<'_> {
                 break;
             }
             run.step = step + 1;
-            // Route policy adjusts actual prompt and observation cost, not
-            // just a strategy label. LowCost reduces repeated observations.
-            let (tail_count,detail_chars)=match request.strategy {
-                Strategy::LowCost=>(6,request.limits.max_result_chars.min(1000)),
-                Strategy::VerifyFirst=>(16,request.limits.max_result_chars),
-                Strategy::Balanced=>(12,request.limits.max_result_chars),
-            };
-            let tail: Vec<Value> = run.receipts.iter().rev().take(tail_count).rev()
-                .map(|r| json!({"id":r.id,"tool":r.tool,"success":r.success,
-                    "result":shortened(&r.result,detail_chars)}))
-                .collect();
+            // Compact only the model's view. Full receipts remain durable
+            // and can be searched/retrieved by internal read-only tools.
+            let projected=context::project(&run.receipts,
+                request.strategy,request.limits.max_result_chars);
             let current_directive=self.journal.directive(&request.id)?;
             let prompt = json!({
                 "userTask":request.instruction,
                 "latestOwnerDirective":current_directive, "ownerInstructions":request.owner_instructions,
-                "currentPlan":run.plan, "recentObservations":tail,
+                "currentPlan":run.plan, "recentObservations":projected.recent,
+                "importantPastFailures":projected.important_failures,
+                "historicalReceiptIndex":projected.history_index,
+                "executionDigest":projected.digest,
                 "requiredAcceptanceChecks":request.checks,
                 "verificationGaps":run.checks.iter().filter(|v| !v.satisfied)
                     .map(|v| &v.explanation).collect::<Vec<_>>(),
@@ -625,7 +623,14 @@ impl Kernel<'_> {
                     run.in_flight = ready.clone();
                     // Durable write-ahead marker: fail closed if storage fails.
                     self.journal.save(&run)?;
-                    let results = join_all(ready.iter().map(|action| self.tools.execute(action))).await;
+                    // Kernel-local observability never reaches the host. Every
+                    // external effect still passes through normal permissions.
+                    let history=&run.receipts;
+                    let results=join_all(ready.iter().map(|action| async move {
+                        if let Some(result)=context::execute_local(action,history) {
+                            result
+                        } else {self.tools.execute(action).await}
+                    })).await;
                     for (action, outcome) in ready.iter().zip(results) {
                         let (success, result) = match outcome {
                             Ok(data) => (true, data),
