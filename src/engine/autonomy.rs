@@ -81,6 +81,15 @@ fn narrow(text:&str,max:usize)->String {
     limited
 }
 /// Stop paying for the same unsuccessful model turn without fresh evidence.
+fn usage_delta(previous:&Value,current:&Value)->Value {
+    let mut out=json!({});
+    for key in ["calls","promptTokens","completionTokens","totalTokens","estimatedCalls"] {
+        let before=previous[key].as_u64().unwrap_or(0);
+        let after=current[key].as_u64().unwrap_or(0);
+        out[key]=json!(after.saturating_sub(before));
+    }
+    out
+}
 fn stalled(previous:&[String],current:&[String],new_evidence:usize,
     previous_error:Option<&str>,error:Option<&str>)->bool{
     !current.is_empty() && previous==current
@@ -146,8 +155,11 @@ pub async fn execute(
                 turn.input.push_str(&instructions.join("\n"));
             }
         }
+        let usage_before=ctx.state.store.session_usage(session_id);
         let (outcome, stats):(Result<Option<Value>,String>,TurnStats)=
             run_quiet_outcome(&ctx.state,&turn).await;
+        let usage_after=ctx.state.store.session_usage(session_id);
+        let measured_usage=usage_delta(&usage_before,&usage_after);
         let latest_error=outcome.as_ref().err().cloned();
         last_message=outcome.as_ref().ok().and_then(|msg|msg.as_ref())
             .map(|msg|msg["id"].clone()).unwrap_or(Value::Null);
@@ -187,6 +199,7 @@ pub async fn execute(
             "toolSuccess":stats.tool_success,
             "toolErrors":stats.tool_errors,
             "evidenceCount":stats.evidence.len(),
+            "usage":measured_usage,
             "gaps":gaps.iter().take(8).map(|g|narrow(g,400)).collect::<Vec<_>>(),
             "error":latest_error.as_deref().map(|e|narrow(e,500)),
         });
@@ -255,6 +268,15 @@ mod tests{
         assert!(text.contains("수정해"));
         assert!(text.len()<4000);
         assert_eq!(CycleConfig::from_input(&json!({"maxAutonomousAttempts":100})).attempts,6);
+    }
+    #[test]
+    fn model_usage_is_measured_from_engine_audit_not_estimated_by_length(){
+        let before=json!({"calls":2,"promptTokens":100,"completionTokens":10,"totalTokens":110});
+        let after=json!({"calls":3,"promptTokens":170,"completionTokens":25,"totalTokens":195});
+        let delta=usage_delta(&before,&after);
+        assert_eq!(delta["calls"],1);
+        assert_eq!(delta["promptTokens"],70);
+        assert_eq!(delta["totalTokens"],85);
     }
     #[test]
     fn identical_failed_attempts_stop_before_wasting_more_tokens(){
