@@ -66,3 +66,7 @@ cargo test --release edit_method_reward_requires_measured_quality_for_full_credi
 ```
 
 No local Rust toolchain or full CI was available in the present session, so these tests are **added but not claimed to have passed**. A demonstrated improvement in descendant performance requires separate equal-budget paired model campaigns with retained raw outcomes.
+
+## GitHub Actions verification request (2026-11-15)
+
+This commit explicitly requests the existing push-triggered CI workflow on the current Sub2 HEAD, including the Ubuntu/macOS/Windows release-mode Rust tests and web typecheck/build. No UI files or application configuration have been changed. CI conclusions must be read from GitHub Actions and are not presumed here.
