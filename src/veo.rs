@@ -39,8 +39,8 @@ impl Veo {
         }
         let billed_krw_per_second=env::var("DOMINION_VEO_KRW_PER_SECOND").ok()
             .and_then(|s|s.parse::<f64>().ok()).unwrap_or(0.0);
-        if !billed_krw_per_second.is_finite()||billed_krw_per_second<0.0||billed_krw_per_second>1_000_000.0{
-            return Err("invalid DOMINION_VEO_KRW_PER_SECOND".into());
+        if !billed_krw_per_second.is_finite()||billed_krw_per_second<=0.0||billed_krw_per_second>1_000_000.0{
+            return Err("Set a positive DOMINION_VEO_KRW_PER_SECOND estimate before paid video generation".into());
         }
         let client=Client::builder().timeout(Duration::from_secs(60))
             .redirect(reqwest::redirect::Policy::none())
