@@ -13,6 +13,7 @@ export interface ThreadOptions {
   /** Capabilities are opt-in, and cannot exceed the Rust server's permissions. */
   allowWrite?: boolean;
   allowShell?: boolean;
+  allowMcp?: boolean;
   requireEvidence?: boolean;
   maxSteps?: number;
   tokenBudget?: number;
@@ -76,6 +77,7 @@ export class DominionThread {
     this.defaults = {
       allowWrite: options.allowWrite ?? false,
       allowShell: options.allowShell ?? false,
+      allowMcp: options.allowMcp ?? false,
       requireEvidence: options.requireEvidence ?? false,
       maxSteps: options.maxSteps,
       tokenBudget: options.tokenBudget,
