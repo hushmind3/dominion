@@ -14,6 +14,8 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/health",get(health))
         .route("/api/settings/owner-profile",get(owner_profile).post(save_owner_profile))
+        .route("/api/agents",get(agents).post(agent_create))
+        .route("/api/agents/:id",axum::routing::delete(agent_delete))
         .route("/api/tasks",get(list).post(submit))
         .route("/api/tasks/:id",get(one))
         .route("/api/tasks/:id/cancel",post(cancel))
@@ -53,6 +55,27 @@ pub fn router(state: AppState) -> Router {
 async fn health(State(state):State<AppState>) -> Json<Value> {
     Json(json!({"ok":true,"engine":"rust","model":state.model_name,
         "workspace":state.workspace.to_string_lossy(),"localOnly":true}))
+}
+async fn agents(State(state):State<AppState>)->Json<Value>{
+    Json(json!(crate::runtime::DominionSdk::from_state(state).agents()))
+}
+async fn agent_create(State(state):State<AppState>,Json(body):Json<Value>)->Response{
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.agent_create(
+        body["name"].as_str().unwrap_or(""),
+        body["description"].as_str().unwrap_or(""),
+        body["instructions"].as_str().unwrap_or("")
+    ) {
+        Ok(record)=>(StatusCode::CREATED,Json(record)).into_response(),
+        Err(error)=>(StatusCode::BAD_REQUEST,Json(json!({"error":error.to_string()}))).into_response()
+    }
+}
+async fn agent_delete(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.agent_delete(&id) {
+        Ok(changed)=>Json(json!({"ok":changed})).into_response(),
+        Err(error)=>(StatusCode::BAD_REQUEST,Json(json!({"error":error.to_string()}))).into_response()
+    }
 }
 async fn owner_profile(State(state):State<AppState>) -> Json<Value> {
     Json(state.store.owner_profile())
