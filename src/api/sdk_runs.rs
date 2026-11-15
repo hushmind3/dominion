@@ -283,6 +283,12 @@ mod tests{
         let state=AppState::new(cfg.clone(),
             crate::db::Store::open(&cfg.db_path()).unwrap(),
             crate::vault::Vault::open(&cfg.key_path()));
+        state.store.put("provider",&json!({
+            "id":"native-main-default","name":"Mock native provider",
+            "enabled":true,"kind":"openai","toolMode":"native",
+            "local":true,"model":"test-native",
+            "baseUrl":"http://127.0.0.1:9/v1"
+        })).unwrap();
         (state,root)
     }
     #[tokio::test]
@@ -300,6 +306,8 @@ mod tests{
         let id=shown["id"].as_str().unwrap();
         let job=state.store.get("job",id).unwrap();
         assert_eq!(job["kind"],"prompt");
+        assert_eq!(job["input"]["clientSurface"],"native_agent_panel");
+        assert_eq!(job["input"]["providerId"],"native-main-default");
         assert_eq!(job["input"]["checks"][0]["type"],"tool_succeeded");
         assert_eq!(job["input"]["checks"][0]["tool"],"shell_exec");
         assert_eq!(job["input"]["checks"][0]["contains"],"cargo test --workspace");
@@ -311,6 +319,48 @@ mod tests{
         assert_eq!(state.store.get("job",id).unwrap()["status"],"cancelled");
         assert_eq!(cancel(State(state.clone()),Path("missing".into())).await.status(),
             StatusCode::NOT_FOUND);
+        let _=std::fs::remove_dir_all(root);
+    }
+    #[tokio::test]
+    async fn automatic_model_selection_skips_legacy_incompatible_provider_before_queueing(){
+        let (state,root)=temporary_state();
+        state.store.put("provider",&json!({
+            "id":"legacy-local","name":"Legacy",
+            "kind":"ollama","model":"legacy-model","enabled":true,
+            "toolMode":"compat","local":true,
+            "baseUrl":"http://127.0.0.1:9"
+        })).unwrap();
+        let legacy=native_panel_provider(&state,Some("legacy-local"));
+        assert!(legacy.is_err(),"explicit non-native route must be rejected");
+        let automatic=native_panel_provider(&state,None).unwrap();
+        assert_eq!(automatic,"native-main-default");
+        let rejected=create(State(state.clone()),Json(json!({
+            "instruction":"Modify README",
+            "providerId":"legacy-local"
+        }))).await;
+        assert_eq!(rejected.status(),StatusCode::BAD_REQUEST);
+        assert!(state.store.all("job").is_empty(),
+            "unsupported model must never create a queued job");
+        let _=std::fs::remove_dir_all(root);
+    }
+    #[tokio::test]
+    async fn autonomous_panel_history_excludes_other_menus_prompt_jobs(){
+        let (state,root)=temporary_state();
+        state.store.put("job",&json!({"id":"from-chat-or-automation",
+            "kind":"prompt","status":"completed",
+            "queuedAt":"2099-01-01T00:00:00Z",
+            "input":{"prompt":"private background task"}})).unwrap();
+        let Json(before)=list(State(state.clone())).await;
+        assert_eq!(before.as_array().unwrap().len(),0);
+        let created=create(State(state.clone()),Json(json!({
+            "instruction":"Inspect a project"
+        }))).await;
+        assert_eq!(created.status(),StatusCode::ACCEPTED);
+        let Json(after)=list(State(state.clone())).await;
+        assert_eq!(after.as_array().unwrap().len(),1);
+        assert_eq!(after[0]["instruction"],"Inspect a project");
+        assert_eq!(state.store.get("job","from-chat-or-automation").unwrap()
+            ["status"],"completed","other menu's durable job must remain intact");
         let _=std::fs::remove_dir_all(root);
     }
     #[tokio::test]
