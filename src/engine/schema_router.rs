@@ -131,7 +131,7 @@ pub(super) fn discover(catalog:&[Value],query:&str,limit:usize)->Value {
         }).collect::<Vec<_>>();
     json!({"tools":entries,"eligibleMcpTools":count,
         "matchingTools":matched,
-        "note":"The listed tools become available with full argument schemas in the next model turn. If a tool is missing, search with a more specific name or English capability keyword."})
+        "note":"These are discovery candidates. Only names in the separate promoted array become callable on the next model turn; narrow your query when an oversized schema cannot fit."})
 }
 
 #[cfg(test)]
@@ -192,11 +192,12 @@ mod tests {
     #[test]
     fn external_schema_budget_failure_never_silently_breaks_explicit_discovery(){
         let all=catalog();
+        let empty=select(&all,"other",&HashSet::new(),5500).unwrap();
+        let minimum=empty.selected_bytes;
         let mut promoted=HashSet::new();
         promoted.insert("mcp__service__action12".into());
-        assert!(select(&all,"other",&promoted,500).is_err());
-        assert!(select(&all,"other",&promoted,1900).is_err());
-        let selected=select(&all,"other",&HashSet::new(),1900).unwrap();
+        assert!(select(&all,"other",&promoted,minimum).is_err());
+        let selected=select(&all,"other",&HashSet::new(),minimum).unwrap();
         assert!(selected.selected_mcp.is_empty());
     }
     #[test]
