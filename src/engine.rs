@@ -43,6 +43,7 @@ fn specs(allow_write: bool, allow_shell: bool, allow_subagents: bool) -> Vec<Val
         "description":"Read an exact byte page from a durable previous tool observation. Offsets and SHA-256 allow reconstruction without replaying an external effect.",
         "parameters":{"type":"object","properties":{
             "callId":{"type":"string"},
+            "sourceTaskId":{"type":"string","description":"Optional linked ancestor task ID from explicit native continuation. Never an arbitrary task."},
             "offsetBytes":{"type":"integer","minimum":0},
             "maxBytes":{"type":"integer","minimum":16,"maximum":8192}
         },"required":["callId"],"additionalProperties":false}
@@ -142,8 +143,12 @@ async fn tool(state: &AppState, current_task: &str, current_session: &str,
     match name {
         "task_receipt" => {
             let call_id=args["callId"].as_str().ok_or("Call identifier required")?;
-            let receipt=state.store.tool_receipt(current_task,call_id)
-                .ok_or("A persisted receipt with that call ID was not found for this task")?;
+            let source_task=args["sourceTaskId"].as_str().unwrap_or(current_task);
+            if !state.store.receipt_source_allowed(current_task,source_task) {
+                return Err("This tool receipt is not in the current task's verified continuation lineage".into());
+            }
+            let receipt=state.store.tool_receipt(source_task,call_id)
+                .ok_or("No committed receipt with that identifier exists in the allowed task")?;
             let offset=args["offsetBytes"].as_u64().unwrap_or(0)
                 .min(usize::MAX as u64) as usize;
             let max=args["maxBytes"].as_u64().unwrap_or(4096)
@@ -791,6 +796,35 @@ mod tests {
         let events=state.store.events_after(&id,0,100);
         assert!(events.iter().any(|e|e["type"]=="tool_result"));
         assert!(events.iter().any(|e|e["type"]=="finished"));
+        let _=std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn resumed_task_can_read_prior_receipt_but_not_an_unrelated_task(){
+        let (url,_)=mock_provider(false).await;
+        let (state,root)=mock_state(url).await;
+        let (prior,_)=state.store.submit("prior-receipt-2026",
+            &json!({"prompt":"read","sessionId":null})).unwrap();
+        let old_id=prior["id"].as_str().unwrap().to_string();
+        state.store.append_event(&old_id,"tool_result",
+            json!({"callId":"previous-proof","outcome":{
+                "receipt":{"content":"persisted evidence"}}})).unwrap();
+        let (next,_)=state.store.submit_continuation("new-receipt-2026",
+            &json!({"prompt":"continue","sessionId":old_id}),&old_id,"completed").unwrap();
+        let new_id=next["id"].as_str().unwrap();
+        let page=tool(&state,new_id,&old_id,"task_receipt",
+            &json!({"sourceTaskId":old_id,"callId":"previous-proof",
+                "offsetBytes":0,"maxBytes":4096}),false,false).await.unwrap();
+        assert!(page["page"].as_str().unwrap().contains("persisted evidence"));
+        let (foreign,_)=state.store.submit("foreign-receipt-2026",
+            &json!({"prompt":"other","sessionId":old_id})).unwrap();
+        let outside=foreign["id"].as_str().unwrap();
+        state.store.append_event(outside,"tool_result",
+            json!({"callId":"previous-proof","outcome":{"secret":"foreign"}})).unwrap();
+        let denied=tool(&state,new_id,&old_id,"task_receipt",
+            &json!({"sourceTaskId":outside,"callId":"previous-proof"}),
+            false,false).await;
+        assert!(denied.is_err());
         let _=std::fs::remove_dir_all(root);
     }
 
