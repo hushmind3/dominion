@@ -180,6 +180,24 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
     let mut input=json!({"prompt":instruction,"toolsEnabled":true,
         "toolsExecutionEnabled":true,"providerId":id,
         "clientSurface":"native_agent_panel"});
+    // Main's public run contract also accepts an explicit model and a
+    // round budget. Apply both to the actual Rust job, never just echo them.
+    if let Some(model)=body["model"].as_str().filter(|model|!model.trim().is_empty()){
+        let route=match gateway::resolve(&state,&id,Some(model)){
+            Ok(route)=>route,
+            Err(message)=>return error(StatusCode::BAD_REQUEST,&message),
+        };
+        if route.kind=="cli" || route.tool_mode=="compat"{
+            return error(StatusCode::BAD_REQUEST,
+                "이 모델은 네이티브 작업 도구 실행을 지원하지 않습니다.");
+        }
+        input["model"]=json!(route.model);
+    }
+    if let Some(rounds)=body["maxRounds"].as_u64(){
+        let rounds=rounds.clamp(1,80);
+        input["maxSteps"]=json!(rounds);
+        input["maxModelCalls"]=json!(rounds);
+    }
     if !verify.is_empty(){
         input["acceptanceChecks"]=json!([{"type":"command_succeeded",
             "command":verify}]);
@@ -377,6 +395,25 @@ mod tests{
             StatusCode::NOT_FOUND);
         let _=std::fs::remove_dir_all(root);
     }
+    #[tokio::test]
+    async fn main_run_contract_applies_model_and_round_limit_to_the_real_job(){
+        let (state,root)=temporary_state();
+        let response=create(State(state.clone()),Json(json!({
+            "instruction":"Inspect and edit a real file",
+            "providerId":"native-main-default",
+            "model":"test-native",
+            "maxRounds":5
+        }))).await;
+        assert_eq!(response.status(),StatusCode::ACCEPTED);
+        let bytes=to_bytes(response.into_body(),1024*1024).await.unwrap();
+        let view:Value=serde_json::from_slice(&bytes).unwrap();
+        let job=state.store.get("job",view["id"].as_str().unwrap()).unwrap();
+        assert_eq!(job["input"]["model"],"test-native");
+        assert_eq!(job["input"]["limits"]["maxSteps"],5);
+        assert_eq!(job["input"]["limits"]["maxModelCalls"],5);
+        let _=std::fs::remove_dir_all(root);
+    }
+
     #[tokio::test]
     async fn automatic_model_selection_skips_legacy_incompatible_provider_before_queueing(){
         let (state,root)=temporary_state();
