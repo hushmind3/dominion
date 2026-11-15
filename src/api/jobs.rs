@@ -49,3 +49,47 @@ pub async fn cancel(State(state):State<AppState>,Path(id):Path<String>)->Respons
         Some(saved)=>{state.bus.record("job",&saved);Json(saved).into_response()},None=>state.store.get("job",&id).map(|j|Json(j).into_response()).unwrap_or_else(||error(StatusCode::CONFLICT,"작업 상태가 변경되었습니다."))
     }
 }
+
+
+/// Owner steering persists in the same job record; the native Rust cycle
+/// reads it before each turn, not through an unrelated model SDK.
+pub async fn steer(
+    State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>
+)->Response{
+    let Some(instruction)=body["instruction"].as_str().map(str::trim)
+        .filter(|s|!s.is_empty()&&s.len()<=4000)else{
+        return error(StatusCode::BAD_REQUEST,"추가 지시는 1~4000자로 입력하세요.");
+    };
+    for _ in 0..4 {
+        let Some(job)=state.store.get("job",&id)else{
+            return error(StatusCode::NOT_FOUND,"작업을 찾을 수 없습니다.");
+        };
+        if job["kind"]!="prompt" || job["input"]["rsiSourceDir"].is_string(){
+            return error(StatusCode::BAD_REQUEST,"일반 자율 실행 작업에서만 추가 지시를 지원합니다.");
+        }
+        if !matches!(job["status"].as_str(),Some("queued"|"running")){
+            return error(StatusCode::CONFLICT,"진행 중인 작업만 수정할 수 있습니다.");
+        }
+        let mut steering=job["steering"].as_array().cloned().unwrap_or_default();
+        if steering.len()>=8 {
+            return error(StatusCode::CONFLICT,"작업당 추가 지시는 최대 8회입니다.");
+        }
+        let revision=job["steeringRevision"].as_u64().unwrap_or(0);
+        steering.push(json!({
+            "revision":revision+1,"instruction":instruction,
+            "at":chrono::Utc::now().to_rfc3339(),
+        }));
+        if let Some(saved)=state.store.patch_if(
+            "job",&id,"steeringRevision",job.get("steeringRevision").unwrap_or(&Value::Null),
+            &json!({"steeringRevision":revision+1,"steering":steering}),
+        ){
+            state.bus.record("job",&saved);
+            state.store.audit("job.steer",json!({"jobId":id,"revision":revision+1}));
+            return Json(json!({
+                "jobId":id,"steeringRevision":revision+1,
+                "appliesAt":"next_model_turn"
+            })).into_response();
+        }
+    }
+    error(StatusCode::CONFLICT,"작업이 동시에 수정되어 추가 지시를 저장하지 못했습니다.")
+}
