@@ -177,8 +177,26 @@ impl DominionSdk {
         store.recover().map_err(RuntimeError)?;
         let (bus, _) = broadcast::channel(2048);
         let mcp = std::sync::Arc::new(crate::mcp::Mcp::from_env().map_err(RuntimeError)?);
+        let rate = |key: &str| env::var(key).ok().and_then(|text| text.parse::<f64>().ok())
+            .unwrap_or(0.0);
+        let mut main = crate::provider::ModelConfig::basic(
+            config.model_url.clone(),config.model_name.clone(),config.api_key.clone()
+        );
+        main.input_krw_per_million=rate("DOMINION_INPUT_KRW_PER_MILLION");
+        main.output_krw_per_million=rate("DOMINION_OUTPUT_KRW_PER_MILLION");
+        let economy = env::var("DOMINION_ECONOMY_MODEL_URL").ok().map(|endpoint| {
+            let mut cheap = crate::provider::ModelConfig::basic(
+                endpoint,env::var("DOMINION_ECONOMY_MODEL")
+                    .unwrap_or_else(|_|config.model_name.clone()),
+                env::var("DOMINION_ECONOMY_API_KEY").ok()
+            );
+            cheap.input_krw_per_million=rate("DOMINION_ECONOMY_INPUT_KRW_PER_MILLION");
+            cheap.output_krw_per_million=rate("DOMINION_ECONOMY_OUTPUT_KRW_PER_MILLION");
+            cheap
+        });
+        let provider = crate::provider::ModelClient::new(main,economy).map_err(RuntimeError)?;
         let state = AppState {
-            store, bus, mcp,
+            store, bus, mcp, provider,
             http: reqwest::Client::builder().timeout(Duration::from_secs(90))
                 .build().map_err(|error| RuntimeError(error.to_string()))?,
             workspace,
