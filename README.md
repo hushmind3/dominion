@@ -75,6 +75,8 @@ The lineage record persists candidate IDs, adoption count, budget use and stop c
 
 See **[Native RSI evolution architecture and test evidence](docs/RSI_EVOLUTION.md)** for exact API inputs, real Git integration tests, failure behavior and limitations.
 
+Source-integrity acceptance: the native Rust check runner fingerprints project source/configuration bytes before and after each allowed test command. Even process exit code 0 is a failed proof when code changes during checking. The tool receipt stores both SHA-256 values and sourceUnchanged. Old passing results are invalidated. A real Node regression changes its own source while returning exit 0 and must end in needs_review. Build/dependency outputs are excluded; this integrity check is not an OS sandbox. Details: src/engine/source_integrity.rs and docs/CODING_ACCEPTANCE.md.
+
 ## Native self-repairing code acceptance (second focused capability)
 
 The actual \`src/engine.rs\` model/tool loop can now **read source → edit one or several files → execute owner-approved tests → read real compiler/test errors → repair → re-run tests → complete**. This is native Rust behavior, not a TypeScript agent wrapper or a prompt-only promise.

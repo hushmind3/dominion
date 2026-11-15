@@ -99,3 +99,11 @@ For real frontier parity, compare on identical SWE-bench Verified tasks, reposit
 ## Unfinished frontier work
 
 Real-provider repair success rate and token cost across diverse codebases remain unmeasured. Source edits currently run directly in a single-owner workspace under a shared lease, not a hardened process sandbox or isolated per-task Git worktree. Rollback after abrupt power loss and conflict resolution with external editors require further work. Browser visual regression and dependency-install policies are not present. None of those are represented as passing features by this proof.
+
+## Check-time source integrity
+
+Every approved executable check now measures a bounded, deterministic SHA-256 inventory of workspace source/configuration files before and after the real process. A green exit code is insufficient if the command rewrites or creates source files. The receipt includes sourceUnchanged, sourceBeforeSha256 and sourceAfterSha256; any mismatch forces success=false and invalidates earlier acceptance proofs. The agent gets the recorded diagnostic and can attempt a new repair within the original step budget.
+
+Excluded generated dependency/build directories include node_modules, target, dist, build and caches. The audit does not follow symlinks and fails closed if the project cannot be read or exceeds its declared inventory bounds. It is not a hardened sandbox: transient modifications reversed before the final hash and changes to non-source artifacts can escape detection. Untrusted projects require OS isolation as a separate engine backend.
+
+Real Node integration regression: green_test_that_rewrites_source_is_rejected_at_real_native_completion. Unit checks cover generated output exclusion, symlink non-following and invalidation of a prior green proof.
