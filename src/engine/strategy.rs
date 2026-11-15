@@ -35,6 +35,14 @@ pub fn complex(text: &str) -> bool {
     count >= 2 || (count >= 1 && text.chars().count() > 180)
 }
 
+pub fn source_change_requested(text: &str) -> bool {
+    let text = text.to_lowercase();
+    ["write", "create", "edit", "implement", "fix", "refactor",
+     "patch", "update", "delete", "작성", "생성", "수정",
+     "구현", "고쳐", "삭제", "파일을 만들", "코드를 바꾸"]
+        .iter().any(|marker| text.contains(marker))
+}
+
 pub fn action_requested(text: &str) -> bool {
     let text = text.to_lowercase();
     [
