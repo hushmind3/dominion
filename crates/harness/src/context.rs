@@ -87,7 +87,7 @@ mod tests {
         ]));
         messages.push(Message::tool_result("call_a", "first result"));
         messages.push(Message::assistant("final answer"));
-        let removed = ContextBudget::new(25).trim(&mut messages);
+        let removed = ContextBudget::new(10).trim(&mut messages);
         assert_eq!(removed, 3);
         assert_eq!(messages.len(), 2);
     }
