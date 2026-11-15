@@ -155,6 +155,64 @@ pub fn repair_feedback(check:&Check,observation:&Value,revision:u64)->String{
         end(error,2000)
     )
 }
+/// Execute only the owner's exact checks. The tool result is committed before
+/// the agent receives it. A persisted failure is reused until a new mutation,
+/// avoiding repeated commands against the same failing workspace revision.
+pub(super) async fn audit(
+    state:&crate::AppState,task_id:&str,session_id:&str,
+    checks:&[Check],ledger:&mut Ledger,receipts:&mut Vec<Value>
+)->Result<Option<(Check,Value)>,String>{
+    for (index,check) in checks.iter().enumerate(){
+        if let Some(previous)=ledger.current(check){
+            if !previous.success{
+                return Ok(Some((check.clone(),previous.observation.clone())));
+            }
+            continue;
+        }
+        if state.store.cancelled(task_id){
+            return Err("Task cancelled before independent source checks".into());
+        }
+        let args=check.arguments();
+        let tool_id=format!("acceptance-{index}-revision-{}",ledger.revision);
+        state.record_event(task_id,"tool_start",json!({
+            "name":"workspace_check","callId":tool_id,
+            "arguments":args,"phase":"native_acceptance",
+            "revision":ledger.revision
+        }))?;
+        state.emit(task_id,"acceptance_started",json!({
+            "check":check.label(),"revision":ledger.revision,
+            "index":index
+        }));
+        let result=super::tool(state,task_id,session_id,
+            "workspace_check",&args,false,true).await;
+        let value=match result{
+            Ok(receipt)=>json!({"ok":receipt["success"]==true,"receipt":receipt}),
+            Err(error)=>json!({"ok":false,"error":error})
+        };
+        // Durable result before another model turn, to avoid replay of a
+        // possibly expensive or stateful external verifier after a crash.
+        state.record_event(task_id,"tool_result",json!({
+            "name":"workspace_check","callId":tool_id,
+            "outcome":value,"phase":"native_acceptance",
+            "revision":ledger.revision
+        }))?;
+        ledger.observe("workspace_check",&args,&value);
+        state.emit(task_id,"acceptance_result",json!({
+            "check":check.label(),"revision":ledger.revision,
+            "success":value["ok"]==true,
+            "exitCode":value["receipt"]["exitCode"],
+            "stderrTail":value["receipt"]["stderr"]
+        }));
+        receipts.push(json!({"tool":"workspace_check","phase":"native_acceptance",
+            "arguments":args,"outcome":value}));
+        if receipts.len()>80{receipts.remove(0);}
+        if value["ok"]!=true{
+            return Ok(Some((check.clone(),value)));
+        }
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests{
     use super::*;
