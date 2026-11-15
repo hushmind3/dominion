@@ -11,7 +11,7 @@ const NativeVideos=lazy(()=>import('./pages/NativeWorkspace').then(x=>({default:
 const NativeImprovements=lazy(()=>import('./pages/NativeWorkspace').then(x=>({default:x.NativeImprovements})))
 const NativeKnowledge=lazy(()=>import('./pages/NativeWorkspace').then(x=>({default:x.NativeKnowledge})))
 const NativeConnections=lazy(()=>import('./pages/NativeWorkspace').then(x=>({default:x.NativeConnections})))
-const AgentsPage=lazy(()=>import('./pages/Agents').then(x=>({default:x.AgentsPage})))
+const AgentsPage=lazy(()=>import('./pages/NativeAgents').then(x=>({default:x.NativeAgents})))
 const WorkflowsPage=lazy(()=>import('./pages/Workflows').then(x=>({default:x.WorkflowsPage})))
 const ExtensionsPage=lazy(()=>import('./pages/Extensions').then(x=>({default:x.ExtensionsPage})))
 const DeveloperPage=lazy(()=>import('./pages/Developer').then(x=>({default:x.DeveloperPage})))
