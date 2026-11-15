@@ -674,7 +674,7 @@ The goal engine is a working, owner-controlled pipeline, not a screenshot-only s
 ### 2026-11-15 추가 보완: RSI 거절 후보 학습·SWE-bench 실측 원장
 
 - `rsi_system/replay.rs`의 **실측 원본 영수증 재검증**과 **실험 채택 확정**을 구분했습니다. 채택되지 않아도 독립 검증된 회귀·정체 사례는 후손 개선 입력에 사용하고, 성공 사례 재활용은 채택 후 재검증한 커밋으로 제한했습니다.
-- SWE-bench 실행기에서 출력 경로를 절대 경로로 고정하고 버전별 공식 SWE-bench 결과 경로(실행 ID 디렉터리 및 모델명·실행 ID 파일)를 원본 명세대로 검증를 안전하게 처리합니다. 전체 도구 시도/성공/실패/불확실 상태와 실패 후 목표 완료율을 계측하며, 공식 Docker 채점 점수는 별도 보관합니다.
+- SWE-bench 실행기에서 출력 경로를 절대 경로로 고정하고 버전별 공식 SWE-bench 결과 경로(실행 ID 디렉터리 및 모델명·실행 ID 파일)를 원본 명세대로 검증합니다. 전체 도구 시도/성공/실패/불확실 상태와 실패 후 목표 완료율을 계측하며, 공식 Docker 채점 점수는 별도 보관합니다.
 - 실증 검증용 [Draft PR #11](https://github.com/hushmind3/dominion-rust/pull/11)을 개설했습니다. 미실행 Cargo/CI/SWE-bench 점수를 성공으로 기록하지 않습니다.
 
 ### 2026-11-15: 최종 모델 경계와 유료 영상 납품 검수
@@ -683,4 +683,12 @@ The goal engine is a working, owner-controlled pipeline, not a screenshot-only s
 - SWE-bench Verified는 문제별 해시 작업공간과 Git 저장소 이름 검증, 정확한 `--instance_ids` 범위, 바이너리·입력·패치에 묶인 고유 채점 `run_id`를 적용합니다. 재현 매니페스트와 관측 호출·복구 지표를 저장합니다.
 - LTX 다중 클립 영상은 개별 유료 영수증 외에 **합성 완료 전 최종 MP4**의 재생 길이·화면비·오디오를 FFprobe로 검증합니다. 검수에 실패하면 `output.part.mp4`와 기존 유료 클립을 보존하고 자동 재과금을 하지 않습니다. 성공 결과는 `finalTechnicalQuality`와 `finalOutputSha256`를 포함합니다.
 - 실제 로컬 FFmpeg/FFprobe 합성 스모크를 실행해 3초+3초 클립의 최종 6.128초 합성과 오디오 존재를 확인했습니다. 이것은 **Rust 빌드·실모델 생성·SWE-bench 완료 증거는 아닙니다**.
+
+### 2026-11-15 챔피온 실행 경로 정리
+
+- **구형 도구 스키마 절단기 삭제:** `trim_tool_definitions`는 빈 메뉴 시 첫 번째 초과 스키마를 넣을 수 있고 현재 호출되지 않던 경로라 제거했습니다. 도구 선택은 `budgeted_tool_definitions`와 권한 제한형 `runtime/tool_discovery.rs` 경로로 통일했습니다.
+- **중복 API·실행 래퍼 제거:** 사용되지 않는 CLI 인증 확인기, 가격 무료 판정 래퍼, 총토큰 기록 래퍼, 목표 탐색 진입 래퍼, 구조체 기반 예전 `OwnerIntent`와 유휴 Rust import를 정리했습니다. 실제 사용자 권한 원칙은 `OWNER_EXECUTION_RULE`로 보존했습니다.
+- **테스트 격리:** 사용자 지시 스티어링·과거 메모리 문맥·미연결 모델 경쟁 연구 경로는 `#[cfg(test)]`에서만 컴파일합니다. 실행 엔진은 최신 사용자 수정 지시, 검증형 메모리 컴파일, 실제 채택된 RSI 검증 경로를 계속 사용합니다.
+- **검증 오류 수정:** 소스 변경·테스트 순서는 증거 배열 순서가 아니라 실행별 `opSeq` 순서가 우선입니다. 실제 CI에서 917/918 통과 후 남은 잘못된 테스트 기댓값을 바로잡고, 후행 수정 반례를 추가했습니다. 코드 탐색 테스트는 문자열 자르기 자체 검증 대신 실제 파일 인덱스 검증으로 교체했습니다.
+- CI 및 최신 브랜치 증거: [Champion PR #11](https://github.com/hushmind3/dominion-rust/pull/11). 실모델 SWE-bench 성과는 별도 검증 대상으로 남깁니다.
 
