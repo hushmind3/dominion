@@ -65,6 +65,17 @@
 
 > **개발자 프리뷰** · 소스코드와 실행 방법을 공개하는 단계입니다. 모든 OS·모델·채널 조합의 실사용 안정성을 보장하지 않으며, 자기개선(RSI)은 별도의 실험 기능입니다. 현재 [GitHub Releases](https://github.com/hushmind3/dominion-rust/releases)에서 사전 빌드된 배포 파일을 제공하지 않으므로 아래의 소스 실행 안내를 먼저 확인해 주세요.
 
+## 🔌 TypeScript SDK — GUI와 동일한 Rust 실행 엔진
+
+외부 Node.js·TypeScript 프로그램에서 DOMINION 작업·에이전트·회의·영상·승인·실행 이벤트를 사용할 수 있는 [TypeScript SDK](sdk/typescript/README.md)를 추가했습니다. 별도의 에이전트 엔진을 설치하거나 외부 SDK에 실행을 위임하는 구조가 아니라, GUI와 SDK가 **동일한 Rust `/api/*`** 핸들러를 호출합니다.
+
+```bash
+npm install --prefix sdk/typescript
+npm test --prefix sdk/typescript
+```
+
+작업 상태·중단·회복과 이벤트 순서 개선은 [서브2 엔진/SDK 연결 문서](docs/SUB2-SDK-DURABLE-EVENTS-2026-11-15.md)에 정리했습니다. 이벤트 이력 만료는 `event_gap`으로 표시하며, 채팅 POST 재실행은 자동으로 하지 않습니다. SDK는 개발용 초기 버전입니다.
+
 ## ✨ 주요 기능
 
 | 영역 | DOMINION에서 할 수 있는 일 |
