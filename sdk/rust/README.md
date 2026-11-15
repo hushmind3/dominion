@@ -13,3 +13,5 @@ The DOMINION production adapter, src/engine/native_agent.rs, is an actual Driver
 The client methods in sdk/rust/src/lib.rs optionally connect to an existing Rust engine at 127.0.0.1:4317 for jobs, sessions, approvals, rooms, video, RSI, chat SSE and replayable events. They are secondary to the native harness.
 
 No vendor SDK owns the loop. No goals.rs and no /api/goals API. Tests for the core cover verified repair, pre-effect checkpoint barriers and cancellation. Run cargo test --manifest-path sdk/rust/Cargo.toml and cargo test --manifest-path Cargo.toml in a Rust development environment. Live model and server tests remain outstanding. See docs/SDK-ARCHITECTURE-2026-11-15.md.
+
+Native entrypoint: `use dominion_sdk::harness::{Kernel, RunRequest, Model, Tools, Evidence, Journal};`. This is a real execution kernel rather than a wrapper around an agent provider. `Dominion` HTTP methods are secondary, for remote/local product integration.

@@ -30,3 +30,5 @@ The SDK never replaces the Dominion engine or implements a second agent harness.
 Contract: /api/* (NOT /api/v1/*), X-Dominion-Token optional admin header (NOT Bearer), POST /api/chat as SSE, GET /api/events?after=N with durable replay. Browser access inherits the server's same-origin policy. API routes are grounded in src/api/mod.rs, src/api/jobs.rs, src/api/system.rs and src/api/video.rs. Tests cover auth, path mapping, SSE fragmentation, reconnection, chat interruption and job completion.
 
 An SDK client needs a running local DOMINION server; it does not bundle a model, and it never holds vendor tokens. HTTP tests mock the server; a real-provider integration test requires explicitly configured credentials.
+
+Mid-run owner steering is `sdk.jobs.steer(jobId, instruction)`, which invokes the Rust kernel via `POST /api/jobs/:id/directive`. The JS client never executes native tools or owns task states.

@@ -23,15 +23,15 @@ GitHub API repository metadata checked on 2026-11-15: OpenClaw approximately 394
 ## Native Rust execution after changes
 
     React tasks ─────┐
-    TypeScript SDK ──┼─ /api/jobs ─ Rust SQLite worker ── native_harness::run
+    TypeScript SDK ──┼─ /api/jobs ─ Rust SQLite worker ── native_agent::run
     Optional Rust HTTP client ────────────────────────────┘        │
-    Embedded Rust application ─ sdk/rust::harness::{run, Driver} ─┘
+    Embedded Rust application ─ sdk/rust::harness::{run, native kernel adapter} ─┘
                                                         │
                          Rust provider/tool/MCP/skill/memory runtime
                          frozen verifier, checkpoints, recovery, event bus
 
-- sdk/rust/src/harness.rs: independent task policy, planning, execution, verification/repair, bounded dynamic replanning, checkpoint and no-duplicate-effect rule.
-- src/engine/native_harness.rs: real production Driver mapping model calls, Rust tool evidence, session continuation, frozen acceptance and SQLite checkpoints to SDK core.
+- crates/dominion-agent-sdk/src/lib.rs: independent task policy, planning, execution, verification/repair, bounded dynamic replanning, checkpoint and no-duplicate-effect rule.
+- src/engine/native_agent.rs: real production native kernel adapter mapping model calls, Rust tool evidence, session continuation, frozen acceptance and SQLite checkpoints to SDK core.
 - src/engine/jobs.rs: ordinary prompt jobs dispatch through this Rust core; RSI worktree generator keeps its independently evaluated path.
 - src/api/jobs.rs: accepts owner task instructions and bounded policies, rejects bogus verifier criteria.
 - web/src/components/ExecutionMonitor.tsx: non-developer task submission, progress phases, verification gaps, cancellation, simple automatic/thorough choice.
@@ -56,3 +56,17 @@ Important frontier gaps to address: strong OS sandbox for all execution routes, 
 5. Once integrated frontier capabilities work, perform same-model/tool/seed/budget SWE-bench Verified and cost/recovery comparisons.
 
 This working environment lacked cargo/rustc and a configured live model server. Source commits do not constitute compile or task-completion evidence. CI has not been started.
+
+## 2026-11-15 stronger direct native kernel integration
+
+The canonical Rust SDK is now `dominion_sdk::harness`, re-exporting a provider-independent executable kernel from `crates/dominion-agent-sdk/src/lib.rs`. The older high-level Driver state machine and its legacy bridge were deleted, not kept as duplicate runners.
+
+- `src/engine/native_agent.rs` supplies production model, tool, evidence and SQLite journal implementations.
+- `src/engine/jobs.rs::run_prompt` delegates **normal** tasks directly to `native_agent::run`; special RSI experiments keep their isolated existing source-edit/holdout implementation.
+- Read-only tool operations are bounded and may execute in parallel; side-effecting tools are ordered and require the real Rust approval policy.
+- `POST /api/jobs/:id/directive` supplies a user correction; the kernel checks for it before model and tool batches and rejects stale work.
+- `web/src/components/ExecutionMonitor.tsx` shows the actual `nativeState` and allows owner steering; the TS SDK is a client only.
+- The wrapper checks command `exitCode` and structured errors before writing a successful tool receipt.
+- The previous goal-specific runner was not recreated, and no Goals API is present.
+
+Validation status: new Rust unit tests exist in the imported kernel and production adapter; compilation and live provider tasks are still outstanding on the available machine. Root Cargo lock and local Rust SDK dependency graph were updated. Do not infer frontier parity from committed source alone.
