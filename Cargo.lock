@@ -400,6 +400,7 @@ name = "dominion-rust"
 version = "0.3.0"
 dependencies = [
  "async-stream",
+ "dominion-harness",
  "axum",
  "base64 0.22.1",
  "chacha20poly1305",
