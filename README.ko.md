@@ -187,3 +187,5 @@ Rust 대화 전송 계층은 `previous_response_not_found`처럼 명시적으로
 Rust 엔진이 모델 제공자의 실제 응답에서 입력·출력·캐시 읽기·캐시 쓰기 토큰을 수집하고, 작업별 누적 기록인 `nativeModelUsage`를 저장합니다. 제공자가 사용량을 보내지 않은 호출은 **미보고 횟수로 분리**해 0원·0토큰으로 위장하지 않습니다. Anthropic의 별도 캐시 읽기·생성 토큰도 Rust 실행 예산의 입력 토큰 합계에 포함합니다. 이제 자율 작업 GUI에서 실제 보고 사용량과 미보고 경고를 확인할 수 있고, TypeScript SDK에서 같은 데이터 타입을 제공합니다. [세부 설계](docs/SUB3-NATIVE-METERING-2026-11-15.md). [GitHub Actions #43691823640](https://github.com/hushmind3/dominion-rust/actions/runs/43691823640)에서 **Rust 115/115**, 독립 **TypeScript SDK 7/7**, React 타입 검사·Vite 빌드 모두 통과했습니다. 실제 API 청구원가와 절감률은 제공자별 계정 요금 검증 전까지 금액으로 단정하지 않습니다.
 
 자율 작업 화면의 고급 설정에서 **실행 토큰 예산**도 직접 입력할 수 있습니다. 값은 기존 `/api/jobs.input.tokenBudget`를 통해 Rust SDK의 `maxEstimatedTokens`로 전달되며, 진행 중에는 커널 예산 사용량과 제공자 실측 사용량을 구분해 보여줍니다. 이전 작업을 다시 시작할 때도 기존 예산을 보존합니다.
+
+최종 GUI 예산 연동까지 반영한 [집중 CI #43692151683](https://github.com/hushmind3/dominion-rust/actions/runs/43692151683)도 **Rust 115/115 · TypeScript SDK 7/7 · 프런트 타입 검사·빌드 전부 통과**했습니다.
