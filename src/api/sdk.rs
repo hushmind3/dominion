@@ -59,6 +59,7 @@ fn public_view(state: &AppState, record: Value) -> Value {
             "state":snapshot.status,
             "rounds":snapshot.rounds,
             "toolCalls":snapshot.tool_calls,
+            "usage":snapshot.usage,
             "events":snapshot.events,
             "pendingCall":snapshot.pending_calls.first(),
             "answer":snapshot.final_text(),
@@ -145,7 +146,8 @@ fn launch(state: AppState, id: String, approved: Option<String>) -> Result<(), S
                     RunStatus::Failed { .. } => "failed",
                 };
                 json!({"status":status,"rounds":session.rounds,
-                    "toolCalls":session.tool_calls,"answer":session.final_text(),
+                    "toolCalls":session.tool_calls,"usage":session.usage,
+                    "answer":session.final_text(),
                     "runState":session.status})
             }
             Err(message) => json!({"status":"failed","error":message}),
