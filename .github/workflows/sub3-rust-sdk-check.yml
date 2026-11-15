@@ -24,6 +24,13 @@ on:
       - 'src/engine/chat/provider.rs'
       - 'src/engine/workflows.rs'
       - 'src/engine/jobs.rs'
+      - 'src/engine/rsi.rs'
+      - 'src/engine/rsi_evolve.rs'
+      - 'src/engine/rsi_worktree.rs'
+      - 'src/api/rsi.rs'
+      - 'scripts/rsi-lab.mjs'
+      - 'scripts/rsi-measure.mjs'
+      - 'scripts/rsi-lab.test.mjs'
       - 'web/src/components/NativeAgentPanel.tsx'
   workflow_dispatch:
 
@@ -46,6 +53,12 @@ jobs:
         run: cargo test --manifest-path crates/dominion-agent-sdk/Cargo.toml -- --nocapture
       - name: Compile full Dominion Rust host and run native adapter contract tests
         run: cargo test --manifest-path Cargo.toml --bin dominion-rust native_ -- --nocapture
+      - name: RSI actual source editing, frozen Git tree and descendant recovery
+        run: |
+          cargo test --manifest-path Cargo.toml --bin dominion-rust engine::rsi::tests -- --nocapture
+          cargo test --manifest-path Cargo.toml --bin dominion-rust engine::rsi_worktree::tests -- --nocapture
+          cargo test --manifest-path Cargo.toml --bin dominion-rust engine::rsi_evolve::tests -- --nocapture
+          cargo test --manifest-path Cargo.toml --bin dominion-rust api::rsi::tests -- --nocapture
       - name: Verify interactive Codex WebSocket continuity separately (native job fixtures above)
         run: cargo test --manifest-path Cargo.toml --bin dominion-rust engine::chat::codex_ws::tests -- --nocapture
       - name: Test replay-safe workflow step recovery through host storage
@@ -60,6 +73,8 @@ jobs:
           npm ci --prefix web
           npm run typecheck --prefix web
           npm run build --prefix web
+      - name: Real Rust frozen paired A/B runner and failure-worktree cleanup
+        run: node --test scripts/rsi-lab.test.mjs
       - name: Build and test the published-surface TypeScript SDK independently
         run: |
           npm install --prefix sdk/typescript --no-package-lock --ignore-scripts --no-audit
