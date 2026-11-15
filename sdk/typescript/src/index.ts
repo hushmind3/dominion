@@ -29,6 +29,20 @@ export interface NativeRouteSelection {
 export type RoutingMode='default'|'quality_cost';
 export interface Job extends RecordItem {kind:string;status:string;input?:unknown;result?:unknown;error?:string;sessionId?:string;stepIndex?:number;stepTotal?:number;
  nativeRoute?:NativeRouteSelection;nativeModelUsage?:NativeModelUsage;nativeState?:{chargedTokens?:number;modelCalls?:number;modelInFlight?:boolean}}
+/** Persisted Rust native job state shared with the autonomous UI. */
+export interface NativeRun {
+ id:string;status:string;instruction:string;answer?:string|null;error?:string|null;
+ checkpoint?:{
+  state?:{state:string};rounds?:number;toolCalls?:number;answer?:string|null;
+  usage?:{prompt_tokens:number;completion_tokens:number;cached_prompt_tokens:number}|null;
+  pendingCall?:{id:string;name:string;arguments:unknown}|null;
+  events?:Array<{kind:string;detail:unknown}>;
+ }|null;
+}
+export interface NativeRunRequest {
+ instruction:string;providerId?:string;model?:string;verifyCommand?:string;maxRounds?:number;
+}
+export interface NativeReconciliation {applied:boolean;details:string}
 export interface Approval extends RecordItem {status:string;sessionId?:string;tool?:string;args?:unknown}
 export interface EngineEvent {seq:number;type:string;kind?:string;record?:RecordItem;removed?:string;approval?:Approval;[key:string]:unknown}
 export interface ChatEvent {type:string;[key:string]:unknown}
@@ -139,6 +153,17 @@ export class Dominion{
     get:(jobId:string)=>this.request<Job>('GET','/api/jobs/'+id(jobId)),
     cancel:(jobId:string)=>this.request<Job>('POST','/api/jobs/'+id(jobId)+'/cancel',{}),
     steer:(jobId:string,instruction:string)=>this.request<{ok:boolean;jobId:string;directive:string}>('POST','/api/jobs/'+id(jobId)+'/directive',{instruction})
+  };
+  /** Public controls for the same Rust native jobs as the React work panel. */
+  readonly nativeRuns={
+    list:()=>this.request<NativeRun[]>('GET','/api/sdk/runs'),
+    start:(input:NativeRunRequest)=>this.request<NativeRun>('POST','/api/sdk/runs',input),
+    get:(runId:string)=>this.request<NativeRun>('GET','/api/sdk/runs/'+id(runId)),
+    approve:(runId:string,callId:string)=>this.request<NativeRun>('POST','/api/sdk/runs/'+id(runId)+'/approve',{callId}),
+    cancel:(runId:string)=>this.request<NativeRun>('POST','/api/sdk/runs/'+id(runId)+'/cancel',{}),
+    resume:(runId:string)=>this.request<NativeRun>('POST','/api/sdk/runs/'+id(runId)+'/resume',{}),
+    reconcile:(runId:string,observation:NativeReconciliation)=>this.request<NativeRun>(
+      'POST','/api/sdk/runs/'+id(runId)+'/reconcile',observation)
   };
   readonly workflows={
     list:()=>this.request<Workflow[]>('GET','/api/workflows'),
