@@ -61,6 +61,43 @@ pub fn receipt_page(receipt:&Value,offset:usize,limit:usize)->Result<Value,Strin
     }))
 }
 
+/// Strict overflow classification prevents ordinary provider failures from
+/// causing additional model charges or retrying unrelated requests.
+pub fn is_context_overflow(error:&str)->bool{
+    let value=error.to_ascii_lowercase();
+    [
+        "context_length_exceeded",
+        "context_window_exceeded",
+        "context window exceeded",
+        "maximum context length",
+        "exceeds the context window",
+        "too many input tokens",
+        "prompt exceeds model context",
+        "max_prompt_tokens"
+    ].iter().any(|phrase|value.contains(phrase))
+}
+/// Verifiable exact pages of a prior persisted owner/assistant message.
+/// Only the authenticated current native session is queried by the caller.
+pub fn history_page(record:&Value,offset:usize,limit:usize)->Result<Value,String>{
+    if !(16..=8192).contains(&limit) {
+        return Err("History page size must be 16..=8192 bytes".into());
+    }
+    let encoded=record["content"].as_str().ok_or("History message has no text")?;
+    if offset>encoded.len()||!encoded.is_char_boundary(offset){
+        return Err("History offset is not at a UTF-8 boundary".into());
+    }
+    let end=floor_boundary(encoded,offset.saturating_add(limit).min(encoded.len()));
+    let digest=format!("{:x}",Sha256::digest(encoded.as_bytes()));
+    Ok(json!({
+        "seq":record["seq"],"role":record["role"],"sha256":digest,
+        "offsetBytes":offset,"totalBytes":encoded.len(),
+        "page":&encoded[offset..end],
+        "nextOffsetBytes":if end<encoded.len(){json!(end)}else{Value::Null},
+        "complete":end==encoded.len(),"source":"native_session_history",
+        "untrusted":true
+    }))
+}
+
 fn role(value:&Value)->&str {
     value.get("role").and_then(Value::as_str).unwrap_or("")
 }
@@ -345,6 +382,29 @@ mod tests{
         let prefix_count=messages.iter().take_while(|m|matches!(role(m),"system"|"developer")).count();
         groups(&messages[prefix_count..]).expect("tool graph remains balanced");
     }
+    #[test]
+    fn context_pressure_errors_are_strictly_classified(){
+        assert!(is_context_overflow("model HTTP 400: context_length_exceeded"));
+        assert!(is_context_overflow("maximum context length is 8192"));
+        assert!(!is_context_overflow("HTTP 429 rate limit"));
+        assert!(!is_context_overflow("HTTP 402 payment required"));
+        assert!(!is_context_overflow("model transport connection refused"));
+    }
+    #[test]
+    fn long_owner_message_can_be_reassembled_without_loss(){
+        let body="안전하게 이어지는 역사 🛠️".repeat(2000);
+        let entry=json!({"seq":14,"role":"user","content":body});
+        let mut result=String::new();let mut cursor=0;
+        loop{
+            let page=history_page(&entry,cursor,4096).unwrap();
+            result.push_str(page["page"].as_str().unwrap());
+            if page["complete"]==true{break;}
+            cursor=page["nextOffsetBytes"].as_u64().unwrap() as usize;
+        }
+        assert_eq!(result,body);
+        assert!(history_page(&entry,0,1).is_err());
+    }
+
     #[test]
     fn unpressured_history_is_identical(){
         let source=vec![json!({"role":"system","content":"stable prefix"}),
