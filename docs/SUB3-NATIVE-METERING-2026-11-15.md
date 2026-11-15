@@ -9,7 +9,8 @@
   → native_stream::Assembler (SSE) OR native_codex_ws::generate (WebSocket)
   → native_model::reported_usage / record_job_usage
   → Store.job.nativeModelUsage + audit(native.model_usage)
-  → GET /api/jobs/{id} → NativeAgentPanel / TypeScript Dominion Job type
+  → GET /api/jobs/{id} → TypeScript Dominion Job type
+  → /api/sdk/runs/{id} Rust compatibility projection → pinned main 879dc23d NativeAgentPanel
 ```
 
 The Rust SDK still owns decision-making, tool permissions, approvals, evidence and durable checkpoints. The provider adapter alone parses usage. No third-party agent runner or shadow execution loop was added.
@@ -30,7 +31,7 @@ Chat/Codex input **already includes** cached input. Anthropic excludes cache rea
 
 ## Display, uncertainty and accuracy
 
-`NativeAgentPanel` shows provider-reported input/output and cache counters, with a warning for calls that lacked usage. The TypeScript SDK exports `NativeModelUsage` and types the identical `Job.nativeModelUsage` field. Both read the persisted Rust job; neither runs a second model or builds a separate proxy ledger.
+With the frontend restored exactly to main 879dc23d, `NativeAgentPanel` shows provider-reported input/output/cache-read through the Rust `/api/sdk/runs` projection. Detailed cache-write and missing-usage evidence stays in `GET /api/jobs/:id` and `Job.nativeModelUsage` in the TypeScript SDK. Neither UI nor adapter creates a second agent loop.
 
 The transport may fail after submitting a request. Existing `native.codex_ws.uncertain` records possible unknown billing and prevents automatic replay. A provider that reports only one token metric is also incomplete; the remaining part is unknown. `native.model_usage.currencyCost:null` explicitly avoids inventing a local-currency price: price tables, subscription allocations, cache-tier rates and provider surcharges must be verified for the selected account and model before any monetary claim. Wire-payload size reductions do not equal actual token cost reductions.
 
@@ -46,8 +47,6 @@ No paid Codex/Anthropic credential call, pricing validation, full release CI or 
 
 [GitHub Actions #43691823640](https://github.com/hushmind3/dominion-rust/actions/runs/43691823640) succeeded on implementation commit `825409f66d8df01fa8799b3496baad62e8c08693`: Rust SDK **45**, native Rust host/agent/transport **54**, interactive Codex WS **15**, workflow recovery **1** — **115/115 Rust tests passed**. React TypeScript typecheck and Vite production build passed; the standalone TypeScript SDK compiled and all **7/7 Node tests passed**. The Rust native tests include the real HTTP-SSE → model adapter → job-store meter integration fixture, along with cache preservation and unknown usage. This does not measure monetary savings or validate commercial provider credentials.
 
-## Owner-controlled UI token budget
+## Owner-controlled token budget through API/SDK (main frontend pinned)
 
-The autonomous-work panel now exposes the existing `/api/jobs` `input.tokenBudget` field (1,000–20,000,000) under advanced controls. The Rust API maps this to `input.limits.maxEstimatedTokens` and the SDK kernel enforces the task's consumption budget. The GUI reads the persisted `nativeState.chargedTokens` as **kernel budget usage** and displays it separately from the provider-reported `nativeModelUsage`. A newly started task uses the current UI budget, while a restart from failed/uncertain work creates a new job with the prior task budget rather than erasing the owner's cap. This is a real engine configuration, not a local GUI-only counter.
-
-**GUI budget integration verified:** [focused run #43692151683](https://github.com/hushmind3/dominion-rust/actions/runs/43692151683), implementation commit `b54b4db19b5da98910cabe979dae319d075da000`, completed successfully with **115/115 Rust cases, 7/7 standalone TypeScript SDK cases, React typecheck and Vite production build**. The submitted budget follows the existing Rust API path; no new billing rate or charge estimate was introduced.
+The owner can set the real Rust SDK budget with `POST /api/jobs` `input.tokenBudget` (mapped to `input.limits.maxEstimatedTokens`) and typed TypeScript SDK. The 2026-11-15 main frontend pin `879dc23d` intentionally replaces the sub3-only advanced GUI controls, so this setting and cache-write/missing-usage details are available through API/SDK rather than the unmodified main panel. The main panel can start jobs, review actual approvals, cancel, and read provider-reported token totals through `src/api/sdk_runs.rs`. Previous [focused run #43692151683](https://github.com/hushmind3/dominion-rust/actions/runs/43692151683) validated the older sub3-specific panel; it is historical evidence, not a claim that those controls remain visible in the pinned frontend.
