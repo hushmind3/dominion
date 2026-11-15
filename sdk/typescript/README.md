@@ -76,6 +76,21 @@ const latest=await client.workflowRun(run.id)
 
 Native endpoints also support owner-defined discussion rooms, local or optional paid videos, isolated improvement experiments, memory and skills. Keep secrets in the runtime's server-side configuration; they are never returned by providerCatalog.
 
+## Native evidence-backed context inspection
+
+~~~ts
+const evidence=await client.contextEvidence(task.id,'earlier design restriction')
+for (const fact of evidence.facts.facts) {
+  console.log(fact.sourceSeq,fact.kind,fact.quote)
+}
+for (const result of evidence.results) {
+  console.log(result.kind,result.messageSeq,result.sourceTaskId,result.callId)
+}
+console.log(evidence.executionState)
+~~~
+
+This endpoint uses the same SQLite full-text index and citation-validated owner fact ledger as the actual Rust model loop. The full source is available through scoped native tools; the response's excerpts are not instructions and do not authorize tool effects. Explicit session continuation verifies prior-task ancestry before returning tool observations.
+
 ## Scope
 
 Task costs are metered from operator-configured KRW rates, with separate cached-input accounting and usage uncertainty flags; they are not a provider invoice. Video generation has a separate project KRW ceiling. Image assets are uploaded through the native scene-image API and animated by local FFmpeg.
