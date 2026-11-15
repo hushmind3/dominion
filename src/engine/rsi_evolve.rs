@@ -1344,12 +1344,16 @@ fn generation_context(state: &AppState, input: &Value, record: &Value) -> String
             text.push_str("\n### 이전 시도의 실제 결과\n");
             for generation in recent.into_iter().rev() {
                     let candidate=generation["candidateId"].as_str().and_then(|id|state.store.get("rsi_candidate",id));
-                let evidence=json!({"accepted":generation["accepted"],"commit":generation["acceptedCommit"],
+                let evidence=json!({"buildDiagnostics":generation["evaluation"]["buildDiagnostics"],
+                    "accepted":generation["accepted"],"commit":generation["acceptedCommit"],
                     "hypothesis":candidate.as_ref().map(|c|&c["hypothesis"]),"paths":candidate.as_ref().map(|c|&c["paths"]),
                     "verdict":generation["evaluation"]["verdict"],"error":generation["error"],
                     "editEvidence":generation["editEvidence"]});
                 text.push_str(&format!("- {}세대: {}\n",generation["attempt"],
                     evidence.to_string().chars().take(1800).collect::<String>()));
+                if generation["evaluation"]["metrics"]["verdict"]=="build_failed" {
+                    text.push_str("- 독립 평가의 컴파일 실패입니다. 기록된 빌드 진단으로 해당 소스를 수정한 뒤 같은 동결 평가 조건에서 다시 검증하세요. 테스트나 검증 규칙을 지우지 마세요.\n");
+                }
             }
         }
         // A focused owner request that already produced verified source reads
