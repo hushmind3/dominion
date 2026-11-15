@@ -10,17 +10,22 @@ type NativeMeasuredUsage = {
  reportedCalls:number;unreportedCalls:number;cacheReportedCalls:number;
  source:string;estimated:false;
 }
+type RoutingPolicy={mode:'default'|'quality_cost';minQuality:number;maxQualityDrop:number}
+type PinnedNativeRoute={providerId:string;model:string;
+ selection?:{mode?:string;reason?:string;estimatedPerTurnKRW?:number;selectedQuality?:number;qualifiedCandidates?:number}}
 type AgentJob = {
  id:string; kind:string; status:string; sessionId?:string; createdAt?:string; queuedAt?:string;
- input?:{prompt?:string;providerId?:string;checks?:{type?:string;tool?:string;contains?:string}[];limits?:{maxEstimatedTokens?:number}};
+ input?:{prompt?:string;providerId?:string;checks?:{type?:string;tool?:string;contains?:string}[];limits?:{maxEstimatedTokens?:number};nativeRoutingPolicy?:RoutingPolicy};
  nativeState?:{step?:number;modelCalls?:number;chargedTokens?:number;receipts?:{tool?:string;success?:boolean}[];error?:string};
  nativeStream?:{stage?:string;protocol?:string;events?:number;visibleTail?:string;pendingCalls?:{id:string;name:string}[];executable?:boolean};
- nativeModelUsage?:NativeMeasuredUsage;
+ nativeModelUsage?:NativeMeasuredUsage&{configuredCostKRW?:number;pricedCalls?:number;unpricedCalls?:number;configuredPriceCurrency?:string};
+ nativeRoute?:PinnedNativeRoute;
  result?:{answer?:string;reason?:string;toolCalls?:number;modelCalls?:number};error?:string;
 }
 type Approval = {id:string;status:string;sessionId?:string;tool?:string;args?:unknown}
 type SdkRun = {
  id:string;status:string;instruction:string;providerId?:string;answer?:string;error?:string;verification?:string;tokenBudget?:number;
+ routingPolicy?:RoutingPolicy;selectedRoute?:PinnedNativeRoute;
  stream?:AgentJob['nativeStream'];
  checkpoint?:{rounds?:number;toolCalls?:number;answer?:string;estimatedTokens?:number;
   usage?:NativeMeasuredUsage;
@@ -44,6 +49,7 @@ function present(job:AgentJob,approvals:Approval[]=[]):SdkRun{
  return {
   id:job.id,status,instruction:job.input?.prompt??'',providerId:job.input?.providerId,
   tokenBudget:job.input?.limits?.maxEstimatedTokens,
+  routingPolicy:job.input?.nativeRoutingPolicy,selectedRoute:job.nativeRoute,
   verification:job.input?.checks?.find(c=>c.type==='tool_succeeded'&&c.tool==='shell_exec')?.contains,
   answer:job.result?.answer,error:job.error??job.result?.reason??job.nativeState?.error,
   stream:job.nativeStream,
@@ -72,6 +78,9 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const [providerId,setProviderId]=useState('')
  const [verification,setVerification]=useState('')
  const [budgetInput,setBudgetInput]=useState('100000')
+ const [routingMode,setRoutingMode]=useState<'default'|'quality_cost'>('default')
+ const [qualityInput,setQualityInput]=useState('0.80')
+ const [qualityDropInput,setQualityDropInput]=useState('0.10')
  const [observation,setObservation]=useState('')
  const [run,setRun]=useState<SdkRun|null>(null)
  const [busy,setBusy]=useState(false)
@@ -83,7 +92,11 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     .sort((a,b)=>String(b.queuedAt??b.createdAt??'').localeCompare(String(a.queuedAt??a.createdAt??'')))[0]
    if(recent){
     const current=await loadRun(recent.id)
-    if(alive){setRun(current);if(current.tokenBudget)setBudgetInput(String(current.tokenBudget))}
+    if(alive){setRun(current);if(current.tokenBudget)setBudgetInput(String(current.tokenBudget));
+     if(current.routingPolicy){setRoutingMode(current.routingPolicy.mode);
+      setQualityInput(String(current.routingPolicy.minQuality));
+      setQualityDropInput(String(current.routingPolicy.maxQualityDrop))}
+    }
    }
   }).catch(()=>{})
   return()=>{alive=false}
@@ -98,10 +111,18 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   return()=>{alive=false;clearInterval(timer)}
  },[run?.id,run?.status])
  const budget=()=>Math.max(1000,Math.min(20000000,Math.trunc(Number(budgetInput)||100000)))
- const launch=async(prompt:string,extraInstructions?:string,verifyCommand?:string,limit=budget())=>{
+ const launch=async(prompt:string,extraInstructions?:string,verifyCommand?:string,
+  limit=budget(),previous?:SdkRun)=>{
+  const policy=previous?.routingPolicy??{
+   mode:routingMode,minQuality:Number(qualityInput),maxQualityDrop:Number(qualityDropInput)
+  }
+  if(!Number.isFinite(policy.minQuality)||policy.minQuality<0||policy.minQuality>1
+   ||!Number.isFinite(policy.maxQualityDrop)||policy.maxQualityDrop<0||policy.maxQualityDrop>0.5)
+   throw Error(en?'Quality must be 0–1 and quality loss 0–0.5':'품질 하한은 0~1, 허용 차이는 0~0.5로 입력하세요.')
   const created=await post<AgentJob>('/api/jobs',{kind:'prompt',input:{
-   prompt,providerId:providerId||run?.providerId||undefined,
-   tokenBudget:limit,
+   prompt,providerId:previous?previous.providerId||undefined:providerId||undefined,
+   tokenBudget:limit,routingMode:policy.mode,
+   minQuality:policy.minQuality,maxQualityDrop:policy.maxQualityDrop,
    ...(extraInstructions?{ownerInstructions:extraInstructions}:{}),
    ...(verifyCommand?{acceptanceChecks:[{type:'command_succeeded',command:verifyCommand}]}:{})
   }})
@@ -133,7 +154,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     // A retry is a distinct job with its own fresh journal.
     await launch(run.instruction,
      'This is a fresh retry after an earlier run failed. Inspect the workspace before editing, and never assume earlier tools did or did not take effect.',
-     run.verification||verification.trim()||undefined,run.tokenBudget??budget())
+     run.verification||verification.trim()||undefined,run.tokenBudget??budget(),run)
    }
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
@@ -146,7 +167,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    await launch(run.instruction,
     'Previous execution needs manual review. The operator inspected the effects and reports: '+(applied?'effect applied':'effect not applied')+
     '. Observation: '+details+'. Verify the actual workspace state before taking any further action; do not blindly replay prior changes.',
-    run.verification||verification.trim()||undefined,run.tokenBudget??budget())
+    run.verification||verification.trim()||undefined,run.tokenBudget??budget(),run)
    setObservation('')
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
@@ -192,6 +213,26 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      value={budgetInput} onChange={e=>setBudgetInput(e.target.value)}
      className="mt-1 h-9 w-56 max-w-full rounded-lg border border-[#E7E0D5] px-3 text-[12px]"/>
     <p className="mt-1">{en?'The Rust kernel enforces this estimate-based limit. Provider-measured usage is displayed separately.':'Rust 커널이 추정 기준 예산을 적용합니다. 제공자 실측 토큰은 별도로 표시합니다.'}</p>
+    <label className="mt-3 block" htmlFor="sdk-routing-mode">{en?'Native model routing':'Rust 엔진 모델 선택'}</label>
+    <select id="sdk-routing-mode" value={routingMode}
+     onChange={e=>setRoutingMode(e.target.value as 'default'|'quality_cost')}
+     className="mt-1 h-9 w-full rounded-lg border border-[#E7E0D5] bg-white px-3 text-[12px]">
+     <option value="default">{en?'Use selected/default provider':'선택한 모델 또는 기본 모델 사용'}</option>
+     <option value="quality_cost">{en?'Quality floor + configured KRW cost':'품질 하한 유지 + 등록 원화 단가 비교'}</option>
+    </select>
+    {routingMode==='quality_cost'&&<div className="mt-2 grid grid-cols-2 gap-2">
+     <label className="text-[11px]">{en?'Minimum quality (0–1)':'최소 품질 (0~1)'}
+      <input type="number" min={0} max={1} step={0.05} value={qualityInput}
+       onChange={e=>setQualityInput(e.target.value)}
+       className="mt-1 h-9 w-full rounded-lg border border-[#E7E0D5] bg-white px-3"/>
+     </label>
+     <label className="text-[11px]">{en?'Maximum drop from best quality (0–0.5)':'최고 품질 대비 허용 차이 (0~0.5)'}
+      <input type="number" min={0} max={0.5} step={0.05} value={qualityDropInput}
+       onChange={e=>setQualityDropInput(e.target.value)}
+       className="mt-1 h-9 w-full rounded-lg border border-[#E7E0D5] bg-white px-3"/>
+     </label>
+    </div>}
+    {routingMode==='quality_cost'&&<p className="mt-1">{en?'Only applies when AI model is Automatic; requires owner-entered model quality and KRW rates in Model Settings.':'AI 모델을 자동 선택으로 둔 경우에만 적용됩니다. 모델 설정에서 품질·원화 단가를 등록한 제공자만 비교합니다.'}</p>}
     <label className="mt-2 block" htmlFor="sdk-verify">
      {en?'Required verification command (must pass)':'필수 검증 명령어 (성공해야 완료)'}
     </label>
@@ -213,11 +254,23 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      {run.checkpoint.usage.cacheReportedCalls>0&&<p className="mt-1">
       {en?'Cache read':'캐시 읽기'} {run.checkpoint.usage.cacheReadTokens.toLocaleString()} · {en?'Cache write':'캐시 쓰기'} {run.checkpoint.usage.cacheWriteTokens.toLocaleString()} {en?'tokens':'토큰'}
      </p>}
+     {run.checkpoint.usage.pricedCalls!==undefined&&<p className="mt-1">
+      {en?'KRW estimate (owner tariffs × reported usage)':'등록 단가 × 제공자 사용량 (원화 추산)'}: {(run.checkpoint.usage.configuredCostKRW??0).toLocaleString('ko-KR',{maximumFractionDigits:3})}원
+      {(run.checkpoint.usage.unpricedCalls??0)>0&&<span className="ml-1 text-[#A54027]">· {run.checkpoint.usage.unpricedCalls} {en?'calls unpriced':'회 비용 미산정'}</span>}
+     </p>}
      {run.checkpoint.usage.unreportedCalls>0&&<p className="mt-1 text-[#A54027]">
       {run.checkpoint.usage.unreportedCalls} {en?'calls did not report token usage; totals exclude unknown usage':'회 호출에서 사용량 미보고 · 위 합계에서 제외'}
      </p>}
     </div>}
     </div>
+    {run.selectedRoute&&<div className="mt-2 text-[11px] text-[#746A5F]">
+     <p>{en?'Pinned model':'작업 고정 모델'}: <strong>{run.selectedRoute.providerId} · {run.selectedRoute.model}</strong></p>
+     {run.selectedRoute.selection?.mode==='quality_cost'&&
+      <p>{en?'Owner-rate projected cost per turn':'등록 단가 기준 턴 예상 비용'}: {run.selectedRoute.selection.estimatedPerTurnKRW?.toLocaleString('ko-KR',{maximumFractionDigits:3})??'—'}원 · {en?'declared quality':'등록 품질'} {run.selectedRoute.selection.selectedQuality}</p>}
+     {run.selectedRoute.selection?.requestedMode==='quality_cost'&&<p className="text-[#A54027]">
+      {en?'No qualified priced models; used default route':'품질·단가를 갖춘 후보가 없어 기존 기본 모델 사용'}
+     </p>}
+    </div>}
     <p className="mt-2 line-clamp-2 text-[11px] text-[#766F67]">{run.instruction}</p>
     {run.stream&&['receiving','interrupted'].includes(run.stream.stage??'')&&<div role="status" aria-live="polite" className="mt-3 rounded-lg border border-[#E7E0D5] bg-white p-3 text-[11px]">
      <p className="font-semibold text-[#726B64]">{en?'Model is generating':'모델 응답 생성 중'} · {run.stream.protocol??'AI'} · {run.stream.events??0} {en?'updates':'회 갱신'}</p>
