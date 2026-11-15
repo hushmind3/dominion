@@ -32,7 +32,7 @@ test('RSI route change is gated by original replayed, audited model evidence',()
  check('src/engine/mod.rs',['pub mod rsi_model_learning;'])
  check('src/engine/rsi_model_learning.rs',[
   'fn learn_verified','model_route_audited','replayed_pair_metrics',
-  'matched','independentTrials'])
+  'candidate["evaluation"]["metrics"]==replay','independentTrials'])
  check('src/engine/router.rs',[
   'learn_verified(state)','compared_preference','compare_known_prices'])
  check('src/engine/chat/provider.rs',['router::select_provider'])
