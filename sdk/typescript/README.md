@@ -40,3 +40,26 @@ Mid-run owner steering is `sdk.jobs.steer(jobId, instruction)`, which invokes th
 ## Native owner-controlled quality-cost routing
 
 A `jobs.create({kind:'prompt',input:{prompt,routingMode:'quality_cost',minQuality:0.8,maxQualityDrop:0.1}})` opt-in goes through the Rust owner API; do not set `providerId` if you want automatic selection. The real Rust job includes `nativeRoute?:NativeRouteSelection` with the pinned model, selection reason, estimated per-turn owner-configured KRW cost and a nonsecret model-contract fingerprint. `nativeModelUsage.configuredCostKRW` is provider-reported usage multiplied by pinned **owner-entered** rates; `unpricedCalls` identifies missing measurements/tariffs. It is not an invoice. Register a provider's `nativeRouting: { model, quality, pricesKRWPerMillion: { input,output,cachedInput?,cacheWrite? } }` first via `providers.save`. Full design: [native Rust quality-cost routing](../../docs/SUB3-NATIVE-QUALITY-COST-ROUTING-2026-11-15.md).
+
+## Native autonomous run controls
+
+The TypeScript SDK and the React autonomous-work panel use the **same** `/api/sdk/runs` routes, backed by the persisted Rust job and tool-approval engine:
+
+```ts
+const run = await sdk.nativeRuns.start({
+  instruction: 'Inspect and repair the repository',
+  verifyCommand: 'cargo test',
+  maxRounds: 24,
+});
+const current = await sdk.nativeRuns.get(run.id);
+if (current.status === 'awaiting_approval' && current.checkpoint?.pendingCall) {
+  // Present the tool name and arguments for human review before approval:
+  // await sdk.nativeRuns.approve(run.id, current.checkpoint.pendingCall.id);
+}
+```
+
+The API also exposes `list()`, `cancel(id)`, `resume(id)`, and
+`reconcile(id,{applied,details})` for uncertain effects requiring an
+operator's recorded observation. Server responses are authoritative:
+the SDK does not fabricate progress, retry ambiguous side effects or
+run a client-side agent loop.
