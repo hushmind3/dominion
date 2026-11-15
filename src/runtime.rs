@@ -195,8 +195,13 @@ impl DominionSdk {
             cheap
         });
         let provider = crate::provider::ModelClient::new(main,economy).map_err(RuntimeError)?;
+        let group_dir = config.database.parent().unwrap_or(std::path::Path::new("."))
+            .join("groups");
+        let groups = std::sync::Arc::new(
+            crate::group::Groups::open(group_dir).await.map_err(RuntimeError)?
+        );
         let state = AppState {
-            store, bus, mcp, provider,
+            store, bus, mcp, provider, groups,
             workspace,
             model_name: config.model_name,
         };
