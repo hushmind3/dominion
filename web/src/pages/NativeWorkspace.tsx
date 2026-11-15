@@ -1,6 +1,7 @@
 import {useCallback,useEffect,useState,type ComponentProps,type FormEvent,type ReactNode} from 'react'
 import {Activity,ArrowRight,BrainCircuit,Clapperboard,Database,Download,MessageCircle,PauseCircle,Play,Plus,RefreshCw,UsersRound} from 'lucide-react'
 import {get,post} from '../api'
+import type {AgentPreset} from './NativeAgents'
 import {Button,PageContainer,TextArea,TextInput,SelectInput} from '../components/Primitives'
 import {Headline,Panel,FormField,Notice,StateTag} from '../components/UI'
 
@@ -54,10 +55,11 @@ function RunList({items,selected,onSelect}:{items:Run[];selected:string;onSelect
 }
 export function NativeTasks({home=false}:{home?:boolean}){
  const tasks=useCollection<Run[]>('/api/tasks',[])
+ const presets=useCollection<AgentPreset[]>('/api/agents',[])
  const [active,setActive]=useState(''),[prompt,setPrompt]=useState(''),[sessionId,setSessionId]=useState('')
  const [allowWrite,setAllowWrite]=useState(false),[allowShell,setAllowShell]=useState(false),[allowMcp,setAllowMcp]=useState(false)
  const [allowSubagents,setAllowSubagents]=useState(false),[requireEvidence,setRequireEvidence]=useState(false)
- const [planningMode,setPlanningMode]=useState('auto'),[modelTier,setModelTier]=useState('auto'),[maxSteps,setMaxSteps]=useState(12),[tokenBudget,setTokenBudget]=useState(40000),[costBudget,setCostBudget]=useState('')
+ const [planningMode,setPlanningMode]=useState('auto'),[modelTier,setModelTier]=useState('auto'),[agentId,setAgentId]=useState(''),[maxSteps,setMaxSteps]=useState(12),[tokenBudget,setTokenBudget]=useState(40000),[costBudget,setCostBudget]=useState('')
  const [instruction,setInstruction]=useState(''),[resumeText,setResumeText]=useState(''),[events,setEvents]=useState<RunEvent[]>([]),[children,setChildren]=useState<Run[]>([])
  const op=useOperation()
  const selected=tasks.value.find(item=>item.id===active)
@@ -80,7 +82,7 @@ export function NativeTasks({home=false}:{home?:boolean}){
  useEffect(()=>{const timer=setInterval(()=>{void tasks.reload()},5000);return()=>clearInterval(timer)},[tasks.reload])
  const submit=async(e:FormEvent)=>{e.preventDefault();const cleaned=prompt.trim();if(!cleaned)return
   const created=await op.run(()=>post<Run>('/api/tasks',{requestId:crypto.randomUUID(),prompt:cleaned,sessionId:sessionId.trim()||undefined,
-   allowWrite,allowShell,allowMcp,allowSubagents,requireEvidence,planningMode,modelTier,maxSteps,tokenBudget,
+   allowWrite,allowShell,allowMcp,allowSubagents,requireEvidence,planningMode,modelTier,agentId:agentId||undefined,maxSteps,tokenBudget,
     costBudgetKrw:costBudget.trim()?Number(costBudget):undefined}))
   if(created){setActive(created.id);setPrompt('');void tasks.reload()}
  }
@@ -112,6 +114,7 @@ export function NativeTasks({home=false}:{home?:boolean}){
         <FormField label="세션 ID (선택)"><TextInput value={sessionId} maxLength={128} onChange={e=>setSessionId(e.target.value)}/></FormField>
         <FormField label="작업 계획"><SelectInput value={planningMode} onChange={e=>setPlanningMode(e.target.value)}><option value="auto">자동</option><option value="always">항상 계획</option><option value="never">계획 생략</option></SelectInput></FormField>
         <FormField label="최대 모델 단계"><TextInput type="number" min={1} max={24} value={maxSteps} onChange={e=>setMaxSteps(Number(e.target.value))}/></FormField>
+        <FormField label="에이전트"><SelectInput value={agentId} onChange={e=>setAgentId(e.target.value)}><option value="">기본 에이전트</option>{presets.value.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</SelectInput></FormField>
         <FormField label="모델 선택 정책"><SelectInput value={modelTier} onChange={e=>setModelTier(e.target.value)}><option value="auto">자동 · 작업 난도에 따라</option><option value="economy">비용 절약 우선</option><option value="quality">품질 우선</option></SelectInput></FormField>
          <FormField label="토큰 예산"><TextInput type="number" min={256} max={500000} value={tokenBudget} onChange={e=>setTokenBudget(Number(e.target.value))}/></FormField>
          <FormField label="모델 비용 예산 (원, 선택)"><TextInput type="number" min={0} max={10000000} value={costBudget} onChange={e=>setCostBudget(e.target.value)} placeholder="비우면 별도 제한 없음"/></FormField>
