@@ -58,27 +58,8 @@ pub async fn run(context: &JobContext, job: &Value) -> Result<Value, String> {
     if state.store.get("job", &context.job_id).is_none() {
         return Err("작업 체크포인트를 찾을 수 없습니다.".into());
     }
-    let executor = goal.get("executor").cloned().unwrap_or_else(|| json!({}));
-    let mut provider_id = string(&executor, "providerId");
-    let mut model = string(&executor, "model");
-    let agent_id = optional(&executor, "agentId");
-    if let Some(agent) = agent_id
-        .as_deref()
-        .and_then(|id| state.store.get("agent", id))
-    {
-        if provider_id.is_empty() {
-            provider_id = string(&agent, "providerId");
-        }
-        if model.is_empty() {
-            model = string(&agent, "model");
-        }
-    }
-    // A goal is at least standard complexity, even if its one-line text
-    // looks like casual chat. Freeze the selected provider/model before
-    // planning so reviews and resumed turns do not drift between models.
-    if provider_id.is_empty() && model.is_empty() {
-        if let (Some(provider),Some(selected_model))=(
-            goal["resolvedExecutor"]["providerId"].as_str(),
+    let (agent_id,provider_id,model)=resolve_executor(state,&goal,&text)?;
+    goal["resolvedExecutor"]["providerId"].as_str(),
             goal["resolvedExecutor"]["model"].as_str()
         ) {
             if state.store.get("provider",provider).is_some_and(|item|item["enabled"]!=false) {
