@@ -408,6 +408,7 @@ pub async fn run(state: AppState, id: String) {
             allow_write,require_evidence);
         let durable=state.store.tool_receipt_ids(&id);
         let mut attempt=0usize;
+        let mut previous_projection:Option<String>=None;
         // The provider request has no side effects from model-proposed tools.
         // A canonical context overflow may therefore retry with a *smaller*
         // read-only projection; no tool effect is ever replayed here.
@@ -423,6 +424,14 @@ pub async fn run(state: AppState, id: String) {
                     return;
                 }
             };
+            // Never resend identical context after a window-overflow error.
+            // Only an actually smaller provider input justifies a paid retry.
+            let projection_hash=projected.projection_sha256.clone();
+            if previous_projection.as_deref()==Some(projection_hash.as_str()) {
+                settle(&state,&id,"needs_review","",verified_writes,
+                    Some("모델 문맥 초과 후 입력을 더 줄일 수 없어 재호출을 중단했습니다.".into()));
+                return;
+            }
             state.emit(&id,"context_projected",json!({
                 "sourceSha256":projected.source_sha256,
                 "projectionSha256":projected.projection_sha256,
@@ -464,6 +473,7 @@ pub async fn run(state: AppState, id: String) {
                         "reason":"provider_rejected_context_window",
                         "billingNote":"Provider may charge for failed attempts; usage not reported"
                     }));
+                    previous_projection=Some(projection_hash);
                     message_budget=smaller;
                     attempt+=1;
                 }
