@@ -335,6 +335,12 @@ impl Kernel<'_> {
             {{\"plan\":[\"concise ordered steps\"],\"actions\":[{{\"id\":\"unique-id\",\"tool\":\"name\",\
             \"arguments\":{{}},\"dependsOn\":[]}}],\"answer\":null}}. \
             On task completion return actions=[] and answer=\"actual result\". \
+            Owner-required checks are executed by the Rust kernel on proposed completion. \
+            You may run diagnostic tests while working, but do not waste a model turn \
+            rerunning an unchanged acceptance command. After edits, propose completion; \
+            Rust will execute outstanding exact tests. If a test fails, inspect the recorded \
+            diagnostic, modify the source and propose completion again. A requested source \
+            edit requires a workspace tool receipt with written=true. \
             Only call tools from this allowed catalog: {}. \
             Strategy: {:?}. Owner instructions: {}.",
             serde_json::to_string(&definitions).map_err(|e| e.to_string())?,
