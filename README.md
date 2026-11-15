@@ -38,6 +38,14 @@ Task admission uses requestId idempotency. Native workers persist every tool obs
 
 Model routing choices are auto, economy or quality; cost accounting records cached/uncached input and output at operator-configured KRW rates, with explicit uncertainty when a provider omits usage. Configure DOMINION_INPUT_KRW_PER_MILLION, DOMINION_CACHED_INPUT_KRW_PER_MILLION and DOMINION_OUTPUT_KRW_PER_MILLION, plus ECONOMY-prefixed equivalents if using a backup. Task options tokenBudget and costBudgetKrw provide bounded execution; a paid remote API needs configured rates before a KRW cap is accepted. These are **rate-based estimates**, not settled provider invoices. Local compute, retries and other billed product services need separate accounting.
 
+## Verified long-context evidence subsystem (feature-level focus)
+
+The first completed frontier-relevant native component is the **bounded evidence-preserving context engine**, in src/engine/context.rs with the real model execution path in src/engine.rs. It validates exact assistant/multi-tool-result groups, strictly limits outbound encoded JSON bytes, records cryptographic source/projection hashes, and can retrieve the original persisted UTF-8 tool result page by page without repeating side effects. Explicit continuation keeps task lineage in one SQLite transaction and enforces ancestry-scoped receipt permissions. Canonical provider context overflow may retry only after measurable projection shrinkage. The imported main UI displays real source/target/budget bytes and receipt counts in its developer inspector.
+
+Set DOMINION_CONTEXT_MAX_BYTES to configure the total encoded model-request context envelope (default 96000 bytes; includes tool schemas and reserved protocol overhead). This is not a tokenizer-derived context window or measured model-performance advantage.
+
+The implementation, exact tool interfaces, failure modes and test evidence are documented in **[Bounded evidence context](docs/CONTEXT_EVIDENCE.md)**. The GitHub native test workflow has passed 59 Rust tests with a real SQLite and filesystem, mock-provider end-to-end evidence retrieval, and the TypeScript SDK contract. Any further feature is separate from this tested subsystem.
+
 ## Low-cost video
 
 Local video rendering requires FFmpeg. Add image assets to individual scenes through the UI; the engine creates animated zoom/pan video segments entirely on CPU, combines clips into a downloadable MP4, and invalidates only edited scenes. Text-only scenes still render. Optional speech uses local Piper neural speech (DOMINION_PIPER_MODEL and optionally DOMINION_PIPER_BIN); when unavailable, eSpeak is the fallback, and silent video is supported.
