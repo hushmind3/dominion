@@ -48,6 +48,8 @@ use tool_dispatch::{frozen_replacements, run_frozen_replacements, dispatch_tool_
 #[path = "runtime/finalization.rs"]
 mod finalization;
 use finalization::{finalization_payload_hash, compliance_summary, compliance_detail, determine_task_outcome, record_success_experience, record_selection_snapshot, finish_attempt};
+#[cfg(test)]
+pub(super) use finalization::finalize_execution;
 #[path = "runtime/session.rs"]
 mod session_evidence;
 use session_evidence::{mark_budget_exhausted, mark_run_signals, retitle_if_placeholder, ensure_session, record_tool_stat};
