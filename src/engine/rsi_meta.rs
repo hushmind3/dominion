@@ -91,11 +91,16 @@ pub(crate) fn verified_episode_receipt(candidate:&Value,receipt:&Value)->bool{
             let (verified,before,after)=measured_subject_gain(report,metric);
             let same=|a:f64,b:f64|(a-b).abs()<=1e-9;
             let raw=report["cases"].as_array();
+            // A failed source edit has zero quality, but is still a valid
+            // measured A/B outcome. Do not disqualify the whole experiment
+            // because a baseline arm failed to improve the held-out case.
+            // A positive score still requires successful candidate guards
+            // through measured_subject_gain above.
             let correct_cases=raw.is_some_and(|cases|cases.len()==2
                 && cases.iter().any(|c|c["id"]=="subject-capability"
-                    && c["baselinePass"]==true && c["candidatePass"]==true)
+                    && c["baselinePass"].is_boolean() && c["candidatePass"].is_boolean())
                 && cases.iter().any(|c|c["id"]=="subject-guard"
-                    && c["baselinePass"]==true && c["candidatePass"]==true));
+                    && c["baselinePass"].is_boolean() && c["candidatePass"].is_boolean()));
             let patch=episode["candidatePatchSha256"].as_str().unwrap_or("");
             let oracle=episode["frozenOracleSha256"].as_str().unwrap_or("");
             let evidence=episode["subjectEvidenceSha256"].as_str().unwrap_or("");
@@ -105,7 +110,8 @@ pub(crate) fn verified_episode_receipt(candidate:&Value,receipt:&Value)->bool{
                 || report["baseCommit"]!=base
                 || report["oracleVersion"]!="meta-multidomain-v2"
                 || report["runner"]!="balanced-frozen-rsi-lab-v3"
-                || report["baselineBuildOk"]!=true || report["candidateBuildOk"]!=true
+                || report["baselineBuildOk"]!=true
+                || (quality>0.0 && report["candidateBuildOk"]!=true)
                 || !valid_sha(patch,64) || !valid_sha(oracle,64)
                 || !valid_sha(evidence,64)
                 || report["patchSha256"]!=patch
@@ -266,8 +272,11 @@ fn fair_meta_episode_limit(remaining:Option<u64>,task_count:usize)->Result<u64,S
 }
 
 fn remaining_meta_tokens(context:&JobContext)->Option<u64>{
+    // A campaign tokenBudget of 0 means *unlimited* (local-night mode),
+    // not zero tokens available. Every individual paid/meta episode still
+    // has a fixed 24k-token ceiling and equal baseline/candidate budgets.
     let budget=context.state.store.get("rsi_campaign",&context.job_id)?
-        ["limits"]["tokenBudget"].as_u64()?;
+        ["limits"]["tokenBudget"].as_u64().filter(|limit|*limit>0)?;
     let sessions=context.state.store.all("job").into_iter()
         .filter(|job|job["kind"]=="rsi_generation"
             && job["input"]["rsiCampaignId"]==context.job_id)
@@ -537,46 +546,56 @@ mod tests {
             for arm in ["baseline","candidate"] {
                 let score=if arm=="baseline"{0.2}else if task==0{0.4}else{0.2};
                 let final_quality=0.5+0.5*score;
-                rows.push(json!({"task":task,"arm":arm,
+                // Keep fixture objects separate: a very large nested json!
+                // exhausts serde_json's Rust macro expansion recursion limit.
+                let capability=json!({"id":"subject-capability",
+                    "baselinePass":true,"candidatePass":true,
+                    "metrics":{"quality":{"baseline":0.5,"candidate":final_quality}}});
+                let guard=json!({"id":"subject-guard",
+                    "baselinePass":true,"candidatePass":true});
+                let report=json!({"baseCommit":base,
+                    "patchSha256":"c".repeat(64),"reportSha256":"a".repeat(64),
+                    "oracleSha256":"b".repeat(64),"oracleVersion":"meta-multidomain-v2",
+                    "runner":"balanced-frozen-rsi-lab-v3",
+                    "baselineTreeSha":"d".repeat(40),"candidateTreeSha":"e".repeat(40),
+                    "baselineBuildOk":true,"candidateBuildOk":true,
+                    "cases":[capability,guard]});
+                let mut row=json!({"task":task,"arm":arm,
                     "generatorCommit":if arm=="baseline"{base.clone()}else{new_commit.clone()},
                     "subjectCommit":base,"providerId":"fixed-provider","model":"fixed-model",
                     "generatorBinarySha256":if arm=="baseline"{"d".repeat(64)}else{"e".repeat(64)},
-                    "subjectEvidenceSha256":"a".repeat(64),
-                    "candidatePatchSha256":"c".repeat(64),
-                    "frozenOracleSha256":"b".repeat(64),
-                    "generationRuntimeMode":"compiled_system_controller",
-                    "generatorSourceTreeSha256":"f".repeat(64),
-                    "controllerPlannerSource":"compiled_descendant_system_controller_v2",
-                    "systemBlueprintVerified":true,"workerOk":true,
-                    "tokenLimit":8000,"usage":{"calls":1,"totalTokens":2000},
-                    "actualModelRoutes":[{"providerId":"fixed-provider","model":"fixed-model"}],
-                    "quality":score,"subjectMetric":"quality",
-                    "baselineSubjectQuality":0.5,"candidateSubjectQuality":final_quality,
-                    "subjectReport":{"baseCommit":base,
-                        "patchSha256":"c".repeat(64),"reportSha256":"a".repeat(64),
-                        "oracleSha256":"b".repeat(64),"oracleVersion":"meta-multidomain-v2",
-                        "runner":"balanced-frozen-rsi-lab-v3",
-                        "baselineTreeSha":"d".repeat(40),"candidateTreeSha":"e".repeat(40),
-                        "baselineBuildOk":true,"candidateBuildOk":true,"cases":[
-                        {"id":"subject-capability","baselinePass":true,"candidatePass":true,
-                            "metrics":{"quality":{"baseline":0.5,"candidate":final_quality}}},
-                        {"id":"subject-guard","baselinePass":true,"candidatePass":true}]}}));
+                    "quality":score,"subjectMetric":"quality"});
+                row["subjectEvidenceSha256"]=json!("a".repeat(64));
+                row["candidatePatchSha256"]=json!("c".repeat(64));
+                row["frozenOracleSha256"]=json!("b".repeat(64));
+                row["generationRuntimeMode"]=json!("compiled_system_controller");
+                row["generatorSourceTreeSha256"]=json!("f".repeat(64));
+                row["controllerPlannerSource"]=json!("compiled_descendant_system_controller_v2");
+                row["systemBlueprintVerified"]=json!(true);
+                row["workerOk"]=json!(true);
+                row["tokenLimit"]=json!(8000);
+                row["usage"]=json!({"calls":1,"totalTokens":2000});
+                row["actualModelRoutes"]=json!([{"providerId":"fixed-provider","model":"fixed-model"}]);
+                row["baselineSubjectQuality"]=json!(0.5);
+                row["candidateSubjectQuality"]=json!(final_quality);
+                row["subjectReport"]=report;
+                rows.push(row);
             }
             measured.push(json!({"id":format!("meta-downstream-{task}"),
                 "baselinePass":true,"candidatePass":true,
                 "metrics":{"quality":{"baseline":0.2,
                     "candidate":if task==0{0.4}else{0.2},"samples":1}}}));
         }
+        let aggregate=json!({"id":"meta-downstream-editing",
+            "baselinePass":true,"candidatePass":true,
+            "metrics":{"quality":{"baseline":0.2,"candidate":0.25,"samples":4},
+                "modelCalls":{"baseline":1.0,"candidate":1.0,"samples":4}}});
         let receipt=json!({"version":3,"candidateId":"candidate-1",
             "baselineGeneratorCommit":base,"candidateGeneratorCommit":new_commit,
             "subjectCommit":base,"providerId":"fixed-provider","model":"fixed-model",
             "tasks":4,"perEpisodeTokenLimit":8000,"pairedEpisodeCount":8,
             "domains":["tools","memory","context","improver"],
-            "episodes":rows,"measurements":measured,
-            "measurement":{"id":"meta-downstream-editing",
-                "baselinePass":true,"candidatePass":true,
-                "metrics":{"quality":{"baseline":0.2,"candidate":0.25,"samples":4},
-                    "modelCalls":{"baseline":1.0,"candidate":1.0,"samples":4}}}});
+            "episodes":rows,"measurements":measured,"measurement":aggregate});
         assert!(verified_episode_receipt(&candidate,&receipt));
         let mut fake=receipt.clone();
         fake["measurement"]["metrics"]["quality"]["candidate"]=json!(0.9);
@@ -607,6 +626,14 @@ mod tests {
         fake=receipt.clone();fake["episodes"][1]["subjectReport"]["cases"][0]
             ["metrics"]["quality"]["candidate"]=json!(0.99);
         assert!(!verified_episode_receipt(&candidate,&fake));
+        fake=receipt.clone();
+        fake["episodes"][0]["subjectReport"]["cases"][1]["candidatePass"]=json!(false);
+        fake["episodes"][0]["quality"]=json!(0.0);
+        // A failed baseline attempt is a real negative observation, not a
+        // malformed receipt. Keep it in the paired means as zero quality.
+        fake["measurements"][0]["metrics"]["quality"]["baseline"]=json!(0.0);
+        fake["measurement"]["metrics"]["quality"]["baseline"]=json!(0.15);
+        assert!(verified_episode_receipt(&candidate,&fake));
         fake=receipt;fake["episodes"][0]["systemBlueprintVerified"]=json!(false);
         assert!(!verified_episode_receipt(&candidate,&fake));
     }
