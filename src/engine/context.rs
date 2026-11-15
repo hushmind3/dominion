@@ -31,6 +31,36 @@ pub struct Projection {
     pub projection_sha256: String,
 }
 
+/// Return a complete, verifiable UTF-8 slice of one persisted observation.
+/// The source digest, byte offsets and page size make a reconstructed receipt
+/// auditable. Every page is read-only and restricted by the caller's task ID.
+pub fn receipt_page(receipt:&Value,offset:usize,limit:usize)->Result<Value,String>{
+    if !(16..=8192).contains(&limit) {
+        return Err("Receipt page size must be 16..=8192 bytes".into());
+    }
+    let serialized=serde_json::to_string(receipt).map_err(|e|e.to_string())?;
+    if offset>serialized.len() || !serialized.is_char_boundary(offset){
+        return Err("Receipt cursor does not match a UTF-8 boundary".into());
+    }
+    let end=floor_boundary(&serialized,offset.saturating_add(limit).min(serialized.len()));
+    if end==offset && offset<serialized.len(){
+        return Err("Receipt page cannot hold a full Unicode character".into());
+    }
+    let digest=format!("{:x}",Sha256::digest(serialized.as_bytes()));
+    let id=receipt["detail"]["callId"].as_str().unwrap_or("");
+    Ok(json!({
+        "callId":id,
+        "sha256":digest,
+        "totalBytes":serialized.len(),
+        "offsetBytes":offset,
+        "nextOffsetBytes":if end<serialized.len(){json!(end)}else{Value::Null},
+        "page":&serialized[offset..end],
+        "complete":end==serialized.len(),
+        "source":"persisted_native_tool_result",
+        "untrusted":true
+    }))
+}
+
 fn role(value:&Value)->&str {
     value.get("role").and_then(Value::as_str).unwrap_or("")
 }
@@ -370,6 +400,32 @@ mod tests{
         source.extend(pair("not-durable",6000));
         assert!(project(&source,2500,&HashSet::new()).is_err());
     }
+    #[test]
+    fn persisted_receipt_is_byte_exact_across_pages_and_unicode(){
+        let record=json!({"taskId":"task-a","type":"tool_result","detail":{
+            "callId":"audit-1","outcome":{"stdout":"한글🔎".repeat(3200),"ok":true}
+        }});
+        let encoded=record.to_string();
+        let expected=format!("{:x}",Sha256::digest(encoded.as_bytes()));
+        let mut output=String::new();
+        let mut cursor=0usize;
+        let mut parts=0usize;
+        loop {
+            let page=receipt_page(&record,cursor,4096).unwrap();
+            assert_eq!(page["sha256"],expected);
+            assert_eq!(page["offsetBytes"],cursor);
+            output.push_str(page["page"].as_str().unwrap());
+            parts+=1;
+            if page["complete"]==true{break;}
+            cursor=page["nextOffsetBytes"].as_u64().unwrap() as usize;
+            assert!(parts<500);
+        }
+        assert!(parts>1);
+        assert_eq!(output,encoded);
+        assert!(receipt_page(&record,1,0).is_err());
+        assert!(receipt_page(&record,encoded.len()+1,100).is_err());
+    }
+
     #[test]
     fn pinned_owner_instruction_overflow_is_explicit(){
         let source=vec![json!({"role":"system","content":"s"}),
