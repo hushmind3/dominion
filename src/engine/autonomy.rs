@@ -278,7 +278,11 @@ pub async fn execute(
         }else if attempt>0{
             turn.input=next_instruction(&active_goal,&last_gaps,last_error.as_deref(),attempt);
         }else if steering_before>0{
-            turn.input=active_goal.clone();
+            // On a resumed task the owner's corrective observation must not
+            // be discarded by a stale appended-instruction snapshot.
+            if input["resumeCount"].as_u64().unwrap_or(0)==0 {
+                turn.input=active_goal.clone();
+            }
         }
         if let Some(command)=verify_command{
             turn.input.push_str("\n\n사용자가 지정한 필수 검증 명령을 실제 도구로 실행하고 결과를 확인하세요. ");

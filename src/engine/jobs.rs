@@ -611,6 +611,29 @@ fn rsi_native_preflight(input: &Value) -> bool {
         && !input["rsiFailedPatchRecovery"]["candidateId"].is_string()
 }
 
+/// Build a new, explicit owner-facing continuation instruction, *not* a
+/// duplicate of the original prompt. The owner's manually observed facts
+/// remain unverified and the next model turn must inspect real workspace
+/// state before any action; no old uncertain tool call is auto-replayed.
+fn resume_owner_instruction(job:&Value,goal:&str)->Result<Option<String>,String>{
+    if job["resumeCount"].as_u64().unwrap_or(0)==0{return Ok(None);}
+    let proof=&job["resumeEvidence"];
+    if proof["source"]!="owner_attestation"||proof["applied"]!=false{
+        return Err("재개 전에 사용자의 미적용 확인 기록이 필요합니다.".into());
+    }
+    let Some(details)=proof["details"].as_str()
+        .map(str::trim).filter(|s|!s.is_empty()) else{
+        return Err("재개할 작업의 확인 기록이 비어 있습니다.".into());
+    };
+    Ok(Some(format!(
+        "이 작업은 사용자가 수동 확인을 마친 뒤 재개했습니다. \
+         다음 기록은 사용자 관찰로서 자동 검증된 사실이 아닙니다.\n\n         사용자가 확인한 미적용 내역: {}\n\n         원래 목표: {}\n\n         이전 파일 수정·원격 호출·도구 실행을 그대로 재생하지 마세요. \
+         현재 파일과 외부 상태를 먼저 다시 확인하고, 실제로 남은 작업만 수행하세요. \
+         권한과 검증 조건은 기존 설정대로 유지하세요.",
+        details.chars().take(2500).collect::<String>(),goal
+    )))
+}
+
 pub(crate) async fn run_prompt(context: &JobContext, job: &Value) -> Result<Value, String> {
     let input = job.get("input").cloned().unwrap_or_else(|| json!({}));
     let prompt = input
@@ -727,6 +750,7 @@ pub(crate) async fn run_prompt(context: &JobContext, job: &Value) -> Result<Valu
             context.state.store.put("session",&session);
         }
     }
+    let resumed_instruction=resume_owner_instruction(job,&prompt)?;
     let reused_research=if let Some(worktree)=&rsi_workspace {
         crate::engine::rsi_evolve::reuse_research(&context.state,&input,&worktree.path,&session_id)
     }else{String::new()};
@@ -742,7 +766,7 @@ pub(crate) async fn run_prompt(context: &JobContext, job: &Value) -> Result<Valu
                 "개선 근거가 있으면 workspace_replace_range(읽은 줄과 sourceSha256) 또는 workspace_replace로 변경하고, 근거가 없다면 변경 없이 이유를 보고하세요."
             };
             format!("{prompt}{reused_research}\n\n현재 대상은 별도의 Git 작업공간입니다. 제공된 검증 원문과 인덱스는 바로 활용하고, 빠진 정보만 도구로 조회하세요. {completion} 절대경로 파일 도구, 셸, Git API, 다른 에이전트는 사용하지 마세요. 빌드·타입 검사와 패치 수집은 실행 엔진이 종료 후 별도로 처리합니다.")
-        } else { prompt },
+        } else { resumed_instruction.unwrap_or_else(||prompt.clone()) },
         agent_id: input
             .get("agentId")
             .and_then(|value| value.as_str())
@@ -810,8 +834,11 @@ pub(crate) async fn run_prompt(context: &JobContext, job: &Value) -> Result<Valu
     let autonomous_result=if rsi_workspace.is_none() && input["autonomous"]!=false {
         let mut scoped_context=context.clone();
         scoped_context.state=scoped_state.clone();
+        // The verifier always scores the immutable owner goal; the *model*
+        // sees the continuation instruction on resume, including the owner's
+        // attestation and fresh-observation requirement.
         Some(crate::engine::autonomy::execute(
-            &scoped_context,&request,&request.input,&input).await?)
+            &scoped_context,&request,&prompt,&input).await?)
     }else{None};
     let mut message=if autonomous_result.is_some() || preflight_native.is_some(){
         // A native source operator is not a model invocation, and must not
@@ -1086,6 +1113,24 @@ mod tests {
         let store = Store::open(&config.db_path()).unwrap();
         let vault = Vault::open(&config.key_path());
         AppState::new(config, store, vault)
+    }
+
+    #[test]
+    fn owner_authorized_resume_does_not_replay_the_original_goal_as_new_input(){
+        let job=json!({"resumeCount":1,"resumeEvidence":{
+            "source":"owner_attestation","applied":false,
+            "details":"The remote job was NOT created"
+        }});
+        let prompt=resume_owner_instruction(&job,"Create remote job").unwrap().unwrap();
+        assert!(prompt.contains("The remote job was NOT created"));
+        assert!(prompt.contains("Create remote job"));
+        assert!(prompt.contains("다시 확인"));
+        assert_ne!(prompt,"Create remote job");
+        assert!(resume_owner_instruction(&json!({}),"New goal").unwrap().is_none());
+        assert!(resume_owner_instruction(&json!({"resumeCount":1}),"Old goal").is_err());
+        assert!(resume_owner_instruction(&json!({"resumeCount":1,"resumeEvidence":{
+            "source":"owner_attestation","applied":true,"details":"Already done"
+        }}),"Goal").is_err());
     }
 
     #[test]

@@ -253,6 +253,18 @@ pub async fn resume(State(state): State<AppState>, Path(id): Path<String>) -> Re
         return error(StatusCode::CONFLICT,
             "재개 한도를 초과했습니다. 검증 기록을 확인한 뒤 새로운 작업을 시작하세요.");
     }
+    // A prior external effect was explicitly attested NOT APPLIED. Preserve
+    // that statement across the CAS and worker restart: clearing the UI
+    // reconciliation without passing it into the model would silently replay
+    // the original owner request as if this were a new task.
+    let prior=job["reconciliation"].clone();
+    let mut history=job["resumeHistory"].as_array().cloned().unwrap_or_default();
+    if let Some(checkpoint)=job.get("autonomousState").filter(|v|!v.is_null()) {
+        history.push(json!({"resumeNumber":resumed+1,
+            "previousAutonomousState":checkpoint,
+            "reconciliation":prior}));
+        if history.len()>2{history.drain(..history.len()-2);}
+    }
     let patch = json!({
         "status": "queued",
         "error": null,
@@ -261,6 +273,8 @@ pub async fn resume(State(state): State<AppState>, Path(id): Path<String>) -> Re
         "startedAt": null,
         "recovered": false,
         "resumeCount": resumed + 1,
+        "resumeEvidence": prior,
+        "resumeHistory": history,
         "reconciliation": null,
         "promptState": {"inFlight": false},
         "autonomousState": null,
@@ -408,6 +422,10 @@ mod tests {
         assert_eq!(record["status"],"queued");
         assert_eq!(record["promptState"]["inFlight"],false);
         assert_eq!(record["resumeCount"],1);
+        assert_eq!(record["resumeEvidence"]["applied"],false);
+        assert_eq!(record["resumeEvidence"]["source"],"owner_attestation");
+        assert_eq!(record["resumeHistory"][0]["previousAutonomousState"]["receipts"][0]["outcome"],
+            "needs_review");
         assert_eq!(record["autonomousState"],Value::Null);
         assert_eq!(resume(State(state.clone()),Path(id.clone())).await.status(),StatusCode::CONFLICT);
     }
