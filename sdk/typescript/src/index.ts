@@ -64,6 +64,26 @@ export interface CreateGroupInput {
   max_rounds?: number;
   budget_krw?: number;
 }
+
+export interface VideoScene { heading: string; narration: string; seconds: number }
+export type VideoBackend = 'local' | 'veo';
+export type VideoStatus = 'draft' | 'rendering' | 'completed' | 'failed';
+export interface VideoRecord {
+  id: string;
+  prompt: string;
+  scenes: VideoScene[];
+  status: VideoStatus;
+  backend: VideoBackend;
+  cost_krw: number;
+  output: string | null;
+  error: string | null;
+  render_seconds: number;
+}
+export interface VideoRequest {
+  prompt: string;
+  scenes?: VideoScene[];
+  backend?: VideoBackend;
+}
 export interface ClientOptions {
   baseUrl?: string;
   fetch?: typeof fetch;
@@ -142,6 +162,26 @@ export class DominionClient {
   }
   groupNext(id: string, signal?: AbortSignal) {
     return this.request<GroupRoom>('/api/groups/'+encodeURIComponent(id)+'/next','POST',{},signal);
+  }
+  videoList(signal?: AbortSignal) {
+    return this.request<VideoRecord[]>('/api/videos','GET',undefined,signal);
+  }
+  videoCreate(input: VideoRequest, signal?: AbortSignal) {
+    return this.request<VideoRecord>('/api/videos','POST',input,signal);
+  }
+  videoGet(id: string, signal?: AbortSignal) {
+    return this.request<VideoRecord>('/api/videos/'+encodeURIComponent(id),'GET',undefined,signal);
+  }
+  videoEditScene(id: string, index: number, scene: VideoScene, signal?: AbortSignal) {
+    if (!Number.isSafeInteger(index) || index < 0) throw new TypeError('Invalid scene index');
+    return this.request<VideoRecord>(
+      '/api/videos/'+encodeURIComponent(id)+'/scenes/'+index,'POST',scene,signal);
+  }
+  videoRender(id: string, signal?: AbortSignal) {
+    return this.request<VideoRecord>('/api/videos/'+encodeURIComponent(id)+'/render','POST',{},signal);
+  }
+  videoDownloadUrl(id: string) {
+    return this.base + '/api/videos/'+encodeURIComponent(id)+'/content';
   }
   /**
    * Reconnect only a read-only GET. The cursor is based on committed event seq;
