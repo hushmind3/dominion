@@ -1,10 +1,16 @@
-import { defineConfig } from 'vite'
+import { defineConfig, searchForWorkspaceRoot } from 'vite'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 const apiTarget=process.env.DOMINION_API_URL||'http://127.0.0.1:4317'
+const webRoot=dirname(fileURLToPath(import.meta.url))
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
+    // Shared SDK source lives beside web/: allow only its source directory,
+    // not an arbitrary parent filesystem tree, in the development server.
+    fs: { allow: [searchForWorkspaceRoot(webRoot), resolve(webRoot,'../sdk/typescript/src')] },
     host: '127.0.0.1', port: 5173, strictPort: true,
     proxy: { '/api': {
       target: apiTarget, changeOrigin: true,
