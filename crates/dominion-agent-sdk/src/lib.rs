@@ -245,6 +245,20 @@ fn decode(content: &str) -> Result<Decision, String> {
 
 /// Distinguish inspection from external effects so existing files or a
 /// plausible model claim cannot satisfy an unperformed edit.
+/// A verified shell command is valid only after the most recent known
+/// workspace edit. The host still enforces actual command permissions.
+fn successful_command_after_edit(receipts: &[Receipt], expected: &str) -> bool {
+    let last_edit=receipts.iter().rposition(|receipt| {
+        receipt.success && matches!(receipt.tool.as_str(),
+            "workspace_write"|"workspace_replace"|"workspace_replace_range"|"file_write")
+    });
+    receipts.iter().enumerate().any(|(index, receipt)| {
+        receipt.success && receipt.tool=="shell_exec"
+            && receipt.arguments["command"].as_str()==Some(expected)
+            && last_edit.is_none_or(|edit|index>edit)
+    })
+}
+
 fn owner_requires_effect(text: &str) -> bool {
     let t = text.to_lowercase();
     ["만들","생성","작성","수정","편집","삭제","제거","고쳐","구현",
@@ -342,6 +356,7 @@ impl Kernel<'_> {
                 "userTask":request.instruction,
                 "latestOwnerDirective":current_directive, "ownerInstructions":request.owner_instructions,
                 "currentPlan":run.plan, "recentObservations":tail,
+                "requiredAcceptanceChecks":request.checks,
                 "verificationGaps":run.checks.iter().filter(|v| !v.satisfied)
                     .map(|v| &v.explanation).collect::<Vec<_>>(),
                 "remainingSteps":request.limits.max_steps-step,
@@ -555,7 +570,12 @@ impl Kernel<'_> {
         for criterion in &request.checks {
             let observation = if criterion.kind == CriterionKind::ToolSucceeded {
                 let name = criterion.tool.as_deref().unwrap_or("");
-                Ok(run.receipts.iter().any(|r| r.tool == name && r.success))
+                if name=="shell_exec" && criterion.contains.is_some() {
+                    Ok(successful_command_after_edit(&run.receipts,
+                        criterion.contains.as_deref().unwrap_or("")))
+                } else {
+                    Ok(run.receipts.iter().any(|r| r.tool == name && r.success))
+                }
             } else {
                 self.evidence.check(criterion).await
             };

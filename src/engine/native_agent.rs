@@ -175,8 +175,11 @@ impl Journal for DurableJournal<'_> {
         }))
     }
     fn cancelled(&self, id: &str)->bool {
-        self.context.state.store.get("job",id)
-            .is_none_or(|job| job["cancelRequested"]==true || job["status"]=="cancelled")
+        self.context.state.store.get("job",id).is_none_or(|job| {
+            job["cancelRequested"]==true || job["status"]=="cancelled" ||
+            job["sessionId"].as_str().is_some_and(|session|
+                self.context.state.is_cancelled(session))
+        })
     }
     fn directive(&self, id: &str)->Result<Option<String>,String> {
         let job=self.context.state.store.get("job",id)

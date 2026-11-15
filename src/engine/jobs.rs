@@ -160,6 +160,14 @@ pub fn recover(state: &AppState) {
         ]
         .iter()
         .any(|path| {
+            // Stable native child IDs make new workflows replay-safe.
+            if *path=="/workflowState/inFlight"
+                && job.pointer(path)==Some(&json!(true))
+            {
+                return job.pointer("/workflowState/activeChildJobId")
+                    .and_then(Value::as_str)
+                    .is_none_or(|id| state.store.get("job",id).is_none());
+            }
             job.pointer(path)
                 .is_some_and(|value| !value.is_null() && value != &json!(false))
         });
@@ -1080,6 +1088,33 @@ mod tests {
         recover(&state);
         let stored = state.store.get("job", job["id"].as_str().unwrap()).unwrap();
         assert_eq!(stored["status"], "needs_review");
+    }
+
+    #[test]
+    fn recover_new_workflow_reuses_durable_rust_sdk_child() {
+        let state=temp_state();
+        state.store.put("job",&json!({
+            "id":"native-child","kind":"prompt","status":"completed",
+            "input":{"prompt":"Analyze source"},"result":{"answer":"Done"}
+        }));
+        state.store.put("job",&json!({
+            "id":"workflow-parent","kind":"workflow","status":"running",
+            "attempts":1,"workflowState":{"inFlight":true,
+                "activeChildJobId":"native-child","activeStepIndex":0}
+        }));
+        recover(&state);
+        assert_eq!(state.store.get("job","workflow-parent").unwrap()["status"],"queued");
+        assert_eq!(state.store.get("job","native-child").unwrap()["status"],"completed");
+    }
+    #[test]
+    fn recover_legacy_workflow_still_requires_review() {
+        let state=temp_state();
+        state.store.put("job",&json!({
+            "id":"legacy-workflow","kind":"workflow","status":"running",
+            "attempts":1,"workflowState":{"inFlight":true,"activeStepIndex":0}
+        }));
+        recover(&state);
+        assert_eq!(state.store.get("job","legacy-workflow").unwrap()["status"],"needs_review");
     }
 
     #[test]

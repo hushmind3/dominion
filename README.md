@@ -185,3 +185,8 @@ The independent native Rust kernel is in `crates/dominion-agent-sdk`. The `domin
 Recent sub3 commits add a dependency-aware Rust tool scheduler (bounded read concurrency and strictly ordered effects), failure-triggered replanning, structured MCP error checking and clean-checkpoint `Kernel::resume`. Previously completed tool effects cannot be replayed automatically after a crash, and unknown outcomes go to owner review. Deterministic kernel scheduling and recovery integration tests are committed in `crates/dominion-agent-sdk/tests`.
 
 **Validation state:** source and connector-level route checks completed; no Rust toolchain is installed in the current execution environment, so these new Rust tests, browser runtime checks and live-provider exercises are still unverified. Full CI and SWE-bench remain deferred until whole-product integration and generated-file cleanup are complete.
+
+
+### Rust-native autonomous coding verification and workflows (sub3)
+
+The main UI now sends required command postconditions to the real Rust kernel. A completed command must match the owner's requested verification command and occur after the latest workspace edit. Workflow stages execute as durable native Rust SDK child jobs rather than a separate chat-turn harness. See [Architecture](docs/SDK-ARCHITECTURE-2026-11-15.md). This source is not yet build-tested.

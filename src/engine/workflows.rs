@@ -1,5 +1,4 @@
-use crate::engine::jobs::JobContext;
-use crate::engine::{chat::TurnRequest, run_quiet};
+use crate::engine::jobs::{self, JobContext};
 use serde_json::{json, Value};
 
 /// Sequential workflow runner. Each step is a real Rust engine turn, the
@@ -28,10 +27,13 @@ pub async fn run(context: &JobContext, job: &Value) -> Result<Value, String> {
         .get("workflowState")
         .cloned()
         .unwrap_or_else(|| json!({}));
-    if existing.get("inFlight").and_then(Value::as_bool) == Some(true) {
-        return Ok(
-            json!({"workflowId":workflow_id,"sessionId":existing.get("sessionId"),"status":"needs_review","reason":"중단된 단계의 도구 실행 여부를 확인해야 합니다."}),
-        );
+    if existing.get("inFlight").and_then(Value::as_bool) == Some(true)
+        && existing.get("activeChildJobId").and_then(Value::as_str).is_none()
+    {
+        // Legacy in-flight steps had no durable child ID. The old chat loop
+        // may have performed effects that cannot be reconciled automatically.
+        return Ok(json!({"workflowId":workflow_id,"sessionId":existing.get("sessionId"),
+            "status":"needs_review","reason":"기존 실행기의 중단된 단계는 수동 확인이 필요합니다."}));
     }
     let definition = existing
         .get("definition")
@@ -123,51 +125,67 @@ pub async fn run(context: &JobContext, job: &Value) -> Result<Value, String> {
             return Err(format!("{step_name} 단계의 지시문이 비어 있습니다."));
         }
 
+        // Each workflow step is an immutable, durable native Rust SDK job.
+        // A stable child id prevents an engine restart from replaying edits.
+        let child_id=format!("workflow-step-{}-{}",context.job_id,index);
+        let child_input=json!({
+            "prompt":prompt,
+            "sessionId":session_id,
+            "agentId":optional(step,"agentId"),
+            "providerId":optional(step,"providerId"),
+            "model":optional(step,"model"),
+            "toolsEnabled":true,
+            "toolsExecutionEnabled":true,
+            "ownerInstructions":format!(
+                "Workflow step {} of {} ({}). Follow the step's owner goal; verify any real changes.",
+                index+1,total,step_name
+            ),
+            "parentWorkflowId":context.job_id,
+        });
+        jobs::enqueue_once(state,&child_id,"prompt",child_input)
+            .ok_or("Could not save the native Rust workflow step")?;
         context.checkpoint(json!({
-            "workflowState": { "sessionId": session_id, "outputs": outputs, "definition": definition, "inFlight": true, "activeStepIndex": index },
+            "workflowState": { "sessionId": session_id, "outputs": outputs,
+                "definition": definition, "inFlight": true,
+                "activeStepIndex": index, "activeChildJobId":child_id },
         }))?;
-        let request = TurnRequest {
-            session_id: Some(session_id.clone()),
-            input: prompt,
-            agent_id: optional(step, "agentId"),
-            provider_id: optional(step, "providerId"),
-            model: optional(step, "model"),
-            attachment_ids: Vec::new(),
-            tools_enabled: true,tools_execution_enabled: true,
-            thinking: None,
-            auto_learning: false,
-            reasoning_effort: None,
-            reasoning_language: None,
-            system_override: Some(format!(
-                "You are executing step {} of the workflow \"{}\". \
-                 Produce the step result directly and concisely.",
-                index + 1,
-                workflow
-                    .get("name")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("Workflow")
-            )),
-            task_id: None,
-            parent_task_id: None,
-            task_revision: None,
-            verification_owner: None,
-        };
-
-        let message = match run_quiet(state, &request).await {
-            Ok(Some(message)) => message,
-            Ok(None) => return Err(format!("{step_name} 단계가 빈 응답을 반환했습니다.")),
-            Err(_) if state.is_cancelled(&session_id) => {
-                return Ok(
-                    json!({"workflowId":workflow_id,"sessionId":session_id,"outputs":outputs,"status":"cancelled"}),
-                )
+        // The child executes outside the parent's worker slot, so one-worker
+        // installations can run full native SDK workflows without deadlocks.
+        jobs::start_now(state.clone(),child_id.clone());
+        let answer=loop {
+            if state.is_cancelled(&session_id) {
+                return Ok(json!({"workflowId":workflow_id,"sessionId":session_id,
+                    "outputs":outputs,"status":"cancelled"}));
             }
-            Err(error) => return Err(error),
+            let child=state.store.get("job",&child_id)
+                .ok_or("Workflow child job was removed during execution")?;
+            match child["status"].as_str().unwrap_or("") {
+                "completed" => {
+                    let Some(answer)=child["result"]["answer"].as_str()
+                        .filter(|answer|!answer.trim().is_empty())
+                    else { return Err(format!("{step_name} 단계의 Rust SDK 결과가 비어 있습니다.")); };
+                    break answer.to_string();
+                }
+                "failed" => return Err(format!("{step_name} 단계 실행 실패: {}",
+                    child["error"].as_str().unwrap_or("unknown error"))),
+                "needs_review" => return Ok(json!({
+                    "workflowId":workflow_id,"sessionId":session_id,
+                    "outputs":outputs,"status":"needs_review",
+                    "activeChildJobId":child_id,
+                    "reason":child["error"].as_str().or_else(||
+                        child["result"]["reason"].as_str()).unwrap_or("실행 결과 확인이 필요합니다.")
+                })),
+                "cancelled" => return Ok(json!({"workflowId":workflow_id,
+                    "sessionId":session_id,"outputs":outputs,"status":"cancelled"})),
+                _ => tokio::time::sleep(std::time::Duration::from_millis(250)).await,
+            }
         };
         outputs.push(json!({
             "stepId": step.get("id"),
             "name": step_name,
-            "content": message.get("content").cloned().unwrap_or(json!("")),
-            "messageId": message.get("id"),
+            "content": answer,
+            "messageId": format!("native-answer-{child_id}"),
+            "childJobId":child_id,
         }));
 
         context.checkpoint(json!({
@@ -290,5 +308,18 @@ mod tests {
         let prompt = "요청: {{input}}\n이전: {{previous}}";
         let rendered = render(prompt, "Rust로 실행", "1단계 결과");
         assert_eq!(rendered, "요청: Rust로 실행\n이전: 1단계 결과");
+    }
+}
+
+#[cfg(test)]
+mod rust_workflow_tests {
+    #[test]
+    fn child_identity_is_stable_across_retries() {
+        let parent="workflow-123";
+        let index=3;
+        let a=format!("workflow-step-{parent}-{index}");
+        let b=format!("workflow-step-{parent}-{index}");
+        assert_eq!(a,b);
+        assert_ne!(a,format!("workflow-step-{parent}-{}",index+1));
     }
 }

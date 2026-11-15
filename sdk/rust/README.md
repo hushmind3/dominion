@@ -29,3 +29,8 @@ The canonical Rust entrypoint remains `Kernel::run`, re-exported as `dominion_sd
 `Kernel::resume(request, checkpoint)` continues an interrupted job from the exact previously committed `Snapshot`. Identity and owner-task text must match. The kernel rejects any checkpoint with a pending model request or outstanding tool effect, preserves prior receipts and token counters, and starts at the next unfinished planning step. A terminal snapshot can be returned without another model request. No prior command is reissued automatically.
 
 The live adapter `src/engine/native_agent.rs` now reads the SQLite-backed `nativeState` checkpoint and calls `Kernel::resume` only when `nativeInFlight` is clear. Restored job runs reuse the original session, execution identifier and chat message identifiers; the existing job recovery worker leaves uncertain tool/model outcomes in `needs_review` rather than requeueing. Scripted tests cover successful continuation, failed dependency recovery, missing identity, and unknown-outcome rejection. These tests are committed but not yet executed with a Rust toolchain here.
+
+
+### Native coding verification
+
+The public job API accepts a `command_succeeded` criterion and transforms it into a Rust-owned exact shell execution receipt check. The verifier only treats a passing command *after the latest workspace edit* as satisfying the owner's acceptance condition. The same requirement flows from the main-based GUI through `/api/jobs`; no TypeScript execution loop. Workflow child jobs also use `Kernel::run` with stable IDs and resumable checkpoints. Test commands still require actual owner approval.

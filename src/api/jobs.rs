@@ -48,11 +48,26 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
                 if let Err(message)=engine::verification::validate_criteria(checks) {
                     return error(StatusCode::BAD_REQUEST,message);
                 }
-                let valid=checks.as_array().is_some_and(|list|list.iter().all(|item|
-                    matches!(item["type"].as_str(),
-                        Some("file_exists"|"file_absent"|"file_contains"|"tool_succeeded"))));
-                if !valid {return error(StatusCode::BAD_REQUEST,"Rust SDK가 지원하는 검증 조건을 선택하세요.");}
-                value["checks"]=checks.clone();
+                let Some(items)=checks.as_array() else {
+                    return error(StatusCode::BAD_REQUEST,"검증 조건은 배열이어야 합니다.");
+                };
+                // Public command_succeeded is an exact, post-edit Rust
+                // receipt check: never a model-reported success claim.
+                let mut native=Vec::with_capacity(items.len());
+                for item in items {
+                    let criterion=match item["type"].as_str() {
+                        Some("file_exists"|"file_absent"|"file_contains"|"tool_succeeded") => item.clone(),
+                        Some("command_succeeded") => json!({
+                            "type":"tool_succeeded",
+                            "tool":"shell_exec",
+                            "contains":item["command"]
+                        }),
+                        _=>return error(StatusCode::BAD_REQUEST,
+                            "Rust SDK가 지원하는 검증 조건을 선택하세요."),
+                    };
+                    native.push(criterion);
+                }
+                value["checks"]=json!(native);
             }
             if let Some(v)=input["allowFallback"].as_bool() {
                 value["allowFallback"]=json!(v);

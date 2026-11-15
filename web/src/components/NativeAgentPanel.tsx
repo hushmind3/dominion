@@ -6,13 +6,13 @@ import {useLocale} from '../i18n'
 // Main branch presentation, wired to sub3's single Rust job/SDK runtime.
 type AgentJob = {
  id:string; kind:string; status:string; sessionId?:string; createdAt?:string; queuedAt?:string;
- input?:{prompt?:string;providerId?:string};
+ input?:{prompt?:string;providerId?:string;checks?:{type?:string;tool?:string;contains?:string}[]};
  nativeState?:{step?:number;modelCalls?:number;chargedTokens?:number;receipts?:{tool?:string;success?:boolean}[];error?:string};
  result?:{answer?:string;reason?:string;toolCalls?:number;modelCalls?:number};error?:string;
 }
 type Approval = {id:string;status:string;sessionId?:string;tool?:string;args?:unknown}
 type SdkRun = {
- id:string;status:string;instruction:string;providerId?:string;answer?:string;error?:string;
+ id:string;status:string;instruction:string;providerId?:string;answer?:string;error?:string;verification?:string;
  checkpoint?:{rounds?:number;toolCalls?:number;answer?:string;
   usage?:{prompt_tokens:number;completion_tokens:number;cached_prompt_tokens:number};
   pendingCall?:{id:string;name:string;arguments:unknown}|null;
@@ -34,6 +34,7 @@ function present(job:AgentJob,approvals:Approval[]=[]):SdkRun{
  const receipts=job.nativeState?.receipts??[]
  return {
   id:job.id,status,instruction:job.input?.prompt??'',providerId:job.input?.providerId,
+  verification:job.input?.checks?.find(c=>c.type==='tool_succeeded'&&c.tool==='shell_exec')?.contains,
   answer:job.result?.answer,error:job.error??job.result?.reason??job.nativeState?.error,
   checkpoint:{
    rounds:job.nativeState?.step??job.nativeState?.modelCalls??job.result?.modelCalls??0,
@@ -82,10 +83,11 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   },1500)
   return()=>{alive=false;clearInterval(timer)}
  },[run?.id,run?.status])
- const launch=async(prompt:string,extraInstructions?:string)=>{
+ const launch=async(prompt:string,extraInstructions?:string,verifyCommand?:string)=>{
   const created=await post<AgentJob>('/api/jobs',{kind:'prompt',input:{
    prompt,providerId:providerId||run?.providerId||undefined,
-   ...(extraInstructions?{ownerInstructions:extraInstructions}:{})
+   ...(extraInstructions?{ownerInstructions:extraInstructions}:{}),
+   ...(verifyCommand?{acceptanceChecks:[{type:'command_succeeded',command:verifyCommand}]}:{})
   }})
   setRun(present(created))
  }
@@ -94,8 +96,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   setBusy(true);setError('')
   try{
    const verify=verification.trim()
-   await launch(instruction.trim(),verify?
-    'After the task, run this verification command as an agent tool and check its exit code. Repair failures; report if the tool is unavailable or permission was denied. Command: '+verify:undefined)
+   await launch(instruction.trim(),undefined,verify||undefined)
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
@@ -114,7 +115,9 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    }else{
     // This SDK does not replay uncertain external effects from a failed job.
     // A retry is a distinct job with its own fresh journal.
-    await launch(run.instruction,'This is a fresh retry after an earlier run failed. Inspect the workspace before editing, and never assume earlier tools did or did not take effect.')
+    await launch(run.instruction,
+     'This is a fresh retry after an earlier run failed. Inspect the workspace before editing, and never assume earlier tools did or did not take effect.',
+     run.verification||verification.trim()||undefined)
    }
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
@@ -126,7 +129,8 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    const details=observation.trim()
    await launch(run.instruction,
     'Previous execution needs manual review. The operator inspected the effects and reports: '+(applied?'effect applied':'effect not applied')+
-    '. Observation: '+details+'. Verify the actual workspace state before taking any further action; do not blindly replay prior changes.')
+    '. Observation: '+details+'. Verify the actual workspace state before taking any further action; do not blindly replay prior changes.',
+    run.verification||verification.trim()||undefined)
    setObservation('')
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
@@ -166,7 +170,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    <details className="text-[11px] text-[#746A5F]">
     <summary className="cursor-pointer select-none">{en?'Optional: verify the result with a command':'선택 사항: 명령어로 결과 검증'}</summary>
     <label className="mt-2 block" htmlFor="sdk-verify">
-     {en?'Ask the agent to run a verification command':'에이전트에게 검증 명령 실행 요청'}
+     {en?'Required verification command (must pass)':'필수 검증 명령어 (성공해야 완료)'}
     </label>
     <input id="sdk-verify" value={verification} onChange={e=>setVerification(e.target.value)}
      maxLength={2048} placeholder="cargo test"

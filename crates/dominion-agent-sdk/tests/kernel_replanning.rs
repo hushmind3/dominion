@@ -34,7 +34,7 @@ impl RecordingTools {
 }
 impl Tools for RecordingTools {
     fn definitions(&self)->Vec<ToolSpec>{
-        ["read","write"].into_iter().map(|name|ToolSpec {
+        ["read","write","shell_exec"].into_iter().map(|name|ToolSpec {
             name:name.into(),description:name.into(),schema:json!({}),
             read_only:name=="read"
         }).collect()
@@ -178,4 +178,61 @@ fn request_length_matches_the_public_job_api_limit(){
     assert!(req.validate().is_ok());
     req.instruction.push('x');
     assert!(req.validate().is_err());
+}
+
+#[tokio::test]
+async fn command_success_is_exact_and_must_follow_last_edit() {
+    let model=ScriptedModel::new(vec![
+        decide(json!([op("edit1","write",&[])]),None),
+        decide(json!([json!({"id":"test_early","tool":"shell_exec",
+            "arguments":{"command":"cargo test"},"dependsOn":[]})]),None),
+        decide(json!([op("edit2","write",&[])]),None),
+        decide(json!([]),Some("Done before last verification")),
+        decide(json!([json!({"id":"test_late","tool":"shell_exec",
+            "arguments":{"command":"cargo test"},"dependsOn":[]})]),None),
+        decide(json!([]),Some("Verified after final edit")),
+    ]);
+    let tools=RecordingTools::new(&[]);
+    let journal=RecordingJournal::default();
+    let kernel=Kernel{model:&model,tools:&tools,evidence:&AlwaysTrueEvidence,journal:&journal};
+    let mut req=request("command-postcondition");
+    req.allowed_tools.push("shell_exec".into());
+    req.checks.push(dominion_agent_sdk::Criterion{
+        kind:dominion_agent_sdk::CriterionKind::ToolSucceeded,
+        path:None,contains:Some("cargo test".into()),tool:Some("shell_exec".into())
+    });
+    let result=kernel.run(req).await.unwrap();
+    assert!(matches!(result.status,Status::Completed));
+    assert_eq!(result.answer.as_deref(),Some("Verified after final edit"));
+    assert_eq!(*tools.called.lock().unwrap(),
+        vec!["edit1","test_early","edit2","test_late"]);
+}
+
+#[tokio::test]
+async fn failed_or_different_verification_command_requires_repair() {
+    let model=ScriptedModel::new(vec![
+        decide(json!([op("edit","write",&[])]),None),
+        decide(json!([json!({"id":"wrong","tool":"shell_exec",
+            "arguments":{"command":"echo all good"},"dependsOn":[]})]),None),
+        decide(json!([]),Some("Not yet verified")),
+        decide(json!([json!({"id":"failing","tool":"shell_exec",
+            "arguments":{"command":"cargo test"},"dependsOn":[]})]),None),
+        decide(json!([json!({"id":"passing","tool":"shell_exec",
+            "arguments":{"command":"cargo test"},"dependsOn":[]})]),None),
+        decide(json!([]),Some("Verified")),
+    ]);
+    let tools=RecordingTools::new(&["failing"]);
+    let journal=RecordingJournal::default();
+    let kernel=Kernel{model:&model,tools:&tools,evidence:&AlwaysTrueEvidence,journal:&journal};
+    let mut req=request("command-repair");
+    req.allowed_tools.push("shell_exec".into());
+    req.checks.push(dominion_agent_sdk::Criterion{
+        kind:dominion_agent_sdk::CriterionKind::ToolSucceeded,
+        path:None,contains:Some("cargo test".into()),tool:Some("shell_exec".into())
+    });
+    let result=kernel.run(req).await.unwrap();
+    assert!(matches!(result.status,Status::Completed));
+    assert_eq!(result.answer.as_deref(),Some("Verified"));
+    assert!(result.receipts.iter().any(|r|r.id=="failing"&&!r.success));
+    assert_eq!(tools.called.lock().unwrap().len(),4);
 }

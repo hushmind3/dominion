@@ -89,3 +89,13 @@ Static integration: main frontend page/panel paths → `/api/jobs` → `src/api/
 - The production UI still uses `main`'s layout. `NativeAgentPanel` is adapted to the sub3 native `/api/jobs` and `/api/approvals` interfaces. TypeScript is a client, not a separate harness.
 
 **Scope and remaining verification:** Run Rust unit/integration tests on an installed Rust toolchain and then an actual local UI + provider sequence. Concurrent agent delegation, video delivery, group conversation runtime, cross-domain RSI improvements, semantic context compression and verified commercial-grade pricing remain whole-product evaluation items. Do not claim they were made frontier-equivalent by this scheduler change. CI stays deferred until project-wide cleanup and integration checks.
+
+## Core execution unification — 2026-11-15
+
+The default general-purpose job path remains `POST /api/jobs` → `src/engine/jobs.rs::run_prompt` → `src/engine/native_agent.rs` → independent `dominion-agent-sdk::Kernel`. No external vendor SDK owns planning, dispatch or verification.
+
+**Real command completion gate:** `POST /api/jobs` accepts `acceptanceChecks: [{ "type": "command_succeeded", "command": "cargo test" }]`. The Rust API normalizes this into a native exact-command tool-receipt criterion. `Kernel::verify` checks the command string, successful host-confirmed execution, and that the receipt occurred **after the latest recorded workspace edit**. A claim of completion alone cannot satisfy it. The `main` autonomous-work panel uses this criterion, including explicit retries, instead of merely appending a verification request to the prompt. This does not bypass shell approval.
+
+**Workflow engine migration:** `src/engine/workflows.rs` now executes each workflow step through the same native Rust SDK job queue. Stable child IDs and `enqueue_once` support retry-safe continuation; `start_now` avoids single-worker deadlocks. A prior child result is reused instead of re-running modifications. Unknown legacy in-flight chat-loop steps remain in `needs_review`. Cancelling the parent session propagates to active native children via the journal.
+
+**Tests authored:** scripted native-kernel tests for stale command verification, mismatched/failed commands and replanning, workflow child checkpoint recovery, legacy recovery and deterministic child ID. Existing tests remain. Rust compilation and integration tests are **not yet run** in this environment; no claims of runtime equivalence with frontier systems. CI remains deliberately deferred until the whole product is cleaned up and ready.
