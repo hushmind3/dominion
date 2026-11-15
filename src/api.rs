@@ -46,6 +46,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/improvements/:id/evaluate",post(improvement_evaluate))
         .route("/api/improvements/:id/adopt",post(improvement_adopt))
         .route("/api/improvements/:id/descendant",post(improvement_descendant))
+        .route("/api/improvements/:id/evolution",post(improvement_evolution_start))
+        .route("/api/evolutions",get(evolution_list))
+        .route("/api/evolutions/:id",get(evolution_get))
         .route("/api/memory",get(memory_list).post(memory_create))
         .route("/api/memory/search",get(memory_search))
         .route("/api/memory/:id/disable",post(memory_disable))
@@ -514,6 +517,31 @@ async fn improvement_descendant(State(state):State<AppState>,Path(id):Path<Strin
     }
 }
 
+async fn improvement_evolution_start(
+    State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>
+)->Response{
+    let id=match parse_room(&id){Ok(id)=>id,Err(error)=>return error};
+    let options=match serde_json::from_value::<crate::improvement::NewEvolution>(body){
+        Ok(value)=>value,
+        Err(error)=>return (StatusCode::BAD_REQUEST,Json(json!({"error":error.to_string()}))).into_response()
+    };
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.improvement_evolution_start(id,options).await{
+        Ok(run)=>(StatusCode::ACCEPTED,Json(json!(run))).into_response(),
+        Err(error)=>(StatusCode::CONFLICT,Json(json!({"error":error.to_string()}))).into_response()
+    }
+}
+async fn evolution_list(State(state):State<AppState>)->Json<Value>{
+    Json(json!(crate::runtime::DominionSdk::from_state(state).evolution_list().await))
+}
+async fn evolution_get(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    let id=match parse_room(&id){Ok(id)=>id,Err(error)=>return error};
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.evolution_get(id).await{
+        Ok(run)=>Json(json!(run)).into_response(),
+        Err(error)=>(StatusCode::NOT_FOUND,Json(json!({"error":error.to_string()}))).into_response()
+    }
+}
 async fn memory_list(State(state):State<AppState>,
     Query(params):Query<HashMap<String,String>>)->Json<Value>{
     let sdk=crate::runtime::DominionSdk::from_state(state);
