@@ -462,29 +462,60 @@ async fn send_codex(state:&AppState,route:&gateway::Route,client:&reqwest::Clien
 }
 async fn send_anthropic(route:&gateway::Route,client:&reqwest::Client,
     body:&Value,state:&AppState,session:&str,job_id:Option<&str>)->Result<Value,String> {
-    gateway::reserve_generation(&route.base_url,&route.model,route.requests_per_minute)?;
+    let (hint_body,hinted,prefix_tokens)=crate::engine::native_cache::hinted(
+        state,route,body);
     let _slot=gateway::acquire(&route.base_url,route.local).await;
-    let response=gateway::benchmark_request(client.post(route.endpoint("/messages")))
-        .header("x-api-key",&route.api_key)
-        .header("anthropic-version","2023-06-01")
-        .header("Content-Type","application/json")
-        .json(body).timeout(Duration::from_secs(240))
-        .send().await.map_err(|e|format!("Anthropic native connection failed: {e}"))?;
-    gateway::verify_benchmark_route(&response)?;
-    if !response.status().is_success(){
+    // An explicit 400/422 rejecting only optional cache_control is proof
+    // that generation did not start. Other HTTP/network failures may have
+    // incurred tokens, so neither this transport nor the kernel retries.
+    for attempt in 0..2 {
+        if state.is_cancelled(session)||job_id.is_some_and(|id|
+            state.store.get("job",id).is_none_or(|job|
+                job["status"]!="running"||job["cancelRequested"]==true)) {
+            return Err("Owner cancelled native Anthropic generation before request".into());
+        }
+        gateway::reserve_generation(&route.base_url,&route.model,route.requests_per_minute)?;
+        let outbound=if attempt==0 {&hint_body}else{body};
+        let response=gateway::benchmark_request(client.post(route.endpoint("/messages")))
+            .header("x-api-key",&route.api_key)
+            .header("anthropic-version","2023-06-01")
+            .header("Content-Type","application/json")
+            .json(outbound).timeout(Duration::from_secs(240))
+            .send().await.map_err(|error|format!(
+                "Anthropic native request delivery uncertain (not replayed): {error}"
+            ))?;
+        gateway::verify_benchmark_route(&response)?;
+        if response.status().is_success() {
+            if hinted && attempt==0 {
+                crate::engine::native_cache::record(
+                    state,route,true,response.status().as_u16(),prefix_tokens);
+            }
+            return if response.headers().get(reqwest::header::CONTENT_TYPE)
+                .and_then(|header|header.to_str().ok())
+                .is_some_and(|content|content.contains("text/event-stream")) {
+                receive_stream(response,crate::engine::native_stream::Wire::Anthropic,
+                    Some(state),session,job_id).await
+            }else{
+                response.json::<Value>().await
+                    .map_err(|e|format!("Anthropic native response error: {e}"))
+            };
+        }
         let status=response.status();
         let error=response.text().await.unwrap_or_default();
+        if hinted && attempt==0 &&
+            crate::engine::native_cache::unsupported(status,&error) {
+            crate::engine::native_cache::record(
+                state,route,false,status.as_u16(),prefix_tokens);
+            state.store.audit("native.prompt_cache_compat_retry",json!({
+                "providerId":route.id,"model":route.model,"sessionId":session,
+                "cacheHintRejectedByProvider":true,"requestPreviouslyGenerated":false,
+                "attempt":2
+            }));
+            continue;
+        }
         return Err(format!("Anthropic native HTTP {status}: {}",clip(&error,600)));
     }
-    if response.headers().get(reqwest::header::CONTENT_TYPE)
-        .and_then(|header|header.to_str().ok())
-        .is_some_and(|content|content.contains("text/event-stream")) {
-        receive_stream(response,crate::engine::native_stream::Wire::Anthropic,
-            Some(state),session,job_id).await
-    }else{
-        response.json::<Value>().await
-            .map_err(|e|format!("Anthropic native response error: {e}"))
-    }
+    Err("Anthropic native optional cache hint recovery exhausted".into())
 }
 /// This is the sole native model-to-kernel bridge. The kernel retains
 /// control of tool validation, scheduling, approvals, verification and replay.
