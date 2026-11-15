@@ -139,7 +139,7 @@ mod tests {
         let addr=listener.local_addr().unwrap();
         let server=tokio::spawn(async move{
             axum::serve(listener,Router::new().route("/v1beta/openai/videos",post(start))
-                .route("/v1beta/openai/videos/{id}",get(poll))).await.unwrap();
+                .route("/v1beta/openai/videos/:id",get(poll))).await.unwrap();
         });
         let client=Client::new();
         let veo=Veo{client,api_key:"test".into(),base:format!("http://{addr}/v1beta/openai"),
