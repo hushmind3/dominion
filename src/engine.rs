@@ -795,6 +795,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn full_native_loop_compacts_large_tools_and_recovers_exact_persisted_page(){
+        use axum::{routing::post,Json,Router};
+        use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
+        let calls=Arc::new(AtomicUsize::new(0));
+        let observed=calls.clone();
+        let app=Router::new().route("/v1/chat/completions",post(
+            move |Json(body):Json<Value>|{
+                let observed=observed.clone();
+                async move{
+                    observed.fetch_add(1,Ordering::SeqCst);
+                    let messages=body["messages"].as_array().cloned().unwrap_or_default();
+                    let got_page=messages.iter().any(|item|
+                        item["role"]=="tool" && item["content"].as_str().is_some_and(
+                            |text|text.contains("nextOffsetBytes")&&text.contains("sha256")));
+                    let is_clipped=messages.iter().any(|item|
+                        item["role"]=="tool" && item["content"].as_str().is_some_and(
+                            |text|text.contains("[DOMINION persisted tool result;")));
+                    let assistant=if got_page{
+                        json!({"role":"assistant","content":"Recovered exact persisted evidence page."})
+                    }else if is_clipped{
+                        json!({"role":"assistant","content":null,"tool_calls":[{
+                            "id":"retrieve-one","type":"function","function":{
+                                "name":"task_receipt","arguments":json!({
+                                    "callId":"first-read","offsetBytes":0,
+                                    "maxBytes":4096
+                                }).to_string()
+                            }
+                        }]})
+                    }else{
+                        json!({"role":"assistant","content":null,"tool_calls":[
+                            {"id":"first-read","type":"function","function":{
+                                "name":"workspace_read",
+                                "arguments":json!({"path":"large.txt"}).to_string()
+                            }},
+                            {"id":"second-read","type":"function","function":{
+                                "name":"workspace_read",
+                                "arguments":json!({"path":"large.txt"}).to_string()
+                            }}
+                        ]})
+                    };
+                    Json(json!({"choices":[{"message":assistant}],
+                        "usage":{"prompt_tokens":180,"completion_tokens":60}}))
+                }
+            }
+        ));
+        let listener=tokio::net::TcpListener::bind(("127.0.0.1",0)).await.unwrap();
+        let url=format!("http://{}/v1/chat/completions",listener.local_addr().unwrap());
+        let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap()});
+        let (state,root)=mock_state(url).await;
+        std::fs::write(root.join("large.txt"),"가".repeat(19_000)).unwrap();
+        let input=json!({"prompt":"Inspect large.txt and recover archived evidence",
+            "sessionId":null,"allowWrite":false,"allowShell":false,
+            "requireEvidence":false,"maxSteps":5,"tokenBudget":20000,
+            "planningMode":"never","modelTier":"quality"});
+        let (task,_)=state.store.submit("bounded-context-2026",&input).unwrap();
+        let id=task["id"].as_str().unwrap().to_string();
+        run(state.clone(),id.clone()).await;
+        let saved=state.store.get(&id).unwrap();
+        assert_eq!(saved["status"],"completed","native failure: {}",saved);
+        assert_eq!(saved["result"]["answer"],"Recovered exact persisted evidence page.");
+        assert_eq!(calls.load(Ordering::SeqCst),3);
+        let events=state.store.events_after(&id,0,100);
+        assert!(events.iter().any(|e|e["type"]=="context_projected"
+            && e["detail"]["clippedReceipts"].as_u64().unwrap_or(0)>0));
+        assert!(events.iter().any(|e|e["type"]=="model_reply"));
+        assert!(events.iter().any(|e|e["type"]=="tool_result"
+            && e["detail"]["callId"]=="retrieve-one"
+            && e["detail"]["outcome"]["receipt"]["sha256"].is_string()));
+        let original=state.store.tool_receipt(&id,"first-read").unwrap();
+        assert!(original["detail"]["outcome"]["receipt"]["content"]
+            .as_str().unwrap().len()>55_000);
+        assert_ne!(original["detail"]["outcome"]["receipt"]["content"],Value::Null);
+        server.abort();
+        let _=std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn mid_request_owner_instruction_prevents_unstarted_file_write() {
         let (url,arrival)=mock_provider(true).await;
         let (state,root)=mock_state(url).await;
