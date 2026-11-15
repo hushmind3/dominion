@@ -325,4 +325,93 @@ mod tests {
         assert!(!allowed_check("bash",&["-c".into(),"curl example.com".into()]));
         assert!(!allowed_check("git",&["reset".into(),"--hard".into()]));
     }
+
+    async fn mock_provider(slow:bool) -> (String, std::sync::Arc<tokio::sync::Notify>) {
+        use axum::{routing::post, Json, Router};
+        let arrival=std::sync::Arc::new(tokio::sync::Notify::new());
+        let signal=arrival.clone();
+        let app=Router::new().route("/v1/chat/completions",post(
+            move |Json(input):Json<Value>| {
+                let signal=signal.clone();
+                async move {
+                    signal.notify_one();
+                    if slow { tokio::time::sleep(Duration::from_millis(120)).await; }
+                    let history=input["messages"].as_array().cloned().unwrap_or_default();
+                    let corrected=history.iter().any(|m|
+                        m["role"]=="user" && m["content"]=="Do not write anything");
+                    let performed=history.iter().any(|m|m["role"]=="tool");
+                    if corrected || performed {
+                        Json(json!({"choices":[{"message":{"role":"assistant","content":"Checked and finished."}}],
+                            "usage":{"total_tokens":52}}))
+                    } else {
+                        let args=json!({"path":"verified.txt","content":"native readback"}).to_string();
+                        Json(json!({"choices":[{"message":{"role":"assistant","content":null,
+                            "tool_calls":[{"id":"write-1","type":"function","function":{
+                                "name":"workspace_write","arguments":args}}]}}],
+                            "usage":{"total_tokens":83}}))
+                    }
+                }
+            }
+        ));
+        let listener=tokio::net::TcpListener::bind(("127.0.0.1",0)).await.unwrap();
+        let url=format!("http://{}/v1/chat/completions",listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener,app).await.unwrap(); });
+        (url,arrival)
+    }
+
+    fn mock_state(url:String) -> (AppState,std::path::PathBuf) {
+        let root=std::env::temp_dir().join(
+            format!("dominion-runtime-test-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let store=crate::store::Store::open(&root.join("state.sqlite")).unwrap();
+        let (bus,_)=tokio::sync::broadcast::channel(128);
+        (AppState {store,bus,http:reqwest::Client::new(),
+            workspace:root.clone(),model_url:url,model_name:"mock".into(),
+            api_key:None},root)
+    }
+
+    #[tokio::test]
+    async fn mock_model_writes_file_and_rust_verifies_real_bytes() {
+        let (url,_)=mock_provider(false).await;
+        let (state,root)=mock_state(url);
+        let input=json!({"prompt":"Create verified.txt","sessionId":null,
+            "allowWrite":true,"allowShell":false,"requireEvidence":true,
+            "maxSteps":4,"tokenBudget":2000});
+        let (task,created)=state.store.submit("mock-write-2026",&input).unwrap();
+        assert!(created);
+        let id=task["id"].as_str().unwrap().to_string();
+        run(state.clone(),id.clone()).await;
+        let saved=state.store.get(&id).unwrap();
+        assert_eq!(saved["status"],"completed");
+        assert_eq!(saved["result"]["verifiedWrites"],1);
+        assert_eq!(std::fs::read_to_string(root.join("verified.txt")).unwrap(),"native readback");
+        let events=state.store.events_after(&id,0,100);
+        assert!(events.iter().any(|e|e["type"]=="tool_result"));
+        assert!(events.iter().any(|e|e["type"]=="finished"));
+        let _=std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn mid_request_owner_instruction_prevents_unstarted_file_write() {
+        let (url,arrival)=mock_provider(true).await;
+        let (state,root)=mock_state(url);
+        let input=json!({"prompt":"Create verified.txt","sessionId":null,
+            "allowWrite":true,"allowShell":false,"requireEvidence":false,
+            "maxSteps":4,"tokenBudget":2000});
+        let (task,_)=state.store.submit("mock-steer-2026",&input).unwrap();
+        let id=task["id"].as_str().unwrap().to_string();
+        let next=state.clone();let task_id=id.clone();
+        let runner=tokio::spawn(async move {run(next,task_id).await;});
+        tokio::time::timeout(Duration::from_secs(3),arrival.notified()).await.unwrap();
+        state.store.steer(&id,"Do not write anything").unwrap();
+        runner.await.unwrap();
+        let saved=state.store.get(&id).unwrap();
+        assert_eq!(saved["status"],"completed");
+        assert!(!root.join("verified.txt").exists());
+        let events=state.store.events_after(&id,0,100);
+        assert!(events.iter().any(|e|e["type"]=="tool_skipped"));
+        assert!(events.iter().any(|e|e["type"]=="instruction_applied"));
+        let _=std::fs::remove_dir_all(root);
+    }
+
 }
