@@ -659,6 +659,21 @@ async fn receive_completion(
                     ));
                 }
                 let output_items = assistant_items(&json!({"output":output}), &completion.content);
+                if completion.content.is_empty() {
+                    // Some providers deliver the canonical text only in the
+                    // settled output array, without preceding delta frames.
+                    // Preserve that answer in the UI and durable transcript so
+                    // the next chain prefix compares against what was shown.
+                    let canonical = output_items.iter()
+                        .filter(|item| item["role"] == "assistant")
+                        .flat_map(|item| item["content"].as_array().into_iter().flatten())
+                        .filter_map(|part| part["text"].as_str())
+                        .collect::<Vec<_>>().join("");
+                    if !canonical.is_empty() {
+                        completion.content = canonical.clone();
+                        let _ = tx.send(json!({"type":"text","text":canonical}));
+                    }
+                }
                 return Ok((completion, response_id, output_items, start));
             }
             "response.failed" | "response.incomplete" => {
@@ -1027,6 +1042,28 @@ mod tests {
             r["event"]=="codex.ws.uncertain" &&
             r["detail"]["modelBilling"]=="unknown" && r["detail"]["replayed"]==false),
             "operator must have a durable unknown-billing receipt");
+        forget(&registry_key(&provider,"fixture","session"));
+        server.abort();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn canonical_terminal_text_survives_missing_delta_frames() {
+        let (state, root) = test_state();
+        let (provider, mut requests, server) = fixture(vec![
+            json!({"type":"response.completed","response":{
+                "id":"resp-terminal-only","output":[{
+                    "type":"message","role":"assistant",
+                    "content":[{"type":"output_text","text":"completed answer"}]
+                }]}}),
+        ]).await;
+        let (tx, mut deltas) = tokio::sync::mpsc::unbounded_channel();
+        let outcome=stream(&state,&provider,"fixture","fixture","session",
+            &json!({}),vec![item("user","request")],"session",&tx).await.unwrap();
+        requests.recv().await.unwrap();
+        assert_eq!(outcome.completion.content,"completed answer");
+        assert_eq!(deltas.try_recv().unwrap()["text"],"completed answer");
+        assert_eq!(outcome.transport["mode"],"full");
         forget(&registry_key(&provider,"fixture","session"));
         server.abort();
         std::fs::remove_dir_all(root).unwrap();
