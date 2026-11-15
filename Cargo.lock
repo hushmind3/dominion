@@ -390,6 +390,7 @@ dependencies = [
 name = "dominion-sdk"
 version = "0.3.0"
 dependencies = [
+ "dominion-agent-sdk",
  "async-stream",
  "futures-util",
  "reqwest",
@@ -399,9 +400,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dominion-agent-sdk"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "dominion-rust"
 version = "0.3.0"
 dependencies = [
+ "dominion-agent-sdk",
  "dominion-sdk",
  "async-stream",
  "axum",
