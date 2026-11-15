@@ -44,3 +44,55 @@ test('portable runner applies exact patches in isolated worktrees and cleans up 
   assert.equal(fs.readFileSync(path.join(root,'subject.txt'),'utf8'),'before\n');
  }finally{fs.rmSync(root,{recursive:true,force:true})}
 });
+
+test('real Rust A/B runner compiles both frozen revisions and measures actual behavior',()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'rsi paired rust '));
+ const git=(...args)=>{
+  const p=spawnSync('git',args,{cwd:root,encoding:'utf8',timeout:30000});
+  assert.equal(p.status,0,p.stderr);return p.stdout.trim()
+ };
+ try{
+  git('init','-q');git('config','core.autocrlf','false');
+  fs.mkdirSync(path.join(root,'src'));
+  fs.writeFileSync(path.join(root,'Cargo.toml'),
+   '[package]\nname = "rsi_pair_real"\nversion = "0.1.0"\nedition = "2021"\n');
+  fs.writeFileSync(path.join(root,'src/lib.rs'),
+   'pub fn fixed() -> bool { false }\n#[cfg(test)] mod tests {\n #[test] fn regression() { assert!(super::fixed()); }\n #[test] fn guard() { assert_eq!(2 + 2, 4); }\n}\n');
+  git('add','.');git('-c','user.name=Fixture','-c','user.email=test@localhost',
+   'commit','-qm','immutable baseline');
+  const base=git('rev-parse','HEAD');
+  const evidence=path.join(root,'paired evidence');fs.mkdirSync(evidence);
+  fs.writeFileSync(path.join(evidence,'patch.diff'),
+   'diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn fixed() -> bool { false }\n+pub fn fixed() -> bool { true }\n');
+  fs.writeFileSync(path.join(evidence,'plan.json'),JSON.stringify({
+   oracleVersion:'real-rust-paired-v1',cases:[
+    {id:'regression',domain:'tools',holdout:true,filter:'tests::regression'},
+    {id:'guard',domain:'memory',holdout:true,filter:'tests::guard'}
+   ]}));
+  const reportFile=path.join(evidence,'report.json');
+  const result=spawnSync(process.execPath,[runner,base,
+   path.join(evidence,'patch.diff'),path.join(evidence,'plan.json'),reportFile],
+   {cwd:root,encoding:'utf8',timeout:240000,env:{...process.env,
+    RSI_BUILD_CACHE:path.join(root,'rsi-build-cache')}});
+  assert.equal(result.status,0,result.stderr);
+  const report=JSON.parse(fs.readFileSync(reportFile,'utf8'));
+  assert.equal(report.runner,'balanced-frozen-rsi-lab-v3');
+  assert.equal(report.baselineBuildOk,true);
+  assert.equal(report.candidateBuildOk,true);
+  assert.equal(report.baselineTreeSha,git('rev-parse',base+'^{tree}'));
+  assert.match(report.candidateTreeSha,/^[a-f0-9]{40}$/);
+  assert.notEqual(report.baselineTreeSha,report.candidateTreeSha);
+  assert.equal(report.cases.length,2);
+  assert.equal(report.cases[0].baselinePass,false,
+   'unfixed source must fail the actual Rust regression test');
+  assert.equal(report.cases[0].candidatePass,true,
+   'real patch must improve the same frozen case');
+  assert.equal(report.cases[1].baselinePass,true);
+  assert.equal(report.cases[1].candidatePass,true);
+  assert.equal(fs.readFileSync(path.join(root,'src/lib.rs'),'utf8')
+   .includes('fixed() -> bool { false }'),true,
+   'both actual compilations must leave the source checkout untouched');
+  assert.equal(git('worktree','list','--porcelain').split('worktree ').length-1,1,
+   'successful real A/B worktrees must be cleaned from Git registration');
+ }finally{fs.rmSync(root,{recursive:true,force:true})}
+});
