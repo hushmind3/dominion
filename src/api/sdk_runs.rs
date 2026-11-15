@@ -158,31 +158,77 @@ pub async fn resume(State(state):State<AppState>,Path(id):Path<String>)->Respons
 pub async fn reconcile(
     State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>
 )->Response{
-    let Some(job)=prompt_job(&state,&id) else {
+    let Some(job)=prompt_job(&state,&id) else{
         return error(StatusCode::NOT_FOUND,"SDK 작업을 찾지 못했습니다.");
     };
-    if job["status"]!="needs_review"{
-        return error(StatusCode::CONFLICT,"수동 확인 대상이 아닙니다.");
+    if job["status"]!="needs_review" || job["cancelRequested"]==true {
+        return error(StatusCode::CONFLICT,"수동 확인 대상이 아니거나 이미 취소된 작업입니다.");
     }
-    let Some(details)=body["details"].as_str()
-        .filter(|s|!s.trim().is_empty()&&s.len()<=8192)
+    let Some(details)=body["details"].as_str().map(str::trim)
+        .filter(|text|!text.is_empty()&&text.len()<=8192)
     else{return error(StatusCode::BAD_REQUEST,"확인한 결과를 입력하세요.");};
-    let Some(applied)=body["applied"].as_bool() else{
+    let Some(applied)=body["applied"].as_bool() else {
         return error(StatusCode::BAD_REQUEST,"적용 여부가 필요합니다.");
     };
-    let observation=json!({"applied":applied,"details":details,
-        "recordedAt":chrono::Utc::now().to_rfc3339(),
-        "kind":"owner_observation_not_execution_proof"});
-    let Some(updated)=state.store.patch_if("job",&id,"status",&json!("needs_review"),
-        &json!({"nativeOwnerObservation":observation})) else {
-        return error(StatusCode::CONFLICT,"작업 상태가 변경되었습니다.");
+    let Ok(mut snapshot)=serde_json::from_value::<dominion_sdk::harness::Snapshot>(
+        job["nativeState"].clone()) else{
+        return error(StatusCode::CONFLICT,"재개 가능한 Rust SDK 체크포인트가 없습니다.");
     };
-    state.store.audit("sdk.main_ui_reconciled_observation",
-        json!({"jobId":id,"applied":applied,"replayed":false}));
+    let action=match snapshot.reconcile_tool_observation(applied,details) {
+        Ok(action)=>action,
+        Err(message)=>return error(StatusCode::CONFLICT,&message),
+    };
+    let operation_id=format!("native-op-{id}-{}",action.id);
+    let operation=state.store.get("execution_operation",&operation_id);
+    if operation.as_ref().is_some_and(|o|
+        o["runId"]!=id || o["tool"]!=action.tool
+            || o["args"]!=action.arguments) {
+        return error(StatusCode::CONFLICT,
+            "원래의 도구 실행 기록과 수동 확인 대상이 일치하지 않습니다.");
+    }
+    let old_directive=job["nativeDirective"].as_str().unwrap_or("");
+    let directive=format!(
+        "{old_directive}\n\nOWNER MANUAL RECOVERY: The uncertain {} operation {} was observed {}. Operator note: {}. This observation is NOT independently verified, is NOT a successful tool receipt, and does NOT permit repeating that operation. Inspect real state using read-only tools before any new side effect.",
+        action.tool,action.id,if applied{"APPLIED"}else{"NOT APPLIED"},details);
+    if directive.len()>32000 {
+        return error(StatusCode::CONFLICT,"복구 지시가 너무 깁니다.");
+    }
+    let observation=json!({
+        "applied":applied,"details":details,
+        "actionId":action.id,"tool":action.tool,"arguments":action.arguments,
+        "recordedAt":chrono::Utc::now().to_rfc3339(),
+        "kind":"owner_observation_not_execution_proof",
+        "requiresInspection":applied
+    });
+    // Publish the exact reconciled SDK snapshot *and* a paused job status in
+    // one CAS. The owner must explicitly click Resume; no hidden paid replay.
+    let Some(updated)=state.store.patch_if("job",&id,"status",&json!("needs_review"),
+        &json!({
+            "status":"interrupted","nativeState":snapshot,
+            "nativeInFlight":false,"nativeOwnerObservation":observation,
+            "nativeDirective":directive,"error":null
+        })) else {
+        return error(StatusCode::CONFLICT,"수동 확인 중 실행 상태가 변경됐습니다.");
+    };
+    if let Some(operation)=operation {
+        if operation["outcomeUnknown"]==true {
+            let before=operation["status"].clone();
+            let _=state.store.patch_if("execution_operation",&operation_id,
+                "status",&before,&json!({
+                    "status":"manually_reconciled",
+                    "outcomeUnknown":false,"ownerObservation":observation,
+                    "reconciledAt":chrono::Utc::now().to_rfc3339()
+                }));
+        }
+    }
+    state.store.audit("sdk.main_ui_reconciled_observation",json!({
+        "jobId":id,"actionId":action.id,"tool":action.tool,
+        "applied":applied,"replayed":false,"independentlyVerified":false
+    }));
     state.bus.record("job",&updated);
-    // Do not translate a human observation into a fake completed state.
     Json(project(&state,&updated)).into_response()
 }
+
 #[cfg(test)]
 mod tests{
     use super::*;
