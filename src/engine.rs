@@ -70,6 +70,15 @@ fn specs(allow_write: bool, allow_shell: bool, allow_subagents: bool) -> Vec<Val
             "maxBytes":{"type":"integer","minimum":16,"maximum":8192}
         },"additionalProperties":false}
     }}));
+    result.push(json!({"type":"function","function":{
+        "name":"workspace_read_lines",
+        "description":"Read up to 160 numbered lines from a UTF-8 source file (up to 12 MiB), with SHA-256 revision and next cursor for large codebases.",
+        "parameters":{"type":"object","properties":{
+            "path":{"type":"string"},
+            "startLine":{"type":"integer","minimum":1},
+            "maxLines":{"type":"integer","minimum":1,"maximum":160}
+        },"required":["path","startLine"],"additionalProperties":false}
+    }}));
     result.push(json!({
         "type":"function","function":{
             "name":"workspace_list",
@@ -95,6 +104,17 @@ fn specs(allow_write: bool, allow_shell: bool, allow_subagents: bool) -> Vec<Val
                 },"required":["path","old","new"],"additionalProperties":false}
             }
         }));
+        result.push(json!({"type":"function","function":{
+            "name":"workspace_replace_many",
+            "description":"Stage and verify 1..8 exact edits across distinct workspace files, then apply them with rollback on failure. Each edit may include SHA-256 read revision.",
+            "parameters":{"type":"object","properties":{
+                "edits":{"type":"array","minItems":1,"maxItems":8,
+                    "items":{"type":"object","properties":{
+                        "path":{"type":"string"},"old":{"type":"string"},
+                        "new":{"type":"string"},"sha256":{"type":"string"}
+                    },"required":["path","old","new"],"additionalProperties":false}}
+            },"required":["edits"],"additionalProperties":false}
+        }}));
         result.push(json!({
             "type":"function","function":{
                 "name":"workspace_write",
@@ -200,9 +220,19 @@ async fn tool(state: &AppState, current_task: &str, current_session: &str,
         "workspace_list" => {
             files::list(&state.workspace, args["path"].as_str().unwrap_or("."))
         }
+        "workspace_read_lines" => {
+            let path=args["path"].as_str().ok_or("Relative source path required")?;
+            let start=args["startLine"].as_u64().unwrap_or(1);
+            let count=args["maxLines"].as_u64().unwrap_or(80);
+            files::read_lines(&state.workspace,path,start,count)
+        }
         "workspace_search" => {
             let query = args["query"].as_str().ok_or("검색할 문자열이 필요합니다.")?;
             files::search(&state.workspace, query, args["path"].as_str().unwrap_or("."))
+        }
+        "workspace_replace_many" if allow_write => {
+            let edits=args["edits"].as_array().ok_or("Atomic edits array required")?;
+            files::replace_many(&state.workspace,edits).await
         }
         "workspace_replace" if allow_write => {
             let path = args["path"].as_str().ok_or("수정할 파일 경로가 필요합니다.")?;
@@ -831,9 +861,11 @@ pub async fn run(state: AppState, id: String) {
             } else {
                 tool(&state,&id,&session,tool_name,&arguments,allow_write,allow_shell).await
             };
-            if matches!(tool_name, "workspace_write" | "workspace_replace") && outcome.as_ref()
-                .is_ok_and(|v|v["verified"]==true) {
-                verified_writes += 1;
+            if matches!(tool_name,"workspace_write"|"workspace_replace"|"workspace_replace_many") &&
+                outcome.as_ref().is_ok_and(|v|v["verified"]==true) {
+                verified_writes+=if tool_name=="workspace_replace_many" {
+                    outcome.as_ref().ok().and_then(|v|v["fileCount"].as_u64()).unwrap_or(0)
+                }else{1};
             }
             let value = match outcome {
                 Ok(receipt) => json!({
