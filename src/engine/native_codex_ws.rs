@@ -469,7 +469,7 @@ mod tests {
     #[test]
     fn provider_context_usage_rebases_an_overgrown_socket_chain() {
         let mut chain=JobChain::new();
-        chain.context_tokens=Some(12_000);
+        chain.context_tokens=Some(13_000);
         let mut provider=route("http://127.0.0.1:1".into());
         provider.context_tokens=Some(16_000);
         provider.max_output_tokens=Some(2048);
