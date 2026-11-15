@@ -19,10 +19,12 @@ pub struct Video {
     pub cost_krw:f64, pub render_seconds:u64, pub error:Option<String>,
     pub output:Option<String>, pub created_at_ms:u64, pub updated_at_ms:u64,
     #[serde(default)] pub backend:VideoBackend,
+    #[serde(default)] pub budget_krw:f64,
     #[serde(default)] pub remote_operations:HashMap<usize,String>,
 }
 #[derive(Deserialize)]
-pub struct NewVideo { pub prompt:String, pub scenes:Option<Vec<Scene>>, pub backend:Option<VideoBackend> }
+pub struct NewVideo { pub prompt:String, pub scenes:Option<Vec<Scene>>, pub backend:Option<VideoBackend>,
+    pub budget_krw:Option<f64> }
 #[derive(Deserialize)]
 pub struct ChangeScene { pub heading:String, pub narration:String, pub seconds:u32 }
 pub struct Videos {
@@ -64,6 +66,11 @@ impl Videos {
         if prompt.is_empty()||prompt.len()>10_000{return Err("video prompt must be 1..10000 characters".into());}
         let backend=input.backend.unwrap_or_default();
         if backend==VideoBackend::Veo { let _=crate::veo::Veo::from_env()?; }
+        let budget=input.budget_krw.unwrap_or(if backend==VideoBackend::Veo {0.0}else{5000.0});
+        if !budget.is_finite()||budget<0.0||budget>1_000_000.0 ||
+            (backend==VideoBackend::Veo && budget==0.0) {
+            return Err("Explicit positive KRW budget required for paid video generation".into());
+        }
         let (scenes,cost)=match input.scenes {
             Some(items)=>(items,0.0),
             None=>{
@@ -85,7 +92,7 @@ impl Videos {
             return Err("Veo scenes must be 4, 6 or 8 seconds".into());
         }
         let now=now_ms();
-        let video=Video{id:Uuid::new_v4(),prompt:prompt.into(),scenes,status:VideoStatus::Draft,cost_krw:cost,render_seconds:0,error:None,output:None,created_at_ms:now,updated_at_ms:now,backend,remote_operations:HashMap::new()};
+        let video=Video{id:Uuid::new_v4(),prompt:prompt.into(),scenes,status:VideoStatus::Draft,cost_krw:cost,render_seconds:0,error:None,output:None,created_at_ms:now,updated_at_ms:now,backend,budget_krw:budget,remote_operations:HashMap::new()};
         self.put(video).await
     }
     pub async fn change_scene(&self,id:Uuid,index:usize,scene:ChangeScene)->Result<Video,String>{
@@ -172,6 +179,10 @@ impl Videos {
             let operation=if let Some(id)=latest.remote_operations.get(&index){id.clone()}else{
                 let prompt=format!("{}\n\nVisual direction: {}\n\nDialogue and narration: {}",
                     video.prompt,scene.heading,scene.narration);
+                let expected=veo.estimate_krw(scene.seconds);
+                if !expected.is_finite() || expected<=0.0 || latest.cost_krw+expected>video.budget_krw {
+                    return Err(format!("Video budget exceeded: spent {:.2} KRW, estimated next {:.2} KRW, limit {:.2} KRW",latest.cost_krw,expected,video.budget_krw));
+                }
                 let operation=veo.start(&prompt,scene.seconds).await?;
                 latest.remote_operations.insert(index,operation.clone());
                 latest.cost_krw+=veo.estimate_krw(scene.seconds);
@@ -322,7 +333,7 @@ mod tests {
     async fn persists_scene_revisions(){
         let dir=std::env::temp_dir().join(format!("dominion-video-test-{}",Uuid::new_v4()));
         let store=Videos::open(dir.clone()).await.unwrap();
-        let video=Video{id:Uuid::new_v4(),prompt:"demo".into(),scenes:vec![Scene{heading:"old".into(),narration:"old".into(),seconds:4}],status:VideoStatus::Draft,cost_krw:0.0,render_seconds:0,error:None,output:None,created_at_ms:now_ms(),updated_at_ms:now_ms(),backend:VideoBackend::Local,remote_operations:HashMap::new()};
+        let video=Video{id:Uuid::new_v4(),prompt:"demo".into(),scenes:vec![Scene{heading:"old".into(),narration:"old".into(),seconds:4}],status:VideoStatus::Draft,cost_krw:0.0,render_seconds:0,error:None,output:None,created_at_ms:now_ms(),updated_at_ms:now_ms(),backend:VideoBackend::Local,budget_krw:5000.0,remote_operations:HashMap::new()};
         let id=video.id;store.put(video).await.unwrap();
         store.change_scene(id,0,ChangeScene{heading:"new".into(),narration:"text".into(),seconds:4}).await.unwrap();
         assert_eq!(store.get(id).await.unwrap().scenes[0].heading,"new");
@@ -343,7 +354,7 @@ mod production_tests {
         let videos=Arc::new(Videos::open(dir.clone()).await.unwrap());
         let video=videos.create(&model,NewVideo{
             prompt:"A short smoke test".into(),
-            scenes:Some(vec![Scene{heading:"Runtime".into(),narration:"The local renderer produces an artifact.".into(),seconds:2}]),backend:None
+            scenes:Some(vec![Scene{heading:"Runtime".into(),narration:"The local renderer produces an artifact.".into(),seconds:2}]),backend:None,budget_krw:None
         }).await.unwrap();
         let id=video.id;
         videos.start(id).await.unwrap();
