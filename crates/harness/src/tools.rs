@@ -265,13 +265,13 @@ mod tests {
     #[test]
     fn patch_requires_exactly_one_match_and_preserves_other_content() {
         let dir = temp_workspace();
-        std::fs::write(dir.join("main.rs"), "let a = 1;\\nlet b = 1;\\n".replace("\\n", "\n")).unwrap();
+        std::fs::write(dir.join("main.rs"), "let a = 1; let b = 1;").unwrap();
         let mut patch = PatchFile(Workspace::new(&dir).unwrap());
         assert!(patch.invoke(&json!({"path":"main.rs","old":"= 1","new":"= 2"})).is_err());
         let report = patch.invoke(&json!({"path":"main.rs","old":"let a = 1;","new":"let a = 2;"})).unwrap();
         assert_eq!(report["changed"], true);
         assert_eq!(std::fs::read_to_string(dir.join("main.rs")).unwrap(),
-            "let a = 2;\\nlet b = 1;\\n".replace("\\n", "\n"));
+            "let a = 2; let b = 1;");
         let _ = std::fs::remove_dir_all(dir);
     }
 
