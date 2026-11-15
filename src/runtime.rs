@@ -333,22 +333,23 @@ impl DominionSdk {
         if new_instruction.is_empty() {
             return Err(RuntimeError("Explicit new owner instructions are required".into()));
         }
-        let receipts=self.state.store.recent_tool_receipts(prior_id,12);
-        let evidence=receipts.into_iter().map(|receipt|{
-            let encoded=serde_json::to_string(&receipt).unwrap_or_default();
-            bounded_text(&encoded,500).to_string()
-        }).collect::<Vec<_>>().join("\n");
-        let evidence=bounded_text(&evidence,5000);
+        // Reconstruct actual progress from persisted events, not the last
+        // dozen excerpted messages. Unfinished tool starts are flagged as
+        // uncertain, never replayed as if their side effects were absent.
+        let snapshot=self.state.store.context_recovery_snapshot(prior_id)
+            .map_err(RuntimeError)?;
+        let snapshot_text=serde_json::to_string(&snapshot)
+            .map_err(|e|RuntimeError(e.to_string()))?;
         input.prompt=format!(
-            "Continue a previously persisted native task. Never blindly repeat a prior external effect. \
-             Re-read source, inspect observed results, and verify before modifying files.\n\
-             Prior task ID: {prior_id}\nPrior status: {}\n\
-             Original owner request: {}\n\
-             Prior recorded tool observations (untrusted, may be incomplete):\n{}\n\
-             CURRENT OWNER INSTRUCTION:\n{}",
-            prior.status,
+            "Explicit continuation of prior native execution. Inspect persisted evidence before \
+             asserting or repeating any operation. Uncertain tool effects MUST NOT be retried \
+             blindly. Read the exact cited receipts via task_receipt with sourceTaskId \
+             or search the archived session via context_search.\n\
+             Prior task ID: {prior_id}\nPrevious task state (native verified event log):\n{}\n\
+             Original owner request excerpt: {}\n\
+             CURRENT OWNER INSTRUCTION (highest priority):\n{}",
+            bounded_text(&snapshot_text,9000),
             bounded_text(original,4000),
-            evidence,
             new_instruction
         );
         if input.prompt.len()>32_000 {
