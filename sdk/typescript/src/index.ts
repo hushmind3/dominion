@@ -6,7 +6,18 @@ export interface Session extends RecordItem {title:string;agentId?:string;provid
 export interface Room extends RecordItem {name:string;agentIds:string[];sessionId?:string}
 export interface WorkflowStep {name:string;prompt:string;agentId:string;providerId?:string;model?:string}
 export interface Workflow extends RecordItem {name:string;steps:WorkflowStep[];description?:string}
-export interface Job extends RecordItem {kind:string;status:string;input?:unknown;result?:unknown;error?:string;sessionId?:string;stepIndex?:number;stepTotal?:number}
+/** Provider-reported token totals; calls missing usage are counted separately. */
+export interface NativeModelUsage {
+ inputTokens:number;outputTokens:number;totalTokens:number;
+ cacheReadTokens:number;cacheWriteTokens:number;
+ reportedCalls:number;unreportedCalls:number;cacheReportedCalls:number;
+ source:string;estimated:false;
+ last?:{providerId:string;model:string;inputTokens:number|null;
+  outputTokens:number|null;cacheReadTokens:number|null;cacheWriteTokens:number|null;
+  providerReported:boolean};
+}
+export interface Job extends RecordItem {kind:string;status:string;input?:unknown;result?:unknown;error?:string;sessionId?:string;stepIndex?:number;stepTotal?:number;
+ nativeModelUsage?:NativeModelUsage;nativeState?:{chargedTokens?:number;modelCalls?:number;modelInFlight?:boolean}}
 export interface Approval extends RecordItem {status:string;sessionId?:string;tool?:string;args?:unknown}
 export interface EngineEvent {seq:number;type:string;kind?:string;record?:RecordItem;removed?:string;approval?:Approval;[key:string]:unknown}
 export interface ChatEvent {type:string;[key:string]:unknown}
