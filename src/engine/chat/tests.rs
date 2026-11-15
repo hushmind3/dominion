@@ -400,3 +400,15 @@ fn parallel_reads_preserve_mutation_barriers() {
     assert_eq!(runtime::adjacent_read_batch_end(&calls, 3, 4), 5);
     assert_eq!(runtime::adjacent_read_batch_end(&calls, 5, 4), 6);
 }
+
+#[test]
+fn korean_turn_infers_reasoning_language_and_respects_explicit_original() {
+    let mut request = TurnRequest::from_value(&json!({"input":"바탕화면에 메모 파일 만들어줘"})).unwrap();
+    assert_eq!(request.effective_reasoning_language(), Some("ko"));
+    request.reasoning_language = Some("original".into());
+    assert_eq!(request.effective_reasoning_language(), None);
+    request.input = "Create a note".into();
+    request.reasoning_language = None;
+    assert_eq!(request.effective_reasoning_language(), None);
+}
+
