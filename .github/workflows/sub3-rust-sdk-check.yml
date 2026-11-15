@@ -28,6 +28,8 @@ on:
       - 'src/engine/rsi_evolve.rs'
       - 'src/engine/rsi_worktree.rs'
       - 'src/api/rsi.rs'
+      - 'src/api/mod.rs'
+      - 'src/api/sdk_runs.rs'
       - 'scripts/rsi-lab.mjs'
       - 'scripts/rsi-measure.mjs'
       - 'scripts/rsi-lab.test.mjs'
@@ -59,6 +61,7 @@ jobs:
           cargo test --manifest-path Cargo.toml --bin dominion-rust engine::rsi_worktree::tests -- --nocapture
           cargo test --manifest-path Cargo.toml --bin dominion-rust engine::rsi_evolve::tests -- --nocapture
           cargo test --manifest-path Cargo.toml --bin dominion-rust api::rsi::tests -- --nocapture
+          cargo test --manifest-path Cargo.toml --bin dominion-rust api::sdk_runs::tests -- --nocapture
       - name: Verify interactive Codex WebSocket continuity separately (native job fixtures above)
         run: cargo test --manifest-path Cargo.toml --bin dominion-rust engine::chat::codex_ws::tests -- --nocapture
       - name: Test replay-safe workflow step recovery through host storage
