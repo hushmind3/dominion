@@ -392,7 +392,11 @@ impl AgentSdk {
                         "reason":"no_successful_effect","attempt":1
                     }));
                     state.messages.push(Message::user(
-                        "The requested action is not complete. No successful write/execute tool                          effect has been observed. Use the available tools to perform the actual                          work. If blocked, report the blocker rather than claiming completion."
+                        concat!(
+                            "The requested action is not complete. No successful write/execute ",
+                            "tool effect has been observed. Use the available tools to perform ",
+                            "the actual work. If blocked, report the blocker rather than claiming completion."
+                        )
                     ));
                     self.persist(state)?;
                     continue;
