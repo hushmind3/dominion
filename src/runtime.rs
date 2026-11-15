@@ -170,6 +170,12 @@ pub struct DominionSdk {
     state: AppState,
 }
 
+fn bounded_text(value:&str,max_bytes:usize)->&str {
+    let mut cut=value.len().min(max_bytes);
+    while !value.is_char_boundary(cut) {cut-=1;}
+    &value[..cut]
+}
+
 impl DominionSdk {
     /// Bind an HTTP handler to the same native execution authority.
     pub(crate) fn from_state(state: AppState) -> Self { Self { state } }
@@ -291,7 +297,7 @@ impl DominionSdk {
         }
         let original=prior.input["prompt"].as_str().unwrap_or("");
         let session=prior.input["sessionId"].as_str().unwrap_or(&prior.id).to_string();
-        if input.session_id.as_deref().is_some_and(|id|id!=session) {
+        if input.session_id.as_deref().is_some_and(|id|id!=session.as_str()) {
             return Err(RuntimeError("Continuation must reuse the original native session".into()));
         }
         input.session_id=Some(session);
@@ -300,10 +306,11 @@ impl DominionSdk {
             return Err(RuntimeError("Explicit new owner instructions are required".into()));
         }
         let receipts=self.state.store.recent_tool_receipts(prior_id,12);
-        let evidence=receipts.into_iter().map(|receipt|
-            serde_json::to_string(&receipt).unwrap_or_default()
-                .chars().take(700).collect::<String>()
-        ).collect::<Vec<_>>().join("\n");
+        let evidence=receipts.into_iter().map(|receipt|{
+            let encoded=serde_json::to_string(&receipt).unwrap_or_default();
+            bounded_text(&encoded,500).to_string()
+        }).collect::<Vec<_>>().join("\n");
+        let evidence=bounded_text(&evidence,5000);
         input.prompt=format!(
             "Continue a previously persisted native task. Never blindly repeat a prior external effect. \
              Re-read source, inspect observed results, and verify before modifying files.\n\
@@ -312,10 +319,13 @@ impl DominionSdk {
              Prior recorded tool observations (untrusted, may be incomplete):\n{}\n\
              CURRENT OWNER INSTRUCTION:\n{}",
             prior.status,
-            original.chars().take(8000).collect::<String>(),
+            bounded_text(original,4000),
             evidence,
-            new_instruction.chars().take(8000).collect::<String>()
+            new_instruction
         );
+        if input.prompt.len()>32_000 {
+            return Err(RuntimeError("Continuation context is too long; provide a shorter new instruction".into()));
+        }
         let record=self.submit(input).await?;
         if let Err(error)=self.state.record_event(&record.id,"resumed_from",json!({
             "priorTaskId":prior_id,"priorStatus":prior.status
