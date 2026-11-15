@@ -47,11 +47,25 @@ pub async fn collect(state:&AppState,root:&Path,goal:&str)->(Value,String){
 }
 #[cfg(test)]
 mod tests{
+    use super::scan;
+    use crate::{config::Config,db::Store,state::AppState,vault::Vault};
     #[test]
-    fn code_navigation_has_a_strict_prompt_limit(){
-        let text="x".repeat(20_000);
-        let mut bounded=String::new();
-        bounded.extend(text.chars().take(12_000));
-        assert_eq!(bounded.chars().count(),12_000);
+    fn index_navigation_is_bounded_by_actual_project_inventory(){
+        let root=std::env::temp_dir().join(format!(
+            "dominion-navigation-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("Cargo.toml"),"[package]\nname=\"sample\"\nversion=\"0.1.0\"\n").unwrap();
+        std::fs::write(root.join("src/main.rs"),"fn main() {}").unwrap();
+        let config=Config{port:0,data_dir:root.join("runtime"),web_dir:root.join("web"),
+            workspace:root.clone()};
+        let store=Store::open(&config.db_path()).unwrap();
+        let state=AppState::new(config.clone(),store,Vault::open(&config.key_path()));
+        let (receipt,prompt)=scan(&state,&root,"inspect src/main.rs").unwrap();
+        assert_eq!(receipt["status"],"indexed");
+        assert_eq!(receipt["sourceHashVerified"],true);
+        assert!(prompt.chars().count()<=12_000);
+        assert!(receipt["extraModelCalls"]==0);
+        drop(state);
+        let _=std::fs::remove_dir_all(root);
     }
 }
