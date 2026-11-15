@@ -5833,6 +5833,13 @@ mod tests {
             include_str!("../../scripts/rsi-lab.mjs"),
         )
         .unwrap();
+        // This frozen standalone runner imports the same Git path adapter as
+        // production paired evaluation; bundle its dependency in the fixture.
+        std::fs::write(
+            fixtures.join("rsi-git-path.mjs"),
+            include_str!("../../scripts/rsi-git-path.mjs"),
+        )
+        .unwrap();
         std::fs::write(
             fixtures.join("rsi-measure.mjs"),
             include_str!("../../scripts/rsi-measure.mjs"),
