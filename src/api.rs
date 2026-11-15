@@ -16,6 +16,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/settings/owner-profile",get(owner_profile).post(save_owner_profile))
         .route("/api/agents",get(agents).post(agent_create))
         .route("/api/agents/:id",axum::routing::delete(agent_delete))
+        .route("/api/workflows",get(workflow_list).post(workflow_create))
+        .route("/api/workflows/:id",get(workflow_get))
+        .route("/api/workflows/:id/runs",get(workflow_runs).post(workflow_start))
+        .route("/api/workflow-runs/:id",get(workflow_run))
         .route("/api/tasks",get(list).post(submit))
         .route("/api/tasks/:id",get(one))
         .route("/api/tasks/:id/cancel",post(cancel))
@@ -77,6 +81,59 @@ async fn agent_delete(State(state):State<AppState>,Path(id):Path<String>)->Respo
         Err(error)=>(StatusCode::BAD_REQUEST,Json(json!({"error":error.to_string()}))).into_response()
     }
 }
+async fn workflow_list(State(state):State<AppState>)->Json<Value>{
+    Json(json!(crate::runtime::DominionSdk::from_state(state).workflows()))
+}
+async fn workflow_create(State(state):State<AppState>,Json(body):Json<Value>)->Response {
+    let Some(name)=body["name"].as_str() else {
+        return (StatusCode::BAD_REQUEST,Json(json!({"error":"워크플로 이름이 필요합니다."}))).into_response();
+    };
+    let Some(steps)=body["steps"].as_array().filter(|steps|!steps.is_empty()) else {
+        return (StatusCode::BAD_REQUEST,Json(json!({"error":"실행할 단계가 필요합니다."}))).into_response();
+    };
+    let mut prompts=Vec::with_capacity(steps.len());
+    for step in steps{
+        let Some(prompt)=step.as_str() else{
+            return (StatusCode::BAD_REQUEST,Json(json!({"error":"단계는 문자열이어야 합니다."}))).into_response();
+        };
+        prompts.push(prompt.to_string());
+    }
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.workflow_create(name,&prompts){
+        Ok(item)=>(StatusCode::CREATED,Json(item)).into_response(),
+        Err(error)=>(StatusCode::BAD_REQUEST,Json(json!({"error":error}))).into_response()
+    }
+}
+async fn workflow_get(State(state):State<AppState>,Path(id):Path<String>)->Response {
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.workflows().into_iter().find(|flow|flow["id"]==id){
+        Some(item)=>Json(item).into_response(),
+        None=>(StatusCode::NOT_FOUND,Json(json!({"error":"워크플로를 찾지 못했습니다."}))).into_response()
+    }
+}
+async fn workflow_runs(State(state):State<AppState>,Path(id):Path<String>)->Json<Value>{
+    Json(json!(crate::runtime::DominionSdk::from_state(state).workflow_runs(&id)))
+}
+async fn workflow_run(State(state):State<AppState>,Path(id):Path<String>)->Response {
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.workflow_run(&id){
+        Some(item)=>Json(item).into_response(),
+        None=>(StatusCode::NOT_FOUND,Json(json!({"error":"실행 기록을 찾지 못했습니다."}))).into_response()
+    }
+}
+async fn workflow_start(State(state):State<AppState>,Path(id):Path<String>,
+    Json(mut options):Json<Value>)->Response {
+    let Some(request_id)=options["requestId"].as_str().map(String::from) else {
+        return (StatusCode::BAD_REQUEST,Json(json!({"error":"requestId를 지정하세요."}))).into_response();
+    };
+    options.as_object_mut().map(|map|{map.remove("requestId");});
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.workflow_start(&id,&request_id,options).await{
+        Ok(run)=>(StatusCode::ACCEPTED,Json(run)).into_response(),
+        Err(error)=>(StatusCode::BAD_REQUEST,Json(json!({"error":error}))).into_response()
+    }
+}
+
 async fn owner_profile(State(state):State<AppState>) -> Json<Value> {
     Json(state.store.owner_profile())
 }
