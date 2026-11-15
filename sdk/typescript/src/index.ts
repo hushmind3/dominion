@@ -44,6 +44,20 @@ export interface TaskEvent {
   type: string;
   detail: Record<string, unknown>;
 }
+export interface NativeWorkflow {
+  id:string;name:string;steps:string[];createdAt:string;
+}
+export interface NativeWorkflowRun {
+  id:string;workflowId:string;requestId:string;status:'queued'|'running'|'completed'|'failed'|'needs_review';
+  currentStep:number;tasks:string[];error:string|null;createdAt:string;updatedAt:string;
+}
+export interface NativeProviderConfig {
+  id:string;model:string;origin:string;keyConfigured:boolean;
+  inputKrwPerMillion:number;cachedInputKrwPerMillion:number;outputKrwPerMillion:number;
+}
+export interface NativeTool {
+  name:string;description:string;permission:string;source:'native'|'mcp';parameters?:unknown;
+}
 export interface AgentPreset {
   id: string;
   name: string;
@@ -231,6 +245,30 @@ export class DominionClient {
   }
   agentDelete(id:string,signal?:AbortSignal) {
     return this.request<{ok:boolean}>('/api/agents/'+encodeURIComponent(id),'DELETE',undefined,signal);
+  }
+  providerCatalog(signal?:AbortSignal) {
+    return this.request<{models:NativeProviderConfig[];default:string}>('/api/providers','GET',undefined,signal);
+  }
+  toolCatalog(signal?:AbortSignal) {
+    return this.request<{tools:NativeTool[];mcpServers:number}>('/api/tools','GET',undefined,signal);
+  }
+  workflows(signal?:AbortSignal) {
+    return this.request<NativeWorkflow[]>('/api/workflows','GET',undefined,signal);
+  }
+  workflowCreate(name:string,steps:string[],signal?:AbortSignal) {
+    return this.request<NativeWorkflow>('/api/workflows','POST',{name,steps},signal);
+  }
+  workflowRuns(id:string,signal?:AbortSignal) {
+    return this.request<NativeWorkflowRun[]>('/api/workflows/'+encodeURIComponent(id)+'/runs','GET',undefined,signal);
+  }
+  workflowStart(id:string,options:Partial<Omit<TaskInput,'prompt'>>={},signal?:AbortSignal) {
+    const requestId=options.requestId??crypto.randomUUID();
+    return this.request<NativeWorkflowRun>('/api/workflows/'+encodeURIComponent(id)+'/runs',
+      'POST',{...options,requestId},signal);
+  }
+  workflowRun(id:string,signal?:AbortSignal) {
+    return this.request<NativeWorkflowRun>('/api/workflow-runs/'+encodeURIComponent(id),
+      'GET',undefined,signal);
   }
   /** Native Rust participant room. The TS client performs no speaker selection. */
   groupList(signal?: AbortSignal) {
