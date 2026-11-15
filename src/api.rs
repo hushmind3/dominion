@@ -14,6 +14,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/health",get(health))
         .route("/api/providers",get(providers))
+        .route("/api/sandbox",get(sandbox_capability))
         .route("/api/tools",get(tools_catalog))
         .route("/api/settings/owner-profile",get(owner_profile).post(save_owner_profile))
         .route("/api/agents",get(agents).post(agent_create))
@@ -77,6 +78,9 @@ async fn context_inspect(State(state):State<AppState>,Path(id):Path<String>,
             Json(json!({"error":error.to_string()}))).into_response()
     }
 }
+async fn sandbox_capability()->Json<Value>{
+    Json(crate::engine::sandbox::availability().await)
+}
 async fn providers(State(state):State<AppState>)->Json<Value>{
     Json(state.provider.catalog())
 }
@@ -93,6 +97,7 @@ async fn tools_catalog(State(state):State<AppState>)->Json<Value>{
         ("workspace_replace_many","Staged rollback-aware multi-file edit","write"),
         ("workspace_write","Verified local source write","write"),
         ("workspace_check","Run approved local tests","shell"),
+        ("tool_discover","Discover eligible MCP tools without the full model schema","mcp"),
         ("subagent_spawn","Delegate bounded native worker","delegate"),
         ("subagent_status","Inspect native child status","read")
     ];
