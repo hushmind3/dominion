@@ -275,6 +275,13 @@ pub async fn execute(
                 "사용자가 기존 작업 목표를 교체했습니다. 이전 목표의 미완료 항목을 계속 수행하지 마세요. \
                 이전 외부 작업의 중복 실행은 피하고 현재 상태를 확인하세요.\n\n새 사용자 목표:\n{active_goal}"
             );
+            if request.input!=goal{
+                // A resumed run already carries the owner's confirmation
+                // about uncertain previous effects. Superseding the goal
+                // must not erase that evidence from the next model turn.
+                turn.input.push_str("\n\n재개 전에 확인한 이전 작업 상태:\n");
+                turn.input.push_str(&request.input);
+            }
         }else if attempt>0{
             turn.input=next_instruction(&active_goal,&last_gaps,last_error.as_deref(),attempt);
         }else if steering_before>0{

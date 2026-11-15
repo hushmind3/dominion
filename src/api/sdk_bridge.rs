@@ -356,6 +356,10 @@ pub async fn resume(State(state): State<AppState>, Path(id): Path<String>) -> Re
         "resumeEvidence": prior,
         "resumeHistory": history,
         "reconciliation": null,
+        "steeringGate": {
+            "revision":job["steeringRevision"].as_u64().unwrap_or(0),
+            "closed":false,
+        },
         "promptState": {"inFlight": false},
         "autonomousState": null,
     });
@@ -584,6 +588,7 @@ mod tests {
         assert_eq!(record["status"],"queued");
         assert_eq!(record["promptState"]["inFlight"],false);
         assert_eq!(record["resumeCount"],1);
+        assert_eq!(record["steeringGate"]["closed"],false);
         assert_eq!(record["resumeEvidence"]["applied"],false);
         assert_eq!(record["resumeEvidence"]["source"],"owner_attestation");
         assert_eq!(record["resumeHistory"][0]["previousAutonomousState"]["receipts"][0]["outcome"],
