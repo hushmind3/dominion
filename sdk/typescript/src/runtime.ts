@@ -14,6 +14,7 @@ export interface ThreadOptions {
   allowWrite?: boolean;
   allowShell?: boolean;
   allowMcp?: boolean;
+  allowSubagents?: boolean;
   requireEvidence?: boolean;
   maxSteps?: number;
   tokenBudget?: number;
@@ -78,6 +79,7 @@ export class DominionThread {
       allowWrite: options.allowWrite ?? false,
       allowShell: options.allowShell ?? false,
       allowMcp: options.allowMcp ?? false,
+      allowSubagents: options.allowSubagents ?? false,
       requireEvidence: options.requireEvidence ?? false,
       maxSteps: options.maxSteps,
       tokenBudget: options.tokenBudget,
