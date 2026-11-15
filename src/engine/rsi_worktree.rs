@@ -1163,7 +1163,7 @@ mod tests {
             &patch.replace("-pub fn before() {}","-pub fn absent() {}"))
             .await.is_err(),"a stale patch must not pass frozen-base verification");
         assert!(reconstructed_patch_tree(&root,&base,"").await.is_err());
-        std::fs::remove_dir_all(&root).unwrap();
+        crate::test_support::cleanup_dir(&root);
     }
 
     #[test]
@@ -1197,7 +1197,7 @@ mod tests {
         assert!(prompt.contains("정적 검사 실패"));
         assert!(prompt.contains("cargo check --all-targets"));
         assert!(!prompt.contains("실제 성능 향상 검증"));
-        std::fs::remove_dir_all(root).unwrap();
+        crate::test_support::cleanup_dir(root);
     }
     #[test]
     fn classification_covers_the_improver_harness_and_algorithm(){
@@ -1363,7 +1363,7 @@ mod tests {
         assert!(!git_local(&source,&["status","--porcelain"]).is_empty());
         cleanup(&worktree).await.unwrap();
         assert!(!worktree.path.exists());
-        std::fs::remove_dir_all(root).unwrap();
+        crate::test_support::cleanup_dir(root);
     }
     #[tokio::test]
     async fn rsi_model_cannot_use_absolute_write_or_shell_tools(){
@@ -1383,7 +1383,7 @@ mod tests {
         assert!(tools::execute(&ctx,"workspace_write",&json!({"path":".git","content":"tamper"}),"run").await.is_err());
         assert!(tools::execute(&ctx,"workspace_write",&json!({"path":"Cargo.toml","content":"tamper"}),"run").await.is_err());
         assert!(!outside.exists());
-        std::fs::remove_dir_all(root).unwrap();
+        crate::test_support::cleanup_dir(root);
     }
 
     #[test]
@@ -1402,6 +1402,6 @@ mod tests {
         assert!(check["findings"].as_array().unwrap().iter().all(|row|!row.as_str().unwrap().contains("unrelated.rs")),
             "unrelated pre-existing files must not block this patch");
         assert!(unsafe_audit_for_patch(&root,"diff --git a/src/lib.rs b/src/lib.rs\n+let value = 1;\n").is_none());
-        std::fs::remove_dir_all(root).unwrap();
+        crate::test_support::cleanup_dir(root);
     }
 }

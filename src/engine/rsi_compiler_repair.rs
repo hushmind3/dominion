@@ -236,7 +236,7 @@ mod tests {
         assert!(fixed.contains("*marker == \"고\""));
         assert_eq!(fs::read(source.join("src/lib.rs")).unwrap(),source_before);
         assert_eq!(check(&isolated).await.unwrap().status.success(),true);
-        fs::remove_dir_all(root).unwrap();
+        crate::test_support::cleanup_dir(root);
     }
 
     #[test]
@@ -252,6 +252,6 @@ mod tests {
                 root.join("src/engine/escape.rs")).unwrap();
             assert!(file_under(&root,"src/engine/escape.rs").is_none());
         }
-        fs::remove_dir_all(root).unwrap();
+        crate::test_support::cleanup_dir(root);
     }
 }

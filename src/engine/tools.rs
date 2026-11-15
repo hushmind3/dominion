@@ -1716,7 +1716,7 @@ mod tests {
         bad["endLine"]=json!(999);
         bad["expectedSha256"]=json!(format!("{:x}",Sha256::digest(std::fs::read(&path).unwrap())));
         assert!(execute(&ctx,"workspace_replace_range",&bad,"run").await.is_err());
-        std::fs::remove_dir_all(dir).unwrap();
+        crate::test_support::cleanup_dir(dir);
     }
 
     #[test]
@@ -2103,7 +2103,7 @@ mod tests {
             !dir.join("escaped.txt").exists(),
             "child continued changing files after Stop"
         );
-        std::fs::remove_dir_all(dir).unwrap();
+        crate::test_support::cleanup_dir(dir);
     }
     #[cfg(unix)]
     #[tokio::test]
@@ -2120,7 +2120,7 @@ mod tests {
             !dir.join("escaped.txt").exists(),
             "child continued changing files after timeout"
         );
-        std::fs::remove_dir_all(dir).unwrap();
+        crate::test_support::cleanup_dir(dir);
     }
     #[cfg(unix)]
     #[tokio::test]
