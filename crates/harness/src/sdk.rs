@@ -31,12 +31,22 @@ pub struct SdkEvent {
     pub detail: Value,
 }
 
+/// Stable result ledger prevents a provider replay from rerunning a tool.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CompletedCall {
+    pub tool: String,
+    pub arguments: Value,
+    pub result: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Session {
     pub id: String,
     pub instruction: String,
     pub messages: Vec<Message>,
     pub pending_calls: Vec<ToolCall>,
+    #[serde(default)]
+    pub completed_calls: BTreeMap<String, CompletedCall>,
     /// Recorded BEFORE an effectful tool call. A crash never silently replays it.
     pub in_flight: Option<ToolCall>,
     pub events: Vec<SdkEvent>,
@@ -53,6 +63,7 @@ impl Session {
             instruction: instruction.clone(),
             messages: vec![Message::system(system), Message::user(instruction)],
             pending_calls: Vec::new(),
+            completed_calls: BTreeMap::new(),
             in_flight: None,
             events: Vec::new(),
             rounds: 0,
@@ -80,8 +91,11 @@ impl Session {
             return Err("session is not awaiting tool reconciliation".into());
         }
         let call = self.in_flight.take().ok_or("no uncertain tool call")?;
-        let result = json!({"manuallyReconciled":true,"observation":observation});
-        self.messages.push(Message::tool_result(call.id.clone(), result.to_string()));
+        let result = json!({"manuallyReconciled":true,"observation":observation}).to_string();
+        self.completed_calls.insert(call.id.clone(), CompletedCall {
+            tool:call.name.clone(), arguments:call.arguments.clone(), result:result.clone()
+        });
+        self.messages.push(Message::tool_result(call.id.clone(), result));
         self.event("tool_reconciled", json!({"id":call.id,"tool":call.name}));
         self.status = RunStatus::Ready;
         Ok(())
@@ -237,6 +251,21 @@ impl AgentSdk {
             }
             if !state.pending_calls.is_empty() {
                 let call = state.pending_calls[0].clone();
+                if let Some(previous) = state.completed_calls.get(&call.id).cloned() {
+                    state.pending_calls.remove(0);
+                    if previous.tool != call.name || previous.arguments != call.arguments {
+                        state.status = RunStatus::Failed {
+                            error:format!("provider reused tool call id {} with changed arguments",call.id)
+                        };
+                        state.event("tool_replay_conflict",json!({"id":call.id,"tool":call.name}));
+                        self.persist(state)?;
+                        return Ok(());
+                    }
+                    state.messages.push(Message::tool_result(call.id.clone(), previous.result));
+                    state.event("tool_replayed", json!({"id":call.id,"tool":call.name}));
+                    self.persist(state)?;
+                    continue;
+                }
                 if state.tool_calls >= self.limits.max_tool_calls {
                     state.status = RunStatus::Exhausted { reason: "max_tool_calls".into() };
                     self.persist(state)?;
@@ -276,7 +305,11 @@ impl AgentSdk {
                     Ok(value) => (true, value.to_string()),
                     Err(error) => (false, json!({"error": error}).to_string()),
                 };
-                state.messages.push(Message::tool_result(call.id.clone(), self.text(text)));
+                let text = self.text(text);
+                state.completed_calls.insert(call.id.clone(), CompletedCall {
+                    tool:call.name.clone(), arguments:call.arguments.clone(), result:text.clone()
+                });
+                state.messages.push(Message::tool_result(call.id.clone(), text));
                 state.in_flight = None;
                 state.event("tool_finished", json!({"id":call.id,"tool":call.name,"ok":ok}));
                 self.persist(state)?;
@@ -379,6 +412,35 @@ mod tests {
         assert_eq!(run.messages[1].content, "user's exact goal");
         assert_eq!(run.messages[3].tool_call_id.as_deref(), Some("c1"));
     }
+    #[test]
+    fn duplicate_provider_call_is_not_executed_twice() {
+        let provider = Scripted(VecDeque::from([
+            calls(), calls(), ModelReply::Final { content: "done".into() }
+        ]));
+        let mut engine = AgentSdk::new(Box::new(provider), Box::new(crate::AllowAll), Limits::default());
+        engine.register(Box::new(Echo));
+        let mut run = Session::new("s", "s", "u");
+        engine.run(&mut run).unwrap();
+        assert_eq!(run.status, RunStatus::Completed);
+        assert_eq!(run.tool_calls, 1);
+        assert_eq!(run.completed_calls.len(), 1);
+        assert!(run.events.iter().any(|event| event.kind=="tool_replayed"));
+    }
+    #[test]
+    fn modified_arguments_with_reused_call_id_fail_closed() {
+        let mut changed = calls();
+        if let ModelReply::Assistant { ref mut tool_calls, .. } = changed {
+            tool_calls[0].arguments = json!({"x":99});
+        }
+        let provider = Scripted(VecDeque::from([calls(), changed]));
+        let mut engine = AgentSdk::new(Box::new(provider), Box::new(crate::AllowAll), Limits::default());
+        engine.register(Box::new(Echo));
+        let mut run = Session::new("s", "s", "u");
+        engine.run(&mut run).unwrap();
+        assert!(matches!(run.status, RunStatus::Failed { .. }));
+        assert_eq!(run.tool_calls, 1);
+    }
+
     #[test]
     fn uncertain_external_effect_requires_manual_reconciliation() {
         let provider = Scripted(VecDeque::new());
