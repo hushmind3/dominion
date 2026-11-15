@@ -27,6 +27,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/videos/:id/render",post(video_render))
         .route("/api/videos/:id/scenes/:index",post(video_scene))
         .route("/api/videos/:id/content",get(video_content))
+        .route("/api/improvements",get(improvement_list).post(improvement_create))
+        .route("/api/improvements/:id",get(improvement_get))
+        .route("/api/improvements/:id/evaluate",post(improvement_evaluate))
+        .route("/api/improvements/:id/adopt",post(improvement_adopt))
+        .route("/api/improvements/:id/descendant",post(improvement_descendant))
         .fallback_service(ServeDir::new("web"))
         .with_state(state)
 }
@@ -279,4 +284,51 @@ async fn video_content(State(state):State<AppState>,Path(id):Path<String>)->Resp
         ],
         Body::from_stream(body)
     ).into_response()
+}
+
+async fn improvement_list(State(state):State<AppState>)->Json<Value>{
+    Json(json!(crate::runtime::DominionSdk::from_state(state).improvement_list().await))
+}
+async fn improvement_create(State(state):State<AppState>,Json(body):Json<Value>)->Response{
+    let input=match serde_json::from_value::<crate::improvement::NewImprovement>(body){
+        Ok(value)=>value,
+        Err(error)=>return (StatusCode::BAD_REQUEST,Json(json!({"error":error.to_string()}))).into_response()
+    };
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.improvement_create(input).await{
+        Ok(record)=>(StatusCode::CREATED,Json(json!(record))).into_response(),
+        Err(error)=>(StatusCode::BAD_REQUEST,Json(json!({"error":error.to_string()}))).into_response()
+    }
+}
+async fn improvement_get(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    let id=match parse_room(&id){Ok(id)=>id,Err(error)=>return error};
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.improvement_get(id).await{
+        Ok(item)=>Json(json!(item)).into_response(),
+        Err(error)=>(StatusCode::NOT_FOUND,Json(json!({"error":error.to_string()}))).into_response()
+    }
+}
+async fn improvement_evaluate(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    let id=match parse_room(&id){Ok(id)=>id,Err(error)=>return error};
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.improvement_evaluate(id).await{
+        Ok(item)=>(StatusCode::ACCEPTED,Json(json!(item))).into_response(),
+        Err(error)=>(StatusCode::CONFLICT,Json(json!({"error":error.to_string()}))).into_response()
+    }
+}
+async fn improvement_adopt(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    let id=match parse_room(&id){Ok(id)=>id,Err(error)=>return error};
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.improvement_adopt(id).await{
+        Ok(item)=>Json(json!(item)).into_response(),
+        Err(error)=>(StatusCode::CONFLICT,Json(json!({"error":error.to_string()}))).into_response()
+    }
+}
+async fn improvement_descendant(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    let id=match parse_room(&id){Ok(id)=>id,Err(error)=>return error};
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.improvement_descendant(id).await{
+        Ok(item)=>(StatusCode::CREATED,Json(json!(item))).into_response(),
+        Err(error)=>(StatusCode::CONFLICT,Json(json!({"error":error.to_string()}))).into_response()
+    }
 }
