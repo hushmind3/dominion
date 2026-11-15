@@ -45,6 +45,7 @@ pub fn has_pending(state:&AppState,session_id:&str)->bool{
 /// The same record ID is the message ID, so a crash between message commit
 /// and status transition cannot duplicate the owner's instruction on replay.
 /// This is called at the next **real model step**, never by the model itself.
+#[cfg(test)]
 pub fn drain_at_step(state: &AppState, session_id: &str) -> Result<Vec<Value>, String> {
     Ok(drain_at_step_with_ids(state,session_id)?
         .into_iter().map(|(_,message)|message).collect())
