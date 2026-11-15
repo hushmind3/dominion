@@ -330,6 +330,84 @@ impl Store {
         Ok((task, inserted))
     }
 
+    /// Atomic native task admission and persisted continuation lineage.
+    /// No worker can observe a queued task before its parent reference exists.
+    /// An idempotent retry cannot invent another side effect or lineage.
+    pub fn submit_continuation(&self,key:&str,input:&Value,prior_id:&str,
+        prior_status:&str)->Result<(Value,bool),String>{
+        let payload=serde_json::to_string(input).map_err(|e|e.to_string())?;
+        let mut conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let tx=conn.transaction().map_err(|e|e.to_string())?;
+        let id=Uuid::new_v4().to_string();
+        let at=chrono::Utc::now().to_rfc3339();
+        let inserted=tx.execute(
+            "INSERT OR IGNORE INTO tasks(id,request_id,input,status,created_at)
+             VALUES(?1,?2,?3,'queued',?4)",
+            params![id,key,payload,at]
+        ).map_err(|e|e.to_string())?==1;
+        let row=tx.query_row(
+            &format!("SELECT {TASK_FIELDS} FROM tasks WHERE request_id=?1"),
+            [key],task_row).map_err(|e|e.to_string())?;
+        if row["input"]!=*input{
+            return Err("Continuation key was reused with a different instruction".into());
+        }
+        let task_id=row["id"].as_str().ok_or("Missing new native task ID")?;
+        if inserted{
+            let source=json!({"taskId":task_id,"type":"resumed_from","detail":{
+                "priorTaskId":prior_id,"priorStatus":prior_status,
+                "source":"native_sdk"
+            }});
+            tx.execute("INSERT INTO events(task_id,kind,data) VALUES(?1,'resumed_from',?2)",
+                params![task_id,source.to_string()]).map_err(|e|e.to_string())?;
+        }else{
+            let previous:String=tx.query_row(
+                "SELECT data FROM events WHERE task_id=?1 AND kind='resumed_from'
+                 ORDER BY seq ASC LIMIT 1",
+                [task_id],|r|r.get(0)).map_err(|e|e.to_string())?;
+            let prior:Value=serde_json::from_str(&previous).map_err(|e|e.to_string())?;
+            if prior["detail"]["priorTaskId"]!=prior_id{
+                return Err("Request key already belongs to another continuation lineage".into());
+            }
+        }
+        tx.commit().map_err(|e|e.to_string())?;
+        Ok((row,inserted))
+    }
+
+    /// Only the current native task or a verifiable linked ancestor in the
+    /// same session may supply tool evidence. Shared session IDs by themselves
+    /// are not sufficient to read an unrelated execution's receipts.
+    pub fn receipt_source_allowed(&self,current:&str,source:&str)->bool {
+        if current==source{return self.get(current).is_some();}
+        let Some(record)=self.get(current) else{return false};
+        let session=record["input"]["sessionId"].as_str()
+            .unwrap_or(current).to_owned();
+        let mut cursor=current.to_owned();
+        let mut seen=HashSet::new();
+        for _ in 0..16{
+            if !seen.insert(cursor.clone()){return false;}
+            let parent={
+                let Ok(conn)=self.conn.lock() else{return false};
+                let raw:Result<String,_>=conn.query_row(
+                    "SELECT data FROM events WHERE task_id=?1 AND kind='resumed_from'
+                     ORDER BY seq ASC LIMIT 1",
+                    [&cursor],|row|row.get(0));
+                raw.ok().and_then(|text|{
+                    serde_json::from_str::<Value>(&text).ok()
+                        .and_then(|value|value["detail"]["priorTaskId"].as_str()
+                            .map(str::to_string))
+                })
+            };
+            let Some(parent)=parent else{return false};
+            let Some(parent_record)=self.get(&parent) else{return false};
+            let parent_session=parent_record["input"]["sessionId"].as_str()
+                .unwrap_or(&parent);
+            if parent_session!=session{return false;}
+            if parent==source{return true;}
+            cursor=parent;
+        }
+        false
+    }
+
     /// Child tasks belong to a persisted parent, never to an SDK-side process.
     pub fn child_tasks(&self,parent_id:&str)->Vec<Value>{
         let Ok(conn)=self.conn.lock() else {return vec![]};
@@ -681,6 +759,35 @@ mod tests {
         assert!(db.account_cost(id,f64::NAN).is_err());
         assert!(db.account_cost(id,-1.0).is_err());
         assert_eq!(db.get(id).unwrap()["costKrw"],json!(4.0));
+    }
+
+    #[test]
+    fn continuation_lineage_is_atomic_idempotent_and_evidence_scoped(){
+        let db=new_store();
+        let (old,_)=db.submit("old-2026",&json!({
+            "prompt":"inspect","sessionId":null
+        })).unwrap();
+        let root=old["id"].as_str().unwrap();
+        let input=json!({"prompt":"resume inspect","sessionId":root});
+        let (second,created)=db.submit_continuation(
+            "next-2026",&input,root,"completed").unwrap();
+        assert!(created);
+        let child=second["id"].as_str().unwrap();
+        assert!(db.receipt_source_allowed(child,root));
+        assert!(!db.receipt_source_allowed(root,child));
+        let (repeated,created)=db.submit_continuation(
+            "next-2026",&input,root,"completed").unwrap();
+        assert!(!created);
+        assert_eq!(repeated["id"],second["id"]);
+        assert_eq!(db.events_after(child,0,20).iter()
+            .filter(|e|e["type"]=="resumed_from").count(),1);
+        let (foreign,_)=db.submit("foreign-2026",&json!({
+            "prompt":"foreign","sessionId":root
+        })).unwrap();
+        let foreign_id=foreign["id"].as_str().unwrap();
+        assert!(!db.receipt_source_allowed(child,foreign_id));
+        assert!(db.submit_continuation("next-2026",
+            &json!({"prompt":"different","sessionId":root}),root,"completed").is_err());
     }
 
     #[test]
