@@ -29,7 +29,16 @@ pub(crate) fn safe_path(path: &str) -> bool {
         && (path.starts_with("src/")
             || path.starts_with("tests/")
             || path.starts_with("web/src/")
-            || path.starts_with("src-tauri/src/"))
+            || path.starts_with("src-tauri/src/")
+            || rust_crate_source(path))
+}
+
+/// Workspace crates are executable source too. Manifests stay outside the
+/// candidate patch allowlist; they are copied only into the source snapshot.
+fn rust_crate_source(path: &str) -> bool {
+    let parts = path.split('/').collect::<Vec<_>>();
+    matches!(parts.as_slice(), ["crates", package, "src" | "tests", ..]
+        if !package.is_empty() && path.ends_with(".rs"))
 }
 
 /// Parse and constrain every changed path, not only the declared target.
