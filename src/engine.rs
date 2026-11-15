@@ -1,7 +1,7 @@
 use crate::AppState;
 mod files;
 mod strategy;
-mod context;
+pub(crate) mod context;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{path::{Component, Path, PathBuf}, process::Stdio, time::Duration};
