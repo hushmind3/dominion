@@ -24,6 +24,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/workflow-runs/:id",get(workflow_run))
         .route("/api/tasks",get(list).post(submit))
         .route("/api/tasks/:id",get(one))
+        .route("/api/tasks/:id/context",get(context_inspect))
         .route("/api/tasks/:id/cancel",post(cancel))
         .route("/api/tasks/:id/steer",post(steer))
         .route("/api/tasks/:id/resume",post(resume))
@@ -63,6 +64,15 @@ async fn health(State(state):State<AppState>) -> Json<Value> {
     Json(json!({"ok":true,"engine":"rust","model":state.model_name,
         "workspace":state.workspace.to_string_lossy(),"localOnly":true}))
 }
+async fn context_inspect(State(state):State<AppState>,Path(id):Path<String>,
+    Query(query):Query<HashMap<String,String>>)->Response {
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.context_inspect(&id,query.get("q").map(String::as_str).unwrap_or("")){
+        Ok(value)=>Json(value).into_response(),
+        Err(error)=>(StatusCode::BAD_REQUEST,
+            Json(json!({"error":error.to_string()}))).into_response()
+    }
+}
 async fn providers(State(state):State<AppState>)->Json<Value>{
     Json(state.provider.catalog())
 }
@@ -72,6 +82,8 @@ async fn tools_catalog(State(state):State<AppState>)->Json<Value>{
         ("workspace_list","Inspect workspace file inventory","read"),
         ("workspace_search","Search source content","read"),
         ("task_receipt","Restore persisted tool result without replay","read"),
+        ("context_search","Find exact historical instructions and tool evidence","read"),
+        ("session_history","Page historical owner and assistant messages","read"),
         ("workspace_replace","Verified exact source edit","write"),
         ("workspace_write","Verified local source write","write"),
         ("workspace_check","Run approved local tests","shell"),
