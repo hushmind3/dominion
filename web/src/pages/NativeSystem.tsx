@@ -10,6 +10,7 @@ type Config={models:Model[];default:string}
 type Tool={name:string;description:string;permission:string;source:string;parameters?:unknown}
 type Tools={tools:Tool[];mcpServers:number}
 type Run={id:string;input:{prompt:string;agentId?:string};status:string;steps:number;tokens:number;costKrw:number;createdAt:string}
+type Evidence={facts:{facts:{sourceSeq:number;kind:string;topic:string;quote:string}[]};results:{kind:string;sourceSeq:number;sourceTaskId:string|null;callId:string|null;excerpt:string}[];executionState:Record<string,unknown>}
 const faded='text-[12px] text-[#7C7469]'
 const money=(value:number)=>Number(value||0).toLocaleString('ko-KR',{maximumFractionDigits:2})+'원'
 function useRemote<T>(url:string,initial:T){
@@ -86,10 +87,12 @@ export function NativeDeveloper(){
  const runs=useRemote<Run[]>('/api/tasks',[])
  const [selected,setSelected]=useState(''),[events,setEvents]=useState<{seq:number;type:string;detail:Record<string,unknown>}[]>([])
  const [error,setError]=useState('')
+ const [query,setQuery]=useState(''),[evidence,setEvidence]=useState<Evidence|null>(null),[searching,setSearching]=useState(false)
+ const inspect=async()=>{if(!selected)return;setSearching(true);setError('');try{setEvidence(await get<Evidence>('/api/tasks/'+encodeURIComponent(selected)+'/context?q='+encodeURIComponent(query)))}catch(e){setError((e as Error).message)}finally{setSearching(false)}}
  const recentProjection=events.filter(event=>event.type==='context_projected').at(-1)
  const context=recentProjection?.detail
  const numeric=(value:unknown)=>typeof value==='number'?value:0
- useEffect(()=>{if(!selected){setEvents([]);return}
+ useEffect(()=>{setEvidence(null);if(!selected){setEvents([]);return}
   let live=true
   const stream=new EventSource('/api/tasks/'+encodeURIComponent(selected)+'/events')
   stream.onmessage=message=>{if(!live)return;try{const event=JSON.parse(message.data);setEvents(value=>[...value,event].slice(-500));if(event.type==='finished')stream.close()}catch{}}
@@ -118,6 +121,20 @@ export function NativeDeveloper(){
      <p className={'mt-3 '+faded}>이 수치는 네트워크 요청의 문자 인코딩 크기이며 토큰 절감률은 아닙니다. 원본 도구 결과는 SQLite에 보관되고, 모델은 재조회 도구로 필요한 구간을 가져옵니다.</p>
      <p className={'mt-1 break-all '+faded}>검증 해시: {String(context.projectionSha256||'').slice(0,24)}… · 생략 메시지 {numeric(context.omittedMessages)}개</p>
     </div>}
+    <div className="mb-4 rounded-xl border border-[#E7E0D5] p-4">
+     <h3 className="mb-2 text-[13px] font-bold">🔍 전체 실행 기억과 원본 근거 검색</h3>
+     <p className={'mb-3 '+faded}>최근 대화 256개 밖의 원문도 SQLite 색인에서 찾습니다. 검색된 영수증은 이전 작업의 확인된 연결 계보만 조회할 수 있습니다.</p>
+     <div className="flex gap-2"><input aria-label="과거 지시와 영수증 검색" value={query} onChange={e=>setQuery(e.target.value)}
+       placeholder="이전 지시·파일·검증 내역 검색" className="min-w-0 flex-1 rounded-xl border border-[#E7E0D5] px-3 py-2 text-[12px]"/>
+       <Button size="sm" disabled={searching||!selected} onClick={()=>void inspect()}><RefreshCw size={13}/> 근거 조회</Button></div>
+     {evidence&&<div className="mt-3 space-y-3 text-[12px]">
+      <div><strong>원문 확인된 사용자 지시 · {evidence.facts.facts.length}개</strong>
+       <div className="mt-2 grid gap-1">{evidence.facts.facts.map((fact,i)=><div key={i} className="rounded-lg bg-[#F6F3EC] p-2"><small className={faded}>#{fact.sourceSeq} · {fact.kind} · {fact.topic}</small><p className="whitespace-pre-wrap">{fact.quote}</p></div>)}</div></div>
+      <div><strong>근거 검색 결과 · {evidence.results.length}개</strong>
+       <div className="mt-2 grid gap-1">{evidence.results.map((item,i)=><div key={i} className="rounded-lg border border-[#E7E0D5] p-2"><small className={faded}>{item.kind} · #{item.sourceSeq} {item.callId?'· 호출 '+item.callId:''}</small><p className="whitespace-pre-wrap break-all">{item.excerpt}</p></div>)}</div></div>
+      <details><summary className="cursor-pointer font-semibold">실행 상태 원본 스냅샷</summary><pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-[#F6F3EC] p-2">{JSON.stringify(evidence.executionState,null,2)}</pre></details>
+     </div>}
+    </div>
     <div className="max-h-[600px] space-y-2 overflow-auto">{events.map((event,index)=><pre key={index} className="overflow-x-auto whitespace-pre-wrap break-all rounded-lg border border-[#ECE5DB] bg-[#F6F3EC] p-3 text-[11px]">{JSON.stringify(event,null,2)}</pre>)}</div>
    </Panel>
   </div>
