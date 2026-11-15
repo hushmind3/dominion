@@ -23,8 +23,12 @@ fn estimate(prices:Prices,input:u64,output:u64)->f64 {
 }
 /// A provider profile is immutable for a native job once selected.
 pub(crate) fn binding(route:&Route)->String {
+    let credential=format!("{:x}",Sha256::digest(route.api_key.as_bytes()));
     let value=json!({"providerId":route.id,"model":route.model,
-        "kind":route.kind,"baseUrl":route.base_url,"accountId":route.account_id});
+        "kind":route.kind,"baseUrl":route.base_url,"accountId":route.account_id,
+        "toolMode":route.tool_mode,"reasoningProtocol":route.reasoning_protocol,
+        "contextTokens":route.context_tokens,"maxOutputTokens":route.max_output_tokens,
+        "credentialDigest":credential});
     format!("{:x}",Sha256::digest(value.to_string().as_bytes()))
 }
 fn route_record(route:&Route,decision:Value,profile:&Value)->Value {
@@ -91,14 +95,9 @@ pub(crate) fn choose(
         candidates.push((route,q,estimated,profile["nativeRouting"].clone()));
     }
     if candidates.is_empty() {
-        let route=route_default()?;
-        let profile=state.store.get("provider",&route.id)
-            .unwrap_or(Value::Null)["nativeRouting"].clone();
-        return Ok((route.clone(),route_record(&route,json!({
-            "mode":"pinned","requestedMode":"quality_cost",
-            "reason":"no_qualified_priced_native_provider",
-            "minimumQuality":min_quality,"estimatedSavings":false,
-        }),&profile)));
+        return Err(format!(
+            "Quality-cost route unavailable: no active native provider has declared quality >= {min_quality:.2}, a matching model and explicit KRW input/output tariffs. Configure Model Settings or choose the default route."
+        ));
     }
     let best_quality=candidates.iter().map(|(_,q,_,_)|*q).fold(0.0,f64::max);
     let floor=min_quality.max(best_quality-max_drop);
@@ -201,9 +200,13 @@ mod tests {
         let s=state();
         add(&s,"default",None,None,0.0);
         add(&s,"unknown",Some(0.95),None,0.0);
+        let error=choose(&s,"",None,
+            &json!({"mode":"quality_cost"}),"inspect","").unwrap_err();
+        assert!(error.contains("no active native provider"),"{error}");
+        // The unchanged default-policy path remains available on request.
         let (fallback,metadata)=choose(&s,"",None,
-            &json!({"mode":"quality_cost"}),"inspect","").unwrap();
-        assert_eq!(metadata["selection"]["reason"],"no_qualified_priced_native_provider");
+            &json!({"mode":"default"}),"inspect","").unwrap();
+        assert_eq!(metadata["selection"]["reason"],"default_policy");
         assert_eq!(fallback.id,"default");
         add(&s,"priced_a",Some(0.92),Some(1000.0),2000.0);
         add(&s,"priced_b",Some(0.92),Some(1000.0),2000.0);
