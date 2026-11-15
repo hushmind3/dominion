@@ -54,6 +54,7 @@ mod tests{
         let root=std::env::temp_dir().join(format!(
             "dominion-navigation-{}",uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join("runtime")).unwrap();
         std::fs::write(root.join("Cargo.toml"),"[package]\nname=\"sample\"\nversion=\"0.1.0\"\n").unwrap();
         std::fs::write(root.join("src/main.rs"),"fn main() {}").unwrap();
         let config=Config{port:0,data_dir:root.join("runtime"),web_dir:root.join("web"),
