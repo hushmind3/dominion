@@ -687,6 +687,25 @@ impl Kernel<'_> {
 mod owner_effect_tests {
     use super::*;
     #[test]
+    fn structured_failures_do_not_count_as_success() {
+        for payload in [
+            json!({"isError":true}),
+            json!({"ok":false}),
+            json!({"success":false}),
+            json!({"error":"permission denied"}),
+            json!({"exitCode":1}),
+            json!({"exit_code":2}),
+            json!({"status":"failed"}),
+            json!({"status":"timeout"}),
+        ] {
+            assert!(!observation_succeeded(&payload), "{payload}");
+        }
+        for payload in [json!({"ok":true}), json!({"exitCode":0}), json!({"content":"ready"})] {
+            assert!(observation_succeeded(&payload), "{payload}");
+        }
+    }
+
+    #[test]
     fn edit_intent_requires_actual_writes_in_any_supported_language() {
         for text in ["README 수정해라", "파일 작성", "코드 리팩토링", "fix the unit test", "implement tool routing"] {
             assert!(owner_requires_effect(text), "{text}");
