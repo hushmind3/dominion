@@ -1,0 +1,9 @@
+{
+  "name":"dominion-native",
+  "private":true,
+  "type":"module",
+  "scripts":{
+    "test:source":"node --test scripts/source-contract.test.mjs",
+    "check:web":"node --check web/app.js"
+  }
+}

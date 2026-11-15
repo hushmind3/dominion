@@ -1,1 +1,76 @@
-<!doctype html><html lang="ko"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><meta name="theme-color" content="#f8fafc"/><title>DOMINION — AI Workspace</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#101824">
+  <title>DOMINION — Autonomous Workspace</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="rail" aria-label="작업공간 메뉴">
+    <div class="brand"><span class="mark">D</span><span>DOMINION<small>Native Agent Workspace</small></span></div>
+    <div class="rail-head">WORKSPACE</div>
+    <a class="rail-item selected" href="/" aria-current="page">✦ <span>작업 실행</span></a>
+    <a class="rail-item" href="#history">▤ <span>실행 기록</span></a>
+    <div class="rail-note">자체 Rust 엔진<br>로컬 저장 · 모델 직접 연결</div>
+    <div class="rail-footer"><span id="engineLed" class="led"></span><span id="connection">서버 연결 확인 중</span></div>
+  </aside>
+  <main class="main">
+    <header class="top"><span class="crumb">WORKSPACE <span class="muted">/</span> 실행</span><span class="tag">RUST ENGINE</span></header>
+    <div class="shell">
+      <section class="hero">
+        <div class="eyebrow">AUTONOMOUS EXECUTION</div>
+        <h1>무엇을 맡기시겠습니까?</h1>
+        <p>말로 지시하고, 실행 과정을 확인하고, 필요한 순간에 방향을 바꾸세요.</p>
+      </section>
+      <form id="submitForm" class="composer">
+        <label for="prompt" class="sr-only">실행할 작업</label>
+        <textarea id="prompt" maxlength="32000" required placeholder="예: README를 읽고 프로젝트 구조를 정리한 뒤 필요한 파일을 수정하고 검사해 줘."></textarea>
+        <div class="composer-foot">
+          <div class="options">
+            <label class="switch"><input id="write" type="checkbox"><span>파일 수정 허용</span></label>
+            <label class="switch"><input id="shell" type="checkbox"><span>검사 명령 허용</span></label>
+            <label class="switch"><input id="evidence" type="checkbox"><span>수정 증거 필수</span></label>
+          </div>
+          <button class="primary" id="run" type="submit"><span>실행 시작</span><span>↗</span></button>
+        </div>
+      </form>
+      <details class="advanced">
+        <summary>고급 실행 설정 <span>⌄</span></summary>
+        <div class="advanced-row">
+          <label>최대 모델 단계 <input id="maxSteps" type="number" min="1" max="24" value="12"></label>
+          <label>토큰 예산 <input id="tokenBudget" type="number" min="256" max="500000" value="40000"></label>
+          <label>연결할 세션 ID <input id="sessionId" type="text" maxlength="128" placeholder="비워두면 새 세션"></label>
+        </div>
+      </details>
+      <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+      <section class="work" id="work" hidden aria-labelledby="workTitle">
+        <div class="section-top">
+          <div><span class="eyebrow">CURRENT RUN</span><h2 id="workTitle">실행 진행</h2></div>
+          <div class="top-actions"><span id="runStatus" class="status">대기</span><button id="cancel" type="button" class="ghost danger">중단</button></div>
+        </div>
+        <div class="metrics">
+          <div><span>모델 단계</span><strong id="steps">0</strong></div>
+          <div><span>사용 토큰</span><strong id="tokens">0</strong></div>
+          <div><span>검증된 파일</span><strong id="verified">0</strong></div>
+        </div>
+        <div class="output" id="output" aria-live="polite">실행 기록을 수신하고 있습니다.</div>
+        <div class="steer">
+          <label for="instruction">실행 중 지시 변경</label>
+          <div class="steer-row"><input id="instruction" placeholder="다음 모델 단계에 반영할 지시를 입력하세요"><button id="steer" type="button" class="secondary">지시 전달</button></div>
+        </div>
+        <div class="timeline-title">실행 이벤트</div>
+        <ol id="timeline" class="timeline" aria-label="이벤트 기록"></ol>
+      </section>
+      <section class="history" id="history" aria-labelledby="historyTitle">
+        <div class="section-top"><div><span class="eyebrow">HISTORY</span><h2 id="historyTitle">최근 작업</h2></div><button id="refresh" class="ghost" type="button">새로고침 ↻</button></div>
+        <div id="tasks" class="tasks"><div class="empty">아직 실행한 작업이 없습니다.</div></div>
+      </section>
+    </div>
+  </main>
+</div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

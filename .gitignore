@@ -1,10 +1,5 @@
-/target
-/runtime
-/runtime-test
-web/node_modules
-web/dist
-*.log
+/target/
+/.dominion/
+/sdk/typescript/dist/
+node_modules/
 .DS_Store
-/bench
-
-.dominion/

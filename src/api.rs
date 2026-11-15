@@ -1,0 +1,169 @@
+use crate::{engine, AppState};
+use axum::{
+    extract::{Path, Query, State},
+    http::{HeaderMap, StatusCode},
+    response::{sse::{Event, KeepAlive, Sse}, IntoResponse, Response},
+    routing::{get, post},
+    Json, Router
+};
+use serde::Deserialize;
+use serde_json::{json, Value};
+use std::{collections::HashMap, convert::Infallible, time::Duration};
+use tower_http::services::ServeDir;
+
+#[derive(Deserialize)]
+#[serde(rename_all="camelCase")]
+struct Submit {
+    request_id: String,
+    prompt: String,
+    session_id: Option<String>,
+    #[serde(default)] allow_write: bool,
+    #[serde(default)] allow_shell: bool,
+    #[serde(default)] require_evidence: bool,
+    max_steps: Option<u64>,
+    token_budget: Option<u64>,
+}
+
+pub fn router(state: AppState) -> Router {
+    Router::new()
+        .route("/api/health",get(health))
+        .route("/api/tasks",get(list).post(submit))
+        .route("/api/tasks/:id",get(one))
+        .route("/api/tasks/:id/cancel",post(cancel))
+        .route("/api/tasks/:id/steer",post(steer))
+        .route("/api/tasks/:id/events",get(events))
+        .fallback_service(ServeDir::new("web"))
+        .with_state(state)
+}
+
+async fn health(State(state):State<AppState>) -> Json<Value> {
+    Json(json!({"ok":true,"engine":"rust","model":state.model_name,
+        "workspace":state.workspace.to_string_lossy(),"localOnly":true}))
+}
+async fn list(State(state):State<AppState>) -> Json<Value> {
+    Json(json!(state.store.list()))
+}
+async fn one(State(state):State<AppState>,Path(id):Path<String>) -> Response {
+    match state.store.get(&id) {
+        Some(record) => Json(record).into_response(),
+        None => (StatusCode::NOT_FOUND,Json(json!({"error":"작업이 없습니다."}))).into_response()
+    }
+}
+async fn submit(State(state):State<AppState>,Json(raw):Json<Value>) -> Response {
+    let Ok(input) = serde_json::from_value::<Submit>(raw) else {
+        return (StatusCode::BAD_REQUEST,Json(json!({"error":"작업 입력 형식이 잘못됐습니다."}))).into_response();
+    };
+    if !(8..=128).contains(&input.request_id.len()) ||
+        !input.request_id.bytes().all(|c| c.is_ascii_alphanumeric() || c==b'-' || c==b'_') ||
+        input.prompt.trim().is_empty() || input.prompt.len()>32_000 ||
+        input.session_id.as_deref().is_some_and(|id| id.len()>128 || id.is_empty()) ||
+        !(1..=24).contains(&input.max_steps.unwrap_or(12)) ||
+        !(256..=500_000).contains(&input.token_budget.unwrap_or(40_000)) {
+        return (StatusCode::BAD_REQUEST,Json(json!({"error":"작업 ID, 내용 또는 실행 한도가 잘못됐습니다."}))).into_response();
+    }
+    let normalized = json!({
+        "prompt":input.prompt.trim(),
+        "sessionId":input.session_id,
+        "allowWrite":input.allow_write,
+        "allowShell":input.allow_shell,
+        "requireEvidence":input.require_evidence,
+        "maxSteps":input.max_steps.unwrap_or(12),
+        "tokenBudget":input.token_budget.unwrap_or(40_000)
+    });
+    match state.store.submit(&input.request_id,&normalized) {
+        Ok((record,created)) => {
+            if created {
+                let next = state.clone();
+                let id = record["id"].as_str().unwrap_or("").to_string();
+                tokio::spawn(async move { engine::run(next,id).await; });
+            }
+            (StatusCode::ACCEPTED,Json(record)).into_response()
+        }
+        Err(message) => (StatusCode::CONFLICT,Json(json!({"error":message}))).into_response()
+    }
+}
+async fn cancel(State(state):State<AppState>,Path(id):Path<String>) -> Response {
+    match state.store.cancel(&id) {
+        Some(record) => {
+            state.emit(&id,"cancel_requested",json!({}));
+            Json(record).into_response()
+        }
+        None => (StatusCode::NOT_FOUND,Json(json!({"error":"작업이 없습니다."}))).into_response()
+    }
+}
+async fn steer(State(state):State<AppState>,Path(id):Path<String>,Json(input):Json<Value>) -> Response {
+    let Some(text) = input["text"].as_str().map(str::trim).filter(|s|!s.is_empty() && s.len()<=4096) else {
+        return (StatusCode::BAD_REQUEST,Json(json!({"error":"지시 내용은 1~4096자여야 합니다."}))).into_response()
+    };
+    match state.store.steer(&id,text) {
+        Ok(record) => {
+            state.emit(&id,"instruction_queued",json!({"text":text}));
+            Json(record).into_response()
+        }
+        Err(message) => (StatusCode::CONFLICT,Json(json!({"error":message}))).into_response()
+    }
+}
+fn full_history(state:&AppState,id:&str,after:u64)->Vec<Value> {
+    let mut cursor=after;
+    let mut out=Vec::new();
+    // Read all currently retained rows in bounded pages, while live subscribers
+    // accumulate newly published events. The cursor is durable SQLite sequence.
+    for _ in 0..128 {
+        let batch=state.store.events_after(id,cursor,500);
+        let length=batch.len();
+        if length==0 { break; }
+        for row in batch {
+            let seq=row["seq"].as_u64().unwrap_or(0);
+            if seq>cursor { cursor=seq;out.push(row); }
+        }
+        if length<500 { break; }
+    }
+    out
+}
+async fn events(
+    State(state):State<AppState>,
+    Path(id):Path<String>,
+    Query(params):Query<HashMap<String,String>>,
+    headers:HeaderMap
+) -> Response {
+    if state.store.get(&id).is_none() {
+        return (StatusCode::NOT_FOUND,Json(json!({"error":"작업이 없습니다."}))).into_response();
+    }
+    let after=params.get("after").and_then(|s|s.parse::<u64>().ok())
+        .or_else(||headers.get("last-event-id").and_then(|s|s.to_str().ok())
+            .and_then(|s|s.parse::<u64>().ok())).unwrap_or(0);
+    let mut receiver=state.bus.subscribe();
+    let backlog=full_history(&state,&id,after);
+    let stream=async_stream::stream! {
+        let mut cursor=after;
+        for event in backlog {
+            let seq=event["seq"].as_u64().unwrap_or(0);
+            if seq<=cursor {continue;}
+            cursor=seq;
+            yield Ok::<Event,Infallible>(Event::default().id(seq.to_string()).data(event.to_string()));
+        }
+        loop {
+            match receiver.recv().await {
+                Ok(event) if event["taskId"].as_str()==Some(id.as_str()) => {
+                    let seq=event["seq"].as_u64().unwrap_or(0);
+                    if seq>cursor {
+                        cursor=seq;
+                        yield Ok(Event::default().id(seq.to_string()).data(event.to_string()));
+                    }
+                }
+                Ok(_) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                    for event in full_history(&state,&id,cursor) {
+                        let seq=event["seq"].as_u64().unwrap_or(0);
+                        if seq>cursor {
+                            cursor=seq;
+                            yield Ok(Event::default().id(seq.to_string()).data(event.to_string()));
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    };
+    Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))).into_response()
+}
