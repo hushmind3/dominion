@@ -260,9 +260,24 @@ fn campaign_view(state: &AppState, job: &Value) -> Value {
         record["metaEvaluationProgress"]=json!({"arm":job["rsiMetaArm"],"task":job["rsiMetaTask"],"jobId":job["rsiMetaActiveJobId"]});
     }
     if let Some(active)=children.iter().find(|j|Some(&j["id"])==record.get("activeGenerationJobId")) {
+        let proof_status=if active["input"]["rsiSystemEvolution"]!=true {
+            "not_required"
+        }else{
+            let id=active["id"].as_str().unwrap_or("");
+            let commit=active["input"]["rsiGeneratorCommit"].as_str().unwrap_or("");
+            let binary=active["input"]["rsiExpectedBinarySha256"].as_str().unwrap_or("");
+            if active["rsiSystemBlueprintVerified"]==true
+                && crate::engine::rsi_evolve::worker_proof_matches(state,id,
+                    record["id"].as_str().unwrap_or(""),commit,binary,
+                    &active["input"]["rsiControllerPlan"]){
+                "verified"
+            }else if matches!(active["status"].as_str(),Some("running"|"queued")){
+                "pending"
+            }else{"missing_or_mismatch"}
+        };
         record["activeWorker"]=json!({"id":active["id"],"status":active["status"],
             "phase":active["rsiPhase"],"generatorCommit":active["input"]["rsiGeneratorCommit"],
-            "focusFiles":active["input"]["rsiFocusFiles"]});
+            "focusFiles":active["input"]["rsiFocusFiles"],"proofStatus":proof_status});
         if record["phase"]=="diagnosing_and_editing" && active["status"]=="running"
             && active["rsiPhase"].is_string() {record["phase"]=active["rsiPhase"].clone();}
     }
