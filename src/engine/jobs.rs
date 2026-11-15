@@ -618,8 +618,10 @@ fn rsi_native_preflight(input: &Value) -> bool {
 fn resume_owner_instruction(job:&Value,goal:&str)->Result<Option<String>,String>{
     if job["resumeCount"].as_u64().unwrap_or(0)==0{return Ok(None);}
     let proof=&job["resumeEvidence"];
-    if proof["source"]!="owner_attestation"||proof["applied"]!=false{
-        return Err("재개 전에 사용자의 미적용 확인 기록이 필요합니다.".into());
+    if !matches!(proof["source"].as_str(),
+        Some("owner_attestation"|"engine_no_tool_observations"))
+        || proof["applied"]!=false{
+        return Err("재개하려면 미적용 확인 또는 도구 실행이 없는 오류 기록이 필요합니다.".into());
     }
     let Some(details)=proof["details"].as_str()
         .map(str::trim).filter(|s|!s.is_empty()) else{
@@ -1127,6 +1129,12 @@ mod tests {
         assert!(prompt.contains("다시 확인"));
         assert_ne!(prompt,"Create remote job");
         assert!(resume_owner_instruction(&json!({}),"New goal").unwrap().is_none());
+        let no_tools=json!({"resumeCount":1,"resumeEvidence":{
+            "source":"engine_no_tool_observations","applied":false,
+            "details":"Provider error with no tool observations"
+        }});
+        assert!(resume_owner_instruction(&no_tools,"Finish the report").unwrap()
+            .unwrap().contains("Provider error"));
         assert!(resume_owner_instruction(&json!({"resumeCount":1}),"Old goal").is_err());
         assert!(resume_owner_instruction(&json!({"resumeCount":1,"resumeEvidence":{
             "source":"owner_attestation","applied":true,"details":"Already done"

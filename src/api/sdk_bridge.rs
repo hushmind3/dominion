@@ -233,20 +233,52 @@ pub async fn approve(
     ).await
 }
 
+/// The visible main-frontend Resume button also needs to work for a pure
+/// provider/model failure, where NO native tool operation was recorded.
+/// Refuse automatic retry if any tool may have started: its outcome is not
+/// inferred from a model error, and owner reconciliation stays mandatory.
+fn model_only_retry_evidence(state:&AppState,job:&Value)->Option<Value>{
+    if job["status"]!="failed" || !job["result"].is_null(){return None;}
+    let session=job["sessionId"].as_str().filter(|s|!s.is_empty())?;
+    state.store.get("session",session)?;
+    let started=job["startedAt"].as_str().filter(|s|!s.is_empty())?;
+    let no_tools=state.store.all("execution_operation").iter().all(|operation|{
+        operation["sessionId"].as_str()!=Some(session)
+            || operation["startedAt"].as_str().is_some_and(|at|at<started)
+    });
+    if !no_tools{return None;}
+    let no_claims=job.pointer("/autonomousState/receipts")
+        .and_then(Value::as_array).is_none_or(|steps|steps.iter().all(|step|
+            step["evidenceCount"].as_u64().unwrap_or(0)==0
+            && step["toolSuccess"].as_array().is_none_or(Vec::is_empty)
+            && step["toolErrors"].as_array().is_none_or(Vec::is_empty)
+        ));
+    if !no_claims{return None;}
+    Some(json!({
+        "source":"engine_no_tool_observations",
+        "applied":false,
+        "details":"이전 시도는 도구 실행 기록 없이 중단되었습니다.",
+        "verifiedByEngine":true,
+        "recordedAt":chrono::Utc::now().to_rfc3339()
+    }))
+}
+
 /// A previously interrupted turn can be retried only after the owner
-/// explicitly reconciled its unknown effects as NOT APPLIED. This is a new
-/// authorized attempt on the same job/session, not blind crash replay.
+/// explicitly reconciled its unknown effects as NOT APPLIED. A provider-only
+/// failure with zero recorded tool calls is also eligible for safe retry. 
+/// This always starts a new decision turn, never replays an old tool call.
 pub async fn resume(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     let Some(job) = panel_job(&state, &id) else {
         return error(StatusCode::NOT_FOUND, "해당 자동 작업을 찾을 수 없습니다.");
     };
-    if job["status"] != "failed"
-        || job["reconciliation"]["source"] != "owner_attestation"
-        || job["reconciliation"]["applied"] != false
-        || job["cancelRequested"] == true
-    {
+    let owner_reconciled=job["reconciliation"]["source"]=="owner_attestation"
+        && job["reconciliation"]["applied"]==false;
+    let safe_model_failure=if owner_reconciled {None}
+        else {model_only_retry_evidence(&state,&job)};
+    if job["status"]!="failed" || job["cancelRequested"]==true
+        || (!owner_reconciled && safe_model_failure.is_none()){
         return error(StatusCode::CONFLICT,
-            "미확정 도구 실행은 자동 재개할 수 없습니다. 먼저 실제 결과를 확인하고 미적용으로 기록하세요.");
+            "도구 부작용이 불확실한 작업은 수동 확인 후 재개하세요. 도구 실행이 없었던 모델 오류만 즉시 재시도할 수 있습니다.");
     }
     let resumed = job["resumeCount"].as_u64().unwrap_or(0);
     if resumed >= 2 {
@@ -257,7 +289,11 @@ pub async fn resume(State(state): State<AppState>, Path(id): Path<String>) -> Re
     // that statement across the CAS and worker restart: clearing the UI
     // reconciliation without passing it into the model would silently replay
     // the original owner request as if this were a new task.
-    let prior=job["reconciliation"].clone();
+    let prior=if owner_reconciled {
+        job["reconciliation"].clone()
+    }else{
+        safe_model_failure.expect("safe retry was checked")
+    };
     let mut history=job["resumeHistory"].as_array().cloned().unwrap_or_default();
     if let Some(checkpoint)=job.get("autonomousState").filter(|v|!v.is_null()) {
         history.push(json!({"resumeNumber":resumed+1,
@@ -401,6 +437,51 @@ mod tests {
         assert_eq!(stored["reconciliation"]["verifiedByEngine"], false);
         assert_eq!(stored["result"]["verified"], false);
     }
+    #[tokio::test]
+    async fn main_frontend_resume_retries_a_provider_failure_without_tool_effects(){
+        let state=state();
+        let session=state.store.put("session",&json!({"title":"A coding task"})).unwrap();
+        let session_id=session["id"].as_str().unwrap().to_string();
+        let job=engine::jobs::enqueue(&state,"prompt",json!({
+            "prompt":"Fix the build", "uiSource":SOURCE, "autonomous":true
+        })).unwrap();
+        let id=job["id"].as_str().unwrap().to_string();
+        state.store.patch_if("job",&id,"status",&json!("queued"),&json!({
+            "status":"failed","sessionId":session_id,
+            "startedAt":"2026-11-15T12:00:00Z",
+            "error":"provider connection failed"
+        }));
+        let resumed=resume(State(state.clone()),Path(id.clone())).await;
+        assert_eq!(resumed.status(),StatusCode::OK);
+        let record=state.store.get("job",&id).unwrap();
+        assert_eq!(record["status"],"queued");
+        assert_eq!(record["resumeEvidence"]["source"],"engine_no_tool_observations");
+        assert_eq!(record["resumeEvidence"]["applied"],false);
+    }
+
+    #[tokio::test]
+    async fn model_error_with_tool_records_cannot_bypass_owner_review(){
+        let state=state();
+        let session=state.store.put("session",&json!({"title":"A coding task"})).unwrap();
+        let session_id=session["id"].as_str().unwrap().to_string();
+        let job=engine::jobs::enqueue(&state,"prompt",json!({
+            "prompt":"Send a remote update", "uiSource":SOURCE, "autonomous":true
+        })).unwrap();
+        let id=job["id"].as_str().unwrap().to_string();
+        state.store.patch_if("job",&id,"status",&json!("queued"),&json!({
+            "status":"failed","sessionId":session_id,
+            "startedAt":"2026-11-15T12:00:00Z","error":"provider connection failed"
+        }));
+        state.store.put("execution_operation",&json!({
+            "runId":"run-x","sessionId":session_id,
+            "tool":"http_fetch","status":"running",
+            "startedAt":"2026-11-15T12:00:01Z"
+        }));
+        assert_eq!(resume(State(state.clone()),Path(id.clone())).await.status(),
+            StatusCode::CONFLICT);
+        assert_eq!(state.store.get("job",&id).unwrap()["status"],"failed");
+    }
+
     #[tokio::test]
     async fn interrupted_effect_requires_owner_attestation_before_resume() {
         let state=state();

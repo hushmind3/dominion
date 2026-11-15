@@ -278,10 +278,14 @@ pub async fn execute(
         }else if attempt>0{
             turn.input=next_instruction(&active_goal,&last_gaps,last_error.as_deref(),attempt);
         }else if steering_before>0{
-            // On a resumed task the owner's corrective observation must not
-            // be discarded by a stale appended-instruction snapshot.
-            if input["resumeCount"].as_u64().unwrap_or(0)==0 {
+            // A resumed turn has a new owner confirmation in request.input.
+            // Do not erase that instruction just because previous steering
+            // notes have an older revision; preserve both sources of intent.
+            if request.input==goal {
                 turn.input=active_goal.clone();
+            }else{
+                turn.input=format!("{}\n\n현재 적용 중인 사용자 목표와 추가 조건:\n{}",
+                    request.input,active_goal);
             }
         }
         if let Some(command)=verify_command{
