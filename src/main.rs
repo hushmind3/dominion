@@ -35,7 +35,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|_| ".dominion/data.sqlite".into());
     let store = store::Store::open(std::path::Path::new(&db_path))
         .map_err(std::io::Error::other)?;
-    let queued = store.recover()?;
+    // Mark uncertain in-flight work for review; the scheduler will pick up
+    // queued tasks without replaying a potentially completed external effect.
+    store.recover()?;
     let (bus, _) = broadcast::channel(2048);
     let state = AppState {
         store,
@@ -48,10 +50,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         model_name: env::var("DOMINION_MODEL").unwrap_or_else(|_| "qwen3".into()),
         api_key: env::var("DOMINION_API_KEY").ok().filter(|s| !s.is_empty()),
     };
-    for id in queued {
-        let next = state.clone();
-        tokio::spawn(async move { engine::run(next, id).await; });
-    }
+    // A task queued behind another turn in the same session must start after
+    // the earlier turn finishes. A durable queue scan also resumes safe queued
+    // work after restart, without requiring an open browser or SDK connection.
+    let queue_state = state.clone();
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_millis(400));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            ticker.tick().await;
+            for id in queue_state.store.runnable_ids(32) {
+                let next = queue_state.clone();
+                tokio::spawn(async move { engine::run(next, id).await; });
+            }
+        }
+    });
     let port = env::var("DOMINION_PORT").ok()
         .and_then(|s| s.parse::<u16>().ok()).unwrap_or(4317);
     let app: Router = api::router(state);
