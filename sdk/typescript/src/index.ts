@@ -189,6 +189,18 @@ export class DominionClient {
       throw new TypeError("requestId must be 8-128 ASCII letters, numbers, _ or -");
     return this.request<TaskRecord>("/api/tasks","POST",{...input,requestId},signal);
   }
+  /** Explicitly continue a persisted task without silently replaying old effects.
+   * Previous tool permissions are never inherited; provide them explicitly.
+   */
+  resume(previousTaskId: string, input: TaskInput, signal?: AbortSignal): Promise<TaskRecord> {
+    if (!previousTaskId || !input || typeof input.prompt !== 'string' || !input.prompt.trim())
+      throw new TypeError('A previous task and fresh owner instruction are required');
+    const requestId=input.requestId ?? crypto.randomUUID();
+    if (!/^[A-Za-z0-9_-]{8,128}$/.test(requestId))
+      throw new TypeError('requestId must be 8-128 ASCII letters, numbers, _ or -');
+    return this.request<TaskRecord>('/api/tasks/'+encodeURIComponent(previousTaskId)+'/resume',
+      'POST',{...input,requestId},signal);
+  }
   list(signal?: AbortSignal) { return this.request<TaskRecord[]>("/api/tasks","GET",undefined,signal); }
   get(id:string, signal?: AbortSignal) {
     return this.request<TaskRecord>("/api/tasks/"+encodeURIComponent(id),"GET",undefined,signal);
