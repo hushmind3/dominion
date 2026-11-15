@@ -142,11 +142,21 @@ test('recursive improvement is Rust-owned, persisted, scored and visible across 
  assert.ok(evolution.includes('workspace_write_lock.lock().await'))
  assert.ok(evolution.includes('put_evolution(run.clone())'))
  assert.ok(evolution.includes('bounded_evolution_can_improve_a_then_b_then_a_with_real_git_evaluation'))
+ const tournament=readFileSync(join(root,'src/improvement/evolution/tournament.rs'),'utf8')
+ assert.ok(tournament.includes('async fn tournament_generation('))
+ assert.ok(tournament.includes('async fn holdout('))
+ assert.ok(tournament.includes('real_git_competition_rejects_high_training_score'))
+ assert.ok(tournament.includes('winner=choose('))
+ assert.ok(evolution.includes('candidates_per_generation'))
  assert.ok(api.includes('/api/improvements/:id/evolution'))
  assert.ok(api.includes('/api/evolutions/:id'))
  assert.ok(runtime.includes('improvement_evolution_start('))
  assert.ok(sdk.includes('improvementEvolutionStart('))
+ assert.ok(sdk.includes('validation_command?: string | null'))
+ assert.ok(sdk.includes('EvolutionCandidate'))
  assert.ok(ui.includes('연속 진화 · A→B→A'))
+ assert.ok(ui.includes('세대당 후보 경쟁 수'))
+ assert.ok(ui.includes('검증용 별도 점수 명령'))
 });
 
 test('owner stop is persisted in the Rust RSI engine and exposed to typed clients',()=>{
