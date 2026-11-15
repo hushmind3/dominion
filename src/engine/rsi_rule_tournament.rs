@@ -10,6 +10,12 @@ fn scope(row:&Value)->Option<String>{
         "objectiveId","knowledgePartition"] {
         values.push(row.get(name)?.as_str().filter(|s|!s.is_empty())?);
     }
+    // A fixed Git HEAD and model are not enough: different frozen case
+    // plans or target domains cannot establish a matched controller contest.
+    values.push(row["domain"].as_str().unwrap_or("unlabelled-domain"));
+    values.push(row["evaluationProfileSha256"].as_str().unwrap_or("no-profile"));
+    values.push(row["evaluationPlanSha256"].as_str()?);
+    values.push(row["evaluationOracleVersion"].as_str()?);
     Some(json!(values).to_string())
 }
 fn comparable(row:&Value)->bool {
@@ -18,6 +24,9 @@ fn comparable(row:&Value)->bool {
         && row["tokens"].as_u64().is_some_and(|v|v>0)
         && row["editPolicy"]["revision"].as_str().is_some_and(|s|!s.is_empty())
         && row["candidateId"].as_str().is_some_and(|s|!s.is_empty())
+        && row["evaluationPlanSha256"].as_str().is_some_and(|s|
+            s.len()==64 && s.bytes().all(|b|b.is_ascii_hexdigit()))
+        && row["evaluationOracleVersion"].as_str().is_some_and(|s|!s.is_empty())
         && row["evaluation"]["source"]=="server_invoked_local_paired_git_worktrees"
         && row["evaluation"]["metrics"].is_object()
 }
@@ -119,7 +128,8 @@ mod tests {
             "generatorCommit":if commit=="sha1" {"a".repeat(40)} else if commit=="sha2" {"b".repeat(40)} else {commit.to_string()},
             "generatorModel":model,
             "generatorProviderId":"p","objectiveId":"goal",
-            "knowledgePartition":"space",
+            "knowledgePartition":"space","domain":"memory",
+            "evaluationPlanSha256":"e".repeat(64),"evaluationOracleVersion":"frozen-v1",
             "editPolicy":{"revision":rev},
             "evaluation":{"source":"server_invoked_local_paired_git_worktrees",
                 "metrics":{"eligible":accepted}}})
@@ -213,6 +223,25 @@ mod tests {
         ];
         let refs=cases.iter().collect::<Vec<_>>();
         assert_eq!(compare(&refs,|v| if v["accepted"]==true {f64::NAN} else {0.0})["promotion"],false);
+    }
+
+    #[test]
+    fn different_frozen_oracle_or_domain_is_not_matched_evidence(){
+        let mut rows=vec![
+            trial("a","base","sha1","m",false),
+            trial("b","child","sha1","m",true),
+            trial("c","base","sha2","m",false),
+            trial("d","child","sha2","m",true),
+        ];
+        assert_eq!(compare(&rows.iter().collect::<Vec<_>>(),reward)["promotion"],true);
+        rows[3]["evaluationPlanSha256"]=json!("f".repeat(64));
+        assert_eq!(compare(&rows.iter().collect::<Vec<_>>(),reward)["promotion"],false);
+        rows[3]["evaluationPlanSha256"]=json!("e".repeat(64));
+        rows[3]["domain"]=json!("context");
+        assert_eq!(compare(&rows.iter().collect::<Vec<_>>(),reward)["promotion"],false);
+        rows[3]["domain"]=json!("memory");
+        rows[3]["evaluationOracleVersion"]=json!("different-oracle");
+        assert_eq!(compare(&rows.iter().collect::<Vec<_>>(),reward)["promotion"],false);
     }
 
 }
