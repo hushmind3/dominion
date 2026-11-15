@@ -77,7 +77,7 @@ async function* frames(body:ReadableStream<Uint8Array>):AsyncGenerator<unknown>{
       buffer+=decoder.decode(value,{stream:true});
       // Coalesced packets may contain multiple independent, bounded SSE frames.
       let match:RegExpExecArray|null;
-      while((match=/\r\n\r\n|\n\n|\r\r/.exec(buffer))){
+      while((match=/(?:\r\n|\r|\n){2}/.exec(buffer))){
         if(match.index>2*1024*1024)throw new DominionStreamError('SSE frame larger than 2 MiB');
         const raw=buffer.slice(0,match.index).replace(/^\uFEFF/,'');
         buffer=buffer.slice(match.index+match[0].length);
