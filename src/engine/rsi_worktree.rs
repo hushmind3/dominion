@@ -1026,7 +1026,12 @@ pub(crate) async fn compare_at(context:&JobContext,id:&str,source:&Path,_runner_
         .arg(candidate["baseCommit"].as_str().unwrap_or(""))
         .arg(&patch_file).arg(&plan_file).arg(&report_file)
         .env("PATH", path)
-        .env("RSI_BUILD_CACHE",std::fs::canonicalize(&state.config.data_dir).map_err(|e|e.to_string())?.join("rsi-paired-build").join(&context.job_id));
+        // Rust canonicalize() uses \\?\ extended paths on Windows. Cargo
+        // propagates CARGO_TARGET_DIR to the MSVC linker, which cannot use
+        // these paths as ordinary .obj arguments (LNK1181). Normalize only
+        // the child-process environment, retaining canonical paths for I/O.
+        .env("RSI_BUILD_CACHE",git_compatible_path(&std::fs::canonicalize(&state.config.data_dir)
+            .map_err(|e|e.to_string())?.join("rsi-paired-build").join(&context.job_id)));
     let outcome=crate::engine::rsi_evolve::command(context,command,Duration::from_secs(1200)).await?;
     if !outcome.status.success() {
         return Err(format!("독립 A/B 실험 실행 실패: {}",String::from_utf8_lossy(&outcome.stderr)
