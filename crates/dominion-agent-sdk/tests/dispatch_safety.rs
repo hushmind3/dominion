@@ -140,3 +140,58 @@ async fn failed_write_ahead_persistence_executes_nothing() {
     assert!(host.calls().is_empty());
     assert!(state.receipts.is_empty());
 }
+
+struct RedirectingJournal {
+    snapshots: Mutex<Vec<Snapshot>>,
+    redirected: std::sync::atomic::AtomicBool,
+    redirect_after_intent: bool,
+}
+impl RedirectingJournal {
+    fn new(redirect_after_intent: bool) -> Self {
+        Self {snapshots:Mutex::new(vec![]),
+            redirected:std::sync::atomic::AtomicBool::new(false),
+            redirect_after_intent}
+    }
+}
+impl Journal for RedirectingJournal {
+    fn save(&self, run: &Snapshot) -> Result<(), String> {
+        self.snapshots.lock().unwrap().push(run.clone());
+        if (self.redirect_after_intent && !run.in_flight.is_empty())
+            || (!self.redirect_after_intent && !run.receipts.is_empty()) {
+            self.redirected.store(true, Ordering::SeqCst);
+        }
+        Ok(())
+    }
+    fn directive(&self, _id: &str) -> Result<Option<String>, String> {
+        Ok(self.redirected.load(Ordering::SeqCst)
+            .then(|| "Owner changed the task".into()))
+    }
+}
+#[tokio::test]
+async fn owner_redirection_after_a_read_prevents_a_stale_write() {
+    let host=Host::new();
+    let journal=RedirectingJournal::new(false);
+    let mut state=run();
+    let outcome=dispatch_batch(&mut state,
+        &[action("inspect","read"),action("stale_mutation","write")],&host,&journal).await;
+    assert!(outcome.is_err());
+    assert_eq!(host.calls(),vec!["inspect"]);
+    assert_eq!(state.receipts.len(),1);
+    assert_eq!(state.receipts[0].id,"inspect");
+    assert!(state.in_flight.is_empty());
+}
+#[tokio::test]
+async fn owner_redirection_after_intent_fence_dispatches_no_tool() {
+    let host=Host::new();
+    let journal=RedirectingJournal::new(true);
+    let mut state=run();
+    let result=dispatch_batch(&mut state,&[action("stale_mutation","write")],&host,&journal).await;
+    assert!(result.is_err());
+    assert!(host.calls().is_empty());
+    assert!(state.receipts.is_empty());
+    assert!(state.in_flight.is_empty());
+    let saved=journal.snapshots.lock().unwrap();
+    assert_eq!(saved.len(),2);
+    assert_eq!(saved[0].in_flight.len(),1);
+    assert!(saved[1].in_flight.is_empty());
+}
