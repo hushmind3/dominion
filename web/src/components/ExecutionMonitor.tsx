@@ -28,11 +28,6 @@ function ToolHistory({id}:{id:string}){
 export function ExecutionMonitor(){
  useLocale()
  const runs=useRemote<Execution[]>('/api/executions',[])
- const jobs=useRemote<any[]>('/api/jobs',[])
- const [autonomous,setAutonomous]=useState(true)
- const [attempts,setAttempts]=useState(3)
- const [strategy,setStrategy]=useState<'focused'|'conservative'>('focused')
- const [steerJob,setSteerJob]=useState(''),[steerText,setSteerText]=useState('')
  const agents=useRemote<Agent[]>('/api/agents',[])
  const [prompt,setPrompt]=useState(''),[agentChoice,setAgentChoice]=useState(''),[info,setInfo]=useState('')
  const [selected,setSelected]=useState<string|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('')
@@ -44,12 +39,9 @@ export function ExecutionMonitor(){
   if(!prompt.trim()||!executorId||busy)return
   setBusy(true);setError('');setInfo('')
   try{
-   await post('/api/jobs',{kind:'prompt',input:{
-    prompt:prompt.trim(),agentId:executorId,autonomous,
-    maxAutonomousAttempts:attempts,executionStrategy:strategy
-   }})
+   await post('/api/jobs',{kind:'prompt',input:{prompt:prompt.trim(),agentId:executorId}})
    setPrompt('');setInfo(t('em.queued'))
-   await runs.reload();await jobs.reload()
+   await runs.reload()
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
@@ -65,7 +57,7 @@ export function ExecutionMonitor(){
    <div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-xl bg-[#24211D] text-white"><Activity size={20}/></span>
     <div><h2 className="m-0 text-lg font-bold text-[#24211D]">{t('em.title')}</h2><p className="m-0 text-xs text-[#7C7469]">{t('em.subtitle')}</p></div></div>
    <div className="flex items-center gap-3"><span className="text-xs font-semibold text-[#5C544A]">{t('em.count',{count})}</span>
-    <Button size="sm" variant="ghost" onClick={()=>{void runs.reload();void jobs.reload()}}><RefreshCw size={14}/> {t('em.refresh')}</Button></div>
+    <Button size="sm" variant="ghost" onClick={()=>void runs.reload()}><RefreshCw size={14}/> {t('em.refresh')}</Button></div>
   </div>
   <div className="border-b border-[#E7E0D5] p-5">
    <label className="mb-2 block text-sm font-semibold text-[#3A342D]">{t('em.instruction')}</label>
@@ -77,38 +69,8 @@ export function ExecutionMonitor(){
     </SelectInput>
     <Button variant="primary" disabled={busy||!executorId||!prompt.trim()} onClick={()=>void execute()}><Play size={15}/> {t('em.run')}</Button>
    </div>
-   <details className="mt-3 rounded-lg border border-[#E7E0D5] bg-[#FAF7F1] px-3 py-2 text-xs">
-    <summary className="cursor-pointer font-medium text-[#5C544A]">{t('em.auto.title')}</summary>
-    <div className="mt-3 flex flex-wrap items-center gap-4">
-     <label className="flex items-center gap-2"><input type="checkbox" checked={autonomous} onChange={e=>setAutonomous(e.target.checked)}/> {t('em.auto.enabled')}</label>
-     <label className="flex items-center gap-2">{t('em.auto.attempts')} <select className="rounded border bg-white px-2 py-1" value={attempts} disabled={!autonomous} onChange={e=>setAttempts(Number(e.target.value))}>{[1,2,3,4,5,6].map(n=><option key={n} value={n}>{t('em.auto.attemptUnit',{count:n})}</option>)}</select></label>
-     <label className="flex items-center gap-2">{t('em.auto.strategy')} <select className="rounded border bg-white px-2 py-1" value={strategy} disabled={!autonomous} onChange={e=>setStrategy(e.target.value as 'focused'|'conservative')}><option value="focused">{t('em.auto.focused')}</option><option value="conservative">{t('em.auto.conservative')}</option></select></label>
-    </div>
-    <p className="mt-2 text-[#7C7469]">{t('em.auto.description')}</p>
-   </details>
    {info&&<p className="mt-2 text-xs text-emerald-700">{info}</p>}
   </div>
-  {jobs.value.some(j=>j.kind==='prompt')&&<div className="border-b border-[#E7E0D5] px-5 py-3">
-   <h3 className="mb-2 text-xs font-bold text-[#3A342D]">{t('em.auto.recent')}</h3>
-   <div className="grid gap-2">{jobs.value.filter(j=>j.kind==='prompt').slice(-5).reverse().map(j=><details key={j.id} className="rounded-lg border border-[#E7E0D5] bg-white px-3 py-2 text-xs">
-    <summary className="flex cursor-pointer flex-wrap items-center gap-2"><span className="min-w-0 flex-1 truncate font-medium">{j.input?.prompt||j.id}</span><span>{j.status}</span><span className="text-[#7C7469]">{j.autonomousState?.attempt||0} / {j.input?.maxAutonomousAttempts||3}회</span></summary>
-    <div className="mt-2 space-y-1 text-[#5C544A]">
-     {(j.autonomousState?.receipts||j.result?.receipts||[]).map((r:any)=><div key={r.attempt} className="rounded bg-[#FAF7F1] p-2">
-      <strong>{t('em.auto.round',{count:r.attempt})}</strong> · {r.outcome==='accepted'?t('em.auto.accepted'):r.outcome==='repair'?t('em.auto.repair'):t('em.auto.review')} · {t('em.auto.tools',{count:r.toolSuccess?.length||0})} · {t('em.auto.tokens',{count:r.usage?.totalTokens||0})}
-      {(r.gaps||[]).map((gap:string,i:number)=><p key={i} className="mt-1 break-words text-[#A94E30]">{gap}</p>)}
-     </div>)}
-     {j.result?.verified===true&&<p className="text-emerald-700">{t('em.auto.verified')}</p>}
-     {j.result?.status==='needs_review'&&<p className="text-amber-800">{t('em.auto.needsReview',{reason:j.result?.reason||t('em.auto.review')})}</p>}
-     {['queued','running'].includes(j.status)&&j.input?.autonomous!==false&&<div className="mt-2 flex flex-wrap items-center gap-2">
-      <input aria-label={t('em.auto.steerAria')} className="min-w-48 flex-1 rounded border border-[#E7E0D5] px-2 py-1 text-xs" placeholder={t('em.auto.steerPlaceholder')} value={steerJob===j.id?steerText:''} onChange={e=>{setSteerJob(j.id);setSteerText(e.target.value)}}/>
-      <button type="button" disabled={steerJob!==j.id||!steerText.trim()} className="rounded border border-[#C7B18F] px-2 py-1 text-[#5C544A] disabled:opacity-50" onClick={async()=>{
-       try{await post('/api/jobs/'+encodeURIComponent(j.id)+'/steer',{instruction:steerText.trim()});setSteerText('');await jobs.reload();setInfo(t('em.auto.steerQueued'))}catch(e){setError((e as Error).message)}
-      }}>{t('em.auto.steer')}</button>
-     </div>}
-     {['queued','running'].includes(j.status)&&<button type="button" className="rounded border border-rose-200 px-2 py-1 text-rose-700" onClick={async()=>{await post('/api/jobs/'+encodeURIComponent(j.id)+'/cancel',{});await jobs.reload()}}>{t('em.auto.stop')}</button>}
-    </div>
-   </details>)}</div>
-  </div>}
   <div className="grid min-w-0 gap-4 p-5 lg:grid-cols-2">
    <div className="max-h-64 space-y-2 overflow-y-auto">
     {runs.value.map(r=><Button key={r.id} variant="ghost" onClick={()=>setSelected(r.id)}

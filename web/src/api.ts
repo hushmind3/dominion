@@ -1,4 +1,3 @@
-import { Dominion, DominionError, StreamInterruptedError } from '@dominion/sdk'
 import {t} from './i18n'
 import {translateError} from './i18n/errors'
 
@@ -13,11 +12,16 @@ export const koreanReasoningKey='dominion.chat.reasoningKo'
 export function koreanReasoningEnabled(){
  try{return localStorage.getItem(koreanReasoningKey)!=='0'}catch{return true}
 }
-const client = new Dominion({ baseUrl: '' })
-export function setAuthToken(value: string) { client.setToken(value) }
+let authToken = ''
+export function setAuthToken(value: string) { authToken = value.trim() }
 
 function apiFetch(url: string, init: RequestInit = {}) {
- return client.raw(url, init)
+ const headers = new Headers(init.headers)
+ if (typeof init.body === 'string' && !headers.has('Content-Type')) {
+  headers.set('Content-Type', 'application/json')
+ }
+ if (authToken) headers.set('X-Dominion-Token', authToken)
+ return fetch(url, {...init, headers, cache: 'no-store'})
 }
 
 export class ApiError extends Error {
@@ -76,11 +80,31 @@ export type ChatRequest = {
 }
 
 export async function streamChat(data: ChatRequest, onEvent: (e: StreamEvent) => void, signal: AbortSignal) {
+ const res = await apiFetch('/api/chat', {method: 'POST', body: JSON.stringify(data), signal})
+ if (!res.ok) throw new ApiError(res.status, translateError((await readJson(res))?.error || 'HTTP ' + res.status))
+ if (!res.body || !res.headers.get('Content-Type')?.startsWith('text/event-stream')) {
+  throw Error('No streaming response')
+ }
+ const reader = res.body.pipeThrough(new TextDecoderStream()).getReader()
+ let buffer = ''
  try {
-  await client.streamChat(data, onEvent, {signal})
- } catch(error) {
-  if (error instanceof DominionError) throw new ApiError(error.status, translateError(error.message))
-  if (error instanceof StreamInterruptedError) throw Error(t('chat.streamInterrupted'))
-  throw error
+  while (true) {
+   const {done, value} = await reader.read()
+   if (done) throw Error(t('chat.streamInterrupted'))
+   buffer += value
+   let boundary: RegExpExecArray | null
+   while ((boundary = /\r?\n\r?\n/.exec(buffer))) {
+    const frame = buffer.slice(0, boundary.index)
+    buffer = buffer.slice(boundary.index + boundary[0].length)
+    const payload = frame.split(/\r?\n/).filter(line => line.startsWith('data:'))
+     .map(line => line.slice(5).replace(/^ /, '')).join('\n')
+    if (!payload) continue
+    const event: StreamEvent = JSON.parse(payload)
+    onEvent(event)
+    if (event.type === 'done') return
+   }
+  }
+ } finally {
+  await reader.cancel().catch(() => {})
  }
 }

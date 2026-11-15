@@ -1,6 +1,7 @@
 import {Activity,ArrowRight,Bot,BrainCircuit,CheckCircle2,Cpu,FolderOpen,MessageSquare,Play,RadioTower,Workflow} from 'lucide-react'
 import {Button,PageContainer} from '../components/Primitives'
 import {ExecutionMonitor} from '../components/ExecutionMonitor'
+import {NativeAgentPanel} from '../components/NativeAgentPanel'
 import {useRemote} from '../components/UI'
 import {StatusPill} from '../components/StatusPill'
 import {t,useLocale,formatDateTime,jobKindLabel} from '../i18n'
@@ -50,6 +51,7 @@ export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
     <div className="m-4 mt-2 flex items-center gap-2 rounded-lg bg-[#F7F2EA] px-3 py-2 text-[11px] text-[#7C7469]"><CheckCircle2 size={14}/> {t('dashboard.note')}</div>
    </section>
   </div>
+  <NativeAgentPanel providers={providers.value}/>
   <section className="mt-4 rounded-xl border border-[#E7E0D5] bg-white">
    <div className="flex items-center justify-between border-b border-[#F0EAE1] px-4 py-3"><h2 className="text-[13px] font-bold">{t('dashboard.recent')}</h2><Button type="button" onClick={()=>navigate('activity')} className="flex items-center gap-1 text-[11px] font-medium text-[#C96442]">{t('dashboard.recent.all')} <ArrowRight size={13}/></Button></div>
    {recent.length?<div className="divide-y divide-[#F0EAE1]">{recent.map(job=><div key={job.id} className="flex items-center gap-3 px-4 py-3"><Workflow size={15} className="text-[#A79C8E]"/><div className="min-w-0 flex-1"><div className="truncate text-[12px] font-semibold">{job.input?.goal||job.input?.prompt||job.kind||t('dashboard.jobFallback')}</div><div className="mt-1 text-[10px] text-[#9C9388]">{jobKindLabel(job.kind)} · {job.createdAt?formatDateTime(job.createdAt):''}</div></div><StatusPill status={job.status} /></div>)}</div>:<div className="flex h-32 items-center justify-center text-[12px] text-[#9C9388]">{t('dashboard.recent.empty')}</div>}
