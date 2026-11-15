@@ -70,6 +70,19 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
                     Err(message)=>return error(StatusCode::BAD_REQUEST,&message),
                 }
             }
+            if let Some(mode)=input["routingMode"].as_str() {
+                if !matches!(mode,"default"|"quality_cost") {
+                    return error(StatusCode::BAD_REQUEST,"지원하지 않는 모델 라우팅 정책입니다.");
+                }
+                let min_quality=input["minQuality"].as_f64().unwrap_or(0.80);
+                let max_drop=input["maxQualityDrop"].as_f64().unwrap_or(0.10);
+                if !min_quality.is_finite()||!(0.0..=1.0).contains(&min_quality)
+                    ||!max_drop.is_finite()||!(0.0..=0.50).contains(&max_drop){
+                    return error(StatusCode::BAD_REQUEST,"모델 품질 하한·허용 품질 차이를 확인하세요.");
+                }
+                value["nativeRoutingPolicy"]=json!({"mode":mode,
+                    "minQuality":min_quality,"maxQualityDrop":max_drop});
+            }
             if let Some(v)=input["allowFallback"].as_bool() {
                 value["allowFallback"]=json!(v);
             }
