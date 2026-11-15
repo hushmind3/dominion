@@ -1,7 +1,7 @@
 const byId = (id) => document.getElementById(id);
 const ui = {
   prompt: byId('prompt'), form: byId('submitForm'), run: byId('run'),
-  write: byId('write'), shell: byId('shell'), evidence: byId('evidence'),
+  write: byId('write'), shell: byId('shell'), mcp: byId('mcp'), evidence: byId('evidence'),
   maxSteps: byId('maxSteps'), tokenBudget: byId('tokenBudget'),
   planningMode: byId('planningMode'),
   sessionId: byId('sessionId'), notice: byId('notice'), work: byId('work'),
@@ -124,7 +124,7 @@ function submission() {
   return {
     requestId:crypto.randomUUID(),prompt:ui.prompt.value.trim(),
     sessionId:ui.sessionId.value.trim() || null,
-    allowWrite:ui.write.checked,allowShell:ui.shell.checked,
+    allowWrite:ui.write.checked,allowShell:ui.shell.checked,allowMcp:ui.mcp.checked,
     requireEvidence:ui.evidence.checked,
     maxSteps:Number(ui.maxSteps.value),tokenBudget:Number(ui.tokenBudget.value),
     planningMode:ui.planningMode.value
