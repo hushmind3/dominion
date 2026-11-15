@@ -534,11 +534,11 @@ const TOOL_CANCEL_DRAIN_LIMIT: Duration=Duration::from_secs(60);
 /// Preserve uncertainty rather than mark an aborted external effect as
 /// successfully rolled back. This function is used only when the running
 /// dispatch could not supply its own durable completion receipt.
-fn mark_unsettled_tools(state:&AppState,execution_id:&str,reason:&str)->usize{
+fn mark_unsettled_tools(state:&AppState,execution_id:&str,reason:&str)->Result<usize,String>{
     let mut count=0;
-    for operation in state.store.all("execution_operation"){
-        if operation["runId"].as_str()!=Some(execution_id)
-            || operation["status"]!="running" {continue;}
+    let operations=state.store.execution_operations(execution_id)?;
+    for operation in operations{
+        if operation["status"]!="running" {continue;}
         let Some(id)=operation["id"].as_str()else{continue;};
         if let Some(saved)=state.store.patch_if(
             "execution_operation",id,"status",&json!("running"),
@@ -558,13 +558,14 @@ fn mark_unsettled_tools(state:&AppState,execution_id:&str,reason:&str)->usize{
             "executionId":execution_id,"count":count,"reason":reason,
         }));
     }
-    count
+    Ok(count)
 }
 
 fn has_live_tools(state:&AppState,execution_id:&str)->bool{
-    state.store.all("execution_operation").iter().any(|operation|
-        operation["runId"].as_str()==Some(execution_id)
-            && operation["status"]=="running")
+    // A transient SQLite read failure must NOT be interpreted as evidence
+    // that no tool is live. Fail closed and let the normal drain path run.
+    state.store.execution_operations(execution_id).map(|operations|
+        operations.iter().any(|op|op["status"]=="running")).unwrap_or(true)
 }
 
 /// A top-level select! otherwise drops the entire model/tool future on
@@ -580,9 +581,12 @@ where F:std::future::Future<Output=Result<Option<Value>,String>>{
     tokio::select!{
         result=&mut body=>result,
         _=&mut limit=>{
-            mark_unsettled_tools(state,execution_id,
-                "턴 시간 제한 도달: 외부 도구 실행 결과를 확인하지 못했습니다.");
-            Err("설정한 실행 시간 제한을 초과했습니다.".into())
+            match mark_unsettled_tools(state,execution_id,
+                "턴 시간 제한 도달: 외부 도구 실행 결과를 확인하지 못했습니다."){
+                Ok(_)=>Err("설정한 실행 시간 제한을 초과했습니다.".into()),
+                Err(error)=>Err(format!(
+                    "실행 시간 제한 이후 도구 결과 저장소를 확인하지 못했습니다: {error}. 수동 확인이 필요합니다.")),
+            }
         }
         _=wait_cancelled(state,session_id,generation)=>{
             if !has_live_tools(state,execution_id) {
@@ -602,9 +606,13 @@ where F:std::future::Future<Output=Result<Option<Value>,String>>{
                     Err("실행이 중단되었습니다.".into())
                 }
                 Err(_)=>{
-                    let unknown=mark_unsettled_tools(state,execution_id,
-                        "취소 후 도구 결과 회수 제한을 초과했습니다.");
-                    Err(format!("실행이 중단되었습니다. {unknown}개 도구 결과가 불확실하여 검토가 필요합니다."))
+                    match mark_unsettled_tools(state,execution_id,
+                        "취소 후 도구 결과 회수 제한을 초과했습니다."){
+                        Ok(unknown)=>Err(format!(
+                            "실행이 중단되었습니다. {unknown}개 도구 결과가 불확실하여 검토가 필요합니다.")),
+                        Err(error)=>Err(format!(
+                            "실행이 중단되었습니다. 결과 기록 저장소에 접근하지 못했습니다: {error}. 수동 확인이 필요합니다.")),
+                    }
                 }
             }
         }
