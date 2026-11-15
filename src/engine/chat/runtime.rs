@@ -2015,6 +2015,14 @@ async fn run_turn_body(
         let parallel_reads = combination.as_ref()
             .and_then(|algorithm|algorithm["implementation"].as_str())
             ==Some("parallel-reads");
+        let batch_names=round_calls.iter().map(|call|call.name.as_str()).collect::<Vec<_>>();
+        let parallel_batch_starts=if parallel_reads{
+            super::tool_schedule::plan(&batch_names,4).into_iter()
+                .filter_map(|batch|match batch{
+                    super::tool_schedule::ToolBatch::ParallelRead{start,len}=>Some((start,len)),
+                    super::tool_schedule::ToolBatch::Exclusive{..}=>None,
+                }).collect::<std::collections::BTreeMap<usize,usize>>()
+        }else{std::collections::BTreeMap::new()};
         let mut parallel_done = std::collections::HashSet::<String>::new();
         let mut ordering_used = false;
         let mut ordering_ok = true;
@@ -2041,10 +2049,8 @@ async fn run_turn_body(
             // four concurrent calls, with matching results emitted in the
             // model's original call order, irrespective of completion order.
             // RSI runs retain their own strict tool/patch ordering.
-            if parallel_reads && session["rsiRun"]!=true && tool_is_read_only(&call.name) {
-                let batch_len=parallel_read_run_len(
-                    round_calls[call_index..].iter().map(|c|c.name.as_str()),4);
-                if batch_len>=2 {
+            if session["rsiRun"]!=true {
+                if let Some(&batch_len)=parallel_batch_starts.get(&call_index){
                     let _=crate::engine::algorithms::choose_for_agent(
                         state,"tool.combination",request.agent_id.as_deref(),Some(execution_id));
                     let batch=&round_calls[call_index..call_index+batch_len];
@@ -3050,20 +3056,8 @@ fn restore_program_state(
     Ok(())
 }
 
-/// Split a model-issued tool batch at every exclusive barrier, rather than
-/// moving independent reads across earlier writes. Calls after a barrier are
-/// dispatched only when the barrier has settled.
-fn parallel_read_run_len<'a>(names:impl Iterator<Item=&'a str>,limit:usize)->usize{
-    names.take(limit).take_while(|name|tool_is_read_only(name)).count()
-}
-
-fn tool_is_read_only(name: &str) -> bool {
-    matches!(
-        name,
-        "workspace_list" | "workspace_read" | "workspace_read_range" | "file_list" | "file_read"
-            | "web_search" | "http_fetch" | "memory_search"
-            | "task_status" | "task_result" | "account_status"
-    )
+fn tool_is_read_only(name:&str)->bool {
+    super::tool_schedule::safe_to_overlap(name)
 }
 
 fn mark_tool_argument_signal(
@@ -6485,31 +6479,6 @@ mod outcome_tests {
             determine_task_outcome(&execution("failed", true, json!("check"))),
             TaskOutcome::Failed
         );
-    }
-}
-
-#[cfg(test)]
-mod exclusive_barrier_tests {
-    use super::*;
-    #[test]
-    fn parallel_runs_are_bounded_and_never_cross_model_order_barriers(){
-        let calls=["workspace_read","workspace_read_range","workspace_write",
-                   "workspace_read","workspace_read_range","shell_exec","file_read"];
-        let mut groups=Vec::new();
-        let mut index=0;
-        while index<calls.len(){
-            let count=parallel_read_run_len(calls[index..].iter().copied(),4);
-            if count>=2 {
-                groups.push((index,index+count));
-                index+=count;
-            }else{index+=1;}
-        }
-        assert_eq!(groups,vec![(0,2),(3,5)]);
-        assert_eq!(parallel_read_run_len(["workspace_write","workspace_read"]
-            .into_iter(),4),0);
-        assert_eq!(parallel_read_run_len(["workspace_read","workspace_write"]
-            .into_iter(),4),1);
-        assert_eq!(parallel_read_run_len(["workspace_read";10].into_iter(),4),4);
     }
 }
 
