@@ -47,7 +47,6 @@ pub async fn collect(state:&AppState,root:&Path,goal:&str)->(Value,String){
 }
 #[cfg(test)]
 mod tests{
-    use super::*;
     #[test]
     fn code_navigation_has_a_strict_prompt_limit(){
         let text="x".repeat(20_000);
