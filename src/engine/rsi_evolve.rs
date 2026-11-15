@@ -753,6 +753,61 @@ async fn select(context: &JobContext, record: &mut Value) -> Result<String, Stri
     }
 }
 
+/// Git worktree creation and source snapshot happen before the campaign
+/// journal exists. Failed setup must tear down both its Git registration and
+/// disposable bytes; it must never leave an invisible lab poisoning retries.
+async fn cleanup_failed_lab(source:&Path,lab:&Path)->Result<(),String>{
+    let mut scan=Command::new("git");
+    scan.current_dir(source).args(["worktree","list","--porcelain"]);
+    let output=tools::run_command(&mut scan,Duration::from_secs(30)).await?;
+    if !output.status.success(){
+        return Err(format!("Cannot inspect Git worktree registry: {}",
+            String::from_utf8_lossy(&output.stderr)));
+    }
+    let location=lab.to_string_lossy();
+    let registered=String::from_utf8_lossy(&output.stdout).lines()
+        .filter_map(|line|line.strip_prefix("worktree "))
+        .any(|path|path==location);
+    if registered {
+        let mut cmd=Command::new("git");
+        cmd.current_dir(source).args(["worktree","remove","--force"])
+            .arg(lab);
+        let removed=tools::run_command(&mut cmd,Duration::from_secs(30)).await?;
+        if !removed.status.success(){
+            return Err(format!("Git still owns the failed lab: {}",
+                String::from_utf8_lossy(&removed.stderr)));
+        }
+    }
+    if lab.exists() {
+        std::fs::remove_dir_all(lab).map_err(|e|format!(
+            "Failed lab not removed after Git registry cleanup: {e}"))?;
+    }
+    Ok(())
+}
+
+async fn abort_lab_bootstrap(
+    context:&JobContext,source:&Path,lab:&Path,error:String
+)->String {
+    let cleaned=cleanup_failed_lab(source,lab).await;
+    context.state.store.audit("rsi.lab_bootstrap_failed",json!({
+        "jobId":context.job_id,"error":error,
+        "cleanupSucceeded":cleaned.is_ok(),
+        "cleanupError":cleaned.as_ref().err(),
+        "labDir":lab.to_string_lossy()
+    }));
+    if cleaned.is_ok() {
+        let _=context.checkpoint(json!({
+            "rsiEvolutionInFlight":false,"rsiPhase":"bootstrap_failed",
+            "rsiLabCleanup":"verified"
+        }));
+    }
+    match cleaned {
+        Ok(())=>error,
+        Err(cleanup_error)=>format!(
+            "{error}; needs_review: Git worktree cleanup failed: {cleanup_error}"),
+    }
+}
+
 pub async fn run(context: &JobContext, job: &Value) -> Result<Value, String> {
     if job["input"]["rsiNativeApproved"] != true {
         return Err("자동 실험 실행 선택이 없습니다.".into());
@@ -779,7 +834,7 @@ pub async fn run(context: &JobContext, job: &Value) -> Result<Value, String> {
     let parent = std::fs::canonicalize(parent).map_err(|e| e.to_string())?;
     let lab = parent.join(format!("lab-{}", uuid::Uuid::new_v4()));
     context.checkpoint(json!({"rsiEvolutionInFlight":true,"rsiPhase":"preparing_lab"}))?;
-    git(
+    if let Err(error)=git(
         context,
         &source,
         &[
@@ -789,9 +844,14 @@ pub async fn run(context: &JobContext, job: &Value) -> Result<Value, String> {
             lab.to_str().ok_or("실험 경로 오류")?,
             base,
         ],
-    )
-    .await?;
-    let (snapshot, fingerprint) = snapshot_source(context, &source, &lab).await?;
+    ).await {
+        return Err(abort_lab_bootstrap(context,&source,&lab,error).await);
+    }
+    let (snapshot, fingerprint) = match snapshot_source(context,&source,&lab).await {
+        Ok(receipt)=>receipt,
+        Err(error)=>return Err(abort_lab_bootstrap(
+            context,&source,&lab,error).await),
+    };
     let mut lineage = json!({
         "selectedCommit": Value::Null,
         "sameSource": false,
@@ -4633,6 +4693,46 @@ mod tests {
         );
         (state, root)
     }
+    #[tokio::test]
+    async fn native_rsi_failed_bootstrap_removes_real_detached_worktree_and_git_registration() {
+        let (state,root)=state();
+        let source=root.join("bootstrap-source");
+        std::fs::create_dir_all(&source).unwrap();
+        let mut init=Command::new("git");
+        init.current_dir(&source).args(["init","-q"]);
+        assert!(tools::run_command(&mut init,Duration::from_secs(30)).await.unwrap().status.success());
+        std::fs::write(source.join("sample.rs"),"pub fn stable() {}\n").unwrap();
+        for args in [
+            vec!["add","sample.rs"],
+            vec!["-c","user.name=RSI","-c","user.email=rsi@localhost","commit","-qm","base"]
+        ]{
+            let mut cmd=Command::new("git");
+            cmd.current_dir(&source).args(args);
+            assert!(tools::run_command(&mut cmd,Duration::from_secs(30)).await.unwrap().status.success());
+        }
+        let lab=root.join("data").join("aborted-rsi-lab");
+        let mut add=Command::new("git");
+        add.current_dir(&source).args(["worktree","add","--detach"])
+            .arg(&lab).arg("HEAD");
+        assert!(tools::run_command(&mut add,Duration::from_secs(30)).await.unwrap().status.success());
+        assert!(lab.exists());
+        let id=format!("cleanup-{}",uuid::Uuid::new_v4());
+        state.store.put("job",&json!({"id":id,"status":"running",
+            "kind":"rsi_evolve","rsiEvolutionInFlight":true})).unwrap();
+        let context=JobContext::new(state.clone(),id.clone());
+        let reason=abort_lab_bootstrap(&context,&source,&lab,"snapshot error".into()).await;
+        assert_eq!(reason,"snapshot error");
+        assert!(!lab.exists());
+        let saved=state.store.get("job",&id).unwrap();
+        assert_eq!(saved["rsiEvolutionInFlight"],false);
+        assert_eq!(saved["rsiLabCleanup"],"verified");
+        let mut list=Command::new("git");
+        list.current_dir(&source).args(["worktree","list","--porcelain"]);
+        let out=tools::run_command(&mut list,Duration::from_secs(30)).await.unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).matches("worktree ").count(),1);
+        let _=std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn native_rsi_worker_returns_actual_verifier_status_not_optimistic_completion() {
         assert_eq!(worker_result_status(&json!({"status":"completed",
