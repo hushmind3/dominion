@@ -4,6 +4,8 @@
 //! bounded replanning, progress, and durable write-ahead checkpoints.
 //! The host supplies providers, tools, and storage; there is no imported harness.
 
+pub mod runtime;
+
 use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};

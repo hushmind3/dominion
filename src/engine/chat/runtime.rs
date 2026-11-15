@@ -2975,19 +2975,10 @@ fn restore_program_state(
 
 /// Limits parallel reads to a contiguous observation-only segment.
 /// No batch can overtake a write, shell command or other effect.
-pub(super) fn adjacent_read_batch_end(
-    calls: &[ToolCall], start: usize, max_batch: usize,
-) -> usize {
-    if start >= calls.len() { return calls.len(); }
-    let mut end = start + 1;
-    if !tool_is_read_only(&calls[start].name) { return end; }
-    while end < calls.len()
-        && end - start < max_batch
-        && tool_is_read_only(&calls[end].name)
-    {
-        end += 1;
-    }
-    end
+pub(super) fn adjacent_read_batch_end(calls: &[ToolCall], start: usize, max_batch: usize) -> usize {
+    dominion_agent_sdk::runtime::read_batch_end(calls, start, max_batch, |call| {
+        tool_is_read_only(&call.name)
+    })
 }
 
 /// A future read cannot bypass enforced procedures or RSI tool permissions.
