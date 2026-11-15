@@ -42,6 +42,25 @@ test("typed goals use native Rust endpoint, owner's fields and admin header", as
   assert.equal(body.tokenBudget,150000);
 });
 
+test("native job promptOnce preserves owner tool settings and stable retry ID", async () => {
+  const seen = [];
+  const sdk = new DominionClient({fetch: async (url, init) => {
+    seen.push({url:String(url),body:JSON.parse(init.body)});
+    return json({id:"owner-task-stable",kind:"prompt",status:"queued"});
+  }});
+  await sdk.jobs.promptOnce("fix code", "retry-safe-2026",{
+    agentId:"a",toolsEnabled:true,toolsExecutionEnabled:false,
+  });
+  assert.equal(seen.length,1);
+  assert.equal(seen[0].url,"http://127.0.0.1:4317/api/jobs");
+  assert.deepEqual(seen[0].body,{
+    kind:"prompt",requestId:"retry-safe-2026",
+    input:{prompt:"fix code",agentId:"a",toolsEnabled:true,toolsExecutionEnabled:false},
+  });
+  assert.throws(()=>sdk.jobs.promptOnce("fix code","bad"),TypeError);
+  assert.equal(seen.length,1);
+});
+
 test("server errors retain status, and writes never silently retry", async () => {
   let calls = 0;
   const sdk = new DominionClient({fetch: async () => {

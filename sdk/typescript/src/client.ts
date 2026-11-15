@@ -5,7 +5,7 @@ import {
 import type {TransportOptions} from "./transport.js";
 import type {
   Approval, ChatEvent, ChatRequest, ChatResult, DominionRecord, EventWatchOptions,
-  Goal, GoalCreate, HarnessSettings, HarnessSettingsUpdate, Job, Message, ModelSelection, RequestOptions, SdkInfo, ServerEvent,
+  Goal, GoalCreate, HarnessSettings, HarnessSettingsUpdate, Job, JobPromptOptions, Message, ModelSelection, RequestOptions, SdkInfo, ServerEvent,
   Session, SessionCreate, WaitOptions,
 } from "./types.js";
 
@@ -79,11 +79,28 @@ export class DominionClient {
       this.transport.json<Job[]>("/api/jobs", "GET", undefined, options),
     get: (id: string, options?: RequestOptions) =>
       this.transport.json<Job>(`/api/jobs/${idPart(id)}`, "GET", undefined, options),
-    /** Generic prompt worker; durable across browser closure and engine restart. */
-    prompt: (prompt: string, model: ModelSelection = {}, options?: RequestOptions) =>
+    /** Legacy prompt submission; each POST intentionally means a new job. */
+    prompt: (prompt: string, model: JobPromptOptions = {}, options?: RequestOptions) =>
       this.transport.json<Job>("/api/jobs", "POST", {
-        kind: "prompt", input: {prompt, ...model, toolsEnabled: true},
+        kind: "prompt", input: {
+          prompt, ...model,
+          toolsEnabled: model.toolsEnabled ?? true,
+          toolsExecutionEnabled: model.toolsExecutionEnabled ?? true,
+        },
       }, options),
+    /** Explicit retry-safe submit: reuse requestId after a lost response. */
+    promptOnce: (prompt: string, requestId: string,
+      model: JobPromptOptions = {}, options?: RequestOptions): Promise<Job> => {
+      if (typeof requestId !== "string" || !/^[A-Za-z0-9_-]{8,128}$/.test(requestId))
+        throw new TypeError("requestId must be 8–128 ASCII letters, digits, _ or -");
+      return this.transport.json<Job>("/api/jobs", "POST", {
+        kind: "prompt", requestId, input: {
+          prompt, ...model,
+          toolsEnabled: model.toolsEnabled ?? true,
+          toolsExecutionEnabled: model.toolsExecutionEnabled ?? true,
+        },
+      }, options);
+    },
     cancel: (id: string, options?: RequestOptions) =>
       this.transport.json<Job>(`/api/jobs/${idPart(id)}/cancel`, "POST", {}, options),
     wait: (id: string, options?: WaitOptions<Job>) =>

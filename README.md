@@ -8,6 +8,13 @@ DOMINION을 **Rust 백엔드 + Rust 실행 엔진**으로 다시 구현한 저�
 - 저장소: SQLite (WAL), 레코드는 JSON 문서
 - Node.js: 런타임이 아니라 **빌드 도구로만** 사용 (`vite build`)
 
+## 🏆 챔피온 2026-11-15: 재시도 가능한 네이티브 작업 제출
+
+- `POST /api/jobs`의 `prompt` 작업은 선택적 `requestId`를 지원합니다. 같은 ID·같은 작업은 원래 기록을 재사용하고, 다른 작업은 409로 거부합니다. 고유 ID의 원자적 등록은 기존 Rust/SQLite `put_if_absent`가 수행합니다.
+- `sdk.jobs.promptOnce(prompt, requestId, options)`는 같은 Rust 작업 생성 경로를 이용합니다. SDK는 임의로 POST를 다시 보내지 않으며, 응답 유실 후 재제출 여부는 사용자가 결정합니다.
+- `toolsExecutionEnabled:false`는 이제 제출 API에서 버려지지 않고 실제 Rust 작업 입력까지 전달됩니다. 유효하지 않은 도구 설정은 거부합니다.
+- [소스 경로·계약·검증 한계](docs/CHAMPION-OWNER-JOB-IDEMPOTENCY-2026-11-15.md)
+
 ## 🏆 챔피온 2026-11-15: 이벤트 누락 없는 재접속과 SDK·화면 복구
 
 - **전체 기록 재생:** `/api/events`는 SQLite에 남은 이벤트를 500건씩 모두 조회합니다. 구독을 먼저 확보하고 이벤트 번호로 중복을 제거해 재접속 중 생긴 기록 누락을 방지합니다.

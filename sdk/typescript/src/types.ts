@@ -23,6 +23,13 @@ export interface ModelSelection {
   providerId?: string;
   model?: string;
 }
+/** Prompt-job options consumed by the native Rust worker. */
+export interface JobPromptOptions extends ModelSelection {
+  toolsEnabled?: boolean;
+  toolsExecutionEnabled?: boolean;
+  thinking?: boolean;
+  reasoningEffort?: string;
+}
 export type GoalStatus = "queued" | "running" | "completed" | "needs_review" | "failed" | "cancelled";
 export interface Goal extends DominionRecord {
   goal: string;

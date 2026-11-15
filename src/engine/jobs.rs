@@ -121,6 +121,20 @@ pub fn enqueue_once(state: &AppState, id: &str, kind: &str, input: Value) -> Opt
         .filter(|existing| existing["kind"] == kind && existing["input"] == candidate["input"])
 }
 
+/// Idempotent owner task submission: the key identifies one logical job,
+/// not an HTTP attempt. The existing SQLite UNIQUE insert is the linearization
+/// point, so concurrent retries cannot start an extra model/tool worker.
+pub fn enqueue_owner_prompt(
+    state: &AppState, request_id: &str, input: Value,
+) -> Result<Value, String> {
+    let digest = sha2::Sha256::digest(
+        format!("dominion:owner-prompt:v1:{request_id}").as_bytes()
+    );
+    let id = format!("owner-task-{digest:x}");
+    enqueue_once(state, &id, "prompt", input)
+        .ok_or_else(|| "같은 요청 ID를 서로 다른 작업에 사용할 수 없습니다.".to_string())
+}
+
 /// A resumed goal must be queued with its completed-iteration checkpoint in
 /// the same insert, before any worker can claim it. Patching the checkpoint
 /// after enqueue is a race that may replay a previous external tool operation.
