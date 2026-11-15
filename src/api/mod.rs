@@ -21,6 +21,7 @@ pub mod benchmark;
 pub mod experiments;
 pub mod chat;
 pub mod jobs;
+pub mod goals;
 pub mod system;
 pub mod attachments;
 pub mod channels;
@@ -143,6 +144,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/system/restore", post(system::restore_backup))
         .route("/api/chat", post(chat::chat))
         .route("/api/jobs",get(jobs::list).post(jobs::create))
+        .route("/api/goals", get(goals::list).post(goals::create))
+        .route("/api/goals/:id", get(goals::one))
+        .route("/api/goals/:id/cancel", post(goals::cancel))
         .route("/api/jobs/:id",get(jobs::one))
         .route("/api/jobs/:id/cancel",post(jobs::cancel))
         .route("/api/tasks", get(tasks::list))
