@@ -35,7 +35,7 @@ DOMINION_HARNESS_KEY=YOUR_KEY cargo run -p dominion-harness --bin dominion-harne
   --checkpoint ./runtime/agent-run.json
 ```
 
-중단 후 `--resume --checkpoint ./runtime/agent-run.json`으로 실행합니다. `--approve-call ID`는 승인 대기 중인 1개 호출만 승인합니다. CLI는 제품 API를 거치지 않고 같은 `sdk::AgentSdk`를 직접 사용합니다.
+중단 후 `--resume --checkpoint ./runtime/agent-run.json`으로 실행합니다. `--approve-call ID`는 승인 대기 중인 1개 호출만 승인합니다. 중단 시 도구의 적용 여부가 불확실하면 파일·명령 결과를 실제 확인한 후 `--resume --checkpoint FILE --reconcile-details "확인한 결과" --reconcile-applied`로 확인 결과를 기록할 수 있습니다. 적용되지 않았을 경우 `--reconcile-applied`를 생략합니다. CLI는 제품 API를 거치지 않고 같은 `sdk::AgentSdk`를 직접 사용합니다.
 
 ## 2026 프런티어 비교와 아직 남은 통합
 
