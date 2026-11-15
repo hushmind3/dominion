@@ -988,6 +988,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn agent_searches_unknown_prior_call_id_then_recovers_verified_ancestor(){
+        use axum::{routing::post,Json,Router};
+        let app=Router::new().route("/v1/chat/completions",post(
+            move |Json(body):Json<Value>|async move{
+                let messages=body["messages"].as_array().cloned().unwrap_or_default();
+                let tool_result=messages.iter().rev().find(|item|item["role"]=="tool")
+                    .and_then(|item|item["content"].as_str())
+                    .and_then(|content|serde_json::from_str::<Value>(content).ok());
+                let answer=if let Some(result)=tool_result{
+                    let receipt=&result["receipt"];
+                    if receipt["page"].as_str().is_some_and(|text|
+                        text.contains("CobaltThistleMarker")) {
+                        json!({"role":"assistant","content":"Recovered exact archival proof."})
+                    }else{
+                        let indexed=&receipt["results"][0];
+                        json!({"role":"assistant","content":null,"tool_calls":[{
+                            "id":"reinspect-record","type":"function","function":{
+                                "name":"task_receipt","arguments":json!({
+                                    "sourceTaskId":indexed["sourceTaskId"],
+                                    "callId":indexed["callId"],
+                                    "offsetBytes":0,"maxBytes":4096
+                                }).to_string()
+                            }
+                        }]})
+                    }
+                }else{
+                    json!({"role":"assistant","content":null,"tool_calls":[{
+                        "id":"find-lost-receipt","type":"function","function":{
+                            "name":"context_search","arguments":json!({
+                                "query":"CobaltThistleMarker","limit":4
+                            }).to_string()
+                        }
+                    }]})
+                };
+                Json(json!({"choices":[{"message":answer}],
+                    "usage":{"prompt_tokens":130,"completion_tokens":50}}))
+            }
+        ));
+        let listener=tokio::net::TcpListener::bind(("127.0.0.1",0)).await.unwrap();
+        let url=format!("http://{}/v1/chat/completions",listener.local_addr().unwrap());
+        let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap()});
+        let (state,root)=mock_state(url).await;
+        let (old,_)=state.store.submit("ancestry-first-2026",
+            &json!({"prompt":"inspect","sessionId":"repo-review"})).unwrap();
+        let prior=old["id"].as_str().unwrap().to_owned();
+        assert!(state.store.claim(&prior));
+        state.store.append_event(&prior,"tool_result",json!({
+            "callId":"unknown-until-found","name":"workspace_read",
+            "outcome":{"ok":true,"receipt":{
+                "path":"archived.txt","content":"CobaltThistleMarker audited evidence from old run"
+            }}
+        })).unwrap();
+        state.store.finish(&prior,"completed",json!({"answer":"done"}),None).unwrap();
+        let (current,_)=state.store.submit_continuation("ancestry-second-2026",
+            &json!({"prompt":"Find archived CobaltThistleMarker evidence, cite the exact saved result.",
+                "sessionId":"repo-review","planningMode":"never",
+                "maxSteps":4,"tokenBudget":10000}),&prior,"completed").unwrap();
+        let id=current["id"].as_str().unwrap().to_owned();
+        run(state.clone(),id.clone()).await;
+        let record=state.store.get(&id).unwrap();
+        assert_eq!(record["status"],"completed","native result: {record}");
+        assert_eq!(record["result"]["answer"],"Recovered exact archival proof.");
+        let trace=state.store.events_after(&id,0,100);
+        assert!(trace.iter().any(|entry|entry["type"]=="tool_result"
+            && entry["detail"]["name"]=="context_search"));
+        assert!(trace.iter().any(|entry|entry["type"]=="tool_result"
+            && entry["detail"]["name"]=="task_receipt"));
+        assert!(!trace.iter().any(|entry|entry["type"]=="tool_start"
+            && entry["detail"]["name"]=="workspace_read"));
+        server.abort();
+        let _=std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn early_owner_constraint_survives_far_beyond_recent_session_window(){
         use axum::{routing::post,Json,Router};
         use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
