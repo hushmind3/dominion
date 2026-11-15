@@ -17,7 +17,7 @@ test('portable runner applies exact patches in isolated worktrees and cleans up 
   const fixtures=path.join(root,'evaluation files');fs.mkdirSync(fixtures);
   fs.copyFileSync(runner,path.join(fixtures,'rsi-lab.mjs'));
   // A fixture grader inspects actual trees; this is not an RSI performance claim.
-  fs.writeFileSync(path.join(fixtures,'rsi-measure.mjs'),`import fs from 'node:fs';import path from 'node:path';fs.writeFileSync(process.env.RSI_REPORT,JSON.stringify({baseline:fs.readFileSync(path.join(process.env.RSI_TEMP,'baseline','subject.txt'),'utf8'),candidate:fs.readFileSync(path.join(process.env.RSI_TEMP,'candidate','subject.txt'),'utf8'),temp:process.env.RSI_TEMP}));`);
+  fs.writeFileSync(path.join(fixtures,'rsi-measure.mjs'),`import fs from 'node:fs';import path from 'node:path';fs.writeFileSync(process.env.RSI_REPORT,JSON.stringify({baseline:fs.readFileSync(path.join(process.env.RSI_TEMP,'baseline','subject.txt'),'utf8'),candidate:fs.readFileSync(path.join(process.env.RSI_TEMP,'candidate','subject.txt'),'utf8'),temp:process.env.RSI_TEMP,baselineTreeSha:process.env.RSI_BASE_TREE_SHA,candidateTreeSha:process.env.RSI_CANDIDATE_TREE_SHA}));`);
   fs.writeFileSync(path.join(fixtures,'candidate.patch'),'diff --git a/subject.txt b/subject.txt\n--- a/subject.txt\n+++ b/subject.txt\n@@ -1 +1 @@\n-before\n+after\n');
   fs.writeFileSync(path.join(fixtures,'plan.json'),JSON.stringify({oracleVersion:'portable-test',cases:[{id:'a',domain:'tools',filter:'fixture::a'},{id:'b',domain:'memory',filter:'fixture::b'}]}));
   const report=path.join(fixtures,'report.json');
@@ -25,7 +25,22 @@ test('portable runner applies exact patches in isolated worktrees and cleans up 
   assert.equal(result.status,0,result.stderr);
   const measured=JSON.parse(fs.readFileSync(report));
   assert.equal(measured.baseline,'before\n');assert.equal(measured.candidate,'after\n');
+  assert.equal(measured.baselineTreeSha,git('rev-parse',base+'^{tree}'));
+  assert.match(measured.candidateTreeSha,/^[a-f0-9]{40}$/);
+  assert.notEqual(measured.candidateTreeSha,measured.baselineTreeSha,
+   'candidate code must have a distinct SHA-attested Git tree');
   assert.equal(fs.readFileSync(path.join(root,'subject.txt'),'utf8'),'before\n');
   assert.equal(fs.existsSync(measured.temp),false);assert.equal(git('worktree','list','--porcelain').split('worktree ').length-1,1);
+  // A failed candidate patch still removes BOTH disposable worktrees and
+  // leaves neither files nor a hidden Git worktree registration.
+  fs.writeFileSync(path.join(fixtures,'bad.patch'),
+   'diff --git a/subject.txt b/subject.txt\n--- a/subject.txt\n+++ b/subject.txt\n@@ -1 +1 @@\n-NOT_THE_BASE\n+after\n');
+  const rejected=spawnSync(process.execPath,[path.join(fixtures,'rsi-lab.mjs'),base,
+   path.join(fixtures,'bad.patch'),path.join(fixtures,'plan.json'),report],
+   {cwd:root,encoding:'utf8'});
+  assert.notEqual(rejected.status,0,'invalid source revision must not be evaluated');
+  assert.equal(git('worktree','list','--porcelain').split('worktree ').length-1,1,
+   'failure cleanup must not leave registered Git worktrees');
+  assert.equal(fs.readFileSync(path.join(root,'subject.txt'),'utf8'),'before\n');
  }finally{fs.rmSync(root,{recursive:true,force:true})}
 });
