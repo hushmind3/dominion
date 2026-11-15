@@ -1,14 +1,17 @@
 import {Activity,ArrowRight,Bot,BrainCircuit,CheckCircle2,Cpu,FolderOpen,MessageSquare,Play,RadioTower,Workflow} from 'lucide-react'
 import {Button,PageContainer} from '../components/Primitives'
 import {ExecutionMonitor} from '../components/ExecutionMonitor'
+import {TaskLauncher} from './home/TaskLauncher'
+import {GoalActivity,type GoalSummary} from './home/GoalActivity'
 import {useRemote} from '../components/UI'
 import {StatusPill} from '../components/StatusPill'
 import {t,useLocale,formatDateTime,jobKindLabel} from '../i18n'
 import type {Agent,ChatSession,Provider} from '../api'
-type Destination='chat'|'models'|'agents'|'rooms'|'connections'|'workflows'|'memory'|'activity'|'rsi'
+type Destination='chat'|'models'|'agents'|'rooms'|'connections'|'workflows'|'memory'|'activity'|'rsi'|'goals'|'video'
 export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
  useLocale()
  const sessions=useRemote<ChatSession[]>('/api/sessions',[])
+ const goals=useRemote<GoalSummary[]>('/api/goals',[])
  const providers=useRemote<Provider[]>('/api/providers',[])
  const agents=useRemote<Agent[]>('/api/agents',[])
  const jobs=useRemote<any[]>('/api/jobs',[])
@@ -17,6 +20,7 @@ export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
  const workflows=useRemote<any[]>('/api/workflows',[])
  const enabledProviders=providers.value.filter(p=>p.enabled)
  const authenticatedProviders=enabledProviders.filter((p:any)=>p.hasKey||p.local).length
+ const modelConnected=authenticatedProviders>0||runtime.value.status==='ready'
  const recent=[...jobs.value].sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).slice(0,6)
  const busy=jobs.value.filter(j=>['queued','running','planning','reviewing','repairing'].includes(j.status)).length
  const lastWorkflow=[...jobs.value].filter(j=>j.kind==='workflow'&&j.status==='completed')
@@ -41,6 +45,9 @@ export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
  ]
  return <PageContainer className="!max-w-[1200px] !py-5">
   <div className="mb-5 flex flex-wrap items-end justify-between gap-3"><div><h1 className="m-0 text-[19px] font-bold tracking-tight">{t('dashboard.title')}</h1><p className="mt-1 text-[12px] text-[#7C7469]">{t('dashboard.subtitle')}</p></div><Button type="button" variant="primary" onClick={()=>navigate('chat')} className="flex h-8 items-center gap-2 rounded-lg px-3 text-[11px] font-semibold"><MessageSquare size={14}/> {t('dashboard.openChat')} <ArrowRight size={13}/></Button></div>
+  <TaskLauncher navigate={navigate} modelConnected={modelConnected}
+   modelLoading={providers.loading||runtime.loading}/>
+  <GoalActivity goals={goals.value} navigate={navigate}/>
   <section className="mb-4 rounded-xl border border-[#E7DCCF] bg-[#FAF7F1] p-4">
    <div className="flex flex-wrap items-center justify-between gap-3">
     <div><strong className="text-[13px] text-[#3F342A]">연결된 작업 완수 경로</strong>

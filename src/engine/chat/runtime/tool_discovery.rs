@@ -5,6 +5,12 @@ use super::*;
 use std::collections::{BTreeSet,HashSet};
 
 pub(super) const TOOL_SEARCH_NAME:&str="dominion_tool_search";
+
+/// Collapse equivalent model search prompts before another tool catalog scan.
+/// This is a pure deterministic key; never used for granting permissions.
+pub(super) fn canonical_query(query:&str)->String {
+    query.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
 const MAX_REVEALED:usize=20;
 const MAX_MATCHES:usize=6;
 
@@ -205,6 +211,14 @@ mod tests{
         assert!(exhausted.iter().any(|tool|tool_name(tool)==
             "mcp__github__create_pull_request"));
         assert!(!exhausted.iter().any(|tool|tool_name(tool)==TOOL_SEARCH_NAME));
+    }
+    #[test]
+    fn equivalent_discovery_queries_share_one_cache_key(){
+        assert_eq!(canonical_query("  GitHub   Pull   Request "),
+            canonical_query("github pull request"));
+        assert_eq!(canonical_query(" 파일   수정 "),
+            canonical_query("파일 수정"));
+        assert_ne!(canonical_query("web search"),canonical_query("file search"));
     }
     #[test]
     fn full_small_catalog_does_not_waste_search_schema(){

@@ -736,3 +736,27 @@ request ID does not enqueue a duplicate correction; a conflicting replay is
 rejected. The normal UI plan revision pathway is unchanged.
 - Source hygiene also blocks the old SDK-only `/api/goals/:id/plan` endpoint, which never matched the native server router.
 - 자율 목표 UI에도 SDK의 `requireTests`·`tokenBudget`를 동일한 요청 필드로 노출했습니다. 소스 작업의 실제 테스트 증거를 기본 요구하며 사용자 선택으로 끌 수 있습니다. 목표 총토큰 상한은 1,000–2,000,000 범위를 검증하고 Rust 엔진 전체 하위 실행에 적용합니다.
+
+### 2026-11-15 — 일반 사용자용 작업 시작, 직접 지시 변경, 중복 검색 억제
+
+미국·중국 상위 GitHub 하네스의 실제 소스를 조사했습니다.
+OpenClaw(실행 소유권), DeepSeek Harness(이벤트·도구 단계),
+Hermes(기억·스킬), Codex Rust(권한과 도구 노출), Gemini CLI(훅),
+Qwen Code(중복 호출), DeerFlow 2.1(재개·샌드박스),
+OpenHands(서버→SDK→GUI 계약)를 비교했습니다. 상세 출처와
+설계별 장단점은 docs/DOMINION-HARNESS-MASTER-DESIGN.md에 있습니다.
+
+일반 사용자 화면(Home)에서 결과를 평문으로 입력하면 실제
+POST /api/goals 작업 큐에 등록되고, 코드 수정 모드에서는
+원본 Git 격리와 후행 테스트 검증을 기본 요구합니다.
+진행 중 작업은 GET /api/goals로 표시하며 동일 화면에서
+POST /api/goals/:id/steer(영속 요청 ID)로 지시를 추가하거나
+실제 /cancel로 중단할 수 있습니다. 모델 연결 상태는
+저장된 공급자·런타임 값으로 안내하며, 영상·그룹·대화는
+각 전용 기능으로 연결합니다. 동적 도구 검색은 동일 질의의
+중복 재검색을 Rust 실행기에서 억제합니다.
+Node 테스트는 화면이 호출하는 실제 작업 생성 함수를 직접 실행합니다.
+정식 실모델 완수율과 비용 절감 실측은 별도 단계입니다.
+- Provider 통합 API는 공개 함수명을 그대로 유지하면서 `providers/credentials.rs`(자격증명), `providers/catalog.rs`(모델 발견·무료 목록), `providers/cli.rs`(CLI·Codex 인증)로 책임을 분리했습니다. `src/api/providers.rs`는 약 74KB에서 약 37KB로 줄었으며 기존 라우트와 인증 보관 경로를 유지합니다.
+- 잔재 검사에 Provider 진입점 크기 제한과 추적된 빌드 산출물·백업 파일 차단을 추가했습니다. 홈 화면의 막대는 작업 완료율이 아니라 실제 반복 시도 한도 사용량으로 표기합니다.
+

@@ -7,9 +7,9 @@ import {t,type LocaleKey,useLocale} from '../i18n'
 export type PageId='home'|'chat'|'video'|'models'|'agents'|'rooms'|'workflows'|'goals'|'memory'|'capabilities'|'extensions'|'connections'|'automations'|'activity'|'settings'|'developer'|'rsi'
 type NavItem={id:PageId;label:LocaleKey;icon:typeof House}
 export const navigation:{title:LocaleKey;items:NavItem[];collapsible?:boolean}[]=[
- {title:'nav.group.workspace',items:[{id:'home',label:'nav.home',icon:House},{id:'chat',label:'nav.chat',icon:MessageSquare},{id:'rooms',label:'nav.rooms',icon:UsersRound},{id:'models',label:'nav.models',icon:Cpu},{id:'agents',label:'nav.agents',icon:Bot},{id:'video',label:'nav.video',icon:Clapperboard}]},
- {title:'nav.group.extensions',items:[{id:'connections',label:'nav.connections',icon:RadioTower},{id:'memory',label:'nav.memory',icon:BookOpenText}]},
- {title:'nav.group.operations',items:[{id:'goals',label:'nav.goals',icon:Bot},{id:'automations',label:'nav.automations',icon:Workflow},{id:'activity',label:'nav.activity',icon:Activity},{id:'rsi',label:'nav.rsi',icon:BrainCircuit},{id:'settings',label:'nav.settings',icon:Settings2}]},
+ {title:'nav.group.workspace',items:[{id:'home',label:'nav.home',icon:House},{id:'chat',label:'nav.chat',icon:MessageSquare},{id:'goals',label:'nav.goals',icon:Bot},{id:'video',label:'nav.video',icon:Clapperboard},{id:'rooms',label:'nav.rooms',icon:UsersRound}]},
+ {title:'nav.group.extensions',items:[{id:'models',label:'nav.models',icon:Cpu},{id:'agents',label:'nav.agents',icon:Bot},{id:'connections',label:'nav.connections',icon:RadioTower},{id:'memory',label:'nav.memory',icon:BookOpenText}]},
+ {title:'nav.group.operations',items:[{id:'automations',label:'nav.automations',icon:Workflow},{id:'activity',label:'nav.activity',icon:Activity},{id:'rsi',label:'nav.rsi',icon:BrainCircuit},{id:'settings',label:'nav.settings',icon:Settings2}]},
  {title:'nav.group.advanced',collapsible:true,items:[{id:'workflows',label:'nav.workflows',icon:Workflow},{id:'developer',label:'nav.developer',icon:Code2}]}
 ]
 const items=navigation.flatMap(g=>g.items)

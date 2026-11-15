@@ -95,7 +95,7 @@ function locationState(){
  const [name,query]=raw.split('?')
  const valid=navigation.some(group=>group.items.some(item=>item.id===name))
  const params=new URLSearchParams(query)
- return {page:(valid?name:'chat') as PageId,session:params.get('session')||undefined,
+ return {page:(valid?name:'home') as PageId,session:params.get('session')||undefined,
   agent:params.get('agent')||undefined,provider:params.get('provider')||undefined,model:params.get('model')||undefined}
 }
 export default function App(){

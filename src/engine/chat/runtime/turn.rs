@@ -271,6 +271,14 @@ pub(super) async fn run_turn_body(
     let mut revealed_tool_names=restore_revealed(state,execution_id,&discovery_catalog)
         .into_iter().take(harness_settings.max_revealed_tools).collect::<std::collections::BTreeSet<_>>();
     let mut discovery_search_calls=0usize;
+    // Persisted within the execution to suppress duplicate model searches
+    // even when an execution is resumed after an interruption.
+    let mut discovery_queries=state.store.get("execution",execution_id)
+        .and_then(|execution|execution["toolDiscoveryQueries"].as_array().cloned())
+        .unwrap_or_default().into_iter().filter_map(|query|
+            query.as_str().map(str::to_string))
+        .take(harness_settings.max_discovery_searches)
+        .collect::<std::collections::BTreeSet<_>>();
     let compiled = if is_room {
         let source = source_message_id.or(reply_to.as_deref()).ok_or("응답할 원문이 없습니다.")?;
         let compiled = super::super::room_context::compile(
@@ -1810,10 +1818,14 @@ pub(super) async fn run_turn_body(
                 // effectful native/MCP tool or broaden the permission scope.
                 discovery_search_calls+=1;
                 let query=arguments["query"].as_str().unwrap_or("");
+                let query_key=canonical_query(query);
+                let duplicate_query=query_key.is_empty()
+                    || !discovery_queries.insert(query_key);
                 let limit=arguments["limit"].as_u64().unwrap_or(4).clamp(1,6) as usize;
                 let capacity=harness_settings.max_revealed_tools
                     .saturating_sub(revealed_tool_names.len());
-                let (matches,names)=if discovery_search_calls<=harness_settings.max_discovery_searches
+                let (matches,names)=if !duplicate_query
+                    && discovery_search_calls<=harness_settings.max_discovery_searches
                     && capacity>0 {
                     discover_tools(&discovery_catalog,query,limit.min(capacity),&revealed_tool_names)
                 }else{(Vec::new(),Vec::new())};
@@ -1827,10 +1839,17 @@ pub(super) async fn run_turn_body(
                 if let Some(mut execution)=state.store.get("execution",execution_id){
                     execution["revealedToolNames"]=json!(revealed_tool_names);
                     execution["toolDiscoverySearches"]=json!(discovery_search_calls);
+                    execution["toolDiscoveryQueries"]=json!(discovery_queries);
                     state.store.put("execution",&execution)
                         .ok_or("동적 도구 발견 상태를 저장하지 못했습니다.")?;
                 }
                 let content=json!({"query":query,"matches":matches,
+                    "duplicateQuery":duplicate_query,
+                    "instruction":if duplicate_query {
+                        "Search already attempted. Use existing tool schemas or a different capability query."
+                    }else{
+                        "Search results are executable only after they appear in the next model turn."
+                    },
                     "revealedForNextTurn":revealed_now,
                     "searchBudgetExhausted":discovery_search_calls>=harness_settings.max_discovery_searches
                         || revealed_tool_names.len()>=harness_settings.max_revealed_tools,
@@ -1847,7 +1866,7 @@ pub(super) async fn run_turn_body(
                 state.store.audit("harness.native_tool_discovery",json!({
                     "executionId":execution_id,"sessionId":session_id,
                     "matched":matches.len(),"newlyRevealed":revealed_now.len(),
-                    "attempt":discovery_search_calls,
+                    "duplicateQuery":duplicate_query,"attempt":discovery_search_calls,
                     "visibleNextTurn":revealed_tool_names.len()
                 }));
                 continue;

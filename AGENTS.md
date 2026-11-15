@@ -12,7 +12,7 @@ A refactor is **not done** when the new code merely works next to abandoned code
 4. Do not let a split public `mod.rs` become the old monolith again. Keep substantial execution, verification and lifecycle logic in focused submodules. Delete duplicate `foo.rs` vs `foo/mod.rs` entrypoints.
 5. Before committing a changed entrypoint, run `node --test scripts/source-hygiene.test.mjs` and `node scripts/source-hygiene.mjs`; fix failures, never silence the gate. Update the gate if a newly retired source path warrants permanent protection.
 6. Finish the complete source/SDK/UI/test/docs residue scan and run locally available validation **before** pushing a change that starts CI. Commit once after all related files are integrated; do not create intermediate CI runs during cleanup. A CI result still pending or failed is **not** a passed build.
-7. Do not replace a real capability with a mock, synthetic receipt, placeholder score, hidden SDK sidecar or cosmetic refactor. Preserve authorization, owner corrections, independent acceptance evidence and actual tool execution.
+7. Do not replace a real capability with a mock, synthetic receipt, placeholder score, hidden SDK sidecar or cosmetic refactor. Ordinary-user UI must show actual durable work and correct owner control; do not report a queued goal or changed plan until the Rust API accepted it. Preserve authorization, owner corrections, independent acceptance evidence and actual tool execution.
 8. Do not merge champion into `main` without an explicit owner request.
 
 A cleanup must be included in the original implementation work. Never defer routine residue removal to a subsequent user prompt.

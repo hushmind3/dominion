@@ -38,7 +38,7 @@ use tool_selection::{tool_advertised, tool_is_read_only, mark_tool_argument_sign
 #[path = "runtime/tool_discovery.rs"]
 mod tool_discovery;
 use tool_discovery::{menu as discoverable_tool_menu,search as discover_tools,
-    restore_revealed,TOOL_SEARCH_NAME};
+    restore_revealed,canonical_query,TOOL_SEARCH_NAME};
 #[path = "runtime/program.rs"]
 mod program_execution;
 use program_execution::run_program;

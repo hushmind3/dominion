@@ -333,3 +333,66 @@ SHA-bound owner request receipt with the plan revision: repeating an identical
 request ID does not enqueue a duplicate correction; a conflicting replay is
 rejected. The normal UI plan revision pathway is unchanged.
 
+## 2026-11-15 · Competitive source inspection and novice-first runtime UX
+
+These are observed GitHub repository snapshots, not measured performance.
+Stars approximate ecosystem adoption only; the source files below were read.
+
+| Repo (stars) | Source inspected | Reusable algorithm | Tradeoff and native choice |
+| --- | --- | --- | --- |
+| OpenClaw (394,462) | src/agents/admitted-run-context.ts | Execution authority bound to source session and cancellation | Very capable gateway with many TS layers; preserve Rust session ownership |
+| DeepSeek Harness (281,125) | packages/core/agent-loop/src/agent.ts | Event-sourced turn progression, step-scoped resolved tool set, inbox and abort | Cordis composition adds deployment complexity; retain Rust algorithm slots |
+| Hermes Agent (263,424) | agent/agent_runtime_helpers.py | Memory/skills, provider fallbacks and repair discipline | Large multipurpose helper (206 KB); do not duplicate a monolith |
+| Codex (135,308) | codex-rs/core/src/tools/router.rs | Advertised/deferred/executable tool authority boundaries | Retain independent provider-agnostic Dominion dispatch |
+| Gemini CLI (108,834) | docs/hooks/reference.md | BeforeToolSelection/BeforeTool/AfterTool hooks | Keep policy hooks versioned with direct runtime callers |
+| DeerFlow 2.1 (85,349) | v2.1 official release | Durable run hydration and owner-scoped cancellation | Integrate lifecycle principles; no LangGraph dependency |
+| Qwen Code (30,365) | packages/core/src/core/agent-loop.ts | Explicit stop reasons, duplicate calls, tool batch accounting | Improve Rust detection without importing its TS scheduler |
+| OpenHands SDK (1,397) | canonical backend/API/TS client boundaries | Server to SDK to GUI contract | Both Dominion SDKs and web UI use the existing Rust backend |
+| Claude Code (155,691) | public repository/SDK/docs | User-centred editing and review conventions | Its complete runtime is not independently reusable open-source code |
+
+Source: https://github.com/openclaw/openclaw
+https://github.com/deepseek-ai/deepseek-harness
+https://github.com/NousResearch/hermes-agent
+https://github.com/openai/codex
+https://github.com/google-gemini/gemini-cli
+https://github.com/bytedance/deer-flow
+https://github.com/QwenLM/qwen-code
+https://github.com/OpenHands/software-agent-sdk
+https://github.com/anthropics/claude-code
+
+### Changes in the executable system
+
+- Home is the new default route, showing a Korean, plain-language task
+  launcher before technical dashboards. It builds a validated real payload
+  and POSTs to /api/goals. Coding work enables Git isolation and post-edit
+  test verification by default. General research does not assert a fake
+  test receipt. The raw owner task is not rewritten.
+- The durable recent-goals panel uses GET /api/goals and supports inline
+  user corrections through POST /api/goals/:id/steer. On network uncertainty
+  the same requestId is reused so the native SQLite goal receipt/CAS
+  prevents duplicate steering. Cancellation calls the real /cancel route.
+- Other task shortcuts open the existing Chat, Video and Rooms workflows;
+  there is no synthetic group or paid video action.
+- Model readiness is grounded in /api/providers and the local model runtime.
+- Rust dynamic tool discovery now canonically records attempted searches
+  on the execution, suppressing repeated identical catalog queries even
+  across interruptions. It adds no LLM call and never broadens permissions.
+- The sidebar prioritizes Home, Chat, Goals, Video and Rooms. Developer
+  functionality remains available in advanced navigation.
+- The new Node contract suite executes the same JS payload builder used by
+  the browser and validates API/owner-steer wiring. Existing release Rust,
+  SDK, UI and RSI checks remain intact.
+
+Actual SWE-bench win rates, cost reduction, third-party GUI parity and
+real paid-video output quality are not claimed from these source tests.
+### Provider module ownership (2026-11-15)
+The provider runtime handlers have been reorganized without changing HTTP
+paths or the shared AppState/vault. src/api/providers.rs now contains provider
+record CRUD, endpoint probing and model response normalization.
+src/api/providers/credentials.rs handles file/environment imports;
+src/api/providers/catalog.rs handles provider catalog and free-model discovery;
+src/api/providers/cli.rs handles CLI credentials and Codex auth/device flow.
+Public re-exports preserve the Rust API module surface. CI builds the real
+handlers and SDKs. The source-hygiene gate blocks large re-grown provider
+entrypoints and tracked build artifacts/backup files.
+

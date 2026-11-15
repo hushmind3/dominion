@@ -15,9 +15,11 @@ export const RETIRED_ENTRYPOINTS = [
 const MAX_ENTRY_BYTES = new Map([
   ['src/engine/goals/mod.rs', 4096],
   ['src/api/goals/mod.rs', 4096],
+  ['src/api/providers.rs', 45000],
 ])
 
 const SCANNED = /^(?:src|scripts|tests|sdk|web|\.github)\//
+const TRASH = /(?:^|\/)(?:node_modules|target|dist|__pycache__)(?:\/|$)|\.(?:bak|orig|rej|tmp|swp|swo|pyc)$/
 const CODE = /\.(?:rs|mjs|cjs|js|jsx|ts|tsx|py|sh|yaml|yml)$/
 const STATIC_REPO_READ = /\b(?:source|file|check)\s*\(\s*(['"])((?:src|scripts|sdk|web|tests|\.github)\/[^'"\r\n]+)\1/g
 const RUST_PATH_MODULE = /#\[\s*path\s*=\s*"([^"]+)"\s*\]\s*(?:#\[[^\]]+\]\s*)*(?:(?:pub(?:\([^)]*\))?)\s+)?mod\s+[A-Za-z_]\w*\s*;/g
@@ -31,6 +33,9 @@ export function auditSourceHygiene(root, suppliedPaths) {
   const violations = []
   const push = (p,detail)=>violations.push(p+': '+detail)
 
+  for (const file of files) {
+    if (TRASH.test(file)) push(file,'tracked build or abandoned backup artifact')
+  }
   for (const retired of RETIRED_ENTRYPOINTS) {
     if (names.has(retired)) push(retired,'obsolete goals.rs restored; use goals/mod.rs')
   }
