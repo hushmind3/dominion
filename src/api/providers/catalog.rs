@@ -1,6 +1,8 @@
 //! Model/provider discovery and free catalog refresh.
 use super::*;
 
+/// Public provider catalog backed by models.dev. The cache keeps the Models
+/// tab usable offline and avoids hammering the upstream on every visit.
 pub async fn provider_catalog(State(state): State<AppState>) -> Json<Value> {
     let cached = state.store.get("provider_catalog", "models.dev");
     if let Some(cached) = &cached {

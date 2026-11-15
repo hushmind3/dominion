@@ -258,5 +258,3 @@ pub(super) fn codex_model() -> String {
     "gpt-6.1-sol".to_string()
 }
 
-/// Public provider catalog backed by models.dev. The cache keeps the Models
-/// tab usable offline and avoids hammering the upstream on every visit.

@@ -38,10 +38,10 @@ pub async fn set_cli_model(State(state): State<AppState>,Path(source): Path<Stri
 pub async fn cli_credentials(State(state): State<AppState>) -> Json<Value> {
     let codex = codex_auth().ok();
     let connected = state.store.get("provider", "codex-oauth");
-    let claude = super::cli_oauth::credential_verified("claude").await;
-    let gemini = super::cli_oauth::credential_verified("gemini").await;
+    let claude = crate::api::cli_oauth::credential_verified("claude").await;
+    let gemini = crate::api::cli_oauth::credential_verified("gemini").await;
     let opencode_auth = opencode_auth();
-    let opencode = super::cli_oauth::credential_verified("opencode").await
+    let opencode = crate::api::cli_oauth::credential_verified("opencode").await
         || opencode_auth.as_ref().and_then(Value::as_object).is_some_and(|entries| !entries.is_empty());
     let go_source = local_opencode_go_key().map(|(_, source)| source);
     let go_provider = direct_opencode_go(&state);

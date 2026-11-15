@@ -58,6 +58,14 @@ test('provider monolith may not silently grow back after modularization',()=>{
   const errors=check({'src/api/providers.rs':'//'.padEnd(46000,'x')})
   assert.ok(errors.some(e=>e.includes('entrypoint exceeds 45000 bytes')))
 })
+test('provider module boundaries reject stranded docs and old parent paths',()=>{
+ const docs=check({'src/api/providers/credentials.rs':
+   'pub fn import() {}\n/// old description has no item\n'});
+ assert.ok(docs.some(e=>e.includes('orphaned Rust doc comment')));
+ const imports=check({'src/api/providers/cli.rs':
+   'pub async fn cli(){super::cli_oauth::credential_verified("x").await;}\n'});
+ assert.ok(imports.some(e=>e.includes('old parent')));
+});
 test('public entrypoint expansion beyond 4KB demands a real module split',()=>{
   const errors=check({'src/engine/goals/mod.rs':'//'.padEnd(4200,'x')})
   assert.ok(errors.some(e=>e.includes('entrypoint exceeds 4096 bytes')))

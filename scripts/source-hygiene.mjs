@@ -72,6 +72,16 @@ export function auditSourceHygiene(root, suppliedPaths) {
     }
     if (isHygieneTest||isHygieneSelf) continue
     if (file.endsWith('.rs')) {
+      // Rust rejects a /// doc comment stranded at EOF after a module split.
+      // Check this before Cargo compilation so the split cannot regress.
+      if (file.startsWith('src/api/providers/') &&
+          /(?:^|\n)[ \t]*\/\/\/[^\n]*(?:\n[ \t]*\/\/\/[^\n]*)*\s*$/.test(body)) {
+        push(file,'orphaned Rust doc comment at end of moved module')
+      }
+      if (file==='src/api/providers/cli.rs' &&
+          /(?<!super::)super::cli_oauth::/.test(body)) {
+        push(file,'CLI OAuth import points to old parent after module move')
+      }
       for (const hit of body.matchAll(RUST_PATH_MODULE)) {
         const modulePath=path.posix.normalize(path.posix.join(path.posix.dirname(file),hit[1]))
         if (!names.has(modulePath)) push(file,'#[path] module target missing: '+modulePath)
