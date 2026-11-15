@@ -187,9 +187,14 @@ pub async fn reconcile(
             "원래의 도구 실행 기록과 수동 확인 대상이 일치하지 않습니다.");
     }
     let old_directive=job["nativeDirective"].as_str().unwrap_or("");
+    let recovery_rule=if applied {
+        "The effect may already exist. Never repeat the observed operation. Perform read-only inspection before any new mutation."
+    }else{
+        "The owner found no applied effect. Reinspect the current state before planning a safe retry."
+    };
     let directive=format!(
-        "{old_directive}\n\nOWNER MANUAL RECOVERY: The uncertain {} operation {} was observed {}. Operator note: {}. This observation is NOT independently verified, is NOT a successful tool receipt, and does NOT permit repeating that operation. Inspect real state using read-only tools before any new side effect.",
-        action.tool,action.id,if applied{"APPLIED"}else{"NOT APPLIED"},details);
+        "{old_directive}\n\nOWNER MANUAL RECOVERY: The uncertain {} operation {} was observed {}. Operator note: {}. This observation is NOT independently verified and is NOT a successful tool receipt. {}",
+        action.tool,action.id,if applied{"APPLIED"}else{"NOT APPLIED"},details,recovery_rule);
     if directive.len()>32000 {
         return error(StatusCode::CONFLICT,"복구 지시가 너무 깁니다.");
     }
@@ -294,6 +299,74 @@ mod tests{
         assert_eq!(approve(State(state.clone()),Path("sdk-job".into()),
             Json(json!({"callId":"approved-call"}))).await.status(),StatusCode::CONFLICT,
             "a decided tool must not be approved a second time");
+        let _=std::fs::remove_dir_all(root);
+    }
+    #[tokio::test]
+    async fn main_ui_reconcile_is_a_real_paused_sdk_checkpoint_not_fake_success(){
+        let (state,root)=temporary_state();
+        let id="reconcile-job";
+        let original=json!({"id":id,"kind":"prompt","status":"needs_review",
+            "sessionId":"s-reconcile","nativeInFlight":true,
+            "input":{"prompt":"Write result.txt"},
+            "nativeState":{"id":id,"status":"needs_review",
+                "instruction":"Write result.txt","plan":[],"step":2,
+                "modelCalls":1,"chargedTokens":1200,"receipts":[],
+                "checks":[],"answer":null,"error":"unconfirmed operation",
+                "modelInFlight":false,
+                "inFlight":[{"id":"tool-1","tool":"workspace_write",
+                    "arguments":{"path":"result.txt","content":"hello"},
+                    "dependsOn":[]}]
+            }
+        });
+        state.store.put("job",&original).unwrap();
+        state.store.put("execution_operation",&json!({
+            "id":"native-op-reconcile-job-tool-1","runId":id,
+            "tool":"workspace_write",
+            "args":{"path":"result.txt","content":"hello"},
+            "status":"interrupted","outcomeUnknown":true
+        })).unwrap();
+        let result=reconcile(State(state.clone()),Path(id.into()),
+            Json(json!({"applied":true,"details":"result.txt contains hello"}))).await;
+        assert_eq!(result.status(),StatusCode::OK);
+        let response:Value=serde_json::from_slice(
+            &to_bytes(result.into_body(),1024*1024).await.unwrap()).unwrap();
+        assert_eq!(response["status"],"interrupted",
+            "main UI must render its real Resume control after reconciliation");
+        let saved=state.store.get("job",id).unwrap();
+        assert_eq!(saved["status"],"interrupted");
+        assert_eq!(saved["nativeInFlight"],false);
+        assert_eq!(saved["nativeState"]["status"],"running");
+        assert_eq!(saved["nativeState"]["inFlight"],json!([]));
+        assert_eq!(saved["nativeState"]["receipts"][0]["success"],false);
+        assert_eq!(saved["nativeState"]["receipts"][0]["result"]["operatorObservedApplied"],true);
+        assert_eq!(saved["nativeOwnerObservation"]["requiresInspection"],true);
+        assert_eq!(state.store.get("execution_operation",
+            "native-op-reconcile-job-tool-1").unwrap()["outcomeUnknown"],false);
+        let resumed=resume(State(state.clone()),Path(id.into())).await;
+        assert_eq!(resumed.status(),StatusCode::OK);
+        assert_eq!(state.store.get("job",id).unwrap()["status"],"queued");
+        let again=reconcile(State(state.clone()),Path(id.into()),
+            Json(json!({"applied":true,"details":"again"}))).await;
+        assert_eq!(again.status(),StatusCode::CONFLICT);
+        let _=std::fs::remove_dir_all(root);
+    }
+    #[tokio::test]
+    async fn main_ui_reconciliation_cannot_mask_uncertain_paid_model_delivery(){
+        let (state,root)=temporary_state();
+        let id="uncertain-paid";
+        state.store.put("job",&json!({"id":id,"kind":"prompt",
+            "status":"needs_review","nativeInFlight":true,
+            "input":{"prompt":"Create a new project"},
+            "nativeState":{"id":id,"status":"needs_review",
+                "instruction":"Create a new project","plan":[],"step":1,
+                "modelCalls":0,"chargedTokens":0,"receipts":[],
+                "checks":[],"answer":null,"error":"network disconnected",
+                "modelInFlight":true,"inFlight":[]}
+        })).unwrap();
+        let attempted=reconcile(State(state.clone()),Path(id.into()),
+            Json(json!({"applied":false,"details":"I saw no file"}))).await;
+        assert_eq!(attempted.status(),StatusCode::CONFLICT);
+        assert_eq!(state.store.get("job",id).unwrap()["nativeInFlight"],true);
         let _=std::fs::remove_dir_all(root);
     }
     #[tokio::test]
