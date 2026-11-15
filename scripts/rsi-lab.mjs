@@ -38,7 +38,15 @@ try{
  }
  const candidate=path.join(temp,'candidate');
  run(['apply','--check',patch],candidate);run(['apply',patch],candidate);
- Object.assign(process.env,{RSI_TEMP:temp,RSI_PLAN:planFile,RSI_PATCH:patch,RSI_BASE_SHA:base,RSI_REPORT:report});
+ // Record candidate identity BEFORE the coordinator injects the frozen oracle.
+ // The disposable worktree index is independent of the owner's checkout.
+ const baselineTreeSha=run(['rev-parse',base+'^{tree}'],root);
+ run(['add','--all'],candidate);
+ const candidateTreeSha=run(['write-tree'],candidate);
+ if(!/^[a-f0-9]{40}$/.test(candidateTreeSha)||candidateTreeSha===baselineTreeSha)
+  throw Error('Candidate must produce a distinct valid Git tree');
+ Object.assign(process.env,{RSI_TEMP:temp,RSI_PLAN:planFile,RSI_PATCH:patch,RSI_BASE_SHA:base,
+  RSI_BASE_TREE_SHA:baselineTreeSha,RSI_CANDIDATE_TREE_SHA:candidateTreeSha,RSI_REPORT:report});
  await import(pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)),'rsi-measure.mjs')).href);
 }finally{
  for(const dir of created.reverse()){
