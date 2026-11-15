@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct Store {
-    conn: Arc<Mutex<Connection>>,
+    pub(crate) conn: Arc<Mutex<Connection>>,
 }
 
 fn task_row(row: &Row<'_>) -> rusqlite::Result<Value> {
@@ -88,6 +88,23 @@ impl Store {
                 instructions TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS workflows (
+                id TEXT PRIMARY KEY,name TEXT NOT NULL,
+                steps TEXT NOT NULL,created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS workflow_runs (
+                id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                request_id TEXT UNIQUE NOT NULL,
+                options TEXT NOT NULL,
+                status TEXT NOT NULL,
+                current_step INTEGER NOT NULL DEFAULT 0,
+                tasks TEXT NOT NULL DEFAULT '[]',
+                error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS workflow_run_source ON workflow_runs(workflow_id,created_at);
             CREATE TABLE IF NOT EXISTS skills (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
