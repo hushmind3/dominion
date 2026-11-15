@@ -262,7 +262,24 @@ pub async fn execute(
             .await
         }
         "workspace_apply_patch" => {
-            let result=patch::apply(ctx.workspace,&required_arg(args,"input")?).await?;
+            let input=required_arg(args,"input")?;
+            let targets=patch::target_paths(ctx.workspace,&input)?;
+            let locks={
+                let mut registry=ctx.state.file_mutations.lock().unwrap();
+                registry.retain(|_,entry|entry.strong_count()!=0);
+                targets.iter().map(|path|{
+                    if let Some(lock)=registry.get(path).and_then(std::sync::Weak::upgrade){
+                        lock
+                    }else{
+                        let lock=std::sync::Arc::new(tokio::sync::Mutex::new(()));
+                        registry.insert(path.clone(),std::sync::Arc::downgrade(&lock));
+                        lock
+                    }
+                }).collect::<Vec<_>>()
+            };
+            let mut guards=Vec::with_capacity(locks.len());
+            for lock in &locks {guards.push(lock.lock().await);}
+            let result=patch::apply(ctx.workspace,&input).await?;
             // Large repositories are indexed lazily. Mark the existing index
             // stale only when bytes actually changed, including partial
             // commits, so the next code_search refreshes before navigating.

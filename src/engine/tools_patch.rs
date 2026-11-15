@@ -427,6 +427,21 @@ fn apply_blocking(root:&Path,input:&str)->Result<Value,String>{
     }))
 }
 
+/// Acquire the same per-file locks as workspace_write/replace. Canonical
+/// ordering prevents deadlocks between concurrent multi-file patch jobs.
+pub(super) fn target_paths(workspace:&Path,input:&str)->Result<Vec<PathBuf>,String>{
+    let mut targets=Vec::new();
+    for operation in parse(input)?{
+        targets.push(super::resolve_workspace(workspace,&operation.path)?);
+        if let Kind::Move(to)=operation.kind{
+            targets.push(super::resolve_workspace(workspace,&to)?);
+        }
+    }
+    targets.sort();
+    targets.dedup();
+    Ok(targets)
+}
+
 pub(super) async fn apply(workspace:&Path,input:&str)->Result<Value,String>{
     let workspace=workspace.to_path_buf();
     let patch=input.to_owned();
