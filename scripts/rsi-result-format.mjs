@@ -23,3 +23,20 @@ export function parseTestInventory(stdout) {
  }
  return names;
 }
+
+import crypto from 'node:crypto';
+import os from 'node:os';
+import path from 'node:path';
+
+// Keep native paired Cargo caches separate by experiment arm. On Windows,
+// Cargo's build-script intermediate paths exceed legacy toolchain limits when
+// the target is nested under the application's deeply named data directory.
+// A hashed, short directory under the system temp root preserves per-campaign
+// cache identity without making the candidate share baseline build products.
+export function pairedBuildTarget(cache,arm,platform=process.platform,tempRoot=os.tmpdir()) {
+ if(arm!=='baseline'&&arm!=='candidate')throw Error('Unknown paired arm');
+ const root=platform==='win32'
+  ? path.join(tempRoot,'dr-'+crypto.createHash('sha256').update(path.resolve(cache)).digest('hex').slice(0,12))
+  : cache;
+ return path.join(root,arm);
+}
