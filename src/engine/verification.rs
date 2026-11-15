@@ -649,6 +649,33 @@ mod verified_patch_tests {
         assert!(!proven_workspace_edit(&state,&valid));
         let _=std::fs::remove_dir_all(dir);
     }
+    #[tokio::test]
+    async fn actual_rust_tool_write_produces_a_verifiable_sha_receipt() {
+        use crate::engine::tools::{self,ToolContext};
+        let (state,dir)=state();
+        let goal="Create src/fixed.rs file";
+        let checks=prepare_acceptance_checks(&state,goal);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        let args=json!({"path":"src/fixed.rs","content":"pub fn fixed()->bool{true}\n"});
+        let ctx=ToolContext{workspace:&dir,store:&state.store,state:&state,
+            session_id:"fixture",agent_id:None,tools_enabled:true,tools_execution_enabled:true};
+        let output=tools::execute(&ctx,"workspace_write",&args,"test-run").await.unwrap();
+        assert_eq!(output["written"],true);
+        assert_eq!(output["changed"],true);
+        assert_eq!(output["postSha256"].as_str().unwrap().len(),64);
+        let evidence=json!({"tool":"workspace_write","arguments":args,"result":output});
+        assert!(proven_workspace_edit(&state,&evidence));
+        assert!(check_acceptance(&state,goal,&checks,&[evidence.clone()]).is_empty());
+        let repeated=tools::execute(&ctx,"workspace_write",&args,"test-run").await.unwrap();
+        assert_eq!(repeated["written"],true);
+        assert_eq!(repeated["changed"],false);
+        assert!(!proven_workspace_edit(&state,&json!({"tool":"workspace_write","result":repeated})));
+        std::fs::write(dir.join("src/fixed.rs"),"externally modified").unwrap();
+        assert!(!proven_workspace_edit(&state,&evidence));
+        assert!(!check_acceptance(&state,goal,&checks,&[evidence]).is_empty());
+        let _=std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn test_must_follow_latest_edit_and_read_only_is_unchanged(){
         let edit=json!({"tool":"workspace_write","result":{"written":true,"changed":true}});
