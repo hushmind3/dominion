@@ -145,6 +145,9 @@ pub struct DominionSdk {
 }
 
 impl DominionSdk {
+    /// Bind an HTTP handler to the same native execution authority.
+    pub(crate) fn from_state(state: AppState) -> Self { Self { state } }
+
     /// Construct a fully native runtime and its asynchronous durable worker.
     /// It executes work without an HTTP listener or a TypeScript process.
     pub async fn start(config: DominionConfig) -> Result<Self, RuntimeError> {
