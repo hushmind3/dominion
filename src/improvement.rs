@@ -32,6 +32,7 @@ pub struct Improvements {
     root:PathBuf, workspace:PathBuf,
     items:Mutex<HashMap<Uuid,Improvement>>,active:Mutex<HashSet<Uuid>>,
     repository_active:Mutex<HashSet<String>>,
+    workspace_write_lock:Arc<Mutex<()>>,
     lineages:Mutex<HashMap<Uuid,EvolutionRun>>,
 }
 fn relative(raw:&str)->Result<&Path,String>{
@@ -74,6 +75,11 @@ fn is_better(baseline:&Measurement,candidate:&Measurement)->bool{
 }
 impl Improvements {
     pub async fn open(root:PathBuf,workspace:PathBuf)->Result<Self,String>{
+        Self::open_with_lease(root,workspace,Arc::new(Mutex::new(()))).await
+    }
+    pub(crate) async fn open_with_lease(
+        root:PathBuf,workspace:PathBuf,workspace_write_lock:Arc<Mutex<()>>
+    )->Result<Self,String>{
         fs::create_dir_all(&root).await.map_err(|e|e.to_string())?;
         fs::create_dir_all(&workspace).await.map_err(|e|e.to_string())?;
         let mut items=HashMap::new();
@@ -88,7 +94,8 @@ impl Improvements {
         }
         let lineages=evolution::load(&root).await?;
         Ok(Self{root,workspace,items:Mutex::new(items),active:Mutex::new(HashSet::new()),
-            repository_active:Mutex::new(HashSet::new()),lineages:Mutex::new(lineages)})
+            repository_active:Mutex::new(HashSet::new()),workspace_write_lock,
+            lineages:Mutex::new(lineages)})
     }
     async fn put(&self,item:Improvement)->Result<Improvement,String>{
         let mut lock=self.items.lock().await;
@@ -152,6 +159,8 @@ impl Improvements {
         }
         let service=Arc::clone(self);
         tokio::spawn(async move{
+            // Same native lease as ordinary agent code edits and acceptance.
+            let _workspace_lease=service.workspace_write_lock.lock().await;
             let result=service.evaluate(&model,item).await;
             if let Err(error)=result {
                 if let Some(mut item)=service.get(id).await {
@@ -261,6 +270,7 @@ impl Improvements {
         Ok(Measurement{tests_passed,score:value,log:log.chars().take(2000).collect()})
     }
     pub async fn adopt(&self,id:Uuid)->Result<Improvement,String>{
+        let _workspace_lease=self.workspace_write_lock.lock().await;
         self.adopt_internal(id,false).await
     }
     pub(super) async fn adopt_internal(&self,id:Uuid,under_lineage_lease:bool)->Result<Improvement,String>{
