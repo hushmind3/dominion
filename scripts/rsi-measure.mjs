@@ -4,13 +4,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
+import {gitCompatibleArg} from './rsi-git-path.mjs';
 const root=process.env.RSI_TEMP;
 const plan=JSON.parse(fs.readFileSync(process.env.RSI_PLAN,'utf8'));
 const hash=data=>crypto.createHash('sha256').update(data).digest('hex');
 const logs=[];
 const run=(exe,args,cwd)=>{
  const result=spawnSync(exe,args,{cwd,encoding:'utf8',timeout:360000,maxBuffer:8*1024*1024,
-  env:{...process.env,CARGO_TARGET_DIR:path.join(process.env.RSI_BUILD_CACHE||path.join(root,'build'),path.basename(cwd))}});
+  // Cargo forwards its target directory to link.exe. Strip the Windows
+  // extended-length prefix at this process boundary, not during file I/O.
+  env:{...process.env,CARGO_TARGET_DIR:gitCompatibleArg(path.join(
+   process.env.RSI_BUILD_CACHE||path.join(root,'build'),path.basename(cwd)))}});
  const text=(result.stdout||'')+'\n'+(result.stderr||'');
  logs.push(text.slice(-80000));
  return {ok:result.status===0&&!result.error,text,stdout:result.stdout||''};
@@ -27,6 +31,13 @@ for(const label of ['baseline','candidate']){
   fs.appendFileSync(path.join(dir,'src/main.rs'),`\n#[cfg(test)]\n#[path=${JSON.stringify(plan.oracleFixture)}]\nmod rsi_frozen_oracle;\n`);
  }
  const built=run(process.env.DOMINION_CARGO||'cargo',['test','--release','--all-targets','--no-run','--message-format=json'],dir);
+ const compilerErrors=built.stdout.split('\n').flatMap(line=>{
+  try{
+   const item=JSON.parse(line);
+   if(item.reason!=='compiler-message'||item.message?.level!=='error')return [];
+   return [`${item.package_id||'unknown crate'}: ${item.message.rendered||item.message.message||'compiler error'}`];
+  }catch{return []}
+ }).slice(-6);
  const binaries=built.stdout.split('\n').flatMap(line=>{
   try{const v=JSON.parse(line);return v.reason==='compiler-artifact'&&v.profile?.test&&v.executable?[v.executable]:[]}catch{return []}
  });
@@ -43,9 +54,13 @@ for(const label of ['baseline','candidate']){
    }
   }
  }
- variants[label]={dir,ok:built.ok&&binaries.length>0,tests,
-  buildDiagnostics:built.ok&&binaries.length>0?null:
-   (built.text.slice(-4000)||'Cargo did not produce a test executable')};
+ const buildOk=built.ok&&binaries.length>0;
+ variants[label]={dir,ok:buildOk,tests,
+  buildDiagnostics:buildOk?null:
+   (compilerErrors.join('\n').slice(-6000)||built.text.slice(-4000)||'Cargo did not produce a test executable'),
+  // Missing frozen cases must remain a failed evaluation, not an empty pass.
+  missingTests:buildOk?plan.cases.filter(spec=>!(tests.get(spec.filter)||[]).length)
+   .map(spec=>({id:spec.id,filter:spec.filter})):[]};
 }
 const cases=[];
 for(const spec of plan.cases){
@@ -113,6 +128,7 @@ const report={baseCommit:process.env.RSI_BASE_SHA,patchSha256:hash(fs.readFileSy
  baselineTreeSha:process.env.RSI_BASE_TREE_SHA,candidateTreeSha:process.env.RSI_CANDIDATE_TREE_SHA,
  oracleVersion:plan.oracleVersion,oracleSha256:plan.oracleSha256||null,runner:'balanced-frozen-rsi-lab-v3',
  reportSha256:hash(evidence),baselineBuildOk:variants.baseline.ok,candidateBuildOk:variants.candidate.ok,
- buildDiagnostics:{baseline:variants.baseline.buildDiagnostics,candidate:variants.candidate.buildDiagnostics},cases};
+ buildDiagnostics:{baseline:variants.baseline.buildDiagnostics,candidate:variants.candidate.buildDiagnostics},
+ missingTests:{baseline:variants.baseline.missingTests,candidate:variants.candidate.missingTests},cases};
 fs.writeFileSync(process.env.RSI_REPORT,JSON.stringify(report,null,2)+'\n');
 console.log(JSON.stringify({report:process.env.RSI_REPORT,pairedCases:cases.length}));
