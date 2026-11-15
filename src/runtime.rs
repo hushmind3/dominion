@@ -406,6 +406,34 @@ impl DominionSdk {
     }
 }
 
+impl DominionSdk {
+    pub fn remember(&self, session:Option<&str>,content:&str,kind:&str)
+        ->Result<Value,RuntimeError>{
+        self.state.store.remember(session,content,kind).map_err(RuntimeError)
+    }
+    pub fn memory_list(&self,session:Option<&str>)->Vec<Value>{
+        self.state.store.memory_list(session)
+    }
+    pub fn memory_search(&self,session:Option<&str>,query:&str,limit:usize)->Vec<Value>{
+        crate::knowledge::recall(&self.state.store.memory_list(session),
+            query,session,limit)
+    }
+    pub fn memory_disable(&self,id:&str)->Result<bool,RuntimeError>{
+        self.state.store.memory_disable(id).map_err(RuntimeError)
+    }
+    pub fn skill_create(&self,name:&str,trigger:&str,instructions:&str,enabled:bool)
+        ->Result<Value,RuntimeError>{
+        self.state.store.skill_save(name,trigger,instructions,enabled)
+            .map_err(RuntimeError)
+    }
+    pub fn skill_list(&self)->Vec<Value>{
+        self.state.store.skill_list()
+    }
+    pub fn skill_enable(&self,id:&str,enabled:bool)->Result<bool,RuntimeError>{
+        self.state.store.skill_enable(id,enabled).map_err(RuntimeError)
+    }
+}
+
 fn decode_record(value: Value) -> Result<TaskRecord, RuntimeError> {
     serde_json::from_value(value).map_err(|error| RuntimeError(error.to_string()))
 }
