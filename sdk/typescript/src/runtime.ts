@@ -20,6 +20,7 @@ export interface ThreadOptions {
   tokenBudget?: number;
   costBudgetKrw?: number;
   planningMode?: 'auto' | 'always' | 'never';
+  modelTier?: 'auto' | 'economy' | 'quality';
 }
 
 export interface RunOptions extends Partial<Omit<TaskInput, 'prompt' | 'sessionId'>> {
@@ -86,6 +87,7 @@ export class DominionThread {
       tokenBudget: options.tokenBudget,
       costBudgetKrw: options.costBudgetKrw,
       planningMode: options.planningMode ?? 'auto',
+      modelTier: options.modelTier ?? 'auto',
     };
   }
 
