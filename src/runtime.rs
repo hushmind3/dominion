@@ -180,7 +180,7 @@ pub struct TaskEvent {
 
 #[derive(Clone)]
 pub struct DominionSdk {
-    state: AppState,
+    pub(crate) state: AppState,
 }
 
 fn bounded_text(value:&str,max_bytes:usize)->&str {
@@ -217,6 +217,7 @@ impl DominionSdk {
         }
         // Uncertain external tool effects are never replayed after a crash.
         store.recover().map_err(RuntimeError)?;
+        store.workflow_recover().map_err(RuntimeError)?;
         let (bus, _) = broadcast::channel(2048);
         let mcp = std::sync::Arc::new(crate::mcp::Mcp::from_env().map_err(RuntimeError)?);
         let rate = |key: &str| env::var(key).ok().and_then(|text| text.parse::<f64>().ok())
