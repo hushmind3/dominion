@@ -1254,6 +1254,20 @@ async fn run_turn_body(
     let mut final_reasoning = String::new();
     let mut last_reasoning = String::new();
     let mut continuation_projection = None;
+    // Strict admission at every provider boundary. A completed/abandoned
+    // owner job never leaks its limit to later user chat in the same session.
+    let job_token_remaining=match (
+        session["jobTokenOwnerId"].as_str(),
+        session["jobTokenLimit"].as_u64()
+    ){
+        (Some(owner),Some(limit)) if state.store.get("job",owner)
+            .is_some_and(|job|job["status"]=="running")=>{
+            let prior=state.store.session_usage(session_id)["totalTokens"]
+                .as_u64().unwrap_or(0);
+            Some(limit.saturating_sub(prior))
+        },
+        _=>None,
+    };
     let mut total_tokens: u64 = 0;
     let mut prompt_tokens_total: u64 = 0;
     let mut completion_tokens_total: u64 = 0;
@@ -1618,6 +1632,22 @@ async fn run_turn_body(
             state,session_id,super::room_context::input_estimate(&wire_messages,&round_tools) as u64,
         )?{
             provider.max_output_tokens=Some(provider.max_output_tokens.unwrap_or(8192).min(limit));
+        }
+        if let Some(available_at_turn_start)=job_token_remaining{
+            // Account for the actual tokens consumed by preceding model calls
+            // in THIS turn and reserve this call's estimated input before
+            // paying for an output. The final provider bill may vary; another
+            // provider call is never launched after the budget is exhausted.
+            let input_estimate=super::room_context::input_estimate(
+                &wire_messages,&round_tools) as u64;
+            let remaining=available_at_turn_start
+                .saturating_sub(total_tokens).saturating_sub(input_estimate);
+            if remaining<256{
+                mark_budget_exhausted(state,execution_id);
+                return Err("작업 토큰 예산이 부족해 다음 모델 호출을 중단했습니다.".into());
+            }
+            provider.max_output_tokens=Some(
+                provider.max_output_tokens.unwrap_or(8192).min(remaining));
         }
         {
             let mut counters = metrics.lock().unwrap();

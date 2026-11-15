@@ -664,6 +664,19 @@ pub(crate) async fn run_prompt(context: &JobContext, job: &Value) -> Result<Valu
                 .ok_or("선택한 작업 폴더를 세션에 저장할 수 없습니다.")?;
         }
     }
+    // The budget is owned by this ONE job, not a global agent/session cap.
+    // Prior conversation usage is excluded; other chat turns cannot inherit
+    // an exhausted ceiling after this job reaches a terminal state.
+    if let Some(budget)=input["tokenBudget"].as_u64().filter(|v|*v>=1024){
+        let baseline=context.state.store.session_usage(&session_id)["totalTokens"]
+            .as_u64().unwrap_or(0);
+        let mut session=context.state.store.get("session",&session_id)
+            .ok_or("토큰 예산을 적용할 세션이 없습니다.")?;
+        session["jobTokenLimit"]=json!(baseline.saturating_add(budget));
+        session["jobTokenOwnerId"]=json!(context.job_id);
+        context.state.store.put("session",&session)
+            .ok_or("작업 토큰 예산을 저장할 수 없습니다.")?;
+    }
     if input["uiSource"]=="native_sdk_panel" {
         let mut session=context.state.store.get("session",&session_id)
             .ok_or("사용자 작업 세션을 찾을 수 없습니다.")?;

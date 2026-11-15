@@ -30,6 +30,13 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
                 };
                 if !command.trim().is_empty(){value["verifyCommand"]=json!(command.trim());}
             }
+            if let Some(raw)=input.get("tokenBudget"){
+                let Some(budget)=raw.as_u64().filter(|v|(1024..=2_000_000).contains(v)) else{
+                    return error(StatusCode::BAD_REQUEST,
+                        "작업 토큰 예산은 1024~2000000 사이의 정수여야 합니다.");
+                };
+                value["tokenBudget"]=json!(budget);
+            }
             if let Some(v)=input.get("maxAutonomousAttempts"){
                 let Some(count)=v.as_u64().filter(|count|(1..=6).contains(count)) else {
                     return error(StatusCode::BAD_REQUEST,"자율 실행 시도 횟수는 1~6이어야 합니다.");

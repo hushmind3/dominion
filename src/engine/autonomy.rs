@@ -206,6 +206,8 @@ pub async fn execute(
     let mut evidence_epoch=0usize;
     let mut plan=decompose::decompose(goal,&json!({"implementation":"numbered-first"}));
     let session_id=request.session_id.as_deref().unwrap_or("");
+    let initial_tokens=ctx.state.store.session_usage(session_id)["totalTokens"]
+        .as_u64().unwrap_or(0);
     let mut all_evidence=Vec::<Value>::new();
     let mut receipts=Vec::<Value>::new();
     let mut last_gaps=Vec::<String>::new();
@@ -296,6 +298,8 @@ pub async fn execute(
             run_quiet_outcome(&ctx.state,&turn).await;
         let usage_after=ctx.state.store.session_usage(session_id);
         let measured_usage=usage_delta(&usage_before,&usage_after);
+        let consumed_tokens=usage_after["totalTokens"].as_u64().unwrap_or(0)
+            .saturating_sub(initial_tokens);
         let latest_error=outcome.as_ref().err().cloned();
         last_message=outcome.as_ref().ok().and_then(|msg|msg.as_ref())
             .map(|msg|msg["id"].clone()).unwrap_or(Value::Null);
@@ -322,6 +326,10 @@ pub async fn execute(
         let tested=verification::test_after_last_edit(current_evidence);
         let mut decision=decide(config.strategy,has_checks,&gaps,
             latest_error.as_deref(),&all_evidence,attempt,config.attempts);
+        if latest_error.as_deref().is_some_and(|error|
+            error.contains("작업 토큰 예산")){
+            decision=Decision::Review;
+        }
         let repeated_without_progress=attempt>0
             && stalled(&last_gaps,&gaps,stats.evidence.len(),
                 last_error.as_deref(),latest_error.as_deref());
@@ -363,6 +371,7 @@ pub async fn execute(
             "toolErrors":stats.tool_errors,
             "evidenceCount":stats.evidence.len(),
             "usage":measured_usage,
+            "tokenUsage":{"used":consumed_tokens,"limit":input["tokenBudget"]},
             "gaps":gaps.iter().take(8).map(|g|narrow(g,400)).collect::<Vec<_>>(),
             "error":latest_error.as_deref().map(|e|narrow(e,500)),
         });
@@ -374,6 +383,7 @@ pub async fn execute(
             "status":"running","phase":if decision==Decision::Repair{"replanning"}else{"verifying"},
             "attempt":attempt+1,"plan":plan,"verification":checks,
             "activeGoal":active_goal,"steeringRevision":steering_before,
+            "tokenUsage":{"used":consumed_tokens,"limit":input["tokenBudget"]},
             "receipts":receipts,
         }}))?;
         match decision {
@@ -393,6 +403,9 @@ pub async fn execute(
                     "status":"needs_review","sessionId":session_id,"messageId":last_message,
                     "reason":if side_effect_unknown(&all_evidence) {
                         "외부 부작용이 발생했을 수 있어 자동 재실행하지 않습니다."
+                    }else if latest_error.as_deref().is_some_and(|error|
+                        error.contains("작업 토큰 예산")){
+                        "사용자가 설정한 작업 토큰 예산에 도달해 추가 호출을 중단했습니다."
                     }else if repeated_without_progress {
                         "새로운 실행 증거 없이 동일한 검증 실패가 반복되어 재시도를 중단했습니다."
                     }else{"검증되지 않은 항목이 남았습니다. 작업 기록을 확인하세요."},
