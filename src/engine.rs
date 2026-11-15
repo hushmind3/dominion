@@ -516,6 +516,8 @@ mod tests {
         let (bus,_)=tokio::sync::broadcast::channel(128);
         (AppState {store,bus,
             mcp:std::sync::Arc::new(crate::mcp::Mcp::new(vec![]).unwrap()),
+            groups:std::sync::Arc::new(tokio::runtime::Handle::current().block_on(
+                crate::group::Groups::open(root.join("groups"))).unwrap()),
             provider:crate::provider::ModelClient::new(
                 crate::provider::ModelConfig::basic(url.clone(),"mock".into(),None),None
             ).unwrap(),
