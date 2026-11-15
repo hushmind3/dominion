@@ -53,3 +53,18 @@ No claim is made that scripted provider fixtures prove a frontier-model coding s
 ## Executed verification (focused gate)
 
 Focused GitHub Actions verification on commit `a9193735d51105b7f4f311a0e83bbd2376e3c45e`: [run 43687745047](https://github.com/hushmind3/dominion-rust/actions/runs/43687745047) completed successfully. The log records 44 SDK test cases (16+2+6+15+3+2), 41 filtered native host test cases, and one workflow recovery test: **86 passed, 0 failed**. Frontend TypeScript check and Vite production build also passed. Real loopback HTTP streaming/stalled-cancellation fixtures are included in those tests; no commercial model API call was made.
+
+
+## Codex chat WebSocket continuity hardening (2026-11-15)
+
+The interactive chat transport, `src/engine/chat/codex_ws.rs`, is independent of the autonomous native job HTTP SSE adapter. Both are controlled by Dominion's Rust runtime.
+
+- **Explicit rejection:** a server `previous_response_not_found` event (no generated output) can discard the connection-local chain and safely replay the full canonical input once on a new socket. A connect failure before sending can also take the existing retry/HTTP route.
+- **Uncertain delivery:** an error while sending, EOF/timeout after a successful send, or a terminal response lacking a response ID is not evidence that inference did not start. The Rust engine no longer retries that request or falls through to an HTTP or second-model generation. This avoids unbounded duplicate billing and inconsistent model/agent state. It returns an explicit error and persists an audit record `codex.ws.uncertain` with `modelBilling: "unknown"` and `replayed: false`. Manual continuation is a distinct later owner decision.
+- **Multimodal signature:** ordered, non-text response input is hashed for the per-session chain comparison, including image/audio/video and future structured parts, rather than retaining potentially large base64 media in process memory. A changed media input forces a fresh canonical request.
+- **Accounting:** wire `sentInputTokens` and `chainReusedItems` are estimated transport metrics, *not* provider-billed token savings. Actual `response.completed.usage` is billed-token evidence when available; an uncertain delivery has no trustworthy token receipt and remains unknown.
+- **Boundaries:** this hardening covers interactive chat. Autonomous long-running jobs still use the native Rust HTTP SSE adapter; extending their Codex socket reuse is a separate integration task. A unit/loopback fixture is not a measured external-provider success rate.
+
+The focused `sub3-rust-sdk-check.yml` was expanded to include `codex_ws::tests` and to trigger on the two changed interactive chat transport files. The test cases cover the uncertain pre-first-delta disconnect, missing response ID, multimodal input mutation, forced socket expiry, partial-output failure, cancellation, and cache-hint rejection. Verify the new workflow run separately; do not treat the previous 86/86 result as evidence for these new tests.
+
+Reference: https://developers.openai.com/api/docs/guides/websocket-mode (WebSocket reconnect and `store=false`), https://developers.openai.com/api/docs/guides/conversation-state (continued model input can still incur billing).
