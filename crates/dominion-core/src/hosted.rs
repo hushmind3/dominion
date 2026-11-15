@@ -44,7 +44,7 @@ impl Snapshot{
         }
         if !self.native.queued_calls.is_empty(){return Err("대기 중인 도구를 처리하기 전에 모델을 다시 호출할 수 없습니다.".into());}
         let round=budget.next_round();
-        if let Some(round)=round{self.step=round;self.native.steps=round;store.save(self)?;}
+        if let Some(round)=round{self.step=round+1;self.native.steps=round+1;store.save(self)?;}
         Ok(round)
     }
     pub fn begin_model(&mut self,store:&dyn Journal)->Result<(),String>{

@@ -7,7 +7,7 @@ use std::{path::Path,fs,collections::{BTreeMap,BTreeSet}};
 
 const COMPONENTS: &[(&str,&[&str])] = &[
     ("algorithms",&["src/engine/algorithms.rs","src/engine/rsi_evolve.rs","src/engine/reasoning.rs"]),
-    ("harness",&["crates/dominion-core/src/hosted.rs","crates/dominion-core/src/domain.rs","crates/dominion-core/src/journal.rs","crates/dominion-core/src/budget.rs","crates/dominion-core/src/tool_schema.rs","src/engine/jobs.rs","src/engine/rsi_worktree.rs","src/engine/chat/runtime.rs","src/engine/decompose.rs"]),
+    ("harness",&["crates/dominion-core/src/engine.rs","crates/dominion-core/src/hosted.rs","crates/dominion-core/src/domain.rs","crates/dominion-core/src/journal.rs","crates/dominion-core/src/budget.rs","crates/dominion-core/src/tool_schema.rs","src/engine/jobs.rs","src/engine/rsi_worktree.rs","src/engine/chat/runtime.rs","src/engine/chat/product.rs","src/engine/decompose.rs"]),
     ("memory",&["src/engine/memory.rs","src/engine/room_state.rs","src/engine/room_knowledge.rs"]),
     ("learning",&["src/engine/learning.rs","src/engine/experience.rs","src/engine/procedure.rs"]),
     ("tools",&["src/engine/tools.rs","src/engine/browser.rs","src/engine/mcp.rs"]),

@@ -5,6 +5,7 @@ pub mod journal;
 pub mod tool_schema;
 pub mod policy;
 pub mod hosted;
+pub mod engine;
 pub mod budget;
 mod mcp {
     pub fn request_identity(run:uuid::Uuid,call:&crate::domain::ToolCall)->String {

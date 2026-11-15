@@ -428,6 +428,13 @@ async fn ordinary_chat_runs_native_tools_through_the_imported_rust_kernel() {
     let execution = state.store.all("execution").pop().unwrap();
     assert_eq!(execution["kernelState"]["native"]["status"], "completed");
     assert_eq!(execution["kernelState"]["receipts"].as_array().unwrap().len(), 2);
+    let phases=execution["kernelState"]["native"]["events"].as_array().unwrap().iter()
+        .filter(|event|event["kind"]=="phase")
+        .filter_map(|event|event["message"].as_str()).collect::<Vec<_>>();
+    assert_eq!(phases,["initialize","prepare_model","model","tools","verify_tools",
+        "prepare_model","model","verify","complete"]);
+    assert_eq!(execution["kernelState"]["modelCalls"],2);
+    assert_eq!(execution["kernelState"]["chargedTokens"],40);
     assert_eq!(execution["budget"]["tools"], 2);
     assert!(execution["kernelState"]["native"]["in_flight"].is_null());
     let captured = requests.lock().unwrap();

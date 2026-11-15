@@ -31,4 +31,21 @@ if (!sources.some(file => file.startsWith('crates/dominion-core/src/'))) {
 for (const file of sources) {
   if (!existsSync(path.join(root, file))) throw new Error(`Missing RSI runtime source: ${file}`)
 }
+// The product must call the real native driver, not just borrow its labels
+// or journal while retaining an independent model/tool retry loop.
+const runtime = readFileSync(path.join(root, 'src/engine/chat/runtime.rs'), 'utf8')
+const adapter = readFileSync(path.join(root, 'src/engine/chat/product.rs'), 'utf8')
+const driver = readFileSync(path.join(root, 'crates/dominion-core/src/engine.rs'), 'utf8')
+if (!runtime.includes('dominion_core::engine::Engine::drive(')) {
+  throw new Error('Product entrypoints must invoke the native driver')
+}
+if (/while\s+!\s*(?:self\.)?finished/.test(runtime + adapter)) {
+  throw new Error('Retired product model retry loop reintroduced')
+}
+for (const phase of ['initialize', 'plan', 'model', 'verify', 'dispatch_tool', 'verify_tools']) {
+  if (!driver.includes(`host.${phase}(`)) throw new Error(`Native driver must own ${phase}`)
+}
+for (const file of ['crates/dominion-core/src/engine.rs', 'src/engine/chat/product.rs']) {
+  if (!sources.includes(file)) throw new Error(`RSI must inspect the live driver/adapter: ${file}`)
+}
 console.log(`Runtime architecture OK: ${members.map(pkg => pkg.name).join(', ')}; ${sources.length} live RSI harness sources`)
