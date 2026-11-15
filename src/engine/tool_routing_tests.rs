@@ -187,6 +187,8 @@ async fn model_cannot_invoke_unadvertised_mcp_or_write_tool(){
     assert!(observations.iter().any(|event|
         event["type"]=="tool_result"
         && event["detail"].to_string().contains("was not advertised")));
+    assert!(!observations.iter().any(|event|event["type"]=="tool_start"),
+        "a rejected model-tool alias must never become a pending external effect");
     server.abort();
     drop(state);
     let _=std::fs::remove_dir_all(root);
