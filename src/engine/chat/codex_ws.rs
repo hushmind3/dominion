@@ -177,8 +177,12 @@ impl Chain {
 pub(super) enum WsError {
     /// A rejected optional hint must be disabled without retrying it twice.
     HintRejected(String),
-    /// The socket cannot be used for this call; retry the complete request.
+    /// No request was accepted, or the server explicitly rejected the old chain.
     Fallback(String),
+    /// The server explicitly rejected previous_response_id before generation.
+    ChainRejected(String),
+    /// A request might have been accepted: neither retry nor HTTP fallback is safe.
+    Uncertain(String),
     /// The model/backend rejected the request itself; surface it like HTTP.
     Fatal(String),
 }
@@ -353,7 +357,15 @@ pub(super) async fn stream(
             guard.reset();
             Err(WsError::HintRejected(message))
         }
-        Err(WsError::Fallback(first_error)) => {
+        Err(WsError::Uncertain(message)) => {
+            guard.reset();
+            state.store.audit("codex.ws.uncertain", json!({
+                "sessionId":session_id,"reason":message,
+                "modelBilling":"unknown","replayed":false
+            }));
+            Err(WsError::Uncertain(message))
+        }
+        Err(WsError::Fallback(first_error) | WsError::ChainRejected(first_error)) => {
             guard.reset();
             // A fresh socket has no chain, so the retry must carry every item.
             let retry = exchange(
@@ -406,7 +418,15 @@ pub(super) async fn stream(
                     guard.reset();
                     Err(WsError::HintRejected(message))
                 }
-                Err(WsError::Fallback(second_error)) => {
+                Err(WsError::Uncertain(message)) => {
+                    guard.reset();
+                    state.store.audit("codex.ws.uncertain", json!({
+                        "sessionId":session_id,"reason":message,
+                        "modelBilling":"unknown","replayed":false
+                    }));
+                    Err(WsError::Uncertain(message))
+                }
+                Err(WsError::Fallback(second_error) | WsError::ChainRejected(second_error)) => {
                     guard.reset();
                     forget(&key);
                     Err(WsError::Fallback(format!(
@@ -478,15 +498,20 @@ async fn exchange(
     socket
         .send(Message::Text(body.to_string()))
         .await
-        .map_err(|error| WsError::Fallback(format!("Codex WebSocket 전송 실패: {error}")))?;
+        .map_err(|error| WsError::Uncertain(format!("Codex WebSocket 전송 결과 불확실: {error}")))?;
 
     let mut output_started = false;
     let result =
         receive_completion(state, socket, session_id, tx, start, &mut output_started).await;
     match result {
-        Err(WsError::Fallback(message) | WsError::HintRejected(message)) if output_started => Err(WsError::Fatal(format!(
-            "Codex 응답 도중 연결이 끊겼습니다. 부분 응답은 자동 재시도하지 않습니다: {message}"
+        // A successful send can trigger inference even before the first delta.
+        // A dropped socket/timeout is not proof that the provider rejected it.
+        Err(WsError::Fallback(message)) => Err(WsError::Uncertain(format!(
+            "Codex 요청 전달 후 완료 확인 실패(자동 재전송 금지): {message}"
         ))),
+        Err(WsError::ChainRejected(message)) if !output_started => Err(WsError::ChainRejected(message)),
+        Err(WsError::ChainRejected(message) | WsError::HintRejected(message)) if output_started =>
+            Err(WsError::Uncertain(format!("Codex 부분 응답 이후 거부/연결 오류: {message}"))),
         other => other,
     }
 }
@@ -620,8 +645,8 @@ async fn receive_completion(
                     completion.usage_exact = true;
                 }
                 if response_id.is_empty() {
-                    return Err(WsError::Fallback(
-                        "Codex WebSocket 응답에 ID가 없습니다.".to_string(),
+                    return Err(WsError::Uncertain(
+                        "Codex WebSocket 완료 응답에 ID가 없어 결과 확정이 불가능합니다.".to_string(),
                     ));
                 }
                 let output_items = assistant_items(&json!({"output":output}), &completion.content);
@@ -645,7 +670,7 @@ async fn receive_completion(
                 let param = piece["error"]["param"].as_str().unwrap_or("");
                 let message = piece["error"]["message"].as_str().unwrap_or("알 수 없는 오류");
                 if code == "previous_response_not_found" || param == "previous_response_id" {
-                    return Err(WsError::Fallback(format!(
+                    return Err(WsError::ChainRejected(format!(
                         "Codex 이전 응답 없음: {message}"
                     )));
                 }
@@ -909,7 +934,7 @@ mod tests {
             )
             .await;
             assert!(
-                matches!(result, Err(WsError::Fatal(_))),
+                matches!(result, Err(WsError::Fatal(_) | WsError::Uncertain(_))),
                 "partial output must surface as failure"
             );
             requests.recv().await.unwrap();
@@ -953,6 +978,46 @@ mod tests {
         .expect("cancellation must interrupt a stalled socket");
         assert!(matches!(result, Err(WsError::Fatal(_))));
         forget(&registry_key(&provider, "fixture", "session"));
+        server.abort();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn websocket_close_before_first_delta_never_regenerates_the_request() {
+        let (state, root) = test_state();
+        let (provider, mut requests, server) = fixture(vec![
+            json!({"type":"response.created","response":{"id":"maybe-billed"}}),
+        ]).await;
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let result=stream(&state,&provider,"fixture","fixture","session",
+            &json!({}),vec![item("user","request")],"session",&tx).await;
+        assert!(matches!(result,Err(WsError::Uncertain(_))),
+            "once the socket accepted a request, EOF before text cannot trigger retry");
+        assert!(requests.recv().await.is_some());
+        assert!(requests.try_recv().is_err(),
+            "do not spend another inference on websocket or HTTP after uncertain delivery");
+        assert!(state.store.all("audit").iter().any(|r|
+            r.to_string().contains("codex.ws.uncertain") ||
+            r.to_string().contains("modelBilling")),
+            "operator must have a durable unknown-billing receipt");
+        forget(&registry_key(&provider,"fixture","session"));
+        server.abort();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn completed_response_without_id_is_not_replayed() {
+        let (state, root) = test_state();
+        let (provider, mut requests, server) = fixture(vec![
+            json!({"type":"response.completed","response":{"output":[]}}),
+        ]).await;
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let result=stream(&state,&provider,"fixture","fixture","session",
+            &json!({}),vec![item("user","request")],"session",&tx).await;
+        assert!(matches!(result,Err(WsError::Uncertain(_))));
+        requests.recv().await.unwrap();
+        assert!(requests.try_recv().is_err());
+        forget(&registry_key(&provider,"fixture","session"));
         server.abort();
         std::fs::remove_dir_all(root).unwrap();
     }
