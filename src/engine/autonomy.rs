@@ -118,8 +118,9 @@ pub async fn execute(
     input:&Value,
 )->Result<Value,String> {
     let config=CycleConfig::from_input(input);
-    let checks=verification::prepare_acceptance_checks(&ctx.state,goal);
-    let has_checks=checks.as_array().is_some_and(|v|!v.is_empty());
+    let mut checks=verification::prepare_acceptance_checks(&ctx.state,goal);
+    let mut has_checks=checks.as_array().is_some_and(|v|!v.is_empty());
+    let mut steering_checked_revision=0u64;
     let plan=decompose::decompose(goal,&json!({"implementation":"numbered-first"}));
     let session_id=request.session_id.as_deref().unwrap_or("");
     let mut all_evidence=Vec::<Value>::new();
@@ -148,6 +149,26 @@ pub async fn execute(
             .ok_or("autonomous job no longer exists")?;
         let steering_before=owner_job["steeringRevision"].as_u64().unwrap_or(0);
         if let Some(messages)=owner_job["steering"].as_array(){
+            // A later owner instruction expands the acceptance contract.
+            // Baselines are captured before executing the next model turn.
+            for message in messages.iter().filter(|message|
+                message["revision"].as_u64().unwrap_or(0)>steering_checked_revision
+            ){
+                if let Some(instruction)=message["instruction"].as_str(){
+                    let additional=verification::prepare_acceptance_checks(&ctx.state,instruction);
+                    if let (Some(existing),Some(extra))=
+                        (checks.as_array_mut(),additional.as_array()){
+                        for check in extra {
+                            if existing.len()>=20 {break;}
+                            if !existing.iter().any(|prior|
+                                prior["type"]==check["type"] && prior["path"]==check["path"]
+                            ){existing.push(check.clone());}
+                        }
+                    }
+                }
+            }
+            steering_checked_revision=steering_before;
+            has_checks=checks.as_array().is_some_and(|v|!v.is_empty());
             let instructions=messages.iter().filter_map(|m|m["instruction"].as_str())
                 .map(|s|format!("- {}",narrow(s,1200))).collect::<Vec<_>>();
             if !instructions.is_empty(){
