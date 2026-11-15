@@ -203,6 +203,10 @@ Rust SDK 자체가 계획·실행·검증·복구의 상태기계입니다. 실�
 
 **RSI 최종 테스트 게이트:** [GitHub Actions #43697949313](https://github.com/hushmind3/dominion-rust/actions/runs/43697949313)에서 Rust SDK·호스트·RSI·Codex·복구 **223/223**, Node 실 Git/Cargo A/B **2/2**, TypeScript SDK **7/7**, 프런트 타입 검사·빌드 통과. 실제 후손 바이너리 실행과 채택/브랜치 검증 테스트를 포함하며 유료 제공자 호출을 통한 자동 RSI 장기 운용의 검증으로 확대 해석하지 않습니다.
 
+## 메인 기준 런타임·검증 정합성 (2026-11-15)
+
+`run_turn`의 도구 실행은 선언 순서와 효과 장벽을 보존하며, 안전한 연속 읽기 배치만 허용합니다. `history`는 완료 순서에 관계없이 도구 ID별 관찰을 복원합니다. 메인의 한국어 파일 검증과 원어 선택도 반영했습니다. 구체적인 수정 함수·검증 범위는 [메인 기능 보존 기록](docs/SUB3-MAIN-PARITY-2026-11-15.md)에 있습니다. 새 변경의 Rust/웹 빌드와 실사용 성능은 미검증입니다.
+
 ## 최신 메인 프런트 동기화·Rust SDK HTTP 호환 (2026-11-15)
 
 `web/` 56개 파일의 Git blob SHA는 메인 커밋 `879dc23dce309688691c200b001b180bead95a12`와 전부 같습니다. 자동 작업 패널의 `/api/sdk/runs` 계열 API는 `src/api/mod.rs` → `src/api/sdk_runs.rs` → 실제 `jobs::create`/SQLite job → Rust `native_agent::run`으로 연결됩니다. 승인 요청은 이미 기록된 `approval`의 세션·호출 ID를 검증한 뒤 기존 `approvals::resolve_approval`로 전달하고, 취소는 `jobs::cancel`을 재사용합니다. 안전한 스냅샷이 아닌 재개 요청은 409로 거부하며, 사용자가 불확실한 도구 호출 1개를 확인하면 독립 Rust SDK의 `Snapshot::reconcile_tool_observation`이 이를 **실행 성공이 아닌 미검증 관찰 영수증**으로 보존하고 작업을 `interrupted`로 바꿉니다. 재개는 별도 사용자 요청과 안전성 검사를 거칩니다. 적용된 것으로 확인한 부작용은 동일 인수로 반복하지 않으며 추가 변경 전에 읽기 검사 영수증을 요구합니다. 실제 진행 중인 승인 대기자가 없는 오래된 승인 요청은 UI에 표시하지 않습니다. UI를 별도 하네스로 대체하지 않았습니다.
