@@ -102,8 +102,8 @@ impl ModelClient {
             if let Some(cheap)=&self.economy {
                 match self.request(cheap,messages,tools).await {
                     Ok(reply)=>return Ok(reply),
-                    Err(_) if cheap.endpoint==self.strong.endpoint && cheap.name==self.strong.name=>{
-                        return self.request(&self.strong,messages,tools).await;
+                    Err(error) if cheap.endpoint==self.strong.endpoint && cheap.name==self.strong.name=>{
+                        return Err(error);
                     },
                     Err(_)=>{},
                 }
