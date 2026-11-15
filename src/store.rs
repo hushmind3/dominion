@@ -21,11 +21,12 @@ fn task_row(row: &Row<'_>) -> rusqlite::Result<Value> {
         "cancelRequested": row.get::<_, i64>(6)? != 0,
         "steps": row.get::<_, i64>(7)?,
         "tokens": row.get::<_, i64>(8)?,
-        "createdAt": row.get::<_, String>(9)?
+        "createdAt": row.get::<_, String>(9)?,
+        "costKrw": row.get::<_, f64>(10)?
     }))
 }
 
-const TASK_FIELDS: &str = "id, request_id, input, status, result, error, cancelled, steps, tokens, created_at";
+const TASK_FIELDS: &str = "id, request_id, input, status, result, error, cancelled, steps, tokens, created_at, cost_krw";
 
 impl Store {
     pub fn open(path: &Path) -> Result<Self, String> {
@@ -47,6 +48,7 @@ impl Store {
                 steer TEXT,
                 steps INTEGER NOT NULL DEFAULT 0,
                 tokens INTEGER NOT NULL DEFAULT 0,
+                cost_krw REAL NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS events (
@@ -88,6 +90,17 @@ impl Store {
                 created_at TEXT NOT NULL
             );
         ").map_err(|e| e.to_string())?;
+        // Preserve data from pre-metering native SQLite installations.
+        let has_cost={
+            let mut stmt=conn.prepare("PRAGMA table_info(tasks)").map_err(|e|e.to_string())?;
+            let cols=stmt.query_map([],|row|row.get::<_,String>(1))
+                .map_err(|e|e.to_string())?;
+            cols.filter_map(Result::ok).any(|name|name=="cost_krw")
+        };
+        if !has_cost {
+            conn.execute("ALTER TABLE tasks ADD COLUMN cost_krw REAL NOT NULL DEFAULT 0",[])
+                .map_err(|e|e.to_string())?;
+        }
         Ok(Self { conn: Arc::new(Mutex::new(conn)) })
     }
 
@@ -370,6 +383,24 @@ impl Store {
                 params![id,tokens.min(i64::MAX as u64) as i64]
             );
         }
+    }
+
+    /// Persist measured provider spend (configured KRW rates, not a fabricated
+    /// invoice). Validated nonnegative costs accumulate across plan, execute,
+    /// verification and delegated calls.
+    pub fn account_cost(&self,id:&str,krw:f64) -> Result<(),String> {
+        if !krw.is_finite() || krw<0.0 {return Err("Invalid provider cost".into());}
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        conn.execute("UPDATE tasks SET cost_krw=cost_krw+?2 WHERE id=?1",
+            params![id,krw]).map_err(|e|e.to_string())?;
+        Ok(())
+    }
+
+    pub fn family_cost_krw(&self,id:&str)->f64 {
+        let Ok(conn)=self.conn.lock() else {return f64::INFINITY};
+        conn.query_row("SELECT COALESCE(SUM(cost_krw),0) FROM tasks
+            WHERE id=?1 OR json_extract(input,'$.parentId')=?1",
+            [id],|row|row.get::<_,f64>(0)).unwrap_or(f64::INFINITY)
     }
 
     pub fn measure(&self, id: &str, tokens: u64) {
