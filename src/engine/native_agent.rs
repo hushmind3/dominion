@@ -46,6 +46,17 @@ struct NativeTools {
     tool_specs: Vec<ToolSpec>,
     tools_enabled: bool,
 }
+// Keep the tail of compiler/test diagnostics rather than the beginning of
+// potentially enormous build logs. This is the portion that usually contains
+// the failing test, exception, or final actionable compiler error.
+fn diagnostic_tail(source:&str, max_chars:usize)->String {
+    let mut tail=source.chars().rev().take(max_chars).collect::<Vec<_>>();
+    tail.reverse();
+    let data=tail.into_iter().collect::<String>();
+    if source.chars().count()>max_chars {
+        format!("[earlier output elided] {data}")
+    } else {data}
+}
 /// Tool transport success is not evidence that the action succeeded.
 /// The SDK must not accept a failing command, HTTP response or MCP result.
 fn verified_tool_result(name: &str, value: Value) -> Result<Value,String> {
@@ -62,7 +73,11 @@ fn verified_tool_result(name: &str, value: Value) -> Result<Value,String> {
     if matches!(name,"shell_exec"|"terminal_exec") {
         match value.get("exitCode").and_then(Value::as_i64) {
             Some(0) => {}
-            other => return Err(format!("{name} failed (exitCode={other:?}): {}",value))
+            other => return Err(format!(
+                "{name} failed (exitCode={other:?}). stderr_tail={} stdout_tail={}",
+                diagnostic_tail(value["stderr"].as_str().unwrap_or(""),2000),
+                diagnostic_tail(value["stdout"].as_str().unwrap_or(""),800),
+            ))
         }
     }
     if let Some(code)=value.get("statusCode").and_then(Value::as_u64)
@@ -71,6 +86,15 @@ fn verified_tool_result(name: &str, value: Value) -> Result<Value,String> {
         if code>=400 { return Err(format!("{name} HTTP {code}: {value}")); }
     }
     Ok(value)
+}
+
+/// A pending human approval must never authorize a command for a goal
+/// that was changed or cancelled while the dialog was open.
+fn may_dispatch_native_action(job:Option<&Value>, expected_directive:&Value,
+    cancelled_session:bool)->bool {
+    !cancelled_session && job.is_some_and(|job|
+        job["status"]=="running" && job["cancelRequested"]!=true
+            && job["nativeDirective"]==*expected_directive)
 }
 
 impl Tools for NativeTools {
@@ -91,6 +115,11 @@ impl Tools for NativeTools {
                 .ok_or("Could not durably record tool intent")?;
             // A crash after this record is never blindly replayed by the job
             // recovery worker; the write-ahead marker remains in the snapshot.
+            // A human may steer or stop the task while an approval dialog
+            // is open. Never dispatch a tool authorized for the stale goal.
+            let planned_directive=self.state.store.get("job",&self.run_id)
+                .and_then(|job|job.get("nativeDirective").cloned())
+                .unwrap_or(Value::Null);
             let approval_needed=if action.tool.starts_with("mcp__") {
                 mcp::requires_approval(&self.state,&action.tool)
             } else { tools::requires_approval(&action.tool) };
@@ -99,6 +128,10 @@ impl Tools for NativeTools {
                 &action.arguments,&self.run_id,&operation_id
             ).await {
                 Err("Tool execution was not approved".to_string())
+            } else if !may_dispatch_native_action(
+                self.state.store.get("job",&self.run_id).as_ref(),
+                &planned_directive,self.state.is_cancelled(&self.session)) {
+                Err("Owner cancelled or changed the task before tool dispatch".into())
             } else if action.tool.starts_with("mcp__") {
                 mcp::call(&self.state,&action.tool,&action.arguments).await
                     .and_then(|value|verified_tool_result(&action.tool,value))
@@ -455,6 +488,13 @@ mod native_result_tests {
         assert!(verified_tool_result("shell_exec",json!({"exitCode":1,"stdout":"","stderr":"failed"})).is_err());
         assert!(verified_tool_result("terminal_exec",json!({"exitCode":null,"stderr":"terminated"})).is_err());
         assert!(verified_tool_result("shell_exec",json!({"exitCode":0,"stdout":"OK"})).is_ok());
+        let long_stderr=format!("{}END_ERROR", "prelude".repeat(1000));
+        let failure=verified_tool_result("shell_exec",json!({
+            "exitCode":101,"stdout":"", "stderr":long_stderr
+        })).unwrap_err();
+        assert!(failure.contains("END_ERROR"));
+        assert!(!failure.contains("prelude".repeat(400).as_str()));
+        assert!(failure.len()<3600);
     }
     #[test]
     fn wrapped_tool_errors_are_not_success_evidence() {
@@ -469,4 +509,19 @@ mod native_result_tests {
             json!({"written":true,"replaced":true})).is_ok());
         assert!(verified_tool_result("workspace_read",json!({"content":"ok"})).is_ok());
     }
+    #[test]
+    fn pending_approval_respects_live_owner_changes_and_cancel() {
+        let original=json!({"status":"running","nativeDirective":"original",
+            "cancelRequested":false});
+        let expected=json!("original");
+        assert!(may_dispatch_native_action(Some(&original),&expected,false));
+        let changed=json!({"status":"running","nativeDirective":"new goal"});
+        assert!(!may_dispatch_native_action(Some(&changed),&expected,false));
+        let cancelled=json!({"status":"running","nativeDirective":"original",
+            "cancelRequested":true});
+        assert!(!may_dispatch_native_action(Some(&cancelled),&expected,false));
+        assert!(!may_dispatch_native_action(Some(&original),&expected,true));
+        assert!(!may_dispatch_native_action(None,&expected,false));
+    }
+
 }

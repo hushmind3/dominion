@@ -34,3 +34,8 @@ The live adapter `src/engine/native_agent.rs` now reads the SQLite-backed `nativ
 ### Native coding verification
 
 The public job API accepts a `command_succeeded` criterion and transforms it into a Rust-owned exact shell execution receipt check. The verifier only treats a passing command *after the latest workspace edit* as satisfying the owner's acceptance condition. The same requirement flows from the main-based GUI through `/api/jobs`; no TypeScript execution loop. Workflow child jobs also use `Kernel::run` with stable IDs and resumable checkpoints. Test commands still require actual owner approval.
+
+
+### Automatic acceptance/repair loop
+
+Native `Kernel::run` and `Kernel::resume` own verification-command scheduling as well as model and tool turns. Set `RunRequest.checks` to a `ToolSucceeded` criterion with `tool: Some("shell_exec")` and `contains: Some("cargo test")`; the kernel executes the exact missing test under the host's normal permission and journal controls when the model proposes final completion. A failed check is fed into repair, not blindly repeated, and later side effects invalidate earlier passes. For HTTP callers, use `acceptanceChecks: [{ "type": "command_succeeded", "command": "cargo test" }]`. This is executable Rust source with authored tests; Rust compilation is not yet verified here.

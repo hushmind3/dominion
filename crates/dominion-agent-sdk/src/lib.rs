@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::HashMap, future::Future, pin::Pin};
 mod scheduler;
+mod acceptance;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -245,18 +246,19 @@ fn decode(content: &str) -> Result<Decision, String> {
 
 /// Distinguish inspection from external effects so existing files or a
 /// plausible model claim cannot satisfy an unperformed edit.
-/// A verified shell command is valid only after the most recent known
-/// workspace edit. The host still enforces actual command permissions.
-fn successful_command_after_edit(receipts: &[Receipt], expected: &str) -> bool {
-    let last_edit=receipts.iter().rposition(|receipt| {
-        receipt.success && matches!(receipt.tool.as_str(),
-            "workspace_write"|"workspace_replace"|"workspace_replace_range"|"file_write")
-    });
-    receipts.iter().enumerate().any(|(index, receipt)| {
-        receipt.success && receipt.tool=="shell_exec"
-            && receipt.arguments["command"].as_str()==Some(expected)
-            && last_edit.is_none_or(|edit|index>edit)
-    })
+/// File changes and generic external actions have different evidence.
+/// Running a command, opening a browser or deploying a service must not be
+/// rejected just because it did not write a workspace file.
+fn owner_requires_file_mutation(text: &str) -> bool {
+    let text=text.to_lowercase();
+    let edit=["수정","편집","작성","만들","생성","삭제","제거","고쳐","구현","개발",
+        "리팩토링","패치","write","edit","delete","remove","modify",
+        "fix","implement","refactor","patch","create"];
+    let artifact=["파일","코드","소스","저장소","프로젝트","버그","구현","개발",
+        "리팩토링","readme","source","repository","code","file","script",
+        "unit test",".rs",".py",".ts",".js",".md",".txt","artifact"];
+    edit.iter().any(|word|text.contains(word))
+        && artifact.iter().any(|word|text.contains(word))
 }
 
 fn owner_requires_effect(text: &str) -> bool {
@@ -266,6 +268,16 @@ fn owner_requires_effect(text: &str) -> bool {
      "create","write","edit","delete","remove","modify","fix","implement",
      "build","deploy","install","execute","save","commit","refactor"]
         .iter().any(|word| t.contains(word))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AcceptanceRun {
+    Passed,
+    NewFailure,
+    ExistingFailure,
+    OwnerChanged,
+    Cancelled,
+    ToolUnavailable,
 }
 
 impl Kernel<'_> {
@@ -425,10 +437,90 @@ impl Kernel<'_> {
             // A final answer never overrides an independent acceptance failure.
             if decision.actions.is_empty() {
                 if let Some(answer) = decision.answer.filter(|s| !s.trim().is_empty()) {
-                    run.checks = self.verify(&request, &run).await;
-                    let requires_file_mutation = owner_requires_effect(&request.instruction);
-                    let has_nonread_effect = run.receipts.iter().any(|r| r.success &&
+                    // Don't waste user-approved test executions on an edit task
+                    // for which the host has not recorded a single real write.
+                    let requires_file_mutation = owner_requires_file_mutation(&request.instruction);
+                    let requires_external_effect = owner_requires_effect(&request.instruction);
+                    let has_nonread_effect = run.receipts.iter().any(|r|r.success &&
                         tools.get(&r.tool).is_some_and(|tool| !tool.read_only));
+                    let has_confirmed_write = run.receipts.iter().any(|r|r.success &&
+                        r.result["written"] == true &&
+                        tools.get(&r.tool).is_some_and(|tool| !tool.read_only));
+                    if requires_file_mutation && !has_confirmed_write {
+                        run.checks = vec![CheckResult {
+                            criterion:Criterion{kind:CriterionKind::ToolSucceeded,
+                                path:None,contains:None,tool:Some("confirmed_write".into())},
+                            satisfied:false,
+                            explanation:"No host-confirmed file modification. Use a workspace editing tool and verify its written=true receipt before finishing".into(),
+                        }];
+                        invalid += 1;
+                        self.journal.save(&run)?;
+                        if invalid >= 3 {break;}
+                        continue;
+                    }
+                    // Verify cheap file conditions before running shell tests.
+                    // No compiler invocation is needed when a required file
+                    // is missing or does not contain the requested change.
+                    let cheap_checks=self.verify(&request,&run,&tools).await;
+                    if cheap_checks.iter().any(|check| !check.satisfied
+                        && check.criterion.kind != CriterionKind::ToolSucceeded) {
+                        run.checks=cheap_checks;
+                        self.journal.save(&run)?;
+                        continue;
+                    }
+                    // The model may propose the final answer, but only the
+                    // Rust kernel decides when required tests run and pass.
+                    // Run all missing tests within this same model step,
+                    // without paying for a separate planning call per test.
+                    match self.run_required_commands(
+                        &request, &mut run, &tools, current_directive.as_deref(),
+                    ).await? {
+                        AcceptanceRun::Passed => {}
+                        AcceptanceRun::NewFailure => {
+                            run.checks = self.verify(&request, &run, &tools).await;
+                            self.journal.save(&run)?;
+                            // Hand the real failure receipt to the model for
+                            // source repair; do not blindly retry the test.
+                            continue;
+                        }
+                        AcceptanceRun::ExistingFailure => {
+                            run.stop(Status::NeedsReview,
+                                "Required verification previously failed; no intervening repair was observed");
+                            run.checks = self.verify(&request, &run, &tools).await;
+                            self.journal.save(&run)?;
+                            return Ok(run);
+                        }
+                        AcceptanceRun::ToolUnavailable => {
+                            run.stop(Status::NeedsReview,
+                                "Required shell verification is not allowed by this run's tool permissions");
+                            self.journal.save(&run)?;
+                            return Ok(run);
+                        }
+                        AcceptanceRun::OwnerChanged => {
+                            self.journal.save(&run)?;
+                            continue;
+                        }
+                        AcceptanceRun::Cancelled => {
+                            run.stop(Status::Cancelled,"Owner cancelled verification");
+                            self.journal.save(&run)?;
+                            return Ok(run);
+                        }
+                    }
+                    run.checks = self.verify(&request, &run, &tools).await;
+                    // A lengthy real test can finish after the owner has
+                    // changed the goal. Never accept a stale completion.
+                    if self.journal.directive(&request.id)?.as_deref()
+                        != current_directive.as_deref() {
+                        self.journal.save(&run)?;
+                        continue;
+                    }
+                    if self.journal.cancelled(&request.id) {
+                        run.stop(Status::Cancelled,"Owner cancelled execution");
+                        self.journal.save(&run)?;
+                        return Ok(run);
+                    }
+                    // Both evidence sources were checked before running tests;
+                    // tests still cannot serve as proof of a file edit.
                     // A preexisting file can satisfy file_exists but cannot
                     // prove a requested change. Require a genuine successful
                     // non-read tool effect for action tasks unless the owner
@@ -436,7 +528,8 @@ impl Kernel<'_> {
                     let observed = run.receipts.iter().any(|r| r.success);
                     let all_checks = run.checks.iter().all(|c| c.satisfied);
                     let evidence_sufficient = !request.require_evidence
-                        || (all_checks && (!requires_file_mutation || has_nonread_effect)
+                        || (all_checks && (!requires_external_effect || has_nonread_effect)
+                            && (!requires_file_mutation || has_confirmed_write)
                             && (observed || !request.checks.is_empty()));
                     if evidence_sufficient && run.checks.iter().all(|c| c.satisfied) {
                         run.answer = Some(answer);
@@ -543,7 +636,7 @@ impl Kernel<'_> {
                     self.journal.save(&run)?;
                 }
                 if matches!(request.strategy,Strategy::VerifyFirst) && !request.checks.is_empty() {
-                    run.checks=self.verify(&request,&run).await;
+                    run.checks=self.verify(&request,&run,&tools).await;
                     self.journal.save(&run)?;
                 }
                 if skipped_any {
@@ -565,14 +658,61 @@ impl Kernel<'_> {
         Ok(run)
     }
 
-    async fn verify(&self, request: &RunRequest, run: &Snapshot) -> Vec<CheckResult> {
+    /// Run exactly the owner's unobserved postconditions, never LLM-created
+    /// test substitutes. Each call passes through the host's ordinary tool
+    /// approval and durable write-ahead operation record.
+    async fn run_required_commands(&self, request: &RunRequest, run: &mut Snapshot,
+        tools: &HashMap<String, ToolSpec>, directive: Option<&str>,
+    ) -> Result<AcceptanceRun, String> {
+        for (index, check) in request.checks.iter().enumerate() {
+            let Some(command) = acceptance::required_command(check) else {continue;};
+            match acceptance::command_state(&run.receipts,&request.checks,tools,command) {
+                acceptance::CommandState::Passed => continue,
+                acceptance::CommandState::Failed => return Ok(AcceptanceRun::ExistingFailure),
+                acceptance::CommandState::Pending => {}
+            }
+            if !tools.contains_key("shell_exec") {
+                return Ok(AcceptanceRun::ToolUnavailable);
+            }
+            if self.journal.cancelled(&request.id) {
+                return Ok(AcceptanceRun::Cancelled);
+            }
+            if self.journal.directive(&request.id)?.as_deref() != directive {
+                return Ok(AcceptanceRun::OwnerChanged);
+            }
+            let mut id = format!("kernel-verify-{}-{index}",run.step);
+            while run.receipts.iter().any(|receipt|receipt.id==id) {
+                id.push('x');
+            }
+            let action=Action {id:id.clone(),tool:"shell_exec".into(),
+                arguments:json!({"command":command}),depends_on:Vec::new()};
+            run.in_flight = vec![action.clone()];
+            self.journal.save(run)?;
+            let result=self.tools.execute(&action).await;
+            let (success, result) = match result {
+                Ok(output) => (true,output),
+                Err(error) => (false,json!({"error":error})),
+            };
+            run.receipts.push(Receipt {id,tool:action.tool,
+                arguments:action.arguments,success,result,step:run.step});
+            run.in_flight.clear();
+            // A checkpoint failure here leaves a durable unresolved
+            // write-ahead marker; a restarted job cannot replay the command.
+            self.journal.save(run)?;
+            if !success {return Ok(AcceptanceRun::NewFailure);}
+        }
+        Ok(AcceptanceRun::Passed)
+    }
+
+    async fn verify(&self, request: &RunRequest, run: &Snapshot,
+        tools: &HashMap<String, ToolSpec>) -> Vec<CheckResult> {
         let mut checks = Vec::with_capacity(request.checks.len());
         for criterion in &request.checks {
             let observation = if criterion.kind == CriterionKind::ToolSucceeded {
                 let name = criterion.tool.as_deref().unwrap_or("");
-                if name=="shell_exec" && criterion.contains.is_some() {
-                    Ok(successful_command_after_edit(&run.receipts,
-                        criterion.contains.as_deref().unwrap_or("")))
+                if let Some(command)=acceptance::required_command(criterion) {
+                    Ok(acceptance::command_state(&run.receipts,&request.checks,
+                        tools,command)==acceptance::CommandState::Passed)
                 } else {
                     Ok(run.receipts.iter().any(|r| r.tool == name && r.success))
                 }
@@ -600,6 +740,13 @@ mod owner_effect_tests {
         }
         for text in ["인사를 해줘", "현재 상황을 설명해줘", "summarize the known context"] {
             assert!(!owner_requires_effect(text), "{text}");
+        }
+        for text in ["README 수정해라", "코드를 구현해라", "fix the unit test"] {
+            assert!(owner_requires_file_mutation(text), "{text}");
+        }
+        for text in ["실행해라", "배포해라", "Run cargo test", "open the browser",
+            "기존 파일 읽어줘", "create a calendar event"] {
+            assert!(!owner_requires_file_mutation(text), "{text}");
         }
     }
 }

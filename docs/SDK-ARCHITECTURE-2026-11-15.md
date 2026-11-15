@@ -99,3 +99,8 @@ The default general-purpose job path remains `POST /api/jobs` → `src/engine/jo
 **Workflow engine migration:** `src/engine/workflows.rs` now executes each workflow step through the same native Rust SDK job queue. Stable child IDs and `enqueue_once` support retry-safe continuation; `start_now` avoids single-worker deadlocks. A prior child result is reused instead of re-running modifications. Unknown legacy in-flight chat-loop steps remain in `needs_review`. Cancelling the parent session propagates to active native children via the journal.
 
 **Tests authored:** scripted native-kernel tests for stale command verification, mismatched/failed commands and replanning, workflow child checkpoint recovery, legacy recovery and deterministic child ID. Existing tests remain. Rust compilation and integration tests are **not yet run** in this environment; no claims of runtime equivalence with frontier systems. CI remains deliberately deferred until the whole product is cleaned up and ready.
+
+
+### Mandatory coding verification and repair ownership
+
+The independent `dominion-agent-sdk::Kernel` now runs the owner's required exact command checks itself on the model's proposed final answer. No model-generated claim can substitute for a host tool receipt. Failed tests are returned as bounded observations for source repair, passing receipts become stale after new effects, and no-repeat checks avoid spending tokens or running commands repeatedly without progress. See `docs/RUST-CODING-COMPLETION-2026-11-15.md` for end-to-end API, state machine and scripted regression cases.

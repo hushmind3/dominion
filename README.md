@@ -190,3 +190,8 @@ Recent sub3 commits add a dependency-aware Rust tool scheduler (bounded read con
 ### Rust-native autonomous coding verification and workflows (sub3)
 
 The main UI now sends required command postconditions to the real Rust kernel. A completed command must match the owner's requested verification command and occur after the latest workspace edit. Workflow stages execute as durable native Rust SDK child jobs rather than a separate chat-turn harness. See [Architecture](docs/SDK-ARCHITECTURE-2026-11-15.md). This source is not yet build-tested.
+
+
+### Rust-owned coding completion gate (2026-11-15)
+
+DOMINION now includes the native Rust SDK-side automatic acceptance/repair controller for required command checks. The model supplies candidate edits; the Rust engine performs missing exact verification commands through the standard approval and durable job operation path, feeds failure diagnostics into replanning, invalidates stale success after subsequent effects and declines unverified completion. The main GUI uses the same `/api/jobs` contract. See [the focused coding completion design](docs/RUST-CODING-COMPLETION-2026-11-15.md). Test files are written but not yet executed with the unavailable local Rust toolchain.

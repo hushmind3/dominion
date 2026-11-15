@@ -2,6 +2,20 @@ use crate::{engine,state::AppState};
 use axum::{extract::{Path,State},http::StatusCode,response::{IntoResponse,Response},Json};
 use serde_json::{json,Value};
 use super::response::error;
+/// An API request describes what must be true; only the Rust kernel may
+/// produce acceptance receipts. Clients cannot submit pre-verified results.
+fn native_acceptance_checks(items:&[Value])->Result<Vec<Value>,String> {
+    items.iter().map(|item|match item["type"].as_str() {
+        Some("file_exists"|"file_absent"|"file_contains"|"tool_succeeded") =>
+            Ok(item.clone()),
+        Some("command_succeeded") if item["command"].as_str()
+            .is_some_and(|text|!text.trim().is_empty()&&text.len()<=4096) =>
+            Ok(json!({"type":"tool_succeeded","tool":"shell_exec",
+                "contains":item["command"]})),
+        _=>Err("Rust SDK가 지원하는 검증 조건을 선택하세요.".into()),
+    }).collect()
+}
+
 pub async fn list(State(state):State<AppState>)->Json<Value>{Json(json!(state.store.all("job")))}
 pub async fn one(State(state):State<AppState>,Path(id):Path<String>)->Response{match state.store.get("job",&id){Some(j)=>Json(j).into_response(),None=>error(StatusCode::NOT_FOUND,"작업을 찾을 수 없습니다.")}}
 /// Client requests describe work, never mutable runtime status or evidence.
@@ -51,23 +65,10 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
                 let Some(items)=checks.as_array() else {
                     return error(StatusCode::BAD_REQUEST,"검증 조건은 배열이어야 합니다.");
                 };
-                // Public command_succeeded is an exact, post-edit Rust
-                // receipt check: never a model-reported success claim.
-                let mut native=Vec::with_capacity(items.len());
-                for item in items {
-                    let criterion=match item["type"].as_str() {
-                        Some("file_exists"|"file_absent"|"file_contains"|"tool_succeeded") => item.clone(),
-                        Some("command_succeeded") => json!({
-                            "type":"tool_succeeded",
-                            "tool":"shell_exec",
-                            "contains":item["command"]
-                        }),
-                        _=>return error(StatusCode::BAD_REQUEST,
-                            "Rust SDK가 지원하는 검증 조건을 선택하세요."),
-                    };
-                    native.push(criterion);
+                match native_acceptance_checks(items) {
+                    Ok(native)=>value["checks"]=json!(native),
+                    Err(message)=>return error(StatusCode::BAD_REQUEST,message),
                 }
-                value["checks"]=json!(native);
             }
             if let Some(v)=input["allowFallback"].as_bool() {
                 value["allowFallback"]=json!(v);
@@ -127,4 +128,31 @@ pub async fn directive(
     })) else {return error(StatusCode::CONFLICT,"작업 상태가 변경되었습니다.");};
     state.bus.record("job",&updated);
     Json(json!({"ok":true,"jobId":id,"directive":instruction})).into_response()
+}
+
+#[cfg(test)]
+mod native_acceptance_tests {
+    use super::*;
+    #[test]
+    fn a_required_command_maps_to_exact_rust_kernel_postcondition() {
+        let criteria=native_acceptance_checks(&[json!({
+            "type":"command_succeeded","command":"cargo test --workspace"
+        })]).unwrap();
+        assert_eq!(criteria,vec![json!({
+            "type":"tool_succeeded","tool":"shell_exec",
+            "contains":"cargo test --workspace"
+        })]);
+        assert!(native_acceptance_checks(&[json!({
+            "type":"command_succeeded","command":"   "
+        })]).is_err());
+    }
+    #[test]
+    fn caller_cannot_submit_a_fake_passed_acceptance_result() {
+        let criteria=native_acceptance_checks(&[json!({
+            "type":"command_succeeded","command":"cargo test",
+            "satisfied":true,"evidence":"forged","receipt":"fake"
+        })]).unwrap();
+        assert_eq!(criteria[0],json!({"type":"tool_succeeded",
+            "tool":"shell_exec","contains":"cargo test"}));
+    }
 }
