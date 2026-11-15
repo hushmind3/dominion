@@ -64,9 +64,17 @@ impl JobChain {
 static CHAINS:LazyLock<Mutex<HashMap<String,Arc<AsyncMutex<JobChain>>>>>=
     LazyLock::new(||Mutex::new(HashMap::new()));
 
-fn key(route:&gateway::Route,account:&str,run_id:&str)->String {
-    format!("{run_id}\0{}\0{}\0{}\0{account}",
+fn key(route:&gateway::Route,account:&str,run_id:&str,access:&str)->String {
+    // An OAuth refresh must not silently carry forward a socket authenticated
+    // under an earlier token. Only a non-reversible digest enters this key.
+    let credential=format!("{:x}",Sha256::digest(access.as_bytes()));
+    format!("{run_id}\0{}\0{}\0{}\0{account}\0{credential}",
         route.id,route.model,route.base_url)
+}
+fn job_live(state:&AppState,session:&str,job_id:&str)->bool {
+    !state.is_cancelled(session)
+        && state.store.get("job",job_id).is_some_and(|job|
+            job["status"]=="running" && job["cancelRequested"]!=true)
 }
 fn chain_for(key:&str)->Arc<AsyncMutex<JobChain>> {
     let mut guard=CHAINS.lock().unwrap();
@@ -282,7 +290,10 @@ pub(crate) async fn generate(
         matches!(v.as_str(),"off"|"http")) {
         return Err(WsError::Unavailable("owner selected Codex HTTP".into()));
     }
-    let key=key(route,account,job_id);
+    if !job_live(state,session,job_id) {
+        return Err(WsError::Rejected("Owner cancelled the job before Codex generation".into()));
+    }
+    let key=key(route,account,job_id,access);
     let shared=chain_for(&key);
     let mut chain=shared.lock().await;
     if chain.opened.is_some_and(|t|t.elapsed()>MAX_AGE) {chain.reset();}
@@ -321,6 +332,12 @@ pub(crate) async fn generate(
             wire["previous_response_id"]=json!(id);
         }else if let Some(map)=wire.as_object_mut() {
             map.remove("previous_response_id");
+        }
+        // Cancellation may arrive while opening a socket or rebuilding input.
+        // Check again immediately before requesting any billable generation.
+        if !job_live(state,session,job_id) {
+            chain.reset();
+            return Err(WsError::Rejected("Owner cancelled before the Codex request was sent".into()));
         }
         // The next request may generate billable tokens even before its first
         // delta. Durable kernel model_in_flight is already committed.
@@ -572,6 +589,22 @@ mod tests {
         assert_eq!(state.store.get("job",&job_id).unwrap()["nativeStream"]["stage"],
             "interrupted");
         server.await.unwrap();
+        forget_job(&job_id);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn already_cancelled_job_never_sends_or_connects_to_codex() {
+        let (listener,base)=listener().await;
+        let route=route(base);
+        let (state,root,job_id)=state();
+        state.cancel_session("session");
+        let result=generate(&state,&route,"account","token",&body("cancelled",&[]),
+            "session",&job_id,&[]).await;
+        assert!(matches!(result,Err(WsError::Rejected(_))));
+        assert!(tokio::time::timeout(Duration::from_millis(120),
+            listener.accept()).await.is_err(),
+            "cancelled work should not open a billable model socket");
         forget_job(&job_id);
         std::fs::remove_dir_all(root).unwrap();
     }
