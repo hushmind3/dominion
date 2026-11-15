@@ -3305,7 +3305,7 @@ fn select_room_tools(
                 "삭제해", "삭제하", "만들어", "만들어줘", "작성해", "작성하",
                 "기록", "남겨", "write", "save", "edit", "delete", "create",
             ],
-            &["workspace_read", "workspace_read_range", "workspace_replace_range", "workspace_replace", "workspace_write", "file_write"],
+            &["workspace_read", "workspace_read_range", "workspace_replace_range", "workspace_replace", "workspace_write", "workspace_apply_patch", "file_write"],
         ),
         (
             &["실행", "명령", "터미널", "빌드", "테스트", "설치", "shell", "run", "build", "test", "install"],
@@ -3374,7 +3374,7 @@ fn select_room_tools(
             .filter(|definition| {
                 matches!(
                     tool_name(definition),
-                    "workspace_list" | "workspace_read" | "workspace_read_range" | "workspace_replace_range" | "workspace_replace" | "workspace_write" | "shell_exec" | "web_search"
+                    "workspace_list" | "workspace_read" | "workspace_read_range" | "workspace_replace_range" | "workspace_replace" | "workspace_write" | "workspace_apply_patch" | "shell_exec" | "web_search"
                 )
             })
             .collect();
@@ -3396,7 +3396,7 @@ fn select_tool_definitions(
         return definitions;
     }
     let default_core = [
-        "workspace_list", "workspace_read", "workspace_read_range", "workspace_replace_range", "workspace_replace", "workspace_write", "shell_exec",
+        "workspace_list", "workspace_read", "workspace_read_range", "workspace_replace_range", "workspace_replace", "workspace_write", "workspace_apply_patch", "shell_exec",
         "web_search", "memory_store", "memory_search", "delegate_task",
         "task_status", "task_result",
     ];
@@ -6716,6 +6716,19 @@ mod harness_tool_selection_tests {
     use serde_json::json;
 
     #[test]
+    fn core_coding_tool_selection_advertises_native_multi_file_patch(){
+        let definitions=vec![
+            json!({"function":{"name":"workspace_read"}}),
+            json!({"function":{"name":"workspace_apply_patch"}}),
+            json!({"function":{"name":"browser_control"}}),
+        ];
+        let selected=select_tool_definitions(definitions,"Fix the repository",
+            &json!({"implementation":"core"}));
+        assert!(selected.iter().any(|tool|tool_name(tool)=="workspace_apply_patch"));
+        assert!(!selected.iter().any(|tool|tool_name(tool)=="browser_control"));
+    }
+
+    #[test]
     fn tool_discovery_selects_core_or_query_relevant_tools() {
         let definitions = vec![
             json!({"type":"function","function":{"name":"workspace_write","description":"write"}}),
@@ -6767,6 +6780,7 @@ mod harness_tool_selection_tests {
         let file_names = files.iter().map(tool_name).collect::<Vec<_>>();
         assert!(file_names.contains(&"workspace_read"), "{file_names:?}");
         assert!(file_names.contains(&"workspace_write"), "{file_names:?}");
+        assert!(file_names.contains(&"workspace_apply_patch"), "{file_names:?}");
         assert!(!file_names.contains(&"mcp_github_search"), "{file_names:?}");
         let mcp = select_room_tools(definitions.clone(), "github 이슈를 검색해", &empty, false);
         assert!(mcp.iter().any(|tool| tool_name(tool) == "mcp_github_search"));
