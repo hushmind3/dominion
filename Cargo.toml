@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/harness", "crates/dominion-agent-sdk", "crates/dominion-core"]
+members = [".", "crates/dominion-core"]
 
 [package]
 name = "dominion-rust"

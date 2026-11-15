@@ -1,16 +1,15 @@
 # DOMINION 자체 Rust 엔진
 
-## 실행 경로 현황 (2026-11-15)
+## 실행 경로 현황 (2026-11-16)
 
-1. **신규 자율 작업 SDK:** `crates/harness/src/sdk.rs` → `src/api/sdk.rs` → `/api/sdk/runs` → `web/src/components/NativeAgentPanel.tsx`. 동일한 `AgentSdk`가 Rust CLI(`crates/harness/src/bin/dominion-harness.rs`)를 구동합니다. Rust가 모델 판단, 도구 호출, 호출별 승인, 실행 이벤트, 체크포인트, 검증과 재시도를 직접 통제합니다.
-2. **기존 제품 기능:** `src/engine/chat/runtime.rs`, `jobs.rs`, `rooms.rs`, `video.rs`, `rsi*.rs` 등의 이전 Rust 경로. 새 SDK로 일괄 이전되지 않았으므로 기능 이름이 같아도 제품 기능 경로가 동일하다고 볼 수 없습니다.
-3. **외부 연동:** HTTP API가 신규 SDK 기능을 제공하며 React UI는 이를 사용하는 클라이언트입니다. TypeScript SDK는 선택적 보조 계층입니다.
-4. **남은 과제:** 기존 기능의 Rust SDK 통합, 모델별 프로토콜, 병렬 실행·계획/재계획, MCP/스킬·서브에이전트, 비용 계측, OS 샌드박스, 실전 검증. 구체적 증거와 현재 한계는 [Rust SDK 문서](docs/HARNESS.md)를 참고하세요.
+운영 실행 코어는 `crates/dominion-core` 하나입니다. 서브4의 상태머신·저널·도구 스키마 검증을 메인의 SQLite·제품 어댑터에 연결했습니다.
 
-실행 경로는 `src/engine`의 Rust 모듈입니다. OpenClaw/Hermes 런타임, 봇 프레임워크,
-외부 메모리 서비스, 해당 프로젝트의 소스 코드를 포함하거나 실행하지 않습니다.
-모델은 OpenAI 호환 HTTP API로 호출하고, Discord는 공식 REST v10으로 연결합니다.
-현재 루트 Cargo에는 사내 Rust SDK 크레이트 `dominion-harness`에 대한 경로 의존성을 연결했습니다. `web/`의 Node 도구는 UI 빌드에 사용합니다.
+1. **공통 실행:** 채팅·그룹·작업·워크플로·RSI·SDK 자동 작업은 `src/engine/chat/runtime.rs`에서 공통 코어의 모델 호출 승인·도구 전이·완료 검사를 거칩니다. 제품의 문맥·계약·학습·RSI 정책은 해당 어댑터가 연결합니다.
+2. **영속 상태:** 기존 SQLite의 `execution.kernelState`, `execution_operation`, `native_frame`에 실행과 증거를 저장합니다. 별도 JSON 실행 저장소를 만들지 않습니다.
+3. **제품 연결:** `src/api/sdk.rs`도 같은 실행 경로를 사용합니다. React 프론트와 선택적 TypeScript 클라이언트는 기존 HTTP API를 호출합니다.
+4. **정리:** 이전 독립 실행기·CLI·워크스페이스 패키지는 삭제했습니다. 빌드와 CI는 현재 제품·공통 코어만 검사합니다. RSI 소스 지도도 현재 코어 경로를 기준으로 생성합니다.
+
+모델 전송·인증, 기존 도구·승인·기억·학습·영상 구현과 사용자 데이터는 유지합니다. Node는 프론트 빌드와 보조 클라이언트에 사용합니다. 이 구조 통합을 실전 모델 성능 향상이나 일반적인 자기개선 성과로 주장하지 않습니다.
 
 ## 기억과 학습
 

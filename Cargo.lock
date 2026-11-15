@@ -387,16 +387,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dominion-agent-sdk"
-version = "0.1.0"
-dependencies = [
- "futures-util",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "dominion-core"
 version = "0.3.0"
 dependencies = [
@@ -406,16 +396,6 @@ dependencies = [
  "sha2",
  "tokio",
  "uuid",
-]
-
-[[package]]
-name = "dominion-harness"
-version = "0.1.0"
-dependencies = [
- "dominion-agent-sdk",
- "reqwest",
- "serde",
- "serde_json",
 ]
 
 [[package]]

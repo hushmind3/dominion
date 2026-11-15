@@ -1,5 +1,5 @@
 /**
- * Optional TypeScript client for Dominion's first-party Rust AgentSdk.
+ * Optional TypeScript client for Dominion's shared native Rust runtime.
  * All control flow, policy, execution and journals remain in the Rust server.
  */
 export type SdkRunStatus =

@@ -7,7 +7,7 @@ use std::{path::Path,fs,collections::{BTreeMap,BTreeSet}};
 
 const COMPONENTS: &[(&str,&[&str])] = &[
     ("algorithms",&["src/engine/algorithms.rs","src/engine/rsi_evolve.rs","src/engine/reasoning.rs"]),
-    ("harness",&["crates/dominion-agent-sdk/src/lib.rs","crates/dominion-agent-sdk/src/runtime.rs","src/engine/jobs.rs","src/engine/rsi_worktree.rs","src/engine/chat/runtime.rs","src/engine/decompose.rs"]),
+    ("harness",&["crates/dominion-core/src/hosted.rs","crates/dominion-core/src/domain.rs","crates/dominion-core/src/journal.rs","crates/dominion-core/src/budget.rs","crates/dominion-core/src/tool_schema.rs","src/engine/jobs.rs","src/engine/rsi_worktree.rs","src/engine/chat/runtime.rs","src/engine/decompose.rs"]),
     ("memory",&["src/engine/memory.rs","src/engine/room_state.rs","src/engine/room_knowledge.rs"]),
     ("learning",&["src/engine/learning.rs","src/engine/experience.rs","src/engine/procedure.rs"]),
     ("tools",&["src/engine/tools.rs","src/engine/browser.rs","src/engine/mcp.rs"]),
@@ -616,6 +616,20 @@ pub(crate) fn handoff_evidence(state:&crate::state::AppState, history:&[Value])-
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn harness_source_map_follows_the_compiled_core_after_legacy_removal(){
+        let root=Path::new(env!("CARGO_MANIFEST_DIR"));
+        let model=blueprint(root,"current",&[]);
+        let harness=model["architecture"].as_array().unwrap().iter().find(|role|role["role"]=="harness").unwrap();
+        let expected=COMPONENTS.iter().find(|(role,_)|*role=="harness").unwrap().1;
+        let sources=harness["representativeSources"].as_array().unwrap();
+        assert_eq!(sources.len(),expected.len(),"RSI must not silently drop missing core source paths");
+        for path in expected{
+            assert!(root.join(path).is_file(),"missing runtime source: {path}");
+            assert!(crate::engine::rsi::safe_path(path),"runtime must remain editable in isolated RSI: {path}");
+            assert!(sources.iter().any(|source|source["path"]==*path));
+        }
+    }
     #[test]
     fn system_self_model_tracks_real_source_revision_and_covers_all_capabilities() {
         let root=std::env::temp_dir().join(format!("rsi-system-{}",uuid::Uuid::new_v4()));

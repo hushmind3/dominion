@@ -1,7 +1,7 @@
 # Dominion auxiliary TypeScript client
 
-The Rust `dominion_harness::sdk::AgentSdk` owns the execution, approvals,
-checkpoints, policies and verification. This small package only calls the
+The Rust `dominion-core` harness and the product SQLite adapters own
+execution, approvals, checkpoints, policies and verification. This small package only calls the
 native Rust server over HTTP. It is **not** an independent agent harness.
 
 ```ts

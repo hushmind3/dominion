@@ -36,7 +36,7 @@
 
 ## Native Rust execution core
 
-The product embeds [`dominion-core`](crates/dominion-core/README.md), adapted from `dominion-sub4`, behind the existing SQLite store, React frontend and provider/tool adapters. Chat, rooms, jobs, workflows, RSI work and the Home autonomous-work panel use the same product execution path. `/api/sdk/runs` no longer launches a separate `AgentSdk`/file-journal worker. See [the execution contract](docs/HARNESS.md).
+The product embeds [`dominion-core`](crates/dominion-core/README.md), adapted from `dominion-sub4`, behind the existing SQLite store, React frontend and provider/tool adapters. Chat, rooms, jobs, workflows, RSI work and the Home autonomous-work panel use the same product execution path. `/api/sdk/runs` uses that same execution path and SQLite journal. See [the execution contract](docs/HARNESS.md).
 
 Existing product data and authentication remain in SQLite and its credential vault. Tool intent, receipts and uncertain-effect recovery use the native Rust state machine; product-specific policies and independent RSI evaluation remain in the main application. This integration does not establish real-model quality gains or general self-improvement.
 

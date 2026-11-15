@@ -34,4 +34,5 @@ jobs:
       - run: npm run build --prefix web
       - run: node --check scripts/rsi-lab.mjs
       - run: node --test scripts/rsi-lab.test.mjs
-      - run: cargo test --release
+      - run: node scripts/check-runtime-architecture.mjs
+      - run: cargo test --workspace --release
