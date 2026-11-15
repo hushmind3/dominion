@@ -125,7 +125,18 @@ impl Videos {
         let relative=format!("scene-{index}.{extension}");
         let tmp=dir.join(format!("scene-{index}.upload"));
         fs::write(&tmp,&bytes).await.map_err(|e|e.to_string())?;
-        fs::rename(&tmp,dir.join(&relative)).await.map_err(|e|e.to_string())?;
+        let target=dir.join(&relative);
+        let backup=dir.join(format!("scene-{index}.previous"));
+        let had_previous=fs::metadata(&target).await.is_ok();
+        if had_previous {
+            let _=fs::remove_file(&backup).await;
+            fs::rename(&target,&backup).await.map_err(|e|e.to_string())?;
+        }
+        if let Err(error)=fs::rename(&tmp,&target).await {
+            if had_previous {let _=fs::rename(&backup,&target).await;}
+            return Err(error.to_string());
+        }
+        if had_previous {let _=fs::remove_file(backup).await;}
         let prior=video.images.insert(index,relative.clone());
         if let Some(previous)=prior {
             if previous!=relative {let _=fs::remove_file(dir.join(previous)).await;}
