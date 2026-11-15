@@ -21,6 +21,57 @@ fn prices(value:&Value)->Option<Prices>{
 fn estimate(prices:Prices,input:u64,output:u64)->f64 {
     (prices.input*input as f64+prices.output*output as f64)/1_000_000.0
 }
+/// Cache forecasts are conservative and never count unverified model billing.
+/// Only stable, route-bound, provider-reported cache usage from at least three
+/// distinct settled jobs influences the projected cost; 30% of the input
+/// retains the uncached baseline to avoid fragile overconfident discounts.
+fn estimate_with_history(
+    state:&AppState,route:&Route,price:Prices,input:u64,output:u64,
+)->Option<(f64,u64)> {
+    let baseline=estimate(price,input,output);
+    let key=binding(route);
+    let mut samples=0u64;
+    let mut calls=0u64;
+    let mut total=0u64;
+    let mut cached=0u64;
+    let mut written=0u64;
+    for job in state.store.all("job") {
+        if job["nativeRoute"]["binding"].as_str()!=Some(key.as_str())
+            ||!matches!(job["status"].as_str(),Some("completed"|"failed"|"needs_review")) {
+            continue;
+        }
+        let meter=&job["nativeModelUsage"];
+        let measured=meter["cacheReportedCalls"].as_u64().unwrap_or(0);
+        if measured==0 || meter["unreportedCalls"].as_u64().unwrap_or(0)>0 {
+            continue;
+        }
+        let Some(used)=meter["inputTokens"].as_u64().filter(|v|*v>0) else{continue};
+        samples+=1;
+        calls=calls.saturating_add(measured);
+        total=total.saturating_add(used);
+        cached=cached.saturating_add(meter["cacheReadTokens"].as_u64().unwrap_or(0));
+        written=written.saturating_add(meter["cacheWriteTokens"].as_u64().unwrap_or(0));
+    }
+    if samples<3||calls<3||total<1024||cached.saturating_add(written)>total {
+        return Some((baseline,0));
+    }
+    // Underpriced cache writes are particularly harmful: a missing cache
+    // tariff is a route-price gap, not permission to assume free writes.
+    if (cached>0&&price.cached.is_none())||(written>0&&price.write.is_none()) {
+        return None;
+    }
+    let weight=0.7;
+    let read_ratio=weight*cached as f64/total as f64;
+    let write_ratio=weight*written as f64/total as f64;
+    let base_ratio=(1.0-read_ratio-write_ratio).max(0.0);
+    let predicted_input=input as f64*(base_ratio*price.input+
+        read_ratio*price.cached.unwrap_or(price.input)+
+        write_ratio*price.write.unwrap_or(price.input))/1_000_000.0;
+    let projected=predicted_input+price.output*output as f64/1_000_000.0;
+    if !projected.is_finite() {return None;}
+    Some((projected,calls))
+}
+
 /// A provider profile is immutable for a native job once selected.
 pub(crate) fn binding(route:&Route)->String {
     let credential=format!("{:x}",Sha256::digest(route.api_key.as_bytes()));
@@ -76,7 +127,7 @@ pub(crate) fn choose(
     let input=crate::engine::chat::estimate_text_tokens(&format!(
         "{task}\n{owner_instructions}")).saturating_add(1024).max(1024);
     let output=2048u64;
-    let mut candidates=Vec::<(Route,f64,f64,Value)>::new();
+    let mut candidates=Vec::<(Route,f64,f64,Value,u64)>::new();
     for profile in state.store.all("provider") {
         let Some(q)=valid_quality(&profile["nativeRouting"]["quality"]) else{continue};
         if q<min_quality {continue;}
@@ -91,23 +142,24 @@ pub(crate) fn choose(
         }
         if !route.local && route.api_key.is_empty(){continue;}
         if route.context_tokens.is_some_and(|cap|cap<input.saturating_add(output)){continue;}
-        let estimated=estimate(price,input,output);
-        candidates.push((route,q,estimated,profile["nativeRouting"].clone()));
+        let Some((estimated,history_calls))=estimate_with_history(
+            state,&route,price,input,output) else {continue;};
+        candidates.push((route,q,estimated,profile["nativeRouting"].clone(),history_calls));
     }
     if candidates.is_empty() {
         return Err(format!(
             "Quality-cost route unavailable: no active native provider has declared quality >= {min_quality:.2}, a matching model and explicit KRW input/output tariffs. Configure Model Settings or choose the default route."
         ));
     }
-    let best_quality=candidates.iter().map(|(_,q,_,_)|*q).fold(0.0,f64::max);
+    let best_quality=candidates.iter().map(|(_,q,_,_,_)|*q).fold(0.0,f64::max);
     let floor=min_quality.max(best_quality-max_drop);
-    candidates.retain(|(_,q,_,_)|*q+1e-10>=floor);
+    candidates.retain(|(_,q,_,_,_)|*q+1e-10>=floor);
     candidates.sort_by(|left,right|left.2.total_cmp(&right.2)
         .then_with(||right.1.total_cmp(&left.1))
         .then_with(||left.0.id.cmp(&right.0.id))
         .then_with(||left.0.model.cmp(&right.0.model)));
     let count=candidates.len();
-    let (route,q,cost,profile)=candidates.remove(0);
+    let (route,q,cost,profile,history_calls)=candidates.remove(0);
     let decision=json!({
         "mode":"quality_cost","reason":"quality_floor_then_estimated_price",
         "minimumQuality":min_quality,"maximumQualityDrop":max_drop,
@@ -115,6 +167,8 @@ pub(crate) fn choose(
         "selectedQuality":q,"qualifiedCandidates":count,
         "estimateInputTokens":input,"estimateOutputTokens":output,
         "estimatedPerTurnKRW":cost,"estimatedSavings":false,
+        "observedCacheCallsUsed":history_calls,
+        "cacheForecastDiscountWeight":if history_calls>0 {0.7}else{0.0},
         "qualityIsOwnerDeclared":true,"pricesAreOwnerConfigured":true,
     });
     let record=route_record(&route,decision,&profile);
@@ -214,6 +268,34 @@ mod tests {
         let (two,_)=choose(&s,"",None,&json!({"mode":"quality_cost"}),"inspect","").unwrap();
         assert_eq!(one.id,"priced_a");
         assert_eq!(one.id,two.id);
+    }
+    #[test]
+    fn native_route_price_uses_sufficient_verified_cache_history_without_discarding_quality_floor() {
+        let s=state();
+        add(&s,"base",Some(0.90),Some(1000.0),0.0);
+        add(&s,"cached",Some(0.92),Some(2000.0),0.0);
+        let cached=gateway::resolve(&s,"cached",None).unwrap();
+        let r=binding(&cached);
+        let policy=json!({"mode":"quality_cost","minQuality":0.8,"maxQualityDrop":0.1});
+        assert_eq!(choose(&s,"",None,&policy,"inspect","").unwrap().0.id,"base");
+        // One older/unknown usage run never establishes a reliable hit rate.
+        for index in 0..2 {
+            s.store.put("job",&json!({"id":format!("observed-{index}"),
+                "status":"completed","nativeRoute":{"binding":r},
+                "nativeModelUsage":{"cacheReportedCalls":1,"unreportedCalls":0,
+                    "inputTokens":10000,"cacheReadTokens":8000,"cacheWriteTokens":0}}));
+        }
+        assert_eq!(choose(&s,"",None,&policy,"inspect","").unwrap().0.id,"base");
+        s.store.put("job",&json!({"id":"observed-3",
+            "status":"completed","nativeRoute":{"binding":r},
+            "nativeModelUsage":{"cacheReportedCalls":1,"unreportedCalls":0,
+                "inputTokens":10000,"cacheReadTokens":8000,"cacheWriteTokens":0}}));
+        let (selected,report)=choose(&s,"",None,&policy,"inspect","").unwrap();
+        assert_eq!(selected.id,"cached");
+        assert_eq!(report["selection"]["observedCacheCallsUsed"],3);
+        // A different route's cache receipts may not inflate this model's history.
+        let separate=gateway::resolve(&s,"base",None).unwrap();
+        assert_ne!(binding(&separate),binding(&cached));
     }
     #[test]
     fn native_price_is_measured_cache_aware_and_unpriced_usage_is_unknown() {
