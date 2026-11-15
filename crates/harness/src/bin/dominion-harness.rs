@@ -1,9 +1,8 @@
 //! Native Rust SDK executable entry point. TypeScript is not required.
 use dominion_harness::openai::OpenAiProvider;
-use dominion_harness::sdk::{AgentSdk, FileJournal, RunStatus, Session, Verification, Verifier};
+use dominion_harness::sdk::{AgentSdk, CommandVerifier, FileJournal, RunStatus, Session};
 use dominion_harness::tools::{ListDir, ReadFile, Shell, Workspace, WriteFile};
 use dominion_harness::{Decision, Limits, Permission, Policy, Tool, ToolSpec};
-use serde_json::{json, Value};
 use std::path::PathBuf;
 
 struct CliPolicy { allow_write: bool, allow_shell: bool }
@@ -14,17 +13,6 @@ impl Policy for CliPolicy {
             Permission::Write if self.allow_write => Decision::Allow,
             Permission::Execute if self.allow_shell => Decision::Allow,
             _ => Decision::Deny,
-        }
-    }
-}
-
-struct CommandVerifier { shell: Shell, command: String }
-impl Verifier for CommandVerifier {
-    fn verify(&mut self, _: &Session) -> Verification {
-        match self.shell.invoke(&json!({"command":self.command})) {
-            Ok(value) if value["exit"] == 0 => Verification::Passed,
-            Ok(value) => Verification::Retry(value.to_string()),
-            Err(error) => Verification::Retry(error),
         }
     }
 }
