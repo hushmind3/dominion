@@ -44,3 +44,45 @@ test('main React workspace delegates to native Rust endpoints',()=>{
  assert.ok(app.includes('WorkspaceSidebar'))
  assert.ok(api.includes('ServeDir::new(&root)'))
 })
+
+
+test('all active main navigation uses real native product paths',()=>{
+ const app=readFileSync(join(root,'web/src/App.tsx'),'utf8')
+ const nav=readFileSync(join(root,'web/src/components/WorkspaceShell.tsx'),'utf8')
+ const native=readFileSync(join(root,'web/src/pages/NativeWorkspace.tsx'),'utf8')
+ const api=readFileSync(join(root,'src/api.rs'),'utf8')
+ const required={
+  'NativeAgents':['/api/agents'],
+  'NativeWorkflows':['/api/workflows'],
+  'NativeSystem':['/api/providers','/api/tools'],
+  'NativeWorkspace':['/api/tasks','/api/groups','/api/videos','/api/improvements']
+ }
+ for(const [page,paths] of Object.entries(required)){
+  assert.ok(app.includes(page),'not mounted: '+page)
+  for(const route of paths)assert.ok(api.includes(route),'Rust endpoint missing: '+route)
+ }
+ assert.ok(nav.includes("id:'extensions'"),'extension navigation absent')
+ assert.ok(native.includes('/resume'),'task continuation UI is missing')
+ assert.ok(api.includes('/api/videos/:id/scenes/:index/image'),'video asset API is missing')
+})
+test('native core owns recovery, spend and workflow execution',()=>{
+ const runtime=readFileSync(join(root,'src/runtime.rs'),'utf8')
+ const engine=readFileSync(join(root,'src/engine.rs'),'utf8')
+ const workflow=readFileSync(join(root,'src/workflows.rs'),'utf8')
+ const video=readFileSync(join(root,'src/video.rs'),'utf8')
+ const migration=readFileSync(join(root,'src/legacy.rs'),'utf8')
+ const provider=readFileSync(join(root,'src/provider.rs'),'utf8')
+ assert.ok(runtime.includes('pub async fn resume('))
+ assert.ok(engine.includes('context::project(&messages,context_limit)'))
+ assert.ok(engine.includes('"task_receipt"'))
+ assert.ok(engine.includes('account_cost(&id,'))
+ assert.ok(provider.includes('cached_input_krw_per_million'))
+ assert.ok(workflow.includes('self.submit(input).await'))
+ assert.ok(workflow.includes('self.wait(&result.id'))
+ assert.ok(workflow.includes('workflow_recover'))
+ assert.ok(video.includes('set_scene_image'))
+ assert.ok(video.includes('zoompan'))
+ assert.ok(migration.includes('OpenFlags::SQLITE_OPEN_READ_ONLY'))
+ assert.ok(migration.includes('legacy_messages'))
+ assert.ok(migration.includes('INSERT OR IGNORE'))
+})
