@@ -1,4 +1,5 @@
 pub mod goal_control;
+pub mod harness_settings;
 pub mod goal_git;
 pub mod goal_changes;
 pub mod agent_diff;

@@ -141,21 +141,29 @@ test("goal poll observes durable terminal state without another agent turn", asy
   assert.equal(count,2);
 });
 
-test("plan steering, resume acknowledgement and approvals use exact APIs", async () => {
+test("owner steering, idempotent instruction, review resume and approval use the real native APIs", async () => {
   const requests = [];
   const sdk = new DominionClient({fetch: async (url,init) => {
     requests.push({path:new URL(url).pathname,method:init.method,body:JSON.parse(init.body ?? '{}')});
-    return json({id:"g",status:"running",ok:true,resolved:true});
+    return json({id:"g",goal:"Fix a regression",planRevision:3,status:"running",ok:true,resolved:true});
   }});
   await sdk.goals.steer("g","Read actual files, implement and test");
+  await sdk.goals.instruct("g","Do the post-edit test","append","owner-42");
   await sdk.goals.resume("g",true);
   await sdk.approvals.resolve("a1",true);
-  assert.deepEqual(requests.map(x => x.path),[
-    "/api/goals/g/plan","/api/goals/g/resume","/api/approvals",
+  assert.deepEqual(requests.map(x => [x.path,x.method]),[
+    ["/api/goals/g","GET"],["/api/goals/g/steer","POST"],["/api/goals/g","GET"],
+    ["/api/goals/g/steer","POST"],["/api/goals/g","GET"],
+    ["/api/goals/g/resume","POST"],["/api/approvals","POST"],
   ]);
-  assert.equal(requests[0].body.plan,"Read actual files, implement and test");
-  assert.equal(requests[1].body.acknowledgeUnknownEffects,true);
-  assert.equal(requests[2].body.allow,true);
+  assert.deepEqual(requests[1].body,{
+    plan:"Read actual files, implement and test",expectedRevision:3
+  });
+  assert.deepEqual(requests[3].body,{
+    text:"Do the post-edit test",mode:"append",requestId:"owner-42"
+  });
+  assert.equal(requests[5].body.acknowledgeUnknownEffects,true);
+  assert.equal(requests[6].body.allow,true);
 });
 
 test("thread run captures only the newly persisted assistant reply", async () => {
@@ -259,4 +267,25 @@ test("native capability negotiation is read-only and does not start a run", asyn
   assert.ok(info.capabilities.includes("native_threads"));
   assert.equal(info.semantics.runPostIdempotent, false);
   assert.equal(calls, 1);
+});
+
+test("owner harness configuration uses the same actual native API as the UI",async()=>{
+  const requests=[];
+  const sdk=new DominionClient({fetch:async(url,init)=>{
+    requests.push({path:new URL(url).pathname,method:init.method,
+      body:init.body?JSON.parse(init.body):undefined});
+    return json({id:"global",dynamicToolDiscovery:false,
+      toolSchemaBudgetBytes:8000,maxDiscoverySearches:2,maxRevealedTools:3});
+  }});
+  const current=await sdk.harness.get();
+  assert.equal(current.id,"global");
+  const updated=await sdk.harness.update({
+    dynamicToolDiscovery:false,toolSchemaBudgetBytes:8000,
+    maxDiscoverySearches:2,maxRevealedTools:3
+  });
+  assert.equal(updated.maxRevealedTools,3);
+  assert.deepEqual(requests.map(r=>[r.path,r.method]),[
+    ["/api/settings/harness","GET"],["/api/settings/harness","POST"]
+  ]);
+  assert.equal(requests[1].body.toolSchemaBudgetBytes,8000);
 });

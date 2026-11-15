@@ -5,7 +5,7 @@ import {
 import type {TransportOptions} from "./transport.js";
 import type {
   Approval, ChatEvent, ChatRequest, ChatResult, DominionRecord, EventWatchOptions,
-  Goal, GoalCreate, Job, Message, ModelSelection, RequestOptions, SdkInfo, ServerEvent,
+  Goal, GoalCreate, HarnessSettings, HarnessSettingsUpdate, Job, Message, ModelSelection, RequestOptions, SdkInfo, ServerEvent,
   Session, SessionCreate, WaitOptions,
 } from "./types.js";
 
@@ -33,6 +33,14 @@ export class DominionClient {
   readonly sdkInfo = (options?: RequestOptions) =>
     this.transport.json<SdkInfo>("/api/sdk/info", "GET", undefined, options);
 
+  /** Persistent, owner-scoped limits enforced by the Rust model-turn loop. */
+  readonly harness = {
+    get: (options?: RequestOptions) =>
+      this.transport.json<HarnessSettings>("/api/settings/harness","GET",undefined,options),
+    update: (settings: HarnessSettingsUpdate, options?: RequestOptions) =>
+      this.transport.json<HarnessSettings>("/api/settings/harness","POST",settings,options),
+  };
+
   readonly goals = {
     create: (input: GoalCreate, options?: RequestOptions) =>
       this.transport.json<Goal>("/api/goals", "POST", input, options),
@@ -42,9 +50,21 @@ export class DominionClient {
       this.transport.json<Goal>(`/api/goals/${idPart(id)}`, "GET", undefined, options),
     cancel: (id: string, options?: RequestOptions) =>
       this.transport.json<Goal>(`/api/goals/${idPart(id)}/cancel`, "POST", {}, options),
-    /** Changes the owner's plan at the next safe execution boundary. */
-    steer: (id: string, plan: string, options?: RequestOptions) =>
-      this.transport.json<Goal>(`/api/goals/${idPart(id)}/plan`, "POST", {plan}, options),
+    /** Conditional owner plan update through the same endpoint as the UI. */
+    steer: async (id: string, plan: string, options?: RequestOptions): Promise<Goal> => {
+      const current = await this.goals.get(id, options);
+      const expectedRevision = current.planRevision ?? 0;
+      await this.transport.json<unknown>(`/api/goals/${idPart(id)}/steer`, "POST",
+        {plan,expectedRevision}, options);
+      return this.goals.get(id, options);
+    },
+    /** Idempotent SDK owner instruction; no duplicate effect for the same requestId. */
+    instruct: async (id:string, text:string, mode:"append"|"replace_plan",
+      requestId:string, options?:RequestOptions):Promise<Goal> => {
+      await this.transport.json<unknown>(`/api/goals/${idPart(id)}/steer`,"POST",
+        {text,mode,requestId},options);
+      return this.goals.get(id,options);
+    },
     /** Does not conceal uncertain external effects: caller must explicitly acknowledge. */
     resume: (id: string, acknowledgeUnknownEffects: true, options?: RequestOptions) =>
       this.transport.json<Goal>(`/api/goals/${idPart(id)}/resume`, "POST", {acknowledgeUnknownEffects}, options),

@@ -26,7 +26,7 @@ pub async fn info()->Json<Value>{
             "durable_goals","goal_worktree","goal_acceptance",
             "goal_steering","review_resume","native_threads",
             "thread_steering","thread_cancellation","event_replay",
-            "mcp_tools","rsi_independent_evaluation"
+            "mcp_tools","rsi_independent_evaluation","harness_settings"
         ],
         "semantics":{
             "runPostIdempotent":false,

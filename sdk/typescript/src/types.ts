@@ -31,10 +31,21 @@ export interface Goal extends DominionRecord {
   taskId?: string;
   sessionId?: string;
   phase?: string;
+  planRevision?: number;
   iterations?: number;
   gaps?: string[];
   evidence?: unknown[];
 }
+/** Owner-tunable native Rust harness limits, applied to the next model turn. */
+export interface HarnessSettings {
+  id: "global";
+  dynamicToolDiscovery: boolean;
+  toolSchemaBudgetBytes: number;
+  maxDiscoverySearches: number;
+  maxRevealedTools: number;
+}
+export type HarnessSettingsUpdate = Omit<HarnessSettings, "id">;
+
 export interface GoalCreate {
   goal: string;
   successCriteria?: Record<string, unknown>[];

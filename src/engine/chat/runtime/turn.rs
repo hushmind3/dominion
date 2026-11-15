@@ -18,6 +18,13 @@ pub(super) async fn run_turn_body(
         .store
         .get("session", session_id)
         .ok_or("Session not found")?;
+    // Freeze the owner's execution limits at turn admission. Later edits
+    // affect the next turn; new owner instructions still steer this turn.
+    let harness_settings=crate::engine::harness_settings::current(state);
+    state.store.audit("harness.owner_profile_applied",json!({
+        "sessionId":session_id,"executionId":execution_id,
+        "settings":&harness_settings
+    }));
     let strategy_candidates = state
         .store
         .get("execution", execution_id)
@@ -257,11 +264,12 @@ pub(super) async fn run_turn_body(
         discovery_catalog.retain(|definition|
             tools::rsi_allowed(tool_name(definition)));
     }
-    let dynamic_tool_discovery = !is_room
+    let dynamic_tool_discovery = harness_settings.dynamic_tool_discovery && !is_room
         && session["rsiRun"]!=true
         && request.tools_enabled && request.tools_execution_enabled
         && !discovery_catalog.is_empty();
-    let mut revealed_tool_names=restore_revealed(state,execution_id,&discovery_catalog);
+    let mut revealed_tool_names=restore_revealed(state,execution_id,&discovery_catalog)
+        .into_iter().take(harness_settings.max_revealed_tools).collect::<std::collections::BTreeSet<_>>();
     let mut discovery_search_calls=0usize;
     let compiled = if is_room {
         let source = source_message_id.or(reply_to.as_deref()).ok_or("응답할 원문이 없습니다.")?;
@@ -795,12 +803,15 @@ pub(super) async fn run_turn_body(
                         .clamp(4_000, 60_000)
                 })
                 .unwrap_or(60_000);
+            let budget=harness_settings.schema_budget(budget);
             let source_count=round_tools.len();
             let source_bytes=round_tools.iter().map(|tool|
                 serde_json::to_string(tool).unwrap_or_default().len()).sum::<usize>();
             round_tools=if dynamic_tool_discovery {
+                let search_allowed=discovery_search_calls<harness_settings.max_discovery_searches
+                    && revealed_tool_names.len()<harness_settings.max_revealed_tools;
                 discoverable_tool_menu(&discovery_catalog,&round_tools,
-                    budget,&request.input,&recent_tool_names,&revealed_tool_names)
+                    budget,&request.input,&recent_tool_names,&revealed_tool_names,search_allowed)
             } else {
                 budgeted_tool_definitions(
                     round_tools,budget,&request.input,&recent_tool_names)
@@ -1029,6 +1040,7 @@ pub(super) async fn run_turn_body(
                 ((tokens.saturating_sub(reserve) as usize) * 4 / 2)
                     .clamp(4_000, 60_000)
             }).unwrap_or(60_000);
+            let budget=harness_settings.schema_budget(budget);
             let phase_count = round_tools.len();
             let phase_bytes = round_tools.iter().map(|definition|
                 serde_json::to_string(definition).map(|raw|raw.len())
@@ -1799,11 +1811,18 @@ pub(super) async fn run_turn_body(
                 discovery_search_calls+=1;
                 let query=arguments["query"].as_str().unwrap_or("");
                 let limit=arguments["limit"].as_u64().unwrap_or(4).clamp(1,6) as usize;
-                let (matches,names)=if discovery_search_calls<=4 {
-                    discover_tools(&discovery_catalog,query,limit,&revealed_tool_names)
+                let capacity=harness_settings.max_revealed_tools
+                    .saturating_sub(revealed_tool_names.len());
+                let (matches,names)=if discovery_search_calls<=harness_settings.max_discovery_searches
+                    && capacity>0 {
+                    discover_tools(&discovery_catalog,query,limit.min(capacity),&revealed_tool_names)
                 }else{(Vec::new(),Vec::new())};
-                for name in &names {
-                    if revealed_tool_names.len()<20 {revealed_tool_names.insert(name.clone());}
+                let mut revealed_now=Vec::new();
+                for name in names {
+                    if revealed_tool_names.len()<harness_settings.max_revealed_tools
+                        && revealed_tool_names.insert(name.clone()) {
+                        revealed_now.push(name);
+                    }
                 }
                 if let Some(mut execution)=state.store.get("execution",execution_id){
                     execution["revealedToolNames"]=json!(revealed_tool_names);
@@ -1812,8 +1831,9 @@ pub(super) async fn run_turn_body(
                         .ok_or("동적 도구 발견 상태를 저장하지 못했습니다.")?;
                 }
                 let content=json!({"query":query,"matches":matches,
-                    "revealedForNextTurn":names,
-                    "searchBudgetExhausted":discovery_search_calls>4,
+                    "revealedForNextTurn":revealed_now,
+                    "searchBudgetExhausted":discovery_search_calls>=harness_settings.max_discovery_searches
+                        || revealed_tool_names.len()>=harness_settings.max_revealed_tools,
                     "searchedAuthorizedCatalogOnly":true}).to_string();
                 let saved=state.store.write_message(&json!({
                     "session_id":session_id,"role":"tool","content":content,
@@ -1826,7 +1846,8 @@ pub(super) async fn run_turn_body(
                     "content":content}));
                 state.store.audit("harness.native_tool_discovery",json!({
                     "executionId":execution_id,"sessionId":session_id,
-                    "matched":names.len(),"attempt":discovery_search_calls,
+                    "matched":matches.len(),"newlyRevealed":revealed_now.len(),
+                    "attempt":discovery_search_calls,
                     "visibleNextTurn":revealed_tool_names.len()
                 }));
                 continue;

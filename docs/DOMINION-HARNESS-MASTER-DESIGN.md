@@ -277,3 +277,59 @@ predicate 초기 집합은 exists/equals/compare/all/any/not이다. 없는 값�
 별도로 확인할 것은 단순 대화의 불필요한 호출 증가 여부, changing-state polling과 무진전 반복의 구분, 재시작 후 프로그램 위치 복원, 경험 조건 불일치 시 재판단, 실험 결과의 다음 실행 반영이다. fixture로는 연결을, 실제 모델·새 과제로는 문제 해결과 전이를 확인한다.
 
 인계 결과는 수정한 코드·이 실행 trace·검사 결과·남은 항목으로 제출하라. 후보 저장/문구 주입만 하고 엔진 동작이 그대로면 구현 미완료다.
+
+## 2026-11-15: User-owned runtime policy and deferred schema execution
+
+Native execution route:
+`AutonomousGoalsPage / TypeScript SDK / Rust SDK` →
+`/api/settings/harness` → SQLite `harness_settings:global` →
+`src/engine/chat/runtime/turn.rs` →
+`tool_selection.rs / tool_discovery.rs` → actual authorized native/MCP
+dispatcher → persisted audit and tool receipts → completion verifier.
+
+The Rust model step freezes a validated owner policy. New owner directions
+retain their existing safe-boundary steering semantics. User budget tuning
+only tightens provider schema limits; it cannot bypass approval, read-only
+delegation, or RSI allowed-tool filtering. Explicitly discovered schemas are
+budget-reserved for the next round. The on-demand search tool is removed
+when its call or reveal cap is reached, while actual permitted discovered
+tools remain visible. Error cases and parameter bounds are covered by Rust
+tests and first-party SDK contract tests.
+
+Comparative source analysis (2026-11-15):
+- OpenAI Codex `codex-rs/core/src/tools/router.rs`: turn-scoped normalized
+  names, deferred exposure, and execution scope. Dominion borrows the
+  **separation** of tool advertisement and executable permission, not its
+  SDK or model vendor decision policy.
+- OpenHands `software-agent-sdk` / Agent Canvas: separate stateful server,
+  UI, events and session API; Dominion retains its native Rust state owner.
+- ByteDance DeerFlow 2.0: persistent runs with interrupt ownership,
+  deferred skill loading, sandbox providers and delegated tasks; compare
+  durable lifecycle against Dominion's existing jobs/session ledger.
+- AgentScope, Qwen-Agent: independently composed ReAct/model/tool layers,
+  resumable state and batched tool calls; Dominion keeps Rust dispatch and
+  independent evidence gates while varying model backends.
+- LangChain DeepAgents: subagent context isolation and tool-result
+  offloading; opportunities are evaluated against real token cost.
+
+Performance claims require actual instrumented model runs, official
+SWE-bench Verified and replayed task traces; a passing contract test
+does not establish frontier-level task success.
+
+### Native SDK goal steering compatibility repair
+
+The public Rust/TypeScript clients previously sent `/api/goals/:id/plan`
+although the Rust HTTP router only registered
+`POST /api/goals/:id/steer` (versioned `plan + expectedRevision`).
+The obsolete SDK path was covered by a matching synthetic mock, not a real
+server. Both SDKs now use the registered endpoint, GET the current revision
+before the conditional POST, and return a full persisted Goal after the ACK.
+No failed POST is automatically retried.
+
+The same endpoint additionally accepts an authenticated
+`text + mode + requestId` shape for user instruction append/replace.
+`goal_steering::submit_instruction` atomically commits a bounded,
+SHA-bound owner request receipt with the plan revision: repeating an identical
+request ID does not enqueue a duplicate correction; a conflicting replay is
+rejected. The normal UI plan revision pathway is unchanged.
+

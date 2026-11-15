@@ -692,3 +692,47 @@ The goal engine is a working, owner-controlled pipeline, not a screenshot-only s
 - **검증 오류 수정:** 소스 변경·테스트 순서는 증거 배열 순서가 아니라 실행별 `opSeq` 순서가 우선입니다. 실제 CI에서 917/918 통과 후 남은 잘못된 테스트 기댓값을 바로잡고, 후행 수정 반례를 추가했습니다. 코드 탐색 테스트는 문자열 자르기 자체 검증 대신 실제 파일 인덱스 검증으로 교체했습니다.
 - CI 및 최신 브랜치 증거: [Champion PR #11](https://github.com/hushmind3/dominion-rust/pull/11). 실모델 SWE-bench 성과는 별도 검증 대상으로 남깁니다.
 
+### 2026-11-15: Native owner-configured harness control plane
+
+A full turn starts in Rust `src/engine/chat/runtime/turn.rs`; the
+`src/engine/harness_settings.rs` snapshot is loaded there and audited as
+`harness.owner_profile_applied`. The same owner fields are read/written at
+`GET/POST /api/settings/harness`, displayed under Autonomous Goals, and used
+by the public TypeScript `sdk.harness.get/update` and Rust
+`DominionClient::harness_settings/set_harness_settings` methods.
+
+- `dynamicToolDiscovery` defaults to true; it only searches tools in the
+  current permission-scoped catalog, never installs or executes anything.
+- `toolSchemaBudgetBytes` 4,000–60,000 is a hard **upper ceiling** alongside
+  the existing provider-aware limit, not a permit to use more context.
+- `maxDiscoverySearches` 1–12; `maxRevealedTools` 1–20 bound per-turn
+  discovery and prevent ever-growing tool schemas. Once exhausted, the
+  search tool disappears from the menu without hiding previously revealed
+  authorized tools. Search receipts list only tools actually revealed.
+- Previously revealed capabilities are reserved before ordinary schema
+  ranking: a newly discovered relevant tool cannot disappear immediately
+  in a later provider call solely because other definitions scored higher.
+- Owner changes affect the **next** model turn, do not relax approvals,
+  isolation, cancellation, independent verification or goal token ceilings.
+  Native RSI/room-specific tool restrictions still apply.
+- Native Rust tests cover malformed settings and tool-menu priority. Both
+  SDKs include endpoint request tests. The web UI uses the identical endpoint.
+
+### Native SDK goal steering compatibility repair
+
+The public Rust/TypeScript clients previously sent `/api/goals/:id/plan`
+although the Rust HTTP router only registered
+`POST /api/goals/:id/steer` (versioned `plan + expectedRevision`).
+The obsolete SDK path was covered by a matching synthetic mock, not a real
+server. Both SDKs now use the registered endpoint, GET the current revision
+before the conditional POST, and return a full persisted Goal after the ACK.
+No failed POST is automatically retried.
+
+The same endpoint additionally accepts an authenticated
+`text + mode + requestId` shape for user instruction append/replace.
+`goal_steering::submit_instruction` atomically commits a bounded,
+SHA-bound owner request receipt with the plan revision: repeating an identical
+request ID does not enqueue a duplicate correction; a conflicting replay is
+rejected. The normal UI plan revision pathway is unchanged.
+- Source hygiene also blocks the old SDK-only `/api/goals/:id/plan` endpoint, which never matched the native server router.
+- 자율 목표 UI에도 SDK의 `requireTests`·`tokenBudget`를 동일한 요청 필드로 노출했습니다. 소스 작업의 실제 테스트 증거를 기본 요구하며 사용자 선택으로 끌 수 있습니다. 목표 총토큰 상한은 1,000–2,000,000 범위를 검증하고 Rust 엔진 전체 하위 실행에 적용합니다.

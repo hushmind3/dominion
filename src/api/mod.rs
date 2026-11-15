@@ -79,6 +79,8 @@ pub fn router(state: AppState) -> Router {
             "/api/settings/owner-profile",
             get(settings::owner_profile).post(settings::save_owner_profile),
         )
+        .route("/api/settings/harness",
+            get(settings::harness_settings).post(settings::save_harness_settings))
         .route("/api/attachments", post(attachments::upload))
         .route("/api/attachments/:id/content", get(attachments::content))
         .route("/api/events", get(system::events))

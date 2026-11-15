@@ -107,18 +107,35 @@ pub async fn resume_goal(
 /// Versioned steering; edits become effective at a safe executor turn boundary.
 pub async fn steer_goal(State(state):State<AppState>,Path(id):Path<String>,
     Json(body):Json<Value>)->Response {
-    if body.as_object().is_none_or(|fields|fields.len()!=2||
-        !fields.contains_key("expectedRevision")||!fields.contains_key("plan")){
-        return error(StatusCode::BAD_REQUEST,"plan과 expectedRevision만 지정하세요.");
-    }
-    let Some(revision)=body["expectedRevision"].as_u64() else{
-        return error(StatusCode::BAD_REQUEST,"expectedRevision은 정수여야 합니다.");
+    use crate::engine::goal_steering::{submit,submit_instruction,SteeringError};
+    // Both first-party SDKs share the same native endpoint as the UI.
+    // Versioned plan replacement: {plan,expectedRevision}
+    // Idempotent owner directive: {text,mode,requestId}
+    let result=match body.as_object(){
+        Some(fields) if fields.len()==2
+            && fields.contains_key("expectedRevision")&&fields.contains_key("plan")=>{
+            let Some(revision)=body["expectedRevision"].as_u64() else{
+                return error(StatusCode::BAD_REQUEST,"expectedRevision은 정수여야 합니다.");
+            };
+            let Some(plan)=body["plan"].as_str() else{
+                return error(StatusCode::BAD_REQUEST,"plan은 문자열이어야 합니다.");
+            };
+            submit(&state,&id,revision,plan)
+        },
+        Some(fields) if fields.len()==3
+            && fields.contains_key("text")&&fields.contains_key("mode")
+            && fields.contains_key("requestId")=>{
+            let (Some(text),Some(mode),Some(request_id))=(
+                body["text"].as_str(),body["mode"].as_str(),body["requestId"].as_str()
+            )else{
+                return error(StatusCode::BAD_REQUEST,"text, mode, requestId는 문자열이어야 합니다.");
+            };
+            submit_instruction(&state,&id,text,mode,request_id)
+        },
+        _=>return error(StatusCode::BAD_REQUEST,
+            "plan+expectedRevision 또는 text+mode+requestId가 필요합니다."),
     };
-    let Some(plan)=body["plan"].as_str() else{
-        return error(StatusCode::BAD_REQUEST,"plan은 문자열이어야 합니다.");
-    };
-    use crate::engine::goal_steering::{submit,SteeringError};
-    match submit(&state,&id,revision,plan){
+    match result{
         Ok(value)=>Json(value).into_response(),
         Err(SteeringError::Missing)=>error(StatusCode::NOT_FOUND,"목표가 없습니다."),
         Err(SteeringError::Immutable)=>error(StatusCode::CONFLICT,"종료된 목표는 수정할 수 없습니다."),

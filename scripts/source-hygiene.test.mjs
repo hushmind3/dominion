@@ -40,6 +40,11 @@ test('static source-contract tests fail before the obsolete file reaches cargo',
   assert.ok(errors.some(e=>e.includes('stale reference to deleted source')))
   assert.ok(errors.some(e=>e.includes('static repository source loader targets missing file')))
 })
+test('old synthetic SDK plan endpoint is blocked, even with a passing mock',()=>{
+  const errors=check({'sdk/typescript/src/client.ts':
+    'const p="/api/goals/" + id + "/plan";'});
+  assert.ok(errors.some(e=>e.includes('deleted /api/goals/:id/plan')));
+})
 test('broken Rust explicit path attribute is reported, not ignored',()=>{
   const errors=check({'src/engine/goals/mod.rs':'#[path="missing.rs"]\nmod runner;\n'})
   assert.ok(errors.some(e=>e.includes('#[path] module target missing')))

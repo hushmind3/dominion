@@ -101,6 +101,14 @@ impl DominionClient {
         self.json(Method::GET, &["sdk", "info"], None).await
     }
 
+    /// Owner-controlled Rust harness policy, shared with the UI and TypeScript SDK.
+    pub async fn harness_settings(&self) -> Result<Value> {
+        self.json(Method::GET,&["settings","harness"],None).await
+    }
+    pub async fn set_harness_settings(&self,settings:Value)->Result<Value> {
+        self.json(Method::POST,&["settings","harness"],Some(settings)).await
+    }
+
     pub(crate) async fn open_chat_stream(&self, body: ChatRequest) -> Result<Response> {
         let req = self.request(true, Method::POST, self.api_url(&["chat"])?).json(&body);
         let response = Self::checked_response(req.send().await?).await?;
@@ -156,18 +164,27 @@ impl DominionClient {
     pub async fn cancel_goal(&self, id: &str) -> Result<Goal> {
         self.json(Method::POST, &["goals", id, "cancel"], Some(json!({}))).await
     }
+    /// Optimistic plan steering: read the actual revision, send one native
+    /// conditional update, then retrieve the complete persisted goal record.
     pub async fn steer_goal(&self, id: &str, plan: &str) -> Result<Goal> {
-        self.json(Method::POST, &["goals", id, "plan"], Some(json!({"plan":plan}))).await
+        let current=self.goal(id).await?;
+        let revision=current.extra.get("planRevision").and_then(Value::as_u64).unwrap_or(0);
+        let _:Value=self.json(Method::POST,&["goals",id,"steer"],
+            Some(json!({"plan":plan,"expectedRevision":revision}))).await?;
+        self.goal(id).await
     }
     /// Durable next-step owner input. Supply a stable request ID so a caller
     /// can safely retry an ambiguous network timeout without duplicate work.
     pub async fn direct_goal(
         &self, id:&str, text:&str, replace_plan:bool, request_id:&str,
     )->Result<Goal>{
-        self.json(Method::POST,&["goals",id,"steer"],Some(json!({
-            "text":text,"mode":if replace_plan{"replace"}else{"append"},
+        // The server returns a steering receipt, not the full Goal. Read the
+        // persisted record after its single idempotent POST.
+        let _:Value=self.json(Method::POST,&["goals",id,"steer"],Some(json!({
+            "text":text,"mode":if replace_plan{"replace_plan"}else{"append"},
             "requestId":request_id,
-        }))).await
+        }))).await?;
+        self.goal(id).await
     }
     /// The server requires the owner's explicit acknowledgement of unknown
     /// side effects, and only resumes a review-pending/failed goal.

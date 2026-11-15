@@ -3,6 +3,10 @@ use axum::{extract::{State},http::StatusCode,response::{IntoResponse,Response},J
 use serde_json::{json,Value};
 use super::response::error;
 
+#[path="settings/harness.rs"]
+mod harness;
+pub use harness::{get as harness_settings,save as save_harness_settings};
+
 pub async fn assistant_settings(State(state): State<AppState>) -> Json<Value> {
     Json(
         state

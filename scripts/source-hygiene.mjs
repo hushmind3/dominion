@@ -54,6 +54,13 @@ export function auditSourceHygiene(root, suppliedPaths) {
     const isHygieneSelf=file.endsWith('/source-hygiene.mjs')
     const body=readFileSync(path.join(root,file),'utf8')
     if (!isHygieneTest && !isHygieneSelf) {
+      // Old SDK mocks once covered an HTTP endpoint the Rust server never
+      // provided. Do not let a route rename revive that stale contract.
+      if ((file.startsWith('sdk/')||file.startsWith('web/')) &&
+          (/\/api\/goals\/[^\s"'\x60]*\/plan|\["goals",\s*id,\s*"plan"\]/.test(body)
+            || (body.includes('"/api/goals/"')&&body.includes('"/plan"')))) {
+        push(file,'SDK still targets deleted /api/goals/:id/plan; use native /steer');
+      }
       for (const retired of RETIRED_ENTRYPOINTS) {
         if (body.includes(retired)) push(file,'stale reference to deleted source: '+retired)
       }

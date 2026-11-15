@@ -38,7 +38,8 @@ pub(super) fn restore_revealed(state:&AppState,execution_id:&str,
 /// A newly discovered tool can be shown only after a search call completes.
 /// Current-model-turn tools remain the definitive execution allowlist.
 pub(super) fn menu(catalog:&[Value],initial:&[Value],budget:usize,
-    query:&str,recent:&HashSet<String>,revealed:&BTreeSet<String>)->Vec<Value>{
+    query:&str,recent:&HashSet<String>,revealed:&BTreeSet<String>,
+    search_enabled:bool)->Vec<Value>{
     if catalog.is_empty(){return Vec::new()}
     let initial_names=initial.iter().map(tool_name).collect::<HashSet<_>>();
     let hidden=catalog.iter().any(|definition|
@@ -49,24 +50,31 @@ pub(super) fn menu(catalog:&[Value],initial:&[Value],budget:usize,
         return initial.to_vec();
     }
     let search=search_definition();
-    let search_bytes=schema_bytes(&search);
-    if search_bytes>=budget{
+    let search_bytes=if search_enabled {schema_bytes(&search)}else{0};
+    if search_enabled&&search_bytes>=budget{
         return budgeted_tool_definitions(initial.to_vec(),budget,query,recent);
     }
-    // Keep the original initial menu plus previously discovered schemas;
-    // never iterate unrelated catalog entries merely because they fit.
-    let mut eligible=Vec::<Value>::new();
+    // Reserve bytes for explicitly discovered schemas first. Sorting the
+    // candidates is insufficient because a secondary ranker may evict them.
+    // Never advertise a tool absent from today's permission-scoped catalog.
+    let mut capacity=budget-search_bytes;
+    let mut selected=Vec::<Value>::new();
+    let mut ordinary=Vec::<Value>::new();
     for definition in catalog {
         let name=tool_name(definition);
-        if !name.is_empty()&&(initial_names.contains(name)||revealed.contains(name)){
-            eligible.push(definition.clone());
+        if name.is_empty(){continue;}
+        if revealed.contains(name) {
+            let size=schema_bytes(definition);
+            if size<=capacity {
+                capacity-=size;
+                selected.push(definition.clone());
+            }
+        }else if initial_names.contains(name) {
+            ordinary.push(definition.clone());
         }
     }
-    // A revealed function must outrank optional, never-searched candidates.
-    // Native coding-chain preservation still takes precedence when possible.
-    eligible.sort_by_key(|definition| !revealed.contains(tool_name(definition)));
-    let mut selected=budgeted_tool_definitions(eligible,budget-search_bytes,query,recent);
-    selected.push(search);
+    selected.extend(budgeted_tool_definitions(ordinary,capacity,query,recent));
+    if search_enabled {selected.push(search);}
     selected
 }
 
@@ -155,7 +163,7 @@ mod tests{
         let catalog=vec![def("workspace_read",10),def("mcp__github__create_pr",50)];
         let initial=vec![catalog[0].clone()];
         let first=menu(&catalog,&initial,2048,"read file",
-            &HashSet::new(),&BTreeSet::new());
+            &HashSet::new(),&BTreeSet::new(),true);
         assert!(first.iter().any(|row|tool_name(row)==TOOL_SEARCH_NAME));
         assert!(!first.iter().any(|row|tool_name(row)=="mcp__github__create_pr"));
         let (results,names)=search(&catalog,"깃허브 github pull",3,&BTreeSet::new());
@@ -163,7 +171,7 @@ mod tests{
         assert!(names.contains(&"mcp__github__create_pr".to_string()));
         let revealed=BTreeSet::from(["mcp__github__create_pr".to_string()]);
         let next=menu(&catalog,&initial,2048,"read file",
-            &HashSet::new(),&revealed);
+            &HashSet::new(),&revealed,true);
         assert!(next.iter().any(|row|tool_name(row)=="mcp__github__create_pr"));
     }
     #[test]
@@ -177,14 +185,32 @@ mod tests{
     fn tiny_provider_budget_never_overflows_with_discovery(){
         let catalog=vec![def("workspace_read",50),def("hidden_mcp",1000)];
         let offered=menu(&catalog,&catalog[..1],128,"read file",
-            &HashSet::new(),&BTreeSet::new());
+            &HashSet::new(),&BTreeSet::new(),true);
         assert!(offered.iter().map(schema_bytes).sum::<usize>()<=128);
+    }
+    #[test]
+    fn revealed_tool_survives_ranking_and_tight_schema_budget(){
+        let expensive=def("workspace_read",1200);
+        let discovered=def("mcp__github__create_pull_request",40);
+        let catalog=vec![expensive.clone(),discovered.clone()];
+        let budget=schema_bytes(&discovered)+schema_bytes(&search_definition())+4;
+        let revealed=BTreeSet::from(["mcp__github__create_pull_request".to_owned()]);
+        let next=menu(&catalog,&[expensive],budget,"read files",
+            &HashSet::new(),&revealed,true);
+        assert!(next.iter().any(|tool|tool_name(tool)==
+            "mcp__github__create_pull_request"));
+        assert!(next.iter().map(schema_bytes).sum::<usize>()<=budget);
+        let exhausted=menu(&catalog,&[],budget,"read files",
+            &HashSet::new(),&revealed,false);
+        assert!(exhausted.iter().any(|tool|tool_name(tool)==
+            "mcp__github__create_pull_request"));
+        assert!(!exhausted.iter().any(|tool|tool_name(tool)==TOOL_SEARCH_NAME));
     }
     #[test]
     fn full_small_catalog_does_not_waste_search_schema(){
         let catalog=vec![def("workspace_read",10),def("workspace_diff",10)];
         let selected=menu(&catalog,&catalog,2048,"inspect code",
-            &HashSet::new(),&BTreeSet::new());
+            &HashSet::new(),&BTreeSet::new(),true);
         assert_eq!(selected,catalog);
     }
 }

@@ -37,6 +37,11 @@ fn sse(items: Vec<Event>) -> Sse<impl futures_util::Stream<Item = Result<Event, 
 #[tokio::test]
 async fn rust_goal_api_is_typed_and_authorized_and_can_be_steered() {
     let app = Router::new()
+        .route("/api/goals/:id", get(|Path(id):Path<String>| async move {
+            assert_eq!(id,"g1");
+            Json(json!({"id":"g1","goal":"Fix a regression","status":"running",
+                "planRevision":0}))
+        }))
         .route("/api/goals", post(|headers: HeaderMap, Json(body): Json<Value>| async move {
             assert_eq!(headers.get("x-dominion-token").unwrap(), "secret");
             assert_eq!(body["goal"], "Fix a regression");
@@ -45,17 +50,17 @@ async fn rust_goal_api_is_typed_and_authorized_and_can_be_steered() {
             assert_eq!(body["isolateWorktree"], true);
             Json(goal("g1", "queued"))
         }))
-        .route("/api/goals/:id/plan", post(|Path(id): Path<String>, Json(body): Json<Value>| async move {
-            assert_eq!(id, "g1");
-            assert_eq!(body["plan"], "Read files, patch, then test");
-            Json(goal("g1", "running"))
-        }))
         .route("/api/goals/:id/steer", post(|Path(id): Path<String>, Json(body): Json<Value>| async move {
             assert_eq!(id, "g1");
-            assert_eq!(body["text"], "Add a regression check");
-            assert_eq!(body["mode"], "append");
-            assert_eq!(body["requestId"], "instruction-42");
-            Json(goal("g1", "running"))
+            if body.get("plan").is_some(){
+                assert_eq!(body["plan"],"Read files, patch, then test");
+                assert_eq!(body["expectedRevision"],0);
+            }else{
+                assert_eq!(body["text"],"Add a regression check");
+                assert_eq!(body["mode"],"append");
+                assert_eq!(body["requestId"],"instruction-42");
+            }
+            Json(json!({"id":"g1","planRevision":1,"status":"pending_application"}))
         }))
         .route("/api/goals/:id/cancel", post(|Path(id): Path<String>| async move {
             assert_eq!(id, "g1");
@@ -330,5 +335,33 @@ async fn rust_sdk_capability_discovery_is_get_only() {
     assert_eq!(info["apiVersion"],1);
     assert_eq!(info["semantics"]["runPostIdempotent"],false);
     assert_eq!(info["capabilities"][0],"native_threads");
+    handle.abort();
+}
+
+#[tokio::test]
+async fn rust_sdk_configures_real_owner_harness_limits_through_native_api() {
+    let app=Router::new().route("/api/settings/harness",
+        get(|| async {
+            Json(json!({"id":"global","dynamicToolDiscovery":true,
+                "toolSchemaBudgetBytes":60000,"maxDiscoverySearches":4,
+                "maxRevealedTools":20}))
+        }).post(|headers:HeaderMap,Json(body):Json<Value>|async move {
+            assert_eq!(headers.get("x-dominion-token").unwrap(),"secret");
+            assert_eq!(body["toolSchemaBudgetBytes"],8000);
+            assert_eq!(body["maxDiscoverySearches"],2);
+            Json(json!({"id":"global","dynamicToolDiscovery":false,
+                "toolSchemaBudgetBytes":8000,"maxDiscoverySearches":2,
+                "maxRevealedTools":3}))
+        }));
+    let (base,handle)=serve(app).await;
+    let sdk=DominionClient::new(&base).unwrap()
+        .with_admin_token("secret").unwrap();
+    let current=sdk.harness_settings().await.unwrap();
+    assert_eq!(current["toolSchemaBudgetBytes"],60000);
+    let updated=sdk.set_harness_settings(json!({
+        "dynamicToolDiscovery":false,"toolSchemaBudgetBytes":8000,
+        "maxDiscoverySearches":2,"maxRevealedTools":3
+    })).await.unwrap();
+    assert_eq!(updated["maxRevealedTools"],3);
     handle.abort();
 }

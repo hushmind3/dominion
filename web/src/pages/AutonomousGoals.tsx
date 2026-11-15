@@ -5,6 +5,10 @@ import {Button,TextArea} from '../components/Primitives'
 import {Headline,Notice,useRemote} from '../components/UI'
 import {StatusPill} from '../components/StatusPill'
 
+type HarnessSettings={id:string;dynamicToolDiscovery:boolean;toolSchemaBudgetBytes:number;
+ maxDiscoverySearches:number;maxRevealedTools:number}
+const defaultHarness:HarnessSettings={id:'global',dynamicToolDiscovery:true,
+ toolSchemaBudgetBytes:60000,maxDiscoverySearches:4,maxRevealedTools:20}
 type Artifact={path:string;sha256:string;bytes:number;sourceTool:string}
 type Goal={id:string;goal:string;status:string;phase?:string;plan?:string;error?:string;
  planRevision?:number;appliedPlanRevision?:number;ownerPlan?:{revision:number;plan:string};
@@ -24,9 +28,14 @@ type Job={id:string;kind:string;status:string;error?:string;input?:{goalId?:stri
 const active=(status:string)=>status==='queued'||status==='running'
 export function AutonomousGoalsPage({openSession}:{openSession:(id:string)=>void}){
  const goals=useRemote<Goal[]>('/api/goals',[])
+ const harness=useRemote<HarnessSettings>('/api/settings/harness',defaultHarness)
+ const [harnessDraft,setHarnessDraft]=useState<HarnessSettings>(defaultHarness)
+ useEffect(()=>setHarnessDraft(harness.value),[harness.value])
  const jobs=useRemote<Job[]>('/api/jobs',[])
  const [objective,setObjective]=useState('')
  const [isolate,setIsolate]=useState(true)
+ const [requireTests,setRequireTests]=useState(true)
+ const [goalTokenBudget,setGoalTokenBudget]=useState(150000)
  const [drafts,setDrafts]=useState<Record<string,string>>({})
  const [diffs,setDiffs]=useState<Record<string,GoalDiff>>({})
  const [shared,setShared]=useState<Record<string,SharedChanges>>({})
@@ -40,11 +49,28 @@ export function AutonomousGoalsPage({openSession}:{openSession:(id:string)=>void
   },6000)
   return ()=>window.clearInterval(timer)
  },[goals.value,goals.reload,jobs.reload])
+ const saveHarness=async()=>{
+  if(busy)return
+  setBusy('harness');setError('');setNotice('')
+  try{
+   await post('/api/settings/harness',{
+    dynamicToolDiscovery:harnessDraft.dynamicToolDiscovery,
+    toolSchemaBudgetBytes:harnessDraft.toolSchemaBudgetBytes,
+    maxDiscoverySearches:harnessDraft.maxDiscoverySearches,
+    maxRevealedTools:harnessDraft.maxRevealedTools
+   })
+   await harness.reload()
+   setNotice('Rust 하네스 설정이 저장됐습니다. 다음 모델 턴부터 적용됩니다.')
+  }catch(e){setError((e as Error).message)}finally{setBusy('')}
+ }
  const create=async()=>{
-  if(!objective.trim()||busy)return
+  if(!objective.trim()||busy||!Number.isInteger(goalTokenBudget)
+  ||goalTokenBudget<1000||goalTokenBudget>2000000)return
   setBusy('new');setError('');setNotice('')
   try{
-   const created=await post<Goal>('/api/goals',{goal:objective.trim(),isolateWorktree:isolate})
+   const created=await post<Goal>('/api/goals',{
+    goal:objective.trim(),isolateWorktree:isolate,requireTests,tokenBudget:goalTokenBudget
+   })
    setObjective('');setNotice('자율 작업을 등록했습니다. 계획부터 실행·검증까지 작업 기록에 남습니다.')
    await reload()
    if(created.sessionId)openSession(created.sessionId)
@@ -150,12 +176,51 @@ export function AutonomousGoalsPage({openSession}:{openSession:(id:string)=>void
      <input type="checkbox" checked={isolate} onChange={event=>setIsolate(event.target.checked)}
       className="size-4 accent-[#C96442]"/> Git 프로젝트를 독립 작업공간에서 수정
     </label>
+    <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-[#524941]">
+     <input type="checkbox" checked={requireTests}
+      onChange={event=>setRequireTests(event.target.checked)}
+      className="size-4 accent-[#C96442]"/> 소스 수정 후 실제 빌드·테스트 증거 필수
+    </label>
+    <label className="flex items-center gap-2 text-xs text-[#524941]">
+     목표 총토큰 상한
+     <input type="number" min={1000} max={2000000} step={1000}
+      value={goalTokenBudget} onChange={event=>setGoalTokenBudget(Number(event.target.value))}
+      className="w-32 rounded-lg border border-[#E7E0D5] bg-white px-2 py-1 text-sm"/>
+    </label>
     <p className="text-xs text-[#7C7469]">Git 격리는 원본을 보호합니다. OS 샌드박스는 아닙니다. 명령 실행은 승인을 따릅니다.</p>
-    <Button variant="primary" disabled={busy!==''||!objective.trim()} onClick={()=>void create()}>
+    <Button variant="primary" disabled={busy!==''||!objective.trim()||!Number.isInteger(goalTokenBudget)
+     ||goalTokenBudget<1000||goalTokenBudget>2000000} onClick={()=>void create()}>
      {busy==='new'?<LoaderCircle size={15} className="animate-spin"/>:<Send size={15}/>} 작업 시작
     </Button>
    </div>
   </section>
+  <details className="mb-4 rounded-2xl border border-[#E7E0D5] bg-white p-5">
+   <summary className="cursor-pointer text-sm font-semibold">⚙️ Rust 하네스 실행 설정 · 도구 발견 및 예산</summary>
+   <p className="mt-2 text-xs text-[#7C7469]">일반 에이전트 모델 턴에 적용되는 도구 설정입니다. 실행 승인·샌드박스 권한은 별도로 유지되며, 변경 사항은 다음 턴부터 반영됩니다.</p>
+   <label className="mt-3 flex items-center gap-2 text-sm">
+    <input type="checkbox" checked={harnessDraft.dynamicToolDiscovery}
+     onChange={e=>setHarnessDraft(p=>({...p,dynamicToolDiscovery:e.target.checked}))}
+     className="size-4 accent-[#C96442]"/> 필요할 때 허가된 도구 검색 및 공개
+   </label>
+   <div className="mt-3 grid gap-3 sm:grid-cols-3">
+    {([
+     ['toolSchemaBudgetBytes','모델 턴 도구 스키마 최대 바이트',4000,60000,1000],
+     ['maxDiscoverySearches','도구 검색 최대 횟수',1,12,1],
+     ['maxRevealedTools','검색으로 공개 가능한 도구 수',1,20,1]
+    ] as const).map(([key,label,min,max,step])=>
+     <label key={key} className="block text-xs text-[#524941]">{label}
+      <input type="number" min={min} max={max} step={step} value={harnessDraft[key]}
+       onChange={e=>setHarnessDraft(p=>({...p,[key]:Number(e.target.value)}))}
+       className="mt-1 w-full rounded-lg border border-[#E7E0D5] bg-white px-3 py-2 text-sm"/>
+     </label>
+    )}
+   </div>
+   <div className="mt-3 flex justify-end">
+    <Button variant="secondary" disabled={busy!==''} onClick={()=>void saveHarness()}>
+     {busy==='harness'?'저장 중…':'실행 설정 저장'}
+    </Button>
+   </div>
+  </details>
   {error&&<Notice message={error}/>}
   {notice&&<p role="status" className="rounded-xl bg-[#F7F3EC] px-4 py-3 text-sm text-[#5C544A]">{notice}</p>}
   <div className="flex items-center justify-between"><h2 className="text-base font-bold">실행 기록</h2>
