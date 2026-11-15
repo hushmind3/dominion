@@ -47,3 +47,22 @@ test('waitJob polls durable status, not UI-local promises',async()=>{
   assert.equal((await sdk.waitJob('j',{intervalMs:100,timeoutMs:1000})).status,'completed');
   assert.equal(count,2);
 });
+
+test('native SDK steering and session binding share real Rust API contracts',async()=>{
+  const observed=[];
+  const sdk=new Dominion({adminToken:'owner',fetch:async(url,init)=>{
+    observed.push({url,init});return reply({ok:true,jobId:'job-1',directive:'Change summary'});
+  }});
+  await sdk.jobs.steer('job-1','Change summary');
+  await sdk.jobs.create({kind:'prompt',input:{
+    prompt:'Build the report',sessionId:'session-1',maxSteps:60,
+    strategy:'verify_first',requireEvidence:true,allowFallback:false
+  }});
+  assert.equal(observed[0].url,'http://127.0.0.1:4317/api/jobs/job-1/directive');
+  assert.equal(observed[0].init.headers['X-Dominion-Token'],'owner');
+  assert.equal(JSON.parse(observed[0].init.body).instruction,'Change summary');
+  assert.deepEqual(JSON.parse(observed[1].init.body),{
+    kind:'prompt',input:{prompt:'Build the report',sessionId:'session-1',
+      maxSteps:60,strategy:'verify_first',requireEvidence:true,allowFallback:false}
+  });
+});
