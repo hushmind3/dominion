@@ -40,6 +40,11 @@ jobs:
         run: cargo test --bin dominion-rust engine::verification -- --nocapture
       - name: Real playable native video
         run: cargo test --bin dominion-rust native_pipeline_produces_a_real_playable_container -- --nocapture
+      - name: Run real HTTP/LLM fixture integration paths (no paid API)
+        run: |
+          for contract in parallel_reads_ ordinary_chat_ room_selected_tools_ native_job_prompt_runs token_budget_is_enforced_ chat_fails_over_ delegated_task_runs delegate_task_runs_; do
+            cargo test --test e2e "$contract" -- --test-threads=1
+          done
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
