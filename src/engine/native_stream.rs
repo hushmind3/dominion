@@ -390,6 +390,35 @@ mod tests {
         format!("data: {}\r\n\r\n",value).into_bytes()
     }
     #[test]
+    fn native_sse_preserves_reported_cache_tokens_from_chat_and_anthropic() {
+        let mut chat=Assembler::new(Wire::Chat);
+        chat.feed(Packet::Data(json!({"choices":[{"delta":{},
+            "finish_reason":"stop"}],"usage":{
+                "prompt_tokens":800,"completion_tokens":20,
+                "prompt_tokens_details":{"cached_tokens":640}}}))).unwrap();
+        chat.feed(Packet::Done).unwrap();
+        let chat=chat.finish().unwrap();
+        assert_eq!(chat["usage"]["prompt_tokens_details"]["cached_tokens"],640);
+        let mut anthropic=Assembler::new(Wire::Anthropic);
+        for event in [
+            json!({"type":"message_start","message":{"usage":{
+                "input_tokens":40,"cache_read_input_tokens":400,
+                "cache_creation_input_tokens":100}}}),
+            json!({"type":"content_block_start","index":0,
+                "content_block":{"type":"text","text":"done"}}),
+            json!({"type":"content_block_stop","index":0}),
+            json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},
+                "usage":{"output_tokens":15}}),
+            json!({"type":"message_stop"}),
+        ] {anthropic.feed(Packet::Data(event)).unwrap();}
+        let anthropic=anthropic.finish().unwrap();
+        assert_eq!(anthropic["usage"]["input_tokens"],40);
+        assert_eq!(anthropic["usage"]["cache_read_input_tokens"],400);
+        assert_eq!(anthropic["usage"]["cache_creation_input_tokens"],100);
+        assert_eq!(anthropic["usage"]["output_tokens"],15);
+    }
+
+    #[test]
     fn native_sse_transport_splits_unicode_and_json() {
         let mut dec=SseDecoder::default();
         let payload=encode(json!({"choices":[{"index":0,"delta":{"content":"한글🧠"}}]}));
