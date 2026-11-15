@@ -45,3 +45,7 @@ No paid Codex/Anthropic credential call, pricing validation, full release CI or 
 ## Verified focused CI result (2026-11-15)
 
 [GitHub Actions #43691823640](https://github.com/hushmind3/dominion-rust/actions/runs/43691823640) succeeded on implementation commit `825409f66d8df01fa8799b3496baad62e8c08693`: Rust SDK **45**, native Rust host/agent/transport **54**, interactive Codex WS **15**, workflow recovery **1** — **115/115 Rust tests passed**. React TypeScript typecheck and Vite production build passed; the standalone TypeScript SDK compiled and all **7/7 Node tests passed**. The Rust native tests include the real HTTP-SSE → model adapter → job-store meter integration fixture, along with cache preservation and unknown usage. This does not measure monetary savings or validate commercial provider credentials.
+
+## Owner-controlled UI token budget
+
+The autonomous-work panel now exposes the existing `/api/jobs` `input.tokenBudget` field (1,000–20,000,000) under advanced controls. The Rust API maps this to `input.limits.maxEstimatedTokens` and the SDK kernel enforces the task's consumption budget. The GUI reads the persisted `nativeState.chargedTokens` as **kernel budget usage** and displays it separately from the provider-reported `nativeModelUsage`. A newly started task uses the current UI budget, while a restart from failed/uncertain work creates a new job with the prior task budget rather than erasing the owner's cap. This is a real engine configuration, not a local GUI-only counter.
