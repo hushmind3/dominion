@@ -1,41 +1,88 @@
-# Dominion Architecture — 2026-11-15
+# Dominion native architecture — 2026-11-15
 
-## One owner of execution
+## Unified product
 
 ~~~text
-Main React/Vite workspace ─┐
-                            ├─ HTTP / SSE ── native Rust SDK runtime ── model
-TypeScript SDK adapter ─────┘                     ├─ SQLite tasks and receipts
-                                                  ├─ permissioned tools
-                                                  ├─ group discussion
-                                                  ├─ video rendering
-                                                  ├─ improvement trials
-                                                  └─ memory and skills
+Main React/Vite workspace   External TypeScript SDK
+            |                         |
+            +---- HTTP / SSE API -----+
+                        |
+                   Native Rust SDK
+                        |
+       +----------------+----------------+
+       |                |                |
+    SQLite          ModelClient      Tool dispatcher
+    task/event      provider select  workspace/MCP
+    session         economy/quality  owner permission
+    memory          usage/cost       receipts/verify
+    presets         prompt context   child execution
+       |                |                |
+       +---- native task lifecycle ------+
+              |        |        |
+       Multi-agent   Video    Improvement
+       group turns   FFmpeg   frozen worktree
+              |        |
+        Durable workflows (step tasks)
 ~~~
 
-The main React/Vite presentation layer is preserved: responsive navigation, visual theme, i18n, reusable controls and existing page source. web/src/pages/NativeWorkspace.tsx replaces API-incompatible flows for the primary active workspaces with the champion native API. The UI is not its own agent runtime.
-
-Vite builds to web/dist. The Rust loopback HTTP service uses ServeDir/ServeFile to serve the built React assets with an SPA index fallback; DOMINION_WEB_DIR overrides the build location. For development, the Vite proxy forwards /api to the Rust server.
+Only Rust decides task admission, planning, model turns, side effects, explicit user corrections and completion. The TypeScript package provides typed transport and a thread convenience layer; it cannot substitute an external agent engine. React uses the same backend routes. The app is loopback-bound, single-owner and not a hardened multi-user service.
 
 ## Source ownership
 
-| Surface | Source |
-| --- | --- |
-| Native Rust SDK, task admission and concurrency | src/runtime.rs |
-| HTTP/SSE and static SPA hosting | src/api.rs |
-| Persisted execution and knowledge | src/store.rs |
-| Model / tool runtime | src/engine.rs |
-| Group discussion | src/group.rs |
-| Video | src/video.rs, src/veo.rs |
-| Isolated improvement experiments | src/improvement.rs |
-| Main visual shell and UX controls | web/src/App.tsx, web/src/components, web/src/theme.css |
-| Real Rust API page adapters | web/src/pages/NativeWorkspace.tsx |
-| External TypeScript transport | sdk/typescript |
+| Area | Native implementation | Browser integration |
+| --- | --- | --- |
+| SDK / task lifecycle | src/runtime.rs, src/store.rs | NativeWorkspace.tsx |
+| Agent model/tool loop | src/engine.rs, src/engine/files.rs, src/engine/strategy.rs | Task event stream |
+| Safe compacted model context | src/engine/context.rs; task_receipt | Execution trace |
+| Provider routing and usage | src/provider.rs | NativeSystem.tsx models |
+| MCP | src/mcp.rs | NativeSystem.tsx extensions |
+| User-defined personas | src/store.rs agents table, src/runtime.rs | NativeAgents.tsx |
+| Sequential workflow execution | src/workflows.rs, SQLite workflow_runs | NativeWorkflows.tsx |
+| Group chat | src/group.rs | NativeWorkspace.tsx groups |
+| Local and remote video | src/video.rs, src/veo.rs | NativeWorkspace.tsx video |
+| Isolated improvement experiments | src/improvement.rs | NativeWorkspace.tsx improvement |
+| Memory / skills | src/store.rs, src/knowledge.rs | NativeWorkspace.tsx knowledge |
+| Historical data migration | src/legacy.rs, src/store.rs | CLI opt-in |
+| API routes and SPA host | src/api.rs | web/dist after Vite build |
+| Main visual language | web/src/App.tsx, web/src/components, web/src/i18n, web/src/theme.css | All live pages |
 
-## Runtime consistency and remaining migration
+The original main React source and look are preserved; old API-incompatible page modules remain as references and are not used for active primary navigation. Do not restore retired specialized modules or create a second TypeScript SDK under packages.
 
-The Rust engine, not the UI, controls authorization, model turns and completion. Browser actions call the same task APIs as the external SDK, and per-task event streams replay persistent SQLite records. The frontend displays actual native records and does not invent model completions or video output.
+## Session consistency
 
-Not every imported main component has a matching champion Rust backend yet. Provider settings, detailed agent configuration, workflow design and some extensions are still missing end-to-end native API integration. The full legacy desktop packaging layer has not been adopted. This source integration does not constitute a compiled Rust build, verified browser E2E run or performance benchmark.
+1. Rust SDK validates a unique requestId and stores the task in SQLite.
+2. Workers atomically claim queued tasks, sharing per-session concurrency limits. They do not auto-replay uncertain effects after process loss.
+3. A model receives a bounded projection preserving tool calls alongside their results, the newest user instruction and system constraints; all originals remain persisted.
+4. Workspace tools require explicit permission. Writes use readback evidence and a stored tool-result receipt before another model turn.
+5. Completion is decided from observations, not just model claims. Steps and provider usage accumulate in the task row and append durable events.
+6. SSE resumes using the persisted cursor. An interrupted user task starts a **new linked task** only after an explicit fresh instruction, new requestId and fresh permissions. The read-only task_receipt tool can recover observations removed from model-facing context without repeating effects.
+7. Multi-step workflows are owner-defined sequences of the exact same native TaskInput objects. Each step has a deterministic retry key, a shared workflow session and independent completion/verification; interrupted workflows remain needs_review.
 
-Design references: DeepSeek Harness, Qwen Code and OpenAI Codex Rust sources from 2026. Comparisons informed boundaries and do not grant external engines decision authority.
+## Provider and cost contracts
+
+Operator-configured main and economy models use OpenAI-compatible transport; no subscriptions are resold by the runtime. Auto routing delegates uncomplicated read-only tasks to an economical model when available. Cached input tokens are a subset of prompt tokens and are billed using the separate configured cached rate. Usage is explicitly marked estimated if the provider omits prompt/output token counts. Cost budgets cannot be presented as enforceable for remote providers without configured input/output rates. Provider rates are **assumptions** until confirmed against external invoices.
+
+Provider-cached prefixes are preserved where possible. Automatic prompt caching is model/provider-specific and cached token reports are authoritative only when returned by that provider. A stable sequence of tool schemas and system context helps caching; context projection can reduce transmitted tokens but may also invalidate cache prefixes, so no savings percentage is claimed without a matched measurement.
+
+## Video and iterative improvement
+
+Local videos are deterministic FFmpeg compositions at 1280x720, containing owner-provided animated images, titles, carefully wrapped captions, and optional locally synthesized Piper/eSpeak audio. Per-scene file invalidation prevents paying to regenerate unchanged clips; portable MP4 replacement retains the previous artifact until the new one has been successfully renamed. External Veo calls require a configured positive cost rate and per-video KRW ceiling before the next billable scene. The storyboard, local clips, audio, remote operation references and output path are persisted.
+
+Improvement experiments are source-edit proposals isolated from the primary checkout, with frozen baseline comparison, test/score evidence and explicit adoption. No model weight-training pipeline is part of RSI. Current loop requires fuller cross-domain feedback and held-out evaluation before any frontier-ranking claim.
+
+## Migration and known limits
+
+Legacy migration is opt-in using DOMINION_IMPORT_LEGACY_DB. It opens the source SQLite read-only and uses a destination transaction, preserving original non-executable JSON records in legacy_archive. It projects permitted user-authored data and safe transcript roles only, disables imported skills and never activates old jobs or provider credentials. Data import records are idempotent per source path.
+
+The current GitHub-connector workflow cannot run a Rust toolchain or full React end-to-end browser tests. Static source changes, checked call paths and authored unit tests are **not** a substitute for compiled runtime proof. Full multi-provider management, browser automation, high-end generative film output, long-running distributed workers, multi-user isolation and measured 2026 frontier benchmark parity remain incomplete.
+
+## Frontier design references
+
+- DeepSeek Harness: event-backed sessions, scoped tool dispatch, provider separation — https://github.com/deepseek-ai/deepseek-harness/tree/master/docs
+- Qwen Code 2026 session agents: durable sessions and cooperative orchestration — https://github.com/QwenLM/qwen-code/blob/main/docs/design/2026-10-05-session-multi-agent.md
+- OpenAI Codex Rust: independent Rust-owned model/tool engine — https://github.com/openai/codex/tree/main/codex-rs/core/src
+- OpenAI prompt caching: prefix preservation and cached usage accounting — https://developers.openai.com/api/docs/guides/prompt-caching
+- MCP Rust SDK 2026: remote tool protocol state and native typed API — https://github.com/modelcontextprotocol/rust-sdk
+- GEPA 2026: correctness-gated candidate evaluation and reuse of observations — https://github.com/gepa-ai/gepa
+
+These sources inform architecture; no external engine is embedded and no independent performance score is inferred from them.
