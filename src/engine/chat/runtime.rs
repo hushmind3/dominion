@@ -2025,7 +2025,7 @@ async fn run_turn_body(
                 _ => {
                     mark_tool_argument_signal(state, request, execution_id, false);
                     let error = format!(
-                        "{} 도구 인수가 올바른 JSON 객체가 아닙니다. 인자를 고쳐 다시 호출하세요.",
+                        "invalid tool arguments: {} 도구 인수가 올바른 JSON 객체가 아닙니다. 인자를 고쳐 다시 호출하세요.",
                         call.name
                     );
                     record_soft_tool_error(
