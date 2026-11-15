@@ -710,7 +710,12 @@ mod inference_tests {
         assert!(!fresh_code_validation(&[edit.clone()]));
         assert!(!fresh_code_validation(&[edit.clone(),forged]));
         assert!(fresh_code_validation(&[edit.clone(),test.clone()]));
-        assert!(!fresh_code_validation(&[test.clone(),edit.clone()]));
+        // opSeq, not arbitrary evidence vector order, is authoritative.
+        // This edit has seq=1 and the successful test has seq=2.
+        assert!(fresh_code_validation(&[test.clone(),edit.clone()]));
+        let later_edit=json!({"tool":"workspace_write","runId":"r","opSeq":3,
+            "arguments":{"path":"src/main.rs"},"result":{"success":true}});
+        assert!(!fresh_code_validation(&[test.clone(),later_edit]));
         assert!(!fresh_code_validation(&[edit.clone(),failed]));
         assert!(coding_test_gaps(&[edit.clone()],false).is_empty());
         assert!(coding_test_gaps(&[edit,test],true).is_empty());
