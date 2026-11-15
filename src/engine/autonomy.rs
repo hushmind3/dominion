@@ -240,6 +240,22 @@ pub async fn execute(
                 Decision::Repair
             }else{Decision::Review};
         }
+        if decision!=Decision::Repair {
+            // Atomically close the exact version observed before this model turn.
+            // A concurrent owner steer invalidates this decision even when the
+            // latest in-memory observation looked unchanged.
+            let expected_gate=owner_job.get("steeringGate").unwrap_or(&Value::Null);
+            match ctx.state.store.patch_if("job",&ctx.job_id,"steeringGate",expected_gate,
+                &json!({"steeringGate":{"revision":steering_before,"closed":true}})){
+                Some(saved)=>ctx.state.bus.record("job",&saved),
+                None=>{
+                    gaps.push("최종 검증 중 새 사용자 지시가 들어와 완료 판정을 보류했습니다.".into());
+                    decision=if attempt+1<config.attempts && !side_effect_unknown(&all_evidence){
+                        Decision::Repair
+                    }else{Decision::Review};
+                }
+            }
+        }
         let receipt=json!({
             "attempt":attempt+1,
             "steeringRevision":steering_before,

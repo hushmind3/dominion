@@ -133,6 +133,9 @@ pub fn steer(state:&AppState,id:&str,instruction:&str)->Result<Value,SteeringErr
         if !matches!(job["status"].as_str(),Some("queued"|"running")){
             return Err(SteeringError::Conflict("진행 중인 작업만 수정할 수 있습니다.".into()));
         }
+        if job["steeringGate"]["closed"] == true {
+            return Err(SteeringError::Conflict("완료 판정이 확정되어 새 지시를 받을 수 없습니다.".into()));
+        }
         let mut steering=job["steering"].as_array().cloned().unwrap_or_default();
         if steering.len()>=8 {
             return Err(SteeringError::Conflict("작업당 추가 지시는 최대 8회입니다.".into()));
@@ -142,10 +145,13 @@ pub fn steer(state:&AppState,id:&str,instruction:&str)->Result<Value,SteeringErr
             "revision":revision+1,"instruction":instruction,
             "at":chrono::Utc::now().to_rfc3339()
         }));
+        // Completion and owner steering advance/close the same CAS gate.
+        // Neither a late owner instruction nor a stale final answer may win both.
         if let Some(saved)=state.store.patch_if(
-            "job",id,"steeringRevision",
-            job.get("steeringRevision").unwrap_or(&Value::Null),
-            &json!({"steeringRevision":revision+1,"steering":steering}),
+            "job",id,"steeringGate",
+            job.get("steeringGate").unwrap_or(&Value::Null),
+            &json!({"steeringRevision":revision+1,"steering":steering,
+                "steeringGate":{"revision":revision+1,"closed":false}}),
         ){
             state.bus.record("job",&saved);
             state.store.audit("job.steer",json!({"jobId":id,"revision":revision+1}));
@@ -1048,6 +1054,23 @@ mod tests {
         assert!(matches!(steer(&state,id,"Proceed"),Err(SteeringError::Conflict(_))));
     }
 
+    #[test]
+    fn steering_and_completion_cannot_both_commit_a_stale_version() {
+        let state=temp_state();
+        let job=enqueue(&state,"prompt",json!({"prompt":"Fix and verify","autonomous":true})).unwrap();
+        let id=job["id"].as_str().unwrap();
+        let stale=job.get("steeringGate").unwrap_or(&Value::Null).clone();
+        assert_eq!(steer(&state,id,"Also run tests").unwrap()["steeringRevision"],1);
+        assert!(state.store.patch_if("job",id,"steeringGate",&stale,
+            &json!({"steeringGate":{"revision":0,"closed":true}})).is_none());
+        let fresh=state.store.get("job",id).unwrap();
+        assert_eq!(fresh["steeringGate"]["revision"],1);
+        state.store.patch_if("job",id,"steeringGate",&fresh["steeringGate"],
+            &json!({"steeringGate":{"revision":1,"closed":true}})).unwrap();
+        assert!(matches!(steer(&state,id,"A late addition"),
+            Err(SteeringError::Conflict(_))));
+        assert_eq!(state.store.get("job",id).unwrap()["steering"].as_array().unwrap().len(),1);
+    }
     #[test]
     fn enqueue_creates_a_queued_job() {
         let state = temp_state();
