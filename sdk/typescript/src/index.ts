@@ -20,6 +20,7 @@ export interface TaskInput {
   /** Extra model planning turn only when needed (auto), always, or never. */
   planningMode?: 'auto' | 'always' | 'never';
   modelTier?: 'auto' | 'economy' | 'quality';
+  agentId?: string;
 }
 export type TaskStatus = "queued" | "running" | "completed" |
   "failed" | "cancelled" | "needs_review";
@@ -42,6 +43,13 @@ export interface TaskEvent {
   taskId: string;
   type: string;
   detail: Record<string, unknown>;
+}
+export interface AgentPreset {
+  id: string;
+  name: string;
+  description: string;
+  instructions: string;
+  createdAt: string;
 }
 export interface GroupParticipant {
   name: string;
@@ -212,6 +220,15 @@ export class DominionClient {
   steer(id:string,text:string,signal?: AbortSignal) {
     if (!text.trim()) throw new TypeError("Owner instruction is empty");
     return this.request<TaskRecord>("/api/tasks/"+encodeURIComponent(id)+"/steer","POST",{text},signal);
+  }
+  agents(signal?: AbortSignal) {
+    return this.request<AgentPreset[]>('/api/agents','GET',undefined,signal);
+  }
+  agentCreate(name:string,instructions:string,description='',signal?:AbortSignal) {
+    return this.request<AgentPreset>('/api/agents','POST',{name,instructions,description},signal);
+  }
+  agentDelete(id:string,signal?:AbortSignal) {
+    return this.request<{ok:boolean}>('/api/agents/'+encodeURIComponent(id),'DELETE',undefined,signal);
   }
   /** Native Rust participant room. The TS client performs no speaker selection. */
   groupList(signal?: AbortSignal) {
