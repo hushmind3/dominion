@@ -145,6 +145,13 @@ impl Dominion {
         self.post(&["api", "jobs"], json!({"kind":"prompt",
             "input":{"prompt":prompt,"agentId":agent_id,"toolsEnabled":true}})).await
     }
+    /// Continue a private engine-owned session without creating another agent runtime.
+    pub async fn submit_prompt_to_session(
+        &self, session_id: &str, prompt: &str, agent_id: Option<&str>
+    ) -> Result<Job, Error> {
+        self.post(&["api", "jobs"], json!({"kind":"prompt",
+            "input":{"prompt":prompt,"sessionId":session_id,"agentId":agent_id,"toolsEnabled":true}})).await
+    }
     pub async fn run_workflow(&self, id: &str, input: &str) -> Result<Job, Error> {
         self.post(&["api", "workflows", id, "run"], json!({"input":input})).await
     }
