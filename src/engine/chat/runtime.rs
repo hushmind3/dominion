@@ -28,26 +28,26 @@ mod turn_body;
 use turn_body::{run_turn_body};
 #[path = "runtime/adaptation.rs"]
 mod adaptation;
-use adaptation::{failure_observation, environment_fingerprint, record_adaptation_error, adaptation_repair_prompt, attempt_model_adaptation};
+use adaptation::{failure_observation, environment_fingerprint, record_adaptation_error, attempt_model_adaptation};
 #[path = "runtime/tool_loop.rs"]
 mod tool_loop;
 use tool_loop::{check_tool_result_pairs,ReadLoopGuard,ErrorLoopGuard,LoopDecision};
 #[path = "runtime/tool_selection.rs"]
 mod tool_selection;
-use tool_selection::{tool_advertised, tool_is_read_only, mark_tool_argument_signal, normalize_tool_arguments, tool_name, room_tool_request, recent_room_tools, select_room_tools, select_tool_definitions, trim_tool_definitions, budgeted_tool_definitions};
+use tool_selection::{tool_advertised, tool_is_read_only, mark_tool_argument_signal, normalize_tool_arguments, tool_name, recent_room_tools, select_room_tools, select_tool_definitions, budgeted_tool_definitions};
 #[path = "runtime/tool_discovery.rs"]
 mod tool_discovery;
 use tool_discovery::{menu as discoverable_tool_menu,search as discover_tools,
     restore_revealed,TOOL_SEARCH_NAME};
 #[path = "runtime/program.rs"]
 mod program_execution;
-use program_execution::{scope_program_node_ids, execute_nodes, save_revised_program, propose_program_revision, run_program};
+use program_execution::run_program;
 #[path = "runtime/tool_dispatch.rs"]
 mod tool_dispatch;
-use tool_dispatch::{frozen_replacements, replacement_content, deterministic_tool, record_partial_shortcut, run_frozen_replacements, dispatch_tool_call, record_soft_tool_error, skip_for_new_owner_instruction};
+use tool_dispatch::{frozen_replacements, run_frozen_replacements, dispatch_tool_call, record_soft_tool_error, skip_for_new_owner_instruction};
 #[path = "runtime/finalization.rs"]
 mod finalization;
-use finalization::{finalization_semantic_payload, finalization_payload_hash, compliance_summary, compliance_detail, standing_violation, determine_task_outcome, record_success_experience, record_selection_snapshot, finish_attempt};
+use finalization::{finalization_payload_hash, compliance_summary, compliance_detail, determine_task_outcome, record_success_experience, record_selection_snapshot, finish_attempt};
 pub(super) use finalization::finalize_execution;
 #[path = "runtime/session.rs"]
 mod session_evidence;
