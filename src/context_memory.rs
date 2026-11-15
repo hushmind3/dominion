@@ -84,6 +84,7 @@ impl Store {
                 kind TEXT NOT NULL CHECK(kind IN('constraint','decision','preference','open_issue')),
                 topic TEXT NOT NULL,
                 quote TEXT NOT NULL,
+                superseded_by INTEGER,
                 created_at TEXT NOT NULL,
                 UNIQUE(session_id,source_seq,kind,quote)
             );
@@ -105,6 +106,17 @@ impl Store {
                 FROM events e JOIN tasks t ON t.id=e.task_id
                WHERE e.kind='tool_result';
         ").map_err(|e|format!("Native context index initialization failed: {e}"))?;
+        let has_supersession={
+            let mut stmt=conn.prepare("PRAGMA table_info(context_facts)")
+                .map_err(|e|e.to_string())?;
+            let cols=stmt.query_map([],|row|row.get::<_,String>(1))
+                .map_err(|e|e.to_string())?;
+            cols.filter_map(Result::ok).any(|col|col=="superseded_by")
+        };
+        if !has_supersession{
+            conn.execute("ALTER TABLE context_facts ADD COLUMN superseded_by INTEGER",[])
+                .map_err(|e|e.to_string())?;
+        }
         Ok(())
     }
 
@@ -183,6 +195,37 @@ impl Store {
                 chrono::Utc::now().to_rfc3339()])
             .map(|changes|changes==1).map_err(|e|e.to_string())
     }
+    /// Supersession requires two real owner quotes, a newer explicit
+    /// correction marker, and an identical semantic topic. Both originals
+    /// remain durable; only the superseded quote leaves the active checkpoint.
+    pub fn context_supersede(&self,session:&str,new_seq:u64,old_seq:u64,
+        kind:&str,topic:&str,new_quote:&str)->Result<bool,String>{
+        if new_seq<=old_seq || new_quote.len()>480{return Ok(false)}
+        let correction=["정정","이제","대신","바꿔","변경","취소","앞으로",
+            "더 이상","말고","actually","instead","no longer","from now","change to"];
+        let owner=self.history_message(session,new_seq)
+            .ok_or("New owner correction source missing")?;
+        let text=owner["content"].as_str().unwrap_or("");
+        if !text.contains(new_quote) ||
+            !correction.iter().any(|word|text.to_lowercase().contains(word)){
+            return Ok(false);
+        }
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let exists:bool=conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM context_facts
+             WHERE session_id=?1 AND source_seq=?2 AND kind=?3
+             AND lower(topic)=lower(?4) AND quote=?5
+             AND superseded_by IS NULL)",
+            params![session,new_seq as i64,kind,topic,new_quote],
+            |r|r.get(0)).map_err(|e|e.to_string())?;
+        if !exists{return Ok(false)}
+        conn.execute("UPDATE context_facts SET superseded_by=?3
+            WHERE session_id=?1 AND source_seq=?2 AND kind=?4
+              AND lower(topic)=lower(?5) AND superseded_by IS NULL",
+            params![session,old_seq as i64,new_seq as i64,kind,topic])
+            .map(|count|count>0).map_err(|e|e.to_string())
+    }
+
     /// A bounded checkpoint is made only of verbatim, proven owner quotes.
     /// Constraint and correction-like material outranks optional preferences;
     /// question relevance breaks ties, then newer source message order.
@@ -190,7 +233,8 @@ impl Store {
         let Ok(conn)=self.conn.lock() else{return json!({"facts":[]})};
         let Ok(mut statement)=conn.prepare(
             "SELECT source_seq,kind,topic,quote FROM context_facts
-             WHERE session_id=?1 ORDER BY source_seq DESC LIMIT 240"
+             WHERE session_id=?1 AND superseded_by IS NULL
+             ORDER BY source_seq DESC LIMIT 240"
         ) else{return json!({"facts":[]})};
         let Ok(rows)=statement.query_map([session],|row|Ok(json!({
             "sourceSeq":row.get::<_,i64>(0)?,"kind":row.get::<_,String>(1)?,
@@ -430,6 +474,31 @@ mod tests{
         assert_eq!(snapshot["effectReplayAllowed"],false);
         assert!(snapshot["recentReceiptPointers"][0]["sourceSeq"].is_number());
         assert_eq!(snapshot["previousProvisionalPlan"]["text"],"Read and verify first");
+    }
+
+    #[test]
+    fn explicit_owner_correction_supersedes_old_quote_without_erasing_audit(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        store.add_message("change","user","반드시 빨간색 버튼을 유지하세요.");
+        store.add_message("change","user","정정: 이제 파란색 버튼을 사용하세요.");
+        let messages=store.context_candidates("change",4);
+        let old=messages[0]["seq"].as_u64().unwrap();
+        let new=messages[1]["seq"].as_u64().unwrap();
+        store.context_pin("change",old,"constraint","button palette",
+            "반드시 빨간색 버튼을 유지하세요.").unwrap();
+        store.context_pin("change",new,"constraint","button palette",
+            "정정: 이제 파란색 버튼을 사용하세요.").unwrap();
+        assert!(store.context_supersede("change",new,old,"constraint",
+            "button palette","정정: 이제 파란색 버튼을 사용하세요.").unwrap());
+        let facts=store.context_checkpoint("change","button",4096).to_string();
+        assert!(!facts.contains("빨간색"));
+        assert!(facts.contains("파란색"));
+        assert!(!store.context_supersede("change",old,new,"constraint",
+            "button palette","반드시 빨간색 버튼을 유지하세요.").unwrap());
+        let conn=store.conn.lock().unwrap();
+        let count:i64=conn.query_row(
+            "SELECT COUNT(*) FROM context_facts WHERE session_id='change'",[],|r|r.get(0)).unwrap();
+        assert_eq!(count,2,"superseded originals must remain in the audit log");
     }
 
     #[test]
