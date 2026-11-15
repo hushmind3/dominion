@@ -144,14 +144,14 @@ use super::*;
         let tools = (0..30)
             .map(|index| json!({"type":"function","function":{"name":format!("tool{index}"),"description":"x".repeat(100)}}))
             .collect::<Vec<_>>();
-        let kept = trim_tool_definitions(tools, 2_000);
+        let kept = budgeted_tool_definitions(tools, 2_000,"",&std::collections::HashSet::new());
         assert!(!kept.is_empty());
         assert!(kept.len() < 30);
         let total = kept
             .iter()
             .map(|tool| serde_json::to_string(tool).unwrap().len())
             .sum::<usize>();
-        assert!(total <= 2_000 || kept.len() == 1);
+        assert!(total <= 2_000, "hard provider cap cannot be bypassed by one oversize schema");
     }
 
     #[test]
