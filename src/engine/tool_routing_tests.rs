@@ -139,9 +139,9 @@ async fn model_discovers_mcp_then_receives_only_the_promoted_full_schema_and_exe
     let routing=events.iter().filter(|event|event["type"]=="tool_schema_routed")
         .collect::<Vec<_>>();
     assert_eq!(routing.len(),3);
-    assert!(routing[0]["data"]["catalogBytes"].as_u64().unwrap_or(0)>
-        routing[0]["data"]["advertisedBytes"].as_u64().unwrap_or(0));
-    assert!(routing[0]["data"]["omittedCount"].as_u64().unwrap_or(0)>=45);
+    assert!(routing[0]["detail"]["catalogBytes"].as_u64().unwrap_or(0)>
+        routing[0]["detail"]["advertisedBytes"].as_u64().unwrap_or(0));
+    assert!(routing[0]["detail"]["omittedCount"].as_u64().unwrap_or(0)>=45);
     assert!(events.iter().any(|event|event["type"]=="tool_schema_promoted"));
     model_server.abort();
     mcp_server.abort();
@@ -186,7 +186,7 @@ async fn model_cannot_invoke_unadvertised_mcp_or_write_tool(){
     let observations=state.store.events_after(&id,0,100);
     assert!(observations.iter().any(|event|
         event["type"]=="tool_result"
-        && event["data"].to_string().contains("was not advertised")));
+        && event["detail"].to_string().contains("was not advertised")));
     server.abort();
     drop(state);
     let _=std::fs::remove_dir_all(root);
