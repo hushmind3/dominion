@@ -762,6 +762,37 @@ mod tests {
     }
 
     #[test]
+    fn tool_evidence_survives_real_sqlite_close_and_reopen(){
+        let root=std::env::temp_dir().join(
+            format!("dominion-evidence-restart-{}",Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path=root.join("durable.sqlite");
+        {
+            let db=Store::open(&path).unwrap();
+            db.append_event("one","tool_start",
+                json!({"callId":"persisted-output","arguments":{"path":"proof.txt"}})).unwrap();
+            db.append_event("one","tool_result",
+                json!({"callId":"persisted-output",
+                    "outcome":{"ok":true,"receipt":{"content":"검증된 자료".repeat(7000)}}})).unwrap();
+        }
+        let reopened=Store::open(&path).unwrap();
+        let saved=reopened.tool_receipt("one","persisted-output").unwrap();
+        assert!(saved["detail"]["outcome"]["receipt"]["content"]
+            .as_str().unwrap().len()>50_000);
+        let mut data=String::new();let mut cursor=0;
+        loop {
+            let part=crate::engine::context::receipt_page(&saved,cursor,4096).unwrap();
+            data.push_str(part["page"].as_str().unwrap());
+            if part["complete"]==true{break;}
+            cursor=part["nextOffsetBytes"].as_u64().unwrap() as usize;
+        }
+        assert_eq!(data,saved.to_string());
+        assert!(reopened.tool_receipt("other","persisted-output").is_none());
+        drop(reopened);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn continuation_lineage_is_atomic_idempotent_and_evidence_scoped(){
         let db=new_store();
         let (old,_)=db.submit("old-2026",&json!({
