@@ -540,13 +540,13 @@ fn edit_stale_read_context(messages: &mut [Value], capacity: usize, schema_chars
 
 /// Prepare a different model's copy from the original, unabridged tool
 /// observations. No 6k/20k/80k magic limits or local/cloud distinction.
-fn fit_tool_context(provider: &ProviderRef, messages: &mut [Value], schema_chars: usize) {
-    let Some(tokens) = provider.context_tokens else { return };
+fn fit_tool_context(provider: &ProviderRef, messages: &mut [Value], schema_chars: usize) -> usize {
+    let Some(tokens) = provider.context_tokens else { return 0 };
     let fixed = fixed_prompt_chars(messages)
         .saturating_add(schema_chars)
         .saturating_add(512);
     let capacity = input_char_capacity(tokens, provider.max_output_tokens);
-    let _reclaimed = edit_stale_read_context(messages, capacity, schema_chars);
+    let reclaimed = edit_stale_read_context(messages, capacity, schema_chars);
     let mut available = capacity.saturating_sub(fixed);
     // Preserve the most recent observation; old tool outputs get the
     // remaining space, with each tool-call ID kept intact.
@@ -559,6 +559,7 @@ fn fit_tool_context(provider: &ProviderRef, messages: &mut [Value], schema_chars
         available = available.saturating_sub(escaped_content_chars(&clipped));
         message["content"] = json!(clipped);
     }
+    reclaimed
 }
 
 fn room_route_keys(state: &AppState, session_id: &str) -> Option<std::collections::HashSet<String>> {
@@ -912,7 +913,15 @@ async fn stream_completion_once_body(
         tools.iter().map(|tool| tool.to_string().chars().count()).sum::<usize>()
     };
     let mut provider_messages = messages.to_vec();
-    fit_tool_context(provider, &mut provider_messages, schema_chars);
+    let reclaimed = fit_tool_context(provider, &mut provider_messages, schema_chars);
+    if reclaimed > 0 {
+        state.store.audit("chat.context_edit_prepared", json!({
+            "sessionId":session_id,"providerId":provider.id,"model":provider.model,
+            "wire":if compatible {"openai-compat"} else {"openai-native"},
+            "removedJsonCharsEstimate":reclaimed,
+            "billedTokenSavings":Value::Null
+        }));
+    }
     if convert_native_history {
         provider_messages = compat_messages(&provider_messages);
     }
@@ -1763,7 +1772,14 @@ async fn stream_anthropic_once(
     let started = std::time::Instant::now();
     let mut fitted_messages = messages.to_vec();
     let schema_chars = tools.iter().map(|tool| tool.to_string().chars().count()).sum();
-    fit_tool_context(provider, &mut fitted_messages, schema_chars);
+    let reclaimed = fit_tool_context(provider, &mut fitted_messages, schema_chars);
+    if reclaimed > 0 {
+        state.store.audit("chat.context_edit_prepared", json!({
+            "sessionId":session_id,"providerId":provider.id,"model":provider.model,
+            "wire":"anthropic","removedJsonCharsEstimate":reclaimed,
+            "billedTokenSavings":Value::Null
+        }));
+    }
     let (system, provider_messages) = anthropic_messages(&fitted_messages);
     let mut body = json!({
         "model": provider.model,
