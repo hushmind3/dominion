@@ -14,6 +14,7 @@ export function AutonomousJobComposer({agents,providers,recentWorkspaces,onCreat
  const [model,setModel]=useState('')
  const [verifyCommand,setVerifyCommand]=useState('')
  const [attempts,setAttempts]=useState(3)
+ const [tokenBudget,setTokenBudget]=useState('')
  const [busy,setBusy]=useState(false)
  const [error,setError]=useState('')
  const [notice,setNotice]=useState('')
@@ -25,6 +26,7 @@ export function AutonomousJobComposer({agents,providers,recentWorkspaces,onCreat
    await post('/api/jobs',{kind:'prompt',input:{
     prompt:goal.trim(),autonomous:true,toolsEnabled:true,
     maxAutonomousAttempts:attempts,executionStrategy:'focused',
+    ...(tokenBudget.trim()?{tokenBudget:Number(tokenBudget)}:{}),
     ...(agentId?{agentId}:{}),
     ...(providerId?{providerId}:{}),
     ...(model.trim()?{model:model.trim()}:{}),
@@ -79,6 +81,12 @@ export function AutonomousJobComposer({agents,providers,recentWorkspaces,onCreat
       <SelectInput value={attempts} onChange={e=>setAttempts(Number(e.target.value))}>
        {[1,2,3,4,5,6].map(n=><option value={n} key={n}>{n}</option>)}
       </SelectInput>
+     </label>
+     <label className="grid gap-1 text-xs font-semibold">{t('ops.compose.tokenBudget')}
+      <TextInput type="number" min={1024} max={2000000} step={1024}
+       value={tokenBudget} placeholder={t('ops.compose.tokenBudgetPlaceholder')}
+       onChange={e=>setTokenBudget(e.target.value)}/>
+      <small className="font-normal text-[#7C7469]">{t('ops.compose.tokenBudgetHelp')}</small>
      </label>
     </div>
    </details>
