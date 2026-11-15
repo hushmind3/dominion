@@ -49,6 +49,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/improvements/:id/evolution",post(improvement_evolution_start))
         .route("/api/evolutions",get(evolution_list))
         .route("/api/evolutions/:id",get(evolution_get))
+        .route("/api/evolutions/:id/stop",post(evolution_stop))
         .route("/api/memory",get(memory_list).post(memory_create))
         .route("/api/memory/search",get(memory_search))
         .route("/api/memory/:id/disable",post(memory_disable))
@@ -540,6 +541,14 @@ async fn evolution_get(State(state):State<AppState>,Path(id):Path<String>)->Resp
     match sdk.evolution_get(id).await{
         Ok(run)=>Json(json!(run)).into_response(),
         Err(error)=>(StatusCode::NOT_FOUND,Json(json!({"error":error.to_string()}))).into_response()
+    }
+}
+async fn evolution_stop(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    let id=match parse_room(&id){Ok(id)=>id,Err(error)=>return error};
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.evolution_stop(id).await{
+        Ok(run)=>Json(json!(run)).into_response(),
+        Err(error)=>(StatusCode::CONFLICT,Json(json!({"error":error.to_string()}))).into_response()
     }
 }
 async fn memory_list(State(state):State<AppState>,
