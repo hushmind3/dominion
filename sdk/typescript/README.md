@@ -130,3 +130,7 @@ This endpoint uses the same SQLite full-text index and citation-validated owner 
 Task costs are metered from operator-configured KRW rates, with separate cached-input accounting and usage uncertainty flags; they are not a provider invoice. Video generation has a separate project KRW ceiling. Image assets are uploaded through the native scene-image API and animated by local FFmpeg.
 
 Use npm run build and npm test from sdk/typescript to run the TypeScript library and transport tests. The repository's primary runtime and source tests require Rust and are not run by importing this JS package.
+
+## Verified code-evolution strategy records
+
+`improvementEvolutionStart(id, {max_generations, cost_budget_krw, candidates_per_generation, target_files, validation_command})` invokes the native Rust pipeline. `evolutionList` and `evolutionGet` return the persisted `EvolutionRun`; no method selection runs in the client. Each `EvolutionCandidate` now reports `strategy_id`, source/validation scores, original training baseline, model cost, and optional source-scope fingerprints. The linked `ImprovementTrial` includes bounded `strategy_feedback` from the Rust method portfolio. React presents the same records in the self-improvement research lab. Policy choices are always computed by Rust from verified historical observations, not reconstructed by JavaScript.
