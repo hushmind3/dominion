@@ -63,7 +63,8 @@ pub(crate) fn edit_method_reward(generation:&Value)->f64 {
         && generation["evaluation"]["metrics"]["eligible"]==true {
         return 1.0;
     }
-    if generation["candidateId"].is_string()
+    if generation["pairedEvidenceVerified"]==true
+        && generation["candidateId"].is_string()
         && generation["evaluation"]["source"]=="server_invoked_local_paired_git_worktrees"
         && generation["evaluation"]["metrics"].is_object() {
         // A neutral independent paired result only proves that the system
@@ -130,24 +131,37 @@ pub(crate) fn history_with_verified_payoffs(state:&AppState,history:&[Value])->V
     let mut seen=BTreeSet::new();
     history.iter().map(|row|{
         let mut enriched=row.clone();
+        // Never inherit a cached success or a cached forecast measurement.
+        // The only source of a training signal is the original paired
+        // evaluator, recomputed from its frozen case plan and raw receipt.
         enriched["evidenceVerified"]=json!(false);
+        enriched["pairedEvidenceVerified"]=json!(false);
+        enriched["measuredImprovedHoldouts"]=Value::Null;
         enriched["verifiedHoldoutGains"]=json!(0);
-        if row["accepted"]!=true {return enriched;}
         let Some(id)=row["candidateId"].as_str().filter(|id|seen.insert(id.to_string())) else {
             return enriched;
         };
         let Some(candidate)=state.store.get("rsi_candidate",id) else {return enriched;};
-        let valid=candidate["status"]=="verified"
-            && candidate["baseCommit"]==row["generatorCommit"]
+        if candidate["baseCommit"]!=row["generatorCommit"]
+            || candidate["evaluation"]["source"]!="server_invoked_local_paired_git_worktrees"
+            || candidate["evaluation"]["evidenceSha256"]!=row["evaluation"]["evidenceSha256"]
+            || !row["evaluation"]["evidenceSha256"].is_string() {
+            return enriched;
+        }
+        // A rejected or neutral paired patch can train a zero-gain forecast,
+        // but can never earn a verified *improvement* reward.
+        let Some(metrics)=crate::engine::rsi::replayed_pair_metrics(state,&candidate) else {
+            return enriched;
+        };
+        enriched["pairedEvidenceVerified"]=json!(true);
+        enriched["measuredImprovedHoldouts"]=metrics["improvedHoldouts"].clone();
+        if row["accepted"]==true
+            && candidate["status"]=="verified"
             && candidate["experimentAdoption"]["commit"]==row["acceptedCommit"]
-            && candidate["evaluation"]["source"]=="server_invoked_local_paired_git_worktrees"
-            && candidate["evaluation"]["metrics"]["eligible"]==true
-            && crate::engine::rsi::verified_pair_receipt(state,&candidate);
-        if valid {
+            && metrics["eligible"]==true {
             enriched["evidenceVerified"]=json!(true);
-            enriched["verifiedHoldoutGains"]=candidate["evaluation"]["metrics"]["improvedHoldouts"].clone();
+            enriched["verifiedHoldoutGains"]=metrics["improvedHoldouts"].clone();
         }
         enriched
     }).collect()
 }
-
