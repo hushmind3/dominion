@@ -438,6 +438,43 @@ mod tests{
             "a decided tool must not be approved a second time");
         let _=std::fs::remove_dir_all(root);
     }
+    #[test]
+    fn main_ui_projects_only_real_progress_and_recoverable_states(){
+        let (state,root)=temporary_state();
+        let mut working=json!({"id":"live","kind":"prompt",
+            "status":"running","input":{"prompt":"Inspect"},
+            "nativeState":{"status":"running","step":2,"modelCalls":2,
+                "modelInFlight":false,"inFlight":[{"id":"call-2",
+                    "tool":"workspace_read_range","arguments":{}}],
+                "receipts":[{"id":"call-1","success":true,
+                    "tool":"workspace_list","step":1}]}
+        });
+        let view=project(&state,&working);
+        assert_eq!(view["status"],"running");
+        assert_eq!(view["checkpoint"]["events"].as_array().unwrap().len(),2);
+        assert_eq!(view["checkpoint"]["events"][0]["kind"],"tool_completed");
+        assert_eq!(view["checkpoint"]["events"][1]["kind"],"tool_started");
+        working["status"]=json!("needs_review");
+        working["nativeState"]["status"]=json!("needs_review");
+        assert_eq!(project(&state,&working)["status"],"in_doubt",
+            "single uncertain tool can be reconciled in the main UI");
+        working["nativeState"]["modelInFlight"]=json!(true);
+        assert_eq!(project(&state,&working)["status"],"denied",
+            "a paid model uncertainty must never display tool reconciliation controls");
+        working["nativeState"]["modelInFlight"]=json!(false);
+        working["nativeState"]["inFlight"]=json!([]);
+        working["nativeState"]["error"]=json!("Model token budget exhausted");
+        assert_eq!(project(&state,&working)["status"],"exhausted",
+            "budget stop must not show a meaningless Applied button");
+        working["status"]=json!("failed");
+        working["nativeState"]["status"]=json!("running");
+        working["nativeState"]["error"]=Value::Null;
+        assert_eq!(project(&state,&working)["status"],"interrupted");
+        working["nativeInFlight"]=json!(true);
+        assert_eq!(project(&state,&working)["status"],"denied",
+            "unsafe failed tasks must not display a non-working Resume button");
+        let _=std::fs::remove_dir_all(root);
+    }
     #[tokio::test]
     async fn main_ui_does_not_offer_dead_orphaned_tool_approval(){
         let (state,root)=temporary_state();
@@ -552,7 +589,8 @@ mod tests{
         assert!(shown["checkpoint"]["usage"].is_null());
         let mut needs=job;
         needs["status"]=json!("needs_review");
-        assert_eq!(project(&state,&needs)["status"],"in_doubt");
+        assert_eq!(project(&state,&needs)["status"],"denied",
+            "no uncertain tool receipt means no actionable manual confirmation");
         let _=std::fs::remove_dir_all(root);
     }
 }
