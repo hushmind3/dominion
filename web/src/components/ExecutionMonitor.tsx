@@ -94,7 +94,7 @@ export function ExecutionMonitor(){
     <summary className="flex cursor-pointer flex-wrap items-center gap-2"><span className="min-w-0 flex-1 truncate font-medium">{j.input?.prompt||j.id}</span><span>{j.status}</span><span className="text-[#7C7469]">{j.autonomousState?.attempt||0} / {j.input?.maxAutonomousAttempts||3}회</span></summary>
     <div className="mt-2 space-y-1 text-[#5C544A]">
      {(j.autonomousState?.receipts||j.result?.receipts||[]).map((r:any)=><div key={r.attempt} className="rounded bg-[#FAF7F1] p-2">
-      <strong>{r.attempt}차</strong> · {r.outcome==='accepted'?'결과 수락':r.outcome==='repair'?'재검증 후 수정':'검토 필요'} · 성공 도구 {r.toolSuccess?.length||0}개
+      <strong>{r.attempt}차</strong> · {r.outcome==='accepted'?'결과 수락':r.outcome==='repair'?'재검증 후 수정':'검토 필요'} · 성공 도구 {r.toolSuccess?.length||0}개 · 실제 기록 토큰 {r.usage?.totalTokens||0}개
       {(r.gaps||[]).map((gap:string,i:number)=><p key={i} className="mt-1 break-words text-[#A94E30]">{gap}</p>)}
      </div>)}
      {j.result?.verified===true&&<p className="text-emerald-700">독립 검증 조건 통과</p>}
