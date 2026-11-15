@@ -119,7 +119,9 @@ impl Store {
 /// Parse and validate run-level owner permissions. There is no implicit
 /// shell, write or MCP authority in a stored workflow definition.
 fn run_options(raw:&Value)->Result<TaskInput,String>{
-    let mut options:TaskInput=serde_json::from_value(raw.clone())
+    let mut payload=raw.clone();
+    payload["prompt"]=json!("workflow step");
+    let mut options:TaskInput=serde_json::from_value(payload)
         .map_err(|e|e.to_string())?;
     options.prompt="workflow step".into();
     options.request_id=None;
