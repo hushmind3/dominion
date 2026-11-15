@@ -359,3 +359,35 @@ async fn structured_tool_error_blocks_descendants_and_never_satisfies_tool_succe
     assert!(output.checks.iter().any(|check| !check.satisfied));
     let _=std::fs::remove_dir_all(root);
 }
+
+#[tokio::test]
+async fn repeated_toolless_success_claims_stop_after_three_model_calls() {
+    let (model, tools, evidence, journal, request, root) = test_env(vec![
+        json!({"actions":[],"answer":"done"}),
+        json!({"actions":[],"answer":"done"}),
+        json!({"actions":[],"answer":"done"}),
+    ]);
+    let output=Kernel {model:&model,tools:&tools,evidence:&evidence,journal:&journal}
+        .run(request).await.unwrap();
+    assert!(matches!(output.status,Status::NeedsReview));
+    assert_eq!(output.model_calls,3, "never consume all 24 default rounds on false claims");
+    assert!(output.error.as_deref().unwrap_or("").contains("no actionable progress"));
+    assert_eq!(tools.writes.load(Ordering::SeqCst),0);
+    let _=std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn genuine_tool_progress_resets_nonprogress_guard() {
+    let (model, tools, evidence, journal, request, root) = test_env(vec![
+        json!({"actions":[],"answer":"premature claim"}),
+        json!({"actions":[{"id":"real","tool":"write",
+            "arguments":{"path":"artifact.txt","content":"hello"}}]}),
+        json!({"actions":[],"answer":"real work finished"}),
+    ]);
+    let output=Kernel {model:&model,tools:&tools,evidence:&evidence,journal:&journal}
+        .run(request).await.unwrap();
+    assert!(matches!(output.status,Status::Completed));
+    assert_eq!(output.model_calls,3);
+    assert_eq!(tools.writes.load(Ordering::SeqCst),1);
+    let _=std::fs::remove_dir_all(root);
+}
