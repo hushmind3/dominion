@@ -15,6 +15,7 @@ pub mod extensions;
 pub mod approvals;
 pub mod sessions;
 pub mod agents;
+pub mod sdk;
 pub mod providers;
 pub mod cli_oauth;
 pub mod benchmark;
@@ -142,6 +143,11 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/system/restore", post(system::restore_backup))
         .route("/api/chat", post(chat::chat))
+        .route("/api/sdk/runs", get(sdk::list).post(sdk::start))
+        .route("/api/sdk/runs/:id", get(sdk::one))
+        .route("/api/sdk/runs/:id/resume", post(sdk::resume))
+        .route("/api/sdk/runs/:id/approve", post(sdk::approve))
+        .route("/api/sdk/runs/:id/cancel", post(sdk::cancel))
         .route("/api/jobs",get(jobs::list).post(jobs::create))
         .route("/api/jobs/:id",get(jobs::one))
         .route("/api/jobs/:id/cancel",post(jobs::cancel))
