@@ -85,6 +85,22 @@ pub trait Verifier: Send {
     fn verify(&mut self, snapshot: &Session) -> Verification;
 }
 
+/// Verify a coding task by running the operator's real test command.
+pub struct CommandVerifier {
+    pub shell: crate::tools::Shell,
+    pub command: String,
+}
+impl Verifier for CommandVerifier {
+    fn verify(&mut self, _: &Session) -> Verification {
+        use crate::Tool;
+        match self.shell.invoke(&json!({"command":self.command})) {
+            Ok(result) if result["exit"] == 0 => Verification::Passed,
+            Ok(result) => Verification::Retry(result.to_string()),
+            Err(error) => Verification::Retry(error),
+        }
+    }
+}
+
 /// Durable file checkpoint, using a same-directory temporary file and rename.
 #[derive(Clone, Debug)]
 pub struct FileJournal {
