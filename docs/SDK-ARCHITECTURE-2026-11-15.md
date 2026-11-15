@@ -76,7 +76,7 @@ Validation status: new Rust unit tests exist in the imported kernel and producti
 
 The `dominion-sub3` branch adopts **main's frontend**: the main versions of `web/src/pages/Home.tsx` and `web/src/components/ExecutionMonitor.tsx`, plus its `NativeAgentPanel` layout. The panel's transport is adapted to sub3's production `/api/jobs` and `/api/approvals` endpoints rather than copying main's separate `/api/sdk/runs` engine. The optional verification command becomes an explicit native agent execution instruction (subject to tool permissions and actual observed exit code), not a claimed post-run command hook. Failed-run retry and in-doubt reconciliation each create a **new** journaled job; neither blindly replays prior external side effects.
 
-Static integration: main frontend page/panel paths → `/api/jobs` → `src/api/jobs.rs` → `src/engine/jobs.rs::run_prompt` → `src/engine/native_agent.rs` → `dominion-sdk` kernel. Approval path: panel → `/api/approvals` → `src/api/approvals.rs` → native Rust approval waiter. The frontend source has been aligned; a live browser/Rust build test is not yet recorded.
+Static integration: main frontend page/panel paths → `/api/jobs` → `src/api/jobs.rs` → `src/engine/jobs.rs::run_prompt` → `src/engine/native_agent.rs` → `dominion-sdk` kernel. Approval path: panel → `/api/approvals` → `src/api/approvals.rs` → native Rust approval waiter. The native Rust host compiled and the main-based frontend TypeScript check and Vite production build passed in GitHub run 43684016242. A live browser/API task remains to be exercised.
 
 
 ## Rust-owned scheduler and clean checkpoint continuation (2026-11-15)
@@ -98,9 +98,23 @@ The default general-purpose job path remains `POST /api/jobs` → `src/engine/jo
 
 **Workflow engine migration:** `src/engine/workflows.rs` now executes each workflow step through the same native Rust SDK job queue. Stable child IDs and `enqueue_once` support retry-safe continuation; `start_now` avoids single-worker deadlocks. A prior child result is reused instead of re-running modifications. Unknown legacy in-flight chat-loop steps remain in `needs_review`. Cancelling the parent session propagates to active native children via the journal.
 
-**Tests authored:** scripted native-kernel tests for stale command verification, mismatched/failed commands and replanning, workflow child checkpoint recovery, legacy recovery and deterministic child ID. Existing tests remain. Rust compilation and integration tests are **not yet run** in this environment; no claims of runtime equivalence with frontier systems. CI remains deliberately deferred until the whole product is cleaned up and ready.
+**Tests authored:** scripted native-kernel tests for stale command verification, mismatched/failed commands and replanning, workflow child checkpoint recovery, legacy recovery and deterministic child ID. Existing tests remain. Rust SDK and native host targeted tests have now run and passed in GitHub run 43684016242; no claims of runtime equivalence with frontier systems. CI remains deliberately deferred until the whole product is cleaned up and ready.
 
 
 ### Mandatory coding verification and repair ownership
 
 The independent `dominion-agent-sdk::Kernel` now runs the owner's required exact command checks itself on the model's proposed final answer. No model-generated claim can substitute for a host tool receipt. Failed tests are returned as bounded observations for source repair, passing receipts become stale after new effects, and no-repeat checks avoid spending tokens or running commands repeatedly without progress. See `docs/RUST-CODING-COMPLETION-2026-11-15.md` for end-to-end API, state machine and scripted regression cases.
+
+
+## Executed verification — 2026-11-15
+
+**[GitHub Actions run 43684016242](https://github.com/hushmind3/dominion-rust/actions/runs/43684016242)** on commit `58c37744763506268a369674e3f828ae56b2a699` **concluded SUCCESS**:
+
+- `cargo test --manifest-path crates/dominion-agent-sdk/Cargo.toml -- --nocapture`: **35 passed, 0 failed** (12 unit + 6 kernel integration + 15 replanning + 2 real-file/shell tests)
+- The two real-file tests run actual filesystem writes, `sh -c` commands, a real nonzero exit code, repair, re-verification and disk checkpoint restore. A scripted model supplies deterministic decisions; this is **not** a claim that a live frontier model solved a fresh task.
+- `cargo test --manifest-path Cargo.toml --bin dominion-rust native_ -- --nocapture`: **22 passed, 0 failed** (filtered Rust host tests; 724 others not run)
+- `cargo test --manifest-path Cargo.toml --bin dominion-rust recover_new_workflow_reuses_durable_rust_sdk_child -- --nocapture`: **1 passed, 0 failed** (745 other host tests not run)
+- `npm ci --prefix web`, `npm run typecheck --prefix web`, `npm run build --prefix web`: **all succeeded**. Vite reported a successful production build.
+
+**Total executed Rust cases in this narrow gate: 58 passed / 0 failed.** Full product CI, live-model coding success, live-browser UI, paid provider budget, and SWE-bench remain independently unverified. The regular full CI workflow was not invoked by this gate; verification is a dedicated `sub3-rust-sdk-check.yml` workflow and is scoped to core/host/UI validation. This narrows one proven execution capability, not a declaration that all of Dominion or its coding intelligence is frontier-equivalent.
+

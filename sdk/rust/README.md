@@ -21,14 +21,14 @@ Native entrypoint: `use dominion_sdk::harness::{Kernel, RunRequest, Model, Tools
 
 The `dominion-agent-sdk` crate now implements a dependency-aware dispatcher in `crates/dominion-agent-sdk/src/scheduler.rs`. Tool calls must reference prior durable receipts or earlier actions in model order. Independent read operations may execute in bounded parallel groups; every mutating operation creates a barrier. Invalid dependency graphs are rejected before effects, and any failed batch is durably recorded and sent to a new model planning step rather than blindly continuing the old plan. The production MCP adapter treats structured errors and non-success HTTP statuses as failures instead of successful tool receipts.
 
-The canonical Rust entrypoint remains `Kernel::run`, re-exported as `dominion_sdk::harness`. The TypeScript package is only a typed HTTP/SSE client. This set of changes is source-implemented and accompanied by scripted tests; Rust compilation and live-provider validation have not yet been executed in this environment. Full CI and SWE-bench should follow product integration, stale-asset cleanup and user-authorized budget checks.
+The canonical Rust entrypoint remains `Kernel::run`, re-exported as `dominion_sdk::harness`. The TypeScript package is only a typed HTTP/SSE client. This set of changes is source-implemented and accompanied by scripted tests; Rust SDK and native host compilation passed targeted tests in GitHub run 43684016242; live-provider validation has not yet run. Full CI and SWE-bench should follow product integration, stale-asset cleanup and user-authorized budget checks.
 
 
 ## Durable, safe continuation
 
 `Kernel::resume(request, checkpoint)` continues an interrupted job from the exact previously committed `Snapshot`. Identity and owner-task text must match. The kernel rejects any checkpoint with a pending model request or outstanding tool effect, preserves prior receipts and token counters, and starts at the next unfinished planning step. A terminal snapshot can be returned without another model request. No prior command is reissued automatically.
 
-The live adapter `src/engine/native_agent.rs` now reads the SQLite-backed `nativeState` checkpoint and calls `Kernel::resume` only when `nativeInFlight` is clear. Restored job runs reuse the original session, execution identifier and chat message identifiers; the existing job recovery worker leaves uncertain tool/model outcomes in `needs_review` rather than requeueing. Scripted tests cover successful continuation, failed dependency recovery, missing identity, and unknown-outcome rejection. These tests are committed but not yet executed with a Rust toolchain here.
+The live adapter `src/engine/native_agent.rs` now reads the SQLite-backed `nativeState` checkpoint and calls `Kernel::resume` only when `nativeInFlight` is clear. Restored job runs reuse the original session, execution identifier and chat message identifiers; the existing job recovery worker leaves uncertain tool/model outcomes in `needs_review` rather than requeueing. Scripted tests cover successful continuation, failed dependency recovery, missing identity, and unknown-outcome rejection. These tests executed and passed in the focused GitHub Rust SDK run 43684016242.
 
 
 ### Native coding verification
@@ -38,4 +38,18 @@ The public job API accepts a `command_succeeded` criterion and transforms it int
 
 ### Automatic acceptance/repair loop
 
-Native `Kernel::run` and `Kernel::resume` own verification-command scheduling as well as model and tool turns. Set `RunRequest.checks` to a `ToolSucceeded` criterion with `tool: Some("shell_exec")` and `contains: Some("cargo test")`; the kernel executes the exact missing test under the host's normal permission and journal controls when the model proposes final completion. A failed check is fed into repair, not blindly repeated, and later side effects invalidate earlier passes. For HTTP callers, use `acceptanceChecks: [{ "type": "command_succeeded", "command": "cargo test" }]`. This is executable Rust source with authored tests; Rust compilation is not yet verified here.
+Native `Kernel::run` and `Kernel::resume` own verification-command scheduling as well as model and tool turns. Set `RunRequest.checks` to a `ToolSucceeded` criterion with `tool: Some("shell_exec")` and `contains: Some("cargo test")`; the kernel executes the exact missing test under the host's normal permission and journal controls when the model proposes final completion. A failed check is fed into repair, not blindly repeated, and later side effects invalidate earlier passes. For HTTP callers, use `acceptanceChecks: [{ "type": "command_succeeded", "command": "cargo test" }]`. This is executable Rust source with authored tests. Rust SDK and host builds passed in the focused GitHub run 43684016242; live-provider operation remains unverified.
+
+
+## Executed verification — 2026-11-15
+
+**[GitHub Actions run 43684016242](https://github.com/hushmind3/dominion-rust/actions/runs/43684016242)** on commit `58c37744763506268a369674e3f828ae56b2a699` **concluded SUCCESS**:
+
+- `cargo test --manifest-path crates/dominion-agent-sdk/Cargo.toml -- --nocapture`: **35 passed, 0 failed** (12 unit + 6 kernel integration + 15 replanning + 2 real-file/shell tests)
+- The two real-file tests run actual filesystem writes, `sh -c` commands, a real nonzero exit code, repair, re-verification and disk checkpoint restore. A scripted model supplies deterministic decisions; this is **not** a claim that a live frontier model solved a fresh task.
+- `cargo test --manifest-path Cargo.toml --bin dominion-rust native_ -- --nocapture`: **22 passed, 0 failed** (filtered Rust host tests; 724 others not run)
+- `cargo test --manifest-path Cargo.toml --bin dominion-rust recover_new_workflow_reuses_durable_rust_sdk_child -- --nocapture`: **1 passed, 0 failed** (745 other host tests not run)
+- `npm ci --prefix web`, `npm run typecheck --prefix web`, `npm run build --prefix web`: **all succeeded**. Vite reported a successful production build.
+
+**Total executed Rust cases in this narrow gate: 58 passed / 0 failed.** Full product CI, live-model coding success, live-browser UI, paid provider budget, and SWE-bench remain independently unverified. The regular full CI workflow was not invoked by this gate; verification is a dedicated `sub3-rust-sdk-check.yml` workflow and is scoped to core/host/UI validation. This narrows one proven execution capability, not a declaration that all of Dominion or its coding intelligence is frontier-equivalent.
+

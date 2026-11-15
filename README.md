@@ -170,7 +170,7 @@ The native Rust SDK core and companion TypeScript client now target the same **n
 - [TypeScript SDK](sdk/typescript/README.md) — `@dominion-ai/sdk` reusable package with typed resources, reconnection, abort support and durable job waiting.
 - [SDK contract and 2026 architecture comparison](docs/SDK-ARCHITECTURE-2026-11-15.md).
 
-Both clients use the actual `/api/*` routes from `src/api/mod.rs`, optional `X-Dominion-Token`, and Rust-owned model, tool, memory and checkpoint logic. They do not embed an external provider's agent harness. The SDKs are source packages; they have not yet been published to crates.io/npm. Rust compile and live-provider integration remain to be verified on an environment with the requisite runtime.
+Both clients use the actual `/api/*` routes from `src/api/mod.rs`, optional `X-Dominion-Token`, and Rust-owned model, tool, memory and checkpoint logic. They do not embed an external provider's agent harness. The SDKs are source packages; they have not yet been published to crates.io/npm. Rust and native-host compilation passed the focused GitHub verification run; live-provider integration remains to be verified.
 
 
 ### Main frontend adopted by sub3 (2026-11-15)
@@ -184,14 +184,30 @@ The independent native Rust kernel is in `crates/dominion-agent-sdk`. The `domin
 
 Recent sub3 commits add a dependency-aware Rust tool scheduler (bounded read concurrency and strictly ordered effects), failure-triggered replanning, structured MCP error checking and clean-checkpoint `Kernel::resume`. Previously completed tool effects cannot be replayed automatically after a crash, and unknown outcomes go to owner review. Deterministic kernel scheduling and recovery integration tests are committed in `crates/dominion-agent-sdk/tests`.
 
-**Validation state:** source and connector-level route checks completed; no Rust toolchain is installed in the current execution environment, so these new Rust tests, browser runtime checks and live-provider exercises are still unverified. Full CI and SWE-bench remain deferred until whole-product integration and generated-file cleanup are complete.
+**Validation state:** remote Rust SDK and host tests plus frontend TypeScript and production build passed in GitHub Actions run 43684016242. Live-provider and browser runtime remain unverified; full CI and SWE-bench stay deferred.
 
 
 ### Rust-native autonomous coding verification and workflows (sub3)
 
-The main UI now sends required command postconditions to the real Rust kernel. A completed command must match the owner's requested verification command and occur after the latest workspace edit. Workflow stages execute as durable native Rust SDK child jobs rather than a separate chat-turn harness. See [Architecture](docs/SDK-ARCHITECTURE-2026-11-15.md). This source is not yet build-tested.
+The main UI now sends required command postconditions to the real Rust kernel. A completed command must match the owner's requested verification command and occur after the latest workspace edit. Workflow stages execute as durable native Rust SDK child jobs rather than a separate chat-turn harness. See [Architecture](docs/SDK-ARCHITECTURE-2026-11-15.md). This source passed the focused native Rust host and frontend build checks; live end-to-end browser interaction remains unverified.
 
 
 ### Rust-owned coding completion gate (2026-11-15)
 
-DOMINION now includes the native Rust SDK-side automatic acceptance/repair controller for required command checks. The model supplies candidate edits; the Rust engine performs missing exact verification commands through the standard approval and durable job operation path, feeds failure diagnostics into replanning, invalidates stale success after subsequent effects and declines unverified completion. The main GUI uses the same `/api/jobs` contract. See [the focused coding completion design](docs/RUST-CODING-COMPLETION-2026-11-15.md). Test files are written but not yet executed with the unavailable local Rust toolchain.
+DOMINION now includes the native Rust SDK-side automatic acceptance/repair controller for required command checks. The model supplies candidate edits; the Rust engine performs missing exact verification commands through the standard approval and durable job operation path, feeds failure diagnostics into replanning, invalidates stale success after subsequent effects and declines unverified completion. The main GUI uses the same `/api/jobs` contract. See [the focused coding completion design](docs/RUST-CODING-COMPLETION-2026-11-15.md). Focused tests have now actually executed and passed on GitHub's Rust runner (run 43684016242).
+
+
+### Verified Rust coding completion: 58 targeted Rust tests + GUI build
+
+## Executed verification — 2026-11-15
+
+**[GitHub Actions run 43684016242](https://github.com/hushmind3/dominion-rust/actions/runs/43684016242)** on commit `58c37744763506268a369674e3f828ae56b2a699` **concluded SUCCESS**:
+
+- `cargo test --manifest-path crates/dominion-agent-sdk/Cargo.toml -- --nocapture`: **35 passed, 0 failed** (12 unit + 6 kernel integration + 15 replanning + 2 real-file/shell tests)
+- The two real-file tests run actual filesystem writes, `sh -c` commands, a real nonzero exit code, repair, re-verification and disk checkpoint restore. A scripted model supplies deterministic decisions; this is **not** a claim that a live frontier model solved a fresh task.
+- `cargo test --manifest-path Cargo.toml --bin dominion-rust native_ -- --nocapture`: **22 passed, 0 failed** (filtered Rust host tests; 724 others not run)
+- `cargo test --manifest-path Cargo.toml --bin dominion-rust recover_new_workflow_reuses_durable_rust_sdk_child -- --nocapture`: **1 passed, 0 failed** (745 other host tests not run)
+- `npm ci --prefix web`, `npm run typecheck --prefix web`, `npm run build --prefix web`: **all succeeded**. Vite reported a successful production build.
+
+**Total executed Rust cases in this narrow gate: 58 passed / 0 failed.** Full product CI, live-model coding success, live-browser UI, paid provider budget, and SWE-bench remain independently unverified. The regular full CI workflow was not invoked by this gate; verification is a dedicated `sub3-rust-sdk-check.yml` workflow and is scoped to core/host/UI validation. This narrows one proven execution capability, not a declaration that all of Dominion or its coding intelligence is frontier-equivalent.
+

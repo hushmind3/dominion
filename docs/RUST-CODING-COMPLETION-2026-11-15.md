@@ -38,7 +38,7 @@ These inputs set required postconditions, not client-asserted success. A `comman
 
 The model proposes edits. Rust determines permissions, ordering, persistence, acceptance and terminal status. There is no imported Claude/Codex/Hermes agent executor.
 
-## Deterministic regression cases (authored, not yet executed)
+## Deterministic regression cases (executed in focused GitHub verification)
 
 - exact command identity, latest failure superseding pass, stale pass after edit (including failed partial effects), two independent checks, read-only observation, unknown external tool effect
 - automatic green-path test without an extra model call
@@ -61,4 +61,16 @@ The design choices adopted here are persistent tool receipts, explicit owner-con
 
 ## Limits / verification status
 
-The code and scripted tests were authored and compared statically. The current execution container lacks `rustc` and `cargo`; **no executable Rust test results or live model/provider evidence are asserted**. Required next local commands are `cargo test --manifest-path crates/dominion-agent-sdk/Cargo.toml` and `cargo test --manifest-path Cargo.toml` followed by a real GUI/API coding task with a failing test, source repair, approval and restart. Full CI and SWE-bench remain deferred until repository cleanup and product integration. Arbitrary shell commands may mutate source outside the native workspace editing tool contracts; those mutations are conservatively treated as unverified for file-edit proof. That case requires a later source-diff evidence mechanism.
+## Executed verification — 2026-11-15
+
+**[GitHub Actions run 43684016242](https://github.com/hushmind3/dominion-rust/actions/runs/43684016242)** on commit `58c37744763506268a369674e3f828ae56b2a699` **concluded SUCCESS**:
+
+- `cargo test --manifest-path crates/dominion-agent-sdk/Cargo.toml -- --nocapture`: **35 passed, 0 failed** (12 unit + 6 kernel integration + 15 replanning + 2 real-file/shell tests)
+- The two real-file tests run actual filesystem writes, `sh -c` commands, a real nonzero exit code, repair, re-verification and disk checkpoint restore. A scripted model supplies deterministic decisions; this is **not** a claim that a live frontier model solved a fresh task.
+- `cargo test --manifest-path Cargo.toml --bin dominion-rust native_ -- --nocapture`: **22 passed, 0 failed** (filtered Rust host tests; 724 others not run)
+- `cargo test --manifest-path Cargo.toml --bin dominion-rust recover_new_workflow_reuses_durable_rust_sdk_child -- --nocapture`: **1 passed, 0 failed** (745 other host tests not run)
+- `npm ci --prefix web`, `npm run typecheck --prefix web`, `npm run build --prefix web`: **all succeeded**. Vite reported a successful production build.
+
+**Total executed Rust cases in this narrow gate: 58 passed / 0 failed.** Full product CI, live-model coding success, live-browser UI, paid provider budget, and SWE-bench remain independently unverified. The regular full CI workflow was not invoked by this gate; verification is a dedicated `sub3-rust-sdk-check.yml` workflow and is scoped to core/host/UI validation. This narrows one proven execution capability, not a declaration that all of Dominion or its coding intelligence is frontier-equivalent.
+
+The Rust SDK and focused native host tests have executed successfully on a GitHub runner. The current container still has no local `cargo` toolchain. The real filesystem/shell integration case succeeded with a deterministic scripted planner; a real-provider coding task, live GUI/API approval exercise and restart drill remain to be run. Full CI and SWE-bench remain deferred until product-wide integration. Arbitrary shell commands may mutate source outside the native workspace editing tool contracts; those mutations are conservatively treated as unverified for file-edit proof. That case requires a later source-diff evidence mechanism.
