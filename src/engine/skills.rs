@@ -129,6 +129,18 @@ pub fn catalog(state: &AppState) -> Value {
 }
 
 fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+    let original=std::fs::canonicalize(from)?;
+    if let Ok(destination)=std::fs::canonicalize(to) {
+        if destination==original {return Ok(());}
+        if destination.starts_with(&original) {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput,
+                "Cannot recursively install a skill inside itself"));
+        }
+    } else if to.parent().and_then(|parent|parent.canonicalize().ok())
+        .is_some_and(|parent|parent.starts_with(&original)) {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput,
+            "Cannot install a skill into its own descendant"));
+    }
     std::fs::create_dir_all(to)?;
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;
@@ -259,6 +271,18 @@ mod tests {
         let store = Store::open(&config.db_path()).unwrap();
         let vault = Vault::open(&config.key_path());
         (AppState::new(config, store, vault), dir)
+    }
+
+    #[test]
+    fn copying_into_the_same_physical_skill_folder_never_overwrites_itself() {
+        let dir=std::env::temp_dir().join(format!("dominion-skill-self-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("SKILL.md"),"original skill").unwrap();
+        copy_dir(&dir,&dir).expect("same-directory install is a no-op");
+        assert_eq!(std::fs::read_to_string(dir.join("SKILL.md")).unwrap(),"original skill");
+        assert!(copy_dir(&dir,&dir.join("nested")).is_err(),
+            "recursive destination must not create unbounded directories");
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]

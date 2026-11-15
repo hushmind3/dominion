@@ -779,6 +779,19 @@ async fn select(context: &JobContext, record: &mut Value) -> Result<String, Stri
 /// Git worktree creation and source snapshot happen before the campaign
 /// journal exists. Failed setup must tear down both its Git registration and
 /// disposable bytes; it must never leave an invisible lab poisoning retries.
+/// Canonicalize both paths as filesystem objects rather than comparing Git
+/// porcelain spelling. macOS /var -> /private/var and Windows extended paths
+/// otherwise leave a registered detached worktree with the same inode.
+fn same_git_worktree_location(a:&Path,b:&Path)->bool {
+    if a==b { return true; }
+    let physical=|p:&Path|{
+        p.canonicalize().ok().or_else(||{
+            let parent=p.parent()?.canonicalize().ok()?;
+            Some(parent.join(p.file_name()?))
+        })
+    };
+    matches!((physical(a),physical(b)),(Some(a),Some(b)) if a==b)
+}
 async fn cleanup_failed_lab(source:&Path,lab:&Path)->Result<(),String>{
     let mut scan=Command::new("git");
     scan.current_dir(source).args(["worktree","list","--porcelain"]);
@@ -787,14 +800,16 @@ async fn cleanup_failed_lab(source:&Path,lab:&Path)->Result<(),String>{
         return Err(format!("Cannot inspect Git worktree registry: {}",
             String::from_utf8_lossy(&output.stderr)));
     }
-    let location=lab.to_string_lossy();
     let registered=String::from_utf8_lossy(&output.stdout).lines()
         .filter_map(|line|line.strip_prefix("worktree "))
-        .any(|path|path==location);
-    if registered {
+        .find(|path|same_git_worktree_location(Path::new(path),lab))
+        .map(str::to_owned);
+    if let Some(path)=registered {
+        // Remove with Git's own registered path to handle aliased /var
+        // prefixes and native Windows path prefixes without guesswork.
         let mut cmd=Command::new("git");
         cmd.current_dir(source).args(["worktree","remove","--force"])
-            .arg(lab);
+            .arg(rsi_worktree::git_cli_argument(&path));
         let removed=tools::run_command(&mut cmd,Duration::from_secs(30)).await?;
         if !removed.status.success(){
             return Err(format!("Git still owns the failed lab: {}",
@@ -805,6 +820,18 @@ async fn cleanup_failed_lab(source:&Path,lab:&Path)->Result<(),String>{
         std::fs::remove_dir_all(lab).map_err(|e|format!(
             "Failed lab not removed after Git registry cleanup: {e}"))?;
     }
+    // A missing directory is not proof of a released Git registration.
+    let mut verify=Command::new("git");
+    verify.current_dir(source).args(["worktree","list","--porcelain"]);
+    let result=tools::run_command(&mut verify,Duration::from_secs(30)).await?;
+    if !result.status.success() {
+        return Err(format!("Cannot verify Git registry: {}",
+            String::from_utf8_lossy(&result.stderr)));
+    }
+    let registered=String::from_utf8_lossy(&result.stdout).lines()
+        .filter_map(|line|line.strip_prefix("worktree "))
+        .any(|path|same_git_worktree_location(Path::new(path),lab));
+    if registered {return Err("Failed lab is still registered as a Git worktree".into());}
     Ok(())
 }
 
@@ -5882,6 +5909,8 @@ mod tests {
         std::fs::create_dir_all(source.join("src")).unwrap();
         std::fs::write(source.join("src/main.rs"), "base\n").unwrap();
         git(&context, &source, &["init", "-q"]).await.unwrap();
+        // Freeze fixture Git line endings independently of runner defaults.
+        git(&context, &source, &["config","core.autocrlf","false"]).await.unwrap();
         git(&context, &source, &["add", "."]).await.unwrap();
         git(
             &context,

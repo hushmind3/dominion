@@ -466,18 +466,30 @@ fn choose_transformation(source: &str, measured: impl Fn(&str)->bool) -> Option<
 mod tests {
     #[test]
     fn source_transformations_are_line_ending_independent() {
-        let lf=include_str!("room_state.rs").replace("\r\n","\n");
-        let crlf=lf.replace('\n',"\r\n");
-        let from_lf=hoist_invariant_query_terms(&lf);
-        let from_windows=hoist_invariant_query_terms(&crlf);
-        assert!(from_lf.is_some(), "baseline must expose the real source operator");
-        assert_eq!(from_lf,from_windows);
-        let hoisted=from_lf.unwrap();
-        assert_eq!(cache_invariant_fact_terms(&hoisted),
-            cache_invariant_fact_terms(&hoisted.replace("\n","\r\n")));
+        // A frozen pre-optimized source is essential: the current product may
+        // already contain the optimization and must not mutate it again.
+        let source = concat!(
+            "fn query_relevance(query: &str, text: &str) -> usize {\n",
+            "    let query_tokens = memory::terms(query);\n",
+            "    let text_tokens = memory::terms(text);\n",
+            "    query_tokens.intersection(&text_tokens).count()\n",
+            "}\n",
+            "fn search(query: &str, facts: &[&str]) -> Vec<usize> {\n",
+            "    let mut ranked = facts\n",
+            "        .iter()\n",
+            "        .filter_map(|text| Some(query_relevance(query, text)));\n",
+            "    ranked\n",
+            "}\n",
+        );
+        let lf = hoist_invariant_query_terms(source)
+            .expect("unoptimized fixture must produce real source mutation");
+        let windows = hoist_invariant_query_terms(&source.replace("\n", "\r\n"))
+            .expect("CRLF must not disable source mutation");
+        assert_eq!(lf, windows);
+        assert!(lf.contains("query_relevance(query, text, &query_tokens)"));
+        assert!(hoist_invariant_query_terms(&lf).is_none(),
+            "an already adopted optimization must not repeat");
     }
-
-    use super::*;
 
     #[test]
     fn streaming_domain_selector_preserves_verified_payoff_objective_and_ties() {
@@ -543,8 +555,8 @@ mod tests {
     fn verified_owner_origin_cache_keeps_legacy_validation() {
         // The compiled descendant may already contain these mutations. A
         // source-evolution regression test must survive actual adoption.
-        let original=include_str!("room_state.rs");
-        let first=materialize_verified_owner_provenance(original)
+        let original=include_str!("room_state.rs").replace("\r\n","\n");
+        let first=materialize_verified_owner_provenance(&original)
             .unwrap_or_else(||original.to_string());
         assert!(first.contains("\"verifiedLocalOwner\": true"));
         assert!(first.contains("fact[\"verifiedLocalOwner\"]==true || !fact[\"sourceMessageId\"]"));
@@ -564,8 +576,8 @@ mod tests {
 
     #[test]
     fn current_engine_has_two_distinct_source_generations() {
-        let original=include_str!("room_state.rs");
-        let first=hoist_invariant_query_terms(original)
+        let original=include_str!("room_state.rs").replace("\r\n","\n");
+        let first=hoist_invariant_query_terms(&original)
             .unwrap_or_else(||original.to_string());
         assert!(first.contains("let query_tokens = memory::terms(query);\n    let mut ranked = facts"));
         let second=hoist_invariant_query_domain(&first)

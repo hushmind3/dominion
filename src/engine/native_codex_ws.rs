@@ -545,7 +545,7 @@ mod tests {
             && a["detail"]["mode"]=="delta"
             && a["detail"]["newToolReceipts"]==1));
         forget_job(&job_id);
-        std::fs::remove_dir_all(root).unwrap();
+        crate::test_support::cleanup_dir(root);
     }
 
     #[tokio::test]
@@ -570,7 +570,7 @@ mod tests {
             && a["detail"]["replayed"]==false));
         server.await.unwrap();
         forget_job(&job_id);
-        std::fs::remove_dir_all(root).unwrap();
+        crate::test_support::cleanup_dir(root);
     }
 
     #[tokio::test]
@@ -597,7 +597,7 @@ mod tests {
             "interrupted");
         server.await.unwrap();
         forget_job(&job_id);
-        std::fs::remove_dir_all(root).unwrap();
+        crate::test_support::cleanup_dir(root);
     }
 
     #[tokio::test]
@@ -613,7 +613,7 @@ mod tests {
             listener.accept()).await.is_err(),
             "cancelled work should not open a billable model socket");
         forget_job(&job_id);
-        std::fs::remove_dir_all(root).unwrap();
+        crate::test_support::cleanup_dir(root);
     }
 
     #[tokio::test]
@@ -645,7 +645,7 @@ mod tests {
             a["event"]=="native.codex_ws.uncertain"));
         server.abort();
         forget_job(&job_id);
-        std::fs::remove_dir_all(root).unwrap();
+        crate::test_support::cleanup_dir(root);
     }
 
     #[tokio::test]
@@ -678,6 +678,6 @@ mod tests {
         assert_eq!(done["id"],"resp-new");
         server.await.unwrap();
         forget_job(&job_id);
-        std::fs::remove_dir_all(root).unwrap();
+        crate::test_support::cleanup_dir(root);
     }
 }

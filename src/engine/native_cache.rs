@@ -144,7 +144,7 @@ mod tests {
         overridden.model="different-model".into();
         assert!(hinted(&state,&overridden,&original).1,
             "negative cache capability is route/model scoped");
-        std::fs::remove_dir_all(dir).unwrap();
+        crate::test_support::cleanup_dir(dir);
     }
     #[test]
     fn only_explicit_unsupported_hint_permits_safe_compatibility_retry() {
@@ -167,6 +167,6 @@ mod tests {
         provider["capabilities"]=json!({"promptCaching":false});
         state.store.put("provider",&provider);
         assert!(!hinted(&state,&route,&body()).1);
-        std::fs::remove_dir_all(dir).unwrap();
+        crate::test_support::cleanup_dir(dir);
     }
 }

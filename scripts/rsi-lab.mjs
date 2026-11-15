@@ -10,8 +10,16 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 const [base,patchArg,planArg,reportArg,...extra]=process.argv.slice(2);
 if(extra.length||![base,patchArg,planArg,reportArg].every(Boolean))throw Error('Usage: node rsi-lab.mjs BASE_SHA candidate.patch cases.json report.json');
 if(!/^[a-f0-9]{40}$/i.test(base))throw Error('Expected full Git commit SHA');
+// Rust canonical paths on Windows may have a Win32 verbatim prefix that
+// git.exe cannot open as a patch filename. Convert only this special prefix.
+const gitArgument=value=>{
+ const normalized=value.replaceAll('\\','/');
+ if(normalized.startsWith('//?/UNC/'))return '//'+normalized.slice('//?/UNC/'.length);
+ if(normalized.startsWith('//?/'))return normalized.slice('//?/'.length);
+ return value;
+};
 const run=(args,cwd=process.cwd())=>{
- const result=spawnSync('git',args,{cwd,encoding:'utf8',timeout:30000,maxBuffer:8*1024*1024,windowsHide:true});
+ const result=spawnSync('git',args.map(gitArgument),{cwd,encoding:'utf8',timeout:30000,maxBuffer:8*1024*1024,windowsHide:true});
  if(result.error||result.status!==0)throw Error(result.error?.message||result.stderr||'Git command failed');
  return result.stdout.trim();
 };
