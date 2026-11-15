@@ -2016,14 +2016,6 @@ async fn run_turn_body(
         let parallel_reads = combination.as_ref()
             .and_then(|algorithm|algorithm["implementation"].as_str())
             ==Some("parallel-reads");
-        let batch_names=round_calls.iter().map(|call|call.name.as_str()).collect::<Vec<_>>();
-        let parallel_batch_starts=if parallel_reads{
-            super::tool_schedule::plan(&batch_names,4).into_iter()
-                .filter_map(|batch|match batch{
-                    super::tool_schedule::ToolBatch::ParallelRead{start,len}=>Some((start,len)),
-                    super::tool_schedule::ToolBatch::Exclusive{..}=>None,
-                }).collect::<std::collections::BTreeMap<usize,usize>>()
-        }else{std::collections::BTreeMap::new()};
         let mut parallel_done = std::collections::HashSet::<String>::new();
         let mut ordering_used = false;
         let mut ordering_ok = !barrier_override;
@@ -2050,8 +2042,13 @@ async fn run_turn_body(
             // four concurrent calls, with matching results emitted in the
             // model's original call order, irrespective of completion order.
             // RSI runs retain their own strict tool/patch ordering.
-            if session["rsiRun"]!=true {
-                if let Some(&batch_len)=parallel_batch_starts.get(&call_index){
+            if parallel_reads && session["rsiRun"]!=true {
+                // Inspect the live call suffix only *after* every preceding
+                // exclusive barrier has settled; fail closed on invalid args.
+                let batch_len=super::tool_schedule::parallel_prefix(
+                    round_calls[call_index..].iter()
+                        .map(|item|(item.name.as_str(),item.arguments.as_str())),4);
+                if batch_len>=2 {
                     let _=crate::engine::algorithms::choose_for_agent(
                         state,"tool.combination",request.agent_id.as_deref(),Some(execution_id));
                     let batch=&round_calls[call_index..call_index+batch_len];

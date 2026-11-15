@@ -18,6 +18,20 @@ pub(super) fn safe_to_overlap(name:&str)->bool{
         "task_status"|"task_result"|"account_status")
 }
 
+/// Classify each *complete call*, including arguments, after the previous
+/// exclusive barrier. Invalid argument JSON cannot be dispatched speculatively
+/// in a parallel read group and remains on the ordinary tool-error path.
+pub(super) fn parallel_prefix<'a>(
+    calls:impl Iterator<Item=(&'a str,&'a str)>,capacity:usize
+)->usize{
+    if capacity<=1{return 0;}
+    calls.take_while(|(name,arguments)|{
+        safe_to_overlap(name)
+            && serde_json::from_str::<serde_json::Value>(arguments)
+                .is_ok_and(|value|value.is_object())
+    }).count()
+}
+
 /// Partition one model batch into disjoint model-order execution barriers.
 /// An exclusive call cannot be overtaken by a subsequent concurrent read.
 pub(super) fn plan(names:&[&str],max_parallel:usize)->Vec<ToolBatch>{
@@ -57,6 +71,23 @@ mod tests {
         ]);
         assert_eq!(plan(&calls,1),(0..calls.len())
             .map(|index|Exclusive{index}).collect::<Vec<_>>());
+    }
+    #[test]
+    fn live_argument_validation_fails_closed_and_rechecks_after_barrier(){
+        let calls=[("workspace_read",r#"{"path":"a.rs"}"#),
+            ("workspace_read_range",r#"{"path":"b.rs"}"#),
+            ("workspace_write",r#"{"path":"a.rs","content":"new"}"#),
+            ("workspace_read",r#"{"path":"a.rs"}"#),
+            ("workspace_read",r#"{"path":"b.rs"}"#)];
+        assert_eq!(parallel_prefix(calls.iter().copied(),4),2);
+        assert_eq!(parallel_prefix(calls[2..].iter().copied(),4),0);
+        assert_eq!(parallel_prefix(calls[3..].iter().copied(),4),2);
+        assert_eq!(parallel_prefix([("workspace_read","not-json"),
+            ("workspace_read",r#"{"path":"b"}"#)].into_iter(),4),0);
+        assert_eq!(parallel_prefix([("workspace_read",r#"{"path":"a"}"#),
+            ("workspace_read","[]")].into_iter(),4),1);
+        assert_eq!(parallel_prefix([("workspace_read",r#"{"path":"a"}"#),
+            ("workspace_read",r#"{"path":"b"}"#)].into_iter(),1),0);
     }
     #[test]
     fn parallel_reads_are_bounded_and_unknown_tools_are_exclusive(){
