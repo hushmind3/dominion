@@ -160,6 +160,133 @@ ui.steer.addEventListener('click',async()=>{
     ui.instruction.value='';notice('지시가 저장됐습니다. 다음 모델 단계에서 반영됩니다.');
   }catch(e){notice(e.message);}
 });
+let selectedImprovement = null;
+let improvementBusy = false;
+
+function viewImprovement(item){
+  selectedImprovement=item?.id||null;
+  const output=byId('improvementEvidence');
+  if(!item){
+    byId('improvementStatus').textContent='개선 실험을 선택하세요.';
+    output.textContent='';
+    byId('improvementEvaluate').disabled=true;
+    byId('improvementAdopt').disabled=true;
+    byId('improvementDescendant').disabled=true;
+    return;
+  }
+  byId('improvementSelect').value=item.id;
+  const status={
+    awaiting_approval:'평가 대기',running:'실험 중',evaluated:'평가 완료',
+    rejected:'개선 근거 부족',adopted:'채택 완료',failed:'실패'
+  };
+  byId('improvementStatus').textContent=
+    (status[item.status]||item.status)+' · 예상 모델 비용 '+
+    Number(item.cost_krw||0).toLocaleString('ko-KR')+'원';
+  const summarize=measure=>measure
+    ? (measure.tests_passed?'테스트 통과':'테스트 실패')+
+       ' · 점수 '+(measure.score??'별도 점수 없음')+
+       '\n'+String(measure.log||'').slice(0,800)
+    : '측정 결과 없음';
+  output.textContent=
+    '저장소: '+item.repository+'\n수정 대상: '+item.target_file+
+    '\n기준 커밋: '+(item.base_commit||'—')+
+    '\n후보 커밋: '+(item.candidate_commit||'—')+
+    '\n원본: '+summarize(item.baseline)+
+    '\n후보: '+summarize(item.candidate)+
+    '\n평가: '+(item.accepted?'채택 기준 충족':'아직 개선 판정 없음')+
+    (item.error?'\n오류: '+item.error:'')+
+    (item.reflection?'\n다음 세대 학습 메모: '+item.reflection.slice(0,1600):'');
+  byId('improvementEvaluate').disabled=improvementBusy||
+    item.status!=='awaiting_approval';
+  byId('improvementAdopt').disabled=improvementBusy||
+    item.status!=='evaluated'||!item.accepted;
+  byId('improvementDescendant').disabled=improvementBusy||
+    item.status!=='adopted';
+}
+async function refreshImprovements(preferred){
+  const experiments=await api('/api/improvements');
+  const picker=byId('improvementSelect');
+  const current=preferred||selectedImprovement;
+  picker.replaceChildren();
+  const option=document.createElement('option');
+  option.value='';option.textContent='실험을 선택하세요';picker.append(option);
+  for(const item of experiments){
+    const row=document.createElement('option');
+    row.value=item.id;
+    row.textContent=item.repository+'/'+item.target_file+' · '+item.status;
+    picker.append(row);
+  }
+  if(current&&experiments.some(item=>item.id===current)){
+    viewImprovement(experiments.find(item=>item.id===current));
+  }else if(experiments.length)viewImprovement(experiments[0]);
+  else viewImprovement(null);
+}
+byId('improvementCreate').addEventListener('submit',async event=>{
+  event.preventDefault();if(improvementBusy)return;
+  improvementBusy=true;
+  try{
+    const payload={
+      repository:byId('improvementRepo').value.trim(),
+      target_file:byId('improvementFile').value.trim(),
+      instruction:byId('improvementInstruction').value.trim(),
+      test_command:byId('improvementTest').value.trim(),
+      score_command:byId('improvementScore').value.trim()||null
+    };
+    const created=await api('/api/improvements','POST',payload);
+    await refreshImprovements(created.id);
+    notice('개선 실험이 저장됐습니다. 승인 후 평가를 실행할 수 있습니다.');
+  }catch(error){notice(error.message);}
+  finally{improvementBusy=false;}
+});
+byId('improvementSelect').addEventListener('change',async event=>{
+  if(!event.target.value){viewImprovement(null);return;}
+  try{viewImprovement(await api('/api/improvements/'+encodeURIComponent(event.target.value)));}
+  catch(error){notice(error.message);}
+});
+byId('improvementEvaluate').addEventListener('click',async()=>{
+  if(!selectedImprovement||improvementBusy)return;
+  if(!window.confirm('격리된 Git 작업공간에서 모델과 검증 명령을 실행합니다. 진행하시겠습니까?'))return;
+  improvementBusy=true;byId('improvementEvaluate').disabled=true;
+  try{
+    viewImprovement(await api('/api/improvements/'+encodeURIComponent(selectedImprovement)+
+      '/evaluate','POST',{}));
+    notice('원본·후보 비교를 시작했습니다. 평가 결과 확인을 사용하세요.');
+  }catch(error){notice(error.message);}
+  finally{improvementBusy=false;}
+});
+byId('improvementRefresh').addEventListener('click',async()=>{
+  if(!selectedImprovement)return;
+  try{
+    viewImprovement(await api('/api/improvements/'+encodeURIComponent(selectedImprovement)));
+    notice('');
+  }catch(error){notice(error.message);}
+});
+byId('improvementAdopt').addEventListener('click',async()=>{
+  if(!selectedImprovement||improvementBusy)return;
+  if(!window.confirm('채택한 변경은 원본 Git 저장소에 반영됩니다. 실제로 적용하시겠습니까?'))return;
+  improvementBusy=true;
+  try{
+    viewImprovement(await api('/api/improvements/'+encodeURIComponent(selectedImprovement)+
+      '/adopt','POST',{}));
+    notice('평가된 변경을 원본에 적용했습니다.');
+  }catch(error){notice(error.message);}
+  finally{improvementBusy=false;}
+});
+byId('improvementDescendant').addEventListener('click',async()=>{
+  if(!selectedImprovement||improvementBusy)return;
+  improvementBusy=true;
+  try{
+    const next=await api('/api/improvements/'+encodeURIComponent(selectedImprovement)+
+      '/descendant','POST',{});
+    await refreshImprovements(next.id);
+    notice('앞선 평가 경험을 이어받은 다음 세대 실험을 만들었습니다.');
+  }catch(error){notice(error.message);}
+  finally{improvementBusy=false;}
+});
+byId('refreshImprovements').addEventListener('click',async()=>{
+  try{await refreshImprovements();notice('');}catch(error){notice(error.message);}
+});
+
 let selectedVideo = null;
 let videoBusy = false;
 
@@ -399,6 +526,7 @@ byId('refreshGroups').addEventListener('click',async()=>{
     await loadTasks();
     await refreshGroups();
     await refreshVideos();
+    await refreshImprovements();
   }catch(error){
     ui.connection.textContent='서버 연결 끊김';notice(error.message);
   }
