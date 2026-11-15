@@ -109,18 +109,6 @@ impl AppState {
                 }
             }
         }
-        for mut goal in self.store.all("goal") {
-            if goal["sessionId"].as_str() == Some(session_id)
-                && matches!(goal["status"].as_str(), Some("queued" | "running"))
-            {
-                goal["status"] = serde_json::json!("cancelled");
-                goal["phase"] = serde_json::json!("cancelled");
-                goal["finishedAt"] = serde_json::json!(chrono::Utc::now().to_rfc3339());
-                if let Some(saved) = self.store.put("goal", &goal) {
-                    self.bus.record("goal", &saved);
-                }
-            }
-        }
     }
 
     pub fn clear_cancel(&self, session_id: &str) {
