@@ -1988,128 +1988,41 @@ async fn run_turn_body(
             .ok_or("도구 호출 메시지를 저장할 수 없습니다.")?;
         state.bus.message(&saved);
 
+        // DeepSeek/Codex-style execution barriers: preserve the model's tool
+        // sequence. An exclusive mutation must finish before subsequent reads.
+        // The older "read-first" optimizer could move those reads before the
+        // write and feed stale observations back to the model.
         let ordering = crate::engine::algorithms::choose_for_agent(
-            state,
-            "execution.ordering",
-            request.agent_id.as_deref(),
-            Some(execution_id),
+            state, "execution.ordering", request.agent_id.as_deref(), Some(execution_id),
         );
-        let ordering_kernel = ordering
-            .as_ref()
-            .and_then(|algorithm| algorithm["implementation"].as_str())
+        let ordering_kernel = ordering.as_ref()
+            .and_then(|algorithm|algorithm["implementation"].as_str())
             .unwrap_or("as-written");
-        let mut round_calls = completion.tool_calls.clone();
-        if ordering_kernel == "read-first" {
-            round_calls.sort_by_key(|call| !tool_is_read_only(&call.name));
+        let round_calls = completion.tool_calls.clone();
+        if ordering_kernel=="read-first"
+            && round_calls.iter().enumerate().any(|(index,call)|
+                !tool_is_read_only(&call.name) && round_calls[index+1..].iter()
+                    .any(|later|tool_is_read_only(&later.name))) {
+            state.store.audit("tool.ordering_barrier_preserved",json!({
+                "executionId":execution_id,"round":round,
+                "requested":"read-first","applied":"model-order",
+                "reason":"later reads may depend on earlier mutations",
+            }));
         }
         let combination = crate::engine::algorithms::choose_for_agent(
-            state,
-            "tool.combination",
-            request.agent_id.as_deref(),
-            None,
+            state, "tool.combination", request.agent_id.as_deref(), None,
         );
-        if combination
-            .as_ref()
-            .and_then(|algorithm| algorithm["implementation"].as_str())
-            == Some("parallel-reads")
-        {
-            let read_calls = round_calls
-                .iter()
-                .filter(|call| tool_is_read_only(&call.name))
-                .cloned()
-                .collect::<Vec<_>>();
-            if read_calls.len() >= 2 {
-                // Only this applicable run owns a combination usage record;
-                // a single read is not a combination measurement.
-                let _ = crate::engine::algorithms::choose_for_agent(
-                    state,
-                    "tool.combination",
-                    request.agent_id.as_deref(),
-                    Some(execution_id),
-                );
-                let base_seq = op_seq;
-                op_seq += read_calls.len() as u64;
-                let mut futures = Vec::new();
-                let mut valid_calls = Vec::new();
-                for (offset, call) in read_calls.iter().enumerate() {
-                    match serde_json::from_str::<Value>(&call.arguments) {
-                        Ok(arguments) => {
-                            valid_calls.push((call.clone(), offset));
-                            futures.push(dispatch_tool_call(
-                                state,
-                                tx,
-                                &session,
-                                request,
-                                session_id,
-                                execution_id,
-                                call,
-                                arguments,
-                                metrics,
-                                base_seq + offset as u64 + 1,
-                                round,
-                                offset,
-                                provider.tool_mode == "compat",
-                                "model",
-                                None,
-                                None,
-                                None,
-                            ));
-                        }
-                        Err(error) => {
-                            // Every tool_call needs a matching tool message.
-                            // Dropping a malformed read would leave the next
-                            // provider round with an unanswered call id.
-                            messages.push(json!({
-                                "role":"tool",
-                                "tool_call_id":call.id,
-                                "content":json!({
-                                    "error":format!("invalid tool arguments: {error}")
-                                }).to_string(),
-                            }));
-                            crate::engine::algorithms::mark_signal(
-                                state, execution_id, "tool.selection", false,
-                            );
-                            crate::engine::algorithms::mark_signal(
-                                state, execution_id, "recovery.strategy", false,
-                            );
-                            mark_tool_argument_signal(state, request, execution_id, false);
-                        }
-                    }
-                }
-                let results = futures_util::future::join_all(futures).await;
-                // A dispatch can complete while the tool itself failed
-                // (`Ok((value, false, content))`). Combination credit requires
-                // every combined read to actually succeed.
-                crate::engine::algorithms::mark_signal(
-                    state,
-                    execution_id,
-                    "tool.combination",
-                    results.iter().all(|result| {
-                        result.as_ref().is_ok_and(|(_, ok, _)| *ok)
-                    }),
-                );
-                for ((call, _offset), result) in valid_calls.iter().zip(results.into_iter()) {
-                    let (content, ok) = match result {
-                        Ok((_value, ok, content)) => (content, ok),
-                        Err(error) => (json!({"error":error}).to_string(), false),
-                    };
-                    messages.push(json!({
-                        "role":"tool","tool_call_id":call.id,"content":content,
-                    }));
-                    crate::engine::algorithms::mark_signal(
-                        state, execution_id, "tool.selection", ok,
-                    );
-                    crate::engine::algorithms::mark_signal(
-                        state, execution_id, "recovery.strategy", ok,
-                    );
-                }
-                round_calls.retain(|call| !tool_is_read_only(&call.name));
-            }
-        }
+        let parallel_reads = combination.as_ref()
+            .and_then(|algorithm|algorithm["implementation"].as_str())
+            ==Some("parallel-reads");
+        let mut parallel_done = std::collections::HashSet::<String>::new();
         let mut ordering_used = false;
         let mut ordering_ok = true;
         let mut rsi_patch_written = false;
         for (call_index, call) in round_calls.iter().enumerate() {
+            // Calls already settled as part of a prior contiguous parallel
+            // group must not be proposed, charged or executed a second time.
+            if parallel_done.contains(&call.id) {continue;}
             // A disconnected SSE client must not stop work already promised by
             // the model; explicit cancel and budgets remain the stop signals.
             if !budget.charge_proposal() {
@@ -2122,6 +2035,81 @@ async fn run_turn_body(
                 || state.cancellation_generation(session_id) != generation
             {
                 return Err("실행이 중단되었습니다.".into());
+            }
+            // Only adjacent read-only calls are concurrency-safe; an earlier
+            // mutation is an exclusive barrier. Each read group is bounded to
+            // four concurrent calls, with matching results emitted in the
+            // model's original call order, irrespective of completion order.
+            // RSI runs retain their own strict tool/patch ordering.
+            if parallel_reads && session["rsiRun"]!=true && tool_is_read_only(&call.name) {
+                let batch_len=parallel_read_run_len(
+                    round_calls[call_index..].iter().map(|c|c.name.as_str()),4);
+                if batch_len>=2 {
+                    let _=crate::engine::algorithms::choose_for_agent(
+                        state,"tool.combination",request.agent_id.as_deref(),Some(execution_id));
+                    let batch=&round_calls[call_index..call_index+batch_len];
+                    let mut ordered=vec![None::<(String,bool)>;batch_len];
+                    let mut futures=Vec::new();
+                    let mut valid_slots=Vec::new();
+                    for (offset,read_call) in batch.iter().enumerate(){
+                        if offset>0 && !budget.charge_proposal(){
+                            return Err(format!("도구 제안 예산({}회)을 초과했습니다.",
+                                max_tools.saturating_mul(2)));
+                        }
+                        parallel_done.insert(read_call.id.clone());
+                        let parsed=serde_json::from_str::<Value>(&read_call.arguments);
+                        match parsed {
+                            Ok(args) if args.is_object()=>{
+                                if !budget.charge_tool(){
+                                    return Err(format!("도구 호출 제한({max_tools}회)을 초과했습니다."));
+                                }
+                                op_seq+=1;
+                                valid_slots.push(offset);
+                                futures.push(dispatch_tool_call(
+                                    state,tx,&session,request,session_id,execution_id,
+                                    read_call,args,metrics,op_seq,round,call_index+offset,
+                                    provider.tool_mode=="compat","model",
+                                    None,None,None,
+                                ));
+                            }
+                            _=>{
+                                mark_tool_argument_signal(state,request,execution_id,false);
+                                let error=format!("{} 도구 인수가 올바른 JSON 객체가 아닙니다.",
+                                    read_call.name);
+                                record_soft_tool_error(
+                                    state,tx,session_id,request,execution_id,
+                                    &read_call.name,&read_call.id,&error,metrics,
+                                );
+                                ordered[offset]=Some((json!({"error":error}).to_string(),false));
+                            }
+                        }
+                    }
+                    let outcomes=futures_util::future::join_all(futures).await;
+                    for (offset,result) in valid_slots.into_iter().zip(outcomes){
+                        let (text,ok)=match result {
+                            Ok((_,ok,content))=>(content,ok),
+                            Err(err)=>(json!({"error":err}).to_string(),false),
+                        };
+                        ordered[offset]=Some((text,ok));
+                    }
+                    let mut all_ok=true;
+                    for (read_call,item) in batch.iter().zip(ordered.into_iter()){
+                        let (text,ok)=item.expect("every read call has a result");
+                        all_ok &= ok;
+                        messages.push(json!({
+                            "role":"tool","tool_call_id":read_call.id,"content":text,
+                        }));
+                        crate::engine::algorithms::mark_signal(
+                            state,execution_id,"tool.selection",ok);
+                        crate::engine::algorithms::mark_signal(
+                            state,execution_id,"recovery.strategy",ok);
+                    }
+                    crate::engine::algorithms::mark_signal(
+                        state,execution_id,"tool.combination",all_ok);
+                    ordering_used=true;
+                    ordering_ok &= all_ok;
+                    continue;
+                }
             }
             if session["rsiRun"] == true && !rsi_tool_advertised(&call.name, &round_tools) {
                 let error = format!(
@@ -3060,6 +3048,13 @@ fn restore_program_state(
         json!({"from": source_id, "to": execution_id, "revision": program["revision"]}),
     );
     Ok(())
+}
+
+/// Split a model-issued tool batch at every exclusive barrier, rather than
+/// moving independent reads across earlier writes. Calls after a barrier are
+/// dispatched only when the barrier has settled.
+fn parallel_read_run_len<'a>(names:impl Iterator<Item=&'a str>,limit:usize)->usize{
+    names.take(limit).take_while(|name|tool_is_read_only(name)).count()
 }
 
 fn tool_is_read_only(name: &str) -> bool {
@@ -6490,6 +6485,31 @@ mod outcome_tests {
             determine_task_outcome(&execution("failed", true, json!("check"))),
             TaskOutcome::Failed
         );
+    }
+}
+
+#[cfg(test)]
+mod exclusive_barrier_tests {
+    use super::*;
+    #[test]
+    fn parallel_runs_are_bounded_and_never_cross_model_order_barriers(){
+        let calls=["workspace_read","workspace_read_range","workspace_write",
+                   "workspace_read","workspace_read_range","shell_exec","file_read"];
+        let mut groups=Vec::new();
+        let mut index=0;
+        while index<calls.len(){
+            let count=parallel_read_run_len(calls[index..].iter().copied(),4);
+            if count>=2 {
+                groups.push((index,index+count));
+                index+=count;
+            }else{index+=1;}
+        }
+        assert_eq!(groups,vec![(0,2),(3,5)]);
+        assert_eq!(parallel_read_run_len(["workspace_write","workspace_read"]
+            .into_iter(),4),0);
+        assert_eq!(parallel_read_run_len(["workspace_read","workspace_write"]
+            .into_iter(),4),1);
+        assert_eq!(parallel_read_run_len(["workspace_read";10].into_iter(),4),4);
     }
 }
 
