@@ -63,8 +63,107 @@ impl Store {
                 content TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS message_session_seq ON messages(session_id, seq);
+            CREATE TABLE IF NOT EXISTS memories (
+                id TEXT PRIMARY KEY,
+                session_id TEXT,
+                content TEXT NOT NULL,
+                source TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'fact',
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS memory_scope ON memories(session_id,status);
+            CREATE TABLE IF NOT EXISTS skills (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                trigger TEXT NOT NULL DEFAULT '',
+                instructions TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
         ").map_err(|e| e.to_string())?;
         Ok(Self { conn: Arc::new(Mutex::new(conn)) })
+    }
+
+    /// Store owner-provided evidence. A session scope never widens implicitly.
+    pub fn remember(&self, session: Option<&str>, content: &str, kind: &str)
+        -> Result<Value,String> {
+        let content=content.trim();
+        if content.is_empty() || content.len()>4096 {return Err("Memory must contain 1..4096 bytes".into());}
+        if session.is_some_and(|id|id.is_empty()||id.len()>128) {
+            return Err("Invalid memory session".into());
+        }
+        if !matches!(kind,"fact"|"correction"|"preference"|"procedure") {
+            return Err("Invalid memory kind".into());
+        }
+        let id=Uuid::new_v4().to_string();
+        let at=chrono::Utc::now().to_rfc3339();
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        conn.execute("INSERT INTO memories(id,session_id,content,source,kind,status,created_at)
+                      VALUES(?1,?2,?3,'owner',?4,'active',?5)",
+            params![id,session,content,kind,at]).map_err(|e|e.to_string())?;
+        Ok(json!({"id":id,"sessionId":session,"content":content,
+            "source":"owner","kind":kind,"status":"active","createdAt":at}))
+    }
+
+    pub fn memory_list(&self, session: Option<&str>)->Vec<Value> {
+        let Ok(conn)=self.conn.lock() else { return vec![] };
+        let Ok(mut query)=conn.prepare("SELECT id,session_id,content,source,kind,status,created_at
+               FROM memories WHERE session_id IS NULL OR session_id=?1
+               ORDER BY created_at DESC LIMIT 500") else {return vec![]};
+        let Ok(rows)=query.query_map(params![session],|row|{
+            Ok(json!({"id":row.get::<_,String>(0)?,
+                "sessionId":row.get::<_,Option<String>>(1)?,
+                "content":row.get::<_,String>(2)?,
+                "source":row.get::<_,String>(3)?,
+                "kind":row.get::<_,String>(4)?,
+                "status":row.get::<_,String>(5)?,
+                "createdAt":row.get::<_,String>(6)?}))
+        }) else { return vec![] };
+        rows.filter_map(Result::ok).collect()
+    }
+
+    pub fn memory_disable(&self,id:&str)->Result<bool,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        conn.execute("UPDATE memories SET status='inactive' WHERE id=?1 AND status='active'",
+            [id]).map(|changed|changed>0).map_err(|e|e.to_string())
+    }
+
+    pub fn skill_save(&self,name:&str,trigger:&str,instructions:&str,enabled:bool)
+        -> Result<Value,String> {
+        let (name,trigger,instructions)=(name.trim(),trigger.trim(),instructions.trim());
+        if name.is_empty() || name.len()>100 || trigger.len()>200 ||
+            instructions.is_empty() || instructions.len()>12_000 {
+            return Err("Skill fields exceed allowed limits".into());
+        }
+        let id=Uuid::new_v4().to_string();
+        let at=chrono::Utc::now().to_rfc3339();
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        conn.execute("INSERT INTO skills(id,name,trigger,instructions,enabled,created_at)
+               VALUES(?1,?2,?3,?4,?5,?6)",
+            params![id,name,trigger,instructions,i64::from(enabled),at])
+            .map_err(|e|e.to_string())?;
+        Ok(json!({"id":id,"name":name,"trigger":trigger,"instructions":instructions,
+            "enabled":enabled,"createdAt":at}))
+    }
+
+    pub fn skill_list(&self)->Vec<Value>{
+        let Ok(conn)=self.conn.lock() else {return vec![]};
+        let Ok(mut query)=conn.prepare("SELECT id,name,trigger,instructions,enabled,created_at
+            FROM skills ORDER BY created_at DESC LIMIT 200") else {return vec![]};
+        let Ok(rows)=query.query_map([],|row|Ok(json!({
+            "id":row.get::<_,String>(0)?,"name":row.get::<_,String>(1)?,
+            "trigger":row.get::<_,String>(2)?,"instructions":row.get::<_,String>(3)?,
+            "enabled":row.get::<_,i64>(4)?!=0,"createdAt":row.get::<_,String>(5)?
+        }))) else {return vec![]};
+        rows.filter_map(Result::ok).collect()
+    }
+
+    pub fn skill_enable(&self,id:&str,enabled:bool)->Result<bool,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        conn.execute("UPDATE skills SET enabled=?2 WHERE id=?1",
+            params![id,i64::from(enabled)])
+            .map(|changed|changed>0).map_err(|e|e.to_string())
     }
 
     pub fn submit(&self, request_id: &str, input: &Value) -> Result<(Value, bool), String> {
