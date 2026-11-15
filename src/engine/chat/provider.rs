@@ -2209,11 +2209,11 @@ mod tests {
             }]}));
             original.push(json!({"role":"tool","tool_call_id":id,"content":content}));
         }
-        let before_chars=original.to_string().chars().count();
+        let before_chars=serde_json::to_string(&original).unwrap().chars().count();
         let mut edited=original.clone();
         let saved=edit_stale_read_context(&mut edited, before_chars + 2_000, 0);
         assert!(saved > 30_000, "expected material reduction, got {saved}");
-        assert!(edited.to_string().chars().count() < before_chars - 30_000);
+        assert!(serde_json::to_string(&edited).unwrap().chars().count() < before_chars - 30_000);
         assert!(edited[2]["content"].as_str().unwrap().contains("compacted"));
         assert!(edited[4]["content"].as_str().unwrap().contains("compacted"));
         for at in [6,8,10,12,14] {
