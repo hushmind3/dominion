@@ -232,11 +232,19 @@ pub fn recover(state: &AppState) {
             .or_else(|| job.pointer("/input/sessionId").and_then(Value::as_str));
         let unknown_external_result = job_session.is_some_and(|session| {
             state.store.all("execution_operation").iter().any(|operation| {
-                operation["outcomeUnknown"] == true
-                    && operation["runId"]
-                        .as_str()
-                        .and_then(|run_id| state.store.get("execution", run_id))
-                        .is_some_and(|run| run["sessionId"].as_str() == Some(session))
+                // Crash recovery previously inspected outcomeUnknown BEFORE
+                // marking unfinished operations unknown. This could requeue
+                // a job even while its pre-crash tool was still "running".
+                let unsettled=operation["outcomeUnknown"]==true
+                    || operation["status"]=="running"
+                    || matches!(operation["effectState"].as_str(),
+                        Some("prepared"|"started"|"effect_unknown"|"needs_review"));
+                unsettled && (
+                    operation["sessionId"].as_str()==Some(session)
+                    || operation["runId"].as_str()
+                        .and_then(|run_id|state.store.get("execution",run_id))
+                        .is_some_and(|run|run["sessionId"].as_str()==Some(session))
+                )
             })
         });
         let uncertain = flagged || unknown_external_result;
@@ -1187,6 +1195,33 @@ mod tests {
         recover(&state);
         let stored = state.store.get("job", job["id"].as_str().unwrap()).unwrap();
         assert_eq!(stored["status"], "needs_review");
+    }
+
+    #[test]
+    fn startup_recovery_never_requeues_unsealed_tool_even_without_old_unknown_flag(){
+        let state=temp_state();
+        state.store.put("job",&json!({
+            "id":"pre-crash-job","kind":"prompt","status":"running","attempts":1,
+            "sessionId":"s","input":{"sessionId":"s","prompt":"Perform external update"},
+            "promptState":{"inFlight":false},
+        }));
+        state.store.put("execution",&json!({
+            "id":"pre-crash-run","sessionId":"s","status":"running",
+        }));
+        state.store.put("execution_operation",&json!({
+            "id":"pre-crash-tool","runId":"pre-crash-run","sessionId":"s",
+            "status":"running","effectState":"started","tool":"github_api",
+            "arguments":{"operation":"push"},"outcomeUnknown":false,
+        }));
+        recover(&state);
+        let job=state.store.get("job","pre-crash-job").unwrap();
+        assert_eq!(job["status"],"needs_review",
+            "in-flight tool was requeued before being classified unknown");
+        let tool=state.store.get("execution_operation","pre-crash-tool").unwrap();
+        assert_eq!(tool["status"],"interrupted");
+        assert_eq!(tool["outcomeUnknown"],true);
+        recover(&state);
+        assert_eq!(state.store.get("job","pre-crash-job").unwrap()["status"],"needs_review");
     }
 
     #[test]
