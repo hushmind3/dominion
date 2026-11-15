@@ -80,6 +80,14 @@ pub fn definitions() -> Vec<Value> {
             "wait": json!({"type":"boolean","description":"Wait for completion (default true)"}),
             "timeoutSeconds": json!({"type":"number","description":"5-300 seconds"})
         }), vec!["agentId", "prompt"])),
+        tool("delegate_parallel", "Launch 2-4 independent read-only research tasks concurrently in isolated Rust job sessions; return bounded results or durable job IDs. No shared workspace writes are allowed.", object(json!({
+            "tasks": json!({"type":"array","minItems":2,"maxItems":4,
+                "items":{"type":"object","properties":{
+                    "agentId":{"type":"string"},"prompt":{"type":"string"}
+                },"required":["agentId","prompt"],"additionalProperties":false}}),
+            "wait":json!({"type":"boolean","description":"Wait for the concurrent tasks (default true)"}),
+            "timeoutSeconds":json!({"type":"integer","minimum":5,"maximum":300})
+        }),vec!["tasks"])),
         tool("task_status", "Check a delegated task's status", object(json!({"jobId": text("Job id")}), vec!["jobId"])),
         tool("task_result", "Read a delegated task's result, artifacts and final answer", object(json!({"jobId": text("Job id")}), vec!["jobId"])),
         tool("account_status", "List OAuth accounts connected to DOMINION", object(json!({}), vec![])),
@@ -115,6 +123,13 @@ pub fn requires_approval(name: &str) -> bool {
     )
 }
 
+/// Read-only parallel branches share a live workspace, so writes, shell,
+/// arbitrary absolute reads, external MCP and further delegation are denied.
+pub fn parallel_read_only_tool(name:&str)->bool{
+    matches!(name,"workspace_list"|"workspace_read"|"workspace_read_range"|
+        "code_search"|"memory_search"|"web_search"|"http_fetch")
+}
+
 pub fn rsi_allowed(name:&str)->bool{
     matches!(name,"code_search"|"workspace_read_range"|"workspace_replace"|"workspace_replace_range"|"workspace_write"|"web_search"|"http_fetch"|"algorithm_propose"|"unsafe_audit"|"rsi_method_propose"|"rsi_system_plan")
 }
@@ -125,8 +140,12 @@ pub async fn execute(
     args: &Value,
     run_id: &str,
 ) -> Result<Value, String> {
-    let isolated_rsi = ctx.store.get("session",ctx.session_id)
-        .is_some_and(|s|s["rsiRun"]==true);
+    let session=ctx.store.get("session",ctx.session_id);
+    let isolated_rsi = session.as_ref().is_some_and(|s|s["rsiRun"]==true);
+    if session.as_ref().is_some_and(|s|s["parallelReadOnly"]==true)
+        && !parallel_read_only_tool(name){
+        return Err("병렬 조사 에이전트는 읽기 전용 도구만 사용할 수 있습니다.".into());
+    }
     if isolated_rsi && !rsi_allowed(name) {
         return Err("분리 자기개선 작업에서는 작업공간 내부 도구만 허용됩니다.".into());
     }
@@ -392,6 +411,7 @@ pub async fn execute(
             Ok(crate::engine::unsafe_audit::audit_path(&path))
         }
         "delegate_task" => delegate(ctx, args).await,
+        "delegate_parallel" => delegate_parallel(ctx,args).await,
         "task_status" => task_payload(ctx, args, false),
         "task_result" => task_payload(ctx, args, true),
         "account_status" => Ok(json!({
@@ -473,6 +493,7 @@ async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Value, String> 
         .get("agent", &agent_id)
         .ok_or_else(|| format!("위임 대상 에이전트를 찾을 수 없습니다: {agent_id}"))?;
     let wait = args["wait"].as_bool().unwrap_or(true);
+    let read_only=args["readOnly"]==true;
     let timeout = args["timeoutSeconds"]
         .as_u64()
         .unwrap_or(90)
@@ -490,6 +511,7 @@ async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Value, String> 
                 "model": agent["model"],
                 "parentSessionId": ctx.session_id,
                 "delegated": true,
+                "parallelReadOnly":read_only,
             }),
         )
         .ok_or("위임 세션을 만들 수 없습니다.")?;
@@ -508,6 +530,8 @@ async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Value, String> 
             "parentSessionId": ctx.session_id,
             "parentAgentId": ctx.agent_id,
             "delegation": true,
+            "parallelDelegationReadOnly":read_only,
+            "maxAutonomousAttempts":if read_only {2}else{3},
         }),
     )
     .ok_or("위임 작업을 만들 수 없습니다.")?;
@@ -540,6 +564,78 @@ async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Value, String> 
         }
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     }
+}
+
+/// Fan out independent investigation across dedicated agent sessions. All
+/// children start before waiting, so the job engine executes them in parallel
+/// instead of blocking the parent on the first child.
+async fn delegate_parallel(ctx:&ToolContext<'_>,args:&Value)->Result<Value,String>{
+    let tasks=args["tasks"].as_array().ok_or("tasks must be an array")?;
+    if !(2..=4).contains(&tasks.len()){
+        return Err("병렬 작업은 2~4개를 동시에 요청하세요.".into());
+    }
+    if delegation_depth(ctx.store,ctx.session_id)>=MAX_DELEGATION_DEPTH {
+        return Err("병렬 위임의 최대 깊이에 도달했습니다.".into());
+    }
+    let historical=ctx.store.all("job").iter()
+        .filter(|job|job["input"]["parentSessionId"].as_str()==Some(ctx.session_id)
+            && job["input"]["parallelDelegationReadOnly"]==true).count();
+    if historical.saturating_add(tasks.len())>8{
+        return Err("한 부모 세션에서 병렬 조사 작업은 최대 8개입니다.".into());
+    }
+    // Validate every candidate before side-effecting queue writes. Invalid
+    // agent IDs or oversized prompts must not leave a partial orphan fan-out.
+    for task in tasks {
+        let agent=task["agentId"].as_str()
+            .filter(|s|!s.trim().is_empty()).ok_or("agentId is required")?;
+        let prompt=task["prompt"].as_str()
+            .filter(|s|!s.trim().is_empty()&&s.len()<=4000)
+            .ok_or("각 하위 지시는 1~4000바이트여야 합니다.")?;
+        if ctx.store.get("agent",agent).is_none(){
+            return Err(format!("위임 대상 에이전트를 찾을 수 없습니다: {agent}"));
+        }
+        if prompt.trim().is_empty(){return Err("하위 작업 지시가 비어 있습니다.".into());}
+    }
+    let mut job_ids=Vec::with_capacity(tasks.len());
+    for task in tasks {
+        let created=delegate(ctx,&json!({
+            "agentId":task["agentId"],"prompt":task["prompt"],
+            "readOnly":true,"wait":false,
+        })).await?;
+        let job_id=created["jobId"].as_str().ok_or("위임 작업 ID가 없습니다.")?;
+        job_ids.push(job_id.to_string());
+    }
+    let wait=args["wait"].as_bool().unwrap_or(true);
+    let timeout=args["timeoutSeconds"].as_u64().unwrap_or(120).clamp(5,300);
+    let deadline=std::time::Instant::now()+std::time::Duration::from_secs(timeout);
+    if wait {
+        loop {
+            if ctx.state.is_cancelled(ctx.session_id) {
+                return Err("부모 작업이 취소되었습니다. 하위 작업 ID는 영구 작업 기록에 남습니다.".into());
+            }
+            let finished=job_ids.iter().all(|id|
+                ctx.store.get("job",id).is_some_and(|job|matches!(
+                    job["status"].as_str(),
+                    Some("completed"|"failed"|"cancelled"|"needs_review")
+                )));
+            if finished || std::time::Instant::now()>=deadline{break;}
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+    }
+    let results=job_ids.iter().map(|id|
+        task_payload(ctx,&json!({"jobId":id}),true)).collect::<Result<Vec<_>,_>>()?;
+    let complete=results.iter().all(|result|matches!(
+        result["status"].as_str(),Some("completed"|"failed"|"cancelled"|"needs_review")
+    ));
+    Ok(json!({
+        "status":if complete{"completed"}else{"partial"},
+        "parallel":true,
+        "readOnly":true,
+        "tasks":results,
+        "hint":if complete{"검증 기록을 바탕으로 결과를 종합하세요."}else{
+            "일부 작업이 진행 중입니다. task_status/task_result로 이어서 확인하세요."
+        },
+    }))
 }
 
 fn task_payload(ctx: &ToolContext<'_>, args: &Value, with_result: bool) -> Result<Value, String> {
@@ -2059,6 +2155,12 @@ mod tests {
         }
         assert!(requires_approval("shell_exec"));
         assert!(!requires_approval("workspace_read"));
+        assert!(names.iter().any(|name|name=="delegate_parallel"));
+        assert!(parallel_read_only_tool("workspace_read_range"));
+        assert!(!parallel_read_only_tool("shell_exec"));
+        assert!(!parallel_read_only_tool("workspace_write"));
+        assert!(!parallel_read_only_tool("mcp__external__tool"));
+        assert!(!parallel_read_only_tool("delegate_task"));
     }
     #[cfg(unix)]
     async fn wait_for_marker(path: &Path) {
