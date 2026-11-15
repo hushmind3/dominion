@@ -130,6 +130,16 @@ pub fn parallel_read_only_tool(name:&str)->bool{
         "code_search"|"memory_search"|"web_search"|"http_fetch")
 }
 
+/// The UI's optional capabilities are a persisted execution policy.
+pub fn ui_tool_allowed(policy:&Value,name:&str)->bool{
+    if policy.is_null(){return true;}
+    if name.starts_with("mcp__") && policy["mcpEnabled"]!=true{return false;}
+    if matches!(name,"web_search"|"http_fetch") && policy["webEnabled"]!=true{return false;}
+    if matches!(name,"delegate_task"|"delegate_parallel"|"task_status"|"task_result")
+        && policy["subagentsEnabled"]!=true{return false;}
+    true
+}
+
 pub fn rsi_allowed(name:&str)->bool{
     matches!(name,"code_search"|"workspace_read_range"|"workspace_replace"|"workspace_replace_range"|"workspace_write"|"web_search"|"http_fetch"|"algorithm_propose"|"unsafe_audit"|"rsi_method_propose"|"rsi_system_plan")
 }
@@ -142,6 +152,9 @@ pub async fn execute(
 ) -> Result<Value, String> {
     let session=ctx.store.get("session",ctx.session_id);
     let isolated_rsi = session.as_ref().is_some_and(|s|s["rsiRun"]==true);
+    if session.as_ref().is_some_and(|s|!ui_tool_allowed(&s["sdkUiPolicy"],name)){
+        return Err("사용자 설정에서 비활성화한 도구입니다.".into());
+    }
     if session.as_ref().is_some_and(|s|s["parallelReadOnly"]==true)
         && !parallel_read_only_tool(name){
         return Err("병렬 조사 에이전트는 읽기 전용 도구만 사용할 수 있습니다.".into());
@@ -2224,6 +2237,11 @@ mod tests {
         assert!(!parallel_read_only_tool("workspace_write"));
         assert!(!parallel_read_only_tool("mcp__external__tool"));
         assert!(!parallel_read_only_tool("delegate_task"));
+        let policy=json!({"mcpEnabled":false,"webEnabled":false,"subagentsEnabled":false});
+        assert!(ui_tool_allowed(&policy,"workspace_read"));
+        assert!(!ui_tool_allowed(&policy,"mcp__service__tool"));
+        assert!(!ui_tool_allowed(&policy,"web_search"));
+        assert!(!ui_tool_allowed(&policy,"delegate_parallel"));
     }
     #[cfg(unix)]
     async fn wait_for_marker(path: &Path) {

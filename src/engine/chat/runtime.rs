@@ -731,6 +731,9 @@ async fn run_turn_body(
         // Unfocused source discovery still needs the regular edit budget.
         max_rounds = max_rounds.max(16);
     }
+    if let Some(rounds)=session["sdkUiPolicy"]["maxRounds"].as_u64(){
+        max_rounds=max_rounds.min(rounds.clamp(1,80) as usize);
+    }
     let mut max_tools = budget_algorithm
         .as_ref()
         .and_then(|algorithm| algorithm["parameters"]["maxTools"].as_u64())
@@ -755,7 +758,8 @@ async fn run_turn_body(
     } else {
         Vec::new()
     };
-    if request.tools_enabled && request.tools_execution_enabled {
+    if request.tools_enabled && request.tools_execution_enabled
+        && (session["sdkUiPolicy"].is_null() || session["sdkUiPolicy"]["mcpEnabled"]==true){
         tool_definitions.extend(mcp::definitions(state).await);
     }
     let is_room = session["roomId"].is_string();
@@ -779,6 +783,10 @@ async fn run_turn_body(
     }
     if session["parallelReadOnly"]==true {
         tool_definitions.retain(|definition|tools::parallel_read_only_tool(tool_name(definition)));
+    }
+    if !session["sdkUiPolicy"].is_null(){
+        tool_definitions.retain(|definition|
+            tools::ui_tool_allowed(&session["sdkUiPolicy"],tool_name(definition)));
     }
     let compiled = if is_room {
         let source = source_message_id.or(reply_to.as_deref()).ok_or("응답할 원문이 없습니다.")?;
@@ -969,7 +977,7 @@ async fn run_turn_body(
             decomposition["kernel"].as_str().unwrap_or(""),
         ]),
     }));
-    let plan_requested = match planning_policy.as_ref().and_then(|policy| {
+    let plan_requested_by_engine = match planning_policy.as_ref().and_then(|policy| {
         crate::engine::policy::outline_decision(
             &policy["parameters"],
             request.input.chars().count(),
@@ -977,6 +985,9 @@ async fn run_turn_body(
     }) {
         Some(decision) => decision,
         None => needs_plan(&request.input, &acceptance) || subtask_count > 1,
+    };
+    let plan_requested=match session["sdkUiPolicy"]["planningMode"].as_str(){
+        Some("always")=>true,Some("never")=>false,_=>plan_requested_by_engine,
     };
     let mut plan_digest: Option<String> = None;
     if acceptance.is_some()
@@ -1522,6 +1533,20 @@ async fn run_turn_body(
             let mut counters = metrics.lock().unwrap();
             counters.model_calls += 1;
             counters.iterations = round as u32 + 1;
+        }
+        // Caps are persistent across autonomous repair turns; the currently
+        // in-flight provider call may overrun its cap, but another cannot start.
+        if let Some(limit)=session["sdkUiPolicy"]["maxTotalTokens"].as_u64(){
+            if state.store.session_usage(session_id)["totalTokens"].as_u64().unwrap_or(0)>=limit {
+                mark_budget_exhausted(state,execution_id);
+                return Err("전체 토큰 한도에 도달했습니다.".into());
+            }
+        }
+        if let Some(limit)=session["sdkUiPolicy"]["maxRounds"].as_u64(){
+            if state.store.session_usage(session_id)["calls"].as_u64().unwrap_or(0)>=limit {
+                mark_budget_exhausted(state,execution_id);
+                return Err("모델 판단 횟수 한도에 도달했습니다.".into());
+            }
         }
         let completion_result = stream_completion(
             state,
@@ -4795,6 +4820,9 @@ async fn dispatch_tool_call(
         let outcome = if state.store.get("session",session_id).is_some_and(|s|s["rsiRun"]==true)
             && !tools::rsi_allowed(&call.name) {
             Err("자기개선 작업의 허용 도구 범위를 벗어났습니다.".into())
+        } else if state.store.get("session",session_id).is_some_and(|s|
+            !tools::ui_tool_allowed(&s["sdkUiPolicy"],&call.name)){
+            Err("사용자 설정에서 비활성화한 도구입니다.".into())
         } else if state.store.get("session",session_id).is_some_and(|s|
             s["parallelReadOnly"]==true) && !tools::parallel_read_only_tool(&call.name){
             Err("병렬 조사 하위 에이전트는 쓰기·셸·위임·MCP 실행을 할 수 없습니다.".into())

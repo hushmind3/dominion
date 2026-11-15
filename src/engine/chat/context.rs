@@ -173,11 +173,13 @@ fn context_block_with_manifest(
     let (memories, mut items) =
         crate::engine::memory::context_block_with_manifest_at(state, &scope, query, execution_id);
 
+    let skills_enabled=state.store.get("session",session_id).is_none_or(|session|
+        session["sdkUiPolicy"].is_null() || session["sdkUiPolicy"]["skillsEnabled"]==true);
     let mut skills = state
         .store
         .all("skill")
         .into_iter()
-        .filter(|skill| crate::engine::memory::visible(skill, &scope))
+        .filter(|skill| skills_enabled && crate::engine::memory::visible(skill, &scope))
         .filter(|skill| skill.get("status").and_then(Value::as_str) != Some("draft"))
         .filter(|skill| skill.get("enabled").and_then(|v| v.as_bool()) != Some(false))
         .filter_map(|skill| {

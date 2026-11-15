@@ -25,6 +25,12 @@ pub struct Start {
     model: Option<String>,
     verify_command: Option<String>,
     max_rounds: Option<usize>,
+    max_total_tokens: Option<u64>,
+    planning_mode: Option<String>,
+    mcp_enabled: Option<bool>,
+    skills_enabled: Option<bool>,
+    web_enabled: Option<bool>,
+    subagents_enabled: Option<bool>,
 }
 
 fn panel_job(state: &AppState, id: &str) -> Option<Value> {
@@ -98,6 +104,8 @@ fn public_view(state: &AppState, job: &Value) -> Value {
             .or_else(|| job.pointer("/result/reason").and_then(Value::as_str)),
         "providerId": job["input"]["providerId"],
         "model": job["input"]["model"],
+        "planningMode": job["input"]["sdkUiPolicy"]["planningMode"],
+        "maxTotalTokens": job["input"]["sdkUiPolicy"]["maxTotalTokens"],
         "createdAt": job["createdAt"],
         "checkpoint": {
             "state": {"state": status},
@@ -149,7 +157,20 @@ pub async fn start(State(state): State<AppState>, Json(input): Json<Start>) -> R
         Ok(route) => route,
         Err(message) => return error(StatusCode::BAD_REQUEST, &message),
     };
-    let attempts = input.max_rounds.unwrap_or(3).clamp(1, 6);
+    let rounds=input.max_rounds.unwrap_or(24);
+    if !(1..=80).contains(&rounds) {
+        return error(StatusCode::BAD_REQUEST, "최대 모델 판단 횟수는 1~80회입니다.");
+    }
+    let tokens=input.max_total_tokens.unwrap_or(120_000);
+    if !(1_000..=2_000_000).contains(&tokens) {
+        return error(StatusCode::BAD_REQUEST, "전체 토큰 한도는 1,000~2,000,000입니다.");
+    }
+    let planning=input.planning_mode.as_deref().unwrap_or("automatic");
+    if !matches!(planning,"automatic"|"always"|"never") {
+        return error(StatusCode::BAD_REQUEST, "작업 계획 모드를 확인하세요.");
+    }
+    // Outer repair attempts are independent of the total model-round cap.
+    let attempts=rounds.clamp(1,6);
     let mut job_input = json!({
         "prompt": instruction,
         "providerId": route.id,
@@ -159,6 +180,13 @@ pub async fn start(State(state): State<AppState>, Json(input): Json<Start>) -> R
         "maxAutonomousAttempts": attempts,
         "executionStrategy": "focused",
         "uiSource": SOURCE,
+        "sdkUiPolicy":{
+            "planningMode":planning,"maxRounds":rounds,"maxTotalTokens":tokens,
+            "mcpEnabled":input.mcp_enabled.unwrap_or(false),
+            "skillsEnabled":input.skills_enabled.unwrap_or(true),
+            "webEnabled":input.web_enabled.unwrap_or(false),
+            "subagentsEnabled":input.subagents_enabled.unwrap_or(false),
+        }
     });
     if let Some(command) = input.verify_command.filter(|command| !command.trim().is_empty()) {
         job_input["verifyCommand"] = json!(command.trim());
@@ -331,6 +359,10 @@ mod tests {
             model: None,
             verify_command: Some("cargo test".into()),
             max_rounds: Some(2),
+            max_total_tokens: Some(50_000),
+            planning_mode: Some("always".into()),
+            mcp_enabled: Some(false),skills_enabled: Some(true),
+            web_enabled: Some(false),subagents_enabled: Some(false),
         })).await;
         assert_eq!(created.status(), StatusCode::ACCEPTED);
         let jobs = state.store.all("job");
@@ -340,6 +372,8 @@ mod tests {
         assert_eq!(job["input"]["providerId"], "test-provider");
         assert_eq!(job["input"]["verifyCommand"], "cargo test");
         assert_eq!(job["input"]["maxAutonomousAttempts"], 2);
+        assert_eq!(job["input"]["sdkUiPolicy"]["maxTotalTokens"],50_000);
+        assert_eq!(job["input"]["sdkUiPolicy"]["planningMode"],"always");
         assert_eq!(one(State(state.clone()), Path(id.to_string())).await.status(), StatusCode::OK);
         state.store.patch_if("job", id, "status", &json!("queued"), &json!({
             "status":"needs_review", "result":{"verified":false}

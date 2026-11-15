@@ -630,6 +630,13 @@ pub(crate) async fn run_prompt(context: &JobContext, job: &Value) -> Result<Valu
         None => context.state.store.put("session",&json!({"title":prompt.chars().take(40).collect::<String>(),"agentId":input.get("agentId")}))
             .and_then(|session|session["id"].as_str().map(str::to_string)).ok_or("작업 세션을 저장할 수 없습니다.")?,
     };
+    if input["uiSource"]=="native_sdk_panel" {
+        let mut session=context.state.store.get("session",&session_id)
+            .ok_or("사용자 작업 세션을 찾을 수 없습니다.")?;
+        session["sdkUiPolicy"]=input["sdkUiPolicy"].clone();
+        context.state.store.put("session",&session)
+            .ok_or("사용자 작업 정책을 저장할 수 없습니다.")?;
+    }
     if rsi_workspace.is_some() {
         if let Some(mut session)=context.state.store.get("session",&session_id) {
             session["rsiRun"]=json!(true);
