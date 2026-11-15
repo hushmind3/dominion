@@ -88,6 +88,16 @@ impl Improvements {
             if !candidate.eligible && candidate.reason.is_none() {
                 candidate.reason=Some("Training score did not improve".into());
             }
+            // A candidate rejected by independent validation is no longer
+            // independently adoptable through the ordinary trial endpoint.
+            if !candidate.eligible && result_trial.status==ImprovementStatus::Evaluated {
+                let mut rejected=result_trial.clone();
+                rejected.accepted=false;
+                rejected.status=ImprovementStatus::Rejected;
+                rejected.error=candidate.reason.clone();
+                rejected.updated_at_ms=now_ms();
+                self.put(rejected).await?;
+            }
             evaluated.push(candidate.clone());
             run.candidates.push(candidate);
             run.updated_at_ms=now_ms();
