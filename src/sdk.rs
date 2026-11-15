@@ -21,7 +21,7 @@ impl From<Config> for EngineOptions {
 pub struct Prompt {
     pub instruction:String,pub agent_id:Option<String>,
     pub provider_id:Option<String>,pub model:Option<String>,
-    pub reasoning_effort:Option<String>,pub tools_enabled:bool,
+    pub reasoning_effort:Option<String>,pub verify_command:Option<String>,pub tools_enabled:bool,
     pub autonomous:bool,pub max_autonomous_attempts:u8,
     pub execution_strategy:ExecutionStrategy,
 }
@@ -35,7 +35,7 @@ impl ExecutionStrategy {
 impl Prompt {
     pub fn new(instruction:impl Into<String>)->Self{
         Self{instruction:instruction.into(),agent_id:None,provider_id:None,model:None,
-            reasoning_effort:None,tools_enabled:true,autonomous:true,
+            reasoning_effort:None,verify_command:None,tools_enabled:true,autonomous:true,
             max_autonomous_attempts:3,execution_strategy:ExecutionStrategy::Focused}
     }
 }
@@ -114,6 +114,9 @@ impl Dominion {
         if let Some(effort)=prompt.reasoning_effort.as_deref(){
             if !engine::reasoning::valid_effort(effort){return Err("invalid reasoning effort".into());}
         }
+        if prompt.verify_command.as_deref().is_some_and(|s|s.len()>2048){
+            return Err("verify_command must be at most 2048 bytes".into());
+        }
         if !(1..=6).contains(&prompt.max_autonomous_attempts){
             return Err("max_autonomous_attempts must be 1..6".into());
         }
@@ -126,6 +129,7 @@ impl Dominion {
         for (name,value) in [
             ("agentId",prompt.agent_id),("providerId",prompt.provider_id),
             ("model",prompt.model),("reasoningEffort",prompt.reasoning_effort),
+            ("verifyCommand",prompt.verify_command),
         ]{
             if let Some(value)=value.filter(|s|!s.trim().is_empty()){input[name]=json!(value);}
         }
@@ -206,6 +210,15 @@ mod tests {
         let reopened=Dominion::open(EngineOptions::new(&dir,dir.join("data"))).unwrap();
         assert_eq!(reopened.job(id).unwrap()["status"],"queued");
         drop(reopened);let _=std::fs::remove_dir_all(dir);
+    }
+    #[test]
+    fn native_sdk_exposes_same_frozen_verification_command_as_gui(){
+        let (sdk,dir)=sdk();
+        let mut prompt=Prompt::new("Fix the failing module");
+        prompt.verify_command=Some("cargo test".into());
+        let job=sdk.submit(prompt).unwrap();
+        assert_eq!(job["input"]["verifyCommand"],"cargo test");
+        drop(sdk);let _=std::fs::remove_dir_all(dir);
     }
     #[test]
     fn invalid_owner_contract_cannot_enqueue_work(){
