@@ -59,35 +59,6 @@ pub async fn run(context: &JobContext, job: &Value) -> Result<Value, String> {
         return Err("작업 체크포인트를 찾을 수 없습니다.".into());
     }
     let (agent_id,provider_id,model)=resolve_executor(state,&goal,&text)?;
-    goal["resolvedExecutor"]["providerId"].as_str(),
-            goal["resolvedExecutor"]["model"].as_str()
-        ) {
-            if state.store.get("provider",provider).is_some_and(|item|item["enabled"]!=false) {
-                provider_id=provider.into();
-                model=selected_model.into();
-            }
-        }
-    }
-    if provider_id.is_empty() && model.is_empty() {
-        let complexity=match crate::engine::router::classify(&text,0,0) {
-            crate::engine::router::Complexity::Light=>
-                crate::engine::router::Complexity::Standard,
-            other=>other,
-        };
-        if let Some(choice)=crate::engine::router::select_provider(state,complexity) {
-            if let Ok(route)=crate::engine::gateway::route_from_provider(state,&choice,None) {
-                provider_id=route.id;
-                model=route.model;
-            }
-        }
-    }
-    if provider_id.is_empty() || model.is_empty() {
-        // A named model without a provider resolves against the configured
-        // default; no arbitrary provider is silently attached to an agent.
-        let selected=crate::engine::gateway::resolve(state,&provider_id,Some(&model))?;
-        provider_id=selected.id;
-        model=selected.model;
-    }
     goal["resolvedExecutor"]=json!({"providerId":provider_id,"model":model});
     let reviewer = goal.get("reviewer").cloned().unwrap_or_else(|| json!({}));
     let planner = goal.get("planner").cloned().unwrap_or_else(|| json!({}));
