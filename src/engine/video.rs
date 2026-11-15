@@ -1097,6 +1097,21 @@ pub async fn upload(ctx: &JobContext, job: &Value) -> Result<Value, String> {
 mod tests {
     use super::*;
     #[test]
+    fn economy_mode_reduces_real_diffusion_frames_and_steps_without_hiding_the_budget() {
+        let normal = render_budget(12,24,40,480,832,false);
+        let economy = render_budget(12,24,40,480,832,true);
+        assert_eq!(normal["frames"],288);
+        assert_eq!(normal["steps"],40);
+        assert_eq!(economy["frames"],144);
+        assert_eq!(economy["fps"],12);
+        assert_eq!(economy["steps"],12);
+        assert_eq!(economy["estimatedWorkReductionPercent"],85);
+        let normal_units = normal["estimatedPixelSteps"].as_str().unwrap().parse::<u128>().unwrap();
+        let cheap_units = economy["estimatedPixelSteps"].as_str().unwrap().parse::<u128>().unwrap();
+        assert_eq!(cheap_units*40*24,normal_units*12*12);
+    }
+
+    #[test]
     fn video_weights_require_a_real_completed_asset_not_a_placeholder() {
         let dir = std::env::temp_dir().join(format!("dominion-model-ready-{}",uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
