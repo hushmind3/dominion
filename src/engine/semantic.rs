@@ -48,7 +48,28 @@ pub(super) fn accept(store:&crate::store::Store,session:&str,
 /// Called only under context pressure or when resuming evidence-heavy work.
 pub(super) async fn refresh(state:&AppState,task:&str,session:&str,
     owner_instruction:&str,allow_model:bool)->Result<Value,String>{
-    let candidates=state.store.context_candidates(session,24);
+    // Reserve sources from three independent windows: the oldest
+    // unprocessed owner statements, query-relevant evidence anywhere in the
+    // indexed history, and the most recent owner corrections.
+    let mut candidates=state.store.context_candidates(session,8);
+    let mut seen=candidates.iter().filter_map(|item|item["seq"].as_u64())
+        .collect::<HashSet<_>>();
+    for hit in state.store.context_search(session,task,owner_instruction,16){
+        if hit["kind"]!="owner"{continue;}
+        let Some(seq)=hit["messageSeq"].as_u64() else{continue};
+        if seen.insert(seq){
+            if let Some(source)=state.store.context_owner_source(session,seq){
+                candidates.push(source);
+            }
+        }
+        if candidates.len()>=16{break;}
+    }
+    for candidate in state.store.context_recent_candidates(session,8){
+        let Some(seq)=candidate["seq"].as_u64() else{continue};
+        if seen.insert(seq){candidates.push(candidate);}
+        if candidates.len()>=24{break;}
+    }
+    candidates.sort_by_key(|item|item["seq"].as_u64().unwrap_or(0));
     if candidates.is_empty(){return Ok(json!({"scanned":0}))}
     let fallback=state.store.context_fallback_owner(session,&candidates);
     let (mut added,mut rejected)=(0,0);
