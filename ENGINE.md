@@ -196,3 +196,7 @@ Rust SDK 자체가 계획·실행·검증·복구의 상태기계입니다. 실�
 ## 품질 하한·원화 가격 기반 Rust 네이티브 모델 라우팅 (2026-11-15)
 
 실제 진입점은 `web/src/pages/Models.tsx` → `src/api/providers.rs::save_provider` (`provider.nativeRouting`) 및 `web/src/components/NativeAgentPanel.tsx` → `src/api/jobs.rs::create` (`input.nativeRoutingPolicy`) → `src/engine/native_agent.rs::run` → `src/engine/native_routing.rs::choose` → `job.nativeRoute` 지속 체크포인트 → `ConfiguredModel::complete_with_tools` → `native_model::complete_with_run` → `nativeModelUsage.configuredCostKRW` → `GET /api/jobs/:id` / TypeScript SDK / GUI입니다. 사용자 직접 지정 제공자·모델 우선, 선언된 품질 하한을 충족하는 가격 보유 네이티브 후보만 가격 비교, 무후보 시 생성 전 거부합니다. 모델+엔드포인트+계정+인증·프로토콜 계약 지문을 고정하여 복구·모델 호출 중 전환을 차단합니다. 여러 완료 작업에서 보고된 캐시 토큰에 근거한 보수적 예상비용과 실제 제공자 보고 토큰 × 소유자 등록 단가를 혼동하지 않습니다. 상세: `docs/SUB3-NATIVE-QUALITY-COST-ROUTING-2026-11-15.md`.
+
+## RSI 실동작 증명과 잔재 정리 (2026-11-15)
+
+`api::rsi::start` → `jobs::run_job(rsi_evolve)` → `rsi_evolve::run_loop` (진짜 `cargo build --release` 및 `--rsi-worker-job`) → `jobs::run_prompt` → `rsi_worktree::finish` → `rsi_worktree::compare_at` → `rsi::replayed_pair_metrics` → `rsi_evolve::adopt` → `rsi_worktree::apply_campaign_to_sub`. `rsi-lab.mjs`에서 동결 oracle 주입 전 후보 Git 트리 SHA를 기록하고 `reconstructed_patch_tree`가 별도 `GIT_INDEX_FILE`에서 독립 검산합니다. 채택/배포는 A/B 보고의 정확한 트리와 일치해야 합니다. `worker_result_status`는 컴파일 실패·수동 검토를 정상 완료로 쓰지 않습니다. `cleanup_failed_lab` 및 Node `finally` 경로는 중단된 실험의 등록 Git worktree를 정리하거나 정리 실패 영수증을 보존합니다. 구현 근거와 범위: `docs/SUB3-RSI-EXECUTION-INTEGRITY-2026-11-15.md`.
