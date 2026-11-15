@@ -26,7 +26,9 @@ for(const c of plan.cases){
  seen.add(c.id);
 }
 run(['cat-file','-e',base+'^{commit}'],root);
-const temp=fs.mkdtempSync(path.join(os.tmpdir(),'dominion-rsi-'));
+// macOS can expose /var as an alias of /private/var. Git registers
+// canonical worktree paths; compare the same physical path on cleanup.
+const temp=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'dominion-rsi-')));
 const created=[];
 try{
  for(const arm of ['baseline','candidate']){
