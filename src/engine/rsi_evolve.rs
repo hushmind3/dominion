@@ -3645,7 +3645,15 @@ async fn run_loop(
             &hashes,record["history"].as_array().map(Vec::as_slice).unwrap_or(&[]));
         let verified_outcomes=history_with_verified_payoffs(
             &context.state,&[generation.clone()]);
-        generation["editMethodReward"]=json!(verified_outcomes.first()
+        let replayed=verified_outcomes.first();
+        // Feed the next-generation predictor only the paired evaluation that
+        // Rust just replayed. A verified neutral/regressed patch is a measured
+        // zero; a missing or altered receipt is not a training observation.
+        generation["pairedEvidenceVerified"]=replayed
+            .map(|row|row["pairedEvidenceVerified"].clone()).unwrap_or(json!(false));
+        generation["measuredImprovedHoldouts"]=replayed
+            .map(|row|row["measuredImprovedHoldouts"].clone()).unwrap_or(Value::Null);
+        generation["editMethodReward"]=json!(replayed
             .map(edit_method_reward).unwrap_or(0.0));
         generation["knowledgeArtifactHashes"]=json!(hashes);
         generation["newFindings"]=json!(new_findings);
@@ -3830,8 +3838,11 @@ async fn run_loop(
         };
         let next_domain = select_domain_for_state(&context.state, &decision_history, &decision_objective);
         let reuse = method_reuse_decision(&context.state, input, &next_domain);
+        // Recheck historical receipts before using them for forecast bias.
+        // Persisted derived fields are hints, never their own proof.
+        let measured_history=history_with_verified_payoffs(&context.state,&decision_history);
         let next_prediction = crate::engine::rsi_forecast::forecast_next(
-            &decision_history, &next_domain, decision_basis);
+            &measured_history, &next_domain, decision_basis);
         record["nextDecision"] = json!({
             "basis": decision_basis,
             "fromGeneration": attempt,
