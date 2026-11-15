@@ -52,8 +52,7 @@ pub(super) async fn load(root:&Path)->Result<HashMap<Uuid,EvolutionRun>,String>{
             run.status=EvolutionStatus::NeedsReview;
             run.stop_reason=Some("Evolution interrupted; inspect committed descendants before a new run".into());
             run.updated_at_ms=now_ms();
-            let bytes=serde_json::to_vec(&run).map_err(|e|e.to_string())?;
-            fs::write(entry.path(),bytes).await.map_err(|e|e.to_string())?;
+            save(root,&run).await?;
         }
         runs.insert(run.id,run);
     }
@@ -64,9 +63,17 @@ async fn save(root:&Path,run:&EvolutionRun)->Result<(),String>{
     let dir=root.join("evolutions");
     let temp=dir.join(format!("{}.tmp",run.id));
     let destination=dir.join(format!("{}.json",run.id));
-    fs::write(&temp,serde_json::to_vec(run).map_err(|e|e.to_string())?)
-        .await.map_err(|e|e.to_string())?;
-    fs::rename(temp,destination).await.map_err(|e|e.to_string())?;
+    use tokio::io::AsyncWriteExt;
+    let bytes=serde_json::to_vec(run).map_err(|e|e.to_string())?;
+    let mut file=fs::OpenOptions::new().create(true).truncate(true)
+        .write(true).open(&temp).await.map_err(|e|e.to_string())?;
+    file.write_all(&bytes).await.map_err(|e|e.to_string())?;
+    file.sync_all().await.map_err(|e|e.to_string())?;
+    drop(file);
+    fs::rename(&temp,&destination).await.map_err(|e|e.to_string())?;
+    #[cfg(unix)]
+    std::fs::File::open(&dir).and_then(|file|file.sync_all())
+        .map_err(|e|e.to_string())?;
     Ok(())
 }
 
