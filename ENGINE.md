@@ -200,3 +200,5 @@ Rust SDK 자체가 계획·실행·검증·복구의 상태기계입니다. 실�
 ## RSI 실동작 증명과 잔재 정리 (2026-11-15)
 
 `api::rsi::start` → `jobs::run_job(rsi_evolve)` → `rsi_evolve::run_loop` (진짜 `cargo build --release` 및 `--rsi-worker-job`) → `jobs::run_prompt` → `rsi_worktree::finish` → `rsi_worktree::compare_at` → `rsi::replayed_pair_metrics` → `rsi_evolve::adopt` → `rsi_worktree::apply_campaign_to_sub`. `rsi-lab.mjs`에서 동결 oracle 주입 전 후보 Git 트리 SHA를 기록하고 `reconstructed_patch_tree`가 별도 `GIT_INDEX_FILE`에서 독립 검산합니다. 채택/배포는 A/B 보고의 정확한 트리와 일치해야 합니다. `worker_result_status`는 컴파일 실패·수동 검토를 정상 완료로 쓰지 않습니다. `cleanup_failed_lab` 및 Node `finally` 경로는 중단된 실험의 등록 Git worktree를 정리하거나 정리 실패 영수증을 보존합니다. 구현 근거와 범위: `docs/SUB3-RSI-EXECUTION-INTEGRITY-2026-11-15.md`.
+
+**RSI 최종 테스트 게이트:** [GitHub Actions #43697949313](https://github.com/hushmind3/dominion-rust/actions/runs/43697949313)에서 Rust SDK·호스트·RSI·Codex·복구 **223/223**, Node 실 Git/Cargo A/B **2/2**, TypeScript SDK **7/7**, 프런트 타입 검사·빌드 통과. 실제 후손 바이너리 실행과 채택/브랜치 검증 테스트를 포함하며 유료 제공자 호출을 통한 자동 RSI 장기 운용의 검증으로 확대 해석하지 않습니다.
