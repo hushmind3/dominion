@@ -3,6 +3,7 @@ const ui = {
   prompt: byId('prompt'), form: byId('submitForm'), run: byId('run'),
   write: byId('write'), shell: byId('shell'), evidence: byId('evidence'),
   maxSteps: byId('maxSteps'), tokenBudget: byId('tokenBudget'),
+  planningMode: byId('planningMode'),
   sessionId: byId('sessionId'), notice: byId('notice'), work: byId('work'),
   status: byId('runStatus'), output: byId('output'), timeline: byId('timeline'),
   steps: byId('steps'), tokens: byId('tokens'), verified: byId('verified'),
@@ -75,6 +76,12 @@ function openStream(id) {
       const detail=event.detail || {};
       if (event.type==='tool_result') {
         row('도구 결과',detail.name+' · '+(detail.outcome?.ok ? '실행 기록됨' : '실패'));
+      } else if (event.type==='plan') {
+        row('실행 계획',String(detail.text||'계획 저장됨').slice(0,180));
+      } else if (event.type==='verification') {
+        row('결과 검증',detail.complete ? '검증 통과' : (detail.feedback||'보완 필요'));
+      } else if (event.type==='context_compacted') {
+        row('문맥 관리',String(detail.oldToolResults||0)+'개 오래된 도구 결과 압축');
       } else if (event.type==='model_step') {
         row('모델 단계',String(detail.step)+' / '+String(detail.limit));
       } else if (event.type==='instruction_applied') {
@@ -119,7 +126,8 @@ function submission() {
     sessionId:ui.sessionId.value.trim() || null,
     allowWrite:ui.write.checked,allowShell:ui.shell.checked,
     requireEvidence:ui.evidence.checked,
-    maxSteps:Number(ui.maxSteps.value),tokenBudget:Number(ui.tokenBudget.value)
+    maxSteps:Number(ui.maxSteps.value),tokenBudget:Number(ui.tokenBudget.value),
+    planningMode:ui.planningMode.value
   };
 }
 async function create(retry=false) {
