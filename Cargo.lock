@@ -387,6 +387,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dominion-harness"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "dominion-rust"
 version = "0.3.0"
 dependencies = [

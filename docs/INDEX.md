@@ -18,6 +18,10 @@
 - [Sub3 핸드오프](SUB3-HANDOFF-2026-11-11.md)
 - [원리 일반화](PRINCIPLE-GENERALIZATION.md)
 
+## 하네스·SDK
+
+- [독립 에이전트 하네스](HARNESS.md) — 루프·도구·정책·컨텍스트, CLI 사용법
+
 ## 설계와 감사
 
 - [하네스 마스터 설계](DOMINION-HARNESS-MASTER-DESIGN.md)

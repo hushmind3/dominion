@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "crates/harness"]
+
 [package]
 name = "dominion-rust"
 version = "0.3.0"
