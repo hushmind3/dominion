@@ -1,6 +1,8 @@
 //! DOMINION SDK. All decisions, tools, memory, execution and checkpoints live in
 //! the DOMINION Rust engine; this crate exposes that engine to other Rust apps.
 //! The SDK does not spawn an external agent harness or depend on a vendor SDK.
+pub mod harness;
+
 use async_stream::try_stream;
 use futures_util::{Stream, StreamExt};
 use reqwest::{Client, Method, Response, Url};
