@@ -33,3 +33,36 @@ The distinction between selecting a candidate using independent empirical evalua
 References:
 - https://proceedings.iclr.cc/paper_files/paper/2026/hash/0e9e708b6f48e14fd0ac29e167413f76-Abstract-Conference.html
 - https://openreview.net/pdf?id=T0EiEuhOOL
+
+
+## Follow-up: end-to-end runtime audit (2026-11-15)
+
+A deeper inspection of `rsi_evolve::evolve` → `rsi_worktree::compare_at` → `rsi::replayed_pair_metrics` → `rsi_edit_method::history_with_verified_payoffs` → `rsi_edit_genome::evolve` exposed two feedback problems:
+
+1. Forecasting previously conditioned on eligible successful results. Neutral or regressed experiments that had a complete paired receipt were discarded, biasing the predicted improvement upward. A replayed but non-eligible candidate now supplies a measured **zero**. An unverified result contributes no sample at all. The forecast is calculated from a freshly revalidated history in the live campaign, while error/bias are recomputed from the originally issued forecast and observed result.
+2. The edit-method optimizer could grant the neutral `0.10` reward from a candidate-shaped generation and a source label without checking the stored original receipt. `pairedEvidenceVerified` now requires an actual replayed candidate/raw pair identity, and positive reward still requires adopted source evidence. Model-origin work with zero native verified writes receives no model-editor reward. Replayed evidence must match the generating worker/campaign when those provenance fields are present.
+
+Tournament matches now also require the *exact* frozen case-plan SHA-256, oracle version, and target domain, not merely source/model/objective. A forged `editPolicy.revision` is excluded from controller promotion by comparing the advertised revision against the canonical executable genome. These checks protect promotion, not the underlying Git source adoption gate.
+
+The only runtime files changed in this continuation are:
+- `src/engine/rsi_edit_method.rs`
+- `src/engine/rsi_evolve.rs`
+- `src/engine/rsi_edit_genome.rs`
+- `src/engine/rsi_forecast.rs`
+- `src/engine/rsi_rule_tournament.rs`
+
+The `web/`, `src-tauri/`, `src/api/`, and SDK trees are untouched. The original main-branch UI stays intact.
+
+### Evidence boundary and focused regression commands
+
+New Rust tests cover neutral trial replay, tampered raw measurement, attribution to the wrong worker, absence of verified model writes, bogus policy revision, case-plan mismatch, task/domain mismatch, and forecasts conditioned on replayed zero-gain trials.
+
+```bash
+cargo test --release rsi_rule_tournament::tests
+cargo test --release rsi_forecast::tests
+cargo test --release replayed_neutral_pair_trains_zero_gain_without_faking_an_improvement
+cargo test --release independently_promoted_policy_can_mutate_again_after_a_real_failure
+cargo test --release edit_method_reward_requires_measured_quality_for_full_credit
+```
+
+No local Rust toolchain or full CI was available in the present session, so these tests are **added but not claimed to have passed**. A demonstrated improvement in descendant performance requires separate equal-budget paired model campaigns with retained raw outcomes.
