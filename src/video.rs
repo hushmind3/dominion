@@ -1,4 +1,5 @@
 use crate::provider::ModelClient;
+use base64::Engine as _;
 fn now_ms()->u64 { chrono::Utc::now().timestamp_millis().max(0) as u64 }
 use serde::{Deserialize,Serialize};
 use serde_json::{json,Value};
@@ -21,6 +22,7 @@ pub struct Video {
     #[serde(default)] pub backend:VideoBackend,
     #[serde(default)] pub budget_krw:f64,
     #[serde(default)] pub remote_operations:HashMap<usize,String>,
+    #[serde(default)] pub images:HashMap<usize,String>,
 }
 #[derive(Deserialize)]
 pub struct NewVideo { pub prompt:String, pub scenes:Option<Vec<Scene>>, pub backend:Option<VideoBackend>,
@@ -92,9 +94,48 @@ impl Videos {
             return Err("Veo scenes must be 4, 6 or 8 seconds".into());
         }
         let now=now_ms();
-        let video=Video{id:Uuid::new_v4(),prompt:prompt.into(),scenes,status:VideoStatus::Draft,cost_krw:cost,render_seconds:0,error:None,output:None,created_at_ms:now,updated_at_ms:now,backend,budget_krw:budget,remote_operations:HashMap::new()};
+        let video=Video{id:Uuid::new_v4(),prompt:prompt.into(),scenes,status:VideoStatus::Draft,cost_krw:cost,render_seconds:0,error:None,output:None,created_at_ms:now,updated_at_ms:now,backend,budget_krw:budget,remote_operations:HashMap::new(),images:HashMap::new()};
         self.put(video).await
     }
+    /// A user's PNG/JPEG image becomes a private, deterministic local asset.
+    /// This never downloads from untrusted URLs and never runs a model.
+    pub async fn set_scene_image(&self,id:Uuid,index:usize,data_url:&str)->Result<Video,String>{
+        if self.active.lock().await.contains(&id){return Err("render in progress".into());}
+        let mut video=self.get(id).await.ok_or("video not found")?;
+        if video.backend!=VideoBackend::Local{return Err("Images are for the local video renderer".into());}
+        if index>=video.scenes.len(){return Err("scene out of range".into());}
+        if data_url.len()>7_100_000{return Err("Image exceeds 5 MiB".into());}
+        let (kind,payload)=data_url.split_once(',').ok_or("Image data URI required")?;
+        let extension=match kind{
+            "data:image/png;base64"=>"png",
+            "data:image/jpeg;base64"=>"jpg",
+            _=>return Err("Only PNG and JPEG images are accepted".into()),
+        };
+        let bytes=base64::engine::general_purpose::STANDARD.decode(payload)
+            .map_err(|_|"Image base64 invalid")?;
+        if bytes.is_empty() || bytes.len()>5*1024*1024 {
+            return Err("Image must contain 1..5 MiB".into());
+        }
+        let format_ok=if extension=="png"{
+            bytes.starts_with(&[137,80,78,71,13,10,26,10])
+        }else {bytes.starts_with(&[255,216,255])};
+        if !format_ok{return Err("Image signature does not match its MIME type".into());}
+        let dir=self.root.join(id.to_string());
+        fs::create_dir_all(&dir).await.map_err(|e|e.to_string())?;
+        let relative=format!("scene-{index}.{extension}");
+        let tmp=dir.join(format!("scene-{index}.upload"));
+        fs::write(&tmp,&bytes).await.map_err(|e|e.to_string())?;
+        fs::rename(&tmp,dir.join(&relative)).await.map_err(|e|e.to_string())?;
+        let prior=video.images.insert(index,relative.clone());
+        if let Some(previous)=prior {
+            if previous!=relative {let _=fs::remove_file(dir.join(previous)).await;}
+        }
+        let _=fs::remove_file(dir.join(format!("scene-{index}.mp4"))).await;
+        video.status=VideoStatus::Draft;video.output=None;video.error=None;
+        video.updated_at_ms=now_ms();
+        self.put(video).await
+    }
+
     pub async fn change_scene(&self,id:Uuid,index:usize,scene:ChangeScene)->Result<Video,String>{
         if self.active.lock().await.contains(&id){return Err("render in progress".into());}
         let mut video=self.get(id).await.ok_or("video not found")?;
@@ -155,14 +196,26 @@ impl Videos {
             let color=["0x16263f","0x202a48","0x27384b","0x172c3c","0x2d2948","0x24414a"][index%6];
             let filter=format!("drawtext=textfile=scene-{index}.txt:fontcolor=white:fontsize=47:line_spacing=18:x=(w-text_w)/2:y=(h-text_h)/2:box=1:boxcolor=black@0.50:boxborderw=26");
             let mut command=Command::new("ffmpeg");
-            command.current_dir(&directory).arg("-y").arg("-hide_banner").arg("-loglevel").arg("error")
-                .arg("-f").arg("lavfi").arg("-i").arg(format!("color=c={color}:s=1280x720:r=24:d={}",scene.seconds));
+            command.current_dir(&directory).arg("-y").arg("-hide_banner").arg("-loglevel").arg("error");
+            let image=video.images.get(&index).filter(|name|
+                *name==&format!("scene-{index}.png") || *name==&format!("scene-{index}.jpg"))
+                .map(|name|directory.join(name)).filter(|path|path.is_file());
+            if let Some(image)=&image {
+                command.arg("-loop").arg("1").arg("-framerate").arg("24")
+                    .arg("-i").arg(image);
+            }else{
+                command.arg("-f").arg("lavfi").arg("-i")
+                    .arg(format!("color=c={color}:s=1280x720:r=24:d={}",scene.seconds));
+            }
             if speech {
                 command.arg("-i").arg(&voice).arg("-af").arg("apad");
             }else{
                 command.arg("-f").arg("lavfi").arg("-i").arg("anullsrc=channel_layout=stereo:sample_rate=44100");
             }
-            command.arg("-vf").arg(&filter).arg("-c:v").arg("libx264").arg("-preset").arg("veryfast")
+            let visual=if image.is_some() {
+                format!("scale=1380:776:force_original_aspect_ratio=increase,crop=1380:776,zoompan=z='min(zoom+0.0006,1.12)':d=1:s=1280x720:fps=24,eq=contrast=1.05,{filter}")
+            }else{filter};
+            command.arg("-vf").arg(&visual).arg("-c:v").arg("libx264").arg("-preset").arg("veryfast")
                 .arg("-crf").arg("24").arg("-pix_fmt").arg("yuv420p").arg("-c:a").arg("aac")
                 .arg("-b:a").arg("112k").arg("-t").arg(scene.seconds.to_string())
                 .arg("-shortest").arg(&clip);
@@ -333,7 +386,7 @@ mod tests {
     async fn persists_scene_revisions(){
         let dir=std::env::temp_dir().join(format!("dominion-video-test-{}",Uuid::new_v4()));
         let store=Videos::open(dir.clone()).await.unwrap();
-        let video=Video{id:Uuid::new_v4(),prompt:"demo".into(),scenes:vec![Scene{heading:"old".into(),narration:"old".into(),seconds:4}],status:VideoStatus::Draft,cost_krw:0.0,render_seconds:0,error:None,output:None,created_at_ms:now_ms(),updated_at_ms:now_ms(),backend:VideoBackend::Local,budget_krw:5000.0,remote_operations:HashMap::new()};
+        let video=Video{id:Uuid::new_v4(),prompt:"demo".into(),scenes:vec![Scene{heading:"old".into(),narration:"old".into(),seconds:4}],status:VideoStatus::Draft,cost_krw:0.0,render_seconds:0,error:None,output:None,created_at_ms:now_ms(),updated_at_ms:now_ms(),backend:VideoBackend::Local,budget_krw:5000.0,remote_operations:HashMap::new(),images:HashMap::new()};
         let id=video.id;store.put(video).await.unwrap();
         store.change_scene(id,0,ChangeScene{heading:"new".into(),narration:"text".into(),seconds:4}).await.unwrap();
         assert_eq!(store.get(id).await.unwrap().scenes[0].heading,"new");
