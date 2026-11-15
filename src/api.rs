@@ -13,6 +13,7 @@ use tower_http::services::{ServeDir, ServeFile};
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/health",get(health))
+        .route("/api/settings/owner-profile",get(owner_profile).post(save_owner_profile))
         .route("/api/tasks",get(list).post(submit))
         .route("/api/tasks/:id",get(one))
         .route("/api/tasks/:id/cancel",post(cancel))
@@ -51,6 +52,19 @@ pub fn router(state: AppState) -> Router {
 async fn health(State(state):State<AppState>) -> Json<Value> {
     Json(json!({"ok":true,"engine":"rust","model":state.model_name,
         "workspace":state.workspace.to_string_lossy(),"localOnly":true}))
+}
+async fn owner_profile(State(state):State<AppState>) -> Json<Value> {
+    Json(state.store.owner_profile())
+}
+async fn save_owner_profile(State(state):State<AppState>,Json(body):Json<Value>) -> Response {
+    let Some(name)=body["name"].as_str() else {
+        return (StatusCode::BAD_REQUEST,Json(json!({"error":"사용자 이름이 필요합니다."}))).into_response();
+    };
+    let avatar=body["avatar"].as_str().unwrap_or("");
+    match state.store.set_owner_profile(name,avatar) {
+        Ok(profile)=>Json(profile).into_response(),
+        Err(error)=>(StatusCode::BAD_REQUEST,Json(json!({"error":error}))).into_response()
+    }
 }
 async fn list(State(state):State<AppState>) -> Json<Value> {
     Json(json!(state.store.list()))
