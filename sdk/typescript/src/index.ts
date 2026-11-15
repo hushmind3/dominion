@@ -1,3 +1,8 @@
+export interface AcceptanceCommand {
+  /** Direct executable, never a shell string. Rust validates this allowlist. */
+  program: 'cargo' | 'npm' | 'node';
+  args: string[];
+}
 export interface TaskInput {
   prompt: string;
   /** Reuse this identifier after a lost HTTP response. */
@@ -13,6 +18,8 @@ export interface TaskInput {
   allowSubagents?: boolean;
   /** Require a verified file write before reporting successful completion. */
   requireEvidence?: boolean;
+  /** Exact test commands required to pass after the last source edit. */
+  acceptanceChecks?: AcceptanceCommand[];
   maxSteps?: number;
   tokenBudget?: number;
   /** Maximum metered model spend in KRW; requires configured rate tables. */
@@ -34,7 +41,7 @@ export interface TaskRecord {
   /** Persisted metered spend using operator-configured KRW rates. */
   costKrw: number;
   error: string | null;
-  result: {answer: string; verifiedWrites: number; verification: string} | null;
+  result: {answer: string; verifiedWrites: number; verification: string; acceptance?: {checks:string[]; revision:number; passed:boolean}} | null;
   cancelRequested: boolean;
   createdAt: string;
 }
