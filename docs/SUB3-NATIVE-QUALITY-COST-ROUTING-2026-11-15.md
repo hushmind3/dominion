@@ -2,7 +2,7 @@
 
 ## Real product flow
 
-`ModelHub` provider modal → `POST /api/providers` → `Store.provider.nativeRouting` → `NativeAgentPanel` advanced routing policy → `POST /api/jobs` → `native_agent::run` → `native_routing::choose` → durable `job.nativeRoute` → independent `dominion_sdk::Kernel` → `native_model::complete_with_run` → provider-reported `nativeModelUsage` + KRW owner-rate cost projection → `GET /api/jobs/:id` → React + TypeScript SDK.
+Provider/Jobs API or TypeScript SDK → `POST /api/providers` (provider.nativeRouting) and `POST /api/jobs` (input.routingMode) → `native_agent::run` → `native_routing::choose` → durable `job.nativeRoute` → independent `dominion_sdk::Kernel` → `native_model::complete_with_run` → provider-reported `nativeModelUsage` + KRW owner-rate cost projection → `GET /api/jobs/:id` / TypeScript SDK. The exact main frontend pin `879dc23d` has no sub3-only cost-routing or model-price UI. Its unchanged autonomous panel calls `/api/sdk/runs` for basic task execution.
 
 The Rust kernel remains the sole owner of its planner, tool contracts, approvals, scheduler, verification and checkpoint transitions. Routing is a **pre-run choice**, not a second agent loop or a covert model switch halfway through an execution.
 
