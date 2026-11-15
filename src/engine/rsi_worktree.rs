@@ -1227,7 +1227,7 @@ mod tests {
         assert!(prompt.contains("정적 검사 실패"));
         assert!(prompt.contains("cargo check --all-targets"));
         assert!(!prompt.contains("실제 성능 향상 검증"));
-        std::fs::remove_dir_all(root).unwrap();
+        drop(state); std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn classification_covers_the_improver_harness_and_algorithm(){
@@ -1401,7 +1401,7 @@ mod tests {
         assert!(!git_local(&source,&["status","--porcelain"]).is_empty());
         cleanup(&worktree).await.unwrap();
         assert!(!worktree.path.exists());
-        std::fs::remove_dir_all(root).unwrap();
+        drop(context); drop(state); std::fs::remove_dir_all(root).unwrap();
     }
     #[tokio::test]
     async fn rsi_model_cannot_use_absolute_write_or_shell_tools(){
@@ -1421,7 +1421,7 @@ mod tests {
         assert!(tools::execute(&ctx,"workspace_write",&json!({"path":".git","content":"tamper"}),"run").await.is_err());
         assert!(tools::execute(&ctx,"workspace_write",&json!({"path":"Cargo.toml","content":"tamper"}),"run").await.is_err());
         assert!(!outside.exists());
-        std::fs::remove_dir_all(root).unwrap();
+        drop(state); std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

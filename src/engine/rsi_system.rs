@@ -709,7 +709,7 @@ mod tests {
         disabled["input"]["rsiSystemEvolution"]=json!(false);
         state.store.put("job",&disabled).unwrap();
         assert!(propose(&state,"session",&request).is_err());
-        fs::remove_dir_all(root).unwrap();
+        drop(state); fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn compiled_successor_distinguishes_whole_system_design_from_downstream_tasks() {
@@ -810,7 +810,7 @@ mod integration_contract_tests {
         assert!(validate_plan_evidence(&state,&root,"revision",index["id"].as_str().unwrap(),&new_role).is_ok());
         fs::write(root.join("src/engine/tools.rs"),"pub fn act_differently() {}\n").unwrap();
         assert!(validate_plan_evidence(&state,&root,"revision",index["id"].as_str().unwrap(),&new_role).is_err());
-        fs::remove_dir_all(root).unwrap();
+        drop(state); fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn real_agent_failures_become_descendant_scheduling_evidence() {
@@ -824,7 +824,7 @@ mod integration_contract_tests {
         assert!(rows[0]["usageSignalCount"].as_u64().unwrap()>0);
         assert_eq!(usage_evidence(&state)["signals"][0]["evidence"][0]["executionId"],"ordinary-task");
         assert_eq!(rows[0]["qualityProven"],false);
-        fs::remove_dir_all(root).unwrap();
+        drop(state); fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn unverified_success_claim_does_not_close_an_architecture_gap() {
@@ -834,7 +834,7 @@ mod integration_contract_tests {
             "focusFiles":["src/engine/memory.rs"],"systemDesign":{"component":"memory"}});
         let rows=architecture_frontier(&state,&model,&[fake],index["id"].as_str().unwrap(),&root);
         assert_eq!(rows[0]["verifiedRoleChanged"],false);assert_eq!(rows[0]["sourceAttempts"],1);
-        fs::remove_dir_all(root).unwrap();
+        drop(state); fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn multi_component_design_requires_complete_source_mapping_and_complete_patch() {
@@ -859,7 +859,7 @@ mod integration_contract_tests {
         assert!(inherited_domain(&[history.clone()]).is_none());
         history["acceptedSourceHashes"]["src/engine/new_planner.rs"]=json!("d".repeat(64));
         assert_eq!(inherited_domain(&[history]),Some("memory".into()));
-        fs::remove_dir_all(root).unwrap();
+        drop(state); fs::remove_dir_all(root).unwrap();
     }
     // These are simulated recorded-experiment receipts, not claims of new live
     // RSI gains. Exercise the real independent result replayer and reject
@@ -939,6 +939,6 @@ mod integration_contract_tests {
         state.store.put("execution_operation",&operation);
         history[1]["acceptedSourceHashes"]["src/engine/learning_part.rs"]=Value::Null;
         assert_eq!(handoff_evidence(&state,&history)["demonstrated"],false);
-        fs::remove_dir_all(root).unwrap();
+        drop(state); fs::remove_dir_all(root).unwrap();
     }
 }

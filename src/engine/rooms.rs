@@ -1465,7 +1465,7 @@ mod tests {
             &json!({"sessionId":"other-room"}),
         );
         assert!(ensure_room_session(&state, "r").is_err());
-        std::fs::remove_dir_all(dir).unwrap();
+        drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn short_casual_requests_use_a_small_speaker_window() {
@@ -1491,7 +1491,7 @@ mod tests {
         assert_eq!(everyone, vec!["a", "b", "c", "d", "e"]);
         let mentioned = plan_speakers(&state, &config, "@나루 답해", None).unwrap();
         assert_eq!(mentioned, vec!["b"]);
-        std::fs::remove_dir_all(dir).unwrap();
+        drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -1537,7 +1537,7 @@ mod tests {
         )
         .unwrap()
         .is_empty());
-        std::fs::remove_dir_all(dir).unwrap();
+        drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
     #[tokio::test]
     async fn shared_conversation_stores_owner_once_and_every_agent_sees_previous_peers() {
@@ -1598,7 +1598,7 @@ mod tests {
         );
         drop(requests);
         server.abort();
-        std::fs::remove_dir_all(dir).unwrap();
+        drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
     #[tokio::test]
     async fn mentioned_agents_can_reply_to_each_other_without_fabricated_owner_turns() {
@@ -1642,7 +1642,7 @@ mod tests {
             1
         );
         server.abort();
-        std::fs::remove_dir_all(dir).unwrap();
+        drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn an_explicit_turn_cap_keeps_all_room_speakers() {
@@ -1663,7 +1663,7 @@ mod tests {
         assert_eq!(speaker_window(&state, &room, "나머지도 말해라", &ids).len(), 9);
         room["maxTurns"] = json!(0);
         assert_eq!(speaker_window(&state, &room, "짧게 말해", &ids).len(), 2);
-        std::fs::remove_dir_all(dir).unwrap();
+        drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[tokio::test]
@@ -1683,7 +1683,7 @@ mod tests {
         assert_eq!(result["outputs"][0]["agentId"], "b");
         assert_eq!(bodies.lock().unwrap().len(), 1);
         server.abort();
-        std::fs::remove_dir_all(dir).unwrap();
+        drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[tokio::test]
@@ -1714,7 +1714,7 @@ mod tests {
         assert_eq!(speakers, vec!["b"]);
         assert_eq!(bodies.lock().unwrap().len(), 2);
         server.abort();
-        std::fs::remove_dir_all(dir).unwrap();
+        drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[tokio::test]
@@ -1761,7 +1761,7 @@ mod tests {
         assert_eq!(result["turns"], 1);
         assert_eq!(result["yieldedToMessageId"], "new-owner");
         server.abort();
-        std::fs::remove_dir_all(dir).unwrap();
+        drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
     #[tokio::test]
     async fn stopped_generation_and_uncertain_turns_never_replay() {
@@ -1775,7 +1775,7 @@ mod tests {
         let result = run(&run_context(&state, "uncertain"), &job).await.unwrap();
         assert_eq!(result["status"], "needs_review");
         assert_eq!(state.store.count("execution"), 0);
-        std::fs::remove_dir_all(dir).unwrap();
+        drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
     #[tokio::test]
     async fn opted_in_owner_command_executes_real_tools_with_frozen_policy_and_evidence() {
@@ -1836,7 +1836,7 @@ mod tests {
             1
         );
         server.abort();
-        std::fs::remove_dir_all(dir).unwrap();
+        drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
     #[tokio::test]
     async fn completed_checkpoints_and_compatibility_runs_do_not_repeat_owner_or_speakers() {
@@ -1867,7 +1867,7 @@ mod tests {
             1
         );
         server.abort();
-        std::fs::remove_dir_all(dir).unwrap();
+        drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
     #[tokio::test]
     async fn nine_participants_share_one_owner_message_and_all_speak() {
@@ -1913,7 +1913,7 @@ mod tests {
         );
         assert_eq!(bodies.lock().unwrap().len(), 9);
         server.abort();
-        std::fs::remove_dir_all(dir).unwrap();
+        drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn discussion_mentions_cannot_starve_the_remaining_first_speakers() {
@@ -1944,7 +1944,7 @@ mod tests {
             Err(tokio::sync::broadcast::error::TryRecvError::Empty)
         ));
         assert_eq!(room(&state), record);
-        std::fs::remove_dir_all(dir).unwrap();
+        drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

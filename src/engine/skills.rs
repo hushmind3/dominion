@@ -290,13 +290,13 @@ mod tests {
         assert_eq!(installed["name"], "Reviewer");
         assert!(dir.join("skills/Reviewer/SKILL.md").exists());
 
-        let _ = std::fs::remove_dir_all(dir);
+        drop(state); let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn rejects_non_http_repo() {
         let (state, dir) = temp_state();
         assert!(import_repo(&state, "file:///etc/passwd").is_err());
-        let _ = std::fs::remove_dir_all(dir);
+        drop(state); let _ = std::fs::remove_dir_all(dir);
     }
 }
