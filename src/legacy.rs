@@ -6,6 +6,7 @@ use rusqlite::{params, Connection, OpenFlags, types::ValueRef};
 use base64::Engine as _;
 use serde_json::{json, Value};
 use std::path::Path;
+use uuid::Uuid;
 
 fn text_field<'a>(data:&'a Value,key:&str)->&'a str{
     data[key].as_str().unwrap_or("").trim()
@@ -208,7 +209,6 @@ pub(crate) fn import(
 #[cfg(test)]
 mod tests{
     use super::*;
-    use uuid::Uuid;
     #[test]
     fn old_records_are_archived_but_only_owner_data_becomes_active(){
         let root=std::env::temp_dir().join(format!("dominion-main-import-{}",uuid::Uuid::new_v4()));
