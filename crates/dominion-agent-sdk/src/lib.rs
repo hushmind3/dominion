@@ -229,13 +229,19 @@ pub async fn dispatch_batch<D: Dispatcher>(
     let planned_directive = journal.directive(&run.id)?;
     let mut ids = HashSet::new();
     for action in actions {
-        if action.id.trim().is_empty() || !ids.insert(&action.id)
+        if action.id.trim().is_empty() || action.id.len() > 128
+            || !ids.insert(action.id.clone())
             || run.receipts.iter().any(|receipt| receipt.id == action.id) {
             return Err("중복되거나 비어 있는 도구 실행 ID입니다.".into());
         }
-        if action.depends_on.iter().any(|dependency|
-            !run.receipts.iter().any(|receipt| &receipt.id == dependency && receipt.success)) {
-            return Err(format!("도구 실행의 선행 조건이 충족되지 않았습니다: {}", action.id));
+        // An action may depend on a previous successful receipt OR an
+        // earlier action in this batch. Forward dependencies are rejected.
+        for dependency in &action.depends_on {
+            if !ids.contains(dependency)
+                && !run.receipts.iter().any(|receipt|
+                    &receipt.id == dependency && receipt.success) {
+                return Err(format!("도구 실행의 선행 조건이 충족되지 않았습니다: {}", action.id));
+            }
         }
     }
     let mut outputs = Vec::with_capacity(actions.len());
@@ -247,11 +253,23 @@ pub async fn dispatch_batch<D: Dispatcher>(
         if journal.directive(&run.id)? != planned_directive {
             return Err("작업 지시가 변경되어 기존 도구 계획을 중단했습니다.".into());
         }
-        let end = runtime::read_batch_end(
+        let parallel_end = runtime::read_batch_end(
             actions, cursor, dispatcher.max_parallel_reads().clamp(1, 16),
             |action| dispatcher.is_read_only(action),
         );
+        // A dependent read cannot start in parallel with the producer.
+        let mut end = cursor + 1;
+        while end < parallel_end && !actions[end].depends_on.iter().any(
+            |dependency| actions[cursor..end].iter().any(|earlier|&earlier.id == dependency)
+        ) { end += 1; }
         let group = &actions[cursor..end];
+        if group.iter().any(|action| action.depends_on.iter().any(|dependency|
+            !run.receipts.iter().any(|receipt|
+                &receipt.id == dependency && receipt.success))) {
+            outputs.extend(actions[cursor..].iter().map(|action|
+                Err(format!("Skipped {} because a required tool did not succeed", action.id))));
+            break;
+        }
         run.in_flight = group.to_vec();
         // Persist intent before starting any tool. A failed save dispatches nothing.
         journal.save(run)?;
