@@ -31,16 +31,11 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const [verification,setVerification]=useState('')
  const [observation,setObservation]=useState('')
  const [run,setRun]=useState<SdkRun|null>(null)
- const [history,setHistory]=useState<SdkRun[]>([])
  const [busy,setBusy]=useState(false)
  const [error,setError]=useState('')
  useEffect(()=>{
   let alive=true
-  get<SdkRun[]>('/api/sdk/runs').then(list=>{
-   if(!alive)return
-   setHistory(current=>[...current.filter(item=>!list.some(saved=>saved.id===item.id)),...list].slice(0,30))
-   setRun(current=>current??list[0]??null)
-  }).catch(()=>{})
+  get<SdkRun[]>('/api/sdk/runs').then(list=>{if(alive&&list.length)setRun(list[0])}).catch(()=>{})
   return()=>{alive=false}
  },[])
  useEffect(()=>{
@@ -48,18 +43,11 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   let alive=true
   const timer=setInterval(()=>{
    get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}`)
-    .then(next=>{if(alive){
-     setRun(current=>current?.id===next.id?next:current)
-     setHistory(items=>items.map(item=>item.id===next.id?next:item))
-    }})
+    .then(next=>{if(alive)setRun(next)})
     .catch(e=>{if(alive)setError((e as Error).message)})
   },1500)
   return()=>{alive=false;clearInterval(timer)}
  },[run?.id,run?.status])
- const remember=(next:SdkRun)=>{
-  setRun(next)
-  setHistory(items=>[next,...items.filter(item=>item.id!==next.id)].slice(0,30))
- }
  const start=async()=>{
   if(!instruction.trim()||busy)return
   setBusy(true);setError('')
@@ -68,7 +56,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     instruction:instruction.trim(),providerId:providerId||undefined,
     verifyCommand:verification.trim()||undefined
    })
-   remember(created)
+   setRun(created)
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
@@ -78,9 +66,9 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   try{
    const call=run.checkpoint?.pendingCall
    if(kind==='approve'&&!call?.id)throw Error(en?'Missing approval details':'승인할 도구 정보를 찾지 못했습니다.')
-   const updated=await post<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}/${kind}`,
+   await post(`/api/sdk/runs/${encodeURIComponent(run.id)}/${kind}`,
     kind==='approve'?{callId:call!.id}:{})
-   remember(updated)
+   setRun({...run,status:kind==='cancel'?'cancelled':'running'})
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
@@ -90,7 +78,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   try{
    const updated=await post<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}/reconcile`,
     {applied,details:observation.trim()})
-   remember(updated);setObservation('')
+   setRun(updated);setObservation('')
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
@@ -107,19 +95,6 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    </div>
   </div>
   <div className="grid gap-3 p-4">
-    {history.length>1&&<label className="flex flex-col gap-1 text-[11px] text-[#746A5F]" htmlFor="sdk-history">
-     {en?'Previous tasks':'이전 작업 기록'}
-     <select id="sdk-history" value={run?.id||''}
-      onChange={e=>{
-       const selected=history.find(item=>item.id===e.target.value)
-       if(selected){setRun(selected);setError('');setObservation('')}
-      }}
-      className="h-9 w-full rounded-lg border border-[#E7E0D5] bg-white px-3 text-[12px]">
-      {history.map(item=><option key={item.id} value={item.id}>
-       {en?stateNames[item.status]?.[1]||item.status:stateNames[item.status]?.[0]||item.status} · {item.instruction.slice(0,64)}
-      </option>)}
-     </select>
-    </label>}
    <label className="text-[12px] font-semibold" htmlFor="sdk-goal">{en?'What would you like done?':'무엇을 해드릴까요?'}</label>
    <textarea id="sdk-goal" value={instruction} onChange={e=>setInstruction(e.target.value)}
     rows={3} maxLength={64000}
