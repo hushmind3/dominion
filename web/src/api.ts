@@ -1,4 +1,4 @@
-import { Dominion, DominionError, StreamInterruptedError } from '../../sdk/typescript/src/index'
+import { Dominion, DominionError, StreamInterruptedError } from '@dominion/sdk'
 import {t} from './i18n'
 import {translateError} from './i18n/errors'
 
