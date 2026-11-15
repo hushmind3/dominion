@@ -29,7 +29,7 @@ fn scoped_path(root: &Path, name: &str, write: bool) -> Result<PathBuf, String> 
     Ok(candidate)
 }
 
-fn specs(allow_write: bool, allow_shell: bool) -> Vec<Value> {
+fn specs(allow_write: bool, allow_shell: bool, allow_subagents: bool) -> Vec<Value> {
     let mut result = vec![json!({
         "type":"function","function":{
             "name":"workspace_read",
@@ -82,6 +82,22 @@ fn specs(allow_write: bool, allow_shell: bool) -> Vec<Value> {
                 },"required":["program","args"],"additionalProperties":false}
             }
         }));
+    }
+    if allow_subagents {
+        result.push(json!({"type":"function","function":{
+            "name":"subagent_spawn",
+            "description":"Delegate a bounded read-only analysis task to a separate native Rust worker. Returns the child task ID for later status inspection.",
+            "parameters":{"type":"object","properties":{
+                "task":{"type":"string"},"role":{"type":"string"}
+            },"required":["task"],"additionalProperties":false}
+        }}));
+        result.push(json!({"type":"function","function":{
+            "name":"subagent_status",
+            "description":"Read a previously delegated native child task status and its recorded answer.",
+            "parameters":{"type":"object","properties":{
+                "taskId":{"type":"string"}
+            },"required":["taskId"],"additionalProperties":false}
+        }}));
     }
     result
 }
@@ -192,10 +208,11 @@ pub async fn run(state: AppState, id: String) {
     let allow_write = input["allowWrite"] == true;
     let allow_shell = input["allowShell"] == true;
     let allow_mcp = input["allowMcp"] == true;
+    let allow_subagents = input["allowSubagents"] == true;
     let require_evidence = input["requireEvidence"] == true;
     let steps = input["maxSteps"].as_u64().unwrap_or(12).clamp(1,24);
     let token_budget = input["tokenBudget"].as_u64().unwrap_or(40_000).clamp(256,500_000);
-    let mut available = specs(allow_write,allow_shell);
+    let mut available = specs(allow_write,allow_shell,allow_subagents);
     if allow_mcp {
         available.extend(state.mcp.definitions().await);
     }
@@ -265,8 +282,12 @@ pub async fn run(state: AppState, id: String) {
             state.store.add_message(&session,"user",&instruction);
             state.emit(&id,"instruction_applied",json!({"text":instruction}));
         }
-        let consumed = state.store.get(&id)
-            .and_then(|v| v["tokens"].as_u64()).unwrap_or(0);
+        let consumed = if allow_subagents {
+            state.store.family_token_usage(&id)
+        } else {
+            state.store.get(&id)
+                .and_then(|v|v["tokens"].as_u64()).unwrap_or(0)
+        };
         if consumed >= token_budget {
             settle(&state,&id,"needs_review","",verified_writes,
                 Some("전체 토큰 예산을 소진했습니다.".into()));
@@ -431,7 +452,36 @@ pub async fn run(state: AppState, id: String) {
                     Some(format!("도구 실행 기록을 저장하지 못했습니다: {error}")));
                 return;
             }
-            let outcome = if tool_name.starts_with("mcp__") && allow_mcp {
+            let outcome = if tool_name=="subagent_spawn" && allow_subagents {
+                let instruction=arguments["task"].as_str().unwrap_or("").trim();
+                let role=arguments["role"].as_str().unwrap_or("Independent research assistant").trim();
+                if instruction.is_empty() || instruction.len()>8000 || role.len()>200 {
+                    Err("Invalid delegated task length".into())
+                } else {
+                    let key_digest=Sha256::digest(format!("{id}/{tool_id}").as_bytes());
+                    let key=format!("sub-{:x}",key_digest);
+                    let child=crate::runtime::TaskInput{
+                        prompt:format!("Read-only independent analysis. Role: {role}\\nTask: {instruction}"),
+                        request_id:Some(key),max_steps:Some(6),token_budget:Some(2000),
+                        allow_write:false,allow_shell:false,allow_mcp:false,allow_subagents:false,
+                        require_evidence:false,planning_mode:Some("auto".into()),
+                        ..Default::default()
+                    };
+                    let sdk=crate::runtime::DominionSdk::from_state(state.clone());
+                    sdk.delegate(&id,child).await.map(|run|json!({
+                        "taskId":run.id,"status":run.status,"sessionId":run.input["sessionId"]
+                    })).map_err(|e|e.to_string())
+                }
+            } else if tool_name=="subagent_status" && allow_subagents {
+                let task_id=arguments["taskId"].as_str().unwrap_or("");
+                let child=state.store.child_tasks(&id)
+                    .into_iter().find(|record|record["id"].as_str()==Some(task_id));
+                child.map(|record|json!({
+                    "taskId":record["id"],"status":record["status"],
+                    "result":record["result"],"error":record["error"],
+                    "tokens":record["tokens"]
+                })).ok_or_else(||"Child task not found in this parent execution".into())
+            } else if tool_name.starts_with("mcp__") && allow_mcp {
                 state.mcp.call(&crate::mcp::ToolCall {
                     id:tool_id.clone(),name:tool_name.into(),arguments:arguments.clone()
                 }).await.map(|response|json!({"content":response}))
