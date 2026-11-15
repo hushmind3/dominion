@@ -175,6 +175,7 @@ export interface EvolutionRun {
   completed_generations: number;
   cost_budget_krw: number;
   spent_krw: number;
+  stop_requested: boolean;
   stop_reason: string | null;
   created_at_ms: number;
   updated_at_ms: number;
@@ -373,6 +374,9 @@ export class DominionClient {
   }
   evolutionGet(id: string, signal?: AbortSignal) {
     return this.request<EvolutionRun>('/api/evolutions/'+encodeURIComponent(id),'GET',undefined,signal);
+  }
+  evolutionStop(id: string, signal?: AbortSignal) {
+    return this.request<EvolutionRun>('/api/evolutions/'+encodeURIComponent(id)+'/stop','POST',{},signal);
   }
   memoryList(sessionId?: string, signal?: AbortSignal) {
     const query=sessionId ? '?sessionId='+encodeURIComponent(sessionId):'';
