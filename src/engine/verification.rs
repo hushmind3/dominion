@@ -429,6 +429,20 @@ pub(crate) fn proven_workspace_edit(state:&AppState,item:&Value)->bool {
         format!("{:x}",Sha256::digest(&bytes))==digest)
 }
 
+/// One valid receipt for *another* file cannot certify the requested target.
+/// This keeps a task with multiple output paths from passing because an
+/// unrelated file was edited while the target changed externally.
+pub(crate) fn proven_edit_for_path(state:&AppState,item:&Value,target:&str)->bool{
+    if !proven_workspace_edit(state,item){return false;}
+    let Some(raw)=item["result"]["path"].as_str()else{return false;};
+    let Ok(expected)=resolve_path(state,target).and_then(|path|
+        path.canonicalize().map_err(|error|error.to_string()))else{return false;};
+    let Ok(root)=state.config.workspace.canonicalize()else{return false;};
+    let candidate=Path::new(raw);
+    let actual=if candidate.is_absolute(){candidate.to_path_buf()}else{root.join(candidate)};
+    actual.canonicalize().is_ok_and(|path|path==expected)
+}
+
 /// Determine whether the owner asked for LOCAL code/artifact modification,
 /// excluding read-only inspection, test execution and remote API actions.
 pub(crate) fn local_edit_intent(goal:&str)->bool{
@@ -516,8 +530,23 @@ pub(crate) fn acceptance_gaps(
         gaps.push("변경 또는 실행을 입증하는 성공한 도구 결과가 없습니다. 조회 결과만으로 행동 목표를 완료할 수 없습니다.".into());
     }
     if local_edit_intent(goal) {
-        if !evidence.iter().any(|item|proven_workspace_edit(state,item)) {
-            gaps.push("실제 변경된 워크스페이스 파일의 최신 SHA-256과 일치하는 쓰기 증거가 없습니다.".into());
+        let targets=checks.iter().filter_map(|check|{
+            if matches!(check["type"].as_str(),Some(
+                "file_exists"|"file_changed"|"file_equals"|"file_contains"|"file_replace_exact"
+            )){
+                check["path"].as_str().map(str::to_string)
+            }else{None}
+        }).collect::<Vec<_>>();
+        if targets.is_empty(){
+            if !evidence.iter().any(|item|proven_workspace_edit(state,item)){
+                gaps.push("실제 변경된 워크스페이스 파일의 최신 SHA-256과 일치하는 쓰기 증거가 없습니다.".into());
+            }
+        }else{
+            for path in targets{
+                if !evidence.iter().any(|item|proven_edit_for_path(state,item,&path)){
+                    gaps.push(format!("요청한 {path} 파일 자체의 수정 SHA-256 증거가 없습니다."));
+                }
+            }
         }
         // When there is no frozen file/command criterion, a free-form model
         // claim cannot close a code-edit task: require one real post-edit test.
@@ -676,6 +705,28 @@ mod verified_patch_tests {
         let _=std::fs::remove_dir_all(dir);
     }
 
+    #[test]
+    fn multi_file_task_needs_proof_for_each_requested_file_not_a_random_edit(){
+        let (state,dir)=state();
+        let goal="Create a.rs and b.rs files";
+        let checks=prepare_acceptance_checks(&state,goal);
+        assert_eq!(checks.as_array().unwrap().len(),2);
+        let make=|name:&str,content:&str|{
+            let path=dir.join(name);
+            std::fs::write(&path,content).unwrap();
+            json!({"tool":"workspace_write","result":{"path":path,
+                "written":true,"changed":true,
+                "postSha256":format!("{:x}",Sha256::digest(content.as_bytes()))}})
+        };
+        let a=make("a.rs","pub fn a() {}");
+        let b=make("b.rs","pub fn b() {}");
+        assert!(proven_edit_for_path(&state,&a,"a.rs"));
+        assert!(!proven_edit_for_path(&state,&a,"b.rs"));
+        let gaps=check_acceptance(&state,goal,&checks,&[a.clone()]);
+        assert!(gaps.iter().any(|gap|gap.contains("b.rs")),"{gaps:?}");
+        assert!(check_acceptance(&state,goal,&checks,&[a,b]).is_empty());
+        let _=std::fs::remove_dir_all(dir);
+    }
     #[test]
     fn test_must_follow_latest_edit_and_read_only_is_unchanged(){
         let edit=json!({"tool":"workspace_write","result":{"written":true,"changed":true}});
