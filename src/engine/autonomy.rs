@@ -162,6 +162,7 @@ pub async fn execute(
     let verify_command=input["verifyCommand"].as_str().filter(|command|!command.trim().is_empty());
     add_explicit_verifier(&mut checks, verify_command)?;
     let mut has_checks=checks.as_array().is_some_and(|v|!v.is_empty());
+    let local_code_change=verification::local_edit_intent(goal);
     let mut steering_checked_revision=0u64;
     let plan=decompose::decompose(goal,&json!({"implementation":"numbered-first"}));
     let session_id=request.session_id.as_deref().unwrap_or("");
@@ -247,6 +248,9 @@ pub async fn execute(
         if owner_changed {
             gaps.push("실행 중 새로운 사용자 지시를 받았습니다. 다음 턴에서 반영합니다.".into());
         }
+        let local_proof=local_code_change
+            && all_evidence.iter().any(|item|verification::proven_workspace_edit(&ctx.state,item));
+        let tested=verification::test_after_last_edit(&all_evidence);
         let mut decision=decide(config.strategy,has_checks,&gaps,
             latest_error.as_deref(),&all_evidence,attempt,config.attempts);
         let repeated_without_progress=attempt>0
@@ -308,8 +312,9 @@ pub async fn execute(
                     "sessionId":session_id,"messageId":last_message,
                     "status":"completed","attempts":attempt+1,
                     "steeringRevision":steering_before,
-                    "verification":if has_checks{"predicate"}else if all_evidence.is_empty(){"answer_only"}else{"tool_evidence"},
-                    "verified":has_checks && gaps.is_empty(),
+                    "verification":if has_checks{"predicate"}else if local_code_change{"post_edit_test"}else if all_evidence.is_empty(){"answer_only"}else{"tool_evidence"},
+                    "verified":gaps.is_empty() && (has_checks || (local_proof && tested)),
+                    "proof":{"workspaceMutation":local_proof,"postEditTest":tested},
                     "receipts":receipts,
                 }));
             }

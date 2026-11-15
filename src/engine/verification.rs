@@ -342,7 +342,8 @@ pub(crate) fn is_action_evidence(item: &Value) -> bool {
         return false;
     }
     match tool_name(item) {
-        "workspace_write" | "file_write" | "workspace_replace" | "workspace_replace_range" => true,
+        "workspace_write" | "file_write" | "workspace_replace" | "workspace_replace_range" =>
+            item["result"]["written"]==true && item["result"]["changed"]!=false,
         "shell_exec" | "terminal_exec" => {
             let args = item
                 .get("arguments")
@@ -406,6 +407,77 @@ pub(crate) fn is_action_evidence(item: &Value) -> bool {
         _ => false,
     }
 }
+/// A code edit is not proved by the model's response, a tool-call name or a
+/// stale write receipt. The actual final bytes must still equal the bytes
+/// recorded when the tool completed successfully.
+pub(crate) fn proven_workspace_edit(state:&AppState,item:&Value)->bool {
+    if !successful_evidence(item) || !matches!(tool_name(item),
+        "workspace_write"|"file_write"|"workspace_replace"|"workspace_replace_range") {
+        return false;
+    }
+    let result=&item["result"];
+    if result["written"]!=true || result["changed"]==false {return false;}
+    let Some(digest)=result["postSha256"].as_str().filter(|v|v.len()==64
+        && v.bytes().all(|ch|ch.is_ascii_hexdigit()))else{return false;};
+    let Some(raw)=result["path"].as_str()else{return false;};
+    let Ok(root)=state.config.workspace.canonicalize()else{return false;};
+    let requested=Path::new(raw);
+    let path=if requested.is_absolute(){requested.to_path_buf()}else{root.join(requested)};
+    let Ok(actual)=path.canonicalize()else{return false;};
+    if !actual.starts_with(&root){return false;}
+    read_bounded_file(&actual).is_some_and(|bytes|
+        format!("{:x}",Sha256::digest(&bytes))==digest)
+}
+
+/// Determine whether the owner asked for LOCAL code/artifact modification,
+/// excluding read-only inspection, test execution and remote API actions.
+pub(crate) fn local_edit_intent(goal:&str)->bool{
+    let text=goal.to_lowercase();
+    let mutation=["수정","고치","리팩터","리팩토링","구현","추가","작성","생성","편집",
+        "fix","refactor","implement","patch","edit","modify","rewrite",
+        "write","update","add ","create"];
+    let target=["코드","소스","파일","버그","기능","모듈","프로젝트","저장소",
+        "code","source","file","bug","module","project","repo","feature",
+        ".rs",".ts",".py",".js",".tsx",".md",".json",".toml"];
+    let read_only=["read ","inspect ","review ","explain ","test ","check ",
+        "분석","확인","검토","설명","테스트"];
+    mutation.iter().any(|v|text.contains(v)) &&
+        (target.iter().any(|v|text.contains(v))
+            || mutation.iter().any(|v|matches!(*v,"refactor"|"implement"|"리팩토링"|"리팩터")
+                && text.contains(v)))
+        && !(read_only.iter().any(|v|text.trim_start().starts_with(v))
+            && !mutation.iter().any(|v|text.contains(v)))
+}
+
+/// Recognized, actually executed commands able to independently check a code
+/// change. Every edit after the last pass invalidates that pass.
+pub(crate) fn test_after_last_edit(evidence:&[Value])->bool{
+    let last_edit=evidence.iter().enumerate().filter_map(|(i,item)|
+        (is_action_evidence(item) && matches!(tool_name(item),
+            "workspace_write"|"file_write"|"workspace_replace"|"workspace_replace_range")
+        ).then_some(i)).last();
+    let Some(edit)=last_edit else{return false;};
+    evidence.iter().enumerate().skip(edit+1).any(|(_,item)|{
+        if !successful_evidence(item) || !matches!(tool_name(item),
+            "shell_exec"|"terminal_exec"){return false;}
+        let args=item.get("arguments").or_else(||item.get("args")).unwrap_or(&Value::Null);
+        let command=if tool_name(item)=="terminal_exec" {
+            let mut cmd=string(args,"command");
+            if let Some(argv)=args["args"].as_array(){
+                for arg in argv.iter().filter_map(Value::as_str){cmd.push(' ');cmd.push_str(arg);}
+            }
+            cmd
+        }else{string(args,"command")};
+        if command.chars().any(|c|matches!(c,';'|'&'|'|'|'>'|'<'|'\n')){return false;}
+        let words=command.split_whitespace().collect::<Vec<_>>();
+        matches!(words.as_slice(),
+            ["cargo", "test", ..]|["cargo","check",..]|["cargo","clippy",..]|
+            ["npm","test",..]|["npm","run","test",..]|["npm","run","typecheck",..]|
+            ["pnpm","test",..]|["pytest",..]|["python","-m","pytest",..]|
+            ["go","test",..]|["vitest",..]|["tsc","--noEmit",..])
+    })
+}
+
 pub(crate) fn command_matches(item: &Value, command: &str) -> bool {
     if !matches!(tool_name(item), "shell_exec" | "terminal_exec") || !successful_evidence(item) {
         return false;
@@ -442,6 +514,16 @@ pub(crate) fn acceptance_gaps(
     });
     if looks_actionable(goal) && !evidence.iter().any(is_action_evidence) && !has_explicit_tool {
         gaps.push("변경 또는 실행을 입증하는 성공한 도구 결과가 없습니다. 조회 결과만으로 행동 목표를 완료할 수 없습니다.".into());
+    }
+    if local_edit_intent(goal) {
+        if !evidence.iter().any(|item|proven_workspace_edit(state,item)) {
+            gaps.push("실제 변경된 워크스페이스 파일의 최신 SHA-256과 일치하는 쓰기 증거가 없습니다.".into());
+        }
+        // When there is no frozen file/command criterion, a free-form model
+        // claim cannot close a code-edit task: require one real post-edit test.
+        if checks.is_empty() && !test_after_last_edit(evidence) {
+            gaps.push("파일 목표가 명시되지 않은 코드 수정은 마지막 수정 이후 실제 테스트 성공이 필요합니다.".into());
+        }
     }
     for check in checks {
         let kind = check["type"].as_str().unwrap_or("");
@@ -522,14 +604,62 @@ mod inference_tests {
 }
 
 #[cfg(test)]
-mod sub2_action_evidence_tests {
+mod verified_patch_tests {
     use super::*;
+    fn state()->(AppState,std::path::PathBuf){
+        let dir=std::env::temp_dir().join(format!("dominion-proof-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=crate::config::Config{port:0,data_dir:dir.join("data"),
+            web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=AppState::new(config.clone(),
+            crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        (state,dir)
+    }
     #[test]
-    fn workspace_patch_is_recognized_as_a_write_not_a_read() {
-        let patch=json!({"tool":"workspace_replace_range",
-            "arguments":{"path":"src/lib.rs"}, "result":{"success":true}});
-        assert!(is_action_evidence(&patch));
-        let failed=json!({"tool":"workspace_replace_range","result":{"success":false}});
-        assert!(!is_action_evidence(&failed));
+    fn no_op_or_forged_write_cannot_mark_local_fix_complete(){
+        let (state,dir)=state();
+        let goal="Fix bug in src/main.rs";
+        let text=b"updated source";
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/main.rs"),text).unwrap();
+        let hash=format!("{:x}",Sha256::digest(text));
+        let valid=json!({"tool":"workspace_replace_range",
+            "result":{"path":dir.join("src/main.rs"),"written":true,
+                "changed":true,"postSha256":hash}});
+        assert!(proven_workspace_edit(&state,&valid));
+        let no_write=json!({"tool":"workspace_replace_range",
+            "result":{"path":dir.join("src/main.rs"),"success":true}});
+        assert!(!is_action_evidence(&no_write));
+        assert!(!proven_workspace_edit(&state,&no_write));
+        let no_change=json!({"tool":"workspace_write",
+            "result":{"path":dir.join("src/main.rs"),"written":true,
+                "changed":false,"postSha256":hash}});
+        assert!(!is_action_evidence(&no_change));
+        assert!(!proven_workspace_edit(&state,&no_change));
+        let bad_hash=json!({"tool":"workspace_write",
+            "result":{"path":dir.join("src/main.rs"),"written":true,
+                "changed":true,"postSha256":"0".repeat(64)}});
+        assert!(!proven_workspace_edit(&state,&bad_hash));
+        let test=json!({"tool":"shell_exec",
+            "arguments":{"command":"cargo test"},"result":{"exitCode":0}});
+        assert!(!check_acceptance(&state,goal,&json!([]),&[no_write,test.clone()]).is_empty());
+        assert!(check_acceptance(&state,goal,&json!([]),&[valid,test]).is_empty());
+        std::fs::write(dir.join("src/main.rs"),"external modification").unwrap();
+        assert!(!proven_workspace_edit(&state,&valid));
+        let _=std::fs::remove_dir_all(dir);
+    }
+    #[test]
+    fn test_must_follow_latest_edit_and_read_only_is_unchanged(){
+        let edit=json!({"tool":"workspace_write","result":{"written":true,"changed":true}});
+        let test=json!({"tool":"shell_exec","arguments":{"command":"cargo test"},
+            "result":{"exitCode":0}});
+        assert!(test_after_last_edit(&[edit.clone(),test.clone()]));
+        assert!(!test_after_last_edit(&[test.clone(),edit.clone()]));
+        assert!(!test_after_last_edit(&[edit.clone(),test.clone(),edit]));
+        assert!(local_edit_intent("Refactor project code"));
+        assert!(local_edit_intent("버그를 수정해"));
+        assert!(!local_edit_intent("Run cargo test"));
+        assert!(!local_edit_intent("프로젝트 분석해"));
     }
 }
