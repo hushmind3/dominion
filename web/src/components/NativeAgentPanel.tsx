@@ -8,6 +8,7 @@ type SdkRun = {
  id: string; status: string; instruction: string; answer?: string; error?: string;
  checkpoint?: {
   state?: SdkState; rounds?: number; toolCalls?: number; answer?: string;
+  usage?: {prompt_tokens:number; completion_tokens:number; cached_prompt_tokens:number};
   pendingCall?: {id:string; name:string; arguments:unknown} | null;
   events?: {kind:string; detail:unknown}[];
  } | null
@@ -127,6 +128,9 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     <div className="flex flex-wrap items-center justify-between gap-2">
      <strong className="text-[12px]">{en?stateNames[status]?.[1]||status:stateNames[status]?.[0]||status}</strong>
      <span className="text-[11px] text-[#82796D]">{run.checkpoint?.rounds??0} {en?'rounds':'회 판단'} · {run.checkpoint?.toolCalls??0} {en?'actions':'회 도구 실행'}</span>
+    {run.checkpoint?.usage&&<p className="mt-2 text-[11px] text-[#82796D]">
+     {en?'Provider-reported tokens':'제공자 보고 토큰'}: {run.checkpoint.usage.prompt_tokens.toLocaleString()} {en?'input':'입력'} · {run.checkpoint.usage.completion_tokens.toLocaleString()} {en?'output':'출력'} · {run.checkpoint.usage.cached_prompt_tokens.toLocaleString()} {en?'cached input':'캐시 입력'}
+    </p>}
     </div>
     <p className="mt-2 line-clamp-2 text-[11px] text-[#766F67]">{run.instruction}</p>
     {events.length>0&&<div className="mt-3 space-y-1 border-t border-[#E7E0D5] pt-2">
