@@ -39,7 +39,7 @@ impl OpenAiProvider {
         let messages = messages
             .iter()
             .map(|message| {
-                json!({
+                let mut wire = json!({
                     "role": match message.role {
                         Role::System => "system",
                         Role::User => "user",
@@ -47,7 +47,21 @@ impl OpenAiProvider {
                         Role::Tool => "tool",
                     },
                     "content": message.content,
-                })
+                });
+                if !message.tool_calls.is_empty() {
+                    wire["tool_calls"] = json!(message.tool_calls.iter().map(|call| json!({
+                        "id": call.id,
+                        "type": "function",
+                        "function": {
+                            "name": call.name,
+                            "arguments": call.arguments.to_string(),
+                        }
+                    })).collect::<Vec<_>>());
+                }
+                if let Some(id) = &message.tool_call_id {
+                    wire["tool_call_id"] = json!(id);
+                }
+                wire
             })
             .collect::<Vec<_>>();
         let mut payload = json!({
@@ -80,6 +94,7 @@ impl Provider for OpenAiProvider {
             return Err("api key가 필요합니다.".into());
         }
         let response = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
             .build()
             .map_err(|error| error.to_string())?
             .post(format!("{}/chat/completions", self.base_url))
@@ -108,28 +123,24 @@ pub fn parse_reply(body: &Value) -> Result<ModelReply, String> {
         .pointer("/choices/0/message")
         .ok_or("provider 응답에 message가 없습니다.")?;
     let content = message["content"].as_str().unwrap_or("").to_string();
-    let calls = message
-        .get("tool_calls")
-        .and_then(Value::as_array)
-        .map(|calls| {
-            calls
-                .iter()
-                .filter_map(|call| {
-                    let name = call.pointer("/function/name")?.as_str()?.to_string();
-                    let arguments = call
-                        .pointer("/function/arguments")
-                        .and_then(Value::as_str)
-                        .and_then(|raw| serde_json::from_str(raw).ok())
-                        .unwrap_or_else(|| json!({}));
-                    Some(ToolCall {
-                        id: call["id"].as_str().unwrap_or("").to_string(),
-                        name,
-                        arguments,
-                    })
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    let mut calls = Vec::new();
+    if let Some(raw_calls) = message.get("tool_calls").and_then(Value::as_array) {
+        for call in raw_calls {
+            let id = call["id"].as_str().filter(|id| !id.is_empty())
+                .ok_or("provider tool call id is missing")?;
+            let name = call.pointer("/function/name").and_then(Value::as_str)
+                .filter(|name| !name.is_empty())
+                .ok_or("provider tool name is missing")?;
+            let raw = call.pointer("/function/arguments").and_then(Value::as_str)
+                .ok_or("provider tool arguments are missing")?;
+            let arguments: Value = serde_json::from_str(raw)
+                .map_err(|error| format!("provider sent invalid tool arguments: {error}"))?;
+            if !arguments.is_object() {
+                return Err("provider tool arguments must be a JSON object".into());
+            }
+            calls.push(ToolCall { id: id.into(), name: name.into(), arguments });
+        }
+    }
     if calls.is_empty() {
         Ok(ModelReply::Final { content })
     } else {
@@ -178,15 +189,26 @@ mod tests {
     }
 
     #[test]
-    fn invalid_arguments_do_not_drop_the_call() {
+    fn invalid_arguments_are_reported_instead_of_executing_empty_arguments() {
         let body = json!({"choices":[{"message":{"content":"",
             "tool_calls":[{"id":"c","type":"function","function":{"name":"fs_list","arguments":"not json"}}]}}]});
-        match parse_reply(&body).unwrap() {
-            ModelReply::Assistant { tool_calls, .. } => {
-                assert_eq!(tool_calls[0].arguments, json!({}));
-            }
-            other => panic!("unexpected {other:?}"),
-        }
+        assert!(parse_reply(&body).unwrap_err().contains("invalid tool arguments"));
+    }
+
+    #[test]
+    fn assistant_tool_calls_and_correlated_results_round_trip_on_wire() {
+        let calls = vec![ToolCall {
+            id: "call_42".into(), name: "fs_read".into(), arguments: json!({"path":"a.txt"})
+        }];
+        let payload = OpenAiProvider::new("http://localhost/v1", "key", "model")
+            .payload(&[
+                Message::user("read"),
+                Message::assistant_calls("", calls),
+                Message::tool_result("call_42", "contents"),
+            ]);
+        assert_eq!(payload["messages"][1]["tool_calls"][0]["id"], "call_42");
+        assert_eq!(payload["messages"][1]["tool_calls"][0]["function"]["arguments"], "{\\"path\\":\\"a.txt\\"}");
+        assert_eq!(payload["messages"][2]["tool_call_id"], "call_42");
     }
 
     #[test]
