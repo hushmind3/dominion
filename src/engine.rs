@@ -988,6 +988,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn early_owner_constraint_survives_far_beyond_recent_session_window(){
+        use axum::{routing::post,Json,Router};
+        use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
+        let summary_calls=Arc::new(AtomicUsize::new(0));
+        let counter=summary_calls.clone();
+        let app=Router::new().route("/v1/chat/completions",post(
+            move |Json(body):Json<Value>|{
+                let counter=counter.clone();
+                async move{
+                    let messages=body["messages"].as_array().cloned().unwrap_or_default();
+                    if messages.first().and_then(|v|v["content"].as_str())
+                        .is_some_and(|v|v.contains("Extract important ORIGINAL OWNER")){
+                        counter.fetch_add(1,Ordering::SeqCst);
+                        let packed:Value=serde_json::from_str(
+                            messages[1]["content"].as_str().unwrap()).unwrap();
+                        let source=packed["sources"].as_array().unwrap().iter()
+                            .find(|row|row["content"].as_str().unwrap_or("")
+                                .contains("반드시 구리색 버튼을 유지하세요")).unwrap();
+                        let facts=json!({"items":[{"seq":source["seq"],
+                            "kind":"constraint","topic":"button colors",
+                            "quote":"반드시 구리색 버튼을 유지하세요"}]}).to_string();
+                        return Json(json!({"choices":[{"message":{
+                            "role":"assistant","content":facts}}],
+                            "usage":{"prompt_tokens":110,"completion_tokens":80}}));
+                    }
+                    let retained=messages.iter().any(|message|
+                        message["role"]=="system" &&
+                        message["content"].as_str().unwrap_or("")
+                            .contains("반드시 구리색 버튼을 유지하세요"));
+                    Json(json!({"choices":[{"message":{
+                        "role":"assistant","content":if retained{
+                            "Original owner restriction retained."
+                        }else{"Owner restriction missing."}
+                    }}],"usage":{"prompt_tokens":300,"completion_tokens":45}}))
+                }
+            }
+        ));
+        let listener=tokio::net::TcpListener::bind(("127.0.0.1",0)).await.unwrap();
+        let url=format!("http://{}/v1/chat/completions",listener.local_addr().unwrap());
+        let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap()});
+        let (state,root)=mock_state(url).await;
+        state.store.add_message("long-session","user",
+            "반드시 구리색 버튼을 유지하세요. 비용이 많이 드는 변경은 하지 마세요.");
+        for index in 0..310 {
+            state.store.add_message("long-session","assistant",
+                &format!("Older response {index}: {}", "context archive ".repeat(35)));
+        }
+        assert!(state.store.history("long-session",256).iter().all(|v|
+            !v["content"].as_str().unwrap_or("").contains("구리색")));
+        let (task,_)=state.store.submit("constraint-older-than-256-2026",
+            &json!({"prompt":"Report whether the original design rule was retained",
+                "sessionId":"long-session","planningMode":"never",
+                "modelTier":"quality","maxSteps":2,"tokenBudget":15000})).unwrap();
+        let id=task["id"].as_str().unwrap().to_owned();
+        run(state.clone(),id.clone()).await;
+        let result=state.store.get(&id).unwrap();
+        assert_eq!(result["status"],"completed","record: {result}");
+        assert_eq!(result["result"]["answer"],"Original owner restriction retained.");
+        assert_eq!(summary_calls.load(Ordering::SeqCst),1);
+        let checkpoint=state.store.context_checkpoint("long-session","design rule",4096);
+        assert!(checkpoint.to_string().contains("반드시 구리색 버튼을 유지하세요"));
+        assert!(state.store.events_after(&id,0,200).iter()
+            .any(|item|item["type"]=="semantic_checkpoint"));
+        server.abort();
+        let _=std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn full_native_loop_compacts_large_tools_and_recovers_exact_persisted_page(){
         use axum::{routing::post,Json,Router};
         use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
