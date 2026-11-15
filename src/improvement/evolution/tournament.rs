@@ -283,7 +283,7 @@ mod tests {
         }
         let seed=service.adopt(seed.id).await.unwrap();
         assert_eq!(tokio::fs::read_to_string(repo.join("a.txt")).await.unwrap(),"1\n");
-        let run=service.evolution_start(model,seed.id,NewEvolution{
+        let run=service.evolution_start(model.clone(),seed.id,NewEvolution{
             max_generations:1,cost_budget_krw:100.0,
             target_files:vec!["b.txt".into()],
             candidates_per_generation:2,
@@ -316,8 +316,37 @@ mod tests {
         let check_count=tokio::fs::read_to_string(&counter).await.unwrap();
         assert_eq!(check_count.lines().count(),8,
             "2 seed checks + 6 tournament checks: baseline reused per scorer");
-        let persisted=Improvements::open(records,workspace).await.unwrap();
+        // Reopen the persistent Rust engine, then prove the next generation
+        // chooses two NEW methods from the previous verified outcomes.
+        let persisted=Arc::new(Improvements::open(
+            records.clone(),workspace.clone()
+        ).await.unwrap());
         assert_eq!(persisted.evolution(run.id).await.unwrap().candidate_groups[0].len(),2);
+        assert_eq!(done.candidates[0].strategy_id.as_deref(),Some("minimal"));
+        assert_eq!(done.candidates[1].strategy_id.as_deref(),Some("alternative"));
+        let next=persisted.evolution_start(model.clone(),winner,NewEvolution{
+            max_generations:1,cost_budget_krw:100.0,
+            target_files:vec!["b.txt".into()],
+            candidates_per_generation:2,
+            validation_command:Some("test $(cat b.txt) -lt 10 && echo $(( $(cat a.txt) + $(cat b.txt) ))".into())
+        },true).await.unwrap();
+        let mut evolved=None;
+        for _ in 0..180{
+            let active=persisted.evolution(next.id).await.unwrap();
+            if active.status!=EvolutionStatus::Running {evolved=Some(active);break;}
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let evolved=evolved.expect("Second meta-evolution tournament did not finish");
+        assert_eq!(evolved.status,EvolutionStatus::Completed,"{:?}",evolved.stop_reason);
+        assert_eq!(evolved.candidates.len(),2);
+        assert_eq!(evolved.candidates[0].strategy_id.as_deref(),Some("simplify"));
+        assert_eq!(evolved.candidates[1].strategy_id.as_deref(),Some("algorithm"));
+        let actual=persisted.get(evolved.candidate_groups[0][0]).await.unwrap();
+        assert_eq!(actual.strategy_id.as_deref(),Some("simplify"));
+        assert!(actual.strategy_feedback.as_deref().unwrap_or("").contains("Verified scoped history"));
+        assert_eq!(tokio::fs::read_to_string(repo.join("b.txt")).await.unwrap(),"2\n");
+        let restored=Improvements::open(records,workspace).await.unwrap();
+        assert_eq!(restored.evolution(next.id).await.unwrap().candidates.len(),2);
         server.abort();
         tokio::fs::remove_dir_all(root).await.unwrap();
     }
