@@ -213,7 +213,7 @@ impl Mcp {
             let schema=item.get("inputSchema").cloned().unwrap_or(json!({"type":"object","properties":{}}));
             if schema.get("type").and_then(Value::as_str)!=Some("object"){continue;}
             let headers=match collect_headers(&schema){
-                Ok(value)=>value,Err(error)=>{tracing::warn!(%error,%name,"ignored invalid MCP tool");continue;}
+                Ok(value)=>value,Err(error)=>{eprintln!("ignored invalid MCP tool {}: {}",name,error);continue;}
             };
             let description=item.get("description").and_then(Value::as_str).unwrap_or("").chars().take(1500).collect::<String>();
             tools.push(RemoteTool{name:name.into(),description,input_schema:schema,headers});
