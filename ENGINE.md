@@ -192,3 +192,7 @@ Rust SDK 자체가 계획·실행·검증·복구의 상태기계입니다. 실�
 ## 네이티브 프롬프트 캐시와 재전송 금지 (2026-11-15)
 
 `/api/jobs` → `native_agent::run` → `dominion_sdk::Kernel` → `native_model::complete_with_run`가 기존 실행 경로입니다. OpenAI 호환 Chat 전송은 `gateway::send_once`로 분리해 네트워크 오류 후 내부 HTTP POST 재시도 없이 커널의 `model_in_flight` 검토 상태를 보존합니다. Anthropic Messages는 `native_cache::hinted`가 긴 고정 도구·시스템 접두사에만 `cache_control`을 부착합니다. 명시적 400/422 미지원 오류가 나온 때에만 캐시 힌트를 벗기고 요청을 1회 재시도하며, 비지원 모델/제공자 결과를 24시간 저장합니다. 사용량 실측은 기존 `nativeModelUsage` 장부에서 제공자 보고값을 읽습니다. 상세: `docs/SUB3-NATIVE-PROMPT-CACHE-2026-11-15.md`.
+
+## 품질 하한·원화 가격 기반 Rust 네이티브 모델 라우팅 (2026-11-15)
+
+실제 진입점은 `web/src/pages/Models.tsx` → `src/api/providers.rs::save_provider` (`provider.nativeRouting`) 및 `web/src/components/NativeAgentPanel.tsx` → `src/api/jobs.rs::create` (`input.nativeRoutingPolicy`) → `src/engine/native_agent.rs::run` → `src/engine/native_routing.rs::choose` → `job.nativeRoute` 지속 체크포인트 → `ConfiguredModel::complete_with_tools` → `native_model::complete_with_run` → `nativeModelUsage.configuredCostKRW` → `GET /api/jobs/:id` / TypeScript SDK / GUI입니다. 사용자 직접 지정 제공자·모델 우선, 선언된 품질 하한을 충족하는 가격 보유 네이티브 후보만 가격 비교, 무후보 시 생성 전 거부합니다. 모델+엔드포인트+계정+인증·프로토콜 계약 지문을 고정하여 복구·모델 호출 중 전환을 차단합니다. 여러 완료 작업에서 보고된 캐시 토큰에 근거한 보수적 예상비용과 실제 제공자 보고 토큰 × 소유자 등록 단가를 혼동하지 않습니다. 상세: `docs/SUB3-NATIVE-QUALITY-COST-ROUTING-2026-11-15.md`.
