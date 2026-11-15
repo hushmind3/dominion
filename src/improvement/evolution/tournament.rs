@@ -24,6 +24,8 @@ impl Improvements {
         run.candidate_groups.push(Vec::new());
         self.put_evolution(run.clone()).await?;
         let mut evaluated=Vec::<CandidateRecord>::new();
+        let mut shared_baseline:Option<(String,Measurement)>=None;
+        let mut shared_validation:Option<(String,Measurement)>=None;
         for proposal_index in 0..run.candidates_per_generation {
             if self.should_stop_evolution(run).await{return Ok(None);}
             if run.spent_krw>=run.cost_budget_krw {
@@ -47,7 +49,8 @@ impl Improvements {
             run.candidate_groups[generation].push(trial.id);
             run.updated_at_ms=now_ms();
             self.put_evolution(run.clone()).await?;
-            let result=self.evaluate(model,trial.clone()).await;
+            let baseline=shared_baseline.as_ref().map(|(sha,result)|(sha.as_str(),result));
+            let result=self.evaluate_with_baseline(model,trial.clone(),baseline).await;
             if let Err(error)=&result {
                 if let Some(mut record)=self.get(trial.id).await {
                     record.status=ImprovementStatus::Failed;
@@ -57,6 +60,13 @@ impl Improvements {
                 }
             }
             let result_trial=self.get(trial.id).await.ok_or("Candidate record lost")?;
+            if shared_baseline.is_none(){
+                if let (Some(sha),Some(baseline))=(
+                    result_trial.base_commit.as_ref(),result_trial.baseline.as_ref()
+                ){
+                    shared_baseline=Some((sha.clone(),baseline.clone()));
+                }
+            }
             run.spent_krw+=result_trial.cost_krw;
             let mut candidate=CandidateRecord{
                 trial_id:trial.id,generation,proposal_index,
@@ -69,8 +79,16 @@ impl Improvements {
             // candidate prompts and reflection. It is operator-frozen per run.
             if candidate.eligible {
                 if let Some(command)=run.validation_command.as_deref() {
-                    match self.holdout(&result_trial,command).await {
+                    let cached=shared_validation.as_ref()
+                        .map(|(sha,measurement)|(sha.as_str(),measurement));
+                    match self.holdout(&result_trial,command,cached).await {
                         Ok((baseline,proposed))=>{
+                            if shared_validation.is_none(){
+                                shared_validation=Some((
+                                    result_trial.base_commit.clone().ok_or("Missing holdout base")?,
+                                    baseline.clone()
+                                ));
+                            }
                             candidate.validation_baseline_score=baseline.score;
                             candidate.validation_score=proposed.score;
                             if !super::super::is_better(&baseline,&proposed) {
@@ -129,13 +147,18 @@ impl Improvements {
         Ok(winner)
     }
 
-    async fn holdout(&self,trial:&Improvement,command:&str)
-        ->Result<(Measurement,Measurement),String>{
+    async fn holdout(
+        &self,trial:&Improvement,command:&str,
+        frozen_baseline:Option<(&str,&Measurement)>
+    )->Result<(Measurement,Measurement),String>{
         let workspace=self.workspace.canonicalize().map_err(|e|e.to_string())?;
         let repo=workspace.join(relative(&trial.repository)?).canonicalize()
             .map_err(|e|e.to_string())?;
         if !repo.starts_with(&workspace){return Err("Holdout repository escaped workspace".into());}
         let base=trial.base_commit.as_deref().ok_or("Missing candidate base")?;
+        if frozen_baseline.is_some_and(|(sha,_)|sha!=base){
+            return Err("Cached validation baseline has a different Git revision".into());
+        }
         let proposed=trial.candidate_commit.as_deref().ok_or("Missing pinned candidate")?;
         let pinned=git(&repo,&["rev-parse",&format!("refs/dominion/improvements/{}",trial.id)]).await?;
         if pinned.trim()!=proposed {return Err("Holdout candidate differs from pinned Git commit".into());}
@@ -144,7 +167,9 @@ impl Improvements {
         let baseline=root.join("holdout_baseline");
         let candidate=root.join("holdout_candidate");
         let mut created=Vec::<PathBuf>::new();
-        for (path,sha) in [(&baseline,base),(&candidate,proposed)] {
+        let worktrees=if frozen_baseline.is_some(){vec![(&candidate,proposed)]}
+            else{vec![(&baseline,base),(&candidate,proposed)]};
+        for (path,sha) in worktrees {
             let name=path.to_str().ok_or("Invalid validation worktree path")?;
             if let Err(error)=git(&repo,&["worktree","add","--detach",name,sha]).await {
                 for existing in &created {
@@ -155,7 +180,10 @@ impl Improvements {
             created.push(path.to_path_buf());
         }
         let result=async {
-            let a=self.measure(&baseline,&trial.test_command,Some(command)).await?;
+            let a=match frozen_baseline {
+                Some((_,previous))=>previous.clone(),
+                None=>self.measure(&baseline,&trial.test_command,Some(command)).await?
+            };
             let b=self.measure(&candidate,&trial.test_command,Some(command)).await?;
             Ok::<_,String>((a,b))
         }.await;
