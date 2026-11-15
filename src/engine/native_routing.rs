@@ -28,11 +28,16 @@ pub(crate) fn binding(route:&Route)->String {
     format!("{:x}",Sha256::digest(value.to_string().as_bytes()))
 }
 fn route_record(route:&Route,decision:Value,profile:&Value)->Value {
+    let price=if profile["model"].as_str().is_none_or(|m|m==route.model)
+        &&prices(&profile["pricesKRWPerMillion"]).is_some() {
+        profile["pricesKRWPerMillion"].clone()
+    }else{Value::Null};
+    let price_source=if price.is_object() {"owner_configured"}else{"unavailable"};
     json!({
         "providerId":route.id,"model":route.model,"binding":binding(route),
         "kind":route.kind,"selection":decision,
-        "pricesKRWPerMillion":profile["pricesKRWPerMillion"],
-        "currency":"KRW","priceSource":"owner_configured",
+        "pricesKRWPerMillion":price,
+        "currency":"KRW","priceSource":price_source,
         "pinnedAt":chrono::Utc::now().to_rfc3339(),
     })
 }
@@ -72,8 +77,9 @@ pub(crate) fn choose(
         let Some(q)=valid_quality(&profile["nativeRouting"]["quality"]) else{continue};
         if q<min_quality {continue;}
         let Some(price)=prices(&profile["nativeRouting"]["pricesKRWPerMillion"]) else{continue};
-        let Some(id)=profile["id"].as_str() else{continue};
         let Ok(route)=gateway::route_from_provider(state,&profile,None) else{continue};
+        if profile["nativeRouting"]["model"].as_str()
+            .is_some_and(|m|m!=route.model) {continue;}
         // Do not substitute CLI compatibility/manual tools for the native SDK
         // and never equate OAuth subscriptions with metered API prices.
         if route.kind=="cli"||route.kind=="codex"||route.tool_mode=="compat"{
@@ -81,7 +87,6 @@ pub(crate) fn choose(
         }
         if !route.local && route.api_key.is_empty(){continue;}
         if route.context_tokens.is_some_and(|cap|cap<input.saturating_add(output)){continue;}
-        let _=id;
         let estimated=estimate(price,input,output);
         candidates.push((route,q,estimated,profile["nativeRouting"].clone()));
     }
@@ -137,6 +142,9 @@ pub(crate) fn observed_cost(
 pub(crate) fn validate_profile(value:&Value)->Result<(),String>{
     if value.is_null(){return Ok(());}
     if !value.is_object(){return Err("nativeRouting must be an object".into());}
+    if value["model"].as_str().is_some_and(|m|m.is_empty()||m.len()>256) {
+        return Err("nativeRouting model identity invalid".into());
+    }
     if valid_quality(&value["quality"]).is_none(){
         return Err("nativeRouting.quality must be 0.0 through 1.0".into());
     }
