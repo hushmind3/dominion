@@ -34,3 +34,14 @@
 작업 브랜치 Git 전체 트리(373개 추적 파일, recursive response 완전)를 조사했다. 추적된 `rsi-labs/`, `rsi-paired/`, `node_modules/`, `target/`, 임시 patch, `*.rej`, `*.orig`는 없었다. 런타임 파일의 누출 여부는 실패 경로 테스트와 실행 후 Git 등록 확인으로 검증한다. 실제 호스트의 과거 남은 비추적 디렉터리는 연결된 실행 컴퓨터를 직접 조사해야 판단 가능하며, 이 문서만으로 정리됐다고 주장하지 않는다.
 
 **CI는 위 잔재 검사와 코드 정리 후에만 수행한다.** 작업 성공률·모델 청구 비용·SWE-bench는 이후 동일 조건으로 별도 측정한다.
+
+
+## 검증 결과 — 2026-11-15
+
+[집중 GitHub Actions #43697949313](https://github.com/hushmind3/dominion-rust/actions/runs/43697949313)에서 **Rust 총 223/223**, 실제 Node·Git·Cargo 기반 RSI A/B **2/2**, 독립 TypeScript SDK **7/7** 테스트가 통과했다. React TypeScript 타입 검사와 Vite 프로덕션 빌드도 통과했다.
+
+Rust 집계: 독립 에이전트 SDK 45, 네이티브 호스트·전송 67, `engine::rsi::tests` 9, `engine::rsi_worktree::tests` 11, `engine::rsi_evolve::tests` 71, `api::rsi::tests` 4, Codex WebSocket 15, 워크플로 복구 1 = **223**. `rsi_evolve` 테스트에는 실제 Rust 후손 바이너리 재컴파일·실행·기존 소스 보호·검증된 Git 계보 채택 및 선택된 브랜치 반영이 포함된다.
+
+Node A/B는 정상·실패 시 Git worktree 정리, 유니코드 경로, 실제 Cargo 프로젝트의 **원본 회귀 테스트 실패 / 수정본 통과 / 양쪽 공통 보호 테스트 통과**, v3 동결 기준 Git 트리 기록을 확인한다. 프로토콜·원화 청구·상용 모델로 자동 세대 반복까지 입증한 수치는 아니다.
+
+기준 코드 커밋: `339bed1947e4c8ee6e67657f10c5dc0f3e760c1a`; 이후 문서 수정은 실행 소스/테스트를 변경하지 않는다. 전체 제품 릴리스 CI, 유료 모델 장기 RSI, SWE-bench는 아직 완주 증거가 없다.
