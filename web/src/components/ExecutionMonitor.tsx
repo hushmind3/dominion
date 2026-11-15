@@ -32,6 +32,7 @@ export function ExecutionMonitor(){
  const [autonomous,setAutonomous]=useState(true)
  const [attempts,setAttempts]=useState(3)
  const [strategy,setStrategy]=useState<'focused'|'conservative'>('focused')
+ const [steerJob,setSteerJob]=useState(''),[steerText,setSteerText]=useState('')
  const agents=useRemote<Agent[]>('/api/agents',[])
  const [prompt,setPrompt]=useState(''),[agentChoice,setAgentChoice]=useState(''),[info,setInfo]=useState('')
  const [selected,setSelected]=useState<string|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('')
@@ -98,6 +99,12 @@ export function ExecutionMonitor(){
      </div>)}
      {j.result?.verified===true&&<p className="text-emerald-700">독립 검증 조건 통과</p>}
      {j.result?.status==='needs_review'&&<p className="text-amber-800">검토가 필요한 작업입니다: {j.result?.reason||'검증 미완료'}</p>}
+     {['queued','running'].includes(j.status)&&j.input?.autonomous!==false&&<div className="mt-2 flex flex-wrap items-center gap-2">
+      <input aria-label="작업 추가 지시" className="min-w-48 flex-1 rounded border border-[#E7E0D5] px-2 py-1 text-xs" placeholder="진행 중 변경할 지시를 입력하세요" value={steerJob===j.id?steerText:''} onChange={e=>{setSteerJob(j.id);setSteerText(e.target.value)}}/>
+      <button type="button" disabled={steerJob!==j.id||!steerText.trim()} className="rounded border border-[#C7B18F] px-2 py-1 text-[#5C544A] disabled:opacity-50" onClick={async()=>{
+       try{await post('/api/jobs/'+encodeURIComponent(j.id)+'/steer',{instruction:steerText.trim()});setSteerText('');await jobs.reload();setInfo('다음 실행 단계에 추가 지시를 반영합니다.')}catch(e){setError((e as Error).message)}
+      }}>지시 추가</button>
+     </div>}
      {['queued','running'].includes(j.status)&&<button type="button" className="rounded border border-rose-200 px-2 py-1 text-rose-700" onClick={async()=>{await post('/api/jobs/'+encodeURIComponent(j.id)+'/cancel',{});await jobs.reload()}}>작업 중단</button>}
     </div>
    </details>)}</div>
