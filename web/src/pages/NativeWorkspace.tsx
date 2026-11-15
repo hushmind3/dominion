@@ -1,5 +1,5 @@
-import {useCallback,useEffect,useMemo,useState,type FormEvent,type ReactNode} from 'react'
-import {Activity,ArrowRight,BrainCircuit,Clapperboard,Cpu,Database,Download,MessageCircle,PauseCircle,Play,Plus,RefreshCw,Settings2,UsersRound} from 'lucide-react'
+import {useCallback,useEffect,useState,type ComponentProps,type FormEvent,type ReactNode} from 'react'
+import {Activity,ArrowRight,BrainCircuit,Clapperboard,Database,Download,MessageCircle,PauseCircle,Play,Plus,RefreshCw,UsersRound} from 'lucide-react'
 import {get,post} from '../api'
 import {Button,PageContainer,TextArea,TextInput,SelectInput} from '../components/Primitives'
 import {Headline,Panel,FormField,Notice,StateTag} from '../components/UI'
@@ -24,7 +24,7 @@ const fmtKrw=(n:number)=>Math.round(n||0).toLocaleString('ko-KR')+'원'
 const errText=(e:unknown)=>e instanceof Error?e.message:String(e)
 function Section({children,className=''}:{children:ReactNode;className?:string}){return <Panel className={panel+' '+className}>{children}</Panel>}
 function InlineError({error}:{error:string}){return <Notice message={error}/>}
-function LoadingButton({busy,children,...rest}:{busy:boolean;children:ReactNode}&React.ComponentProps<typeof Button>){return <Button disabled={busy||rest.disabled} {...rest}>{busy?'처리 중…':children}</Button>}
+function LoadingButton({busy,children,...rest}:{busy:boolean;children:ReactNode}&ComponentProps<typeof Button>){return <Button disabled={busy||rest.disabled} {...rest}>{busy?'처리 중…':children}</Button>}
 function useCollection<T>(path:string,empty:T){
  const [value,setValue]=useState<T>(empty),[error,setError]=useState(''),[loading,setLoading]=useState(true)
  const reload=useCallback(async()=>{try{const data=await get<T>(path);setValue(data);setError('')}catch(e){setError(errText(e))}finally{setLoading(false)}},[path])
