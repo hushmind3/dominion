@@ -410,10 +410,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "dominion-harness"
+version = "0.1.0"
+dependencies = [
+ "dominion-agent-sdk",
+ "reqwest",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "dominion-rust"
 version = "0.3.0"
 dependencies = [
  "dominion-agent-sdk",
+ "dominion-harness",
  "dominion-sdk",
  "async-stream",
  "axum",

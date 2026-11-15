@@ -22,6 +22,7 @@ pub mod experiments;
 pub mod chat;
 pub mod jobs;
 pub mod sdk_runs;
+pub mod sdk;
 pub mod system;
 pub mod attachments;
 pub mod channels;
@@ -148,6 +149,14 @@ pub fn router(state: AppState) -> Router {
         .route("/api/jobs/:id/cancel",post(jobs::cancel))
         .route("/api/jobs/:id/directive",post(jobs::directive))
         // Main @879dc23d frontend uses this stable view of the SAME Rust SDK jobs.
+        // Preserve main's independent Rust harness contract alongside the
+        // native-product job-backed SDK used by the existing GUI.
+        .route("/api/harness/runs",get(sdk::list).post(sdk::start))
+        .route("/api/harness/runs/:id",get(sdk::one))
+        .route("/api/harness/runs/:id/approve",post(sdk::approve))
+        .route("/api/harness/runs/:id/cancel",post(sdk::cancel))
+        .route("/api/harness/runs/:id/resume",post(sdk::resume))
+        .route("/api/harness/runs/:id/reconcile",post(sdk::reconcile))
         .route("/api/sdk/runs",get(sdk_runs::list).post(sdk_runs::create))
         .route("/api/sdk/runs/:id",get(sdk_runs::one))
         .route("/api/sdk/runs/:id/approve",post(sdk_runs::approve))
