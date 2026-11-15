@@ -159,11 +159,27 @@ export interface ImprovementTrial {
   parent: string | null;
   reflection: string | null;
   adopted_commit: string | null;
+  proposal_index?: number;
+  proposal_count?: number;
 }
 export interface EvolutionRequest {
   max_generations: number;
   cost_budget_krw: number;
   target_files?: string[];
+  /** Generate and compare 1..4 independent proposals from the same Git base. */
+  candidates_per_generation?: number;
+  /** Independent, operator-authored numeric validation scorer; not sent to proposer. */
+  validation_command?: string | null;
+}
+export interface EvolutionCandidate {
+  trial_id: string;
+  generation: number;
+  proposal_index: number;
+  training_score: number | null;
+  validation_baseline_score: number | null;
+  validation_score: number | null;
+  eligible: boolean;
+  reason: string | null;
 }
 export interface EvolutionRun {
   id: string;
@@ -171,6 +187,10 @@ export interface EvolutionRun {
   status: 'running' | 'completed' | 'needs_review' | 'failed';
   max_generations: number;
   target_files: string[];
+  candidates_per_generation: number;
+  validation_command: string | null;
+  candidate_groups: string[][];
+  candidates: EvolutionCandidate[];
   descendants: string[];
   completed_generations: number;
   cost_budget_krw: number;
