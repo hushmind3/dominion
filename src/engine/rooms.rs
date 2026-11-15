@@ -1598,7 +1598,7 @@ mod tests {
         );
         drop(requests);
         server.abort();
-        drop(state); std::fs::remove_dir_all(dir).unwrap();
+        drop(context); drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
     #[tokio::test]
     async fn mentioned_agents_can_reply_to_each_other_without_fabricated_owner_turns() {
@@ -1741,7 +1741,7 @@ mod tests {
         let result = run(&run_context(&state, "loop"), &job).await.unwrap();
         assert_eq!(result["turns"], 3);
         assert_eq!(result["pauseReason"], "turn_limit");
-        server.abort();
+        server.abort(); let _=server.await;
         let state_clone = state.clone();
         let callback: Callback = Arc::new(move |index, _| {
             if index == 0 {
@@ -1760,7 +1760,7 @@ mod tests {
         let result = run(&run_context(&state, "interject"), &job).await.unwrap();
         assert_eq!(result["turns"], 1);
         assert_eq!(result["yieldedToMessageId"], "new-owner");
-        server.abort();
+        server.abort(); let _=server.await;
         drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
     #[tokio::test]
@@ -1867,7 +1867,7 @@ mod tests {
             1
         );
         server.abort();
-        drop(state); std::fs::remove_dir_all(dir).unwrap();
+        drop(context); drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
     #[tokio::test]
     async fn nine_participants_share_one_owner_message_and_all_speak() {

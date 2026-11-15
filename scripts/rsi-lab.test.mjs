@@ -5,6 +5,16 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
+import {gitCompatibleArg} from './rsi-git-path.mjs';
+
+test('Git CLI paths are normalized without changing Git refs or ordinary paths',()=>{
+ assert.equal(gitCompatibleArg('\\\\?\\C:\\repo\\candidate.patch'),'C:\\repo\\candidate.patch');
+ assert.equal(gitCompatibleArg('\\\\?\\UNC\\server\\share\\candidate.patch'),'\\\\server\\share\\candidate.patch');
+ assert.equal(gitCompatibleArg('//?/C:/repo/candidate.patch'),'C:/repo/candidate.patch');
+ assert.equal(gitCompatibleArg('//?/UNC/server/share/candidate.patch'),'//server/share/candidate.patch');
+ assert.equal(gitCompatibleArg('HEAD^{tree}'),'HEAD^{tree}');
+ assert.equal(gitCompatibleArg('src/engine/rsi.rs'),'src/engine/rsi.rs');
+});
 const runner=fileURLToPath(new URL('./rsi-lab.mjs',import.meta.url));
 test('portable runner applies exact patches in isolated worktrees and cleans up paths with spaces',()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'rsi portable 한글 '));
@@ -16,6 +26,8 @@ test('portable runner applies exact patches in isolated worktrees and cleans up 
   const base=git('rev-parse','HEAD');
   const fixtures=path.join(root,'evaluation files');fs.mkdirSync(fixtures);
   fs.copyFileSync(runner,path.join(fixtures,'rsi-lab.mjs'));
+  fs.copyFileSync(fileURLToPath(new URL('./rsi-git-path.mjs',import.meta.url)),
+    path.join(fixtures,'rsi-git-path.mjs'));
   // A fixture grader inspects actual trees; this is not an RSI performance claim.
   fs.writeFileSync(path.join(fixtures,'rsi-measure.mjs'),`import fs from 'node:fs';import path from 'node:path';fs.writeFileSync(process.env.RSI_REPORT,JSON.stringify({baseline:fs.readFileSync(path.join(process.env.RSI_TEMP,'baseline','subject.txt'),'utf8'),candidate:fs.readFileSync(path.join(process.env.RSI_TEMP,'candidate','subject.txt'),'utf8'),temp:process.env.RSI_TEMP,
  baselineTreeSha:process.env.RSI_BASE_TREE_SHA,candidateTreeSha:process.env.RSI_CANDIDATE_TREE_SHA}));`);

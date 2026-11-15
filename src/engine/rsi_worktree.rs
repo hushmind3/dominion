@@ -995,6 +995,8 @@ pub(crate) async fn compare_at(context:&JobContext,id:&str,source:&Path,_runner_
     let runner=output_dir.join("rsi-lab.mjs");
     std::fs::write(&runner,include_str!("../../scripts/rsi-lab.mjs")).map_err(|e|e.to_string())?;
     std::fs::write(output_dir.join("rsi-measure.mjs"),include_str!("../../scripts/rsi-measure.mjs")).map_err(|e|e.to_string())?;
+    std::fs::write(output_dir.join("rsi-git-path.mjs"),
+        include_str!("../../scripts/rsi-git-path.mjs")).map_err(|e|e.to_string())?;
     let meta_required=candidate["cases"].as_array().is_some_and(|cases|
         cases.iter().any(crate::engine::rsi_meta::is_case));
     let static_cases=candidate["cases"].as_array().into_iter().flatten()

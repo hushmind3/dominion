@@ -540,7 +540,12 @@ pub(crate) async fn command(
 
 async fn git(context: &JobContext, dir: &Path, args: &[&str]) -> Result<String, String> {
     let mut cmd = Command::new("git");
-    cmd.current_dir(dir).args(args);
+    // Includes persisted, canonicalized Windows lab paths during worktree
+    // cleanup. Git for Windows rejects Win32 extended-length CLI strings.
+    let prepared=args.iter().map(|arg|
+        crate::engine::rsi_worktree::git_compatible_path(Path::new(arg))
+    ).collect::<Vec<_>>();
+    cmd.current_dir(dir).args(&prepared);
     let output = command(context, cmd, Duration::from_secs(30)).await?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr)
