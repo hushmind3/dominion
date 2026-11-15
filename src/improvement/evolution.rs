@@ -87,6 +87,9 @@ impl Improvements {
         shell_enabled:bool
     )->Result<EvolutionRun,String>{
         if !shell_enabled{return Err("DOMINION_ENABLE_SHELL=true is required for approved evolution".into());}
+        if !model.can_meter_paid_cost(){
+            return Err("Remote model token KRW rates must be configured to meter evolution spending".into());
+        }
         if !(1..=4).contains(&request.max_generations){
             return Err("Evolution must request 1..4 bounded generations".into());
         }
@@ -283,7 +286,7 @@ mod tests {
         assert_eq!(service.get(seed.id).await.unwrap().status,ImprovementStatus::Evaluated);
         let seed=service.adopt(seed.id).await.unwrap();
         assert!(seed.adopted_commit.is_some());
-        let run=service.evolution_start(model,seed.id,NewEvolution{
+        let run=service.evolution_start(model.clone(),seed.id,NewEvolution{
             max_generations:2,cost_budget_krw:100.0,
             target_files:vec!["b.txt".into(),"a.txt".into()]
         },true).await.unwrap();
@@ -308,12 +311,51 @@ mod tests {
         assert_eq!(second.base_commit,first.adopted_commit);
         assert_eq!(first.status,ImprovementStatus::Adopted);
         assert_eq!(second.status,ImprovementStatus::Adopted);
+        // A paid provider's single request may overshoot the allowed
+        // ceiling. Persist and show the candidate but never auto-adopt it.
+        let mut rate=crate::provider::ModelConfig::basic(
+            format!("http://{addr}/chat/completions"),"priced".into(),None
+        );
+        rate.input_krw_per_million=1_000_000.0;
+        rate.output_krw_per_million=1_000_000.0;
+        let priced=crate::provider::ModelClient::new(rate,None).unwrap();
+        let limited=service.evolution_start(priced,second.id,NewEvolution{
+            max_generations:1,cost_budget_krw:1.0,target_files:vec!["a.txt".into()]
+        },true).await.unwrap();
+        let mut bounded=None;
+        for _ in 0..150 {
+            let current=service.evolution(limited.id).await.unwrap();
+            if current.status!=EvolutionStatus::Running{bounded=Some(current);break;}
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let bounded=bounded.expect("Priced evolution did not settle");
+        assert_eq!(bounded.status,EvolutionStatus::NeedsReview);
+        assert_eq!(bounded.completed_generations,0);
+        assert!(bounded.spent_krw>bounded.cost_budget_krw);
+        assert_eq!(fs::read_to_string(repo.join("a.txt")).await.unwrap(),"2\n");
+        let proposal=service.get(bounded.descendants[0]).await.unwrap();
+        assert_eq!(proposal.status,ImprovementStatus::Evaluated);
         let restored=Improvements::open(dir,workspace).await.unwrap();
         assert_eq!(restored.evolution(run.id).await.unwrap().completed_generations,2);
         server.abort();
         fs::remove_dir_all(root).await.unwrap();
     }
 
+    #[tokio::test]
+    async fn unpriced_remote_provider_is_blocked_before_any_generation(){
+        let root=std::env::temp_dir().join(format!("dominion-evolution-rate-{}",Uuid::new_v4()));
+        fs::create_dir_all(&root).await.unwrap();
+        let service=Arc::new(Improvements::open(root.join("records"),root.clone()).await.unwrap());
+        let model=crate::provider::ModelClient::new(
+            crate::provider::ModelConfig::basic("https://example.org/v1/chat/completions".into(),
+                "unpriced".into(),None),None
+        ).unwrap();
+        let error=service.evolution_start(model,Uuid::new_v4(),NewEvolution{
+            max_generations:1,cost_budget_krw:10.0,target_files:vec![]
+        },true).await.unwrap_err();
+        assert!(error.contains("KRW rates"));
+        fs::remove_dir_all(root).await.unwrap();
+    }
     #[tokio::test]
     async fn interrupted_evolution_is_not_replayed_on_reopen(){
         let root=std::env::temp_dir().join(format!("dominion-evolution-recover-{}",Uuid::new_v4()));
