@@ -426,6 +426,21 @@ fn make_cards(dir: &Path, title: &str, scenes: &[String], aspect: &str) -> Resul
             .cloned()
             .unwrap_or_default();
         let svg=format!("<svg xmlns='http://www.w3.org/2000/svg' width='{w}' height='{h}'><defs><linearGradient id='bg' x2='1' y2='1'><stop stop-color='#171f32'/><stop offset='1' stop-color='#314862'/></linearGradient></defs><rect width='{w}' height='{h}' fill='url(#bg)'/><circle cx='{}' cy='{}' r='240' fill='#c96442' opacity='.15'/><rect x='48' y='86' width='80' height='5' rx='2' fill='#edb78e'/><text x='48' y='140' font-family='{}' font-size='22' fill='#edb78e'>{}</text>{text}<text x='48' y='{}' font-family='sans-serif' font-size='20' fill='#d0d9e4'>{:02} / {:02}</text><rect x='48' y='{}' width='{}' height='4' fill='#edb78e'/></svg>",w,h,escape(&family),escape(&heading),h-55,i+1,scenes.len(),h-30,(w-96)*(i+1)as u32/scenes.len()as u32);
+        // Deterministic scene-specific art direction: vivid variation without
+        // image-generation API calls or cross-scene model drift.
+        let themes = [
+            ("#171f32", "#314862", "#c96442", "#edb78e"),
+            ("#102b35", "#28616b", "#51b5ad", "#b4eee1"),
+            ("#292038", "#62476b", "#bd79a1", "#f9c6e3"),
+            ("#302720", "#756043", "#e3aa5b", "#ffe6b8"),
+            ("#182b2b", "#30564b", "#79b68e", "#c5eaca"),
+        ];
+        let (background, shade, halo, accent) = themes[i % themes.len()];
+        let svg = svg
+            .replace("#171f32", background)
+            .replace("#314862", shade)
+            .replace("#c96442", halo)
+            .replace("#edb78e", accent);
         let tree = resvg::usvg::Tree::from_str(&svg, &options).map_err(|e| e.to_string())?;
         let mut bitmap = resvg::tiny_skia::Pixmap::new(w, h).ok_or("영상 프레임 메모리 부족")?;
         resvg::render(
@@ -441,42 +456,74 @@ fn make_cards(dir: &Path, title: &str, scenes: &[String], aspect: &str) -> Resul
 }
 /// Offline Korean narration. Each scene is spoken to its own file so the
 /// video length follows the audio, not a fixed duration.
+/// Offline narration without an account or paid API. Apple uses `say`;
+/// Windows uses built-in System.Speech. Other systems keep a playable silent
+/// video rather than pretending audio was generated.
+async fn speak_scene(path: &Path, scene: &str, voice: &str, rate: &str) -> Option<()> {
+    let status = if cfg!(target_os = "macos") {
+        tokio::process::Command::new("say")
+            .args(["-v", voice, "-r", rate, "-o"])
+            .arg(path)
+            .arg("--")
+            .arg(scene)
+            .status().await.ok()?
+    } else if cfg!(target_os = "windows") {
+        // Never interpolate arbitrary user text into PowerShell source.
+        // Environment variables pass speech content as data.
+        let script = r#"
+Add-Type -AssemblyName System.Speech
+$tts = New-Object System.Speech.Synthesis.SpeechSynthesizer
+try {
+    $tts.Rate = [int]$env:DOMINION_SPEECH_RATE
+    if ($env:DOMINION_SPEECH_VOICE) {
+        try { $tts.SelectVoice($env:DOMINION_SPEECH_VOICE) } catch {}
+    }
+    $tts.SetOutputToWaveFile($env:DOMINION_SPEECH_FILE)
+    $tts.Speak($env:DOMINION_SPEECH_TEXT)
+} finally { $tts.Dispose() }
+"#;
+        let windows_rate = ((rate.parse::<i32>().unwrap_or(170) - 170) / 15)
+            .clamp(-10, 10).to_string();
+        tokio::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .env("DOMINION_SPEECH_FILE", path)
+            .env("DOMINION_SPEECH_TEXT", scene)
+            .env("DOMINION_SPEECH_RATE", windows_rate)
+            .env("DOMINION_SPEECH_VOICE", voice)
+            .status().await.ok()?
+    } else {
+        return None;
+    };
+    status.success().then_some(())
+}
+
 async fn say_scenes(
     dir: &Path, scenes: &[String], cfg: &Value, encoder: &Path,
 ) -> Option<(Vec<f64>, std::path::PathBuf)> {
     if cfg["narration"] == false { return None; }
     let voice = cfg["voice"].as_str().filter(|value| !value.is_empty()).unwrap_or("Yuna");
     let rate = cfg["rate"].as_u64().unwrap_or(170).clamp(80, 320).to_string();
-    let ffprobe = encoder.with_file_name("ffprobe");
+    let probe_name = if cfg!(windows) { "ffprobe.exe" } else { "ffprobe" };
+    let sibling = encoder.with_file_name(probe_name);
+    let ffprobe = if sibling.exists() { sibling } else { PathBuf::from(probe_name) };
+    let extension = if cfg!(windows) { "wav" } else { "aiff" };
     let mut durations = Vec::new();
     let mut list = String::new();
     for (index, scene) in scenes.iter().enumerate() {
-        let file = format!("narration-{index:02}.aiff");
+        let file = format!("narration-{index:02}.{extension}");
         let path = dir.join(&file);
-        let status = tokio::process::Command::new("say")
-            .args(["-v", voice, "-r", &rate, "-o"])
-            .arg(&path)
-            .arg("--")
-            .arg(scene)
-            .status()
-            .await
-            .ok()?;
-        if !status.success() { return None; }
+        speak_scene(&path, scene, voice, &rate).await?;
         let seconds = probe_duration(&ffprobe, &path).await?;
-        // Some installed "voices" are novelty entries that render silence;
-        // a near-zero file would make -shortest truncate the whole video.
         if seconds < 0.2 { return None; }
         durations.push((seconds + 0.35).max(1.0));
-        list.push_str(&format!("file '{file}'\n"));
+        list.push_str(&format!("file '{file}'\\n"));
     }
     std::fs::write(dir.join("narration.txt"), list).ok()?;
     let status = tokio::process::Command::new(encoder)
         .current_dir(dir)
         .args(["-hide_banner","-loglevel","error","-y","-f","concat","-safe","0",
             "-i","narration.txt","-c:a","aac","-b:a","128k","narration.m4a"])
-        .status()
-        .await
-        .ok()?;
+        .status().await.ok()?;
     if !status.success() { return None; }
     Some((durations, dir.join("narration.m4a")))
 }
@@ -489,6 +536,17 @@ async fn probe_duration(ffprobe: &Path, file: &Path) -> Option<f64> {
         .await
         .ok()?;
     String::from_utf8_lossy(&output.stdout).trim().parse().ok()
+}
+
+fn native_motion_filter(aspect: &str) -> String {
+    let size = match aspect {
+        "16:9" => "1280x720",
+        "1:1" => "900x900",
+        _ => "720x1280",
+    };
+    // Gentle digital camera movement upgrades otherwise static scene cards
+    // without requiring a GPU or remote image/video model.
+    format!("fps=24,zoompan=z='min(zoom+0.0011,1.10)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={size}:fps=24,format=yuv420p")
 }
 
 async fn native(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, String> {
@@ -564,9 +622,10 @@ async fn native(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, St
     } else {
         command.args(["-f","lavfi","-i","anullsrc=r=48000:cl=stereo"]);
     }
+    let motion_filter = native_motion_filter(input["aspectRatio"].as_str().unwrap_or("9:16"));
     command.args([
         "-t",&format!("{:.3}", total_seconds + 0.2),
-        "-vf","fps=24,format=yuv420p","-c:v","libx264","-preset","veryfast","-crf","22",
+        "-vf",&motion_filter,"-c:v","libx264","-preset","veryfast","-crf","22",
         "-c:a","aac","-movflags","+faststart","-shortest","output.part.mp4",
     ]);
     progress(ctx, "encoding", 50)?;
@@ -589,6 +648,8 @@ async fn native(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, St
         "duration":total_seconds.round() as u64,
         "scenes":scenes.len(),
         "narrated":narration.is_some(),
+        "motion":"subtle-zoom",
+        "sceneArt":"deterministic-palettes",
     }))
 }
 
@@ -970,6 +1031,16 @@ mod tests {
         assert!(bytes.len() > 10000);
         std::fs::remove_dir_all(dir).unwrap();
     }
+    #[test]
+    fn native_video_motion_matches_all_aspect_ratios() {
+        for (aspect, size) in [("9:16", "720x1280"), ("16:9", "1280x720"), ("1:1", "900x900")] {
+            let filter = native_motion_filter(aspect);
+            assert!(filter.contains("zoompan=z="));
+            assert!(filter.contains(&format!("s={size}:")));
+            assert!(filter.contains("format=yuv420p"));
+        }
+    }
+
     #[test]
     fn template_substitution_never_changes_json_structure() {
         let mut value = json!({"1":{"inputs":{"text":"{{prompt}}","seconds":"{{duration}}"}}});
