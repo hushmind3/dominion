@@ -45,8 +45,7 @@ pub(super) fn tail(text: &str, limit: usize) -> String {
         .collect()
 }
 
-/// Resolve and freeze the actual executor before planner/reviewer turns.
-/// Never fabricate a provider for an explicitly selected model.
+/// Resolve and freeze the actual executor
 pub(super) fn resolve_executor(
     state:&AppState,goal:&Value,text:&str
 )->Result<(Option<String>,String,String),String>{
@@ -70,6 +69,34 @@ pub(super) fn resolve_executor(
     // planning so reviews and resumed turns do not drift between models.
     if provider_id.is_empty() && model.is_empty() {
         if let (Some(provider),Some(selected_model))=(
-        
+            goal["resolvedExecutor"]["providerId"].as_str(),
+            goal["resolvedExecutor"]["model"].as_str()
+        ) {
+            if state.store.get("provider",provider).is_some_and(|item|item["enabled"]!=false) {
+                provider_id=provider.into();
+                model=selected_model.into();
+            }
+        }
+    }
+    if provider_id.is_empty() && model.is_empty() {
+        let complexity=match crate::engine::router::classify(&text,0,0) {
+            crate::engine::router::Complexity::Light=>
+                crate::engine::router::Complexity::Standard,
+            other=>other,
+        };
+        if let Some(choice)=crate::engine::router::select_provider(state,complexity) {
+            if let Ok(route)=crate::engine::gateway::route_from_provider(state,&choice,None) {
+                provider_id=route.id;
+                model=route.model;
+            }
+        }
+    }
+    if provider_id.is_empty() || model.is_empty() {
+        // A named model without a provider resolves against the configured
+        // default; no arbitrary provider is silently attached to an agent.
+        let selected=crate::engine::gateway::resolve(state,&provider_id,Some(&model))?;
+        provider_id=selected.id;
+        model=selected.model;
+    }
     Ok((agent_id,provider_id,model))
 }
