@@ -903,9 +903,19 @@ mod tests {
         let counter=Arc::new(AtomicUsize::new(0));
         let calls=counter.clone();
         let app=Router::new().route("/v1/chat/completions",post(
-            move ||{
+            move |Json(body):Json<Value>|{
                 let calls=calls.clone();
                 async move{
+                    // Semantic selection is an independent bounded model phase;
+                    // its call must not consume the execution retry counter.
+                    if body["messages"][0]["content"].as_str()
+                        .is_some_and(|text|text.contains("Extract important ORIGINAL OWNER")) {
+                        return (StatusCode::OK,Json(json!({
+                            "choices":[{"message":{"role":"assistant",
+                                "content":"{\"items\":[]}"}}],
+                            "usage":{"prompt_tokens":100,"completion_tokens":15}
+                        })));
+                    }
                     let call=calls.fetch_add(1,Ordering::SeqCst);
                     if call==0 {
                         (StatusCode::BAD_REQUEST,Json(json!({
