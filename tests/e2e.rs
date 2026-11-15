@@ -7216,6 +7216,27 @@ fn compound_shell_file_creation_finishes_without_false_repair_or_reviewer() {
 }
 
 #[test]
+fn existing_file_creation_preserves_contents_without_model_calls() {
+    let _serial = serial();
+    let (port, requests) = scripted_provider(|_| panic!("existing file must not require a model call"));
+    let app = TestApp::new(port, "native");
+    std::fs::write(app._root.join("existing.md"), "preserve these bytes").unwrap();
+    let stream = app.chat(&json!({"input":"existing.md 파일을 만들어줘","autoLearning":false}));
+    assert!(stream.contains("assistant_saved"), "{stream}");
+    assert!(stream.contains("파일이 이미 있습니다"), "{stream}");
+    assert_eq!(std::fs::read_to_string(app._root.join("existing.md")).unwrap(), "preserve these bytes");
+    assert!(requests.lock().unwrap().is_empty());
+    let execution = &app.get("/api/executions")[0];
+    assert_eq!(execution["modelCalls"], 0, "{execution}");
+    assert_eq!(execution["toolCalls"], 0, "{execution}");
+    assert_eq!(execution["deterministicShortcut"]["kind"], "file_already_exists", "{execution}");
+    let messages = app.get(&format!("/api/sessions/{}/messages", execution["sessionId"].as_str().unwrap()));
+    let last = messages.as_array().unwrap().last().unwrap();
+    assert_eq!(last["metadata"]["completionSource"], "existing_artifact");
+    assert_eq!(last["metadata"]["usage"]["totalTokens"], 0);
+}
+
+#[test]
 fn empty_file_creation_uses_one_model_call_and_no_paid_final_summary() {
     let _serial = serial();
     let (port, requests) = scripted_provider(|request| {

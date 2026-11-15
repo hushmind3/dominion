@@ -210,8 +210,20 @@ pub(crate) fn infer_criteria(goal: &str) -> Vec<Value> {
                 *check = json!({"type":"file_equals","path":path,"content":content,"inferred":true});
             }
         }
+        if check["type"] == "file_changed" && simple_file_creation_goal(goal) {
+            check["type"] = json!("file_exists");
+            check["creationOnly"] = json!(true);
+        }
     }
     paths
+}
+
+pub(crate) fn simple_file_creation_goal(input: &str) -> bool {
+    let lower = input.to_lowercase();
+    input.chars().count() <= 240 && !input.contains('\n')
+        && ["만들", "생성", "create"].iter().any(|word|lower.contains(word))
+        && !["그리고", "다음", "한 뒤", "후에", "then", "after", ";", "내용", "적어", "써", "저장", "테스트", "빌드", "다운로드", "복사", "수정", "편집", "write", "with", "containing", "copy", "download"]
+            .iter().any(|word|lower.contains(word))
 }
 
 fn desktop_filename(goal: &str) -> Option<String> {
@@ -371,7 +383,7 @@ pub(crate) fn baseline_checks(state: &AppState, mut checks: Vec<Value>) -> Value
                 bytes, check["old"].as_str()?, check["new"].as_str()?,
             )).map(|expected| format!("{:x}", Sha256::digest(expected.as_bytes())))
                 .map(Value::String).unwrap_or(Value::Null);
-        } else if check["type"] == "file_changed"
+        } else if check["type"] == "file_changed" || check["creationOnly"] == true
             || (check["type"] == "file_equals" && check["inferred"] == true)
         {
             check["baseline"] = resolve_path(state, check["path"].as_str().unwrap_or(""))
@@ -511,6 +523,7 @@ pub(crate) fn acceptance_gaps(
         )
     });
     let mut verified_artifact_change = false;
+    let mut verified_creation_state = false;
     for check in checks {
         let kind = check["type"].as_str().unwrap_or("");
         let path = check["path"].as_str().unwrap_or("");
@@ -562,6 +575,9 @@ pub(crate) fn acceptance_gaps(
             || (kind == "file_equals" && check["inferred"] == true)) {
             verified_artifact_change = true;
         }
+        if passed && kind == "file_exists" && check["creationOnly"] == true {
+            verified_creation_state = true;
+        }
         if !passed {
             if kind == "file_replace_exact" {
                 gaps.push(format!("The exact replacement in {path} has not been verified. Preserve every other byte of the original file."));
@@ -579,7 +595,8 @@ pub(crate) fn acceptance_gaps(
         )
     });
     if looks_actionable(goal) && !evidence.iter().any(is_action_evidence) && !has_explicit_tool
-        && !(verified_artifact_change && executed_effect) {
+        && !(verified_artifact_change && executed_effect)
+        && !(verified_creation_state && evidence.iter().any(successful_evidence)) {
         gaps.push("변경 또는 실행을 입증하는 성공한 도구 결과가 없습니다. 조회 결과만으로 행동 목표를 완료할 수 없습니다.".into());
     }
     gaps

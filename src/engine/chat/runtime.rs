@@ -1209,11 +1209,30 @@ async fn run_turn_body(
     });
     let kernel_journal = ChatKernelJournal { state, execution_id, session_id, generation };
     dominion_agent_sdk::Journal::save(&kernel_journal, &kernel_state)?;
+    if let Some(path) = simple_creation_target.as_ref().filter(|path|
+        std::fs::metadata(path).is_ok_and(|metadata|metadata.is_file())
+            && !strategy_candidates.iter().any(|strategy|
+                strategy["verification"]["type"] == "procedure"
+                    && crate::engine::procedure::applies(strategy, &request.input, None, None))) {
+        // Creation is a desired state, not an instruction to overwrite an
+        // existing file until its hash changes. The host can report this
+        // independently observed state without a paid model or a mutation.
+        final_content = format!("파일이 이미 있습니다: `{}`. 내용을 유지했습니다.", path.display());
+        acceptance_passed = true;
+        finished = true;
+        metadata["completionSource"] = json!("existing_artifact");
+        if let Some(mut execution) = state.store.get("execution", execution_id) {
+            execution["deterministicShortcut"] = json!({"kind":"file_already_exists","modelCalls":0,"tokens":0});
+            execution["artifactVerification"] = json!({"path":path,"exists":true,"verified":true});
+            state.store.put("execution", &execution).ok_or("파일 확인 결과를 저장할 수 없습니다.")?;
+        }
+        let _ = tx.send(json!({"type":"text","text":final_content}));
+    }
     let mut program_finished = program_policy.is_none();
     // `toolsEnabled` controls whether the model may call tools. It is not an
     // execution permission for the Rust harness; harness nodes use the same
     // approval, cancellation and budget policy as model tool calls.
-    let harness_messages = if request.tools_execution_enabled {
+    let harness_messages = if request.tools_execution_enabled && !finished {
         run_harness_nodes(
         state,
         tx,
@@ -1233,8 +1252,8 @@ async fn run_turn_body(
     };
     messages.extend(harness_messages);
 
-    while let Some(round) = budget.next_round() {
-        if finished { break; }
+    while !finished {
+        let Some(round) = budget.next_round() else { break; };
         if budget.expired() {
             return Err("실행 시간 제한(10분)을 초과했습니다.".into());
         }
@@ -5057,16 +5076,12 @@ struct ActionReview {
 fn simple_file_creation(
     state: &AppState, input: &str, acceptance: &Option<(String, Value)>,
 ) -> Option<std::path::PathBuf> {
-    let lower = input.to_lowercase();
-    if input.chars().count() > 240 || input.contains('\n')
-        || !["만들", "생성", "create"].iter().any(|word|lower.contains(word))
-        || ["그리고", "다음", "한 뒤", "후에", "then", "after", ";", "내용", "적어", "써", "저장", "테스트", "빌드", "다운로드", "복사", "수정", "편집", "write", "with", "containing", "copy", "download"]
-            .iter().any(|word|lower.contains(word)) { return None; }
+    if !verification::simple_file_creation_goal(input) { return None; }
     let (_, checks) = acceptance.as_ref()?;
     let checks = checks.as_array()?;
     let [check] = checks.as_slice() else { return None; };
-    if check["type"] != "file_changed" || check["inferred"] != true
-        || !check["baseline"].is_null() { return None; }
+    if check["type"] != "file_exists" || check["inferred"] != true
+        || check["creationOnly"] != true { return None; }
     crate::engine::verification::resolve_path(state, check["path"].as_str()?).ok()
 }
 

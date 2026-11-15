@@ -462,6 +462,8 @@ fn completed_compound_shell_file_creation_is_accepted_without_another_reviewer()
         "status":"completed","result":{"exitCode":0,"stdout":"memo.txt","stderr":""}})];
     assert!(crate::engine::verification::check_acceptance(&state, "memo.txt 파일 만들어줘", &checks, &evidence).is_empty());
     let read_only = vec![json!({"tool":"workspace_list","result":{"entries":["memo.txt"]}})];
+    assert!(crate::engine::verification::check_acceptance(&state, "memo.txt 파일 만들어줘", &checks, &read_only).is_empty());
+    std::fs::remove_file(state.config.workspace.join("memo.txt")).unwrap();
     assert!(!crate::engine::verification::check_acceptance(&state, "memo.txt 파일 만들어줘", &checks, &read_only).is_empty());
     assert!(!crate::engine::verification::check_acceptance(&state, "memo.txt 파일 만들어줘", &json!([]), &evidence).is_empty());
     let _ = std::fs::remove_dir_all(&state.config.data_dir);
