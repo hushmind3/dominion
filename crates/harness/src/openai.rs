@@ -207,7 +207,8 @@ mod tests {
                 Message::tool_result("call_42", "contents"),
             ]);
         assert_eq!(payload["messages"][1]["tool_calls"][0]["id"], "call_42");
-        assert_eq!(payload["messages"][1]["tool_calls"][0]["function"]["arguments"], "{\\"path\\":\\"a.txt\\"}");
+        let argument_text = payload["messages"][1]["tool_calls"][0]["function"]["arguments"].as_str().unwrap();
+        assert_eq!(serde_json::from_str::<Value>(argument_text).unwrap(), json!({"path":"a.txt"}));
         assert_eq!(payload["messages"][2]["tool_call_id"], "call_42");
     }
 
