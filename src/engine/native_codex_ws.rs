@@ -224,11 +224,29 @@ async fn receive(state:&AppState,session:&str,job_id:&str,chain:&mut JobChain)
             let updates=assembler.feed(Packet::Data(event)).map_err(WsError::Rejected)?;
             progress.updates(updates).map_err(WsError::Uncertain)?;
             let response=assembler.finish().map_err(WsError::Rejected)?;
+            if response["id"].as_str().is_none_or(str::is_empty) {
+                return Err(WsError::Uncertain(
+                    "Codex terminal response is missing its response ID".into()));
+            }
             progress.record("settled").map_err(WsError::Uncertain)?;
             return Ok(Received::Completed(response));
         }
         let updates=assembler.feed(Packet::Data(event)).map_err(WsError::Rejected)?;
         progress.updates(updates).map_err(WsError::Uncertain)?;
+    }
+}
+
+/// Update the existing pending display without erasing the last streamed text
+/// or its non-executable pending tool labels when a generation aborts.
+fn mark_interrupted(state:&AppState,job_id:&str) {
+    let Some(job)=state.store.get("job",job_id) else {return};
+    let mut progress=job["nativeStream"].clone();
+    if !progress.is_object(){return;}
+    progress["stage"]=json!("interrupted");
+    progress["executable"]=json!(false);
+    if let Some(saved)=state.store.patch_if("job",job_id,"status",&json!("running"),
+        &json!({"nativeStream":progress})) {
+        state.bus.record("job",&saved);
     }
 }
 
@@ -297,6 +315,7 @@ pub(crate) async fn generate(
             },
             Ok(Received::ChainRejected(why))=>{
                 chain.reset();
+                mark_interrupted(state,job_id);
                 return Err(WsError::Rejected(format!("Codex chain rejected: {why}")));
             },
             Ok(Received::Completed(response))=>{
@@ -321,7 +340,8 @@ pub(crate) async fn generate(
             },
             Err(error)=>{
                 chain.reset();
-                let uncertainty=matches!(error,WsError::Uncertain(_));
+                mark_interrupted(state,job_id);
+                let uncertainty=matches!(&error,WsError::Uncertain(_));
                 if uncertainty {
                     state.store.audit("native.codex_ws.uncertain",json!({
                         "jobId":job_id,"sessionId":session,
@@ -466,6 +486,65 @@ mod tests {
             a["event"]=="native.codex_ws.uncertain"
             && a["detail"]["replayed"]==false));
         server.await.unwrap();
+        forget_job("job-test");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn settled_response_without_identity_is_uncertain_and_never_retried() {
+        let (listener,base)=listener().await;
+        let route=route(base);
+        let (state,root)=state();
+        let (tx,mut requests)=tokio::sync::mpsc::unbounded_channel();
+        let server=tokio::spawn(async move {
+            let mut socket=accept_socket(&listener).await;
+            tx.send(socket.next().await.unwrap().unwrap()).unwrap();
+            socket.send(Message::Text(json!({"type":"response.completed",
+                "response":{"status":"completed","output":[]}})
+                .to_string().into())).await.unwrap();
+        });
+        let result=generate(&state,&route,"account","token",&body("first",&[]),
+            "session","job-test",&[]).await;
+        assert!(matches!(result,Err(WsError::Uncertain(_))));
+        requests.recv().await.unwrap();
+        assert!(requests.try_recv().is_err(),"missing ID cannot trigger paid replay");
+        assert!(state.store.recent_audit(10).iter().any(|a|
+            a["event"]=="native.codex_ws.uncertain" && a["detail"]["modelBilling"]=="unknown"));
+        assert_eq!(state.store.get("job","job-test").unwrap()["nativeStream"]["stage"],
+            "interrupted");
+        server.await.unwrap();
+        forget_job("job-test");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn stalled_native_socket_obeys_owner_cancellation_without_retry() {
+        let (listener,base)=listener().await;
+        let route=route(base);
+        let (state,root)=state();
+        let (notice,mut sent)=tokio::sync::mpsc::unbounded_channel();
+        let server=tokio::spawn(async move {
+            let mut socket=accept_socket(&listener).await;
+            notice.send(()).unwrap();
+            let _=socket.next().await;
+            std::future::pending::<()>().await;
+        });
+        let request=body("slow task",&[]);
+        let run=generate(&state,&route,"account","token",&request,
+            "session","job-test",&[]);
+        let cancel=async {
+            sent.recv().await.unwrap();
+            // Also let the socket finish its initial send before cancellation.
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            state.cancel_session("session");
+        };
+        let (result,())=tokio::time::timeout(Duration::from_secs(3),async{
+            tokio::join!(run,cancel)
+        }).await.expect("cancellation must interrupt the silent socket promptly");
+        assert!(matches!(result,Err(WsError::Uncertain(_))));
+        assert!(state.store.recent_audit(10).iter().any(|a|
+            a["event"]=="native.codex_ws.uncertain"));
+        server.abort();
         forget_job("job-test");
         std::fs::remove_dir_all(root).unwrap();
     }
