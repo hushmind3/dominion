@@ -546,4 +546,71 @@ mod tests {
         assert_eq!(run.final_text(), Some("corrected"));
         assert_eq!(run.messages[1].content, "original goal");
     }
+
+    #[test]
+    fn action_claim_without_any_tool_effect_is_not_completed() {
+        let provider = Scripted(VecDeque::from([
+            ModelReply::Final { content:"created the file".into() },
+            ModelReply::Final { content:"created the file".into() },
+        ]));
+        let mut engine=AgentSdk::new(Box::new(provider),Box::new(crate::AllowAll),Limits::default());
+        engine.register(Box::new(Echo));
+        let mut state=Session::new("s","system","create a file and save its contents");
+        engine.run(&mut state).unwrap();
+        assert!(matches!(state.status,RunStatus::Exhausted {ref reason} if reason=="unverified_no_effect"));
+        assert_eq!(state.rounds,2);
+        assert_eq!(state.tool_calls,0);
+        assert!(state.events.iter().any(|event|event.kind=="evidence_retry"));
+        assert!(state.events.iter().any(|event|event.kind=="unverified"));
+        assert!(state.final_text().is_none());
+    }
+
+    #[test]
+    fn premature_completion_gets_one_repair_then_real_write_can_complete() {
+        let provider=Scripted(VecDeque::from([
+            ModelReply::Final {content:"claimed completion too early".into()},
+            calls(),
+            ModelReply::Final {content:"real operation completed".into()},
+        ]));
+        let mut engine=AgentSdk::new(Box::new(provider),Box::new(crate::AllowAll),Limits::default());
+        engine.register(Box::new(Echo));
+        let mut state=Session::new("s","system","write a report to disk");
+        engine.run(&mut state).unwrap();
+        assert_eq!(state.status,RunStatus::Completed);
+        assert_eq!(state.rounds,3);
+        assert_eq!(state.tool_calls,1);
+        assert_eq!(state.final_text(),Some("real operation completed"));
+        assert!(state.events.iter().any(|event|event.kind=="tool_finished"
+            && event.detail["ok"]==true));
+    }
+
+    struct Inspect;
+    impl Tool for Inspect {
+        fn spec(&self)->ToolSpec {
+            ToolSpec {name:"inspect".into(),description:"read only".into(),
+                parameters:json!({}),permission:Permission::Read}
+        }
+        fn invoke(&mut self, _:&Value)->Result<Value,String> { Ok(json!({"files":[]})) }
+    }
+
+    #[test]
+    fn successful_read_does_not_prove_a_requested_edit() {
+        let provider=Scripted(VecDeque::from([
+            ModelReply::Assistant {content:String::new(),tool_calls:vec![
+                ToolCall{id:"inspect1".into(),name:"inspect".into(),arguments:json!({})}
+            ]},
+            ModelReply::Final {content:"edited".into()},
+            ModelReply::Final {content:"edited".into()},
+        ]));
+        let mut engine=AgentSdk::new(Box::new(provider),Box::new(crate::AllowAll),Limits::default());
+        engine.register(Box::new(Inspect));
+        let mut state=Session::new("s","system","edit a source file");
+        engine.run(&mut state).unwrap();
+        assert!(matches!(state.status,RunStatus::Exhausted {ref reason} if reason=="unverified_no_effect"));
+        assert_eq!(state.tool_calls,1);
+        assert!(state.events.iter().any(|event|event.kind=="tool_finished"
+            && event.detail["ok"]==true));
+        assert!(state.events.iter().any(|event|event.kind=="unverified"));
+    }
+
 }
