@@ -553,10 +553,10 @@ mod tests {
             item
         };
         let mut rows=vec![
-            make("a-control",control.clone(),"sha-a",false),
-            make("a-winner",winner.clone(),"sha-a",true),
-            make("b-control",control,"sha-b",false),
-            make("b-winner",winner.clone(),"sha-b",true)
+            make("a-control",control.clone(),&"a".repeat(40),false),
+            make("a-winner",winner.clone(),&"a".repeat(40),true),
+            make("b-control",control,&"b".repeat(40),false),
+            make("b-winner",winner.clone(),&"b".repeat(40),true)
         ];
         // Both versions also have enough source-receipted examples for
         // counterexample induction. Independent paired wins still take
