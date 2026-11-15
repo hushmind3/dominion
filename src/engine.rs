@@ -249,6 +249,7 @@ pub async fn run(state: AppState, id: String) {
     let planning = strategy::PlanningPolicy::from_setting(
         input["planningMode"].as_str().unwrap_or("auto")
     );
+    let model_tier=input["modelTier"].as_str().unwrap_or("auto");
 
     // Planning is selective: simple questions avoid the extra paid turn.
     // Its output is guidance; user instructions and tool receipts stay primary.
@@ -327,9 +328,12 @@ pub async fn run(state: AppState, id: String) {
                 "omittedMessages":projected.omitted_messages
             }));
         }
+        let economical=strategy::use_economy(model_tier,&active_instruction,
+            allow_write,require_evidence);
         state.emit(&id,"model_step",json!({"step":step+1,"limit":steps,
-            "modelContextChars":projected.projected_chars}));
-        let reply = match state.provider.complete(&projected.messages,&available,false).await {
+            "modelContextChars":projected.projected_chars,
+            "routing":if economical {"economy"}else{"quality"}}));
+        let reply = match state.provider.complete(&projected.messages,&available,economical).await {
             Ok(value) => value,
             Err(error) => {
                 settle(&state,&id,"failed","",verified_writes,Some(error));
