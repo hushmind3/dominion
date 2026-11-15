@@ -173,11 +173,6 @@ async fn tool(state: &AppState, name: &str, args: &Value,
     }
 }
 
-async fn completion(state: &AppState, messages: &[Value], tools: &[Value])
-    -> Result<Value, String> {
-    state.provider.complete_raw(messages,tools).await
-}
-
 fn settle(state: &AppState, id: &str, status: &str, answer: &str,
     verified_writes: u64, error: Option<String>) {
     let result = json!({"answer":answer,"verifiedWrites":verified_writes,
@@ -222,11 +217,15 @@ pub async fn run(state: AppState, id: String) {
     // Planning is selective: simple questions avoid the extra paid turn.
     // Its output is guidance; user instructions and tool receipts stay primary.
     if planning.should_plan(&prompt) && !state.store.cancelled(&id) {
-        match completion(&state,&strategy::make_plan_messages(&prompt),&[]).await {
-            Ok(planning_response) => {
-                let tokens = planning_response["usage"]["total_tokens"].as_u64().unwrap_or(0);
+        match state.provider.complete(&strategy::make_plan_messages(&prompt),&[],true).await {
+            Ok(planning_reply) => {
+                let tokens = planning_reply.input_tokens + planning_reply.output_tokens;
                 state.store.account_aux_tokens(&id,tokens);
-                if let Some(plan) = strategy::extract_plan(&planning_response) {
+                state.emit(&id,"model_usage",json!({"phase":"planning",
+                    "model":planning_reply.model,"inputTokens":planning_reply.input_tokens,
+                    "outputTokens":planning_reply.output_tokens,
+                    "cachedTokens":planning_reply.cached_tokens,"estimatedKrw":planning_reply.cost_krw}));
+                if let Some(plan) = strategy::extract_plan(&planning_reply.raw) {
                     messages.insert(1,json!({"role":"system","content":format!(
                         "Provisional execution checklist. Adapt to observed results.\\n{plan}"
                     )}));
@@ -261,15 +260,21 @@ pub async fn run(state: AppState, id: String) {
             state.emit(&id,"context_compacted",json!({"oldToolResults":compacted}));
         }
         state.emit(&id,"model_step",json!({"step":step+1,"limit":steps}));
-        let response = match completion(&state,&messages,&available).await {
+        let reply = match state.provider.complete(&messages,&available,false).await {
             Ok(value) => value,
             Err(error) => {
                 settle(&state,&id,"failed","",verified_writes,Some(error));
                 return;
             }
         };
-        let tokens = response["usage"]["total_tokens"].as_u64().unwrap_or(0);
+        let tokens = reply.raw["usage"]["total_tokens"].as_u64()
+            .unwrap_or(reply.input_tokens.saturating_add(reply.output_tokens));
         state.store.measure(&id,tokens);
+        state.emit(&id,"model_usage",json!({"phase":"execute",
+            "model":reply.model,"inputTokens":reply.input_tokens,
+            "outputTokens":reply.output_tokens,
+            "cachedTokens":reply.cached_tokens,"estimatedKrw":reply.cost_krw}));
+        let response = reply.raw;
         if state.store.cancelled(&id) {
             settle(&state,&id,"cancelled","",verified_writes,None);
             return;
@@ -328,13 +333,17 @@ pub async fn run(state: AppState, id: String) {
             // corrections. It cannot override the native evidence check.
             if strategy::complex(&active_instruction) && strategy::action_requested(&active_instruction)
                 && !receipts.is_empty() {
-                let review = completion(&state,
-                    &strategy::review_messages(&active_instruction,&text,&receipts),&[]).await;
+                let review = state.provider.complete(
+                    &strategy::review_messages(&active_instruction,&text,&receipts),&[],false).await;
                 match review {
                     Ok(verdict) => {
-                        let tokens=verdict["usage"]["total_tokens"].as_u64().unwrap_or(0);
+                        let tokens=verdict.input_tokens + verdict.output_tokens;
                         state.store.account_aux_tokens(&id,tokens);
-                        let review=strategy::parse_review(&verdict);
+                        state.emit(&id,"model_usage",json!({"phase":"verification",
+                            "model":verdict.model,"inputTokens":verdict.input_tokens,
+                            "outputTokens":verdict.output_tokens,
+                            "cachedTokens":verdict.cached_tokens,"estimatedKrw":verdict.cost_krw}));
+                        let review=strategy::parse_review(&verdict.raw);
                         state.emit(&id,"verification",json!({
                             "complete":review.as_ref().map(|item|item.complete),
                             "feedback":review.as_ref().map(|item|item.feedback.as_str()),
