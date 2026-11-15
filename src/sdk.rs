@@ -140,6 +140,10 @@ impl Dominion {
         engine::jobs::start_now(self.state.clone(),id.to_string());
         Ok(())
     }
+    /// Persist a high-priority owner instruction for the next model turn.
+    pub fn steer(&self,id:&str,instruction:&str)->Result<Value,String>{
+        engine::jobs::steer(&self.state,id,instruction).map_err(|error|error.to_string())
+    }
     pub fn job(&self,id:&str)->Option<Value>{self.state.store.get("job",id)}
     pub fn jobs(&self)->Vec<Value>{self.state.store.all("job")}
     pub fn session(&self,id:&str)->Option<Value>{self.state.store.get("session",id)}
@@ -192,6 +196,9 @@ mod tests {
         let id=job["id"].as_str().unwrap();
         assert_eq!(job["status"],"queued");
         assert_eq!(sdk.job(id).unwrap()["input"]["prompt"],"Inspect the repository and prepare a patch");
+        let steering=sdk.steer(id,"Prioritize the real tests before reporting").unwrap();
+        assert_eq!(steering["steeringRevision"],1);
+        assert_eq!(sdk.job(id).unwrap()["steering"][0]["revision"],1);
         assert!(sdk.events_after(0,100).iter().any(|event|
             event["kind"]=="job"&&event["record"]["id"]==id));
         assert_eq!(sdk.clone().job(id).unwrap()["id"],id);
