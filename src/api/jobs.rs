@@ -57,6 +57,16 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
             if let Some(v)=input["requireEvidence"].as_bool() {
                 value["requireEvidence"]=json!(v);
             }
+            // A private transcript can be reused, but a room or external
+            // channel cannot be silently rebound to a different worker.
+            if let Some(session_id)=input["sessionId"].as_str().filter(|s|!s.is_empty()) {
+                let Some(session)=state.store.get("session",session_id)
+                else {return error(StatusCode::BAD_REQUEST,"연결할 세션을 찾을 수 없습니다.");};
+                if session["roomId"].is_string()||session["channelContext"].is_object(){
+                    return error(StatusCode::BAD_REQUEST,"그룹·외부 채널 세션은 해당 화면에서 실행하세요.");
+                }
+                value["sessionId"]=json!(session_id);
+            }
             if let Some(id)=value["agentId"].as_str(){if state.store.get("agent",id).is_none(){return error(StatusCode::BAD_REQUEST,"실행 에이전트를 찾을 수 없습니다.");}}
             value
         },
