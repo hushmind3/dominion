@@ -8,3 +8,6 @@ web/dist
 /bench
 
 .dominion/
+
+# TypeScript incremental compiler artifacts
+*.tsbuildinfo
