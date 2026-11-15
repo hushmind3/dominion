@@ -627,15 +627,35 @@ async fn delegate_parallel(ctx:&ToolContext<'_>,args:&Value)->Result<Value,Strin
     let complete=results.iter().all(|result|matches!(
         result["status"].as_str(),Some("completed"|"failed"|"cancelled"|"needs_review")
     ));
+    // The parent needs a synthesis, not four complete raw tool transcripts.
+    // Explicit task_result retains complete evidence on demand.
+    let summaries=results.iter().map(summarize_parallel_result).collect::<Vec<_>>();
     Ok(json!({
         "status":if complete{"completed"}else{"partial"},
         "parallel":true,
         "readOnly":true,
-        "tasks":results,
+        "tasks":summaries,
         "hint":if complete{"검증 기록을 바탕으로 결과를 종합하세요."}else{
             "일부 작업이 진행 중입니다. task_status/task_result로 이어서 확인하세요."
         },
     }))
+}
+
+/// Keep parallel fan-in context bounded independently of child log size.
+fn summarize_parallel_result(result:&Value)->Value {
+    let brief=result["content"].as_str().unwrap_or("").chars()
+        .take(1800).collect::<String>();
+    let reason=result["error"].as_str().unwrap_or("").chars()
+        .take(400).collect::<String>();
+    json!({
+        "jobId":result["jobId"],
+        "status":result["status"],
+        "verified":result["result"]["verified"]==true,
+        "answer":brief,
+        "error":reason,
+        "evidenceCount":result["operations"].as_array().map_or(0,Vec::len),
+        "fullReceipt":"task_result(jobId)",
+    })
 }
 
 fn task_payload(ctx: &ToolContext<'_>, args: &Value, with_result: bool) -> Result<Value, String> {
@@ -1617,6 +1637,22 @@ fn strip_html(html: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parallel_fanin_bounds_context_but_retains_job_retrieval_keys(){
+        let original=json!({"jobId":"child-1","status":"completed",
+            "content":"z".repeat(100_000),
+            "result":{"verified":true,"receipts":[{"large":"x".repeat(100_000)}]},
+            "operations":(0..20).map(|_|json!({"output":"x".repeat(1000)})).collect::<Vec<_>>(),
+        });
+        let summary=summarize_parallel_result(&original);
+        assert_eq!(summary["jobId"],"child-1");
+        assert_eq!(summary["verified"],true);
+        assert_eq!(summary["evidenceCount"],20);
+        assert_eq!(summary["answer"].as_str().unwrap().chars().count(),1800);
+        assert!(summary.to_string().len()<3000);
+        assert!(summary.get("operations").is_none());
+    }
 
     #[tokio::test]
     async fn parallel_agent_is_read_only_even_if_it_fabricates_tool_calls(){
