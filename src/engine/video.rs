@@ -307,6 +307,10 @@ fn file_sha256(file:&Path)->Result<String,String>{
 
 /// The estimate is model-agnostic pixel/frame work, not an invented provider
 /// price. Scene reuse is only counted after manifest and SHA256 verification.
+fn within_new_scene_budget(rendered:usize,max:Option<u64>)->bool {
+    max.is_none_or(|limit|(rendered as u64)<limit)
+}
+
 fn render_workload(input: &Value) -> Value {
     let render = &input["render"];
     let frames = render["frames"].as_u64().unwrap_or(0);
@@ -325,7 +329,7 @@ fn render_workload(input: &Value) -> Value {
 pub fn public_job(job: &Value) -> Value {
     let id = job["id"].as_str().unwrap_or("");
     let ready = job["kind"] == "video" && job["status"] == "completed";
-    json!({"id":id,"kind":job["kind"],"title":job["input"]["title"],"brief":job["input"]["brief"],"engine":job["input"]["engine"],"status":job["status"],"phase":job.get("phase").unwrap_or(&job["status"]),"progress":job["progress"],"error":job["error"],"createdAt":job.get("createdAt").or(job.get("created_at")),"videoJobId":job["input"]["videoJobId"],"privacyStatus":job["input"]["privacyStatus"],"outputUrl":ready.then(||format!("/api/video/jobs/{id}/content")),"storyboard":job["videoState"]["scenes"],"result":job["result"],"duration":job["input"]["duration"],"aspectRatio":job["input"]["aspectRatio"],"renderWorkload":render_workload(&job["input"])})
+    json!({"id":id,"kind":job["kind"],"title":job["input"]["title"],"brief":job["input"]["brief"],"engine":job["input"]["engine"],"status":job["status"],"phase":job.get("phase").unwrap_or(&job["status"]),"progress":job["progress"],"error":job["error"],"createdAt":job.get("createdAt").or(job.get("created_at")),"videoJobId":job["input"]["videoJobId"],"privacyStatus":job["input"]["privacyStatus"],"outputUrl":ready.then(||format!("/api/video/jobs/{id}/content")),"storyboard":job["videoState"]["scenes"],"result":job["result"],"duration":job["input"]["duration"],"aspectRatio":job["input"]["aspectRatio"],"renderWorkload":render_workload(&job["input"]),"maxNewScenes":job["input"]["maxNewScenes"]})
 }
 pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
     let cfg = config(state);
@@ -442,6 +446,17 @@ pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
             return Err("재생성 장면 번호가 범위를 벗어나거나 중복되었습니다.".into());
         }
     }
+    // Opt-in cap on NEW remote GPU renders. Reused SHA256-verified clips
+    // are free to this quota; old jobs remain usable when this quota is zero.
+    let max_new_scenes=match body.get("maxNewScenes") {
+        None | Some(Value::Null)=>None,
+        Some(value)=>Some(value.as_u64()
+            .filter(|limit|*limit<=scenes.len() as u64)
+            .ok_or("새 장면 최대 생성 횟수는 0~장면 수의 정수여야 합니다.")?),
+    };
+    if engine=="comfyui" && scenes.len()==1 && max_new_scenes==Some(0) {
+        return Err("단일 장면 영상은 최소 1회의 새 렌더가 필요합니다.".into());
+    }
     if let Some(old_id)=body["reuseVideoJobId"].as_str().filter(|v|!v.is_empty()){
         uuid::Uuid::parse_str(old_id).map_err(|_|"재사용할 영상 ID가 올바르지 않습니다.")?;
         if state.store.get("job",old_id)
@@ -457,6 +472,7 @@ pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
         "continuity":body["continuity"].as_str().unwrap_or("").chars().take(2000).collect::<String>(),
         "reuseVideoJobId":body["reuseVideoJobId"].as_str().unwrap_or(""),
         "regenerateScenes":regenerate,
+        "maxNewScenes":max_new_scenes,
         "render":{"prompt":brief,"negative":negative_prompt,"negativePrompt":negative_prompt,
                   "duration":duration,"width":width,"height":height,"fps":fps,"frames":duration*fps,"seed":seed}
     });
@@ -965,6 +981,9 @@ async fn comfy_storyboard(ctx:&JobContext,input:&Value,root:&Path)->Result<Value
             }
         }
         if !used_previous {
+            if !within_new_scene_budget(rendered,input["maxNewScenes"].as_u64()) {
+                return Err(format!("새 장면 렌더 예산을 초과했습니다: {rendered}개 완료, 다음 장면 {index}. 기존 장면은 재사용할 수 있습니다."));
+            }
             let started=std::time::Instant::now();
             comfy(ctx,&scene_input,&scene_dir).await?;
             render_seconds+=started.elapsed().as_secs_f64();
@@ -1301,6 +1320,14 @@ mod tests {
         assert_eq!(file_sha256(&path).unwrap(),format!("{:x}",Sha256::digest(&bytes)));
         std::fs::remove_dir_all(dir).unwrap();
     }
+    #[test]
+    fn remote_gpu_scene_budget_counts_only_real_new_renders() {
+        assert!(within_new_scene_budget(0,Some(0))==false);
+        assert!(within_new_scene_budget(0,Some(1)));
+        assert!(!within_new_scene_budget(1,Some(1)));
+        assert!(within_new_scene_budget(999,None));
+    }
+
     #[test]
     fn comfy_receipts_support_legacy_and_current_job_statuses() {
         assert_eq!(comfy_result_status(&json!({"status":{"status_str":"success","completed":true}})),"completed");
