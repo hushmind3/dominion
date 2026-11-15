@@ -1108,6 +1108,11 @@ pub(crate) async fn compare_at(context:&JobContext,id:&str,source:&Path,_runner_
     if !build_diagnostics.is_null() {
         updated["evaluation"]["buildDiagnostics"]=build_diagnostics.clone();
     }
+    // Preserve the complete frozen test inventory and per-arm build outcome.
+    // A missing exact test is never reclassified as a passing comparison.
+    updated["evaluation"]["baselineBuildOk"]=report["baselineBuildOk"].clone();
+    updated["evaluation"]["candidateBuildOk"]=report["candidateBuildOk"].clone();
+    updated["evaluation"]["missingTests"]=report["missingTests"].clone();
     state.store.put("rsi_candidate",&updated)
         .ok_or("A/B 평가 후보 갱신에 실패했습니다.")?;
     state.store.put("rsi_evaluation",&updated["evaluation"]);
@@ -1158,6 +1163,9 @@ pub(crate) async fn compare_at(context:&JobContext,id:&str,source:&Path,_runner_
         "candidateId":id,"candidateStatus":updated["status"],
         "verdict":verdict,"metrics":metrics,
         "buildDiagnostics":build_diagnostics,
+        "baselineBuildOk":report["baselineBuildOk"],
+        "candidateBuildOk":report["candidateBuildOk"],
+        "missingTests":report["missingTests"],
         // Descendant rule induction and matched policy tournaments consume
         // the generation-level comparison receipt. Without this verified
         // origin they silently discard every neutral/rejected counterexample,
