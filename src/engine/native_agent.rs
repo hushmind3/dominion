@@ -39,6 +39,28 @@ struct NativeTools {
     tool_specs: Vec<ToolSpec>,
     tools_enabled: bool,
 }
+/// Tool transport success is not evidence that the action succeeded.
+/// The SDK must not accept a failing command, HTTP response or MCP result.
+fn verified_tool_result(name: &str, value: Value) -> Result<Value,String> {
+    if value["isError"] == true || value["success"] == false
+        || value["ok"] == false || value.get("error").is_some_and(|v| !v.is_null())
+    {
+        return Err(format!("{name} returned an error: {}",value));
+    }
+    if matches!(name,"shell_exec"|"terminal_exec") {
+        match value.get("exitCode").and_then(Value::as_i64) {
+            Some(0) => {}
+            other => return Err(format!("{name} failed (exitCode={other:?}): {}",value))
+        }
+    }
+    if let Some(code)=value.get("statusCode").and_then(Value::as_u64)
+        .or_else(||value.get("status").and_then(Value::as_u64))
+    {
+        if code>=400 { return Err(format!("{name} HTTP {code}: {value}")); }
+    }
+    Ok(value)
+}
+
 impl Tools for NativeTools {
     fn definitions(&self) -> Vec<ToolSpec> { self.tool_specs.clone() }
     fn execute<'a>(&'a self, action: &'a Action) -> BoxFuture<'a, Result<Value, String>> {
@@ -78,6 +100,7 @@ impl Tools for NativeTools {
                     tools_enabled:self.tools_enabled,tools_execution_enabled:self.tools_enabled,
                 };
                 tools::execute(&context,&action.tool,&action.arguments,&self.run_id).await
+                    .and_then(|value|verified_tool_result(&action.tool,value))
             };
             let patch=match &outcome {
                 Ok(value)=>json!({"status":"completed","outcomeUnknown":false,"result":value,
@@ -366,5 +389,23 @@ mod native_evidence_tests {
         assert!(evidence.safe_path("broken").is_err());
         let _=std::fs::remove_dir_all(root);
         let _=std::fs::remove_dir_all(other);
+    }
+}
+
+#[cfg(test)]
+mod native_result_tests {
+    use super::*;
+    #[test]
+    fn failing_shell_exit_is_not_a_successful_sdk_receipt() {
+        assert!(verified_tool_result("shell_exec",json!({"exitCode":1,"stdout":"","stderr":"failed"})).is_err());
+        assert!(verified_tool_result("terminal_exec",json!({"exitCode":null,"stderr":"terminated"})).is_err());
+        assert!(verified_tool_result("shell_exec",json!({"exitCode":0,"stdout":"OK"})).is_ok());
+    }
+    #[test]
+    fn wrapped_tool_errors_are_not_success_evidence() {
+        assert!(verified_tool_result("http_fetch",json!({"statusCode":503,"body":"fail"})).is_err());
+        assert!(verified_tool_result("mcp__server__op",json!({"isError":true})).is_err());
+        assert!(verified_tool_result("workspace_write",json!({"success":false})).is_err());
+        assert!(verified_tool_result("workspace_read",json!({"content":"ok"})).is_ok());
     }
 }
