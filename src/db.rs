@@ -210,6 +210,22 @@ impl Store {
         rows.filter_map(|row| row.ok()).collect()
     }
 
+    /// Main Home UI polls per-job progress frequently. Read only executions
+    /// for the one owning session instead of materializing all engine runs for
+    /// every card, and propagate database failures rather than fabricating
+    /// an empty progress state.
+    pub fn session_executions(&self, session_id: &str) -> Result<Vec<Value>, String> {
+        let conn = self.conn.lock().unwrap();
+        let mut statement = conn.prepare(
+            "SELECT data, id, created_at, updated_at FROM records
+             WHERE kind='execution' AND json_extract(data,'$.sessionId')=?1
+             ORDER BY created_at ASC, id ASC",
+        ).map_err(|error| error.to_string())?;
+        let rows = statement.query_map([session_id], record_from_row)
+            .map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
+    }
+
     pub fn execution_operations(&self, run_id: &str) -> Result<Vec<Value>, String> {
         let conn = self.conn.lock().unwrap();
         let mut statement = conn.prepare(

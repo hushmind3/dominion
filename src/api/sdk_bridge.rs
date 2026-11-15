@@ -83,22 +83,21 @@ fn public_view(state: &AppState, job: &Value) -> Value {
     // fabricating progress from queued job metadata.
     let origin=job["queuedAt"].as_str().unwrap_or("");
     let executions=if session.is_empty(){Vec::new()}else{
-        state.store.all("execution").into_iter().filter(|run|
-            run["sessionId"].as_str()==Some(session)
-                && run["startedAt"].as_str().is_some_and(|at|at>=origin)
-        ).collect::<Vec<_>>()
+        state.store.session_executions(session).unwrap_or_default().into_iter()
+            .filter(|run|run["startedAt"].as_str().is_some_and(|at|at>=origin))
+            .collect::<Vec<_>>()
     };
     let round_progress=executions.iter().map(|run|
         run["iterations"].as_u64().unwrap_or(0) as usize
     ).sum::<usize>();
-    let known_runs=executions.iter().filter_map(|run|
-        run["id"].as_str().map(str::to_string)
-    ).collect::<std::collections::HashSet<_>>();
-    let mut operations=if known_runs.is_empty(){Vec::new()}else{
-        state.store.all("execution_operation").into_iter().filter(|op|
-            op["runId"].as_str().is_some_and(|id|known_runs.contains(id))
-        ).collect::<Vec<_>>()
-    };
+    let mut operations=Vec::new();
+    for run in &executions {
+        if let Some(run_id)=run["id"].as_str(){
+            if let Ok(mut items)=state.store.execution_operations(run_id){
+                operations.append(&mut items);
+            }
+        }
+    }
     operations.sort_by(|a,b|a["startedAt"].as_str().unwrap_or("")
         .cmp(b["startedAt"].as_str().unwrap_or(""))
         .then_with(||a["opSeq"].as_u64().cmp(&b["opSeq"].as_u64())));
@@ -292,7 +291,7 @@ fn model_only_retry_evidence(state:&AppState,job:&Value)->Option<Value>{
     let session=job["sessionId"].as_str().filter(|s|!s.is_empty())?;
     state.store.get("session",session)?;
     let started=job["startedAt"].as_str().filter(|s|!s.is_empty())?;
-    let no_tools=state.store.all("execution_operation").iter().all(|operation|{
+    let no_tools=state.store.try_all("execution_operation").ok()?.iter().all(|operation|{
         operation["sessionId"].as_str()!=Some(session)
             || operation["startedAt"].as_str().is_some_and(|at|at<started)
     });
