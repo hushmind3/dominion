@@ -58,7 +58,7 @@ export function NativeTasks({home=false}:{home?:boolean}){
  const [allowWrite,setAllowWrite]=useState(false),[allowShell,setAllowShell]=useState(false),[allowMcp,setAllowMcp]=useState(false)
  const [allowSubagents,setAllowSubagents]=useState(false),[requireEvidence,setRequireEvidence]=useState(false)
  const [planningMode,setPlanningMode]=useState('auto'),[maxSteps,setMaxSteps]=useState(12),[tokenBudget,setTokenBudget]=useState(40000),[costBudget,setCostBudget]=useState('')
- const [instruction,setInstruction]=useState(''),[events,setEvents]=useState<RunEvent[]>([]),[children,setChildren]=useState<Run[]>([])
+ const [instruction,setInstruction]=useState(''),[resumeText,setResumeText]=useState(''),[events,setEvents]=useState<RunEvent[]>([]),[children,setChildren]=useState<Run[]>([])
  const op=useOperation()
  const selected=tasks.value.find(item=>item.id===active)
  useEffect(()=>{if(!active)return;let done=false;const load=()=>{void get<Run[]>('/api/tasks/'+encodeURIComponent(active)+'/children').then(v=>{if(!done)setChildren(v)}).catch(()=>{if(!done)setChildren([])})}
@@ -71,7 +71,8 @@ export function NativeTasks({home=false}:{home?:boolean}){
   stream.onmessage=event=>{try{const item=JSON.parse(event.data) as RunEvent
     if(!alive||seen.has(item.seq))return;seen.add(item.seq)
     setEvents(current=>[...current,item].slice(-350))
-    if(['completed','failed','cancelled','needs_review','step_completed','task_completed','subagent_completed'].includes(item.type)){void tasks.reload()}
+    if(['finished','completed','failed','cancelled','needs_review','step_completed','task_completed','subagent_completed'].includes(item.type)){void tasks.reload()}
+    if(item.type==='finished')stream.close()
   }catch{}}
   stream.onerror=()=>{if(!alive)return;void tasks.reload()}
   return()=>{alive=false;stream.close()}
@@ -82,6 +83,15 @@ export function NativeTasks({home=false}:{home?:boolean}){
    allowWrite,allowShell,allowMcp,allowSubagents,requireEvidence,planningMode,maxSteps,tokenBudget,
     costBudgetKrw:costBudget.trim()?Number(costBudget):undefined}))
   if(created){setActive(created.id);setPrompt('');void tasks.reload()}
+ }
+ const continueTask=async()=>{
+  if(!active||!resumeText.trim())return
+  const created=await op.run(()=>post<Run>('/api/tasks/'+encodeURIComponent(active)+'/resume',{
+   requestId:crypto.randomUUID(),prompt:resumeText,
+   allowWrite,allowShell,allowMcp,allowSubagents,requireEvidence,planningMode,maxSteps,tokenBudget,
+   costBudgetKrw:costBudget.trim()?Number(costBudget):undefined
+  }))
+  if(created){setResumeText('');setActive(created.id);void tasks.reload()}
  }
  const intervene=async(route:'cancel'|'steer')=>{
   if(!active)return
@@ -115,7 +125,12 @@ export function NativeTasks({home=false}:{home?:boolean}){
      {selected.error&&<InlineError error={selected.error}/>}
      {selected.result&&<div className="mb-4 rounded-xl border border-[#E7E0D5] bg-white p-4"><h3 className="mb-2 text-[12px] font-bold">실행 결과</h3><pre className="whitespace-pre-wrap break-words text-[12px]">{typeof selected.result.answer==='string'?selected.result.answer:JSON.stringify(selected.result,null,2)}</pre></div>}
      {!complete.has(selected.status)&&<div className="mb-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]"><TextInput aria-label="실행 중 방향 변경" value={instruction} onChange={e=>setInstruction(e.target.value)} placeholder="다음 단계에 반영할 지시"/><LoadingButton busy={op.busy} disabled={!instruction.trim()} onClick={()=>void intervene('steer')}>지시 전달</LoadingButton><LoadingButton busy={op.busy} variant="danger" onClick={()=>void intervene('cancel')}><PauseCircle size={14}/> 중단</LoadingButton></div>}
-     <details open><summary className="cursor-pointer text-[12px] font-semibold">실행 이벤트 · {events.length}건</summary><ol className="mt-3 max-h-72 space-y-2 overflow-auto">{events.map(ev=><li key={ev.seq} className="rounded-lg border border-[#EEE8E0] p-3 text-[11px]"><div className="flex justify-between"><strong>{ev.type}</strong><span className="text-[#A79C8E]">#{ev.seq}</span></div>{ev.detail&&<pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-all text-[#6F675D]">{JSON.stringify(ev.detail,null,2)}</pre>}</li>)}</ol></details>
+     {complete.has(selected.status)&&<div className="mb-4 rounded-xl border border-[#E7E0D5] p-3">
+       <h3 className="mb-2 text-[12px] font-bold">작업 이어서 실행</h3>
+       <p className={'mb-2 '+subtle}>이전 작업의 저장된 기록을 참고해 새 실행을 만듭니다. 파일·셸·MCP 권한은 위 설정에서 다시 명시적으로 선택합니다.</p>
+       <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"><TextInput aria-label="작업 이어서 실행 지시" value={resumeText} onChange={e=>setResumeText(e.target.value)} placeholder="실패한 부분을 확인하고 수정해 주세요."/><LoadingButton busy={op.busy} disabled={!resumeText.trim()} onClick={()=>void continueTask()} variant="primary"><RefreshCw size={14}/> 이어서 실행</LoadingButton></div>
+      </div>}
+      <details open><summary className="cursor-pointer text-[12px] font-semibold">실행 이벤트 · {events.length}건</summary><ol className="mt-3 max-h-72 space-y-2 overflow-auto">{events.map(ev=><li key={ev.seq} className="rounded-lg border border-[#EEE8E0] p-3 text-[11px]"><div className="flex justify-between"><strong>{ev.type}</strong><span className="text-[#A79C8E]">#{ev.seq}</span></div>{ev.detail&&<pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-all text-[#6F675D]">{JSON.stringify(ev.detail,null,2)}</pre>}</li>)}</ol></details>
      {children.length>0&&<details className="mt-3"><summary className="cursor-pointer text-[12px] font-semibold">보조 에이전트 {children.length}개</summary><div className="mt-2"><RunList items={children} selected="" onSelect={setActive}/></div></details>}
     </Section>}
    </div>
