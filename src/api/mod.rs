@@ -21,6 +21,7 @@ pub mod benchmark;
 pub mod experiments;
 pub mod chat;
 pub mod jobs;
+pub mod sdk_runs;
 pub mod system;
 pub mod attachments;
 pub mod channels;
@@ -146,6 +147,13 @@ pub fn router(state: AppState) -> Router {
         .route("/api/jobs/:id",get(jobs::one))
         .route("/api/jobs/:id/cancel",post(jobs::cancel))
         .route("/api/jobs/:id/directive",post(jobs::directive))
+        // Main @879dc23d frontend uses this stable view of the SAME Rust SDK jobs.
+        .route("/api/sdk/runs",get(sdk_runs::list).post(sdk_runs::create))
+        .route("/api/sdk/runs/:id",get(sdk_runs::one))
+        .route("/api/sdk/runs/:id/approve",post(sdk_runs::approve))
+        .route("/api/sdk/runs/:id/cancel",post(sdk_runs::cancel))
+        .route("/api/sdk/runs/:id/resume",post(sdk_runs::resume))
+        .route("/api/sdk/runs/:id/reconcile",post(sdk_runs::reconcile))
         .route("/api/tasks", get(tasks::list))
         .route("/api/tasks/:id", get(tasks::one))
         .route("/api/tools", get(extensions::list_tools))
