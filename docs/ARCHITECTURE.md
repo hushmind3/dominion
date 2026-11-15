@@ -48,6 +48,10 @@ Only Rust decides task admission, planning, model turns, side effects, explicit 
 
 The original main React source and look are preserved; old API-incompatible page modules remain as references and are not used for active primary navigation. Do not restore retired specialized modules or create a second TypeScript SDK under packages.
 
+### Proof-preserving context management
+
+The completed native context feature is documented in [docs/CONTEXT_EVIDENCE.md](CONTEXT_EVIDENCE.md), including the exact invariants, hard encoded-byte budgets, parent/child tool graph parsing, deterministic projections and SHA-256 source/projection receipts. The task_receipt and session_history tools retrieve persisted UTF-8 byte pages; no effects are replayed. A resumed task's lineage is committed atomically before any worker can claim it. Projected bytes are neither billed-token counts nor claims about external frontier success rates.
+
 ## Session consistency
 
 1. Rust SDK validates a unique requestId and stores the task in SQLite.
