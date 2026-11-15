@@ -96,9 +96,11 @@ test('job workspace travels through the native Rust API contract',async()=>{
     return json({id:'scoped-job',status:'queued',kind:'prompt',input:payload.input});
   }});
   const result=await sdk.jobs.create({kind:'prompt',input:{
-    prompt:'Fix the project',workspaceDir:'/home/you/code/project',autonomous:true
+    prompt:'Fix the project',workspaceDir:'/home/you/code/project',
+    tokenBudget:24000,autonomous:true
   }});
   assert.equal(payload.input.workspaceDir,'/home/you/code/project');
+  assert.equal(payload.input.tokenBudget,24000);
   assert.equal(result.input.prompt,'Fix the project');
 });
 test('owner replacement uses the existing job and explicit replace mode',async()=>{
