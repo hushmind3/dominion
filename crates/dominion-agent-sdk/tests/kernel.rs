@@ -309,3 +309,53 @@ async fn invalid_dependency_graph_is_rejected_before_any_tool_dispatch() {
         let _=std::fs::remove_dir_all(root);
     }
 }
+
+struct StructuredFailure(AtomicUsize);
+impl Tools for StructuredFailure {
+    fn definitions(&self) -> Vec<ToolSpec> {
+        vec![
+            ToolSpec {name:"structured_failure".into(), description:"simulate a structured tool error".into(),
+                schema:json!({}), read_only:false},
+            ToolSpec {name:"dependent".into(), description:"a dependent side effect".into(),
+                schema:json!({}), read_only:false},
+        ]
+    }
+    fn execute<'a>(&'a self, action: &'a Action) -> BoxFuture<'a, Result<Value, String>> {
+        Box::pin(async move {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            if action.tool == "structured_failure" {
+                Ok(json!({"isError":true,"error":"operation failed","exitCode":1}))
+            } else {
+                Ok(json!({"ok":true}))
+            }
+        })
+    }
+}
+
+#[tokio::test]
+async fn structured_tool_error_blocks_descendants_and_never_satisfies_tool_success() {
+    let (model, _unused_tools, evidence, journal, mut request, root) = test_env(vec![
+        json!({"actions":[
+            {"id":"first","tool":"structured_failure"},
+            {"id":"second","tool":"dependent","dependsOn":["first"]}
+        ]}),
+        json!({"actions":[],"answer":"done"}),
+    ]);
+    request.allowed_tools=vec!["structured_failure".into(),"dependent".into()];
+    request.checks=vec![Criterion {
+        kind:CriterionKind::ToolSucceeded, path:None, contains:None,
+        tool:Some("structured_failure".into()),
+    }];
+    request.limits.max_steps=2;
+    let tools=StructuredFailure(AtomicUsize::new(0));
+    let output=Kernel {model:&model,tools:&tools,evidence:&evidence,journal:&journal}
+        .run(request).await.unwrap();
+    assert!(matches!(output.status, Status::NeedsReview));
+    assert_eq!(tools.0.load(Ordering::SeqCst), 1, "dependent tool must not run");
+    assert_eq!(output.receipts.len(), 2);
+    assert!(!output.receipts[0].success);
+    assert!(!output.receipts[1].success);
+    assert_eq!(output.receipts[1].result["skipped"], true);
+    assert!(output.checks.iter().any(|check| !check.satisfied));
+    let _=std::fs::remove_dir_all(root);
+}
