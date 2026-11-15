@@ -25,6 +25,8 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const [maxRounds,setMaxRounds]=useState(24)
  const [mcpEnabled,setMcpEnabled]=useState(false)
  const [skillsEnabled,setSkillsEnabled]=useState(true)
+ const [webEnabled,setWebEnabled]=useState(false)
+ const [subagentsEnabled,setSubagentsEnabled]=useState(false)
  const [observation,setObservation]=useState('')
  const [run,setRun]=useState<SdkRun|null>(null)
  const [busy,setBusy]=useState(false)
@@ -51,7 +53,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    const created=await post<SdkRun>('/api/sdk/runs',{
     instruction:instruction.trim(),providerId:providerId||undefined,
     verifyCommand:verification.trim()||undefined,
-    planningMode,maxTotalTokens:tokenBudget,maxRounds,mcpEnabled,skillsEnabled
+    planningMode,maxTotalTokens:tokenBudget,maxRounds,mcpEnabled,skillsEnabled,webEnabled,subagentsEnabled
    })
    setRun(created)
   }catch(e){setError((e as Error).message)}
@@ -142,6 +144,8 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      <div className="mt-3 flex flex-wrap gap-4 text-[11px]">
       <label className="flex items-center gap-1.5"><input type="checkbox" checked={mcpEnabled} onChange={e=>setMcpEnabled(e.target.checked)}/>{en?'Use configured MCP tools':'연결한 MCP 도구 사용'}</label>
       <label className="flex items-center gap-1.5"><input type="checkbox" checked={skillsEnabled} onChange={e=>setSkillsEnabled(e.target.checked)}/>{en?'Read installed skills':'설치된 스킬 참조'}</label>
+      <label className="flex items-center gap-1.5"><input type="checkbox" checked={webEnabled} onChange={e=>setWebEnabled(e.target.checked)}/>{en?'Public web research (approval required)':'공개 웹 조사 (실행 승인 필요)'}</label>
+      <label className="flex items-center gap-1.5"><input type="checkbox" checked={subagentsEnabled} onChange={e=>setSubagentsEnabled(e.target.checked)}/>{en?'Delegate tasks to agents (approval required)':'다른 에이전트에 작업 위임 (승인 필요)'}</label>
      </div>
      <p className="mt-2 text-[10px] text-[#84796B]">
       {en?'Token caps apply to provider-reported usage before the next call; the final reply can exceed the cap.':'토큰 한도는 제공자 보고 사용량을 기준으로 다음 호출 전에 적용됩니다. 마지막 응답은 한도를 초과할 수 있습니다.'}
