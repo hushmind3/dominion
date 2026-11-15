@@ -9,6 +9,8 @@ export interface TaskInput {
   allowShell?: boolean;
   /** Explicit consent to expose operator-configured MCP tools in this run. */
   allowMcp?: boolean;
+  /** Permit bounded native read-only child workers. */
+  allowSubagents?: boolean;
   /** Require a verified file write before reporting successful completion. */
   requireEvidence?: boolean;
   maxSteps?: number;
