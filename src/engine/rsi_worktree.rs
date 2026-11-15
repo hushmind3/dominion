@@ -209,6 +209,46 @@ async fn git(dir:&Path, args:&[&str])->Result<String,String>{
 fn valid_sha(value:&str)->bool {
     value.len()==40 && value.bytes().all(|byte|byte.is_ascii_hexdigit())
 }
+
+/// Recreate the exact candidate Git tree from immutable base and patch without
+/// ever touching the owner's index or checkout. The evaluator's JSON tree
+/// receipt is independently checked against this Rust-owned reconstruction.
+/// This same path is also used at publication, so both gates have one meaning.
+async fn reconstructed_patch_tree(source:&Path,base:&str,patch:&str)->Result<String,String>{
+    if !valid_sha(base) || patch.is_empty() {
+        return Err("동결된 기준 커밋과 실제 후보 패치가 필요합니다.".into());
+    }
+    let temporary=std::env::temp_dir().join(format!("dominion-rsi-index-{}",uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temporary).map_err(|e|e.to_string())?;
+    let patch_file=temporary.join("candidate.patch");
+    let isolated_index=temporary.join("index");
+    let result=async {
+        std::fs::write(&patch_file,patch).map_err(|e|e.to_string())?;
+        let patch_path=patch_file.to_str().ok_or("패치 파일 경로가 유효하지 않습니다.")?;
+        let mut tree=String::new();
+        for args in [
+            vec!["read-tree",base],
+            vec!["apply","--cached",patch_path],
+            vec!["write-tree"],
+        ]{
+            let mut command=Command::new("git");
+            command.current_dir(source).args(args).env("GIT_INDEX_FILE",&isolated_index);
+            let output=run(command,GIT_LIMIT).await?;
+            if !output.status.success(){
+                return Err(format!("후보 Git 트리 재구성 실패: {}",
+                    String::from_utf8_lossy(&output.stderr).chars().take(800).collect::<String>()));
+            }
+            tree=String::from_utf8_lossy(&output.stdout).trim().to_string();
+        }
+        let baseline=git(source,&["rev-parse",&format!("{base}^{{tree}}")]).await?;
+        if !valid_sha(&tree) || tree==baseline {
+            return Err("후보 패치가 유효한 변경 트리를 생성하지 않았습니다.".into());
+        }
+        Ok(tree)
+    }.await;
+    let _=std::fs::remove_dir_all(&temporary);
+    result
+}
 /// Preload an independently measured, rejected patch into the next
 /// generation's disposable checkout. This patch does NOT update the accepted
 /// source revision: its child must change actual code and beat the ORIGINAL
@@ -856,28 +896,12 @@ pub async fn apply_campaign_to_sub(state:&crate::state::AppState,id:&str,expecte
         if candidate["baseCommit"]!=parent {return Err("검증한 기준과 채택 계보가 다릅니다.".into());}
         let patch=candidate["patch"].as_str().ok_or("검증 패치 없음")?;
         if digest(patch)!=candidate["patchSha256"].as_str().unwrap_or("") {return Err("검증 패치 해시가 다릅니다.".into());}
-        let temp=std::env::temp_dir().join(format!("dominion-rsi-publish-{}",uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&temp).map_err(|e|e.to_string())?;
-        let patch_path=temp.join("candidate.patch");
-        std::fs::write(&patch_path,patch).map_err(|e|e.to_string())?;
-        let checked=async {
-            let mut tree=String::new();
-            for args in [vec!["read-tree".to_string(),parent.clone()],
-                vec!["apply".into(),"--cached".into(),patch_path.to_string_lossy().to_string()],vec!["write-tree".into()]] {
-                let mut cmd=Command::new("git");
-                cmd.current_dir(&source).args(args).env("GIT_INDEX_FILE",temp.join("index"));
-                let out=run(cmd,GIT_LIMIT).await?;
-                if !out.status.success(){return Err("검증 패치를 재구성하지 못했습니다.".to_string());}
-                tree=String::from_utf8_lossy(&out.stdout).trim().to_string();
-            }
-            if tree!=git(&source,&["rev-parse",&format!("{commit}^{{tree}}")]).await?
-                || candidate["evaluation"]["candidateTreeSha"].as_str()
-                    .is_some_and(|attested|tree!=attested) {
-                return Err("실제 채택 코드가 검증 패치·평가 트리와 다릅니다.".into());
-            }
-            Ok::<(),String>(())
-        }.await;
-        let _=std::fs::remove_dir_all(temp);checked?;
+        let tree=reconstructed_patch_tree(&source,&parent,patch).await?;
+        if tree!=git(&source,&["rev-parse",&format!("{commit}^{{tree}}")]).await?
+            || candidate["evaluation"]["candidateTreeSha"].as_str()
+                .is_some_and(|attested|tree!=attested) {
+            return Err("실제 채택 코드가 검증 패치·평가 트리와 다릅니다.".into());
+        }
     }
     if commits.is_empty() {return Err("적용할 검증 변경이 없습니다.".into());}
     if git(&source,&["rev-parse","HEAD"]).await?!=base
@@ -935,7 +959,12 @@ pub(crate) async fn compare_at(context:&JobContext,id:&str,source:&Path,_runner_
     }
     // Older frozen candidates remain evaluable after the checkout advances.
     // Both lab variants are created from candidate.baseCommit, never HEAD.
-    git(source,&["cat-file","-e",&format!("{}^{{commit}}",candidate["baseCommit"].as_str().ok_or("기준 커밋 없음")?)]).await?;
+    let base=candidate["baseCommit"].as_str().ok_or("기준 커밋 없음")?;
+    git(source,&["cat-file","-e",&format!("{base}^{{commit}}")]).await?;
+    // Fail before expensive A/B compilation if the patch does not reconstruct
+    // the same code from the frozen source; no model- or JS-provided tree claim
+    // can override this Git result.
+    let expected_tree=reconstructed_patch_tree(source,base,patch).await?;
     let output_dir=state.config.data_dir.join("rsi-paired")
         .join(format!("{}-{}",id,uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&output_dir).map_err(|e|e.to_string())?;
@@ -1004,8 +1033,8 @@ pub(crate) async fn compare_at(context:&JobContext,id:&str,source:&Path,_runner_
     if report["runner"]!="balanced-frozen-rsi-lab-v3"
         || report["baselineTreeSha"]!=baseline_tree
         || !valid_tree(&report["candidateTreeSha"])
-        || report["candidateTreeSha"]==report["baselineTreeSha"] {
-        return Err("독립 평가에 사용한 기준·후보 Git 트리 증거가 올바르지 않습니다.".into());
+        || report["candidateTreeSha"]!=expected_tree {
+        return Err("평가기가 실행한 후보 Git 트리와 Rust가 독립 재구성한 Git 트리가 다릅니다.".into());
     }
     let mut evidence_sha=evidence_sha;
     let mut meta_receipt=Value::Null;
@@ -1111,6 +1140,40 @@ pub async fn cleanup(worktree:&Worktree)->Result<(),String>{
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn frozen_candidate_tree_is_reconstructed_without_mutating_owner_index() {
+        let root=std::env::temp_dir().join(format!("rsi-tree-contract-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("src/engine")).unwrap();
+        std::fs::write(root.join("src/engine/subject.rs"),"pub fn before() {}\n").unwrap();
+        git(&root,&["init","-q"]).await.unwrap();
+        git(&root,&["config","core.autocrlf","false"]).await.unwrap();
+        git(&root,&["add","."]).await.unwrap();
+        git(&root,&["-c","user.name=Test","-c","user.email=test@localhost",
+            "commit","-qm","frozen base"]).await.unwrap();
+        let base=git(&root,&["rev-parse","HEAD"]).await.unwrap();
+        let before_index=git(&root,&["ls-files","--stage"]).await.unwrap();
+        let patch="diff --git a/src/engine/subject.rs b/src/engine/subject.rs\n\
+--- a/src/engine/subject.rs\n\
++++ b/src/engine/subject.rs\n\
+@@ -1 +1 @@\n\
+-pub fn before() {}\n\
++pub fn after() {}\n";
+        std::fs::write(root.join("src/engine/subject.rs"),"pub fn after() {}\n").unwrap();
+        git(&root,&["add","."]).await.unwrap();
+        let actual=git(&root,&["write-tree"]).await.unwrap();
+        git(&root,&["reset","--hard",&base]).await.unwrap();
+        let calculated=reconstructed_patch_tree(&root,&base,patch).await.unwrap();
+        assert_eq!(calculated,actual,"Rust preflight must reproduce the exact code tree");
+        assert_eq!(git(&root,&["ls-files","--stage"]).await.unwrap(),before_index);
+        assert_eq!(git(&root,&["rev-parse","HEAD"]).await.unwrap(),base);
+        assert!(git(&root,&["status","--porcelain"]).await.unwrap().is_empty());
+        assert!(reconstructed_patch_tree(&root,&base,
+            &patch.replace("-pub fn before() {}","-pub fn absent() {}"))
+            .await.is_err(),"a stale patch must not pass frozen-base verification");
+        assert!(reconstructed_patch_tree(&root,&base,"").await.is_err());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
     #[test]
     fn rsi_resolves_cargo_even_with_a_minimal_service_path() {
         let cargo = cargo_executable();
