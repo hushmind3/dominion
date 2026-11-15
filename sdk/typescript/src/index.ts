@@ -36,6 +36,34 @@ export interface TaskEvent {
   type: string;
   detail: Record<string, unknown>;
 }
+export interface GroupParticipant {
+  name: string;
+  role: string;
+  economy: boolean;
+}
+export interface GroupMessage {
+  speaker: string;
+  content: string;
+  at_ms: number;
+  model: string | null;
+}
+export interface GroupRoom {
+  id: string;
+  topic: string;
+  participants: GroupParticipant[];
+  messages: GroupMessage[];
+  status: 'open' | 'finished';
+  rounds: number;
+  max_rounds: number;
+  cost_krw: number;
+  budget_krw: number;
+}
+export interface CreateGroupInput {
+  topic: string;
+  participants: GroupParticipant[];
+  max_rounds?: number;
+  budget_krw?: number;
+}
 export interface ClientOptions {
   baseUrl?: string;
   fetch?: typeof fetch;
@@ -98,6 +126,22 @@ export class DominionClient {
   steer(id:string,text:string,signal?: AbortSignal) {
     if (!text.trim()) throw new TypeError("Owner instruction is empty");
     return this.request<TaskRecord>("/api/tasks/"+encodeURIComponent(id)+"/steer","POST",{text},signal);
+  }
+  /** Native Rust participant room. The TS client performs no speaker selection. */
+  groupList(signal?: AbortSignal) {
+    return this.request<GroupRoom[]>('/api/groups','GET',undefined,signal);
+  }
+  groupCreate(input: CreateGroupInput, signal?: AbortSignal) {
+    return this.request<GroupRoom>('/api/groups','POST',input,signal);
+  }
+  groupGet(id: string, signal?: AbortSignal) {
+    return this.request<GroupRoom>('/api/groups/'+encodeURIComponent(id),'GET',undefined,signal);
+  }
+  groupSay(id: string, content: string, signal?: AbortSignal) {
+    return this.request<GroupRoom>('/api/groups/'+encodeURIComponent(id)+'/messages','POST',{content},signal);
+  }
+  groupNext(id: string, signal?: AbortSignal) {
+    return this.request<GroupRoom>('/api/groups/'+encodeURIComponent(id)+'/next','POST',{},signal);
   }
   /**
    * Reconnect only a read-only GET. The cursor is based on committed event seq;
