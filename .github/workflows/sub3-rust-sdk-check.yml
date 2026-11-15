@@ -1,0 +1,29 @@
+name: Sub3 Rust SDK focused verification
+
+# A narrow isolated compiler/test check, NOT the full Dominion release CI.
+# Only SDK source and this workflow trigger it; the regular repo CI excludes
+# dominion-sub3 and remains untouched.
+on:
+  push:
+    branches: [dominion-sub3]
+    paths:
+      - '.github/workflows/sub3-rust-sdk-check.yml'
+      - 'crates/dominion-agent-sdk/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sub3-rust-sdk-verify
+  cancel-in-progress: true
+
+jobs:
+  sdk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Compile and execute Rust SDK tests, including real file and shell repair
+        run: cargo test --manifest-path crates/dominion-agent-sdk/Cargo.toml -- --nocapture
