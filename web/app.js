@@ -160,12 +160,116 @@ ui.steer.addEventListener('click',async()=>{
     ui.instruction.value='';notice('지시가 저장됐습니다. 다음 모델 단계에서 반영됩니다.');
   }catch(e){notice(e.message);}
 });
+let selectedGroup = null;
+let groupBusy = false;
+
+function viewGroup(group) {
+  selectedGroup = group?.id || null;
+  const out=byId('groupMessages');
+  out.replaceChildren();
+  if (!group) {
+    byId('groupStatus').textContent='새 그룹을 만들거나 기존 그룹을 선택하세요.';
+    return;
+  }
+  byId('groupSelect').value=group.id;
+  byId('groupStatus').textContent=
+    (group.status==='open'?'대화 중':'종료')+' · '+
+    group.rounds+'/'+group.max_rounds+'회 · 예상 비용 '+
+    Number(group.cost_krw||0).toLocaleString('ko-KR')+'원';
+  for (const message of group.messages || []) {
+    const item=document.createElement('li');
+    const heading=document.createElement('strong');
+    heading.textContent=(message.speaker==='user'?'사용자':message.speaker)+' · ';
+    const content=document.createElement('span');
+    content.textContent=message.content;
+    item.append(heading,content);
+    out.append(item);
+  }
+  byId('groupNext').disabled=groupBusy||group.status!=='open';
+}
+async function refreshGroups(preferred) {
+  const rooms=await api('/api/groups');
+  const picker=byId('groupSelect');
+  const value=preferred || selectedGroup;
+  picker.replaceChildren();
+  const placeholder=document.createElement('option');
+  placeholder.value='';placeholder.textContent='그룹을 선택하세요';
+  picker.append(placeholder);
+  for(const room of rooms) {
+    const option=document.createElement('option');
+    option.value=room.id;
+    option.textContent=room.topic+' · '+room.participants.map(p=>p.name).join(', ');
+    picker.append(option);
+  }
+  if(value && rooms.some(room=>room.id===value)){
+    viewGroup(rooms.find(room=>room.id===value));
+  }else if(rooms.length) viewGroup(rooms[0]);
+  else viewGroup(null);
+}
+byId('groupCreate').addEventListener('submit',async event=>{
+  event.preventDefault();
+  if(groupBusy)return;
+  const a=byId('groupNameA').value.trim(),b=byId('groupNameB').value.trim();
+  if(!a||!b||a.toLowerCase()===b.toLowerCase()){
+    notice('그룹 참가자 이름은 서로 달라야 합니다.');return;
+  }
+  groupBusy=true;
+  try{
+    const room=await api('/api/groups','POST',{
+      topic:byId('groupTopic').value.trim(),
+      participants:[
+        {name:a,role:byId('groupRoleA').value.trim(),economy:false},
+        {name:b,role:byId('groupRoleB').value.trim(),economy:true}
+      ],
+      max_rounds:12,budget_krw:Number(byId('groupBudget').value)
+    });
+    await refreshGroups(room.id);
+    notice('그룹이 저장됐습니다. 먼저 메시지를 보내고 다음 발언을 실행하세요.');
+  }catch(error){notice(error.message);}
+  finally{groupBusy=false;}
+});
+byId('groupSelect').addEventListener('change',async event=>{
+  const id=event.target.value;
+  if(!id){viewGroup(null);return;}
+  try{viewGroup(await api('/api/groups/'+encodeURIComponent(id)));}
+  catch(error){notice(error.message);}
+});
+byId('groupSpeak').addEventListener('submit',async event=>{
+  event.preventDefault();
+  if(groupBusy||!selectedGroup){notice('먼저 그룹을 선택하세요.');return;}
+  groupBusy=true;
+  try{
+    const text=byId('groupInput').value.trim();
+    if(!text)return;
+    const room=await api('/api/groups/'+encodeURIComponent(selectedGroup)+'/messages',
+      'POST',{content:text});
+    byId('groupInput').value='';
+    viewGroup(room);
+    notice('메시지가 전달됐습니다.');
+  }catch(error){notice(error.message);}
+  finally{groupBusy=false;}
+});
+byId('groupNext').addEventListener('click',async()=>{
+  if(!selectedGroup||groupBusy)return;
+  groupBusy=true;byId('groupNext').disabled=true;
+  notice('에이전트가 저장된 대화를 읽고 발언하고 있습니다.');
+  try{
+    viewGroup(await api('/api/groups/'+encodeURIComponent(selectedGroup)+'/next','POST',{}));
+    notice('');
+  }catch(error){notice(error.message);}
+  finally{groupBusy=false;if(selectedGroup)byId('groupNext').disabled=false;}
+});
+byId('refreshGroups').addEventListener('click',async()=>{
+  try{await refreshGroups();notice('');}catch(error){notice(error.message);}
+});
+
 (async()=>{
   try{
     const status=await api('/api/health');
     ui.engineLed.classList.add('on');
     ui.connection.textContent='Rust 연결됨 · '+status.model;
     await loadTasks();
+    await refreshGroups();
   }catch(error){
     ui.connection.textContent='서버 연결 끊김';notice(error.message);
   }
