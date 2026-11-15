@@ -197,12 +197,8 @@ impl DominionSdk {
         let provider = crate::provider::ModelClient::new(main,economy).map_err(RuntimeError)?;
         let state = AppState {
             store, bus, mcp, provider,
-            http: reqwest::Client::builder().timeout(Duration::from_secs(90))
-                .build().map_err(|error| RuntimeError(error.to_string()))?,
             workspace,
-            model_url: config.model_url,
             model_name: config.model_name,
-            api_key: config.api_key,
         };
         let sdk = Self { state };
         sdk.start_dispatcher(config.max_concurrent_tasks.clamp(1, 32));
