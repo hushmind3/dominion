@@ -41,7 +41,7 @@ Only Rust decides task admission, planning, model turns, side effects, explicit 
 | Sequential workflow execution | src/workflows.rs, SQLite workflow_runs | NativeWorkflows.tsx |
 | Group chat | src/group.rs | NativeWorkspace.tsx groups |
 | Local and remote video | src/video.rs, src/veo.rs | NativeWorkspace.tsx video |
-| Isolated improvement experiments | src/improvement.rs | NativeWorkspace.tsx improvement |
+| Isolated and cross-file recursive evolution | src/improvement.rs, src/improvement/evolution.rs | NativeWorkspace.tsx improvement |
 | Memory / skills | src/store.rs, src/knowledge.rs | NativeWorkspace.tsx knowledge |
 | Historical data migration | src/legacy.rs, src/store.rs | CLI opt-in |
 | API routes and SPA host | src/api.rs | web/dist after Vite build |
@@ -79,13 +79,13 @@ Provider-cached prefixes are preserved where possible. Automatic prompt caching 
 
 Local videos are deterministic FFmpeg compositions at 1280x720, containing owner-provided animated images, titles, carefully wrapped captions, and optional locally synthesized Piper/eSpeak audio. Per-scene file invalidation prevents paying to regenerate unchanged clips; portable MP4 replacement retains the previous artifact until the new one has been successfully renamed. External Veo calls require a configured positive cost rate and per-video KRW ceiling before the next billable scene. The storyboard, local clips, audio, remote operation references and output path are persisted.
 
-Improvement experiments are source-edit proposals isolated from the primary checkout, with frozen baseline comparison, test/score evidence and explicit adoption. Accepted candidates are pinned under a Git `refs/dominion/improvements/<UUID>` ref before their detached worktree is removed; adoption verifies the pinned commit matches the independently evaluated candidate. This retains candidate ancestry through Git garbage collection and prevents an orphaned SHA from silently breaking the descendant path. No model weight-training pipeline is part of RSI. Current loop requires fuller cross-domain feedback and held-out evaluation before any frontier-ranking claim.
+Improvement experiments are source-edit proposals isolated from the primary checkout, with frozen baseline comparison, test/score evidence and explicit adoption. The Rust `src/improvement/evolution.rs` module adds owner-approved 1–4 generation A→B→A sequences with a fixed objective, test and numeric scorer, persisted daughter IDs, recorded adoption results and cost ceilings. Its evaluations share the same workspace writer lock as `engine.rs`, and both the checked-out HEAD and tracked tree must remain unchanged during testing. The seed's exact adopted HEAD is checked again once the lease is acquired. See [RSI evolution details](RSI_EVOLUTION.md) for source-level entrypoints, mock-model/real-Git tests and failure bounds. Accepted candidates are pinned under a Git `refs/dominion/improvements/<UUID>` ref before their detached worktree is removed; adoption verifies the pinned commit matches the independently evaluated candidate. This retains candidate ancestry through Git garbage collection and prevents an orphaned SHA from silently breaking the descendant path. No model weight-training pipeline is part of RSI. Current loop requires fuller cross-domain feedback and held-out evaluation before any frontier-ranking claim.
 
 ## Migration and known limits
 
 Legacy migration is opt-in using DOMINION_IMPORT_LEGACY_DB. It opens the source SQLite read-only and uses a destination transaction, preserving original non-executable JSON records in legacy_archive. It projects permitted user-authored data and safe transcript roles only, disables imported skills and never activates old jobs or provider credentials. Data import records are idempotent per source path.
 
-The current GitHub-connector workflow cannot run a Rust toolchain or full React end-to-end browser tests. Static source changes, checked call paths and authored unit tests are **not** a substitute for compiled runtime proof. Full multi-provider management, browser automation, high-end generative film output, long-running distributed workers, multi-user isolation and measured 2026 frontier benchmark parity remain incomplete.
+The GitHub Actions workflow on the champion branch runs cargo tests, source contracts, SDK tests and frontend checks; that is actual compiled and process-level proof. Browser-driven UI smoke tests and full real-provider evaluations remain unmeasured. Full multi-provider management, browser automation, high-end generative film output, long-running distributed workers, multi-user isolation and measured 2026 frontier benchmark parity remain incomplete.
 
 ## Frontier design references
 
