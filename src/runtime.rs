@@ -591,6 +591,10 @@ impl DominionSdk {
         self.state.improvements.evolution(id).await
             .ok_or_else(||RuntimeError("Evolution run not found".into()))
     }
+    pub async fn evolution_stop(&self,id:uuid::Uuid)
+        ->Result<crate::improvement::EvolutionRun,RuntimeError>{
+        self.state.improvements.evolution_stop(id).await.map_err(RuntimeError)
+    }
 }
 
 impl DominionSdk {
