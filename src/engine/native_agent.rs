@@ -447,6 +447,13 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
         context.state.store.write_message(&source_message)
             .ok_or("Could not persist owner instruction before native execution")?;
     }
+    // This guard also closes the ephemeral Codex socket if the Rust kernel
+    // returns early; durable receipts and uncertain-model markers remain.
+    struct NativeSocketCleanup<'a>(&'a str);
+    impl Drop for NativeSocketCleanup<'_> {
+        fn drop(&mut self) {crate::engine::native_codex_ws::forget_job(self.0);}
+    }
+    let _socket_cleanup=NativeSocketCleanup(&context.job_id);
     let kernel=Kernel{model:&model,tools:&host_tools,evidence:&evidence,journal:&journal};
     let snapshot=if let Some(saved)=resume_snapshot {
         kernel.resume(request,saved).await?
