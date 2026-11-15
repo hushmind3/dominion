@@ -131,38 +131,46 @@ pub(crate) fn infer_criteria(goal: &str) -> Vec<Value> {
         .iter()
         .any(|verb| lower.contains(verb));
     let mut paths = Vec::new();
-    for raw in goal.split(|c: char| {
-        c.is_whitespace() || matches!(c, '`' | '\'' | '"' | ',' | '(' | ')' | '[' | ']')
-    }) {
-        // Korean particles can follow a path without a space (a.txt를).
-        let token = raw.trim_end_matches(|c: char| matches!(c, '.' | ':' | ';' | '!' | '?'));
-        let candidate = token.char_indices().find_map(|(index, ch)| {
-            (ch == '.')
-                .then(|| {
-                    let ext: String = token[index + 1..]
-                        .chars()
-                        .take_while(|ch| ch.is_ascii_alphanumeric())
-                        .collect();
-                    (index, ext)
-                })
-                .filter(|(_, ext)| {
-                    [
-                        "txt", "md", "rs", "json", "py", "js", "ts", "tsx", "csv", "html", "toml",
-                        "yaml", "yml", "sh",
-                    ]
-                    .contains(&ext.as_str())
-                })
-        });
-        if let Some((index, ext)) = candidate {
-            let path = &token[..index + 1 + ext.len()];
-            if path.contains("://") || path.starts_with('-') || path.is_empty() {
-                continue;
-            }
-            if !paths
-                .iter()
-                .any(|v: &Value| v.get("path").and_then(Value::as_str) == Some(path))
-            {
-                paths.push(json!({"type":if deletion {"file_absent"} else {"file_changed"},"path":path,"inferred":true}));
+    // A location followed by an unquoted filename may contain spaces. Capture
+    // the complete span before tokenizing; a suffix such as "ㅂㅅ.md" is not
+    // an independently authorized second target.
+    if let Some(path) = desktop_filename(goal) {
+        paths.push(json!({"type":if deletion {"file_absent"} else {"file_changed"},"path":path,"inferred":true}));
+    }
+    if paths.is_empty() {
+        for raw in goal.split(|c: char| {
+            c.is_whitespace() || matches!(c, '`' | '\'' | '"' | ',' | '(' | ')' | '[' | ']')
+        }) {
+            // Korean particles can follow a path without a space (a.txt를).
+            let token = raw.trim_end_matches(|c: char| matches!(c, '.' | ':' | ';' | '!' | '?'));
+            let candidate = token.char_indices().find_map(|(index, ch)| {
+                (ch == '.')
+                    .then(|| {
+                        let ext: String = token[index + 1..]
+                            .chars()
+                            .take_while(|ch| ch.is_ascii_alphanumeric())
+                            .collect();
+                        (index, ext)
+                    })
+                    .filter(|(_, ext)| {
+                        [
+                            "txt", "md", "rs", "json", "py", "js", "ts", "tsx", "csv", "html", "toml",
+                            "yaml", "yml", "sh",
+                        ]
+                        .contains(&ext.as_str())
+                    })
+            });
+            if let Some((index, ext)) = candidate {
+                let path = &token[..index + 1 + ext.len()];
+                if path.contains("://") || path.starts_with('-') || path.is_empty() {
+                    continue;
+                }
+                if !paths
+                    .iter()
+                    .any(|v: &Value| v.get("path").and_then(Value::as_str) == Some(path))
+                {
+                    paths.push(json!({"type":if deletion {"file_absent"} else {"file_changed"},"path":path,"inferred":true}));
+                }
             }
         }
     }
@@ -179,7 +187,9 @@ pub(crate) fn infer_criteria(goal: &str) -> Vec<Value> {
             let extension = ["txt", "md", "csv", "json"].into_iter().find(|extension|
                 after.strip_prefix(extension).is_some_and(|rest| rest.trim_start().starts_with("파일")));
             let Some(extension) = extension else { continue; };
-            let name = before.trim_end().rsplit(char::is_whitespace).next().unwrap_or("")
+            let located_name = ["바탕화면에", "바탕 화면에", "데스크톱에", "데스크탑에"]
+                .iter().find_map(|marker| before.split_once(marker).map(|(_, name)|name.trim()));
+            let name = located_name.unwrap_or_else(||before.trim_end().rsplit(char::is_whitespace).next().unwrap_or(""))
                 .trim_matches(|ch| matches!(ch, '`' | '\'' | '"'));
             if name.is_empty() || name.contains('/') || name.contains('\\') || name.chars().any(char::is_control) {
                 continue;
@@ -205,8 +215,45 @@ pub(crate) fn infer_criteria(goal: &str) -> Vec<Value> {
                 *check = json!({"type":"file_equals","path":path,"content":content,"inferred":true});
             }
         }
+        if check["type"] == "file_changed" && simple_file_creation_goal(goal) {
+            check["type"] = json!("file_exists");
+            check["creationOnly"] = json!(true);
+        }
     }
     paths
+}
+
+pub(crate) fn simple_file_creation_goal(input: &str) -> bool {
+    let lower = input.to_lowercase();
+    input.chars().count() <= 240 && !input.contains('\n')
+        && ["만들", "생성", "create"].iter().any(|word|lower.contains(word))
+        && !["그리고", "다음", "한 뒤", "후에", "then", "after", ";", "내용", "적어", "써", "저장", "테스트", "빌드", "다운로드", "복사", "수정", "편집", "write", "with", "containing", "copy", "download"]
+            .iter().any(|word|lower.contains(word))
+}
+
+fn desktop_filename(goal: &str) -> Option<String> {
+    let rest = ["바탕화면에", "바탕 화면에", "데스크톱에", "데스크탑에"]
+        .iter().find_map(|marker| goal.split_once(marker).map(|(_, rest)|rest.trim_start()))?;
+    for (index, ch) in rest.char_indices() {
+        if ch != '.' { continue; }
+        let extension = rest[index + 1..].chars().take_while(|ch|ch.is_ascii_alphanumeric()).collect::<String>();
+        if !["txt","md","rs","json","py","js","ts","tsx","csv","html","toml","yaml","yml","sh"].contains(&extension.as_str()) {
+            continue;
+        }
+        let end = index + 1 + extension.len();
+        let suffix = rest[end..].trim_start_matches(|ch:char|ch.is_whitespace() || matches!(ch,'`'|'\''|'"'));
+        if !["파일", "를", "을", "만들", "생성", "삭제", "제거"].iter().any(|word|suffix.starts_with(word)) {
+            continue;
+        }
+        let name = rest[..end].trim().trim_matches(|ch|matches!(ch,'`'|'\''|'"'));
+        if name.is_empty() || name.contains('/') || name.contains('\\')
+            || name.chars().any(char::is_control)
+            || ["그리고", "읽고", "확인하고", ";"].iter().any(|marker|name.contains(marker)) {
+            return None;
+        }
+        return Some(format!("~/Desktop/{name}"));
+    }
+    None
 }
 
 /// Recognize a bounded, unambiguous owner contract. The hash is captured
@@ -341,7 +388,7 @@ pub(crate) fn baseline_checks(state: &AppState, mut checks: Vec<Value>) -> Value
                 bytes, check["old"].as_str()?, check["new"].as_str()?,
             )).map(|expected| format!("{:x}", Sha256::digest(expected.as_bytes())))
                 .map(Value::String).unwrap_or(Value::Null);
-        } else if check["type"] == "file_changed"
+        } else if check["type"] == "file_changed" || check["creationOnly"] == true
             || (check["type"] == "file_equals" && check["inferred"] == true)
         {
             check["baseline"] = resolve_path(state, check["path"].as_str().unwrap_or(""))
@@ -481,6 +528,7 @@ pub(crate) fn acceptance_gaps(
         )
     });
     let mut verified_artifact_change = false;
+    let mut verified_creation_state = false;
     for check in checks {
         let kind = check["type"].as_str().unwrap_or("");
         let path = check["path"].as_str().unwrap_or("");
@@ -532,6 +580,9 @@ pub(crate) fn acceptance_gaps(
             || (kind == "file_equals" && check["inferred"] == true)) {
             verified_artifact_change = true;
         }
+        if passed && kind == "file_exists" && check["creationOnly"] == true {
+            verified_creation_state = true;
+        }
         if !passed {
             if kind == "file_replace_exact" {
                 gaps.push(format!("The exact replacement in {path} has not been verified. Preserve every other byte of the original file."));
@@ -549,7 +600,8 @@ pub(crate) fn acceptance_gaps(
         )
     });
     if looks_actionable(goal) && !evidence.iter().any(is_action_evidence) && !has_explicit_tool
-        && !(verified_artifact_change && executed_effect) {
+        && !(verified_artifact_change && executed_effect)
+        && !(verified_creation_state && evidence.iter().any(successful_evidence)) {
         gaps.push("변경 또는 실행을 입증하는 성공한 도구 결과가 없습니다. 조회 결과만으로 행동 목표를 완료할 수 없습니다.".into());
     }
     gaps
@@ -559,6 +611,21 @@ pub(crate) fn acceptance_gaps(
 #[cfg(test)]
 mod inference_tests {
     use super::*;
+
+    #[test]
+    fn desktop_filename_with_spaces_is_never_replaced_by_its_last_word() {
+        for input in [
+            "바탕화면에 코덱스 ㅂㅅ.md파일만들어봐라",
+            "바탕화면에 `코덱스 ㅂㅅ.md` 파일을 만들어줘",
+            "바탕화면에 코덱스 ㅂㅅ라는 md파일 만들어줘",
+            "바탕 화면에 \"오늘 할 일.txt\" 파일을 만들어줘",
+        ] {
+            let checks = infer_criteria(input);
+            assert_eq!(checks.len(), 1, "{input}: {checks:?}");
+            let expected = if input.contains("오늘") {"~/Desktop/오늘 할 일.txt"} else {"~/Desktop/코덱스 ㅂㅅ.md"};
+            assert_eq!(checks[0]["path"], expected, "{input}");
+        }
+    }
 
     #[test]
     fn named_korean_desktop_file_has_a_concrete_acceptance_target() {

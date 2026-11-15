@@ -706,7 +706,7 @@ async fn run_turn_body(
         .unwrap_or((2, 2));
     let mut op_seq = 0u64;
 
-    let mut metadata = json!({"authorKind":"agent","roomId":session.get("roomId"),"replyToMessageId":reply_to,"executionId":execution_id,"taskId":task_id,"reasoningLanguageRequested":request.reasoning_language,"reasoningLanguageEffective":request.effective_reasoning_language(),"reasoningTranslated":false});
+    let mut metadata = json!({"runtime":"dominion-agent-sdk","authorKind":"agent","roomId":session.get("roomId"),"replyToMessageId":reply_to,"executionId":execution_id,"taskId":task_id,"reasoningLanguageRequested":request.reasoning_language,"reasoningLanguageEffective":request.effective_reasoning_language(),"reasoningTranslated":false});
 
     let mut provider = select_provider(state, request, &session)?;
     let allow_provider_fallback = session["rsiRun"]!=true;
@@ -750,6 +750,9 @@ async fn run_turn_body(
             .filter(|seconds|*seconds>0).map(std::time::Duration::from_secs)
             .unwrap_or(std::time::Duration::from_secs(365*24*3600))
     }else{MAX_ELAPSED};
+    let simple_creation_target = if !session["roomId"].is_string() && session["rsiRun"] != true {
+        simple_file_creation(state, &request.input, &acceptance)
+    } else { None };
     let mut tool_definitions = if request.tools_enabled && request.tools_execution_enabled {
         tools::definitions()
     } else {
@@ -773,6 +776,28 @@ async fn run_turn_body(
     };
     if tool_discovery_applies(is_room, session["rsiRun"] == true) {
         tool_definitions = select_tool_definitions(tool_definitions, &request.input, &discovery);
+    }
+    if simple_creation_target.is_some() {
+        // A concrete file creation has no use for web, memory, delegation or
+        // RSI schemas. Keep native file access and shell fallback available.
+        let workspace_root = state.config.workspace.canonicalize()
+            .unwrap_or_else(|_|state.config.workspace.clone());
+        let inside_workspace = simple_creation_target.as_ref().is_some_and(|path|
+            path.starts_with(&workspace_root));
+        tool_definitions = tools::definitions().into_iter().filter(|definition| {
+            let name = tool_name(definition);
+            matches!(name, "shell_exec" | "terminal_exec") || if inside_workspace {
+                matches!(name, "workspace_list" | "workspace_read" | "workspace_write")
+            } else {
+                matches!(name, "file_list" | "file_read" | "file_write")
+            }
+        }).collect();
+        if !request.tools_enabled || !request.tools_execution_enabled { tool_definitions.clear(); }
+        crate::engine::algorithms::mark_unrated(state, execution_id, "tool.discovery", "single-file task catalog");
+        if let Some(mut execution) = state.store.get("execution", execution_id) {
+            execution["contextPolicy"] = json!("single-file-creation");
+            state.store.put("execution", &execution);
+        }
     }
     if session["rsiRun"]==true {
         tool_definitions.retain(|definition| tools::rsi_allowed(tool_name(definition)));
@@ -1175,11 +1200,39 @@ async fn run_turn_body(
     let mut rsi_last_program_phase = String::new();
     let mut rsi_last_rule_id = String::new();
 
+    let _kernel_checkpoint = KernelCheckpoint { state, execution_id, budget: budget.clone() };
+    let mut kernel_state = dominion_agent_sdk::Snapshot::from_request(&dominion_agent_sdk::RunRequest {
+        id: execution_id.to_string(), instruction: request.input.clone(),
+        owner_instructions: String::new(), strategy: dominion_agent_sdk::Strategy::Balanced,
+        limits: dominion_agent_sdk::Limits::default(), allowed_tools: vec![], checks: vec![],
+        require_evidence: false,
+    });
+    let kernel_journal = ChatKernelJournal { state, execution_id, session_id, generation };
+    dominion_agent_sdk::Journal::save(&kernel_journal, &kernel_state)?;
+    if let Some(path) = simple_creation_target.as_ref().filter(|path|
+        std::fs::metadata(path).is_ok_and(|metadata|metadata.is_file())
+            && !strategy_candidates.iter().any(|strategy|
+                strategy["verification"]["type"] == "procedure"
+                    && crate::engine::procedure::applies(strategy, &request.input, None, None))) {
+        // Creation is a desired state, not an instruction to overwrite an
+        // existing file until its hash changes. The host can report this
+        // independently observed state without a paid model or a mutation.
+        final_content = format!("파일이 이미 있습니다: `{}`. 내용을 유지했습니다.", path.display());
+        acceptance_passed = true;
+        finished = true;
+        metadata["completionSource"] = json!("existing_artifact");
+        if let Some(mut execution) = state.store.get("execution", execution_id) {
+            execution["deterministicShortcut"] = json!({"kind":"file_already_exists","modelCalls":0,"tokens":0});
+            execution["artifactVerification"] = json!({"path":path,"exists":true,"verified":true});
+            state.store.put("execution", &execution).ok_or("파일 확인 결과를 저장할 수 없습니다.")?;
+        }
+        let _ = tx.send(json!({"type":"text","text":final_content}));
+    }
     let mut program_finished = program_policy.is_none();
     // `toolsEnabled` controls whether the model may call tools. It is not an
     // execution permission for the Rust harness; harness nodes use the same
     // approval, cancellation and budget policy as model tool calls.
-    let harness_messages = if request.tools_execution_enabled {
+    let harness_messages = if request.tools_execution_enabled && !finished {
         run_harness_nodes(
         state,
         tx,
@@ -1199,12 +1252,8 @@ async fn run_turn_body(
     };
     messages.extend(harness_messages);
 
-    for round in 0..max_rounds {
-        if finished { break; }
-        if !budget.charge_round() {
-            mark_budget_exhausted(state, execution_id);
-            return Err("모델 라운드 예산을 초과했습니다.".into());
-        }
+    while !finished {
+        let Some(round) = budget.next_round() else { break; };
         if budget.expired() {
             return Err("실행 시간 제한(10분)을 초과했습니다.".into());
         }
@@ -1520,6 +1569,9 @@ async fn run_turn_body(
             counters.model_calls += 1;
             counters.iterations = round as u32 + 1;
         }
+        kernel_state.model_in_flight = true;
+        kernel_state.model_calls = metrics.lock().unwrap().model_calls as usize;
+        dominion_agent_sdk::Journal::save(&kernel_journal, &kernel_state)?;
         let completion_result = stream_completion(
             state,
             &client,
@@ -1543,6 +1595,8 @@ async fn run_turn_body(
             }
         }
         let (mut completion, selected_provider) = completion_result?;
+        kernel_state.model_in_flight = false;
+        dominion_agent_sdk::Journal::save(&kernel_journal, &kernel_state)?;
         if selected_provider.id != provider.id {
             // The streamed response came from a fallback route; later rounds
             // must continue on that route rather than retrying the dead one.
@@ -1970,24 +2024,20 @@ async fn run_turn_body(
             .as_ref()
             .and_then(|algorithm| algorithm["implementation"].as_str())
             .unwrap_or("as-written");
-        // Preserve provider-declared order. Reads may be parallel only while
-        // adjacent: a write, shell command or delegation is a hard barrier.
+        // Native provider calls retain their declared order. Effects are barriers;
+        // the shared Rust kernel only batches adjacent independent observations.
         let round_calls = completion.tool_calls.clone();
-        if ordering_kernel == "read-first"
-            && round_calls.iter().any(|call| !tool_is_read_only(&call.name))
-        {
+        if ordering_kernel == "read-first" && round_calls.iter().any(|call| !tool_is_read_only(&call.name)) {
             crate::engine::algorithms::mark_unrated(
-                state, execution_id, "execution.ordering",
-                "effect ordering barrier preserved",
+                state, execution_id, "execution.ordering", "effect ordering barrier preserved",
             );
         }
         let combination = crate::engine::algorithms::choose_for_agent(
-            state, "tool.combination", request.agent_id.as_deref(), None,
+            state, "tool.combination", request.agent_id.as_deref(), Some(execution_id),
         );
         let parallel_reads = combination.as_ref()
             .and_then(|algorithm| algorithm["implementation"].as_str()) == Some("parallel-reads");
-        let mut dispatched =
-            std::collections::HashMap::<usize, Result<(Value, bool, String), String>>::new();
+        let mut dispatched = std::collections::HashMap::new();
         let mut ordering_used = false;
         let mut ordering_ok = true;
         let mut rsi_patch_written = false;
@@ -2225,49 +2275,46 @@ async fn run_turn_body(
                 if parallel_reads && tool_is_read_only(&call.name) {
                     let candidate_end = adjacent_read_batch_end(&round_calls, call_index, 4);
                     while end < candidate_end {
-                        if !parallel_read_admitted(
-                            &round_calls[end], &session, &round_tools,
-                            &strategy_candidates, &request.input, &completed_operations,
-                        ) || !budget.can_execute_tool() {
-                            break;
-                        }
-                        if !budget.charge_proposal() || !budget.charge_tool() {
-                            break;
-                        }
+                        let next = &round_calls[end];
+                        if !parallel_read_admitted(next, &session, &round_tools,
+                            &strategy_candidates, &request.input, &completed_operations)
+                            || !budget.can_execute_tool() { break; }
+                        if !budget.charge_proposal() || !budget.charge_tool() { break; }
                         end += 1;
                     }
                 }
-                let mut futures = Vec::new();
+                let mut prepared = Vec::new();
                 for index in call_index..end {
-                    let parsed = if index == call_index {
-                        arguments.clone()
-                    } else {
-                        // Preflight admission already validated a JSON object.
-                        serde_json::from_str::<Value>(&round_calls[index].arguments)
-                            .map_err(|error| format!("도구 인수 해석 실패: {error}"))?
-                    };
                     op_seq += 1;
-                    futures.push(dispatch_tool_call(
-                        state, tx, &session, request, session_id, execution_id,
-                        &round_calls[index], parsed, metrics, op_seq, round, index,
-                        provider.tool_mode == "compat", "model", None, None, None,
-                    ));
+                    let parsed = if index == call_index { arguments.clone() }
+                        else { serde_json::from_str(&round_calls[index].arguments)
+                            .map_err(|error| format!("도구 인수 해석 실패: {error}"))? };
+                    prepared.push((index, op_seq, parsed));
                 }
-                let results = futures_util::future::join_all(futures).await;
-                if end > call_index + 1 {
-                    let _ = crate::engine::algorithms::choose_for_agent(
-                        state, "tool.combination", request.agent_id.as_deref(), Some(execution_id),
-                    );
-                    crate::engine::algorithms::mark_signal(
-                        state, execution_id, "tool.combination",
-                        results.iter().all(|result| result.as_ref().is_ok_and(|(_, ok, _)| *ok)),
-                    );
+                kernel_state.step = round + 1;
+                kernel_state.model_calls = metrics.lock().unwrap().model_calls as usize;
+                kernel_state.charged_tokens = total_tokens;
+                let actions = prepared.iter().map(|(index, _, args)| dominion_agent_sdk::Action {
+                    id: format!("{round}:{}", round_calls[*index].id),
+                    tool: round_calls[*index].name.clone(), arguments: args.clone(), depends_on: vec![],
+                }).collect::<Vec<_>>();
+                let dispatcher = ChatKernelDispatcher {
+                    state, tx, session: &session, request, session_id, execution_id,
+                    metrics, prepared: &prepared, calls: &round_calls, round,
+                    compat: provider.tool_mode == "compat",
+                };
+                let results = dominion_agent_sdk::dispatch_batch(
+                    &mut kernel_state, &actions, &dispatcher, &kernel_journal,
+                ).await?;
+                if prepared.len() > 1 {
+                    crate::engine::algorithms::mark_signal(state, execution_id,
+                        "tool.combination", results.iter().all(|result|
+                            result.as_ref().is_ok_and(|(_, ok, _)| *ok)));
                 }
-                for (index, result) in (call_index..end).zip(results) {
+                for ((index, _, _), result) in prepared.into_iter().zip(results) {
                     dispatched.insert(index, result);
                 }
-                dispatched.remove(&call_index)
-                    .ok_or_else(|| "도구 배치 결과가 없습니다.".to_string())??
+                dispatched.remove(&call_index).ok_or("도구 배치 결과가 없습니다.")??
             };
             ordering_used = true;
             if !ok {
@@ -2413,6 +2460,25 @@ async fn run_turn_body(
                         "content": "모든 검증 조건이 충족되었습니다. 추가 도구 호출 없이 최종 답변만 작성하세요."
                     }));
                     let _ = tx.send(json!({"type": "acceptance_passed"}));
+                    if let Some(path) = simple_creation_target.as_ref().filter(|path|
+                        std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file() && metadata.len() == 0)
+                        && !strategy_candidates.iter().any(|strategy|
+                            strategy["verification"]["type"] == "procedure"
+                                && crate::engine::procedure::applies(strategy, &request.input, None, None))) {
+                        // The native action has already finished and the host
+                        // verified the exact owner-bound artifact. Reporting
+                        // that fact does not require another paid model turn.
+                        final_content = format!("파일을 만들었습니다: `{}`", path.display());
+                        metadata["completionSource"] = json!("verified_artifact");
+                        // This provider projection predates the just-finished
+                        // tool exchange. Let the next turn derive that full
+                        // exchange from the durable transcript before adding
+                        // this host-generated summary to the working view.
+                        continuation_projection = None;
+                        let _ = tx.send(json!({"type":"text","text":final_content}));
+                        finished = true;
+                        break;
+                    }
                 }
             }
         }
@@ -2440,6 +2506,13 @@ async fn run_turn_body(
         return Err("모델이 빈 응답을 반환했습니다.".into());
     }
 
+    kernel_state.status = dominion_agent_sdk::Status::Completed;
+    kernel_state.answer = Some(final_content.clone());
+    kernel_state.model_calls = metrics.lock().unwrap().model_calls as usize;
+    kernel_state.charged_tokens = total_tokens;
+    dominion_agent_sdk::Journal::save(&kernel_journal, &kernel_state)?;
+
+
     if let Some(mut execution) = state.store.get("execution", execution_id) {
         execution["acceptancePassed"] = json!(acceptance_passed);
         execution["acceptanceText"] = acceptance
@@ -2454,6 +2527,7 @@ async fn run_turn_body(
                 .collect::<Vec<_>>()
         );
         execution["budget"] = budget.snapshot();
+        execution["runtime"] = json!("dominion-agent-sdk");
         state.store.put("execution", &execution);
     }
     // Attach the usage to the message so every client can show what the turn
@@ -2973,6 +3047,76 @@ fn restore_program_state(
     Ok(())
 }
 
+struct ChatKernelJournal<'a> {
+    state: &'a AppState,
+    execution_id: &'a str,
+    session_id: &'a str,
+    generation: u64,
+}
+impl dominion_agent_sdk::Journal for ChatKernelJournal<'_> {
+    fn save(&self, snapshot: &dominion_agent_sdk::Snapshot) -> Result<(), String> {
+        let mut execution = self.state.store.get("execution", self.execution_id)
+            .ok_or("Rust 코어 실행 기록이 없습니다.")?;
+        execution["runtime"] = json!("dominion-agent-sdk");
+        execution["kernelState"] = serde_json::to_value(snapshot).map_err(|error| error.to_string())?;
+        self.state.store.put("execution", &execution)
+            .ok_or("Rust 코어 체크포인트를 저장할 수 없습니다.")?;
+        Ok(())
+    }
+    fn cancelled(&self, _: &str) -> bool {
+        self.state.is_cancelled(self.session_id)
+            || self.state.cancellation_generation(self.session_id) != self.generation
+    }
+}
+
+struct ChatKernelDispatcher<'a> {
+    state: &'a AppState,
+    tx: &'a UnboundedSender<Value>,
+    session: &'a Value,
+    request: &'a TurnRequest,
+    session_id: &'a str,
+    execution_id: &'a str,
+    metrics: &'a std::sync::Mutex<Metrics>,
+    prepared: &'a [(usize, u64, Value)],
+    calls: &'a [ToolCall],
+    round: usize,
+    compat: bool,
+}
+impl dominion_agent_sdk::Dispatcher for ChatKernelDispatcher<'_> {
+    type Output = (Value, bool, String);
+    fn execute<'a>(&'a self, action: &'a dominion_agent_sdk::Action)
+        -> dominion_agent_sdk::BoxFuture<'a, Result<dominion_agent_sdk::DispatchResult<Self::Output>, String>> {
+        Box::pin(async move {
+            let (index, seq, _) = self.prepared.iter().find(|(index, _, _)|
+                action.id == format!("{}:{}", self.round, self.calls[*index].id))
+                .ok_or("Rust 코어 도구 호출의 원문을 찾을 수 없습니다.")?;
+            let output = dispatch_tool_call(
+                self.state, self.tx, self.session, self.request, self.session_id,
+                self.execution_id, &self.calls[*index], action.arguments.clone(),
+                self.metrics, *seq, self.round, *index, self.compat, "model", None, None, None,
+            ).await?;
+            Ok(dominion_agent_sdk::DispatchResult {
+                success: output.1, observation: output.0.clone(), output,
+            })
+        })
+    }
+}
+
+struct KernelCheckpoint<'a> {
+    state: &'a AppState,
+    execution_id: &'a str,
+    budget: dominion_agent_sdk::runtime::BudgetLedger,
+}
+impl Drop for KernelCheckpoint<'_> {
+    fn drop(&mut self) {
+        if let Some(mut execution) = self.state.store.get("execution", self.execution_id) {
+            execution["runtime"] = json!("dominion-agent-sdk");
+            execution["budget"] = self.budget.snapshot();
+            self.state.store.put("execution", &execution);
+        }
+    }
+}
+
 /// Limits parallel reads to a contiguous observation-only segment.
 /// No batch can overtake a write, shell command or other effect.
 pub(super) fn adjacent_read_batch_end(calls: &[ToolCall], start: usize, max_batch: usize) -> usize {
@@ -2981,7 +3125,6 @@ pub(super) fn adjacent_read_batch_end(calls: &[ToolCall], start: usize, max_batc
     })
 }
 
-/// A future read cannot bypass enforced procedures or RSI tool permissions.
 fn parallel_read_admitted(
     call: &ToolCall, session: &Value, definitions: &[Value],
     strategies: &[Value], input: &str, completed: &[Value],
@@ -4936,6 +5079,18 @@ struct ActionReview {
     next_action: Option<String>,
 }
 
+fn simple_file_creation(
+    state: &AppState, input: &str, acceptance: &Option<(String, Value)>,
+) -> Option<std::path::PathBuf> {
+    if !verification::simple_file_creation_goal(input) { return None; }
+    let (_, checks) = acceptance.as_ref()?;
+    let checks = checks.as_array()?;
+    let [check] = checks.as_slice() else { return None; };
+    if check["type"] != "file_exists" || check["inferred"] != true
+        || check["creationOnly"] != true { return None; }
+    crate::engine::verification::resolve_path(state, check["path"].as_str()?).ok()
+}
+
 /// Deterministic single-step file work should not pay for an extra planner
 /// call. Multi-step, long or unverified requests still get one.
 fn needs_plan(input: &str, acceptance: &Option<(String, Value)>) -> bool {
@@ -5485,6 +5640,14 @@ pub(super) fn finalize_execution(
         }
     }
     let status = record["status"].as_str().unwrap_or("failed").to_string();
+    if record["kernelState"].is_object() {
+        record["kernelState"]["status"] = json!(match status.as_str() {
+            "completed" => "completed", "cancelled" => "cancelled", _ => "failed",
+        });
+        record["kernelState"]["modelCalls"] = json!(counters.model_calls);
+        record["kernelState"]["chargedTokens"] = json!(counters.tokens);
+        if let Err(message) = result { record["kernelState"]["error"] = json!(message); }
+    }
     record["phase"] = json!(final_phase(&status));
     record["phaseUpdatedAt"] = json!(chrono::Utc::now().to_rfc3339());
     for mut operation in state.store.all("execution_operation") {

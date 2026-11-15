@@ -9,7 +9,7 @@ pub mod runtime;
 use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::HashMap, future::Future, pin::Pin};
+use std::{collections::{HashMap, HashSet}, future::Future, pin::Pin};
 mod scheduler;
 mod acceptance;
 mod context;
@@ -187,6 +187,65 @@ pub trait Journal: Send + Sync {
     /// The owner may redirect a running task; new instructions override stale plans.
     fn directive(&self, _id: &str) -> Result<Option<String>, String> { Ok(None) }
 }
+
+/// Native tool protocols may retain additional host data (stream events,
+/// receipts and message framing) without forcing the model through JSON prose.
+pub struct DispatchResult<T> {
+    pub output: T,
+    pub observation: Value,
+    pub success: bool,
+}
+
+pub trait Dispatcher: Send + Sync {
+    type Output: Send;
+    fn execute<'a>(&'a self, action: &'a Action)
+        -> BoxFuture<'a, Result<DispatchResult<Self::Output>, String>>;
+}
+
+/// The same write-ahead dispatch barrier serves the structured planner and
+/// native streaming chat. The host supplies approval/effect implementation.
+/// An interrupted batch remains explicitly in flight in the durable journal.
+pub async fn dispatch_batch<D: Dispatcher>(
+    run: &mut Snapshot, actions: &[Action], dispatcher: &D, journal: &dyn Journal,
+) -> Result<Vec<Result<D::Output, String>>, String> {
+    if !matches!(run.status, Status::Running) {
+        return Err("종료된 실행에 도구를 추가할 수 없습니다.".into());
+    }
+    if journal.cancelled(&run.id) {
+        return Err("실행이 취소되었습니다.".into());
+    }
+    if !run.in_flight.is_empty() {
+        return Err("이전 도구 실행의 결과를 먼저 확인해야 합니다.".into());
+    }
+    let mut ids = HashSet::new();
+    for action in actions {
+        if action.id.trim().is_empty() || !ids.insert(&action.id)
+            || run.receipts.iter().any(|receipt| receipt.id == action.id) {
+            return Err("중복되거나 비어 있는 도구 실행 ID입니다.".into());
+        }
+        if action.depends_on.iter().any(|dependency|
+            !run.receipts.iter().any(|receipt| &receipt.id == dependency && receipt.success)) {
+            return Err(format!("도구 실행의 선행 조건이 충족되지 않았습니다: {}", action.id));
+        }
+    }
+    run.in_flight = actions.to_vec();
+    journal.save(run)?;
+    let results = join_all(actions.iter().map(|action| dispatcher.execute(action))).await;
+    let mut outputs = Vec::with_capacity(results.len());
+    for (action, result) in actions.iter().zip(results) {
+        let (success, observation, output) = match result {
+            Ok(result) => (result.success, result.observation, Ok(result.output)),
+            Err(error) => (false, json!({"error":error}), Err(error)),
+        };
+        run.receipts.push(Receipt { id: action.id.clone(), tool: action.tool.clone(),
+            arguments: action.arguments.clone(), success, result: observation, step: run.step });
+        outputs.push(output);
+    }
+    run.in_flight.clear();
+    journal.save(run)?;
+    Ok(outputs)
+}
+
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
