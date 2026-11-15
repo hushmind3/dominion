@@ -31,42 +31,11 @@
 절차 추출은 비활성 스킬 초안을 만듭니다. 검토·활성화한 스킬만 다음 턴에 적용합니다.
 이 파이프라인은 가중치 훈련이나 모델 자체의 성능 향상을 보장하는 기능이 아닙니다.
 
-## 목표 하네스
+## 자율 실행과 현재 SDK 계약
 
-모델은 계획과 검토를 제안하고, Rust가 완료 상태를 결정합니다.
-`POST /api/goals`에서 명시적인 `successCriteria`를 지정할 수 있습니다.
+기존 `POST /api/goals` 경로와 구형 목표 전용 작업 실행기는 2026-11-15 메인에서 제거되었습니다. 현재 실행 진입점은 `POST /api/jobs` (`prompt`/`workflow`), `POST /api/chat` (SSE), `POST /api/workflows/:id/run`, `POST /api/rooms/:id/run`입니다. 독립 평가와 작업 검증은 `engine::verification`을 사용합니다. 실행·승인·복구의 권위는 Rust 엔진과 SQLite에 있으며 클라이언트가 상태를 조작할 수 없습니다.
 
-```json
-{
-  "goal": "report.md 파일을 작성하고 결과를 확인해라",
-  "maxIterations": 5,
-  "executor": {"agentId": "my-agent"},
-  "successCriteria": [
-    {"type": "file_changed", "path": "report.md"},
-    {"type": "file_contains", "path": "report.md", "contains": "검증 결과"}
-  ]
-}
-```
-
-| type | 필수 값 | Rust가 확인하는 것 |
-| --- | --- | --- |
-| `file_exists` | `path` | 경로 존재 |
-| `file_absent` | `path` | 경로 부재 |
-| `file_changed` | `path` | 실행 시작 전 상태와 비교한 변경 |
-| `file_contains` | `path`, `contains` | 파일의 실제 내용 |
-| `tool_succeeded` | `tool` | 해당 이름의 실제 성공 결과 |
-| `command_succeeded` | `command` | 동일 명령의 종료 코드 0 |
-
-상대 경로는 워크스페이스 안으로 제한하고 심볼릭 링크 이탈을 거부합니다.
-절대 경로는 `file_*` 도구와 같은 명시적 컴퓨터 경로입니다.
-조건이 없으면 목표 문장에서 파일 경로와 변경·삭제 의도를 보수적으로 추론합니다.
-셸 명령의 임의 의미를 완전히 판정할 수는 없으므로 복잡한 작업에는 명시적 조건을 사용하세요.
-`tool_succeeded`는 그 도구의 성공만 확인하며 더 넓은 업무 결과를 보장하지 않습니다.
-
-실행 후 검토 모델에 실제 도구 인수·결과와 Rust 검증의 미충족 조건을 전달합니다.
-검토 JSON이 올바르고, 완료 판정이고, 미충족 조건도 없어야 `completed`가 됩니다.
-미완료는 수정 턴으로 이어지고 한도에 도달하면 `needs_review`입니다.
-실패·취소·검토 필요 상태는 부모 작업에도 그대로 반영합니다.
+`SDK` 디렉터리의 Rust·TypeScript 패키지는 이 동일한 엔진/API를 호출하고 /api/events?after=N 으로 내구성 있는 이벤트를 재생합니다. 참고: [SDK 구조](docs/SDK-ARCHITECTURE-2026-11-15.md) · [Rust](sdk/rust/README.md) · [TypeScript](sdk/typescript/README.md).
 
 ## 실행 기록·복구·취소
 
@@ -78,10 +47,9 @@ SQLite에 실행·사용자 메시지·도구 호출 시작을 저장하지 못�
 설정할 수 있습니다. 동일 세션의 동시 턴은 차단합니다. 에이전트별 모델·지시·기억을 적용하고,
 공유 회의 기록에서 다른 화자의 발언을 자신의 assistant 메시지로 전달하지 않습니다.
 
-목표·워크플로·회의·프롬프트·Discord는 부수 효과 전에 체크포인트를 기록합니다.
+워크플로·회의·프롬프트·Discord는 부수 효과 전에 체크포인트를 기록합니다.
 중단 지점의 실행/전송 여부가 불확실하면 자동 반복하지 않고 `needs_review`로 남깁니다.
-완료한 회의 발언과 워크플로 단계는 저장된 커서로 건너뜁니다. 검토가 끝나지 않은 목표도
-확인 없이 다음 실행 턴을 시작하지 않습니다. 종료 상태의 목표를 재시작으로 다시 열지 않습니다.
+완료한 회의 발언과 워크플로 단계는 저장된 커서로 건너뜁니다. 불확실한 외부 실행 상태는 확인 없이 재실행하지 않습니다.
 
 취소는 DB에도 저장됩니다. 해당 세션의 대기 작업과 실행 중 작업을 취소하고,
 새 UI 대화가 시작되어도 이전 작업의 취소를 되돌리지 않습니다.
