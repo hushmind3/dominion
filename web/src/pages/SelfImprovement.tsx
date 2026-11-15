@@ -18,13 +18,11 @@ type SystemDesign={component?:string;components?:string[];componentFiles?:Record
 type ArchitectureTarget={role?:string;domain?:string;path?:string;verifiedRoleChanged?:boolean}
 type SystemControllerPlan={source?:string;generatorCommit?:string;domain?:string;historyCount?:number;architectureTarget?:ArchitectureTarget;architectureFrontier?:ArchitectureTarget[]}
 type SystemEvidence={verifiedLineageLength?:number;rebuiltHandoffs?:number;sourceChangedComponents?:string[];missingComponents?:string[];metaImprovementObserved?:boolean;inventedMethodTransferred?:boolean;demonstrated?:boolean}
-type CrossDomainCycle={domains:[string,string,string];generatorCommits:string[];acceptedCommits:string[];candidateIds:string[];attempts:number[]}
-type CrossDomainTransfer={demonstrated:boolean;verifiedGenerations:number;cycles:CrossDomainCycle[];nextReturnDomain?:string|null;proofKind:string}
 type EvaluationProfile={id:string;name:string;taskCount:number;requiredComponents:string[];sha256?:string}
 type Campaign={id:string;evaluationProfile?:EvaluationProfile;status:string;phase:string;attempts?:number;acceptedGenerations?:number;tokens?:number;
- systemEvolution?:boolean;systemEvidence?:SystemEvidence;crossDomainTransfer?:CrossDomainTransfer;systemSourceWrites?:number;evaluationEpisodes?:number;metaEvaluationProgress?:{arm?:string;task?:number};
+ systemEvolution?:boolean;systemEvidence?:SystemEvidence;systemSourceWrites?:number;evaluationEpisodes?:number;metaEvaluationProgress?:{arm?:string;task?:number};
  reusedArtifacts?:number;preservedFailureAttempts?:number;modelCalls?:number;verifiedSourceWrites?:number;candidateCount?:number;applicationError?:string;applyWhenFinished?:boolean;
- activeWorker?:{phase?:string;generatorCommit?:string;focusFiles?:string[];proofStatus?:'verified'|'pending'|'missing_or_mismatch'|'not_required'};diagnosis?:{failed?:number};
+ activeWorker?:{phase?:string;generatorCommit?:string;focusFiles?:string[]};diagnosis?:{failed?:number};
  objective?:string;providerId?:string;model?:string;headCommit?:string;baseCommit?:string;sourceSnapshot?:boolean;
  continuedFrom?:string;selectedVersionRunning?:boolean;installJobId?:string;
  limits?:{maxAttempts?:number;tokenBudget?:number;timeBudgetSeconds?:number};
@@ -34,11 +32,10 @@ type Campaign={id:string;evaluationProfile?:EvaluationProfile;status:string;phas
  history?:{attempt:number;accepted:boolean;selection?:string;error?:string;domain:string;newFindings?:number;generatorCommit?:string;acceptedCommit?:string;methodExecutions?:{result?:{followed?:boolean;unknown?:boolean}}[];domainSelection?:string;searchStrategy?:{id?:string;name?:string;implementation?:string;mode?:string};trialOutcome?:{status?:string;verdict?:string};focusFiles?:string[];focusSelection?:FocusSelection;
  architectureTarget?:ArchitectureTarget;systemBlueprintVerified?:boolean;systemBlueprint?:SystemBlueprint;systemDesign?:SystemDesign;
  improvementDirective?:{mode?:string;sourceGenerationId?:string};
- workerProofVerified?:boolean;workerProof?:{source?:string;binarySha256?:string;controllerSha256?:string;generatorCommit?:string};pairedRevalidated?:boolean;
  controllerPlan?:SystemControllerPlan;metaEvaluation?:{tasks?:number;domains?:string[];perEpisodeTokenLimit?:number;measurement?:{metrics?:{quality?:{baseline:number;candidate:number}}};episodes?:{arm:string;task:number;quality:number;usage?:{calls?:number;totalTokens?:number}}[]}}[]}
 type VerifyRow={index:number;attempt?:number;accepted:boolean;domain?:string;generatorCommit?:string;acceptedCommit?:string;
  target?:string;independentReceipt:boolean;metaTransfer:boolean;regressions?:number;improvedHoldoutDomains?:string[];metaHoldoutGains?:number;reason?:string}
-type VerifyReport={campaignId:string;systemEvidence?:SystemEvidence;crossDomainTransfer?:CrossDomainTransfer;capabilityDemonstrated:boolean;verifiedStreak:number;
+type VerifyReport={campaignId:string;systemEvidence?:SystemEvidence;capabilityDemonstrated:boolean;verifiedStreak:number;
  required:{verifiedStreak:number;holdoutDomains:number;metaTransfer:boolean};generations:VerifyRow[]}
 const SAVED='dominion.rsi.evolutionJob'
 const PREFERENCES='dominion.rsi.preferences'
@@ -185,7 +182,7 @@ export function SelfImprovementPage(){
   try{
    const job=await post<{id:string;status:string}>('/api/rsi/start',{
     providerId,model,...(!continuing&&reportedIssue?{issueId:reportedIssue.id}:{}),evaluationProfileId:continuing?campaign?.evaluationProfile?.id||'default':evaluationProfileId,localOnly:localOnly||workload==='night',...(continuing&&campaign?{continueFrom:campaign.id}:{request}),mode:'continuous',confirmation:'START_RSI_EVOLUTION',
-    selectionPolicy:selection,evolutionTarget:'system',applyWhenFinished:true,expandAfterGain:true,crossDomainCycle:selection==='automatic',nativeInduction:false,reasoningEffort:'low',maxAttempts:budget.maxAttempts,tokenBudget:budget.tokenBudget,timeBudgetSeconds:budget.timeBudgetSeconds
+    selectionPolicy:selection,evolutionTarget:'system',applyWhenFinished:true,expandAfterGain:true,nativeInduction:false,reasoningEffort:'low',maxAttempts:budget.maxAttempts,tokenBudget:budget.tokenBudget,timeBudgetSeconds:budget.timeBudgetSeconds
    })
    setSetupMode(false);setJobId(job.id);setCampaign({id:job.id,status:job.status,phase:'preparing_lab'});setInstall(null);setSettingsOpen(false)
    try{localStorage.setItem(SAVED,job.id)}catch{}
@@ -230,8 +227,7 @@ export function SelfImprovementPage(){
   <Panel className="p-5 sm:p-7">
    <div className="flex flex-wrap items-center justify-between gap-4"><div><h2 className="text-lg font-bold">버튼 한 번으로 시스템 자기개선</h2>
     <p className="mt-2 text-[13px] text-[#5C544A]">{enabled.find(p=>p.id===providerId)?.name||'서비스 확인 중'} · <strong>{model||'모델 확인 중'}</strong></p>
-    <p className="mt-2 text-[12px] text-[#7C7469]">전체 코드 탐색 → 시스템 재설계 → 후속 작업 A/B 평가 → {selection==='automatic'?'자동 채택':'직접 선택'} → 새 개선기로 재실행</p>
-    <p className="mt-1 text-[11px] text-[#81786B]">{selection==='automatic'&&!request.trim()?'서로 다른 2개 분야에서 실측 개선이 쌓이면 후손 실행기가 A → B → A 재검증을 탐색합니다.':'사용자 지정 목표 또는 수동 선택을 우선하며 자동 교차 개선 탐색은 실행하지 않습니다.'}</p></div>
+    <p className="mt-2 text-[12px] text-[#7C7469]">전체 코드 탐색 → 시스템 재설계 → 후속 작업 A/B 평가 → {selection==='automatic'?'자동 채택':'직접 선택'} → 새 개선기로 재실행</p></div>
     <Button variant="primary" onClick={()=>void start()} disabled={busy||working||installing||!providerId||!model.trim()}>
      {busy||working||installing?<LoaderCircle size={16} className="animate-spin"/>:<Play size={16}/>}{installing?'프로그램에 반영 중':working?'자기개선 실행 중':'자기개선 시작'}</Button></div>
    <div className="mt-4 grid gap-3 sm:grid-cols-2"><FormField label="연결된 서비스"><SelectInput value={providerId} disabled={working||busy} onChange={e=>{setProviderId(e.target.value);setModel(enabled.find(p=>p.id===e.target.value)?.model||'');if(!enabled.find(p=>p.id===e.target.value)?.local)setLocalOnly(false)}}>
@@ -267,20 +263,11 @@ export function SelfImprovementPage(){
     <summary className="cursor-pointer text-[12px] font-semibold">저장된 검증 기록</summary><div className="mt-3 flex flex-wrap items-start justify-between gap-2"><div><p className="text-[13px] font-semibold">독립 평가와 계보 기록</p><p className="mt-1 text-[11px] text-[#7C7469]">저장된 세대별 독립 평가 영수증과 계보를 다시 대조합니다. 새 모델 호출은 없습니다.</p></div>
      <Button variant="secondary" disabled={busy} onClick={()=>void runVerify()}>{busy?<LoaderCircle size={13} className="animate-spin"/>:<ShieldCheck size={13}/>}기록 조회</Button></div>
     {campaign.systemEvidence&&<SystemEvidenceView evidence={campaign.systemEvidence}/>}
-    {campaign.crossDomainTransfer&&<div className="mt-3 rounded-lg border border-[#E7E0D5] bg-[#FAF7F1] p-3 text-[11px] leading-5 text-[#665D50]">
-     <p className="font-semibold">서로 다른 능력의 재귀 개선 (A → B → A)</p>
-     <p>{campaign.crossDomainTransfer.demonstrated?'독립 검증된 교차 개선 계보 확인':'독립 검증된 교차 개선 계보 없음'} · 증명된 후손 채택 {campaign.crossDomainTransfer.verifiedGenerations}회</p>
-     {campaign.crossDomainTransfer.cycles.map((cycle,index)=><p key={index} className="break-all">검증된 순환 {index+1}: {cycle.domains.join(' → ')} · 채택 코드 {cycle.acceptedCommits.map(value=>value.slice(0,8)).join(' → ')}</p>)}
-     {!campaign.crossDomainTransfer.demonstrated&&campaign.crossDomainTransfer.nextReturnDomain&&<p>다음 검증 후보 분야: {campaign.crossDomainTransfer.nextReturnDomain} · 참고 정보이며 자동 채택 증거는 아닙니다.</p>}
-     <p>동결 평가 우세·후손 커밋 연속성·실행 바이너리 증거가 모두 일치할 때만 인정합니다.</p>
-    </div>}
    <p className="mt-3 text-[12px] text-[#7C7469]">현재 소스 해시와 함께 재사용한 자료 {campaign.reusedArtifacts||0}건 · 보존한 실패 시도 {campaign.preservedFailureAttempts||0}건. 실패와 가설은 검증 성공으로 세지 않습니다.</p>
    <p className="mt-3 text-[12px] text-[#5C544A]">후속 코딩 평가 {campaign.evaluationEpisodes||0}회{campaign.metaEvaluationProgress?.arm?' · '+(campaign.metaEvaluationProgress.arm==='baseline'?'이전 개선기':'수정된 개선기')+' · 과제 '+((campaign.metaEvaluationProgress.task||0)+1):''}</p>
    <p className="mt-3 text-[11px] text-[#7C7469]">실행 모델: {campaign.model||model} · 채택 버전으로 후속 실행 {inherited}회{campaign.activeWorker?.generatorCommit?' · 현재 실행기 '+campaign.activeWorker.generatorCommit.slice(0,10):''}</p>
-   {campaign.activeWorker?.proofStatus&&campaign.activeWorker.proofStatus!=='not_required'&&<p className="mt-1 text-[11px] text-[#7C7469]">현재 후손 프로세스 증거: {campaign.activeWorker.proofStatus==='verified'?'실행 파일·제어기 일치':campaign.activeWorker.proofStatus==='pending'?'실행 증거 수집 중':'실행 증거 불일치 또는 누락'}</p>}
    {campaign.activeWorker?.focusFiles?.length?<p className="mt-1 break-all text-[11px] text-[#7C7469]">수정 대상: {campaign.activeWorker.focusFiles.join(', ')}</p>:null}
     {verify&&verify.campaignId===campaign.id&&<div className="mt-3">
-     {verify.crossDomainTransfer&&<p className="mb-2 text-[11px] font-semibold text-[#665D50]">A → B → A 계보 재검산: {verify.crossDomainTransfer.demonstrated?'성립':'미성립'} · 독립 측정된 순환 {verify.crossDomainTransfer.cycles.length}개</p>}
      <p className={verify.capabilityDemonstrated?'rounded-lg bg-[#F2F6EF] px-3 py-2 text-[12px] font-semibold text-[#4E6B45]':'rounded-lg bg-[#FAF7F1] px-3 py-2 text-[12px] font-semibold text-[#7C4A2E]'}>{verify.systemEvidence?(verify.capabilityDemonstrated?'시스템 계승 기준 충족':'시스템 계승 기준 미달'):(verify.capabilityDemonstrated?'기준 충족 · 검증된 3세대 연속 채택과 전이 근거를 확인했습니다':`기준 미달 · 독립 검증 채택 ${verify.verifiedStreak}/3세대`)}</p>
      {verify.generations.length>0?<div className="mt-2 grid gap-1">{verify.generations.map(row=><div key={row.index} className="rounded-md bg-[#FAF7F1] px-2 py-1.5 text-[11px]">
       <div className="flex flex-wrap justify-between gap-2"><span className="font-semibold">{row.index}. {row.attempt?row.attempt+'번째 시도':'세대'}{row.domain?' · '+row.domain:''}</span><span className={row.independentReceipt?'text-[#4E6B45]':'text-[#7C7469]'}>{row.accepted?(row.independentReceipt?'독립 검증 일치':'영수증 불일치'):'채택 안 됨'}</span></div>
@@ -306,8 +293,7 @@ export function SelfImprovementPage(){
      <p className="mt-1 text-[#7C7469]">실행기: {item.controllerPlan.generatorCommit?.slice(0,10)} · 이전 세대 {item.controllerPlan.historyCount||0}건 계승 · 다음 영역 {item.controllerPlan.domain||'탐색 중'}</p>
      <p className="mt-1 text-[#7C7469]">전체 소스 자기모형: {item.systemBlueprint?.sourceFileCount??item.systemBlueprint?.sourceInventory?.length??0}개 파일 · {item.systemBlueprint?.architecture?.length||0}개 구성요소 · 지문 {item.systemBlueprint?.sourceTreeSha256?.slice(0,12)||'없음'}</p>
      {item.controllerPlan.architectureTarget&&<p className="mt-1 break-all text-[#7C7469]">후손이 선택한 구조 과제: {item.controllerPlan.architectureTarget.role} · {item.controllerPlan.architectureTarget.path} · 후보 구성요소 {item.controllerPlan.architectureFrontier?.length||0}개</p>}
-     <p className="mt-1 text-[#7C7469]">다음 행동: {item.improvementDirective?.mode||'없음'} · {item.systemBlueprintVerified?'후손 자기모형 검증':'후손 자기모형 증거 없음'}</p>
-     <p className="mt-1 text-[#7C7469]">실제 후손 실행: {item.workerProofVerified===true?'바이너리·제어기 영수증 일치':item.workerProofVerified===false?'영수증 불일치 또는 누락':'기록 없음'}{item.workerProof?.binarySha256?' · 바이너리 '+item.workerProof.binarySha256.slice(0,12):''} · 독립 A/B: {item.pairedRevalidated===true?'재검산 통과':item.pairedRevalidated===false?'미통과 또는 미실행':'미진행'}</p>
+     <p className="mt-1 text-[#7C7469]">다음 행동: {item.improvementDirective?.mode||'없음'} · {item.systemBlueprintVerified?'후손 재검증 완료':'후손 재검증 증거 없음'}</p>
     </div>}
     {item.systemDesign?.hypothesis&&<div className="mt-2 rounded-lg border border-[#E7E0D5] bg-white p-3">
      <p className="font-semibold">이번 세대가 제안한 새 지능 구조 · {item.systemDesign.components?.join(' · ')||item.systemDesign.component||'전반'}</p>
