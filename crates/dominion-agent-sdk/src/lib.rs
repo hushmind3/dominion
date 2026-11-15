@@ -242,6 +242,17 @@ fn decode(content: &str) -> Result<Decision, String> {
     Ok(decision)
 }
 
+/// Distinguish inspection from external effects so existing files or a
+/// plausible model claim cannot satisfy an unperformed edit.
+fn owner_requires_effect(text: &str) -> bool {
+    let t = text.to_lowercase();
+    ["만들","생성","작성","수정","편집","삭제","제거","고쳐","구현",
+     "개발","리팩토링","배포","설치","실행","저장","커밋","복사","이동",
+     "create","write","edit","delete","remove","modify","fix","implement",
+     "build","deploy","install","execute","save","commit","refactor"]
+        .iter().any(|word| t.contains(word))
+}
+
 impl Kernel<'_> {
     pub async fn run(&self, request: RunRequest) -> Result<Snapshot, String> {
         request.validate()?;
@@ -373,14 +384,18 @@ impl Kernel<'_> {
             if decision.actions.is_empty() {
                 if let Some(answer) = decision.answer.filter(|s| !s.trim().is_empty()) {
                     run.checks = self.verify(&request, &run).await;
-                    let requires_file_mutation = request.instruction.to_ascii_lowercase()
-                        .split_whitespace().any(|word| matches!(word, "edit" | "write" | "create" | "modify" | "fix" | "implement" | "delete"));
+                    let requires_file_mutation = owner_requires_effect(&request.instruction);
                     let has_nonread_effect = run.receipts.iter().any(|r| r.success &&
                         tools.get(&r.tool).is_some_and(|tool| !tool.read_only));
+                    // A preexisting file can satisfy file_exists but cannot
+                    // prove a requested change. Require a genuine successful
+                    // non-read tool effect for action tasks unless the owner
+                    // explicitly disabled evidence checking.
+                    let observed = run.receipts.iter().any(|r| r.success);
+                    let all_checks = run.checks.iter().all(|c| c.satisfied);
                     let evidence_sufficient = !request.require_evidence
-                        || (!request.checks.is_empty() && run.checks.iter().all(|c| c.satisfied))
-                        || (run.receipts.iter().any(|r| r.success)
-                            && (!requires_file_mutation || has_nonread_effect));
+                        || (all_checks && (!requires_file_mutation || has_nonread_effect)
+                            && (observed || !request.checks.is_empty()));
                     if evidence_sufficient && run.checks.iter().all(|c| c.satisfied) {
                         run.answer = Some(answer);
                         run.status = Status::Completed;
@@ -498,5 +513,19 @@ impl Kernel<'_> {
             checks.push(CheckResult {criterion:criterion.clone(),satisfied,explanation});
         }
         checks
+    }
+}
+
+#[cfg(test)]
+mod owner_effect_tests {
+    use super::*;
+    #[test]
+    fn edit_intent_requires_actual_writes_in_any_supported_language() {
+        for text in ["README 수정해라", "파일 작성", "코드 리팩토링", "fix the unit test", "implement tool routing"] {
+            assert!(owner_requires_effect(text), "{text}");
+        }
+        for text in ["인사를 해줘", "현재 상황을 설명해줘", "summarize the known context"] {
+            assert!(!owner_requires_effect(text), "{text}");
+        }
     }
 }
