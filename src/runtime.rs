@@ -62,6 +62,9 @@ pub struct TaskInput {
     /// Explicit run-level consent to use configured external MCP tools.
     #[serde(default)]
     pub allow_mcp: bool,
+    /// Explicitly permit bounded, read-only child tasks with lineage.
+    #[serde(default)]
+    pub allow_subagents: bool,
     #[serde(default)]
     pub require_evidence: bool,
     #[serde(default)]
@@ -110,6 +113,7 @@ impl TaskInput {
             "allowWrite": self.allow_write,
             "allowShell": self.allow_shell,
             "allowMcp": self.allow_mcp,
+            "allowSubagents": self.allow_subagents,
             "requireEvidence": self.require_evidence,
             "maxSteps": self.max_steps.unwrap_or(12),
             "tokenBudget": self.token_budget.unwrap_or(40_000),
@@ -431,6 +435,59 @@ impl DominionSdk {
     }
     pub fn skill_enable(&self,id:&str,enabled:bool)->Result<bool,RuntimeError>{
         self.state.store.skill_enable(id,enabled).map_err(RuntimeError)
+    }
+}
+
+impl DominionSdk {
+    /// Delegate bounded research to a separate native worker. Child tasks
+    /// cannot gain write/shell/network tools and cannot recursively delegate.
+    /// Model-initiated descendants are capped to three per parent.
+    pub async fn delegate(&self,parent_id:&str,mut input:TaskInput)
+        ->Result<TaskRecord,RuntimeError>{
+        let parent=self.task(parent_id)?;
+        if parent.status!="running" || parent.cancel_requested {
+            return Err(RuntimeError("Parent execution must still be running".into()));
+        }
+        if parent.input["allowSubagents"]!=true {
+            return Err(RuntimeError("Parent task has no subagent authorization".into()));
+        }
+        if input.allow_write || input.allow_shell || input.allow_mcp || input.allow_subagents {
+            return Err(RuntimeError("Child research cannot elevate tool permissions".into()));
+        }
+        if self.state.store.child_tasks(parent_id).len()>=3 {
+            return Err(RuntimeError("At most 3 independent child tasks per parent".into()));
+        }
+        let allowed=parent.input["tokenBudget"].as_u64().unwrap_or(40000);
+        let used=self.state.store.family_token_usage(parent_id);
+        let remaining=allowed.saturating_sub(used);
+        if remaining<256 {
+            return Err(RuntimeError("Parent family token budget exhausted".into()));
+        }
+        let requested=input.token_budget.unwrap_or(remaining.min(2000));
+        if requested>remaining {
+            return Err(RuntimeError("Child token budget exceeds parent allowance".into()));
+        }
+        input.token_budget=Some(requested);
+        input.max_steps=Some(input.max_steps.unwrap_or(6).min(8));
+        // Every child owns a separate native transcript and cannot learn the
+        // parent's private chat history without explicit delegation text.
+        input.session_id=Some(uuid::Uuid::new_v4().to_string());
+        let (key,mut payload)=input.normalized()?;
+        payload["parentId"]=json!(parent_id);
+        let (record,created)=self.state.store.submit(&key,&payload).map_err(RuntimeError)?;
+        if created{
+            self.state.emit(parent_id,"subagent_started",json!({
+                "taskId":record["id"],"sessionId":payload["sessionId"],
+                "tokenBudget":requested
+            }));
+        }
+        decode_record(record)
+    }
+
+    pub fn children(&self,parent_id:&str)->Result<Vec<TaskRecord>,RuntimeError>{
+        self.task(parent_id)?;
+        self.state.store.child_tasks(parent_id)
+            .into_iter().map(decode_record).collect()
     }
 }
 
