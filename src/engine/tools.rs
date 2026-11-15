@@ -261,8 +261,22 @@ pub async fn execute(
             )
             .await
         }
-        "workspace_apply_patch" => patch::apply(
-            ctx.workspace,&required_arg(args,"input")?).await,
+        "workspace_apply_patch" => {
+            let result=patch::apply(ctx.workspace,&required_arg(args,"input")?).await?;
+            // Large repositories are indexed lazily. Mark the existing index
+            // stale only when bytes actually changed, including partial
+            // commits, so the next code_search refreshes before navigating.
+            if result["changed"]==true {
+                if let Ok(workspace)=ctx.workspace.canonicalize(){
+                    let id=crate::engine::code_index::index_id(&workspace);
+                    if let Some(mut index)=ctx.store.get("code_index",&id){
+                        index["dirty"]=json!(true);
+                        ctx.store.put("code_index",&index);
+                    }
+                }
+            }
+            Ok(result)
+        },
         "file_list" => {
             let path = PathBuf::from(required_arg(args, "path")?);
             list_dir(&path).await
@@ -885,8 +899,8 @@ fn search_code_index(
         .filter(|meta|meta["sourceDir"].is_string() && meta["sourceDir"]==session["rsiSourceDir"]);
     // Never search whichever unrelated repository happened to be indexed last.
     let meta=match bound.or_else(||crate::engine::code_index::get(ctx.state,ctx.workspace)) {
-        Some(meta)=>meta,
-        None=>crate::engine::code_index::refresh(ctx.state,ctx.workspace)?,
+        Some(meta) if meta["dirty"]!=true=>meta,
+        _=>crate::engine::code_index::refresh(ctx.state,ctx.workspace)?,
     };
     let index_id = meta["id"].as_str().unwrap_or("");
     let terms=needle.split_whitespace().map(|term|term.trim_matches(['`','\"','\'','(',')',',']))
@@ -2231,6 +2245,31 @@ mod tests {
         assert!(append_http_chunk(&mut bytes,b"abcdefghij"));
         assert_eq!(bytes.len(),HTTP_FETCH_LIMIT);
         assert_eq!(&bytes[HTTP_FETCH_LIMIT-4..],b"abcd");
+    }
+
+    #[tokio::test]
+    async fn native_multi_file_patch_uses_the_real_tool_dispatcher_and_invalidates_code_index(){
+        use crate::{config::Config,db::Store,vault::Vault};
+        let dir=std::env::temp_dir().join(format!("dominion-native-patch-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("first.rs"),"fn first() {}\n").unwrap();
+        let config=Config{port:0,data_dir:dir.join("data"),web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=crate::state::AppState::new(config.clone(),
+            Store::open(&config.db_path()).unwrap(),Vault::open(&config.key_path()));
+        state.store.put("session",&json!({"id":"s"}));
+        let index_id=crate::engine::code_index::index_id(&dir.canonicalize().unwrap());
+        state.store.put("code_index",&json!({"id":index_id,"sourceDir":dir,"files":1}));
+        let ctx=ToolContext{workspace:&dir,store:&state.store,state:&state,
+            session_id:"s",agent_id:None,tools_enabled:true,tools_execution_enabled:true};
+        let input="*** Begin Patch\n*** Update File: first.rs\n@@\n-fn first() {}\n+fn first() { println!(\"done\"); }\n*** Add File: second.rs\n+pub fn second() {}\n*** End Patch";
+        let result=execute(&ctx,"workspace_apply_patch",&json!({"input":input}),"test-run")
+            .await.unwrap();
+        assert_eq!(result["status"],"completed","{result}");
+        assert_eq!(result["applied"],2);
+        assert_eq!(state.store.get("code_index",&index_id).unwrap()["dirty"],true);
+        assert!(std::fs::read_to_string(dir.join("first.rs")).unwrap().contains("done"));
+        assert!(std::fs::read_to_string(dir.join("second.rs")).unwrap().contains("second"));
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]
