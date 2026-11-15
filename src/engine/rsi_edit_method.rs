@@ -58,6 +58,13 @@ pub(crate) fn edit_method_reward(generation:&Value)->f64 {
         return 0.0;
     }
     if !executed_policy_rule(generation) {return 0.0;}
+    // A real model-origin generation records the native edit receipt count.
+    // An inherited patch, shell-only side effect or unrelated native operator
+    // must not be credited to the model's method with zero verified writes.
+    if generation["editEvidence"].is_object()
+        && generation["editEvidence"]["verifiedWrites"].as_u64().unwrap_or(0)==0 {
+        return 0.0;
+    }
     if generation["accepted"]==true
         && generation["evidenceVerified"]==true
         && generation["evaluation"]["metrics"]["eligible"]==true {
@@ -143,6 +150,10 @@ pub(crate) fn history_with_verified_payoffs(state:&AppState,history:&[Value])->V
         };
         let Some(candidate)=state.store.get("rsi_candidate",id) else {return enriched;};
         if candidate["baseCommit"]!=row["generatorCommit"]
+            || (candidate["rsiJobId"].as_str().is_some()
+                && candidate["rsiJobId"]!=row["jobId"])
+            || (candidate["experimentAdoption"]["campaignId"].as_str().is_some()
+                && candidate["experimentAdoption"]["campaignId"]!=row["campaignId"])
             || candidate["evaluation"]["source"]!="server_invoked_local_paired_git_worktrees"
             || (row["evaluation"]["evidenceSha256"].is_string()
                 && candidate["evaluation"]["evidenceSha256"]!=row["evaluation"]["evidenceSha256"])
