@@ -100,12 +100,15 @@ test('real coding evaluation uses complete Git patches and official task-level g
 })
 
 test('real autonomous goals enforce last successful test, source SHA progress and bounded token spending',()=>{
- check('src/api/goals.rs',['requireTests','tokenBudget','token_budget'])
- check('src/engine/goals.rs',[
+ // Confirm public routes still forward to the split native modules.
+ check('src/api/goals.rs',['mod lifecycle;','pub use lifecycle::'])
+ check('src/engine/goals.rs',['mod runner;','pub use runner::run;'])
+ check('src/api/goals/lifecycle.rs',['requireTests','tokenBudget','token_budget'])
+ check('src/engine/goals/runner.rs',[
   'goal_test_gaps','observed_artifact_changes',
   'materially_advanced','diagnosis::classify',
-  'strict_goal_rejects_model_claims',
   'failureDiagnosis','material_progress'])
+ check('src/engine/goals/tests.rs',['strict_goal_rejects_model_claims'])
  check('src/engine/goals/progress.rs',[
   'observed_artifact_changes','strict_coding_progress_requires_real_artifact_change'])
  check('src/engine/goals/diagnosis.rs',[
