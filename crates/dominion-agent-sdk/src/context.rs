@@ -192,8 +192,8 @@ mod tests {
         let data=(0..260).map(|i|receipt(&format!("r{i}"),i+1,true,
             json!({"content":"source".repeat(2000)}))).collect::<Vec<_>>();
         let p=project(&data,Strategy::Balanced,3000);
-        let surfaced=p.recent.to_string().len()
-            +p.important_failures.to_string().len()+p.history_index.to_string().len();
+        let surfaced=serde_json::to_string(&p.recent).unwrap().len()
+            +serde_json::to_string(&p.important_failures).unwrap().len()+serde_json::to_string(&p.history_index).unwrap().len();
         assert!(surfaced<17000,"projection must not grow with full log: {surfaced}");
         assert_eq!(data.len(),260);
         let search=execute_local(&Action{id:"s".into(),tool:RECEIPT_SEARCH.into(),
@@ -211,7 +211,7 @@ mod tests {
             json!({"stderr":format!("{}REAL_ERROR", "x".repeat(5000))}))];
         data.extend((0..20).map(|i|receipt(&format!("r{i}"),i+2,true,json!("OK"))));
         let p=project(&data,Strategy::Balanced,800);
-        assert!(p.important_failures.to_string().contains("REAL_ERROR"));
+        assert!(serde_json::to_string(&p.important_failures).unwrap().contains("REAL_ERROR"));
     }
     #[test]
     fn newer_failures_and_unicode_boundaries_retain_tail() {
