@@ -4,10 +4,11 @@ import {t} from '../i18n'
 import {Button,SelectInput,TextArea,TextInput} from './Primitives'
 
 type Option={id:string;name:string}
-export function AutonomousJobComposer({agents,providers,onCreated}:{
- agents:Option[];providers:Option[];onCreated:()=>void
+export function AutonomousJobComposer({agents,providers,recentWorkspaces,onCreated}:{
+ agents:Option[];providers:Option[];recentWorkspaces:string[];onCreated:()=>void
 }){
  const [goal,setGoal]=useState('')
+ const [workspaceDir,setWorkspaceDir]=useState('')
  const [agentId,setAgentId]=useState('')
  const [providerId,setProviderId]=useState('')
  const [model,setModel]=useState('')
@@ -27,6 +28,7 @@ export function AutonomousJobComposer({agents,providers,onCreated}:{
     ...(agentId?{agentId}:{}),
     ...(providerId?{providerId}:{}),
     ...(model.trim()?{model:model.trim()}:{}),
+    ...(workspaceDir.trim()?{workspaceDir:workspaceDir.trim()}:{}),
     ...(verifyCommand.trim()?{verifyCommand:verifyCommand.trim()}:{}),
    }})
    setGoal('');setNotice(t('ops.compose.created'));onCreated()
@@ -48,6 +50,16 @@ export function AutonomousJobComposer({agents,providers,onCreated}:{
      {agents.map(agent=><option key={agent.id} value={agent.id}>{agent.name}</option>)}
     </SelectInput>
    </label>}
+   <label htmlFor="autonomous-workspace" className="grid gap-1 text-xs font-semibold">
+    {t('ops.compose.workspace')}
+    <TextInput id="autonomous-workspace" value={workspaceDir} list="autonomous-workspace-history"
+     placeholder={t('ops.compose.workspacePlaceholder')} autoComplete="off"
+     onChange={e=>setWorkspaceDir(e.target.value)}/>
+    <small className="font-normal text-[#7C7469]">{t('ops.compose.workspaceHelp')}</small>
+   </label>
+   <datalist id="autonomous-workspace-history">
+    {recentWorkspaces.map(path=><option value={path} key={path}/>)}
+   </datalist>
    <details className="rounded-lg border border-[#EFE9DF] p-3">
     <summary className="cursor-pointer text-xs font-semibold">{t('ops.compose.advanced')}</summary>
     <div className="mt-3 grid gap-3 sm:grid-cols-2">
