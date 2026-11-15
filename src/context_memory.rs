@@ -124,6 +124,30 @@ impl Store {
                 "content":row.get::<_,String>(1)?}))) else{return vec![]};
         items.filter_map(Result::ok).collect()
     }
+    /// Query-aware sampling from an arbitrarily old owner message, without
+    /// restricting retrieval to an arbitrary 256-message session tail.
+    pub fn context_owner_source(&self,session:&str,seq:u64)->Option<Value>{
+        let record=self.history_message(session,seq)?;
+        let conn=self.conn.lock().ok()?;
+        let role:Option<String>=conn.query_row(
+            "SELECT role FROM messages WHERE session_id=?1 AND seq=?2",
+            params![session,seq.min(i64::MAX as u64) as i64],
+            |row|row.get(0)).optional().ok()?;
+        if role.as_deref()==Some("user"){Some(record)}else{None}
+    }
+    pub fn context_recent_candidates(&self,session:&str,limit:usize)->Vec<Value>{
+        let Ok(conn)=self.conn.lock() else{return vec![]};
+        let Ok(mut statement)=conn.prepare(
+            "SELECT m.seq,m.content FROM messages m
+             LEFT JOIN context_reviewed r ON r.session_id=m.session_id AND r.source_seq=m.seq
+             WHERE m.session_id=?1 AND m.role='user' AND r.source_seq IS NULL
+             ORDER BY m.seq DESC LIMIT ?2"
+        ) else{return vec![]};
+        let Ok(rows)=statement.query_map(params![session,limit.clamp(1,16) as i64],
+            |row|Ok(json!({"seq":row.get::<_,i64>(0)?,
+                "content":row.get::<_,String>(1)?}))) else{return vec![]};
+        rows.filter_map(Result::ok).collect()
+    }
     pub fn context_review(&self,session:&str,seqs:&[u64])->Result<(),String>{
         let mut conn=self.conn.lock().map_err(|e|e.to_string())?;
         let tx=conn.transaction().map_err(|e|e.to_string())?;
