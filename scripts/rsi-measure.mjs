@@ -34,11 +34,18 @@ for(const label of ['baseline','candidate']){
  if(built.ok)for(const binary of new Set(binaries)){
   const listed=run(binary,['--list','--format','terse'],dir);
   if(!listed.ok)throw Error('Cannot enumerate tests');
-  for(const line of listed.stdout.split('\n'))if(line.endsWith(': test')){
-   const name=line.slice(0,-6);tests.set(name,[...(tests.get(name)||[]),binary]);
+  for(const raw of listed.stdout.split('\n')){
+   // Windows test enumeration emits CRLF. A trailing CR must not hide
+   // every frozen test and turn a valid candidate into a false failure.
+   const line=raw.trimEnd();
+   if(line.endsWith(': test')){
+    const name=line.slice(0,-6);tests.set(name,[...(tests.get(name)||[]),binary]);
+   }
   }
  }
- variants[label]={dir,ok:built.ok&&binaries.length>0,tests};
+ variants[label]={dir,ok:built.ok&&binaries.length>0,tests,
+  buildDiagnostics:built.ok&&binaries.length>0?null:
+   (built.text.slice(-4000)||'Cargo did not produce a test executable')};
 }
 const cases=[];
 for(const spec of plan.cases){
@@ -105,6 +112,7 @@ fs.writeFileSync(process.env.RSI_REPORT+'.evidence.txt',evidence);
 const report={baseCommit:process.env.RSI_BASE_SHA,patchSha256:hash(fs.readFileSync(process.env.RSI_PATCH)),
  baselineTreeSha:process.env.RSI_BASE_TREE_SHA,candidateTreeSha:process.env.RSI_CANDIDATE_TREE_SHA,
  oracleVersion:plan.oracleVersion,oracleSha256:plan.oracleSha256||null,runner:'balanced-frozen-rsi-lab-v3',
- reportSha256:hash(evidence),baselineBuildOk:variants.baseline.ok,candidateBuildOk:variants.candidate.ok,cases};
+ reportSha256:hash(evidence),baselineBuildOk:variants.baseline.ok,candidateBuildOk:variants.candidate.ok,
+ buildDiagnostics:{baseline:variants.baseline.buildDiagnostics,candidate:variants.candidate.buildDiagnostics},cases};
 fs.writeFileSync(process.env.RSI_REPORT,JSON.stringify(report,null,2)+'\n');
 console.log(JSON.stringify({report:process.env.RSI_REPORT,pairedCases:cases.length}));
