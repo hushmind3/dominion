@@ -3543,6 +3543,13 @@ async fn run_loop(
                         .store
                         .get("rsi_candidate", id)
                         .ok_or("후보 소실")?;
+                    // Tournament comparisons must share the identical frozen
+                    // paired case plan and oracle, not merely the same goal.
+                    // Capture the evaluator-owned plan in the generation row
+                    // before it becomes a learned controller observation.
+                    generation["evaluationPlanSha256"]=json!(format!("{:x}",
+                        Sha256::digest(candidate["cases"].to_string().as_bytes())));
+                    generation["evaluationOracleVersion"]=candidate["oracleVersion"].clone();
                     let design=&generation["systemDesign"];
                     let paths=candidate["paths"].as_array().cloned().unwrap_or_default();
                     let design_complete=input["rsiSystemEvolution"]!=true || (
