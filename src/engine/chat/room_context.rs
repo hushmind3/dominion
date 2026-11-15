@@ -78,14 +78,12 @@ fn core(state: &AppState, request: &TurnRequest, room: &Value, _query: &str) -> 
     } else {
         prompt.push_str("\n이번 턴에는 도구가 비활성화되어 있습니다. 외부 작업을 수행했다고 말하지 마십시오.");
     }
-    if request.reasoning_language.as_deref() == Some("ko") {
-        prompt.push_str(
-            "\n주인이 다른 언어를 요청하지 않는 한 추론과 최종 답변에 한국어를 사용하십시오.",
-        );
-    }
     if let Some(extra) = &request.system_override {
         prompt.push('\n');
         prompt.push_str(extra);
+    }
+    if request.effective_reasoning_language() == Some("ko") {
+        prompt.push_str("\n추론과 답변은 한국어로. 주인의 언어 지정이 우선.");
     }
     (prompt, persona_tokens, items)
 }
