@@ -40,6 +40,12 @@ fn side_effect_unknown(evidence:&[Value])->bool {
     // Workspace edits and read-only operations are retryable after a fresh
     // verifier pass; arbitrary shell/MCP/HTTP writes are not.
     evidence.iter().any(|item|{
+        // A multi-file patch has no remote provider, but a failed move can
+        // leave a destination committed while source deletion is uncertain.
+        // Do not treat that partial result as a safe replan/replay.
+        if item["outcomeUnknown"]==true || item["result"]["outcomeUnknown"]==true {
+            return true;
+        }
         let tool=item["tool"].as_str().unwrap_or("");
         !matches!(tool,
             "workspace_read"|"workspace_read_range"|"workspace_write"|
@@ -64,6 +70,10 @@ fn decide(
     attempt:usize,
     max_attempts:usize,
 ) -> Decision {
+    if evidence.iter().any(|item|
+        item["outcomeUnknown"]==true || item["result"]["outcomeUnknown"]==true){
+        return Decision::Review;
+    }
     if gaps.is_empty() && error.is_none(){return Decision::Accept;}
     // Even if a provider fails after the last successful workspace write,
     // a frozen independent verifier can demonstrate the artifact exists.
@@ -405,6 +415,18 @@ mod tests{
         assert!(verification_after_last_edit("cargo test",&[edit.clone(),test.clone()]));
         assert!(verification_after_last_edit("cargo test",&[edit,test.clone(),test]));
     }
+    #[test]
+    fn partial_multi_file_patch_with_unknown_effect_requires_owner_review(){
+        let uncertain=json!({"tool":"workspace_apply_patch","result":{
+            "status":"partial","error":"move deletion status unclear",
+            "outcomeUnknown":true,"partialApplied":true,
+            "files":[{"path":"src/one.rs","written":true,"changed":true}]
+        }});
+        assert!(side_effect_unknown(&[uncertain.clone()]));
+        assert_eq!(decide(Strategy::Focused,false,&[],None,&[uncertain],0,6),
+            Decision::Review);
+    }
+
     #[test]
     fn conservative_strategy_stops_on_partial_write_plus_provider_error(){
         let evidence=vec![json!({"tool":"workspace_write","result":{"ok":true}})];
