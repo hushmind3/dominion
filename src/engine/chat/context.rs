@@ -451,17 +451,31 @@ pub(super) fn render_history(
                     .iter()
                     .take_while(|row| row["role"] == "tool" && row["agent_id"].as_str() == agent_id)
                     .collect();
-                let valid = calls.len() == results.len()
-                    && calls.iter().zip(&results).all(|(call, result)| {
-                        call["id"].as_str().is_some() && call["id"] == result["tool_call_id"]
-                    });
+                // Concurrent native tools settle and persist in completion
+                // order, which may differ from the assistant's requested
+                // order. Reassemble by call ID, reject duplicates/orphans,
+                // and restore the exact model-visible original call sequence.
+                let mut ordered_results=Vec::<&Value>::with_capacity(calls.len());
+                let mut call_ids=std::collections::HashSet::<&str>::new();
+                for call in calls {
+                    let Some(id)=call["id"].as_str()else{break};
+                    if !call_ids.insert(id){break;}
+                    let Some(result)=results.iter()
+                        .copied().find(|row|row["tool_call_id"].as_str()==Some(id))
+                    else{break;};
+                    ordered_results.push(result);
+                }
+                let valid=calls.len()==results.len()
+                    && ordered_results.len()==calls.len()
+                    && results.iter().all(|row|row["tool_call_id"].as_str()
+                        .is_some_and(|id|call_ids.contains(id)));
                 if valid {
                     let mut assistant = json!({"role":"assistant","content":content,"tool_calls":calls});
                     if let Some(reasoning) = stored_reasoning(message) {
                         assistant["reasoning_content"] = json!(reasoning);
                     }
                     out.push(assistant);
-                    out.extend(results.iter().map(|row| {
+                    out.extend(ordered_results.iter().map(|row| {
                         let content = row["content"].as_str().unwrap_or("");
                         let content = if is_room && content.chars().count() > 2_000 {
                             format!(
@@ -564,6 +578,64 @@ mod tests {
             crate::vault::Vault::open(&config.key_path()),
         );
         (state, dir)
+    }
+
+    #[test]
+    fn durable_parallel_result_history_reorders_by_model_call_ids_not_completion_time(){
+        let (state,dir)=state();
+        state.store.put("session",&json!({"id":"s","title":"ordered results"}));
+        state.store.write_message(&json!({"session_id":"s","role":"user","content":"read a and b"}));
+        state.store.write_message(&json!({
+            "session_id":"s","role":"assistant","content":"",
+            "tool_calls":[
+                {"id":"first","type":"function",
+                 "function":{"name":"workspace_read","arguments":"{\"path\":\"a.rs\"}"}},
+                {"id":"second","type":"function",
+                 "function":{"name":"workspace_read","arguments":"{\"path\":\"b.rs\"}"}}
+            ],
+        }));
+        // The second tool finishes and writes its SQLite row first.
+        state.store.write_message(&json!({
+            "session_id":"s","role":"tool","tool_call_id":"second",
+            "content":"content-B",
+        }));
+        state.store.write_message(&json!({
+            "session_id":"s","role":"tool","tool_call_id":"first",
+            "content":"content-A",
+        }));
+        let restored=history(&state,"s",None,None).unwrap();
+        let calls=restored.iter().position(|row|row["tool_calls"].is_array())
+            .expect("both parallel calls remain in model context");
+        assert_eq!(restored[calls]["tool_calls"][0]["id"],"first");
+        assert_eq!(restored[calls+1]["tool_call_id"],"first");
+        assert_eq!(restored[calls+1]["content"],"content-A");
+        assert_eq!(restored[calls+2]["tool_call_id"],"second");
+        assert_eq!(restored[calls+2]["content"],"content-B");
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn partial_or_duplicate_parallel_results_are_not_replayed_as_valid_tool_history(){
+        let (state,dir)=state();
+        state.store.put("session",&json!({"id":"s","title":"partial results"}));
+        let assistant=state.store.write_message(&json!({
+            "session_id":"s","role":"assistant","content":"",
+            "tool_calls":[{"id":"a"},{"id":"b"}],
+        })).unwrap();
+        state.store.write_message(&json!({
+            "session_id":"s","role":"tool","tool_call_id":"b","content":"partial"
+        }));
+        let before=history(&state,"s",None,None).unwrap();
+        assert!(!before.iter().any(|row|row["tool_calls"].is_array()));
+        assert!(!before.iter().any(|row|row["role"]=="tool"));
+        state.store.write_message(&json!({
+            "session_id":"s","role":"tool","tool_call_id":"b","content":"duplicate"
+        }));
+        let duplicated=history(&state,"s",None,None).unwrap();
+        assert!(!duplicated.iter().any(|row|row["tool_calls"].is_array()));
+        assert!(!duplicated.iter().any(|row|row["role"]=="tool"));
+        assert!(assistant["id"].is_string());
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]
