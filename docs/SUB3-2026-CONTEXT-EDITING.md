@@ -26,3 +26,8 @@
 - `anthropic_native_stream_translates_messages_tools_and_usage`: 실제 mock HTTP 전송의 압축된 본문·최근 결과·쓰기·오류·원본 불변 및 감사 이벤트 확인.
 
 실제 토큰 청구와 프롬프트 캐시 hit/miss는 모델·제공자별로 기존 `model.usage` 감사 기록을 비교해야 한다. 테스트에 나타난 입력 문자량의 감소를 비용 절감률로 환산해 주장하지 않는다.
+
+
+### 검증 결과 — 2026-11-15
+
+[GitHub Actions 제품 집중 검증 #43717467520](https://github.com/hushmind3/dominion-rust/actions/runs/43717467520) **성공**. Rust 호스트 빌드, 도구 결과 압축·쓰기/오류/ID 재사용 회귀, **실제 Anthropic 모의 HTTP 요청의 압축 본문·감사 이벤트**, 채팅 19개·파일 검증·실제 FFmpeg H.264 생성·API 통합 10개, React 타입 검사·빌드를 포함한다. 시험에서 측정된 **30,000자 이상**의 직렬화 문자량 감소는 구성된 가상 도구 출력에서 얻은 결과이며 실제 API 청구 토큰 절감률이 아니다.
