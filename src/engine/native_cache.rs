@@ -39,8 +39,11 @@ pub(crate) fn hinted(
     state:&AppState,route:&Route,original:&Value
 )->(Value,bool,u64) {
     let tokens=prefix_tokens(original);
-    if route.kind!="anthropic" || route.local ||cache_declared_off(state,route)
-        || previously_rejected(state,route) ||tokens<MIN_CACHEABLE_PREFIX_TOKENS {
+    let local_opt_in=state.store.get("provider",&route.id).is_some_and(|provider|
+        provider["capabilities"]["promptCaching"]==true);
+    if route.kind!="anthropic" || (route.local && !local_opt_in)
+        || cache_declared_off(state,route) || previously_rejected(state,route)
+        ||tokens<MIN_CACHEABLE_PREFIX_TOKENS {
         return (original.clone(),false,tokens);
     }
     let mut body=original.clone();
