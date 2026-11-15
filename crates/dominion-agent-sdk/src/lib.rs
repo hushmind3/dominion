@@ -237,9 +237,9 @@ pub async fn dispatch_batch<D: Dispatcher>(
         // An action may depend on a previous successful receipt OR an
         // earlier action in this batch. Forward dependencies are rejected.
         for dependency in &action.depends_on {
-            if !ids.contains(dependency)
+            if dependency == &action.id || (!ids.contains(dependency)
                 && !run.receipts.iter().any(|receipt|
-                    &receipt.id == dependency && receipt.success) {
+                    &receipt.id == dependency && receipt.success)) {
                 return Err(format!("도구 실행의 선행 조건이 충족되지 않았습니다: {}", action.id));
             }
         }
