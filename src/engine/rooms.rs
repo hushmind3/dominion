@@ -492,9 +492,11 @@ async fn run_locked(
         })
         .clamp(1, max_turns_ceiling());
     let token_budget = room["tokenBudget"].as_u64().unwrap_or(0);
-    let usage_baseline = state.store.session_usage(session_id)["totalTokens"]
-        .as_u64()
-        .unwrap_or(0);
+    // Resume must charge the entire owner request, not reset the quota at
+    // every process restart or checkpoint replay.
+    let usage_baseline=existing["tokenUsageBaseline"].as_u64()
+        .unwrap_or_else(||state.store.session_usage(session_id)["totalTokens"]
+            .as_u64().unwrap_or(0));
     let conflict_strategy =
         crate::engine::algorithms::variant_for_agent(state, "multiagent.conflict", None);
     let mut conflict_resolution = existing
@@ -933,7 +935,13 @@ fn checkpoint(
     in_flight: bool,
     active: Option<&str>,
 ) -> Result<(), String> {
-    context.checkpoint(json!({"sessionId":session_id,"stepIndex":outputs.len(),"stepTotal":budget,"roomState":{"sessionId":session_id,"generation":generation,"sourceMessageId":source_id,"routingMode":mode,"roster":roster,"initialSpeakers":initial,"pendingSpeakers":pending,"turnBudget":budget,"outputs":outputs,"inFlight":in_flight,"activeAgentId":active}}))
+    // roomState is replaced atomically by each checkpoint. Carry the
+    // original per-job usage baseline through ALL subsequent checkpoints.
+    let usage_baseline=context.state.store.get("job",&context.job_id)
+        .and_then(|job|job["roomState"]["tokenUsageBaseline"].as_u64())
+        .unwrap_or_else(||context.state.store.session_usage(session_id)["totalTokens"]
+            .as_u64().unwrap_or(0));
+    context.checkpoint(json!({"sessionId":session_id,"stepIndex":outputs.len(),"stepTotal":budget,"roomState":{"sessionId":session_id,"generation":generation,"sourceMessageId":source_id,"routingMode":mode,"roster":roster,"initialSpeakers":initial,"pendingSpeakers":pending,"turnBudget":budget,"tokenUsageBaseline":usage_baseline,"outputs":outputs,"inFlight":in_flight,"activeAgentId":active}}))
 }
 fn finish(
     context: &JobContext,
@@ -1715,6 +1723,33 @@ mod tests {
         assert_eq!(bodies.lock().unwrap().len(), 2);
         server.abort();
         drop(state); std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn owner_room_token_budget_keeps_its_baseline_after_checkpoint_replay() {
+        let (state,dir)=test_state();
+        save_owner_job(&state,"budget-replay","@가람 hello");
+        let context=run_context(&state,"budget-replay");
+        let roster=vec!["a".to_string()];
+        let pending=VecDeque::from(roster.clone());
+        checkpoint(&context,"room:r",0,"owner-1","discussion",
+            &roster,&roster,&pending,&[],1,false,None).unwrap();
+        let baseline=state.store.get("job","budget-replay").unwrap()["roomState"]["tokenUsageBaseline"].clone();
+        state.store.audit("model.usage",json!({
+            "sessionId":"room:r","providerId":"mock","model":"test",
+            "promptTokens":800,"completionTokens":200,"totalTokens":1000,
+            "estimated":false
+        }));
+        checkpoint(&context,"room:r",0,"owner-1","discussion",
+            &roster,&roster,&pending,&[],1,false,None).unwrap();
+        let persisted=state.store.get("job","budget-replay").unwrap();
+        assert_eq!(persisted["roomState"]["tokenUsageBaseline"],baseline);
+        let used=state.store.session_usage("room:r")["totalTokens"].as_u64().unwrap_or(0)
+            .saturating_sub(baseline.as_u64().unwrap_or(0));
+        assert_eq!(used,1000);
+        drop(context);
+        drop(state);
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
