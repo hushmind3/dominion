@@ -437,13 +437,13 @@ pub(crate) fn local_edit_intent(goal:&str)->bool{
         "fix","refactor","implement","patch","edit","modify","rewrite",
         "write","update","add ","create"];
     let target=["코드","소스","파일","버그","기능","모듈","프로젝트","저장소",
-        "code","source","file","bug","module","project","repo","feature",
-        ".rs",".ts",".py",".js",".tsx",".md",".json",".toml"];
+        "code","source","file","bug","module","project","repo","feature","patch","diff",
+        "script","app","application",".rs",".ts",".py",".js",".tsx",".md",".json",".toml"];
     let read_only=["read ","inspect ","review ","explain ","test ","check ",
         "분석","확인","검토","설명","테스트"];
     mutation.iter().any(|v|text.contains(v)) &&
         (target.iter().any(|v|text.contains(v))
-            || mutation.iter().any(|v|matches!(*v,"refactor"|"implement"|"리팩토링"|"리팩터")
+            || mutation.iter().any(|v|matches!(*v,"refactor"|"implement"|"patch"|"fix"|"리팩토링"|"리팩터")
                 && text.contains(v)))
         && !(read_only.iter().any(|v|text.trim_start().starts_with(v))
             && !mutation.iter().any(|v|text.contains(v)))
@@ -686,6 +686,7 @@ mod verified_patch_tests {
         assert!(!test_after_last_edit(&[edit.clone(),test.clone(),edit]));
         assert!(local_edit_intent("Refactor project code"));
         assert!(local_edit_intent("버그를 수정해"));
+        assert!(local_edit_intent("Write a patch"));
         assert!(!local_edit_intent("Run cargo test"));
         assert!(!local_edit_intent("프로젝트 분석해"));
     }

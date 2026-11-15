@@ -210,6 +210,10 @@ DM·음성·파일 첨부·슬래시 명령·Gateway 실시간 이벤트는 이�
 
 `POST /api/jobs` / `sdk::Dominion::submit` → `engine::jobs::run_prompt` → `engine::autonomy::execute` → `engine::run_quiet_outcome` → `engine::verification::check_acceptance` → bounded repair or `needs_review`. Owner steering uses engine CAS on the original job (`POST /api/jobs/:id/steer` or `sdk::Dominion::steer`). Dynamic acceptance checks include subsequently steered file objectives. Per-attempt tokens come from audited SQLite model usage. Non-repeatable external side effects are never treated as safe to retry.
 
+### One focused mechanism: proof-carrying workspace modification
+
+`src/engine/tools.rs` now returns `written`, `changed`, and `postSha256` on successful first-party writes. `src/engine/verification.rs::proven_workspace_edit` compares the recorded digest to actual final bytes within the canonical workspace; no-op, stale, missing or out-of-root receipts cannot authorize completion. `local_edit_intent` treats a source-edit request as requiring genuine mutation, independently of an explicit shell-test criterion. When no file/command acceptance check was supplied, a passing test after the latest edit is required. `src/engine/autonomy.rs` turns remaining failed predicates into bounded repair feedback or `needs_review`, and records the proof type in the job result. Both pure and actual Rust tool-execution regression tests were added. [Proof contract](docs/SUB2-VERIFIED-PATCH-2026-11-15.md). The module does not assert semantic correctness beyond its frozen checks.
+
 ### Main UI compatibility and bounded execution improvements
 
 - `src/api/sdk_bridge.rs`: `/api/sdk/runs` is the main frontend's compatibility surface over the existing native prompt job scheduler; it is not a new agent engine. The UI's requested approvals are resolved only through the actual session-bound durable approval API. Owner reconciliation is explicitly distinguished from engine verification. Resume requires owner-attested absence of prior effects, with a bounded replay count.

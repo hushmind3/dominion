@@ -142,6 +142,8 @@ The agent execution engine is written in **Rust**. Node.js is used to build the 
 
 **Rust is Dominion's primary engine and SDK.** The desktop, HTTP API and external Rust consumers use the same native lifecycle in `src/sdk.rs` (`Dominion::open / start / submit / steer / wait`). This keeps model selection, tools, durable jobs, memory and permissions under Dominion's control, independently of any vendor's agent SDK.
 
+**Proof-carrying code edits:** native workspace tools record whether bytes actually changed and their post-write SHA-256. The Rust verifier rehashes the current file, rejects no-op/fabricated writes, and requires a successful post-edit test when the owner supplied no explicit file or command check. Failing checks are fed back into bounded replanning, never converted into a false green job. See [verified patch implementation](docs/SUB2-VERIFIED-PATCH-2026-11-15.md).
+
 Ordinary prompt jobs now enter a Rust-owned verification/replan cycle. The engine captures acceptance conditions before work, gathers actual tool evidence, continues when measurable checks fail, and stops uncertain external side effects rather than replaying them. The user can add a new instruction to an active job; the next model turn sees the persisted revision. The default cycle is bounded to 3 attempts and can be configured to 1–6.
 
 ```rust
