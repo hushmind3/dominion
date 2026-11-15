@@ -479,7 +479,7 @@ fn command_failure_persists_actual_evidence() {
 }
 
 #[test]
-fn compatibility_tools_are_available_and_round_limit_is_a_failure() {
+fn compatibility_tools_are_available_and_identical_read_cycles_fail_early() {
     let _serial = serial();
     let (port, requests) = scripted_provider(|_| {
         vec![
@@ -490,13 +490,14 @@ fn compatibility_tools_are_available_and_round_limit_is_a_failure() {
     let session = app.post("/api/sessions", &json!({"title":"limit"}));
     let stream =
         app.chat(&json!({"sessionId":session["id"],"input":"계속 확인","autoLearning":false}));
-    // Repeating a read call carries information, so the harness lets the
-    // model continue until the round budget; it still must fail and never
-    // save a raw tool-call fragment as the final answer.
+    // A repeated IDENTICAL read is not new information. The native
+    // ReadLoopGuard nudges on the third observation and stops on the fifth,
+    // before exhausting the broader model-round budget. The result must
+    // remain a failure without a fabricated assistant answer.
     assert!(stream.contains("tool_start") || stream.contains("tool_error"), "{stream}");
     assert!(!stream.contains("assistant_saved"), "{stream}");
     let calls = requests.lock().unwrap();
-    assert!(calls.len() >= 8, "round budget was not reached: {} calls", calls.len());
+    assert_eq!(calls.len(), 5, "identical read observations must stop on turn five");
     assert!(calls[0]["messages"][0]["content"]
         .as_str()
         .unwrap()
