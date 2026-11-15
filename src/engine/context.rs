@@ -445,6 +445,9 @@ mod tests{
         assert_eq!(a.messages.last().unwrap()["content"],"최신 수정 지시를 그대로 보존하십시오");
         valid(&a.messages);
         assert!(a.original_bytes>a.projected_bytes);
+        // Deterministic UTF-8 JSON-byte reduction, not provider token savings.
+        assert!(a.projected_bytes.saturating_mul(4)<a.original_bytes,
+            "original={} projected={}",a.original_bytes,a.projected_bytes);
     }
     #[test]
     fn repeated_tool_identifiers_cannot_rebind_an_old_receipt(){
