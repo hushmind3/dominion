@@ -1999,10 +1999,11 @@ async fn run_turn_body(
             .and_then(|algorithm|algorithm["implementation"].as_str())
             .unwrap_or("as-written");
         let round_calls = completion.tool_calls.clone();
-        if ordering_kernel=="read-first"
+        let barrier_override=ordering_kernel=="read-first"
             && round_calls.iter().enumerate().any(|(index,call)|
                 !tool_is_read_only(&call.name) && round_calls[index+1..].iter()
-                    .any(|later|tool_is_read_only(&later.name))) {
+                    .any(|later|tool_is_read_only(&later.name)));
+        if barrier_override {
             state.store.audit("tool.ordering_barrier_preserved",json!({
                 "executionId":execution_id,"round":round,
                 "requested":"read-first","applied":"model-order",
@@ -2025,7 +2026,7 @@ async fn run_turn_body(
         }else{std::collections::BTreeMap::new()};
         let mut parallel_done = std::collections::HashSet::<String>::new();
         let mut ordering_used = false;
-        let mut ordering_ok = true;
+        let mut ordering_ok = !barrier_override;
         let mut rsi_patch_written = false;
         for (call_index, call) in round_calls.iter().enumerate() {
             // Calls already settled as part of a prior contiguous parallel
