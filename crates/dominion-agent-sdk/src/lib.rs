@@ -336,7 +336,7 @@ fn decode(content: &str) -> Result<Decision, String> {
 
 /// Distinguish inspection from external effects so existing files or a
 /// plausible model claim cannot satisfy an unperformed edit.
-fn owner_requires_effect(text: &str) -> bool {
+pub fn owner_requires_effect(text: &str) -> bool {
     let t = text.to_lowercase();
     ["만들","생성","작성","수정","편집","삭제","제거","고쳐","구현",
      "개발","리팩토링","배포","설치","실행","저장","커밋","복사","이동",
