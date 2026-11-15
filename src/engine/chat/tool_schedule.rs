@@ -54,6 +54,57 @@ pub(super) fn plan(names:&[&str],max_parallel:usize)->Vec<ToolBatch>{
     batches
 }
 
+/// Outcomes keep their original indexes even when a faster sibling returns
+/// first. On cancellation or unexpected dispatch failure the pool stops
+/// replenishing but drains all started futures before returning.
+pub(super) struct RollingOutcome<T,E>{
+    pub results:Vec<Option<Result<T,E>>>,
+    pub cancelled:bool,
+    pub failed:bool,
+    pub unstarted:usize,
+}
+
+pub(super) async fn run_rolling<I,T,E,F,Fut,C>(
+    inputs:Vec<I>,capacity:usize,run:F,should_cancel:C
+)->RollingOutcome<T,E>
+where
+    F:Fn(I)->Fut,
+    Fut:std::future::Future<Output=Result<T,E>>,
+    C:Fn()->bool,
+{
+    use futures_util::stream::{FuturesUnordered,StreamExt};
+    let total=inputs.len();
+    let mut waiting=inputs.into_iter().enumerate();
+    let make=|(index,item):(usize,I)|{
+        let work=run(item);
+        async move{(index,work.await)}
+    };
+    let mut running=FuturesUnordered::new();
+    let mut cancelled=should_cancel();
+    let mut failed=false;
+    if !cancelled{
+        for _ in 0..capacity.max(1).min(16){
+            if let Some(item)=waiting.next(){running.push(make(item));}
+        }
+    }
+    let mut results=(0..total).map(|_|None).collect::<Vec<Option<Result<T,E>>>>();
+    while !running.is_empty(){
+        if should_cancel(){cancelled=true;}
+        let next=tokio::time::timeout(
+            std::time::Duration::from_millis(150),running.next()).await;
+        let Ok(Some((index,result)))=next else{continue;};
+        if result.is_err(){failed=true;}
+        results[index]=Some(result);
+        // A completion can itself trigger cancellation. Check again BEFORE
+        // admitting another call into the bounded pool.
+        if should_cancel(){cancelled=true;}
+        if !cancelled && !failed{
+            if let Some(item)=waiting.next(){running.push(make(item));}
+        }
+    }
+    RollingOutcome{results,cancelled,failed,unstarted:waiting.count()}
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -72,6 +123,83 @@ mod tests {
         assert_eq!(plan(&calls,1),(0..calls.len())
             .map(|index|Exclusive{index}).collect::<Vec<_>>());
     }
+    #[tokio::test]
+    async fn rolling_pool_respects_cap_commits_order_and_reuses_open_slots(){
+        use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
+        let active=Arc::new(AtomicUsize::new(0));
+        let peak=Arc::new(AtomicUsize::new(0));
+        let a=active.clone();let p=peak.clone();
+        let outcome=run_rolling((0usize..10).collect(),3,move |id|{
+            let a=a.clone();let p=p.clone();
+            async move{
+                let current=a.fetch_add(1,Ordering::SeqCst)+1;
+                p.fetch_max(current,Ordering::SeqCst);
+                tokio::time::sleep(std::time::Duration::from_millis(
+                    if id==0{35}else{4}
+                )).await;
+                a.fetch_sub(1,Ordering::SeqCst);
+                Ok::<usize,&'static str>(id)
+            }
+        },||false).await;
+        assert!(!outcome.cancelled && !outcome.failed);
+        assert_eq!(outcome.unstarted,0);
+        assert_eq!(active.load(Ordering::SeqCst),0);
+        assert_eq!(peak.load(Ordering::SeqCst),3);
+        assert_eq!(outcome.results.into_iter().map(|v|v.unwrap().unwrap())
+            .collect::<Vec<_>>(),(0usize..10).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn unexpected_dispatch_failure_drains_started_tools_without_replenishing(){
+        use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
+        let started=Arc::new(AtomicUsize::new(0));
+        let alive=Arc::new(AtomicUsize::new(0));
+        let s=started.clone();let a=alive.clone();
+        let outcome=run_rolling((0usize..8).collect(),3,move |id|{
+            let s=s.clone();let a=a.clone();
+            async move{
+                s.fetch_add(1,Ordering::SeqCst);
+                a.fetch_add(1,Ordering::SeqCst);
+                tokio::time::sleep(std::time::Duration::from_millis(
+                    if id==0{1}else{30}
+                )).await;
+                a.fetch_sub(1,Ordering::SeqCst);
+                if id==0{Err("real internal failure")}else{Ok(id)}
+            }
+        },||false).await;
+        assert!(outcome.failed);
+        assert!(!outcome.cancelled);
+        assert_eq!(started.load(Ordering::SeqCst),3);
+        assert_eq!(alive.load(Ordering::SeqCst),0);
+        assert_eq!(outcome.unstarted,5);
+        assert_eq!(outcome.results.iter().filter(|v|v.is_some()).count(),3);
+        assert!(matches!(outcome.results[0],Some(Err("real internal failure"))));
+    }
+
+    #[tokio::test]
+    async fn owner_cancel_drains_inflight_and_never_launches_queued_calls(){
+        use std::sync::{Arc,atomic::{AtomicBool,AtomicUsize,Ordering}};
+        let stopped=Arc::new(AtomicBool::new(false));
+        let started=Arc::new(AtomicUsize::new(0));
+        let flag=stopped.clone();let count=started.clone();let observe=stopped.clone();
+        let outcome=run_rolling((0usize..8).collect(),3,move |id|{
+            let flag=flag.clone();let count=count.clone();
+            async move{
+                count.fetch_add(1,Ordering::SeqCst);
+                tokio::time::sleep(std::time::Duration::from_millis(
+                    if id==0{2}else{25}
+                )).await;
+                if id==0{flag.store(true,Ordering::SeqCst);}
+                Ok::<usize,&'static str>(id)
+            }
+        },move ||observe.load(Ordering::SeqCst)).await;
+        assert!(outcome.cancelled);
+        assert!(!outcome.failed);
+        assert_eq!(started.load(Ordering::SeqCst),3);
+        assert_eq!(outcome.unstarted,5);
+        assert_eq!(outcome.results.iter().filter(|v|v.is_some()).count(),3);
+    }
+
     #[test]
     fn live_argument_validation_fails_closed_and_rechecks_after_barrier(){
         let calls=[("workspace_read",r#"{"path":"a.rs"}"#),

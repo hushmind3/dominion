@@ -2052,7 +2052,6 @@ async fn run_turn_body(
                     let _=crate::engine::algorithms::choose_for_agent(
                         state,"tool.combination",request.agent_id.as_deref(),Some(execution_id));
                     let batch=&round_calls[call_index..call_index+batch_len];
-                    use futures_util::stream::{FuturesUnordered,StreamExt};
                     let mut ordered=vec![None::<(String,bool)>;batch_len];
                     let mut ready=std::collections::VecDeque::<(usize,Value,u64)>::new();
                     // Preflight every call and charge the complete batch
@@ -2103,50 +2102,43 @@ async fn run_turn_body(
                             (offset,result)
                         }
                     };
-                    let mut running=FuturesUnordered::new();
-                    const PARALLEL_CAP:usize=4;
-                    for _ in 0..PARALLEL_CAP {
-                        if let Some(next)=ready.pop_front(){running.push(launch(next));}
-                    }
-                    let mut fatal=None::<String>;
-                    let mut cancelled=false;
+                    // Reuse the tested native pool rather than duplicating
+                    // concurrency, cancellation or fatal-error rules here.
                     let started=std::time::Instant::now();
-                    while !running.is_empty(){
-                        if state.is_cancelled(session_id)
-                            || state.cancellation_generation(session_id)!=generation{
-                            cancelled=true;
-                        }
-                        // Check cancellation while operations are in flight,
-                        // but drain already-started futures rather than drop
-                        // their uncertain external results.
-                        let next=tokio::time::timeout(
-                            std::time::Duration::from_millis(150),running.next()).await;
-                        let Ok(Some((offset,result)))=next else {continue;};
-                        match result {
-                            Ok((_,ok,content))=>ordered[offset]=Some((content,ok)),
-                            Err(error)=>{
-                                if fatal.is_none(){fatal=Some(error);}
+                    let outcome=super::tool_schedule::run_rolling(
+                        ready.into_iter().collect::<Vec<_>>(),
+                        4,
+                        launch,
+                        || state.is_cancelled(session_id)
+                            || state.cancellation_generation(session_id)!=generation,
+                    ).await;
+                    let mut fatal=None::<String>;
+                    for item in outcome.results {
+                        match item {
+                            Some(Ok((offset,content,ok)))=>{
+                                ordered[offset]=Some((content,ok));
                             }
-                        }
-                        if !cancelled && fatal.is_none(){
-                            if let Some(next)=ready.pop_front(){running.push(launch(next));}
+                            Some(Err(error)) if fatal.is_none()=>fatal=Some(error),
+                            _=>{},
                         }
                     }
                     state.store.audit("tool.parallel_batch_settled",json!({
                         "sessionId":session_id,"executionId":execution_id,
                         "round":round,"firstCallIndex":call_index,
-                        "planned":batch_len,"finished":ordered.iter().filter(|item|item.is_some()).count(),
-                        "unstarted":ready.len(),"cancelled":cancelled,
-                        "fatal":fatal.is_some(),"elapsedMs":started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                        "planned":batch_len,
+                        "finished":ordered.iter().filter(|item|item.is_some()).count(),
+                        "unstarted":outcome.unstarted,
+                        "cancelled":outcome.cancelled,
+                        "fatal":outcome.failed,
+                        "elapsedMs":started.elapsed().as_millis().min(u64::MAX as u128) as u64,
                     }));
-                    if cancelled{
-                        return Err("병렬 도구 실행이 중단되었습니다. 시작된 작업의 종료는 확인했으며, 미실행 호출을 재생하지 않습니다.".into());
+                    if outcome.cancelled{
+                        return Err("병렬 도구 실행이 중단되었습니다. 시작된 작업은 모두 종료했고 미실행 호출을 재생하지 않습니다.".into());
                     }
                     if let Some(error)=fatal{
-                        // An internal dispatch failure is not a successful
-                        // tool response. All started work was drained above;
-                        // terminate this turn with the original error so the
-                        // durable recovery path can classify unknown effects.
+                        // Never convert an internal dispatch failure into a
+                        // model-visible successful tool result. All active
+                        // work has settled; surface the real terminal error.
                         return Err(error);
                     }
                     let mut all_ok=true;
