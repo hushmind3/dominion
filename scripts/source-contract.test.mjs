@@ -73,7 +73,7 @@ test('native core owns recovery, spend and workflow execution',()=>{
  const migration=readFileSync(join(root,'src/legacy.rs'),'utf8')
  const provider=readFileSync(join(root,'src/provider.rs'),'utf8')
  assert.ok(runtime.includes('pub async fn resume('))
- assert.ok(engine.includes('context::project(&messages,context_limit)'))
+ assert.ok(engine.includes('context::project(&messages,message_budget,&durable)'))
  assert.ok(engine.includes('"task_receipt"'))
  assert.ok(engine.includes('account_cost(&id,'))
  assert.ok(provider.includes('cached_input_krw_per_million'))
