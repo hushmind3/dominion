@@ -294,8 +294,25 @@ pub async fn reconcile(
         "kind":"owner_observation_not_execution_proof",
         "requiresInspection":applied
     });
-    // Publish the exact reconciled SDK snapshot *and* a paused job status in
-    // one CAS. The owner must explicitly click Resume; no hidden paid replay.
+    // Resolve the host operation journal FIRST. If its CAS conflicts, keep
+    // the job in needs_review, not an interrupted state with a dead Resume
+    // button. An operator observation never asserts successful execution.
+    if let Some(operation)=operation {
+        if operation["outcomeUnknown"]==true {
+            let before=operation["status"].clone();
+            if state.store.patch_if("execution_operation",&operation_id,
+                "status",&before,&json!({
+                    "status":"manually_reconciled",
+                    "outcomeUnknown":false,"ownerObservation":observation,
+                    "reconciledAt":chrono::Utc::now().to_rfc3339()
+                })).is_none(){
+                return error(StatusCode::CONFLICT,
+                    "확인 중 도구 실행 기록이 변경됐습니다. 실제 기록을 다시 확인하세요.");
+            }
+        }
+    }
+    // The job's state and exact reconciled Rust checkpoint move together.
+    // If this CAS fails, the task remains paused for operator review.
     let Some(updated)=state.store.patch_if("job",&id,"status",&json!("needs_review"),
         &json!({
             "status":"interrupted","nativeState":snapshot,
@@ -304,17 +321,6 @@ pub async fn reconcile(
         })) else {
         return error(StatusCode::CONFLICT,"수동 확인 중 실행 상태가 변경됐습니다.");
     };
-    if let Some(operation)=operation {
-        if operation["outcomeUnknown"]==true {
-            let before=operation["status"].clone();
-            let _=state.store.patch_if("execution_operation",&operation_id,
-                "status",&before,&json!({
-                    "status":"manually_reconciled",
-                    "outcomeUnknown":false,"ownerObservation":observation,
-                    "reconciledAt":chrono::Utc::now().to_rfc3339()
-                }));
-        }
-    }
     state.store.audit("sdk.main_ui_reconciled_observation",json!({
         "jobId":id,"actionId":action.id,"tool":action.tool,
         "applied":applied,"replayed":false,"independentlyVerified":false
