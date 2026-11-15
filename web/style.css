@@ -50,3 +50,43 @@ textarea::placeholder,input::placeholder{color:#6e8097}
 .empty{color:#7e91ac;text-align:center;padding:29px;font-size:13px}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
 @media(max-width:850px){.layout{grid-template-columns:1fr}.rail{padding:11px 17px;display:flex;flex-direction:row;align-items:center;border-right:0;border-bottom:1px solid #26354a}.brand{padding:0;margin-right:auto}.rail-head,.rail-note,.rail-footer{display:none}.rail-item{padding:10px}.top{padding:0 23px}.shell{padding:28px 18px 70px}}
 @media(max-width:570px){.brand small,.rail-item span,.tag{display:none}.composer-foot{align-items:stretch;flex-direction:column}.options{gap:8px}.primary{justify-content:center}.advanced-row{grid-template-columns:1fr}.work,.history{padding:17px}.metrics{gap:5px}.metrics strong{font-size:19px}.top{height:50px}.shell{padding:25px 12px 55px}}
+
+/* Native feature workspaces retain the same accessible visual grammar. */
+select{font:inherit;color:#e7edf7;background:#141f2d;border:1px solid #314258;
+  border-radius:7px;padding:10px;max-width:100%;min-height:42px}
+select:focus-visible,summary:focus-visible{outline:2px solid #89acfb;outline-offset:3px}
+.advanced-row select{width:100%}
+.advanced-row input:focus,.steer input:focus,
+.advanced textarea:focus{border-color:#9fc0ff}
+.advanced form,.history form{max-width:100%}
+.history .advanced{padding:13px;border:1px solid #2c3e56;
+  border-radius:10px;background:#111d2b}
+.history input{min-height:40px;min-width:0}
+.history .advanced>label{display:grid;gap:8px;font-size:12px}
+.history .advanced textarea{min-height:86px;max-height:260px;padding:12px;
+  border:1px solid #314258;border-radius:9px;background:#0e1927}
+.history .advanced button{margin:10px}
+.history .advanced-row{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.history .advanced-row label{min-width:0}
+.history p{font-size:12px;color:#b0bfd2;line-height:1.7}
+.history .steer-row{flex-wrap:wrap;margin:12px 0}
+.history .output{margin:10px 0;max-height:360px;overflow:auto}
+.history .timeline{margin:12px 0}
+.history .timeline .advanced{padding:12px;display:grid;gap:10px}
+.history .timeline input{background:#0f1d2d;border:1px solid #344961;
+  color:#e7edf7;border-radius:6px;padding:9px;width:100%}
+.history .timeline strong{font-size:12px;color:#d2e3ff}
+.history .task{cursor:default;overflow-wrap:anywhere}
+.history .task button{margin-top:9px}
+a.secondary{display:inline-flex;align-items:center;justify-content:center}
+.rail{position:sticky;top:0;height:100vh;overflow-y:auto}
+@media(max-width:850px){
+  .rail{position:static;height:auto;overflow-x:auto;overflow-y:hidden;white-space:nowrap}
+  .rail-item{flex:0 0 auto}
+}
+@media(max-width:570px){
+  .rail-item{min-width:40px;justify-content:center}
+  .history .steer-row button,.history .steer-row a{flex:1 1 auto}
+  .history .advanced-row{grid-template-columns:1fr}
+  .history input,.history select{font-size:16px}
+}
