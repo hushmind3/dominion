@@ -1081,6 +1081,11 @@ fn public_provider(state: &AppState, mut provider: Value) -> Value {
 }
 
 pub async fn save_provider(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
+    if let Some(profile)=body.get("nativeRouting") {
+        if let Err(message)=crate::engine::native_routing::validate_profile(profile) {
+            return error(StatusCode::BAD_REQUEST,&message);
+        }
+    }
     if let Err(message) = crate::engine::reasoning::validate(&body) {
         return error(StatusCode::BAD_REQUEST, &message);
     }
