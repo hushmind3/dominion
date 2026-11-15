@@ -361,6 +361,26 @@ pub fn evaluate_search_algorithm(
     })
 }
 
+/// Verify an actual spawned descendant executable against an immutable
+/// coordinator identity. This receipt is produced before the model call;
+/// model-written output and a claimed success flag cannot substitute for it.
+pub(crate) fn worker_proof_matches(
+    state:&AppState,job_id:&str,campaign_id:&str,commit:&str,
+    binary_sha:&str,controller:&Value,
+)->bool {
+    if job_id.is_empty() || campaign_id.is_empty()
+        || commit.len()!=40 || !commit.bytes().all(|b|b.is_ascii_hexdigit())
+        || binary_sha.len()!=64 || !binary_sha.bytes().all(|b|b.is_ascii_hexdigit())
+        || !controller.is_object() {return false;}
+    let expected=format!("{:x}",Sha256::digest(controller.to_string().as_bytes()));
+    state.store.get("rsi_worker_proof",&format!("rsi-worker-proof-{job_id}"))
+        .is_some_and(|proof|proof["source"]=="spawned_compiled_descendant_v1"
+            && proof["jobId"]==job_id && proof["campaignId"]==campaign_id
+            && proof["generatorCommit"]==commit && proof["binarySha256"]==binary_sha
+            && proof["controllerSha256"]==expected
+            && proof["blueprintVerified"]==true)
+}
+
 pub fn auto_write_allowed(state: &AppState, session_id: &str, tool: &str, args: &Value) -> bool {
     if !matches!(tool, "workspace_write" | "workspace_replace" | "workspace_replace_range")
         || !args["path"]
@@ -2890,6 +2910,11 @@ async fn run_loop(
         child_input["rsiBaseCommit"] = json!(head);
         child_input["rsiCampaignId"] = json!(context.job_id);
         child_input["rsiGeneratorCommit"] = json!(head);
+        // The parent pins the executable digest before child launch. The
+        // running child must independently hash its own executable and issue
+        // a bound receipt before making any provider/tool calls.
+        child_input["rsiExpectedBinarySha256"]=record["generatorBinarySha256"].clone();
+        child_input["rsiWorkerProofRequired"]=json!(input["rsiSystemEvolution"]==true);
         // Give the next worker the REAL previous rejected source bytes as its
         // detached starting point. Re-running on the pristine baseline loses
         // the prior implementation and repeatedly produces a neutral patch.
@@ -3297,6 +3322,12 @@ async fn run_loop(
             .get("job", child_id)
             .ok_or("세대 작업 사라짐")?;
         let session = current["sessionId"].as_str();
+        let worker_proof_verified=input["rsiSystemEvolution"]!=true
+            || (current["input"]["rsiWorkerProofRequired"]==true
+                && current["rsiSystemBlueprintVerified"]==true
+                && worker_proof_matches(&context.state,child_id,&context.job_id,
+                    &head,record["generatorBinarySha256"].as_str().unwrap_or(""),
+                    &current["input"]["rsiControllerPlan"]));
         let stopped=generation_stop_reason(&current,output.as_ref().err().map(String::as_str));
         let tools_used = session
             .map(|session_id| session_tool_usage(&context.state, session_id))
@@ -3427,6 +3458,11 @@ async fn run_loop(
         // generation receipt.
         generation["toolTimeline"]=json!(tool_timeline);
         generation["ruleExecutions"]=json!(rule_executions);
+        generation["workerProofVerified"]=json!(worker_proof_verified);
+        if input["rsiSystemEvolution"]==true {
+            generation["workerProof"]=context.state.store.get("rsi_worker_proof",
+                &format!("rsi-worker-proof-{child_id}")).unwrap_or(Value::Null);
+        }
         // A successful native write can still produce uncompilable Rust.
         // Keep the *real compiler diagnostic* and the pre-repair history
         // separate from independently eligible improvements. This makes
@@ -3468,7 +3504,8 @@ async fn run_loop(
                 record["history"].as_array().map(Vec::as_slice).unwrap_or(&[]),id));
         // A byte-identical failed patch from the identical base does not
         // deserve another full expensive A/B run.
-        let candidate_id = proposed_candidate.filter(|_|previous_failed.is_none());
+        let candidate_id = proposed_candidate.filter(|_|previous_failed.is_none()
+            && worker_proof_verified);
         let waiting_before = record["waitingMs"].as_u64().unwrap_or(0);
         if let Some(id) = candidate_id {
             record["phase"] = json!("measuring");
@@ -3571,6 +3608,11 @@ async fn run_loop(
                     .or_else(|| current["error"].as_str())
                     .unwrap_or("유효한 변경이나 검사 통과 없음"));
             }
+        }
+        if input["rsiSystemEvolution"]==true && !worker_proof_verified {
+            generation["error"]=json!("재빌드된 후손 프로세스의 실행 바이너리·출처·계획 증거가 일치하지 않습니다.");
+            generation["evaluation"]=json!({"verdict":"unverified_descendant_worker",
+                "eligible":false,"reason":"missing_or_mismatched_spawned_worker_proof"});
         }
         if input["rsiSystemEvolution"]==true {
             record["tokens"]=json!(campaign_model_tokens(&context.state,&context.job_id));
@@ -4407,6 +4449,21 @@ pub async fn worker(job_id: &str) -> Result<(), String> {
     let campaign = job["input"]["rsiCampaignId"]
         .as_str()
         .ok_or("자동 개선 ID 없음")?.to_string();
+    let binary_proof=if job["input"]["rsiWorkerProofRequired"]==true {
+        if job["input"]["rsiSystemEvolution"]!=true {
+            return Err("실행 증거는 전체 시스템 개선에서만 요구합니다.".into());
+        }
+        let expected=job["input"]["rsiExpectedBinarySha256"].as_str()
+            .filter(|v|v.len()==64 && v.bytes().all(|b|b.is_ascii_hexdigit()))
+            .ok_or("후손 실행 바이너리 기대 SHA-256이 없습니다.")?;
+        let executable=std::env::current_exe().map_err(|e|e.to_string())?;
+        let observed=format!("{:x}",Sha256::digest(
+            std::fs::read(executable).map_err(|e|e.to_string())?));
+        if observed!=expected {
+            return Err("후손 바이너리 SHA-256이 실행 시작 시 고정된 바이너리와 다릅니다.".into());
+        }
+        Some(observed)
+    }else{None};
     if state.store.get("job", &campaign).is_none_or(|p| {
         p["kind"] != "rsi_evolve" || p["status"] != "running" || p["cancelRequested"] == true
     }) {
@@ -4583,6 +4640,26 @@ pub async fn worker(job_id: &str) -> Result<(), String> {
     job["input"]["prompt"]=json!(prompt);
     job["rsiWorkerContextPlan"]=plan;
     state.store.put("job", &job).ok_or("세대 지시 저장 실패")?;
+    if let Some(observed)=binary_proof {
+        if job["rsiSystemBlueprintVerified"]!=true
+            || job["input"]["rsiControllerPlan"]["source"]
+                !="compiled_descendant_system_controller_v2" {
+            return Err("후손 제어기가 실제 실행 전에 자기모형을 검증하지 못했습니다.".into());
+        }
+        let receipt=json!({
+            "id":format!("rsi-worker-proof-{job_id}"),
+            "source":"spawned_compiled_descendant_v1",
+            "jobId":job_id,"campaignId":campaign,
+            "generatorCommit":commit,"binarySha256":observed,
+            "controllerSha256":format!("{:x}",Sha256::digest(
+                job["input"]["rsiControllerPlan"].to_string().as_bytes())),
+            "blueprintVerified":true,
+            "createdAt":chrono::Utc::now().to_rfc3339()
+        });
+        state.store.put("rsi_worker_proof",&receipt)
+            .ok_or("후손의 실제 프로세스 실행 영수증을 기록하지 못했습니다.")?;
+        state.store.audit("rsi.spawned_descendant_proof",receipt);
+    }
     let context = JobContext::new(state.clone(), job_id.into());
     let result = jobs::run_prompt(&context, &job).await;
     match result {
@@ -4620,6 +4697,30 @@ mod tests {
         state.store.put("job",&json!({"id":"campaign","kind":"rsi_evolve","status":"running","input":{"rsiNativeApproved":true}})).unwrap();
         JobContext::new(state.clone(), "campaign".into())
     }
+    #[test]
+    fn spawned_worker_receipt_must_match_binary_revision_and_controller() {
+        let (state,root)=state();
+        let base="a".repeat(40);let binary="b".repeat(64);
+        let controller=json!({"source":"compiled_descendant_system_controller_v2",
+            "generatorCommit":base,"domain":"improver","editPolicy":{"revision":"r1"}});
+        let proof=json!({"id":"rsi-worker-proof-child","source":"spawned_compiled_descendant_v1",
+            "jobId":"child","campaignId":"campaign","generatorCommit":base,
+            "binarySha256":binary,
+            "controllerSha256":format!("{:x}",Sha256::digest(controller.to_string().as_bytes())),
+            "blueprintVerified":true});
+        state.store.put("rsi_worker_proof",&proof);
+        assert!(worker_proof_matches(&state,"child","campaign",&base,&binary,&controller));
+        assert!(!worker_proof_matches(&state,"child","campaign",&base,&"c".repeat(64),&controller));
+        assert!(!worker_proof_matches(&state,"child","other",&base,&binary,&controller));
+        assert!(!worker_proof_matches(&state,"child","campaign",&"d".repeat(40),&binary,&controller));
+        let mut changed=controller.clone();changed["editPolicy"]["revision"]=json!("r2");
+        assert!(!worker_proof_matches(&state,"child","campaign",&base,&binary,&changed));
+        let mut forged=proof;forged["blueprintVerified"]=json!(false);
+        state.store.put("rsi_worker_proof",&forged);
+        assert!(!worker_proof_matches(&state,"child","campaign",&base,&binary,&controller));
+        let _=std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn verified_adoption_opens_a_new_source_goal_only_when_opted_in() {
         let root=json!({"rsiExpandAfterGain":true,"rsiObjective":"fix one file"});

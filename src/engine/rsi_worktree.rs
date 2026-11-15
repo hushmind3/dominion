@@ -13,7 +13,12 @@ const CHECK_LIMIT: Duration = Duration::from_secs(360);
 /// The canonical main checkout and owned RSI work checkouts may evolve.
 /// Application still requires exact recorded branch and commit provenance.
 pub(crate) fn rsi_work_branch(branch: &str) -> bool {
-    matches!(branch, "main" | "dominion-sub" | "dominion-sub3")
+    // All product development work branches can start independent RSI.
+    // Publication still requires the exact recorded origin branch, SHA and
+    // Git tree; accepting a branch here never grants cross-branch adoption.
+    matches!(branch, "main" | "dominion-sub" | "dominion-sub1"
+        | "dominion-sub2" | "dominion-sub3" | "dominion-sub4"
+        | "dominion-champion")
 }
 
 /// Legacy experiments did not record a source branch. They may only be
@@ -1216,8 +1221,16 @@ mod tests {
         assert!(!owns_application_branch("main",None));
         assert!(!owns_application_branch("main",Some("dominion-sub3")));
         assert!(!owns_application_branch("dominion-sub3",Some("main")));
-        for forbidden in ["dominion-champion","dominion-sub1","dominion-sub2","dominion-sub4","dominion-sub3-other"] {
-            assert!(!rsi_work_branch(forbidden), "다른 브랜치에 적용하면 안 됩니다: {forbidden}");
+        for branch in ["dominion-sub1","dominion-sub2","dominion-sub3",
+            "dominion-sub4","dominion-champion"] {
+            assert!(rsi_work_branch(branch), "활성 RSI 브랜치가 거부되었습니다: {branch}");
+            assert!(owns_application_branch(branch,Some(branch)));
+            assert!(!owns_application_branch(branch,Some("dominion-sub3-other")),
+                "RSI 출처가 다른 브랜치에 반영되어서는 안 됩니다");
+        }
+        for forbidden in ["dominion-sub3-other","dominion-sub2-research",
+            "feature/experimental","refs/heads/dominion-sub2"] {
+            assert!(!rsi_work_branch(forbidden), "임의 브랜치는 실행할 수 없습니다: {forbidden}");
         }
     }
 

@@ -566,7 +566,12 @@ pub(crate) fn handoff_evidence(state:&crate::state::AppState, history:&[Value])-
                 path.as_str().is_some_and(|path|generation["acceptedSourceHashes"][path].as_str()
                     .is_some_and(|sha|sha.len()==64 && sha.bytes().all(|b|b.is_ascii_hexdigit())))))
             && generation["tokenUsage"]["calls"].as_u64().unwrap_or(0)>0
-            && generator.len()==40 && accepted.len()==40 && binary.len()==64;
+            && generator.len()==40 && accepted.len()==40 && binary.len()==64
+            && generation["workerProofVerified"]==true
+            && crate::engine::rsi_evolve::worker_proof_matches(state,
+                generation["jobId"].as_str().unwrap_or(""),
+                generation["campaignId"].as_str().unwrap_or(""),
+                generator,binary,controller);
         if !valid {continue;}
         verified+=1;
         if chain>0 && (generator!=prior_commit || binaries.contains(binary)) {
@@ -881,7 +886,19 @@ mod integration_contract_tests {
         let mut hashes=serde_json::Map::new();for path in &paths{hashes.insert(path.clone(),json!("e".repeat(64)));}
         let mut mapping=serde_json::Map::new();for (role,path) in roles.iter().zip(paths.iter()){mapping.insert(role.to_string(),json!([path]));}
         let blueprint=json!({"generatorCommit":generator,"sourceTreeSha256":"a".repeat(64)});
-        json!({"id":format!("generation-{n}"),"jobId":format!("job-{n}"),"accepted":true,"systemEvolution":true,
+        let worker_proof=json!({"id":format!("rsi-worker-proof-job-{n}"),
+            "source":"spawned_compiled_descendant_v1",
+            "jobId":format!("job-{n}"),"campaignId":"fixture-campaign",
+            "generatorCommit":generator,"binarySha256":format!("{}",n+1).repeat(64),
+            "controllerSha256":format!("{:x}",Sha256::digest(json!({
+                "source":"compiled_descendant_system_controller_v2",
+                "generatorCommit":generator,"systemBlueprint":blueprint
+            }).to_string().as_bytes())),
+            "blueprintVerified":true});
+        state.store.put("rsi_worker_proof",&worker_proof);
+        json!({"id":format!("generation-{n}"),"campaignId":"fixture-campaign",
+            "workerProofVerified":true,
+            "jobId":format!("job-{n}"),"accepted":true,"systemEvolution":true,
             "generatorCommit":generator,"acceptedCommit":accepted,"generatorBinarySha256":format!("{}",n+1).repeat(64),
             "candidateId":id,"systemBlueprintVerified":true,"systemBlueprint":blueprint,"tokenUsage":{"calls":1},
             "controllerPlan":{"source":"compiled_descendant_system_controller_v2","generatorCommit":generator,"systemBlueprint":blueprint},
@@ -910,6 +927,11 @@ mod integration_contract_tests {
             "result":{"written":true},"toolReceipt":{"verified":true,"observedVersion":format!("sha256:{}","e".repeat(64))}});
         state.store.put("execution_operation",&operation);
         assert_eq!(handoff_evidence(&state,&history)["demonstrated"],true);
+        // The original synthetic executable receipt cannot authenticate a
+        // different generator binary even if the row claims success.
+        let mut tampered=history.clone();
+        tampered[1]["generatorBinarySha256"]=json!("f".repeat(64));
+        assert_eq!(handoff_evidence(&state,&tampered)["demonstrated"],false);
         operation["toolReceipt"]["observedVersion"]=json!(format!("sha256:{}","d".repeat(64)));
         state.store.put("execution_operation",&operation);
         assert_eq!(handoff_evidence(&state,&history)["demonstrated"],false,"superseded method output cannot claim the adopted code");
