@@ -1,5 +1,6 @@
 use crate::AppState;
 mod files;
+mod source_integrity;
 mod strategy;
 mod schema_router;
 pub(crate) mod context;
@@ -275,6 +276,12 @@ async fn tool(state: &AppState, current_task: &str, current_session: &str,
                 params.iter().any(|v| v.len()>256 || v.starts_with('-') && v.contains('=') && v.contains('/')) {
                 return Err("허용되지 않은 검사 명령입니다.".into());
             }
+            // Checks are executable code: an exit status cannot certify a
+            // revision that was mutated while the check ran.
+            let workspace=state.workspace.clone();
+            let before=tokio::task::spawn_blocking(move||
+                source_integrity::snapshot(&workspace)
+            ).await.map_err(|e|format!("Source audit worker: {e}"))??;
             let mut command = Command::new(program);
             command.args(&params)
                 .current_dir(&state.workspace).stdin(Stdio::null())
@@ -288,13 +295,26 @@ async fn tool(state: &AppState, current_task: &str, current_session: &str,
             let output = timeout(Duration::from_secs(90), command.output()).await
                 .map_err(|_| "검사 명령 제한 시간이 초과되었습니다.".to_string())?
                 .map_err(|e| e.to_string())?;
+            let workspace=state.workspace.clone();
+            let after=tokio::task::spawn_blocking(move||
+                source_integrity::snapshot(&workspace)
+            ).await.map_err(|e|format!("Source audit worker: {e}"))??;
+            let unchanged=before==after;
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
+            let mut diagnostic=stderr.chars().take(7_400).collect::<String>();
+            if !unchanged {
+                diagnostic.push_str("\nSOURCE INTEGRITY FAILURE: the check modified source or configuration; exit code does not certify the current revision.");
+            }
             Ok(json!({
-                "program":program,"args":params,"success":output.status.success(),
+                "program":program,"args":params,
+                "success":output.status.success()&&unchanged,
                 "exitCode":output.status.code(),
+                "sourceUnchanged":unchanged,
+                "sourceBeforeSha256":before,
+                "sourceAfterSha256":after,
                 "stdout":stdout.chars().take(16_000).collect::<String>(),
-                "stderr":stderr.chars().take(8_000).collect::<String>()
+                "stderr":diagnostic
             }))
         }
         _ => Err("이 작업에서는 해당 도구 실행 권한이 없습니다.".into()),
