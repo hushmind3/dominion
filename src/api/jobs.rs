@@ -25,6 +25,11 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
         "prompt"=>{
             let Some(prompt)=input["prompt"].as_str().filter(|p|!p.trim().is_empty()&&p.len()<=64000)else{return error(StatusCode::BAD_REQUEST,"실행할 작업 지시가 필요합니다.")};
             let mut value=json!({"prompt":prompt,"toolsEnabled":input["toolsEnabled"].as_bool().unwrap_or(true)});
+            // Used only to scope the main UI's autonomous-work history.
+            // It grants no tool, model or approval permission.
+            if input["clientSurface"]=="native_agent_panel" {
+                value["clientSurface"]=json!("native_agent_panel");
+            }
             for key in ["agentId","providerId","model","reasoningEffort"]{if let Some(v)=input[key].as_str().filter(|s|!s.is_empty()){value[key]=json!(v);}}
             if let Some(v)=input["thinking"].as_bool(){value["thinking"]=json!(v);}
             if let Some(v)=input["toolsExecutionEnabled"].as_bool(){value["toolsExecutionEnabled"]=json!(v);}
