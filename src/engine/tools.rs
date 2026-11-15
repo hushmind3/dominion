@@ -551,28 +551,30 @@ async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Value, String> 
         .as_u64()
         .unwrap_or(90)
         .clamp(5, 300);
-
+    // An isolated parent project must survive async child queue dispatch and
+    // process restart. The in-memory scoped AppState alone is insufficient:
+    // the global scheduler may claim a child before start_now runs.
+    let inherited_workspace=ctx.store.get("session",ctx.session_id)
+        .and_then(|session|session["workspaceDir"].as_str().map(str::to_string));
+    let mut child_session=json!({
+        "title": format!("Delegate · {}", prompt.chars().take(36).collect::<String>()),
+        "agentId": agent_id,
+        "providerId": agent["providerId"],
+        "model": agent["model"],
+        "parentSessionId": ctx.session_id,
+        "delegated": true,
+        "parallelReadOnly":read_only,
+    });
+    if let Some(workspace)=inherited_workspace.as_deref(){
+        child_session["workspaceDir"]=json!(workspace);
+    }
     let session = ctx
         .state
         .store
-        .put(
-            "session",
-            &json!({
-                "title": format!("Delegate · {}", prompt.chars().take(36).collect::<String>()),
-                "agentId": agent_id,
-                "providerId": agent["providerId"],
-                "model": agent["model"],
-                "parentSessionId": ctx.session_id,
-                "delegated": true,
-                "parallelReadOnly":read_only,
-            }),
-        )
+        .put("session",&child_session)
         .ok_or("위임 세션을 만들 수 없습니다.")?;
     let session_id = session["id"].as_str().unwrap_or("").to_string();
-    let job = crate::engine::jobs::enqueue(
-        ctx.state,
-        "prompt",
-        json!({
+    let mut child_input=json!({
             "prompt": prompt,
             "agentId": agent_id,
             "providerId": agent["providerId"],
@@ -585,9 +587,12 @@ async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Value, String> 
             "delegation": true,
             "parallelDelegationReadOnly":read_only,
             "maxAutonomousAttempts":if read_only {2}else{3},
-        }),
-    )
-    .ok_or("위임 작업을 만들 수 없습니다.")?;
+    });
+    if let Some(workspace)=inherited_workspace{
+        child_input["workspaceDir"]=json!(workspace);
+    }
+    let job = crate::engine::jobs::enqueue(ctx.state,"prompt",child_input)
+        .ok_or("위임 작업을 만들 수 없습니다.")?;
     let job_id = job["id"].as_str().unwrap_or("").to_string();
     crate::engine::jobs::start_now(ctx.state.clone(), job_id.clone());
 
