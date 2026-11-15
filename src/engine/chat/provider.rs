@@ -2542,8 +2542,8 @@ mod tests {
             json!({"role":"user","content":"Continue the same task"}),
         ];
         for (id, name, content) in [
-            ("old1","workspace_read","A".repeat(22_000)),
-            ("old2","file_read","B".repeat(22_000)),
+            ("old1","workspace_read","A".repeat(28_000)),
+            ("old2","file_read","B".repeat(28_000)),
             ("write","workspace_write","write receipt".repeat(450)),
             ("error","workspace_read",json!({"error":"permission denied","text":"z".repeat(5_000)}).to_string()),
             ("new1","workspace_read","recent-one".repeat(500)),
