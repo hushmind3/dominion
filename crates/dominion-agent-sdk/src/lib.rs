@@ -237,6 +237,52 @@ impl Snapshot {
         self.status = status;
         self.error = Some(reason.into());
     }
+    /// The operator may resolve exactly ONE uncertain tool effect. A human
+    /// observation is never a successful tool receipt, an independent
+    /// acceptance proof, or permission to replay a previous paid call.
+    ///
+    /// This returns the reconciled action so the host can atomically attach
+    /// its own durable audit metadata before allowing queue continuation.
+    pub fn reconcile_tool_observation(
+        &mut self, applied:bool, details:&str
+    )->Result<Action,String>{
+        let details=details.trim();
+        if details.is_empty()||details.len()>8192 {
+            return Err("A concrete operator observation (1..8192 bytes) is required".into());
+        }
+        if !matches!(self.status,Status::NeedsReview)
+            ||self.model_in_flight||self.in_flight.len()!=1 {
+            return Err("Only one uncertain tool effect may be reconciled; uncertain model calls cannot be replayed".into());
+        }
+        let action=self.in_flight[0].clone();
+        if self.receipts.iter().any(|r|r.id==action.id) {
+            return Err("An existing tool receipt already owns this action ID".into());
+        }
+        self.receipts.push(Receipt{
+            id:action.id.clone(),tool:action.tool.clone(),
+            arguments:action.arguments.clone(),success:false,
+            result:json!({
+                "operatorObservedApplied":applied,
+                "observation":details,
+                "independentlyVerified":false,
+                "replayed":false,
+                "reason":"uncertain tool outcome manually reconciled; verify before trusting"
+            }),
+            step:self.step,
+        });
+        self.checks.push(CheckResult{
+            criterion:Criterion{kind:CriterionKind::ToolSucceeded,path:None,
+                contains:None,tool:Some("manual_reconciliation".into())},
+            satisfied:false,
+            explanation:format!(
+                "Operator observed uncertain {} result for {}. Independent inspection and replanning required; never treat this as a successful tool receipt.",
+                if applied{"applied"}else{"not applied"},action.tool),
+        });
+        self.in_flight.clear();
+        self.status=Status::Running;
+        self.error=None;
+        Ok(action)
+    }
 }
 
 pub struct Kernel<'a> {
@@ -802,6 +848,55 @@ impl Kernel<'_> {
 #[cfg(test)]
 mod owner_effect_tests {
     use super::*;
+    #[test]
+    fn manual_uncertain_tool_observation_is_not_a_forged_success_receipt(){
+        let request=RunRequest{
+            id:"manual-one".into(),instruction:"write a file".into(),
+            owner_instructions:String::new(),strategy:Strategy::Balanced,
+            limits:Limits::default(),allowed_tools:vec!["workspace_write".into()],
+            checks:vec![],require_evidence:true
+        };
+        let mut snapshot=Snapshot::from_request(&request);
+        snapshot.status=Status::NeedsReview;
+        snapshot.step=3;
+        snapshot.in_flight=vec![Action{
+            id:"operation-1".into(),tool:"workspace_write".into(),
+            arguments:json!({"path":"result.txt","content":"written"}),
+            depends_on:vec![]
+        }];
+        let action=snapshot.reconcile_tool_observation(true,"result.txt exists").unwrap();
+        assert_eq!(action.id,"operation-1");
+        assert!(matches!(snapshot.status,Status::Running));
+        assert!(!snapshot.model_in_flight);
+        assert!(snapshot.in_flight.is_empty());
+        assert_eq!(snapshot.receipts.len(),1);
+        assert_eq!(snapshot.receipts[0].success,false);
+        assert_eq!(snapshot.receipts[0].result["independentlyVerified"],false);
+        assert_eq!(snapshot.receipts[0].result["operatorObservedApplied"],true);
+        assert!(!snapshot.checks.last().unwrap().satisfied);
+        assert!(snapshot.reconcile_tool_observation(true,"again").is_err(),
+            "cannot reconcile or replay an action twice");
+    }
+    #[test]
+    fn uncertain_paid_model_and_multiple_tools_are_not_operator_resumable(){
+        let request=RunRequest{
+            id:"manual-two".into(),instruction:"run a shell command".into(),
+            owner_instructions:String::new(),strategy:Strategy::Balanced,
+            limits:Limits::default(),allowed_tools:vec![],checks:vec![],
+            require_evidence:false
+        };
+        let mut snapshot=Snapshot::from_request(&request);
+        snapshot.status=Status::NeedsReview;
+        snapshot.model_in_flight=true;
+        snapshot.in_flight=vec![Action{id:"x".into(),tool:"shell_exec".into(),
+            arguments:json!({"command":"echo test"}),depends_on:vec![]}];
+        assert!(snapshot.reconcile_tool_observation(false,"no effect").is_err());
+        assert!(snapshot.in_flight.len()==1);
+        snapshot.model_in_flight=false;
+        snapshot.in_flight.push(snapshot.in_flight[0].clone());
+        assert!(snapshot.reconcile_tool_observation(true,"could be applied").is_err());
+        assert_eq!(snapshot.receipts.len(),0);
+    }
     #[test]
     fn edit_intent_requires_actual_writes_in_any_supported_language() {
         for text in ["README 수정해라", "파일 작성", "코드 리팩토링", "fix the unit test", "implement tool routing"] {
