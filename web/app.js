@@ -160,6 +160,134 @@ ui.steer.addEventListener('click',async()=>{
     ui.instruction.value='';notice('지시가 저장됐습니다. 다음 모델 단계에서 반영됩니다.');
   }catch(e){notice(e.message);}
 });
+let selectedVideo = null;
+let videoBusy = false;
+
+function viewVideo(video) {
+  selectedVideo=video?.id||null;
+  const items=byId('videoScenes');
+  items.replaceChildren();
+  const link=byId('videoDownload');
+  link.hidden=true;
+  if(!video){
+    byId('videoStatus').textContent='새 영상 프로젝트를 만들거나 기존 영상을 선택하세요.';
+    byId('videoRender').disabled=true;
+    return;
+  }
+  byId('videoSelect').value=video.id;
+  const status={draft:'장면 준비',rendering:'렌더링 중',completed:'완성',failed:'실패'};
+  byId('videoStatus').textContent=(status[video.status]||video.status)+
+    ' · '+(video.scenes||[]).length+'개 장면 · 예상 API 비용 '+
+    Number(video.cost_krw||0).toLocaleString('ko-KR')+'원';
+  if(video.error)notice(video.error);
+  byId('videoRender').disabled=videoBusy||video.status==='rendering';
+  if(video.status==='completed'){
+    link.hidden=false;
+    link.href='/api/videos/'+encodeURIComponent(video.id)+'/content';
+    link.download='dominion-'+video.id+'.mp4';
+  }
+  (video.scenes||[]).forEach((scene,index)=>{
+    const section=document.createElement('div');
+    section.className='advanced';
+    const head=document.createElement('strong');
+    head.textContent=(index+1)+'번 장면';
+    const title=document.createElement('input');
+    title.value=scene.heading;title.maxLength=180;
+    title.setAttribute('aria-label',(index+1)+'번 장면 제목');
+    const narration=document.createElement('input');
+    narration.value=scene.narration;narration.maxLength=1000;
+    narration.setAttribute('aria-label',(index+1)+'번 장면 내용');
+    const seconds=document.createElement('input');
+    seconds.type='number';seconds.min=2;seconds.max=30;seconds.value=scene.seconds;
+    seconds.setAttribute('aria-label',(index+1)+'번 장면 초');
+    const save=document.createElement('button');
+    save.type='button';save.className='ghost';save.textContent='장면 수정 저장';
+    save.disabled=video.status==='rendering';
+    save.addEventListener('click',async()=>{
+      if(videoBusy)return;
+      videoBusy=true;save.disabled=true;
+      try{
+        const changed=await api('/api/videos/'+encodeURIComponent(video.id)+
+          '/scenes/'+index,'POST',{
+            heading:title.value.trim(),narration:narration.value,
+            seconds:Number(seconds.value)
+          });
+        viewVideo(changed);
+        notice('바뀐 장면만 다시 렌더링하도록 저장했습니다.');
+      }catch(error){notice(error.message);}
+      finally{videoBusy=false;save.disabled=false;}
+    });
+    section.append(head,title,narration,seconds,save);
+    items.append(section);
+  });
+}
+async function refreshVideos(preferred){
+  const videos=await api('/api/videos');
+  const picker=byId('videoSelect');
+  const chosen=preferred||selectedVideo;
+  picker.replaceChildren();
+  const first=document.createElement('option');
+  first.value='';first.textContent='영상을 선택하세요';picker.append(first);
+  for(const video of videos){
+    const item=document.createElement('option');
+    item.value=video.id;
+    item.textContent=video.prompt.slice(0,70)+' · '+video.status;
+    picker.append(item);
+  }
+  if(chosen && videos.some(video=>video.id===chosen)){
+    viewVideo(videos.find(video=>video.id===chosen));
+  }else if(videos.length)viewVideo(videos[0]);
+  else viewVideo(null);
+}
+byId('videoCreate').addEventListener('submit',async event=>{
+  event.preventDefault();
+  if(videoBusy)return;
+  const backend=byId('videoBackend').value;
+  if(backend==='veo' && !window.confirm(
+    'Veo는 외부 영상 생성 API를 호출하며 요금이 청구될 수 있습니다. 계속하시겠습니까?'))return;
+  videoBusy=true;
+  try{
+    const payload={
+      prompt:byId('videoPrompt').value.trim(),backend
+    };
+    const heading=byId('videoHeading').value.trim();
+    if(heading){
+      payload.scenes=[{heading,narration:byId('videoNarration').value,
+        seconds:Number(byId('videoSeconds').value)}];
+    }
+    const video=await api('/api/videos','POST',payload);
+    await refreshVideos(video.id);
+    notice('영상 프로젝트가 저장됐습니다. 내용을 검토하고 렌더링을 시작하세요.');
+  }catch(error){notice(error.message);}
+  finally{videoBusy=false;}
+});
+byId('videoSelect').addEventListener('change',async event=>{
+  if(!event.target.value){viewVideo(null);return;}
+  try{viewVideo(await api('/api/videos/'+encodeURIComponent(event.target.value)));}
+  catch(error){notice(error.message);}
+});
+byId('videoRender').addEventListener('click',async()=>{
+  if(!selectedVideo||videoBusy)return;
+  videoBusy=true;byId('videoRender').disabled=true;
+  try{
+    const latest=await api('/api/videos/'+encodeURIComponent(selectedVideo));
+    if(latest.backend==='veo' && !window.confirm(
+      'Veo 렌더링은 영상 생성 비용이 발생할 수 있습니다. 시작하시겠습니까?'))return;
+    viewVideo(await api('/api/videos/'+encodeURIComponent(selectedVideo)+'/render',
+      'POST',{}));
+    notice('렌더링 작업을 시작했습니다. 상태 확인을 눌러 결과를 확인하세요.');
+  }catch(error){notice(error.message);}
+  finally{videoBusy=false;}
+});
+byId('videoCheck').addEventListener('click',async()=>{
+  if(!selectedVideo)return;
+  try{viewVideo(await api('/api/videos/'+encodeURIComponent(selectedVideo)));notice('');}
+  catch(error){notice(error.message);}
+});
+byId('refreshVideos').addEventListener('click',async()=>{
+  try{await refreshVideos();notice('');}catch(error){notice(error.message);}
+});
+
 let selectedGroup = null;
 let groupBusy = false;
 
@@ -270,6 +398,7 @@ byId('refreshGroups').addEventListener('click',async()=>{
     ui.connection.textContent='Rust 연결됨 · '+status.model;
     await loadTasks();
     await refreshGroups();
+    await refreshVideos();
   }catch(error){
     ui.connection.textContent='서버 연결 끊김';notice(error.message);
   }
