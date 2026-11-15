@@ -5338,6 +5338,10 @@ mod tests {
             "native mutations cannot credit an unused model editor, even after model calls");
         assert_eq!(edit_method_reward(&json!({"accepted":true,"evidenceVerified":true,
             "evaluation":{"metrics":{"eligible":true}}})),1.0);
+        assert_eq!(edit_method_reward(&json!({"accepted":true,"evidenceVerified":true,
+            "editEvidence":{"attempts":1,"verifiedWrites":0},
+            "evaluation":{"metrics":{"eligible":true}}})),0.0,
+            "an adopted source without model-origin verified writes cannot reward the model editor");
         assert_eq!(edit_method_reward(&json!({"accepted":true,"evidenceVerified":false,
             "evaluation":{"metrics":{"eligible":true}}})),0.0,
             "unverified summaries cannot earn a successful improvement reward");
@@ -6751,6 +6755,7 @@ mod tests {
             "oracleVersion":"frozen-v1","reportSha256":hash,
             "baselineBuildOk":true,"candidateBuildOk":true,"cases":raw});
         let candidate=json!({"id":"neutral-paired","target":"harness",
+            "rsiJobId":"measured-job",
             "status":"inconclusive","baseCommit":base,
             "patchSha256":patch,"oracleVersion":"frozen-v1","cases":plan,
             "evaluation":{"source":"server_invoked_local_paired_git_worktrees",
@@ -6772,6 +6777,11 @@ mod tests {
         assert_eq!(enriched[0]["measuredImprovedHoldouts"],0);
         assert_eq!(enriched[0]["evidenceVerified"],false);
         assert_eq!(enriched[0]["verifiedHoldoutGains"],0);
+        let mut stolen=row.clone();
+        stolen["jobId"]=json!("unrelated-worker");
+        assert_eq!(history_with_verified_payoffs(&state,&[stolen])[0]
+            ["pairedEvidenceVerified"],false,
+            "a different generation cannot claim the original worker's trial");
         row["evaluation"]["evidenceSha256"]=json!("f".repeat(64));
         assert_eq!(history_with_verified_payoffs(&state,&[row]) [0]
             ["pairedEvidenceVerified"],false);
