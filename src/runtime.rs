@@ -342,6 +342,32 @@ impl DominionSdk {
     }
 }
 
+impl DominionSdk {
+    pub async fn video_create(&self,input:crate::video::NewVideo)
+        -> Result<crate::video::Video,RuntimeError>{
+        self.state.videos.create(&self.state.provider,input).await.map_err(RuntimeError)
+    }
+    pub async fn video_list(&self)->Vec<crate::video::Video>{
+        self.state.videos.list().await
+    }
+    pub async fn video_get(&self,id:uuid::Uuid)
+        ->Result<crate::video::Video,RuntimeError>{
+        self.state.videos.get(id).await
+            .ok_or_else(||RuntimeError("Video not found".into()))
+    }
+    pub async fn video_scene(&self,id:uuid::Uuid,index:usize,change:crate::video::ChangeScene)
+        ->Result<crate::video::Video,RuntimeError>{
+        self.state.videos.change_scene(id,index,change).await.map_err(RuntimeError)
+    }
+    pub async fn video_render(&self,id:uuid::Uuid)
+        ->Result<crate::video::Video,RuntimeError>{
+        self.state.videos.start(id).await.map_err(RuntimeError)
+    }
+    pub async fn video_output(&self,id:uuid::Uuid)->Result<std::path::PathBuf,RuntimeError>{
+        self.state.videos.output_path(id).await.map_err(RuntimeError)
+    }
+}
+
 fn decode_record(value: Value) -> Result<TaskRecord, RuntimeError> {
     serde_json::from_value(value).map_err(|error| RuntimeError(error.to_string()))
 }
