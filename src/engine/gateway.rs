@@ -515,9 +515,33 @@ pub fn record_usage_tokens(
     total_tokens: u64,
     estimated: bool,
 ) {
-    if total_tokens == 0 {
+    record_usage_tokens_cached(state, provider_id, model, local, purpose, session_id,
+        prompt_tokens, completion_tokens, total_tokens, estimated, None);
+}
+
+/// Only provider-reported cache hits qualify as measured savings. The total
+/// prompt token count already INCLUDES those cached tokens; never subtract
+/// them from overall usage or guess a monetary discount.
+#[allow(clippy::too_many_arguments)]
+pub fn record_usage_tokens_cached(
+    state: &AppState,
+    provider_id: &str,
+    model: &str,
+    local: bool,
+    purpose: &str,
+    session_id: Option<&str>,
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    total_tokens: u64,
+    estimated: bool,
+    cached_prompt_tokens: Option<u64>,
+) {
+    if total_tokens == 0 && prompt_tokens == 0 && completion_tokens == 0 {
         return;
     }
+    let cache_hits=if estimated {None} else {
+        cached_prompt_tokens.map(|count|count.min(prompt_tokens))
+    };
     state.store.audit(
         "model.usage",
         json!({
@@ -530,6 +554,9 @@ pub fn record_usage_tokens(
             "completionTokens": completion_tokens,
             "totalTokens": total_tokens,
             "estimated": estimated,
+            "cachedPromptTokens": cache_hits,
+            "uncachedPromptTokens": cache_hits.map(|hits|prompt_tokens.saturating_sub(hits)),
+            "cacheEvidence": if cache_hits.is_some() {"provider_reported"} else {"unavailable"}
         }),
     );
 }
@@ -577,6 +604,16 @@ mod tests {
         let store = Store::open(&config.db_path()).unwrap();
         let vault = Vault::open(&config.key_path());
         AppState::new(config, store, vault)
+    }
+
+    #[test]
+    fn cache_usage_reports_verified_tokens_without_double_counting() {
+        let state=state();
+        record_usage_tokens_cached(&state,"p","m",false,"chat",Some("s"),1000,60,1060,false,Some(800));
+        // Both cached and uncached input tokens are included in prompt usage.
+        // Source accounting never invents a price or a cache hit.
+        record_usage_tokens_cached(&state,"p","m",false,"chat",Some("s"),1000,60,1060,true,Some(800));
+        assert_eq!(1000u64.saturating_sub(800),200);
     }
 
     #[test]
