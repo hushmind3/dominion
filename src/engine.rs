@@ -1,6 +1,7 @@
 use crate::AppState;
 mod files;
 mod strategy;
+mod context;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{path::{Component, Path, PathBuf}, process::Stdio, time::Duration};
@@ -293,12 +294,22 @@ pub async fn run(state: AppState, id: String) {
                 Some("전체 토큰 예산을 소진했습니다.".into()));
             return;
         }
-        let compacted = strategy::prune_tool_context(&mut messages,32_000);
-        if compacted > 0 {
-            state.emit(&id,"context_compacted",json!({"oldToolResults":compacted}));
+        // Compact only the outbound projection. Tool call/result pairs and
+        // original session evidence remain intact for later verification.
+        let context_limit=std::env::var("DOMINION_CONTEXT_MAX_CHARS").ok()
+            .and_then(|value|value.parse::<usize>().ok())
+            .unwrap_or(48_000).clamp(16_000,256_000);
+        let projected=context::project(&messages,context_limit);
+        if projected.omitted_messages>0 || projected.projected_chars<projected.original_chars {
+            state.emit(&id,"context_projected",json!({
+                "originalChars":projected.original_chars,
+                "modelChars":projected.projected_chars,
+                "omittedMessages":projected.omitted_messages
+            }));
         }
-        state.emit(&id,"model_step",json!({"step":step+1,"limit":steps}));
-        let reply = match state.provider.complete(&messages,&available,false).await {
+        state.emit(&id,"model_step",json!({"step":step+1,"limit":steps,
+            "modelContextChars":projected.projected_chars}));
+        let reply = match state.provider.complete(&projected.messages,&available,false).await {
             Ok(value) => value,
             Err(error) => {
                 settle(&state,&id,"failed","",verified_writes,Some(error));
