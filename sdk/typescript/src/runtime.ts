@@ -16,6 +16,7 @@ export interface ThreadOptions {
   allowMcp?: boolean;
   allowSubagents?: boolean;
   requireEvidence?: boolean;
+  acceptanceChecks?: TaskInput['acceptanceChecks'];
   maxSteps?: number;
   tokenBudget?: number;
   costBudgetKrw?: number;
@@ -83,6 +84,7 @@ export class DominionThread {
       allowMcp: options.allowMcp ?? false,
       allowSubagents: options.allowSubagents ?? false,
       requireEvidence: options.requireEvidence ?? false,
+      acceptanceChecks:options.acceptanceChecks,
       maxSteps: options.maxSteps,
       tokenBudget: options.tokenBudget,
       costBudgetKrw: options.costBudgetKrw,
