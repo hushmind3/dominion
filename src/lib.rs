@@ -7,6 +7,8 @@ pub mod store;
 pub mod mcp;
 pub mod provider;
 pub mod group;
+pub mod video;
+pub mod veo;
 
 pub use runtime::{DominionConfig, DominionSdk, RuntimeError, TaskInput, TaskRecord, TaskEvent};
 
@@ -21,6 +23,7 @@ pub struct AppState {
     pub(crate) mcp: Arc<mcp::Mcp>,
     pub(crate) provider: provider::ModelClient,
     pub(crate) groups: Arc<group::Groups>,
+    pub(crate) videos: Arc<video::Videos>,
     pub(crate) bus: broadcast::Sender<Value>,
     pub(crate) workspace: PathBuf,
     pub(crate) model_name: String,
