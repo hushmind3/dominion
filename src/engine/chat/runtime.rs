@@ -2052,15 +2052,16 @@ async fn run_turn_body(
                     let _=crate::engine::algorithms::choose_for_agent(
                         state,"tool.combination",request.agent_id.as_deref(),Some(execution_id));
                     let batch=&round_calls[call_index..call_index+batch_len];
+                    use futures_util::stream::{FuturesUnordered,StreamExt};
                     let mut ordered=vec![None::<(String,bool)>;batch_len];
-                    let mut futures=Vec::new();
-                    let mut valid_slots=Vec::new();
+                    let mut ready=std::collections::VecDeque::<(usize,Value,u64)>::new();
+                    // Preflight every call and charge the complete batch
+                    // before starting *any* side effect or external request.
                     for (offset,read_call) in batch.iter().enumerate(){
                         if offset>0 && !budget.charge_proposal(){
                             return Err(format!("도구 제안 예산({}회)을 초과했습니다.",
                                 max_tools.saturating_mul(2)));
                         }
-                        parallel_done.insert(read_call.id.clone());
                         let parsed=serde_json::from_str::<Value>(&read_call.arguments);
                         match parsed {
                             Ok(args) if args.is_object()=>{
@@ -2068,13 +2069,7 @@ async fn run_turn_body(
                                     return Err(format!("도구 호출 제한({max_tools}회)을 초과했습니다."));
                                 }
                                 op_seq+=1;
-                                valid_slots.push(offset);
-                                futures.push(dispatch_tool_call(
-                                    state,tx,&session,request,session_id,execution_id,
-                                    read_call,args,metrics,op_seq,round,call_index+offset,
-                                    provider.tool_mode=="compat","model",
-                                    None,None,None,
-                                ));
+                                ready.push_back((offset,args,op_seq));
                             }
                             _=>{
                                 mark_tool_argument_signal(state,request,execution_id,false);
@@ -2088,13 +2083,71 @@ async fn run_turn_body(
                             }
                         }
                     }
-                    let outcomes=futures_util::future::join_all(futures).await;
-                    for (offset,result) in valid_slots.into_iter().zip(outcomes){
-                        let (text,ok)=match result {
-                            Ok((_,ok,content))=>(content,ok),
-                            Err(err)=>(json!({"error":err}).to_string(),false),
-                        };
-                        ordered[offset]=Some((text,ok));
+                    for read_call in batch {
+                        parallel_done.insert(read_call.id.clone());
+                    }
+                    // Rolling pool: as one read finishes, start the next one
+                    // without waiting for the slowest member of a fixed window.
+                    // The dispatcher is the existing native permissions,
+                    // receipts and cancellation path, not a second harness.
+                    let compat=provider.tool_mode=="compat";
+                    let session_ref=&session;
+                    let launch=|(offset,args,seq):(usize,Value,u64)|{
+                        let read_call=&batch[offset];
+                        async move {
+                            let result=dispatch_tool_call(
+                                state,tx,session_ref,request,session_id,execution_id,
+                                read_call,args,metrics,seq,round,call_index+offset,
+                                compat,"model",None,None,None,
+                            ).await;
+                            (offset,result)
+                        }
+                    };
+                    let mut running=FuturesUnordered::new();
+                    const PARALLEL_CAP:usize=4;
+                    for _ in 0..PARALLEL_CAP {
+                        if let Some(next)=ready.pop_front(){running.push(launch(next));}
+                    }
+                    let mut fatal=None::<String>;
+                    let mut cancelled=false;
+                    let started=std::time::Instant::now();
+                    while !running.is_empty(){
+                        if state.is_cancelled(session_id)
+                            || state.cancellation_generation(session_id)!=generation{
+                            cancelled=true;
+                        }
+                        // Check cancellation while operations are in flight,
+                        // but drain already-started futures rather than drop
+                        // their uncertain external results.
+                        let next=tokio::time::timeout(
+                            std::time::Duration::from_millis(150),running.next()).await;
+                        let Ok(Some((offset,result)))=next else {continue;};
+                        match result {
+                            Ok((_,ok,content))=>ordered[offset]=Some((content,ok)),
+                            Err(error)=>{
+                                if fatal.is_none(){fatal=Some(error);}
+                            }
+                        }
+                        if !cancelled && fatal.is_none(){
+                            if let Some(next)=ready.pop_front(){running.push(launch(next));}
+                        }
+                    }
+                    state.store.audit("tool.parallel_batch_settled",json!({
+                        "sessionId":session_id,"executionId":execution_id,
+                        "round":round,"firstCallIndex":call_index,
+                        "planned":batch_len,"finished":ordered.iter().filter(|item|item.is_some()).count(),
+                        "unstarted":ready.len(),"cancelled":cancelled,
+                        "fatal":fatal.is_some(),"elapsedMs":started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                    }));
+                    if cancelled{
+                        return Err("병렬 도구 실행이 중단되었습니다. 시작된 작업의 종료는 확인했으며, 미실행 호출을 재생하지 않습니다.".into());
+                    }
+                    if let Some(error)=fatal{
+                        // An internal dispatch failure is not a successful
+                        // tool response. All started work was drained above;
+                        // terminate this turn with the original error so the
+                        // durable recovery path can classify unknown effects.
+                        return Err(error);
                     }
                     let mut all_ok=true;
                     for (read_call,item) in batch.iter().zip(ordered.into_iter()){
