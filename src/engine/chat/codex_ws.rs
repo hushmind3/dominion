@@ -996,9 +996,9 @@ mod tests {
         assert!(requests.recv().await.is_some());
         assert!(requests.try_recv().is_err(),
             "do not spend another inference on websocket or HTTP after uncertain delivery");
-        assert!(state.store.all("audit").iter().any(|r|
-            r.to_string().contains("codex.ws.uncertain") ||
-            r.to_string().contains("modelBilling")),
+        assert!(state.store.recent_audit(5).iter().any(|r|
+            r["event"]=="codex.ws.uncertain" &&
+            r["detail"]["modelBilling"]=="unknown" && r["detail"]["replayed"]==false),
             "operator must have a durable unknown-billing receipt");
         forget(&registry_key(&provider,"fixture","session"));
         server.abort();
