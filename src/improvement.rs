@@ -185,11 +185,22 @@ impl Improvements {
         });
         self.get(id).await.ok_or("trial missing after start".into())
     }
-    async fn evaluate(&self,model:&ModelClient,mut item:Improvement)->Result<(),String>{
+    async fn evaluate(&self,model:&ModelClient,item:Improvement)->Result<(),String>{
+        self.evaluate_with_baseline(model,item,None).await
+    }
+    /// Cache only a baseline measured from this exact Git SHA under the
+    /// shared native workspace lease. Candidate tests always run afresh.
+    async fn evaluate_with_baseline(
+        &self,model:&ModelClient,mut item:Improvement,
+        frozen_baseline:Option<(&str,&Measurement)>
+    )->Result<(),String>{
         let repo=self.workspace.canonicalize().map_err(|e|e.to_string())?.join(relative(&item.repository)?)
             .canonicalize().map_err(|e|e.to_string())?;
         let head=git(&repo,&["rev-parse","HEAD"]).await?;
         let head=head.trim().to_string();
+        if frozen_baseline.is_some_and(|(sha,_)|sha!=head){
+            return Err("Cached baseline revision differs from current Git HEAD".into());
+        }
         if !git(&repo,&["status","--porcelain"]).await?.is_empty(){return Err("repository must have a clean working tree".into());}
         item.base_commit=Some(head.clone());self.put(item.clone()).await?;
         let trial_root=self.root.join(item.id.to_string());
@@ -198,7 +209,9 @@ impl Improvements {
         let reference=trial_root.join("baseline");
         let candidate=trial_root.join("candidate");
         let mut created=Vec::<PathBuf>::new();
-        for destination in [&reference,&candidate]{
+        let destinations=if frozen_baseline.is_some() {vec![&candidate]}
+            else {vec![&reference,&candidate]};
+        for destination in destinations {
             let attempt=async {
                 let path=destination.to_str().ok_or("invalid worktree path")?;
                 git(&repo,&["worktree","add","--detach",path,&head]).await?;
@@ -212,13 +225,18 @@ impl Improvements {
             }
             created.push(destination.to_path_buf());
         }
-        let result=self.evaluate_worktrees(model,&mut item,&reference,&candidate).await;
+        let result=self.evaluate_worktrees(
+            model,&mut item,&reference,&candidate,frozen_baseline
+        ).await;
         for dir in [&reference,&candidate] {
             if let Some(path)=dir.to_str(){let _=git(&repo,&["worktree","remove","--force",path]).await;}
         }
         result
     }
-    async fn evaluate_worktrees(&self,model:&ModelClient,item:&mut Improvement,reference:&Path,candidate:&Path)->Result<(),String>{
+    async fn evaluate_worktrees(
+        &self,model:&ModelClient,item:&mut Improvement,reference:&Path,
+        candidate:&Path,frozen_baseline:Option<(&str,&Measurement)>
+    )->Result<(),String>{
         let file=relative(&item.target_file)?;
         let source=candidate.join(file);
         let actual=source.canonicalize().map_err(|e|format!("candidate target unavailable: {e}"))?;
@@ -258,10 +276,11 @@ impl Improvements {
         item.candidate_commit=Some(commit);
         item.proposal=Some(format!("{} bytes -> {} bytes",original.len(),text.len()));
         self.put(item.clone()).await?;
-        let baseline=self.measure(reference,&item.test_command,item.score_command.as_deref()).await;
-        let candidate_measure=self.measure(candidate,&item.test_command,item.score_command.as_deref()).await;
-        let a=baseline?;
-        let b=candidate_measure?;
+        let a=match frozen_baseline {
+            Some((_,evidence))=>evidence.clone(),
+            None=>self.measure(reference,&item.test_command,item.score_command.as_deref()).await?
+        };
+        let b=self.measure(candidate,&item.test_command,item.score_command.as_deref()).await?;
         let accepted=is_better(&a,&b);
         item.reflection=Some(format!("Previous score {:?}; candidate score {:?}; baseline tests: {}; candidate tests: {}; adopted recommendation: {}. Baseline log: {} Candidate log: {}",
             a.score,b.score,a.tests_passed,b.tests_passed,accepted,a.log.chars().take(1000).collect::<String>(),b.log.chars().take(1000).collect::<String>()));
