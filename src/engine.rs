@@ -1,4 +1,5 @@
 use crate::AppState;
+mod files;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{path::{Component, Path, PathBuf}, process::Stdio, time::Duration};
@@ -35,7 +36,31 @@ fn specs(allow_write: bool, allow_shell: bool) -> Vec<Value> {
             "parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}
         }
     })];
+    result.push(json!({
+        "type":"function","function":{
+            "name":"workspace_list",
+            "description":"Discover up to 200 source files recursively in the workspace. Use before reading files.",
+            "parameters":{"type":"object","properties":{"path":{"type":"string","description":"Relative folder or '.'"}},"required":["path"],"additionalProperties":false}
+        }
+    }));
+    result.push(json!({
+        "type":"function","function":{
+            "name":"workspace_search",
+            "description":"Find exact text in bounded workspace source files, returning paths and line previews.",
+            "parameters":{"type":"object","properties":{"query":{"type":"string"},"path":{"type":"string"}},"required":["query","path"],"additionalProperties":false}
+        }
+    }));
     if allow_write {
+        result.push(json!({
+            "type":"function","function":{
+                "name":"workspace_replace",
+                "description":"Replace one exact UTF-8 source span, refusing ambiguous or stale edits. Optional sha256 locks the input revision.",
+                "parameters":{"type":"object","properties":{
+                    "path":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"},
+                    "sha256":{"type":"string"}
+                },"required":["path","old","new"],"additionalProperties":false}
+            }
+        }));
         result.push(json!({
             "type":"function","function":{
                 "name":"workspace_write",
@@ -78,6 +103,19 @@ fn allowed_check(program: &str, args: &[String]) -> bool {
 async fn tool(state: &AppState, name: &str, args: &Value,
     allow_write: bool, allow_shell: bool) -> Result<Value, String> {
     match name {
+        "workspace_list" => {
+            files::list(&state.workspace, args["path"].as_str().unwrap_or("."))
+        }
+        "workspace_search" => {
+            let query = args["query"].as_str().ok_or("검색할 문자열이 필요합니다.")?;
+            files::search(&state.workspace, query, args["path"].as_str().unwrap_or("."))
+        }
+        "workspace_replace" if allow_write => {
+            let path = args["path"].as_str().ok_or("수정할 파일 경로가 필요합니다.")?;
+            let old = args["old"].as_str().ok_or("변경 전 정확한 문자열이 필요합니다.")?;
+            let new = args["new"].as_str().ok_or("변경할 새 문자열이 필요합니다.")?;
+            files::replace(&state.workspace, path, old, new, args["sha256"].as_str()).await
+        }
         "workspace_read" => {
             let path = args["path"].as_str().ok_or("파일 경로가 필요합니다.")?;
             let file = scoped_path(&state.workspace, path, false)?;
@@ -284,7 +322,7 @@ pub async fn run(state: AppState, id: String) {
                 .unwrap_or(Value::Null);
             state.emit(&id,"tool_start",json!({"name":tool_name,"callId":tool_id}));
             let outcome = tool(&state,tool_name,&arguments,allow_write,allow_shell).await;
-            if tool_name == "workspace_write" && outcome.as_ref()
+            if matches!(tool_name, "workspace_write" | "workspace_replace") && outcome.as_ref()
                 .is_ok_and(|v|v["verified"]==true) {
                 verified_writes += 1;
             }
