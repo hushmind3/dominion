@@ -153,3 +153,14 @@ Bring your own API credentials or connect a local model, then use a Rust-native 
 **Getting started:** [Installation guide](docs/GETTING-STARTED.md) · [Engine internals](ENGINE.md) · [Issues](https://github.com/hushmind3/dominion-rust/issues) · [Pull requests](https://github.com/hushmind3/dominion-rust/pulls)
 
 **License:** [Apache License 2.0](LICENSE).
+
+
+## 🧩 Rust / TypeScript SDK (서브3)
+
+도미니언 자체 Rust 엔진과 동일한 API·작업 상태를 사용하는 별도 SDK를 추가했습니다.
+
+- [Rust SDK](sdk/rust/README.md): `dominion-sdk` — 작업, 세션, 승인, 그룹대화, 영상, RSI, 채팅/SSE 이벤트 스트림.
+- [TypeScript SDK](sdk/typescript/README.md): `@dominion-ai/sdk` — 타입 기반 API, 스트림 재접속, 작업 상태/취소·완료 대기.
+- [구조·2026 프런티어 비교](docs/SDK-ARCHITECTURE-2026-11-15.md).
+
+CLI 하네스나 타사 에이전트 실행기를 SDK에 넣지 않습니다. 실제 판단·도구·메모리·체크포인트는 `src/engine/`이 담당하고 SDK와 GUI는 `/api/*`에 연결됩니다. 두 패키지는 아직 패키지 레지스트리에 게시하지 않았으며 Rust SDK 컴파일과 실모델 통합 검증은 별도 환경에서 진행해야 합니다.
