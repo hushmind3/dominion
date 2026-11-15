@@ -1,6 +1,5 @@
 //! Source-grounded, bounded workspace discovery before an autonomous plan.
 //! Repository texts are treated as context, never as tool commands.
-use crate::state::AppState;
 use std::{fs,path::Path};
 fn ignored(name:&str)->bool {
     matches!(name,".git"|"node_modules"|"target"|"build"|"dist"|
@@ -22,9 +21,6 @@ fn scan(root:&Path,dir:&Path,depth:usize,paths:&mut Vec<String>){
         if kind.is_dir(){paths.push(format!("{rel}/"));scan(root,&entry.path(),depth+1,paths);}
         else if kind.is_file(){paths.push(rel);}
     }
-}
-pub fn snapshot(state:&AppState)->String {
-    snapshot_in(&state.config.workspace)
 }
 pub fn snapshot_in(root:&Path)->String {
     if !root.is_dir() || !["Cargo.toml","package.json","pyproject.toml","go.mod",
