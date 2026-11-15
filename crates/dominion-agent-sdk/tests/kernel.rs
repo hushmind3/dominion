@@ -213,3 +213,99 @@ async fn native_protocol_cannot_dispatch_without_a_durable_intent() {
     assert_eq!(run.in_flight.len(), 1);
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[tokio::test]
+async fn same_decision_write_then_dependent_read_runs_in_dependency_order() {
+    let (model, tools, evidence, journal, request, root) = test_env(vec![
+        json!({"actions":[
+            {"id":"write-first","tool":"write","arguments":{"path":"artifact.txt","content":"hello"}},
+            {"id":"read-after","tool":"read","arguments":{"path":"artifact.txt"},
+             "dependsOn":["write-first"]}
+        ]}),
+        json!({"actions":[],"answer":"artifact written and inspected"}),
+    ]);
+    let output = Kernel {model:&model,tools:&tools,evidence:&evidence,journal:&journal}
+        .run(request).await.unwrap();
+    assert!(matches!(output.status, Status::Completed), "{:?}",output.error);
+    assert_eq!(output.receipts.len(), 2);
+    assert_eq!(output.receipts[0].tool, "write");
+    assert_eq!(output.receipts[1].tool, "read");
+    assert_eq!(output.receipts[1].result["content"], "hello");
+    assert_eq!(tools.writes.load(Ordering::SeqCst), 1);
+    // A dependent read must never share the write's in-flight dispatch batch.
+    let snapshots = journal.0.lock().unwrap();
+    assert!(snapshots.iter().any(|snapshot| snapshot.in_flight.len() == 1
+        && snapshot.in_flight[0].id == "write-first"));
+    assert!(snapshots.iter().any(|snapshot| snapshot.in_flight.len() == 1
+        && snapshot.in_flight[0].id == "read-after"));
+    drop(snapshots);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn forward_reference_is_topologically_ordered_without_extra_model_call() {
+    let (model, tools, evidence, journal, request, root) = test_env(vec![
+        json!({"actions":[
+            {"id":"inspect","tool":"read","arguments":{"path":"artifact.txt"},
+             "dependsOn":["create"]},
+            {"id":"create","tool":"write","arguments":{"path":"artifact.txt","content":"hello"}}
+        ]}),
+        json!({"actions":[],"answer":"completed"}),
+    ]);
+    let output = Kernel {model:&model,tools:&tools,evidence:&evidence,journal:&journal}
+        .run(request).await.unwrap();
+    assert!(matches!(output.status, Status::Completed), "{:?}",output.error);
+    assert_eq!(output.model_calls, 2);
+    assert_eq!(output.receipts.iter().map(|r|r.id.as_str()).collect::<Vec<_>>(),
+        vec!["create","inspect"]);
+    assert_eq!(output.receipts[1].result["content"],"hello");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn failed_predecessor_skips_dependent_without_executing_it() {
+    let (model, tools, evidence, journal, mut request, root) = test_env(vec![
+        json!({"actions":[
+            {"id":"failed-write","tool":"write",
+             "arguments":{"path":"missing-directory/artifact.txt","content":"hello"}},
+            {"id":"dependent-read","tool":"read","arguments":{"path":"artifact.txt"},
+             "dependsOn":["failed-write"]}
+        ]}),
+        json!({"actions":[],"answer":"done"}),
+    ]);
+    request.limits.max_steps = 2;
+    let output = Kernel {model:&model,tools:&tools,evidence:&evidence,journal:&journal}
+        .run(request).await.unwrap();
+    assert!(matches!(output.status, Status::NeedsReview));
+    assert_eq!(output.receipts.len(), 2);
+    assert!(!output.receipts[0].success);
+    assert!(!output.receipts[1].success);
+    assert_eq!(output.receipts[1].result["reason"], "failed_dependency");
+    assert_eq!(output.receipts[1].result["skipped"], true);
+    assert_eq!(tools.writes.load(Ordering::SeqCst), 0);
+    assert!(!journal.0.lock().unwrap().iter().any(|snapshot|
+        snapshot.in_flight.iter().any(|action|action.id=="dependent-read")));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn invalid_dependency_graph_is_rejected_before_any_tool_dispatch() {
+    for actions in [
+        json!([
+            {"id":"a","tool":"write","arguments":{"content":"hello"},"dependsOn":["b"]},
+            {"id":"b","tool":"read","dependsOn":["a"]}
+        ]),
+        json!([
+            {"id":"a","tool":"write","arguments":{"content":"hello"},"dependsOn":["missing"]}
+        ]),
+    ] {
+        let (model, tools, evidence, journal, request, root) =
+            test_env(vec![json!({"actions":actions})]);
+        let output=Kernel {model:&model,tools:&tools,evidence:&evidence,journal:&journal}
+            .run(request).await.unwrap();
+        assert!(matches!(output.status, Status::NeedsReview));
+        assert!(output.receipts.is_empty());
+        assert_eq!(tools.writes.load(Ordering::SeqCst), 0);
+        let _=std::fs::remove_dir_all(root);
+    }
+}
