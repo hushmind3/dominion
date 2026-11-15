@@ -170,3 +170,12 @@ async fn checkpoint_identity_and_unknown_effects_fail_closed(){
     assert!(tools.called.lock().unwrap().is_empty());
     assert!(journal.snapshots.lock().unwrap().is_empty());
 }
+
+#[test]
+fn request_length_matches_the_public_job_api_limit(){
+    let mut req=request("payload-size-parity");
+    req.instruction="x".repeat(64_000);
+    assert!(req.validate().is_ok());
+    req.instruction.push('x');
+    assert!(req.validate().is_err());
+}
