@@ -14,6 +14,12 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
             for key in ["agentId","providerId","model","reasoningEffort"]{if let Some(v)=input[key].as_str().filter(|s|!s.is_empty()){value[key]=json!(v);}}
             if let Some(v)=input["thinking"].as_bool(){value["thinking"]=json!(v);}
             if let Some(v)=input["autonomous"].as_bool(){value["autonomous"]=json!(v);}
+            if let Some(command)=input.get("verifyCommand"){
+                let Some(command)=command.as_str().filter(|command|command.len()<=2048)else{
+                    return error(StatusCode::BAD_REQUEST,"검증 명령은 최대 2048자 문자열입니다.");
+                };
+                if !command.trim().is_empty(){value["verifyCommand"]=json!(command.trim());}
+            }
             if let Some(v)=input.get("maxAutonomousAttempts"){
                 let Some(count)=v.as_u64().filter(|count|(1..=6).contains(count)) else {
                     return error(StatusCode::BAD_REQUEST,"자율 실행 시도 횟수는 1~6이어야 합니다.");
