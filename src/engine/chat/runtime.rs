@@ -706,7 +706,7 @@ async fn run_turn_body(
         .unwrap_or((2, 2));
     let mut op_seq = 0u64;
 
-    let mut metadata = json!({"authorKind":"agent","roomId":session.get("roomId"),"replyToMessageId":reply_to,"executionId":execution_id,"taskId":task_id,"reasoningLanguageRequested":request.reasoning_language,"reasoningTranslated":false});
+    let mut metadata = json!({"authorKind":"agent","roomId":session.get("roomId"),"replyToMessageId":reply_to,"executionId":execution_id,"taskId":task_id,"reasoningLanguageRequested":request.reasoning_language,"reasoningLanguageEffective":request.effective_reasoning_language(),"reasoningTranslated":false});
 
     let mut provider = select_provider(state, request, &session)?;
     let allow_provider_fallback = session["rsiRun"]!=true;
