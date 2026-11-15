@@ -55,6 +55,14 @@ export interface NativeProviderConfig {
   id:string;model:string;origin:string;keyConfigured:boolean;
   inputKrwPerMillion:number;cachedInputKrwPerMillion:number;outputKrwPerMillion:number;
 }
+export interface NativeContextEvidence {
+  taskId:string;sessionId:string;source:'native_durable_context';
+  facts:{facts:Array<{sourceSeq:number;kind:string;topic:string;quote:string}>};
+  results:Array<{kind:'owner'|'assistant'|'tool';sourceSeq:number;
+    sourceTaskId:string|null;messageSeq:number|null;callId:string|null;
+    excerpt:string;exactRetrieval:'task_receipt'|'session_history';untrusted:boolean}>;
+  executionState:Record<string,unknown>;
+}
 export interface NativeTool {
   name:string;description:string;permission:string;source:'native'|'mcp';parameters?:unknown;
 }
@@ -245,6 +253,12 @@ export class DominionClient {
   }
   agentDelete(id:string,signal?:AbortSignal) {
     return this.request<{ok:boolean}>('/api/agents/'+encodeURIComponent(id),'DELETE',undefined,signal);
+  }
+  /** Native evidence-backed semantic history and explicit recovery state. */
+  contextEvidence(taskId:string,query='',signal?:AbortSignal) {
+    return this.request<NativeContextEvidence>(
+      '/api/tasks/'+encodeURIComponent(taskId)+'/context?q='+encodeURIComponent(query),
+      'GET',undefined,signal);
   }
   providerCatalog(signal?:AbortSignal) {
     return this.request<{models:NativeProviderConfig[];default:string}>('/api/providers','GET',undefined,signal);
