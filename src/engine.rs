@@ -4,6 +4,8 @@ mod strategy;
 pub(crate) mod context;
 mod semantic;
 pub(crate) mod verification;
+#[cfg(test)]
+mod acceptance_tests;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{path::{Component, Path, PathBuf}, process::Stdio, time::Duration};
