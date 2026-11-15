@@ -23,6 +23,10 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/package-lock.json
+      # Detect retired source references, shadow modules and reborn monoliths
+      # before spending minutes compiling the native engine.
+      - run: node --test scripts/source-hygiene.test.mjs
+      - run: node scripts/source-hygiene.mjs
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: npm ci --prefix web
