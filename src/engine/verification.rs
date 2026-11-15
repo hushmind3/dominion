@@ -601,7 +601,7 @@ pub(crate) fn acceptance_gaps(
     });
     if looks_actionable(goal) && !evidence.iter().any(is_action_evidence) && !has_explicit_tool
         && !(verified_artifact_change && executed_effect)
-        && !(verified_creation_state && evidence.iter().any(successful_evidence)) {
+        && !(verified_creation_state && executed_effect) {
         gaps.push("변경 또는 실행을 입증하는 성공한 도구 결과가 없습니다. 조회 결과만으로 행동 목표를 완료할 수 없습니다.".into());
     }
     gaps
