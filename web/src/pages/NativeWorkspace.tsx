@@ -12,7 +12,8 @@ type Group = {id:string;topic:string;participants:Member[];messages:{speaker:str
 type Scene = {heading:string;narration:string;seconds:number}
 type Video = {id:string;prompt:string;status:string;scenes:Scene[];backend:string;error?:string|null;output?:string|null;cost_krw:number;budget_krw:number;images?:Record<string,string>}
 type Trial = {id:string;repository:string;target_file:string;instruction:string;status:string;accepted:boolean;cost_krw:number;error?:string|null;baseline?:{score?:number;tests_passed:boolean};candidate?:{score?:number;tests_passed:boolean}}
-type Evolution = {id:string;starting_trial:string;status:string;max_generations:number;target_files:string[];descendants:string[];completed_generations:number;cost_budget_krw:number;spent_krw:number;stop_requested?:boolean;stop_reason?:string|null}
+type EvolutionCandidate = {trial_id:string;generation:number;proposal_index:number;training_score:number|null;validation_baseline_score:number|null;validation_score:number|null;eligible:boolean;reason?:string|null}
+type Evolution = {id:string;starting_trial:string;status:string;max_generations:number;target_files:string[];candidates_per_generation?:number;validation_command?:string|null;candidate_groups?:string[][];candidates?:EvolutionCandidate[];descendants:string[];completed_generations:number;cost_budget_krw:number;spent_krw:number;stop_requested?:boolean;stop_reason?:string|null}
 type Memory = {id:string;content:string;kind:string;status:string;sessionId?:string|null}
 type Skill = {id:string;name:string;trigger:string;instructions:string;enabled:boolean}
 type Health = {ok:boolean;engine:string;model:string;workspace:string}
@@ -278,8 +279,9 @@ export function NativeImprovements(){
  const evolutions=useCollection<Evolution[]>('/api/evolutions',[])
  const [active,setActive]=useState(''),[repository,setRepository]=useState(''),[targetFile,setTargetFile]=useState(''),[instruction,setInstruction]=useState(''),[testCommand,setTestCommand]=useState('cargo test'),[scoreCommand,setScoreCommand]=useState('')
  const [generations,setGenerations]=useState(2),[evolutionBudget,setEvolutionBudget]=useState('1000'),[targetSequence,setTargetSequence]=useState('')
+ const [candidateCount,setCandidateCount]=useState(2),[validationCommand,setValidationCommand]=useState('')
  const op=useOperation();const selected=data.value.find(x=>x.id===active)
- const related=evolutions.value.filter(run=>run.starting_trial===active||run.descendants.includes(active))
+ const related=evolutions.value.filter(run=>run.starting_trial===active||run.descendants.includes(active)||(run.candidate_groups||[]).some(ids=>ids.includes(active)))
  useEffect(()=>{if(!evolutions.value.some(run=>run.status==='running'))return
    const timer=window.setInterval(()=>{void evolutions.reload();void data.reload()},2500)
    return()=>window.clearInterval(timer)
@@ -293,7 +295,9 @@ export function NativeImprovements(){
      if(!Number.isFinite(budget)||budget<1||budget>1000000)throw Error('원화 예산은 1~1,000,000원으로 입력하세요.')
      if(files.length!==0&&files.length!==generations)throw Error('세대별 파일 수를 세대 수와 일치시켜 주세요.')
      return post<Evolution>('/api/improvements/'+encodeURIComponent(active)+'/evolution',{
-       max_generations:generations,cost_budget_krw:budget,target_files:files
+       max_generations:generations,cost_budget_krw:budget,target_files:files,
+       candidates_per_generation:candidateCount,
+       validation_command:validationCommand.trim()||null
      })
    })
    if(item){void evolutions.reload();void data.reload()}
@@ -316,11 +320,12 @@ export function NativeImprovements(){
     <div className={'mt-3 '+row}><LoadingButton busy={op.busy||selected.status!=='awaiting_approval'} onClick={()=>void act('evaluate')}>독립 평가</LoadingButton><LoadingButton busy={op.busy||selected.status!=='evaluated'} variant="primary" onClick={()=>void act('adopt')}>검증 후보 채택</LoadingButton><LoadingButton busy={op.busy||selected.status!=='adopted'} onClick={()=>void act('descendant')}>후손 실험</LoadingButton></div>
    </Section>}
    {selected?.status==='adopted'&&<Section><h2 className="mb-2 font-bold">연속 진화 · A→B→A</h2>
-    <p className={subtle}>채택한 후보에서 다음 세대를 실행합니다. 검증된 개선은 Git 저장소에 자동 채택됩니다. 동일한 점수 기준으로 평가하며 개선이 없거나 비용 상한을 넘으면 중단합니다.</p>
+    <p className={subtle}>같은 Git 기준본에서 후보를 여러 개 생성해 경쟁시킨 후, 검증된 1개만 다음 세대에 계승합니다. 별도 검증 명령을 설정하면 훈련 점수가 높아도 검증 기준을 통과하지 못한 후보는 채택하지 않습니다.</p>
     <div className="my-3 grid gap-3 sm:grid-cols-2">
      <FormField label="세대 수 (최대 4)"><SelectInput value={String(generations)} onChange={e=>setGenerations(Number(e.target.value))}><option value="1">1세대</option><option value="2">2세대</option><option value="3">3세대</option><option value="4">4세대</option></SelectInput></FormField>
      <FormField label="누적 모델 예산 (원)"><TextInput value={evolutionBudget} onChange={e=>setEvolutionBudget(e.target.value)} placeholder="1000"/></FormField>
     </div>
+    <div className="grid gap-3 sm:grid-cols-2"><FormField label="세대당 후보 경쟁 수"><SelectInput value={String(candidateCount)} onChange={e=>setCandidateCount(Number(e.target.value))}><option value="1">1개</option><option value="2">2개</option><option value="3">3개</option><option value="4">4개</option></SelectInput></FormField><FormField label="검증용 별도 점수 명령 (선택)"><TextInput value={validationCommand} onChange={e=>setValidationCommand(e.target.value)} placeholder="node scripts/score-validation.mjs"/></FormField></div>
     <FormField label="개선 파일 순서 (선택, 쉼표로 구분)"><TextInput value={targetSequence} onChange={e=>setTargetSequence(e.target.value)} placeholder="src/engine.rs, src/strategy.rs, src/engine.rs"/></FormField>
     <p className={'mt-2 '+subtle}>비우면 같은 파일을 반복합니다. 파일을 지정하면 세대 수만큼 입력하세요. 비용은 제공자 사용량을 기준으로 추산하며 호출 1회의 초과 청구 가능성은 남습니다.</p>
     <div className="mt-3"><LoadingButton busy={op.busy||related.some(run=>run.status==='running')} variant="primary" onClick={()=>void evolve()}><Play size={14}/> 검증된 연속 진화 실행</LoadingButton></div>
@@ -328,8 +333,13 @@ export function NativeImprovements(){
    {related.length>0&&<Section><div className="mb-3 flex items-center justify-between"><h2 className="font-bold">세대별 검증 기록</h2><Button size="sm" onClick={()=>{void evolutions.reload();void data.reload()}}><RefreshCw size={14}/> 갱신</Button></div>
     <div className="grid gap-3">{related.map(run=><div key={run.id} className="rounded-lg border border-[#E7E0D5] p-3 text-[12px]">
      <div className="flex items-center justify-between gap-2"><strong>{run.completed_generations}/{run.max_generations}세대 채택</strong><div className={row}><Status value={run.status}/>{run.status==='running'&&(run.stop_requested?<span className={subtle}>중단 요청됨</span>:<LoadingButton busy={op.busy} size="sm" onClick={()=>void stopEvolution(run.id)}><PauseCircle size={13}/> 중단</LoadingButton>)}</div></div>
-     <p className={'mt-1 '+subtle}>{run.target_files.join(' → ')} · 모델 비용 {fmtKrw(run.spent_krw)} / {fmtKrw(run.cost_budget_krw)}</p>
-     <div className={'mt-2 '+row}>{run.descendants.map((id,i)=><Button key={id} size="sm" variant="ghost" onClick={()=>setActive(id)}>{i+1}세대 결과</Button>)}</div>
+     <p className={'mt-1 '+subtle}>{run.target_files.join(' → ')} · 세대당 {run.candidates_per_generation||1}개 후보 · 모델 비용 {fmtKrw(run.spent_krw)} / {fmtKrw(run.cost_budget_krw)}</p>
+     <div className={'mt-2 '+row}>{run.descendants.map((id,i)=><Button key={id} size="sm" variant="ghost" onClick={()=>setActive(id)}>{i+1}세대 채택</Button>)}</div>
+     {(run.candidates||[]).length>0&&<div className="mt-3 grid gap-2">{(run.candidates||[]).map(item=><div key={item.trial_id} className="rounded-lg border border-[#ECE5DB] bg-[#F8F6F1] p-2">
+       <div className="flex flex-wrap items-center justify-between gap-2"><Button size="sm" variant="ghost" onClick={()=>setActive(item.trial_id)}>{item.generation+1}세대 · 후보 {item.proposal_index+1}</Button><span className={subtle}>{run.descendants.includes(item.trial_id)?'채택':item.eligible?'검증 통과 · 경쟁 결과 대기':'제외'}</span></div>
+       <p className={subtle}>훈련 {item.training_score??'—'} · 독립 검증 {item.validation_score??'—'} (기준 {item.validation_baseline_score??'—'})</p>
+       {item.reason&&<p className={subtle}>{item.reason}</p>}
+     </div>)}</div>
      {run.stop_reason&&<InlineError error={run.stop_reason}/>}
     </div>)}</div>
    </Section>}
