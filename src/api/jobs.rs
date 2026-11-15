@@ -60,14 +60,14 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
             }
             if let Some(checks)=input.get("acceptanceChecks") {
                 if let Err(message)=engine::verification::validate_criteria(checks) {
-                    return error(StatusCode::BAD_REQUEST,message);
+                    return error(StatusCode::BAD_REQUEST,&message);
                 }
                 let Some(items)=checks.as_array() else {
                     return error(StatusCode::BAD_REQUEST,"검증 조건은 배열이어야 합니다.");
                 };
                 match native_acceptance_checks(items) {
                     Ok(native)=>value["checks"]=json!(native),
-                    Err(message)=>return error(StatusCode::BAD_REQUEST,message),
+                    Err(message)=>return error(StatusCode::BAD_REQUEST,&message),
                 }
             }
             if let Some(v)=input["allowFallback"].as_bool() {

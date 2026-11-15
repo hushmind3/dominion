@@ -9,6 +9,10 @@ on:
     paths:
       - '.github/workflows/sub3-rust-sdk-check.yml'
       - 'crates/dominion-agent-sdk/**'
+      - 'src/api/jobs.rs'
+      - 'src/engine/native_agent.rs'
+      - 'src/engine/workflows.rs'
+      - 'src/engine/jobs.rs'
   workflow_dispatch:
 
 permissions:
