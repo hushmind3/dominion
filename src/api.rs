@@ -79,12 +79,14 @@ async fn providers(State(state):State<AppState>)->Json<Value>{
 async fn tools_catalog(State(state):State<AppState>)->Json<Value>{
     let builtins=[
         ("workspace_read","Read UTF-8 workspace files","read"),
+        ("workspace_read_lines","Read bounded numbered source ranges from large files","read"),
         ("workspace_list","Inspect workspace file inventory","read"),
         ("workspace_search","Search source content","read"),
         ("task_receipt","Restore persisted tool result without replay","read"),
         ("context_search","Find exact historical instructions and tool evidence","read"),
         ("session_history","Page historical owner and assistant messages","read"),
         ("workspace_replace","Verified exact source edit","write"),
+        ("workspace_replace_many","Staged rollback-aware multi-file edit","write"),
         ("workspace_write","Verified local source write","write"),
         ("workspace_check","Run approved local tests","shell"),
         ("subagent_spawn","Delegate bounded native worker","delegate"),
