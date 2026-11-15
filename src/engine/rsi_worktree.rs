@@ -208,7 +208,7 @@ fn valid_sha(value:&str)->bool {
 /// ever touching the owner's index or checkout. The evaluator's JSON tree
 /// receipt is independently checked against this Rust-owned reconstruction.
 /// This same path is also used at publication, so both gates have one meaning.
-async fn reconstructed_patch_tree(source:&Path,base:&str,patch:&str)->Result<String,String>{
+pub(crate) async fn reconstructed_patch_tree(source:&Path,base:&str,patch:&str)->Result<String,String>{
     if !valid_sha(base) || patch.is_empty() {
         return Err("동결된 기준 커밋과 실제 후보 패치가 필요합니다.".into());
     }
