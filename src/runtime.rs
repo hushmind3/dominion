@@ -313,6 +313,30 @@ impl DominionSdk {
     }
 }
 
+impl DominionSdk {
+    /// Actual persisted multi-participant rooms, sharing the same native
+    /// model router and configured economy/strong models as agent runs.
+    pub async fn group_create(&self, input: crate::group::NewRoom)
+        -> Result<crate::group::Room,RuntimeError> {
+        self.state.groups.create(input).await.map_err(RuntimeError)
+    }
+    pub async fn group_list(&self) -> Vec<crate::group::Room> {
+        self.state.groups.list().await
+    }
+    pub async fn group_get(&self,id:uuid::Uuid)->Result<crate::group::Room,RuntimeError>{
+        self.state.groups.get(id).await
+            .ok_or_else(||RuntimeError("Room not found".into()))
+    }
+    pub async fn group_say(&self,id:uuid::Uuid,text:String)
+        ->Result<crate::group::Room,RuntimeError>{
+        self.state.groups.say(id,text).await.map_err(RuntimeError)
+    }
+    pub async fn group_next(&self,id:uuid::Uuid)
+        ->Result<crate::group::Room,RuntimeError>{
+        self.state.groups.next(&self.state.provider,id).await.map_err(RuntimeError)
+    }
+}
+
 fn decode_record(value: Value) -> Result<TaskRecord, RuntimeError> {
     serde_json::from_value(value).map_err(|error| RuntimeError(error.to_string()))
 }
