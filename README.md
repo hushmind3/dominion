@@ -46,6 +46,37 @@ Set DOMINION_CONTEXT_MAX_BYTES to configure the total encoded model-request cont
 
 The implementation, exact tool interfaces, failure modes and test evidence are documented in **[Bounded evidence context](docs/CONTEXT_EVIDENCE.md)**. The GitHub native test workflow has passed 59 Rust tests with a real SQLite and filesystem, mock-provider end-to-end evidence retrieval, and the TypeScript SDK contract. Any further feature is separate from this tested subsystem.
 
+## Native self-repairing code acceptance (second focused capability)
+
+The actual \`src/engine.rs\` model/tool loop can now **read source → edit one or several files → execute owner-approved tests → read real compiler/test errors → repair → re-run tests → complete**. This is native Rust behavior, not a TypeScript agent wrapper or a prompt-only promise.
+
+- \`src/engine/verification.rs\` owns check selection, an exact executable+argv allowlist, source revision invalidation and the deterministic completion gate. \`acceptanceChecks\` accepts up to 4 precise owner-specified checks when \`allowShell=true\`. With no explicit checks, the engine conservatively detects \`cargo test --quiet\` for Rust or \`npm test --silent\` for a Node package with a test script. No shell interpolation is performed. Failed tests retain stderr, stdout, actual exit code, Rust tool events and the next repair instruction.
+- **Passing results from a prior source revision do not count**: every attempted write/edit, uncertain external MCP side effect or source-format action invalidates earlier check proofs. An unchanged failing revision is not re-tested endlessly. With \`requireEvidence=true\`, a coding job that has shell permission but no runnable check enters \`needs_review\` instead of claiming verified success.
+- \`src/engine/files.rs\` supports bounded numbered reads of large source files and staged multi-file exact replacements. It pre-validates 1–8 independent changes, refuses stale file SHA-256 and ambiguous spans, preserves original permissions, confirms readback hashes and attempts rollback on a failed adoption. A crash in the middle is reported as an uncertain effect; backups must be inspected before retry.
+- A shared native workspace lease prevents overlapping writer/shell/MCP jobs from interleaving file changes with another agent's acceptance check. Read-only tasks continue independently. A per-worktree isolated sandbox is still preferable for a higher-throughput multi-user system.
+- The final task result carries its independently recorded \`acceptance\` evidence (passing check commands and source revision), alongside file-write readback evidence. An assistant's prose alone never sets these fields.
+
+Example Rust/HTTP task input (same JSON contract is supported in the TypeScript SDK and the main React task form):
+
+~~~json
+{
+  "requestId": "fix-calculator-2026",
+  "prompt": "Fix calc.js and run the exact acceptance tests",
+  "allowWrite": true,
+  "allowShell": true,
+  "requireEvidence": true,
+  "acceptanceChecks": [
+    {"program": "node", "args": ["--test", "calc.test.js"]}
+  ],
+  "maxSteps": 8,
+  "tokenBudget": 15000
+}
+~~~
+
+The real Rust acceptance suite uses a mock LLM for reproducible model choices while invoking **actual Node test processes and actual filesystem edits**. It proves that one wrong edit fails, its diagnostic is included in the next model request, a corrected edit passes, an unchanged failing source is not retested, stale earlier green evidence is rejected, concurrent writers serialize, and a staged two-file change passes a joint test. See \`src/engine/acceptance_tests.rs\`, \`src/engine/verification.rs\` and [coding acceptance architecture](docs/CODING_ACCEPTANCE.md).
+
+**Boundary:** these tests establish end-to-end functional integration, not an SWE-bench Verified success rate or equivalence to Claude Code/Codex on hidden problems. More work is needed on isolated branch adoption, general dependency management, browser validation and real-provider evaluation.
+
 ## Low-cost video
 
 Local video rendering requires FFmpeg. Add image assets to individual scenes through the UI; the engine creates animated zoom/pan video segments entirely on CPU, combines clips into a downloadable MP4, and invalidates only edited scenes. Text-only scenes still render. Optional speech uses local Piper neural speech (DOMINION_PIPER_MODEL and optionally DOMINION_PIPER_BIN); when unavailable, eSpeak is the fallback, and silent video is supported.
