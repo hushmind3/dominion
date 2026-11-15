@@ -3100,6 +3100,10 @@ impl dominion_agent_sdk::Dispatcher for ChatKernelDispatcher<'_> {
             })
         })
     }
+    fn is_read_only(&self, action: &dominion_agent_sdk::Action) -> bool {
+        tool_is_read_only(&action.tool)
+    }
+    fn max_parallel_reads(&self) -> usize { 4 }
 }
 
 struct KernelCheckpoint<'a> {
