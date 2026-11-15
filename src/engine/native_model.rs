@@ -670,6 +670,59 @@ mod tests {
         assert_eq!(c.decision.unwrap().actions[0].id,"call_5");
     }
     #[test]
+    fn provider_usage_correctly_counts_cached_input_and_distinguishes_missing_fields() {
+        let codex=reported_usage("codex",&json!({"usage":{
+            "input_tokens":400,"output_tokens":100,
+            "input_tokens_details":{"cached_tokens":300}}}));
+        assert_eq!((codex.input,codex.output,codex.cache_read),
+            (Some(400),Some(100),Some(300)));
+        let anthropic=json!({"content":[{"type":"text","text":"ok"}],
+            "usage":{"input_tokens":50,"output_tokens":25,
+                "cache_read_input_tokens":600,"cache_creation_input_tokens":200}});
+        let result=reported_usage("anthropic",&anthropic);
+        assert_eq!((result.input,result.output,result.cache_read,result.cache_write),
+            (Some(850),Some(25),Some(600),Some(200)));
+        assert_eq!(parse_anthropic(&anthropic).unwrap().reply.input_tokens,Some(850),
+            "SDK budget must include the cached tokens Anthropic reports separately");
+        let chat=reported_usage("chat",&json!({"usage":{
+            "prompt_tokens":120,"completion_tokens":20,
+            "prompt_tokens_details":{"cached_tokens":90}}}));
+        assert_eq!((chat.input,chat.cache_read),(Some(120),Some(90)));
+        let unknown=reported_usage("chat",&json!({"usage":{}}));
+        assert_eq!((unknown.input,unknown.output,unknown.cache_read),(None,None,None));
+    }
+    #[test]
+    fn native_job_token_ledger_aggregates_measured_calls_without_fabricating_zero_usage() {
+        let state=mock_state("http://127.0.0.1:9876/v1","openai");
+        let id=format!("native-usage-{}",uuid::Uuid::new_v4());
+        state.store.put("job",&json!({"id":id,
+            "kind":"prompt","status":"running","cancelRequested":false}));
+        let route=gateway::resolve(&state,"native-wire-test",Some("model-mock")).unwrap();
+        for (input,output,cached) in [(100,25,60),(90,10,40)] {
+            record_job_usage(&state,Some(&id),"session",&route,
+                reported_usage("chat",&json!({"usage":{
+                    "prompt_tokens":input,"completion_tokens":output,
+                    "prompt_tokens_details":{"cached_tokens":cached}}}))).unwrap();
+        }
+        record_job_usage(&state,Some(&id),"session",&route,
+            NativeReportedUsage::default()).unwrap();
+        let ledger=state.store.get("job",&id).unwrap()["nativeModelUsage"].clone();
+        assert_eq!(ledger["inputTokens"],190);
+        assert_eq!(ledger["outputTokens"],35);
+        assert_eq!(ledger["totalTokens"],225);
+        assert_eq!(ledger["cacheReadTokens"],100);
+        assert_eq!(ledger["reportedCalls"],2);
+        assert_eq!(ledger["unreportedCalls"],1);
+        assert_eq!(ledger["cacheReportedCalls"],2);
+        assert_eq!(ledger["last"]["providerReported"],false);
+        state.store.patch_if("job",&id,"status",&json!("running"),
+            &json!({"status":"cancelled"})).unwrap();
+        assert!(record_job_usage(&state,Some(&id),"session",&route,
+            NativeReportedUsage::default()).is_err(),
+            "a late provider response must not reopen the cancelled task");
+    }
+
+    #[test]
     fn native_receipt_history_uses_paired_provider_roles() {
         let receipt=read();
         let messages=chat_messages("system","{}",std::slice::from_ref(&receipt));
