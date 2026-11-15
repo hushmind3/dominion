@@ -286,24 +286,6 @@ pub(super) fn select_tool_definitions(
         .collect()
 }
 
-pub(super) fn trim_tool_definitions(definitions: Vec<Value>, budget: usize) -> Vec<Value> {
-    let mut kept = Vec::new();
-    let mut used = 0usize;
-    for definition in definitions {
-        let size = serde_json::to_string(&definition)
-            .map(|text| text.len())
-            .unwrap_or(0);
-        if used + size > budget && !kept.is_empty() {
-            continue;
-        }
-        used += size;
-        kept.push(definition);
-    }
-    kept
-}
-
-
-
 /// Select a query-relevant *subset* only when the provider's schema byte
 /// allowance cannot fit the full tool catalog. Unlike naive first-N trimming,
 /// do not silently hide an editing tool just because many unrelated MCP
