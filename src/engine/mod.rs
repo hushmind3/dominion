@@ -1,4 +1,5 @@
 pub mod goal_control;
+pub mod native_harness;
 pub mod adaptation_loop;
 pub mod distill;
 pub mod effect;
@@ -127,6 +128,38 @@ pub async fn run_quiet_outcome(
 }
 
 /// Background resume that never records a second owner message.
+
+/// Resume a model/tool turn without creating a second owner message, while
+/// preserving real tool evidence for the native Rust SDK verifier.
+pub async fn run_quiet_resume_outcome(
+    state: &AppState,
+    request: &chat::TurnRequest,
+) -> (Result<Option<Value>, String>, TurnStats) {
+    let (sender, mut receiver) = mpsc::unbounded_channel::<Value>();
+    let collector = tokio::spawn(async move {
+        let mut stats = TurnStats::default();
+        while let Some(event) = receiver.recv().await {
+            let name = event["name"].as_str().unwrap_or("");
+            match event["type"].as_str() {
+                Some("tool_end") if !name.is_empty() => {
+                    stats.tool_success.push(name.to_string());
+                    stats.evidence.push(serde_json::json!({
+                        "tool": name, "callId":event.get("id"),
+                        "arguments":event.get("arguments"),"result":event.get("result"),
+                    }));
+                }
+                Some("tool_error") if !name.is_empty() => stats.tool_errors.push(name.to_owned()),
+                _ => {}
+            }
+        }
+        stats
+    });
+    let result = chat::run_turn_resume(state, request, &sender).await;
+    drop(sender);
+    let stats = collector.await.unwrap_or_default();
+    (result, stats)
+}
+
 pub async fn run_quiet_resume(
     state: &AppState,
     request: &chat::TurnRequest,

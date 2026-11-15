@@ -19,6 +19,11 @@ pub fn prepare_acceptance_checks(state:&AppState,input:&str)->Value {
 pub fn check_acceptance(state:&AppState,input:&str,checks:&Value,evidence:&[Value])->Vec<String>{
     acceptance_gaps(state,input,checks,evidence)
 }
+pub fn freeze_criteria(state: &AppState, criteria: &Value) -> Result<Value, String> {
+    validate_criteria(criteria)?;
+    Ok(baseline_checks(state, criteria.as_array().cloned().unwrap_or_default()))
+}
+
 pub fn validate_criteria(criteria: &Value) -> Result<(), String> {
     let items = criteria
         .as_array()

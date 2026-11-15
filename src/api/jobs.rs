@@ -13,6 +13,13 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
             let mut value=json!({"prompt":prompt,"toolsEnabled":input["toolsEnabled"].as_bool().unwrap_or(true)});
             for key in ["agentId","providerId","model","reasoningEffort"]{if let Some(v)=input[key].as_str().filter(|s|!s.is_empty()){value[key]=json!(v);}}
             if let Some(v)=input["thinking"].as_bool(){value["thinking"]=json!(v);}
+            if let Some(v)=input["toolsExecutionEnabled"].as_bool(){value["toolsExecutionEnabled"]=json!(v);}
+            if let Some(v)=input["planning"].as_bool(){value["planning"]=json!(v);}
+            for key in ["maxSteps","maxAttempts"] { if let Some(v)=input[key].as_u64() { value[key]=json!(v.clamp(1,12)); } }
+            if let Some(checks)=input.get("acceptanceChecks") {
+                if let Err(message)=engine::verification::validate_criteria(checks) { return error(StatusCode::BAD_REQUEST,message); }
+                value["acceptanceChecks"]=checks.clone();
+            }
             if let Some(id)=value["agentId"].as_str(){if state.store.get("agent",id).is_none(){return error(StatusCode::BAD_REQUEST,"실행 에이전트를 찾을 수 없습니다.");}}
             value
         },
