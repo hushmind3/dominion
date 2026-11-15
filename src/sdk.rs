@@ -55,7 +55,7 @@ impl Dominion {
             .map_err(|error|format!("cannot create data directory: {error}"))?;
         let config=Config{port:options.port,data_dir:options.data_dir,
             web_dir:options.web_dir,workspace:options.workspace};
-        let store=Store::open(&config.db_path())?;
+        let store=Store::open(&config.db_path()).map_err(|error|error.to_string())?;
         let vault=Vault::open(&config.key_path());
         let state=AppState::new(config,store,vault);
         migrations::run(&state)?;
