@@ -55,7 +55,8 @@ async fn fixture(url:String,initial:&str)->(AppState,std::path::PathBuf){
             root.join("improvements"),root.clone()).await.unwrap()),
         provider:crate::provider::ModelClient::new(
             crate::provider::ModelConfig::basic(url,"mock".into(),None),None).unwrap(),
-        workspace:root.clone(),model_name:"mock".into()
+        workspace:root.clone(),workspace_write_lock:Arc::new(tokio::sync::Mutex::new(())),
+        model_name:"mock".into()
     };
     (state,root)
 }
