@@ -38,6 +38,13 @@ fn specs(allow_write: bool, allow_shell: bool, allow_subagents: bool) -> Vec<Val
             "parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}
         }
     })];
+    result.push(json!({"type":"function","function":{
+        "name":"task_receipt",
+        "description":"Restore a previously persisted tool observation by its call ID after context compaction. This is read-only and cannot replay a tool effect.",
+        "parameters":{"type":"object","properties":{
+            "callId":{"type":"string"}
+        },"required":["callId"],"additionalProperties":false}
+    }}));
     result.push(json!({
         "type":"function","function":{
             "name":"workspace_list",
@@ -118,9 +125,20 @@ fn allowed_check(program: &str, args: &[String]) -> bool {
     }
 }
 
-async fn tool(state: &AppState, name: &str, args: &Value,
+async fn tool(state: &AppState, current_task: &str, name: &str, args: &Value,
     allow_write: bool, allow_shell: bool) -> Result<Value, String> {
     match name {
+        "task_receipt" => {
+            let call_id=args["callId"].as_str().ok_or("Call identifier required")?;
+            let receipt=state.store.tool_receipt(current_task,call_id)
+                .ok_or("A persisted receipt with that call ID was not found for this task")?;
+            let output=receipt.to_string();
+            if output.len()>16000 {
+                Ok(json!({"callId":call_id,"truncated":true,
+                    "summary":output.chars().take(12000).collect::<String>(),
+                    "note":"Full event remains persisted in SQLite"}))
+            }else {Ok(receipt)}
+        },
         "workspace_list" => {
             files::list(&state.workspace, args["path"].as_str().unwrap_or("."))
         }
@@ -548,7 +566,7 @@ pub async fn run(state: AppState, id: String) {
                     id:tool_id.clone(),name:tool_name.into(),arguments:arguments.clone()
                 }).await.map(|response|json!({"content":response}))
             } else {
-                tool(&state,tool_name,&arguments,allow_write,allow_shell).await
+                tool(&state,&id,tool_name,&arguments,allow_write,allow_shell).await
             }.and_then(|receipt| {
                 if tool_name == "workspace_check" && receipt["success"] == false {
                     Err(format!("검사 명령 실패: {receipt}"))
