@@ -47,6 +47,8 @@ jobs:
           command -v ffmpeg
           command -v ffprobe
       - name: Real playable native video
+        env:
+          DOMINION_REQUIRE_VIDEO_FFMPEG: '1'
         run: cargo test --bin dominion-rust native_pipeline_produces_a_real_playable_container -- --nocapture
       - name: Run real HTTP/LLM fixture integration paths (no paid API)
         run: |
