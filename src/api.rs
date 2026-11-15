@@ -18,6 +18,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/tasks/:id/cancel",post(cancel))
         .route("/api/tasks/:id/steer",post(steer))
         .route("/api/tasks/:id/events",get(events))
+        .route("/api/tasks/:id/children",get(subagent_children))
+        .route("/api/tasks/:id/delegate",post(subagent_delegate))
         .route("/api/groups",get(group_list).post(group_create))
         .route("/api/groups/:id",get(group_get))
         .route("/api/groups/:id/messages",post(group_say))
@@ -396,5 +398,25 @@ async fn skill_enable(State(state):State<AppState>,
     match sdk.skill_enable(&id,enabled){
         Ok(changed)=>Json(json!({"ok":changed})).into_response(),
         Err(error)=>(StatusCode::BAD_REQUEST,Json(json!({"error":error.to_string()}))).into_response()
+    }
+}
+
+async fn subagent_children(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.children(&id){
+        Ok(children)=>Json(json!(children)).into_response(),
+        Err(error)=>(StatusCode::NOT_FOUND,Json(json!({"error":error.to_string()}))).into_response()
+    }
+}
+async fn subagent_delegate(State(state):State<AppState>,Path(id):Path<String>,
+    Json(body):Json<Value>)->Response{
+    let input=match serde_json::from_value::<crate::runtime::TaskInput>(body){
+        Ok(input)=>input,
+        Err(error)=>return (StatusCode::BAD_REQUEST,Json(json!({"error":error.to_string()}))).into_response()
+    };
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.delegate(&id,input).await{
+        Ok(child)=>(StatusCode::ACCEPTED,Json(json!(child))).into_response(),
+        Err(error)=>(StatusCode::CONFLICT,Json(json!({"error":error.to_string()}))).into_response()
     }
 }
