@@ -64,6 +64,11 @@ test('all active main navigation uses real native product paths',()=>{
  assert.ok(nav.includes("id:'extensions'"),'extension navigation absent')
  assert.ok(native.includes('/resume'),'task continuation UI is missing')
  assert.ok(api.includes('/api/videos/:id/scenes/:index/image'),'video asset API is missing')
+ assert.ok(api.includes('/api/tasks/:id/context'),'semantic evidence API is missing')
+ const inspector=readFileSync(join(root,'web/src/pages/NativeSystem.tsx'),'utf8')
+ assert.ok(inspector.includes('/context?q='),'main React evidence inspector is disconnected')
+ const sdk=readFileSync(join(root,'sdk/typescript/src/index.ts'),'utf8')
+ assert.ok(sdk.includes('contextEvidence('),'typed client lacks native evidence API')
 })
 test('native core owns recovery, spend and workflow execution',()=>{
  const runtime=readFileSync(join(root,'src/runtime.rs'),'utf8')
