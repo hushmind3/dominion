@@ -1,4 +1,5 @@
 use crate::{Message, ModelReply, Provider, Role, ToolCall, ToolSpec};
+use crate::provider::ModelUsage;
 use serde_json::{json, Value};
 
 /// OpenAI-compatible chat-completions adapter.
@@ -12,6 +13,7 @@ pub struct OpenAiProvider {
     model: String,
     tools: Vec<ToolSpec>,
     temperature: f32,
+    usage: Option<ModelUsage>,
 }
 
 impl OpenAiProvider {
@@ -22,6 +24,7 @@ impl OpenAiProvider {
             model: model.into(),
             tools: Vec::new(),
             temperature: 0.0,
+            usage: None,
         }
     }
 
@@ -90,6 +93,7 @@ impl OpenAiProvider {
 
 impl Provider for OpenAiProvider {
     fn complete(&mut self, messages: &[Message]) -> Result<ModelReply, String> {
+        self.usage = None;
         if self.api_key.is_empty() && !self.base_url.starts_with("http://127.0.0.1") {
             return Err("api key가 필요합니다.".into());
         }
@@ -113,7 +117,21 @@ impl Provider for OpenAiProvider {
                 body.to_string().chars().take(400).collect::<String>()
             ));
         }
+        if let Some(usage) = body.get("usage") {
+            self.usage = Some(ModelUsage {
+                prompt_tokens:usage["prompt_tokens"].as_u64().unwrap_or(0),
+                completion_tokens:usage["completion_tokens"].as_u64().unwrap_or(0),
+                cached_prompt_tokens:usage.pointer("/prompt_tokens_details/cached_tokens")
+                    .and_then(Value::as_u64)
+                    .or_else(|| usage["cached_tokens"].as_u64())
+                    .unwrap_or(0),
+            });
+        }
         parse_reply(&body)
+    }
+
+    fn take_usage(&mut self) -> Option<ModelUsage> {
+        self.usage.take()
     }
 }
 
