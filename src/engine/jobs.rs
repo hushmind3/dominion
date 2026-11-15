@@ -103,6 +103,61 @@ pub fn enqueue(state: &AppState, kind: &str, input: Value) -> Option<Value> {
 
 /// Atomically deduplicate an immutable operation across HTTP requests and
 /// workers. The supplied ID belongs to the engine, never a client record.
+/// Durable user steering is engine policy, not an HTTP-layer shortcut.
+#[derive(Debug)]
+pub enum SteeringError {
+    BadInput(String),
+    NotFound,
+    Conflict(String),
+}
+impl std::fmt::Display for SteeringError {
+    fn fmt(&self,fmt:&mut std::fmt::Formatter<'_>)->std::fmt::Result{
+        match self {
+            Self::BadInput(text)|Self::Conflict(text)=>fmt.write_str(text),
+            Self::NotFound=>fmt.write_str("작업을 찾을 수 없습니다."),
+        }
+    }
+}
+pub fn steer(state:&AppState,id:&str,instruction:&str)->Result<Value,SteeringError>{
+    let instruction=instruction.trim();
+    if instruction.is_empty() || instruction.len()>4000 {
+        return Err(SteeringError::BadInput("추가 지시는 1~4000자로 입력하세요.".into()));
+    }
+    for _ in 0..4 {
+        let job=state.store.get("job",id).ok_or(SteeringError::NotFound)?;
+        if job["kind"]!="prompt" || job["input"]["rsiSourceDir"].is_string()
+            || job["input"]["autonomous"]==false {
+            return Err(SteeringError::BadInput(
+                "자율 실행 중인 일반 작업에서만 추가 지시를 지원합니다.".into()));
+        }
+        if !matches!(job["status"].as_str(),Some("queued"|"running")){
+            return Err(SteeringError::Conflict("진행 중인 작업만 수정할 수 있습니다.".into()));
+        }
+        let mut steering=job["steering"].as_array().cloned().unwrap_or_default();
+        if steering.len()>=8 {
+            return Err(SteeringError::Conflict("작업당 추가 지시는 최대 8회입니다.".into()));
+        }
+        let revision=job["steeringRevision"].as_u64().unwrap_or(0);
+        steering.push(json!({
+            "revision":revision+1,"instruction":instruction,
+            "at":chrono::Utc::now().to_rfc3339()
+        }));
+        if let Some(saved)=state.store.patch_if(
+            "job",id,"steeringRevision",
+            job.get("steeringRevision").unwrap_or(&Value::Null),
+            &json!({"steeringRevision":revision+1,"steering":steering}),
+        ){
+            state.bus.record("job",&saved);
+            state.store.audit("job.steer",json!({"jobId":id,"revision":revision+1}));
+            return Ok(json!({
+                "jobId":id,"steeringRevision":revision+1,
+                "appliesAt":"next_model_turn"
+            }));
+        }
+    }
+    Err(SteeringError::Conflict("작업이 동시에 수정되었습니다.".into()))
+}
+
 pub fn enqueue_once(state: &AppState, id: &str, kind: &str, input: Value) -> Option<Value> {
     let candidate = json!({"id":id,"kind":kind,"input":input,"status":"queued",
         "queuedAt":chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros,true),
