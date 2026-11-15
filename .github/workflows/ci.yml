@@ -2,6 +2,8 @@ name: CI
 
 on:
   push:
+    branches-ignore:
+      - dominion-sub3
   pull_request:
 
 permissions:
