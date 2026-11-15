@@ -1,7 +1,7 @@
 const byId = (id) => document.getElementById(id);
 const ui = {
   prompt: byId('prompt'), form: byId('submitForm'), run: byId('run'),
-  write: byId('write'), shell: byId('shell'), mcp: byId('mcp'), evidence: byId('evidence'),
+  write: byId('write'), shell: byId('shell'), mcp: byId('mcp'), subagents: byId('subagents'), evidence: byId('evidence'),
   maxSteps: byId('maxSteps'), tokenBudget: byId('tokenBudget'),
   planningMode: byId('planningMode'),
   sessionId: byId('sessionId'), notice: byId('notice'), work: byId('work'),
@@ -76,6 +76,8 @@ function openStream(id) {
       const detail=event.detail || {};
       if (event.type==='tool_result') {
         row('도구 결과',detail.name+' · '+(detail.outcome?.ok ? '실행 기록됨' : '실패'));
+      } else if (event.type==='subagent_started') {
+        row('보조 에이전트',String(detail.taskId||'')+' · 분석 시작');
       } else if (event.type==='plan') {
         row('실행 계획',String(detail.text||'계획 저장됨').slice(0,180));
       } else if (event.type==='verification') {
@@ -125,6 +127,7 @@ function submission() {
     requestId:crypto.randomUUID(),prompt:ui.prompt.value.trim(),
     sessionId:ui.sessionId.value.trim() || null,
     allowWrite:ui.write.checked,allowShell:ui.shell.checked,allowMcp:ui.mcp.checked,
+    allowSubagents:ui.subagents.checked,
     requireEvidence:ui.evidence.checked,
     maxSteps:Number(ui.maxSteps.value),tokenBudget:Number(ui.tokenBudget.value),
     planningMode:ui.planningMode.value
@@ -146,6 +149,23 @@ async function create(retry=false) {
     notice(error.message+' · 같은 요청으로 다시 전송하려면 실행 시작을 누르세요.');
   } finally { ui.run.disabled=false; }
 }
+byId('showChildren').addEventListener('click',async()=>{
+  if(!active)return;
+  try{
+    const list=await api('/api/tasks/'+encodeURIComponent(active)+'/children');
+    const out=byId('children');out.replaceChildren();
+    if(!list.length){
+      const empty=document.createElement('li');empty.textContent='위임된 보조 작업이 없습니다.';
+      out.append(empty);return;
+    }
+    for(const item of list){
+      const line=document.createElement('li');
+      line.textContent=(item.input?.prompt||'하위 작업')+' · '+statusText(item.status)+
+        (item.result?.answer?' · '+item.result.answer.slice(0,250):'');
+      out.append(line);
+    }
+  }catch(error){notice(error.message);}
+});
 ui.form.addEventListener('submit',async event=>{event.preventDefault();await create(Boolean(pending));});
 ui.refresh.addEventListener('click',async()=>{try{await loadTasks();await updateTask();notice('');}catch(e){notice(e.message);}});
 ui.cancel.addEventListener('click',async()=>{
