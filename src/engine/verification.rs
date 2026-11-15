@@ -164,7 +164,8 @@ pub fn repair_feedback(check:&Check,observation:&Value,revision:u64)->String{
 /// avoiding repeated commands against the same failing workspace revision.
 pub(super) async fn audit(
     state:&crate::AppState,task_id:&str,session_id:&str,
-    checks:&[Check],ledger:&mut Ledger,receipts:&mut Vec<Value>
+    checks:&[Check],ledger:&mut Ledger,receipts:&mut Vec<Value>,
+    shell_isolation:&str
 )->Result<Option<(Check,Value)>,String>{
     for (index,check) in checks.iter().enumerate(){
         if let Some(previous)=ledger.current(check){
@@ -188,7 +189,7 @@ pub(super) async fn audit(
             "index":index
         }));
         let result=super::tool(state,task_id,session_id,
-            "workspace_check",&args,false,true).await;
+            "workspace_check",&args,false,true,shell_isolation).await;
         let value=match result{
             Ok(receipt)=>json!({"ok":receipt["success"]==true,"receipt":receipt}),
             Err(error)=>json!({"ok":false,"error":error})
@@ -205,7 +206,9 @@ pub(super) async fn audit(
             "check":check.label(),"revision":ledger.revision,
             "success":value["ok"]==true,
             "exitCode":value["receipt"]["exitCode"],
-            "stderrTail":value["receipt"]["stderr"]
+            "stderrTail":value["receipt"]["stderr"],
+            "sandboxed":value["receipt"]["sandboxed"],
+            "sandboxBackend":value["receipt"]["sandboxBackend"]
         }));
         receipts.push(json!({"tool":"workspace_check","phase":"native_acceptance",
             "arguments":args,"outcome":value}));
