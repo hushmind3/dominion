@@ -4,11 +4,18 @@ import {get, post, type Provider} from '../api'
 import {useLocale} from '../i18n'
 
 // Main branch presentation, wired to sub3's single Rust job/SDK runtime.
+type NativeMeasuredUsage = {
+ inputTokens:number;outputTokens:number;totalTokens:number;
+ cacheReadTokens:number;cacheWriteTokens:number;
+ reportedCalls:number;unreportedCalls:number;cacheReportedCalls:number;
+ source:string;estimated:false;
+}
 type AgentJob = {
  id:string; kind:string; status:string; sessionId?:string; createdAt?:string; queuedAt?:string;
  input?:{prompt?:string;providerId?:string;checks?:{type?:string;tool?:string;contains?:string}[]};
  nativeState?:{step?:number;modelCalls?:number;chargedTokens?:number;receipts?:{tool?:string;success?:boolean}[];error?:string};
  nativeStream?:{stage?:string;protocol?:string;events?:number;visibleTail?:string;pendingCalls?:{id:string;name:string}[];executable?:boolean};
+ nativeModelUsage?:NativeMeasuredUsage;
  result?:{answer?:string;reason?:string;toolCalls?:number;modelCalls?:number};error?:string;
 }
 type Approval = {id:string;status:string;sessionId?:string;tool?:string;args?:unknown}
@@ -16,7 +23,7 @@ type SdkRun = {
  id:string;status:string;instruction:string;providerId?:string;answer?:string;error?:string;verification?:string;
  stream?:AgentJob['nativeStream'];
  checkpoint?:{rounds?:number;toolCalls?:number;answer?:string;
-  usage?:{prompt_tokens:number;completion_tokens:number;cached_prompt_tokens:number};
+  usage?:NativeMeasuredUsage;
   pendingCall?:{id:string;name:string;arguments:unknown}|null;
   events?:{kind:string;detail:unknown}[]}
 }
@@ -43,6 +50,7 @@ function present(job:AgentJob,approvals:Approval[]=[]):SdkRun{
    rounds:job.nativeState?.step??job.nativeState?.modelCalls??job.result?.modelCalls??0,
    toolCalls:job.result?.toolCalls??receipts.length,
    answer:job.result?.answer,
+   usage:job.nativeModelUsage,
    pendingCall:pending?{id:pending.id,name:pending.tool??'tool',arguments:pending.args??{}}:null,
    events:receipts.slice(-4).map(x=>({kind:x.success?'verified':'tool_started',detail:x.tool??''}))
   }
@@ -184,9 +192,15 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     <div className="flex flex-wrap items-center justify-between gap-2">
      <strong className="text-[12px]">{en?stateNames[status]?.[1]||status:stateNames[status]?.[0]||status}</strong>
      <span className="text-[11px] text-[#82796D]">{run.checkpoint?.rounds??0} {en?'rounds':'회 판단'} · {run.checkpoint?.toolCalls??0} {en?'actions':'회 도구 실행'}</span>
-    {run.checkpoint?.usage&&<p className="mt-2 text-[11px] text-[#82796D]">
-     {en?'Provider-reported tokens':'제공자 보고 토큰'}: {run.checkpoint.usage.prompt_tokens.toLocaleString()} {en?'input':'입력'} · {run.checkpoint.usage.completion_tokens.toLocaleString()} {en?'output':'출력'} · {run.checkpoint.usage.cached_prompt_tokens.toLocaleString()} {en?'cached input':'캐시 입력'}
-    </p>}
+    {run.checkpoint?.usage&&<div className="mt-2 text-[11px] text-[#82796D]" aria-label={en?'Measured provider token usage':'제공자 측정 토큰 사용량'}>
+     <p>{en?'Provider-reported (measured)':'제공자 보고값 (실측)'}: {run.checkpoint.usage.inputTokens.toLocaleString()} {en?'input':'입력'} · {run.checkpoint.usage.outputTokens.toLocaleString()} {en?'output':'출력'} · {run.checkpoint.usage.reportedCalls} {en?'reported calls':'회 보고'}</p>
+     {run.checkpoint.usage.cacheReportedCalls>0&&<p className="mt-1">
+      {en?'Cache read':'캐시 읽기'} {run.checkpoint.usage.cacheReadTokens.toLocaleString()} · {en?'Cache write':'캐시 쓰기'} {run.checkpoint.usage.cacheWriteTokens.toLocaleString()} {en?'tokens':'토큰'}
+     </p>}
+     {run.checkpoint.usage.unreportedCalls>0&&<p className="mt-1 text-[#A54027]">
+      {run.checkpoint.usage.unreportedCalls} {en?'calls did not report token usage; totals exclude unknown usage':'회 호출에서 사용량 미보고 · 위 합계에서 제외'}
+     </p>}
+    </div>}
     </div>
     <p className="mt-2 line-clamp-2 text-[11px] text-[#766F67]">{run.instruction}</p>
     {run.stream&&['receiving','interrupted'].includes(run.stream.stage??'')&&<div role="status" aria-live="polite" className="mt-3 rounded-lg border border-[#E7E0D5] bg-white p-3 text-[11px]">
