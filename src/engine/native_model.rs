@@ -49,6 +49,10 @@ fn record_job_usage(state:&AppState,job_id:Option<&str>,session:&str,
     let cache_known=usage.cache_read.is_some()||usage.cache_write.is_some();
     let input=usage.input.unwrap_or(0);
     let output=usage.output.unwrap_or(0);
+    let configured_cost=crate::engine::native_routing::observed_cost(
+        &job["nativeRoute"],usage.input,usage.output,usage.cache_read,usage.cache_write);
+    let cost_total=old["configuredCostKRW"].as_f64().unwrap_or(0.0)
+        +configured_cost.unwrap_or(0.0);
     let ledger=json!({
         "inputTokens":add("inputTokens",input),
         "outputTokens":add("outputTokens",output),
@@ -58,7 +62,13 @@ fn record_job_usage(state:&AppState,job_id:Option<&str>,session:&str,
         "reportedCalls":add("reportedCalls",u64::from(known)),
         "unreportedCalls":add("unreportedCalls",u64::from(!known)),
         "cacheReportedCalls":add("cacheReportedCalls",u64::from(cache_known)),
+        "configuredCostKRW":cost_total,
+        "pricedCalls":add("pricedCalls",u64::from(configured_cost.is_some())),
+        "unpricedCalls":add("unpricedCalls",u64::from(configured_cost.is_none())),
+        "configuredPriceCurrency":"KRW",
+        "costBasis":"owner_configured_rates_x_provider_reported_tokens_not_invoice",
         "last":{"providerId":route.id,"model":route.model,
+            "configuredCostKRW":configured_cost,
             "inputTokens":usage.input,"outputTokens":usage.output,
             "cacheReadTokens":usage.cache_read,"cacheWriteTokens":usage.cache_write,
             "providerReported":known},
@@ -74,7 +84,8 @@ fn record_job_usage(state:&AppState,job_id:Option<&str>,session:&str,
         "inputTokens":usage.input,"outputTokens":usage.output,
         "cacheReadTokens":usage.cache_read,"cacheWriteTokens":usage.cache_write,
         "providerReported":known,"cacheReported":cache_known,
-        "estimated":false,"currencyCost":null
+        "estimated":false,"configuredCostKRW":configured_cost,
+        "configuredPriceCurrency":"KRW","providerInvoiceVerified":false
     }));
     Ok(())
 }
