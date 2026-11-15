@@ -406,7 +406,7 @@ mod tests {
         assert_eq!(bounded.completed_generations,0);
         assert!(bounded.spent_krw>bounded.cost_budget_krw);
         assert_eq!(fs::read_to_string(repo.join("a.txt")).await.unwrap(),"2\n");
-        let proposal=service.get(bounded.descendants[0]).await.unwrap();
+        let proposal=service.get(bounded.candidate_groups[0][0]).await.unwrap();
         assert_eq!(proposal.status,ImprovementStatus::Evaluated);
         let restored=Improvements::open(dir,workspace).await.unwrap();
         assert_eq!(restored.evolution(run.id).await.unwrap().completed_generations,2);
