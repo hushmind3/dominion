@@ -641,6 +641,18 @@ impl Store {
         out
     }
 
+    /// Snapshot the final deterministic acceptance statement into the task
+    /// result. The model cannot create this event: the Rust verifier does.
+    pub fn last_acceptance(&self,id:&str)->Option<Value>{
+        let conn=self.conn.lock().ok()?;
+        let raw:String=conn.query_row(
+            "SELECT data FROM events WHERE task_id=?1 AND kind='acceptance_complete'
+             ORDER BY seq DESC LIMIT 1",
+            [id],|row|row.get(0)).ok()?;
+        let value:Value=serde_json::from_str(&raw).ok()?;
+        Some(value["detail"].clone())
+    }
+
     pub fn events_after(&self, id: &str, after: u64, limit: usize) -> Vec<Value> {
         let Ok(conn) = self.conn.lock() else { return Vec::new() };
         let Ok(mut stmt) = conn.prepare(
