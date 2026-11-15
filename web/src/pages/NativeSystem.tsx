@@ -84,8 +84,11 @@ export function NativeExtensions(){
 }
 export function NativeDeveloper(){
  const runs=useRemote<Run[]>('/api/tasks',[])
- const [selected,setSelected]=useState(''),[events,setEvents]=useState<unknown[]>([])
+ const [selected,setSelected]=useState(''),[events,setEvents]=useState<{seq:number;type:string;detail:Record<string,unknown>}[]>([])
  const [error,setError]=useState('')
+ const recentProjection=events.filter(event=>event.type==='context_projected').at(-1)
+ const context=recentProjection?.detail
+ const numeric=(value:unknown)=>typeof value==='number'?value:0
  useEffect(()=>{if(!selected){setEvents([]);return}
   let live=true
   const stream=new EventSource('/api/tasks/'+encodeURIComponent(selected)+'/events')
@@ -104,6 +107,17 @@ export function NativeDeveloper(){
    </Panel>
    <Panel className="p-4"><div className="mb-3 flex items-center justify-between"><h2 className="font-bold">영속 실행 이벤트 · {events.length}건</h2>{selected&&<span className={faded}>{selected.slice(0,8)}</span>}</div>
     <Notice message={error}/>
+    {context&&<div className="mb-4 rounded-xl border border-[#E5D7C8] bg-[#FBF7F2] p-4 text-[12px]">
+     <h3 className="mb-2 font-bold">🧠 장기 문맥 관리 · 영속 근거 보존</h3>
+     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div><span className={faded}>원본 입력</span><strong className="block text-[15px]">{numeric(context.originalBytes).toLocaleString()}B</strong></div>
+      <div><span className={faded}>모델 전달</span><strong className="block text-[15px]">{numeric(context.modelBytes).toLocaleString()}B</strong></div>
+      <div><span className={faded}>문맥 한도</span><strong className="block text-[15px]">{numeric(context.budgetBytes).toLocaleString()}B</strong></div>
+      <div><span className={faded}>근거 압축</span><strong className="block text-[15px]">{numeric(context.clippedReceipts)}개</strong></div>
+     </div>
+     <p className={'mt-3 '+faded}>이 수치는 네트워크 요청의 문자 인코딩 크기이며 토큰 절감률은 아닙니다. 원본 도구 결과는 SQLite에 보관되고, 모델은 재조회 도구로 필요한 구간을 가져옵니다.</p>
+     <p className={'mt-1 break-all '+faded}>검증 해시: {String(context.projectionSha256||'').slice(0,24)}… · 생략 메시지 {numeric(context.omittedMessages)}개</p>
+    </div>}
     <div className="max-h-[600px] space-y-2 overflow-auto">{events.map((event,index)=><pre key={index} className="overflow-x-auto whitespace-pre-wrap break-all rounded-lg border border-[#ECE5DB] bg-[#F6F3EC] p-3 text-[11px]">{JSON.stringify(event,null,2)}</pre>)}</div>
    </Panel>
   </div>
