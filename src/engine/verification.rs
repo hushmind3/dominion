@@ -446,7 +446,9 @@ pub(crate) fn proven_workspace_edit(state:&AppState,item:&Value)->bool {
     if tool_name(item)=="workspace_apply_patch" {
         return item["result"]["status"]=="completed"
             && item["result"]["files"].as_array().is_some_and(|files|
-                files.iter().any(|entry|file_receipt_matches(state,entry,None)));
+                !files.is_empty()
+                    && files.iter().any(|entry|entry["changed"]==true)
+                    && files.iter().all(|entry|file_receipt_matches(state,entry,None)));
     }
     if !matches!(tool_name(item),
         "workspace_write"|"file_write"|"workspace_replace"|"workspace_replace_range"){
@@ -774,6 +776,8 @@ mod verified_patch_tests {
         assert!(proven_edit_for_path(&state,&value,"one.rs"));
         assert!(proven_edit_for_path(&state,&value,"two.rs"));
         std::fs::write(dir.join("two.rs"),"stale").unwrap();
+        assert!(!proven_workspace_edit(&state,&value),
+            "A multi-file edit is not fully proven when ANY output becomes stale");
         assert!(!proven_edit_for_path(&state,&value,"two.rs"));
         let partial=json!({"tool":"workspace_apply_patch","result":{
             "status":"partial","error":"failed","files":value["result"]["files"]}});
