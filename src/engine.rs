@@ -135,18 +135,16 @@ fn specs(allow_write: bool, allow_shell: bool, allow_subagents: bool) -> Vec<Val
     result
 }
 
-fn allowed_check(program: &str, args: &[String]) -> bool {
-    match (program, args.first().map(String::as_str)) {
-        ("cargo", Some("check" | "test" | "fmt")) => true,
-        ("npm", Some("test" | "run")) => {
-            args.first().is_some_and(|a| a == "test") ||
-                (args.len() == 2 && matches!(args[1].as_str(), "build" | "typecheck"))
-        }
-        ("git", Some("status" | "diff")) => args.iter().skip(1)
-            .all(|v| matches!(v.as_str(),"--short"|"--stat"|"--no-ext-diff")),
-        ("node", Some("--test")) => true,
-        ("rg", Some(pattern)) => args.len()==1 && !pattern.starts_with('-'),
-        _ => false,
+fn allowed_check(program:&str,args:&[String])->bool{
+    match(program,args.first().map(String::as_str)){
+        ("cargo",Some("test"|"check"))=>verification::acceptable(program,args),
+        ("cargo",Some("fmt"))=>args.len()==2 && args[1]=="--check",
+        ("npm",Some("test"|"run"))=>verification::acceptable(program,args),
+        ("node",Some("--test"))=>verification::acceptable(program,args),
+        ("git",Some("status"|"diff"))=>args.iter().skip(1)
+            .all(|v|matches!(v.as_str(),"--short"|"--stat"|"--no-ext-diff")),
+        ("rg",Some(pattern))=>args.len()==1&&!pattern.starts_with('-'),
+        _=>false
     }
 }
 
