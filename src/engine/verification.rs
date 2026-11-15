@@ -673,7 +673,7 @@ mod verified_patch_tests {
         let test=json!({"tool":"shell_exec",
             "arguments":{"command":"cargo test"},"result":{"exitCode":0}});
         assert!(!check_acceptance(&state,goal,&json!([]),&[no_write,test.clone()]).is_empty());
-        assert!(check_acceptance(&state,goal,&json!([]),&[valid,test]).is_empty());
+        assert!(check_acceptance(&state,goal,&json!([]),&[valid.clone(),test]).is_empty());
         std::fs::write(dir.join("src/main.rs"),"external modification").unwrap();
         assert!(!proven_workspace_edit(&state,&valid));
         let _=std::fs::remove_dir_all(dir);
