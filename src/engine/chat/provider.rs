@@ -2624,6 +2624,12 @@ mod tests {
         assert_eq!(bodies.len(),2);
         let sent=bodies[1]["body"]["messages"].to_string();
         assert!(sent.contains("compacted"), "large old reads must be reduced");
+        assert!(state.store.recent_audit(200).iter().any(|row|
+            row["event"]=="chat.context_edit_prepared"
+            && row["detail"]["wire"]=="anthropic"
+            && row["detail"]["removedJsonCharsEstimate"].as_u64().unwrap_or(0)>30_000
+            && row["detail"]["billedTokenSavings"].is_null()),
+            "the reduction must be observable without inventing actual billed tokens");
         assert!(sent.contains("recent-three"), "latest tool observations survive");
         assert!(sent.contains("write receipt"), "write result must survive");
         assert!(sent.contains("permission denied"), "tool errors must survive");
