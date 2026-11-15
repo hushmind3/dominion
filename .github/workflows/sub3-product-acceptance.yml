@@ -1,0 +1,50 @@
+name: Sub3 product acceptance (focused)
+
+on:
+  push:
+    branches: [dominion-sub3]
+    paths:
+      - '.github/workflows/sub3-product-acceptance.yml'
+      - 'src/engine/chat/**'
+      - 'src/engine/video.rs'
+      - 'src/api/video.rs'
+      - 'src/engine/verification.rs'
+      - 'src/engine/code_index.rs'
+      - 'src/engine/rsi_system.rs'
+      - 'web/src/pages/Chat.tsx'
+      - 'web/src/pages/Video.tsx'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sub3-product-acceptance
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Compile actual backend
+        run: cargo check --bin dominion-rust
+      - name: Chat and durable tool-order regressions
+        run: cargo test --bin dominion-rust engine::chat::tests -- --nocapture
+      - name: Artifact verification contracts
+        run: cargo test --bin dominion-rust engine::verification -- --nocapture
+      - name: Real playable native video
+        run: cargo test --bin dominion-rust native_pipeline_produces_a_real_playable_container -- --nocapture
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Verify shipping GUI
+        run: |
+          npm ci --prefix web
+          npm run typecheck --prefix web
+          npm run build --prefix web
