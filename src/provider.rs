@@ -29,6 +29,8 @@ pub struct Reply {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cached_tokens: u64,
+    /// True when the provider omitted token usage and a conservative size estimate was used.
+    pub usage_estimated: bool,
     pub cost_krw: f64,
     pub model: String,
 }
@@ -72,6 +74,8 @@ impl ModelClient {
             payload["tools"]=json!(tools);
             payload["tool_choice"]=json!("auto");
         }
+        let input_chars=messages.iter().map(|message|message.to_string().chars().count())
+            .sum::<usize>()+tools.iter().map(|tool|tool.to_string().chars().count()).sum::<usize>();
         let mut req=self.http.post(&provider.endpoint).json(&payload);
         if let Some(token)=&provider.api_key {req=req.bearer_auth(token);}
         let response=req.send().await.map_err(|error|format!("model transport: {error}"))?;
@@ -83,8 +87,12 @@ impl ModelClient {
         let raw=response.json::<Value>().await.map_err(|error|format!("model JSON: {error}"))?;
         let message=&raw["choices"][0]["message"];
         if !message.is_object() {return Err("model response missing assistant message".into());}
-        let input_tokens=raw["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
-        let output_tokens=raw["usage"]["completion_tokens"].as_u64().unwrap_or(0);
+        let usage_estimated=raw["usage"]["prompt_tokens"].as_u64().is_none()
+            || raw["usage"]["completion_tokens"].as_u64().is_none();
+        let input_tokens=raw["usage"]["prompt_tokens"].as_u64()
+            .unwrap_or_else(||(input_chars as u64).saturating_add(3)/4);
+        let output_tokens=raw["usage"]["completion_tokens"].as_u64()
+            .unwrap_or_else(||(message.to_string().chars().count() as u64).saturating_add(3)/4);
         let cached_tokens=raw.pointer("/usage/prompt_tokens_details/cached_tokens")
             .and_then(Value::as_u64).unwrap_or(0).min(input_tokens);
         let cost_krw=calculate_cost(
@@ -92,7 +100,8 @@ impl ModelClient {
         );
         Ok(Reply {
             text:message["content"].as_str().unwrap_or_default().into(),
-            raw,input_tokens,output_tokens,cached_tokens,cost_krw,model:provider.name.clone()
+            raw,input_tokens,output_tokens,cached_tokens,usage_estimated,cost_krw,
+            model:provider.name.clone()
         })
     }
 
