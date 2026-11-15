@@ -56,7 +56,7 @@ function RunList({items,selected,onSelect}:{items:Run[];selected:string;onSelect
 export function NativeTasks({home=false}:{home?:boolean}){
  const tasks=useCollection<Run[]>('/api/tasks',[])
  const presets=useCollection<AgentPreset[]>('/api/agents',[])
- const [active,setActive]=useState(''),[prompt,setPrompt]=useState(''),[sessionId,setSessionId]=useState('')
+ const [active,setActive]=useState(()=>new URLSearchParams(window.location.hash.split('?')[1]||'').get('task')||''),[prompt,setPrompt]=useState(''),[sessionId,setSessionId]=useState('')
  const [allowWrite,setAllowWrite]=useState(false),[allowShell,setAllowShell]=useState(false),[allowMcp,setAllowMcp]=useState(false)
  const [allowSubagents,setAllowSubagents]=useState(false),[requireEvidence,setRequireEvidence]=useState(false)
  const [planningMode,setPlanningMode]=useState('auto'),[modelTier,setModelTier]=useState('auto'),[agentId,setAgentId]=useState(''),[maxSteps,setMaxSteps]=useState(12),[tokenBudget,setTokenBudget]=useState(40000),[costBudget,setCostBudget]=useState('')
