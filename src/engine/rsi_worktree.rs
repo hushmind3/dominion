@@ -1041,6 +1041,9 @@ pub(crate) async fn compare_at(context:&JobContext,id:&str,source:&Path,_runner_
     if meta_required {
         context.checkpoint(json!({"rsiPhase":"meta_evaluating"}))?;
         meta_receipt=crate::engine::rsi_meta::evaluate(context,&candidate,source,&output_dir).await?;
+        if !crate::engine::rsi_meta::verified_episode_receipt(&candidate,&meta_receipt) {
+            return Err("모델 A/B 결과와 후속 과제별 원본 증거가 일치하지 않습니다.".into());
+        }
         let expected=candidate["cases"].as_array().into_iter().flatten().filter(|case|
             crate::engine::rsi_meta::is_case(case)).map(|case|case["id"].clone()).collect::<Vec<_>>();
         let measured=if expected==vec![json!("meta-downstream-editing")] {

@@ -461,6 +461,10 @@ pub(crate) fn replayed_pair_metrics(state: &AppState, candidate: &Value) -> Opti
         || report["patchSha256"] != candidate["patchSha256"]
         || report["oracleVersion"] != candidate["oracleVersion"]
         || !paired_tree_proof(candidate,report)
+        || (plan.iter().any(crate::engine::rsi_meta::is_case)
+            && (!crate::engine::rsi_meta::verified_episode_receipt(
+                candidate,&report["metaEvaluation"])
+                || candidate["metaEvaluation"]!=report["metaEvaluation"]))
         || report["baselineBuildOk"] != true || report["candidateBuildOk"] != true
     { return None; }
     let Ok(recalculated) = evaluate_cases(

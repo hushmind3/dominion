@@ -27,6 +27,105 @@ pub fn case()->Value {cases().remove(0)}
 
 fn sha(bytes: impl AsRef<[u8]>) -> String { format!("{:x}",Sha256::digest(bytes.as_ref())) }
 
+/// Recalculate the downstream A/B episode table rather than trusting a
+/// candidate-visible aggregate. This is a read-only replay of persisted
+/// coordinator receipts and cannot initiate a new model call.
+pub(crate) fn verified_episode_receipt(candidate:&Value,receipt:&Value)->bool{
+    let Some(base)=candidate["baseCommit"].as_str() else{return false;};
+    let valid_sha=|v:&str,n:usize|v.len()==n && v.bytes().all(|b|b.is_ascii_hexdigit());
+    let Some(changed)=receipt["candidateGeneratorCommit"].as_str() else{return false;};
+    let Some(provider)=receipt["providerId"].as_str().filter(|v|!v.is_empty()) else{return false;};
+    let Some(model)=receipt["model"].as_str().filter(|v|!v.is_empty()) else{return false;};
+    let Some(tasks)=receipt["tasks"].as_u64().filter(|v|*v>=1&&*v<=16) else{return false;};
+    let Some(limit)=receipt["perEpisodeTokenLimit"].as_u64().filter(|v|*v>=4000) else{return false;};
+    let Some(rows)=receipt["episodes"].as_array() else{return false;};
+    let Some(domain_list)=receipt["domains"].as_array() else{return false;};
+    let Some(measurements)=receipt["measurements"].as_array() else{return false;};
+    if receipt["version"]!=2 || receipt["candidateId"]!=candidate["id"]
+        || receipt["baselineGeneratorCommit"]!=base || receipt["subjectCommit"]!=base
+        || !valid_sha(base,40) || !valid_sha(changed,40) || changed==base
+        || receipt["pairedEpisodeCount"].as_u64()!=Some(tasks*2)
+        || rows.len()!=2*tasks as usize || measurements.len()!=tasks as usize
+        || domain_list.len()!=tasks as usize
+    {return false;}
+    let mut seen=BTreeSet::new();
+    let mut baseline_sum=0.0_f64;
+    let mut candidate_sum=0.0_f64;
+    let mut baseline_calls=0.0_f64;
+    let mut candidate_calls=0.0_f64;
+    for episode in rows {
+        let Some(task)=episode["task"].as_u64().filter(|v|*v<tasks) else{return false;};
+        let Some(arm)=episode["arm"].as_str().filter(|a|matches!(*a,"baseline"|"candidate")) else{return false;};
+        if !seen.insert((task,arm.to_string())) {return false;}
+        let expected=if arm=="baseline"{base}else{changed};
+        let Some(binary)=episode["generatorBinarySha256"].as_str() else{return false;};
+        let Some(quality)=episode["quality"].as_f64().filter(|v|v.is_finite()&&(0.0..=1.0).contains(v)) else{return false;};
+        let Some(calls)=episode["usage"]["calls"].as_u64().filter(|v|*v>0) else{return false;};
+        let Some(tokens)=episode["usage"]["totalTokens"].as_u64() else{return false;};
+        let Some(routes)=episode["actualModelRoutes"].as_array().filter(|v|!v.is_empty()) else{return false;};
+        if episode["generatorCommit"]!=expected
+            || episode["subjectCommit"]!=base
+            || episode["providerId"]!=provider || episode["model"]!=model
+            || episode["tokenLimit"]!=limit || tokens>limit
+            || episode["workerOk"]!=true || !valid_sha(binary,64)
+            || routes.iter().any(|r|r["providerId"]!=provider||r["model"]!=model)
+        {return false;}
+        if episode["generationRuntimeMode"]=="compiled_system_controller"
+            && (episode["systemBlueprintVerified"]!=true
+                || episode["controllerPlannerSource"]!="compiled_descendant_system_controller_v2"
+                || !episode["generatorSourceTreeSha256"].as_str()
+                    .is_some_and(|hash|valid_sha(hash,64))) {
+            return false;
+        }
+        if episode["generationRuntimeMode"]!="compiled_system_controller"
+            && episode["generationRuntimeMode"]!="regular_worker" {return false;}
+        if episode["subjectReport"].is_object() {
+            let metric=episode["subjectMetric"].as_str().unwrap_or("quality");
+            let (verified,before,after)=measured_subject_gain(&episode["subjectReport"],metric);
+            let same=|a:f64,b:f64|(a-b).abs()<=1e-9;
+            if !same(verified,quality)
+                || episode["baselineSubjectQuality"].as_f64().is_none_or(|v|!same(v,before))
+                || episode["candidateSubjectQuality"].as_f64().is_none_or(|v|!same(v,after))
+                || episode["subjectReport"]["baseCommit"]!=base
+                || !episode["subjectReport"]["candidateTreeSha"].as_str()
+                    .is_some_and(|hash|valid_sha(hash,40)) {
+                return false;
+            }
+        }else if quality!=0.0 {return false;}
+        if arm=="baseline" {baseline_sum+=quality;baseline_calls+=calls as f64;}
+        else {candidate_sum+=quality;candidate_calls+=calls as f64;}
+    }
+    let same=|a:f64,b:f64|(a-b).abs()<=1e-9;
+    for task in 0..tasks {
+        let row=&measurements[task as usize];
+        let matching=|arm:&str|rows.iter().find(|episode|
+            episode["task"].as_u64()==Some(task)&&episode["arm"]==arm)
+            .and_then(|episode|episode["quality"].as_f64());
+        let (Some(before),Some(after))=(matching("baseline"),matching("candidate")) else{return false;};
+        if !row["id"].as_str().is_some_and(|v|v.starts_with("meta-downstream-"))
+            || row["baselinePass"]!=true || row["candidatePass"]!=true
+            || row["metrics"]["quality"]["samples"]!=1
+            || !row["metrics"]["quality"]["baseline"].as_f64().is_some_and(|v|same(v,before))
+            || !row["metrics"]["quality"]["candidate"].as_f64().is_some_and(|v|same(v,after)) {
+            return false;
+        }
+    }
+    let aggregate=&receipt["measurement"];
+    aggregate["id"]=="meta-downstream-editing"
+        && aggregate["baselinePass"]==true && aggregate["candidatePass"]==true
+        && aggregate["metrics"]["quality"]["samples"]==tasks
+        && aggregate["metrics"]["modelCalls"]["samples"]==tasks
+        && aggregate["metrics"]["quality"]["baseline"].as_f64()
+            .is_some_and(|v|same(v,baseline_sum/tasks as f64))
+        && aggregate["metrics"]["quality"]["candidate"].as_f64()
+            .is_some_and(|v|same(v,candidate_sum/tasks as f64))
+        && aggregate["metrics"]["modelCalls"]["baseline"].as_f64()
+            .is_some_and(|v|same(v,baseline_calls/tasks as f64))
+        && aggregate["metrics"]["modelCalls"]["candidate"].as_f64()
+            .is_some_and(|v|same(v,candidate_calls/tasks as f64))
+}
+
+
 /// Frozen downstream capabilities exercise different parts of the same
 /// compiled agent, instead of two paraphrases targeting a single product bug.
 /// Both arms get identical tasks, source bytes, evaluation and token limits.
@@ -367,6 +466,9 @@ pub async fn evaluate(context:&JobContext, candidate:&Value, source:&Path, outpu
             "perEpisodeTokenLimit":token_limit,"pairedEpisodeCount":2*task_count,
             "episodes":rows,"measurement":measured,"measurements":measurements,
             "limitation":"Registered held-out tasks with matched model budgets; this tests downstream capability, not unbounded recursive intelligence."});
+        if !verified_episode_receipt(candidate,&receipt) {
+            return Err("후속 A/B의 모델 경로·실행 출처·실제 측정·집계 값이 일치하지 않습니다.".into());
+        }
         std::fs::write(output.join("meta-receipt.json"),serde_json::to_vec_pretty(&receipt).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
         Ok(receipt)
     }.await;
@@ -379,6 +481,73 @@ pub async fn evaluate(context:&JobContext, candidate:&Value, source:&Path, outpu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paired_episode_replay_rejects_winner_summary_forgery_and_unpaid_or_duplicate_arms(){
+        let base="a".repeat(40);
+        let new_commit="b".repeat(40);
+        let candidate=json!({"id":"candidate-1","baseCommit":base});
+        let mut rows=Vec::new();
+        let mut measured=Vec::new();
+        for task in 0..4u64 {
+            for arm in ["baseline","candidate"] {
+                let score=if arm=="baseline"{0.2}else if task==0{0.4}else{0.2};
+                let final_quality=0.5+0.5*score;
+                rows.push(json!({"task":task,"arm":arm,
+                    "generatorCommit":if arm=="baseline"{base.clone()}else{new_commit.clone()},
+                    "subjectCommit":base,"providerId":"fixed-provider","model":"fixed-model",
+                    "generatorBinarySha256":"d".repeat(64),
+                    "generationRuntimeMode":"compiled_system_controller",
+                    "generatorSourceTreeSha256":"f".repeat(64),
+                    "controllerPlannerSource":"compiled_descendant_system_controller_v2",
+                    "systemBlueprintVerified":true,"workerOk":true,
+                    "tokenLimit":8000,"usage":{"calls":1,"totalTokens":2000},
+                    "actualModelRoutes":[{"providerId":"fixed-provider","model":"fixed-model"}],
+                    "quality":score,"subjectMetric":"quality",
+                    "baselineSubjectQuality":0.5,"candidateSubjectQuality":final_quality,
+                    "subjectReport":{"baseCommit":base,"candidateTreeSha":"e".repeat(40),
+                        "candidateBuildOk":true,"cases":[
+                        {"id":"subject-capability","candidatePass":true,
+                            "metrics":{"quality":{"baseline":0.5,"candidate":final_quality}}},
+                        {"id":"subject-guard","candidatePass":true}]}}));
+            }
+            measured.push(json!({"id":format!("meta-downstream-{task}"),
+                "baselinePass":true,"candidatePass":true,
+                "metrics":{"quality":{"baseline":0.2,
+                    "candidate":if task==0{0.4}else{0.2},"samples":1}}}));
+        }
+        let receipt=json!({"version":2,"candidateId":"candidate-1",
+            "baselineGeneratorCommit":base,"candidateGeneratorCommit":new_commit,
+            "subjectCommit":base,"providerId":"fixed-provider","model":"fixed-model",
+            "tasks":4,"perEpisodeTokenLimit":8000,"pairedEpisodeCount":8,
+            "domains":["tools","memory","context","improver"],
+            "episodes":rows,"measurements":measured,
+            "measurement":{"id":"meta-downstream-editing",
+                "baselinePass":true,"candidatePass":true,
+                "metrics":{"quality":{"baseline":0.2,"candidate":0.25,"samples":4},
+                    "modelCalls":{"baseline":1.0,"candidate":1.0,"samples":4}}}});
+        assert!(verified_episode_receipt(&candidate,&receipt));
+        let mut fake=receipt.clone();
+        fake["measurement"]["metrics"]["quality"]["candidate"]=json!(0.9);
+        assert!(!verified_episode_receipt(&candidate,&fake));
+        fake=receipt.clone();fake["episodes"][0]["quality"]=json!(0.9);
+        assert!(!verified_episode_receipt(&candidate,&fake));
+        fake=receipt.clone();fake["episodes"][0]["generatorCommit"]=json!("c".repeat(40));
+        assert!(!verified_episode_receipt(&candidate,&fake));
+        fake=receipt.clone();fake["episodes"][0]["actualModelRoutes"][0]["model"]=json!("fallback-model");
+        assert!(!verified_episode_receipt(&candidate,&fake));
+        fake=receipt.clone();fake["episodes"][0]["usage"]["totalTokens"]=json!(8001);
+        assert!(!verified_episode_receipt(&candidate,&fake));
+        fake=receipt.clone();fake["episodes"][1]["task"]=json!(0);
+        fake["episodes"][1]["arm"]=json!("baseline");
+        assert!(!verified_episode_receipt(&candidate,&fake));
+        fake=receipt.clone();fake["episodes"][1]["subjectReport"]["cases"][0]
+            ["metrics"]["quality"]["candidate"]=json!(0.99);
+        assert!(!verified_episode_receipt(&candidate,&fake));
+        fake=receipt;fake["episodes"][0]["systemBlueprintVerified"]=json!(false);
+        assert!(!verified_episode_receipt(&candidate,&fake));
+    }
+
     #[test]
     fn pair_budget_is_split_before_any_billable_model_episode() {
         assert_eq!(fair_meta_episode_limit(None,4).unwrap(),24_000);
