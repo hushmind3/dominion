@@ -13,7 +13,8 @@ const run=(exe,args,cwd)=>{
   env:{...process.env,CARGO_TARGET_DIR:path.join(process.env.RSI_BUILD_CACHE||path.join(root,'build'),path.basename(cwd))}});
  const text=(result.stdout||'')+'\n'+(result.stderr||'');
  logs.push(text.slice(-80000));
- return {ok:result.status===0&&!result.error,text,stdout:result.stdout||''};
+ return {ok:result.status===0&&!result.error,text,stdout:result.stdout||'',
+   exitCode:result.status,error:result.error?.message||null};
 };
 const median=values=>{const sorted=[...values].sort((a,b)=>a-b),mid=Math.floor(sorted.length/2);return sorted.length%2?sorted[mid]:(sorted[mid-1]+sorted[mid])/2};
 const oracle=plan.oracleFixture?fs.readFileSync(plan.oracleFixture):null;
@@ -21,6 +22,7 @@ if(oracle&&hash(oracle)!==plan.oracleSha256)throw Error('Frozen oracle hash mism
 const verifyOracle=()=>{if(oracle&&hash(fs.readFileSync(plan.oracleFixture))!==plan.oracleSha256)throw Error('Oracle was modified during execution');};
 // Fresh targets keep both compiled variants alive for interleaved AB/BA runs.
 const variants={};
+const buildDiagnostics={};
 for(const label of ['baseline','candidate']){
  const dir=path.join(root,label);
  if(oracle){
@@ -30,7 +32,19 @@ for(const label of ['baseline','candidate']){
  const binaries=built.stdout.split('\n').flatMap(line=>{
   try{const v=JSON.parse(line);return v.reason==='compiler-artifact'&&v.profile?.test&&v.executable?[v.executable]:[]}catch{return []}
  });
- const tests=new Map();
+ // Preserve actionable compiler failures in the signed paired report.
+  // A boolean build_failed cannot teach a descendant WHAT to repair, and
+  // hiding the diagnostics also makes cross-platform regressions opaque.
+  if(!built.ok||binaries.length===0){
+   const lines=built.text.split(/\r?\n/);
+   const first=lines.findIndex(line=>/^(?:error(?:\[[A-Z]\d+\])?:|fatal error:|error:)/i.test(line.trim()));
+   const focused=first>=0?lines.slice(Math.max(0,first-1),first+19).join('\n'):
+    built.text.slice(-3000);
+   buildDiagnostics[label]={exitCode:built.exitCode,
+    error:built.error||(binaries.length===0&&built.ok?'No test executable produced':null),
+    output:focused.slice(0,3500)};
+  }
+  const tests=new Map();
  if(built.ok)for(const binary of new Set(binaries)){
   const listed=run(binary,['--list','--format','terse'],dir);
   if(!listed.ok)throw Error('Cannot enumerate tests');
@@ -105,6 +119,7 @@ fs.writeFileSync(process.env.RSI_REPORT+'.evidence.txt',evidence);
 const report={baseCommit:process.env.RSI_BASE_SHA,patchSha256:hash(fs.readFileSync(process.env.RSI_PATCH)),
  baselineTreeSha:process.env.RSI_BASE_TREE_SHA,candidateTreeSha:process.env.RSI_CANDIDATE_TREE_SHA,
  oracleVersion:plan.oracleVersion,oracleSha256:plan.oracleSha256||null,runner:'balanced-frozen-rsi-lab-v3',
- reportSha256:hash(evidence),baselineBuildOk:variants.baseline.ok,candidateBuildOk:variants.candidate.ok,cases};
+ reportSha256:hash(evidence),baselineBuildOk:variants.baseline.ok,candidateBuildOk:variants.candidate.ok,
+  buildDiagnostics,cases};
 fs.writeFileSync(process.env.RSI_REPORT,JSON.stringify(report,null,2)+'\n');
 console.log(JSON.stringify({report:process.env.RSI_REPORT,pairedCases:cases.length}));
