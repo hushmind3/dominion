@@ -723,6 +723,19 @@ fn substitute(value: &mut Value, variables: &Value) {
         _ => {}
     }
 }
+/// Accept legacy /history/{id} and modern /api/jobs/{id} receipts without
+/// mistaking a queued job for completion or a failed job for a missing output.
+fn comfy_result_status(result: &Value) -> &'static str {
+    match result["status"].as_str().or_else(||result["status"]["status_str"].as_str()) {
+        Some("completed"|"success")=>"completed",
+        Some("error"|"failed")=>"failed",
+        Some("cancelled"|"canceled")=>"cancelled",
+        Some("pending"|"in_progress"|"running"|"queued")=>"running",
+        _ if result["status"]["completed"]==true=>"completed",
+        _=>"running",
+    }
+}
+
 async fn comfy(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, String> {
     let cfg = &input["config"];
     let base = cfg["comfyUrl"].as_str().unwrap_or("").trim_end_matches('/');
@@ -765,6 +778,8 @@ async fn comfy(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, Str
     let prompt_id = answer["prompt_id"]
         .as_str()
         .ok_or("needs_review: ComfyUI prompt_id가 없습니다.")?;
+    uuid::Uuid::parse_str(prompt_id)
+        .map_err(|_|"needs_review: ComfyUI prompt_id 형식 오류")?;
     ctx.checkpoint(json!({"phase":"rendering","progress":25,"videoState":{"inFlight":true,"promptId":prompt_id}}))?;
     let start = std::time::Instant::now();
     loop {
@@ -775,19 +790,34 @@ async fn comfy(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, Str
                     .into(),
             );
         }
-        let history: Value = client
+        let response = client
             .get(format!("{base}/history/{prompt_id}"))
             .timeout(Duration::from_secs(10))
-            .send()
-            .await
-            .map_err(|e| e.to_string())?
-            .json()
-            .await
-            .map_err(|e| e.to_string())?;
-        let result = &history[prompt_id];
-        if result["status"]["status_str"] == "error" {
-            ctx.checkpoint(json!({"videoState":{"inFlight":false,"promptId":prompt_id}}))?;
-            return Err("ComfyUI 워크플로 실행 실패".into());
+            .send().await
+            .map_err(|e|format!("needs_review: ComfyUI 조회 실패: {e}"))?;
+        let modern = response.status()==reqwest::StatusCode::NOT_FOUND;
+        let response = if modern {
+            // Current ComfyUI also serves detailed job receipts here.
+            // No extra POST is issued: a polling fallback never re-renders.
+            client.get(format!("{base}/api/jobs/{prompt_id}"))
+                .timeout(Duration::from_secs(10)).send().await
+                .map_err(|e|format!("needs_review: ComfyUI 작업 조회 실패: {e}"))?
+        } else {response};
+        if response.status()==reqwest::StatusCode::NOT_FOUND {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            continue; // Submitted work can still be waiting for its history row.
+        }
+        if !response.status().is_success() {
+            return Err(format!("needs_review: ComfyUI 작업 상태 HTTP {}",response.status()));
+        }
+        let history:Value=response.json().await
+            .map_err(|_|"needs_review: ComfyUI 작업 상태 응답 오류")?;
+        let result = if modern {&history} else {&history[prompt_id]};
+        let status=comfy_result_status(result);
+        if matches!(status,"failed"|"cancelled") {
+            ctx.checkpoint(json!({"videoState":{"inFlight":false,"promptId":prompt_id,
+                "remoteStatus":status}}))?;
+            return Err(format!("ComfyUI 작업이 {status} 상태로 종료됐습니다."));
         }
         if let Some(outputs) = result["outputs"].as_object() {
             for node in outputs.values() {
@@ -842,7 +872,7 @@ async fn comfy(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, Str
                     }
                 }
             }
-            if result["status"]["completed"] == true {
+            if status=="completed" {
                 return Err(
                     "ComfyUI 완료 결과에 MP4가 없습니다. 영상 출력 노드를 확인하세요.".into(),
                 );
@@ -1271,6 +1301,15 @@ mod tests {
         assert_eq!(file_sha256(&path).unwrap(),format!("{:x}",Sha256::digest(&bytes)));
         std::fs::remove_dir_all(dir).unwrap();
     }
+    #[test]
+    fn comfy_receipts_support_legacy_and_current_job_statuses() {
+        assert_eq!(comfy_result_status(&json!({"status":{"status_str":"success","completed":true}})),"completed");
+        assert_eq!(comfy_result_status(&json!({"status":"completed","outputs":{}})),"completed");
+        assert_eq!(comfy_result_status(&json!({"status":"in_progress"})),"running");
+        assert_eq!(comfy_result_status(&json!({"status":{"status_str":"error"}})),"failed");
+        assert_eq!(comfy_result_status(&json!({"status":"cancelled"})),"cancelled");
+    }
+
     #[test]
     fn workload_is_honest_about_units_and_does_not_invent_prices() {
         let input=json!({"render":{"width":640,"height":360,"fps":16,"frames":240}});
