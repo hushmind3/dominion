@@ -422,7 +422,7 @@ mod tests {
         let resumed=prepare(&restored,&provider,&request,"room:one","full persona",&json!({"effort":"low"})).unwrap();
         assert_eq!(first["cacheKey"],resumed["cacheKey"]);
         assert_eq!(resumed["previousReplyMessageId"],message["id"]);
-        std::fs::remove_dir_all(root).unwrap();
+        drop(restored); std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -465,7 +465,7 @@ mod tests {
         assert_eq!(seen.len(),4,"one negotiation retry, then no further retries");
         assert_eq!(seen[0],seen[1]);assert_eq!(seen[1],seen[2]);
         assert_ne!(seen[2],seen[3],"another bot must have a separate route affinity");
-        drop(seen);server.abort();let _=std::fs::remove_dir_all(root);
+        drop(seen);server.abort();let _=drop(state); std::fs::remove_dir_all(root);
     }
 
     #[tokio::test]
@@ -498,7 +498,7 @@ mod tests {
         let affinity=plan["cacheAffinityId"].as_str().unwrap();
         assert_eq!(seen[0].0,affinity);
         assert_eq!(seen[0].1.as_deref(),Some(affinity),"direct OpenCode Go must receive the session affinity");
-        drop(seen);server.abort();let _=std::fs::remove_dir_all(root);
+        drop(seen);server.abort();let _=drop(state); std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -546,7 +546,7 @@ mod tests {
         restored.store.put("room",&json!({"id":"test","contextBudgetTokens":2000}));
         let (after_restart,_)=project(&restored,&provider,&second,&[],"room:test",&mut resumed);
         assert_eq!(after_restart,second_wire);
-        std::fs::remove_dir_all(root).unwrap();
+        drop(restored); std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -584,7 +584,7 @@ mod tests {
         state.store.clear_messages("s");
         project(&state,&provider,&fresh,&[],"s",&mut next);
         assert_eq!(next["workingView"]["rebaseReason"],"transcript_reset");
-        std::fs::remove_dir_all(root).unwrap();
+        drop(state); std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -626,7 +626,7 @@ mod tests {
         state.store.patch_if("memory","a","status",&json!("active"),&json!({"status":"archived"}));
         let (revoked,_)=project(&state,&provider,&messages("owner2",&["b"]),&[],"room:r",&mut next);
         assert!(!json!(revoked).to_string().contains("FACT_a"));
-        std::fs::remove_dir_all(root).unwrap();
+        drop(state); std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -643,6 +643,6 @@ mod tests {
         let id=feature_id(&provider,CacheWire::Key);
         state.store.patch_if("provider_wire_feature",&id,"accepted",&json!(false),&json!({"expiresAt":0}));
         assert_eq!(hinted_body(&state,&provider,&original,&mut plan,CacheWire::Key)["prompt_cache_key"],"stable-participant-key");
-        std::fs::remove_dir_all(root).unwrap();
+        drop(state); std::fs::remove_dir_all(root).unwrap();
     }
 }

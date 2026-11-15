@@ -719,7 +719,7 @@ mod tests {
                 .len()
                 < 16
         );
-        std::fs::remove_dir_all(&state.config.data_dir).unwrap();
+        let dir=state.config.data_dir.clone(); drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -740,7 +740,7 @@ mod tests {
         let text = json!(compiled.history).to_string();
         assert!(text.contains("현재 원문은 반드시 남아야 한다."));
         assert!(!text.contains("FUTURE_OWNER_MUST_NOT_LEAK"));
-        std::fs::remove_dir_all(&state.config.data_dir).unwrap();
+        let dir=state.config.data_dir.clone(); drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -767,7 +767,7 @@ mod tests {
         assert!(!asks_room_origin("처음부터 다시 시작하지 마"));
         assert!(asks_room_origin("처음에 무슨 말을 했지?"));
         assert!(asks_room_origin("내가 첫 턴에 뭐라고 했는지 기억해?"));
-        std::fs::remove_dir_all(&state.config.data_dir).unwrap();
+        let dir=state.config.data_dir.clone(); drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -805,7 +805,7 @@ mod tests {
                 }
             }
         }
-        std::fs::remove_dir_all(&state.config.data_dir).unwrap();
+        let dir=state.config.data_dir.clone(); drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -839,7 +839,7 @@ mod tests {
         let compiled = compile(&state, &request, "room:r", "weather", &[], &[]).unwrap();
         let rendered = json!(compiled.history).to_string();
         assert!(!rendered.contains("FIRST_TURN_MARKER"), "{rendered}");
-        std::fs::remove_dir_all(&state.config.data_dir).unwrap();
+        let dir=state.config.data_dir.clone(); drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -870,7 +870,7 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("9000"));
-        std::fs::remove_dir_all(&state.config.data_dir).unwrap();
+        let dir=state.config.data_dir.clone(); drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -890,7 +890,7 @@ mod tests {
         assert!(json!(compiled.history).to_string().contains("각자 선택한 식별자"));
         assert!(compiled.system.prompt.contains("PERSONA_MUST_SURVIVE"));
         assert!(!compiled.system.prompt.contains("날짜:"));
-        std::fs::remove_dir_all(state.config.data_dir).unwrap();
+        let dir=state.config.data_dir.clone(); drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -921,7 +921,7 @@ mod tests {
             2
         );
         assert_eq!(state.store.messages("room:r").len(), 101);
-        std::fs::remove_dir_all(&state.config.data_dir).unwrap();
+        let dir=state.config.data_dir.clone(); drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -945,6 +945,6 @@ mod tests {
         assert!(!block["content"].as_str().unwrap().contains("코볼트"));
         assert_eq!(corrected.accounting["requiredOverBudget"],true,"owner state remains mandatory above the target");
         assert!(corrected.system.items.iter().any(|item|item["kind"]=="owner_state" && item["id"].is_string()));
-        std::fs::remove_dir_all(&state.config.data_dir).unwrap();
+        let dir=state.config.data_dir.clone(); drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
 }
