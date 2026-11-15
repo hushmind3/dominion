@@ -198,3 +198,10 @@ DM·음성·파일 첨부·슬래시 명령·Gateway 실시간 이벤트는 이�
 - [Hermes 스킬](https://hermes-agent.nousresearch.com/docs/user-guide/features/skills)
 - [Discord 메시지 API](https://docs.discord.com/developers/resources/message)
 - [Discord 요청 제한](https://docs.discord.com/developers/topics/rate-limits)
+
+## Sub2 — Rust event bus and shared TypeScript SDK (2026-11-15)
+
+- `src/events.rs::Bus::emit`: synchronize sequence allocation, SQLite persistence and broadcast to preserve order across concurrent cloned writers.
+- `src/api/system.rs::events`: bounded paginated replay, gap notification and live recovery. `/api/events?after=` and `Last-Event-ID` share the cursor; expired history emits `event_gap` and asks clients to resynchronize state.
+- `sdk/typescript/src/index.ts`: independently consumable, typed client for **the same** Rust `/api/*` endpoints, including job polling, approval, room idempotency, video, RSI, and abortable SSE/chat. `web/src/api.ts` shares transport and chat parser.
+- [Implementation trace and evidence](docs/SUB2-SDK-DURABLE-EVENTS-2026-11-15.md). Unit tests added; no live provider benchmark claimed.
