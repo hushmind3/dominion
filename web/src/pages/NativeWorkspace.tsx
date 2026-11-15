@@ -12,6 +12,7 @@ type Group = {id:string;topic:string;participants:Member[];messages:{speaker:str
 type Scene = {heading:string;narration:string;seconds:number}
 type Video = {id:string;prompt:string;status:string;scenes:Scene[];backend:string;error?:string|null;output?:string|null;cost_krw:number;budget_krw:number;images?:Record<string,string>}
 type Trial = {id:string;repository:string;target_file:string;instruction:string;status:string;accepted:boolean;cost_krw:number;error?:string|null;baseline?:{score?:number;tests_passed:boolean};candidate?:{score?:number;tests_passed:boolean}}
+type Evolution = {id:string;starting_trial:string;status:string;max_generations:number;target_files:string[];descendants:string[];completed_generations:number;cost_budget_krw:number;spent_krw:number;stop_reason?:string|null}
 type Memory = {id:string;content:string;kind:string;status:string;sessionId?:string|null}
 type Skill = {id:string;name:string;trigger:string;instructions:string;enabled:boolean}
 type Health = {ok:boolean;engine:string;model:string;workspace:string}
@@ -274,10 +275,23 @@ export function NativeVideos(){
 }
 export function NativeImprovements(){
  const data=useCollection<Trial[]>('/api/improvements',[])
+ const evolutions=useCollection<Evolution[]>('/api/evolutions',[])
  const [active,setActive]=useState(''),[repository,setRepository]=useState(''),[targetFile,setTargetFile]=useState(''),[instruction,setInstruction]=useState(''),[testCommand,setTestCommand]=useState('cargo test'),[scoreCommand,setScoreCommand]=useState('')
+ const [generations,setGenerations]=useState(2),[evolutionBudget,setEvolutionBudget]=useState('1000'),[targetSequence,setTargetSequence]=useState('')
  const op=useOperation();const selected=data.value.find(x=>x.id===active)
+ const related=evolutions.value.filter(run=>run.starting_trial===active||run.descendants.includes(active))
+ useEffect(()=>{if(!evolutions.value.some(run=>run.status==='running'))return
+   const timer=window.setInterval(()=>{void evolutions.reload();void data.reload()},2500)
+   return()=>window.clearInterval(timer)
+ },[evolutions.value,evolutions.reload,data.reload])
  const create=async(e:FormEvent)=>{e.preventDefault();const item=await op.run(()=>post<Trial>('/api/improvements',{repository,target_file:targetFile,instruction,test_command:testCommand,score_command:scoreCommand.trim()||null,parent:null}));if(item){setActive(item.id);void data.reload()}}
  const act=async(action:'evaluate'|'adopt'|'descendant')=>{const item=await op.run(()=>post<Trial>('/api/improvements/'+encodeURIComponent(active)+'/'+action,{}));if(item){if(action==='descendant')setActive(item.id);void data.reload()}}
+ const evolve=async()=>{
+   const files=targetSequence.split(',').map(v=>v.trim()).filter(Boolean)
+   const options={max_generations:generations,cost_budget_krw:Number(evolutionBudget),target_files:files}
+   const item=await op.run(()=>post<Evolution>('/api/improvements/'+encodeURIComponent(active)+'/evolution',options))
+   if(item){void evolutions.reload();void data.reload()}
+ }
  return <Page title="자기개선 연구실" eyebrow="RECURSIVE SELF IMPROVEMENT" description="격리된 Git 작업공간에서 개선 후보를 만들고 원본과 비교한 결과를 보고 채택합니다.">
   <div className={layout}><div className="grid content-start gap-4">
    <Section><form onSubmit={e=>void create(e)} className="grid gap-3">
@@ -289,8 +303,27 @@ export function NativeImprovements(){
    {selected&&<Section><div className="flex items-center justify-between"><h2 className="font-bold">{selected.target_file}</h2><Status value={selected.status}/></div><p className={'my-2 '+subtle}>{selected.instruction}</p>
     <div className="grid grid-cols-2 gap-2 rounded-xl bg-[#F7F3EC] p-3 text-[12px]"><div>기준 측정<pre>{selected.baseline?JSON.stringify(selected.baseline,null,2):'대기'}</pre></div><div>후보 측정<pre>{selected.candidate?JSON.stringify(selected.candidate,null,2):'대기'}</pre></div></div>
     {selected.error&&<InlineError error={selected.error}/>}
-    <div className={'mt-3 '+row}><LoadingButton busy={op.busy} onClick={()=>void act('evaluate')}>독립 평가</LoadingButton><LoadingButton busy={op.busy||selected.status!=='evaluated'} variant="primary" onClick={()=>void act('adopt')}>검증 후보 채택</LoadingButton><LoadingButton busy={op.busy} onClick={()=>void act('descendant')}>후손 실험</LoadingButton></div>
-   </Section>}<InlineError error={op.error}/>
+    <div className={'mt-3 '+row}><LoadingButton busy={op.busy||selected.status!=='awaiting_approval'} onClick={()=>void act('evaluate')}>독립 평가</LoadingButton><LoadingButton busy={op.busy||selected.status!=='evaluated'} variant="primary" onClick={()=>void act('adopt')}>검증 후보 채택</LoadingButton><LoadingButton busy={op.busy||selected.status!=='adopted'} onClick={()=>void act('descendant')}>후손 실험</LoadingButton></div>
+   </Section>}
+   {selected?.status==='adopted'&&<Section><h2 className="mb-2 font-bold">연속 진화 · A→B→A</h2>
+    <p className={subtle}>채택한 후보에서 다음 세대를 실행합니다. 모든 세대는 동일한 테스트·점수 기준으로 독립 평가하며, 개선이 없거나 비용 상한을 넘으면 중단합니다.</p>
+    <div className="my-3 grid gap-3 sm:grid-cols-2">
+     <FormField label="세대 수 (최대 4)"><SelectInput value={String(generations)} onChange={e=>setGenerations(Number(e.target.value))}><option value="1">1세대</option><option value="2">2세대</option><option value="3">3세대</option><option value="4">4세대</option></SelectInput></FormField>
+     <FormField label="누적 모델 예산 (원)"><TextInput value={evolutionBudget} onChange={e=>setEvolutionBudget(e.target.value)} placeholder="1000"/></FormField>
+    </div>
+    <FormField label="개선 파일 순서 (선택, 쉼표로 구분)"><TextInput value={targetSequence} onChange={e=>setTargetSequence(e.target.value)} placeholder="src/engine.rs, src/strategy.rs, src/engine.rs"/></FormField>
+    <p className={'mt-2 '+subtle}>비우면 같은 파일을 반복합니다. 파일을 지정하면 세대 수만큼 입력하세요. 비용은 제공자 사용량을 기준으로 추산하며 호출 1회의 초과 청구 가능성은 남습니다.</p>
+    <div className="mt-3"><LoadingButton busy={op.busy||related.some(run=>run.status==='running')} variant="primary" onClick={()=>void evolve()}><Play size={14}/> 검증된 연속 진화 실행</LoadingButton></div>
+   </Section>}
+   {related.length>0&&<Section><div className="mb-3 flex items-center justify-between"><h2 className="font-bold">세대별 검증 기록</h2><Button size="sm" onClick={()=>{void evolutions.reload();void data.reload()}}><RefreshCw size={14}/> 갱신</Button></div>
+    <div className="grid gap-3">{related.map(run=><div key={run.id} className="rounded-lg border border-[#E7E0D5] p-3 text-[12px]">
+     <div className="flex items-center justify-between"><strong>{run.completed_generations}/{run.max_generations}세대 채택</strong><Status value={run.status}/></div>
+     <p className={'mt-1 '+subtle}>{run.target_files.join(' → ')} · 모델 비용 {fmtKrw(run.spent_krw)} / {fmtKrw(run.cost_budget_krw)}</p>
+     <div className={'mt-2 '+row}>{run.descendants.map((id,i)=><Button key={id} size="sm" variant="ghost" onClick={()=>setActive(id)}>{i+1}세대 결과</Button>)}</div>
+     {run.stop_reason&&<InlineError error={run.stop_reason}/>}
+    </div>)}</div>
+   </Section>}
+   <InlineError error={op.error}/>
   </div>
   <Section><div className="mb-3 flex justify-between"><h2 className="font-bold">실험 기록</h2><Button variant="ghost" onClick={()=>void data.reload()}><RefreshCw size={14}/></Button></div><InlineError error={data.error}/><div className="grid gap-2">{data.value.map(item=><ListButton key={item.id} selected={active===item.id} onClick={()=>setActive(item.id)}><strong>{item.repository} / {item.target_file}</strong><p className={subtle}>{item.status} · {fmtKrw(item.cost_krw)}</p></ListButton>)}</div></Section>
  </div>
