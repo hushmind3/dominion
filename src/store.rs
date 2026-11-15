@@ -593,6 +593,19 @@ impl Store {
     /// Recover earlier user/assistant messages in exact persisted order.
     /// A caller always supplies its own current session, never an arbitrary
     /// target session or a model-provided foreign identifier.
+    pub fn history_message(&self,session_id:&str,seq:u64)->Option<Value>{
+        let conn=self.conn.lock().ok()?;
+        conn.query_row(
+            "SELECT seq,role,content FROM messages WHERE session_id=?1 AND seq=?2",
+            params![session_id,seq.min(i64::MAX as u64) as i64],
+            |row|Ok(json!({
+                "seq":row.get::<_,i64>(0)?,
+                "role":row.get::<_,String>(1)?,
+                "content":row.get::<_,String>(2)?
+            }))
+        ).ok()
+    }
+
     pub fn history_page(&self,session_id:&str,before:Option<u64>,limit:usize)->Vec<Value>{
         let Ok(conn)=self.conn.lock() else {return vec![]};
         let Ok(mut statement)=conn.prepare(
@@ -669,6 +682,20 @@ mod tests {
         assert_eq!(db.get(id).unwrap()["costKrw"],json!(4.0));
     }
 
+    #[test]
+    fn native_session_history_cursor_isolation(){
+        let store=new_store();
+        store.add_message("session-A","user","owner directive");
+        store.add_message("session-B","user","unrelated secret");
+        store.add_message("session-A","assistant","action report");
+        let list=store.history_page("session-A",None,10);
+        assert_eq!(list.len(),2);
+        let latest=list[0]["seq"].as_u64().unwrap();
+        assert!(store.history_message("session-B",latest).is_none());
+        let earlier=store.history_page("session-A",Some(latest),10);
+        assert_eq!(earlier.len(),1);
+        assert_eq!(earlier[0]["content"],"owner directive");
+    }
     #[test]
     fn receipt_index_contains_only_committed_same_task_results(){
         let db=new_store();
