@@ -46,6 +46,25 @@ Set DOMINION_CONTEXT_MAX_BYTES to configure the total encoded model-request cont
 
 The implementation, exact tool interfaces, failure modes and test evidence are documented in **[Bounded evidence context](docs/CONTEXT_EVIDENCE.md)**. The GitHub native test workflow has passed 59 Rust tests with a real SQLite and filesystem, mock-provider end-to-end evidence retrieval, and the TypeScript SDK contract. Any further feature is separate from this tested subsystem.
 
+## Model-neutral MCP tool selection (live native path)
+
+The Rust agent no longer sends every configured MCP tool schema in every model
+turn. It retains the permission-scoped tool catalog server-side and uses
+`src/engine/schema_router.rs` for bounded, intent-weighted tool selection.
+When an external capability is not visible, the model can call
+`tool_discover` to browse short eligible descriptions, promote fitting full
+schemas, and use them on the next step. Tool aliases absent from that step's
+actual provider request are rejected **before any external effect can start**.
+
+Routing is wired from the native `/api/tasks` execution loop to the existing
+TypeScript event client and the React task UI. The GUI shows the actual
+JSON-schema bytes sent versus catalog bytes; provider-reported tokens and
+configured KRW cost estimates remain separate measurements. The feature
+includes local HTTP mock model + a **46-tool MCP server** end-to-end tests
+for discovery, promotion, real invocation and rejected fabricated tool calls.
+See **[Native lazy MCP tool routing](docs/TOOL_ROUTING.md)** for exact limits,
+source trace, evidence and unresolved retrieval-quality work.
+
 ## Bounded A→B→A code evolution
 
 A separately evaluated and **adopted** improvement can seed 1–4 automatic generations through `POST /api/improvements/:id/evolution`, the Rust/TypeScript SDK, or the main React RSI lab. Provide `max_generations`, `cost_budget_krw` and optional ordered `target_files` (for example `["src/a.rs","src/b.rs","src/a.rs"]`). Optionally set `candidates_per_generation` to 1–4 and supply a **separate owner-authored numeric** `validation_command`. Every sibling candidate starts from the same adopted Git base and fixed objective/test/scoring contract. The engine retains individual Git-pinned candidates, scores all proposals, runs validation in new detached worktrees against the exact baseline/candidate commits, and chooses **one** independently eligible highest-scoring candidate; losers are not adoptable. Validation commands and outcomes are never shown to the model proposer. Every candidate's result and metered cost (including rejected proposals) is persisted, and the chosen verified gain becomes the next generation's baseline. For sibling candidates sharing the exact Git base SHA, independently measured baseline evidence is reused; each candidate still runs fresh tests and, when configured, fresh validation. This avoids redundant baseline subprocesses without treating stale source revisions as verified.
