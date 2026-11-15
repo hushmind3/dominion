@@ -425,6 +425,23 @@ pub(crate) fn verified_pair_receipt(state: &AppState, candidate: &Value) -> bool
     replayed_pair_metrics(state, candidate).is_some_and(|metrics| metrics["eligible"] == true)
 }
 
+/// Bind v3 measurements to the exact pre-oracle candidate Git tree.
+/// Legacy receipts remain readable but carry no tree-level attestation.
+fn paired_tree_proof(candidate:&Value,report:&Value)->bool {
+    if report["runner"]!="balanced-frozen-rsi-lab-v3" {
+        return report["baselineTreeSha"].is_null()
+            && report["candidateTreeSha"].is_null()
+            && candidate["evaluation"]["baselineTreeSha"].is_null()
+            && candidate["evaluation"]["candidateTreeSha"].is_null();
+    }
+    let Some(base)=report["baselineTreeSha"].as_str() else {return false;};
+    let Some(child)=report["candidateTreeSha"].as_str() else {return false;};
+    let valid=|s:&str|s.len()==40 && s.bytes().all(|b|b.is_ascii_hexdigit());
+    valid(base) && valid(child) && base!=child
+        && candidate["evaluation"]["baselineTreeSha"]==report["baselineTreeSha"]
+        && candidate["evaluation"]["candidateTreeSha"]==report["candidateTreeSha"]
+}
+
 /// Recompute both successful and neutral experiments from the server's raw
 /// paired receipt. Neutral patches may seed search, but cannot earn adoption.
 pub(crate) fn replayed_pair_metrics(state: &AppState, candidate: &Value) -> Option<Value> {
@@ -443,6 +460,7 @@ pub(crate) fn replayed_pair_metrics(state: &AppState, candidate: &Value) -> Opti
         || report["baseCommit"] != candidate["baseCommit"]
         || report["patchSha256"] != candidate["patchSha256"]
         || report["oracleVersion"] != candidate["oracleVersion"]
+        || !paired_tree_proof(candidate,report)
         || report["baselineBuildOk"] != true || report["candidateBuildOk"] != true
     { return None; }
     let Ok(recalculated) = evaluate_cases(
@@ -635,6 +653,25 @@ mod tests {
             "baselineBuildOk":true,"candidateBuildOk":true,
             "cases":(0..8).map(|i|json!({"id":format!("case-{i}"),"baselinePass":i!=0,"candidatePass":true})).collect::<Vec<_>>()})
     }
+    #[test]
+    fn paired_v3_tree_attestation_rejects_mismatched_descendant_and_accepts_legacy() {
+        let mut candidate=json!({"evaluation":{"baselineTreeSha":"a".repeat(40),
+            "candidateTreeSha":"b".repeat(40)}});
+        let mut report=json!({"runner":"balanced-frozen-rsi-lab-v3",
+            "baselineTreeSha":"a".repeat(40),"candidateTreeSha":"b".repeat(40)});
+        assert!(paired_tree_proof(&candidate,&report));
+        report["candidateTreeSha"]=json!("c".repeat(40));
+        assert!(!paired_tree_proof(&candidate,&report));
+        report["candidateTreeSha"]=json!("a".repeat(40));
+        assert!(!paired_tree_proof(&candidate,&report));
+        report["candidateTreeSha"]=json!("bad");
+        assert!(!paired_tree_proof(&candidate,&report));
+        report=json!({"runner":"balanced-frozen-rsi-lab-v2"});
+        assert!(!paired_tree_proof(&candidate,&report));
+        candidate["evaluation"]=json!({});
+        assert!(paired_tree_proof(&candidate,&report));
+    }
+
     #[test]
     fn train_only_improvement_cannot_claim_holdout_generalization() {
         let plan=(0..8).map(|i|json!({

@@ -736,7 +736,8 @@ pub async fn apply_to_sub(state:&crate::state::AppState,id:&str,body:&Value)->Re
         &&candidate["evaluation"]["metrics"]["eligible"]==true
         &&evidence["pairedComparisonComplete"]==true
         &&candidate["evaluation"]["evidenceSha256"].is_string()
-        &&candidate["evaluation"]["evidenceSha256"]==evidence["paired"]["reportSha256"];
+        &&candidate["evaluation"]["evidenceSha256"]==evidence["paired"]["reportSha256"]
+        &&rsi::verified_pair_receipt(state,&candidate);
     if (candidate["target"]=="improver"||body["confirmation"]=="APPLY_VERIFIED_TO_SUB")&&!verified {
         return Err("독립 비교에서 우세함이 확인된 개선기만 적용할 수 있습니다.".into());
     }
@@ -843,8 +844,9 @@ pub async fn apply_campaign_to_sub(state:&crate::state::AppState,id:&str,expecte
     for commit in commits.lines() {
         let candidate=candidates.iter().find(|c|c["experimentAdoption"]["commit"]==commit
             && c["status"]=="verified" && c["evaluation"]["metrics"]["eligible"]==true
-            && c["evaluation"]["source"]=="server_invoked_local_paired_git_worktrees")
-            .ok_or("검증되지 않은 커밋이 섞여 있어 적용하지 않았습니다.")?;
+            && c["evaluation"]["source"]=="server_invoked_local_paired_git_worktrees"
+            && rsi::verified_pair_receipt(state,c))
+            .ok_or("독립 평가 영수증이 재검산되지 않는 커밋이 섞여 있어 적용하지 않았습니다.")?;
         let parent=git(&source,&["rev-parse",&format!("{commit}^")]).await?;
         if candidate["baseCommit"]!=parent {return Err("검증한 기준과 채택 계보가 다릅니다.".into());}
         let patch=candidate["patch"].as_str().ok_or("검증 패치 없음")?;
@@ -863,8 +865,10 @@ pub async fn apply_campaign_to_sub(state:&crate::state::AppState,id:&str,expecte
                 if !out.status.success(){return Err("검증 패치를 재구성하지 못했습니다.".to_string());}
                 tree=String::from_utf8_lossy(&out.stdout).trim().to_string();
             }
-            if tree!=git(&source,&["rev-parse",&format!("{commit}^{{tree}}")]).await? {
-                return Err("실제 채택 코드가 검증 패치와 다릅니다.".into());
+            if tree!=git(&source,&["rev-parse",&format!("{commit}^{{tree}}")]).await?
+                || candidate["evaluation"]["candidateTreeSha"].as_str()
+                    .is_some_and(|attested|tree!=attested) {
+                return Err("실제 채택 코드가 검증 패치·평가 트리와 다릅니다.".into());
             }
             Ok::<(),String>(())
         }.await;
@@ -916,8 +920,10 @@ pub(crate) async fn compare_at(context:&JobContext,id:&str,source:&Path,_runner_
     let prior=state.store.get("rsi_run",
         &format!("rsi-run-{}",candidate["rsiJobId"].as_str().unwrap_or("")))
         .ok_or("모델이 생성한 후보의 원본 실행 증거가 없습니다.")?;
-    if prior["candidateId"]!=candidate["id"]||prior["checksPassed"]!=true {
-        return Err("컴파일 검사를 통과한 현재 실행 후보만 A/B 실험을 실행합니다.".into());
+    if prior["candidateId"]!=candidate["id"] || prior["checksPassed"]!=true
+        || prior["sourceClean"]!=true || prior["diffSha256"]!=candidate["patchSha256"]
+        || prior["baseCommit"]!=candidate["baseCommit"] {
+        return Err("소스 원본·패치 해시·검사 증거가 모두 일치한 후보만 A/B 실험을 실행합니다.".into());
     }
     if !git(source,&["status","--porcelain","--untracked-files=no"]).await?.is_empty(){
         return Err("비교할 기준 작업공간에 추적 중인 변경이 있습니다.".into());
@@ -986,6 +992,16 @@ pub(crate) async fn compare_at(context:&JobContext,id:&str,source:&Path,_runner_
         || report["oracleVersion"]!=candidate["oracleVersion"] {
         return Err("원본·패치·평가 기준 또는 실행 증거의 해시가 일치하지 않습니다.".into());
     }
+    let baseline_tree=git(source,&["rev-parse",&format!(
+        "{}^{{tree}}",candidate["baseCommit"].as_str().ok_or("기준 커밋 없음")?) ]).await?;
+    let valid_tree=|value:&Value|value.as_str().is_some_and(|sha|
+        sha.len()==40 && sha.bytes().all(|b|b.is_ascii_hexdigit()));
+    if report["runner"]!="balanced-frozen-rsi-lab-v3"
+        || report["baselineTreeSha"]!=baseline_tree
+        || !valid_tree(&report["candidateTreeSha"])
+        || report["candidateTreeSha"]==report["baselineTreeSha"] {
+        return Err("독립 평가에 사용한 기준·후보 Git 트리 증거가 올바르지 않습니다.".into());
+    }
     let mut evidence_sha=evidence_sha;
     let mut meta_receipt=Value::Null;
     if meta_required {
@@ -1018,6 +1034,8 @@ pub(crate) async fn compare_at(context:&JobContext,id:&str,source:&Path,_runner_
     updated["pairedComparisonComplete"]=json!(true);
     updated["evaluation"]["source"]=json!("server_invoked_local_paired_git_worktrees");
     updated["evaluation"]["evidenceSha256"]=json!(evidence_sha);
+    updated["evaluation"]["baselineTreeSha"]=report["baselineTreeSha"].clone();
+    updated["evaluation"]["candidateTreeSha"]=report["candidateTreeSha"].clone();
     state.store.put("rsi_candidate",&updated)
         .ok_or("A/B 평가 후보 갱신에 실패했습니다.")?;
     state.store.put("rsi_evaluation",&updated["evaluation"]);

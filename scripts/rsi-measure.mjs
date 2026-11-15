@@ -103,7 +103,8 @@ const evidence=`baseCommit=${process.env.RSI_BASE_SHA}\noracleSha256=${plan.orac
 fs.mkdirSync(path.dirname(process.env.RSI_REPORT),{recursive:true});
 fs.writeFileSync(process.env.RSI_REPORT+'.evidence.txt',evidence);
 const report={baseCommit:process.env.RSI_BASE_SHA,patchSha256:hash(fs.readFileSync(process.env.RSI_PATCH)),
- oracleVersion:plan.oracleVersion,oracleSha256:plan.oracleSha256||null,runner:'balanced-frozen-rsi-lab-v2',
+ baselineTreeSha:process.env.RSI_BASE_TREE_SHA,candidateTreeSha:process.env.RSI_CANDIDATE_TREE_SHA,
+ oracleVersion:plan.oracleVersion,oracleSha256:plan.oracleSha256||null,runner:'balanced-frozen-rsi-lab-v3',
  reportSha256:hash(evidence),baselineBuildOk:variants.baseline.ok,candidateBuildOk:variants.candidate.ok,cases};
 fs.writeFileSync(process.env.RSI_REPORT,JSON.stringify(report,null,2)+'\n');
 console.log(JSON.stringify({report:process.env.RSI_REPORT,pairedCases:cases.length}));

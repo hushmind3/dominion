@@ -3878,6 +3878,12 @@ pub(crate) async fn adopt(
     let _ = std::fs::remove_file(file);
     applied?;
     git(context, lab, &["add", "--all"]).await?;
+    let staged_tree=git(context,lab,&["write-tree"]).await?;
+    if candidate["evaluation"]["candidateTreeSha"].as_str()
+        .is_some_and(|attested|attested!=staged_tree) {
+        let _=git(context,lab,&["reset","--hard",base]).await;
+        return Err("실험 채택 중 평가된 Git 트리와 실제 후손 코드가 달라졌습니다.".into());
+    }
     git(
         context,
         lab,

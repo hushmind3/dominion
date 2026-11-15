@@ -36,6 +36,9 @@
 
 ## What is DOMINION?
 
+RSI experimental adoption is bound to frozen paired evaluation. The evaluator records the candidate's pre-oracle Git tree and checks it against adopted descendants; implementation and limits are in [the Sub2 tree-proof note](docs/SUB2-RSI-TREE-PROOF-2026-11-15.md).
+
+
 **DOMINION is an AI agent tool, not another AI model or a token-reselling service.**
 
 Connect a model you already have access to — including supported cloud APIs and locally hosted models — and use it inside an agent workspace. DOMINION's Rust harness handles tool execution, permissions, durable tasks, long-term memory, and multi-agent coordination. The workspace also includes AI video generation workflows and experimental recursive self-improvement (RSI).
