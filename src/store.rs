@@ -73,6 +73,12 @@ impl Store {
                 created_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS memory_scope ON memories(session_id,status);
+            CREATE TABLE IF NOT EXISTS owner_profile (
+                id INTEGER PRIMARY KEY CHECK(id = 1),
+                name TEXT NOT NULL,
+                avatar TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS skills (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -86,6 +92,48 @@ impl Store {
     }
 
     /// Store owner-provided evidence. A session scope never widens implicitly.
+    /// Persist the one local owner's visible identity for the main React shell.
+    pub fn owner_profile(&self) -> Value {
+        let fallback = || json!({"id":"owner","name":"나","avatar":"","updatedAt":null});
+        let Ok(conn) = self.conn.lock() else { return fallback() };
+        conn.query_row(
+            "SELECT name,avatar,updated_at FROM owner_profile WHERE id=1",[],
+            |row| Ok(json!({
+                "id":"owner",
+                "name":row.get::<_,String>(0)?,
+                "avatar":row.get::<_,String>(1)?,
+                "updatedAt":row.get::<_,String>(2)?
+            }))
+        ).unwrap_or_else(|_| fallback())
+    }
+
+    pub fn set_owner_profile(&self, name: &str, avatar: &str) -> Result<Value,String> {
+        let name = name.trim();
+        if name.is_empty() || name.len()>100 {
+            return Err("Owner name must contain 1..100 bytes".into());
+        }
+        let avatar=avatar.trim();
+        if avatar.len()>1_500_000 {return Err("Avatar exceeds 1.5 MB".into());}
+        if !avatar.is_empty() {
+            let encoded=["data:image/png;base64,","data:image/jpeg;base64,",
+                "data:image/webp;base64,"].iter().find_map(|prefix|avatar.strip_prefix(prefix))
+                .ok_or("Avatar must be a PNG, JPEG or WebP data URI")?;
+            if encoded.is_empty() || !encoded.bytes().all(|byte|
+                byte.is_ascii_alphanumeric() || matches!(byte,b'+'|b'/'|b'=')) {
+                return Err("Invalid avatar image encoding".into());
+            }
+        }
+        let at=chrono::Utc::now().to_rfc3339();
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        conn.execute(
+            "INSERT INTO owner_profile(id,name,avatar,updated_at) VALUES(1,?1,?2,?3)
+             ON CONFLICT(id) DO UPDATE SET name=excluded.name,
+                avatar=excluded.avatar,updated_at=excluded.updated_at",
+            params![name,avatar,at]
+        ).map_err(|e|e.to_string())?;
+        Ok(json!({"id":"owner","name":name,"avatar":avatar,"updatedAt":at}))
+    }
+
     pub fn remember(&self, session: Option<&str>, content: &str, kind: &str)
         -> Result<Value,String> {
         let content=content.trim();
