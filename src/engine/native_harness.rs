@@ -186,3 +186,68 @@ pub async fn run(context: &JobContext, job: &Value) -> Result<Value, String> {
         "verificationGaps":result.gaps
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{config::Config, db::Store, vault::Vault};
+    use dominion_sdk::harness::Phase;
+
+    fn local_state() -> AppState {
+        let dir = std::env::temp_dir().join(format!("dominion-native-sdk-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = Config { port: 0, data_dir: dir.clone(),
+            web_dir: dir.join("web"), workspace: dir.clone() };
+        let store = Store::open(&config.db_path()).unwrap();
+        let vault = Vault::open(&config.key_path());
+        AppState::new(config, store, vault)
+    }
+
+    /// The public worker entry really enters SDK checkpoint control, without
+    /// creating a fabricated owner message or requiring a model to be mocked.
+    #[tokio::test]
+    async fn completed_native_checkpoint_is_idempotent() {
+        let state = local_state();
+        let session = state.store.put("session", &json!({"title":"native"})).unwrap();
+        let sid = session["id"].as_str().unwrap();
+        let job = engine::jobs::enqueue(&state, "prompt",
+            json!({"prompt":"Inspect repository","sessionId":sid})).unwrap();
+        let id = job["id"].as_str().unwrap();
+        let mut cp = Checkpoint::initial();
+        cp.phase = Phase::Completed;
+        cp.plan = vec!["Inspect repository".into()];
+        cp.step_index = 1;
+        cp.step_total = 1;
+        let saved = state.store.patch_if("job", id, "id", &json!(id),
+            &json!({"nativeHarness":cp})).unwrap();
+        let context = JobContext::new(state.clone(), id.to_string());
+        let result = run(&context, &saved).await.unwrap();
+        assert_eq!(result["status"], "completed");
+        assert!(state.store.messages(sid).is_empty(),
+            "A completed job must not create another owner message");
+    }
+
+    #[tokio::test]
+    async fn interrupted_native_effect_requires_review_without_replay() {
+        let state = local_state();
+        let session = state.store.put("session", &json!({"title":"native"})).unwrap();
+        let sid = session["id"].as_str().unwrap();
+        let job = engine::jobs::enqueue(&state, "prompt",
+            json!({"prompt":"Write a report","sessionId":sid})).unwrap();
+        let id = job["id"].as_str().unwrap();
+        let mut cp = Checkpoint::initial();
+        cp.phase = Phase::Executing;
+        cp.plan = vec!["Write a report".into()];
+        cp.step_total = 1;
+        cp.in_flight = true;
+        let saved = state.store.patch_if("job", id, "id", &json!(id),
+            &json!({"nativeHarness":cp})).unwrap();
+        let context = JobContext::new(state.clone(), id.to_string());
+        let result = run(&context, &saved).await.unwrap();
+        assert_eq!(result["status"], "needs_review");
+        assert!(state.store.messages(sid).is_empty(),
+            "An unknown external effect must not be replayed");
+        assert!(state.store.get("job", id)
+            .is_some_and(|j| j["nativeHarness"]["inFlight"] == true));
+    }
+}
