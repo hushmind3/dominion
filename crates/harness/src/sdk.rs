@@ -297,16 +297,21 @@ impl AgentSdk {
             state.event("model_finished", json!({"round":state.rounds,"calls":state.pending_calls.len()}));
             self.persist(state)?;
             if !state.pending_calls.is_empty() { continue; }
-            match self.verifier.as_mut().map(|v| v.verify(state)).unwrap_or(Verification::Passed) {
-                Verification::Passed => {
+            match self.verifier.as_mut().map(|v| v.verify(state)) {
+                None => {
+                    // Final prose is not evidence that a coding task passed.
                     state.status = RunStatus::Completed;
-                    state.event("verified", json!({"passed":true}));
+                    state.event("completed", json!({"independentlyVerified":false}));
                 }
-                Verification::Rejected(reason) => {
+                Some(Verification::Passed) => {
+                    state.status = RunStatus::Completed;
+                    state.event("verified", json!({"passed":true,"independentlyVerified":true}));
+                }
+                Some(Verification::Rejected(reason)) => {
                     state.status = RunStatus::Failed { error: reason };
                     state.event("verified", json!({"passed":false,"retry":false}));
                 }
-                Verification::Retry(reason) => {
+                Some(Verification::Retry(reason)) => {
                     state.event("verified", json!({"passed":false,"retry":true}));
                     state.messages.push(Message::user(format!(
                         "Independent verification failed. Fix the result and verify again. Details: {}", self.text(reason)
@@ -373,6 +378,17 @@ mod tests {
         assert_eq!(run.tool_calls, 0);
         engine.reconcile(&mut run, json!({"operator":"reconciled"})).unwrap();
         assert!(run.in_flight.is_none());
+    }
+    #[test]
+    fn final_answer_without_an_independent_verifier_is_not_claimed_as_verified() {
+        let provider = Scripted(VecDeque::from([ModelReply::Final { content: "done".into() }]));
+        let mut engine = AgentSdk::new(Box::new(provider), Box::new(crate::AllowAll), Limits::default());
+        let mut run = Session::new("s", "rules", "goal");
+        engine.run(&mut run).unwrap();
+        assert_eq!(run.status, RunStatus::Completed);
+        assert!(run.events.iter().any(|event| event.kind == "completed"
+            && event.detail["independentlyVerified"] == false));
+        assert!(!run.events.iter().any(|event| event.kind == "verified"));
     }
     struct FailOnce(bool);
     impl Verifier for FailOnce {
