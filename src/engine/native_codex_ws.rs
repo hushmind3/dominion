@@ -158,7 +158,7 @@ fn exceeds_context_budget(
         (route.context_tokens,chain.context_tokens,planned) else {return false};
     let reserved=route.max_output_tokens.unwrap_or(capacity/8)
         .min(capacity/4).max(128).min(capacity);
-    let next=crate::engine::chat::estimate_text_tokens(&input.to_string())
+    let next=crate::engine::chat::estimate_text_tokens(&serde_json::to_string(input).unwrap_or_default())
         .saturating_add(crate::engine::chat::estimate_text_tokens(
             &body["instructions"].to_string()));
     prior.saturating_add(next).saturating_add(reserved)
