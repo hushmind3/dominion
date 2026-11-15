@@ -128,3 +128,8 @@ The independent `dominion-agent-sdk::Kernel` now runs the owner's required exact
 ### Native model tool-call route (source implementation)
 
 `Kernel::run_from` now calls `Model::complete_with_tools` with host-advertised `ToolSpec`s and durable receipts. `ConfiguredModel` delegates to `engine/native_model.rs` for OpenAI-compatible, Anthropic and Codex native tool-call protocols; local/compat text model routes keep `Model::complete` and the existing JSON planner. Native calls become typed `Decision.actions` and pass through `scheduler::arrange` and the same production approval/journal/execution/acceptance pipeline. No upstream vendor agent runtime is used. See `docs/SUB3-NATIVE-FUNCTION-CALLS-2026-11-15.md` for source mapping, protocol notes and test boundaries.
+
+
+### Native streaming state machine (agent job path)
+
+`src/engine/native_stream.rs::{SseDecoder,Assembler}` is the model-side state machine. Byte-level SSE frames from OpenAI-compatible/Anthropic/Codex are incrementally parsed by `native_model::receive_stream`, with provider-specific completeness criteria and fail-closed tool-call assembly. `native_model::StreamProgress` persists bounded visible output and **unexecuted** tool IDs under `job.nativeStream` and broadcasts `job_event` deltas. The Rust kernel remains sole authority for dispatch, checkpoints and acceptance. A 250 ms cancellation tick handles silent/stalled HTTP streams; a terminal cancellation snapshot persists after explicit owner cancellation. Source and constraints: `docs/SUB3-NATIVE-STREAM-2026-11-15.md`.

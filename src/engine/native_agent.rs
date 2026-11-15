@@ -227,13 +227,29 @@ struct DurableJournal<'a> { context: &'a JobContext }
 impl Journal for DurableJournal<'_> {
     fn save(&self, snapshot:&Snapshot)->Result<(),String> {
         let in_flight=snapshot.model_in_flight || !snapshot.in_flight.is_empty();
-        self.context.checkpoint(json!({
+        let patch=json!({
             "nativeState":snapshot,
             "nativeInFlight":in_flight,
             "stepIndex":snapshot.step,
             "modelCalls":snapshot.model_calls,
             "estimatedTokens":snapshot.charged_tokens
-        }))
+        });
+        // Ordinary checkpointing must refuse owner-cancelled jobs. A
+        // *terminal cancelled snapshot* is the exception: persist proof that
+        // generation was stopped without authorizing any further action.
+        // This CAS requires an existing owner cancellation flag and cannot
+        // clear it or reopen execution.
+        if matches!(snapshot.status,dominion_sdk::harness::Status::Cancelled)
+            && self.context.state.store.get("job",&self.context.job_id)
+                .is_some_and(|job|job["cancelRequested"]==true)
+        {
+            let saved=self.context.state.store.patch_if("job",
+                &self.context.job_id,"cancelRequested",&json!(true),&patch)
+                .ok_or("Cancelled native task checkpoint could not be saved")?;
+            self.context.state.bus.record("job",&saved);
+            return Ok(());
+        }
+        self.context.checkpoint(patch)
     }
     fn cancelled(&self, id: &str)->bool {
         self.context.state.store.get("job",id).is_none_or(|job| {
@@ -532,6 +548,37 @@ mod native_result_tests {
         assert!(verified_tool_result("workspace_replace",
             json!({"written":true,"replaced":true})).is_ok());
         assert!(verified_tool_result("workspace_read",json!({"content":"ok"})).is_ok());
+    }
+    #[test]
+    fn native_cancelled_generation_writes_terminal_checkpoint_even_after_cancel_flag() {
+        use crate::{config::Config,db::Store,vault::Vault};
+        let dir=std::env::temp_dir().join(format!("dominion-cancel-journal-{}",
+            uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=Config{port:0,data_dir:dir.clone(),web_dir:dir.join("web"),
+            workspace:dir.clone()};
+        let store=Store::open(&config.db_path()).unwrap();
+        let vault=Vault::open(&config.key_path());
+        let state=AppState::new(config,store,vault);
+        state.store.put("job",&json!({"id":"cancelled-native",
+            "kind":"prompt","status":"cancelled","cancelRequested":true}));
+        let context=JobContext::new(state.clone(),"cancelled-native".into());
+        let journal=DurableJournal{context:&context};
+        let snap=Snapshot {
+            id:"cancelled-native".into(),
+            status:dominion_sdk::harness::Status::Cancelled,
+            instruction:"review".into(),plan:vec![],step:1,model_calls:0,
+            charged_tokens:0,receipts:vec![],checks:vec![],answer:None,
+            error:Some("Owner cancelled native model generation".into()),
+            in_flight:vec![],model_in_flight:false
+        };
+        journal.save(&snap).unwrap();
+        let job=state.store.get("job","cancelled-native").unwrap();
+        assert_eq!(job["nativeState"]["status"],"cancelled");
+        assert_eq!(job["nativeInFlight"],false);
+        assert_eq!(job["cancelRequested"],true);
+        assert_eq!(job["status"],"cancelled");
+        let _=std::fs::remove_dir_all(&dir);
     }
     #[test]
     fn pending_approval_respects_live_owner_changes_and_cancel() {

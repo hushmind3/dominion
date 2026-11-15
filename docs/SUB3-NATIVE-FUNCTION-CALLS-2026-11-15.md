@@ -52,7 +52,7 @@ Complete tool results stay durable; the provider sees recent host-confirmed tool
 - Full loopback HTTP → Rust kernel → actual filesystem read → host receipt → next provider request → final completion test.
 - Focused GitHub Actions runs SDK tests, targeted host Rust tests and main-based GUI TypeScript/Vite production build. Full product CI and SWE-bench remain outside this change.
 
-**Not yet implemented:** incremental real-time native tool-call streaming to the autonomous GUI (Codex SSE is consumed until final settlement), real-provider credential live call matrix, global prompt-cache accounting, true provider session continuation for every route, and sandboxed multi-agent spawning. A loopback HTTP mock proves protocol/adapter behavior, not comparative frontier task completion.
+**Streaming now implemented:** the native agent adapter consumes provider-native SSE incrementally, validates complete turn settlement before authorizing any tool action, and displays bounded pending progress through the autonomous job GUI (see `docs/SUB3-NATIVE-STREAM-2026-11-15.md`). **Remaining:** real-provider credential live call matrix, global prompt-cache accounting, true provider session continuation for every route, and sandboxed multi-agent spawning. A loopback HTTP mock proves protocol/adapter behavior, not comparative frontier task completion.
 
 ## Audit criteria
 

@@ -63,3 +63,8 @@ The SDK's Rust-native, read-only `dominion_receipt_search` and `dominion_receipt
 ### Provider-native function calls (backwards-compatible)
 
 The exported `Model` trait now offers optional `complete_with_tools(system, prompt, tool_specs, durable_receipts)` returning `ModelTurn { reply, decision }` and a `supports_native_tools()` flag. Text-only implementations require **no changes** and retain `complete()`; native adapters decode provider `tool_calls` into typed `Decision.actions`, preserving tool call IDs and JSON objects. The `Kernel` still decides dispatch and validation. Actual host wire adapters and protocol fixtures live under `src/engine/native_model.rs`. See `docs/SUB3-NATIVE-FUNCTION-CALLS-2026-11-15.md`.
+
+
+### Streaming provider adapters used by the Rust SDK
+
+The `dominion-agent-sdk` kernel remains model/provider-agnostic. The **production host** `src/engine/native_model.rs` now reads native SSE frames incrementally through `src/engine/native_stream.rs`; a parser emits provider-complete typed `Decision.actions` only after Chat `[DONE]`, Anthropic `message_stop`, or Codex `response.completed`. Ongoing progress is persisted in the same job record and never grants tool authority. Existing JSON fallback remains for self-hosted providers that ignore streaming. See `docs/SUB3-NATIVE-STREAM-2026-11-15.md`.

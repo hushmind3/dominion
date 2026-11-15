@@ -221,3 +221,8 @@ The Rust agent kernel now separates persisted source/tool receipts from the boun
 ### Native provider function calls in the Rust SDK (sub3, 2026-11-15)
 
 The default `/api/jobs` native agent path now supports provider-native typed tool calls for OpenAI-compatible chat completions, Anthropic Messages and Codex Responses. `Model::complete_with_tools` returns typed `Action` IDs into the independent Rust kernel, preserving ordinary owner approval, permission, checkpoint and validation controls; compatible local/text-only models keep the prior JSON decision mode. The real provider/request adapters are implemented in `src/engine/native_model.rs`, not embedded vendor agent runners. See [source-level design](docs/SUB3-NATIVE-FUNCTION-CALLS-2026-11-15.md). Live third-party credential and performance benchmarks are independent future validation.
+
+
+### Native incremental model streaming and bounded progress (sub3, 2026-11-15)
+
+The same Rust `/api/jobs` native agent now consumes OpenAI-compatible Chat Completions, Anthropic Messages and Codex Responses SSE as incremental structured events. `src/engine/native_stream.rs` assembles split UTF-8/tool-call JSON and only releases typed actions after a complete provider terminal event; partial, failed or interrupted calls never reach the tool dispatcher. Progress is recorded in `job.nativeStream`, sent over existing job events, and shown in the autonomous-work panel as **pending, not executed** actions. Owner cancellation interrupts stalled streams without replaying paid model calls. See [native streaming architecture](docs/SUB3-NATIVE-STREAM-2026-11-15.md).
