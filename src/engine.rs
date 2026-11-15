@@ -3,6 +3,7 @@ mod files;
 mod source_integrity;
 mod strategy;
 mod schema_router;
+pub(crate) mod sandbox;
 pub(crate) mod context;
 mod semantic;
 pub(crate) mod verification;
@@ -12,8 +13,7 @@ mod acceptance_tests;
 mod tool_routing_tests;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{collections::HashSet, path::{Component, Path, PathBuf}, process::Stdio, time::Duration};
-use tokio::{process::Command, time::timeout};
+use std::{collections::HashSet, path::{Component, Path, PathBuf}, time::Duration};
 
 fn scoped_path(root: &Path, name: &str, write: bool) -> Result<PathBuf, String> {
     if name.is_empty() || name.len() > 512 { return Err("잘못된 파일 경로입니다.".into()); }
@@ -183,7 +183,8 @@ fn allowed_check(program:&str,args:&[String])->bool{
 }
 
 async fn tool(state: &AppState, current_task: &str, current_session: &str,
-    name: &str, args: &Value, allow_write: bool, allow_shell: bool) -> Result<Value, String> {
+    name: &str, args: &Value, allow_write: bool, allow_shell: bool,
+    shell_isolation:&str) -> Result<Value, String> {
     match name {
         "task_receipt" => {
             let call_id=args["callId"].as_str().ok_or("Call identifier required")?;
@@ -282,40 +283,26 @@ async fn tool(state: &AppState, current_task: &str, current_session: &str,
             let before=tokio::task::spawn_blocking(move||
                 source_integrity::snapshot(&workspace)
             ).await.map_err(|e|format!("Source audit worker: {e}"))??;
-            let mut command = Command::new(program);
-            command.args(&params)
-                .current_dir(&state.workspace).stdin(Stdio::null())
-                .stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
-            if program=="git" {
-                command.env_remove("GIT_EXTERNAL_DIFF");
-                if params.first().is_some_and(|s|s=="diff") {
-                    command.arg("--no-ext-diff");
-                }
-            }
-            let output = timeout(Duration::from_secs(90), command.output()).await
-                .map_err(|_| "검사 명령 제한 시간이 초과되었습니다.".to_string())?
-                .map_err(|e| e.to_string())?;
+            // OS confinement and source-integrity checking are orthogonal:
+            // even a successful sandboxed test does not prove that it left
+            // the exact source revision unchanged.
+            let mut output=sandbox::execute(
+                &state.workspace,program,&params,shell_isolation).await?;
             let workspace=state.workspace.clone();
             let after=tokio::task::spawn_blocking(move||
                 source_integrity::snapshot(&workspace)
             ).await.map_err(|e|format!("Source audit worker: {e}"))??;
             let unchanged=before==after;
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let mut diagnostic=stderr.chars().take(7_400).collect::<String>();
             if !unchanged {
+                output["success"]=json!(false);
+                let mut diagnostic=output["stderr"].as_str().unwrap_or("").to_string();
                 diagnostic.push_str("\nSOURCE INTEGRITY FAILURE: the check modified source or configuration; exit code does not certify the current revision.");
+                output["stderr"]=json!(diagnostic);
             }
-            Ok(json!({
-                "program":program,"args":params,
-                "success":output.status.success()&&unchanged,
-                "exitCode":output.status.code(),
-                "sourceUnchanged":unchanged,
-                "sourceBeforeSha256":before,
-                "sourceAfterSha256":after,
-                "stdout":stdout.chars().take(16_000).collect::<String>(),
-                "stderr":diagnostic
-            }))
+            output["sourceUnchanged"]=json!(unchanged);
+            output["sourceBeforeSha256"]=json!(before);
+            output["sourceAfterSha256"]=json!(after);
+            Ok(output)
         }
         _ => Err("이 작업에서는 해당 도구 실행 권한이 없습니다.".into()),
     }
@@ -360,6 +347,7 @@ pub async fn run(state: AppState, id: String) {
     let session = input["sessionId"].as_str().unwrap_or(&id).to_string();
     let allow_write = input["allowWrite"] == true;
     let allow_shell = input["allowShell"] == true;
+    let shell_isolation = input["shellIsolation"].as_str().unwrap_or("host");
     let allow_mcp = input["allowMcp"] == true;
     let allow_subagents = input["allowSubagents"] == true;
     let require_evidence = input["requireEvidence"] == true;
@@ -435,7 +423,8 @@ pub async fn run(state: AppState, id: String) {
     messages.extend(state.store.history(&session, 256));
     messages.push(json!({"role":"user","content":prompt}));
     state.store.add_message(&session,"user",&prompt);
-    state.emit(&id,"running",json!({"sessionId":session,"model":state.model_name}));
+    state.emit(&id,"running",json!({"sessionId":session,"model":state.model_name,
+        "shellIsolation":shell_isolation}));
     let mut verified_writes = 0_u64;
     let mut proof=verification::Ledger::default();
     let mut total_calls = 0_u64;
@@ -755,7 +744,7 @@ pub async fn run(state: AppState, id: String) {
                 }
                 if !expected_checks.is_empty() {
                     match verification::audit(
-                        &state,&id,&session,&expected_checks,&mut proof,&mut receipts
+                        &state,&id,&session,&expected_checks,&mut proof,&mut receipts,shell_isolation
                     ).await {
                         Ok(Some((check,failure)))=>{
                             let feedback=verification::repair_feedback(
@@ -975,7 +964,7 @@ pub async fn run(state: AppState, id: String) {
                     id:tool_id.clone(),name:tool_name.into(),arguments:arguments.clone()
                 }).await.map(|response|json!({"content":response}))
             } else {
-                tool(&state,&id,&session,tool_name,&arguments,allow_write,allow_shell).await
+                tool(&state,&id,&session,tool_name,&arguments,allow_write,allow_shell,shell_isolation).await
             };
             if matches!(tool_name,"workspace_write"|"workspace_replace"|"workspace_replace_many") &&
                 outcome.as_ref().is_ok_and(|v|v["verified"]==true) {
