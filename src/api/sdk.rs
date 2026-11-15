@@ -27,6 +27,9 @@ pub struct Start {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Approve { call_id: String }
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReconcileInput { applied: bool, details: String }
 
 fn active_flags() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
     static FLAGS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
@@ -247,6 +250,52 @@ pub async fn approve(State(state): State<AppState>, Path(id): Path<String>, Json
         Ok(()) => (StatusCode::ACCEPTED, Json(record)).into_response(),
         Err(message) => error(StatusCode::CONFLICT, &message),
     }
+}
+
+/// An interrupted effect must be inspected outside the agent before resume.
+/// Reconciliation records the operator's observation, never replays the tool.
+pub async fn reconcile(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<ReconcileInput>,
+) -> Response {
+    let details = input.details.trim();
+    if details.is_empty() || details.len() > 8192 {
+        return error(StatusCode::BAD_REQUEST, "실제 확인한 결과를 1~8192자로 입력하세요.");
+    }
+    let Some(mut record) = state.store.get("sdk_run", &id) else {
+        return error(StatusCode::NOT_FOUND, "작업이 없습니다.");
+    };
+    if record["status"] == "cancelled" || record["status"] == "completed" {
+        return error(StatusCode::CONFLICT, "종료된 작업은 복구할 수 없습니다.");
+    }
+    let lock_id = format!("sdk:{id}");
+    if !state.begin_session(&lock_id) {
+        return error(StatusCode::CONFLICT, "작업 실행 중에는 복구 결과를 변경할 수 없습니다.");
+    }
+    let _guard = state.session_guard(&lock_id);
+    let checkpoint = journal(&state, &id);
+    let Some(mut session) = checkpoint.load().ok().flatten() else {
+        return error(StatusCode::CONFLICT, "복구할 실행 기록이 없습니다.");
+    };
+    let observed = json!({
+        "applied":input.applied,
+        "details":details,
+        "operatorConfirmed":true,
+    });
+    if let Err(message) = session.reconcile_observation(observed) {
+        return error(StatusCode::CONFLICT, &message);
+    }
+    if let Err(message) = checkpoint.save(&session) {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, &message);
+    }
+    record["status"] = json!("interrupted");
+    record["runState"] = json!(session.status);
+    let Some(saved) = state.store.put("sdk_run", &record) else {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, "복구 상태를 저장할 수 없습니다.");
+    };
+    state.bus.record("sdk_run", &saved);
+    Json(public_view(&state, saved)).into_response()
 }
 
 pub async fn cancel(State(state): State<AppState>, Path(id): Path<String>) -> Response {
