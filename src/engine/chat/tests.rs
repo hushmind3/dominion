@@ -382,3 +382,21 @@ fn durable_history_restores_out_of_order_results_by_call_identity() {
     let _ = std::fs::remove_dir_all(&state.config.data_dir);
 }
 
+#[test]
+fn parallel_reads_preserve_mutation_barriers() {
+    let calls = ["workspace_read", "workspace_list", "workspace_write",
+                 "workspace_read", "file_read", "shell_exec"]
+        .iter()
+        .enumerate()
+        .map(|(index, name)| ToolCall {
+            id: format!("call-{index}"),
+            name: (*name).into(),
+            arguments: "{}".into(),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(runtime::adjacent_read_batch_end(&calls, 0, 4), 2);
+    assert_eq!(runtime::adjacent_read_batch_end(&calls, 1, 4), 2);
+    assert_eq!(runtime::adjacent_read_batch_end(&calls, 2, 4), 3);
+    assert_eq!(runtime::adjacent_read_batch_end(&calls, 3, 4), 5);
+    assert_eq!(runtime::adjacent_read_batch_end(&calls, 5, 4), 6);
+}
