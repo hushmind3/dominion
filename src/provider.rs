@@ -67,6 +67,26 @@ impl ModelClient {
         })
     }
 
+    /// Read-only public provider description; never return credentials.
+    pub fn catalog(&self)->Value {
+        let describe=|provider:&ModelConfig,kind:&str|{
+            let origin=reqwest::Url::parse(&provider.endpoint)
+                .map(|uri|uri.origin().ascii_serialization()).unwrap_or_default();
+            json!({
+                "id":kind,"model":provider.name,"origin":origin,
+                "keyConfigured":provider.api_key.as_ref().is_some_and(|v|!v.is_empty()),
+                "inputKrwPerMillion":provider.input_krw_per_million,
+                "cachedInputKrwPerMillion":provider.cached_input_krw_per_million,
+                "outputKrwPerMillion":provider.output_krw_per_million
+            })
+        };
+        let mut items=vec![describe(&self.strong,"quality")];
+        if let Some(economy)=&self.economy {
+            items.push(describe(economy,"economy"));
+        }
+        json!({"models":items,"default":"auto"})
+    }
+
     async fn request(&self, provider: &ModelConfig, messages: &[Value], tools: &[Value])
         -> Result<Reply,String> {
         let mut payload=json!({"model":provider.name,"messages":messages,"stream":false});
