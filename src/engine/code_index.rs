@@ -67,7 +67,7 @@ fn is_source(path: &Path) -> bool {
 
 fn collect_files(source: &Path) -> Vec<PathBuf> {
     let mut roots = vec![source.join("src"), source.join("tests")];
-    for extra in ["web/src", "src-tauri/src", "scripts", ".github/workflows"] {
+    for extra in ["crates", "web/src", "src-tauri/src", "scripts", ".github/workflows"] {
         let path = source.join(extra);
         if path.is_dir() {
             roots.push(path);
