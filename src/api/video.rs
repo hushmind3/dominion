@@ -87,6 +87,7 @@ pub async fn save_config(State(state): State<AppState>, Json(body): Json<Value>)
         "resolution",
         "steps",
         "comfyModelsDir",
+        "economy",
     ] {
         if let Some(v) = body.get(key) {
             cfg[key] = v.clone();
