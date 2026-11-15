@@ -16,12 +16,12 @@ test('Git CLI paths are normalized without changing Git refs or ordinary paths',
  assert.equal(gitCompatibleArg('src/engine/rsi.rs'),'src/engine/rsi.rs');
 });
 test('Windows Cargo cache paths are normalized before reaching MSVC',()=>{
- const drive=String.raw`\\\\?\\C:\\Users\\runneradmin\\AppData\\Local\\Temp\\rsi-paired-build`;
- const ordinary=String.raw`C:\\Users\\runneradmin\\AppData\\Local\\Temp\\rsi-paired-build\\candidate`;
+ const drive=String.raw`\\?\C:\Users\runneradmin\AppData\Local\Temp\rsi-paired-build`;
+ const ordinary=String.raw`C:\Users\runneradmin\AppData\Local\Temp\rsi-paired-build\candidate`;
  assert.equal(gitCompatibleArg(path.win32.join(drive,'candidate')),ordinary);
- const unc=String.raw`\\\\?\\UNC\\builder\\share\\rsi-paired-build`;
+ const unc=String.raw`\\?\UNC\builder\share\rsi-paired-build`;
  assert.equal(gitCompatibleArg(path.win32.join(unc,'baseline')),
-  String.raw`\\\\builder\\share\\rsi-paired-build\\baseline`);
+  String.raw`\\builder\share\rsi-paired-build\baseline`);
 });
 
 const runner=fileURLToPath(new URL('./rsi-lab.mjs',import.meta.url));
