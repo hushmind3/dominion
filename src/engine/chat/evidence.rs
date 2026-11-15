@@ -1,6 +1,6 @@
 //! Action acceptance for ordinary turns. Only the actual request is examined;
 //! examples, peer quotations and provider completion claims cannot prove work.
-use crate::{engine::goals,state::AppState};
+use crate::{engine::verification,state::AppState};
 use serde_json::Value;
 
 pub(crate) fn prepare_owner_action(state:&AppState,input:&str)->Option<(String,Value)>{
@@ -19,7 +19,7 @@ pub(crate) fn prepare_owner_action(state:&AppState,input:&str)->Option<(String,V
     let command_action=["run ","install ","build ","deploy ","commit ","download ","copy ","move "].iter().any(|prefix|english.starts_with(prefix))
         ||["실행해","테스트해","빌드해","설치해","배포해","커밋해","복사해","이동해","다운로드해"].iter().any(|term|lower.contains(term));
     if !(file_action&&file_target||command_action){return None;}
-    let checks=goals::prepare_acceptance_checks(state,&request);Some((request,checks))
+    let checks=verification::prepare_acceptance_checks(state,&request);Some((request,checks))
 }
 pub(super) fn evidence_for_source(state:&AppState,session:&str,source:&str,execution:&str)->Vec<Value>{
     let mut runs=std::collections::HashSet::new();runs.insert(execution.to_string());

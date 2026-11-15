@@ -67,7 +67,7 @@ pub(super) async fn deterministic_tool(
     op_seq: u64,
     metrics: &std::sync::Mutex<Metrics>,
 ) -> Result<(Value, Value), String> {
-    let effective_workspace=crate::engine::goal_git::workspace_for_session(state,session_id)?;
+    let effective_workspace=state.config.workspace.clone();
     let mut operations = state
         .store
         .all("execution_operation")
@@ -396,7 +396,7 @@ pub(super) async fn dispatch_tool_call(
     procedure_strategy: Option<&str>,
     procedure_revision: Option<&str>,
 ) -> Result<(Value, bool, String), String> {
-    let effective_workspace=crate::engine::goal_git::workspace_for_session(state,session_id)?;
+    let effective_workspace=state.config.workspace.clone();
     let argument_strategy = crate::engine::algorithms::choose_for_agent(
         state,
         "tool.arguments",

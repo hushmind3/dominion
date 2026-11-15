@@ -5,7 +5,6 @@ pub mod algorithms;
 pub mod rsi;
 pub mod translation;
 pub mod settings;
-pub mod goals;
 pub mod improvements;
 pub mod executions;
 pub mod tasks;
@@ -245,20 +244,6 @@ pub fn router(state: AppState) -> Router {
             get(executions::execution_operations),
         )
         .route("/api/skills/:id/export", get(extensions::export_skill))
-        .route("/api/goals", get(goals::list_goals).post(goals::create_goal))
-        .route("/api/goals/:id/steer",post(goals::steer_goal))
-        .route("/api/goals/:id/resume",post(goals::resume_goal))
-        .route("/api/goals/:id/diff",get(goals::diff_goal))
-        .route("/api/goals/:id/patch",get(goals::export_goal_patch))
-        .route("/api/goals/:id/rollback",post(goals::rollback_goal))
-        .route("/api/goals/:id/apply",post(goals::apply_goal))
-        .route("/api/goals/:id/changes",get(goals::shared_changes))
-        .route("/api/goals/:id/undo",post(goals::shared_undo))
-        .route("/api/goals/:id/cancel",post(goals::cancel_goal))
-        .route(
-            "/api/goals/:id",
-            get(goals::get_goal).delete(goals::delete_goal),
-        )
         // approvals
         .route(
             "/api/approvals",

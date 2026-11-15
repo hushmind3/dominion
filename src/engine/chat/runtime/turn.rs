@@ -83,7 +83,7 @@ pub(super) async fn run_turn_body(
         None => Some(task_input(&session,&request.input).to_string()),
     };
     let mut acceptance = if session["rsiRun"]==true || request.verification_owner.as_deref() == Some("parent") {
-        // RSI's independent patch verifier (or the parent goal) owns review;
+        // RSI's independent patch verifier (or the parent task) owns review;
         // investigating and declining a change must not trigger forced writes.
         // The child still
         // records operations, deterministic evidence and cancellation; it must
@@ -439,7 +439,7 @@ pub(super) async fn run_turn_body(
         }));
     }
     // Deterministic decomposition runs before any model call. It gives the
-    // turn an engine-owned ordered sub-goal list and an independently graded
+    // turn an engine-owned ordered subtask list and an independently graded
     // signal that does not depend on whole-task success.
     let decomposition_algorithm = crate::engine::algorithms::choose_decomposition_for_agent(
         state,
@@ -708,17 +708,6 @@ pub(super) async fn run_turn_body(
 
     for round in 0..max_rounds {
         if finished { break; }
-        // This also gates program-driven steps before their tool side effects.
-        // The goal owns the aggregate budget across planner/worker/reviewer.
-        if crate::engine::goal_control::goal_token_budget_exhausted(state,session_id){
-            state.store.audit("goal.token_budget_exhausted",json!({
-                "sessionId":session_id,"executionId":execution_id,
-                "round":round,"remainingTokens":
-                    crate::engine::goal_control::remaining_goal_tokens(state,session_id)
-            }));
-            mark_budget_exhausted(state,execution_id);
-            return Err("goal_token_budget: 다음 모델/도구 단계 전에 사용자 총 토큰 예산이 소진되었습니다.".into());
-        }
         if !budget.charge_round() {
             mark_budget_exhausted(state, execution_id);
             return Err("모델 라운드 예산을 초과했습니다.".into());
@@ -1347,7 +1336,7 @@ pub(super) async fn run_turn_body(
                 crate::engine::procedure::sort_operations(&mut operations);
                 // Resolve before the Option-returning filter_map closure.
                 // A missing isolated worktree must fail closed.
-                let scoped_workspace=crate::engine::goal_git::workspace_for_session(state,session_id)?;
+                let scoped_workspace=state.config.workspace.clone();
                 let violations = strategy_candidates
                     .iter()
                     .filter(|strategy| {
@@ -1420,7 +1409,7 @@ pub(super) async fn run_turn_body(
                     .as_deref()
                     .map(|source| evidence_for_source(state, session_id, source, execution_id))
                     .unwrap_or_default();
-                let mut gaps = goals::check_acceptance(state, acceptance_text, checks, &evidence);
+                let mut gaps = verification::check_acceptance(state, acceptance_text, checks, &evidence);
                 let mut next_action = String::new();
                 if !gaps.is_empty() {
                     // Independent reviewer: deterministic checks still win, but
@@ -2264,7 +2253,7 @@ pub(super) async fn run_turn_body(
                     .map(|source| evidence_for_source(state, session_id, source, execution_id))
                     .unwrap_or_default();
                 if !evidence.is_empty()
-                    && goals::check_acceptance(state, acceptance_text, checks, &evidence).is_empty()
+                    && verification::check_acceptance(state, acceptance_text, checks, &evidence).is_empty()
                 {
                     acceptance_passed = true;
                     force_final = true;

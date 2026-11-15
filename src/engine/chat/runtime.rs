@@ -9,7 +9,7 @@ use super::{
 };
 use super::evidence::{evidence_for_source, prepare_owner_action};
 use crate::engine::adaptation::types::TaskOutcome;
-use crate::engine::goals;
+use crate::engine::verification;
 use crate::{
     engine::{
         llm, mcp,
@@ -87,7 +87,7 @@ fn rsi_should_checkpoint(tool_calls: u64, has_write: bool) -> bool {
     !has_write && tool_calls >= 6
 }
 
-/// A concrete source-edit goal cannot spend every model round re-reading its
+/// A concrete source-edit task cannot spend every model round re-reading its
 /// evidence. An edit-only stage is reached only after real source material was
 /// delivered in the prompt or returned by a successful read tool. Unfocused
 /// autonomous research retains its more permissive decision checkpoint.
@@ -419,7 +419,7 @@ async fn run_turn_with_policy(
         state, &improvement_scope, Some(&execution_id),
     );
     strategy_candidates.extend(crate::engine::rsi_evolve::method_strategies(state, &session));
-    // Derived prompts (goal iterations, room speakers) attach to the root the
+    // Derived prompts (worker iterations, room speakers) attach to the root the
     // parent lifecycle created. Only an owner-facing chat turn creates a root.
     let task_id = request.task_id.clone().unwrap_or_else(|| execution_id.clone());
     let parent_task_id = request.parent_task_id.clone();

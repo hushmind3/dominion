@@ -1,7 +1,7 @@
 use crate::engine::chat::TurnRequest;
 use crate::engine::run_quiet;
 use sha2::Digest;
-use crate::engine::{goals, learning, reflect, rooms, workflows};
+use crate::engine::{learning, reflect, rooms, workflows};
 use crate::state::AppState;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
@@ -135,31 +135,6 @@ pub fn enqueue_owner_prompt(
         .ok_or_else(|| "같은 요청 ID를 서로 다른 작업에 사용할 수 없습니다.".to_string())
 }
 
-/// A resumed goal must be queued with its completed-iteration checkpoint in
-/// the same insert, before any worker can claim it. Patching the checkpoint
-/// after enqueue is a race that may replay a previous external tool operation.
-pub fn enqueue_goal_resume(
-    state: &AppState, id: &str, goal_id: &str, checkpoint: Value,
-    step_index: u64, step_total: u64,
-) -> Option<Value> {
-    let candidate = json!({
-        "id":id,"kind":"goal","input":{"goalId":goal_id,"resumeAfterReview":true},
-        "status":"queued","queuedAt":chrono::Utc::now().to_rfc3339_opts(
-            chrono::SecondsFormat::Micros,true),
-        "attempts":0,"stepIndex":step_index,"stepTotal":step_total,
-        "goalState":checkpoint,"events":[]
-    });
-    if let Some(saved) = state.store.put_if_absent("job", &candidate) {
-        state.bus.record("job",&saved);
-        state.store.audit("job.queued",json!({
-            "kind":"goal","jobId":id,"resumeAfterReview":true
-        }));
-        return Some(saved);
-    }
-    // Never turn a conflicting historic job into a fresh queued execution.
-    None
-}
-
 pub fn cancel_rsi_children(state: &AppState, campaign: &str) {
     for child in state.store.all("job") {
         if child["kind"] != "rsi_generation" || child["input"]["rsiCampaignId"] != campaign
@@ -192,8 +167,6 @@ pub fn recover(state: &AppState) {
             "/promptState/inFlight",
             "/rsiCompareInFlight",
             "/rsiEvolutionInFlight",
-            "/goalState/inFlight",
-            "/goalState/reviewPending",
             "/roomState/inFlight",
             "/workflowState/inFlight",
             "/discordState/inFlight",
@@ -235,24 +208,6 @@ pub fn recover(state: &AppState) {
                 if let Some(saved)=state.store.patch_if("room",id,"id",&json!(id),&json!({
                     "status":status,"activeAgentId":null,"pauseReason":if status=="needs_review" {"재시작 전 발언이나 도구 결과를 확인해야 합니다."} else {""}
                 })) { state.bus.record("room",&saved); }
-            }
-        }
-        if uncertain || attempts >= 3 {
-            if let Some(id) = job.pointer("/input/goalId").and_then(Value::as_str) {
-                if let Some(mut goal) = state.store.get("goal", id) {
-                    if matches!(
-                        goal["status"].as_str(),
-                        Some("completed" | "cancelled" | "failed" | "needs_review")
-                    ) {
-                        continue;
-                    }
-                    goal["status"] = json!("needs_review");
-                    goal["phase"] = json!("needs_review");
-                    goal["gaps"] = json!([
-                        "재시작 전 실행 결과가 확정되지 않았습니다. 실행 증거를 확인하세요."
-                    ]);
-                    state.store.put("goal", &goal);
-                }
             }
         }
         state.store.audit(
@@ -497,7 +452,6 @@ async fn run_job(state: AppState, job: Value) {
     let result = match kind.as_str() {
         "workflow" => workflows::run(&context, &job).await,
         "room" | "meeting" => rooms::run(&context, &job).await,
-        "goal" => goals::run(&context, &job).await,
         "prompt" => run_prompt(&context, &job).await,
         "rsi_compare" => crate::engine::rsi_worktree::compare(&context,&job).await,
         "rsi_evolve" => crate::engine::rsi_evolve::run(&context,&job).await,
@@ -551,22 +505,6 @@ async fn run_job(state: AppState, job: Value) {
                 "job.failed",
                 json!({ "jobId": job_id, "kind": kind, "error": error }),
             );
-            // A worker failure must also leave the durable parent goal in a
-            // reviewable terminal state. Otherwise the UI would show "running"
-            // forever even though the job failed and could not be resumed.
-            if kind == "goal" {
-                if let Some(goal_id)=job.pointer("/input/goalId").and_then(Value::as_str) {
-                    if let Some(goal)=state.store.get("goal",goal_id) {
-                        if matches!(goal["status"].as_str(),Some("queued"|"running")) {
-                            if let Some(saved)=state.store.patch_if("goal",goal_id,"status",
-                                &goal["status"],&json!({"status":status,"phase":status,
-                                    "error":error,"finishedAt":chrono::Utc::now().to_rfc3339()})) {
-                                state.bus.record("goal",&saved);
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
     if kind == "rsi_evolve" {
@@ -1004,7 +942,7 @@ fn schedule_automations(state: &AppState) {
             .cloned()
             .unwrap_or_else(|| json!({}));
         let job_kind = if kind == "meeting" { "room" } else { kind };
-        if !matches!(job_kind, "prompt" | "workflow" | "room" | "learn" | "goal")
+        if !matches!(job_kind, "prompt" | "workflow" | "room" | "learn")
             || (job_kind=="workflow" && automation["confirmRecurringModelCosts"]!=true) {
             continue;
         }
@@ -1272,7 +1210,7 @@ mod tests {
     #[test]
     fn job_errors_are_recorded_as_failed() {
         let state = temp_state();
-        let job = enqueue(&state, "room", json!({ "roomId": "missing", "goal": "x" })).unwrap();
+        let job = enqueue(&state, "room", json!({ "roomId": "missing", "topic": "x" })).unwrap();
         let id = job["id"].as_str().unwrap().to_string();
         let _ = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -1282,54 +1220,6 @@ mod tests {
         let stored = state.store.get("job", &id).unwrap();
         assert_eq!(stored["status"], "failed");
         assert!(stored["error"].as_str().unwrap().contains("대화방"));
-    }
-
-    #[test]
-    fn uncertain_goal_recovery_updates_job_and_goal_without_replaying() {
-        let state = temp_state();
-        state
-            .store
-            .put("goal", &json!({"id":"g","status":"running","goal":"write"}));
-        state.store.put(
-            "job",
-            &json!({"id":"j","kind":"goal","status":"running","attempts":1,
-            "input":{"goalId":"g"},"goalState":{"inFlight":true}}),
-        );
-        recover(&state);
-        assert_eq!(
-            state.store.get("job", "j").unwrap()["status"],
-            "needs_review"
-        );
-        assert_eq!(
-            state.store.get("goal", "g").unwrap()["status"],
-            "needs_review"
-        );
-        assert!(next_queued(&state).is_none());
-    }
-
-    #[tokio::test]
-    async fn goal_review_state_is_preserved_on_the_parent_job() {
-        let state = temp_state();
-        state
-            .store
-            .put("goal", &json!({"id":"g","status":"running","goal":"실행"}));
-        let job = state
-            .store
-            .put(
-                "job",
-                &json!({"id":"j","kind":"goal","status":"running","attempts":1,
-            "input":{"goalId":"g"},"goalState":{"inFlight":true}}),
-            )
-            .unwrap();
-        run_job(state.clone(), job).await;
-        assert_eq!(
-            state.store.get("job", "j").unwrap()["status"],
-            "needs_review"
-        );
-        assert_eq!(
-            state.store.get("goal", "g").unwrap()["status"],
-            "needs_review"
-        );
     }
 
     #[test]

@@ -1,15 +1,6 @@
-pub mod goal_control;
 pub mod harness_settings;
-pub mod goal_git;
-pub mod goal_changes;
 pub mod agent_diff;
 pub mod agent_parallel;
-pub mod goal_context;
-pub mod goal_navigation;
-pub mod goal_receipts;
-pub mod goal_evidence;
-pub mod goal_steering;
-pub mod goal_artifacts;
 pub mod adaptation_loop;
 pub mod distill;
 pub mod effect;
@@ -37,7 +28,6 @@ pub mod procedure;
 pub mod program;
 pub mod verification;
 pub mod reflect;
-pub mod goals;
 pub mod gateway;
 pub mod cli_model;
 pub mod improve;
@@ -135,7 +125,7 @@ pub struct TurnStats {
     pub evidence: Vec<Value>,
 }
 
-/// Runs a turn and collects tool evidence for the goal harness.
+/// Runs a turn and collects tool evidence for the native task harness.
 pub async fn run_quiet_outcome(
     state: &AppState,
     request: &chat::TurnRequest,

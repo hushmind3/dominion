@@ -1,4 +1,4 @@
-//! Shared acceptance checks used by ordinary chat and goal execution.
+//! Shared acceptance checks used by ordinary chat and task execution.
 use crate::state::AppState;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -63,7 +63,7 @@ pub fn validate_criteria(criteria: &Value) -> Result<(), String> {
     }
     Ok(())
 }
-pub(crate) fn looks_actionable(goal: &str) -> bool {
+pub(crate) fn looks_actionable(task: &str) -> bool {
     [
         "만들",
         "생성",
@@ -106,13 +106,13 @@ pub(crate) fn looks_actionable(goal: &str) -> bool {
         "commit",
     ]
     .iter()
-    .any(|v| goal.to_lowercase().contains(v))
+    .any(|v| task.to_lowercase().contains(v))
 }
-pub(crate) fn infer_criteria(goal: &str) -> Vec<Value> {
-    if !looks_actionable(goal) {
+pub(crate) fn infer_criteria(task: &str) -> Vec<Value> {
+    if !looks_actionable(task) {
         return vec![];
     }
-    let lower = goal.to_lowercase();
+    let lower = task.to_lowercase();
     let deletion = ["삭제", "제거", "delete", "remove"]
         .iter()
         .any(|v| lower.contains(v));
@@ -125,8 +125,8 @@ pub(crate) fn infer_criteria(goal: &str) -> Vec<Value> {
         return vec![];
     }
     if !deletion {
-        if let Some(replacement) = goal.split('`').nth(1)
-            .and_then(|path| literal_replacement(goal, path))
+        if let Some(replacement) = task.split('`').nth(1)
+            .and_then(|path| literal_replacement(task, path))
         {
             return vec![replacement];
         }
@@ -138,7 +138,7 @@ pub(crate) fn infer_criteria(goal: &str) -> Vec<Value> {
         .iter()
         .any(|verb| lower.contains(verb));
     let mut paths = Vec::new();
-    for raw in goal.split(|c: char| {
+    for raw in task.split(|c: char| {
         c.is_whitespace() || matches!(c, '`' | '\'' | '"' | ',' | '(' | ')' | '[' | ']')
     }) {
         // Korean particles can follow a path without a space (a.txt를).
@@ -181,7 +181,7 @@ pub(crate) fn infer_criteria(goal: &str) -> Vec<Value> {
     if let [check] = paths.as_mut_slice() {
         let path = check["path"].as_str().unwrap_or_default();
         if !deletion {
-            if let Some(content) = literal_creation(goal, path) {
+            if let Some(content) = literal_creation(task, path) {
                 *check = json!({"type":"file_equals","path":path,"content":content,"inferred":true});
             }
         }
@@ -191,8 +191,8 @@ pub(crate) fn infer_criteria(goal: &str) -> Vec<Value> {
 
 /// Recognize a bounded, unambiguous owner contract. The hash is captured
 /// before any tool runs and covers every untouched byte as well as the edit.
-fn literal_replacement(goal: &str, path: &str) -> Option<Value> {
-    let mut parts = goal.trim().split('`');
+fn literal_replacement(task: &str, path: &str) -> Option<Value> {
+    let mut parts = task.trim().split('`');
     let (before, file, edit, old, middle, new, after) = (
         parts.next()?, parts.next()?, parts.next()?, parts.next()?,
         parts.next()?, parts.next()?, parts.next()?,
@@ -217,8 +217,8 @@ fn literal_replacement(goal: &str, path: &str) -> Option<Value> {
     }))
 }
 
-fn literal_creation<'a>(goal: &'a str, path: &str) -> Option<&'a str> {
-    let rest = goal.trim().trim_end_matches('.').strip_prefix(path)?
+fn literal_creation<'a>(task: &'a str, path: &str) -> Option<&'a str> {
+    let rest = task.trim().trim_end_matches('.').strip_prefix(path)?
         .strip_prefix(" 파일을 만들고 내용을 ")?.strip_suffix("로 저장해")?;
     let content = rest.strip_prefix('`').and_then(|value| value.strip_suffix('`'))
         .unwrap_or(rest);
@@ -258,7 +258,7 @@ fn exact_replacement(bytes: Vec<u8>, old: &str, new: &str) -> Option<String> {
 pub(crate) fn resolve_path(state: &AppState, path: &str) -> Result<PathBuf, String> {
     resolve_path_with_root(&state.config.workspace,path,false)
 }
-/// Isolated goals are verified only inside their private worktree. Absolute
+/// Isolated tasks are verified only inside their private worktree. Absolute
 /// paths must not silently switch verification back to the live checkout.
 pub(crate) fn resolve_path_in(root:&Path,path:&str)->Result<PathBuf,String>{
     resolve_path_with_root(root,path,true)
@@ -483,7 +483,7 @@ fn source_mutation(item: &Value) -> bool {
 
 /// Determines if a successful later edit invalidates a prior test receipt.
 /// opSeq is authoritative inside one execution. RFC3339 timestamps order
-/// receipts across successive goal iterations/executions. Missing chronology
+/// receipts across successive task iterations/executions. Missing chronology
 /// fails closed: an unsequenced write cannot validate an older test.
 fn test_stale_after_write(test: &Value, write: &Value) -> bool {
     let same_run=test["runId"].as_str().is_some_and(|id|
@@ -563,10 +563,10 @@ pub(crate) fn fresh_code_validation(evidence:&[Value])->bool{
     })
 }
 
-/// Pull all execution outcomes for this goal's session. A failed test must
+/// Pull all execution outcomes for this task's session. A failed test must
 /// not disappear merely because the summary evidence list keeps successes
 /// only. Failure to inspect the store is a verification gap, not approval.
-pub(crate) fn goal_test_gaps(
+pub(crate) fn task_test_gaps(
     state:&AppState,session_id:&str,evidence:&[Value],require_tests:bool
 )->Vec<String>{
     if !require_tests{return Vec::new();}
@@ -588,17 +588,17 @@ pub(crate) fn coding_test_gaps(evidence:&[Value],require_tests:bool)->Vec<String
 }
 
 pub(crate) fn acceptance_gaps(
-    state:&AppState,goal:&str,checks:&Value,evidence:&[Value]
+    state:&AppState,task:&str,checks:&Value,evidence:&[Value]
 )->Vec<String>{
-    acceptance_gaps_with_root(&state.config.workspace,goal,checks,evidence,false)
+    acceptance_gaps_with_root(&state.config.workspace,task,checks,evidence,false)
 }
 pub(crate) fn acceptance_gaps_in(
-    root:&Path,goal:&str,checks:&Value,evidence:&[Value]
+    root:&Path,task:&str,checks:&Value,evidence:&[Value]
 )->Vec<String>{
-    acceptance_gaps_with_root(root,goal,checks,evidence,true)
+    acceptance_gaps_with_root(root,task,checks,evidence,true)
 }
 fn acceptance_gaps_with_root(
-    root:&Path,goal:&str,checks:&Value,evidence:&[Value],strict:bool
+    root:&Path,task:&str,checks:&Value,evidence:&[Value],strict:bool
 )->Vec<String>{
     let checks = checks.as_array().cloned().unwrap_or_default();
     let mut gaps = Vec::new();
@@ -608,7 +608,7 @@ fn acceptance_gaps_with_root(
             Some("tool_succeeded" | "command_succeeded")
         )
     });
-    if looks_actionable(goal) && !evidence.iter().any(is_action_evidence) && !has_explicit_tool {
+    if looks_actionable(task) && !evidence.iter().any(is_action_evidence) && !has_explicit_tool {
         gaps.push("변경 또는 실행을 입증하는 성공한 도구 결과가 없습니다. 조회 결과만으로 행동 목표를 완료할 수 없습니다.".into());
     }
     for check in checks {
@@ -753,7 +753,7 @@ mod inference_tests {
     #[test]
     fn multi_iteration_tests_require_a_new_check_after_newer_source_write() {
         let (state,root)={
-            let root=std::env::temp_dir().join(format!("goal-stale-check-{}",uuid::Uuid::new_v4()));
+            let root=std::env::temp_dir().join(format!("task-stale-check-{}",uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&root).unwrap();
             let config=crate::config::Config{
                 port:0,data_dir:root.clone(),web_dir:root.join("web"),workspace:root.clone()
