@@ -171,3 +171,8 @@ DM·음성·파일 첨부·슬래시 명령·Gateway 실시간 이벤트는 이�
 ## 독립 Rust SDK와 실행 경로 (2026-11-15)
 
 Rust SDK 자체가 계획·실행·검증·복구의 상태기계입니다. 실제 src/engine/native_agent.rs는 SDK의 모델·도구·검증·SQLite 지속성 인터페이스를 구현합니다. 주 실행 루프는 `dominion_sdk::harness`의 독립 Rust 커널입니다. 일반 /api/jobs는 이 엔진을 호출하고 React와 TypeScript SDK도 동일한 상태를 읽습니다. 사용자 원문이 모든 단계에서 우선하고 중단된 외부 실행은 자동 재실행하지 않습니다. RSI의 분리된 독립 평가는 기존 경로로 유지합니다. 자세한 내용은 docs/SDK-ARCHITECTURE-2026-11-15.md 참조.
+
+
+## WebSocket 불확실 완료와 SDK 문맥 예산 (2026-11-15)
+
+`src/engine/chat/codex_ws.rs`는 요청 전달 후 완료를 확인하지 못한 호출을 재생하지 않고 `codex.ws.uncertain` 기록으로 남깁니다. `provider.rs`는 이 오류에서 HTTP와 대체 모델 호출을 중단합니다. `crates/dominion-agent-sdk/src/context.rs::project`는 최신 도구 영수증을 남은 모델 문맥 표시 예산에 맞게 축소하고 원본을 보존합니다. 별도 에이전트 SDK나 외부 하네스를 실행 루프에 추가하지 않았습니다. 세부 사항 및 테스트 경계는 `docs/SUB3-NATIVE-STREAM-2026-11-15.md`, `docs/SUB3-DURABLE-CONTEXT-2026-11-15.md`를 참조합니다.
