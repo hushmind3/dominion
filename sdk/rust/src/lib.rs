@@ -154,6 +154,10 @@ impl Dominion {
     pub async fn cancel_job(&self, id: &str) -> Result<Job, Error> {
         self.post(&["api", "jobs", id, "cancel"], json!({})).await
     }
+    /// Mid-run owner correction; the native Rust kernel rechecks before tool batches.
+    pub async fn steer_job(&self, id: &str, instruction: &str) -> Result<Value, Error> {
+        self.post(&["api", "jobs", id, "directive"], json!({"instruction":instruction})).await
+    }
     pub async fn wait_job(&self, id: &str, timeout: Duration, interval: Duration) -> Result<Job, Error> {
         let started = Instant::now();
         loop {

@@ -115,7 +115,8 @@ export class Dominion{
     list:()=>this.request<Job[]>('GET','/api/jobs'),
     create:(job:CreateJob)=>this.request<Job>('POST','/api/jobs',job),
     get:(jobId:string)=>this.request<Job>('GET','/api/jobs/'+id(jobId)),
-    cancel:(jobId:string)=>this.request<Job>('POST','/api/jobs/'+id(jobId)+'/cancel',{})
+    cancel:(jobId:string)=>this.request<Job>('POST','/api/jobs/'+id(jobId)+'/cancel',{}),
+    steer:(jobId:string,instruction:string)=>this.request<{ok:boolean;jobId:string;directive:string}>('POST','/api/jobs/'+id(jobId)+'/directive',{instruction})
   };
   readonly workflows={
     list:()=>this.request<Workflow[]>('GET','/api/workflows'),
