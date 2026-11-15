@@ -18,6 +18,7 @@ pub struct Improvement {
     pub id:Uuid, pub parent:Option<Uuid>, pub repository:String, pub target_file:String,
     pub instruction:String, pub test_command:String, pub score_command:Option<String>,
     pub status:ImprovementStatus, pub base_commit:Option<String>,pub candidate_commit:Option<String>,
+    #[serde(default)] pub adopted_commit:Option<String>,
     pub baseline:Option<Measurement>,pub candidate:Option<Measurement>,pub proposal:Option<String>,
     pub reflection:Option<String>,pub accepted:bool,pub cost_krw:f64,pub error:Option<String>,
     pub created_at_ms:u64,pub updated_at_ms:u64,
@@ -123,7 +124,8 @@ impl Improvements {
         let now=now_ms();
         self.put(Improvement{id:Uuid::new_v4(),parent:input.parent,repository:input.repository,target_file:input.target_file,
             instruction:input.instruction,test_command:input.test_command,score_command:input.score_command,status,
-            base_commit:None,candidate_commit:None,baseline:None,candidate:None,proposal:None,reflection:None,
+            base_commit:None,candidate_commit:None,adopted_commit:None,
+            baseline:None,candidate:None,proposal:None,reflection:None,
             accepted:false,cost_krw:0.0,error:None,created_at_ms:now,updated_at_ms:now}).await
     }
     pub async fn start(self:&Arc<Self>,model:ModelClient,id:Uuid,shell_enabled:bool)->Result<Improvement,String>{
@@ -286,6 +288,7 @@ impl Improvements {
             return Err("candidate lineage ref differs from the independently evaluated commit".into());
         }
         execute("git",&["-c","user.name=Dominion","-c","user.email=dominion@localhost","cherry-pick",commit],&repo,45).await?;
+        item.adopted_commit=Some(git(&repo,&["rev-parse","HEAD"]).await?.trim().to_string());
         item.status=ImprovementStatus::Adopted;item.updated_at_ms=now_ms();
         self.put(item).await
     }
