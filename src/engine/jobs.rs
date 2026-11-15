@@ -1032,6 +1032,23 @@ mod tests {
     }
 
     #[test]
+    fn owner_steering_is_revisioned_and_never_rewrites_user_job_input(){
+        let state=temp_state();
+        let job=enqueue(&state,"prompt",json!({"prompt":"Write a patch","autonomous":true})).unwrap();
+        let id=job["id"].as_str().unwrap();
+        let first=steer(&state,id,"Run the real tests").unwrap();
+        let second=steer(&state,id,"Do not overwrite untouched files").unwrap();
+        assert_eq!(first["steeringRevision"],1);
+        assert_eq!(second["steeringRevision"],2);
+        let stored=state.store.get("job",id).unwrap();
+        assert_eq!(stored["input"]["prompt"],"Write a patch");
+        assert_eq!(stored["steering"].as_array().unwrap().len(),2);
+        assert_eq!(stored["steering"][1]["instruction"],"Do not overwrite untouched files");
+        state.store.patch_if("job",id,"status",&json!("queued"),&json!({"status":"cancelled"}));
+        assert!(matches!(steer(&state,id,"Proceed"),Err(SteeringError::Conflict(_))));
+    }
+
+    #[test]
     fn enqueue_creates_a_queued_job() {
         let state = temp_state();
         let job = enqueue(
