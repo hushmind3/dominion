@@ -1,5 +1,5 @@
 import {useEffect, useState} from 'react'
-import {Check, ChevronDown, Play, RefreshCw, ShieldAlert, Square, Sparkles} from 'lucide-react'
+import {Check, Play, RefreshCw, ShieldAlert, Square, Sparkles} from 'lucide-react'
 import {get, post, type Provider} from '../api'
 import {useLocale} from '../i18n'
 
@@ -28,6 +28,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const [instruction,setInstruction]=useState('')
  const [providerId,setProviderId]=useState('')
  const [verification,setVerification]=useState('')
+ const [observation,setObservation]=useState('')
  const [run,setRun]=useState<SdkRun|null>(null)
  const [busy,setBusy]=useState(false)
  const [error,setError]=useState('')
@@ -70,10 +71,20 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
+ const reconcile=async(applied:boolean)=>{
+  if(!run||busy||!observation.trim())return
+  setBusy(true);setError('')
+  try{
+   const updated=await post<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}/reconcile`,
+    {applied,details:observation.trim()})
+   setRun(updated);setObservation('')
+  }catch(e){setError((e as Error).message)}
+  finally{setBusy(false)}
+ }
  const status=run?.status||''
  const call=run?.checkpoint?.pendingCall
  const needsApproval=status==='awaiting_approval' && call
- const canResume=['interrupted','failed','exhausted','denied'].includes(status)
+ const canResume=['interrupted','failed'].includes(status)
  const events=(run?.checkpoint?.events||[]).slice(-4)
  return <section className="mt-4 rounded-xl border border-[#E7E0D5] bg-white">
   <div className="flex items-center gap-2 border-b border-[#F0EAE1] px-4 py-3">
@@ -146,9 +157,28 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
       <RefreshCw size={13}/>{en?'Resume':'재개'}
      </button>}
     </div>
-    {status==='in_doubt'&&<p className="mt-3 text-[11px] text-[#A54027]">
-     {en?'A tool may have changed files before interruption. Check its effects before resuming.':'중단 직전 도구 실행의 결과가 불확실합니다. 파일 상태를 직접 확인한 뒤 복구해야 합니다.'}
-    </p>}
+    {status==='in_doubt'&&<div className="mt-3 rounded-lg border border-[#E5C4AB] bg-white p-3">
+     <p className="text-[11px] text-[#A54027]">
+      {en?'The interrupted tool may have changed files. Inspect the workspace before continuing.':'중단 직전 도구가 파일을 변경했을 수 있습니다. 실제 상태를 확인한 뒤 기록하세요.'}
+     </p>
+     <label htmlFor="sdk-observation" className="mt-3 block text-[11px] font-semibold">
+      {en?'What did you observe?':'확인한 작업 결과'}
+     </label>
+     <textarea id="sdk-observation" rows={2} maxLength={8192}
+      value={observation} onChange={e=>setObservation(e.target.value)}
+      placeholder={en?'Describe the files or outcomes you inspected.':'실제로 확인한 파일 상태나 실행 결과를 입력하세요.'}
+      className="mt-1 w-full rounded-lg border border-[#E7E0D5] p-2 text-[11px]" />
+     <div className="mt-2 flex flex-wrap gap-2">
+      <button type="button" disabled={busy||!observation.trim()} onClick={()=>void reconcile(true)}
+       className="rounded-lg border border-[#E7E0D5] px-3 py-2 text-[11px] disabled:opacity-40">
+       {en?'Effect already applied':'변경이 적용됐음'}
+      </button>
+      <button type="button" disabled={busy||!observation.trim()} onClick={()=>void reconcile(false)}
+       className="rounded-lg border border-[#E7E0D5] px-3 py-2 text-[11px] disabled:opacity-40">
+       {en?'Effect not applied':'변경이 적용되지 않았음'}
+      </button>
+     </div>
+    </div>}
    </div>}
   </div>
  </section>
