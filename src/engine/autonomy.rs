@@ -159,6 +159,33 @@ fn verification_after_last_edit(command:&str, evidence:&[Value])->bool {
     }
 }
 
+#[derive(Debug,PartialEq,Eq)]
+struct OwnerIntent{
+    goal:String,additions:Vec<String>,replacement_revision:u64,
+}
+impl OwnerIntent{
+    fn effective_goal(&self)->String{
+        if self.additions.is_empty(){return self.goal.clone();}
+        format!("{}\n\n사용자가 추가한 작업 조건:\n{}",self.goal,
+            self.additions.iter().map(|s|format!("- {s}")).collect::<Vec<_>>().join("\n"))
+    }
+}
+/// Replay durable owner instructions: replacement invalidates the old task and
+/// prior additions; subsequent additions remain binding.
+fn owner_intent(original:&str,messages:&[Value])->OwnerIntent{
+    let mut active=OwnerIntent{goal:original.into(),additions:Vec::new(),replacement_revision:0};
+    for message in messages{
+        let Some(instruction)=message["instruction"].as_str()
+            .map(str::trim).filter(|s|!s.is_empty()) else{continue;};
+        if message["mode"]=="replace"{
+            active.goal=instruction.into();
+            active.additions.clear();
+            active.replacement_revision=message["revision"].as_u64().unwrap_or(0);
+        }else{active.additions.push(instruction.into());}
+    }
+    active
+}
+
 /// Called by the existing durable prompt worker. The job stays one operation;
 /// all intermediate rounds share its session, cancellation and audit records.
 pub async fn execute(
@@ -172,9 +199,12 @@ pub async fn execute(
     let verify_command=input["verifyCommand"].as_str().filter(|command|!command.trim().is_empty());
     add_explicit_verifier(&mut checks, verify_command)?;
     let mut has_checks=checks.as_array().is_some_and(|v|!v.is_empty());
-    let local_code_change=verification::local_edit_intent(goal);
+    let mut active_goal=goal.to_owned();
+    let mut local_code_change=verification::local_edit_intent(goal);
     let mut steering_checked_revision=0u64;
-    let plan=decompose::decompose(goal,&json!({"implementation":"numbered-first"}));
+    let mut latest_replacement_revision=0u64;
+    let mut evidence_epoch=0usize;
+    let mut plan=decompose::decompose(goal,&json!({"implementation":"numbered-first"}));
     let session_id=request.session_id.as_deref().unwrap_or("");
     let mut all_evidence=Vec::<Value>::new();
     let mut receipts=Vec::<Value>::new();
@@ -192,48 +222,74 @@ pub async fn execute(
             "plan":plan,"verification":checks,
             "receipts":receipts,
         }}))?;
-        let mut turn=request.clone();
-        if attempt>0 {
-            turn.input=next_instruction(goal,&last_gaps,last_error.as_deref(),attempt);
-        }
-        if let Some(command)=verify_command {
-            turn.input.push_str("\n\n사용자가 지정한 필수 검증 명령을 실제 도구로 실행하고 결과를 확인하세요. ");
-            turn.input.push_str("기존 코드 변경이 완료된 뒤 명령이 성공해야 작업이 통과됩니다. ");
-            turn.input.push_str("실행에는 기존 도구 승인 정책이 적용됩니다. 명령: ");
-            turn.input.push_str(command);
-        }
-        // Owner steering wins over the prior plan and remains durable in the
-        // same job record. Only the next model turn reads a new revision.
+        // A running model/tool call is not interrupted mid-effect. At the
+        // next turn boundary, replay the owner's revisioned intent from Rust.
         let owner_job=ctx.state.store.get("job",&ctx.job_id)
             .ok_or("autonomous job no longer exists")?;
         let steering_before=owner_job["steeringRevision"].as_u64().unwrap_or(0);
-        if let Some(messages)=owner_job["steering"].as_array(){
-            // A later owner instruction expands the acceptance contract.
-            // Baselines are captured before executing the next model turn.
-            for message in messages.iter().filter(|message|
-                message["revision"].as_u64().unwrap_or(0)>steering_checked_revision
+        let messages=owner_job["steering"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+        let intent=owner_intent(goal,messages);
+        let replaced=intent.replacement_revision>latest_replacement_revision;
+        if replaced{
+            // The old goal cannot continue to gate success. Historical
+            // receipts and side effects remain visible; old tool evidence
+            // cannot accidentally satisfy the replacement's new predicates.
+            checks=verification::prepare_acceptance_checks(&ctx.state,&intent.goal);
+            add_explicit_verifier(&mut checks,verify_command)?;
+            steering_checked_revision=intent.replacement_revision;
+            latest_replacement_revision=intent.replacement_revision;
+            evidence_epoch=all_evidence.len();
+            last_gaps.clear();
+            last_error=None;
+        }
+        if steering_before>steering_checked_revision{
+            for message in messages.iter().filter(|m|
+                m["revision"].as_u64().unwrap_or(0)>steering_checked_revision
+                && m["mode"]!="replace"
             ){
                 if let Some(instruction)=message["instruction"].as_str(){
                     let additional=verification::prepare_acceptance_checks(&ctx.state,instruction);
-                    if let (Some(existing),Some(extra))=
-                        (checks.as_array_mut(),additional.as_array()){
-                        for check in extra {
+                    if let (Some(existing),Some(extra))=(checks.as_array_mut(),additional.as_array()){
+                        for check in extra{
                             if existing.len()>=20 {break;}
-                            if !existing.iter().any(|prior|
-                                prior["type"]==check["type"] && prior["path"]==check["path"]
-                            ){existing.push(check.clone());}
+                            if !existing.iter().any(|prior|prior==check){
+                                existing.push(check.clone());
+                            }
                         }
                     }
                 }
             }
             steering_checked_revision=steering_before;
-            has_checks=checks.as_array().is_some_and(|v|!v.is_empty());
-            let instructions=messages.iter().filter_map(|m|m["instruction"].as_str())
-                .map(|s|format!("- {}",narrow(s,1200))).collect::<Vec<_>>();
-            if !instructions.is_empty(){
-                turn.input.push_str("\n\n사용자가 작업 도중 추가한 최신 지시(우선 반영):\n");
-                turn.input.push_str(&instructions.join("\n"));
-            }
+        }
+        if steering_before>0{
+            active_goal=intent.effective_goal();
+            plan=decompose::decompose(&active_goal,&json!({"implementation":"numbered-first"}));
+            local_code_change=verification::local_edit_intent(&active_goal);
+        }
+        has_checks=checks.as_array().is_some_and(|v|!v.is_empty());
+        let mut turn=request.clone();
+        if replaced{
+            turn.input=format!(
+                "사용자가 기존 작업 목표를 교체했습니다. 이전 목표의 미완료 항목을 계속 수행하지 마세요. \
+                이전 외부 작업의 중복 실행은 피하고 현재 상태를 확인하세요.\n\n새 사용자 목표:\n{active_goal}"
+            );
+        }else if attempt>0{
+            turn.input=next_instruction(&active_goal,&last_gaps,last_error.as_deref(),attempt);
+        }else if steering_before>0{
+            turn.input=active_goal.clone();
+        }
+        if let Some(command)=verify_command{
+            turn.input.push_str("\n\n사용자가 지정한 필수 검증 명령을 실제 도구로 실행하고 결과를 확인하세요. ");
+            turn.input.push_str("기존 코드 변경이 완료된 뒤 명령이 성공해야 작업이 통과됩니다. ");
+            turn.input.push_str("실행에는 기존 도구 승인 정책이 적용됩니다. 명령: ");
+            turn.input.push_str(command);
+        }
+        if steering_before>0{
+            ctx.checkpoint(json!({"autonomousState":{
+                "status":"running","phase":"executing","attempt":attempt+1,
+                "activeGoal":active_goal,"steeringRevision":steering_before,
+                "plan":plan,"verification":checks,"receipts":receipts,
+            }}))?;
         }
         let usage_before=ctx.state.store.session_usage(session_id);
         let (outcome, stats):(Result<Option<Value>,String>,TurnStats)=
@@ -244,9 +300,11 @@ pub async fn execute(
         last_message=outcome.as_ref().ok().and_then(|msg|msg.as_ref())
             .map(|msg|msg["id"].clone()).unwrap_or(Value::Null);
         all_evidence.extend(stats.evidence.iter().cloned());
-        let mut gaps=verification::check_acceptance(&ctx.state,goal,&checks,&all_evidence);
+        let current_evidence=&all_evidence[evidence_epoch..];
+        let mut gaps=verification::check_acceptance(
+            &ctx.state,&active_goal,&checks,current_evidence);
         if let Some(command)=verify_command {
-            if !verification_after_last_edit(command,&all_evidence) {
+            if !verification_after_last_edit(command,current_evidence) {
                 gaps.push("최종 파일 변경 이후 검증 명령이 성공한 증거가 없습니다. 마지막 변경본으로 명령을 다시 실행하세요.".into());
             }
         }
@@ -259,8 +317,9 @@ pub async fn execute(
             gaps.push("실행 중 새로운 사용자 지시를 받았습니다. 다음 턴에서 반영합니다.".into());
         }
         let local_proof=local_code_change
-            && all_evidence.iter().any(|item|verification::proven_workspace_edit(&ctx.state,item));
-        let tested=verification::test_after_last_edit(&all_evidence);
+            && current_evidence.iter().any(|item|
+                verification::proven_workspace_edit(&ctx.state,item));
+        let tested=verification::test_after_last_edit(current_evidence);
         let mut decision=decide(config.strategy,has_checks,&gaps,
             latest_error.as_deref(),&all_evidence,attempt,config.attempts);
         let repeated_without_progress=attempt>0
@@ -295,7 +354,7 @@ pub async fn execute(
         }
         let receipt=json!({
             "attempt":attempt+1,
-            "steeringRevision":steering_before,
+            "steeringRevision":steering_before,"activeGoal":active_goal,
             "outcome":match decision {
                 Decision::Accept=>"accepted",Decision::Repair=>"repair",Decision::Review=>"needs_review"
             },
@@ -314,6 +373,7 @@ pub async fn execute(
         ctx.checkpoint(json!({"autonomousState":{
             "status":"running","phase":if decision==Decision::Repair{"replanning"}else{"verifying"},
             "attempt":attempt+1,"plan":plan,"verification":checks,
+            "activeGoal":active_goal,"steeringRevision":steering_before,
             "receipts":receipts,
         }}))?;
         match decision {
@@ -352,6 +412,24 @@ pub async fn execute(
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]
+    fn owner_goal_replacement_invalidates_old_additions(){
+        let notes=vec![
+            json!({"revision":1,"mode":"append","instruction":"Old extra file"}),
+            json!({"revision":2,"mode":"replace","instruction":"Create a new report"}),
+            json!({"revision":3,"mode":"append","instruction":"Include a chart"}),
+        ];
+        let intent=owner_intent("Delete the old report",&notes);
+        assert_eq!(intent.replacement_revision,2);
+        assert_eq!(intent.goal,"Create a new report");
+        assert!(intent.effective_goal().contains("Include a chart"));
+        assert!(!intent.effective_goal().contains("Old extra file"));
+        assert!(!intent.effective_goal().contains("Delete the old report"));
+        let legacy=owner_intent("Original",&notes[..1]);
+        assert_eq!(legacy.replacement_revision,0);
+        assert!(legacy.effective_goal().contains("Original"));
+        assert!(legacy.effective_goal().contains("Old extra file"));
+    }
     #[test]
     fn verifier_beats_model_claims_and_bounds_retries(){
         let gaps=vec!["file missing".to_string()];

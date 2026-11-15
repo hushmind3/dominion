@@ -119,6 +119,16 @@ impl std::fmt::Display for SteeringError {
     }
 }
 pub fn steer(state:&AppState,id:&str,instruction:&str)->Result<Value,SteeringError>{
+    steer_with_mode(state,id,instruction,"append")
+}
+
+/// User goal replacements and additive steering share one native durable job.
+/// A revisioned CAS prevents a stale completion from overtaking owner input.
+pub fn steer_with_mode(state:&AppState,id:&str,instruction:&str,mode:&str)
+    ->Result<Value,SteeringError>{
+    if !matches!(mode,"append"|"replace") {
+        return Err(SteeringError::BadInput("지시 방식은 append 또는 replace입니다.".into()));
+    }
     let instruction=instruction.trim();
     if instruction.is_empty() || instruction.len()>4000 {
         return Err(SteeringError::BadInput("추가 지시는 1~4000자로 입력하세요.".into()));
@@ -142,7 +152,7 @@ pub fn steer(state:&AppState,id:&str,instruction:&str)->Result<Value,SteeringErr
         }
         let revision=job["steeringRevision"].as_u64().unwrap_or(0);
         steering.push(json!({
-            "revision":revision+1,"instruction":instruction,
+            "revision":revision+1,"instruction":instruction,"mode":mode,
             "at":chrono::Utc::now().to_rfc3339()
         }));
         // Completion and owner steering advance/close the same CAS gate.
@@ -154,9 +164,9 @@ pub fn steer(state:&AppState,id:&str,instruction:&str)->Result<Value,SteeringErr
                 "steeringGate":{"revision":revision+1,"closed":false}}),
         ){
             state.bus.record("job",&saved);
-            state.store.audit("job.steer",json!({"jobId":id,"revision":revision+1}));
+            state.store.audit("job.steer",json!({"jobId":id,"revision":revision+1,"mode":mode}));
             return Ok(json!({
-                "jobId":id,"steeringRevision":revision+1,
+                "jobId":id,"steeringRevision":revision+1,"mode":mode,
                 "appliesAt":"next_model_turn"
             }));
         }
@@ -1067,6 +1077,23 @@ mod tests {
         assert_eq!(stored["steering"][1]["instruction"],"Do not overwrite untouched files");
         state.store.patch_if("job",id,"status",&json!("queued"),&json!({"status":"cancelled"}));
         assert!(matches!(steer(&state,id,"Proceed"),Err(SteeringError::Conflict(_))));
+    }
+
+    #[test]
+    fn replacement_is_durable_and_still_uses_existing_steering_gate(){
+        let state=temp_state();
+        let job=enqueue(&state,"prompt",json!({"prompt":"Old task","autonomous":true})).unwrap();
+        let id=job["id"].as_str().unwrap();
+        assert_eq!(steer(&state,id,"Extra constraint").unwrap()["mode"],"append");
+        let changed=steer_with_mode(&state,id,"New task","replace").unwrap();
+        assert_eq!(changed["mode"],"replace");
+        assert_eq!(changed["steeringRevision"],2);
+        let saved=state.store.get("job",id).unwrap();
+        assert_eq!(saved["input"]["prompt"],"Old task");
+        assert_eq!(saved["steering"][1]["mode"],"replace");
+        assert_eq!(saved["steeringGate"]["revision"],2);
+        assert!(matches!(steer_with_mode(&state,id,"invalid","oops"),
+            Err(SteeringError::BadInput(_))));
     }
 
     #[test]

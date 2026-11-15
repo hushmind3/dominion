@@ -61,7 +61,14 @@ pub async fn cancel(State(state):State<AppState>,Path(id):Path<String>)->Respons
 pub async fn steer(
     State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>
 )->Response{
-    match engine::jobs::steer(&state,&id,body["instruction"].as_str().unwrap_or("")){
+    let mode=match body.get("mode"){
+        None=>"append",
+        Some(Value::String(mode)) if matches!(mode.as_str(),"append"|"replace")=>mode.as_str(),
+        _=>return error(StatusCode::BAD_REQUEST,"지시 방식은 append 또는 replace입니다."),
+    };
+    match engine::jobs::steer_with_mode(
+        &state,&id,body["instruction"].as_str().unwrap_or(""),mode
+    ){
         Ok(record)=>Json(record).into_response(),
         Err(engine::jobs::SteeringError::BadInput(message))=>
             error(StatusCode::BAD_REQUEST,&message),
