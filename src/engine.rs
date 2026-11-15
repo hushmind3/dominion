@@ -7,6 +7,8 @@ mod semantic;
 pub(crate) mod verification;
 #[cfg(test)]
 mod acceptance_tests;
+#[cfg(test)]
+mod tool_routing_tests;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{collections::HashSet, path::{Component, Path, PathBuf}, process::Stdio, time::Duration};
