@@ -40,6 +40,13 @@
       <details class="advanced">
         <summary>고급 실행 설정 <span>⌄</span></summary>
         <div class="advanced-row">
+          <label>작업 계획 방식
+            <select id="planningMode" aria-label="자동 계획 또는 항상 계획">
+              <option value="auto" selected>자동 · 복잡할 때만</option>
+              <option value="always">항상 계획</option>
+              <option value="never">빠른 실행 · 계획 생략</option>
+            </select>
+          </label>
           <label>최대 모델 단계 <input id="maxSteps" type="number" min="1" max="24" value="12"></label>
           <label>토큰 예산 <input id="tokenBudget" type="number" min="256" max="500000" value="40000"></label>
           <label>연결할 세션 ID <input id="sessionId" type="text" maxlength="128" placeholder="비워두면 새 세션"></label>
