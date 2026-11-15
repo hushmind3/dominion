@@ -126,7 +126,9 @@ impl Store {
             conn.execute("ALTER TABLE tasks ADD COLUMN cost_krw REAL NOT NULL DEFAULT 0",[])
                 .map_err(|e|e.to_string())?;
         }
-        Ok(Self { conn: Arc::new(Mutex::new(conn)) })
+        let store=Self { conn: Arc::new(Mutex::new(conn)) };
+        store.context_init()?;
+        Ok(store)
     }
 
     /// Operator-triggered data migration. Never modifies the source.
