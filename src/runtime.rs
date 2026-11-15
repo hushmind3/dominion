@@ -65,6 +65,8 @@ pub struct TaskInput {
     pub max_steps: Option<u64>,
     #[serde(default)]
     pub token_budget: Option<u64>,
+    #[serde(default)]
+    pub planning_mode: Option<String>,
 }
 
 impl TaskInput {
@@ -87,6 +89,11 @@ impl TaskInput {
         if !(256..=500_000).contains(&self.token_budget.unwrap_or(40_000)) {
             return Err(RuntimeError("tokenBudget must be 256..=500000".into()));
         }
+        if self.planning_mode.as_deref().is_some_and(
+            |value| !matches!(value,"auto"|"always"|"never")
+        ) {
+            return Err(RuntimeError("planningMode must be auto, always or never".into()));
+        }
         Ok(())
     }
 
@@ -102,6 +109,7 @@ impl TaskInput {
             "requireEvidence": self.require_evidence,
             "maxSteps": self.max_steps.unwrap_or(12),
             "tokenBudget": self.token_budget.unwrap_or(40_000),
+            "planningMode": self.planning_mode.unwrap_or_else(||"auto".into()),
         });
         Ok((key, payload))
     }
