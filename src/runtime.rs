@@ -306,6 +306,69 @@ mod tests {
         assert!(TaskInput {prompt:"ok".into(),token_budget:Some(128),..Default::default()}
             .validate().is_err());
     }
+    #[tokio::test]
+    async fn rust_sdk_executes_verified_work_without_http_frontend() {
+        use axum::{routing::post, Json, Router};
+        async fn provider(Json(request): Json<Value>) -> Json<Value> {
+            let has_receipt = request["messages"].as_array().is_some_and(|history|
+                history.iter().any(|message| message["role"] == "tool"));
+            let response = if has_receipt {
+                json!({"role":"assistant","content":"File written and readback verified."})
+            } else {
+                json!({"role":"assistant","content":null,"tool_calls":[{
+                    "id":"write-test","type":"function","function":{
+                        "name":"workspace_write",
+                        "arguments":json!({"path":"outcome.txt","content":"native-sdk-proof"}).to_string()
+                    }
+                }]})
+            };
+            Json(json!({"choices":[{"message":response}],"usage":{"total_tokens":30}}))
+        }
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1",0)).await.unwrap();
+        let url=format!("http://{}/chat/completions",listener.local_addr().unwrap());
+        let server=tokio::spawn(async move {
+            axum::serve(listener,Router::new().route("/chat/completions",post(provider)))
+                .await.unwrap()
+        });
+        let root=std::env::temp_dir().join(
+            format!("dominion-rust-sdk-{}",uuid::Uuid::new_v4())
+        );
+        std::fs::create_dir_all(&root).unwrap();
+        let sdk=DominionSdk::start(DominionConfig {
+            workspace:root.clone(),
+            database:root.join("native.sqlite"),
+            model_url:url,
+            model_name:"mock-provider".into(),
+            api_key:None,
+            max_concurrent_tasks:2,
+        }).await.unwrap();
+        let result=sdk.execute(TaskInput {
+            prompt:"Create outcome.txt".into(),
+            request_id:Some("sdk-native-2026".into()),
+            allow_write:true,
+            require_evidence:true,
+            max_steps:Some(4),
+            ..Default::default()
+        },Duration::from_secs(5)).await.unwrap();
+        assert_eq!(result.status,"completed");
+        assert_eq!(std::fs::read_to_string(root.join("outcome.txt")).unwrap(),
+            "native-sdk-proof");
+        let events=sdk.events_after(&result.id,0,50).unwrap();
+        assert!(events.iter().any(|event|event.kind=="tool_result"));
+        assert!(events.iter().any(|event|event.kind=="finished"));
+        let duplicate=sdk.submit(TaskInput {
+            prompt:"Create outcome.txt".into(),
+            request_id:Some("sdk-native-2026".into()),
+            allow_write:true,
+            require_evidence:true,
+            max_steps:Some(4),
+            ..Default::default()
+        }).await.unwrap();
+        assert_eq!(duplicate.id,result.id);
+        server.abort();
+        let _=std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn native_task_serialization_matches_the_public_rust_http_contract() {
         let (key, normalized) = TaskInput {
