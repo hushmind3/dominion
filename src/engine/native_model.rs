@@ -276,7 +276,7 @@ pub(crate) async fn complete(
         return Err("Native tool calling is not enabled for this provider".into());
     }
     let definitions=tool_catalog(tools,wire);
-    let body=match wire {
+    let mut body=match wire {
         "codex"=>json!({"model":route.model,"instructions":system,
             "input":codex_input(prompt,receipts),"tools":definitions,
             "tool_choice":"auto","stream":true,"store":false}),
@@ -288,6 +288,18 @@ pub(crate) async fn complete(
             "tools":definitions,"tool_choice":"auto","stream":false,
             "max_tokens":route.max_output_tokens.unwrap_or(8192)}),
     };
+    // DeepSeek/Reflection may require a reasoning_content field even on
+    // replayed assistant tool-call messages. All other providers get only
+    // standards-compliant OpenAI-compatible chat fields.
+    if wire=="chat" && route.reasoning_protocol=="deepseek" {
+        if let Some(messages)=body["messages"].as_array_mut() {
+            for message in messages {
+                if message["role"]=="assistant" {
+                    message["reasoning_content"]=json!("");
+                }
+            }
+        }
+    }
     let value=match wire {
         "codex"=>send_codex(state,&route,&client,&body).await?,
         "anthropic"=>send_anthropic(&route,&client,&body).await?,
@@ -344,7 +356,7 @@ mod tests {
             "message":{"content":"partial"}}]})).is_err());
     }
     #[test]
-    fn anthropic_and_codex_native_calls_are_preserved() {
+    fn native_anthropic_and_codex_calls_are_preserved() {
         let a=parse_anthropic(&json!({"content":[
             {"type":"tool_use","id":"toolu_1","name":"workspace_read",
                 "input":{"path":"README.md"}}
@@ -371,7 +383,7 @@ mod tests {
         assert_eq!(codex[2]["type"],"function_call_output");
     }
     #[test]
-    fn rejects_duplicate_call_ids_and_non_object_arguments() {
+    fn native_rejects_duplicate_call_ids_and_non_object_arguments() {
         assert!(finish(String::new(),vec![
             decode_call("same","one",&json!({})).unwrap(),
             decode_call("same","two",&json!({})).unwrap(),
@@ -379,7 +391,7 @@ mod tests {
         assert!(decode_call("call","read",&json!("[1]")).is_err());
     }
     #[test]
-    fn codex_sse_requires_terminal_success_and_complete_output() {
+    fn native_codex_sse_requires_terminal_success_and_complete_output() {
         let raw=format!("event: response.completed\ndata: {}\n\n",
             json!({"type":"response.completed","response":{"status":"completed",
                 "output":[{"type":"function_call","call_id":"call_9",
@@ -388,4 +400,79 @@ mod tests {
         assert_eq!(result.decision.unwrap().actions[0].id,"call_9");
         assert!(parse_codex_events("data: {\"type\":\"response.output_item.done\"}\n\n").is_err());
     }
+    fn mock_state(url:&str,kind:&str)->AppState {
+        use crate::{config::Config,db::Store,vault::Vault};
+        let dir=std::env::temp_dir().join(format!(
+            "dominion-native-provider-test-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=Config{port:0,data_dir:dir.clone(),web_dir:dir.join("web"),
+            workspace:dir.clone()};
+        let store=Store::open(&config.db_path()).unwrap();
+        let vault=Vault::open(&config.key_path());
+        let state=AppState::new(config,store,vault);
+        state.store.put("provider",&json!({
+            "id":"native-wire-test","kind":kind,"model":"model-mock",
+            "baseUrl":url,"enabled":true,"toolMode":"native",
+            "reasoningProtocol":if kind=="anthropic" {"anthropic"}else{"openai"}
+        }));
+        state
+    }
+    #[tokio::test]
+    async fn native_openai_compatible_http_wire_returns_structured_sdk_action() {
+        use axum::{routing::post,Router,Json};
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr=listener.local_addr().unwrap();
+        let app=Router::new().route("/v1/chat/completions",
+            post(|Json(body):Json<Value>| async move {
+                assert_eq!(body["stream"],false);
+                assert_eq!(body["tools"][0]["function"]["name"],"workspace_read");
+                assert_eq!(body["messages"][2]["tool_calls"][0]["id"],"call_1");
+                assert_eq!(body["messages"][3]["role"],"tool");
+                Json(json!({"id":"response_1","choices":[{
+                    "finish_reason":"tool_calls",
+                    "message":{"role":"assistant","content":null,
+                        "tool_calls":[{
+                            "id":"call_2","type":"function",
+                            "function":{"name":"workspace_read",
+                                "arguments":"{\"path\":\"src/lib.rs\"}"}
+                        }]}
+                }],"usage":{"prompt_tokens":55,"completion_tokens":11,
+                    "total_tokens":66}}))
+            }));
+        let task=tokio::spawn(async move {axum::serve(listener,app).await.unwrap();});
+        let state=mock_state(&format!("http://{addr}/v1"),"openai");
+        let output=complete(&state,"native-wire-test","model-mock","session-1",
+            "You are a model","{}",&[tool()],&[read()]).await.unwrap();
+        let action=&output.decision.as_ref().unwrap().actions[0];
+        assert_eq!(action.id,"call_2");
+        assert_eq!(action.tool,"workspace_read");
+        assert_eq!(action.arguments,json!({"path":"src/lib.rs"}));
+        assert_eq!(output.reply.input_tokens,Some(55));
+        task.abort();
+    }
+    #[tokio::test]
+    async fn native_anthropic_http_wire_returns_structured_sdk_action() {
+        use axum::{routing::post,Router,Json};
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr=listener.local_addr().unwrap();
+        let app=Router::new().route("/v1/messages",
+            post(|Json(body):Json<Value>| async move {
+                assert_eq!(body["stream"],false);
+                assert_eq!(body["tools"][0]["name"],"workspace_read");
+                assert_eq!(body["messages"][1]["content"][0]["type"],"tool_use");
+                assert_eq!(body["messages"][2]["content"][0]["type"],"tool_result");
+                Json(json!({"type":"message","stop_reason":"tool_use",
+                    "content":[{"type":"tool_use","id":"toolu_4",
+                        "name":"workspace_read","input":{"path":"README.md"}}],
+                    "usage":{"input_tokens":77,"output_tokens":23}}))
+            }));
+        let task=tokio::spawn(async move {axum::serve(listener,app).await.unwrap();});
+        let state=mock_state(&format!("http://{addr}/v1"),"anthropic");
+        let output=complete(&state,"native-wire-test","model-mock","session-2",
+            "You are a model","{}",&[tool()],&[read()]).await.unwrap();
+        assert_eq!(output.decision.unwrap().actions[0].arguments["path"],"README.md");
+        assert_eq!(output.reply.input_tokens,Some(77));
+        task.abort();
+    }
+
 }

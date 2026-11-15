@@ -149,6 +149,10 @@ pub trait Model: Send + Sync {
     fn complete<'a>(&'a self, system: &'a str, prompt: &'a str)
         -> BoxFuture<'a, Result<ModelReply, String>>;
 
+    /// A provider that accepts typed tool schemas need not receive a
+    /// duplicated megabyte-scale JSON catalogue in the system prompt.
+    fn supports_native_tools(&self) -> bool {false}
+
     /// Native function/tool-call lane. Providers receive real host tool
     /// schemas and the durable receipt transcript; the default retains
     /// backwards-compatible JSON planning for text-only local routes.
@@ -355,26 +359,36 @@ impl Kernel<'_> {
             } else {spec.description.clone()},
             "parameters":spec.schema, "readOnly":spec.read_only
         })).collect();
-        let system = format!(
+        let native_wire=self.model.supports_native_tools();
+        let catalog_prompt=if native_wire {
+            "Tool definitions are supplied in the model provider's native typed tool catalogue.".to_string()
+        } else {
+            serde_json::to_string(&definitions).map_err(|e|e.to_string())?
+        };
+        let response_contract=if native_wire {
+            "For each action use a provider-native function/tool call with valid JSON object arguments. \
+             Never emit a JSON decision wrapper or impersonate a tool result in text. \
+             When no more actions are needed, respond with the actual final answer as normal text."
+        }else{
+            "Reply with exactly one JSON object: \
+             {\"plan\":[\"concise ordered steps\"],\"actions\":[{\"id\":\"unique-id\", \
+             \"tool\":\"name\",\"arguments\":{},\"dependsOn\":[]}],\"answer\":null}. \
+             On task completion return actions=[] and answer=\"actual result\"."
+        };
+        let system=format!(
             "You are DOMINION's model planner. The Rust kernel owns action dispatch, \
-            limits, permission checks, and verification. Respect the owner's instruction \
-            and never claim an unobserved task is done. Reply with exactly one JSON object: \
-            {{\"plan\":[\"concise ordered steps\"],\"actions\":[{{\"id\":\"unique-id\",\"tool\":\"name\",\
-            \"arguments\":{{}},\"dependsOn\":[]}}],\"answer\":null}}. \
-            On task completion return actions=[] and answer=\"actual result\". \
-            Owner-required checks are executed by the Rust kernel on proposed completion. \
-            You may run diagnostic tests while working, but do not waste a model turn \
-            rerunning an unchanged acceptance command. After edits, propose completion; \
-            Rust will execute outstanding exact tests. If a test fails, inspect the recorded \
-            diagnostic, modify the source and propose completion again. A requested source \
-            edit requires a workspace tool receipt with written=true. \
-            Previous tool outputs are still stored in the durable journal. \
-            Use dominion_receipt_search and dominion_receipt_read for prior details, \
-            never replay external effects merely to retrieve an observation. \
-            Only call tools from this allowed catalog: {}. \
-            Strategy: {:?}. Owner instructions: {}.",
-            serde_json::to_string(&definitions).map_err(|e| e.to_string())?,
-            request.strategy, request.owner_instructions
+             limits, permission checks and verification. Respect the owner's instructions \
+             and never claim an unobserved task is done. {} \
+             Owner-required checks are executed by the Rust kernel on proposed completion. \
+             You may run diagnostic tests while working, but do not waste a model turn \
+             rerunning an unchanged acceptance command. After edits, propose completion; \
+             Rust will execute outstanding exact tests. If a test fails, inspect the recorded \
+             diagnostic, modify the source and propose completion again. A requested source \
+             edit requires a workspace tool receipt with written=true. \
+             Previous tool outputs remain in the durable journal. Use dominion_receipt_search \
+             and dominion_receipt_read for prior details; never replay external effects merely \
+             to retrieve an observation. Allowed tools: {}. Strategy: {:?}. Owner instructions: {}.",
+            response_contract,catalog_prompt,request.strategy,request.owner_instructions
         );
         let mut invalid = 0usize;
         self.journal.save(&run)?;

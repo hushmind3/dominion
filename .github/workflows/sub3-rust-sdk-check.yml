@@ -11,6 +11,7 @@ on:
       - 'crates/dominion-agent-sdk/**'
       - 'src/api/jobs.rs'
       - 'src/engine/native_agent.rs'
+      - 'src/engine/native_model.rs'
       - 'src/engine/workflows.rs'
       - 'src/engine/jobs.rs'
       - 'web/src/components/NativeAgentPanel.tsx'

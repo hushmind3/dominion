@@ -36,6 +36,10 @@ impl Model for ConfiguredModel {
             Ok(ModelReply {content, input_tokens: None, output_tokens: None})
         })
     }
+    fn supports_native_tools(&self)->bool {
+        gateway::resolve(&self.state,&self.provider,Some(&self.model))
+            .is_ok_and(|route| route.kind!="cli" && route.tool_mode!="compat")
+    }
     fn complete_with_tools<'a>(
         &'a self, system:&'a str, prompt:&'a str,
         schemas:&'a [ToolSpec], receipts:&'a [Receipt],
