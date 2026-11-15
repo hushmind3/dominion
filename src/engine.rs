@@ -1,5 +1,6 @@
 use crate::AppState;
 mod files;
+mod strategy;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{path::{Component, Path, PathBuf}, process::Stdio, time::Duration};
@@ -221,6 +222,28 @@ pub async fn run(state: AppState, id: String) {
     state.emit(&id,"running",json!({"sessionId":session,"model":state.model_name}));
     let mut verified_writes = 0_u64;
     let mut total_calls = 0_u64;
+    let mut receipts: Vec<Value> = Vec::new();
+    let planning = strategy::PlanningPolicy::from_setting(
+        input["planningMode"].as_str().unwrap_or("auto")
+    );
+
+    // Planning is selective: simple questions avoid the extra paid turn.
+    // Its output is guidance; user instructions and tool receipts stay primary.
+    if planning.should_plan(&prompt) && !state.store.cancelled(&id) {
+        match completion(&state,&strategy::make_plan_messages(&prompt),&[]).await {
+            Ok(planning_response) => {
+                let tokens = planning_response["usage"]["total_tokens"].as_u64().unwrap_or(0);
+                state.store.account_aux_tokens(&id,tokens);
+                if let Some(plan) = strategy::extract_plan(&planning_response) {
+                    messages.insert(1,json!({"role":"system","content":format!(
+                        "Provisional execution checklist. Adapt to observed results.\\n{plan}"
+                    )}));
+                    state.emit(&id,"plan",json!({"text":plan,"tokens":tokens}));
+                }
+            }
+            Err(error) => state.emit(&id,"plan_error",json!({"message":error})),
+        }
+    }
 
     for step in 0..steps {
         if state.store.cancelled(&id) {
@@ -238,6 +261,10 @@ pub async fn run(state: AppState, id: String) {
             settle(&state,&id,"needs_review","",verified_writes,
                 Some("전체 토큰 예산을 소진했습니다.".into()));
             return;
+        }
+        let compacted = strategy::prune_tool_context(&mut messages,32_000);
+        if compacted > 0 {
+            state.emit(&id,"context_compacted",json!({"oldToolResults":compacted}));
         }
         state.emit(&id,"model_step",json!({"step":step+1,"limit":steps}));
         let response = match completion(&state,&messages,&available).await {
@@ -283,11 +310,65 @@ pub async fn run(state: AppState, id: String) {
                     Some("모델이 최종 내용을 제공하지 않았습니다.".into()));
                 return;
             }
+
+            // Deterministic evidence gate: model claims never prove a write.
+            let required_write = (require_evidence || (allow_write &&
+                strategy::source_change_requested(&prompt)));
+            if required_write && verified_writes == 0 {
+                state.emit(&id,"verification_gap",json!({
+                    "reason":"requested source change lacks verified write receipt"
+                }));
+                if step + 1 < steps {
+                    messages.push(message);
+                    messages.push(json!({"role":"user","content":
+                        "Your response does not satisfy the requested file change: no verified write/edit receipt exists. Inspect source and perform the edit with actual tools, or report the blocking error."}));
+                    continue;
+                }
+                settle(&state,&id,"needs_review",&text,verified_writes,
+                    Some("요청한 변경을 입증하는 실제 파일 수정 기록이 없습니다.".into()));
+                return;
+            }
+            // For complex work a separate model critique may demand further
+            // corrections. It cannot override the native evidence check.
+            if strategy::complex(&prompt) && strategy::action_requested(&prompt)
+                && !receipts.is_empty() {
+                let review = completion(&state,
+                    &strategy::review_messages(&prompt,&text,&receipts),&[]).await;
+                match review {
+                    Ok(verdict) => {
+                        let tokens=verdict["usage"]["total_tokens"].as_u64().unwrap_or(0);
+                        state.store.account_aux_tokens(&id,tokens);
+                        let review=strategy::parse_review(&verdict);
+                        state.emit(&id,"verification",json!({
+                            "complete":review.as_ref().map(|item|item.complete),
+                            "feedback":review.as_ref().map(|item|item.feedback.as_str()),
+                            "tokens":tokens
+                        }));
+                        if !review.as_ref().is_some_and(|item|item.complete) {
+                            let correction=review
+                                .map(|item|item.feedback)
+                                .filter(|text|!text.is_empty())
+                                .unwrap_or_else(||"Reviewer did not provide valid completion evidence".into());
+                            if step + 1 < steps {
+                                messages.push(message);
+                                messages.push(json!({"role":"user","content":format!(
+                                    "Independent review found unfinished work: {correction}. Reinspect actual files or test results and repair the work before responding."
+                                )}));
+                                continue;
+                            }
+                            settle(&state,&id,"needs_review",&text,verified_writes,Some(correction));
+                            return;
+                        }
+                    }
+                    Err(error) => {
+                        settle(&state,&id,"needs_review",&text,verified_writes,
+                            Some(format!("독립 검증 모델 오류: {error}")));
+                        return;
+                    }
+                }
+            }
             state.store.add_message(&session,"assistant",&text);
-            let complete = !require_evidence || verified_writes > 0;
-            settle(&state,&id,if complete {"completed"} else {"needs_review"},
-                &text,verified_writes,
-                (!complete).then_some("실제 파일 수정 증거가 없습니다.".into()));
+            settle(&state,&id,"completed",&text,verified_writes,None);
             return;
         }
         messages.push(message);
@@ -321,7 +402,12 @@ pub async fn run(state: AppState, id: String) {
                 .and_then(|s| serde_json::from_str::<Value>(s).ok())
                 .unwrap_or(Value::Null);
             state.emit(&id,"tool_start",json!({"name":tool_name,"callId":tool_id}));
-            let outcome = tool(&state,tool_name,&arguments,allow_write,allow_shell).await;
+            let outcome = tool(&state,tool_name,&arguments,allow_write,allow_shell).await
+                .and_then(|receipt| {
+                    if tool_name == "workspace_check" && receipt["success"] == false {
+                        Err(format!("검사 명령 실패: {receipt}"))
+                    } else { Ok(receipt) }
+                });
             if matches!(tool_name, "workspace_write" | "workspace_replace") && outcome.as_ref()
                 .is_ok_and(|v|v["verified"]==true) {
                 verified_writes += 1;
@@ -332,6 +418,8 @@ pub async fn run(state: AppState, id: String) {
             };
             state.emit(&id,"tool_result",json!({"name":tool_name,"callId":tool_id,
                 "outcome":value}));
+            receipts.push(json!({"tool":tool_name,"outcome":value}));
+            if receipts.len()>80 { receipts.remove(0); }
             messages.push(json!({"role":"tool","tool_call_id":tool_id,
                 "content":value.to_string()}));
         }
