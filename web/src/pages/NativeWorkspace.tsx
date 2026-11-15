@@ -10,7 +10,7 @@ type RunEvent = {seq:number;taskId:string;type:string;detail?:Record<string,unkn
 type Member = {name:string;role:string;economy?:boolean}
 type Group = {id:string;topic:string;participants:Member[];messages:{speaker:string;content:string;at_ms:number}[];status:string;rounds:number;max_rounds:number;cost_krw:number;budget_krw:number}
 type Scene = {heading:string;narration:string;seconds:number}
-type Video = {id:string;prompt:string;status:string;scenes:Scene[];backend:string;error?:string|null;output?:string|null;cost_krw:number;budget_krw:number}
+type Video = {id:string;prompt:string;status:string;scenes:Scene[];backend:string;error?:string|null;output?:string|null;cost_krw:number;budget_krw:number;images?:Record<string,string>}
 type Trial = {id:string;repository:string;target_file:string;instruction:string;status:string;accepted:boolean;cost_krw:number;error?:string|null;baseline?:{score?:number;tests_passed:boolean};candidate?:{score?:number;tests_passed:boolean}}
 type Memory = {id:string;content:string;kind:string;status:string;sessionId?:string|null}
 type Skill = {id:string;name:string;trigger:string;instructions:string;enabled:boolean}
@@ -194,6 +194,22 @@ export function NativeVideos(){
  const op=useOperation();const selected=data.value.find(x=>x.id===active)
  const create=async(e:FormEvent)=>{e.preventDefault();const scenes=heading.trim()&&narration.trim()?[{heading,narration,seconds}]:undefined
   const item=await op.run(()=>post<Video>('/api/videos',{prompt,backend,scenes,budget_krw:videoBudget}));if(item){setActive(item.id);void data.reload()}}
+ const uploadImage=async(index:number,file?:File)=>{
+  if(!file)return
+  if(!['image/png','image/jpeg'].includes(file.type)||file.size>5*1024*1024){
+   window.alert('PNG/JPEG 이미지만 5MB까지 첨부할 수 있습니다.');return
+  }
+  const dataUrl=await new Promise<string>((resolve,reject)=>{
+   const reader=new FileReader()
+   reader.onload=()=>resolve(String(reader.result||''))
+   reader.onerror=()=>reject(new Error('이미지를 읽을 수 없습니다.'))
+   reader.readAsDataURL(file)
+  }).catch(()=>null)
+  if(!dataUrl||!active)return
+  const item=await op.run(()=>post<Video>(
+   '/api/videos/'+encodeURIComponent(active)+'/scenes/'+index+'/image',{dataUrl}))
+  if(item){data.setValue(old=>old.map(x=>x.id===item.id?item:x))}
+ }
  const beginEdit=(index:number,scene:Scene)=>{
   setEditing(index);setEditHeading(scene.heading);setEditNarration(scene.narration);setEditSeconds(scene.seconds)
  }
@@ -215,7 +231,11 @@ export function NativeVideos(){
     <div><LoadingButton busy={op.busy} type="submit" variant="primary"><Clapperboard size={14}/> 프로젝트 만들기</LoadingButton></div>
    </form></Section>
    {selected&&<Section><div className="flex items-center justify-between"><h2 className="font-bold">{selected.prompt}</h2><Status value={selected.status}/></div><p className={'my-2 '+subtle}>제작 비용: {fmtKrw(selected.cost_krw)} / 한도 {fmtKrw(selected.budget_krw)} · 방식: {selected.backend}</p>
-    <div className="my-4 grid gap-2">{selected.scenes.map((scene,i)=><div key={i} className="rounded-lg border border-[#EFE9DF] p-3 text-[12px]"><div className="flex items-center justify-between gap-2"><strong>{i+1}. {scene.heading}</strong><Button size="sm" variant="ghost" onClick={()=>beginEdit(i,scene)}>수정</Button></div><p className="mt-1 whitespace-pre-wrap">{scene.narration}</p><small>{scene.seconds}초</small></div>)}</div>
+    <div className="my-4 grid gap-2">{selected.scenes.map((scene,i)=><div key={i} className="rounded-lg border border-[#EFE9DF] p-3 text-[12px]"><div className="flex items-center justify-between gap-2"><strong>{i+1}. {scene.heading}</strong><Button size="sm" variant="ghost" onClick={()=>beginEdit(i,scene)}>수정</Button></div><p className="mt-1 whitespace-pre-wrap">{scene.narration}</p><small>{scene.seconds}초</small>
+    {selected.backend==='local'&&<label className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-[#D8CFC2] p-2 text-[11px]">
+     <span>{selected.images?.[i]?'🖼️ 이미지 등록됨 · 교체':'🖼️ 이 장면에 이미지 첨부'}</span>
+     <input type="file" accept="image/png,image/jpeg" className="max-w-full text-[11px]" onChange={e=>void uploadImage(i,e.target.files?.[0])} disabled={op.busy}/>
+    </label>}</div>)}</div>
     {editing!==null&&<form onSubmit={e=>void saveScene(e)} className="mb-4 grid gap-2 rounded-xl bg-[#F6F3EC] p-3">
      <h3 className="font-semibold">{editing+1}번 장면 수정</h3>
      <FormField label="장면 제목"><TextInput required value={editHeading} maxLength={180} onChange={e=>setEditHeading(e.target.value)}/></FormField>
