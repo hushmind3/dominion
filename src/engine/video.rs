@@ -1059,6 +1059,24 @@ pub async fn upload(ctx: &JobContext, job: &Value) -> Result<Value, String> {
 mod tests {
     use super::*;
     #[test]
+    fn video_weights_require_a_real_completed_asset_not_a_placeholder() {
+        let dir = std::env::temp_dir().join(format!("dominion-model-ready-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let weight = dir.join("diffusion.safetensors");
+        let part = dir.join("diffusion.part");
+        assert!(!model_asset_ready(&weight));
+        std::fs::write(&weight, b"").unwrap();
+        assert!(!model_asset_ready(&weight));
+        std::fs::write(&weight, b"git-lfs version https://git-lfs.github.com/spec/v1").unwrap();
+        assert!(!model_asset_ready(&weight), "a Git LFS pointer is not model weights");
+        std::fs::remove_file(&weight).unwrap();
+        std::fs::write(&part, vec![7u8; MIN_MODEL_ASSET_BYTES as usize]).unwrap();
+        assert!(!model_asset_ready(&weight), "partial files must never appear installed");
+        std::fs::rename(part,&weight).unwrap();
+        assert!(model_asset_ready(&weight));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn frozen_ffmpeg_path_wins_over_current_settings() {
         let dir = std::env::temp_dir().join(format!("dominion-ffmpeg-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
