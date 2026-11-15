@@ -26,9 +26,19 @@ fn size(values:&[Value])->Result<usize,String>{
         .map_err(|error|format!("tool schema JSON encoding: {error}"))
 }
 fn words(text:&str)->HashSet<String>{
+    // Ignore protocol boilerplate present on every MCP declaration.
+    // Otherwise prompts containing "external tool" accidentally match
+    // the entire catalog and defeat lazy loading.
+    const GENERIC:&[&str]=&[
+        "the","and","for","use","please","from","into","with",
+        "external","mcp","tool","tools","provider","service",
+        "connector","approval","required","available","this",
+    ];
     text.split(|ch:char|!ch.is_alphanumeric())
         .map(str::trim).filter(|word|word.chars().count()>=3)
-        .map(str::to_lowercase).collect()
+        .map(str::to_lowercase)
+        .filter(|word|!GENERIC.contains(&word.as_str()))
+        .collect()
 }
 fn relevance(query:&str,tool:&Value)->u64{
     let Some(alias)=name(tool) else{return 0;};
@@ -199,6 +209,24 @@ mod tests {
         assert!(select(&all,"other",&promoted,minimum).is_err());
         let selected=select(&all,"other",&HashSet::new(),minimum).unwrap();
         assert!(selected.selected_mcp.is_empty());
+    }
+    #[test]
+    fn mcp_protocol_boilerplate_does_not_create_false_relevance(){
+        let all=vec![
+            tool("workspace_read","Read files",1),
+            tool("tool_discover","Find tools",1),
+            tool("mcp__ledger__lookup_invoice",
+                "External MCP tool (approval required). ledger: Find invoices and payment receipts",200),
+            tool("mcp__travel__lookup_flight",
+                "External MCP tool (approval required). travel: Search airline flights",200),
+        ];
+        let empty=select(&all,
+            "Use an external connector to verify a recent charge",
+            &HashSet::new(),4000).unwrap();
+        assert!(empty.selected_mcp.is_empty());
+        let relevant=select(&all,"Find payment invoices",
+            &HashSet::new(),4000).unwrap();
+        assert_eq!(relevant.selected_mcp,vec!["mcp__ledger__lookup_invoice"]);
     }
     #[test]
     fn name_collision_prefers_native_and_cannot_be_invoked_twice(){
