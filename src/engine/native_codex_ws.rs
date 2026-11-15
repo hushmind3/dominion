@@ -39,12 +39,16 @@ struct JobChain {
     stable_contract:Option<String>,
     acknowledged_receipts:Vec<String>,
     outstanding_calls:Vec<String>,
+    /// Observed provider context usage after the last completed response.
+    /// None means the provider did not report it; never invent a cache hit.
+    context_tokens:Option<u64>,
 }
 impl JobChain {
     fn new()->Self {
         Self{socket:None,opened:None,touched:Instant::now(),
             response_id:None,stable_contract:None,
-            acknowledged_receipts:Vec::new(),outstanding_calls:Vec::new()}
+            acknowledged_receipts:Vec::new(),outstanding_calls:Vec::new(),
+            context_tokens:None}
     }
     fn reset(&mut self) {
         self.socket=None;
@@ -53,6 +57,7 @@ impl JobChain {
         self.stable_contract=None;
         self.acknowledged_receipts.clear();
         self.outstanding_calls.clear();
+        self.context_tokens=None;
     }
 }
 
@@ -141,6 +146,23 @@ fn plan(chain:&JobChain,body:&Value,receipts:&[Receipt])->Plan {
     if current_prompt["role"]!="user" {return Plan::Full;}
     inputs.push(current_prompt.clone());
     Plan::Delta{input:inputs,received:new.len()}
+}
+
+/// Rebase a growing server-side response chain before it exceeds the
+/// owner's configured provider context capacity. The canonical full input
+/// still follows the SDK's existing source/receipt projection and admission.
+fn exceeds_context_budget(
+    chain:&JobChain,route:&gateway::Route,planned:&Plan,body:&Value
+)->bool {
+    let (Some(capacity),Some(prior),Plan::Delta{input,..})=
+        (route.context_tokens,chain.context_tokens,planned) else {return false};
+    let reserved=route.max_output_tokens.unwrap_or(capacity/8)
+        .min(capacity/4).max(128).min(capacity);
+    let next=crate::engine::chat::estimate_text_tokens(&input.to_string())
+        .saturating_add(crate::engine::chat::estimate_text_tokens(
+            &body["instructions"].to_string()));
+    prior.saturating_add(next).saturating_add(reserved)
+        >=capacity.saturating_mul(9)/10
 }
 
 fn websocket_url(base:&str)->String {
@@ -273,7 +295,17 @@ pub(crate) async fn generate(
             chain.socket=Some(socket);
             chain.opened=Some(Instant::now());
         }
-        let planned=plan(&chain,body,receipts);
+        let mut planned=plan(&chain,body,receipts);
+        if exceeds_context_budget(&chain,route,&planned,body) {
+            state.store.audit("native.codex_ws.context_rebase",json!({
+                "jobId":job_id,"sessionId":session,
+                "reportedPriorContextTokens":chain.context_tokens,
+                "configuredContextTokens":route.context_tokens,
+                "reason":"server_chain_context_budget",
+                "oldToolResultsRetainedInJournal":true
+            }));
+            planned=Plan::Full;
+        }
         let (input,previous,mode,new_receipts)=match planned {
             Plan::Full=>(body["input"].clone(),None,"full",0usize),
             Plan::Delta{input,received}=>(
@@ -326,6 +358,11 @@ pub(crate) async fn generate(
                 chain.stable_contract=Some(contract(body));
                 chain.acknowledged_receipts=stamps.clone();
                 chain.outstanding_calls=outstanding;
+                // Responses usage input_tokens includes prior response context.
+                // It is the observed context signal, NOT a network-savings claim.
+                chain.context_tokens=response["usage"]["input_tokens"].as_u64()
+                    .map(|input|input.saturating_add(
+                        response["usage"]["output_tokens"].as_u64().unwrap_or(0)));
                 chain.touched=Instant::now();
                 state.store.audit("native.codex_ws.turn",json!({
                     "jobId":job_id,"sessionId":session,"mode":mode,
@@ -427,6 +464,27 @@ mod tests {
         assert_eq!(plan(&chain,&body("now",&[]),&[]),Plan::Full);
         assert_eq!(websocket_url("https://chatgpt.com/backend-api/codex"),
             "wss://chatgpt.com/backend-api/codex/responses");
+    }
+
+    #[test]
+    fn provider_context_usage_rebases_an_overgrown_socket_chain() {
+        let mut chain=JobChain::new();
+        chain.context_tokens=Some(12_000);
+        let mut provider=route("http://127.0.0.1:1".into());
+        provider.context_tokens=Some(16_000);
+        provider.max_output_tokens=Some(2048);
+        let plan=Plan::Delta{input:vec![json!({
+            "role":"user","content":[{"type":"input_text","text":"continue"}]
+        })],received:0};
+        assert!(exceeds_context_budget(&chain,&provider,&plan,
+            &json!({"instructions":"owner instructions"})));
+        chain.context_tokens=Some(200);
+        assert!(!exceeds_context_budget(&chain,&provider,&plan,
+            &json!({"instructions":"owner instructions"})));
+        provider.context_tokens=None;
+        assert!(!exceeds_context_budget(&chain,&provider,&plan,
+            &json!({"instructions":"owner instructions"})),
+            "unknown configured capacity must not fabricate a token limit");
     }
 
     #[tokio::test]
