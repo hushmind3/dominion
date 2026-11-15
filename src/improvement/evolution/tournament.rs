@@ -243,11 +243,17 @@ mod tests {
             ),None
         ).unwrap();
         let records=root.join("records");
+        let counter=root.join("check-count.txt");
+        // All score/test calls are real processes. Verify that the baseline
+        // is evaluated once for each frozen scorer, while every contender
+        // still runs its own tests in a separate worktree.
+        let tests=format!("echo checked >> {} && test -f a.txt && test -f b.txt",
+            counter.to_string_lossy());
         let service=Arc::new(Improvements::open(records.clone(),workspace.clone()).await.unwrap());
         let seed=service.create(NewImprovement{
             repository:"project".into(),target_file:"a.txt".into(),
             instruction:"Find a measurable implementation improvement".into(),
-            test_command:"test -f a.txt && test -f b.txt".into(),
+            test_command:tests,
             score_command:Some("echo $(( $(cat a.txt) + $(cat b.txt) ))".into()),
             parent:None
         }).await.unwrap();
@@ -288,6 +294,9 @@ mod tests {
         assert_eq!(done.candidates[1].training_score,Some(26.0));
         assert!(!done.candidates[1].eligible);
         assert_eq!(tokio::fs::read_to_string(repo.join("b.txt")).await.unwrap(),"1\n");
+        let check_count=tokio::fs::read_to_string(&counter).await.unwrap();
+        assert_eq!(check_count.lines().count(),8,
+            "2 seed checks + 6 tournament checks: baseline reused per scorer");
         let persisted=Improvements::open(records,workspace).await.unwrap();
         assert_eq!(persisted.evolution(run.id).await.unwrap().candidate_groups[0].len(),2);
         server.abort();
