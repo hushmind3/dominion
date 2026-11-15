@@ -11,12 +11,14 @@ pub struct ModelConfig {
     pub api_key: Option<String>,
     /// Configured price in KRW per million tokens, not an asserted provider rate.
     pub input_krw_per_million: f64,
+    pub cached_input_krw_per_million: f64,
     pub output_krw_per_million: f64,
 }
 impl ModelConfig {
     pub fn basic(endpoint: String, name: String, api_key: Option<String>) -> Self {
         Self {endpoint, name, api_key,
-            input_krw_per_million:0.0,output_krw_per_million:0.0}
+            input_krw_per_million:0.0,cached_input_krw_per_million:0.0,
+            output_krw_per_million:0.0}
     }
 }
 
@@ -50,7 +52,9 @@ impl ModelClient {
                 return Err("model name must be non-empty and bounded".into());
             }
             if !item.input_krw_per_million.is_finite() || !item.output_krw_per_million.is_finite()
-                || item.input_krw_per_million<0.0 || item.output_krw_per_million<0.0 {
+                || !item.cached_input_krw_per_million.is_finite()
+                || item.input_krw_per_million<0.0 || item.output_krw_per_million<0.0
+                || item.cached_input_krw_per_million<0.0 {
                 return Err("model KRW token rates must be finite and nonnegative".into());
             }
         }
@@ -83,10 +87,9 @@ impl ModelClient {
         let output_tokens=raw["usage"]["completion_tokens"].as_u64().unwrap_or(0);
         let cached_tokens=raw.pointer("/usage/prompt_tokens_details/cached_tokens")
             .and_then(Value::as_u64).unwrap_or(0).min(input_tokens);
-        let cost_krw=(
-            (input_tokens as f64)*provider.input_krw_per_million
-           +(output_tokens as f64)*provider.output_krw_per_million
-        )/1_000_000.0;
+        let cost_krw=calculate_cost(
+            provider, input_tokens, cached_tokens, output_tokens
+        );
         Ok(Reply {
             text:message["content"].as_str().unwrap_or_default().into(),
             raw,input_tokens,output_tokens,cached_tokens,cost_krw,model:provider.name.clone()
@@ -118,11 +121,33 @@ impl ModelClient {
     }
 }
 
+/// Meter cached and uncached prompt tokens separately. Cached tokens form a
+/// subset of input tokens, not an extra billable quantity.
+fn calculate_cost(provider:&ModelConfig,input:u64,cached:u64,output:u64)->f64{
+    let cached=cached.min(input);
+    let uncached=input.saturating_sub(cached);
+    (uncached as f64*provider.input_krw_per_million
+        +cached as f64*provider.cached_input_krw_per_million
+        +output as f64*provider.output_krw_per_million)/1_000_000.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn rejects_non_http_or_invalid_rates() {
+    fn cache_pricing_never_double_charges_the_input_tokens() {
+        let mut cfg=ModelConfig::basic("http://localhost:1234/v1/chat/completions".into(),
+            "test".into(),None);
+        cfg.input_krw_per_million=2000.0;
+        cfg.cached_input_krw_per_million=300.0;
+        cfg.output_krw_per_million=5000.0;
+        // 800 uncached + 200 cached + 100 generated
+        let expected=(800.0*2000.0+200.0*300.0+100.0*5000.0)/1_000_000.0;
+        assert!((calculate_cost(&cfg,1000,200,100)-expected).abs()<0.000001);
+        assert_eq!(calculate_cost(&cfg,100,200,0),0.03);
+    }
+    #[test]
+        fn rejects_non_http_or_invalid_rates() {
         assert!(ModelClient::new(ModelConfig::basic(
             "file:///local".into(),"test".into(),None),None).is_err());
         let mut provider=ModelConfig::basic(
