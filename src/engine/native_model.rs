@@ -502,11 +502,15 @@ pub(crate) async fn complete_with_run(
         }
     };
     let usage=if wire=="chat" {gateway::usage_from(&value)}
-        else {gateway::Usage {
-            prompt_tokens:value["usage"]["input_tokens"].as_u64().unwrap_or(0),
-            completion_tokens:value["usage"]["output_tokens"].as_u64().unwrap_or(0),
-            total_tokens:value["usage"]["total_tokens"].as_u64().unwrap_or(0),
-        }};
+        else {
+            let prompt=value["usage"]["input_tokens"].as_u64().unwrap_or(0);
+            let output=value["usage"]["output_tokens"].as_u64().unwrap_or(0);
+            gateway::Usage {
+                prompt_tokens:prompt,completion_tokens:output,
+                total_tokens:value["usage"]["total_tokens"].as_u64()
+                    .unwrap_or_else(||prompt.saturating_add(output)),
+            }
+        };
     gateway::record_usage(state,&route,usage,"agent_native",Some(session));
     match wire {
         "codex"=>parse_codex(&value),
