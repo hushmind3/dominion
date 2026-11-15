@@ -81,6 +81,13 @@ impl Store {
                 avatar TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS agents (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL,
+                instructions TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS skills (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -188,6 +195,55 @@ impl Store {
         let conn=self.conn.lock().map_err(|e|e.to_string())?;
         conn.execute("UPDATE memories SET status='inactive' WHERE id=?1 AND status='active'",
             [id]).map(|changed|changed>0).map_err(|e|e.to_string())
+    }
+
+    /// First-party local persona presets are data, not a delegated runtime.
+    pub fn agent_save(&self,name:&str,description:&str,instructions:&str)
+        -> Result<Value,String> {
+        let (name,description,instructions)=(name.trim(),description.trim(),instructions.trim());
+        if name.is_empty()||name.len()>80||description.len()>500||
+            instructions.is_empty()||instructions.len()>8_000 {
+            return Err("Agent name, description or instructions exceed limits".into());
+        }
+        let id=Uuid::new_v4().to_string();
+        let at=chrono::Utc::now().to_rfc3339();
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        conn.execute(
+            "INSERT INTO agents(id,name,description,instructions,created_at) VALUES(?1,?2,?3,?4,?5)",
+            params![id,name,description,instructions,at]
+        ).map_err(|e|e.to_string())?;
+        Ok(json!({"id":id,"name":name,"description":description,
+            "instructions":instructions,"createdAt":at}))
+    }
+
+    pub fn agent_get(&self,id:&str)->Option<Value>{
+        let conn=self.conn.lock().ok()?;
+        conn.query_row("SELECT id,name,description,instructions,created_at FROM agents WHERE id=?1",
+            [id],|row|Ok(json!({
+                "id":row.get::<_,String>(0)?,"name":row.get::<_,String>(1)?,
+                "description":row.get::<_,String>(2)?,
+                "instructions":row.get::<_,String>(3)?,
+                "createdAt":row.get::<_,String>(4)?
+            }))).ok()
+    }
+
+    pub fn agents(&self)->Vec<Value>{
+        let Ok(conn)=self.conn.lock() else {return vec![]};
+        let Ok(mut stmt)=conn.prepare("SELECT id,name,description,instructions,created_at
+            FROM agents ORDER BY created_at DESC LIMIT 300") else {return vec![]};
+        let Ok(rows)=stmt.query_map([],|row|Ok(json!({
+            "id":row.get::<_,String>(0)?,"name":row.get::<_,String>(1)?,
+            "description":row.get::<_,String>(2)?,
+            "instructions":row.get::<_,String>(3)?,
+            "createdAt":row.get::<_,String>(4)?
+        }))) else {return vec![]};
+        rows.filter_map(Result::ok).collect()
+    }
+
+    pub fn agent_delete(&self,id:&str)->Result<bool,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        conn.execute("DELETE FROM agents WHERE id=?1",[id])
+            .map(|count|count>0).map_err(|e|e.to_string())
     }
 
     pub fn skill_save(&self,name:&str,trigger:&str,instructions:&str,enabled:bool)
