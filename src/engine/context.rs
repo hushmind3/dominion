@@ -125,6 +125,7 @@ fn ceiling_boundary(s:&str,desired:usize)->usize{
 /// old tool output to a different tool call.
 fn groups(input:&[Value])->Result<Vec<Vec<Value>>,String>{
     let mut result=Vec::new();
+    let mut global_ids=HashSet::new();
     let mut i=0usize;
     while i<input.len(){
         let item=&input[i];
@@ -138,7 +139,8 @@ fn groups(input:&[Value])->Result<Vec<Vec<Value>>,String>{
                     for call in calls {
                         let id=call["id"].as_str().filter(|id|!id.is_empty()&&id.len()<=200)
                             .ok_or("Tool call has no valid stable identifier")?;
-                        if !pending.insert(id.to_string()) {
+                        if !pending.insert(id.to_string()) ||
+                            !global_ids.insert(id.to_string()) {
                             return Err(format!("Duplicate tool call identifier: {id}"));
                         }
                     }
@@ -161,7 +163,10 @@ fn groups(input:&[Value])->Result<Vec<Vec<Value>>,String>{
                     continue;
                 }
             },
-            "system"|"developer"|"user"=>{},
+            "system"|"developer"=>return Err(format!(
+                "System/developer context appears after conversation began at message {i}; cannot safely drop privileged instructions"
+            )),
+            "user"=>{},
             other=>return Err(format!("Unsupported model message role: {other}")),
         }
         result.push(vec![item.clone()]);
@@ -441,6 +446,21 @@ mod tests{
         valid(&a.messages);
         assert!(a.original_bytes>a.projected_bytes);
     }
+    #[test]
+    fn repeated_tool_identifiers_cannot_rebind_an_old_receipt(){
+        let mut data=vec![json!({"role":"system","content":"s"})];
+        data.extend(pair("same-call",150));
+        data.extend(pair("same-call",150));
+        assert!(project(&data,9000,&HashSet::new()).is_err());
+    }
+    #[test]
+    fn late_privileged_messages_are_never_silently_discarded(){
+        let data=vec![json!({"role":"system","content":"s"}),
+            json!({"role":"user","content":"request"}),
+            json!({"role":"developer","content":"immutable constraint"})];
+        assert!(project(&data,2000,&HashSet::new()).is_err());
+    }
+
     #[test]
     fn missing_or_orphan_tool_output_fails_closed(){
         let missing=vec![json!({"role":"user","content":"x"}),
