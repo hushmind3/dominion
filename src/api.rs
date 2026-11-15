@@ -70,6 +70,7 @@ async fn tools_catalog(State(state):State<AppState>)->Json<Value>{
         ("workspace_read","Read UTF-8 workspace files","read"),
         ("workspace_list","Inspect workspace file inventory","read"),
         ("workspace_search","Search source content","read"),
+        ("task_receipt","Restore persisted tool result without replay","read"),
         ("workspace_replace","Verified exact source edit","write"),
         ("workspace_write","Verified local source write","write"),
         ("workspace_check","Run approved local tests","shell"),
