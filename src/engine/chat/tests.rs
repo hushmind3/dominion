@@ -412,3 +412,17 @@ fn korean_turn_infers_reasoning_language_and_respects_explicit_original() {
     assert_eq!(request.effective_reasoning_language(), None);
 }
 
+#[test]
+fn completed_compound_shell_file_creation_is_accepted_without_another_reviewer() {
+    let state = temp_state();
+    let checks = crate::engine::verification::prepare_acceptance_checks(&state, "memo.txt 파일 만들어줘");
+    assert!(crate::engine::verification::check_acceptance(&state, "memo.txt 파일 만들어줘", &checks, &[]).len() > 0);
+    std::fs::write(state.config.workspace.join("memo.txt"), "").unwrap();
+    let evidence = vec![json!({"tool":"shell_exec","arguments":{"command":"cd workspace && touch memo.txt && ls -l memo.txt"},
+        "status":"completed","result":{"exitCode":0,"stdout":"memo.txt","stderr":""}})];
+    assert!(crate::engine::verification::check_acceptance(&state, "memo.txt 파일 만들어줘", &checks, &evidence).is_empty());
+    let read_only = vec![json!({"tool":"workspace_list","result":{"entries":["memo.txt"]}})];
+    assert!(!crate::engine::verification::check_acceptance(&state, "memo.txt 파일 만들어줘", &checks, &read_only).is_empty());
+    assert!(!crate::engine::verification::check_acceptance(&state, "memo.txt 파일 만들어줘", &json!([]), &evidence).is_empty());
+    let _ = std::fs::remove_dir_all(&state.config.data_dir);
+}
