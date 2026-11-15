@@ -172,6 +172,100 @@ impl Improvements {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn real_git_competition_rejects_high_training_score_that_fails_independent_validation(){
+        use crate::improvement::{execute,NewImprovement};
+        use axum::{routing::post,Json,Router};
+        use serde_json::{json,Value};
+        use tokio::process::Command;
+
+        async fn alternative(Json(request):Json<Value>)->Json<Value>{
+            let text=request["messages"].as_array()
+                .and_then(|messages|messages.iter().rev().find(|msg|msg["role"]=="user"))
+                .and_then(|item|item["content"].as_str()).unwrap_or("");
+            let current=text.split("Current contents:\n").last()
+                .unwrap_or("0").trim().parse::<u32>().unwrap_or(0);
+            let jump=if text.contains("Search alternative 2 of 2") {25} else {1};
+            Json(json!({"choices":[{"message":{"role":"assistant",
+                "content":format!("{}\n",current+jump)}}],
+                "usage":{"prompt_tokens":7,"completion_tokens":3}}))
+        }
+
+        if Command::new("git").arg("--version").output().await.is_err(){return;}
+        let root=std::env::temp_dir().join(format!("dominion-competition-{}",Uuid::new_v4()));
+        let workspace=root.join("workspace");
+        let repo=workspace.join("project");
+        tokio::fs::create_dir_all(&repo).await.unwrap();
+        git(&repo,&["init"]).await.unwrap();
+        tokio::fs::write(repo.join("a.txt"),"0\n").await.unwrap();
+        tokio::fs::write(repo.join("b.txt"),"0\n").await.unwrap();
+        git(&repo,&["add","a.txt","b.txt"]).await.unwrap();
+        execute("git",&["-c","user.name=Test","-c","user.email=test@example.com",
+            "commit","-m","original"],&repo,30).await.unwrap();
+
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr=listener.local_addr().unwrap();
+        let server=tokio::spawn(async move {
+            axum::serve(listener,Router::new().route("/chat/completions",post(alternative)))
+                .await.unwrap();
+        });
+        let model=crate::provider::ModelClient::new(
+            crate::provider::ModelConfig::basic(
+                format!("http://{addr}/chat/completions"),"contest".into(),None
+            ),None
+        ).unwrap();
+        let records=root.join("records");
+        let service=Arc::new(Improvements::open(records.clone(),workspace.clone()).await.unwrap());
+        let seed=service.create(NewImprovement{
+            repository:"project".into(),target_file:"a.txt".into(),
+            instruction:"Find a measurable implementation improvement".into(),
+            test_command:"test -f a.txt && test -f b.txt".into(),
+            score_command:Some("echo $(( $(cat a.txt) + $(cat b.txt) ))".into()),
+            parent:None
+        }).await.unwrap();
+        service.start(model.clone(),seed.id,true).await.unwrap();
+        for _ in 0..150{
+            if service.get(seed.id).await.unwrap().status!=ImprovementStatus::Running {break;}
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let seed=service.adopt(seed.id).await.unwrap();
+        assert_eq!(tokio::fs::read_to_string(repo.join("a.txt")).await.unwrap(),"1\n");
+        let run=service.evolution_start(model,seed.id,NewEvolution{
+            max_generations:1,cost_budget_krw:100.0,
+            target_files:vec!["b.txt".into()],
+            candidates_per_generation:2,
+            // The second candidate gets a much higher TRAINING score, but
+            // its 25 causes this operator-provided validation to fail.
+            validation_command:Some("test $(cat b.txt) -lt 10 && echo $(( $(cat a.txt) + $(cat b.txt) ))".into())
+        },true).await.unwrap();
+        let mut terminal=None;
+        for _ in 0..180{
+            let current=service.evolution(run.id).await.unwrap();
+            if current.status!=EvolutionStatus::Running{terminal=Some(current);break;}
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let done=terminal.expect("Candidate tournament did not settle");
+        assert_eq!(done.status,EvolutionStatus::Completed,"{:?}",done.stop_reason);
+        assert_eq!(done.completed_generations,1);
+        assert_eq!(done.candidates.len(),2);
+        assert_eq!(done.candidate_groups.len(),1);
+        assert_eq!(done.candidate_groups[0].len(),2);
+        let winner=done.descendants[0];
+        assert_eq!(winner,done.candidate_groups[0][0]);
+        let rejected=service.get(done.candidate_groups[0][1]).await.unwrap();
+        assert_eq!(rejected.status,ImprovementStatus::Rejected);
+        assert!(!rejected.accepted);
+        assert_eq!(done.candidates[0].training_score,Some(2.0));
+        assert_eq!(done.candidates[0].validation_score,Some(2.0));
+        assert_eq!(done.candidates[1].training_score,Some(26.0));
+        assert!(!done.candidates[1].eligible);
+        assert_eq!(tokio::fs::read_to_string(repo.join("b.txt")).await.unwrap(),"1\n");
+        let persisted=Improvements::open(records,workspace).await.unwrap();
+        assert_eq!(persisted.evolution(run.id).await.unwrap().candidate_groups[0].len(),2);
+        server.abort();
+        tokio::fs::remove_dir_all(root).await.unwrap();
+    }
+
     #[test]
     fn independent_validation_beats_training_and_ties_are_stable(){
         let a=CandidateRecord{trial_id:Uuid::new_v4(),generation:0,proposal_index:0,
