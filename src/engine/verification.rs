@@ -126,6 +126,13 @@ pub(crate) fn infer_criteria(goal: &str) -> Vec<Value> {
         .iter()
         .any(|verb| lower.contains(verb));
     let mut paths = Vec::new();
+    // Explicit Desktop filenames can contain spaces; never infer the last
+    // word as a different file from the user's intended destination.
+    if let Some(path)=desktop_filename(goal){
+        paths.push(json!({"type":if deletion{"file_absent"}else{"file_changed"},
+            "path":path,"inferred":true}));
+    }
+    if paths.is_empty(){
     for raw in goal.split(|c: char| {
         c.is_whitespace() || matches!(c, '`' | '\'' | '"' | ',' | '(' | ')' | '[' | ']')
     }) {
@@ -161,6 +168,7 @@ pub(crate) fn infer_criteria(goal: &str) -> Vec<Value> {
             }
         }
     }
+    }
     if reading && paths.len() > 1 {
         if let Some(output) = paths.pop() {
             paths = vec![output];
@@ -172,9 +180,46 @@ pub(crate) fn infer_criteria(goal: &str) -> Vec<Value> {
             if let Some(content) = literal_creation(goal, path) {
                 *check = json!({"type":"file_equals","path":path,"content":content,"inferred":true});
             }
+            if check["type"]=="file_changed" && simple_file_creation_goal(goal){
+                check["type"]=json!("file_exists");
+                check["creationOnly"]=json!(true);
+            }
         }
     }
     paths
+}
+
+pub(crate) fn simple_file_creation_goal(input: &str) -> bool {
+    let lower = input.to_lowercase();
+    input.chars().count() <= 240 && !input.contains('\n')
+        && ["만들", "생성", "create"].iter().any(|word|lower.contains(word))
+        && !["그리고", "다음", "한 뒤", "후에", "then", "after", ";", "내용", "적어", "써", "저장", "테스트", "빌드", "다운로드", "복사", "수정", "편집", "write", "with", "containing", "copy", "download"]
+            .iter().any(|word|lower.contains(word))
+}
+
+fn desktop_filename(goal: &str) -> Option<String> {
+    let rest = ["바탕화면에", "바탕 화면에", "데스크톱에", "데스크탑에"]
+        .iter().find_map(|marker| goal.split_once(marker).map(|(_, rest)|rest.trim_start()))?;
+    for (index, ch) in rest.char_indices() {
+        if ch != '.' { continue; }
+        let extension = rest[index + 1..].chars().take_while(|ch|ch.is_ascii_alphanumeric()).collect::<String>();
+        if !["txt","md","rs","json","py","js","ts","tsx","csv","html","toml","yaml","yml","sh"].contains(&extension.as_str()) {
+            continue;
+        }
+        let end = index + 1 + extension.len();
+        let suffix = rest[end..].trim_start_matches(|ch:char|ch.is_whitespace() || matches!(ch,'`'|'\''|'"'));
+        if !["파일", "를", "을", "만들", "생성", "삭제", "제거"].iter().any(|word|suffix.starts_with(word)) {
+            continue;
+        }
+        let name = rest[..end].trim().trim_matches(|ch|matches!(ch,'`'|'\''|'"'));
+        if name.is_empty() || name.contains('/') || name.contains('\\')
+            || name.chars().any(char::is_control)
+            || ["그리고", "읽고", "확인하고", ";"].iter().any(|marker|name.contains(marker)) {
+            return None;
+        }
+        return Some(format!("~/Desktop/{name}"));
+    }
+    None
 }
 
 /// Recognize a bounded, unambiguous owner contract. The hash is captured
@@ -244,6 +289,14 @@ fn exact_replacement(bytes: Vec<u8>, old: &str, new: &str) -> Option<String> {
 }
 
 pub(crate) fn resolve_path(state: &AppState, path: &str) -> Result<PathBuf, String> {
+    if let Some(relative) = path.strip_prefix("~/") {
+        let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+            .ok_or("사용자 홈 경로를 찾을 수 없습니다.")?;
+        if Path::new(relative).components().any(|part| matches!(part, Component::ParentDir)) {
+            return Err("홈 검증 경로에 상위 경로 이동을 사용할 수 없습니다.".into());
+        }
+        return Ok(PathBuf::from(home).join(relative));
+    }
     let path = Path::new(path);
     if path.is_absolute() {
         return Ok(path.to_path_buf());
@@ -301,7 +354,7 @@ pub(crate) fn baseline_checks(state: &AppState, mut checks: Vec<Value>) -> Value
                 bytes, check["old"].as_str()?, check["new"].as_str()?,
             )).map(|expected| format!("{:x}", Sha256::digest(expected.as_bytes())))
                 .map(Value::String).unwrap_or(Value::Null);
-        } else if check["type"] == "file_changed"
+        } else if check["type"] == "file_changed" || check["creationOnly"]==true
             || (check["type"] == "file_equals" && check["inferred"] == true)
         {
             check["baseline"] = resolve_path(state, check["path"].as_str().unwrap_or(""))
@@ -552,16 +605,25 @@ pub(crate) fn acceptance_gaps(
 ) -> Vec<String> {
     let checks = checks.as_array().cloned().unwrap_or_default();
     let mut gaps = Vec::new();
+    // Bare creation requests are desired-state operations: if an existing
+    // file already meets that one owner condition, avoid claiming that the
+    // current run modified it or requiring a fresh SHA write receipt.
+    let creation_exists=checks.len()==1
+        && checks[0]["type"]=="file_exists"
+        && checks[0]["creationOnly"]==true
+        && checks[0]["path"].as_str().is_some_and(|path|
+            resolve_path(state,path).is_ok_and(|path|path.is_file()));
     let has_explicit_tool = checks.iter().any(|check| {
         matches!(
             check["type"].as_str(),
             Some("tool_succeeded" | "command_succeeded")
         )
     });
-    if looks_actionable(goal) && !evidence.iter().any(is_action_evidence) && !has_explicit_tool {
+    if looks_actionable(goal) && !evidence.iter().any(is_action_evidence)
+        && !has_explicit_tool && !creation_exists {
         gaps.push("변경 또는 실행을 입증하는 성공한 도구 결과가 없습니다. 조회 결과만으로 행동 목표를 완료할 수 없습니다.".into());
     }
-    if local_edit_intent(goal) {
+    if local_edit_intent(goal) && !creation_exists {
         let targets=checks.iter().filter_map(|check|{
             if matches!(check["type"].as_str(),Some(
                 "file_exists"|"file_changed"|"file_equals"|"file_contains"|"file_replace_exact"
@@ -648,6 +710,39 @@ pub(crate) fn acceptance_gaps(
 #[cfg(test)]
 mod inference_tests {
     use super::*;
+
+    #[test]
+    fn simple_create_is_existing_state_not_a_file_change_and_preserves_content(){
+        let dir=std::env::temp_dir().join(format!("dominion-main-create-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=crate::config::Config{port:0,data_dir:dir.join("data"),
+            web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=AppState::new(config.clone(),
+            crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        let goal="existing.md 파일을 만들어줘";
+        let path=dir.join("existing.md");
+        std::fs::write(&path,"Do not overwrite this").unwrap();
+        let checks=prepare_acceptance_checks(&state,goal);
+        assert_eq!(checks[0]["type"],"file_exists");
+        assert_eq!(checks[0]["creationOnly"],true);
+        assert!(check_acceptance(&state,goal,&checks,&[]).is_empty());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(),"Do not overwrite this");
+        std::fs::remove_file(path).unwrap();
+        assert!(!check_acceptance(&state,goal,&checks,&[]).is_empty());
+        let content_goal="existing.md 파일을 만들고 내용을 hello로 저장해";
+        assert_ne!(infer_criteria(content_goal)[0]["type"],"file_exists");
+        let _=std::fs::remove_dir_all(dir);
+    }
+    #[test]
+    fn spaced_desktop_filename_is_one_target(){
+        for prompt in ["바탕화면에 코덱스 ㅂㅅ.md파일만들어봐라",
+            "바탕 화면에 \"오늘 할 일.txt\" 파일을 만들어줘"]{
+            let inferred=infer_criteria(prompt);
+            assert_eq!(inferred.len(),1,"{inferred:?}");
+            assert!(inferred[0]["path"].as_str().unwrap().starts_with("~/Desktop/"));
+        }
+    }
 
     #[test]
     fn reading_an_input_does_not_require_it_to_change() {
