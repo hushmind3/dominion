@@ -109,6 +109,28 @@ fn next_instruction(goal:&str,gaps:&[String],error:Option<&str>,round:usize)->St
     )
 }
 
+/// The explicit UI command is a frozen acceptance criterion. Only a real
+/// successful command invocation (captured by the Rust tool runtime) satisfies
+/// it; prose or an unexecuted suggestion cannot make the job pass.
+fn add_explicit_verifier(checks: &mut Value, command: Option<&str>) -> Result<(), String> {
+    let Some(command) = command.map(str::trim).filter(|command| !command.is_empty()) else {
+        return Ok(());
+    };
+    if command.len() > 2048 {
+        return Err("검증 명령은 최대 2048자입니다.".into());
+    }
+    let items = checks.as_array_mut().ok_or("검증 조건이 배열이 아닙니다.")?;
+    if items.len() >= 20 {
+        return Err("검증 조건은 최대 20개입니다.".into());
+    }
+    if !items.iter().any(|check| {
+        check["type"] == "command_succeeded" && check["command"] == command
+    }) {
+        items.push(json!({"type":"command_succeeded","command":command}));
+    }
+    Ok(())
+}
+
 /// Called by the existing durable prompt worker. The job stays one operation;
 /// all intermediate rounds share its session, cancellation and audit records.
 pub async fn execute(
@@ -119,6 +141,8 @@ pub async fn execute(
 )->Result<Value,String> {
     let config=CycleConfig::from_input(input);
     let mut checks=verification::prepare_acceptance_checks(&ctx.state,goal);
+    let verify_command=input["verifyCommand"].as_str().filter(|command|!command.trim().is_empty());
+    add_explicit_verifier(&mut checks, verify_command)?;
     let mut has_checks=checks.as_array().is_some_and(|v|!v.is_empty());
     let mut steering_checked_revision=0u64;
     let plan=decompose::decompose(goal,&json!({"implementation":"numbered-first"}));
@@ -142,6 +166,12 @@ pub async fn execute(
         let mut turn=request.clone();
         if attempt>0 {
             turn.input=next_instruction(goal,&last_gaps,last_error.as_deref(),attempt);
+        }
+        if let Some(command)=verify_command {
+            turn.input.push_str("\n\n사용자가 지정한 필수 검증 명령을 실제 도구로 실행하고 결과를 확인하세요. ");
+            turn.input.push_str("기존 코드 변경이 완료된 뒤 명령이 성공해야 작업이 통과됩니다. ");
+            turn.input.push_str("실행에는 기존 도구 승인 정책이 적용됩니다. 명령: ");
+            turn.input.push_str(command);
         }
         // Owner steering wins over the prior plan and remains durable in the
         // same job record. Only the next model turn reads a new revision.
@@ -305,6 +335,19 @@ mod tests{
         assert!(stalled(&gaps,&gaps,0,None,None));
         assert!(!stalled(&gaps,&gaps,1,None,None));
         assert!(!stalled(&gaps,&[],0,None,None));
+    }
+    #[test]
+    fn explicit_ui_verifier_is_not_optional_and_cannot_be_faked() {
+        let mut checks=json!([{"type":"file_exists","path":"src/main.rs"}]);
+        add_explicit_verifier(&mut checks,Some("cargo test")).unwrap();
+        assert_eq!(checks.as_array().unwrap().len(),2);
+        assert_eq!(checks[1]["type"],"command_succeeded");
+        assert_eq!(checks[1]["command"],"cargo test");
+        add_explicit_verifier(&mut checks,Some("cargo test")).unwrap();
+        assert_eq!(checks.as_array().unwrap().len(),2);
+        assert!(add_explicit_verifier(&mut checks,Some(&"x".repeat(2049))).is_err());
+        let mut full=json!(vec![json!({"type":"file_exists","path":"some.rs"});20]);
+        assert!(add_explicit_verifier(&mut full,Some("cargo test")).is_err());
     }
     #[test]
     fn conservative_strategy_stops_on_partial_write_plus_provider_error(){
