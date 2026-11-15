@@ -27,7 +27,7 @@ mod runner;
 #[path="goals/tests.rs"]
 mod tests;
 
-use roles::{role_model,optional,tail};
+use roles::{role_model,optional,tail,resolve_executor};
 use completion::{patch_goal,finish};
 pub use completion::parse_review;
 pub use runner::run;
