@@ -917,7 +917,8 @@ mod tests {
             provider:crate::provider::ModelClient::new(
                 crate::provider::ModelConfig::basic(url.clone(),"mock".into(),None),None
             ).unwrap(),
-            workspace:root.clone(),model_name:"mock".into()},root)
+            workspace:root.clone(),workspace_write_lock:std::sync::Arc::new(tokio::sync::Mutex::new(())),
+            model_name:"mock".into()},root)
     }
 
     #[tokio::test]
