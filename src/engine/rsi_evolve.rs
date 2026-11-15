@@ -520,7 +520,7 @@ pub(crate) async fn command(
 
 async fn git(context: &JobContext, dir: &Path, args: &[&str]) -> Result<String, String> {
     let mut cmd = Command::new("git");
-    cmd.current_dir(dir).args(args);
+    cmd.current_dir(dir).args(args.iter().map(|arg|rsi_worktree::git_cli_argument(arg)));
     let output = command(context, cmd, Duration::from_secs(30)).await?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr)

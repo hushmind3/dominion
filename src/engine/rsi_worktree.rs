@@ -192,9 +192,19 @@ fn digest(value:&str)->String {
 async fn run(mut command: Command, limit: Duration) -> Result<std::process::Output,String> {
     tools::run_command(&mut command, limit).await
 }
+/// Git-for-Windows rejects paths beginning with Win32 verbatim prefixes
+/// (e.g. \\?\C:\...) even when Rust's canonicalize returned them.
+/// Translate only such filesystem paths; leave SHA refs, flags and patch
+/// content unchanged. UNC shares retain their network prefix.
+pub(crate) fn git_cli_argument(value:&str)->String {
+    let normalized=value.replace('\\',"/");
+    let Some(rest)=normalized.strip_prefix("//?/") else{return value.to_string()};
+    if let Some(share)=rest.strip_prefix("UNC/"){format!("//{share}")}
+    else{rest.to_string()}
+}
 async fn git(dir:&Path, args:&[&str])->Result<String,String>{
     let mut command=Command::new("git");
-    command.current_dir(dir).args(args);
+    command.current_dir(dir).args(args.iter().map(|arg|git_cli_argument(arg)));
     let output=run(command,GIT_LIMIT).await?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).chars().take(900).collect());
@@ -1131,6 +1141,14 @@ pub async fn cleanup(worktree:&Worktree)->Result<(),String>{
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn git_cli_rejects_verbatim_prefix_without_damaging_ordinary_arguments() {
+        assert_eq!(super::git_cli_argument(r"\\?\C:\Users\runner\lab"),"C:/Users/runner/lab");
+        assert_eq!(super::git_cli_argument(r"\\?\UNC\host\share\lab"),"//host/share/lab");
+        assert_eq!(super::git_cli_argument("HEAD^{tree}"),"HEAD^{tree}");
+        assert_eq!(super::git_cli_argument("--cached"),"--cached");
+    }
+
     use super::*;
     #[tokio::test]
     async fn frozen_candidate_tree_is_reconstructed_without_mutating_owner_index() {
