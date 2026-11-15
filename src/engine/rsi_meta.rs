@@ -291,6 +291,7 @@ async fn episode(context:&JobContext, binary:&Path, generator_commit:&str,
                     "filter":task_spec.guard}]}).to_string()).map_err(|e|e.to_string())?;
         let report=dir.join("report.json");let runner=dir.join("rsi-lab.mjs");
         std::fs::write(&runner,include_str!("../../scripts/rsi-lab.mjs")).map_err(|e|e.to_string())?;
+        std::fs::write(dir.join("rsi-result-format.mjs"),include_str!("../../scripts/rsi-result-format.mjs")).map_err(|e|e.to_string())?;
         std::fs::write(dir.join("rsi-measure.mjs"),include_str!("../../scripts/rsi-measure.mjs")).map_err(|e|e.to_string())?;
         let mut cmd=Command::new(rsi_worktree::node_executable());cmd.current_dir(source).arg(&runner).arg(source_commit).arg(&patch_file).arg(&plan).arg(&report)
             .env("PATH",super::dev::toolchain_path().unwrap_or_default())
