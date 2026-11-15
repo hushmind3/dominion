@@ -1,9 +1,16 @@
 # DOMINION 자체 Rust 엔진
 
+## 실행 경로 현황 (2026-11-15)
+
+1. **신규 자율 작업 SDK:** `crates/harness/src/sdk.rs` → `src/api/sdk.rs` → `/api/sdk/runs` → `web/src/components/NativeAgentPanel.tsx`. 동일한 `AgentSdk`가 Rust CLI(`crates/harness/src/bin/dominion-harness.rs`)를 구동합니다. Rust가 모델 판단, 도구 호출, 호출별 승인, 실행 이벤트, 체크포인트, 검증과 재시도를 직접 통제합니다.
+2. **기존 제품 기능:** `src/engine/chat/runtime.rs`, `jobs.rs`, `rooms.rs`, `video.rs`, `rsi*.rs` 등의 이전 Rust 경로. 새 SDK로 일괄 이전되지 않았으므로 기능 이름이 같아도 제품 기능 경로가 동일하다고 볼 수 없습니다.
+3. **외부 연동:** HTTP API가 신규 SDK 기능을 제공하며 React UI는 이를 사용하는 클라이언트입니다. TypeScript SDK는 선택적 보조 계층입니다.
+4. **남은 과제:** 기존 기능의 Rust SDK 통합, 모델별 프로토콜, 병렬 실행·계획/재계획, MCP/스킬·서브에이전트, 비용 계측, OS 샌드박스, 실전 검증. 구체적 증거와 현재 한계는 [Rust SDK 문서](docs/HARNESS.md)를 참고하세요.
+
 실행 경로는 `src/engine`의 Rust 모듈입니다. OpenClaw/Hermes 런타임, 봇 프레임워크,
 외부 메모리 서비스, 해당 프로젝트의 소스 코드를 포함하거나 실행하지 않습니다.
 모델은 OpenAI 호환 HTTP API로 호출하고, Discord는 공식 REST v10으로 연결합니다.
-이번 변경은 Cargo 의존성을 추가하지 않습니다. `web/`의 Node 도구는 UI 빌드에 사용합니다.
+현재 루트 Cargo에는 사내 Rust SDK 크레이트 `dominion-harness`에 대한 경로 의존성을 연결했습니다. `web/`의 Node 도구는 UI 빌드에 사용합니다.
 
 ## 기억과 학습
 
