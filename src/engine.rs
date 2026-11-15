@@ -213,6 +213,7 @@ pub async fn run(state: AppState, id: String) {
     let require_evidence = input["requireEvidence"] == true;
     let steps = input["maxSteps"].as_u64().unwrap_or(12).clamp(1,24);
     let token_budget = input["tokenBudget"].as_u64().unwrap_or(40_000).clamp(256,500_000);
+    let cost_budget_krw = input["costBudgetKrw"].as_f64();
     let mut available = specs(allow_write,allow_shell,allow_subagents);
     if allow_mcp {
         available.extend(state.mcp.definitions().await);
@@ -256,6 +257,11 @@ pub async fn run(state: AppState, id: String) {
             Ok(planning_reply) => {
                 let tokens = planning_reply.input_tokens + planning_reply.output_tokens;
                 state.store.account_aux_tokens(&id,tokens);
+                if let Err(error)=state.store.account_cost(&id,planning_reply.cost_krw) {
+                    settle(&state,&id,"needs_review","",0,
+                        Some(format!("계획 비용 기록 오류: {error}")));
+                    return;
+                }
                 state.emit(&id,"model_usage",json!({"phase":"planning",
                     "model":planning_reply.model,"inputTokens":planning_reply.input_tokens,
                     "outputTokens":planning_reply.output_tokens,
@@ -294,6 +300,19 @@ pub async fn run(state: AppState, id: String) {
                 Some("전체 토큰 예산을 소진했습니다.".into()));
             return;
         }
+        if let Some(ceiling)=cost_budget_krw {
+            let spent=if allow_subagents {state.store.family_cost_krw(&id)}
+                else {state.store.get(&id).and_then(|v|v["costKrw"].as_f64())
+                    .unwrap_or(f64::INFINITY)};
+            if spent>=ceiling {
+                state.emit(&id,"budget_exhausted",json!({
+                    "type":"krw","spentKrw":spent,"limitKrw":ceiling
+                }));
+                settle(&state,&id,"needs_review","",verified_writes,
+                    Some("요청한 원화 사용 예산에 도달했습니다.".into()));
+                return;
+            }
+        }
         // Compact only the outbound projection. Tool call/result pairs and
         // original session evidence remain intact for later verification.
         let context_limit=std::env::var("DOMINION_CONTEXT_MAX_CHARS").ok()
@@ -319,6 +338,11 @@ pub async fn run(state: AppState, id: String) {
         let tokens = reply.raw["usage"]["total_tokens"].as_u64()
             .unwrap_or(reply.input_tokens.saturating_add(reply.output_tokens));
         state.store.measure(&id,tokens);
+        if let Err(error)=state.store.account_cost(&id,reply.cost_krw) {
+            settle(&state,&id,"needs_review","",verified_writes,
+                Some(format!("모델 사용 비용을 저장하지 못했습니다: {error}")));
+            return;
+        }
         state.emit(&id,"model_usage",json!({"phase":"execute",
             "model":reply.model,"inputTokens":reply.input_tokens,
             "outputTokens":reply.output_tokens,
@@ -388,6 +412,11 @@ pub async fn run(state: AppState, id: String) {
                     Ok(verdict) => {
                         let tokens=verdict.input_tokens + verdict.output_tokens;
                         state.store.account_aux_tokens(&id,tokens);
+                         if let Err(error)=state.store.account_cost(&id,verdict.cost_krw) {
+                             settle(&state,&id,"needs_review",&text,verified_writes,
+                                 Some(format!("검증 비용 기록 오류: {error}")));
+                             return;
+                         }
                         state.emit(&id,"model_usage",json!({"phase":"verification",
                             "model":verdict.model,"inputTokens":verdict.input_tokens,
                             "outputTokens":verdict.output_tokens,
