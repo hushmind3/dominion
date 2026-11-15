@@ -141,3 +141,14 @@ test('native wait exposes manual recovery and does not infer task success',async
   const sdk=new Dominion({fetch:async()=>reply({id:'r2',instruction:'Edit',status:'in_doubt'})});
   assert.equal((await sdk.nativeRuns.wait('r2',{timeoutMs:100})).status,'in_doubt');
 });
+
+test('SSE accepts mixed CRLF + LF, LF + CRLF, and CR + CRLF separators',async()=>{
+  const sdk=new Dominion({fetch:async()=>sse(
+    'data: {"seq":1,"type":"mixed-one"}\r\n\n',
+    'data: {"seq":2,"type":"mixed-two"}\n\r\n',
+    'data: {"seq":3,"type":"mixed-three"}\r\r\n'
+  )});
+  const found=[];
+  for await(const event of sdk.events()){found.push(event.type);}
+  assert.deepEqual(found,['mixed-one','mixed-two','mixed-three']);
+});
