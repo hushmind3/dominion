@@ -14,7 +14,7 @@ use std::{
 };
 
 pub fn config(state: &AppState) -> Value {
-    let mut value = json!({"id":"default","engine":"native","duration":15,"aspectRatio":"9:16","comfyUrl":"","comfyWorkflow":null,"workflowDir":"","outputDir":"","ffmpegPath":"","providerId":"","model":"","useModel":false,"narration":true,"voice":"Yuna","rate":170,"videoModel":"","resolution":"480x832","steps":20,"comfyModelsDir":""});
+    let mut value = json!({"id":"default","engine":"native","duration":15,"aspectRatio":"9:16","comfyUrl":"","comfyWorkflow":null,"workflowDir":"","outputDir":"","ffmpegPath":"","providerId":"","model":"","useModel":false,"narration":true,"voice":"Yuna","rate":170,"videoModel":"","resolution":"480x832","steps":20,"comfyModelsDir":"","economy":false});
     if let Some(saved) = state.store.get("video_config", "default") {
         if let Some(map) = saved.as_object() {
             for (k, v) in map {
@@ -325,8 +325,33 @@ pub fn output_path(state: &AppState, id: &str) -> Result<PathBuf, String> {
 pub fn public_job(job: &Value) -> Value {
     let id = job["id"].as_str().unwrap_or("");
     let ready = job["kind"] == "video" && job["status"] == "completed";
-    json!({"id":id,"kind":job["kind"],"title":job["input"]["title"],"brief":job["input"]["brief"],"engine":job["input"]["engine"],"status":job["status"],"phase":job.get("phase").unwrap_or(&job["status"]),"progress":job["progress"],"error":job["error"],"createdAt":job.get("createdAt").or(job.get("created_at")),"videoJobId":job["input"]["videoJobId"],"privacyStatus":job["input"]["privacyStatus"],"outputUrl":ready.then(||format!("/api/video/jobs/{id}/content")),"storyboard":job["videoState"]["scenes"],"result":job["result"],"duration":job["input"]["duration"],"aspectRatio":job["input"]["aspectRatio"]})
+    json!({"id":id,"kind":job["kind"],"title":job["input"]["title"],"brief":job["input"]["brief"],"engine":job["input"]["engine"],"status":job["status"],"phase":job.get("phase").unwrap_or(&job["status"]),"progress":job["progress"],"error":job["error"],"createdAt":job.get("createdAt").or(job.get("created_at")),"videoJobId":job["input"]["videoJobId"],"privacyStatus":job["input"]["privacyStatus"],"outputUrl":ready.then(||format!("/api/video/jobs/{id}/content")),"storyboard":job["videoState"]["scenes"],"result":job["result"],"duration":job["input"]["duration"],"aspectRatio":job["input"]["aspectRatio"],"renderBudget":job["input"]["render"]["budget"]})
 }
+/// Deterministic preflight work estimate: frames x diffusion steps x pixels.
+//// Economy is explicit opt-in; it never silently changes the user's quality.
+fn render_budget(duration: u64, fps: u64, steps: u64,
+    width: u64, height: u64, economy: bool) -> Value {
+    let effective_fps = if economy { fps.min(12) } else { fps };
+    let effective_steps = if economy { steps.min(12) } else { steps };
+    let units = |f: u64, s: u64| -> u128 {
+        u128::from(duration) * u128::from(f) * u128::from(s)
+            * u128::from(width) * u128::from(height)
+    };
+    let baseline = units(fps,steps);
+    let reduced = units(effective_fps,effective_steps);
+    json!({
+        "mode":if economy{"economy"}else{"standard"},
+        "fps":effective_fps,"steps":effective_steps,
+        "frames":duration.saturating_mul(effective_fps),
+        "estimatedPixelSteps":reduced.to_string(),
+        "baselinePixelSteps":baseline.to_string(),
+        "estimatedWorkReductionPercent":if baseline > 0 {
+            ((baseline.saturating_sub(reduced))*100/baseline) as u64
+        } else { 0 },
+        "note":"Compute proxy only; runtime, electricity and provider charges are not inferred"
+    })
+}
+
 pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
     let cfg = config(state);
     let brief = body["brief"].as_str().unwrap_or("").trim();
@@ -375,6 +400,8 @@ pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
         .collect::<String>();
     let fps = body["fps"].as_u64().unwrap_or(16);
     let seed = body["seed"].as_i64().unwrap_or(-1);
+    let economy = body["economy"].as_bool()
+        .or(cfg["economy"].as_bool()).unwrap_or(false);
     let negative_prompt = body["negativePrompt"].as_str().unwrap_or("");
     if !(1..=60).contains(&fps) || seed < -1 || negative_prompt.len() > 16_000 {
         return Err("FPS, 시드, 네거티브 프롬프트 값을 확인하세요.".into());
@@ -401,6 +428,15 @@ pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
         "1:1" => (480, 480),
         _ => (360, 640),
     });
+    let plan = render_budget(duration,fps,cfg["steps"].as_u64().unwrap_or(20).clamp(1,60),
+        width,height,economy && engine == "comfyui");
+    let mut frozen_cfg = cfg.clone();
+    frozen_cfg["steps"] = plan["steps"].clone();
+    if economy && engine == "native" {
+        // Explicit economy mode always skips the optional paid storyboard call.
+        frozen_cfg["useModel"] = json!(false);
+    }
+    let effective_fps = if engine == "comfyui" { plan["fps"].as_u64().unwrap_or(fps) } else { fps };
     let seed = if seed == -1 {
         // Freeze one seed for this job so a safe retry uses identical input.
         i64::from(u32::from_be_bytes(uuid::Uuid::new_v4().as_bytes()[..4].try_into().unwrap()))
@@ -409,9 +445,11 @@ pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
     };
     let input = json!({
         "brief":brief, "title":title, "engine":engine, "duration":duration,
-        "aspectRatio":aspect, "config":cfg, "publish":false,
+        "aspectRatio":aspect, "config":frozen_cfg, "publish":false,
         "render":{"prompt":brief,"negative":negative_prompt,"negativePrompt":negative_prompt,
-                  "duration":duration,"width":width,"height":height,"fps":fps,"frames":duration*fps,"seed":seed}
+                  "duration":duration,"width":width,"height":height,
+                  "fps":effective_fps,"frames":duration*effective_fps,
+                  "steps":plan["steps"],"economy":economy,"budget":plan,"seed":seed}
     });
     jobs::enqueue(state, "video", input)
         .map(|j| public_job(&j))
