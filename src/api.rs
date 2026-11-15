@@ -8,7 +8,7 @@ use axum::{
 };
 use serde_json::{json, Value};
 use std::{collections::HashMap, convert::Infallible, time::Duration};
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -39,7 +39,12 @@ pub fn router(state: AppState) -> Router {
         .route("/api/memory/:id/disable",post(memory_disable))
         .route("/api/skills",get(skill_list).post(skill_create))
         .route("/api/skills/:id/enable",post(skill_enable))
-        .fallback_service(ServeDir::new("web"))
+        .fallback_service({
+            let root = std::env::var_os("DOMINION_WEB_DIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("web/dist"));
+            ServeDir::new(&root).fallback(ServeFile::new(root.join("index.html")))
+        })
         .with_state(state)
 }
 
