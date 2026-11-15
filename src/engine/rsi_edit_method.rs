@@ -156,7 +156,9 @@ pub(crate) fn history_with_verified_payoffs(state:&AppState,history:&[Value])->V
             return enriched;
         };
         enriched["pairedEvidenceVerified"]=json!(true);
-        enriched["measuredImprovedHoldouts"]=metrics["improvedHoldouts"].clone();
+        enriched["measuredImprovedHoldouts"]=if metrics["eligible"]==true {
+            metrics["improvedHoldouts"].clone()
+        } else {json!(0)};
         if row["accepted"]==true
             && candidate["status"]=="verified"
             && candidate["experimentAdoption"]["commit"]==row["acceptedCommit"]
