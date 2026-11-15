@@ -140,6 +140,11 @@ export function ModelHub(){
  const [defaultEffort,setDefaultEffort]=useState('')
  const [routingPrice,setRoutingPrice]=useState<RoutingPriceFields>(emptyRoutingPrices)
  const priceField=(field:keyof RoutingPriceFields,value:string)=>setRoutingPrice(old=>({...old,[field]:value}))
+ const changeDefaultModel=(value:string)=>{
+  if(edit?.nativeRouting?.model&&edit.nativeRouting.model!==value)
+   setRoutingPrice(emptyRoutingPrices)
+  setDefaultModel(value)
+ }
  const editModels=useProviderModels(modal&&edit?edit.id:'')
  const probe=async(p:Provider)=>{
   setCounts(old=>({...old,[p.id]:{list:[],busy:true}}))
@@ -481,8 +486,8 @@ export function ModelHub(){
     </>}
     {kind!=='codex'&&<FormField label="기본 모델 ID" hint="키를 등록한 후 제공자 모델 목록에서 선택하거나 ID를 직접 입력하세요.">
      <div className="grid gap-2">
-      {edit?.hasKey&&baseUrl.trim()===edit.baseUrl&&kind===edit.kind&&<ModelPicker providerId={edit.id} value={defaultModel} onChange={setDefaultModel} className="w-full"/>}
-      <TextInput value={defaultModel} onChange={e=>setDefaultModel(e.target.value)} placeholder={integration==='opencode-go'?'예: deepseek-v4.1-flash':t('models.dlg.modelIdPlaceholder')}/>
+      {edit?.hasKey&&baseUrl.trim()===edit.baseUrl&&kind===edit.kind&&<ModelPicker providerId={edit.id} value={defaultModel} onChange={changeDefaultModel} className="w-full"/>}
+      <TextInput value={defaultModel} onChange={e=>changeDefaultModel(e.target.value)} placeholder={integration==='opencode-go'?'예: deepseek-v4.1-flash':t('models.dlg.modelIdPlaceholder')}/>
      </div>
     </FormField>}
     <FormField label={t('models.dlg.rpm')} hint={t('models.dlg.rpmHint')}><TextInput type="number" min={0} max={10000} value={rpm} onChange={e=>setRpm(e.target.value)} placeholder="0"/></FormField>
