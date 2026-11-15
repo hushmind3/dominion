@@ -223,6 +223,8 @@ pub async fn run(state: AppState, id: String) {
     let mut verified_writes = 0_u64;
     let mut total_calls = 0_u64;
     let mut receipts: Vec<Value> = Vec::new();
+    let mut active_instruction = prompt.clone();
+    let mut owner_redirected = false;
     let planning = strategy::PlanningPolicy::from_setting(
         input["planningMode"].as_str().unwrap_or("auto")
     );
@@ -251,6 +253,8 @@ pub async fn run(state: AppState, id: String) {
             return;
         }
         if let Some(instruction) = state.store.take_steer(&id) {
+            active_instruction = instruction.clone();
+            owner_redirected = true;
             messages.push(json!({"role":"user","content":instruction}));
             state.store.add_message(&session,"user",&instruction);
             state.emit(&id,"instruction_applied",json!({"text":instruction}));
@@ -290,6 +294,8 @@ pub async fn run(state: AppState, id: String) {
         // A correction arriving during an in-flight model request supersedes
         // every not-yet-started tool call. Keep tool/result pairs complete.
         if let Some(instruction) = state.store.take_steer(&id) {
+            active_instruction = instruction.clone();
+            owner_redirected = true;
             messages.push(message.clone());
             for call in &calls {
                 let tool_id=call["id"].as_str().unwrap_or("unidentified");
@@ -312,8 +318,8 @@ pub async fn run(state: AppState, id: String) {
             }
 
             // Deterministic evidence gate: model claims never prove a write.
-            let required_write = (require_evidence || (allow_write &&
-                strategy::source_change_requested(&prompt)));
+            let required_write = require_evidence || (allow_write && !owner_redirected &&
+                strategy::source_change_requested(&active_instruction));
             if required_write && verified_writes == 0 {
                 state.emit(&id,"verification_gap",json!({
                     "reason":"requested source change lacks verified write receipt"
@@ -330,10 +336,10 @@ pub async fn run(state: AppState, id: String) {
             }
             // For complex work a separate model critique may demand further
             // corrections. It cannot override the native evidence check.
-            if strategy::complex(&prompt) && strategy::action_requested(&prompt)
+            if strategy::complex(&active_instruction) && strategy::action_requested(&active_instruction)
                 && !receipts.is_empty() {
                 let review = completion(&state,
-                    &strategy::review_messages(&prompt,&text,&receipts),&[]).await;
+                    &strategy::review_messages(&active_instruction,&text,&receipts),&[]).await;
                 match review {
                     Ok(verdict) => {
                         let tokens=verdict["usage"]["total_tokens"].as_u64().unwrap_or(0);
@@ -424,6 +430,8 @@ pub async fn run(state: AppState, id: String) {
                 "content":value.to_string()}));
         }
         if let Some(instruction)=pending_correction {
+            active_instruction = instruction.clone();
+            owner_redirected = true;
             messages.push(json!({"role":"user","content":instruction}));
             state.store.add_message(&session,"user",&instruction);
             state.emit(&id,"instruction_applied",json!({"text":instruction}));
