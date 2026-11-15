@@ -67,9 +67,10 @@ fn allowed_check(program: &str, args: &[String]) -> bool {
             args.first().is_some_and(|a| a == "test") ||
                 (args.len() == 2 && matches!(args[1].as_str(), "build" | "typecheck"))
         }
-        ("git", Some("status" | "diff")) => true,
+        ("git", Some("status" | "diff")) => args.iter().skip(1)
+            .all(|v| matches!(v.as_str(),"--short"|"--stat"|"--no-ext-diff")),
         ("node", Some("--test")) => true,
-        ("rg", Some(_)) => true,
+        ("rg", Some(pattern)) => args.len()==1 && !pattern.starts_with('-'),
         _ => false,
     }
 }
@@ -111,6 +112,12 @@ async fn tool(state: &AppState, name: &str, args: &Value,
             command.args(&params)
                 .current_dir(&state.workspace).stdin(Stdio::null())
                 .stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+            if program=="git" {
+                command.env_remove("GIT_EXTERNAL_DIFF");
+                if params.first().is_some_and(|s|s=="diff") {
+                    command.arg("--no-ext-diff");
+                }
+            }
             let output = timeout(Duration::from_secs(90), command.output()).await
                 .map_err(|_| "검사 명령 제한 시간이 초과되었습니다.".to_string())?
                 .map_err(|e| e.to_string())?;
@@ -215,6 +222,22 @@ pub async fn run(state: AppState, id: String) {
         };
         let message = Value::Object(message.clone());
         let calls = message["tool_calls"].as_array().cloned().unwrap_or_default();
+        // A correction arriving during an in-flight model request supersedes
+        // every not-yet-started tool call. Keep tool/result pairs complete.
+        if let Some(instruction) = state.store.take_steer(&id) {
+            messages.push(message.clone());
+            for call in &calls {
+                let tool_id=call["id"].as_str().unwrap_or("unidentified");
+                let result=json!({"ok":false,"skipped":true,"reason":"owner_instruction_changed"});
+                messages.push(json!({"role":"tool","tool_call_id":tool_id,
+                    "content":result.to_string()}));
+                state.emit(&id,"tool_skipped",json!({"callId":tool_id,"reason":"owner_instruction_changed"}));
+            }
+            messages.push(json!({"role":"user","content":instruction}));
+            state.store.add_message(&session,"user",&instruction);
+            state.emit(&id,"instruction_applied",json!({"text":instruction}));
+            continue;
+        }
         if calls.is_empty() {
             let text = message["content"].as_str().unwrap_or("").trim().to_string();
             if text.is_empty() {
@@ -230,6 +253,7 @@ pub async fn run(state: AppState, id: String) {
             return;
         }
         messages.push(message);
+        let mut pending_correction:Option<String>=None;
         for call in calls {
             if state.store.cancelled(&id) {
                 settle(&state,&id,"cancelled","",verified_writes,None);
@@ -243,6 +267,18 @@ pub async fn run(state: AppState, id: String) {
             }
             let tool_name = call["function"]["name"].as_str().unwrap_or("");
             let tool_id = call["id"].as_str().unwrap_or("unidentified").to_string();
+            // The owner may redirect execution while earlier calls in the
+            // same batch are running. Skip every remaining unstarted effect.
+            if pending_correction.is_none() {
+                pending_correction=state.store.take_steer(&id);
+            }
+            if pending_correction.is_some() {
+                let value=json!({"ok":false,"skipped":true,"reason":"owner_instruction_changed"});
+                state.emit(&id,"tool_skipped",json!({"name":tool_name,"callId":tool_id}));
+                messages.push(json!({"role":"tool","tool_call_id":tool_id,
+                    "content":value.to_string()}));
+                continue;
+            }
             let arguments = call["function"]["arguments"].as_str()
                 .and_then(|s| serde_json::from_str::<Value>(s).ok())
                 .unwrap_or(Value::Null);
@@ -260,6 +296,11 @@ pub async fn run(state: AppState, id: String) {
                 "outcome":value}));
             messages.push(json!({"role":"tool","tool_call_id":tool_id,
                 "content":value.to_string()}));
+        }
+        if let Some(instruction)=pending_correction {
+            messages.push(json!({"role":"user","content":instruction}));
+            state.store.add_message(&session,"user",&instruction);
+            state.emit(&id,"instruction_applied",json!({"text":instruction}));
         }
     }
     settle(&state,&id,"needs_review","",verified_writes,
