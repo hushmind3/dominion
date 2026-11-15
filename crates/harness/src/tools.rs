@@ -81,6 +81,51 @@ impl Tool for WriteFile {
     }
 }
 
+/// Replace one exact span of a source file, refusing ambiguous or stale edits.
+/// A patch costs fewer model tokens than rewriting a whole file.
+pub struct PatchFile(pub Workspace);
+impl Tool for PatchFile {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "fs_patch".into(),
+            description: "Replace exactly one matching text span in a workspace UTF-8 file. Refuses missing or ambiguous matches.".into(),
+            parameters: json!({
+                "type":"object",
+                "properties":{
+                    "path":{"type":"string"},
+                    "old":{"type":"string"},
+                    "new":{"type":"string"}
+                },
+                "required":["path","old","new"]
+            }),
+            permission: Permission::Write,
+        }
+    }
+    fn invoke(&mut self, arguments: &Value) -> Result<Value, String> {
+        let path = arguments["path"].as_str().ok_or("path가 필요합니다.")?;
+        let old = arguments["old"].as_str().filter(|part| !part.is_empty())
+            .ok_or("old는 비어 있을 수 없습니다.")?;
+        let new = arguments["new"].as_str().ok_or("new가 필요합니다.")?;
+        let target = self.0.resolve(path)?;
+        let previous = std::fs::read_to_string(&target)
+            .map_err(|error| format!("수정할 파일 읽기 실패: {error}"))?;
+        let hits = previous.match_indices(old).count();
+        if hits != 1 {
+            return Err(format!("코드 패치 거부: old 텍스트가 {hits}개 일치합니다 (정확히 1개 필요)."));
+        }
+        let updated = previous.replacen(old, new, 1);
+        // Resolve the final path a second time; a symlink may have changed
+        // while the model was preparing its requested patch.
+        let verified = self.0.resolve(path)?;
+        if verified != target { return Err("패치 대상 경로가 변경됐습니다.".into()); }
+        std::fs::write(&target, updated.as_bytes())
+            .map_err(|error| format!("패치 기록 실패: {error}"))?;
+        Ok(json!({
+            "path":path, "changed":true, "oldBytes":old.len(), "newBytes":new.len()
+        }))
+    }
+}
+
 pub struct ListDir(pub Workspace);
 impl Tool for ListDir {
     fn spec(&self) -> ToolSpec {
@@ -215,6 +260,19 @@ mod tests {
         let value = read.invoke(&json!({"path":"src/a.txt"})).unwrap();
         assert_eq!(value["content"], "hello");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn patch_requires_exactly_one_match_and_preserves_other_content() {
+        let dir = temp_workspace();
+        std::fs::write(dir.join("main.rs"), "let a = 1;\\nlet b = 1;\\n".replace("\\n", "\n")).unwrap();
+        let mut patch = PatchFile(Workspace::new(&dir).unwrap());
+        assert!(patch.invoke(&json!({"path":"main.rs","old":"= 1","new":"= 2"})).is_err());
+        let report = patch.invoke(&json!({"path":"main.rs","old":"let a = 1;","new":"let a = 2;"})).unwrap();
+        assert_eq!(report["changed"], true);
+        assert_eq!(std::fs::read_to_string(dir.join("main.rs")).unwrap(),
+            "let a = 2;\\nlet b = 1;\\n".replace("\\n", "\n"));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
