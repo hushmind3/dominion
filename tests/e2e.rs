@@ -7186,3 +7186,31 @@ fn codex_receives_uploaded_image_and_file_contents() {
     assert!(parts.iter().any(|part| part["type"] == "input_image"
         && part["image_url"] == format!("data:image/png;base64,{image_data}")), "{seen:?}");
 }
+
+#[test]
+fn compound_shell_file_creation_finishes_without_false_repair_or_reviewer() {
+    let _serial = serial();
+    let (port, requests) = scripted_provider(|request| {
+        let tools = request["tools"].as_array().is_some_and(|tools| !tools.is_empty());
+        if !tools {
+            return vec![json!({"choices":[{"delta":{"content":"빈 텍스트 파일을 만들었습니다."},"finish_reason":"stop"}]})];
+        }
+        vec![json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"compound-create","type":"function",
+            "function":{"name":"shell_exec","arguments":json!({"command":"touch '메모.txt' && ls -l '메모.txt'"}).to_string()}}]},"finish_reason":"tool_calls"}]})]
+    });
+    let app = TestApp::new(port, "native");
+    app.post("/api/policy", &json!({"autoApproveAll":true}));
+    let session = app.post("/api/sessions", &json!({"title":"compound-create"}));
+    let stream = app.chat(&json!({"sessionId":session["id"],"input":"메모라는 txt파일 만들어줘","autoLearning":false}));
+    assert!(stream.contains("assistant_saved"), "{stream}");
+    assert!(!stream.contains("acceptance_retry"), "{stream}");
+    assert!(!stream.contains("실행 증거가 부족"), "{stream}");
+    assert_eq!(std::fs::metadata(app._root.join("메모.txt")).unwrap().len(), 0);
+    let execution = app.get("/api/executions")[0].clone();
+    assert_eq!(execution["status"], "completed", "{execution}");
+    assert_eq!(execution["toolCalls"], 1, "{execution}");
+    assert!(execution["modelCalls"].as_u64().unwrap() <= 3, "{execution}");
+    let captured = requests.lock().unwrap();
+    let chat = captured.iter().find(|request| request["tools"].as_array().is_some_and(|tools| !tools.is_empty())).unwrap();
+    assert!(chat["messages"][0]["content"].as_str().unwrap().contains("언어 지침: 추론"));
+}

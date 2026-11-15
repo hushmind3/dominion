@@ -357,3 +357,112 @@ fn parses_function_wrapper_and_missing_closing_tag() {
     assert_eq!(calls[0].0, "workspace_read");
     assert!(calls[0].1.contains("a.txt"));
 }
+
+#[test]
+fn durable_history_restores_out_of_order_results_by_call_identity() {
+    let state = temp_state();
+    let transcript = [
+        json!({"role":"assistant","content":"","tool_calls":[
+            {"id":"a","type":"function","function":{"name":"workspace_read","arguments":"{}"}},
+            {"id":"b","type":"function","function":{"name":"workspace_read","arguments":"{}"}}
+        ]}),
+        json!({"role":"tool","tool_call_id":"b","content":"second observation"}),
+        json!({"role":"tool","tool_call_id":"a","content":"first observation"}),
+    ];
+    for mut message in transcript {
+        message["session_id"] = json!("out-of-order");
+        state.store.write_message(&message).unwrap();
+    }
+    let restored = history(&state, "out-of-order", None, None).unwrap();
+    assert_eq!(restored.len(), 3);
+    assert_eq!(restored[1]["tool_call_id"], "a");
+    assert_eq!(restored[1]["content"], "first observation");
+    assert_eq!(restored[2]["tool_call_id"], "b");
+    assert_eq!(restored[2]["content"], "second observation");
+    let _ = std::fs::remove_dir_all(&state.config.data_dir);
+}
+
+#[tokio::test]
+async fn ordinary_chat_runs_native_tools_through_the_imported_rust_kernel() {
+    use axum::{extract::State, routing::post, Json, Router};
+    use axum::response::IntoResponse;
+    use std::sync::{Arc, Mutex};
+    let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+    async fn model(State(requests): State<Arc<Mutex<Vec<Value>>>>, Json(body): Json<Value>)
+        -> axum::response::Response {
+        let first = {
+            let mut captured = requests.lock().unwrap();
+            captured.push(body);
+            captured.len() == 1
+        };
+        let delta = if first { json!({"tool_calls":[
+            {"index":0,"id":"call-a","type":"function","function":{"name":"workspace_read","arguments":"{\"path\":\"a.txt\"}"}},
+            {"index":1,"id":"call-b","type":"function","function":{"name":"workspace_read","arguments":"{\"path\":\"b.txt\"}"}}
+        ]}) } else { json!({"content":"두 파일의 실제 내용을 확인했습니다."}) };
+        let response = format!("data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+            json!({"choices":[{"delta":delta}]}),
+            json!({"choices":[{"delta":{},"finish_reason":if first {"tool_calls"} else {"stop"}}],
+                "usage":{"prompt_tokens":10,"completion_tokens":10,"total_tokens":20}}));
+        ([(axum::http::header::CONTENT_TYPE,"text/event-stream")],response).into_response()
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = Router::new().route("/chat/completions", post(model)).with_state(requests.clone());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let state = temp_state();
+    std::fs::write(state.config.workspace.join("a.txt"), "alpha").unwrap();
+    std::fs::write(state.config.workspace.join("b.txt"), "beta").unwrap();
+    state.store.put("provider", &json!({"id":"kernel-model","baseUrl":format!("http://{address}"),
+        "model":"native-tool-fixture","kind":"openai","enabled":true}));
+    state.store.put("session", &json!({"id":"kernel-chat","providerId":"kernel-model"}));
+    crate::engine::algorithms::seed(&state);
+    let parallel = state.store.all("algorithm").into_iter().find(|row|
+        row["kind"] == "tool.combination" && row["implementation"] == "parallel-reads").unwrap();
+    crate::engine::algorithms::activate(&state, parallel["id"].as_str().unwrap()).unwrap();
+    let request = TurnRequest::from_value(&json!({"sessionId":"kernel-chat",
+        "input":"현재 상황을 설명해줘","autoLearning":false})).unwrap();
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let saved = tokio::time::timeout(Duration::from_secs(5), run_turn(&state, &request, &tx))
+        .await.unwrap().unwrap().unwrap();
+    assert_eq!(saved["metadata"]["runtime"], "dominion-agent-sdk");
+    let execution = state.store.all("execution").pop().unwrap();
+    assert_eq!(execution["kernelState"]["status"], "completed");
+    assert_eq!(execution["kernelState"]["receipts"].as_array().unwrap().len(), 2);
+    assert_eq!(execution["budget"]["tools"], 2);
+    assert!(execution["kernelState"]["inFlight"].as_array().unwrap().is_empty());
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured.len(), 2);
+    let evidence = captured[1]["messages"].as_array().unwrap().iter()
+        .filter(|message| message["role"] == "tool").collect::<Vec<_>>();
+    assert_eq!(evidence.len(), 2);
+    assert!(evidence.iter().any(|message| message["content"].as_str().unwrap().contains("alpha")));
+    assert!(evidence.iter().any(|message| message["content"].as_str().unwrap().contains("beta")));
+    server.abort();
+    let _ = std::fs::remove_dir_all(&state.config.data_dir);
+}
+
+#[test]
+fn korean_turn_infers_reasoning_language_and_respects_explicit_original() {
+    let mut request = TurnRequest::from_value(&json!({"input":"바탕화면에 메모 파일 만들어줘"})).unwrap();
+    assert_eq!(request.effective_reasoning_language(), Some("ko"));
+    request.reasoning_language = Some("original".into());
+    assert_eq!(request.effective_reasoning_language(), None);
+    request.input = "Create a note".into();
+    request.reasoning_language = None;
+    assert_eq!(request.effective_reasoning_language(), None);
+}
+
+#[test]
+fn completed_compound_shell_file_creation_is_accepted_without_another_reviewer() {
+    let state = temp_state();
+    let checks = crate::engine::verification::prepare_acceptance_checks(&state, "memo.txt 파일 만들어줘");
+    assert!(crate::engine::verification::check_acceptance(&state, "memo.txt 파일 만들어줘", &checks, &[]).len() > 0);
+    std::fs::write(state.config.workspace.join("memo.txt"), "").unwrap();
+    let evidence = vec![json!({"tool":"shell_exec","arguments":{"command":"cd workspace && touch memo.txt && ls -l memo.txt"},
+        "status":"completed","result":{"exitCode":0,"stdout":"memo.txt","stderr":""}})];
+    assert!(crate::engine::verification::check_acceptance(&state, "memo.txt 파일 만들어줘", &checks, &evidence).is_empty());
+    let read_only = vec![json!({"tool":"workspace_list","result":{"entries":["memo.txt"]}})];
+    assert!(!crate::engine::verification::check_acceptance(&state, "memo.txt 파일 만들어줘", &checks, &read_only).is_empty());
+    assert!(!crate::engine::verification::check_acceptance(&state, "memo.txt 파일 만들어줘", &json!([]), &evidence).is_empty());
+    let _ = std::fs::remove_dir_all(&state.config.data_dir);
+}

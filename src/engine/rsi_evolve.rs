@@ -580,11 +580,27 @@ pub fn lineage_fingerprint_valid(value: &str) -> bool {
         && value != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 }
 
+/// Source capture and candidate-edit authorization are different contracts.
+/// A new path dependency needs its manifest and Rust files in the baseline
+/// even while those files are untracked in the owner's checkout.
+fn snapshot_source_path(path: &str) -> bool {
+    if path.contains('\\') || path.chars().any(char::is_control)
+        || path.split('/').any(|part| part.is_empty() || part.starts_with('.')) {
+        return false;
+    }
+    crate::engine::rsi::safe_path(path)
+        || matches!(path, "Cargo.toml" | "Cargo.lock" | "build.rs")
+        || matches!(path.split('/').collect::<Vec<_>>().as_slice(),
+            ["crates", _, "Cargo.toml" | "build.rs" | "README.md"])
+        || path.strip_prefix("scripts/").is_some_and(|part| !part.contains('/'))
+}
+
 async fn snapshot_source(
     context: &JobContext,
     source: &Path,
     lab: &Path,
 ) -> Result<(bool, String), String> {
+    let source_root = source.canonicalize().map_err(|e| e.to_string())?;
     let commit = git(context, source, &["rev-parse", "HEAD"]).await?;
     let tree = git(context, source, &["rev-parse", "HEAD^{tree}"]).await?;
     let mut cmd = Command::new("git");
@@ -618,17 +634,16 @@ async fn snapshot_source(
     let mut bytes = 0u64;
     let mut untracked: Vec<(String, Vec<u8>)> = Vec::new();
     for name in files.split('\0').filter(|name| !name.is_empty()) {
-        let code = crate::engine::rsi::safe_path(name)
-            || name
-                .strip_prefix("scripts/")
-                .is_some_and(|part| !part.contains('/') && !part.starts_with('.'));
-        if !code || name.chars().any(char::is_control) {
+        if !snapshot_source_path(name) {
             continue;
         }
         let path = source.join(name);
         let metadata = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
         if !metadata.is_file() {
             continue;
+        }
+        if !path.canonicalize().map_err(|e| e.to_string())?.starts_with(&source_root) {
+            return Err("원본 밖을 가리키는 새 소스 파일은 복사할 수 없습니다.".into());
         }
         bytes = bytes.saturating_add(metadata.len());
         if bytes > 8 * 1024 * 1024 {
@@ -640,6 +655,17 @@ async fn snapshot_source(
         let contents = std::fs::read(&path).map_err(|e| e.to_string())?;
         untracked.push((name.to_string(), contents.clone()));
         std::fs::write(destination, contents).map_err(|e| e.to_string())?;
+    }
+    if lab.join("Cargo.toml").is_file() && lab.join("Cargo.lock").is_file() {
+        let mut metadata = Command::new(rsi_worktree::cargo_executable());
+        metadata.current_dir(lab).args([
+            "metadata", "--format-version", "1", "--no-deps", "--locked", "--offline",
+        ]);
+        let output = command(context, metadata, Duration::from_secs(30)).await?;
+        if !output.status.success() {
+            return Err(format!("자기개선 소스 복사본의 Cargo 작업 공간이 불완전합니다: {}",
+                String::from_utf8_lossy(&output.stderr).chars().take(2000).collect::<String>()));
+        }
     }
     let fingerprint = lineage_fingerprint(&commit, &tree, &output.stdout, &untracked);
     if git(context, lab, &["status", "--porcelain"])
@@ -5678,6 +5704,44 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
     #[cfg(unix)]
+    #[tokio::test]
+    async fn snapshot_includes_untracked_workspace_crates_and_builds_locked() {
+        let (state, root) = state();
+        let context = parent(&state);
+        let source = root.join("source");
+        std::fs::create_dir_all(source.join("src")).unwrap();
+        std::fs::write(source.join("Cargo.toml"), "[workspace]\nmembers=[\".\"]\n[package]\nname=\"snapshot-host\"\nversion=\"0.1.0\"\nedition=\"2021\"\n").unwrap();
+        std::fs::write(source.join("src/main.rs"), "fn main() {}\n").unwrap();
+        git(&context, &source, &["init", "-q"]).await.unwrap();
+        git(&context, &source, &["add", "."]).await.unwrap();
+        git(&context, &source, &["-c","user.name=Test","-c","user.email=test@localhost","commit","-qm","base"]).await.unwrap();
+        let original = git(&context, &source, &["rev-parse","HEAD"]).await.unwrap();
+        std::fs::write(source.join("Cargo.toml"), "[workspace]\nmembers=[\".\",\"crates/new-core\"]\n[package]\nname=\"snapshot-host\"\nversion=\"0.1.0\"\nedition=\"2021\"\n[dependencies]\nnew-core={path=\"crates/new-core\"}\n").unwrap();
+        std::fs::write(source.join("src/main.rs"), "fn main() { assert_eq!(new_core::answer(), 42); }\n").unwrap();
+        std::fs::create_dir_all(source.join("crates/new-core/src")).unwrap();
+        std::fs::write(source.join("crates/new-core/Cargo.toml"), "[package]\nname=\"new-core\"\nversion=\"0.1.0\"\nedition=\"2021\"\n").unwrap();
+        std::fs::write(source.join("crates/new-core/src/lib.rs"), "pub fn answer() -> u8 { 42 }\n").unwrap();
+        std::fs::write(source.join("crates/new-core/.env"), "private fixture\n").unwrap();
+        let mut lock = Command::new(rsi_worktree::cargo_executable());
+        lock.current_dir(&source).args(["generate-lockfile","--offline"]);
+        assert!(command(&context, lock, Duration::from_secs(30)).await.unwrap().status.success());
+        let owner_status = git(&context, &source, &["status","--porcelain","--untracked-files=all"]).await.unwrap();
+        let lab = root.join("lab");
+        git(&context, &source, &["worktree","add","--detach",lab.to_str().unwrap(),&original]).await.unwrap();
+        let (changed, _) = snapshot_source(&context, &source, &lab).await.unwrap();
+        assert!(changed);
+        assert!(lab.join("crates/new-core/Cargo.toml").is_file());
+        assert!(lab.join("crates/new-core/src/lib.rs").is_file());
+        assert!(!lab.join("crates/new-core/.env").exists());
+        let mut check = Command::new(rsi_worktree::cargo_executable());
+        check.current_dir(&lab).args(["check","--locked","--offline","--target-dir"]).arg(root.join("build"));
+        let output = command(&context, check, Duration::from_secs(60)).await.unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(git(&context, &source, &["rev-parse","HEAD"]).await.unwrap(), original);
+        assert_eq!(git(&context, &source, &["status","--porcelain","--untracked-files=all"]).await.unwrap(), owner_status);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[tokio::test]
     async fn snapshot_and_adoption_preserve_the_users_checkout_and_commit() {
         let (state, root) = state();

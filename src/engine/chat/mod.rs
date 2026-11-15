@@ -101,6 +101,16 @@ pub struct TurnRequest {
 }
 
 impl TurnRequest {
+    pub fn effective_reasoning_language(&self) -> Option<&str> {
+        match self.reasoning_language.as_deref() {
+            Some("original") => None,
+            None | Some("auto") => self.input.chars()
+                .any(|ch| matches!(ch, '\u{AC00}'..='\u{D7A3}' | '\u{1100}'..='\u{11FF}' | '\u{3130}'..='\u{318F}'))
+                .then_some("ko"),
+            language => language,
+        }
+    }
+
     pub fn from_value(value: &Value) -> Result<Self, String> {
         crate::engine::reasoning::validate(value)?;
         let text = value

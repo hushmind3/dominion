@@ -127,14 +127,12 @@ pub(super) fn system_prompt_with_manifest_at(
         scope.agent_id.as_deref().unwrap_or(""),
         &serde_json::to_string(&items).unwrap_or_default(),
     ]);
-    if request.reasoning_language.as_deref() == Some("ko") {
-        prompt.push_str(
-            "\n\nWrite every internal reasoning / thinking step in Korean (한국어).              The final answer must also be in Korean unless the user asks otherwise.",
-        );
-    }
     if let Some(extra) = &request.system_override {
         prompt.push_str("\n\n");
         prompt.push_str(extra);
+    }
+    if request.effective_reasoning_language() == Some("ko") {
+        prompt.push_str("\n\n언어 지침: 추론·생각의 설명과 최종 답변은 한국어로 작성하십시오. 도구 실행 뒤 이어지는 추론도 한국어로 유지하십시오. 코드·명령어·파일명·고유명사는 원문을 유지하고, 사용자가 다른 언어를 명시하면 그 요청을 따르십시오.");
     }
     items.push(json!({
         "kind": "system_prompt",
@@ -449,10 +447,19 @@ pub(super) fn render_history(
                     .iter()
                     .take_while(|row| row["role"] == "tool" && row["agent_id"].as_str() == agent_id)
                     .collect();
-                let valid = calls.len() == results.len()
-                    && calls.iter().zip(&results).all(|(call, result)| {
-                        call["id"].as_str().is_some() && call["id"] == result["tool_call_id"]
-                    });
+                // Results are committed when tools finish, not in model call order.
+                // Correlate by identity so parallel completion and safe scheduling
+                // never make durable evidence disappear on the following turn.
+                let mut seen = std::collections::HashSet::new();
+                let ordered = calls.iter().map(|call| {
+                    let id = call["id"].as_str()?;
+                    if !seen.insert(id) { return None; }
+                    let mut matches = results.iter().filter(|row| row["tool_call_id"] == id);
+                    let result = matches.next().copied()?;
+                    matches.next().is_none().then_some(result)
+                }).collect::<Option<Vec<_>>>();
+                let valid = calls.len() == results.len() && ordered.is_some();
+                let results = ordered.unwrap_or_default();
                 if valid {
                     let mut assistant = json!({"role":"assistant","content":content,"tool_calls":calls});
                     if let Some(reasoning) = stored_reasoning(message) {

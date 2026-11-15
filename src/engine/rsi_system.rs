@@ -7,7 +7,7 @@ use std::{path::Path,fs,collections::{BTreeMap,BTreeSet}};
 
 const COMPONENTS: &[(&str,&[&str])] = &[
     ("algorithms",&["src/engine/algorithms.rs","src/engine/rsi_evolve.rs","src/engine/reasoning.rs"]),
-    ("harness",&["src/engine/jobs.rs","src/engine/rsi_worktree.rs","src/engine/chat/runtime.rs","src/engine/decompose.rs"]),
+    ("harness",&["crates/dominion-agent-sdk/src/lib.rs","crates/dominion-agent-sdk/src/runtime.rs","src/engine/jobs.rs","src/engine/rsi_worktree.rs","src/engine/chat/runtime.rs","src/engine/decompose.rs"]),
     ("memory",&["src/engine/memory.rs","src/engine/room_state.rs","src/engine/room_knowledge.rs"]),
     ("learning",&["src/engine/learning.rs","src/engine/experience.rs","src/engine/procedure.rs"]),
     ("tools",&["src/engine/tools.rs","src/engine/browser.rs","src/engine/mcp.rs"]),
@@ -21,7 +21,7 @@ const COMPONENTS: &[(&str,&[&str])] = &[
 /// system's source graph; the prompt can remain short without losing lineage.
 fn source_inventory(root:&Path)->Vec<Value> {
     let Ok(root)=fs::canonicalize(root) else {return Vec::new()};
-    let mut pending=vec![root.join("src"),root.join("web").join("src")];
+    let mut pending=vec![root.join("src"),root.join("crates"),root.join("web").join("src")];
     let mut rows=Vec::new();
     while let Some(directory)=pending.pop() {
         let Ok(entries)=fs::read_dir(&directory) else {continue};
@@ -29,6 +29,8 @@ fn source_inventory(root:&Path)->Vec<Value> {
             let Ok(file)=fs::canonicalize(entry.path()) else {continue};
             if !file.starts_with(&root){continue;}
             if file.is_dir() {
+                if matches!(file.file_name().and_then(|name|name.to_str()),
+                    Some("target"|"node_modules"|".git"|"runtime")) {continue;}
                 pending.push(file);
                 continue;
             }

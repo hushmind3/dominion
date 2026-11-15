@@ -249,6 +249,11 @@ impl AgentSdk {
         }
         state.status = RunStatus::Running;
         self.persist(state)?;
+        let mut budget = dominion_agent_sdk::runtime::BudgetLedger::new(
+            self.limits.max_rounds, self.limits.max_tool_calls,
+            std::time::Duration::from_secs(24 * 3600),
+        );
+        budget.restore(state.rounds, state.tool_calls);
         loop {
             if self.cancellation.load(Ordering::SeqCst) {
                 state.status = RunStatus::Cancelled;
@@ -299,6 +304,11 @@ impl AgentSdk {
                     return Ok(());
                 }
                 self.approved_once = None;
+                if !budget.charge_tool() {
+                    state.status = RunStatus::Exhausted { reason: "max_tool_calls".into() };
+                    self.persist(state)?;
+                    return Ok(());
+                }
                 state.tool_calls += 1;
                 state.pending_calls.remove(0);
                 state.in_flight = Some(call.clone());
@@ -329,6 +339,11 @@ impl AgentSdk {
             }
             let removed = ContextBudget::new(self.limits.max_context_chars).trim(&mut state.messages);
             if removed > 0 { state.event("context_trimmed", json!({"removed":removed})); }
+            if !budget.charge_round() {
+                state.status = RunStatus::Exhausted { reason: "max_rounds".into() };
+                self.persist(state)?;
+                return Ok(());
+            }
             state.rounds += 1;
             state.event("model_started", json!({"round":state.rounds}));
             self.persist(state)?;

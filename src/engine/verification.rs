@@ -166,6 +166,33 @@ pub(crate) fn infer_criteria(goal: &str) -> Vec<Value> {
             paths = vec![output];
         }
     }
+    // Natural Korean names need not contain a dot: "메모라는 txt파일".
+    if paths.is_empty() {
+        for separator in ["이라는", "라는", "이란", "란"] {
+            let Some((before, after)) = goal.split_once(separator) else { continue; };
+            let after = after.trim_start();
+            let extension = ["txt", "md", "csv", "json"].into_iter().find(|extension|
+                after.strip_prefix(extension).is_some_and(|rest| rest.trim_start().starts_with("파일")));
+            let Some(extension) = extension else { continue; };
+            let name = before.trim_end().rsplit(char::is_whitespace).next().unwrap_or("")
+                .trim_matches(|ch| matches!(ch, '`' | '\'' | '"'));
+            if name.is_empty() || name.contains('/') || name.contains('\\') || name.chars().any(char::is_control) {
+                continue;
+            }
+            let name = if name.ends_with(&format!(".{extension}")) {name.to_string()}
+                else {format!("{name}.{extension}")};
+            paths.push(json!({"type":if deletion {"file_absent"} else {"file_changed"},"path":name,"inferred":true}));
+            break;
+        }
+    }
+    if lower.contains("바탕화면") || lower.contains("desktop") {
+        for check in &mut paths {
+            if let Some(path) = check["path"].as_str().filter(|path|
+                !path.contains('/') && !path.contains('\\')) {
+                check["path"] = json!(format!("~/Desktop/{path}"));
+            }
+        }
+    }
     if let [check] = paths.as_mut_slice() {
         let path = check["path"].as_str().unwrap_or_default();
         if !deletion {
@@ -244,6 +271,14 @@ fn exact_replacement(bytes: Vec<u8>, old: &str, new: &str) -> Option<String> {
 }
 
 pub(crate) fn resolve_path(state: &AppState, path: &str) -> Result<PathBuf, String> {
+    if let Some(relative) = path.strip_prefix("~/") {
+        let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+            .ok_or("사용자 홈 경로를 찾을 수 없습니다.")?;
+        if Path::new(relative).components().any(|part| matches!(part, Component::ParentDir)) {
+            return Err("홈 검증 경로에 상위 경로 이동을 사용할 수 없습니다.".into());
+        }
+        return Ok(PathBuf::from(home).join(relative));
+    }
     let path = Path::new(path);
     if path.is_absolute() {
         return Ok(path.to_path_buf());
@@ -440,9 +475,7 @@ pub(crate) fn acceptance_gaps(
             Some("tool_succeeded" | "command_succeeded")
         )
     });
-    if looks_actionable(goal) && !evidence.iter().any(is_action_evidence) && !has_explicit_tool {
-        gaps.push("변경 또는 실행을 입증하는 성공한 도구 결과가 없습니다. 조회 결과만으로 행동 목표를 완료할 수 없습니다.".into());
-    }
+    let mut verified_artifact_change = false;
     for check in checks {
         let kind = check["type"].as_str().unwrap_or("");
         let path = check["path"].as_str().unwrap_or("");
@@ -487,6 +520,13 @@ pub(crate) fn acceptance_gaps(
                 .any(|item| command_matches(item, check["command"].as_str().unwrap_or(""))),
             _ => false,
         };
+        // A frozen before/after artifact check proves a change independently
+        // of shell syntax. `cd ... && touch ... && ls ...` must not be treated
+        // as a read-only action merely because it contains control operators.
+        if passed && (kind == "file_changed" || kind == "file_replace_exact"
+            || (kind == "file_equals" && check["inferred"] == true)) {
+            verified_artifact_change = true;
+        }
         if !passed {
             if kind == "file_replace_exact" {
                 gaps.push(format!("The exact replacement in {path} has not been verified. Preserve every other byte of the original file."));
@@ -498,6 +538,15 @@ pub(crate) fn acceptance_gaps(
             ));
         }
     }
+    let executed_effect = evidence.iter().any(|item| {
+        successful_evidence(item) && crate::engine::effect::is_effectful(
+            tool_name(item), item.get("arguments").or_else(||item.get("args")).unwrap_or(&Value::Null),
+        )
+    });
+    if looks_actionable(goal) && !evidence.iter().any(is_action_evidence) && !has_explicit_tool
+        && !(verified_artifact_change && executed_effect) {
+        gaps.push("변경 또는 실행을 입증하는 성공한 도구 결과가 없습니다. 조회 결과만으로 행동 목표를 완료할 수 없습니다.".into());
+    }
     gaps
 }
 
@@ -505,6 +554,15 @@ pub(crate) fn acceptance_gaps(
 #[cfg(test)]
 mod inference_tests {
     use super::*;
+
+    #[test]
+    fn named_korean_desktop_file_has_a_concrete_acceptance_target() {
+        for input in ["바탕화면에 메모라는txt파일만들어봐", "바탕화면에 메모라는 txt 파일 만들어줘", "바탕화면에 메모.txt 파일 만들어줘"] {
+            let checks = infer_criteria(input);
+            assert_eq!(checks.len(), 1, "{input}: {checks:?}");
+            assert_eq!(checks[0]["path"], "~/Desktop/메모.txt", "{input}");
+        }
+    }
 
     #[test]
     fn reading_an_input_does_not_require_it_to_change() {
