@@ -185,6 +185,29 @@ impl Store {
         Ok((task, inserted))
     }
 
+    /// Child tasks belong to a persisted parent, never to an SDK-side process.
+    pub fn child_tasks(&self,parent_id:&str)->Vec<Value>{
+        let Ok(conn)=self.conn.lock() else {return vec![]};
+        let Ok(mut stmt)=conn.prepare(&format!(
+            "SELECT {TASK_FIELDS} FROM tasks
+             WHERE json_extract(input,'$.parentId')=?1
+             ORDER BY created_at LIMIT 16"
+        )) else {return vec![]};
+        let Ok(rows)=stmt.query_map([parent_id],task_row) else {return vec![]};
+        rows.filter_map(Result::ok).collect()
+    }
+
+    /// Parent and direct children share one resource envelope.
+    pub fn family_token_usage(&self,parent_id:&str)->u64{
+        let Ok(conn)=self.conn.lock() else {return u64::MAX};
+        let result:rusqlite::Result<i64>=conn.query_row(
+            "SELECT COALESCE(SUM(tokens),0) FROM tasks
+             WHERE id=?1 OR json_extract(input,'$.parentId')=?1",
+            [parent_id],|row|row.get(0)
+        );
+        result.map(|n|n.max(0) as u64).unwrap_or(u64::MAX)
+    }
+
     pub fn get(&self, id: &str) -> Option<Value> {
         let conn = self.conn.lock().ok()?;
         conn.query_row(&format!("SELECT {TASK_FIELDS} FROM tasks WHERE id=?1"),
