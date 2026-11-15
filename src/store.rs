@@ -191,6 +191,17 @@ impl Store {
         text
     }
 
+    /// Plan and independent critique requests consume model tokens but are
+    /// not counted as tool-loop steps. Every call contributes to the budget.
+    pub fn account_aux_tokens(&self, id: &str, tokens: u64) {
+        if let Ok(conn) = self.conn.lock() {
+            let _ = conn.execute(
+                "UPDATE tasks SET tokens=tokens+?2 WHERE id=?1",
+                params![id,tokens.min(i64::MAX as u64) as i64]
+            );
+        }
+    }
+
     pub fn measure(&self, id: &str, tokens: u64) {
         if let Ok(conn) = self.conn.lock() {
             let _ = conn.execute("UPDATE tasks SET steps=steps+1,tokens=tokens+?2 WHERE id=?1",
