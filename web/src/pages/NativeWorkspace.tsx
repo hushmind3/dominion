@@ -4,7 +4,7 @@ import {get,post} from '../api'
 import {Button,PageContainer,TextArea,TextInput,SelectInput} from '../components/Primitives'
 import {Headline,Panel,FormField,Notice,StateTag} from '../components/UI'
 
-type Run = {id:string;status:string;input:{prompt:string;sessionId?:string;maxSteps?:number;tokenBudget?:number};result?:{answer?:string;[key:string]:unknown}|null;error?:string|null;steps:number;tokens:number;createdAt:string;cancelRequested?:boolean}
+type Run = {id:string;status:string;input:{prompt:string;sessionId?:string;maxSteps?:number;tokenBudget?:number};result?:{answer?:string;[key:string]:unknown}|null;error?:string|null;steps:number;tokens:number;costKrw:number;createdAt:string;cancelRequested?:boolean}
 type RunEvent = {seq:number;taskId:string;type:string;detail?:Record<string,unknown>}
 type Member = {name:string;role:string;economy?:boolean}
 type Group = {id:string;topic:string;participants:Member[];messages:{speaker:string;content:string;at_ms:number}[];status:string;rounds:number;max_rounds:number;cost_krw:number;budget_krw:number}
@@ -49,7 +49,7 @@ function Page({title,description,eyebrow,children}:{title:string;description:str
 function RunList({items,selected,onSelect}:{items:Run[];selected:string;onSelect:(id:string)=>void}){
  return <div className="grid max-h-[470px] gap-2 overflow-auto">{items.length?items.map(item=><ListButton key={item.id} selected={selected===item.id} onClick={()=>onSelect(item.id)}>
   <div className="flex items-center justify-between gap-2"><strong className="line-clamp-2">{item.input.prompt}</strong><Status value={item.status}/></div>
-  <p className={'mt-1 '+subtle}>{new Date(item.createdAt).toLocaleString('ko-KR')} · {item.steps}단계 · {item.tokens.toLocaleString()}토큰</p>
+  <p className={'mt-1 '+subtle}>{new Date(item.createdAt).toLocaleString('ko-KR')} · {item.steps}단계 · {item.tokens.toLocaleString()}토큰 · {fmtKrw(item.costKrw)}</p>
  </ListButton>):<p className={subtle}>아직 실행 기록이 없습니다.</p>}</div>
 }
 export function NativeTasks({home=false}:{home?:boolean}){
@@ -57,7 +57,7 @@ export function NativeTasks({home=false}:{home?:boolean}){
  const [active,setActive]=useState(''),[prompt,setPrompt]=useState(''),[sessionId,setSessionId]=useState('')
  const [allowWrite,setAllowWrite]=useState(false),[allowShell,setAllowShell]=useState(false),[allowMcp,setAllowMcp]=useState(false)
  const [allowSubagents,setAllowSubagents]=useState(false),[requireEvidence,setRequireEvidence]=useState(false)
- const [planningMode,setPlanningMode]=useState('auto'),[maxSteps,setMaxSteps]=useState(12),[tokenBudget,setTokenBudget]=useState(40000)
+ const [planningMode,setPlanningMode]=useState('auto'),[maxSteps,setMaxSteps]=useState(12),[tokenBudget,setTokenBudget]=useState(40000),[costBudget,setCostBudget]=useState('')
  const [instruction,setInstruction]=useState(''),[events,setEvents]=useState<RunEvent[]>([]),[children,setChildren]=useState<Run[]>([])
  const op=useOperation()
  const selected=tasks.value.find(item=>item.id===active)
@@ -79,7 +79,8 @@ export function NativeTasks({home=false}:{home?:boolean}){
  useEffect(()=>{const timer=setInterval(()=>{void tasks.reload()},5000);return()=>clearInterval(timer)},[tasks.reload])
  const submit=async(e:FormEvent)=>{e.preventDefault();const cleaned=prompt.trim();if(!cleaned)return
   const created=await op.run(()=>post<Run>('/api/tasks',{requestId:crypto.randomUUID(),prompt:cleaned,sessionId:sessionId.trim()||undefined,
-   allowWrite,allowShell,allowMcp,allowSubagents,requireEvidence,planningMode,maxSteps,tokenBudget}))
+   allowWrite,allowShell,allowMcp,allowSubagents,requireEvidence,planningMode,maxSteps,tokenBudget,
+    costBudgetKrw:costBudget.trim()?Number(costBudget):undefined}))
   if(created){setActive(created.id);setPrompt('');void tasks.reload()}
  }
  const intervene=async(route:'cancel'|'steer')=>{
@@ -102,6 +103,7 @@ export function NativeTasks({home=false}:{home?:boolean}){
         <FormField label="작업 계획"><SelectInput value={planningMode} onChange={e=>setPlanningMode(e.target.value)}><option value="auto">자동</option><option value="always">항상 계획</option><option value="never">계획 생략</option></SelectInput></FormField>
         <FormField label="최대 모델 단계"><TextInput type="number" min={1} max={24} value={maxSteps} onChange={e=>setMaxSteps(Number(e.target.value))}/></FormField>
         <FormField label="토큰 예산"><TextInput type="number" min={256} max={500000} value={tokenBudget} onChange={e=>setTokenBudget(Number(e.target.value))}/></FormField>
+         <FormField label="모델 비용 예산 (원, 선택)"><TextInput type="number" min={0} max={10000000} value={costBudget} onChange={e=>setCostBudget(e.target.value)} placeholder="비우면 별도 제한 없음"/></FormField>
        </div>
       </details>
       <div className="flex items-center justify-between gap-3"><span className={subtle}>파일 변경·셸·외부 도구는 개별적으로 허용합니다.</span><LoadingButton busy={op.busy} type="submit" variant="primary"><Play size={14}/> 실행 시작</LoadingButton></div>
@@ -109,7 +111,7 @@ export function NativeTasks({home=false}:{home?:boolean}){
     </Section>
     {selected&&<Section>
      <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-bold">실행 진행</h2><Status value={selected.status}/></div>
-     <div className="my-4 grid grid-cols-3 gap-3 rounded-xl bg-[#F6F3EC] p-3 text-center text-[12px]"><div>단계<strong className="block text-lg">{selected.steps}</strong></div><div>토큰<strong className="block text-lg">{selected.tokens.toLocaleString()}</strong></div><div>상태<strong className="block text-sm">{selected.cancelRequested?'중단 요청됨':selected.status}</strong></div></div>
+     <div className="my-4 grid grid-cols-2 gap-3 rounded-xl bg-[#F6F3EC] p-3 text-center text-[12px] sm:grid-cols-4"><div>단계<strong className="block text-lg">{selected.steps}</strong></div><div>토큰<strong className="block text-lg">{selected.tokens.toLocaleString()}</strong></div><div>추정 비용<strong className="block text-lg">{fmtKrw(selected.costKrw)}</strong></div><div>상태<strong className="block text-sm">{selected.cancelRequested?'중단 요청됨':selected.status}</strong></div></div>
      {selected.error&&<InlineError error={selected.error}/>}
      {selected.result&&<div className="mb-4 rounded-xl border border-[#E7E0D5] bg-white p-4"><h3 className="mb-2 text-[12px] font-bold">실행 결과</h3><pre className="whitespace-pre-wrap break-words text-[12px]">{typeof selected.result.answer==='string'?selected.result.answer:JSON.stringify(selected.result,null,2)}</pre></div>}
      {!complete.has(selected.status)&&<div className="mb-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]"><TextInput aria-label="실행 중 방향 변경" value={instruction} onChange={e=>setInstruction(e.target.value)} placeholder="다음 단계에 반영할 지시"/><LoadingButton busy={op.busy} disabled={!instruction.trim()} onClick={()=>void intervene('steer')}>지시 전달</LoadingButton><LoadingButton busy={op.busy} variant="danger" onClick={()=>void intervene('cancel')}><PauseCircle size={14}/> 중단</LoadingButton></div>}
