@@ -1132,6 +1132,40 @@ pub async fn cleanup(worktree:&Worktree)->Result<(),String>{
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn frozen_candidate_tree_is_reconstructed_without_mutating_owner_index() {
+        let root=std::env::temp_dir().join(format!("rsi-tree-contract-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("src/engine")).unwrap();
+        std::fs::write(root.join("src/engine/subject.rs"),"pub fn before() {}\n").unwrap();
+        git(&root,&["init","-q"]).await.unwrap();
+        git(&root,&["config","core.autocrlf","false"]).await.unwrap();
+        git(&root,&["add","."]).await.unwrap();
+        git(&root,&["-c","user.name=Test","-c","user.email=test@localhost",
+            "commit","-qm","frozen base"]).await.unwrap();
+        let base=git(&root,&["rev-parse","HEAD"]).await.unwrap();
+        let before_index=git(&root,&["ls-files","--stage"]).await.unwrap();
+        let patch="diff --git a/src/engine/subject.rs b/src/engine/subject.rs\n\
+--- a/src/engine/subject.rs\n\
++++ b/src/engine/subject.rs\n\
+@@ -1 +1 @@\n\
+-pub fn before() {}\n\
++pub fn after() {}\n";
+        std::fs::write(root.join("src/engine/subject.rs"),"pub fn after() {}\n").unwrap();
+        git(&root,&["add","."]).await.unwrap();
+        let actual=git(&root,&["write-tree"]).await.unwrap();
+        git(&root,&["reset","--hard",&base]).await.unwrap();
+        let calculated=reconstructed_patch_tree(&root,&base,patch).await.unwrap();
+        assert_eq!(calculated,actual,"Rust preflight must reproduce the exact code tree");
+        assert_eq!(git(&root,&["ls-files","--stage"]).await.unwrap(),before_index);
+        assert_eq!(git(&root,&["rev-parse","HEAD"]).await.unwrap(),base);
+        assert!(git(&root,&["status","--porcelain"]).await.unwrap().is_empty());
+        assert!(reconstructed_patch_tree(&root,&base,
+            &patch.replace("-pub fn before() {}","-pub fn absent() {}"))
+            .await.is_err(),"a stale patch must not pass frozen-base verification");
+        assert!(reconstructed_patch_tree(&root,&base,"").await.is_err());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
     #[test]
     fn rsi_resolves_cargo_even_with_a_minimal_service_path() {
         let cargo = cargo_executable();
