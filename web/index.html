@@ -13,6 +13,7 @@
     <div class="brand"><span class="mark">D</span><span>DOMINION<small>Native Agent Workspace</small></span></div>
     <div class="rail-head">WORKSPACE</div>
     <a class="rail-item selected" href="/" aria-current="page">✦ <span>작업 실행</span></a>
+    <a class="rail-item" href="#groups">◉ <span>그룹 대화</span></a>
     <a class="rail-item" href="#history">▤ <span>실행 기록</span></a>
     <div class="rail-note">자체 Rust 엔진<br>로컬 저장 · 모델 직접 연결</div>
     <div class="rail-footer"><span id="engineLed" class="led"></span><span id="connection">서버 연결 확인 중</span></div>
@@ -71,6 +72,39 @@
         </div>
         <div class="timeline-title">실행 이벤트</div>
         <ol id="timeline" class="timeline" aria-label="이벤트 기록"></ol>
+      </section>
+      <section class="history" id="groups" aria-labelledby="groupTitle">
+        <div class="section-top">
+          <div><span class="eyebrow">MULTI AGENT</span><h2 id="groupTitle">에이전트 그룹 대화</h2></div>
+          <button id="refreshGroups" type="button" class="ghost">대화 목록 새로고침 ↻</button>
+        </div>
+        <p>2명의 역할을 정하고 대화를 시작하세요. 다음 발언을 누를 때만 모델이 호출됩니다.</p>
+        <form id="groupCreate" class="advanced">
+          <div class="advanced-row">
+            <label>대화 주제 <input id="groupTopic" maxlength="200" required placeholder="예: 신제품 설계 검토"></label>
+            <label>참가자 1 이름 <input id="groupNameA" maxlength="40" value="설계자" required></label>
+            <label>참가자 1 역할 <input id="groupRoleA" maxlength="500" value="실현 가능한 설계와 사용자 경험을 제안" required></label>
+          </div>
+          <div class="advanced-row">
+            <label>참가자 2 이름 <input id="groupNameB" maxlength="40" value="검토자" required></label>
+            <label>참가자 2 역할 <input id="groupRoleB" maxlength="500" value="오류와 위험을 찾고 구체적인 개선안을 제시" required></label>
+            <label>대화 예산 (원) <input id="groupBudget" type="number" min="0" max="1000000" value="5000"></label>
+          </div>
+          <button class="secondary" type="submit">새 그룹 만들기</button>
+        </form>
+        <div class="advanced-row">
+          <label>저장된 그룹 <select id="groupSelect" aria-label="저장된 그룹 선택"><option value="">선택하세요</option></select></label>
+          <span id="groupStatus" class="muted" aria-live="polite">아직 선택된 그룹이 없습니다.</span>
+        </div>
+        <ol id="groupMessages" class="timeline" aria-label="그룹 대화 기록"></ol>
+        <form id="groupSpeak" class="steer">
+          <label for="groupInput">그룹에 지시하기</label>
+          <div class="steer-row">
+            <input id="groupInput" maxlength="10000" placeholder="@설계자 같은 멘션도 사용할 수 있습니다." required>
+            <button type="submit" class="secondary">메시지 보내기</button>
+          </div>
+        </form>
+        <button id="groupNext" class="primary" type="button">에이전트 다음 발언 실행</button>
       </section>
       <section class="history" id="history" aria-labelledby="historyTitle">
         <div class="section-top"><div><span class="eyebrow">HISTORY</span><h2 id="historyTitle">최근 작업</h2></div><button id="refresh" class="ghost" type="button">새로고침 ↻</button></div>
