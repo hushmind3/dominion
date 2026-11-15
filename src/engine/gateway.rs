@@ -610,10 +610,18 @@ mod tests {
     fn cache_usage_reports_verified_tokens_without_double_counting() {
         let state=state();
         record_usage_tokens_cached(&state,"p","m",false,"chat",Some("s"),1000,60,1060,false,Some(800));
-        // Both cached and uncached input tokens are included in prompt usage.
-        // Source accounting never invents a price or a cache hit.
+        // Estimated usage must not claim savings even when the input includes
+        // a purported hit. Unmeasured calls are not cache misses.
         record_usage_tokens_cached(&state,"p","m",false,"chat",Some("s"),1000,60,1060,true,Some(800));
-        assert_eq!(1000u64.saturating_sub(800),200);
+        let total=state.store.usage_summary();
+        assert_eq!(total["calls"],2);
+        assert_eq!(total["promptTokens"],2000);
+        assert_eq!(total["totalTokens"],2120);
+        assert_eq!(total["cachedPromptTokens"],800);
+        assert_eq!(total["cacheObservedCalls"],1);
+        let session=state.store.session_usage("s");
+        assert_eq!(session["cachedPromptTokens"],800);
+        assert_eq!(session["cacheObservedCalls"],1);
     }
 
     #[test]
