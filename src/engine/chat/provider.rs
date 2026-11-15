@@ -2534,6 +2534,44 @@ mod tests {
         assert_eq!(body["messages"][1]["content"][0]["type"], "tool_use");
         assert_eq!(body["messages"][2]["content"][0]["type"], "tool_result");
         assert_eq!(body["tools"][0]["input_schema"]["type"], "object");
+        drop(calls);
+        // Confirm that editing reaches the actual Anthropic HTTP payload;
+        // the durable input and assistant/tool IDs are not modified.
+        let mut pressure = vec![
+            json!({"role":"system","content":"Keep user's objective unchanged"}),
+            json!({"role":"user","content":"Continue the same task"}),
+        ];
+        for (id, name, content) in [
+            ("old1","workspace_read","A".repeat(22_000)),
+            ("old2","file_read","B".repeat(22_000)),
+            ("write","workspace_write","write receipt".repeat(450)),
+            ("error","workspace_read",json!({"error":"permission denied","text":"z".repeat(5_000)}).to_string()),
+            ("new1","workspace_read","recent-one".repeat(500)),
+            ("new2","workspace_read","recent-two".repeat(500)),
+            ("new3","workspace_read","recent-three".repeat(500)),
+        ] {
+            pressure.push(json!({"role":"assistant","content":"","tool_calls":[{
+                "id":id,"type":"function",
+                "function":{"name":name,"arguments":"{}"}
+            }]}));
+            pressure.push(json!({"role":"tool","tool_call_id":id,"content":content}));
+        }
+        let original=pressure.clone();
+        let mut limited=provider.clone();
+        limited.context_tokens=Some(28_000);
+        let (tx2,_rx2)=tokio::sync::mpsc::unbounded_channel();
+        let _completion=stream_completion_once(
+            &state, &reqwest::Client::new(), &limited, &pressure, &[],
+            &request, "s", &tx2, false,
+        ).await.unwrap();
+        let bodies=observed.lock().unwrap();
+        assert_eq!(bodies.len(),2);
+        let sent=bodies[1]["body"]["messages"].to_string();
+        assert!(sent.contains("compacted"), "large old reads must be reduced");
+        assert!(sent.contains("recent-three"), "latest tool observations survive");
+        assert!(sent.contains("write receipt"), "write result must survive");
+        assert!(sent.contains("permission denied"), "tool errors must survive");
+        assert_eq!(pressure,original, "provider must only edit its transmitted copy");
         server.abort();
         let _ = std::fs::remove_dir_all(root);
     }
