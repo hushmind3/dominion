@@ -183,7 +183,14 @@ pub fn evolve(history: &[Value], payoff: fn(&Value) -> f64) -> Value {
     // contexts favor the challenger without a contradictory measured pair.
     // This promotes a controller, never a source patch: source adoption still
     // requires the existing frozen paired evaluator.
-    let contest=crate::engine::rsi_rule_tournament::compare(&observed,payoff);
+    // Only an actually serialized, executable controller revision may
+    // compete. A child or stale row must not relabel its method after the
+    // worker has finished and retroactively claim another policy's result.
+    let tournament_rows=observed.iter().copied().filter(|row|{
+        row["editPolicy"]["revision"].as_str().is_some_and(|declared|
+            declared==Genome::from_policy(&row["editPolicy"]).revision())
+    }).collect::<Vec<_>>();
+    let contest=crate::engine::rsi_rule_tournament::compare(&tournament_rows,payoff);
     if contest["promotion"]==true {
         if let Some(winner)=contest["winnerRevision"].as_str() {
             if let Some((genome,_,_,_))=cohorts.get(winner) {
@@ -545,6 +552,9 @@ mod tests {
             item["generatorProviderId"]=json!("provider-1");
             item["objectiveId"]=json!("goal-1");
             item["knowledgePartition"]=json!("partition-1");
+            item["domain"]=json!("improver");
+            item["evaluationPlanSha256"]=json!("e".repeat(64));
+            item["evaluationOracleVersion"]=json!("frozen-v1");
             item["candidateId"]=json!(format!("candidate-{job}"));
             item["accepted"]=json!(success);
             item["evidenceVerified"]=json!(success);
@@ -587,6 +597,10 @@ mod tests {
         assert_eq!(next["parentRevision"],winner["revision"]);
         assert_ne!(next["revision"],winner["revision"]);
         assert_eq!(next["improvementProven"],false);
+        rows[3]["editPolicy"]["revision"]=json!("spoofed-champion");
+        let no_forged_promotion=evolve(&rows,reward);
+        assert!(no_forged_promotion["competitionEvidence"]["promotion"]!=true,
+            "a relabelled descendant must not manufacture a matched policy win");
     }
 
     #[test]
