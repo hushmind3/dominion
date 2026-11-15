@@ -165,6 +165,22 @@ pub fn router(state: AppState) -> Router {
         .route("/api/sdk/runs/:id/reconcile",post(sdk_runs::reconcile))
         .route("/api/tasks", get(tasks::list))
         .route("/api/tasks/:id", get(tasks::one))
+        // Persistent collection endpoints consumed by the canonical main GUI.
+        // Their handlers already implement validation, secret sealing, and
+        // workflow enqueue; without these routes the visible UI receives 404.
+        .route("/api/memories", get(collections::list).post(collections::save))
+        .route("/api/memories/:id", get(collections::one).delete(collections::remove))
+        .route("/api/skills", get(collections::list).post(collections::save))
+        .route("/api/skills/:id", get(collections::one).delete(collections::remove))
+        .route("/api/mcp", get(collections::list).post(collections::save))
+        .route("/api/mcp/:id", get(collections::one).delete(collections::remove))
+        .route("/api/automations", get(collections::list).post(collections::save))
+        .route("/api/automations/:id", get(collections::one).delete(collections::remove))
+        .route("/api/workflows", get(collections::list).post(collections::save))
+        .route("/api/workflows/:id", get(collections::one).delete(collections::remove))
+        .route("/api/workflows/:id/run", post(collections::action))
+        .route("/api/knowledge", get(collections::list).post(collections::save))
+        .route("/api/knowledge/:id", get(collections::one).delete(collections::remove))
         .route("/api/tools", get(extensions::list_tools))
         .route("/api/browser/status", get(browser::status))
         .route("/api/browser/screenshot", get(browser::screenshot))
