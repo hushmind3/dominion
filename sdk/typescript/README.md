@@ -1,77 +1,83 @@
-# Dominion TypeScript client
+# Dominion first-party TypeScript client
 
-The client is an HTTP/SSE adapter to the **same native Rust engine** used by the browser interface. No vendor agent driver or secondary policy loop runs in JavaScript.
+The package **@dominion/native-client** is a typed HTTP/SSE adapter to the native Rust runtime. It does not own agent planning, prompt policy, model turns, tool execution, completion or workflow scheduling. Browser and SDK share exactly the same Rust routes.
 
-```js
-import {DominionClient} from "@dominion/native-client";
-const client = new DominionClient({baseUrl:"http://127.0.0.1:4317"});
-const task = await client.submit({
-  requestId:"my-unique-request-2026",
-  prompt:"Read README.md and explain the project",
-  maxSteps:8,
-  tokenBudget:10000
-});
-for await (const event of client.watch(task.id)) {
-  console.log(event.type,event.detail);
-  if (event.type==="finished") break;
-}
-```
+## Run a native task
 
-To retry after an uncertain network response, submit **the same ID and identical input**. A mismatched payload returns HTTP 409. The SDK never silently resends a POST. Only SSE GET reconnects from a committed cursor.
+~~~ts
+import {DominionClient,DominionRuntime} from '@dominion/native-client'
 
-Writes and local inspection commands must be explicitly enabled per task.
-
-## Stateful thread API (2026)
-
-The canonical SDK also exposes a **native-backed thread facade**, following the
-session/stream separation used by current Codex, Qwen Code and DeepSeek Harness
-SDKs. The TypeScript layer **does not** run a second agent loop.
-
-```ts
-import { DominionRuntime } from '@dominion/native-client'
-
-const runtime = new DominionRuntime({baseUrl:'http://127.0.0.1:4317'})
-const thread = runtime.startThread({
-  allowWrite: false,   // opt in deliberately for mutating tasks
-  allowShell: false,
-  maxSteps: 8,
-  tokenBudget: 10000,
+const client=new DominionClient({baseUrl:'http://127.0.0.1:4317'})
+const task=await client.submit({
+  requestId:crypto.randomUUID(),
+  prompt:'Inspect the repository and summarize remaining work',
+  allowWrite:false,
+  allowShell:false,
+  modelTier:'auto',
+  tokenBudget:10000,
+  costBudgetKrw:2500
 })
-
-// For synchronous application logic:
-const result = await thread.run('Inspect README.md and summarize the engine.')
-console.log(result.status, result.finalResponse)
-
-// For UI event streaming:
-const streamed = await thread.runStreamed('Inspect another file.')
-for await (const event of streamed.events) {
-  console.log(event.seq, event.type, event.detail)
+for await (const event of client.watch(task.id)) {
+  console.log(event.type,event.detail)
+  if (event.type==='finished') break
 }
+console.log(await client.task(task.id))
+~~~
 
-// Persist thread.id in your own application to resume its Rust transcript:
-const resumed = runtime.resumeThread(thread.id)
-const next = await resumed.run('Continue from the earlier inspection.')
-```
+A requestId is required by the HTTP API (SDK submit generates one if omitted); retransmit the same key **and identical input** after an uncertain network response. Duplicate requests return the previous durable task, not a second model run. SSE GET reconnects from the last persisted event sequence, never from an invented cursor. If configured remote provider rates are unavailable, the backend refuses a paid-model KRW cap rather than claiming to enforce it.
 
-A run's result is accepted only after reading the persisted terminal task
-record from Rust. Failed, cancelled, or review-required runs return a non-success
-status and a null `finalResponse`. The SDK preserves the native request-ID
-idempotency contract and never retries POST requests behind the caller's back.
-An `AbortSignal` stops **client waiting**; `thread.cancel()` is the explicit
-server-side stop action.
+## Continue a persisted task explicitly
 
-The high-level facade lives in `src/runtime.ts`; the original `DominionClient`
-low-level methods, events, and return types remain available. Both call
-`/api/tasks` on the same Rust daemon. No external model vendor SDK, parallel
-workflow brain, or additional package is necessary.
+~~~ts
+const next=await client.resume(task.id,{
+  requestId:crypto.randomUUID(),
+  prompt:'Re-read the failed verification receipt, apply a narrow correction and test again.',
+  allowWrite:true,allowShell:true,requireEvidence:true,
+  maxSteps:10,modelTier:'quality'
+})
+~~~
 
-### Implementation references
+This creates a fresh linked native task with the same session. No prior write, shell, MCP or subagent permissions are inherited and no earlier tool action is automatically repeated.
 
-- [Codex TypeScript SDK](https://github.com/openai/codex/tree/main/sdk/typescript):
-  thread continuation and structured run events
-- [Qwen Code SDK](https://github.com/QwenLM/qwen-code/tree/main/packages/sdk-typescript):
-  CLI/SDK transport separates the execution core from a programmatic client
-- [DeepSeek Harness SDK](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/sdk):
-  protocol/server/client boundary between a complete runtime and its SDK
-- [ACP TypeScript SDK](https://github.com/agentclientprotocol/typescript-sdk):
-  a potential future interoperability adapter; not a replacement for Rust execution
+## Thread convenience layer
+
+~~~ts
+const runtime=new DominionRuntime({baseUrl:'http://127.0.0.1:4317'})
+const thread=runtime.startThread({allowWrite:false,tokenBudget:9000})
+const result=await thread.run('Check README and inspect project layout.')
+const stream=await thread.runStreamed('Inspect another module.')
+for await (const event of stream.events)console.log(event.type,event.seq)
+const resumed=await thread.continueFrom(stream.taskId,
+  'Verify the previous conclusion from the persisted work evidence.')
+~~~
+
+The thread facade is a transport-level session handle. Every method delegates to the native Rust task scheduler; it is not an embedded external agent harness.
+
+## Real product APIs
+
+~~~ts
+const agent=await client.agentCreate('Code reviewer',
+  'Verify the source and test evidence before accepting a change.')
+const allAgents=await client.agents()
+
+const providers=await client.providerCatalog()
+const tools=await client.toolCatalog()
+
+const workflow=await client.workflowCreate('Repository verification',[
+  'Read source code and identify required changes.',
+  'Inspect changed files and run available tests.'
+])
+const run=await client.workflowStart(workflow.id,{
+  requestId:crypto.randomUUID(),allowShell:true,
+  tokenBudget:10000,modelTier:'quality'
+})
+const latest=await client.workflowRun(run.id)
+~~~
+
+Native endpoints also support owner-defined discussion rooms, local or optional paid videos, isolated improvement experiments, memory and skills. Keep secrets in the runtime's server-side configuration; they are never returned by providerCatalog.
+
+## Scope
+
+Task costs are metered from operator-configured KRW rates, with separate cached-input accounting and usage uncertainty flags; they are not a provider invoice. Video generation has a separate project KRW ceiling. Image assets are uploaded through the native scene-image API and animated by local FFmpeg.
+
+Use npm run build and npm test from sdk/typescript to run the TypeScript library and transport tests. The repository's primary runtime and source tests require Rust and are not run by importing this JS package.
