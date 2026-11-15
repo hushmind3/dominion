@@ -12,6 +12,8 @@ on:
       - 'src/api/jobs.rs'
       - 'src/engine/native_agent.rs'
       - 'src/engine/native_model.rs'
+      - 'src/engine/native_cache.rs'
+      - 'src/engine/gateway.rs'
       - 'src/engine/native_stream.rs'
       - 'src/engine/native_codex_ws.rs'
       - 'sdk/typescript/**'
