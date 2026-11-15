@@ -143,6 +143,7 @@ impl Improvements {
             self.repository_active.lock().await.remove(&parent.repository);
             return Err(error);
         }
+        let run_id=run.id;
         let service=Arc::clone(self);
         tokio::spawn(async move {
             let mut run=run;
@@ -154,7 +155,7 @@ impl Improvements {
             let _=service.put_evolution(run).await;
             service.repository_active.lock().await.remove(&parent.repository);
         });
-        self.evolution(run.id).await.ok_or("Evolution record not committed".into())
+        self.evolution(run_id).await.ok_or("Evolution record not committed".into())
     }
 
     async fn advance_evolution(
@@ -212,5 +213,115 @@ impl Improvements {
         }
         run.status=EvolutionStatus::Completed;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::improvement::{execute,git,ImprovementStatus,NewImprovement};
+    use axum::{routing::post,Json,Router};
+    use serde_json::{json,Value};
+    use tokio::process::Command;
+
+    async fn incremental_model(Json(request):Json<Value>)->Json<Value>{
+        let content=request["messages"].as_array()
+            .and_then(|messages|messages.iter().rev().find(|msg|msg["role"]=="user"))
+            .and_then(|message|message["content"].as_str()).unwrap_or("");
+        let previous=content.split("Current contents:\n").last()
+            .unwrap_or("").trim().parse::<u32>().unwrap_or(0);
+        Json(json!({"choices":[{"message":{"role":"assistant",
+            "content":format!("{}\n",previous+1)}}],
+            "usage":{"prompt_tokens":5,"completion_tokens":2}}))
+    }
+    #[tokio::test]
+    async fn bounded_evolution_can_improve_a_then_b_then_a_with_real_git_evaluation(){
+        if Command::new("git").arg("--version").output().await.is_err(){return;}
+        let root=std::env::temp_dir().join(format!("dominion-evolution-{}",Uuid::new_v4()));
+        let workspace=root.join("workspace");
+        let repo=workspace.join("repo");
+        fs::create_dir_all(&repo).await.unwrap();
+        git(&repo,&["init"]).await.unwrap();
+        fs::write(repo.join("a.txt"),"0\n").await.unwrap();
+        fs::write(repo.join("b.txt"),"0\n").await.unwrap();
+        git(&repo,&["add","a.txt","b.txt"]).await.unwrap();
+        execute("git",&["-c","user.name=Test","-c","user.email=test@example.com",
+            "commit","-m","initial"],&repo,30).await.unwrap();
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr=listener.local_addr().unwrap();
+        let server=tokio::spawn(async move {
+            axum::serve(listener,Router::new().route("/chat/completions",post(incremental_model))).await.unwrap();
+        });
+        let model=crate::provider::ModelClient::new(
+            crate::provider::ModelConfig::basic(
+                format!("http://{addr}/chat/completions"),"fixture".into(),None
+            ),None
+        ).unwrap();
+        let dir=root.join("records");
+        let service=Arc::new(Improvements::open(dir.clone(),workspace.clone()).await.unwrap());
+        let seed=service.create(NewImprovement{
+            repository:"repo".into(),target_file:"a.txt".into(),
+            instruction:"Improve the objective without changing the evaluator".into(),
+            test_command:"test -f a.txt && test -f b.txt".into(),
+            score_command:Some("echo $(( $(cat a.txt) + $(cat b.txt) ))".into()),
+            parent:None
+        }).await.unwrap();
+        service.start(model.clone(),seed.id,true).await.unwrap();
+        for _ in 0..150 {
+            if service.get(seed.id).await.unwrap().status!=ImprovementStatus::Running{break;}
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert_eq!(service.get(seed.id).await.unwrap().status,ImprovementStatus::Evaluated);
+        let seed=service.adopt(seed.id).await.unwrap();
+        assert!(seed.adopted_commit.is_some());
+        let run=service.evolution_start(model,seed.id,NewEvolution{
+            max_generations:2,cost_budget_krw:100.0,
+            target_files:vec!["b.txt".into(),"a.txt".into()]
+        },true).await.unwrap();
+        let mut completed=None;
+        for _ in 0..180 {
+            let current=service.evolution(run.id).await.unwrap();
+            if current.status!=EvolutionStatus::Running{completed=Some(current);break;}
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let result=completed.expect("Evolution did not settle within test deadline");
+        assert_eq!(result.status,EvolutionStatus::Completed,"{:?}",result.stop_reason);
+        assert_eq!(result.completed_generations,2);
+        assert_eq!(result.descendants.len(),2);
+        assert_eq!(fs::read_to_string(repo.join("a.txt")).await.unwrap(),"2\n");
+        assert_eq!(fs::read_to_string(repo.join("b.txt")).await.unwrap(),"1\n");
+        let first=service.get(result.descendants[0]).await.unwrap();
+        let second=service.get(result.descendants[1]).await.unwrap();
+        assert_eq!(first.parent,Some(seed.id));
+        assert_eq!(second.parent,Some(first.id));
+        assert_eq!(first.target_file,"b.txt");
+        assert_eq!(second.target_file,"a.txt");
+        assert_eq!(second.base_commit,first.adopted_commit);
+        assert_eq!(first.status,ImprovementStatus::Adopted);
+        assert_eq!(second.status,ImprovementStatus::Adopted);
+        let restored=Improvements::open(dir,workspace).await.unwrap();
+        assert_eq!(restored.evolution(run.id).await.unwrap().completed_generations,2);
+        server.abort();
+        fs::remove_dir_all(root).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn interrupted_evolution_is_not_replayed_on_reopen(){
+        let root=std::env::temp_dir().join(format!("dominion-evolution-recover-{}",Uuid::new_v4()));
+        fs::create_dir_all(&root).await.unwrap();
+        let service=Improvements::open(root.join("records"),root.clone()).await.unwrap();
+        let now=now_ms();
+        let run=EvolutionRun{id:Uuid::new_v4(),starting_trial:Uuid::new_v4(),
+            status:EvolutionStatus::Running,max_generations:2,
+            target_files:vec!["a.txt".into(),"b.txt".into()],descendants:Vec::new(),
+            completed_generations:0,cost_budget_krw:100.0,spent_krw:0.0,
+            stop_reason:None,created_at_ms:now,updated_at_ms:now};
+        service.put_evolution(run.clone()).await.unwrap();
+        let restored=Improvements::open(root.join("records"),root.clone()).await.unwrap();
+        let state=restored.evolution(run.id).await.unwrap();
+        assert_eq!(state.status,EvolutionStatus::NeedsReview);
+        assert_eq!(state.completed_generations,0);
+        assert_eq!(state.descendants.len(),0);
+        fs::remove_dir_all(root).await.unwrap();
     }
 }
