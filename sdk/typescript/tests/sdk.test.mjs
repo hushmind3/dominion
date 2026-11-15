@@ -89,6 +89,18 @@ test('abort ends durable polling before any network request',async()=>{
   assert.equal(calls,0);
 });
 
+test('job workspace travels through the native Rust API contract',async()=>{
+  let payload;
+  const sdk=new Dominion({fetch:async(_url,init)=>{
+    payload=JSON.parse(init.body);
+    return json({id:'scoped-job',status:'queued',kind:'prompt',input:payload.input});
+  }});
+  const result=await sdk.jobs.create({kind:'prompt',input:{
+    prompt:'Fix the project',workspaceDir:'/home/you/code/project',autonomous:true
+  }});
+  assert.equal(payload.input.workspaceDir,'/home/you/code/project');
+  assert.equal(result.input.prompt,'Fix the project');
+});
 test('owner replacement uses the existing job and explicit replace mode',async()=>{
   let last;
   const client=new Dominion({fetch:async(url,init)=>{

@@ -30,6 +30,7 @@ All operations use **real** `/api/*` endpoints. The Rust engine performs plannin
 
 ## Important contracts
 
+- `jobs.create({kind:'prompt', input:{prompt:'Fix this project', workspaceDir:'/absolute/project/path'}})` scopes an individual job to that existing project rather than the server startup folder. The Rust engine validates the directory at submission and again at execution. The embeddable Rust SDK uses `submit_in_workspace(prompt,path)`.
 - `jobs.create` returns the Rust-persisted job; `jobs.get` and `waitForJob` read it after an SDK or GUI restart. The SDK does not claim to resume an incomplete task on its own.
 - `streamChat(input, onEvent, {signal})` uses the same `POST /api/chat` stream as the GUI. A dropped chat stream is **never automatically replayed**, since replay could duplicate paid model calls, file edits or external actions.
 - `events({after, signal, maxReconnects})` listens to the durable `GET /api/events` bus, deduplicating by `seq` and reconnecting with `after` / `Last-Event-ID`. Consumers should persist the last processed `seq` to resume across process restarts; feed replay is bounded by the server's own retention contract.

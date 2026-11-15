@@ -35,6 +35,7 @@ export interface PromptJobInput {
   kind: 'prompt';
   input: { prompt: string; toolsEnabled?: boolean; agentId?: string; providerId?: string; model?: string; reasoningEffort?: string; thinking?: boolean;
     /** Engine-owned autonomous verification/replan (default true). */ autonomous?: boolean;
+    /** Existing absolute project directory, scoped to this job only. */ workspaceDir?: string;
     /** Bounded Rust repair loop, 1..6, default 3. */ maxAutonomousAttempts?: number;
     executionStrategy?: 'focused' | 'conservative';
   };
