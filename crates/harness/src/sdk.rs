@@ -55,6 +55,8 @@ pub struct Session {
     pub tool_calls: usize,
     #[serde(default)]
     pub usage: ModelUsage,
+    #[serde(default)]
+    pub usage_reports: usize,
     pub status: RunStatus,
 }
 
@@ -72,6 +74,7 @@ impl Session {
             rounds: 0,
             tool_calls: 0,
             usage: ModelUsage::default(),
+            usage_reports: 0,
             status: RunStatus::Ready,
         }
     }
@@ -338,6 +341,7 @@ impl AgentSdk {
                 }
             };
             if let Some(usage) = self.provider.take_usage() {
+                state.usage_reports = state.usage_reports.saturating_add(1);
                 state.usage.add(usage);
                 state.event("model_usage", json!({
                     "promptTokens":usage.prompt_tokens,
