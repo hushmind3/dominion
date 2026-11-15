@@ -11,10 +11,11 @@ const NativeVideos=lazy(()=>import('./pages/NativeWorkspace').then(x=>({default:
 const NativeImprovements=lazy(()=>import('./pages/NativeWorkspace').then(x=>({default:x.NativeImprovements})))
 const NativeKnowledge=lazy(()=>import('./pages/NativeWorkspace').then(x=>({default:x.NativeKnowledge})))
 const NativeConnections=lazy(()=>import('./pages/NativeWorkspace').then(x=>({default:x.NativeConnections})))
+const NativeModels=lazy(()=>import('./pages/NativeSystem').then(x=>({default:x.NativeModels})))
 const AgentsPage=lazy(()=>import('./pages/NativeAgents').then(x=>({default:x.NativeAgents})))
 const WorkflowsPage=lazy(()=>import('./pages/NativeWorkflows').then(x=>({default:x.NativeWorkflows})))
-const ExtensionsPage=lazy(()=>import('./pages/Extensions').then(x=>({default:x.ExtensionsPage})))
-const DeveloperPage=lazy(()=>import('./pages/Developer').then(x=>({default:x.DeveloperPage})))
+const ExtensionsPage=lazy(()=>import('./pages/NativeSystem').then(x=>({default:x.NativeExtensions})))
+const DeveloperPage=lazy(()=>import('./pages/NativeSystem').then(x=>({default:x.NativeDeveloper})))
 
 const entry=document.querySelector<HTMLScriptElement>('script[type="module"][src]')?.getAttribute('src')||''
 const entryPath=/\/assets\/[^/?]+\.js/.test(entry)?new URL(entry,document.baseURI).pathname:''
@@ -92,7 +93,8 @@ export default function App(){
       {page==='video'&&<NativeVideos/>}
       {page==='rsi'&&<NativeImprovements/>}
       {page==='memory'&&<NativeKnowledge/>}
-      {(['models','connections','settings'] as PageId[]).includes(page)&&<NativeConnections/>}
+      {page==='models'&&<NativeModels/>}
+      {(['connections','settings'] as PageId[]).includes(page)&&<NativeConnections/>}
       {page==='activity'&&<NativeTasks/>}
       {page==='agents'&&<AgentsPage/>}
       {page==='workflows'&&<WorkflowsPage openSession={id=>navigate('chat',id)}/>}
