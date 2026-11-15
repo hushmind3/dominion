@@ -345,8 +345,28 @@ mod tests {
         assert_eq!(actual.strategy_id.as_deref(),Some("simplify"));
         assert!(actual.strategy_feedback.as_deref().unwrap_or("").contains("Verified scoped history"));
         assert_eq!(tokio::fs::read_to_string(repo.join("b.txt")).await.unwrap(),"2\n");
+        // All 4 methods have now been evaluated. The evidence policy should
+        // exploit its independently stronger prior method on a third chain.
+        let third=persisted.evolution_start(
+            model.clone(),evolved.descendants[0],NewEvolution{
+                max_generations:1,cost_budget_krw:100.0,
+                target_files:vec!["b.txt".into()],
+                candidates_per_generation:1,
+                validation_command:Some("test $(cat b.txt) -lt 10 && echo $(( $(cat a.txt) + $(cat b.txt) ))".into())
+            },true).await.unwrap();
+        let mut third_result=None;
+        for _ in 0..160{
+            let active=persisted.evolution(third.id).await.unwrap();
+            if active.status!=EvolutionStatus::Running{third_result=Some(active);break;}
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let third_result=third_result.expect("Third meta policy run did not finish");
+        assert_eq!(third_result.status,EvolutionStatus::Completed,"{:?}",third_result.stop_reason);
+        assert_eq!(third_result.candidates[0].strategy_id.as_deref(),Some("minimal"));
+        assert_eq!(tokio::fs::read_to_string(repo.join("b.txt")).await.unwrap(),"3\n");
         let restored=Improvements::open(records,workspace).await.unwrap();
         assert_eq!(restored.evolution(next.id).await.unwrap().candidates.len(),2);
+        assert_eq!(restored.evolution(third.id).await.unwrap().descendants.len(),1);
         server.abort();
         tokio::fs::remove_dir_all(root).await.unwrap();
     }
