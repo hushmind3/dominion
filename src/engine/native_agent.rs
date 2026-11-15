@@ -54,6 +54,11 @@ fn verified_tool_result(name: &str, value: Value) -> Result<Value,String> {
     {
         return Err(format!("{name} returned an error: {}",value));
     }
+    if matches!(name,"workspace_write"|"workspace_replace"|"workspace_replace_range"|"file_write")
+        && value["written"]!=true
+    {
+        return Err(format!("{name} produced no confirmed file write: {value}"));
+    }
     if matches!(name,"shell_exec"|"terminal_exec") {
         match value.get("exitCode").and_then(Value::as_i64) {
             Some(0) => {}
@@ -458,6 +463,10 @@ mod native_result_tests {
         assert!(verified_tool_result("mcp__server__op",json!({"statusCode":503})).is_err());
         assert!(verified_tool_result("mcp__server__op",json!({"error":"denied"})).is_err());
         assert!(verified_tool_result("workspace_write",json!({"success":false})).is_err());
+        assert!(verified_tool_result("workspace_replace_range",
+            json!({"written":false,"unchanged":true})).is_err());
+        assert!(verified_tool_result("workspace_replace",
+            json!({"written":true,"replaced":true})).is_ok());
         assert!(verified_tool_result("workspace_read",json!({"content":"ok"})).is_ok());
     }
 }
