@@ -554,30 +554,6 @@ pub fn record_usage_tokens(
     );
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn record_usage_total(
-    state: &AppState,
-    provider_id: &str,
-    model: &str,
-    local: bool,
-    purpose: &str,
-    session_id: Option<&str>,
-    total_tokens: u64,
-) {
-    record_usage_tokens(
-        state,
-        provider_id,
-        model,
-        local,
-        purpose,
-        session_id,
-        0,
-        0,
-        total_tokens,
-        true,
-    );
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
