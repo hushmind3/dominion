@@ -5817,6 +5817,11 @@ mod tests {
             include_str!("../../scripts/rsi-measure.mjs"),
         )
         .unwrap();
+        std::fs::write(
+            fixtures.join("rsi-result-format.mjs"),
+            include_str!("../../scripts/rsi-result-format.mjs"),
+        )
+        .unwrap();
         let report_file = fixtures.join("report.json");
         let mut cmd = Command::new(rsi_worktree::node_executable());
         cmd.current_dir(&source)
