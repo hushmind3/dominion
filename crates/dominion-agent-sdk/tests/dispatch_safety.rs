@@ -126,7 +126,10 @@ async fn reported_failure_cannot_be_mistaken_for_a_successful_result() {
     let actions = [action("false_result","write"),action("later","write")];
     let result = dispatch_batch(&mut state,&actions,&host,&journal).await.unwrap();
     assert_eq!(host.calls(),vec!["false_result"]);
-    assert!(result.iter().all(Result::is_err));
+    assert_eq!(result.len(),2);
+    assert_eq!(result[0].as_ref().unwrap(),"false_result",
+        "a failed tool must return its actual host observation for model repair");
+    assert!(result[1].is_err(),"later mutation must never execute after a failure");
     assert!(!state.receipts[0].success);
     assert_eq!(state.receipts[0].result["result"],"false_result");
 }
