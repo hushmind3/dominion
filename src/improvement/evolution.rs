@@ -147,6 +147,9 @@ impl Improvements {
         let service=Arc::clone(self);
         tokio::spawn(async move {
             let mut run=run;
+            // Hold one native workspace writer lease from the first candidate
+            // through final adoption, including every real scoring process.
+            let _workspace_lease=service.workspace_write_lock.lock().await;
             if let Err(error)=service.advance_evolution(&model,&parent,&mut run).await {
                 run.status=EvolutionStatus::Failed;
                 run.stop_reason=Some(error);
@@ -161,6 +164,12 @@ impl Improvements {
     async fn advance_evolution(
         &self, model:&ModelClient,seed:&Improvement,run:&mut EvolutionRun
     )->Result<(),String>{
+        let workspace=self.workspace.canonicalize().map_err(|e|e.to_string())?;
+        let repo=workspace.join(relative(&seed.repository)?).canonicalize().map_err(|e|e.to_string())?;
+        let head=git(&repo,&["rev-parse","HEAD"]).await?;
+        if seed.adopted_commit.as_deref()!=Some(head.trim()) {
+            return Err("Seed checkout moved before acquiring native workspace lease".into());
+        }
         let mut adopted=seed.clone();
         for target in run.target_files.clone(){
             if run.spent_krw>=run.cost_budget_krw{
