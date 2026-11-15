@@ -30,7 +30,11 @@ const temp=fs.mkdtempSync(path.join(os.tmpdir(),'dominion-rsi-'));
 const created=[];
 try{
  for(const arm of ['baseline','candidate']){
-  const dir=path.join(temp,arm);run(['worktree','add','--quiet','--detach',dir,base],root);created.push(dir);
+  const dir=path.join(temp,arm);
+  // Register the intended path BEFORE invoking git: even a failed add can
+  // leave an orphaned gitdir that requires explicit disposal.
+  created.push(dir);
+  run(['worktree','add','--quiet','--detach',dir,base],root);
  }
  if(plan.fixturePatch){
   const fixture=path.resolve(path.dirname(planFile),plan.fixturePatch);
@@ -49,8 +53,18 @@ try{
   RSI_BASE_TREE_SHA:baselineTreeSha,RSI_CANDIDATE_TREE_SHA:candidateTreeSha,RSI_REPORT:report});
  await import(pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)),'rsi-measure.mjs')).href);
 }finally{
+ // Never delete worktree directories behind Git's back: that leaves
+ // registered metadata in the owner's repo and poisons future RSI runs.
+ const registered=run(['worktree','list','--porcelain'],root)
+  .split('\n').filter(line=>line.startsWith('worktree '))
+  .map(line=>line.slice('worktree '.length));
+ const failures=[];
  for(const dir of created.reverse()){
-  try{run(['worktree','remove','--force',dir],root);}catch{/* preserve the primary experiment failure */}
+  if(registered.includes(dir)){
+   try{run(['worktree','remove','--force',dir],root)}
+   catch(error){failures.push(dir+': '+error.message)}
+  }
  }
+ if(failures.length)throw Error('RSI worktree cleanup failed; preserved lab for review: '+failures.join('; '));
  fs.rmSync(temp,{recursive:true,force:true});
 }
