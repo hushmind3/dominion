@@ -505,6 +505,21 @@ mod tests {
     }
 
     #[test]
+    fn usage_cost_is_accumulated_and_invalid_cost_refused() {
+        let db=new_store();
+        let (task,_) = db.submit("metered-task-2026",
+            &json!({"prompt":"inspect repo"})).unwrap();
+        let id=task["id"].as_str().unwrap();
+        db.account_cost(id,1.25).unwrap();
+        db.account_cost(id,2.75).unwrap();
+        assert_eq!(db.get(id).unwrap()["costKrw"],json!(4.0));
+        assert_eq!(db.family_cost_krw(id),4.0);
+        assert!(db.account_cost(id,f64::NAN).is_err());
+        assert!(db.account_cost(id,-1.0).is_err());
+        assert_eq!(db.get(id).unwrap()["costKrw"],json!(4.0));
+    }
+
+    #[test]
     fn event_cursor_does_not_repeat_prior_records() {
         let db = new_store();
         let a = db.append_event("task-1","step",json!({"n":1})).unwrap();
