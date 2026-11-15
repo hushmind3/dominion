@@ -16,6 +16,16 @@
 - `src/engine/verification.rs`: 한국어 파일명과 바탕화면 경로 검증.
 - GitHub 최신 브랜치 파일을 다시 읽어 함수 호출 경계·조건·UI 원어 옵션 11개를 정적으로 확인했다.
 
-## 검증 범위와 남은 목표
+## 실제 검증과 메인 동등성 (2026-11-15)
 
-이 변경 묶음의 `cargo test`, UI 타입 검사, 라이브 제공자·실청구 토큰 검증은 아직 수행되지 않았다. 기존 성공한 CI 결과를 이 커밋의 통과로 간주하지 않는다. 메인 전체 API/하네스의 전 기능 동등성도 아직 별도 종단 간 회귀 비교가 필요하다. 다음 검증 대상은 `cargo test --bin dominion-rust engine::chat::tests`, `cargo test --bin dominion-rust engine::verification`, 웹 타입 검사 및 사용자 실제 작업·비용 A/B다.
+- 메인 Git 트리 `a6c12ccf85c55ecf4ea46e33a7f4f9027bb36e9f`의 정적 API route **210/210**이 서브3에도 존재한다. 서브3의 `/api/jobs/:id/directive` 1개가 추가로 존재한다.
+- 메인/서브3 `web/`에서 빌드 캐시를 제외한 **56/56개 파일 Git blob SHA가 전부 동일**하다.
+- [제품 집중 테스트 #43711789923](https://github.com/hushmind3/dominion-rust/actions/runs/43711789923): Rust 본체 컴파일, 채팅/도구 순서 회귀, 결과물 검증, 실제 네이티브 MP4 생성, 웹 타입 검사·프로덕션 빌드 **통과**.
+- [Rust SDK·RSI 집중 테스트 #43711861791](https://github.com/hushmind3/dominion-rust/actions/runs/43711861791): Rust SDK·네이티브 호스트/RSI/복구·TypeScript UI 등을 검증하는 워크플로 **통과**.
+- 메인의 공유 `dominion_agent_sdk::runtime::BudgetLedger`를 제품 채팅의 `budget`으로 직접 재사용한다. 분기별 독립 계수가 아닌 하나의 공유 회계 장부에서 동시 실행을 승인한다.
+- `src/api/sdk_runs.rs::create`는 메인 실행 계약의 `model`, `maxRounds`를 실제 `jobs::create`의 모델·예산 입력으로 연결한다.
+- `src/engine/video.rs`의 무API 네이티브 영상은 장면별 테마/미세 줌과 Windows 오프라인 System.Speech 경로를 추가한다. GitHub Ubuntu 집중 검증의 실제 MP4 테스트가 통과했으며, Windows 음성 품질 자체는 별도 검증이 필요하다.
+
+## 검증되지 않은 범위
+
+정적 경로 일치가 전체 동작의 완전 동등성을 증명하지는 않는다. 라이브 상용 제공자별 실제 청구 비용, Windows 오프라인 음성의 환경별 사용 가능성, 공개 프런티어 벤치마크, 전체 99개 HTTP e2e 사례 및 유료 모델을 이용한 장기 다세대 RSI 완주는 여기서 완료를 주장하지 않는다.
