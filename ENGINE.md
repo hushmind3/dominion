@@ -176,3 +176,8 @@ Rust SDK 자체가 계획·실행·검증·복구의 상태기계입니다. 실�
 ## WebSocket 불확실 완료와 SDK 문맥 예산 (2026-11-15)
 
 `src/engine/chat/codex_ws.rs`는 요청 전달 후 완료를 확인하지 못한 호출을 재생하지 않고 `codex.ws.uncertain` 기록으로 남깁니다. `provider.rs`는 이 오류에서 HTTP와 대체 모델 호출을 중단합니다. `crates/dominion-agent-sdk/src/context.rs::project`는 최신 도구 영수증을 남은 모델 문맥 표시 예산에 맞게 축소하고 원본을 보존합니다. 별도 에이전트 SDK나 외부 하네스를 실행 루프에 추가하지 않았습니다. 세부 사항 및 테스트 경계는 `docs/SUB3-NATIVE-STREAM-2026-11-15.md`, `docs/SUB3-DURABLE-CONTEXT-2026-11-15.md`를 참조합니다.
+
+
+## 자율 작업 Codex WebSocket 연속성 (2026-11-15)
+
+`/api/jobs` → `jobs::run_prompt` → `native_agent::run` → `dominion_sdk::Kernel` → `native_model::complete_with_run` → `native_codex_ws::generate`가 실제 호출 경로입니다. 동일 작업의 정상 완료 응답 ID와 실제 도구 영수증을 연결해 입력을 증분 전송하고, 체인 불일치·만료·문맥 증가 시 저장된 영수증으로 전체 요청을 재구성합니다. 네트워크 전달 결과가 불확실하면 재생하지 않고 `nativeInFlight` 및 감사 기록으로 검토하게 합니다. `native.codex_ws.turn`, `native.codex_ws.uncertain`, `native.codex_ws.context_rebase`는 전송 모드·불확실 비용·문맥 교체 경로를 설명합니다. 세부 설계와 공식 2026년 프로토콜 비교: `docs/SUB3-NATIVE-CODEX-WS-2026-11-15.md`.
