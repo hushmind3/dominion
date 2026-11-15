@@ -1,9 +1,10 @@
 //! DOMINION SDK. All decisions, tools, memory, execution and checkpoints live in
 //! the DOMINION Rust engine; this crate exposes that engine to other Rust apps.
 //! The SDK does not spawn an external agent harness or depend on a vendor SDK.
-pub mod harness;
-/// Direct model-independent Rust agent kernel with tool dispatch, owner steering and bounded parallel reads.
-pub use dominion_agent_sdk as kernel;
+/// DOMINION's canonical, model-independent native orchestration kernel.
+pub mod harness {
+    pub use dominion_agent_sdk::*;
+}
 
 use async_stream::try_stream;
 use futures_util::{Stream, StreamExt};

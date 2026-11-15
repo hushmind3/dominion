@@ -4,7 +4,7 @@
 //! execution path. Existing provider, vault, SQLite, MCP, tool and approval
 //! implementations are adapters, not owners of the new agent loop.
 use crate::{engine::{chat, gateway, jobs::JobContext, llm, mcp, tools}, state::AppState};
-use dominion_agent_sdk::{
+use dominion_sdk::harness::{
     Action, BoxFuture, Criterion, CriterionKind, Evidence, Journal, Kernel,
     Limits, Model, ModelReply, RunRequest, Snapshot, Strategy, ToolSpec, Tools,
 };
