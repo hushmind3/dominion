@@ -12,6 +12,7 @@ pub mod veo;
 pub mod improvement;
 pub mod knowledge;
 pub mod legacy;
+pub mod workflows;
 
 pub use runtime::{DominionConfig, DominionSdk, RuntimeError, TaskInput, TaskRecord, TaskEvent};
 
