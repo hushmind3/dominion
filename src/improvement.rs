@@ -5,7 +5,7 @@ fn now_ms()->u64 { chrono::Utc::now().timestamp_millis().max(0) as u64 }
 use serde::{Deserialize,Serialize};
 use serde_json::json;
 use std::{collections::{HashMap,HashSet},path::{Component,Path,PathBuf},process::Stdio,sync::Arc,time::Duration};
-use tokio::{fs,io::{AsyncReadExt},process::Command,sync::Mutex};
+use tokio::{fs,io::{AsyncReadExt,AsyncWriteExt},process::Command,sync::Mutex};
 use uuid::Uuid;
 
 #[derive(Clone,Debug,Serialize,Deserialize,PartialEq,Eq)]
@@ -101,8 +101,16 @@ impl Improvements {
         let mut lock=self.items.lock().await;
         let tmp=self.root.join(format!("{}.tmp",item.id));
         let file=self.root.join(format!("{}.json",item.id));
-        fs::write(&tmp,serde_json::to_vec(&item).map_err(|e|e.to_string())?).await.map_err(|e|e.to_string())?;
-        fs::rename(tmp,file).await.map_err(|e|e.to_string())?;
+        let bytes=serde_json::to_vec(&item).map_err(|e|e.to_string())?;
+        let mut stream=fs::OpenOptions::new().create(true).truncate(true)
+            .write(true).open(&tmp).await.map_err(|e|e.to_string())?;
+        stream.write_all(&bytes).await.map_err(|e|e.to_string())?;
+        stream.sync_all().await.map_err(|e|e.to_string())?;
+        drop(stream);
+        fs::rename(&tmp,&file).await.map_err(|e|e.to_string())?;
+        #[cfg(unix)]
+        std::fs::File::open(&self.root).and_then(|file|file.sync_all())
+            .map_err(|e|e.to_string())?;
         lock.insert(item.id,item.clone());Ok(item)
     }
     pub async fn get(&self,id:Uuid)->Option<Improvement>{self.items.lock().await.get(&id).cloned()}
