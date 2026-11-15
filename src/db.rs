@@ -938,11 +938,11 @@ impl Store {
         let Ok(mut stmt) = conn.prepare(
             "SELECT detail FROM audit WHERE event='model.usage' ORDER BY rowid DESC LIMIT 5000",
         ) else {
-            return json!({"calls":0,"promptTokens":0,"completionTokens":0,"totalTokens":0,"estimatedCalls":0,"groups":[]});
+            return json!({"calls":0,"promptTokens":0,"completionTokens":0,"totalTokens":0,"estimatedCalls":0,"cachedPromptTokens":0,"cacheObservedCalls":0,"groups":[]});
         };
         let rows = stmt.query_map([], |row| row.get::<_, String>(0));
         let Ok(rows) = rows else {
-            return json!({"calls":0,"promptTokens":0,"completionTokens":0,"totalTokens":0,"estimatedCalls":0,"groups":[]});
+            return json!({"calls":0,"promptTokens":0,"completionTokens":0,"totalTokens":0,"estimatedCalls":0,"cachedPromptTokens":0,"cacheObservedCalls":0,"groups":[]});
         };
         let mut groups: std::collections::HashMap<String, Value> =
             std::collections::HashMap::new();
@@ -951,6 +951,8 @@ impl Store {
         let mut completion = 0u64;
         let mut total = 0u64;
         let mut estimated = 0u64;
+        let mut cached = 0u64;
+        let mut cache_observed = 0u64;
         for row in rows.flatten() {
             let Ok(detail) = serde_json::from_str::<Value>(&row) else {
                 continue;
@@ -969,6 +971,8 @@ impl Store {
                     "completionTokens": 0,
                     "totalTokens": 0,
                     "estimatedCalls": 0,
+                    "cachedPromptTokens": 0,
+                    "cacheObservedCalls": 0,
                 })
             });
             calls += 1;
@@ -985,6 +989,19 @@ impl Store {
                 json!(entry["completionTokens"].as_u64().unwrap_or(0) + completion_tokens);
             entry["totalTokens"] =
                 json!(entry["totalTokens"].as_u64().unwrap_or(0) + total_tokens);
+            // Absent telemetry is not a cache miss. Never infer a hit from
+            // stable prompts or count the same tokens twice.
+            if detail["estimated"]!=true {
+                if let Some(hits)=detail["cachedPromptTokens"].as_u64() {
+                    let bounded=hits.min(prompt_tokens);
+                    cached=cached.saturating_add(bounded);
+                    cache_observed=cache_observed.saturating_add(1);
+                    entry["cachedPromptTokens"]=json!(
+                        entry["cachedPromptTokens"].as_u64().unwrap_or(0).saturating_add(bounded));
+                    entry["cacheObservedCalls"]=json!(
+                        entry["cacheObservedCalls"].as_u64().unwrap_or(0).saturating_add(1));
+                }
+            }
             if detail["estimated"].as_bool() == Some(true) {
                 estimated += 1;
                 entry["estimatedCalls"] =
@@ -1005,6 +1022,8 @@ impl Store {
             "completionTokens": completion,
             "totalTokens": total,
             "estimatedCalls": estimated,
+            "cachedPromptTokens": cached,
+            "cacheObservedCalls": cache_observed,
             "groups": groups,
         })
     }
@@ -1025,7 +1044,11 @@ impl Store {
                     COALESCE(SUM(CAST(json_extract(detail,'$.promptTokens') AS INTEGER)),0),
                     COALESCE(SUM(CAST(json_extract(detail,'$.completionTokens') AS INTEGER)),0),
                     COALESCE(SUM(CAST(json_extract(detail,'$.totalTokens') AS INTEGER)),0),
-                    COALESCE(SUM(CASE WHEN json_extract(detail,'$.estimated')=1 THEN 1 ELSE 0 END),0)
+                    COALESCE(SUM(CASE WHEN json_extract(detail,'$.estimated')=1 THEN 1 ELSE 0 END),0),
+                    COALESCE(SUM(CASE WHEN json_type(detail,'$.cachedPromptTokens')='integer' AND json_extract(detail,'$.estimated')!=1
+                        THEN CAST(json_extract(detail,'$.cachedPromptTokens') AS INTEGER) ELSE 0 END),0),
+                    COALESCE(SUM(CASE WHEN json_type(detail,'$.cachedPromptTokens')='integer' AND json_extract(detail,'$.estimated')!=1
+                        THEN 1 ELSE 0 END),0)
              FROM audit
              WHERE event='model.usage' AND json_extract(detail,'$.sessionId')=?1",
             [session_id],
@@ -1036,19 +1059,24 @@ impl Store {
                     row.get::<_, i64>(2)?,
                     row.get::<_, i64>(3)?,
                     row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
                 ))
             },
         );
         match summary {
-            Ok((calls, prompt, completion, total, estimated)) => json!({
+            Ok((calls, prompt, completion, total, estimated, cached, cache_observed)) => json!({
                 "calls": calls.max(0),
                 "promptTokens": prompt.max(0),
                 "completionTokens": completion.max(0),
                 "totalTokens": total.max(0),
                 "estimatedCalls": estimated.max(0),
+                "cachedPromptTokens":cached.max(0),
+                "cacheObservedCalls":cache_observed.max(0),
             }),
             Err(_) => json!({
-                "calls":0,"promptTokens":0,"completionTokens":0,"totalTokens":0,"estimatedCalls":0
+                "calls":0,"promptTokens":0,"completionTokens":0,"totalTokens":0,"estimatedCalls":0,
+                "cachedPromptTokens":0,"cacheObservedCalls":0
             }),
         }
     }
