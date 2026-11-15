@@ -466,6 +466,7 @@ pub async fn run(state: AppState, id: String) {
         if let Some(instruction) = state.store.take_steer(&id) {
             active_instruction = instruction.clone();
             owner_redirected = true;
+            promoted_tools.clear(); // owner steered the task; retire stale MCP schema promotions
             messages.push(json!({"role":"user","content":instruction}));
             state.store.add_message(&session,"user",&instruction);
             state.emit(&id,"instruction_applied",json!({"text":instruction}));
@@ -682,6 +683,7 @@ pub async fn run(state: AppState, id: String) {
         if let Some(instruction) = state.store.take_steer(&id) {
             active_instruction = instruction.clone();
             owner_redirected = true;
+            promoted_tools.clear(); // owner steered the task; retire stale MCP schema promotions
             messages.push(message.clone());
             for call in &calls {
                 let tool_id=call["id"].as_str().unwrap_or("unidentified");
@@ -983,6 +985,7 @@ pub async fn run(state: AppState, id: String) {
         if let Some(instruction)=pending_correction {
             active_instruction = instruction.clone();
             owner_redirected = true;
+            promoted_tools.clear(); // owner steered the task; retire stale MCP schema promotions
             messages.push(json!({"role":"user","content":instruction}));
             state.store.add_message(&session,"user",&instruction);
             state.emit(&id,"instruction_applied",json!({"text":instruction}));
