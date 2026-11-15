@@ -80,6 +80,12 @@ fn narrow(text:&str,max:usize)->String {
     if text.chars().count()>max {limited.push('…');}
     limited
 }
+/// Stop paying for the same unsuccessful model turn without fresh evidence.
+fn stalled(previous:&[String],current:&[String],new_evidence:usize,
+    previous_error:Option<&str>,error:Option<&str>)->bool{
+    !current.is_empty() && previous==current
+        && new_evidence==0 && previous_error==error
+}
 fn next_instruction(goal:&str,gaps:&[String],error:Option<&str>,round:usize)->String {
     let evidence=gaps.iter().take(6).map(|gap|format!("- {}",narrow(gap,300)))
         .collect::<Vec<_>>().join("\n");
@@ -157,6 +163,12 @@ pub async fn execute(
         }
         let mut decision=decide(config.strategy,has_checks,&gaps,
             latest_error.as_deref(),&all_evidence,attempt,config.attempts);
+        let repeated_without_progress=attempt>0
+            && stalled(&last_gaps,&gaps,stats.evidence.len(),
+                last_error.as_deref(),latest_error.as_deref());
+        if repeated_without_progress && !owner_changed {
+            decision=Decision::Review;
+        }
         if owner_changed {
             // A new owner instruction never overrides the no-replay boundary
             // for a possibly non-idempotent external action.
@@ -203,6 +215,8 @@ pub async fn execute(
                     "status":"needs_review","sessionId":session_id,"messageId":last_message,
                     "reason":if side_effect_unknown(&all_evidence) {
                         "외부 부작용이 발생했을 수 있어 자동 재실행하지 않습니다."
+                    }else if repeated_without_progress {
+                        "새로운 실행 증거 없이 동일한 검증 실패가 반복되어 재시도를 중단했습니다."
                     }else{"검증되지 않은 항목이 남았습니다. 작업 기록을 확인하세요."},
                     "unmetChecks":gaps,"lastError":latest_error,
                     "attempts":attempt+1,"receipts":receipts,
@@ -241,6 +255,13 @@ mod tests{
         assert!(text.contains("수정해"));
         assert!(text.len()<4000);
         assert_eq!(CycleConfig::from_input(&json!({"maxAutonomousAttempts":100})).attempts,6);
+    }
+    #[test]
+    fn identical_failed_attempts_stop_before_wasting_more_tokens(){
+        let gaps=vec!["file missing".to_string()];
+        assert!(stalled(&gaps,&gaps,0,None,None));
+        assert!(!stalled(&gaps,&gaps,1,None,None));
+        assert!(!stalled(&gaps,&[],0,None,None));
     }
     #[test]
     fn conservative_strategy_stops_on_partial_write_plus_provider_error(){
