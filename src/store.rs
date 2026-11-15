@@ -116,12 +116,42 @@ impl Store {
         rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
     }
 
+    /// Only one task may own a transcript at a time. Null session IDs are
+    /// isolated by task ID; callers with the same explicit session are ordered.
+    /// The SQLite update is atomic across concurrent submitters/workers.
     pub fn claim(&self, id: &str) -> bool {
         let Ok(conn) = self.conn.lock() else { return false };
         conn.execute(
-            "UPDATE tasks SET status='running' WHERE id=?1 AND status='queued' AND cancelled=0",
+            "UPDATE tasks SET status='running'
+             WHERE id=?1 AND status='queued' AND cancelled=0
+               AND NOT EXISTS (
+                 SELECT 1 FROM tasks AS active
+                 WHERE active.status='running'
+                   AND COALESCE(json_extract(active.input,'$.sessionId'),active.id)
+                       = COALESCE(json_extract(tasks.input,'$.sessionId'),tasks.id)
+               )",
             [id]
         ).is_ok_and(|n| n == 1)
+    }
+
+    /// Runnable tasks are rediscovered after another task finishes or the
+    /// process restarts. This is a read-only query; claim() owns admission.
+    pub fn runnable_ids(&self, limit: usize) -> Vec<String> {
+        let Ok(conn) = self.conn.lock() else { return Vec::new() };
+        let Ok(mut stmt) = conn.prepare(
+            "SELECT pending.id FROM tasks AS pending
+             WHERE pending.status='queued' AND pending.cancelled=0
+               AND NOT EXISTS (
+                 SELECT 1 FROM tasks AS active
+                 WHERE active.status='running'
+                   AND COALESCE(json_extract(active.input,'$.sessionId'),active.id)
+                       = COALESCE(json_extract(pending.input,'$.sessionId'),pending.id)
+               )
+             ORDER BY pending.created_at, pending.rowid LIMIT ?1"
+        ) else { return Vec::new() };
+        let Ok(rows) = stmt.query_map([limit.clamp(1, 64) as i64],
+            |row| row.get::<_, String>(0)) else { return Vec::new() };
+        rows.filter_map(Result::ok).collect()
     }
 
     pub fn cancel(&self, id: &str) -> Option<Value> {
