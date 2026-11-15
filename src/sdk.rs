@@ -22,8 +22,6 @@ pub struct Prompt {
     pub instruction:String,pub agent_id:Option<String>,
     pub provider_id:Option<String>,pub model:Option<String>,
     pub reasoning_effort:Option<String>,pub verify_command:Option<String>,pub tools_enabled:bool,
-    /// Optional existing absolute directory to execute this job in.
-    pub workspace_dir:Option<PathBuf>,
     pub autonomous:bool,pub max_autonomous_attempts:u8,
     pub execution_strategy:ExecutionStrategy,
 }
@@ -38,7 +36,6 @@ impl Prompt {
     pub fn new(instruction:impl Into<String>)->Self{
         Self{instruction:instruction.into(),agent_id:None,provider_id:None,model:None,
             reasoning_effort:None,verify_command:None,tools_enabled:true,autonomous:true,
-            workspace_dir:None,
             max_autonomous_attempts:3,execution_strategy:ExecutionStrategy::Focused}
     }
 }
@@ -105,11 +102,22 @@ impl Dominion {
     }
     /// Write a native engine job without starting an external agent or API wrapper.
     pub fn submit(&self,prompt:Prompt)->Result<Value,String>{
+        self.submit_scoped(prompt,None)
+    }
+    /// Run one task in a chosen existing repository without changing the
+    /// global default for other jobs. A separate method retains source
+    /// compatibility with callers constructing the existing Prompt struct.
+    pub fn submit_in_workspace(&self,prompt:Prompt,workspace:impl Into<PathBuf>)
+        ->Result<Value,String>{
+        self.submit_scoped(prompt,Some(workspace.into()))
+    }
+    fn submit_scoped(&self,prompt:Prompt,workspace_dir:Option<PathBuf>)
+        ->Result<Value,String>{
         let instruction=prompt.instruction.trim();
         if instruction.is_empty()||instruction.len()>64_000 {
             return Err("instruction must contain 1..64000 bytes".into());
         }
-        let workspace=prompt.workspace_dir.as_ref()
+        let workspace=workspace_dir.as_ref()
             .map(|path|crate::engine::workspace_scope::resolve(&self.state,
                 path.to_str().ok_or("workspace_dir must be Unicode")?))
             .transpose()?;
