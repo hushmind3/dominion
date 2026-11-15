@@ -44,7 +44,8 @@ fn collect(root: &Path, start: &str) -> Result<(Vec<PathBuf>, bool), String> {
         for entry in entries {
             let filename = entry.file_name();
             let name = filename.to_string_lossy();
-            if matches!(name.as_ref(), ".git" | "node_modules" | "target" | ".dominion" | "dist") {
+            if matches!(name.as_ref(), ".git" | "node_modules" | "target" | ".dominion" | "dist")
+                || name.starts_with(".dominion-stage-") || name.starts_with(".dominion-backup-") {
                 continue;
             }
             let kind = entry.file_type().map_err(|error| error.to_string())?;
@@ -248,7 +249,12 @@ pub async fn replace_many(root:&Path,edits:&[Value])->Result<Value,String>{
                 .create_new(true).write(true).open(&entry.stage).await
                 .map_err(|e|e.to_string())?;
             output.write_all(&entry.updated).await.map_err(|e|e.to_string())?;
-            output.sync_all().await.map_err(|e|e.to_string())
+            output.sync_all().await.map_err(|e|e.to_string())?;
+            // Preserve executable bits and other source permissions.
+            let original_permissions=std::fs::metadata(&entry.file)
+                .map_err(|e|e.to_string())?.permissions();
+            tokio::fs::set_permissions(&entry.stage,original_permissions)
+                .await.map_err(|e|e.to_string())
         }.await;
         if let Err(error)=result{
             for i in staged {
@@ -260,7 +266,13 @@ pub async fn replace_many(root:&Path,edits:&[Value])->Result<Value,String>{
         staged.push(index);
     }
     for entry in &prepared {
-        let current=tokio::fs::read(&entry.file).await.map_err(|e|e.to_string())?;
+        let current=match tokio::fs::read(&entry.file).await{
+            Ok(bytes)=>bytes,
+            Err(error)=>{
+                for stage in &prepared{let _=tokio::fs::remove_file(&stage.stage).await;}
+                return Err(format!("Cannot recheck prior file before commit: {error}"));
+            }
+        };
         if current!=entry.original {
             for stage in &prepared{let _=tokio::fs::remove_file(&stage.stage).await;}
             return Err("Source was concurrently modified; no staged edit was adopted".into());
