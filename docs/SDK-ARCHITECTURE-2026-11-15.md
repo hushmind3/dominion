@@ -65,7 +65,7 @@ The canonical Rust SDK is now `dominion_sdk::harness`, re-exporting a provider-i
 - `src/engine/jobs.rs::run_prompt` delegates **normal** tasks directly to `native_agent::run`; special RSI experiments keep their isolated existing source-edit/holdout implementation.
 - Read-only tool operations are bounded and may execute in parallel; side-effecting tools are ordered and require the real Rust approval policy.
 - `POST /api/jobs/:id/directive` supplies a user correction; the kernel checks for it before model and tool batches and rejects stale work.
-- `web/src/components/ExecutionMonitor.tsx` uses main's original execution-monitor interface. `web/src/components/NativeAgentPanel.tsx` keeps main's autonomous-work presentation while reading the same sub3 Rust `job` journal and `/api/approvals`; it does not start a second agent loop. Mid-task steering remains available via `POST /api/jobs/:id/directive` and the TypeScript SDK.
+- `web/src/components/ExecutionMonitor.tsx` and `web/src/components/NativeAgentPanel.tsx` are both identical to main commit `879dc23d`. The unchanged panel reads `/api/sdk/runs`, and `src/api/sdk_runs.rs` adapts this contract to the same Rust `job` journal and durable approvals; it does not start a second agent loop. Mid-task steering remains available via `POST /api/jobs/:id/directive` and the TypeScript SDK.
 - The wrapper checks command `exitCode` and structured errors before writing a successful tool receipt.
 - The previous goal-specific runner was not recreated, and no Goals API is present.
 
@@ -74,9 +74,9 @@ Validation status: new Rust unit tests exist in the imported kernel and producti
 
 ## Frontend decision (2026-11-15)
 
-The `dominion-sub3` branch adopts **main's frontend**: the main versions of `web/src/pages/Home.tsx` and `web/src/components/ExecutionMonitor.tsx`, plus its `NativeAgentPanel` layout. The panel's transport is adapted to sub3's production `/api/jobs` and `/api/approvals` endpoints rather than copying main's separate `/api/sdk/runs` engine. The optional verification command becomes an explicit native agent execution instruction (subject to tool permissions and actual observed exit code), not a claimed post-run command hook. Failed-run retry and in-doubt reconciliation each create a **new** journaled job; neither blindly replays prior external side effects.
+The entire `web/` tree (56 files) exactly matches **main commit `879dc23d`**. The main panel uses `/api/sdk/runs` unchanged; `src/api/sdk_runs.rs` implements its read/create/approve/cancel/resume/reconcile contract by delegating to the validated native `/api/jobs` handler and the durable Rust approval ledger. Its optional verification command becomes a native SDK postcondition plus explicit owner instructions. Resume is accepted only for a safe interrupted kernel snapshot; unresolved side effects are never re-executed on an optimistic UI status. Reconciliation records user observation, not proof of execution or completed work.
 
-Static integration: main frontend page/panel paths → `/api/jobs` → `src/api/jobs.rs` → `src/engine/jobs.rs::run_prompt` → `src/engine/native_agent.rs` → `dominion-sdk` kernel. Approval path: panel → `/api/approvals` → `src/api/approvals.rs` → native Rust approval waiter. The native Rust host compiled and the main-based frontend TypeScript check and Vite production build passed in GitHub run 43684016242. A live browser/API task remains to be exercised.
+Current integration: pinned main frontend → `/api/sdk/runs` → `src/api/sdk_runs.rs` → validated `src/api/jobs.rs::create` → `engine::jobs::run_prompt` → `native_agent::run` → independent Rust `dominion-sdk` kernel. Approval: main panel → `/api/sdk/runs/:id/approve` → exact session/call guard → `src/api/approvals.rs` → original native Rust approval waiter. The native Rust host compiled and the main-based frontend TypeScript check and Vite production build passed in GitHub run 43684016242. A live browser/API task remains to be exercised.
 
 
 ## Rust-owned scheduler and clean checkpoint continuation (2026-11-15)
@@ -86,7 +86,7 @@ Static integration: main frontend page/panel paths → `/api/jobs` → `src/api/
 - `Kernel::resume` matches exact run identity and original user task, rejects unknown in-flight model/tool outcomes and skips all already-committed steps and receipts. The job queue continues only clean interrupted checkpoints, and the product adapter preserves session IDs, execution IDs, and existing messages.
 - `src/engine/native_agent.rs` uses a single common structured error validator for MCP and native tools; this prevents false positive receipts from HTTP-style error envelopes.
 - New deterministic tests: `scheduler.rs` (5) and `tests/kernel_replanning.rs` (5), in addition to prior kernel tests; these test files are source artifacts, **not a claim of executed test passes**.
-- The production UI still uses `main`'s layout. `NativeAgentPanel` is adapted to the sub3 native `/api/jobs` and `/api/approvals` interfaces. TypeScript is a client, not a separate harness.
+- The production UI now uses main `879dc23d` **exactly**, with no altered React source. The Rust SDK-run compatibility API forwards to the existing native `/api/jobs` and `/api/approvals` operations; TypeScript remains a client, not a second harness.
 
 **Scope and remaining verification:** Run Rust unit/integration tests on an installed Rust toolchain and then an actual local UI + provider sequence. Concurrent agent delegation, video delivery, group conversation runtime, cross-domain RSI improvements, semantic context compression and verified commercial-grade pricing remain whole-product evaluation items. Do not claim they were made frontier-equivalent by this scheduler change. CI stays deferred until project-wide cleanup and integration checks.
 
@@ -138,3 +138,7 @@ The independent `dominion-agent-sdk::Kernel` now runs the owner's required exact
 ### Sub3 incremental native SSE verification — 2026-11-15
 
 Focused GitHub Actions verification on commit `a9193735d51105b7f4f311a0e83bbd2376e3c45e`: [run 43687745047](https://github.com/hushmind3/dominion-rust/actions/runs/43687745047) completed successfully. The log records 44 SDK test cases (16+2+6+15+3+2), 41 filtered native host test cases, and one workflow recovery test: **86 passed, 0 failed**. Frontend TypeScript check and Vite production build also passed. Real loopback HTTP streaming/stalled-cancellation fixtures are included in those tests; no commercial model API call was made.
+
+## Exact main UI pin — 879dc23d (2026-11-15)
+
+Comparison of every Git blob in `web/` returned 56/56 identical to main commit `879dc23dce309688691c200b001b180bead95a12`. The pinned UI does not contain the earlier sub3-only budget/price/routing widgets, while those functions remain exposed through the Rust API and TypeScript SDK. This distinction supersedes historical descriptions of the sub3-only frontend transport above.
