@@ -551,7 +551,9 @@ pub(crate) async fn complete_with_run(
         "codex"=>send_codex(state,&route,&client,&body,session,job_id,receipts).await?,
         "anthropic"=>send_anthropic(&route,&client,&body,state,session,job_id).await?,
         _=>{
-            let response=gateway::send(&route,&client,&body,Duration::from_secs(240)).await?;
+            // A durable model_in_flight checkpoint means a transport failure
+            // is not permission for an internal HTTP POST retry.
+            let response=gateway::send_once(&route,&client,&body,Duration::from_secs(240)).await?;
             if !response.response.status().is_success(){
                 let status=response.response.status();
                 let error=response.response.text().await.unwrap_or_default();
