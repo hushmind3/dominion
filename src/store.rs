@@ -111,6 +111,16 @@ impl Store {
         Ok(Self { conn: Arc::new(Mutex::new(conn)) })
     }
 
+    /// Operator-triggered data migration. Never modifies the source.
+    pub fn import_legacy(&self,source:&Path,destination:&Path)->Result<Value,String>{
+        if source.canonicalize().map_err(|e|e.to_string())? ==
+            destination.canonicalize().map_err(|e|e.to_string())? {
+            return Err("Legacy import source and destination must differ".into());
+        }
+        let mut conn=self.conn.lock().map_err(|e|e.to_string())?;
+        crate::legacy::import(source,&mut conn)
+    }
+
     /// Store owner-provided evidence. A session scope never widens implicitly.
     /// Persist the one local owner's visible identity for the main React shell.
     pub fn owner_profile(&self) -> Value {
