@@ -37,7 +37,7 @@ fn estimate_with_history(
     let mut written=0u64;
     for job in state.store.all("job") {
         if job["nativeRoute"]["binding"].as_str()!=Some(key.as_str())
-            ||!matches!(job["status"].as_str(),Some("completed"|"failed"|"needs_review")) {
+            ||job["status"]!="completed" {
             continue;
         }
         let meter=&job["nativeModelUsage"];
