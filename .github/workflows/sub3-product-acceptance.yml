@@ -13,6 +13,7 @@ on:
       - 'src/engine/rsi.rs'
       - 'src/engine/rsi_evolve.rs'
       - 'tests/e2e.rs'
+      - 'scripts/check-main-parity.mjs'
       - 'packages/sdk-typescript/**'
       - 'src/engine/chat/**'
       - 'src/engine/video.rs'
@@ -37,6 +38,10 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      - name: Verify current main source, GUI and API-handler parity
+        run: |
+          git fetch --no-tags --depth=1 origin main
+          node scripts/check-main-parity.mjs
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Compile actual backend
