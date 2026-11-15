@@ -171,3 +171,14 @@ grader. Real model results still require a configured provider and runtime.
 
 The FFmpeg concat demuxer requires compatible stream layouts and adjusts timestamps from each input duration; its successful exit alone does not establish a correct-length film. [FFmpeg format documentation](https://www.ffmpeg.org/ffmpeg-formats.html).
 
+## 2026-11-15 cleanup: remove inactive compatibility paths
+
+Actual branch cleanup, not speculative module renaming:
+
+- Deleted dead provider/model wrappers (`claude_cli_authenticated`, `model_is_free`), inactive usage audit alias (`record_usage_total`) and the old oversize-permitting `trim_tool_definitions` implementation. Active provider auth, `model_free_status`, measured `record_usage_tokens` and byte-strict discovery/budget paths remain.
+- Removed unused standalone `OwnerIntent` state structure plus its self-referential tests while retaining the active `OWNER_EXECUTION_RULE` policy. Deleted obsolete goal inventory wrapper `goal_context::snapshot`; the bounded `snapshot_in` path remains.
+- Pruned stale reexports and imports from `chat/runtime.rs`, `rsi_evolve.rs` and other compiled modules. Test-only compatibility/query and experimental generator comparison helpers are now `#[cfg(test)]` rather than shipped dead-code pathways.
+- The failed `cargo test --release` run [43622443858](https://github.com/hushmind3/dominion-rust/actions/runs/43622443858) had **917 passing, 1 failing** unit test: a prior fixture asserted on supplied array order even though the reliable ordering was `opSeq`. The assertion now uses real `opSeq` chronology and checks a truly later source edit. No change was made to weaken the runtime freshness gate.
+- Replaced the tautological `code_navigation_has_a_strict_prompt_limit` test with a temporary workspace + SQLite-backed source-index test, and ensured a room-knowledge fixture removes its temporary directory.
+- This cleanup does not claim official SWE-bench results, cinematic semantic quality, or completed validation on a newer HEAD before CI finishes.
+
