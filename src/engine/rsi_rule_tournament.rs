@@ -70,8 +70,8 @@ pub fn compare(rows:&[&Value],reward:fn(&Value)->f64)->Value {
                 let lr=left_rows.iter().map(|row|row.2).fold(f64::INFINITY,f64::min);
                 let rr=right_rows.iter().map(|row|row.2).fold(f64::INFINITY,f64::min);
                 let outcome=if lr-rr>0.25 {1} else if rr-lr>0.25 {2} else {0};
-                let prior=by_source.entry(((*left).clone(),(*right).clone()))
-                    .or_default().entry(source.clone()).or_insert(outcome);
+                let prior=by_source.entry((left.to_string(),right.to_string()))
+                    .or_default().entry(source.to_string()).or_insert(outcome);
                 if *prior!=outcome {*prior=0;}
             }
         }
