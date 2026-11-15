@@ -198,3 +198,38 @@ async fn owner_redirection_after_intent_fence_dispatches_no_tool() {
     assert_eq!(saved[0].in_flight.len(),1);
     assert!(saved[1].in_flight.is_empty());
 }
+
+#[tokio::test]
+async fn in_batch_dependency_waits_for_producer_and_commits_ordered_receipts() {
+    let host=Host::new();
+    let journal=JournalLog::default();
+    let mut state=run();
+    let first=action("fetch","read");
+    let mut second=action("inspect","read");
+    second.depends_on=vec!["fetch".into()];
+    let mut third=action("apply","write");
+    third.depends_on=vec!["inspect".into()];
+    let output=dispatch_batch(&mut state,&[first,second,third],&host,&journal)
+        .await.unwrap();
+    assert!(output.iter().all(Result::is_ok));
+    assert_eq!(host.calls(),vec!["fetch","inspect","apply"]);
+    assert_eq!(state.receipts.iter().map(|receipt|receipt.id.as_str())
+        .collect::<Vec<_>>(),vec!["fetch","inspect","apply"]);
+    assert_eq!(host.peak.load(Ordering::SeqCst),1,
+        "dependent reads must never share the same execution window");
+}
+#[tokio::test]
+async fn self_dependency_and_future_dependency_fail_before_any_effect() {
+    let host=Host::new();
+    let journal=JournalLog::default();
+    let mut state=run();
+    let mut self_cycle=action("cycle","read");
+    self_cycle.depends_on=vec!["cycle".into()];
+    assert!(dispatch_batch(&mut state,&[self_cycle],&host,&journal).await.is_err());
+    let mut future=action("first","write");
+    future.depends_on=vec!["later".into()];
+    assert!(dispatch_batch(&mut state,&[future,action("later","read")],
+        &host,&journal).await.is_err());
+    assert!(host.calls().is_empty());
+    assert!(journal.checkpoints.lock().unwrap().is_empty());
+}
