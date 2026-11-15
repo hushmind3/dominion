@@ -84,6 +84,35 @@ export interface VideoRequest {
   scenes?: VideoScene[];
   backend?: VideoBackend;
 }
+export interface ImprovementRequest {
+  repository: string;
+  target_file: string;
+  instruction: string;
+  test_command: string;
+  score_command?: string | null;
+  parent?: string | null;
+}
+export interface ImprovementMeasurement {
+  tests_passed: boolean;
+  score: number | null;
+  log: string;
+}
+export interface ImprovementTrial {
+  id: string;
+  repository: string;
+  target_file: string;
+  instruction: string;
+  status: 'awaiting_approval' | 'running' | 'evaluated' | 'rejected' | 'adopted' | 'failed';
+  base_commit: string | null;
+  candidate_commit: string | null;
+  baseline: ImprovementMeasurement | null;
+  candidate: ImprovementMeasurement | null;
+  accepted: boolean;
+  cost_krw: number;
+  error: string | null;
+  parent: string | null;
+  reflection: string | null;
+}
 export interface ClientOptions {
   baseUrl?: string;
   fetch?: typeof fetch;
@@ -182,6 +211,24 @@ export class DominionClient {
   }
   videoDownloadUrl(id: string) {
     return this.base + '/api/videos/'+encodeURIComponent(id)+'/content';
+  }
+  improvementList(signal?: AbortSignal) {
+    return this.request<ImprovementTrial[]>('/api/improvements','GET',undefined,signal);
+  }
+  improvementCreate(input: ImprovementRequest, signal?: AbortSignal) {
+    return this.request<ImprovementTrial>('/api/improvements','POST',input,signal);
+  }
+  improvementGet(id: string, signal?: AbortSignal) {
+    return this.request<ImprovementTrial>('/api/improvements/'+encodeURIComponent(id),'GET',undefined,signal);
+  }
+  improvementEvaluate(id: string, signal?: AbortSignal) {
+    return this.request<ImprovementTrial>('/api/improvements/'+encodeURIComponent(id)+'/evaluate','POST',{},signal);
+  }
+  improvementAdopt(id: string, signal?: AbortSignal) {
+    return this.request<ImprovementTrial>('/api/improvements/'+encodeURIComponent(id)+'/adopt','POST',{},signal);
+  }
+  improvementDescendant(id: string, signal?: AbortSignal) {
+    return this.request<ImprovementTrial>('/api/improvements/'+encodeURIComponent(id)+'/descendant','POST',{},signal);
   }
   /**
    * Reconnect only a read-only GET. The cursor is based on committed event seq;
