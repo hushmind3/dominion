@@ -258,8 +258,8 @@ fn parse_anthropic(value:&Value)->Result<ModelTurn,String> {
             _=>{}
         }
     }
-    finish(parts.join("\n"),actions,value["usage"]["input_tokens"].as_u64(),
-        value["usage"]["output_tokens"].as_u64())
+    let measured=reported_usage("anthropic",value);
+    finish(parts.join("\n"),actions,measured.input,measured.output)
 }
 fn parse_codex(value:&Value)->Result<ModelTurn,String> {
     if matches!(value["status"].as_str(),Some("failed"|"incomplete")) {
@@ -570,17 +570,17 @@ pub(crate) async fn complete_with_run(
             }
         }
     };
-    let usage=if wire=="chat" {gateway::usage_from(&value)}
-        else {
-            let prompt=value["usage"]["input_tokens"].as_u64().unwrap_or(0);
-            let output=value["usage"]["output_tokens"].as_u64().unwrap_or(0);
-            gateway::Usage {
-                prompt_tokens:prompt,completion_tokens:output,
-                total_tokens:value["usage"]["total_tokens"].as_u64()
-                    .unwrap_or_else(||prompt.saturating_add(output)),
-            }
-        };
-    gateway::record_usage(state,&route,usage,"agent_native",Some(session));
+    let measured=reported_usage(wire,&value);
+    let prompt=measured.input.unwrap_or(0);
+    let output=measured.output.unwrap_or(0);
+    // Anthropic input_tokens excludes cache-read and cache-write tokens.
+    let total=if wire=="anthropic" {prompt.saturating_add(output)}
+        else {value["usage"]["total_tokens"].as_u64()
+            .unwrap_or_else(||prompt.saturating_add(output))};
+    gateway::record_usage(state,&route,gateway::Usage{
+        prompt_tokens:prompt,completion_tokens:output,total_tokens:total
+    },"agent_native",Some(session));
+    record_job_usage(state,job_id,session,&route,measured)?;
     match wire {
         "codex"=>parse_codex(&value),
         "anthropic"=>parse_anthropic(&value),
