@@ -476,7 +476,7 @@ pub(crate) fn replayed_pair_metrics(state: &AppState, candidate: &Value) -> Opti
 /// One adopted generation holds proof only when its paired evaluation was
 /// replayed from the preserved receipt and matched the exact generator and
 /// accepted commits.
-fn generation_proof(state:&AppState,generation:&Value)
+pub(crate) fn generation_proof(state:&AppState,generation:&Value)
     ->Option<(String,bool,BTreeSet<String>)> {
     if generation["accepted"] != true {return None;}
     let candidate = generation["candidateId"].as_str()
@@ -530,7 +530,7 @@ pub fn capability_proven(state: &AppState, history: &[Value]) -> bool {
 }
 
 /// Gather every inherited segment of a campaign in lineage order.
-fn lineage_history(state:&AppState,campaign:&Value)->Vec<Value> {
+pub(crate) fn lineage_history(state:&AppState,campaign:&Value)->Vec<Value> {
     let mut segments = Vec::new();
     let mut seen = BTreeSet::new();
     let mut current=campaign.clone();

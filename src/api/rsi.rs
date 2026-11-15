@@ -29,6 +29,9 @@ fn apply_capability(state: &AppState, record: &mut Value) {
     let max = measured_max.max(record["maxAcceptedStreak"].as_u64().unwrap_or(0));
     record["acceptedStreak"] = json!(streak);
     record["maxAcceptedStreak"] = json!(max);
+    record["crossDomainTransfer"]=if record["history"].as_array().is_some_and(|h|h.len()>=2) {
+        crate::engine::rsi_transfer::audit_campaign(state,record)
+    } else {crate::engine::rsi_transfer::empty()};
     if record["systemEvolution"]==true {
         let history=record["history"].as_array().cloned().unwrap_or_default();
         record["systemEvidence"]=crate::engine::rsi_system::handoff_evidence(state,&history);
@@ -298,6 +301,7 @@ pub async fn verify(State(state):State<AppState>,Path(id):Path<String>)->Respons
         return error("캠페인 기록을 찾을 수 없습니다.".into());
     };
     let mut report=engine::capability_audit(&state,&campaign);
+    report["crossDomainTransfer"]=crate::engine::rsi_transfer::audit_campaign(&state,&campaign);
     if campaign["systemEvolution"]==true || state.store.get("job",&id)
         .is_some_and(|job|job["input"]["rsiSystemEvolution"]==true) {
         let history=campaign["history"].as_array().cloned().unwrap_or_default();

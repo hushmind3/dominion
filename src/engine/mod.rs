@@ -29,6 +29,7 @@ pub mod cli_model;
 pub mod improve;
 pub mod code_index;
 pub mod rsi;
+pub mod rsi_transfer;
 pub mod rsi_archive;
 pub mod rsi_forecast;
 pub mod rsi_edit_method;
