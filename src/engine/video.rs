@@ -305,10 +305,27 @@ fn file_sha256(file:&Path)->Result<String,String>{
     Ok(format!("{:x}",digest.finalize()))
 }
 
+/// The estimate is model-agnostic pixel/frame work, not an invented provider
+/// price. Scene reuse is only counted after manifest and SHA256 verification.
+fn render_workload(input: &Value) -> Value {
+    let render = &input["render"];
+    let frames = render["frames"].as_u64().unwrap_or(0);
+    let pixels = render["width"].as_u64().unwrap_or(0)
+        .saturating_mul(render["height"].as_u64().unwrap_or(0));
+    let pixel_frames = pixels.saturating_mul(frames);
+    json!({
+        "frames":frames,
+        "pixelFrames":pixel_frames,
+        "megapixelFrames":pixel_frames / 1_000_000,
+        "estimatedMoneyCost":Value::Null,
+        "unit":"pixel_frames_not_currency",
+    })
+}
+
 pub fn public_job(job: &Value) -> Value {
     let id = job["id"].as_str().unwrap_or("");
     let ready = job["kind"] == "video" && job["status"] == "completed";
-    json!({"id":id,"kind":job["kind"],"title":job["input"]["title"],"brief":job["input"]["brief"],"engine":job["input"]["engine"],"status":job["status"],"phase":job.get("phase").unwrap_or(&job["status"]),"progress":job["progress"],"error":job["error"],"createdAt":job.get("createdAt").or(job.get("created_at")),"videoJobId":job["input"]["videoJobId"],"privacyStatus":job["input"]["privacyStatus"],"outputUrl":ready.then(||format!("/api/video/jobs/{id}/content")),"storyboard":job["videoState"]["scenes"],"result":job["result"],"duration":job["input"]["duration"],"aspectRatio":job["input"]["aspectRatio"]})
+    json!({"id":id,"kind":job["kind"],"title":job["input"]["title"],"brief":job["input"]["brief"],"engine":job["input"]["engine"],"status":job["status"],"phase":job.get("phase").unwrap_or(&job["status"]),"progress":job["progress"],"error":job["error"],"createdAt":job.get("createdAt").or(job.get("created_at")),"videoJobId":job["input"]["videoJobId"],"privacyStatus":job["input"]["privacyStatus"],"outputUrl":ready.then(||format!("/api/video/jobs/{id}/content")),"storyboard":job["videoState"]["scenes"],"result":job["result"],"duration":job["input"]["duration"],"aspectRatio":job["input"]["aspectRatio"],"renderWorkload":render_workload(&job["input"])})
 }
 pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
     let cfg = config(state);
@@ -342,8 +359,8 @@ pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
     if !(3..=180).contains(&duration) {
         return Err("영상 길이는 3~180초입니다.".into());
     }
+    let scenes=storyboard_scenes(body)?;
     if engine=="comfyui" {
-        let scenes=storyboard_scenes(body)?;
         // Every scene needs at least three seconds. Reject impossible briefs
         // instead of silently outputting a longer video than was requested.
         if scenes.len()>1 && duration < (scenes.len() as u64).saturating_mul(3) {
@@ -406,8 +423,24 @@ pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
     };
     // A multi-scene ComfyUI project is completed with FFmpeg without
     // requiring any premium video API or a high-end user GPU.
-    if engine=="comfyui" && storyboard_scenes(body)?.len()>1 && ffmpeg(state).is_none(){
+    if engine=="comfyui" && scenes.len()>1 && ffmpeg(state).is_none(){
         return Err("여러 장면 결합에는 FFmpeg가 필요합니다.".into());
+    }
+    // Reject malformed or out-of-range regeneration selections BEFORE any
+    // expensive remote video work. Never silently ignore an invalid scene.
+    let regenerate=match body.get("regenerateScenes") {
+        None | Some(Value::Null)=>vec![],
+        Some(Value::Array(items))=>items.clone(),
+        _=>return Err("재생성 장면은 0부터 시작하는 장면 번호 배열이어야 합니다.".into()),
+    };
+    let mut seen=std::collections::HashSet::new();
+    for selected in &regenerate {
+        let Some(index)=selected.as_u64() else {
+            return Err("재생성 장면 번호는 음수가 아닌 정수여야 합니다.".into());
+        };
+        if index>=scenes.len() as u64 || !seen.insert(index) {
+            return Err("재생성 장면 번호가 범위를 벗어나거나 중복되었습니다.".into());
+        }
     }
     if let Some(old_id)=body["reuseVideoJobId"].as_str().filter(|v|!v.is_empty()){
         uuid::Uuid::parse_str(old_id).map_err(|_|"재사용할 영상 ID가 올바르지 않습니다.")?;
@@ -420,10 +453,10 @@ pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
     let input = json!({
         "brief":brief, "title":title, "engine":engine, "duration":duration,
         "aspectRatio":aspect, "config":cfg, "publish":false,
-        "scenes":storyboard_scenes(body)?,
+        "scenes":scenes,
         "continuity":body["continuity"].as_str().unwrap_or("").chars().take(2000).collect::<String>(),
         "reuseVideoJobId":body["reuseVideoJobId"].as_str().unwrap_or(""),
-        "regenerateScenes":body["regenerateScenes"].as_array().cloned().unwrap_or_default(),
+        "regenerateScenes":regenerate,
         "render":{"prompt":brief,"negative":negative_prompt,"negativePrompt":negative_prompt,
                   "duration":duration,"width":width,"height":height,"fps":fps,"frames":duration*fps,"seed":seed}
     });
@@ -829,6 +862,7 @@ async fn comfy_storyboard(ctx:&JobContext,input:&Value,root:&Path)->Result<Value
         .ok_or("다중 장면 영상에 FFmpeg가 필요합니다.")?;
     let mut index_file=String::new();
     let mut reused=0usize;
+    let mut reused_frames=0u64;
     let mut rendered=0usize;
     let mut render_seconds=0.0_f64;
     let previous=input["reuseVideoJobId"].as_str().filter(|id|!id.is_empty())
@@ -894,6 +928,7 @@ async fn comfy_storyboard(ctx:&JobContext,input:&Value,root:&Path)->Result<Value
                         std::fs::copy(source_dir.join("manifest.json"),&manifest)
                             .map_err(|e|e.to_string())?;
                         reused+=1;
+                        reused_frames=reused_frames.saturating_add(seconds.saturating_mul(fps));
                         used_previous=true;
                     }
                 }
@@ -955,6 +990,10 @@ async fn comfy_storyboard(ctx:&JobContext,input:&Value,root:&Path)->Result<Value
     Ok(json!({"engine":"comfyui","mode":"storyboard",
         "sceneCount":total,"renderedScenes":rendered,"reusedScenes":reused,
         "renderSeconds":render_seconds,
+        "generatedFrames":input["render"]["fps"].as_u64().unwrap_or(16)
+            .saturating_mul(input["duration"].as_u64().unwrap_or(0))
+            .saturating_sub(reused_frames),
+        "reusedFrames":reused_frames,
         "duration":actual_duration,
         "provenance":"content-addressed segment manifests",
         "assembly":"local ffmpeg concat"}))
@@ -1232,6 +1271,16 @@ mod tests {
         assert_eq!(file_sha256(&path).unwrap(),format!("{:x}",Sha256::digest(&bytes)));
         std::fs::remove_dir_all(dir).unwrap();
     }
+    #[test]
+    fn workload_is_honest_about_units_and_does_not_invent_prices() {
+        let input=json!({"render":{"width":640,"height":360,"fps":16,"frames":240}});
+        let workload=render_workload(&input);
+        assert_eq!(workload["frames"],240);
+        assert_eq!(workload["pixelFrames"],55_296_000u64);
+        assert_eq!(workload["megapixelFrames"],55);
+        assert!(workload["estimatedMoneyCost"].is_null());
+    }
+
     #[test]
     fn template_substitution_never_changes_json_structure() {
         let mut value = json!({"1":{"inputs":{"text":"{{prompt}}","seconds":"{{duration}}"}}});
