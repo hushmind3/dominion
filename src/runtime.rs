@@ -206,6 +206,15 @@ impl DominionSdk {
         let workspace = config.workspace.canonicalize()
             .map_err(|error| RuntimeError(format!("Invalid workspace: {error}")))?;
         let store = Store::open(&config.database).map_err(RuntimeError)?;
+        // Explicit operator opt-in; never parse an old database as a live task
+        // store and never import historical provider credentials.
+        if let Ok(source)=env::var("DOMINION_IMPORT_LEGACY_DB") {
+            if !source.trim().is_empty() {
+                let report=store.import_legacy(std::path::Path::new(&source),&config.database)
+                    .map_err(RuntimeError)?;
+                eprintln!("Legacy data import: {}",report);
+            }
+        }
         // Uncertain external tool effects are never replayed after a crash.
         store.recover().map_err(RuntimeError)?;
         let (bus, _) = broadcast::channel(2048);
