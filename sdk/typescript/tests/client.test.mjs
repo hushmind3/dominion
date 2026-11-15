@@ -75,3 +75,34 @@ test("cancel and correction remain separate explicit native actions",async()=>{
   ]);
   assert.equal(calls[0].body.text,"read the latest file first");
 });
+
+test("typed client uses the native A-B-A evolution routes and exact budget",async()=>{
+  const calls=[];
+  const evolution={id:"run-2026",starting_trial:"seed-2026",status:"running",
+    max_generations:2,target_files:["src/a.rs","src/b.rs"],
+    descendants:[],completed_generations:0,cost_budget_krw:900,
+    spent_krw:0,stop_reason:null};
+  const client=new DominionClient({fetch:async(url,init)=>{
+    calls.push({method:init.method,path:new URL(url).pathname,
+      body:init.body?JSON.parse(init.body):undefined});
+    return json(calls.length===2?[evolution]:evolution);
+  }});
+  const started=await client.improvementEvolutionStart("seed-2026",{
+    max_generations:2,cost_budget_krw:900,
+    target_files:["src/a.rs","src/b.rs"]
+  });
+  const list=await client.evolutionList();
+  const single=await client.evolutionGet("run-2026");
+  assert.equal(started.status,"running");
+  assert.equal(list[0].starting_trial,"seed-2026");
+  assert.equal(single.max_generations,2);
+  assert.deepEqual(calls.map(c=>[c.method,c.path]),[
+    ["POST","/api/improvements/seed-2026/evolution"],
+    ["GET","/api/evolutions"],
+    ["GET","/api/evolutions/run-2026"]
+  ]);
+  assert.deepEqual(calls[0].body,{
+    max_generations:2,cost_budget_krw:900,
+    target_files:["src/a.rs","src/b.rs"]
+  });
+});
