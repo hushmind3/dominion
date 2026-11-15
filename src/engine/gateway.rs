@@ -412,6 +412,30 @@ pub fn verify_benchmark_route(response: &reqwest::Response) -> Result<(), String
     Ok(())
 }
 
+/// Only one provider dispatch for a durable native agent model call.
+/// A POST disconnected before its first delta may still have incurred tokens.
+/// The Rust kernel handles model_in_flight; never retry here.
+pub async fn send_once(
+    route:&Route,client:&reqwest::Client,body:&Value,timeout:Duration,
+)->Result<GatewayResponse,String> {
+    reserve_generation(&route.base_url,&route.model,route.requests_per_minute)?;
+    let permit=acquire(&route.base_url,route.local).await;
+    let response=benchmark_request(client.post(route.endpoint("/chat/completions")))
+        .header("Content-Type","application/json")
+        .header("Authorization",format!("Bearer {}",route.api_key))
+        .json(body)
+        .timeout(timeout)
+        .send().await.map_err(|error|format!(
+            "{} native model delivery may be uncertain (not replayed): {error}",
+            route.name
+        ))?;
+    if response.status()==reqwest::StatusCode::TOO_MANY_REQUESTS {
+        mark_rate_limited(&route.base_url,&route.model);
+    }
+    verify_benchmark_route(&response)?;
+    Ok(GatewayResponse{response,_permit:permit})
+}
+
 /// Sends a helper completion through shared admission and authentication.
 pub async fn send(
     route: &Route,
