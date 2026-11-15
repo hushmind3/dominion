@@ -144,6 +144,7 @@ export class Dominion {
     get: (key: string, options?: RequestOptions) => this.request<Job>('GET','/api/jobs/'+id(key),undefined,options),
     create: (input: CreateJobInput, options?: RequestOptions) => this.request<Job>('POST','/api/jobs',input,options),
     cancel: (key: string, options?: RequestOptions) => this.request<Job>('POST','/api/jobs/'+id(key)+'/cancel',{},options),
+    steer: (key: string, instruction: string, options?: RequestOptions) => this.request<{jobId:string;steeringRevision:number;appliesAt:string}>('POST','/api/jobs/'+id(key)+'/steer',{instruction},options),
   };
   readonly executions = {
     list: (limit=200,offset=0,options?:RequestOptions) => this.request<Execution[]>('GET','/api/executions?limit='+limit+'&offset='+offset,undefined,options),
