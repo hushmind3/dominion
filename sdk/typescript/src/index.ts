@@ -158,6 +158,26 @@ export interface ImprovementTrial {
   error: string | null;
   parent: string | null;
   reflection: string | null;
+  adopted_commit: string | null;
+}
+export interface EvolutionRequest {
+  max_generations: number;
+  cost_budget_krw: number;
+  target_files?: string[];
+}
+export interface EvolutionRun {
+  id: string;
+  starting_trial: string;
+  status: 'running' | 'completed' | 'needs_review' | 'failed';
+  max_generations: number;
+  target_files: string[];
+  descendants: string[];
+  completed_generations: number;
+  cost_budget_krw: number;
+  spent_krw: number;
+  stop_reason: string | null;
+  created_at_ms: number;
+  updated_at_ms: number;
 }
 export type MemoryKind = 'fact' | 'correction' | 'preference' | 'procedure';
 export interface MemoryRecord {
@@ -344,6 +364,15 @@ export class DominionClient {
   }
   improvementDescendant(id: string, signal?: AbortSignal) {
     return this.request<ImprovementTrial>('/api/improvements/'+encodeURIComponent(id)+'/descendant','POST',{},signal);
+  }
+  improvementEvolutionStart(id: string, options: EvolutionRequest, signal?: AbortSignal) {
+    return this.request<EvolutionRun>('/api/improvements/'+encodeURIComponent(id)+'/evolution','POST',options,signal);
+  }
+  evolutionList(signal?: AbortSignal) {
+    return this.request<EvolutionRun[]>('/api/evolutions','GET',undefined,signal);
+  }
+  evolutionGet(id: string, signal?: AbortSignal) {
+    return this.request<EvolutionRun>('/api/evolutions/'+encodeURIComponent(id),'GET',undefined,signal);
   }
   memoryList(sessionId?: string, signal?: AbortSignal) {
     const query=sessionId ? '?sessionId='+encodeURIComponent(sessionId):'';
