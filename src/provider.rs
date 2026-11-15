@@ -67,6 +67,22 @@ impl ModelClient {
         })
     }
 
+    /// Only call a remote KRW spending ceiling calibrated when paid
+    /// provider token rates are configured. Local endpoints do not incur API
+    /// per-token charges; hardware expense is accounted separately.
+    pub fn can_meter_paid_cost(&self)->bool {
+        let priced=|model:&ModelConfig|{
+            let local=reqwest::Url::parse(&model.endpoint).ok()
+                .and_then(|url|url.host_str().map(|host|{
+                    host.eq_ignore_ascii_case("localhost") ||
+                    host.parse::<std::net::IpAddr>().is_ok_and(|ip|ip.is_loopback())
+                })).unwrap_or(false);
+            local || (model.input_krw_per_million>0.0 &&
+                model.output_krw_per_million>0.0)
+        };
+        priced(&self.strong) && self.economy.as_ref().map_or(true,priced)
+    }
+
     /// Read-only public provider description; never return credentials.
     pub fn catalog(&self)->Value {
         let describe=|provider:&ModelConfig,kind:&str|{
@@ -176,7 +192,18 @@ mod tests {
         assert_eq!(calculate_cost(&cfg,100,200,0),0.03);
     }
     #[test]
-        fn rejects_non_http_or_invalid_rates() {
+    fn remote_paid_api_requires_prices_before_krw_limits() {
+        let remote=ModelConfig::basic(
+            "https://api.example.com/v1/chat/completions".into(),
+            "large".into(),Some("server-secret".into()));
+        assert!(!ModelClient::new(remote.clone(),None).unwrap().can_meter_paid_cost());
+        let mut priced=remote;
+        priced.input_krw_per_million=100.0;
+        priced.output_krw_per_million=300.0;
+        assert!(ModelClient::new(priced,None).unwrap().can_meter_paid_cost());
+    }
+    #[test]
+    fn rejects_non_http_or_invalid_rates() {
         assert!(ModelClient::new(ModelConfig::basic(
             "file:///local".into(),"test".into(),None),None).is_err());
         let mut provider=ModelConfig::basic(
