@@ -184,9 +184,9 @@ Rust SDK 자체가 계획·실행·검증·복구의 상태기계입니다. 실�
 
 ## 네이티브 작업별 공급자 토큰/캐시 측정 (2026-11-15)
 
-`native_stream::Assembler`는 SSE 공급자의 사용량·캐시 통계를 터미널 응답까지 유지하며, `native_model::reported_usage`가 Chat/Responses/Anthropic별 입력·출력·캐시 토큰을 읽습니다. `native_model::record_job_usage`가 완료된 공급자 응답만 `Store.job.nativeModelUsage`와 `native.model_usage` 감사 기록에 누적합니다. `native_agent::Kernel`은 실행 소유권·사용자 승인·기존 체크포인트를 그대로 보유합니다. `GET /api/jobs/:id`에서 실제 측정값과 미보고 호출 수가 노출되고 React 자율 작업 UI와 `sdk/typescript/src/index.ts::NativeModelUsage`가 이를 직접 사용합니다. 누락된 제공자 사용량은 0비용으로 처리하지 않습니다. `docs/SUB3-NATIVE-METERING-2026-11-15.md` 및 [집중 CI #43691823640](https://github.com/hushmind3/dominion-rust/actions/runs/43691823640) 참조.
+`native_stream::Assembler`는 SSE 제공자 토큰·캐시를 보존하며, `native_model::record_job_usage`가 사용량을 `job.nativeModelUsage`에 누적합니다. 자세한 실측과 미보고 호출 수는 `GET /api/jobs/:id` 및 TypeScript SDK에서 확인합니다. 고정된 메인 879dc23d 프런트는 `GET /api/sdk/runs/:id` 호환 API가 제공하는 입력·출력·캐시 읽기 총량만 표시합니다. 실제 미보고 사용량을 0으로 위장하지 않습니다. 상세: `docs/SUB3-NATIVE-METERING-2026-11-15.md`.
 
-자율 작업 GUI의 토큰 예산 입력은 `web/src/components/NativeAgentPanel.tsx::launch` → `POST /api/jobs`의 `input.tokenBudget` → `src/api/jobs.rs::create` → `input.limits.maxEstimatedTokens` → `dominion_sdk::harness::Kernel::run`로 이어집니다. `nativeState.chargedTokens`는 커널이 통제하는 예산 계정이며 `nativeModelUsage`는 공급자 실측 사용량으로 따로 표시합니다.
+토큰 예산은 TypeScript SDK/`POST /api/jobs`의 `input.tokenBudget` → `src/api/jobs.rs::create` → `input.limits.maxEstimatedTokens` → Rust `dominion_sdk::harness::Kernel`에서 집행합니다. 메인 879dc23d 프런트를 정확히 복원하여 서브3 전용 GUI 예산 컨트롤은 사용하지 않습니다.
 
 
 ## 네이티브 프롬프트 캐시와 재전송 금지 (2026-11-15)
@@ -195,10 +195,14 @@ Rust SDK 자체가 계획·실행·검증·복구의 상태기계입니다. 실�
 
 ## 품질 하한·원화 가격 기반 Rust 네이티브 모델 라우팅 (2026-11-15)
 
-실제 진입점은 `web/src/pages/Models.tsx` → `src/api/providers.rs::save_provider` (`provider.nativeRouting`) 및 `web/src/components/NativeAgentPanel.tsx` → `src/api/jobs.rs::create` (`input.nativeRoutingPolicy`) → `src/engine/native_agent.rs::run` → `src/engine/native_routing.rs::choose` → `job.nativeRoute` 지속 체크포인트 → `ConfiguredModel::complete_with_tools` → `native_model::complete_with_run` → `nativeModelUsage.configuredCostKRW` → `GET /api/jobs/:id` / TypeScript SDK / GUI입니다. 사용자 직접 지정 제공자·모델 우선, 선언된 품질 하한을 충족하는 가격 보유 네이티브 후보만 가격 비교, 무후보 시 생성 전 거부합니다. 모델+엔드포인트+계정+인증·프로토콜 계약 지문을 고정하여 복구·모델 호출 중 전환을 차단합니다. 여러 완료 작업에서 보고된 캐시 토큰에 근거한 보수적 예상비용과 실제 제공자 보고 토큰 × 소유자 등록 단가를 혼동하지 않습니다. 상세: `docs/SUB3-NATIVE-QUALITY-COST-ROUTING-2026-11-15.md`.
+모델 가격·품질 라우팅은 API/TypeScript SDK의 `POST /api/providers` (`provider.nativeRouting`), `POST /api/jobs` (`input.nativeRoutingPolicy`) → `native_agent::run` → `native_routing::choose` → 고정된 `job.nativeRoute` → `native_model::complete_with_run` → `nativeModelUsage.configuredCostKRW`의 실제 Rust 실행 경로에 남았습니다. 프런트는 메인 879dc23d와 동일하므로 서브3 전용 모델 단가·품질 UI는 표시하지 않습니다. 직접 지정 모델 우선·계약 지문·캐시 비용 실측 구분은 Rust 엔진에서 유지됩니다.
 
 ## RSI 실동작 증명과 잔재 정리 (2026-11-15)
 
 `api::rsi::start` → `jobs::run_job(rsi_evolve)` → `rsi_evolve::run_loop` (진짜 `cargo build --release` 및 `--rsi-worker-job`) → `jobs::run_prompt` → `rsi_worktree::finish` → `rsi_worktree::compare_at` → `rsi::replayed_pair_metrics` → `rsi_evolve::adopt` → `rsi_worktree::apply_campaign_to_sub`. `rsi-lab.mjs`에서 동결 oracle 주입 전 후보 Git 트리 SHA를 기록하고 `reconstructed_patch_tree`가 별도 `GIT_INDEX_FILE`에서 독립 검산합니다. 채택/배포는 A/B 보고의 정확한 트리와 일치해야 합니다. `worker_result_status`는 컴파일 실패·수동 검토를 정상 완료로 쓰지 않습니다. `cleanup_failed_lab` 및 Node `finally` 경로는 중단된 실험의 등록 Git worktree를 정리하거나 정리 실패 영수증을 보존합니다. 구현 근거와 범위: `docs/SUB3-RSI-EXECUTION-INTEGRITY-2026-11-15.md`.
 
 **RSI 최종 테스트 게이트:** [GitHub Actions #43697949313](https://github.com/hushmind3/dominion-rust/actions/runs/43697949313)에서 Rust SDK·호스트·RSI·Codex·복구 **223/223**, Node 실 Git/Cargo A/B **2/2**, TypeScript SDK **7/7**, 프런트 타입 검사·빌드 통과. 실제 후손 바이너리 실행과 채택/브랜치 검증 테스트를 포함하며 유료 제공자 호출을 통한 자동 RSI 장기 운용의 검증으로 확대 해석하지 않습니다.
+
+## 메인 `879dc23d` 프런트 고정·SDK HTTP 호환 (2026-11-15)
+
+`web/` 56개 파일의 Git blob SHA는 메인 커밋 `879dc23dce309688691c200b001b180bead95a12`와 전부 같습니다. 자동 작업 패널의 `/api/sdk/runs` 계열 API는 `src/api/mod.rs` → `src/api/sdk_runs.rs` → 실제 `jobs::create`/SQLite job → Rust `native_agent::run`으로 연결됩니다. 승인 요청은 이미 기록된 `approval`의 세션·호출 ID를 검증한 뒤 기존 `approvals::resolve_approval`로 전달하고, 취소는 `jobs::cancel`을 재사용합니다. 안전한 스냅샷이 아닌 재개 요청은 409로 거부하며, 사용자 관찰은 감사 영수증으로 저장하지만 미확정 도구 실행을 완료로 만들지 않습니다. UI를 별도 하네스로 대체하지 않았습니다.
