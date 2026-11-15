@@ -7,6 +7,13 @@ on:
       - '.github/workflows/sub3-product-acceptance.yml'
       - 'Cargo.toml'
       - 'crates/dominion-agent-sdk/**'
+      - 'crates/harness/**'
+      - 'src/api/sdk.rs'
+      - 'src/api/mod.rs'
+      - 'src/engine/rsi.rs'
+      - 'src/engine/rsi_evolve.rs'
+      - 'tests/e2e.rs'
+      - 'packages/sdk-typescript/**'
       - 'src/engine/chat/**'
       - 'src/engine/video.rs'
       - 'src/api/video.rs'
@@ -61,6 +68,13 @@ jobs:
           for contract in parallel_reads_ ordinary_chat_ room_selected_tools_ native_job_prompt_runs token_budget_is_enforced_ chat_fails_over_ delegate_task_runs_; do
             cargo test --test e2e "$contract" -- --test-threads=1
           done
+      - name: Main's single-file creation contracts (real HTTP fixture)
+        run: |
+          cargo test --test e2e compound_shell_file_creation_finishes_without_false_repair_or_reviewer -- --test-threads=1
+          cargo test --test e2e existing_file_creation_preserves_contents_without_model_calls -- --test-threads=1
+          cargo test --test e2e empty_file_creation_uses_one_model_call_and_no_paid_final_summary -- --test-threads=1
+      - name: Main's independent Rust harness unit and integration contracts
+        run: cargo test -p dominion-harness -- --nocapture
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -71,3 +85,9 @@ jobs:
           npm ci --prefix web
           npm run typecheck --prefix web
           npm run build --prefix web
+      - name: Typecheck and build main's independent TypeScript client
+        run: |
+          npm install --prefix packages/sdk-typescript --no-package-lock --ignore-scripts --no-audit
+          npm run typecheck --prefix packages/sdk-typescript
+          npm run build --prefix packages/sdk-typescript
+
