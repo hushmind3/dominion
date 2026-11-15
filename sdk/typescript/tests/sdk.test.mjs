@@ -97,3 +97,24 @@ test('native approval conflict is never turned into optimistic success',async()=
   await assert.rejects(()=>sdk.nativeRuns.approve('n1','expired'),error=>
     error instanceof DominionApiError&&error.status===409);
 });
+
+test('SSE accepts many small events coalesced into a single >2 MiB transport chunk',async()=>{
+  const payload=Array.from({length:400},(_,i)=>
+    'data: '+JSON.stringify({seq:i+1,type:'record',detail:'x'.repeat(6500)})+'\n\n'
+  ).join('');
+  assert.ok(payload.length>2*1024*1024);
+  const sdk=new Dominion({fetch:async()=>sse(payload)});
+  let count=0;
+  for await(const event of sdk.events()){
+    count++;
+    assert.equal(event.seq,count);
+  }
+  assert.equal(count,400);
+});
+test('SSE still rejects a single oversized frame',async()=>{
+  const huge='data: '+JSON.stringify({seq:1,type:'record',detail:'x'.repeat(2*1024*1024)})+'\n\n';
+  const sdk=new Dominion({fetch:async()=>sse(huge)});
+  await assert.rejects(async()=>{
+    for await(const event of sdk.events()){void event;}
+  },error=>error instanceof DominionStreamError&&error.message.includes('larger than 2 MiB'));
+});
