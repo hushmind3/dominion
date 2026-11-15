@@ -127,17 +127,44 @@ pub async fn execute(
         if attempt>0 {
             turn.input=next_instruction(goal,&last_gaps,last_error.as_deref(),attempt);
         }
+        // Owner steering wins over the prior plan and remains durable in the
+        // same job record. Only the next model turn reads a new revision.
+        let owner_job=ctx.state.store.get("job",&ctx.job_id)
+            .ok_or("autonomous job no longer exists")?;
+        let steering_before=owner_job["steeringRevision"].as_u64().unwrap_or(0);
+        if let Some(messages)=owner_job["steering"].as_array(){
+            let instructions=messages.iter().filter_map(|m|m["instruction"].as_str())
+                .map(|s|format!("- {}",narrow(s,1200))).collect::<Vec<_>>();
+            if !instructions.is_empty(){
+                turn.input.push_str("\n\n사용자가 작업 도중 추가한 최신 지시(우선 반영):\n");
+                turn.input.push_str(&instructions.join("\n"));
+            }
+        }
         let (outcome, stats):(Result<Option<Value>,String>,TurnStats)=
             run_quiet_outcome(&ctx.state,&turn).await;
         let latest_error=outcome.as_ref().err().cloned();
         last_message=outcome.as_ref().ok().and_then(|msg|msg.as_ref())
             .map(|msg|msg["id"].clone()).unwrap_or(Value::Null);
         all_evidence.extend(stats.evidence.iter().cloned());
-        let gaps=verification::check_acceptance(&ctx.state,goal,&checks,&all_evidence);
-        let decision=decide(config.strategy,has_checks,&gaps,
+        let mut gaps=verification::check_acceptance(&ctx.state,goal,&checks,&all_evidence);
+        // If the owner steered while a long model turn was executing, never
+        // complete based on the previous instruction snapshot.
+        let steering_after=ctx.state.store.get("job",&ctx.job_id)
+            .and_then(|j|j["steeringRevision"].as_u64()).unwrap_or(0);
+        let owner_changed=steering_after>steering_before;
+        if owner_changed {
+            gaps.push("실행 중 새로운 사용자 지시를 받았습니다. 다음 턴에서 반영합니다.".into());
+        }
+        let mut decision=decide(config.strategy,has_checks,&gaps,
             latest_error.as_deref(),&all_evidence,attempt,config.attempts);
+        if owner_changed {
+            decision=if attempt+1<config.attempts {
+                Decision::Repair
+            }else{Decision::Review};
+        }
         let receipt=json!({
             "attempt":attempt+1,
+            "steeringRevision":steering_before,
             "outcome":match decision {
                 Decision::Accept=>"accepted",Decision::Repair=>"repair",Decision::Review=>"needs_review"
             },
@@ -162,6 +189,7 @@ pub async fn execute(
                 return Ok(json!({
                     "sessionId":session_id,"messageId":last_message,
                     "status":"completed","attempts":attempt+1,
+                    "steeringRevision":steering_before,
                     "verification":if has_checks{"predicate"}else if all_evidence.is_empty(){"answer_only"}else{"tool_evidence"},
                     "verified":has_checks && gaps.is_empty(),
                     "receipts":receipts,
