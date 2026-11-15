@@ -35,6 +35,18 @@ pub fn complex(text: &str) -> bool {
     count >= 2 || (count >= 1 && text.chars().count() > 180)
 }
 
+/// Select an economical model only for user-authorized low-risk requests.
+/// The optional economical provider must still be configured by the operator;
+/// ModelClient handles a single bounded fallback without duplicating tool effects.
+pub fn use_economy(tier:&str,instruction:&str,allow_write:bool,require_evidence:bool)->bool{
+    match tier {
+        "economy" => true,
+        "quality" => false,
+        _ => !allow_write && !require_evidence
+            && !complex(instruction) && !source_change_requested(instruction),
+    }
+}
+
 pub fn source_change_requested(text: &str) -> bool {
     let text = text.to_lowercase();
     ["write", "create", "edit", "implement", "fix", "refactor",
@@ -136,6 +148,13 @@ mod tests {
             "전체 프로젝트를 리팩토링하고 여러 파일 수정하고 테스트까지 실행"));
         assert!(PlanningPolicy::Always.should_plan("hello"));
         assert!(!PlanningPolicy::Never.should_plan("implement a project"));
+    }
+    #[test]
+    fn economical_model_is_not_auto_selected_for_source_edits(){
+        assert!(use_economy("auto","What is Rust?",false,false));
+        assert!(!use_economy("auto","리팩토링하고 여러 파일을 수정하고 테스트",true,true));
+        assert!(!use_economy("quality","Hello",false,false));
+        assert!(use_economy("economy","Implement code",true,true));
     }
     #[test]
     fn review_requires_structured_boolean_not_model_confidence() {
