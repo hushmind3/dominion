@@ -22,6 +22,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/groups/:id",get(group_get))
         .route("/api/groups/:id/messages",post(group_say))
         .route("/api/groups/:id/next",post(group_next))
+        .route("/api/videos",get(video_list).post(video_create))
+        .route("/api/videos/:id",get(video_get))
+        .route("/api/videos/:id/render",post(video_render))
+        .route("/api/videos/:id/scenes/:index",post(video_scene))
+        .route("/api/videos/:id/content",get(video_content))
         .fallback_service(ServeDir::new("web"))
         .with_state(state)
 }
@@ -191,4 +196,87 @@ async fn group_next(State(state):State<AppState>,Path(id):Path<String>)->Respons
         Ok(room)=>Json(json!(room)).into_response(),
         Err(error)=>(StatusCode::BAD_GATEWAY,Json(json!({"error":error.to_string()}))).into_response()
     }
+}
+
+async fn video_list(State(state):State<AppState>)->Json<Value>{
+    Json(json!(crate::runtime::DominionSdk::from_state(state).video_list().await))
+}
+async fn video_create(State(state):State<AppState>,Json(body):Json<Value>)->Response{
+    let input=match serde_json::from_value::<crate::video::NewVideo>(body){
+        Ok(value)=>value,
+        Err(error)=>return (StatusCode::BAD_REQUEST,Json(json!({"error":error.to_string()}))).into_response()
+    };
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.video_create(input).await{
+        Ok(video)=>(StatusCode::CREATED,Json(json!(video))).into_response(),
+        Err(error)=>(StatusCode::BAD_REQUEST,Json(json!({"error":error.to_string()}))).into_response()
+    }
+}
+async fn video_get(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    let id=match parse_room(&id){Ok(id)=>id,Err(error)=>return error};
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.video_get(id).await{
+        Ok(video)=>Json(json!(video)).into_response(),
+        Err(error)=>(StatusCode::NOT_FOUND,Json(json!({"error":error.to_string()}))).into_response()
+    }
+}
+async fn video_render(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    let id=match parse_room(&id){Ok(id)=>id,Err(error)=>return error};
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.video_render(id).await{
+        Ok(video)=>(StatusCode::ACCEPTED,Json(json!(video))).into_response(),
+        Err(error)=>(StatusCode::CONFLICT,Json(json!({"error":error.to_string()}))).into_response()
+    }
+}
+async fn video_scene(State(state):State<AppState>,
+    Path((id,index)):Path<(String,usize)>,Json(body):Json<Value>)->Response{
+    let id=match parse_room(&id){Ok(id)=>id,Err(error)=>return error};
+    let change=match serde_json::from_value::<crate::video::ChangeScene>(body){
+        Ok(value)=>value,
+        Err(error)=>return (StatusCode::BAD_REQUEST,Json(json!({"error":error.to_string()}))).into_response()
+    };
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.video_scene(id,index,change).await{
+        Ok(video)=>Json(json!(video)).into_response(),
+        Err(error)=>(StatusCode::BAD_REQUEST,Json(json!({"error":error.to_string()}))).into_response()
+    }
+}
+async fn video_content(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    use axum::body::{Body,Bytes};
+    use tokio::io::AsyncReadExt;
+    let id=match parse_room(&id){Ok(id)=>id,Err(error)=>return error};
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    let path=match sdk.video_output(id).await{
+        Ok(path)=>path,
+        Err(error)=>return (StatusCode::NOT_FOUND,Json(json!({"error":error.to_string()}))).into_response()
+    };
+    let file=match tokio::fs::File::open(&path).await {
+        Ok(file)=>file,
+        Err(error)=>return (StatusCode::NOT_FOUND,Json(json!({"error":error.to_string()}))).into_response()
+    };
+    let size=match file.metadata().await {
+        Ok(meta) if meta.is_file() && meta.len()>0 && meta.len()<=160*1024*1024=>meta.len(),
+        _=>return (StatusCode::CONFLICT,Json(json!({"error":"영상 출력 파일이 유효하지 않습니다."}))).into_response()
+    };
+    let body=async_stream::stream!{
+        let mut file=file;
+        loop{
+            let mut chunk=vec![0u8;64*1024];
+            match file.read(&mut chunk).await {
+                Ok(0)=>break,
+                Ok(count)=>yield Ok::<Bytes,std::io::Error>(Bytes::copy_from_slice(&chunk[..count])),
+                Err(error)=>{yield Err(error);break}
+            }
+        }
+    };
+    (
+        StatusCode::OK,
+        [
+            (axum::http::header::CONTENT_TYPE,"video/mp4".to_string()),
+            (axum::http::header::CONTENT_LENGTH,size.to_string()),
+            (axum::http::header::CONTENT_DISPOSITION,format!("attachment; filename=\"dominion-{id}.mp4\"")),
+            (axum::http::header::CACHE_CONTROL,"no-store".to_string())
+        ],
+        Body::from_stream(body)
+    ).into_response()
 }
