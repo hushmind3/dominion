@@ -133,3 +133,8 @@ The independent `dominion-agent-sdk::Kernel` now runs the owner's required exact
 ### Native streaming state machine (agent job path)
 
 `src/engine/native_stream.rs::{SseDecoder,Assembler}` is the model-side state machine. Byte-level SSE frames from OpenAI-compatible/Anthropic/Codex are incrementally parsed by `native_model::receive_stream`, with provider-specific completeness criteria and fail-closed tool-call assembly. `native_model::StreamProgress` persists bounded visible output and **unexecuted** tool IDs under `job.nativeStream` and broadcasts `job_event` deltas. The Rust kernel remains sole authority for dispatch, checkpoints and acceptance. A 250 ms cancellation tick handles silent/stalled HTTP streams; a terminal cancellation snapshot persists after explicit owner cancellation. Source and constraints: `docs/SUB3-NATIVE-STREAM-2026-11-15.md`.
+
+
+### Sub3 incremental native SSE verification — 2026-11-15
+
+Focused GitHub Actions verification on commit `a9193735d51105b7f4f311a0e83bbd2376e3c45e`: [run 43687745047](https://github.com/hushmind3/dominion-rust/actions/runs/43687745047) completed successfully. The log records 44 SDK test cases (16+2+6+15+3+2), 41 filtered native host test cases, and one workflow recovery test: **86 passed, 0 failed**. Frontend TypeScript check and Vite production build also passed. Real loopback HTTP streaming/stalled-cancellation fixtures are included in those tests; no commercial model API call was made.

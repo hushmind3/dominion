@@ -226,3 +226,8 @@ The default `/api/jobs` native agent path now supports provider-native typed too
 ### Native incremental model streaming and bounded progress (sub3, 2026-11-15)
 
 The same Rust `/api/jobs` native agent now consumes OpenAI-compatible Chat Completions, Anthropic Messages and Codex Responses SSE as incremental structured events. `src/engine/native_stream.rs` assembles split UTF-8/tool-call JSON and only releases typed actions after a complete provider terminal event; partial, failed or interrupted calls never reach the tool dispatcher. Progress is recorded in `job.nativeStream`, sent over existing job events, and shown in the autonomous-work panel as **pending, not executed** actions. Owner cancellation interrupts stalled streams without replaying paid model calls. See [native streaming architecture](docs/SUB3-NATIVE-STREAM-2026-11-15.md).
+
+
+### Sub3 incremental native SSE verification — 2026-11-15
+
+Focused GitHub Actions verification on commit `a9193735d51105b7f4f311a0e83bbd2376e3c45e`: [run 43687745047](https://github.com/hushmind3/dominion-rust/actions/runs/43687745047) completed successfully. The log records 44 SDK test cases (16+2+6+15+3+2), 41 filtered native host test cases, and one workflow recovery test: **86 passed, 0 failed**. Frontend TypeScript check and Vite production build also passed. Real loopback HTTP streaming/stalled-cancellation fixtures are included in those tests; no commercial model API call was made.

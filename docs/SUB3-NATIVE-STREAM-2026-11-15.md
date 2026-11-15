@@ -49,3 +49,7 @@ Compatible self-hosted servers that ignore streaming can still return a **comple
 Source tests exercise split-byte SSE, Korean/UTF-8 payloads, interleaved indexed tool calls, Anthropics' partial input JSON and thinking, missing completion, Codex incomplete/error events, paired model/host tool receipts, real loopback HTTP SSE (5–7 byte chunks), durable progress persistence and owner cancellation during a deliberately stalled provider. The narrow branch verification runs Rust SDK tests, filtered native-host tests, workflow checkpoint recovery and main-based GUI typecheck/build; full CI/SWE-bench is deliberately separate.
 
 No claim is made that scripted provider fixtures prove a frontier-model coding success rate. Production third-party provider live credentials, Codex socket-chain reuse inside autonomous jobs, broader benchmark scoring and cross-provider cache cost accounting remain separate follow-on work.
+
+## Executed verification (focused gate)
+
+Focused GitHub Actions verification on commit `a9193735d51105b7f4f311a0e83bbd2376e3c45e`: [run 43687745047](https://github.com/hushmind3/dominion-rust/actions/runs/43687745047) completed successfully. The log records 44 SDK test cases (16+2+6+15+3+2), 41 filtered native host test cases, and one workflow recovery test: **86 passed, 0 failed**. Frontend TypeScript check and Vite production build also passed. Real loopback HTTP streaming/stalled-cancellation fixtures are included in those tests; no commercial model API call was made.
