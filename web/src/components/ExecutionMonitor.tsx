@@ -12,7 +12,7 @@ type Execution={
  iterations:number;modelCalls:number;toolCalls:number;tokens:number
 }
 type Agent={id:string;name:string;providerId:string;model:string}
-type TaskJob={id:string;kind:string;status:string;queuedAt?:string;sessionId?:string;input?:{prompt?:string;limits?:{maxSteps?:number}};nativeState?:{status?:string;step?:number;modelCalls?:number;chargedTokens?:number;checks?:unknown[]};modelCalls?:number;estimatedTokens?:number;result?:{verificationGaps?:string[];messageId?:string;sessionId?:string};nativeHarness?:{phase?:string;stepIndex?:number;stepTotal?:number;attempt?:number;gaps?:string[];history?:unknown[]}}
+type TaskJob={id:string;kind:string;status:string;queuedAt?:string;sessionId?:string;input?:{prompt?:string;limits?:{maxSteps?:number}};nativeState?:{status?:string;step?:number;modelCalls?:number;chargedTokens?:number;checks?:unknown[];plan?:string[];receipts?:{tool:string;success:boolean}[];error?:string};modelCalls?:number;estimatedTokens?:number;result?:{verificationGaps?:string[];messageId?:string;sessionId?:string};nativeHarness?:{phase?:string;stepIndex?:number;stepTotal?:number;attempt?:number;gaps?:string[];history?:unknown[]}}
 type Operation={id:string;callId:string;tool:string;status:string;startedAt:string;reason?:string}
 const labels:Record<string,LocaleKey>={running:'em.status.running',completed:'em.status.completed',cancelled:'em.status.cancelled',failed:'em.status.failed',interrupted:'em.status.interrupted',needs_review:'em.status.needs_review',budget_exceeded:'em.status.budget_exceeded'}
 const active=(s:string)=>s==='running'
@@ -109,6 +109,16 @@ export function ExecutionMonitor(){
       <span>{activeTask.nativeState?.status||activeTask.nativeHarness?.phase||activeTask.status}</span></div>
      <p className="mt-2 text-[#7C7469]">{lang==='ko'?'진행 단계':'Step'} {activeTask.nativeState?.step??activeTask.nativeHarness?.stepIndex??0} / {activeTask.input?.limits?.maxSteps??'—'}</p>
      <p className="mt-1 text-[#7C7469]">{lang==='ko'?'모델 호출':'Model calls'}: {activeTask.modelCalls??activeTask.nativeState?.modelCalls??0}</p>
+     <p className="mt-1 text-[#7C7469]">{lang==='ko'?'검증 가능한 도구 실행':'Recorded tool executions'}: {activeTask.nativeState?.receipts?.length||0}</p>
+     <p className="mt-1 text-[#7C7469]">{lang==='ko'?'추정 토큰':'Estimated tokens'}: {(activeTask.estimatedTokens??activeTask.nativeState?.chargedTokens??0).toLocaleString()}</p>
+     {Boolean(activeTask.nativeState?.plan?.length)&&<div className="mt-3 space-y-1" aria-label={lang==='ko'?'작업 계획':'Task plan'}>
+      {activeTask.nativeState?.plan?.slice(0,10).map((step,index)=><div key={index} className="flex gap-2 rounded-md bg-[#FAF7F1] px-2 py-1.5">
+       <span className="shrink-0 font-semibold">{activeTask.status==='completed'||index+1<(activeTask.nativeState?.step??0)?'✓':index+1===activeTask.nativeState?.step?'●':'○'}</span>
+       <span className="min-w-0 break-words">{step}</span>
+      </div>)}
+     </div>}
+     {(activeTask.nativeState?.error||'')&&activeTask.status!=='running'&&
+      <p role="alert" className="mt-2 break-words rounded-lg bg-[#FFF5E7] p-2 text-amber-900">{activeTask.nativeState?.error}</p>
      {((activeTask.result?.verificationGaps||activeTask.nativeHarness?.gaps)||[]).length>0&&
       <div role="alert" className="mt-2 rounded-lg bg-[#FFF5E7] p-2 text-amber-900">
        <strong>{lang==='ko'?'확인이 필요한 내용':'Needs review'}</strong>
