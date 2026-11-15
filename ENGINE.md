@@ -208,4 +208,11 @@ DM·음성·파일 첨부·슬래시 명령·Gateway 실시간 이벤트는 이�
 
 ### Autonomous Rust execution path
 
-`POST /api/jobs` / `sdk::Dominion::submit` → `engine::jobs::run_prompt` → `engine::autonomy::execute` → `engine::run_quiet_outcome` → `engine::verification::check_acceptance` → bounded repair or `needs_review`. Owner steering uses engine CAS on the original job (`POST /api/jobs/:id/steer` or `sdk::Dominion::steer`). Dynamic acceptance checks include subsequently steered file objectives. Per-attempt tokens come from audited SQLite model usage. Non-repeatable external side effects are never treated as safe to retry. See [source comparison](docs/FRONTIER-COMPARISON-SUB2-2026-11-15.md).
+`POST /api/jobs` / `sdk::Dominion::submit` → `engine::jobs::run_prompt` → `engine::autonomy::execute` → `engine::run_quiet_outcome` → `engine::verification::check_acceptance` → bounded repair or `needs_review`. Owner steering uses engine CAS on the original job (`POST /api/jobs/:id/steer` or `sdk::Dominion::steer`). Dynamic acceptance checks include subsequently steered file objectives. Per-attempt tokens come from audited SQLite model usage. Non-repeatable external side effects are never treated as safe to retry.
+
+### Main UI compatibility and bounded execution improvements
+
+- `src/api/sdk_bridge.rs`: `/api/sdk/runs` is the main frontend's compatibility surface over the existing native prompt job scheduler; it is not a new agent engine. The UI's requested approvals are resolved only through the actual session-bound durable approval API. Owner reconciliation is explicitly distinguished from engine verification. Resume requires owner-attested absence of prior effects, with a bounded replay count.
+- `src/engine/autonomy.rs`: explicit `verifyCommand` is a frozen `command_succeeded` criterion, requiring real success **after the last source mutation**. Final acceptance and user steering share the same SQLite CAS gate.
+- `src/engine/tools.rs` + `src/engine/chat/runtime.rs`: `delegate_parallel` uses the durable prompt worker to execute 2–4 independent child sessions, read-only in both advertised and executed tool paths; per-parent total 8 and nested depth 4.
+- `src/engine/video.rs`: partial-scene ComfyUI rerender, SHA-256 clip manifests, deterministic seeds, frozen total duration, memory-bounded streaming hashing and FFmpeg concatenation with re-encode fallback. No quantified GPU savings or final film quality score claimed. [Code trace](docs/SUB2-RUNTIME-VIDEO-2026-11-15.md). See [source comparison](docs/FRONTIER-COMPARISON-SUB2-2026-11-15.md).

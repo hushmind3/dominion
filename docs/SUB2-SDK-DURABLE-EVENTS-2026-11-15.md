@@ -45,3 +45,7 @@ Patterns were compared with the published [OpenAI Agents JS streaming lifecycle]
 ## Native engine evolution — 2026-11-15
 
 The primary public SDK is Rust (`src/lib.rs`, `src/sdk.rs`); TypeScript is an optional /api client. The desktop and Rust consumers boot the same runtime. `src/engine/autonomy.rs` runs bounded evidence-driven repair cycles for ordinary prompt jobs; the specialized detached RSI verifier remains separate. `src/engine/jobs.rs::steer` persists owner instructions for the next model boundary; `src/api/jobs.rs` adapts the same engine method. The unchanged main GUI exposes its existing execution/activity views; step receipts, revisioned steering and usage deltas remain available through the Rust SDK and job API, not additional sub2 GUI controls. See [frontier comparison](FRONTIER-COMPARISON-SUB2-2026-11-15.md).
+
+## Native main-frontend API compatibility added after initial integration
+
+The unchanged main-branch `web/src/components/NativeAgentPanel.tsx` uses `GET/POST /api/sdk/runs`, `GET /api/sdk/runs/:id` and `POST /api/sdk/runs/:id/{cancel,approve,resume,reconcile}`. `src/api/sdk_bridge.rs` now handles those routes using existing `engine::jobs` and the native durable approval service. No vendor SDK or second execution kernel was added. The optional TypeScript SDK continues to use the same Rust REST API. Verification commands become engine-level acceptance conditions; results after the last source change are required. [Additional implementation notes](SUB2-RUNTIME-VIDEO-2026-11-15.md).

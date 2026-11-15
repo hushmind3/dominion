@@ -78,6 +78,10 @@ npm test --prefix sdk/typescript
 
 [2026년 프런티어 실행 구조 비교](docs/FRONTIER-COMPARISON-SUB2-2026-11-15.md) · [실제 연결·복구 경로](docs/SUB2-SDK-DURABLE-EVENTS-2026-11-15.md)
 
+**메인 화면 ↔ Rust 엔진:** 메인 프런트가 호출하는 `/api/sdk/runs`는 `src/api/sdk_bridge.rs`에서 기존 Rust `job` 실행·승인·취소·검증 기록에 연결됩니다. 실패 뒤 재개는 실제 효과가 미적용됐다는 사용자 확인이 기록된 경우에만 허용합니다. 사용자 지정 검증 명령은 실제 도구 성공, 마지막 소스 수정 이후 실행이라는 2가지 조건을 만족해야 합니다.
+
+**실행 능력 확장:** `delegate_parallel`은 2~4개 독립 읽기 전용 하위 세션을 병렬 실행하며 부모당 총 8개로 제한합니다. 영상은 여러 ComfyUI 장면을 만들고 SHA-256 검증된 기존 장면을 재사용하며, 필요한 장면만 재생성하고 FFmpeg로 병합합니다. [구현·검증 세부사항](docs/SUB2-RUNTIME-VIDEO-2026-11-15.md).
+
 **검증 범위:** TypeScript SDK 로컬 모의 전송 테스트는 9개 통과했습니다. Rust 엔진의 전체 빌드, 실모델 장기 실행, SWE-bench Verified 동급 비교, 영상 품질·비용 평가를 완료한 상태는 아닙니다.
 
 ## ✨ 주요 기능
