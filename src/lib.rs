@@ -6,6 +6,7 @@ pub mod runtime;
 pub mod store;
 pub mod mcp;
 pub mod provider;
+pub mod group;
 
 pub use runtime::{DominionConfig, DominionSdk, RuntimeError, TaskInput, TaskRecord, TaskEvent};
 
@@ -19,6 +20,7 @@ pub struct AppState {
     pub(crate) store: store::Store,
     pub(crate) mcp: Arc<mcp::Mcp>,
     pub(crate) provider: provider::ModelClient,
+    pub(crate) groups: Arc<group::Groups>,
     pub(crate) bus: broadcast::Sender<Value>,
     pub(crate) workspace: PathBuf,
     pub(crate) model_name: String,
