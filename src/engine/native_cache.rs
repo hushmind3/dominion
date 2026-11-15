@@ -120,8 +120,8 @@ mod tests {
     fn native_static_tools_and_system_cache_but_unique_task_never_does() {
         let (state,route,dir)=fixture();
         let original=body();
-        let (first,hinted,prefix)=hinted(&state,&route,&original);
-        assert!(hinted);
+        let (first,hint_on,prefix)=hinted(&state,&route,&original);
+        assert!(hint_on);
         assert!(prefix>=1024);
         assert_eq!(first["tools"][1]["cache_control"]["type"],"ephemeral");
         assert_eq!(first["system"][0]["cache_control"]["type"],"ephemeral");
