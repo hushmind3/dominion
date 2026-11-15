@@ -373,6 +373,35 @@ impl AgentSdk {
             state.event("model_finished", json!({"round":state.rounds,"calls":state.pending_calls.len()}));
             self.persist(state)?;
             if !state.pending_calls.is_empty() { continue; }
+            // An assistant saying "done" is not evidence of a requested
+            // mutation. Require an actual successful non-read tool before
+            // accepting action tasks without an independent verifier.
+            // The verifier, when configured, remains the stronger authority.
+            let needs_effect = dominion_agent_sdk::owner_requires_effect(&state.instruction);
+            let successful_effect = state.events.iter().any(|event| {
+                event.kind == "tool_finished" && event.detail["ok"] == true
+                    && event.detail["tool"].as_str().is_some_and(|name|
+                        self.tools.get(name).is_some_and(|tool|
+                            tool.spec().permission != crate::Permission::Read))
+            });
+            if needs_effect && self.verifier.is_none() && !successful_effect {
+                let retries = state.events.iter()
+                    .filter(|event| event.kind == "evidence_retry").count();
+                if retries == 0 && state.rounds < self.limits.max_rounds {
+                    state.event("evidence_retry", json!({
+                        "reason":"no_successful_effect","attempt":1
+                    }));
+                    state.messages.push(Message::user(
+                        "The requested action is not complete. No successful write/execute tool                          effect has been observed. Use the available tools to perform the actual                          work. If blocked, report the blocker rather than claiming completion."
+                    ));
+                    self.persist(state)?;
+                    continue;
+                }
+                state.status = RunStatus::Exhausted { reason:"unverified_no_effect".into() };
+                state.event("unverified", json!({"reason":"no_successful_effect"}));
+                self.persist(state)?;
+                return Ok(());
+            }
             match self.verifier.as_mut().map(|v| v.verify(state)) {
                 None => {
                     // Final prose is not evidence that a coding task passed.
