@@ -37,8 +37,15 @@ pub fn models_dir(state: &AppState) -> PathBuf {
     }
 }
 
+// A zero-byte or tiny pointer/partial file is not a usable video weight.
+// All built-in diffusion, text-encoder and VAE assets are comfortably >1 MiB.
+const MIN_MODEL_ASSET_BYTES: u64 = 1024 * 1024;
+fn model_asset_ready(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .is_ok_and(|meta| meta.is_file() && meta.len() >= MIN_MODEL_ASSET_BYTES)
+}
 fn present(state: &AppState, relative: &str) -> bool {
-    models_dir(state).join(relative).is_file()
+    model_asset_ready(&models_dir(state).join(relative))
 }
 
 /// Built-in one-click models. Availability is a real file check, not a claim.
@@ -167,25 +174,64 @@ async fn download_files(
     let client = reqwest::Client::builder().build().map_err(|e| e.to_string())?;
     let mut total = 0u64;
     let mut done = 0u64;
-    for (relative, url) in files {
+    for (index, (relative, url)) in files.iter().enumerate() {
         let target = base.join(relative);
-        if target.is_file() { continue; }
-        if let Some(parent) = target.parent() { let _ = std::fs::create_dir_all(parent); }
-        let response = client.get(*url).send().await.map_err(|e| e.to_string())?;
-        if !response.status().is_success() {
-            return Err(format!("다운로드 실패: HTTP {}", response.status()));
+        if model_asset_ready(&target) { continue; }
+        if let Some(parent) = target.parent() {
+            tokio::fs::create_dir_all(parent).await.map_err(|e| e.to_string())?;
         }
-        total += response.content_length().unwrap_or(0);
+        // Keep interrupted transfers as .part files. Only atomic promotion
+        // after length verification permits a model to appear installed.
         let part = target.with_extension("part");
-        let mut file = tokio::fs::File::create(&part).await.map_err(|e| e.to_string())?;
+        let existing = tokio::fs::metadata(&part).await
+            .ok().filter(|meta| meta.is_file()).map_or(0, |meta| meta.len());
+        let mut request = client.get(*url);
+        if existing > 0 {
+            request = request.header(reqwest::header::RANGE, format!("bytes={existing}-"));
+        }
+        let response = request.send().await.map_err(|e| e.to_string())?;
+        let status = response.status();
+        if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE && existing >= MIN_MODEL_ASSET_BYTES {
+            let full = response.headers().get(reqwest::header::CONTENT_RANGE)
+                .and_then(|header| header.to_str().ok())
+                .and_then(|value| value.strip_prefix("bytes */"))
+                .and_then(|value| value.parse::<u64>().ok());
+            if full == Some(existing) {
+                if target.exists() { tokio::fs::remove_file(&target).await.map_err(|e| e.to_string())?; }
+                tokio::fs::rename(&part, &target).await.map_err(|e| e.to_string())?;
+                continue;
+            }
+        }
+        if !status.is_success() {
+            return Err(format!("다운로드 실패: HTTP {status}"));
+        }
+        let resumed = existing > 0 && status == reqwest::StatusCode::PARTIAL_CONTENT;
+        if status == reqwest::StatusCode::PARTIAL_CONTENT {
+            let expected_start = format!("bytes {existing}-");
+            let range = response.headers().get(reqwest::header::CONTENT_RANGE)
+                .and_then(|header| header.to_str().ok()).unwrap_or("");
+            if !resumed || !range.starts_with(&expected_start) {
+                return Err("다운로드 서버의 재개 범위가 로컬 파일과 일치하지 않습니다.".into());
+            }
+        }
+        let prior = if resumed { existing } else { 0 };
+        let remaining = response.content_length();
+        let expected_total = remaining.and_then(|bytes| prior.checked_add(bytes));
+        done = done.saturating_add(prior);
+        total = total.saturating_add(expected_total.unwrap_or(prior));
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true).write(true).append(resumed).truncate(!resumed)
+            .open(&part).await.map_err(|e| e.to_string())?;
         use futures_util::StreamExt;
         use tokio::io::AsyncWriteExt;
         let mut stream = response.bytes_stream();
+        let mut received = 0u64;
         let mut since_update = 0u64;
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|e| e.to_string())?;
             file.write_all(&chunk).await.map_err(|e| e.to_string())?;
-            done += chunk.len() as u64;
+            received = received.saturating_add(chunk.len() as u64);
+            done = done.saturating_add(chunk.len() as u64);
             since_update += chunk.len() as u64;
             if since_update >= 8 * 1024 * 1024 {
                 since_update = 0;
@@ -193,17 +239,27 @@ async fn download_files(
                     .unwrap_or_else(|| json!({"id": key}));
                 record["bytes"] = json!(done);
                 record["total"] = json!(total.max(done));
-                record["progress"] = json!(((done * 100) / total.max(done)).min(99));
+                let file_fraction = expected_total.filter(|expected| *expected > 0)
+                    .map_or(0, |expected| ((prior.saturating_add(received)).min(expected) * 100) / expected);
+                record["progress"] = json!(((index as u64 * 100 + file_fraction)
+                    / files.len().max(1) as u64).min(99));
                 state.store.put("video_model_download", &record);
             }
         }
         file.flush().await.map_err(|e| e.to_string())?;
+        file.sync_all().await.map_err(|e| e.to_string())?;
         drop(file);
+        if remaining.is_some_and(|length| received != length) {
+            return Err(format!("모델 파일이 불완전합니다: {relative} (expected {remaining:?}, received {received})"));
+        }
+        if !model_asset_ready(&part) {
+            return Err(format!("모델 파일 크기가 비정상적입니다: {relative}"));
+        }
+        if target.exists() { tokio::fs::remove_file(&target).await.map_err(|e| e.to_string())?; }
         tokio::fs::rename(&part, &target).await.map_err(|e| e.to_string())?;
     }
     Ok(())
 }
-
 pub fn downloads(state: &AppState) -> Vec<Value> {
     state.store.all("video_model_download")
 }
