@@ -1,0 +1,6 @@
+# RSI source mutations and signed source hashes require the same byte-level
+# Rust inputs on Windows, Linux and macOS. Normalize on checkout so Git's
+# core.autocrlf cannot rewrite algorithm shapes or break source matching.
+*.rs text eol=lf
+*.toml text eol=lf
+Cargo.lock text eol=lf
