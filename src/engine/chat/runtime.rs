@@ -2344,7 +2344,7 @@ async fn run_turn_body(
             }
             let mutating_call = matches!(
                 call.name.as_str(),
-                "workspace_write" | "workspace_replace" | "workspace_replace_range" | "file_write" | "shell_exec" | "terminal_exec"
+                "workspace_write" | "workspace_replace" | "workspace_replace_range" | "workspace_apply_patch" | "file_write" | "shell_exec" | "terminal_exec"
             );
             let has_prior_read = completed_operations.iter().any(|operation| {
                 matches!(
@@ -2512,7 +2512,7 @@ async fn run_turn_body(
                 failed_calls.remove(&call_key);
                 if matches!(
                     call.name.as_str(),
-                    "workspace_write" | "workspace_replace" | "workspace_replace_range" | "file_write" | "shell_exec" | "terminal_exec" | "github_api" | "delegate_task"
+                    "workspace_write" | "workspace_replace" | "workspace_replace_range" | "workspace_apply_patch" | "file_write" | "shell_exec" | "terminal_exec" | "github_api" | "delegate_task"
                 ) {
                     environment_version += 1;
                 }
@@ -2557,7 +2557,7 @@ async fn run_turn_body(
                         if tool_succeeded(result)
                             && matches!(
                                 selected["tool"].as_str(),
-                                Some("workspace_write" | "workspace_replace" | "workspace_replace_range" | "file_write" | "shell_exec" | "terminal_exec" | "github_api" | "delegate_task")
+                                Some("workspace_write" | "workspace_replace" | "workspace_replace_range" | "workspace_apply_patch" | "file_write" | "shell_exec" | "terminal_exec" | "github_api" | "delegate_task")
                             )
                         {
                             environment_version += 1;
@@ -4555,7 +4555,7 @@ async fn deterministic_tool(
     // dispatch path so the opt-in guard can see this read.
     let file_observation = if matches!(
         tool,
-        "workspace_read" | "workspace_read_range" | "file_read" | "workspace_replace" | "workspace_replace_range" | "workspace_write"
+        "workspace_read" | "workspace_read_range" | "file_read" | "workspace_replace" | "workspace_replace_range" | "workspace_write" | "workspace_apply_patch"
     ) {
         result
             .as_object_mut()

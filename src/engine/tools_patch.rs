@@ -107,7 +107,7 @@ fn parse(input:&str)->Result<Vec<Operation>,String>{
                 index+=1;
             }
         }
-        match op.kind{
+        match &op.kind{
             Kind::Add=>{
                 while index<lines.len()-1 && !lines[index].starts_with("*** "){
                     let text=lines[index].strip_prefix('+')
@@ -203,7 +203,7 @@ fn apply_hunks(source:&str,hunks:&[Hunk])->Result<String,String>{
             Vec::new()
         }else{
             (from..=lines.len()-hunk.old.len())
-                .filter(|&i|lines[i..i+hunk.old.len()]==*hunk.old)
+                .filter(|&i|lines[i..i+hunk.old.len()]==hunk.old[..])
                 .filter(|&i|!hunk.at_end || i+hunk.old.len()==lines.len())
                 .collect::<Vec<_>>()
         };
@@ -241,7 +241,7 @@ fn prepare(root:&Path,ops:Vec<Operation>)->Result<Vec<Prepared>,String>{
         }
         let before=read_existing(&source)?;
         let destination_before=if source==destination{None}else{read_existing(&destination)?};
-        let after=match op.kind{
+        let after=match &op.kind{
             Kind::Add=>{
                 if before.is_some(){return Err(format!(
                     "Add File would overwrite an existing file: {}",op.path));}
