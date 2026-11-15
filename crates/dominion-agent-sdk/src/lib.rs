@@ -200,11 +200,17 @@ pub trait Dispatcher: Send + Sync {
     type Output: Send;
     fn execute<'a>(&'a self, action: &'a Action)
         -> BoxFuture<'a, Result<DispatchResult<Self::Output>, String>>;
+
+    /// The host is the only authority for read-only classification.
+    /// Unknown tools default to effects: never parallelize them by guessing.
+    fn is_read_only(&self, _action: &Action) -> bool { false }
+    fn max_parallel_reads(&self) -> usize { 4 }
 }
 
-/// The same write-ahead dispatch barrier serves the structured planner and
-/// native streaming chat. The host supplies approval/effect implementation.
-/// An interrupted batch remains explicitly in flight in the durable journal.
+/// A shared write-ahead barrier for native streaming and structured planners.
+/// Independent, host-declared reads can run together. Every effect is a strict
+/// ordering barrier; a failed group prevents later effects from executing.
+/// Each group is independently journaled so a crash cannot replay prior effects.
 pub async fn dispatch_batch<D: Dispatcher>(
     run: &mut Snapshot, actions: &[Action], dispatcher: &D, journal: &dyn Journal,
 ) -> Result<Vec<Result<D::Output, String>>, String> {
@@ -228,21 +234,46 @@ pub async fn dispatch_batch<D: Dispatcher>(
             return Err(format!("도구 실행의 선행 조건이 충족되지 않았습니다: {}", action.id));
         }
     }
-    run.in_flight = actions.to_vec();
-    journal.save(run)?;
-    let results = join_all(actions.iter().map(|action| dispatcher.execute(action))).await;
-    let mut outputs = Vec::with_capacity(results.len());
-    for (action, result) in actions.iter().zip(results) {
-        let (success, observation, output) = match result {
-            Ok(result) => (result.success, result.observation, Ok(result.output)),
-            Err(error) => (false, json!({"error":error}), Err(error)),
-        };
-        run.receipts.push(Receipt { id: action.id.clone(), tool: action.tool.clone(),
-            arguments: action.arguments.clone(), success, result: observation, step: run.step });
-        outputs.push(output);
+    let mut outputs = Vec::with_capacity(actions.len());
+    let mut cursor = 0usize;
+    while cursor < actions.len() {
+        if journal.cancelled(&run.id) {
+            return Err("실행이 취소되었습니다.".into());
+        }
+        let end = runtime::read_batch_end(
+            actions, cursor, dispatcher.max_parallel_reads().clamp(1, 16),
+            |action| dispatcher.is_read_only(action),
+        );
+        let group = &actions[cursor..end];
+        run.in_flight = group.to_vec();
+        // Persist intent before starting any tool. A failed save dispatches nothing.
+        journal.save(run)?;
+        let results = join_all(group.iter().map(|action| dispatcher.execute(action))).await;
+        let mut group_failed = false;
+        for (action, outcome) in group.iter().zip(results) {
+            let (success, observation, output) = match outcome {
+                Ok(result) if result.success => (true, result.observation, Ok(result.output)),
+                Ok(result) => (false, result.observation,
+                    Err(format!("Tool {} reported an unsuccessful result", action.id))),
+                Err(error) => (false, json!({"error":error.clone()}), Err(error)),
+            };
+            group_failed |= !success;
+            run.receipts.push(Receipt { id: action.id.clone(), tool: action.tool.clone(),
+                arguments: action.arguments.clone(), success, result: observation, step: run.step });
+            outputs.push(output);
+        }
+        run.in_flight.clear();
+        // The next group may not run if completed receipts cannot be persisted.
+        journal.save(run)?;
+        cursor = end;
+        if group_failed {
+            // Return an output slot for each skipped action without forging a
+            // receipt or reserving an execution that never occurred.
+            outputs.extend(actions[cursor..].iter().map(|action|
+                Err(format!("Skipped {} after an unsuccessful tool batch", action.id))));
+            break;
+        }
     }
-    run.in_flight.clear();
-    journal.save(run)?;
     Ok(outputs)
 }
 
