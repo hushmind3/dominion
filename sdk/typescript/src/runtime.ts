@@ -18,6 +18,7 @@ export interface ThreadOptions {
   requireEvidence?: boolean;
   maxSteps?: number;
   tokenBudget?: number;
+  costBudgetKrw?: number;
   planningMode?: 'auto' | 'always' | 'never';
 }
 
@@ -83,6 +84,7 @@ export class DominionThread {
       requireEvidence: options.requireEvidence ?? false,
       maxSteps: options.maxSteps,
       tokenBudget: options.tokenBudget,
+      costBudgetKrw: options.costBudgetKrw,
       planningMode: options.planningMode ?? 'auto',
     };
   }
