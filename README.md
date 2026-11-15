@@ -138,16 +138,20 @@ The agent execution engine is written in **Rust**. Node.js is used to build the 
 
 **Technical docs:** [Engine](ENGINE.md) · [Documentation index](docs/INDEX.md) · [Self-improvement execution contract](docs/RSI-MAIN-INTEGRATION-2026-11-12.md).
 
-## 🔌 TypeScript SDK — same Rust engine, external apps and GUI
+## 🦀 Native Rust SDK and autonomous execution
 
-DOMINION includes a typed [TypeScript SDK](sdk/typescript/README.md) to run work, inspect durable jobs, stream chat, manage rooms/approvals/video, and receive reconnectable execution events from **the existing Rust `/api/*` handlers**. The React GUI shares this transport rather than maintaining a separate harness or incompatible execution semantics.
+**Rust is Dominion's primary engine and SDK.** The desktop, HTTP API and external Rust consumers use the same native lifecycle in `src/sdk.rs` (`Dominion::open / start / submit / steer / wait`). This keeps model selection, tools, durable jobs, memory and permissions under Dominion's control, independently of any vendor's agent SDK.
 
-```bash
-npm install --prefix sdk/typescript
-npm test --prefix sdk/typescript
+Ordinary prompt jobs now enter a Rust-owned verification/replan cycle. The engine captures acceptance conditions before work, gathers actual tool evidence, continues when measurable checks fail, and stops uncertain external side effects rather than replaying them. The user can add a new instruction to an active job; the next model turn sees the persisted revision. The default cycle is bounded to 3 attempts and can be configured to 1–6.
+
+```rust
+use dominion_rust::sdk::{Dominion, EngineOptions, Prompt};
+let sdk = Dominion::open(EngineOptions::new(".", "./runtime"))?;
+sdk.start()?; // in a Tokio runtime
+let job = sdk.submit(Prompt::new("Inspect, fix and verify the code"))?;
 ```
 
-See [Sub2 integration and event recovery trace](docs/SUB2-SDK-DURABLE-EVENTS-2026-11-15.md) for concrete handlers, replay behavior, tests and verification limits. SDK is pre-release; external code should use the versioned package surface and its documented endpoints.
+The [TypeScript SDK](sdk/typescript/README.md) is an **optional auxiliary client**, not a harness. GUI and TypeScript use the same Rust `/api/*` endpoints and recorded results. See [2026 frontier source comparison](docs/FRONTIER-COMPARISON-SUB2-2026-11-15.md) and [execution contract](docs/SUB2-SDK-DURABLE-EVENTS-2026-11-15.md). Frontier-equivalent performance is not yet benchmarked.
 
 ## 🚧 Project status
 
