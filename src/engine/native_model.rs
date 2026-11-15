@@ -93,6 +93,39 @@ fn tool_catalog(tools:&[ToolSpec],protocol:&str)->Vec<Value> {
             "description":s.description,"parameters":s.schema}}),
     }).collect()
 }
+/// Admit provider-native model input against the configured context window.
+/// Only old, paired tool observations can be removed: the owner instruction,
+/// live plan, tool schemas and newest user prompt remain intact. All removed
+/// results remain in the kernel's durable receipt store for receipt_search.
+fn fit_native_context(body:&mut Value,wire:&str,capacity:u64,max_output:Option<u64>)
+    ->Result<(usize,u64,u64),String> {
+    let reserved=max_output.unwrap_or((capacity/8).max(256)).max(128).min(capacity);
+    let input_cap=capacity.saturating_sub(reserved);
+    let initial=crate::engine::chat::estimate_text_tokens(&body.to_string());
+    let mut estimated=initial;
+    let mut dropped=0usize;
+    while estimated>input_cap {
+        let field=if wire=="codex" {"input"} else {"messages"};
+        let at=if wire=="chat" {2} else {1};
+        let Some(items)=body[field].as_array_mut() else {
+            return Err("Native model context input has no message array".into());
+        };
+        if items.len()<=at+2 {
+            // Refuse to truncate the current task or system policy. A local
+            // retrieval tool can reconstruct old receipts when the model has
+            // sufficient room; silently cutting user instructions cannot.
+            return Err(format!(
+                "Native model context admission exceeded: estimated {estimated} input tokens, {input_cap} available after reserving {reserved} output tokens (configured context {capacity})"
+            ));
+        }
+        items.remove(at);
+        items.remove(at);
+        dropped+=1;
+        estimated=crate::engine::chat::estimate_text_tokens(&body.to_string());
+    }
+    Ok((dropped,initial,estimated))
+}
+
 fn decode_call(id:&str,name:&str,arg:&Value)->Result<Action,String> {
     if id.is_empty()||id.len()>128 || name.is_empty()||name.len()>128 {
         return Err("Malformed native tool call identity".into());
@@ -411,6 +444,18 @@ pub(crate) async fn complete_with_run(
             }
         }
     }
+    if let Some(capacity)=route.context_tokens {
+        let (dropped,before,after)=fit_native_context(&mut body,wire,
+            capacity,route.max_output_tokens)?;
+        if dropped>0 {
+            state.store.audit("native.context_admission",json!({
+                "sessionId":session,"providerId":route.id,"model":route.model,
+                "estimatedInputTokensBefore":before,"estimatedInputTokensAfter":after,
+                "omittedPairedReceipts":dropped,"contextCapacityTokens":capacity,
+                "modelUsageEstimate":true,"durableReceiptsRetained":true
+            }));
+        }
+    }
     let value=match wire {
         "codex"=>send_codex(state,&route,&client,&body,session,job_id).await?,
         "anthropic"=>send_anthropic(&route,&client,&body,state,session,job_id).await?,
@@ -461,6 +506,46 @@ mod tests {
             arguments:json!({"path":"src/main.rs"}),success:true,
             result:json!({"content":"fn main() {}"}),step:1}
     }
+    #[test]
+    fn provider_context_admission_removes_only_old_complete_tool_pairs() {
+        let receipts=(0..8).map(|i|Receipt{
+            id:format!("call-{i}"),step:i+1,tool:"workspace_read".into(),
+            arguments:json!({"path":format!("src/{i}.rs")}),success:true,
+            result:json!({"content":"x".repeat(4000)})
+        }).collect::<Vec<_>>();
+        for protocol in ["chat","anthropic","codex"] {
+            let system="Owner policy: never discard my objective";
+            let owner="Current instruction: solve the latest task";
+            let mut body=match protocol {
+                "chat"=>json!({"messages":chat_messages(system,owner,&receipts),
+                    "tools":[{"type":"function","name":"workspace_read"}]}),
+                "anthropic"=>json!({"messages":anthropic_messages(system,owner,&receipts),
+                    "system":system,"tools":[{"name":"workspace_read"}]}),
+                _=>json!({"input":codex_input(owner,&receipts),
+                    "instructions":system,"tools":[{"type":"function","name":"workspace_read"}]}),
+            };
+            let (dropped,before,after)=fit_native_context(&mut body,protocol,1100,None).unwrap();
+            assert!(dropped>0,"must adapt {protocol} oversize receipt history");
+            assert!(before>after);
+            assert!(after<=1100-256);
+            assert!(body.to_string().contains("Current instruction: solve the latest task"));
+            assert!(body.to_string().contains("workspace_read"));
+            let field=if protocol=="codex" {"input"}else{"messages"};
+            let count=body[field].as_array().unwrap().len();
+            assert_eq!((count-if protocol=="chat"{3}else{2})%2,0,
+                "tool call/output must remain paired");
+        }
+    }
+
+    #[test]
+    fn oversized_mandatory_prompt_is_rejected_before_any_provider_send() {
+        let mut body=json!({"instructions":"do not drop this",
+            "input":[{"role":"user","content":[{"type":"input_text","text":"z".repeat(5000)}]}]});
+        let original=body.clone();
+        assert!(fit_native_context(&mut body,"codex",700,Some(300)).is_err());
+        assert_eq!(body,original,"never cut owner or current prompt to force a request");
+    }
+
     #[test]
     fn native_chat_calls_are_typed_not_json_roleplay() {
         let response=json!({"choices":[{"finish_reason":"tool_calls",
