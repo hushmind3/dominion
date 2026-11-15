@@ -38,6 +38,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/videos/:id",get(video_get))
         .route("/api/videos/:id/render",post(video_render))
         .route("/api/videos/:id/scenes/:index",post(video_scene))
+        .route("/api/videos/:id/scenes/:index/image",post(video_image))
         .route("/api/videos/:id/content",get(video_content))
         .route("/api/improvements",get(improvement_list).post(improvement_create))
         .route("/api/improvements/:id",get(improvement_get))
@@ -399,6 +400,19 @@ async fn video_scene(State(state):State<AppState>,
         Err(error)=>(StatusCode::BAD_REQUEST,Json(json!({"error":error.to_string()}))).into_response()
     }
 }
+async fn video_image(State(state):State<AppState>,Path((id,index)):Path<(String,usize)>,
+    Json(body):Json<Value>)->Response{
+    let id=match parse_room(&id){Ok(id)=>id,Err(error)=>return error};
+    let Some(data_url)=body["dataUrl"].as_str() else{
+        return (StatusCode::BAD_REQUEST,Json(json!({"error":"이미지 데이터가 필요합니다."}))).into_response();
+    };
+    let sdk=crate::runtime::DominionSdk::from_state(state);
+    match sdk.video_image(id,index,data_url).await{
+        Ok(video)=>Json(json!(video)).into_response(),
+        Err(error)=>(StatusCode::BAD_REQUEST,Json(json!({"error":error.to_string()}))).into_response()
+    }
+}
+
 async fn video_content(State(state):State<AppState>,Path(id):Path<String>)->Response{
     use axum::body::{Body,Bytes};
     use tokio::io::AsyncReadExt;
