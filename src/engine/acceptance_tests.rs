@@ -131,6 +131,60 @@ async fn concurrent_coding_tasks_hold_the_workspace_lease_until_source_acceptanc
 }
 
 #[tokio::test]
+async fn native_agent_can_change_two_files_then_pass_real_joint_acceptance(){
+    let (url,server)=server_for(move |turn,_body|match turn{
+        0=>model_message(vec![
+            function_call("read-a","workspace_read_lines",json!({
+                "path":"a.js","startLine":1,"maxLines":40
+            })),
+            function_call("read-b","workspace_read_lines",json!({
+                "path":"b.js","startLine":1,"maxLines":40
+            }))
+        ]),
+        1=>model_message(vec![function_call("atomic-update","workspace_replace_many",
+            json!({"edits":[
+                {"path":"a.js","old":"x + 1","new":"x + 3"},
+                {"path":"b.js","old":"x * 2","new":"x * 4"}
+            ]}))]),
+        _=>final_message("Both source modules were corrected and tested.")
+    }).await;
+    let (state,root)=fixture(url,"1").await;
+    std::fs::write(root.join("a.js"),"module.exports = x => x + 1;\n").unwrap();
+    std::fs::write(root.join("b.js"),"module.exports = x => x * 2;\n").unwrap();
+    std::fs::write(root.join("joint.test.js"),
+        "const test = require('node:test');\n\
+         const assert = require('node:assert/strict');\n\
+         const a = require('./a.js'); const b = require('./b.js');\n\
+         test('both source edits are valid',()=>{assert.equal(a(2),5);assert.equal(b(2),8)});\n"
+    ).unwrap();
+    let mut request=input(5);
+    request["acceptanceChecks"]=json!([{
+        "program":"node","args":["--test","joint.test.js"]
+    }]);
+    let (task,_)=state.store.submit("multi-file-coding-2026",&request).unwrap();
+    let id=task["id"].as_str().unwrap().to_string();
+    run(state.clone(),id.clone()).await;
+    let record=state.store.get(&id).unwrap();
+    assert_eq!(record["status"],"completed","{record}");
+    assert_eq!(record["result"]["verifiedWrites"],2);
+    assert_eq!(record["result"]["acceptance"]["passed"],true);
+    assert_eq!(record["result"]["verification"],
+        "source_sha256_and_fresh_command_checks");
+    assert!(std::fs::read_to_string(root.join("a.js")).unwrap().contains("x + 3"));
+    assert!(std::fs::read_to_string(root.join("b.js")).unwrap().contains("x * 4"));
+    let events=trace(&state,&id);
+    assert!(events.iter().any(|e|e["type"]=="tool_result" &&
+        e["detail"]["name"]=="workspace_replace_many" &&
+        e["detail"]["outcome"]["receipt"]["fileCount"]==2));
+    assert!(events.iter().any(|e|e["type"]=="acceptance_result" &&
+        e["detail"]["success"]==true));
+    assert!(!std::fs::read_dir(&root).unwrap().filter_map(Result::ok)
+        .any(|f|f.file_name().to_string_lossy().starts_with(".dominion-stage-")));
+    server.abort();
+    let _=std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn wrong_multifile_repair_receives_real_test_failure_and_fixes_it(){
     let traffic=Arc::new(Mutex::new(Vec::<Value>::new()));
     let inspected=traffic.clone();
