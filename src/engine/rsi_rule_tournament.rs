@@ -176,8 +176,9 @@ mod tests {
         cases[2]["objectiveId"]=json!("different-goal");
         cases[3]["objectiveId"]=json!("different-goal");
         let refs=cases.iter().collect::<Vec<_>>();
-        assert_eq!(compare(&refs,reward)["promotion"],false);
-        let comparison=&compare(&refs,reward)["comparisons"][0];
+        let outcome=compare(&refs,reward);
+        assert_eq!(outcome["promotion"],false);
+        let comparison=&outcome["comparisons"][0];
         assert_eq!(comparison["matchedContexts"],1);
     }
 
