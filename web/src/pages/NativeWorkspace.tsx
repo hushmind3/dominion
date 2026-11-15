@@ -5,7 +5,8 @@ import type {AgentPreset} from './NativeAgents'
 import {Button,PageContainer,TextArea,TextInput,SelectInput} from '../components/Primitives'
 import {Headline,Panel,FormField,Notice,StateTag} from '../components/UI'
 
-type Run = {id:string;status:string;input:{prompt:string;sessionId?:string;maxSteps?:number;tokenBudget?:number};result?:{answer?:string;[key:string]:unknown}|null;error?:string|null;steps:number;tokens:number;costKrw:number;createdAt:string;cancelRequested?:boolean}
+type SandboxCapability = {available:boolean;backend:string|null;scope:string;reason?:string;note?:string}
+type Run = {id:string;status:string;input:{prompt:string;sessionId?:string;maxSteps?:number;tokenBudget?:number;shellIsolation?:'host'|'isolated'};result?:{answer?:string;[key:string]:unknown}|null;error?:string|null;steps:number;tokens:number;costKrw:number;createdAt:string;cancelRequested?:boolean}
 type RunEvent = {seq:number;taskId:string;type:string;detail?:Record<string,unknown>}
 type Member = {name:string;role:string;economy?:boolean}
 type Group = {id:string;topic:string;participants:Member[];messages:{speaker:string;content:string;at_ms:number}[];status:string;rounds:number;max_rounds:number;cost_krw:number;budget_krw:number}
@@ -62,15 +63,29 @@ export function NativeTasks({home=false}:{home?:boolean}){
  const [active,setActive]=useState(()=>new URLSearchParams(window.location.hash.split('?')[1]||'').get('task')||''),[prompt,setPrompt]=useState(''),[sessionId,setSessionId]=useState('')
  const [allowWrite,setAllowWrite]=useState(false),[allowShell,setAllowShell]=useState(false),[allowMcp,setAllowMcp]=useState(false)
  const [allowSubagents,setAllowSubagents]=useState(false),[requireEvidence,setRequireEvidence]=useState(false)
+ const [shellIsolation,setShellIsolation]=useState<'host'|'isolated'>('host')
+ const [sandboxCapability,setSandboxCapability]=useState<SandboxCapability|null>(null)
  const [planningMode,setPlanningMode]=useState('auto'),[modelTier,setModelTier]=useState('auto'),[agentId,setAgentId]=useState(''),[checkKind,setCheckKind]=useState('auto'),[testFile,setTestFile]=useState('calc.test.js'),[maxSteps,setMaxSteps]=useState(12),[tokenBudget,setTokenBudget]=useState(40000),[costBudget,setCostBudget]=useState('')
  const [instruction,setInstruction]=useState(''),[resumeText,setResumeText]=useState(''),[events,setEvents]=useState<RunEvent[]>([]),[children,setChildren]=useState<Run[]>([])
  const op=useOperation()
  const selected=tasks.value.find(item=>item.id===active)
+ const isolationUnavailable=allowShell&&shellIsolation==='isolated'&&sandboxCapability?.available!==true
  const acceptanceChecks=checkKind==='cargo'?[{program:'cargo',args:['test','--quiet']}]:
   checkKind==='npm'?[{program:'npm',args:['test','--silent']}]:
   checkKind==='node'?[{program:'node',args:['--test',testFile.trim()]}]:[]
  const latestAcceptance=events.filter(event=>event.type==='acceptance_result').at(-1)
  const latestSchemaRoute=events.filter(event=>event.type==='tool_schema_routed').at(-1)
+ useEffect(()=>{
+  if(!allowShell)return
+  let mounted=true
+  void get<SandboxCapability>('/api/sandbox').then(info=>{
+   if(mounted)setSandboxCapability(info)
+  }).catch(error=>{
+   if(mounted)setSandboxCapability({available:false,backend:null,scope:'shell_only',
+    reason:errText(error)})
+  })
+  return()=>{mounted=false}
+ },[allowShell])
  useEffect(()=>{if(!active)return;let done=false;const load=()=>{void get<Run[]>('/api/tasks/'+encodeURIComponent(active)+'/children').then(v=>{if(!done)setChildren(v)}).catch(()=>{if(!done)setChildren([])})}
   load();return()=>{done=true}
  },[active])
@@ -90,7 +105,8 @@ export function NativeTasks({home=false}:{home?:boolean}){
  useEffect(()=>{const timer=setInterval(()=>{void tasks.reload()},5000);return()=>clearInterval(timer)},[tasks.reload])
  const submit=async(e:FormEvent)=>{e.preventDefault();const cleaned=prompt.trim();if(!cleaned)return
   const created=await op.run(()=>post<Run>('/api/tasks',{requestId:crypto.randomUUID(),prompt:cleaned,sessionId:sessionId.trim()||undefined,
-   allowWrite,allowShell,allowMcp,allowSubagents,requireEvidence,planningMode,modelTier,agentId:agentId||undefined,acceptanceChecks,maxSteps,tokenBudget,
+   allowWrite,allowShell,shellIsolation:allowShell?shellIsolation:'host',
+   allowMcp,allowSubagents,requireEvidence,planningMode,modelTier,agentId:agentId||undefined,acceptanceChecks,maxSteps,tokenBudget,
     costBudgetKrw:costBudget.trim()?Number(costBudget):undefined}))
   if(created){setActive(created.id);setPrompt('');void tasks.reload()}
  }
@@ -98,7 +114,8 @@ export function NativeTasks({home=false}:{home?:boolean}){
   if(!active||!resumeText.trim())return
   const created=await op.run(()=>post<Run>('/api/tasks/'+encodeURIComponent(active)+'/resume',{
    requestId:crypto.randomUUID(),prompt:resumeText,
-   allowWrite,allowShell,allowMcp,allowSubagents,requireEvidence,planningMode,modelTier,agentId:agentId||undefined,acceptanceChecks,maxSteps,tokenBudget,
+   allowWrite,allowShell,shellIsolation:allowShell?shellIsolation:'host',
+   allowMcp,allowSubagents,requireEvidence,planningMode,modelTier,agentId:agentId||undefined,acceptanceChecks,maxSteps,tokenBudget,
    costBudgetKrw:costBudget.trim()?Number(costBudget):undefined
   }))
   if(created){setResumeText('');setActive(created.id);void tasks.reload()}
@@ -129,6 +146,27 @@ export function NativeTasks({home=false}:{home?:boolean}){
          <option value="npm">Node · npm test --silent</option>
          <option value="node">Node · 지정한 테스트 파일</option>
         </SelectInput></FormField>}
+        {allowShell&&<div className="sm:col-span-2 rounded-xl border border-[#E7E0D5] bg-white p-3">
+         <FormField label="검사 명령 실행 환경">
+          <SelectInput value={shellIsolation}
+           onChange={e=>setShellIsolation(e.target.value as 'host'|'isolated')}>
+           <option value="host">기본 실행 · 허용한 검사만 사용</option>
+           <option value="isolated">격리 실행 · 파일 쓰기 제한 + 외부 인터넷 차단</option>
+          </SelectInput>
+         </FormField>
+         {shellIsolation==='isolated'&&<p className={'mt-2 text-[11px] '+
+          (sandboxCapability?.available?'text-[#58735C]':'text-[#AC473A]')} role="status">
+          {sandboxCapability?.available
+           ?'✓ 사용 가능: '+(sandboxCapability.backend||'격리 실행')+
+            ' · 격리 환경이 시작되지 않으면 검사 명령을 실행하지 않습니다.'
+           :'격리 실행을 사용하려면 환경 설정이 필요합니다. '+
+            (sandboxCapability?.reason||'격리 엔진 상태를 확인 중입니다.')}
+         </p>}
+         <p className="mt-2 text-[11px] text-[#7C7469]">
+          격리는 코드 검사 명령에 적용됩니다. 모델의 파일 편집 권한이나 MCP 외부 연결은
+          각각 별도로 허용합니다. 기본 실행은 종전 동작과 동일합니다.
+         </p>
+        </div>}
         {allowShell&&checkKind==='node'&&<FormField label="테스트 파일 (작업 폴더 상대 경로)">
          <TextInput value={testFile} onChange={e=>setTestFile(e.target.value)} placeholder="calc.test.js" maxLength={180}/>
         </FormField>}
@@ -137,7 +175,7 @@ export function NativeTasks({home=false}:{home?:boolean}){
          <FormField label="모델 비용 예산 (원, 선택)"><TextInput type="number" min={0} max={10000000} value={costBudget} onChange={e=>setCostBudget(e.target.value)} placeholder="비우면 별도 제한 없음"/></FormField>
        </div>
       </details>
-      <div className="flex items-center justify-between gap-3"><span className={subtle}>파일 변경·셸·외부 도구는 개별적으로 허용합니다.</span><LoadingButton busy={op.busy} type="submit" variant="primary"><Play size={14}/> 실행 시작</LoadingButton></div>
+      <div className="flex items-center justify-between gap-3"><span className={subtle}>파일 변경·셸·외부 도구는 개별적으로 허용합니다.</span><LoadingButton busy={op.busy} disabled={isolationUnavailable} type="submit" variant="primary"><Play size={14}/> 실행 시작</LoadingButton></div>
      </form><InlineError error={op.error}/>
     </Section>
     {selected&&<Section>
@@ -160,9 +198,17 @@ export function NativeTasks({home=false}:{home?:boolean}){
        실제 청구 토큰과 원가는 제공자 계측값으로 별도 확인합니다.
       </p>
      </div>}
+     {selected.input.shellIsolation==='isolated'&&<p className="mb-2 text-[11px] text-[#58735C]">
+      🛡️ 검사 명령 격리 실행 선택됨 · 파일 편집·MCP 권한은 별도
+     </p>}
      {latestAcceptance&&<div className="mb-3 rounded-xl border border-[#E7E0D5] bg-white p-3 text-[12px]">
       <strong className="block">🧪 실파일 코드 검증 {latestAcceptance.detail?.success===true?'· 통과':'· 실패 / 자동 수정 대상'}</strong>
       <p className="mt-1 text-[#6F675D]">{String(latestAcceptance.detail?.check||'검증 명령')}</p>
+      <p className="mt-1 text-[#7C7469]">
+       {latestAcceptance.detail?.sandboxed===true
+        ?'🛡️ 격리 검사 · '+String(latestAcceptance.detail?.sandboxBackend??'OS')
+        :'호스트 검사 명령'}
+      </p>
       <p className="mt-1 text-[#8B8175]">소스 수정 차수 {String(latestAcceptance.detail?.revision??'-')} · 종료 코드 {String(latestAcceptance.detail?.exitCode??'-')}</p>
       {latestAcceptance.detail?.success!==true&&<p className="mt-2 whitespace-pre-wrap break-words text-rose-700">{String(latestAcceptance.detail?.stderrTail||'실패한 실행 기록에서 진단 정보를 확인할 수 있습니다.').slice(-1600)}</p>}
      </div>}
@@ -171,7 +217,7 @@ export function NativeTasks({home=false}:{home?:boolean}){
      {complete.has(selected.status)&&<div className="mb-4 rounded-xl border border-[#E7E0D5] p-3">
        <h3 className="mb-2 text-[12px] font-bold">작업 이어서 실행</h3>
        <p className={'mb-2 '+subtle}>이전 작업의 저장된 기록을 참고해 새 실행을 만듭니다. 파일·셸·MCP 권한은 위 설정에서 다시 명시적으로 선택합니다.</p>
-       <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"><TextInput aria-label="작업 이어서 실행 지시" value={resumeText} onChange={e=>setResumeText(e.target.value)} placeholder="실패한 부분을 확인하고 수정해 주세요."/><LoadingButton busy={op.busy} disabled={!resumeText.trim()} onClick={()=>void continueTask()} variant="primary"><RefreshCw size={14}/> 이어서 실행</LoadingButton></div>
+       <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"><TextInput aria-label="작업 이어서 실행 지시" value={resumeText} onChange={e=>setResumeText(e.target.value)} placeholder="실패한 부분을 확인하고 수정해 주세요."/><LoadingButton busy={op.busy} disabled={!resumeText.trim()||isolationUnavailable} onClick={()=>void continueTask()} variant="primary"><RefreshCw size={14}/> 이어서 실행</LoadingButton></div>
       </div>}
       <details open><summary className="cursor-pointer text-[12px] font-semibold">실행 이벤트 · {events.length}건</summary><ol className="mt-3 max-h-72 space-y-2 overflow-auto">{events.map(ev=><li key={ev.seq} className="rounded-lg border border-[#EEE8E0] p-3 text-[11px]"><div className="flex justify-between"><strong>{ev.type}</strong><span className="text-[#A79C8E]">#{ev.seq}</span></div>{ev.detail&&<pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-all text-[#6F675D]">{JSON.stringify(ev.detail,null,2)}</pre>}</li>)}</ol></details>
      {children.length>0&&<details className="mt-3"><summary className="cursor-pointer text-[12px] font-semibold">보조 에이전트 {children.length}개</summary><div className="mt-2"><RunList items={children} selected="" onSelect={setActive}/></div></details>}
@@ -390,9 +436,22 @@ export function NativeKnowledge(){
 }
 export function NativeConnections(){
  const data=useCollection<Health>('/api/health',{ok:false,engine:'',model:'',workspace:''})
+ const isolation=useCollection<SandboxCapability>('/api/sandbox',{available:false,backend:null,scope:'shell_only'})
  return <Page title="연결 · 실행 환경" eyebrow="NATIVE RUST CONNECTIONS" description="이 화면은 Rust 엔진의 실제 연결 상태를 표시합니다. 모델 제공자는 서버 환경 설정으로 연결합니다.">
   <Section><div className="mb-3 flex items-center justify-between"><h2 className="text-[14px] font-bold">엔진 연결</h2><Button onClick={()=>void data.reload()}><RefreshCw size={14}/> 새로고침</Button></div>
   <InlineError error={data.error}/><div className="grid gap-3 sm:grid-cols-2">{[['상태',data.value.ok?'연결됨':'연결되지 않음'],['실행 엔진',data.value.engine],['현재 모델',data.value.model],['작업공간',data.value.workspace]].map(([label,value])=><div className="rounded-lg bg-[#F6F3EC] p-4" key={label}><p className={subtle}>{label}</p><strong className="break-words text-[14px]">{value||'—'}</strong></div>)}</div>
+  <div className="mt-4 rounded-lg border border-[#ECE5DB] p-4 text-[12px]">
+   <div className="flex justify-between gap-2"><h3 className="mb-2 font-bold">🛡️ 검사 명령 격리 환경</h3>
+    <Button variant="ghost" size="sm" onClick={()=>void isolation.reload()}>다시 확인</Button>
+   </div>
+   <p role="status" className={isolation.value.available?'text-[#58735C]':'text-[#B65042]'}>
+    {isolation.value.available?'사용 가능 · '+(isolation.value.backend||'격리 실행'):
+     '현재 사용 불가 · '+(isolation.value.reason||'격리 엔진 상태를 확인해 주세요.')}
+   </p>
+   <p className={'mt-2 '+subtle}>Linux에서는 Bubblewrap을, 그 외 환경에서는 설치된 Docker/Podman과
+    준비된 검사 이미지를 사용합니다. 모델·SDK와 독립적으로 외부 인터넷을 차단합니다.
+    검사 명령만 격리하며 파일 편집·MCP는 별도 권한입니다.</p>
+  </div>
   <div className="mt-4 rounded-lg border border-[#ECE5DB] p-4 text-[12px]"><h3 className="mb-2 font-bold">모델 연결 설정</h3><p className={subtle}>DOMINION_MODEL_URL, DOMINION_MODEL, DOMINION_API_KEY 환경변수로 모델 제공자를 설정합니다. 키 값은 이 화면에 표시하지 않습니다.</p></div>
   </Section>
  </Page>
