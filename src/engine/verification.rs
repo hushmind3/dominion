@@ -344,6 +344,9 @@ pub(crate) fn is_action_evidence(item: &Value) -> bool {
     match tool_name(item) {
         "workspace_write" | "file_write" | "workspace_replace" | "workspace_replace_range" =>
             item["result"]["written"]==true && item["result"]["changed"]!=false,
+        "workspace_apply_patch" => item["result"]["status"]=="completed"
+            && item["result"]["files"].as_array().is_some_and(|files|
+                files.iter().any(|entry|entry["changed"]==true)),
         "shell_exec" | "terminal_exec" => {
             let args = item
                 .get("arguments")
@@ -410,23 +413,46 @@ pub(crate) fn is_action_evidence(item: &Value) -> bool {
 /// A code edit is not proved by the model's response, a tool-call name or a
 /// stale write receipt. The actual final bytes must still equal the bytes
 /// recorded when the tool completed successfully.
-pub(crate) fn proven_workspace_edit(state:&AppState,item:&Value)->bool {
-    if !successful_evidence(item) || !matches!(tool_name(item),
-        "workspace_write"|"file_write"|"workspace_replace"|"workspace_replace_range") {
-        return false;
-    }
-    let result=&item["result"];
-    if result["written"]!=true || result["changed"]==false {return false;}
-    let Some(digest)=result["postSha256"].as_str().filter(|v|v.len()==64
-        && v.bytes().all(|ch|ch.is_ascii_hexdigit()))else{return false;};
-    let Some(raw)=result["path"].as_str()else{return false;};
+fn file_receipt_matches(state:&AppState,entry:&Value,target:Option<&str>)->bool{
+    if entry["written"]!=true || entry["changed"]!=true {return false;}
+    let Some(raw)=entry["path"].as_str()else{return false;};
     let Ok(root)=state.config.workspace.canonicalize()else{return false;};
     let requested=Path::new(raw);
     let path=if requested.is_absolute(){requested.to_path_buf()}else{root.join(requested)};
+    if entry["action"]=="delete" || entry["action"]=="move-from"{
+        // Deletion was recorded as a native committed operation. A correct
+        // final state must still have that path absent.
+        if let Some(target)=target{
+            let Ok(expected)=resolve_path(state,target)else{return false;};
+            if expected!=path{return false;}
+        }
+        return path.starts_with(&root) && !path.exists();
+    }
+    let Some(digest)=entry["postSha256"].as_str().filter(|v|v.len()==64
+        && v.bytes().all(|ch|ch.is_ascii_hexdigit()))else{return false;};
     let Ok(actual)=path.canonicalize()else{return false;};
     if !actual.starts_with(&root){return false;}
+    if let Some(target)=target{
+        let Ok(expected)=resolve_path(state,target).and_then(|p|
+            p.canonicalize().map_err(|error|error.to_string()))else{return false;};
+        if actual!=expected{return false;}
+    }
     read_bounded_file(&actual).is_some_and(|bytes|
         format!("{:x}",Sha256::digest(&bytes))==digest)
+}
+
+pub(crate) fn proven_workspace_edit(state:&AppState,item:&Value)->bool {
+    if !successful_evidence(item){return false;}
+    if tool_name(item)=="workspace_apply_patch" {
+        return item["result"]["status"]=="completed"
+            && item["result"]["files"].as_array().is_some_and(|files|
+                files.iter().any(|entry|file_receipt_matches(state,entry,None)));
+    }
+    if !matches!(tool_name(item),
+        "workspace_write"|"file_write"|"workspace_replace"|"workspace_replace_range"){
+        return false;
+    }
+    file_receipt_matches(state,&item["result"],None)
 }
 
 /// One valid receipt for *another* file cannot certify the requested target.
@@ -434,6 +460,10 @@ pub(crate) fn proven_workspace_edit(state:&AppState,item:&Value)->bool {
 /// unrelated file was edited while the target changed externally.
 pub(crate) fn proven_edit_for_path(state:&AppState,item:&Value,target:&str)->bool{
     if !proven_workspace_edit(state,item){return false;}
+    if tool_name(item)=="workspace_apply_patch"{
+        return item["result"]["files"].as_array().is_some_and(|files|
+            files.iter().any(|entry|file_receipt_matches(state,entry,Some(target))));
+    }
     let Some(raw)=item["result"]["path"].as_str()else{return false;};
     let Ok(expected)=resolve_path(state,target).and_then(|path|
         path.canonicalize().map_err(|error|error.to_string()))else{return false;};
@@ -468,7 +498,7 @@ pub(crate) fn local_edit_intent(goal:&str)->bool{
 pub(crate) fn test_after_last_edit(evidence:&[Value])->bool{
     let last_edit=evidence.iter().enumerate().filter_map(|(i,item)|
         (is_action_evidence(item) && matches!(tool_name(item),
-            "workspace_write"|"file_write"|"workspace_replace"|"workspace_replace_range")
+            "workspace_write"|"file_write"|"workspace_replace"|"workspace_replace_range"|"workspace_apply_patch")
         ).then_some(i)).last();
     let Some(edit)=last_edit else{return false;};
     evidence.iter().enumerate().skip(edit+1).any(|(_,item)|{
@@ -727,6 +757,30 @@ mod verified_patch_tests {
         assert!(check_acceptance(&state,goal,&checks,&[a,b]).is_empty());
         let _=std::fs::remove_dir_all(dir);
     }
+    #[test]
+    fn proof_checks_each_file_in_a_multi_file_patch_receipt(){
+        let (state,dir)=state();
+        std::fs::write(dir.join("one.rs"),"one new").unwrap();
+        std::fs::write(dir.join("two.rs"),"two new").unwrap();
+        let value=json!({
+            "tool":"workspace_apply_patch","result":{"status":"completed","written":true,
+                "files":[
+                  {"path":dir.join("one.rs"),"written":true,"changed":true,
+                   "action":"update","postSha256":format!("{:x}",Sha256::digest(b"one new"))},
+                  {"path":dir.join("two.rs"),"written":true,"changed":true,
+                   "action":"update","postSha256":format!("{:x}",Sha256::digest(b"two new"))}
+                ]}});
+        assert!(proven_workspace_edit(&state,&value));
+        assert!(proven_edit_for_path(&state,&value,"one.rs"));
+        assert!(proven_edit_for_path(&state,&value,"two.rs"));
+        std::fs::write(dir.join("two.rs"),"stale").unwrap();
+        assert!(!proven_edit_for_path(&state,&value,"two.rs"));
+        let partial=json!({"tool":"workspace_apply_patch","result":{
+            "status":"partial","error":"failed","files":value["result"]["files"]}});
+        assert!(!proven_workspace_edit(&state,&partial));
+        let _=std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn test_must_follow_latest_edit_and_read_only_is_unchanged(){
         let edit=json!({"tool":"workspace_write","result":{"written":true,"changed":true}});

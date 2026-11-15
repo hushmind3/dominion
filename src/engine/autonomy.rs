@@ -43,7 +43,7 @@ fn side_effect_unknown(evidence:&[Value])->bool {
         let tool=item["tool"].as_str().unwrap_or("");
         !matches!(tool,
             "workspace_read"|"workspace_read_range"|"workspace_write"|
-            "workspace_replace"|"workspace_replace_range"|"workspace_list"|
+            "workspace_replace"|"workspace_replace_range"|"workspace_apply_patch"|"workspace_list"|
             "workspace_search"|"code_search"|"file_read"|"file_write"
         ) && !(matches!(tool,"shell_exec"|"terminal_exec")&&{
             let args=item["arguments"]["command"].as_str().unwrap_or("");
@@ -137,7 +137,7 @@ fn verification_after_last_edit(command:&str, evidence:&[Value])->bool {
     let last_edit=evidence.iter().enumerate().filter_map(|(index,item)|{
         (verification::successful_evidence(item) && matches!(
             verification::tool_name(item),
-            "workspace_write"|"workspace_replace"|"workspace_replace_range"|"file_write"
+            "workspace_write"|"workspace_replace"|"workspace_replace_range"|"workspace_apply_patch"|"file_write"
         )).then_some(index)
     }).last();
     let last_pass=evidence.iter().enumerate().filter_map(|(index,item)|

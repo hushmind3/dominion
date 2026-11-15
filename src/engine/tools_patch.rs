@@ -299,13 +299,6 @@ fn stage_all(prepared:&mut [Prepared])->Result<StageCleanup,String>{
 }
 
 fn still_current(item:&Prepared)->Result<(),String>{
-    if super::resolve_workspace(
-        item.source.parent().unwrap_or(Path::new(".")), // replaced below
-        "."
-    ).is_err() {
-        // Placeholder is never trusted for path authorization. The caller
-        // re-resolves each canonical path against the original root.
-    }
     let current=read_existing(&item.source)?;
     if current.as_deref()!=item.before.as_deref(){
         return Err(format!("Source changed after patch preflight: {}",item.operation.path));

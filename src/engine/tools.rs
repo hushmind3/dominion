@@ -1,3 +1,6 @@
+#[path = "tools_patch.rs"]
+mod patch;
+
 use crate::db::Store;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -39,6 +42,9 @@ pub fn definitions() -> Vec<Value> {
         tool("workspace_replace_range", "Replace a previously read inclusive line range with newText only. Use startLine/endLine and sourceSha256 returned by workspace_read_range; old text is not required.", object(json!({"path": text("Relative file path"), "startLine": json!({"type":"integer","minimum":1}), "endLine": json!({"type":"integer","minimum":1,"description":"Inclusive line number; at most 120 lines"}), "newText": text("Replacement lines (without old source text)"), "expectedSha256": text("Exact sourceSha256 from the successful prior read")}), vec!["path","startLine","endLine","newText","expectedSha256"])),
         tool("workspace_replace", "Replace one exact block in a workspace file without resending the whole file (approval required). oldText must occur exactly once.", object(json!({"path": text("Relative file path"), "oldText": text("Exact existing text to replace; must occur exactly once"), "newText": text("Replacement text"), "expectedSha256": text("Optional SHA-256 observed before editing")}), vec!["path","oldText","newText"])),
         tool("workspace_write", "Write a UTF-8 file inside the workspace (approval required)", object(json!({"path": text("Relative file path"), "content": text("UTF-8 content")}), vec!["path", "content"])),
+        tool("workspace_apply_patch", "Apply one Codex-style multi-file patch across up to 32 files: *** Begin Patch, *** Add/Update/Delete File, optional *** Move to, @@ hunks, *** End Patch. Entire patch is validated before writes; on commit failure inspect the returned partial receipts and re-read files. Approval required.", object(json!({
+            "input": text("One Codex-style multi-file patch. Prefix changed lines with + or -, context lines with one space.")
+        }), vec!["input"])),
         tool("file_list", "List any folder on this computer using an absolute path", object(json!({"path": text("Absolute folder path")}), vec!["path"])),
         tool("file_read", "Read any UTF-8 text file using an absolute path", object(json!({"path": text("Absolute file path")}), vec!["path"])),
         tool("file_write", "Create or overwrite any file using an absolute path (approval required)", object(json!({"path": text("Absolute file path"), "content": text("UTF-8 content")}), vec!["path", "content"])),
@@ -113,6 +119,7 @@ pub fn requires_approval(name: &str) -> bool {
     matches!(
         name,
         "workspace_write"
+            | "workspace_apply_patch"
             | "workspace_replace"
             | "workspace_replace_range"
             | "file_write"
@@ -254,6 +261,8 @@ pub async fn execute(
             )
             .await
         }
+        "workspace_apply_patch" => patch::apply(
+            ctx.workspace,&required_arg(args,"input")?).await,
         "file_list" => {
             let path = PathBuf::from(required_arg(args, "path")?);
             list_dir(&path).await
@@ -2245,6 +2254,10 @@ mod tests {
         assert!(requires_approval("shell_exec"));
         assert!(!requires_approval("workspace_read"));
         assert!(names.iter().any(|name|name=="delegate_parallel"));
+        assert!(names.iter().any(|name|name=="workspace_apply_patch"));
+        assert!(requires_approval("workspace_apply_patch"));
+        assert!(!parallel_read_only_tool("workspace_apply_patch"));
+        assert!(!rsi_allowed("workspace_apply_patch"));
         assert!(parallel_read_only_tool("workspace_read_range"));
         assert!(!parallel_read_only_tool("shell_exec"));
         assert!(!parallel_read_only_tool("workspace_write"));
