@@ -653,8 +653,26 @@ mod tests {
             ..Default::default()
         }).await.unwrap();
         assert_eq!(duplicate.id,result.id);
+        let continued=sdk.resume(&result.id,TaskInput {
+            prompt:"Inspect earlier proof without changing files".into(),
+            request_id:Some("sdk-resume-2026".into()),
+            ..Default::default()
+        }).await.unwrap();
+        assert_ne!(continued.id,result.id);
+        assert_eq!(continued.input["sessionId"],result.id);
+        assert_eq!(continued.input["allowWrite"],false);
+        let lineage=sdk.events_after(&continued.id,0,10).unwrap();
+        assert!(lineage.iter().any(|event|event.kind=="resumed_from"));
         server.abort();
         let _=std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn utf8_context_excerpt_never_splits_a_multibyte_character(){
+        let text="가나다라마바사";
+        assert_eq!(bounded_text(text,4),"가");
+        assert_eq!(bounded_text(text,6),"가나");
+        assert_eq!(bounded_text(text,0),"");
     }
 
     #[test]
