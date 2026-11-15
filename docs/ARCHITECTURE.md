@@ -33,7 +33,7 @@ Only Rust decides task admission, planning, model turns, side effects, explicit 
 | --- | --- | --- |
 | SDK / task lifecycle | src/runtime.rs, src/store.rs | NativeWorkspace.tsx |
 | Agent model/tool loop | src/engine.rs, src/engine/files.rs, src/engine/strategy.rs | Task event stream |
-| Safe compacted model context | src/engine/context.rs; task_receipt | Execution trace |
+| Verified long-term semantic context | src/engine/context.rs, src/engine/semantic.rs, src/context_memory.rs, src/store.rs | Evidence inspector and task_receipt/context_search tools |
 | Provider routing and usage | src/provider.rs | NativeSystem.tsx models |
 | MCP | src/mcp.rs | NativeSystem.tsx extensions |
 | User-defined personas | src/store.rs agents table, src/runtime.rs | NativeAgents.tsx |
