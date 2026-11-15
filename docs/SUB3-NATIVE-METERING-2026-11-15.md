@@ -41,3 +41,7 @@ For protocol comparison see [OpenAI 2026 Responses WebSocket mode](https://devel
 Focused Rust regression tests cover native SSE caching for Chat and Anthropic, provider-specific token parsing, a persistent two-call cache ledger, absence of provider usage, cancelled-job rejection, and an actual HTTP SSE tool-call path that commits measured usage to the job database. The independent TypeScript SDK now runs its own build/tests in the focused verification workflow in addition to the React GUI build.
 
 No paid Codex/Anthropic credential call, pricing validation, full release CI or frontier agent benchmark is claimed.
+
+## Verified focused CI result (2026-11-15)
+
+[GitHub Actions #43691823640](https://github.com/hushmind3/dominion-rust/actions/runs/43691823640) succeeded on implementation commit `825409f66d8df01fa8799b3496baad62e8c08693`: Rust SDK **45**, native Rust host/agent/transport **54**, interactive Codex WS **15**, workflow recovery **1** — **115/115 Rust tests passed**. React TypeScript typecheck and Vite production build passed; the standalone TypeScript SDK compiled and all **7/7 Node tests passed**. The Rust native tests include the real HTTP-SSE → model adapter → job-store meter integration fixture, along with cache preservation and unknown usage. This does not measure monetary savings or validate commercial provider credentials.
