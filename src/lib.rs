@@ -32,6 +32,10 @@ pub struct AppState {
     pub(crate) improvements: Arc<improvement::Improvements>,
     pub(crate) bus: broadcast::Sender<Value>,
     pub(crate) workspace: PathBuf,
+    /// A shared lease spanning code edits and their final acceptance checks.
+    /// Without this, a concurrent writer can invalidate a successful test
+    /// between execution and task settlement.
+    pub(crate) workspace_write_lock: Arc<tokio::sync::Mutex<()>>,
     pub(crate) model_name: String,
 }
 
