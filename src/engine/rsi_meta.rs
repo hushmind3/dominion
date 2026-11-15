@@ -41,7 +41,7 @@ pub(crate) fn verified_episode_receipt(candidate:&Value,receipt:&Value)->bool{
     let Some(rows)=receipt["episodes"].as_array() else{return false;};
     let Some(domain_list)=receipt["domains"].as_array() else{return false;};
     let Some(measurements)=receipt["measurements"].as_array() else{return false;};
-    if receipt["version"]!=2 || receipt["candidateId"]!=candidate["id"]
+    if receipt["version"]!=3 || receipt["candidateId"]!=candidate["id"]
         || receipt["baselineGeneratorCommit"]!=base || receipt["subjectCommit"]!=base
         || !valid_sha(base,40) || !valid_sha(changed,40) || changed==base
         || receipt["pairedEpisodeCount"].as_u64()!=Some(tasks*2)
@@ -53,6 +53,8 @@ pub(crate) fn verified_episode_receipt(candidate:&Value,receipt:&Value)->bool{
     let mut candidate_sum=0.0_f64;
     let mut baseline_calls=0.0_f64;
     let mut candidate_calls=0.0_f64;
+    let mut baseline_binary:Option<&str>=None;
+    let mut candidate_binary:Option<&str>=None;
     for episode in rows {
         let Some(task)=episode["task"].as_u64().filter(|v|*v<tasks) else{return false;};
         let Some(arm)=episode["arm"].as_str().filter(|a|matches!(*a,"baseline"|"candidate")) else{return false;};
@@ -63,11 +65,15 @@ pub(crate) fn verified_episode_receipt(candidate:&Value,receipt:&Value)->bool{
         let Some(calls)=episode["usage"]["calls"].as_u64().filter(|v|*v>0) else{return false;};
         let Some(tokens)=episode["usage"]["totalTokens"].as_u64() else{return false;};
         let Some(routes)=episode["actualModelRoutes"].as_array().filter(|v|!v.is_empty()) else{return false;};
+        let pinned=if arm=="baseline"{&mut baseline_binary}else{&mut candidate_binary};
+        if pinned.is_some_and(|digest|digest!=binary){return false;}
+        *pinned=Some(binary);
         if episode["generatorCommit"]!=expected
             || episode["subjectCommit"]!=base
             || episode["providerId"]!=provider || episode["model"]!=model
             || episode["tokenLimit"]!=limit || tokens>limit
             || episode["workerOk"]!=true || !valid_sha(binary,64)
+            || !episode["gradingError"].is_null()
             || routes.iter().any(|r|r["providerId"]!=provider||r["model"]!=model)
         {return false;}
         if episode["generationRuntimeMode"]=="compiled_system_controller"
@@ -80,21 +86,42 @@ pub(crate) fn verified_episode_receipt(candidate:&Value,receipt:&Value)->bool{
         if episode["generationRuntimeMode"]!="compiled_system_controller"
             && episode["generationRuntimeMode"]!="regular_worker" {return false;}
         if episode["subjectReport"].is_object() {
+            let report=&episode["subjectReport"];
             let metric=episode["subjectMetric"].as_str().unwrap_or("quality");
-            let (verified,before,after)=measured_subject_gain(&episode["subjectReport"],metric);
+            let (verified,before,after)=measured_subject_gain(report,metric);
             let same=|a:f64,b:f64|(a-b).abs()<=1e-9;
-            if !same(verified,quality)
+            let raw=report["cases"].as_array();
+            let correct_cases=raw.is_some_and(|cases|cases.len()==2
+                && cases.iter().any(|c|c["id"]=="subject-capability"
+                    && c["baselinePass"]==true && c["candidatePass"]==true)
+                && cases.iter().any(|c|c["id"]=="subject-guard"
+                    && c["baselinePass"]==true && c["candidatePass"]==true));
+            let patch=episode["candidatePatchSha256"].as_str().unwrap_or("");
+            let oracle=episode["frozenOracleSha256"].as_str().unwrap_or("");
+            let evidence=episode["subjectEvidenceSha256"].as_str().unwrap_or("");
+            if !correct_cases || !same(verified,quality)
                 || episode["baselineSubjectQuality"].as_f64().is_none_or(|v|!same(v,before))
                 || episode["candidateSubjectQuality"].as_f64().is_none_or(|v|!same(v,after))
-                || episode["subjectReport"]["baseCommit"]!=base
-                || !episode["subjectReport"]["candidateTreeSha"].as_str()
-                    .is_some_and(|hash|valid_sha(hash,40)) {
+                || report["baseCommit"]!=base
+                || report["oracleVersion"]!="meta-multidomain-v2"
+                || report["runner"]!="balanced-frozen-rsi-lab-v3"
+                || report["baselineBuildOk"]!=true || report["candidateBuildOk"]!=true
+                || !valid_sha(patch,64) || !valid_sha(oracle,64)
+                || !valid_sha(evidence,64)
+                || report["patchSha256"]!=patch
+                || report["oracleSha256"]!=oracle
+                || report["reportSha256"]!=evidence
+                || !report["baselineTreeSha"].as_str().is_some_and(|hash|valid_sha(hash,40))
+                || !report["candidateTreeSha"].as_str().is_some_and(|hash|valid_sha(hash,40))
+                || report["baselineTreeSha"]==report["candidateTreeSha"] {
                 return false;
             }
         }else if quality!=0.0 {return false;}
         if arm=="baseline" {baseline_sum+=quality;baseline_calls+=calls as f64;}
         else {candidate_sum+=quality;candidate_calls+=calls as f64;}
     }
+    if baseline_binary.is_none() || candidate_binary.is_none()
+        || baseline_binary==candidate_binary {return false;}
     let same=|a:f64,b:f64|(a-b).abs()<=1e-9;
     for task in 0..tasks {
         let row=&measurements[task as usize];
@@ -397,6 +424,23 @@ async fn episode(context:&JobContext, binary:&Path, generator_commit:&str,
         let checked=command(context,cmd,Duration::from_secs(600)).await?;
         if checked.status.success() {
             let measured:Value=serde_json::from_slice(&std::fs::read(&report).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+            let evidence_path=dir.join("report.json.evidence.txt");
+            if std::fs::metadata(&evidence_path).map_err(|e|e.to_string())?.len()>24*1024*1024 {
+                return Err("후속 과제 원시 채점 로그 크기가 증거 보관 한도를 초과했습니다.".into());
+            }
+            let evidence_sha=sha(std::fs::read(&evidence_path).map_err(|e|e.to_string())?);
+            let oracle_sha=sha(oracle);
+            if measured["baseCommit"]!=source_commit
+                || measured["patchSha256"]!=candidate["patchSha256"]
+                || measured["reportSha256"]!=evidence_sha
+                || measured["oracleSha256"]!=oracle_sha
+                || measured["runner"]!="balanced-frozen-rsi-lab-v3"
+                || measured["oracleVersion"]!="meta-multidomain-v2" {
+                return Err("후속 과제 채점 로그와 패치·동결 오라클·기준 커밋 증거가 다릅니다.".into());
+            }
+            result["subjectEvidenceSha256"]=json!(evidence_sha);
+            result["candidatePatchSha256"]=candidate["patchSha256"].clone();
+            result["frozenOracleSha256"]=json!(oracle_sha);
             let (gain,before,after)=measured_subject_gain(&measured,&task_spec.metric);
             result["quality"]=json!(gain);
             result["domain"]=json!(task_spec.domain);
@@ -458,7 +502,7 @@ pub async fn evaluate(context:&JobContext, candidate:&Value, source:&Path, outpu
             json!({"id":spec["id"],"baselinePass":true,"candidatePass":true,
                 "metrics":{"quality":{"baseline":score("baseline"),"candidate":score("candidate"),"samples":1}}})
         }).collect::<Vec<_>>();
-        let receipt=json!({"version":2,"campaignId":context.job_id,"candidateId":candidate["id"],
+        let receipt=json!({"version":3,"campaignId":context.job_id,"candidateId":candidate["id"],
             "baselineGeneratorCommit":base,"candidateGeneratorCommit":commit,"subjectCommit":base,
             "providerId":outer["input"]["providerId"],"model":outer["input"]["model"],
             "tasks":task_count,"domains":profile["tasks"].as_array().unwrap().iter().map(|task|task["domain"].clone()).collect::<Vec<_>>(),
@@ -496,7 +540,10 @@ mod tests {
                 rows.push(json!({"task":task,"arm":arm,
                     "generatorCommit":if arm=="baseline"{base.clone()}else{new_commit.clone()},
                     "subjectCommit":base,"providerId":"fixed-provider","model":"fixed-model",
-                    "generatorBinarySha256":"d".repeat(64),
+                    "generatorBinarySha256":if arm=="baseline"{"d".repeat(64)}else{"e".repeat(64)},
+                    "subjectEvidenceSha256":"a".repeat(64),
+                    "candidatePatchSha256":"c".repeat(64),
+                    "frozenOracleSha256":"b".repeat(64),
                     "generationRuntimeMode":"compiled_system_controller",
                     "generatorSourceTreeSha256":"f".repeat(64),
                     "controllerPlannerSource":"compiled_descendant_system_controller_v2",
@@ -505,18 +552,22 @@ mod tests {
                     "actualModelRoutes":[{"providerId":"fixed-provider","model":"fixed-model"}],
                     "quality":score,"subjectMetric":"quality",
                     "baselineSubjectQuality":0.5,"candidateSubjectQuality":final_quality,
-                    "subjectReport":{"baseCommit":base,"candidateTreeSha":"e".repeat(40),
-                        "candidateBuildOk":true,"cases":[
-                        {"id":"subject-capability","candidatePass":true,
+                    "subjectReport":{"baseCommit":base,
+                        "patchSha256":"c".repeat(64),"reportSha256":"a".repeat(64),
+                        "oracleSha256":"b".repeat(64),"oracleVersion":"meta-multidomain-v2",
+                        "runner":"balanced-frozen-rsi-lab-v3",
+                        "baselineTreeSha":"d".repeat(40),"candidateTreeSha":"e".repeat(40),
+                        "baselineBuildOk":true,"candidateBuildOk":true,"cases":[
+                        {"id":"subject-capability","baselinePass":true,"candidatePass":true,
                             "metrics":{"quality":{"baseline":0.5,"candidate":final_quality}}},
-                        {"id":"subject-guard","candidatePass":true}]}}));
+                        {"id":"subject-guard","baselinePass":true,"candidatePass":true}]}}));
             }
             measured.push(json!({"id":format!("meta-downstream-{task}"),
                 "baselinePass":true,"candidatePass":true,
                 "metrics":{"quality":{"baseline":0.2,
                     "candidate":if task==0{0.4}else{0.2},"samples":1}}}));
         }
-        let receipt=json!({"version":2,"candidateId":"candidate-1",
+        let receipt=json!({"version":3,"candidateId":"candidate-1",
             "baselineGeneratorCommit":base,"candidateGeneratorCommit":new_commit,
             "subjectCommit":base,"providerId":"fixed-provider","model":"fixed-model",
             "tasks":4,"perEpisodeTokenLimit":8000,"pairedEpisodeCount":8,
@@ -533,6 +584,18 @@ mod tests {
         fake=receipt.clone();fake["episodes"][0]["quality"]=json!(0.9);
         assert!(!verified_episode_receipt(&candidate,&fake));
         fake=receipt.clone();fake["episodes"][0]["generatorCommit"]=json!("c".repeat(40));
+        assert!(!verified_episode_receipt(&candidate,&fake));
+        fake=receipt.clone();fake["episodes"][0]["generatorBinarySha256"]=json!("f".repeat(64));
+        assert!(!verified_episode_receipt(&candidate,&fake));
+        fake=receipt.clone();fake["episodes"][0]["candidatePatchSha256"]=json!("0".repeat(64));
+        assert!(!verified_episode_receipt(&candidate,&fake));
+        fake=receipt.clone();fake["episodes"][0]["subjectEvidenceSha256"]=json!("0".repeat(64));
+        assert!(!verified_episode_receipt(&candidate,&fake));
+        fake=receipt.clone();fake["episodes"][0]["frozenOracleSha256"]=json!("0".repeat(64));
+        assert!(!verified_episode_receipt(&candidate,&fake));
+        fake=receipt.clone();fake["episodes"][0]["subjectReport"]["cases"][1]["baselinePass"]=json!(false);
+        assert!(!verified_episode_receipt(&candidate,&fake));
+        fake=receipt.clone();fake["episodes"][0]["gradingError"]=json!("missing frozen test");
         assert!(!verified_episode_receipt(&candidate,&fake));
         fake=receipt.clone();fake["episodes"][0]["actualModelRoutes"][0]["model"]=json!("fallback-model");
         assert!(!verified_episode_receipt(&candidate,&fake));
