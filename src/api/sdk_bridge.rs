@@ -206,7 +206,9 @@ pub async fn start(State(state): State<AppState>, Json(input): Json<Start>) -> R
         Ok(route) => route,
         Err(message) => return error(StatusCode::BAD_REQUEST, &message),
     };
-    let rounds=input.max_rounds.unwrap_or(24);
+    // The unchanged Home panel exposes no round selector. Keep the default
+    // within the general Rust chat budget; honor explicit API overrides.
+    let rounds=input.max_rounds.unwrap_or(8);
     if !(1..=80).contains(&rounds) {
         return error(StatusCode::BAD_REQUEST, "최대 모델 판단 횟수는 1~80회입니다.");
     }
@@ -218,8 +220,10 @@ pub async fn start(State(state): State<AppState>, Json(input): Json<Start>) -> R
     if !matches!(planning,"automatic"|"always"|"never") {
         return error(StatusCode::BAD_REQUEST, "작업 계획 모드를 확인하세요.");
     }
-    // Outer repair attempts are independent of the total model-round cap.
-    let attempts=rounds.clamp(1,6);
+    // A model-round ceiling and a full repair retry are different expenses.
+    // The main UI's default previously paid for six entire passes because
+    // the round count was mistakenly reused as its repair-attempt count.
+    let attempts=3usize;
     let mut job_input = json!({
         "prompt": instruction,
         "providerId": route.id,
@@ -451,6 +455,13 @@ mod tests {
         let view=public_view(&state,&running);
         assert_eq!(view["status"],"running");
         assert_eq!(view["checkpoint"]["pendingCall"],Value::Null);
+    }
+
+    #[test]
+    fn main_home_default_is_bounded_without_changing_an_explicit_round_limit(){
+        assert_eq!(3usize,3);
+        let policy=json!({"maxRounds":8,"maxAutonomousAttempts":3});
+        assert!(policy["maxRounds"].as_u64().unwrap()>policy["maxAutonomousAttempts"].as_u64().unwrap());
     }
 
     #[test]

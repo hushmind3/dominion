@@ -3421,18 +3421,18 @@ fn select_room_tools(
         .collect();
     scored.sort_by(|a, b| b.0.cmp(&a.0));
     if scored.is_empty() {
-        if acceptance {
-            return definitions;
-        }
-        return definitions
-            .into_iter()
-            .filter(|definition| {
-                matches!(
-                    tool_name(definition),
-                    "workspace_list" | "workspace_read" | "workspace_read_range" | "workspace_replace_range" | "workspace_replace" | "workspace_write" | "workspace_apply_patch" | "shell_exec" | "web_search"
-                )
-            })
-            .collect();
+        // A verifiable room action needs the normal read/edit/run toolchain,
+        // not every unrelated browser, account, RSI and MCP schema. The
+        // owner can still explicitly request any enabled optional capability.
+        return definitions.into_iter().filter(|definition|{
+            matches!(tool_name(definition),
+                "workspace_list"|"workspace_read"|"workspace_read_range"|
+                "code_search"|"workspace_replace_range"|"workspace_replace"|
+                "workspace_write"|"workspace_apply_patch"|"shell_exec"|
+                "terminal_exec"|"web_search"|"http_fetch")
+                || (acceptance && tool_name(definition).starts_with("mcp__")
+                    && query.to_lowercase().contains("mcp"))
+        }).collect();
     }
     scored.truncate(8);
     scored.into_iter().map(|(_, definition)| definition).collect()
@@ -3457,9 +3457,10 @@ fn select_panel_tool_definitions(definitions:Vec<Value>,query:&str)->Vec<Value>{
     let wants_save_memory=mentions(&["기억해","기억해 둬","메모리에 저장",
         "remember this","save memory"]);
     let wants_skill=mentions(&["스킬","skill","재사용 절차","reusable procedure"]);
-    let wants_browser=mentions(&["브라우저","browser","웹페이지","사이트 클릭",
-        "click the page","스크린샷","screenshot","웹사이트 접속"]);
-    let wants_github=mentions(&["깃허브","github","pull request","이슈 생성","issue 생성"]);
+    let wants_browser=mentions(&["브라우저","browser","웹페이지","웹사이트","사이트",
+        "click the page","스크린샷","screenshot","ui test","e2e test"]);
+    let wants_github=mentions(&["깃허브","github","git push","git commit",
+        "커밋","풀 리퀘스트","pull request","이슈 생성","issue 생성"]);
     let wants_accounts=mentions(&["연결 계정","로그인 계정","oauth","connected account"]);
     definitions.into_iter().filter(|definition|{
         match tool_name(definition){
@@ -6916,6 +6917,7 @@ mod harness_tool_selection_tests {
         assert!(continued.iter().any(|tool| tool_name(tool) == "shell_exec"));
         let accepted = select_room_tools(definitions, "작업", &empty, true);
         assert!(!accepted.is_empty());
+        assert!(accepted.iter().all(|item|tool_name(item)!="mcp_github_search"));
     }
 
     #[test]
