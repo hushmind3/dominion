@@ -357,3 +357,28 @@ fn parses_function_wrapper_and_missing_closing_tag() {
     assert_eq!(calls[0].0, "workspace_read");
     assert!(calls[0].1.contains("a.txt"));
 }
+
+#[test]
+fn durable_history_restores_out_of_order_results_by_call_identity() {
+    let state = temp_state();
+    let transcript = [
+        json!({"role":"assistant","content":"","tool_calls":[
+            {"id":"a","type":"function","function":{"name":"workspace_read","arguments":"{}"}},
+            {"id":"b","type":"function","function":{"name":"workspace_read","arguments":"{}"}}
+        ]}),
+        json!({"role":"tool","tool_call_id":"b","content":"second observation"}),
+        json!({"role":"tool","tool_call_id":"a","content":"first observation"}),
+    ];
+    for mut message in transcript {
+        message["session_id"] = json!("out-of-order");
+        state.store.write_message(&message).unwrap();
+    }
+    let restored = history(&state, "out-of-order", None, None).unwrap();
+    assert_eq!(restored.len(), 3);
+    assert_eq!(restored[1]["tool_call_id"], "a");
+    assert_eq!(restored[1]["content"], "first observation");
+    assert_eq!(restored[2]["tool_call_id"], "b");
+    assert_eq!(restored[2]["content"], "second observation");
+    let _ = std::fs::remove_dir_all(&state.config.data_dir);
+}
+
