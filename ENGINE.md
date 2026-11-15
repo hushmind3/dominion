@@ -205,7 +205,7 @@ Rust SDK 자체가 계획·실행·검증·복구의 상태기계입니다. 실�
 
 ## 메인 기준 런타임·검증 정합성 (2026-11-15)
 
-`run_turn`의 도구 실행은 선언 순서와 효과 장벽을 보존하며, 안전한 연속 읽기 배치만 허용합니다. `history`는 완료 순서에 관계없이 도구 ID별 관찰을 복원합니다. 메인의 한국어 파일 검증과 원어 선택도 반영했습니다. 구체적인 수정 함수·검증 범위는 [메인 기능 보존 기록](docs/SUB3-MAIN-PARITY-2026-11-15.md)에 있습니다. 메인 API 210/210과 UI 56/56 파일의 정적 일치를 확인했습니다. [제품 집중 CI #43711789923](https://github.com/hushmind3/dominion-rust/actions/runs/43711789923)에서 Rust 컴파일/채팅/수행 결과 검증/실제 MP4/웹 빌드를 통과했습니다. [SDK·RSI CI #43711861791](https://github.com/hushmind3/dominion-rust/actions/runs/43711861791)도 통과했습니다. 상용 모델 요금·전체 HTTP 동등성은 아직 미측정입니다.
+`run_turn`의 도구 실행은 선언 순서와 효과 장벽을 보존하며, 안전한 연속 읽기 배치만 허용합니다. `history`는 완료 순서에 관계없이 도구 ID별 관찰을 복원합니다. 메인의 한국어 파일 검증과 원어 선택도 반영했습니다. 구체적인 수정 함수·검증 범위는 [메인 기능 보존 기록](docs/SUB3-MAIN-PARITY-2026-11-15.md)에 있습니다. 메인 API 210/210과 UI 56/56 파일의 정적 일치를 확인했습니다. [제품 집중 CI #43712789490](https://github.com/hushmind3/dominion-rust/actions/runs/43712789490)에서 Rust 컴파일/채팅/수행 결과 검증/FFprobe가 검증한 H.264 MP4/실제 HTTP 10개/웹 빌드를 통과했습니다. [SDK·RSI CI #43711861791](https://github.com/hushmind3/dominion-rust/actions/runs/43711861791)도 통과했습니다. 상용 모델 요금·전체 HTTP 동등성은 아직 미측정입니다.
 
 ## 최신 메인 프런트 동기화·Rust SDK HTTP 호환 (2026-11-15)
 
