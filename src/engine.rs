@@ -854,6 +854,26 @@ pub async fn run(state: AppState, id: String) {
             let arguments = call["function"]["arguments"].as_str()
                 .and_then(|s| serde_json::from_str::<Value>(s).ok())
                 .unwrap_or(Value::Null);
+            // Missing tools are a model observation, not an external effect.
+            // Never persist tool_start for something that cannot execute;
+            // otherwise a crash could falsely quarantine a harmless error.
+            let advertised=exposed.iter().any(|tool|
+                schema_router::name(tool)==Some(tool_name));
+            if !advertised {
+                let value=json!({"ok":false,"error":format!(
+                    "Tool '{tool_name}' was not advertised in this model turn. Use tool_discover to obtain a current schema before calling it."
+                )});
+                if let Err(error)=state.record_event(&id,"tool_result",
+                    json!({"name":tool_name,"callId":tool_id,"outcome":value,
+                        "dispatch":"rejected_before_side_effect"})) {
+                    settle(&state,&id,"needs_review","",verified_writes,
+                        Some(format!("도구 거부 결과 저장 실패: {error}")));
+                    return;
+                }
+                messages.push(json!({"role":"tool","tool_call_id":tool_id,
+                    "content":value.to_string()}));
+                continue;
+            }
             // Persist intent before every possible external effect. Crash
             // recovery quarantines incomplete runs rather than replaying them.
             if let Err(error)=state.record_event(&id,"tool_start",
@@ -862,13 +882,7 @@ pub async fn run(state: AppState, id: String) {
                     Some(format!("도구 실행 기록을 저장하지 못했습니다: {error}")));
                 return;
             }
-            let advertised=exposed.iter().any(|tool|
-                schema_router::name(tool)==Some(tool_name));
-            let outcome = if !advertised {
-                // Never dispatch a fabricated or stale MCP function alias,
-                // even when it still exists in the full permission catalog.
-                Err(format!("Tool '{tool_name}' was not advertised in this model turn. Use tool_discover to obtain a current schema before calling it."))
-            } else if tool_name=="tool_discover" && allow_mcp {
+            let outcome = if tool_name=="tool_discover" && allow_mcp {
                 let query=arguments["query"].as_str().unwrap_or("").trim();
                 if query.chars().count()<2 || query.len()>300 {
                     Err("tool_discover requires a query of 2..300 UTF-8 bytes".into())
