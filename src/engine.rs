@@ -2,6 +2,7 @@ use crate::AppState;
 mod files;
 mod strategy;
 pub(crate) mod context;
+mod semantic;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{path::{Component, Path, PathBuf}, process::Stdio, time::Duration};
@@ -47,6 +48,14 @@ fn specs(allow_write: bool, allow_shell: bool, allow_subagents: bool) -> Vec<Val
             "offsetBytes":{"type":"integer","minimum":0},
             "maxBytes":{"type":"integer","minimum":16,"maximum":8192}
         },"required":["callId"],"additionalProperties":false}
+    }}));
+    result.push(json!({"type":"function","function":{
+        "name":"context_search",
+        "description":"Search the entire persisted native session by keywords, including distant owner instructions and linked tool observations. Returns source identifiers for exact retrieval; does not replay tools.",
+        "parameters":{"type":"object","properties":{
+            "query":{"type":"string","minLength":2},
+            "limit":{"type":"integer","minimum":1,"maximum":20}
+        },"required":["query"],"additionalProperties":false}
     }}));
     result.push(json!({"type":"function","function":{
         "name":"session_history",
@@ -154,6 +163,14 @@ async fn tool(state: &AppState, current_task: &str, current_session: &str,
             let max=args["maxBytes"].as_u64().unwrap_or(4096)
                 .min(usize::MAX as u64) as usize;
             context::receipt_page(&receipt,offset,max)
+        },
+        "context_search" => {
+            let query=args["query"].as_str().filter(|s|!s.trim().is_empty()&&s.len()<=400)
+                .ok_or("A bounded search query is required")?;
+            let limit=args["limit"].as_u64().unwrap_or(8).min(20) as usize;
+            let results=state.store.context_search(current_session,current_task,query,limit);
+            Ok(json!({"query":query,"results":results,"scope":"native_session_and_verified_ancestors",
+                "note":"Only indexed provenance is returned. Read the exact source by messageSeq or callId."}))
         },
         "session_history" => {
             let seq=args["messageSeq"].as_u64();
@@ -396,6 +413,42 @@ pub async fn run(state: AppState, id: String) {
             .or_else(|_|std::env::var("DOMINION_CONTEXT_MAX_CHARS")).ok()
             .and_then(|value|value.parse::<usize>().ok())
             .unwrap_or(96_000).clamp(8192,2_000_000);
+        // A model may propose which old statements matter; every selected
+        // constraint must match a real owner message in SQLite. Avoid an
+        // extra paid summarizer request until the active context has pressure.
+        let raw_bytes=serde_json::to_vec(&messages).map(|v|v.len()).unwrap_or(usize::MAX);
+        let needs_refresh=step==0 && (
+            raw_bytes>context_limit.saturating_mul(3)/5 ||
+            prompt.starts_with("Continue a previously persisted native task")
+        );
+        if needs_refresh && !state.store.cancelled(&id) {
+            let allow_model=consumed.saturating_add(3500)<token_budget &&
+                cost_budget_krw.is_none_or(|cap|
+                    state.store.get(&id).and_then(|v|v["costKrw"].as_f64())
+                        .unwrap_or(f64::INFINITY)<cap);
+            if let Err(error)=semantic::refresh(
+                &state,&id,&session,&active_instruction,allow_model
+            ).await {
+                state.emit(&id,"semantic_checkpoint_error",json!({"message":error}));
+            }
+        }
+        let facts=state.store.context_checkpoint(&session,&active_instruction,5500);
+        let found=state.store.context_search(&session,&id,&active_instruction,8)
+            .into_iter().filter(|item|item["kind"]=="owner" &&
+                item["excerpt"].as_str()!=Some(active_instruction.as_str()))
+            .take(3).collect::<Vec<_>>();
+        // Only literal owner text is promoted to the pinned checkpoint.
+        // Model replies and tool output remain ordinary untrusted evidence.
+        let mut outbound=messages.clone();
+        if let Some(note)=semantic::checkpoint_text(&facts,&found) {
+            let prefix=outbound.iter().take_while(|item|
+                matches!(item["role"].as_str(),Some("system"|"developer"))).count();
+            outbound.insert(prefix,json!({"role":"system","content":note}));
+            state.emit(&id,"context_checkpoint_selected",json!({
+                "exactOwnerFacts":facts["facts"].as_array().map(Vec::len).unwrap_or(0),
+                "retrievedOwnerSources":found.len()
+            }));
+        }
         let declarations=serde_json::to_vec(&available).map(|v|v.len())
             .unwrap_or(usize::MAX);
         let Some(mut message_budget)=context_limit.checked_sub(declarations.saturating_add(2048))
@@ -413,7 +466,7 @@ pub async fn run(state: AppState, id: String) {
         // A canonical context overflow may therefore retry with a *smaller*
         // read-only projection; no tool effect is ever replayed here.
         let reply=loop {
-            let projected=match context::project(&messages,message_budget,&durable){
+            let projected=match context::project(&outbound,message_budget,&durable){
                 Ok(view)=>view,
                 Err(error)=>{
                     state.emit(&id,"context_rejected",json!({
