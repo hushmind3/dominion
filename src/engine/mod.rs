@@ -23,7 +23,6 @@ pub mod procedure;
 pub mod program;
 pub mod verification;
 pub mod reflect;
-pub mod goals;
 pub mod gateway;
 pub mod cli_model;
 pub mod improve;

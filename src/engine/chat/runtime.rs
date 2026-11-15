@@ -15,7 +15,7 @@ use super::{
 };
 use super::evidence::{evidence_for_source, prepare_owner_action};
 use crate::engine::adaptation::types::TaskOutcome;
-use crate::engine::goals;
+use crate::engine::verification;
 use crate::{
     engine::{
         llm, mcp,
@@ -1797,7 +1797,7 @@ async fn run_turn_body(
                     .as_deref()
                     .map(|source| evidence_for_source(state, session_id, source, execution_id))
                     .unwrap_or_default();
-                let mut gaps = goals::check_acceptance(state, acceptance_text, checks, &evidence);
+                let mut gaps = verification::check_acceptance(state, acceptance_text, checks, &evidence);
                 let mut next_action = String::new();
                 if !gaps.is_empty() {
                     // Independent reviewer: deterministic checks still win, but
@@ -2461,7 +2461,7 @@ async fn run_turn_body(
                     .map(|source| evidence_for_source(state, session_id, source, execution_id))
                     .unwrap_or_default();
                 if !evidence.is_empty()
-                    && goals::check_acceptance(state, acceptance_text, checks, &evidence).is_empty()
+                    && verification::check_acceptance(state, acceptance_text, checks, &evidence).is_empty()
                 {
                     acceptance_passed = true;
                     force_final = true;
@@ -5581,7 +5581,7 @@ pub(super) fn finalize_execution(
             record["sessionId"].as_str(),
         ) {
             let evidence = evidence_for_source(state, session, source, execution_id);
-            let gaps = goals::check_acceptance(state, text, &record["acceptanceChecks"], &evidence);
+            let gaps = verification::check_acceptance(state, text, &record["acceptanceChecks"], &evidence);
             if !gaps.is_empty() {
                 record["acceptancePassed"] = json!(false);
                 record["acceptanceFinalGaps"] = json!(gaps);

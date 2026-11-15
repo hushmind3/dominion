@@ -1,6 +1,6 @@
 use crate::engine::chat::TurnRequest;
 use crate::engine::run_quiet;
-use crate::engine::{goals, learning, reflect, rooms, workflows};
+use crate::engine::{learning, reflect, rooms, workflows};
 use crate::state::AppState;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
@@ -195,24 +195,6 @@ pub fn recover(state: &AppState) {
                 if let Some(saved)=state.store.patch_if("room",id,"id",&json!(id),&json!({
                     "status":status,"activeAgentId":null,"pauseReason":if status=="needs_review" {"재시작 전 발언이나 도구 결과를 확인해야 합니다."} else {""}
                 })) { state.bus.record("room",&saved); }
-            }
-        }
-        if uncertain || attempts >= 3 {
-            if let Some(id) = job.pointer("/input/goalId").and_then(Value::as_str) {
-                if let Some(mut goal) = state.store.get("goal", id) {
-                    if matches!(
-                        goal["status"].as_str(),
-                        Some("completed" | "cancelled" | "failed" | "needs_review")
-                    ) {
-                        continue;
-                    }
-                    goal["status"] = json!("needs_review");
-                    goal["phase"] = json!("needs_review");
-                    goal["gaps"] = json!([
-                        "재시작 전 실행 결과가 확정되지 않았습니다. 실행 증거를 확인하세요."
-                    ]);
-                    state.store.put("goal", &goal);
-                }
             }
         }
         state.store.audit(
@@ -457,7 +439,6 @@ async fn run_job(state: AppState, job: Value) {
     let result = match kind.as_str() {
         "workflow" => workflows::run(&context, &job).await,
         "room" | "meeting" => rooms::run(&context, &job).await,
-        "goal" => goals::run(&context, &job).await,
         "prompt" => run_prompt(&context, &job).await,
         "rsi_compare" => crate::engine::rsi_worktree::compare(&context,&job).await,
         "rsi_evolve" => crate::engine::rsi_evolve::run(&context,&job).await,
@@ -942,7 +923,7 @@ fn schedule_automations(state: &AppState) {
             .cloned()
             .unwrap_or_else(|| json!({}));
         let job_kind = if kind == "meeting" { "room" } else { kind };
-        if !matches!(job_kind, "prompt" | "workflow" | "room" | "learn" | "goal") {
+        if !matches!(job_kind, "prompt" | "workflow" | "room" | "learn") {
             continue;
         }
         enqueue(state, job_kind, input);
@@ -1146,54 +1127,6 @@ mod tests {
         let stored = state.store.get("job", &id).unwrap();
         assert_eq!(stored["status"], "failed");
         assert!(stored["error"].as_str().unwrap().contains("대화방"));
-    }
-
-    #[test]
-    fn uncertain_goal_recovery_updates_job_and_goal_without_replaying() {
-        let state = temp_state();
-        state
-            .store
-            .put("goal", &json!({"id":"g","status":"running","goal":"write"}));
-        state.store.put(
-            "job",
-            &json!({"id":"j","kind":"goal","status":"running","attempts":1,
-            "input":{"goalId":"g"},"goalState":{"inFlight":true}}),
-        );
-        recover(&state);
-        assert_eq!(
-            state.store.get("job", "j").unwrap()["status"],
-            "needs_review"
-        );
-        assert_eq!(
-            state.store.get("goal", "g").unwrap()["status"],
-            "needs_review"
-        );
-        assert!(next_queued(&state).is_none());
-    }
-
-    #[tokio::test]
-    async fn goal_review_state_is_preserved_on_the_parent_job() {
-        let state = temp_state();
-        state
-            .store
-            .put("goal", &json!({"id":"g","status":"running","goal":"실행"}));
-        let job = state
-            .store
-            .put(
-                "job",
-                &json!({"id":"j","kind":"goal","status":"running","attempts":1,
-            "input":{"goalId":"g"},"goalState":{"inFlight":true}}),
-            )
-            .unwrap();
-        run_job(state.clone(), job).await;
-        assert_eq!(
-            state.store.get("job", "j").unwrap()["status"],
-            "needs_review"
-        );
-        assert_eq!(
-            state.store.get("goal", "g").unwrap()["status"],
-            "needs_review"
-        );
     }
 
     #[test]
