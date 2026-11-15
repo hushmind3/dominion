@@ -103,11 +103,15 @@ impl Ledger {
     pub fn observe(&mut self,tool:&str,args:&Value,outcome:&Value){
         let mutating=matches!(tool,"workspace_write"|"workspace_replace"|"workspace_replace_many")
             || tool.starts_with("mcp__")
-            || (tool=="workspace_check" && args["program"]=="cargo"
-                && args["args"][0]=="fmt");
+            || (tool=="workspace_check" && (
+                outcome["receipt"]["sourceUnchanged"]==false ||
+                (args["program"]=="cargo" && args["args"][0]=="fmt")
+            ));
         if mutating {
             self.revision=self.revision.saturating_add(1);
-            return;
+            // A source-changing check is also failed proof for its new
+            // revision, not a passing or reusable verification receipt.
+            if tool!="workspace_check"{return;}
         }
         if tool!="workspace_check"{return}
         let Some(program)=args["program"].as_str() else{return};
@@ -242,6 +246,24 @@ mod tests{
         assert!(ledger.current_failure(&[check.clone()]).is_some());
         ledger.observe("workspace_replace",&json!({}),&green);
         assert!(ledger.current_failure(&[check]).is_none());
+    }
+    #[test]
+    fn green_exit_cannot_pass_after_check_modifies_source(){
+        let check=Check{program:"node".into(),args:vec![
+            "--test".into(),"source.test.js".into()]};
+        let args=check.arguments();
+        let normal=json!({"ok":true,"receipt":{
+            "success":true,"exitCode":0,"sourceUnchanged":true}});
+        let mutated=json!({"ok":false,"receipt":{
+            "success":false,"exitCode":0,"sourceUnchanged":false}});
+        let mut ledger=Ledger::default();
+        ledger.observe("workspace_check",&args,&normal);
+        assert!(ledger.complete(&[check.clone()]));
+        let previous_revision=ledger.revision;
+        ledger.observe("workspace_check",&args,&mutated);
+        assert!(ledger.revision>previous_revision);
+        assert!(!ledger.complete(&[check.clone()]));
+        assert!(ledger.current_failure(&[check]).is_some());
     }
     #[test]
     fn missing_manifest_does_not_fabricate_test_pass(){

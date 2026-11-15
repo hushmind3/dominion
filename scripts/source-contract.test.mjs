@@ -176,3 +176,16 @@ test('owner stop is persisted in the Rust RSI engine and exposed to typed client
  assert.ok(sdk.includes('evolutionStop('))
  assert.ok(ui.includes("stopEvolution(run.id)"))
 });
+
+test('native source acceptance rejects green checks that mutated the source',()=>{
+ const engine=readFileSync(join(root,'src/engine.rs'),'utf8')
+ const integrity=readFileSync(join(root,'src/engine/source_integrity.rs'),'utf8')
+ const verification=readFileSync(join(root,'src/engine/verification.rs'),'utf8')
+ const tests=readFileSync(join(root,'src/engine/acceptance_tests.rs'),'utf8')
+ assert.ok(engine.includes('source_integrity::snapshot(&workspace)'))
+ assert.ok(engine.includes('output.status.success()&&unchanged'))
+ assert.ok(integrity.includes('MAX_SOURCE_BYTES'))
+ assert.ok(verification.includes('outcome["receipt"]["sourceUnchanged"]==false'))
+ assert.ok(tests.includes('green_test_that_rewrites_source_is_rejected_at_real_native_completion'))
+});
+

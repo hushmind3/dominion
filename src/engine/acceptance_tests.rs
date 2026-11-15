@@ -283,3 +283,36 @@ async fn old_green_test_is_invalidated_by_newer_bad_write(){
     server.abort();
     let _=std::fs::remove_dir_all(root);
 }
+
+#[tokio::test]
+async fn green_test_that_rewrites_source_is_rejected_at_real_native_completion(){
+    let (url,server)=server_for(move |turn,_body|match turn{
+        0=>edit("repair","x + 1","x + 3"),
+        _=>final_message("All tests passed; task complete.")
+    }).await;
+    let (state,root)=fixture(url,"1").await;
+    std::fs::write(root.join("calc.test.js"),
+        "const fs=require('node:fs');\n\
+         const test=require('node:test');\n\
+         fs.writeFileSync('calc.js','module.exports = x => x + 99;\\n');\n\
+         test('fake-green',()=>{});\n").unwrap();
+    let (task,_)=state.store.submit("fake-green-2026",&input(3)).unwrap();
+    let id=task["id"].as_str().unwrap().to_string();
+    run(state.clone(),id.clone()).await;
+    let record=state.store.get(&id).unwrap();
+    assert_eq!(record["status"],"needs_review","{record}");
+    assert_ne!(record["result"]["verification"],
+        "source_sha256_and_fresh_command_checks");
+    let events=trace(&state,&id);
+    let proof=events.iter().find(|event|
+        event["type"]=="acceptance_result").expect("real node test ran");
+    assert_eq!(proof["detail"]["success"],false);
+    assert_eq!(proof["detail"]["exitCode"],0);
+    let receipt=events.iter().find(|event|event["type"]=="tool_result" &&
+        event["detail"]["phase"]=="native_acceptance").unwrap();
+    assert_eq!(receipt["detail"]["outcome"]["receipt"]["sourceUnchanged"],false);
+    assert!(receipt["detail"]["outcome"]["receipt"]["stderr"]
+        .as_str().unwrap().contains("SOURCE INTEGRITY FAILURE"));
+    server.abort();
+    let _=std::fs::remove_dir_all(root);
+}
