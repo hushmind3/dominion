@@ -446,6 +446,81 @@ fn clip_tool_for_provider(text: &str, allowed_encoded_chars: usize) -> String {
     prefix
 }
 
+/// Context editing for long tool-heavy sessions. Only provider-facing copies
+/// are changed: execution_operation and durable chat history remain exact.
+/// Inspired by 2026 context-editing practice, but uses no added model call.
+///
+/// Keep recent observations and all writes/errors intact. Older large reads
+/// are reduced only near a declared context limit AND when the reduction is
+/// large enough to justify losing a prompt-cache prefix.
+fn edit_stale_read_context(messages: &mut [Value], capacity: usize, schema_chars: usize) -> usize {
+    if capacity < 4096 { return 0; }
+    let mut total = fixed_prompt_chars(messages)
+        .saturating_add(schema_chars)
+        .saturating_add(512);
+    total = total.saturating_add(messages.iter()
+        .filter(|row| row["role"] == "tool")
+        .filter_map(|row| row["content"].as_str())
+        .map(escaped_content_chars).sum::<usize>());
+    if total <= capacity.saturating_mul(3) / 4 { return 0; }
+
+    let mut names = std::collections::HashMap::<String, String>::new();
+    for message in messages.iter().filter(|m| m["role"] == "assistant") {
+        for call in message["tool_calls"].as_array().into_iter().flatten() {
+            if let (Some(id), Some(name)) = (call["id"].as_str(),
+                call["function"]["name"].as_str().or_else(|| call["name"].as_str())) {
+                names.insert(id.to_owned(), name.to_owned());
+            }
+        }
+    }
+    let mut recent = 0usize;
+    let mut candidates = Vec::<(usize, String, usize)>::new();
+    for (index, message) in messages.iter().enumerate().rev() {
+        if message["role"] != "tool" { continue; }
+        recent += 1;
+        if recent <= 3 { continue; }
+        let Some(id) = message["tool_call_id"].as_str() else { continue; };
+        let Some(tool) = names.get(id) else { continue; };
+        if !matches!(tool.as_str(), "workspace_read" | "workspace_read_range"
+            | "workspace_list" | "file_read" | "file_list" | "web_search" | "http_fetch") {
+            continue;
+        }
+        let Some(content) = message["content"].as_str() else { continue; };
+        let size = escaped_content_chars(content);
+        if size < 2400 || content.starts_with("Error:")
+            || serde_json::from_str::<Value>(content).ok().is_some_and(|value|
+                value.get("error").is_some() || value.get("ok") == Some(&json!(false))) {
+            continue;
+        }
+        let begin: String = content.chars().take(240).collect();
+        let end: String = content.chars().rev().take(120).collect::<Vec<_>>()
+            .into_iter().rev().collect();
+        let compact = format!(
+            "[Older {tool} result compacted, call={id}, original_chars={}. \
+             Original observation remains in durable execution history; \
+             re-read if exact bytes are needed.]\n{begin}\n…\n{end}",
+            content.chars().count(),
+        );
+        let saving = size.saturating_sub(escaped_content_chars(&compact));
+        if saving > 1000 { candidates.push((index, compact, saving)); }
+    }
+    let minimum = capacity.saturating_div(12).clamp(8_000, 24_000);
+    if candidates.iter().map(|(_, _, saving)| saving).sum::<usize>() < minimum {
+        return 0;
+    }
+    // Oldest-first, then stop. This avoids needless cache invalidation on
+    // subsequent turns and leaves the most recent work available verbatim.
+    candidates.reverse();
+    let mut cleared = 0usize;
+    for (index, compact, saving) in candidates {
+        if total <= capacity.saturating_mul(3) / 5 && cleared >= minimum { break; }
+        messages[index]["content"] = json!(compact);
+        total = total.saturating_sub(saving);
+        cleared = cleared.saturating_add(saving);
+    }
+    cleared
+}
+
 /// Prepare a different model's copy from the original, unabridged tool
 /// observations. No 6k/20k/80k magic limits or local/cloud distinction.
 fn fit_tool_context(provider: &ProviderRef, messages: &mut [Value], schema_chars: usize) {
@@ -453,8 +528,9 @@ fn fit_tool_context(provider: &ProviderRef, messages: &mut [Value], schema_chars
     let fixed = fixed_prompt_chars(messages)
         .saturating_add(schema_chars)
         .saturating_add(512);
-    let mut available = input_char_capacity(tokens, provider.max_output_tokens)
-        .saturating_sub(fixed);
+    let capacity = input_char_capacity(tokens, provider.max_output_tokens);
+    let _reclaimed = edit_stale_read_context(messages, capacity, schema_chars);
+    let mut available = capacity.saturating_sub(fixed);
     // Preserve the most recent observation; old tool outputs get the
     // remaining space, with each tool-call ID kept intact.
     for message in messages.iter_mut().rev() {
@@ -1668,7 +1744,10 @@ async fn stream_anthropic_once(
     continuity: &mut Value,
 ) -> Result<Completion, String> {
     let started = std::time::Instant::now();
-    let (system, provider_messages) = anthropic_messages(messages);
+    let mut fitted_messages = messages.to_vec();
+    let schema_chars = tools.iter().map(|tool| tool.to_string().chars().count()).sum();
+    fit_tool_context(provider, &mut fitted_messages, schema_chars);
+    let (system, provider_messages) = anthropic_messages(&fitted_messages);
     let mut body = json!({
         "model": provider.model,
         "messages": provider_messages,
