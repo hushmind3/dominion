@@ -21,6 +21,7 @@ pub mod benchmark;
 pub mod experiments;
 pub mod chat;
 pub mod jobs;
+pub mod sdk_bridge;
 pub mod system;
 pub mod attachments;
 pub mod channels;
@@ -146,6 +147,13 @@ pub fn router(state: AppState) -> Router {
         .route("/api/jobs/:id",get(jobs::one))
         .route("/api/jobs/:id/cancel",post(jobs::cancel))
         .route("/api/jobs/:id/steer",post(jobs::steer))
+        // Main branch NativeAgentPanel uses this bridge to the SAME native Rust job engine.
+        .route("/api/sdk/runs", get(sdk_bridge::list).post(sdk_bridge::start))
+        .route("/api/sdk/runs/:id", get(sdk_bridge::one))
+        .route("/api/sdk/runs/:id/cancel", post(sdk_bridge::cancel))
+        .route("/api/sdk/runs/:id/approve", post(sdk_bridge::approve))
+        .route("/api/sdk/runs/:id/resume", post(sdk_bridge::resume))
+        .route("/api/sdk/runs/:id/reconcile", post(sdk_bridge::reconcile))
         .route("/api/tasks", get(tasks::list))
         .route("/api/tasks/:id", get(tasks::one))
         .route("/api/tools", get(extensions::list_tools))
