@@ -112,6 +112,8 @@ pub(crate) struct Assembler {
     closed:BTreeSet<usize>,
     prompt_tokens:Option<u64>,
     output_tokens:Option<u64>,
+    cached_read_tokens:Option<u64>,
+    cached_write_tokens:Option<u64>,
     anthropic_stop:Option<String>,
     codex_response:Option<Value>,
 }
@@ -119,8 +121,9 @@ impl Assembler {
     pub(crate) fn new(wire:Wire)->Self {
         Self {wire,done:false,chat_finish:None,text:String::new(),
             calls:BTreeMap::new(),blocks:BTreeMap::new(),closed:BTreeSet::new(),
-            prompt_tokens:None,output_tokens:None,anthropic_stop:None,
-            codex_response:None}
+            prompt_tokens:None,output_tokens:None,
+            cached_read_tokens:None,cached_write_tokens:None,
+            anthropic_stop:None,codex_response:None}
     }
     pub(crate) fn feed(&mut self,packet:Packet)->Result<Vec<Update>,String>{
         if self.done{return Err("Native stream delivered events after terminal completion".into());}
@@ -148,6 +151,10 @@ impl Assembler {
         }
         if let Some(tokens)=event["usage"]["completion_tokens"].as_u64(){
             self.output_tokens=Some(tokens);
+        }
+        if let Some(cached)=event["usage"]["prompt_tokens_details"]["cached_tokens"].as_u64()
+            .or_else(||event["usage"]["prompt_token_details"]["cached_tokens"].as_u64()) {
+            self.cached_read_tokens=Some(cached);
         }
         for choice in event["choices"].as_array().into_iter().flatten(){
             if choice["index"].as_u64().unwrap_or(0)!=0 {continue;}
@@ -193,7 +200,10 @@ impl Assembler {
     fn anthropic(&mut self,event:&Value,updates:&mut Vec<Update>)->Result<(),String>{
         match event["type"].as_str().unwrap_or("") {
             "message_start"=>{
-                self.prompt_tokens=event["message"]["usage"]["input_tokens"].as_u64();
+                let usage=&event["message"]["usage"];
+                self.prompt_tokens=usage["input_tokens"].as_u64();
+                self.cached_read_tokens=usage["cache_read_input_tokens"].as_u64();
+                self.cached_write_tokens=usage["cache_creation_input_tokens"].as_u64();
             }
             "content_block_start"=>{
                 let idx=event["index"].as_u64().ok_or("Anthropic content block missing index")?;
@@ -255,6 +265,12 @@ impl Assembler {
                 }
                 if let Some(output)=event["usage"]["output_tokens"].as_u64(){
                     self.output_tokens=Some(output);
+                }
+                if let Some(cached)=event["usage"]["cache_read_input_tokens"].as_u64(){
+                    self.cached_read_tokens=Some(cached);
+                }
+                if let Some(cached)=event["usage"]["cache_creation_input_tokens"].as_u64(){
+                    self.cached_write_tokens=Some(cached);
                 }
             }
             "message_stop"=>{
@@ -335,7 +351,8 @@ impl Assembler {
                     "message":{"role":"assistant","content":self.text,
                         "tool_calls":calls}}],
                     "usage":{"prompt_tokens":self.prompt_tokens,
-                        "completion_tokens":self.output_tokens}}))
+                        "completion_tokens":self.output_tokens,
+                        "prompt_tokens_details":{"cached_tokens":self.cached_read_tokens}}}))
             }
             Wire::Anthropic=>{
                 let mut blocks=Vec::new();
@@ -358,7 +375,9 @@ impl Assembler {
                 }
                 Ok(json!({"type":"message","stop_reason":self.anthropic_stop,
                     "content":blocks,"usage":{"input_tokens":self.prompt_tokens,
-                        "output_tokens":self.output_tokens}}))
+                        "output_tokens":self.output_tokens,
+                        "cache_read_input_tokens":self.cached_read_tokens,
+                        "cache_creation_input_tokens":self.cached_write_tokens}}))
             }
         }
     }
