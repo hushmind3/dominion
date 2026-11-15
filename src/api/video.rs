@@ -332,7 +332,10 @@ mod tests {
     #[tokio::test]
     async fn native_pipeline_produces_a_real_playable_container() {
         let s = state();
+        let require_ffmpeg = std::env::var("DOMINION_REQUIRE_VIDEO_FFMPEG")
+            .ok().as_deref() == Some("1");
         if video::ffmpeg(&s).is_none() {
+            assert!(!require_ffmpeg, "FFmpeg is required for the real-video acceptance test");
             return;
         }
         let j = video::enqueue(
@@ -347,6 +350,22 @@ mod tests {
         assert!(result["bytes"].as_u64().unwrap() > 1000);
         let data = std::fs::read(video::directory(&s, &id).unwrap().join("output.mp4")).unwrap();
         assert_eq!(&data[4..8], b"ftyp");
+        if require_ffmpeg {
+            // The container signature alone is not enough; inspect the
+            // decoder-visible stream of the actual finished MP4.
+            let output_path = video::directory(&s, &id).unwrap().join("output.mp4");
+            let probe = tokio::process::Command::new("ffprobe")
+                .args(["-v", "error", "-select_streams", "v:0",
+                    "-show_entries", "stream=codec_name,width,height",
+                    "-of", "json"])
+                .arg(&output_path).output().await.unwrap();
+            assert!(probe.status.success(), "ffprobe failed: {}",
+                String::from_utf8_lossy(&probe.stderr));
+            let info:Value=serde_json::from_slice(&probe.stdout).unwrap();
+            assert_eq!(info["streams"][0]["codec_name"], "h264");
+            assert_eq!(info["streams"][0]["width"], 720);
+            assert_eq!(info["streams"][0]["height"], 1280);
+        }
         assert!(
             video::output_path(&s, &id).is_err(),
             "unfinished job must not be served"
