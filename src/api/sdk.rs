@@ -341,7 +341,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod tests {
+mod parity_tests {
     use super::*;
     #[tokio::test]
     async fn main_independent_harness_queues_a_real_rust_run() {
