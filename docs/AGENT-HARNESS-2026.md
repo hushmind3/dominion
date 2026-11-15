@@ -24,6 +24,23 @@ At review time, public GitHub repositories reported approximately **135k** Codex
 - Adding an owner constraint is different from replacing a task. Both now have explicit semantics. A replacement invalidates obsolete planning/verifier conditions while preserving historical audit and no-replay information.
 - Operator-facing UX is not a developer dashboard: optional advanced controls, a natural-language task composer and direct in-place correction let users stay in the Activity page.
 
+## Additional implemented slice: per-project native jobs and bounded provider calls
+
+**Goal:** Allow one Dominion installation to work on many repositories without accidentally applying a code-change request to the server's startup directory.
+
+| Entry point | Real implementation | Runtime consequence |
+| --- | --- | --- |
+| Rust `POST /api/jobs` | `src/api/jobs.rs` validates `workspaceDir` and `tokenBudget` | Persisted user selection, not an unused UI setting |
+| Native Rust SDK | `src/sdk.rs` adds `submit_in_workspace()` and `submit_with_options()`, preserving the existing `Prompt` struct | Same job queue without embedding another agent SDK |
+| Workspace authority | `src/engine/workspace_scope.rs` canonicalizes an existing absolute root and rejects the internal data folder or filesystem root | Selected project is a **per-job config clone**; database, tool approvals, cancellation, events and write locks are shared |
+| Job worker | `src/engine/jobs.rs::run_prompt` applies the selected root both to `run_quiet` and the Rust `autonomy::execute` verification cycle | Search, workspace-relative edits and tests in the selected repository |
+| Subagent delegation | `src/engine/tools.rs::delegate` persists the parent's selected project in the child job/session | Both `delegate_task` and `delegate_parallel` retain project scope even if the global worker claims children after restart |
+| Provider budget | `src/engine/chat/runtime.rs` reads the job-owned token limit at the real model-call boundary | Reserves the next input estimate and bounds requested output; avoids launching a subsequent model call without a remaining allowance |
+| User budget | `src/engine/autonomy.rs` accumulates attempt usage and returns review on budget exhaustion | The frontend receives the real token-usage checkpoint and does not hide budget failures |
+| React & TypeScript | `web/src/components/AutonomousJobComposer.tsx`, `Operations.tsx`, `sdk/typescript/src/index.ts` | Select recent project folders and per-job token budgets through the same native API; SDK waits terminate on `needs_review` |
+
+**Boundaries:** This is project-relative path routing, **not** a host-level OS security sandbox; existing approved shell tools and absolute-path tools retain their separate permission and runtime behavior. The per-job provider admission budget is **not** a strict aggregate cap across independently delegated subagent jobs; a separate atomic shared budget/reservation ledger is necessary for that future feature. Usage estimates and provider bills may differ. No model-dependent benchmarks or CI pass are claimed for this slice.
+
 ## Implemented end-to-end contract
 
 1. `web/src/components/AutonomousJobComposer.tsx`: starts real `POST /api/jobs` prompt work with `autonomous:true`, optional model/agent/verification settings.
