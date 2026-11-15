@@ -2095,12 +2095,11 @@ async fn run_turn_body(
                     let launch=|(offset,args,seq):(usize,Value,u64)|{
                         let read_call=&batch[offset];
                         async move {
-                            let result=dispatch_tool_call(
+                            dispatch_tool_call(
                                 state,tx,session_ref,request,session_id,execution_id,
                                 read_call,args,metrics,seq,round,call_index+offset,
                                 compat,"model",None,None,None,
-                            ).await;
-                            (offset,result)
+                            ).await.map(|(_,ok,content)|(offset,content,ok))
                         }
                     };
                     // Reuse the tested native pool rather than duplicating
