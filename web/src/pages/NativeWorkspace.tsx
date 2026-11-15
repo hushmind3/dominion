@@ -10,7 +10,7 @@ type RunEvent = {seq:number;taskId:string;type:string;detail?:Record<string,unkn
 type Member = {name:string;role:string;economy?:boolean}
 type Group = {id:string;topic:string;participants:Member[];messages:{speaker:string;content:string;at_ms:number}[];status:string;rounds:number;max_rounds:number;cost_krw:number;budget_krw:number}
 type Scene = {heading:string;narration:string;seconds:number}
-type Video = {id:string;prompt:string;status:string;scenes:Scene[];backend:string;error?:string|null;output?:string|null;cost_krw:number}
+type Video = {id:string;prompt:string;status:string;scenes:Scene[];backend:string;error?:string|null;output?:string|null;cost_krw:number;budget_krw:number}
 type Trial = {id:string;repository:string;target_file:string;instruction:string;status:string;accepted:boolean;cost_krw:number;error?:string|null;baseline?:{score?:number;tests_passed:boolean};candidate?:{score?:number;tests_passed:boolean}}
 type Memory = {id:string;content:string;kind:string;status:string;sessionId?:string|null}
 type Skill = {id:string;name:string;trigger:string;instructions:string;enabled:boolean}
@@ -189,11 +189,11 @@ export function NativeGroups(){
 }
 export function NativeVideos(){
  const data=useCollection<Video[]>('/api/videos',[])
- const [active,setActive]=useState(''),[prompt,setPrompt]=useState(''),[backend,setBackend]=useState('local'),[heading,setHeading]=useState(''),[narration,setNarration]=useState(''),[seconds,setSeconds]=useState(4)
+ const [active,setActive]=useState(''),[prompt,setPrompt]=useState(''),[backend,setBackend]=useState('local'),[videoBudget,setVideoBudget]=useState(5000),[heading,setHeading]=useState(''),[narration,setNarration]=useState(''),[seconds,setSeconds]=useState(4)
  const [editing,setEditing]=useState<number|null>(null),[editHeading,setEditHeading]=useState(''),[editNarration,setEditNarration]=useState(''),[editSeconds,setEditSeconds]=useState(4)
  const op=useOperation();const selected=data.value.find(x=>x.id===active)
  const create=async(e:FormEvent)=>{e.preventDefault();const scenes=heading.trim()&&narration.trim()?[{heading,narration,seconds}]:undefined
-  const item=await op.run(()=>post<Video>('/api/videos',{prompt,backend,scenes}));if(item){setActive(item.id);void data.reload()}}
+  const item=await op.run(()=>post<Video>('/api/videos',{prompt,backend,scenes,budget_krw:videoBudget}));if(item){setActive(item.id);void data.reload()}}
  const beginEdit=(index:number,scene:Scene)=>{
   setEditing(index);setEditHeading(scene.heading);setEditNarration(scene.narration);setEditSeconds(scene.seconds)
  }
@@ -209,11 +209,12 @@ export function NativeVideos(){
   <div className="grid content-start gap-4">
    <Section><form onSubmit={e=>void create(e)} className="grid gap-3">
     <FormField label="영상 주제"><TextArea required rows={3} value={prompt} onChange={e=>setPrompt(e.target.value)}/></FormField>
-    <FormField label="제작 방식"><SelectInput value={backend} onChange={e=>setBackend(e.target.value)}><option value="local">로컬 장면 렌더링</option><option value="veo">Veo (API 비용 별도)</option></SelectInput></FormField>
+    <FormField label="제작 방식"><SelectInput value={backend} onChange={e=>setBackend(e.target.value)}><option value="local">로컬 장면 렌더링</option><option value="veo">Veo (별도 API 요금)</option></SelectInput></FormField>
+    <FormField label="영상 예산 한도 (원)"><TextInput type="number" value={videoBudget} min={0} max={1000000} onChange={e=>setVideoBudget(Number(e.target.value))}/></FormField>
     <details><summary className="cursor-pointer text-[12px] font-semibold">장면 직접 설정</summary><div className="mt-3 grid gap-2"><FormField label="장면 제목"><TextInput value={heading} onChange={e=>setHeading(e.target.value)}/></FormField><FormField label="내레이션"><TextArea value={narration} onChange={e=>setNarration(e.target.value)}/></FormField><FormField label="길이 (초)"><TextInput type="number" min={2} max={30} value={seconds} onChange={e=>setSeconds(Number(e.target.value))}/></FormField></div></details>
     <div><LoadingButton busy={op.busy} type="submit" variant="primary"><Clapperboard size={14}/> 프로젝트 만들기</LoadingButton></div>
    </form></Section>
-   {selected&&<Section><div className="flex items-center justify-between"><h2 className="font-bold">{selected.prompt}</h2><Status value={selected.status}/></div><p className={'my-2 '+subtle}>제작 비용: {fmtKrw(selected.cost_krw)} · 방식: {selected.backend}</p>
+   {selected&&<Section><div className="flex items-center justify-between"><h2 className="font-bold">{selected.prompt}</h2><Status value={selected.status}/></div><p className={'my-2 '+subtle}>제작 비용: {fmtKrw(selected.cost_krw)} / 한도 {fmtKrw(selected.budget_krw)} · 방식: {selected.backend}</p>
     <div className="my-4 grid gap-2">{selected.scenes.map((scene,i)=><div key={i} className="rounded-lg border border-[#EFE9DF] p-3 text-[12px]"><div className="flex items-center justify-between gap-2"><strong>{i+1}. {scene.heading}</strong><Button size="sm" variant="ghost" onClick={()=>beginEdit(i,scene)}>수정</Button></div><p className="mt-1 whitespace-pre-wrap">{scene.narration}</p><small>{scene.seconds}초</small></div>)}</div>
     {editing!==null&&<form onSubmit={e=>void saveScene(e)} className="mb-4 grid gap-2 rounded-xl bg-[#F6F3EC] p-3">
      <h3 className="font-semibold">{editing+1}번 장면 수정</h3>
