@@ -223,7 +223,8 @@ pub async fn start(State(state): State<AppState>, Json(input): Json<Start>) -> R
     // A model-round ceiling and a full repair retry are different expenses.
     // The main UI's default previously paid for six entire passes because
     // the round count was mistakenly reused as its repair-attempt count.
-    let attempts=3usize;
+    let attempts=input.max_rounds.map(|rounds|rounds.clamp(1,3))
+        .unwrap_or(3);
     let mut job_input = json!({
         "prompt": instruction,
         "providerId": route.id,
@@ -457,11 +458,26 @@ mod tests {
         assert_eq!(view["checkpoint"]["pendingCall"],Value::Null);
     }
 
-    #[test]
-    fn main_home_default_is_bounded_without_changing_an_explicit_round_limit(){
-        assert_eq!(3usize,3);
-        let policy=json!({"maxRounds":8,"maxAutonomousAttempts":3});
-        assert!(policy["maxRounds"].as_u64().unwrap()>policy["maxAutonomousAttempts"].as_u64().unwrap());
+    #[tokio::test]
+    async fn main_home_default_uses_eight_model_rounds_and_three_repair_attempts(){
+        let state=state();
+        state.store.put("provider",&json!({
+            "id":"model","name":"Model","enabled":true,
+            "kind":"openai","baseUrl":"http://127.0.0.1:9/v1",
+            "model":"local-test"
+        }));
+        let response=start(State(state.clone()),Json(Start{
+            instruction:"Inspect a repository".into(),
+            provider_id:Some("model".into()),model:None,verify_command:None,
+            max_rounds:None,max_total_tokens:None,planning_mode:None,
+            mcp_enabled:None,skills_enabled:None,web_enabled:None,
+            subagents_enabled:None,
+        })).await;
+        assert_eq!(response.status(),StatusCode::ACCEPTED);
+        let jobs=state.store.all("job");
+        assert_eq!(jobs.len(),1);
+        assert_eq!(jobs[0]["input"]["sdkUiPolicy"]["maxRounds"],8);
+        assert_eq!(jobs[0]["input"]["maxAutonomousAttempts"],3);
     }
 
     #[test]

@@ -1090,8 +1090,17 @@ async fn run_turn_body(
         Some(decision) => decision,
         None => needs_plan(&request.input, &acceptance) || subtask_count > 1,
     };
+    // Home autonomous jobs already retain an engine-owned task plan and
+    // deterministic unmet checks across repair turns. Paying another planner
+    // model on every repeat is redundant; the repair instruction provides
+    // the next concrete step. An explicit "always" still wins.
+    let previous_panel_answer=session["sdkUiPolicy"].is_object()
+        && state.store.messages(session_id).iter().any(|message|
+            message["role"]=="assistant"
+            && message["metadata"]["authorKind"]=="agent");
     let plan_requested=match session["sdkUiPolicy"]["planningMode"].as_str(){
-        Some("always")=>true,Some("never")=>false,_=>plan_requested_by_engine,
+        Some("always")=>true,Some("never")=>false,
+        _=>plan_requested_by_engine && !previous_panel_answer,
     };
     let mut plan_digest: Option<String> = None;
     if acceptance.is_some()
