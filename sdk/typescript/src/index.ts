@@ -15,6 +15,8 @@ export interface TaskInput {
   requireEvidence?: boolean;
   maxSteps?: number;
   tokenBudget?: number;
+  /** Maximum metered model spend in KRW; requires configured rate tables. */
+  costBudgetKrw?: number;
   /** Extra model planning turn only when needed (auto), always, or never. */
   planningMode?: 'auto' | 'always' | 'never';
 }
@@ -27,6 +29,8 @@ export interface TaskRecord {
   status: TaskStatus;
   steps: number;
   tokens: number;
+  /** Persisted metered spend using operator-configured KRW rates. */
+  costKrw: number;
   error: string | null;
   result: {answer: string; verifiedWrites: number; verification: string} | null;
   cancelRequested: boolean;
