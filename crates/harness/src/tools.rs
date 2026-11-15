@@ -21,13 +21,20 @@ impl Workspace {
         if path.is_empty() || Path::new(path).is_absolute() {
             return Err("상대 경로만 허용됩니다.".into());
         }
-        if Path::new(path).components().any(|part| matches!(part, std::path::Component::ParentDir)) {
+        if Path::new(path).components().any(|part| matches!(part,
+            std::path::Component::ParentDir | std::path::Component::RootDir | std::path::Component::Prefix(_))) {
             return Err("상위 경로 이동은 허용되지 않습니다.".into());
         }
         let candidate = self.root.join(path);
-        let parent = candidate.parent().unwrap_or(&self.root);
-        let parent = parent.canonicalize().unwrap_or_else(|_| self.root.clone());
-        if !parent.starts_with(&self.root) {
+        // Check the nearest existing ancestor, including the target itself.
+        // A symlink pointing outside the workspace must never become a read
+        // or a write target. Do not fall back to the root on canonicalize error.
+        let mut existing = candidate.as_path();
+        while !existing.exists() && !existing.is_symlink() {
+            existing = existing.parent().ok_or("경로를 확인할 수 없습니다.")?;
+        }
+        let resolved = existing.canonicalize().map_err(|error| format!("경로 확인 실패: {error}"))?;
+        if !resolved.starts_with(&self.root) {
             return Err("작업 폴더 밖의 경로입니다.".into());
         }
         Ok(candidate)
@@ -119,19 +126,65 @@ impl Tool for Shell {
     fn invoke(&mut self, arguments: &Value) -> Result<Value, String> {
         let command = arguments["command"].as_str().ok_or("command가 필요합니다.")?;
         let started = std::time::Instant::now();
-        let output = Command::new("sh")
-            .arg("-c")
+        let mut child = Command::new(if cfg!(windows) { "cmd" } else { "sh" })
+            .arg(if cfg!(windows) { "/C" } else { "-c" })
             .arg(command)
             .current_dir(&self.workspace.root)
-            .output()
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
             .map_err(|error| format!("실행 실패: {error}"))?;
-        let mut text = String::from_utf8_lossy(&output.stdout).to_string();
-        text.push_str(&String::from_utf8_lossy(&output.stderr));
-        let text = text.chars().take(20_000).collect::<String>();
+
+        // Drain both pipes while polling, otherwise a verbose test runner can
+        // fill the OS pipe and deadlock before its deadline is reached.
+        fn drain<R: std::io::Read + Send + 'static>(mut reader: R) -> std::thread::JoinHandle<Vec<u8>> {
+            std::thread::spawn(move || {
+                let mut bytes = Vec::new();
+                let mut chunk = [0u8; 8192];
+                loop {
+                    let size = match reader.read(&mut chunk) { Ok(0) | Err(_) => break, Ok(n) => n };
+                    let remaining = 20_000usize.saturating_sub(bytes.len());
+                    bytes.extend_from_slice(&chunk[..size.min(remaining)]);
+                }
+                bytes
+            })
+        }
+        let stdout = drain(child.stdout.take().ok_or("stdout unavailable")?);
+        let stderr = drain(child.stderr.take().ok_or("stderr unavailable")?);
+        let deadline = std::time::Duration::from_secs(self.timeout_secs);
+        let (status, timed_out) = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break (status, false),
+                Ok(None) if started.elapsed() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(25));
+                }
+                Ok(None) => {
+                    let _ = child.kill();
+                    let status = child.wait().map_err(|error| error.to_string())?;
+                    break (status, true);
+                }
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!("실행 상태 확인 실패: {error}"));
+                }
+            }
+        };
+        let stdout = stdout.join().unwrap_or_default();
+        let stderr = stderr.join().unwrap_or_default();
+        let mut output = String::from_utf8_lossy(&stdout).to_string();
+        output.push_str(&String::from_utf8_lossy(&stderr));
+        let output: String = output.chars().take(20_000).collect();
+        if timed_out {
+            return Err(format!("shell timeout after {} seconds: {}", self.timeout_secs, output));
+        }
+        if !status.success() {
+            return Err(format!("shell exited {:?}: {}", status.code(), output));
+        }
         Ok(json!({
-            "exit": output.status.code(),
+            "exit": status.code(),
             "seconds": started.elapsed().as_secs_f64(),
-            "output": text,
+            "output": output,
         }))
     }
 }
@@ -171,6 +224,28 @@ mod tests {
         assert!(write.invoke(&json!({"path":"../escape.txt","content":"x"})).is_err());
         assert!(write.invoke(&json!({"path":"/tmp/abs.txt","content":"x"})).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_targets_outside_workspace_are_rejected() {
+        let dir = temp_workspace();
+        let outer = temp_workspace();
+        std::os::unix::fs::symlink(&outer, dir.join("outside")).unwrap();
+        let mut write = WriteFile(Workspace::new(&dir).unwrap());
+        assert!(write.invoke(&json!({"path":"outside/leak.txt","content":"never"})).is_err());
+        assert!(!outer.join("leak.txt").exists());
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(outer);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn shell_rejects_failed_commands_and_enforces_timeout() {
+        let dir = temp_workspace();
+        let mut shell = Shell { workspace: Workspace::new(&dir).unwrap(), timeout_secs: 1 };
+        assert!(shell.invoke(&json!({"command":"exit 7"})).unwrap_err().contains("7"));
+        assert!(shell.invoke(&json!({"command":"sleep 3"})).unwrap_err().contains("timeout"));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
