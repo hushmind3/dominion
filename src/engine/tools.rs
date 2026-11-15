@@ -1619,6 +1619,33 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn parallel_agent_is_read_only_even_if_it_fabricates_tool_calls(){
+        use crate::{config::Config,db::Store,vault::Vault};
+        let dir=std::env::temp_dir().join(format!("dominion-fanout-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("source.txt"),"original").unwrap();
+        let config=Config{port:0,data_dir:dir.join("data"),web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=crate::state::AppState::new(config.clone(),
+            Store::open(&config.db_path()).unwrap(),Vault::open(&config.key_path()));
+        state.store.put("session",&json!({"id":"child","parallelReadOnly":true}));
+        let ctx=ToolContext{workspace:&dir,store:&state.store,state:&state,
+            session_id:"child",agent_id:None,tools_enabled:true,tools_execution_enabled:true};
+        assert!(execute(&ctx,"workspace_read",&json!({"path":"source.txt"}),"run").await.is_ok());
+        assert!(execute(&ctx,"workspace_write",
+            &json!({"path":"source.txt","content":"changed"}),"run").await.is_err());
+        assert!(execute(&ctx,"delegate_task",
+            &json!({"agentId":"other","prompt":"continue"}),"run").await.is_err());
+        assert_eq!(std::fs::read_to_string(dir.join("source.txt")).unwrap(),"original");
+        let invalid=delegate_parallel(&ctx,&json!({"tasks":[
+            {"agentId":"missing-a","prompt":"inspect A"},
+            {"agentId":"missing-b","prompt":"inspect B"}],"wait":false
+        })).await.unwrap_err();
+        assert!(invalid.contains("위임 대상"));
+        assert!(state.store.all("job").is_empty());
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
     async fn rsi_navigation_finds_literal_diagnostics_and_honors_the_read_contract() {
         use crate::{config::Config,db::Store,vault::Vault};
         let dir=std::env::temp_dir().join(format!("rsi-navigation-{}",uuid::Uuid::new_v4()));
