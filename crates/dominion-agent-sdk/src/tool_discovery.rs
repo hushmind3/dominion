@@ -110,8 +110,9 @@ pub(crate) fn select(catalog:&HashMap<String,ToolSpec>,task:&str,owner:&str,
    displayed.insert(r.tool.clone());
   }
  }
- let mut query=format!("{task} {owner} {}",directive.unwrap_or(""));
- for part in plan.iter().take(6){query.push(' ');query.push_str(part);}
+ // A mutable model plan must not thrash the provider's cached schema prefix.
+ // Only the owner goal/directive and explicit discovery change the shortlist.
+ let query=format!("{task} {owner} {}",directive.unwrap_or(""));
  for name in ranked(catalog,&query) {
   if displayed.len()>=VISIBLE{break}
   displayed.insert(name);
