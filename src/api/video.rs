@@ -309,6 +309,8 @@ pub async fn catalog(State(state): State<AppState>) -> Json<Value> {
             {"id":"comfyui","name":cfg["comfyWorkflowName"].as_str().unwrap_or("ComfyUI"),"kind":"comfyui","available":comfy},
         ],
         "videoModels": video::video_models(&state),
+        "modelsDir":video::models_dir(&state),
+        "modelsDirReady":video::models_dir_ready(&state),
         "selectedVideoModel": cfg["videoModel"],
         "workflows": workflows_from_config(&cfg),
         "engine": cfg["engine"],
