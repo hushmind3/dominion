@@ -28,7 +28,7 @@ type VideoJob=JobState & {
  result?:{bytes?:number;sceneCount?:number;renderedScenes?:number;reusedScenes?:number;reusedFrames?:number;generatedFrames?:number;renderSeconds?:number;url?:string}
 }
 type UploadJob=JobState & {progress?:number;result?:{url?:string}}
-type VideoStatus={config:VideoConfig;modelDirectory?:string;native?:{available:boolean};comfy:{reachable:boolean;available?:boolean};workflows:{id:string;name:string;bytes:number}[];jobs:VideoJob[]}
+type VideoStatus={config:VideoConfig;modelDirectory?:string;native?:{available:boolean};comfy:{reachable:boolean;available?:boolean;missingNodes?:string[]};workflows:{id:string;name:string;bytes:number}[];jobs:VideoJob[]}
 type YoutubeStatus={connected:boolean;uploadAllowed:boolean;account?:{displayName:string;scopes:string}|null;uploads:UploadJob[]}
 type Draft={title:string;prompt:string;negative:string;ratio:Ratio;seconds:number;fps:number;seed:string;scenes:string[];continuity:string;mode:StudioMode}
 const ratios:Record<Ratio,{label:string;w:number;h:number}>={
@@ -143,6 +143,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  const prerequisite=usingComfy
   ? !statusConfig.comfyUrl?.trim()?'먼저 ComfyUI 서버 주소를 등록해 주세요.'
    : !video.value.comfy.reachable?'ComfyUI 서버에 연결되지 않았습니다. 주소와 실행 상태를 확인해 주세요.'
+   : video.value.comfy.missingNodes?.length?'ComfyUI에 GGUF 확장 노드가 설치되지 않았습니다. 영상 모델 카드 아래의 설치 안내를 확인해 주세요.'
    : !video.value.comfy.available?'영상 모델을 설치하거나 API 워크플로를 등록해 주세요.':''
   : !video.value.native?.available?'네이티브 영상 제작에는 FFmpeg 설치가 필요합니다.':''
  const submittedState=sortedJobs.find(j=>j.id===submitted?.id)??(active.value?.id===submitted?.id?active.value:submitted)
@@ -166,11 +167,6 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
   const timer=window.setInterval(()=>void jobs.reload(),4000)
   return()=>window.clearInterval(timer)
  },[sortedJobs,jobs.reload])
- useEffect(()=>{
-  if(downloadState?.status!=='downloading')return
-  const timer=window.setInterval(()=>void downloads.reload(),3000)
-  return()=>window.clearInterval(timer)
- },[downloadState?.status,downloads.reload])
  useEffect(()=>{if(downloadState?.status==='completed'){void catalog.reload();void video.reload()}},[downloadState?.status,catalog.reload,video.reload])
  // Keep real model availability fresh while a download is pending. The UI
  // re-reads both install receipts and the disk-backed catalog.
@@ -231,10 +227,6 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
    }
   }catch(e){setError((e as Error).message)}
   finally{setPreparingModel('')}
- }
- const startDownload=async()=>{
-  const selected=catalog.value.videoModels.find(m=>m.id===statusConfig.videoModel)
-  if(selected)await prepareVideoModel(selected)
  }
  const reveal=async(id:string)=>{
   try{await post('/api/video/jobs/'+encodeURIComponent(id)+'/reveal',{})}catch(e){setError((e as Error).message)}
@@ -418,6 +410,10 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
      <span className={'text-[11px] font-semibold '+(video.value.comfy.reachable?'text-[#42774D]':'text-[#906349]')}>{video.value.comfy.reachable?'● 연결됨':'○ 서버 연결 필요'}</span>
     </div>
     {!video.value.comfy.reachable&&<p className="mt-2 text-[11px] leading-5 text-[#836D5B]">모델 파일 다운로드는 바로 시작할 수 있습니다. AI 렌더링에는 실행 중인 ComfyUI 서버도 필요합니다. 기본 연결 주소는 127.0.0.1:8188입니다.</p>}
+    {usingComfy&&video.value.comfy.reachable&&Boolean(video.value.comfy.missingNodes?.length)&&<div role="alert" className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[12px] text-amber-900">
+     <span>GGUF 영상 생성에 필요한 ComfyUI 확장 노드가 없습니다: {video.value.comfy.missingNodes?.join(', ')}. 모델 파일만으로는 렌더링할 수 없습니다.</span>
+     <a href="https://github.com/city96/ComfyUI-GGUF" target="_blank" rel="noreferrer" className="font-bold underline">GGUF 확장 설치 안내 <ExternalLink size={12} className="inline"/></a>
+    </div>}
     <p className="mt-1 text-[11px] leading-5 text-[#887769]">모델 파일은 DOMINION을 실행 중인 컴퓨터에 저장됩니다. 원격 ComfyUI를 사용하면 서버의 모델 경로와 일치시켜 주세요.</p>
    </Panel>
    <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.8fr)]">
@@ -629,7 +625,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
     <div className="mt-4 rounded-xl border border-[#E7E0D5] p-3"><h3 className="mb-2 text-[12px] font-bold text-[#453A31]">외부 워크플로 가져오기</h3>{savedWorkflow&&<div className="mb-3 rounded-lg bg-[#F0F4EA] p-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-[11px] font-semibold text-[#597450]"><Check size={13} className="mr-1 inline"/>{savedWorkflow.name} · 등록된 워크플로 사용 중</p><Button size="sm" variant="ghost" disabled={savingConfig} onClick={()=>void saveConfig({comfyWorkflow:null,comfyWorkflowName:''})}>등록 해제</Button></div><p className="mt-1 text-[11px] text-[#6B795F]">등록한 API 워크플로가 기본 모델보다 먼저 실행됩니다. 내장 모델로 바꾸려면 등록을 해제하세요.</p></div>}<label className={'inline-flex cursor-pointer items-center gap-2 rounded-xl border border-[#DCCCBF] bg-[#FFFDF9] px-3 py-2 text-[12px] font-semibold text-[#694A38] '+focus}><Upload size={14}/> API 워크플로 JSON 선택<input type="file" accept=".json,application/json" className="sr-only" disabled={savingConfig} onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void importWorkflow(file)}}/></label><p className="mt-2 text-[11px] text-[#81766B]">ComfyUI에서 API 형식으로 내보낸 JSON을 사용합니다. 일반 UI 그래프 JSON과 구별됩니다.</p></div>
    </Panel>
    <div className="grid gap-4">
-    <Panel className="p-4 sm:p-6"><h2 className={panelTitle}>AI 영상 모델</h2><p className="mt-1 text-[12px] text-[#807469]">미설치 모델도 선택한 뒤 바로 다운로드할 수 있습니다.</p>
+    <Panel className="p-4 sm:p-6"><h2 className={panelTitle}>고급 모델·렌더 경로</h2><p className="mt-1 text-[12px] text-[#807469]">일반 모델 선택과 다운로드는 영상 만들기 화면에서 진행합니다.</p>
      <div className="mt-3 grid gap-3">
       <div className="rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-3">
        <FormField label="ComfyUI 모델 설치 폴더"><div className="flex flex-col gap-2 sm:flex-row"><TextInput value={modelDir} onChange={e=>setModelDir(e.target.value)} aria-label="모델 설치 폴더 경로" placeholder={video.value.modelDirectory||'ComfyUI/models'}/><Button variant="secondary" disabled={savingConfig} className="shrink-0" onClick={()=>void saveConfig({comfyModelsDir:modelDir.trim()})}>경로 저장</Button></div></FormField>
