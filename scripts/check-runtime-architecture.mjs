@@ -1,6 +1,6 @@
 // Verify the slim runtime graph without probing retired RSI/media engines.
 import {execFileSync} from 'node:child_process'
-import {existsSync,readFileSync} from 'node:fs'
+import {existsSync,readFileSync,readdirSync} from 'node:fs'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')
@@ -24,8 +24,20 @@ if(!outcome.includes('pub(super) fn determine_task_outcome(')||!runtime.includes
 if(/while\s+!\s*(?:self\.)?finished/.test(runtime+adapter))throw Error('Legacy model retry loop reintroduced')
 for(const phase of ['initialize','plan','model','verify','dispatch_tool','verify_tools'])
   if(!driver.includes(`host.${phase}(`))throw Error('Native driver missing phase: '+phase)
-if(/^pub mod (rsi|video)(?:_|;)/m.test(modules)||/tool\("(?:rsi_|algorithm_propose|unsafe_audit)"/.test(tools))
+if(/^pub mod (rsi|video)(?:_|;)/m.test(modules)||/tool\("(?:rsi_[^"]*|algorithm_propose|unsafe_audit)"/.test(tools))
   throw Error('Retired generation engine or tool schema still registered')
 for(const file of ['src/engine/video.rs','src/engine/rsi_evolve.rs','src/engine/rsi_worktree.rs'])
   if(existsSync(path.join(root,file)))throw Error('Retired engine source remains: '+file)
 console.log(`Agent runtime graph OK: ${members.map(p=>p.name).join(', ')}`)
+
+for(const file of readdirSync(path.join(root,'src/engine')))
+  if(/^(?:rsi(?:_|\.)|video(?:_|\.))/.test(file))throw Error('Retired engine source remains: '+file)
+const api=readFileSync(path.join(root,'src/api/mod.rs'),'utf8')
+for(const line of api.split('\n'))if(/\.route\("\/api\/(?:rsi|video|youtube)(?:\/|\")/.test(line)&&/\bpost\(/.test(line))
+  throw Error('Retired mutation endpoint is registered: '+line.trim())
+const frontend=readFileSync(path.join(root,'web/src/App.tsx'),'utf8')+readFileSync(path.join(root,'web/src/components/WorkspaceShell.tsx'),'utf8')
+if(/VideoPage|SelfImprovementPage|id:'(?:video|rsi)'/.test(frontend))throw Error('Retired UI is reachable')
+if(existsSync(path.join(root,'web/src/components/ImprovementNotice.tsx')))throw Error('Retired RSI prompt widget remains')
+if(/resvg|comfyui/i.test(product.dependencies.map(d=>d.name).join(' ')))throw Error('Retired media renderer dependency remains')
+for(const retired of ['dominion-harness','dominion-agent-sdk'])if(members.some(p=>p.name===retired)||product.dependencies.some(p=>p.name===retired))
+  throw Error('Retired duplicate runtime returned: '+retired)

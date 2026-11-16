@@ -1396,7 +1396,9 @@ fn a_short_greeting_reaches_all_nine_when_the_turn_cap_covers_the_roster() {
         "toolsEnabled":false,"autoLearning":false
     }));
     let sent = app.post(&format!("/api/rooms/{}/messages",room["id"].as_str().unwrap()), &json!({"input":"다시 인사해봐"}));
-    let deadline = Instant::now() + Duration::from_secs(20);
+    // Nine serial model turns each commit durable state. Windows CI needs a
+    // per-roster allowance; all nine speakers and exact call counts still apply.
+    let deadline = Instant::now() + Duration::from_secs(90);
     loop {
         let job = app.get(&format!("/api/jobs/{}", sent["jobId"].as_str().unwrap()));
         if job["status"] == "completed" { break; }
@@ -7335,4 +7337,39 @@ fn owner_replacement_during_approval_cannot_write_the_old_goal_or_escape_workspa
     assert!(project.join("current-approved.md").is_file());
     assert!(!project.join("stale-approved.md").exists());assert!(!app._root.join("current-approved.md").exists());
     assert_eq!(requests.lock().unwrap().len(),2);
+}
+
+#[test]
+fn retired_media_and_rsi_remain_read_only_and_cannot_queue_new_work(){
+    let _serial=serial();
+    let app=TestApp::new(1,"native");
+    let root=app._root.clone();
+    let id="cfa99b14-5aaa-44d3-a5a6-118236eb810d";
+    let output=root.join("runtime/video").join(id);std::fs::create_dir_all(&output).unwrap();
+    let original=b"archived original bytes";std::fs::write(output.join("output.mp4"),original).unwrap();
+    {
+        let db=Connection::open(root.join("runtime/dominion.sqlite")).unwrap();
+        for (kind,value) in [("job",json!({"id":id,"kind":"video","status":"completed","input":{"title":"archived"}})),
+            ("rsi_campaign",json!({"id":"archived-rsi","status":"completed","history":[{"accepted":true}]}))]{
+            db.execute("INSERT INTO records(kind,id,data) VALUES(?1,?2,?3)",rusqlite::params![kind,value["id"].as_str().unwrap(),value.to_string()]).unwrap();
+        }
+    }
+    drop(app);
+    let app=TestApp::from_root(1,"native",root,&[]);
+    assert_eq!(app.get(&format!("/api/video/jobs/{id}"))["title"],"archived");
+    assert_eq!(app.get("/api/rsi/campaigns/archived-rsi")["history"][0]["accepted"],true);
+    let bytes=app.client.get(format!("{}/api/video/jobs/{id}/content",app.base)).send().unwrap().error_for_status().unwrap().bytes().unwrap();
+    assert_eq!(&bytes[..],original);
+    let before=app.get("/api/jobs").as_array().unwrap().len();
+    for endpoint in ["/api/video/jobs","/api/video/generate","/api/video/config","/api/youtube/upload","/api/rsi/campaigns","/api/rsi/inspect","/api/rsi/issues"] {
+        let response=app.client.post(format!("{}{endpoint}",app.base)).json(&json!({"brief":"must not start","instruction":"must not start"})).send().unwrap();
+        assert!(matches!(response.status().as_u16(),404|405|410),"{endpoint}: {}",response.status());
+    }
+    for kind in ["video","youtube_upload","rsi_evolve","rsi_compare","rsi_generation"]{
+        let response=app.client.post(format!("{}/api/jobs",app.base)).json(&json!({"kind":kind,"input":{"prompt":"must not start"}})).send().unwrap();
+        assert_eq!(response.status().as_u16(),400,"{kind}");
+    }
+    assert_eq!(app.get("/api/jobs").as_array().unwrap().len(),before);
+    assert_eq!(std::fs::read(output.join("output.mp4")).unwrap(),original);
+    assert!(!app.get("/api/oauth/providers").as_array().unwrap().iter().any(|p|p["id"]=="youtube"));
 }

@@ -237,6 +237,25 @@ fn queued_job_event(event: &Value) -> bool {
         && event["record"]["status"] == "queued"
 }
 
+async fn wait_dispatch_event(
+    events: &mut tokio::sync::broadcast::Receiver<Value>,
+    finished: &tokio::sync::Notify,
+    fallback: &mut tokio::time::Interval,
+) -> bool {
+    loop {
+        tokio::select! {
+            _ = finished.notified() => return true,
+            _ = fallback.tick() => return true,
+            event = events.recv() => match event {
+                Ok(event) if queued_job_event(&event) => return true,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => return true,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return false,
+                _ => {},
+            },
+        }
+    }
+}
+
 pub fn start(state: AppState) {
     crate::engine::channel_adapter::start(state.clone());
     let workers = std::env::var("DOMINION_JOB_WORKERS")
@@ -267,16 +286,7 @@ pub fn start(state: AppState) {
                     wake.notify_one();
                 });
             }
-            tokio::select! {
-                _ = finished.notified() => {},
-                event = job_events.recv() => match event {
-                    Ok(event) if queued_job_event(&event) => {},
-                    Ok(_) => continue,
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {},
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                },
-                _ = fallback.tick() => {},
-            }
+            if !wait_dispatch_event(&mut job_events, &finished, &mut fallback).await { break; }
         }
     });
 
@@ -323,7 +333,10 @@ pub fn start(state: AppState) {
 }
 
 fn next_queued(state: &AppState) -> Option<Value> {
-    let jobs = state.store.all("job");
+    let jobs = match state.store.active_jobs() {
+        Ok(jobs) => jobs,
+        Err(error) => {state.store.audit("job.queue_read_failed",json!({"error":error}));return None;}
+    };
     let learning_running = jobs
         .iter()
         .any(|job| job["status"] == "running" && job["kind"] == "learn");
@@ -832,6 +845,19 @@ mod tests {
 #[cfg(test)]
 mod dispatcher_tests {
     use super::*;
+    #[tokio::test]
+    async fn unrelated_events_do_not_reenter_dispatch_or_starve_fallback() {
+        let (send,mut events)=tokio::sync::broadcast::channel(16);
+        let finished=tokio::sync::Notify::new();
+        let mut fallback=tokio::time::interval_at(tokio::time::Instant::now()+Duration::from_millis(150),Duration::from_millis(150));
+        send.send(json!({"type":"message"})).unwrap();
+        assert!(tokio::time::timeout(Duration::from_millis(20),wait_dispatch_event(&mut events,&finished,&mut fallback)).await.is_err());
+        send.send(json!({"type":"record","kind":"job","record":{"status":"queued"}})).unwrap();
+        assert!(tokio::time::timeout(Duration::from_millis(20),wait_dispatch_event(&mut events,&finished,&mut fallback)).await.unwrap());
+        // A wake written without an event is still picked up by the fallback.
+        assert!(tokio::time::timeout(Duration::from_secs(1),wait_dispatch_event(&mut events,&finished,&mut fallback)).await.unwrap());
+    }
+
     #[test]
     fn only_newly_queued_job_events_wake_dispatcher() {
         assert!(queued_job_event(&json!({"type":"record","kind":"job","record":{"status":"queued"}})));

@@ -31,15 +31,7 @@ const PROVIDERS: &[Provider] = &[
         scopes: "openid email profile",
         extra: &[("access_type", "offline"), ("prompt", "consent")],
     },
-    Provider {
-        id: "youtube",
-        name: "YouTube 업로드",
-        authorize: "https://accounts.google.com/o/oauth2/v2/auth",
-        token: "https://oauth2.googleapis.com/token",
-        user: "https://www.googleapis.com/oauth2/v3/userinfo",
-        scopes: "openid email profile https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly",
-        extra: &[("access_type", "offline"), ("prompt", "consent")],
-    },
+
 ];
 
 fn provider(id: &str) -> Option<&'static Provider> {
@@ -121,11 +113,6 @@ pub fn save(
 fn client_credentials(state: &AppState, id: &str) -> Result<(String, String), String> {
     let sealed = state
         .read_secret(&format!("oauth:{id}:secret"))
-        .or_else(|| {
-            (id == "youtube")
-                .then(|| state.read_secret("oauth:google:secret"))
-                .flatten()
-        })
         .ok_or_else(|| "OAuth 앱이 설정되지 않았습니다.".to_string())?;
     let value: Value = serde_json::from_str(&sealed).map_err(|error| error.to_string())?;
     let client_id = value
@@ -178,7 +165,7 @@ pub fn start(state: &AppState, id: &str) -> Result<Value, String> {
         for (key, value) in provider.extra {
             query.append_pair(key, value);
         }
-        if id == "google" || id == "youtube" {
+        if id == "google" {
             query
                 .append_pair("response_type", "code")
                 .append_pair("code_challenge", &challenge)

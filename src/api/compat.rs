@@ -27,10 +27,7 @@ pub async fn youtube_uploads(State(state): State<AppState>) -> Json<Value> {
 }
 
 pub async fn youtube_status(State(state): State<AppState>) -> Json<Value> {
-    let connection = crate::engine::oauth::status(&state)
-        .into_iter()
-        .find(|p| p["id"] == "youtube")
-        .unwrap_or(json!({}));
+    let connection = state.store.get("oauth_config", "youtube").unwrap_or(json!({}));
     Json(
         json!({"connected":connection["connected"],"retired":true,"uploadAllowed":false,"account":connection["account"],"uploads":state.store.all("job").iter().filter(|j|j["kind"]=="youtube_upload").map(crate::api::video::public_job).collect::<Vec<_>>(),"channel":null}),
     )

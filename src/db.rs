@@ -163,6 +163,9 @@ impl Store {
                  projection_version TEXT NOT NULL,
                  PRIMARY KEY(observation_id, projection_version)
              );
+             CREATE INDEX IF NOT EXISTS idx_job_active_status
+                 ON records(kind, json_extract(data,'$.status'), json_extract(data,'$.queuedAt'))
+                 WHERE kind='job';
              CREATE INDEX IF NOT EXISTS idx_records_kind_updated
                  ON records(kind, updated_at DESC);
              CREATE INDEX IF NOT EXISTS idx_operation_run
@@ -208,6 +211,16 @@ impl Store {
             Err(_) => return Vec::new(),
         };
         rows.filter_map(|row| row.ok()).collect()
+    }
+
+    /// Only current work reaches dispatch; historical payloads stay in SQLite.
+    pub fn active_jobs(&self) -> Result<Vec<Value>, String> {
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare("SELECT data,id,created_at,updated_at FROM records
+            WHERE kind='job' AND json_extract(data,'$.status') IN ('queued','running')
+            ORDER BY json_extract(data,'$.queuedAt'),id").map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([],record_from_row).map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
     }
 
     pub fn execution_operations(&self, run_id: &str) -> Result<Vec<Value>, String> {
@@ -1182,6 +1195,23 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let store = Store::open(&dir.join("dominion.sqlite")).unwrap();
         (store, dir)
+    }
+
+    #[test]
+    fn dispatch_reads_indexed_current_jobs_without_touching_history() {
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        for i in 0..500 {
+            store.put("job",&json!({"id":format!("j{i:03}"),"status":if i==10||i==20 {"queued"}else if i==30 {"running"}else{"completed"},"queuedAt":format!("{i:04}")})).unwrap();
+        }
+        // A historical, unrelated record may not be JSON; the partial index
+        // must never evaluate its payload or break migration/dispatch.
+        store.conn.lock().unwrap().execute("INSERT INTO records(kind,id,data) VALUES('legacy','opaque','not json')",[]).unwrap();
+        let active=store.active_jobs().unwrap();
+        assert_eq!(active.iter().map(|v|v["id"].as_str().unwrap()).collect::<Vec<_>>(),["j010","j020","j030"]);
+        let conn=store.conn.lock().unwrap();
+        let plan:String=conn.query_row("EXPLAIN QUERY PLAN SELECT data FROM records WHERE kind='job' AND json_extract(data,'$.status') IN ('queued','running')",[],|r|r.get(3)).unwrap();
+        assert!(plan.contains("idx_job_active_status"),"{plan}");
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM records WHERE kind='job'",[],|r|r.get::<_,u64>(0)).unwrap(),500);
     }
 
     #[test]

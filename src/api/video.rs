@@ -50,9 +50,13 @@ pub async fn content(State(state):State<AppState>,Path(id):Path<String>,request:
             job["kind"]=="video" && job["status"]=="completed") {
         return error(StatusCode::NOT_FOUND,"완료된 영상 기록이 없습니다.");
     }
-    let Ok(root)=state.config.data_dir.join("video").join(&id).canonicalize() else {
+    let Ok(base)=state.config.data_dir.join("video").canonicalize() else {
         return error(StatusCode::NOT_FOUND,"보관된 파일이 없습니다.");
     };
+    let Ok(root)=base.join(&id).canonicalize() else {
+        return error(StatusCode::NOT_FOUND,"보관된 파일이 없습니다.");
+    };
+    if !root.starts_with(&base) {return error(StatusCode::NOT_FOUND,"파일 경로가 올바르지 않습니다.");}
     let Ok(output)=root.join("output.mp4").canonicalize() else {
         return error(StatusCode::NOT_FOUND,"보관된 파일이 없습니다.");
     };

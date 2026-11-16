@@ -17,7 +17,7 @@ Native FFmpeg/ComfyUI video composition, narration generation, scene regeneratio
 
 ## Background behavior
 
-Ordinary chat and rooms default to `autoLearning: false`. Owner corrections remain independently recordable. One bounded event-driven dispatcher wakes on queued jobs; a ten-second fallback scan protects durable work from missed events. Deterministic experience guidance and distillation run only after changed evidence rather than constantly reevaluating untouched history. No RSI autonomous sweeps run.
+Ordinary chat and rooms default to `autoLearning: false`. Owner corrections remain independently recordable. One bounded event-driven dispatcher wakes on queued jobs; a ten-second fallback reads only indexed queued/running records to protect durable work from missed events. Unrelated bus traffic never triggers dispatch scans. Deterministic experience guidance and distillation run only after changed evidence rather than constantly reevaluating untouched history. No RSI autonomous sweeps run.
 
 ## Regression contract
 
