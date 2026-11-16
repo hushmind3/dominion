@@ -44,6 +44,7 @@ pub async fn status(State(state): State<AppState>) -> Json<Value> {
         .map(video::public_job).collect::<Vec<_>>();
     Json(json!({
         "config": cfg,
+        "modelDirectory": video::models_dir(&state).display().to_string(),
         "runtime": "rust",
         "available": executable.is_some() || comfy,
         "native": {"available": executable.is_some()},
