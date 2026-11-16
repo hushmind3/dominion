@@ -5,7 +5,7 @@ use crate::state::AppState;
 use futures_util::StreamExt;
 use serde_json::{json,Value};
 use sha2::{Digest,Sha256};
-use std::{path::{Path,PathBuf},time::Duration};
+use std::{path::Path,time::Duration};
 
 pub const FEATURED: [(&str,&str);6]=[
     ("Wan-AI/Wan2.2-TI2V-5B","Wan 2.2 · 영상 생성 5B"),
@@ -187,10 +187,10 @@ pub async fn download(state:AppState,repo:&str,path:&str)->Result<Value,String>{
         "startedAt":chrono::Utc::now().to_rfc3339()});
     state.store.put("video_model_download",&record)
         .ok_or("영상 모델 다운로드 기록 저장 실패")?;
-    let repo=repo.to_owned();let file_path=path.to_owned();
+    let repo_for_worker=repo.to_owned();let file_path=path.to_owned();
     let state_for_worker=state.clone();let key_for_worker=key.clone();
     tokio::spawn(async move{
-        let outcome=transfer(&state_for_worker,&key_for_worker,&repo,&file_path,
+        let outcome=transfer(&state_for_worker,&key_for_worker,&repo_for_worker,&file_path,
             &target,expected,digest.as_deref()).await;
         let mut record=state_for_worker.store.get("video_model_download",&key_for_worker)
             .unwrap_or_else(||json!({"id":key_for_worker}));
