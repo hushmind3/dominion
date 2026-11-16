@@ -434,10 +434,14 @@ async fn run_turn_body(
     source_message_id: Option<&str>,
 ) -> Result<Option<Value>, String> {
     let turn_started = std::time::Instant::now();
-    let session = state
+    let mut session = state
         .store
         .get("session", session_id)
         .ok_or("Session not found")?;
+    // A completed SDK job must not leave tool gates, planning or budgets
+    // active on the ordinary chat session that it used.
+    session["sdkUiPolicy"] =
+        crate::engine::execution_scope::active_panel_policy(state,&session);
     let strategy_candidates = state
         .store
         .get("execution", execution_id)
@@ -1259,8 +1263,9 @@ async fn run_turn_body(
             // The Home UI's ceiling covers the entire task, not only turns
             // that already finished. Reserve this call's input estimate and
             // maximum output BEFORE entering a billable provider request.
-            let used=state.store.session_usage(session_id)["totalTokens"]
-                .as_u64().unwrap_or(0).saturating_add(total_tokens);
+            let used=crate::engine::execution_scope::usage_since_baseline(
+                &session,&state.store.session_usage(session_id),"totalTokens"
+            ).saturating_add(total_tokens);
             let estimated_input=super::room_context::input_estimate(
                 &wire_messages,&round_tools) as u64;
             let remaining=limit.saturating_sub(used).saturating_sub(estimated_input);
@@ -1296,7 +1301,9 @@ async fn run_turn_body(
         // reserved output above. The round ceiling is separately persistent
         // across model turns and autonomous repair attempts.
         if let Some(limit)=session["sdkUiPolicy"]["maxRounds"].as_u64(){
-            if state.store.session_usage(session_id)["calls"].as_u64().unwrap_or(0)>=limit {
+            if crate::engine::execution_scope::usage_since_baseline(
+                &session,&state.store.session_usage(session_id),"calls"
+            )>=limit {
                 mark_budget_exhausted(state,execution_id);
                 return Err("모델 판단 횟수 한도에 도달했습니다.".into());
             }
@@ -4295,7 +4302,10 @@ async fn dispatch_tool_call(
             tools_execution_enabled: request.tools_execution_enabled,
         };
         let outcome = if state.store.get("session",session_id).is_some_and(|s|
-            !tools::ui_tool_allowed(&s["sdkUiPolicy"],&call.name)){
+            !tools::ui_tool_allowed(
+                &crate::engine::execution_scope::active_panel_policy(state,&s),
+                &call.name
+            )){
             Err("사용자 설정에서 비활성화한 도구입니다.".into())
         } else if state.store.get("session",session_id).is_some_and(|s|
             s["parallelReadOnly"]==true) && !tools::parallel_read_only_tool(&call.name){

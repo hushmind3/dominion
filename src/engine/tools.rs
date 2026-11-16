@@ -132,7 +132,8 @@ pub async fn execute(
     run_id: &str,
 ) -> Result<Value, String> {
     let session=ctx.store.get("session",ctx.session_id);
-    if session.as_ref().is_some_and(|s|!ui_tool_allowed(&s["sdkUiPolicy"],name)){
+    if session.as_ref().is_some_and(|s|!ui_tool_allowed(
+        &crate::engine::execution_scope::active_panel_policy(ctx.state,s),name)){
         return Err("사용자 설정에서 비활성화한 도구입니다.".into());
     }
     if session.as_ref().is_some_and(|s|s["parallelReadOnly"]==true)

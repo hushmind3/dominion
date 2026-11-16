@@ -644,9 +644,14 @@ pub(crate) async fn run_prompt(context:&JobContext,job:&Value)->Result<Value,Str
      .ok_or("작업별 토큰 예산을 저장하지 못했습니다.")?;
  }
  if input["uiSource"]=="native_sdk_panel"{
+   let baseline=context.state.store.session_usage(&session_id);
    let mut session=context.state.store.get("session",&session_id)
      .ok_or("작업 세션을 찾을 수 없습니다.")?;
    session["sdkUiPolicy"]=input["sdkUiPolicy"].clone();
+   session["sdkUiPolicyOwnerId"]=json!(&context.job_id);
+   session["sdkUiPolicyBaseline"]=json!({
+      "calls":baseline["calls"],"totalTokens":baseline["totalTokens"],
+   });
    context.state.store.put("session",&session)
      .ok_or("작업 정책을 저장하지 못했습니다.")?;
  }

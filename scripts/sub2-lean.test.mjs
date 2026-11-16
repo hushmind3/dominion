@@ -103,3 +103,18 @@ test('retired RSI UI links and source-generation workflows are absent',()=>{
   assert.match(src('src/api/video.rs'),/pub async fn content/);
   assert.match(src('src/api/rsi.rs'),/Read-only archival RSI records/);
 });
+
+test('Home SDK policy is owned by a live Rust job, not a sticky chat session',()=>{
+ const kernel=src('src/engine/execution_scope.rs');
+ const jobs=src('src/engine/jobs.rs');
+ const chat=src('src/engine/chat/runtime.rs');
+ const tools=src('src/engine/tools.rs');
+ assert.match(jobs,/sdkUiPolicyOwnerId/);
+ assert.match(jobs,/sdkUiPolicyBaseline/);
+ assert.match(kernel,/job\["status"\] != "running"/);
+ assert.match(kernel,/job\["sessionId"\] != session\["id"\]/);
+ assert.match(kernel,/usage_since_baseline/);
+ assert.match(chat,/execution_scope::active_panel_policy/);
+ assert.match(chat,/execution_scope::usage_since_baseline/);
+ assert.match(tools,/execution_scope::active_panel_policy/);
+});
