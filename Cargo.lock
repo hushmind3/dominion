@@ -322,9 +322,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "dominion-agent-kernel"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "dominion-rust"
 version = "0.3.0"
 dependencies = [
+ "dominion-agent-kernel",
  "async-stream",
  "axum",
  "base64 0.22.1",

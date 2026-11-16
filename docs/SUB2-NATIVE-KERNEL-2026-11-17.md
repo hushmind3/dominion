@@ -1,0 +1,16 @@
+# Independent owner-task kernel on Sub2 (2026-11-17)
+
+The `dominion-sub2` branch separates the **model-independent task decision core** as a buildable Rust library at `crates/dominion-agent-kernel`. It is compiled into and **used by** the existing `src/engine/autonomy.rs` durable owner job worker through the `src/engine/agent_kernel.rs` compatibility export. It is not a second executor.
+
+## Responsibilities
+
+- The independent crate owns bounded attempts, focused/conservative repair vs review, replay barriers for tools whose effects cannot be safely assumed, monotonic usage deltas, and versioned owner instruction replacement.
+- The root Rust engine owns model/provider protocol, SQLite transactions, tool approvals, multi-agent scheduling, cancellation, real acceptance verification and user assets.
+- `src/engine/execution_scope.rs` limits Home SDK tool-policy/budget effects to the active compatible job and calculates its budget relative to its own persisted session baseline. Standard chat is no longer constrained by the *finished* Home job.
+- Existing embeddable Rust SDK (`src/sdk.rs`), optional TypeScript SDK, UI/SDK compatibility API, SQLite schema, historical media/RSI reads remain unchanged.
+
+## Evaluation boundaries
+
+This source separation is meant to make replay decisions independently testable and portable, **not to claim frontier parity**. The available CI exercises the new workspace library's unit tests together with the root package. End-to-end real-model patch completion rate, restart-on-unknown-effect tests and token/latency benchmarks still require comparative runs against the same task set and budget.
+
+This work does not modify `main`, does not restore retired RSI campaigns or media production, and does not delete stored data.

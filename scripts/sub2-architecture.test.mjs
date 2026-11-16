@@ -41,3 +41,17 @@ test('the native owner task loop delegates decisions to a model-free execution k
     assert.ok(kernel.includes(signature),signature);
  assert.match(kernel,/outcomeUnknown/);
 });
+
+test('a standalone Rust task kernel is consumed by the same native owner worker',()=>{
+ const manifest=file('Cargo.toml');
+ const crate=file('crates/dominion-agent-kernel/Cargo.toml');
+ const lib=file('crates/dominion-agent-kernel/src/lib.rs');
+ const adapter=file('src/engine/agent_kernel.rs');
+ const worker=file('src/engine/autonomy.rs');
+ assert.match(manifest,/dominion-agent-kernel = \{ path = "crates\/dominion-agent-kernel" \}/);
+ assert.match(crate,/name = "dominion-agent-kernel"/);
+ assert.match(lib,/pub fn decide\(/);
+ assert.match(lib,/pub fn side_effect_unknown\(/);
+ assert.match(adapter,/pub use dominion_agent_kernel::\*/);
+ assert.match(worker,/agent_kernel::/);
+});
