@@ -121,11 +121,27 @@ pub fn edit(state:&AppState,id:&str,body:&Value)->Result<Value,String>{
  state.bus.record("video_project",&saved);Ok(saved)
 }
 pub fn render(state:&AppState,id:&str,expected:Option<u64>)->Result<Value,String>{
- let project=get(state,id)?;
- let rev=project["revision"].as_u64().unwrap_or(0);
+ let mut project=get(state,id)?;
+ let mut rev=project["revision"].as_u64().unwrap_or(0);
  if expected.is_some_and(|v|v!=rev){return Err("기획 버전이 바뀌었습니다.".into())}
  if !matches!(project["status"].as_str(),Some("planned"|"ready"|"failed"|"rendering")){
   return Err("기획 완료 후 렌더링할 수 있습니다.".into())
+ }
+ if matches!(project["status"].as_str(),Some("ready"|"failed"))
+    && project["renderJobId"].is_string(){
+  if let Some(old)=project["renderJobId"].as_str()
+    .and_then(|job_id|state.store.get("job",job_id)){
+    if old["status"]=="needs_review"{
+      return Err("이전 영상의 원격 생성 결과가 불확실합니다. 먼저 작업 기록을 확인하세요.".into())
+    }
+  }
+  // Explicit re-render is a new immutable revision, not a replay of a
+  // completed/failed child with the same idempotency key.
+  project=state.store.patch_if("video_project",id,"revision",&json!(rev),
+    &json!({"revision":rev+1,"status":"planned",
+      "renderJobId":null,"renderError":null}))
+    .ok_or("새 렌더링 버전을 생성하지 못했습니다.")?;
+  rev+=1;
  }
  let scenes=validate_scenes(&project["scenes"])?;
  let brief=scenes.iter().filter_map(|v|v["script"].as_str()).collect::<Vec<_>>().join("\n");
