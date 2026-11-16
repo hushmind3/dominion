@@ -162,6 +162,10 @@ Contributions are welcome — particularly **reproducible bug reports, test case
 **License:** [Apache 2.0](LICENSE) · **한국어:** [README.ko.md](README.ko.md)
 
 
+## 🎥 Sub3 multi-family video-model browser (2026-11-16)
+
+Video → 자율 콘텐츠 제작 now offers **other model families at the top of its own model library**. Browse Wan 2.2, LTX-Video / LTX-2.3, HunyuanVideo, CogVideoX, Mochi, or search Hugging Face for another video generator, inspect the repository's real GGUF / safetensors variant sizes and download the selected file with durable progress. The Rust host verifies repository and weight filenames, supports resumable downloads, and checks expected file size / LFS SHA-256 when available. No second app menu is needed, and **downloading a checkpoint does not silently swap the renderer**. External repositories often need more than one file and their own compatible workflow; only known supported model workflows are marked runnable.
+
 ## 🎬 Sub3 turnkey content studio and model install (2026-11-16)
 
 This section applies to **`dominion-sub3` only**, not to `main`. **Video → 자율 콘텐츠 제작** leads from a goal to an optional AI storyboard, editable scene scripts and timings, native FFmpeg/ComfyUI rendering, MP4 + SRT + production manifest export, and opt-in private/unlisted YouTube delivery.
