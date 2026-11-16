@@ -526,20 +526,20 @@ async fn run_turn_with_policy(
                 result.as_ref().ok().and_then(|message|message.as_ref()).and_then(|message|message["id"].as_str()),
             );
         }
-        // A correction is worth reflecting on even when the corrective turn
-        // itself failed, because the failure is additional evidence.
-        if let Some(correction_id) =
-            crate::engine::reflect::correction_to_reflect(state, &session_id, &request.input)
-        {
-            crate::engine::reflect::enqueue(
-                state,
-                &session_id,
-                &correction_id,
-                request.agent_id.as_deref(),
-                request.provider_id.as_deref().unwrap_or(""),
-                request.model.as_deref().unwrap_or(""),
-            );
-        }
+    }
+    // A correction is worth reflecting on even when the corrective turn
+    // itself failed, because the failure is additional evidence.
+    if let Some(correction_id) =
+        crate::engine::reflect::correction_to_reflect(state, &session_id, &request.input)
+    {
+        crate::engine::reflect::enqueue(
+            state,
+            &session_id,
+            &correction_id,
+            request.agent_id.as_deref(),
+            request.provider_id.as_deref().unwrap_or(""),
+            request.model.as_deref().unwrap_or(""),
+        );
     }
     result
 }
@@ -4285,19 +4285,8 @@ pub(super) fn finalize_execution(
             for observation in &observations {
                 state.bus.record("strategy_observation", observation);
             }
-            let queued = crate::engine::improve::schedule_experiments(state);
-            crate::engine::policy::meta_improve(state);
-            let proposed = crate::engine::policy::propose_candidates(state);
-            if !queued.is_empty() || !proposed.is_empty() {
-                state.store.audit(
-                    "experiment.scheduled",
-                    json!({
-                        "executionId": execution_id,
-                        "requests": queued.len(),
-                        "policyCandidates": proposed.len()
-                    }),
-                );
-            }
+            // Keep verified execution observations, without scheduling autonomous
+            // strategy campaigns or proposing policy candidates after every turn.
         }
         Ok(crate::db::FinalizeOutcome::AlreadyApplied) => {
             state.store.audit(
