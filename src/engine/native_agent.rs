@@ -375,6 +375,22 @@ async fn allowed_tools(state:&AppState, input:&Value)->Vec<ToolSpec> {
     }
     collected
 }
+/// Bind the exact reviewed tool capabilities and owner-required evidence to
+/// a durable run. A restart must not inherit newly enabled tools, a changed
+/// argument schema, or a tool silently reclassified as read-only.
+fn native_tool_authority_fingerprint(
+    specs:&[ToolSpec], checks:&[Criterion], require_evidence:bool,
+)->String {
+    let mut contracts=specs.iter().map(|spec|json!({
+        "name":spec.name,"schema":spec.schema,"readOnly":spec.read_only
+    })).collect::<Vec<_>>();
+    contracts.sort_by(|left,right|left["name"].as_str().cmp(&right["name"].as_str()));
+    evidence_sha(&json!({
+        "version":1,"contracts":contracts,"acceptanceChecks":checks,
+        "requireEvidence":require_evidence
+    }))
+}
+
 /// New default entry for persistent Rust prompt jobs. No separate goals API.
 pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
     let input=&job["input"];
@@ -532,6 +548,21 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
         require_evidence:input["requireEvidence"].as_bool().unwrap_or(actionable),
     };
     request.validate()?;
+    // Persist the review boundary before the first model/tool call. New host
+    // configuration cannot broaden an existing job's authority after a crash.
+    // Older checkpoints without this new field remain readable and acquire
+    // a binding when they are next safely resumed.
+    let authority=native_tool_authority_fingerprint(
+        &available,&request.checks,request.require_evidence
+    );
+    if previous.is_some() && prior_job.as_ref()
+        .and_then(|job|job["nativeToolAuthoritySha256"].as_str())
+        .is_some_and(|pinned|pinned!=authority) {
+        return Ok(json!({"status":"needs_review",
+            "reason":"Native tool permissions, argument schemas or acceptance requirements changed since checkpoint; review required",
+            "snapshot":previous}));
+    }
+    context.checkpoint(json!({"nativeToolAuthoritySha256":authority}))?;
     let model=ConfiguredModel {
         state:context.state.clone(),provider:route.id.clone(),
         model:route.model.clone(),session:session.clone(),
@@ -687,6 +718,40 @@ mod native_result_tests {
         assert!(failure.contains("END_ERROR"));
         assert!(!failure.contains("prelude".repeat(400).as_str()));
         assert!(failure.len()<3600);
+    }
+    #[test]
+    fn native_tool_authority_survives_catalog_reordering_but_rejects_policy_drift() {
+        let read=ToolSpec{name:"workspace_read".into(),description:"inspect".into(),
+            schema:json!({"type":"object","properties":{"path":{"type":"string"}}}),
+            read_only:true};
+        let write=ToolSpec{name:"workspace_write".into(),description:"edit".into(),
+            schema:json!({"type":"object","required":["path"]}),read_only:false};
+        let original=native_tool_authority_fingerprint(
+            &[read.clone(),write.clone()],&[],true);
+        assert_eq!(original,native_tool_authority_fingerprint(
+            &[write.clone(),read.clone()],&[],true));
+        // Cosmetic description changes do not invalidate permissions.
+        let mut renamed=read.clone();
+        renamed.description="updated wording".into();
+        assert_eq!(original,native_tool_authority_fingerprint(
+            &[renamed,write.clone()],&[],true));
+        assert_ne!(original,native_tool_authority_fingerprint(&[read.clone()],&[],true));
+        let mut changed=write.clone();
+        changed.read_only=true;
+        assert_ne!(original,native_tool_authority_fingerprint(
+            &[read.clone(),changed],&[],true));
+        changed=write;
+        changed.schema=json!({"type":"object","required":["path","content"]});
+        assert_ne!(original,native_tool_authority_fingerprint(
+            &[read.clone(),changed],&[],true));
+        assert_ne!(original,native_tool_authority_fingerprint(
+            &[read.clone()],&[],false));
+        let check=Criterion{kind:CriterionKind::FileExists,
+            path:Some("artifact.txt".into()),contains:None,tool:None};
+        assert_ne!(original,native_tool_authority_fingerprint(
+            &[read,ToolSpec{name:"workspace_write".into(),description:"edit".into(),
+                schema:json!({"type":"object","required":["path"]}),read_only:false}],
+            &[check],true));
     }
     #[test]
     fn wrapped_tool_errors_are_not_success_evidence() {
