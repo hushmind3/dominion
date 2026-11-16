@@ -797,7 +797,7 @@ async fn run_turn_body(
     // native calls or the text-tool manual for whichever local/API model
     // actually handles each round, including after failover.
 
-    if session["delegationWorkspace"].is_object(){tool_definitions.retain(|tool|!tool_name(tool).starts_with("mcp__")&&!matches!(tool_name(tool),"github_api"|"browser_control"));}
+    if session["delegationWorkspace"].is_object(){tool_definitions.retain(|tool|!tool_name(tool).starts_with("mcp__")&&!matches!(tool_name(tool),"github_api"|"github_file_read"|"github_file_update"|"browser_control"));}
     if session["readOnly"]==true {tool_definitions.retain(|tool|tools::observational(tool_name(tool)));}
     let discovered_tool_names = tool_definitions
         .iter()
@@ -1603,7 +1603,7 @@ fn tool_is_read_only(name: &str) -> bool {
         name,
         "workspace_list" | "workspace_read" | "workspace_read_range" | "file_list" | "file_read"
             | "web_search" | "http_fetch" | "memory_search"
-            | "task_status" | "task_result" | "account_status"
+            | "task_status" | "task_result" | "account_status" | "github_file_read"
     )
 }
 
@@ -1742,7 +1742,7 @@ fn select_room_tools(
             &["브라우저", "browser", "클릭", "click"],
             &["browser_control"],
         ),
-        (&["github", "깃허브"], &["github_api"]),
+        (&["github", "깃허브"], &["github_file_read","github_file_update","github_api"]),
         (&["계정", "oauth", "account"], &["account_status"]),
     ];
     let mut scored: Vec<(i32, Value)> = definitions
@@ -3247,7 +3247,7 @@ async fn dispatch_tool_call(
             tools_enabled: request.tools_enabled,
             tools_execution_enabled: request.tools_execution_enabled,
         };
-        let outcome = if session["delegationWorkspace"].is_object()&&(call.name.starts_with("mcp__")||matches!(call.name.as_str(),"github_api"|"browser_control")){
+        let outcome = if session["delegationWorkspace"].is_object()&&(call.name.starts_with("mcp__")||matches!(call.name.as_str(),"github_api"|"github_file_read"|"github_file_update"|"browser_control")){
             Err("격리 위임 작업에서는 외부 변경 도구를 실행할 수 없습니다.".into())
         } else if session["readOnly"]==true&&!tools::observational(&call.name){
             Err("읽기 전용 위임 작업에는 이 도구를 실행할 권한이 없습니다.".into())

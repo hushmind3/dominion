@@ -1086,6 +1086,7 @@ impl Host for MainTurn<'_> {
                     | "shell_exec"
                     | "terminal_exec"
                     | "github_api"
+                    | "github_file_update"
                     | "delegate_task"
                         | "task_integrate"
             );
@@ -1307,6 +1308,7 @@ impl Host for MainTurn<'_> {
                         | "shell_exec"
                         | "terminal_exec"
                         | "github_api"
+                        | "github_file_update"
                         | "delegate_task"
                         | "task_integrate"
                 ) {
@@ -1377,6 +1379,7 @@ impl Host for MainTurn<'_> {
                                             | "shell_exec"
                                             | "terminal_exec"
                                             | "github_api"
+                                            | "github_file_update"
                                             | "delegate_task"
                         | "task_integrate"
                                     )
@@ -1720,7 +1723,7 @@ impl MainTurn<'_> {
                 ||text.starts_with("연속 적응 실행이 진전 없이 실패했습니다.")
                 ||(replaced&&(text.starts_with("Internal execution plan.")||text.starts_with("Engine-owned task decomposition.")))))
         });
-        if self.session["delegationWorkspace"].is_object(){self.tool_definitions.retain(|tool|!tool_name(tool).starts_with("mcp__")&&!matches!(tool_name(tool),"github_api"|"browser_control"));}
+        if self.session["delegationWorkspace"].is_object(){self.tool_definitions.retain(|tool|!tool_name(tool).starts_with("mcp__")&&!matches!(tool_name(tool),"github_api"|"github_file_read"|"github_file_update"|"browser_control"));}
         self.owner_revision = revision;
         self.state.store.audit("job.owner_revision_applied",json!({"executionId":self.execution_id,"revision":revision,"mode":if replaced{"replace"}else{"append"}}));
         Ok(())

@@ -72,6 +72,18 @@ pub fn definitions() -> Vec<Value> {
             "key": text("Key to press: Enter, Escape, Tab, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Backspace")
         }), vec!["action"])),
         tool("github_api", "Call the GitHub REST API as the connected account. Write methods require approval (approval required)", object(json!({"method": json!({"type": "string", "enum": ["GET", "POST", "PATCH", "PUT", "DELETE"]}), "path": text("GitHub API path beginning with /"), "body": json!({"type": "object"})}), vec!["method", "path"])),
+        tool("github_file_read","Read a GitHub repository file using the connected account; returns its exact content SHA for safe edits",object(json!({
+            "owner":text("Repository owner"),"repo":text("Repository name"),
+            "path":text("Repository-relative file path"),
+            "branch":text("Branch or commit ref, default branch when omitted")
+        }),vec!["owner","repo","path"])),
+        tool("github_file_update","Update one GitHub repository file using an observed SHA, create a commit and re-read the remote file (approval required)",object(json!({
+            "owner":text("Repository owner"),"repo":text("Repository name"),
+            "path":text("Repository-relative file path"),
+            "branch":text("Target branch name"),"expectedSha":text("SHA from github_file_read, required"),
+            "content":text("Complete new UTF-8 file content"),
+            "message":text("Git commit message")
+        }),vec!["owner","repo","path","branch","expectedSha","content","message"])),
     ]
 }
 
@@ -109,12 +121,13 @@ pub fn requires_approval(name: &str) -> bool {
             | "terminal_exec"
             | "task_integrate"
             | "github_api"
+            | "github_file_update"
             | "browser_control"
     )
 }
 
 pub fn observational(name:&str)->bool{
-    matches!(name,"workspace_git_status"|"workspace_git_diff"|"workspace_list"|"workspace_read"|"workspace_read_range"|"code_search"|"file_list"|"file_read"|"memory_search"|"web_search"|"http_fetch"|"task_status"|"task_result"|"account_status")
+    matches!(name,"workspace_git_status"|"workspace_git_diff"|"workspace_list"|"workspace_read"|"workspace_read_range"|"code_search"|"file_list"|"file_read"|"memory_search"|"web_search"|"http_fetch"|"task_status"|"task_result"|"account_status"|"github_file_read")
 }
 
 pub async fn execute(
@@ -128,7 +141,7 @@ pub async fn execute(
         return Err("읽기 전용 위임 작업에는 이 도구를 실행할 권한이 없습니다.".into());
     }
     let parent_isolated=ctx.store.get("session",ctx.session_id).is_some_and(|s|s["delegationWorkspace"].is_object());
-    if parent_isolated&&(name.starts_with("mcp__")||matches!(name,"browser_control"|"github_api")){
+    if parent_isolated&&(name.starts_with("mcp__")||matches!(name,"browser_control"|"github_api"|"github_file_read"|"github_file_update")){
         return Err("격리 위임 작업에서는 외부 변경 도구를 실행할 수 없습니다.".into());
     }
     if parent_isolated&&name=="delegate_task"&&args["isolatedWorktree"]!=true{
@@ -345,6 +358,8 @@ pub async fn execute(
             "providers": crate::engine::oauth::status(ctx.state),
         })),
         "github_api" => github_api(ctx, args).await,
+        "github_file_read" => github_file_read(ctx,args).await,
+        "github_file_update" => github_file_update(ctx,args).await,
         other => Err(format!("Unknown tool: {other}")),
     }
 }
@@ -381,6 +396,113 @@ async fn github_api(ctx: &ToolContext<'_>, args: &Value) -> Result<Value, String
         "status": status,
         "body": parsed.to_string().chars().take(20_000).collect::<String>(),
     }))
+}
+
+
+fn github_file_url(args:&Value)->Result<reqwest::Url,String>{
+    let owner=required_arg(args,"owner")?;
+    let repo=required_arg(args,"repo")?;
+    if [owner,repo].iter().any(|s|s.is_empty()||s.len()>100||
+        !s.bytes().all(|b|b.is_ascii_alphanumeric()||matches!(b,b'-'|b'_'|b'.'))){
+        return Err("GitHub 저장소 소유자/이름이 올바르지 않습니다.".into());
+    }
+    let path=required_arg(args,"path")?;
+    if path.len()>1024||path.starts_with('/')||path.contains('\\')||
+        path.split('/').any(|s|s.is_empty()||s=="."||s==".."||s.contains('%')||s.chars().any(char::is_control)){
+        return Err("GitHub 파일 경로는 저장소 내부의 상대경로여야 합니다.".into());
+    }
+    let mut url=reqwest::Url::parse("https://api.github.com").map_err(|e|e.to_string())?;
+    {
+        let mut parts=url.path_segments_mut().map_err(|_|"GitHub API URL 오류")?;
+        parts.extend(["repos",owner,repo,"contents"]);
+        for segment in path.split('/') {parts.push(segment);}
+    }
+    if let Some(branch)=args["branch"].as_str(){
+        if branch.is_empty()||branch.len()>255||branch.chars().any(char::is_control)||
+            branch.starts_with('-')||branch.contains("..")||branch.contains('@')||
+            branch.contains('\\')||branch.contains(' '){
+            return Err("GitHub 브랜치 이름이 올바르지 않습니다.".into());
+        }
+        url.query_pairs_mut().append_pair("ref",branch);
+    }
+    Ok(url)
+}
+
+async fn github_file_read(ctx:&ToolContext<'_>,args:&Value)->Result<Value,String>{
+    let url=github_file_url(args)?;
+    let token=crate::engine::oauth::fresh_access_token(ctx.state,"github").await
+        .map_err(|e|format!("GitHub 계정 연결을 확인하세요: {e}"))?;
+    let response=ctx.state.provider_http_client(30)?
+        .get(url).bearer_auth(token)
+        .header("Accept","application/vnd.github+json")
+        .header("User-Agent","DOMINION").send().await
+        .map_err(|e|e.to_string())?;
+    let status=response.status();
+    let value:Value=response.json().await.map_err(|e|e.to_string())?;
+    if !status.is_success(){
+        return Err(format!("GitHub 파일 조회 실패 ({}): {}",
+            status.as_u16(),value["message"].as_str().unwrap_or("권한 또는 경로를 확인하세요.")));
+    }
+    let content=value["content"].as_str().ok_or("GitHub 파일 본문이 없습니다.")?;
+    use base64::Engine;
+    let bytes=base64::engine::general_purpose::STANDARD
+        .decode(content.chars().filter(|c|!c.is_whitespace()).collect::<String>())
+        .map_err(|_|"GitHub 파일 인코딩이 올바르지 않습니다.")?;
+    if bytes.len()>256*1024 {return Err("GitHub 파일이 256KiB를 초과해 분할 조회가 필요합니다.".into());}
+    let text=String::from_utf8(bytes).map_err(|_|"바이너리 파일은 텍스트 도구로 수정할 수 없습니다.")?;
+    Ok(json!({"path":value["path"],"sha":value["sha"],
+        "content":text,"size":value["size"],"ref":args["branch"],
+        "verified":true}))
+}
+
+async fn github_file_update(ctx:&ToolContext<'_>,args:&Value)->Result<Value,String>{
+    let expected=required_arg(args,"expectedSha")?;
+    if expected.len()!=40||!expected.bytes().all(|b|b.is_ascii_hexdigit()){
+        return Err("파일 수정 전 github_file_read에서 받은 40자리 SHA가 필요합니다.".into());
+    }
+    let content=required_arg(args,"content")?;
+    if content.len()>256*1024{return Err("수정할 파일은 256KiB 이하여야 합니다.".into());}
+    let message=required_arg(args,"message")?;
+    if message.trim().is_empty()||message.len()>1024{return Err("커밋 메시지는 1~1024자여야 합니다.".into());}
+    if args["branch"].as_str().is_none(){return Err("수정할 브랜치를 지정해야 합니다.".into());}
+    let mut url=github_file_url(args)?;
+    // GitHub Contents write endpoint uses the branch in the JSON body.
+    url.set_query(None);
+    let token=crate::engine::oauth::fresh_access_token(ctx.state,"github").await
+        .map_err(|e|format!("GitHub 계정 연결을 확인하세요: {e}"))?;
+    use base64::Engine;
+    let body=json!({"message":message,"sha":expected,"branch":args["branch"],
+        "content":base64::engine::general_purpose::STANDARD.encode(content.as_bytes())});
+    let client=ctx.state.provider_http_client(30)?;
+    let result=client.put(url.clone()).bearer_auth(&token)
+        .header("Accept","application/vnd.github+json")
+        .header("User-Agent","DOMINION").json(&body)
+        .send().await.map_err(|e|e.to_string())?;
+    let status=result.status();
+    let changed:Value=result.json().await.map_err(|e|e.to_string())?;
+    if !status.is_success(){
+        return Err(format!("GitHub 커밋 실패 ({}): {}",
+            status.as_u16(),changed["message"].as_str().unwrap_or("권한, SHA 또는 브랜치를 확인하세요.")));
+    }
+    let commit_sha=changed["commit"]["sha"].as_str().unwrap_or("");
+    let file_sha=changed["content"]["sha"].as_str().unwrap_or("");
+    if commit_sha.is_empty()||file_sha.is_empty(){
+        return Err("GitHub 응답에 커밋 또는 파일 SHA가 없습니다. 원격에서 확인하세요.".into());
+    }
+    url.query_pairs_mut().append_pair("ref",required_arg(args,"branch")?);
+    let confirmed=client.get(url).bearer_auth(&token)
+        .header("Accept","application/vnd.github+json")
+        .header("User-Agent","DOMINION").send().await.map_err(|e|e.to_string())?;
+    if !confirmed.status().is_success(){
+        return Err(format!("커밋은 생성됐지만 원격 파일 재조회가 실패했습니다: {commit_sha}"));
+    }
+    let check:Value=confirmed.json().await.map_err(|e|e.to_string())?;
+    if check["sha"]!=file_sha{
+        return Err(format!("커밋은 생성됐지만 원격 파일 SHA 검증이 일치하지 않습니다: {commit_sha}"));
+    }
+    Ok(json!({"commitSha":commit_sha,"fileSha":file_sha,
+        "path":args["path"],"branch":args["branch"],"verified":true,
+        "remoteReadBack":true}))
 }
 
 const MAX_DELEGATION_DEPTH: usize = 4;
@@ -1751,6 +1873,19 @@ mod tests {
         assert!(append_http_chunk(&mut bytes,b"abcdefghij"));
         assert_eq!(bytes.len(),HTTP_FETCH_LIMIT);
         assert_eq!(&bytes[HTTP_FETCH_LIMIT-4..],b"abcd");
+    }
+
+    #[test]
+    fn github_file_tool_paths_and_approval_are_explicit(){
+        let args=json!({"owner":"hushmind3","repo":"dominion-rust",
+            "path":"src/engine/tools.rs","branch":"main"});
+        let url=github_file_url(&args).unwrap();
+        assert_eq!(url.as_str(),"https://api.github.com/repos/hushmind3/dominion-rust/contents/src/engine/tools.rs?ref=main");
+        assert!(github_file_url(&json!({"owner":"a","repo":"b","path":"../secret"})).is_err());
+        assert!(github_file_url(&json!({"owner":"a","repo":"b","path":"/etc/passwd"})).is_err());
+        assert!(requires_approval("github_file_update"));
+        assert!(!requires_approval("github_file_read"));
+        assert!(observational("github_file_read"));
     }
 
     #[test]
