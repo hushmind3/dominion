@@ -61,12 +61,6 @@ pub(super) struct MainTurn<'a> {
     pub(super) adaptation_failures: usize,
     pub(super) acceptance_passed: bool,
     pub(super) budget: super::super::budget::BudgetLedger,
-    pub(super) rsi_decision_checkpoint: bool,
-    pub(super) rsi_edit_only_announced: bool,
-    pub(super) rsi_edit_retry: bool,
-    pub(super) rsi_edit_stage_requested: bool,
-    pub(super) rsi_last_program_phase: String,
-    pub(super) rsi_last_rule_id: String,
     pub(super) program_finished: bool,
     pub(super) round_tools: Vec<Value>,
     pub(super) wire_messages: Vec<Value>,
@@ -78,7 +72,6 @@ pub(super) struct MainTurn<'a> {
     pub(super) dispatched: std::collections::HashMap<usize, Result<(Value, bool, String), String>>,
     pub(super) ordering_used: bool,
     pub(super) ordering_ok: bool,
-    pub(super) rsi_patch_written: bool,
     pub(super) prepared_arguments: Value,
     pub(super) prepared_key: String,
     pub(super) completed_operations: Vec<Value>,
@@ -171,7 +164,6 @@ impl Host for MainTurn<'_> {
         self.acceptance.is_some()
             && self.request.tools_enabled
             && self.source_message_id.is_none()
-            && self.session["rsiRun"] != true
             && self.plan_requested
     }
     fn plan<'a>(
@@ -322,303 +314,7 @@ impl Host for MainTurn<'_> {
                     tool_schema_budget,
                 );
             }
-            if self.session["rsiRun"] == true
-                && self.session["rsiSystemEvolution"] != true
-                && !self.force_final
-            {
-                let tool_calls = self.metrics.lock().unwrap().tool_calls as u64;
-                let mut all_operations = self
-                    .state
-                    .store
-                    .all("execution_operation")
-                    .into_iter()
-                    .filter(|operation| operation["runId"].as_str() == Some(self.execution_id))
-                    .collect::<Vec<_>>();
-                // The generic store returns most-recently-updated first. A
-                // program must consume operations in true execution order:
-                // failed edit -> fresh read means recovery, not another failure.
-                all_operations
-                    .sort_by_key(|operation| operation["opSeq"].as_u64().unwrap_or(u64::MAX));
-                let completed = all_operations
-                    .iter()
-                    .filter(|operation| operation["status"] == "completed")
-                    .cloned()
-                    .collect::<Vec<_>>();
-                let has_write = completed.iter().any(rsi_verified_write_operation);
-                let read_calls = completed
-                    .iter()
-                    .filter(|operation| {
-                        matches!(
-                            operation["tool"].as_str(),
-                            Some("workspace_read_range" | "workspace_read")
-                        )
-                    })
-                    .count() as u64;
-                let grounded = self.session["rsiFocusContextReady"] == true || read_calls > 0;
-                let focused = self.session["rsiExplicitFocus"] == true
-                    || self.session["rsiAutoFocus"] == true
-                    || self.session["rsiFocusFiles"]
-                        .as_array()
-                        .is_some_and(|files| !files.is_empty());
-                let program_stage =
-                    rsi_compiler_repair_route(&self.session, &all_operations, has_write).or_else(
-                        || {
-                            crate::engine::rsi_edit_program::route(
-                                &self.session["rsiEditPolicy"],
-                                &all_operations,
-                                tool_calls,
-                                focused,
-                                self.session["rsiFocusContextReady"] == true,
-                            )
-                        },
-                    );
-                // Newly required source-hash observation takes priority over
-                // any synthesized search/edit policy. Otherwise a learned rule
-                // can indefinitely suppress the only recovery tool.
-                let must_ground = program_stage
-                    .is_some_and(|decision| matches!(decision.phase, "focus_ground" | "reground"));
-                // Compiler repair is driven by actual verifier evidence, so a
-                // previously induced search-only rule cannot shadow its edit phase.
-                let rule_decision = if must_ground || self.session["rsiRepairPath"].is_string() {
-                    None
-                } else {
-                    crate::engine::rsi_decision_rules::choose(
-                        &self.session["rsiEditPolicy"],
-                        &all_operations,
-                        tool_calls,
-                        focused,
-                        self.session["rsiFocusContextReady"] == true,
-                    )
-                };
-                if let Some(rule) = rule_decision.as_ref() {
-                    if self.rsi_last_rule_id != rule.id {
-                        let receipt = json!({
-                            "id":crate::engine::memory::stable_id(&[
-                                self.execution_id,&rule.id,&tool_calls.to_string()
-                            ]),
-                            "sessionId":self.session_id,"runId":self.execution_id,
-                            "generationJobId":self.session["rsiGenerationJobId"],
-                            "policyRevision":self.session["rsiEditPolicy"]["revision"],
-                            "ruleId":rule.id,"toolCalls":tool_calls,
-                            // opSeq and toolCalls are different counters when the
-                            // native harness runs deterministic steps. Persist
-                            // the actual last observed operation to attribute
-                            // only later verified source edits to this rule.
-                            "opSeqBefore":all_operations.iter()
-                                .filter_map(|op|op["opSeq"].as_u64()).max().unwrap_or(0),
-                            "allow":rule.allow,
-                            "recordedAt":chrono::Utc::now().to_rfc3339(),
-                        });
-                        self.state.store.put("rsi_rule_execution", &receipt);
-                        self.state
-                            .store
-                            .audit("rsi.synthesized_rule_fired", receipt.clone());
-                        self.messages.push(json!({"role":"system","content":format!(
-                        "DOMINION이 실제 실행 경험으로 합성한 판단 조건이 충족되었습니다 (규칙 {}). 이번 단계에서는 다음 도구만 사용하세요: {}. 작업 결과를 관찰하면 실행 정책을 다시 평가합니다.",
-                        &rule.id[..rule.id.len().min(10)],rule.allow.join(", "))
-                    }));
-                        self.rsi_last_rule_id = rule.id.clone();
-                    }
-                } else {
-                    self.rsi_last_rule_id.clear();
-                }
-                if let Some(decision) = program_stage {
-                    if self.rsi_last_program_phase != decision.phase {
-                        self.state.store.audit(
-                            "rsi.program_stage_executed",
-                            json!({
-                                "sessionId":self.session_id,"executionId":self.execution_id,
-                                "programRevision":self.session["rsiEditPolicy"]["revision"],
-                                "phase":decision.phase,"toolCalls":tool_calls,
-                                "observedOperations":all_operations.len(),
-                            }),
-                        );
-                        if decision.phase == "reground" {
-                            self.messages.push(json!({"role":"system","content":
-                            "이전 편집 실행이 실패했습니다. 소스 버전이 변경됐을 수 있습니다. workspace_read_range로 현재 범위와 해시를 다시 관찰한 뒤 정확한 버전에서 재편집하세요."}));
-                        } else if decision.phase == "contrast" {
-                            self.messages.push(json!({"role":"system","content":
-                            "독립 평가에서 개선이 없었던 이전 방법과 다른 가설을 확인하세요. 대안 탐색에 code_search를 사용할 수 있습니다. 이미 현재 소스 원문과 해시를 읽어 수정 근거가 있다면 검색 반복 없이 workspace_replace_range 또는 workspace_replace로 새 구현을 작성하세요."}));
-                        }
-                        let stage_receipt = json!({
-                            "id":crate::engine::memory::stable_id(&[
-                                self.execution_id, decision.phase, &tool_calls.to_string()
-                            ]),
-                            "sessionId":self.session_id,"runId":self.execution_id,
-                            "generationJobId":self.session["rsiGenerationJobId"],
-                            "campaignId":self.session["rsiCampaignId"],
-                            "policyRevision":self.session["rsiEditPolicy"]["revision"],
-                            "phase":decision.phase,"toolCalls":tool_calls,
-                            "observedOperations":all_operations.len(),
-                            "recordedAt":chrono::Utc::now().to_rfc3339(),
-                        });
-                        self.state.store.put("rsi_program_phase", &stage_receipt);
-                        self.rsi_last_program_phase = decision.phase.to_string();
-                    }
-                }
-                // An observed read followed by a textual non-edit must be
-                // eligible for a concrete editing retry. Learned search/contrast
-                // stages previously shadowed this flag and made the offered tool
-                // set read-only even while the system demanded a patch.
-                let failed_edit_since_read = all_operations
-                    .iter()
-                    .rev()
-                    .take_while(|op| op["tool"] != "workspace_read_range")
-                    .any(|op| {
-                        matches!(
-                            op["tool"].as_str(),
-                            Some("workspace_replace_range" | "workspace_replace")
-                        ) && (op["status"] != "completed" || op["result"]["written"] == false)
-                    });
-                // A compiler-directed retry needs a fresh read of its exact
-                // failing file. An older "try editing now" hint must not remove
-                // workspace_read_range from the only repair tool menu.
-                let edit_retry_override = self.session["rsiRepairPath"].as_str().is_none()
-                    && self.rsi_edit_stage_requested
-                    && grounded
-                    && !has_write
-                    && !failed_edit_since_read;
-                let stage = if edit_retry_override {
-                    Some(true)
-                } else {
-                    rule_decision
-                        .as_ref()
-                        .map(|decision| decision.edit_only())
-                        .or_else(|| program_stage.map(|decision| decision.edit_only()))
-                        .or_else(|| {
-                            rsi_checkpoint_stage_with_method(
-                                tool_calls,
-                                read_calls,
-                                has_write,
-                                focused,
-                                self.session["rsiFocusContextReady"] == true,
-                                &self.session["rsiEditPolicy"],
-                            )
-                        })
-                };
-                if let Some(edit_only) = stage {
-                    // Reapply the restriction on EVERY following model round.
-                    // The old one-shot guard reopened code_search and all read
-                    // tools after the first checkpoint, allowing read-only loops.
-                    if edit_retry_override {
-                        self.round_tools = self
-                            .tool_definitions
-                            .iter()
-                            .filter(|definition| {
-                                matches!(
-                                    tool_name(definition),
-                                    "workspace_replace"
-                                        | "workspace_replace_range"
-                                        | "workspace_write"
-                                )
-                            })
-                            .cloned()
-                            .collect();
-                        self.state.store.audit("rsi.focused_edit_retry_unblocked",serde_json::json!({
-                        "executionId":self.execution_id,"sessionId":self.session_id,
-                        "toolCalls":tool_calls,"policyRevision":self.session["rsiEditPolicy"]["revision"]
-                    }));
-                    } else if let Some(rule) = rule_decision.as_ref() {
-                        self.round_tools = self
-                            .tool_definitions
-                            .iter()
-                            .filter(|definition| rule.allows(tool_name(definition)))
-                            .cloned()
-                            .collect();
-                    } else if let Some(decision) = program_stage {
-                        // Restore the selected phase's tiny tool menu from the
-                        // original catalog. A context-size trim of the general
-                        // menu must never delete the only hash re-read tool.
-                        self.round_tools = self
-                            .tool_definitions
-                            .iter()
-                            .filter(|definition| decision.allows(tool_name(definition)))
-                            .cloned()
-                            .collect();
-                    } else {
-                        self.round_tools.retain(|definition| {
-                            rsi_checkpoint_tool(tool_name(definition), edit_only)
-                        });
-                    }
-                    // The learned algorithm changes the executable edit menu's
-                    // order after a real source observation, independently of
-                    // the model's preference or prose. Both grounded edit tools
-                    // remain available as recovery options.
-                    let preferred = self.session["rsiEditPolicy"]["preferredTool"]
-                        .as_str()
-                        .filter(|tool| {
-                            matches!(*tool, "workspace_replace_range" | "workspace_replace")
-                        });
-                    if edit_only {
-                        if let Some(preferred) = preferred {
-                            self.round_tools
-                                .sort_by_key(|definition| tool_name(definition) != preferred);
-                        }
-                    }
-                    if edit_only && !self.rsi_edit_only_announced {
-                        self.messages.push(json!({"role":"system",
-                        "content":format!("DOMINION 개선 방법 선택: {:?} (정책 revision={}). 소스 근거 확인 단계는 종료되었습니다. 가능한 편집 연산 중 {}를 먼저 시도하세요. 해당 방식이 실제 관찰된 근거에 맞지 않으면 다른 편집 도구를 사용하세요. workspace_read_range의 startLine/endLine/sourceSha256을 이용한 범위 편집 또는 정확한 oldText 치환으로 소스를 수정하세요. 새 파일에만 workspace_write를 사용합니다. 조회 도구는 더 제공되지 않습니다. 실제 변경 전에는 테스트·완료를 주장하지 마세요.",
-                            self.session["rsiEditPolicy"]["method"].as_str().unwrap_or("balanced"),
-                            self.session["rsiEditPolicy"]["revision"].as_str().unwrap_or("default"),
-                            preferred.unwrap_or("workspace_replace_range"))
-                    }));
-                        self.rsi_edit_only_announced = true;
-                    } else if !self.rsi_decision_checkpoint
-                        && program_stage.is_none()
-                        && rule_decision.is_none()
-                    {
-                        self.messages.push(json!({"role":"system",
-                        "content":"탐색 예산을 소진했습니다. code_search는 종료하고, 정확히 부족한 범위만 workspace_read_range로 보충하세요. 확보된 근거로 코드 편집이나 실행 가능한 방법을 시도한 뒤 실제 결과를 보고하세요. 근거가 없다면 그 이유를 보고하세요."
-                    }));
-                    }
-                    if !self.rsi_decision_checkpoint {
-                        self.state.store.audit(
-                            "rsi.action_checkpoint",
-                            json!({
-                                "sessionId":self.session_id,"executionId":self.execution_id,
-                                "toolCalls":tool_calls,"readCalls":read_calls,
-                                "editOnly":edit_only,"editPolicy":self.session["rsiEditPolicy"]
-                            }),
-                        );
-                    }
-                    self.rsi_decision_checkpoint = true;
-                }
-                // A learned contrast/search-only menu formerly rejected native
-                // writes forever: rejected calls are soft errors and do not
-                // advance the executed-tool counter used by the stage scheduler.
-                // One successful live read is sufficient to OFFER both editors;
-                // their preconditions still decide whether any patch is written.
-                if rsi_offer_grounded_edit_fallback(
-                    &mut self.round_tools,
-                    &self.tool_definitions,
-                    focused,
-                    read_calls > 0,
-                    must_ground,
-                    has_write,
-                ) {
-                    self.state.store.audit(
-                        "rsi.grounded_edit_menu_recovered",
-                        json!({
-                            "sessionId":self.session_id,"executionId":self.execution_id,
-                            "toolCalls":tool_calls,"readCalls":read_calls,
-                            "programPhase":program_stage.map(|phase|phase.phase),
-                            "policyRevision":self.session["rsiEditPolicy"]["revision"]
-                        }),
-                    );
-                }
-            }
             self.wire_messages = self.messages.clone();
-            // Campaigns enforce the owner's cumulative budget below. The generic
-            // standalone turn ceiling must not terminate a budgeted research run.
-            if self.session["rsiRun"] == true && !self.session["rsiCampaignId"].is_string() {
-                let input = crate::engine::chat::room_context::input_estimate(
-                    &self.wire_messages,
-                    &self.round_tools,
-                ) as u64;
-                let limit = rsi_output_allowance(self.total_tokens, input)?;
-                self.provider.max_output_tokens =
-                    Some(self.provider.max_output_tokens.unwrap_or(8192).min(limit));
-            }
             if self.is_room {
                 if let Some(mut execution) = self.state.store.get("execution", self.execution_id) {
                     execution["inputContext"]["preparedInputTokensEstimate"] =
@@ -634,18 +330,6 @@ impl Host for MainTurn<'_> {
                     self.state.store.put("execution", &execution);
                 }
             }
-            if let Some(limit) = crate::engine::rsi_evolve::remaining_output_tokens(
-                self.state,
-                self.session_id,
-                crate::engine::chat::room_context::input_estimate(
-                    &self.wire_messages,
-                    &self.round_tools,
-                ) as u64,
-            )? {
-                self.provider.max_output_tokens =
-                    Some(self.provider.max_output_tokens.unwrap_or(8192).min(limit));
-            }
-
             Ok(self.round_tools.clone())
         })
     }
@@ -809,7 +493,6 @@ impl Host for MainTurn<'_> {
             }
             self.metrics.lock().unwrap().tokens = self.total_tokens;
             if self.total_tokens > MAX_TOKENS
-                && !(self.session["rsiRun"] == true && self.session["rsiCampaignId"].is_string())
             {
                 return Err(format!(
                     "토큰 예산({MAX_TOKENS})을 초과했습니다. 요청을 나눠 다시 시도하세요."
@@ -834,14 +517,7 @@ impl Host for MainTurn<'_> {
             }
             if completion.tool_calls.is_empty()
                 && self.request.tools_enabled
-                && (self.provider.tool_mode != "native"
-                    || has_dsml_call
-                    || rsi_textual_edit_fallback(
-                        self.session["rsiRun"] == true,
-                        self.session["rsiExplicitFocus"] == true
-                            || self.session["rsiAutoFocus"] == true,
-                        self.rsi_edit_only_announced,
-                    ))
+                && (self.provider.tool_mode != "native" || has_dsml_call)
                 && !self.force_final
             {
                 let known = self
@@ -891,55 +567,6 @@ impl Host for MainTurn<'_> {
             let round = ctx.round;
             let completion = self.completion.take().ok_or("모델 응답이 없습니다.")?;
 
-            // A focused RSI job is not finished by another explanation of
-            // its code. Give the model one bounded corrective opportunity to
-            // issue a real source edit; never fabricate a patch or verdict.
-            if (self.session["rsiExplicitFocus"] == true
-                || self.session["rsiAutoFocus"] == true
-                || self.session["rsiFocusFiles"]
-                    .as_array()
-                    .is_some_and(|files| !files.is_empty()))
-                && !self.rsi_edit_retry
-                && round + 1 < self.max_rounds
-            {
-                let completed = self
-                    .state
-                    .store
-                    .all("execution_operation")
-                    .into_iter()
-                    .filter(|operation| {
-                        operation["runId"].as_str() == Some(self.execution_id)
-                            && operation["status"].as_str() == Some("completed")
-                    })
-                    .collect::<Vec<_>>();
-                let has_write = completed.iter().any(rsi_verified_write_operation);
-                let has_read = completed.iter().any(|operation| {
-                    matches!(
-                        operation["tool"].as_str(),
-                        Some("workspace_read_range" | "workspace_read")
-                    )
-                });
-                // The model may try to finish after its FIRST read, before the
-                // ordinary three-tool threshold. In that case, run one real
-                // edit-focused continuation rather than counting more research
-                // as successful implementation.
-                if !has_write && (has_read || self.session["rsiFocusContextReady"] == true) {
-                    self.rsi_edit_retry = true;
-                    self.rsi_edit_stage_requested = true;
-                    self.state.store.audit(
-                        "rsi.edit_retry",
-                        json!({
-                            "sessionId":self.session_id,"executionId":self.execution_id,
-                            "round":round,"sourceRead":has_read,
-                            "sourceInPrompt":self.session["rsiFocusContextReady"] == true
-                        }),
-                    );
-                    self.messages.push(json!({"role":"user",
-                        "content":"명시된 코드 수정은 아직 수행되지 않았습니다. 이전 workspace_read_range 결과의 startLine/endLine/sourceSha256으로 workspace_replace_range를 호출하고 바꿀 코드만 newText에 넣으세요. 이전에 받은 정확한 oldText가 있다면 workspace_replace도 가능합니다. 새 파일에만 workspace_write를 사용하세요. 수정 불가능하다면 이유를 보고하세요."
-                    }));
-                    return Ok(Flow::Continue);
-                }
-            }
             {
                 let mut operations = self
                     .state
@@ -1169,22 +796,6 @@ impl Host for MainTurn<'_> {
 
             let mut seen_ids = std::collections::HashSet::new();
             for call in completion.tool_calls.iter_mut() {
-                if self.session["rsiRun"] == true {
-                    if let Some(canonical) =
-                        rsi_canonical_tool_name(&call.name, &self.round_tools).map(str::to_string)
-                    {
-                        if canonical != call.name {
-                            self.state.store.audit(
-                                "rsi.tool_name_protocol_recovered",
-                                json!({
-                                    "sessionId":self.session_id,"executionId":self.execution_id,
-                                    "original":call.name,"canonical":canonical
-                                }),
-                            );
-                            call.name = canonical;
-                        }
-                    }
-                }
                 if call.id.trim().is_empty() || !seen_ids.insert(call.id.clone()) {
                     call.id = uuid::Uuid::new_v4().to_string();
                     seen_ids.insert(call.id.clone());
@@ -1263,7 +874,6 @@ impl Host for MainTurn<'_> {
             self.dispatched = std::collections::HashMap::new();
             self.ordering_used = false;
             self.ordering_ok = true;
-            self.rsi_patch_written = false;
 
             Ok(self.round_calls.len())
         })
@@ -1292,29 +902,6 @@ impl Host for MainTurn<'_> {
                 || self.state.cancellation_generation(self.session_id) != self.generation
             {
                 return Err("실행이 중단되었습니다.".into());
-            }
-            if self.session["rsiRun"] == true && !rsi_tool_advertised(&call.name, &self.round_tools)
-            {
-                let error = format!(
-                    "이번 RSI 단계에서 '{}' 도구는 제공되지 않았습니다. 현재 허용된 편집 도구 중 하나를 사용하세요.",
-                    call.name
-                );
-                record_soft_tool_error(
-                    self.state,
-                    self.tx,
-                    self.session_id,
-                    &self.request,
-                    self.execution_id,
-                    &call.name,
-                    &call.id,
-                    &error,
-                    self.metrics,
-                );
-                self.messages.push(json!({
-                    "role":"tool","tool_call_id":call.id,
-                    "content":json!({"error":error,"unadvertisedRsiTool":true}).to_string()
-                }));
-                return Ok(false);
             }
             let mut arguments = match serde_json::from_str::<Value>(&call.arguments) {
                 Ok(value) if value.is_object() => value,
@@ -1352,9 +939,6 @@ impl Host for MainTurn<'_> {
                         && operation["status"].as_str() == Some("completed")
                 })
                 .collect::<Vec<_>>();
-            if self.session["rsiRun"] == true && call.name == "workspace_replace_range" {
-                arguments = rsi_ground_range_edit_args(arguments, &completed_operations);
-            }
             let procedure_violation = self.strategy_candidates.iter().find_map(|strategy| {
                 if !crate::engine::procedure::applies(
                     strategy,
@@ -1701,27 +1285,6 @@ impl Host for MainTurn<'_> {
             if !ok {
                 self.ordering_ok = false;
             }
-            if rsi_patch_ready_for_verification(&self.session, &call.name, &arguments, &result, ok)
-                && self
-                    .state
-                    .store
-                    .get(
-                        "execution_operation",
-                        &format!("{execution_id}:{round}:{call_index}:{}", call.id),
-                    )
-                    .is_some_and(|operation| operation["toolReceipt"]["verified"] == true)
-            {
-                self.rsi_patch_written = true;
-                self.state.store.audit(
-                    "rsi.patch_submitted_for_verification",
-                    json!({
-                        "sessionId": self.session_id, "executionId": self.execution_id,
-                        "tool": call.name, "callId": call.id,
-                        "path": arguments["path"],
-                        "postSha256": result["postSha256"],
-                    }),
-                );
-            }
             crate::engine::algorithms::mark_signal(
                 self.state,
                 self.execution_id,
@@ -1870,13 +1433,6 @@ impl Host for MainTurn<'_> {
                     self.ordering_ok,
                 );
             }
-            if self.rsi_patch_written {
-                // An observed edit is a candidate, not a proven improvement.
-                // rsi_worktree::finish captures the diff and runs the verifier.
-                self.final_content = "실제 소스 변경을 기록했습니다. 독립 빌드와 성능 비교는 실행 엔진이 수행합니다.".into();
-                return Ok(Flow::Complete);
-            }
-
             // Check acceptance after the tool round, not only when the model
             // decides to stop. A model that keeps verifying can otherwise burn the
             // whole round budget after the work is already complete.

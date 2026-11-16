@@ -48,62 +48,6 @@ export interface StartRun {
   shellSandbox?: 'required' | 'off';
 }
 
-export type VideoEngine = 'native' | 'comfyui';
-export interface VideoQuality {
-  status: 'passed' | 'container_only';
-  bytes: number;
-  durationSeconds?: number;
-  width?: number;
-  height?: number;
-  audioPresent?: boolean;
-  warning?: string;
-}
-export interface VideoJob {
-  id: string;
-  kind: 'video' | 'youtube_upload';
-  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'needs_review';
-  engine?: VideoEngine;
-  title?: string;
-  brief?: string;
-  progress?: number;
-  storyboard?: string[];
-  quality?: VideoQuality | null;
-  outputUrl?: string | null;
-  deliveryJobId?: string | null;
-  deliveryError?: string | null;
-  result?: {
-    quality?: VideoQuality;
-    renderWallSeconds?: number;
-    newSceneCalls?: number;
-    reusedScenes?: number;
-    outputUrl?: string;
-    youtubeId?: string;
-    url?: string;
-    bytes?: number;
-  } | null;
-  error?: string | null;
-}
-export interface StartVideo {
-  brief: string;
-  title?: string;
-  engine?: VideoEngine;
-  duration?: number;
-  aspectRatio?: '9:16' | '16:9' | '1:1';
-  scenes?: string[];
-  fps?: number;
-  seed?: number;
-  negativePrompt?: string;
-  /** Explicit opt-in; queued upload is always private. */
-  autoUpload?: boolean;
-}
-export interface VideoUpload {
-  title?: string;
-  description?: string;
-  privacyStatus?: 'private' | 'unlisted' | 'public';
-  tags?: string;
-  madeForKids?: boolean;
-}
-
 export interface ClientOptions {
   baseUrl?: string;
   adminToken?: string;
@@ -190,25 +134,5 @@ export class DominionAgentClient {
       {}, signal);
   }
 
-  /** These media endpoints use the same durable Rust job engine as the UI. */
-  listVideoJobs(signal?: AbortSignal): Promise<VideoJob[]> {
-    return this.request('GET', '/api/video/jobs', undefined, signal);
-  }
-  getVideoJob(id: string, signal?: AbortSignal): Promise<VideoJob> {
-    return this.request('GET', `/api/video/jobs/${encodeURIComponent(id)}`, undefined, signal);
-  }
-  createVideo(input: StartVideo, signal?: AbortSignal): Promise<VideoJob> {
-    return this.request('POST', '/api/video/jobs', input, signal);
-  }
-  regenerateVideoScene(
-    sourceJobId: string, sceneIndex: number, prompt: string, signal?: AbortSignal,
-  ): Promise<VideoJob> {
-    return this.request('POST',
-      `/api/video/jobs/${encodeURIComponent(sourceJobId)}/regenerate`,
-      {sceneIndex, prompt}, signal);
-  }
-  queueVideoUpload(videoJobId: string, input: VideoUpload, signal?: AbortSignal): Promise<VideoJob> {
-    return this.request('POST', `/api/video/jobs/${encodeURIComponent(videoJobId)}/upload`,
-      input, signal);
-  }
+
 }

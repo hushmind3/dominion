@@ -33,7 +33,5 @@ jobs:
       - run: npm run typecheck --prefix web
       - run: node web/node_modules/typescript/bin/tsc -p packages/sdk-typescript/tsconfig.json --noEmit
       - run: npm run build --prefix web
-      - run: node --check scripts/rsi-lab.mjs
-      - run: node --test scripts/rsi-lab.test.mjs
       - run: node scripts/check-runtime-architecture.mjs
       - run: cargo test --workspace --release

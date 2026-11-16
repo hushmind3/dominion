@@ -1,397 +1,69 @@
-use crate::{engine::video, state::AppState};
-use axum::{
-    body::Body,
-    extract::{Path, State},
-    http::{Request, StatusCode},
-    response::{IntoResponse, Response},
-    Json,
-};
-use serde_json::{json, Value};
-use std::time::Duration;
-fn error(status: StatusCode, message: impl Into<String>) -> Response {
-    (status, Json(json!({"error":message.into()}))).into_response()
+//! Read-only media archive. Native video/audio production is not part of the agent runtime.
+use crate::state::AppState;
+use axum::{body::Body,extract::{Path,State},http::{Request,StatusCode},
+    response::{IntoResponse,Response},Json};
+use serde_json::{json,Value};
+fn error(code:StatusCode,reason:&str)->Response {
+    (code,Json(json!({"error":reason}))).into_response()
 }
-async fn comfy_reachable(url: &str) -> bool {
-    if url.is_empty() {
-        return false;
+pub fn public_job(job:&Value)->Value {
+    let id=job["id"].as_str().unwrap_or("");
+    let available=job["kind"]=="video" && job["status"]=="completed";
+    json!({"id":id,"kind":job["kind"],"title":job["input"]["title"],
+        "brief":job["input"]["brief"],"status":job["status"],
+        "phase":job.get("phase").unwrap_or(&job["status"]),
+        "progress":job["progress"],"error":job["error"],"createdAt":job.get("createdAt"),
+        "videoJobId":job["input"]["videoJobId"],"outputUrl":available.then(||
+            format!("/api/video/jobs/{id}/content")),
+        "storyboard":job["videoState"]["scenes"],"quality":job["result"]["quality"],
+        "result":job["result"],"deliveryJobId":job["deliveryJobId"]})
+}
+pub fn outputs(state:&AppState)->Vec<Value>{
+    state.store.all("job").iter().filter(|j|j["kind"]=="video" && j["status"]=="completed")
+        .map(public_job).collect()
+}
+pub async fn status(State(state):State<AppState>)->Json<Value>{
+    Json(json!({"retired":true,"available":false,"engines":[],
+        "jobs":state.store.all("job").iter().filter(|j|j["kind"]=="video")
+            .map(public_job).collect::<Vec<_>>() }))
+}
+pub async fn get_config(State(_state):State<AppState>)->Json<Value>{
+    Json(json!({"retired":true,"available":false}))
+}
+pub async fn outputs_handler(State(state):State<AppState>)->Json<Value>{Json(json!(outputs(&state)))}
+pub async fn files(State(state):State<AppState>)->Json<Value>{Json(json!(outputs(&state)))}
+pub async fn list_jobs(State(state):State<AppState>)->Json<Value>{
+    Json(json!(state.store.all("job").iter().filter(|job|
+        matches!(job["kind"].as_str(),Some("video"|"youtube_upload")))
+        .map(public_job).collect::<Vec<_>>()))
+}
+pub async fn job(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    state.store.get("job",&id).filter(|job|
+        matches!(job["kind"].as_str(),Some("video"|"youtube_upload")))
+        .map(|job|Json(public_job(&job)).into_response())
+        .unwrap_or_else(||error(StatusCode::NOT_FOUND,"영상 작업 기록이 없습니다."))
+}
+pub async fn content(State(state):State<AppState>,Path(id):Path<String>,request:Request<Body>)->Response{
+    // UUID validation and canonical containment prevent archive path traversal.
+    if uuid::Uuid::parse_str(&id).is_err() ||
+        !state.store.get("job",&id).is_some_and(|job|
+            job["kind"]=="video" && job["status"]=="completed") {
+        return error(StatusCode::NOT_FOUND,"완료된 영상 기록이 없습니다.");
     }
-    reqwest::Client::new()
-        .get(format!("{}/system_stats", url.trim_end_matches('/')))
-        .timeout(Duration::from_secs(2))
-        .send()
-        .await
-        .is_ok_and(|r| r.status().is_success())
-}
-pub fn outputs(state: &AppState) -> Vec<Value> {
-    state
-        .store
-        .all("job")
-        .iter()
-        .filter(|j| j["kind"] == "video" && j["status"] == "completed")
-        .map(video::public_job)
-        .collect()
-}
-pub async fn status(State(state): State<AppState>) -> Json<Value> {
-    let cfg = video::config(&state);
-    let executable = video::ffmpeg(&state);
-    let reachable = comfy_reachable(cfg["comfyUrl"].as_str().unwrap_or("")).await;
-    let built_in = video::video_models(&state).iter()
-        .any(|model| model["id"] == cfg["videoModel"] && model["available"] == true);
-    let comfy = reachable && (cfg["comfyWorkflow"].is_object() || built_in);
-    let workflows = workflows_from_config(&cfg);
-    let jobs = state.store.all("job").iter()
-        .filter(|job| job["kind"] == "video")
-        .map(video::public_job).collect::<Vec<_>>();
-    Json(json!({
-        "config": cfg,
-        "runtime": "rust",
-        "available": executable.is_some() || comfy,
-        "native": {"available": executable.is_some()},
-        "ffmpeg": {"available": executable.is_some(), "path": executable},
-        "comfy": {"reachable": reachable, "available": comfy},
-        "engines": [
-            {"id":"native","name":"자막 카드 영상","available":executable.is_some(),"reason":if executable.is_some(){""}else{"FFmpeg 실행 파일 필요"}},
-            {"id":"comfyui","name":"ComfyUI","available":comfy,"reason":if comfy{""}else{"서버와 API 워크플로 설정 필요"}}
-        ],
-        "jobs": jobs,
-        "models": [],
-        "modelsReady": false,
-        "workflows": workflows,
-        "installed": reachable
-    }))
-}
-pub async fn get_config(State(state): State<AppState>) -> Json<Value> {
-    Json(video::config(&state))
-}
-pub async fn save_config(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
-    let mut cfg = video::config(&state);
-    for key in [
-        "engine",
-        "duration",
-        "aspectRatio",
-        "comfyUrl",
-        "comfyWorkflow",
-        "comfyWorkflowName",
-        "workflowDir",
-        "outputDir",
-        "ffmpegPath",
-        "providerId",
-        "model",
-        "useModel",
-        "voice",
-        "rate",
-        "narration",
-        "subtitles",
-        "videoModel",
-        "resolution",
-        "steps",
-        "comfyModelsDir",
-    ] {
-        if let Some(v) = body.get(key) {
-            cfg[key] = v.clone();
-        }
-    }
-    if let Some(url) = cfg["comfyUrl"].as_str().filter(|s| !s.is_empty()) {
-        if !reqwest::Url::parse(url).is_ok_and(|u| {
-            matches!(u.scheme(), "http" | "https")
-                && u.username().is_empty()
-                && u.password().is_none()
-        }) {
-            return error(
-                StatusCode::BAD_REQUEST,
-                "ComfyUI HTTP(S) 주소를 확인하세요.",
-            );
-        }
-    }
-    if !cfg["comfyWorkflow"].is_null()
-        && !cfg["comfyWorkflow"].as_object().is_some_and(|nodes| {
-            !nodes.is_empty() && nodes.values().all(|node| {
-                node["class_type"].is_string() && node["inputs"].is_object()
-            })
-        }) {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "API 형식 워크플로 JSON 객체가 필요합니다.",
-        );
-    }
-    if cfg["comfyWorkflow"].to_string().len() > 1024 * 1024 {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "워크플로는 1MiB 이하로 저장하세요.",
-        );
-    }
-    if state.store.put("video_config", &cfg).is_none() {
-        return error(StatusCode::INTERNAL_SERVER_ERROR, "영상 설정을 저장할 수 없습니다.");
-    }
-    state.bus.record("video_config", &json!({"id":"default"}));
-    Json(video::config(&state)).into_response()
-}
-pub async fn list_jobs(State(state): State<AppState>) -> Json<Value> {
-    Json(json!(state
-        .store
-        .all("job")
-        .iter()
-        .filter(|j| matches!(j["kind"].as_str(), Some("video" | "youtube_upload")))
-        .map(video::public_job)
-        .collect::<Vec<_>>()))
-}
-pub async fn create_job(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
-    match video::enqueue(&state, &body) {
-        Ok(j) => (StatusCode::ACCEPTED, Json(j)).into_response(),
-        Err(e) => error(StatusCode::BAD_REQUEST, e),
-    }
-}
-pub async fn job(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    match state
-        .store
-        .get("job", &id)
-        .filter(|j| matches!(j["kind"].as_str(), Some("video" | "youtube_upload")))
-    {
-        Some(j) => Json(video::public_job(&j)).into_response(),
-        None => error(StatusCode::NOT_FOUND, "영상 작업을 찾을 수 없습니다."),
-    }
-}
-pub async fn regenerate(
-    State(state):State<AppState>,
-    Path(id):Path<String>,
-    Json(body):Json<Value>,
-)->Response{
-    match video::enqueue_regeneration(&state,&id,&body){
-        Ok(job)=>(StatusCode::ACCEPTED,Json(job)).into_response(),
-        Err(message)=>error(StatusCode::BAD_REQUEST,message),
-    }
-}
-pub async fn upload(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(body): Json<Value>,
-) -> Response {
-    match video::enqueue_upload(&state, &id, &body) {
-        Ok(j) => (StatusCode::ACCEPTED, Json(j)).into_response(),
-        Err(e) => error(StatusCode::BAD_REQUEST, e),
-    }
-}
-pub async fn content(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    request: Request<Body>,
-) -> Response {
-    let path = match video::output_path(&state, &id) {
-        Ok(p) => p,
-        Err(e) => return error(StatusCode::NOT_FOUND, e),
+    let Ok(root)=state.config.data_dir.join("video").join(&id).canonicalize() else {
+        return error(StatusCode::NOT_FOUND,"보관된 파일이 없습니다.");
     };
-    match tower_http::services::ServeFile::new(path)
-        .try_call(request)
-        .await
-    {
-        Ok(response) => {
-            let mut response = response.into_response();
-            response
-                .headers_mut()
-                .insert("x-content-type-options", "nosniff".parse().unwrap());
-            response
-        }
-        Err(_) => error(StatusCode::NOT_FOUND, "영상 파일을 열 수 없습니다."),
-    }
-}
-pub async fn outputs_handler(State(state): State<AppState>) -> Json<Value> {
-    Json(json!(outputs(&state)))
-}
-pub async fn locations(State(state): State<AppState>) -> Json<Value> {
-    Json(json!({"outputs":[state.config.data_dir.join("video")],"comfy":[],"workflows":[]}))
-}
-fn workflows_from_config(cfg: &Value) -> Vec<Value> {
-    if !cfg["comfyWorkflow"].is_object() {
-        return Vec::new();
-    }
-    vec![json!({
-        "id": "default",
-        "name": cfg["comfyWorkflowName"].as_str().unwrap_or("ComfyUI"),
-        "bytes": cfg["comfyWorkflow"].to_string().len(),
-    })]
-}
-
-pub async fn workflows(State(state): State<AppState>) -> Json<Value> {
-    Json(json!(workflows_from_config(&video::config(&state))))
-}
-
-pub async fn models(State(state): State<AppState>) -> Json<Value> {
-    let cfg = video::config(&state);
-    let native = video::ffmpeg(&state).is_some();
-    let reachable = comfy_reachable(cfg["comfyUrl"].as_str().unwrap_or("")).await;
-    let comfy = reachable && cfg["comfyWorkflow"].is_object();
-    let mut items = vec![json!({
-        "id": "native",
-        "name": "DOMINION native (ffmpeg)",
-        "kind": "native",
-        "available": native,
-        "hint": if native { "로컬 ffmpeg으로 장면과 자막을 합성합니다." } else { "ffmpeg를 찾을 수 없습니다. 설정에서 경로를 지정하세요." },
-    })];
-    if comfy {
-        items.push(json!({
-            "id": "comfyui",
-            "name": cfg["comfyWorkflowName"].as_str().unwrap_or("ComfyUI"),
-            "kind": "comfyui",
-            "available": true,
-            "hint": "연결된 ComfyUI 워크플로로 생성합니다.",
-        }));
-    }
-    Json(json!(items))
-}
-
-pub async fn download_model(
-    State(state): State<AppState>, Path(id): Path<String>,
-) -> Response {
-    match video::start_download(state.clone(), &id) {
-        Ok(value) => (StatusCode::ACCEPTED, Json(value)).into_response(),
-        Err(message) => error(StatusCode::BAD_REQUEST, message),
-    }
-}
-
-pub async fn model_downloads(State(state): State<AppState>) -> Json<Value> {
-    Json(json!({"downloads": video::downloads(&state)}))
-}
-
-pub async fn catalog(State(state): State<AppState>) -> Json<Value> {
-    let cfg = video::config(&state);
-    let native = video::ffmpeg(&state).is_some();
-    let reachable = comfy_reachable(cfg["comfyUrl"].as_str().unwrap_or("")).await;
-    let comfy = reachable && cfg["comfyWorkflow"].is_object();
-    Json(json!({
-        "models": [
-            {"id":"native","name":"DOMINION native (ffmpeg)","kind":"native","available":native},
-            {"id":"comfyui","name":cfg["comfyWorkflowName"].as_str().unwrap_or("ComfyUI"),"kind":"comfyui","available":comfy},
-        ],
-        "videoModels": video::video_models(&state),
-        "selectedVideoModel": cfg["videoModel"],
-        "workflows": workflows_from_config(&cfg),
-        "engine": cfg["engine"],
-        "comfyUrl": cfg["comfyUrl"],
-        "comfyReachable": reachable,
-    }))
-}
-
-pub async fn files(State(state): State<AppState>) -> Json<Value> {
-    Json(json!(outputs(&state)))
-}
-
-pub async fn reveal(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    let path = match video::output_path(&state, &id) {
-        Ok(path) => path,
-        Err(message) => return error(StatusCode::NOT_FOUND, message),
+    let Ok(output)=root.join("output.mp4").canonicalize() else {
+        return error(StatusCode::NOT_FOUND,"보관된 파일이 없습니다.");
     };
-    #[cfg(target_os = "macos")]
-    let launched = tokio::process::Command::new("/usr/bin/open").arg("-R").arg(&path).status().await;
-    #[cfg(target_os = "windows")]
-    let launched = tokio::process::Command::new("explorer.exe")
-        .arg(path.parent().expect("output directory")).status().await;
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let launched = tokio::process::Command::new("xdg-open")
-        .arg(path.parent().expect("output directory")).status().await;
-    #[cfg(not(any(unix, windows)))]
-    let launched: std::io::Result<std::process::ExitStatus> =
-        Err(std::io::Error::from(std::io::ErrorKind::Unsupported));
-
-    match launched {
-        Ok(status) if status.success() => Json(json!({"opened":true})).into_response(),
-        _ => error(StatusCode::SERVICE_UNAVAILABLE, "영상 폴더를 열 수 없습니다."),
-    }
-}
-
-pub async fn not_available() -> Response {
-    error(
-        StatusCode::NOT_IMPLEMENTED,
-        "이 작업은 지원하지 않습니다. 영상 작업 만들기를 사용하세요.",
-    )
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn state() -> AppState {
-        let dir = std::env::temp_dir().join(format!("dominion-video-api-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let cfg = crate::config::Config {
-            port: 0,
-            data_dir: dir.clone(),
-            web_dir: dir.join("web"),
-            workspace: dir,
-        };
-        AppState::new(
-            cfg.clone(),
-            crate::db::Store::open(&cfg.db_path()).unwrap(),
-            crate::vault::Vault::open(&cfg.key_path()),
-        )
-    }
-    #[test]
-    fn enqueue_is_durable_and_never_publishes_implicitly() {
-        let s = state();
-        let result = video::enqueue(
-            &s,
-            &json!({"brief":"테스트 영상","engine":"native","duration":3,"publish":true}),
-        );
-        if video::ffmpeg(&s).is_some() {
-            let j = result.unwrap();
-            let raw = s.store.get("job", j["id"].as_str().unwrap()).unwrap();
-            assert_eq!(raw["input"]["publish"], false);
-            assert_eq!(raw["status"], "queued");
-            assert!(outputs(&s).is_empty());
-        }
-        assert!(video::enqueue(&s, &json!({"brief":"x","duration":900})).is_err());
-        let cleanup_dir = s.config.data_dir.clone();
-        drop(s);
-        std::fs::remove_dir_all(cleanup_dir).unwrap();
-    }
-    #[tokio::test]
-    async fn native_pipeline_produces_a_real_playable_container() {
-        let s = state();
-        if video::ffmpeg(&s).is_none() {
-            return;
-        }
-        let j = video::enqueue(
-            &s,
-            &json!({"brief":"실제 영상 테스트. 한글 프레임 확인","duration":3}),
-        )
-        .unwrap();
-        let id = j["id"].as_str().unwrap().to_string();
-        let job = s.store.get("job", &id).unwrap();
-        let ctx = crate::engine::jobs::JobContext::new(s.clone(), id.clone());
-        let result = video::run(&ctx, &job).await.unwrap();
-        assert!(result["bytes"].as_u64().unwrap() > 1000);
-        let data = std::fs::read(video::directory(&s, &id).unwrap().join("output.mp4")).unwrap();
-        assert_eq!(&data[4..8], b"ftyp");
-        assert!(
-            video::output_path(&s, &id).is_err(),
-            "unfinished job must not be served"
-        );
-        // The original remains intact; a derivative modifies only the chosen
-        // scene and reuses the unchanged image from the prior completed run.
-        s.store.patch_if("job",&id,"status",&json!("queued"),&json!({"status":"completed"}))
-            .unwrap();
-        let original_dir=video::directory(&s,&id).unwrap();
-        let first=std::fs::read(original_dir.join("card-00.png")).unwrap();
-        let second=std::fs::read(original_dir.join("card-01.png")).unwrap();
-        let derivative=video::enqueue_regeneration(&s,&id,&json!({
-            "sceneIndex":1,"prompt":"새 장면으로 바뀐 영상입니다"
-        })).unwrap();
-        let new_id=derivative["id"].as_str().unwrap().to_string();
-        let saved=s.store.get("job",&new_id).unwrap();
-        assert_eq!(saved["input"]["sourceJobId"],id);
-        assert_eq!(saved["input"]["autoUpload"],false);
-        let job_ctx=crate::engine::jobs::JobContext::new(s.clone(),new_id.clone());
-        let result=video::run(&job_ctx,&saved).await.unwrap();
-        assert!(result["quality"]["status"]=="passed"
-            || result["quality"]["status"]=="container_only");
-        let derivative_dir=video::directory(&s,&new_id).unwrap();
-        assert_eq!(first,std::fs::read(derivative_dir.join("card-00.png")).unwrap());
-        assert_ne!(second,std::fs::read(derivative_dir.join("card-01.png")).unwrap());
-        assert!(video::enqueue_regeneration(&s,&id,&json!({
-            "sceneIndex":100,"prompt":"invalid"
-        })).is_err());
-        assert!(video::enqueue(&s,&json!({
-            "brief":"x","engine":"native","autoUpload":true
-        })).is_err(),"nonconsensual delivery must never queue");
-        let cleanup_dir = s.config.data_dir.clone();
-        drop(s);
-        std::fs::remove_dir_all(cleanup_dir).unwrap();
+    if !output.starts_with(&root) {return error(StatusCode::NOT_FOUND,"파일 경로가 올바르지 않습니다.");}
+    use tower::Service;
+    match tower_http::services::ServeFile::new(output).try_call(request).await {
+        Ok(response)=>{
+            let mut response=response.into_response();
+            response.headers_mut().insert("x-content-type-options","nosniff".parse().unwrap());
+            response
+        },
+        Err(_)=>error(StatusCode::NOT_FOUND,"보관된 파일을 읽을 수 없습니다."),
     }
 }

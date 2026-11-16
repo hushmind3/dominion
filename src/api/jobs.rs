@@ -25,17 +25,12 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
         "workflow"=>{
             let Some(id)=input["workflowId"].as_str().filter(|id|state.store.get("workflow",id).is_some())else{return error(StatusCode::BAD_REQUEST,"워크플로를 찾을 수 없습니다.")};json!({"workflowId":id,"input":input["input"]})
         },
-        _=>return error(StatusCode::BAD_REQUEST,"해당 작업은 대화·회의·영상의 실행 API에서 시작하세요."),
+        _=>return error(StatusCode::BAD_REQUEST,"해당 작업은 대화·회의의 실행 API에서 시작하세요."),
     };
     match engine::jobs::enqueue(&state,kind,clean){Some(job)=>(StatusCode::ACCEPTED,Json(job)).into_response(),None=>error(StatusCode::INTERNAL_SERVER_ERROR,"작업을 대기열에 저장할 수 없습니다.")}
 }
 pub async fn cancel(State(state):State<AppState>,Path(id):Path<String>)->Response{
     let Some(job)=state.store.get("job",&id)else{return error(StatusCode::NOT_FOUND,"작업이 없습니다.")};
-    if job["kind"]=="rsi_evolve" {
-        // Also clean up descendants when a client repeats Stop on a terminal parent.
-        engine::jobs::cancel_rsi_children(&state,&id);
-        if job["status"]=="cancelled" {return Json(job).into_response();}
-    }
     if !matches!(job["status"].as_str(),Some("queued"|"running")){return error(StatusCode::CONFLICT,"진행 중인 작업만 중단할 수 있습니다.");}
     if let Some(session)=job["sessionId"].as_str(){state.cancel_session(session);}
     match state.store.patch_if("job",&id,"status",&job["status"],&json!({"status":"cancelled","cancelRequested":true,"finishedAt":chrono::Utc::now().to_rfc3339()})){

@@ -1,70 +1,31 @@
-// Check the resolved build graph rather than a runtime label.
+// Verify the slim runtime graph without probing retired RSI/media engines.
 import {execFileSync} from 'node:child_process'
-import {existsSync, readFileSync} from 'node:fs'
+import {existsSync,readFileSync} from 'node:fs'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
-
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const metadata = JSON.parse(execFileSync('cargo', [
-  'metadata', '--format-version', '1', '--no-deps', '--locked',
-], {cwd: root, encoding: 'utf8'}))
-const members = metadata.packages.filter(pkg => metadata.workspace_members.includes(pkg.id))
-const product = members.find(pkg => pkg.name === 'dominion-rust')
-const core = members.find(pkg => pkg.name === 'dominion-core')
-if (!product || !core) throw new Error('Product and native core must both be workspace members')
-const retired = new Set(['dominion-harness', 'dominion-agent-sdk'])
-if (members.some(pkg => retired.has(pkg.name))) throw new Error('Retired execution package in workspace')
-if (product.dependencies.some(dep => retired.has(dep.name))) throw new Error('Product depends on a retired runtime')
-if (!product.dependencies.some(dep => dep.name === core.name && dep.path === path.dirname(core.manifest_path))) {
-  throw new Error('Product must embed the workspace native core directly')
-}
-for (const pkg of members) {
-  if (!existsSync(pkg.manifest_path)) throw new Error(`Missing workspace manifest: ${pkg.manifest_path}`)
-}
-const source = readFileSync(path.join(root, 'src/engine/rsi_system.rs'), 'utf8')
-const map = source.match(/\("harness",\s*&\[([^\]]+)\]\)/s)?.[1]
-if (!map) throw new Error('RSI harness source map is missing')
-const sources = [...map.matchAll(/"([^"]+)"/g)].map(match => match[1])
-if (!sources.some(file => file.startsWith('crates/dominion-core/src/'))) {
-  throw new Error('RSI is not inspecting the native execution core')
-}
-for (const file of sources) {
-  if (!existsSync(path.join(root, file))) throw new Error(`Missing RSI runtime source: ${file}`)
-}
-// The product must call the real native driver, not just borrow its labels
-// or journal while retaining an independent model/tool retry loop.
-const runtime = readFileSync(path.join(root, 'src/engine/chat/runtime.rs'), 'utf8')
-const adapter = readFileSync(path.join(root, 'src/engine/chat/product.rs'), 'utf8')
-const outcome = readFileSync(path.join(root, 'src/engine/chat/outcome.rs'), 'utf8')
-if (!runtime.includes('mod outcome;') ||
-    !runtime.includes('use outcome::{') ||
-    !outcome.includes('pub(super) fn determine_task_outcome(') ||
-    runtime.includes('fn determine_task_outcome(')) {
-  throw new Error('Finalization policy must be isolated and called by runtime')
-}
-if (!sources.includes('src/engine/chat/outcome.rs')) {
-  throw new Error('RSI harness map must inspect the live finalization policy module')
-}
-const driver = readFileSync(path.join(root, 'crates/dominion-core/src/engine.rs'), 'utf8')
-const video = readFileSync(path.join(root, 'src/engine/video.rs'), 'utf8')
-const videoQuality = readFileSync(path.join(root, 'src/engine/video_quality.rs'), 'utf8')
-const jobs = readFileSync(path.join(root, 'src/engine/jobs.rs'), 'utf8')
-if (!video.includes('quality::inspect(') || !video.includes('comfy_story(') ||
-    !video.includes('enqueue_regeneration(') || !videoQuality.includes('pub async fn inspect(') ||
-    !jobs.includes('if kind=="video" && job["input"]["autoUpload"]==true')) {
-  throw new Error('Video creation, quality verification and opt-in delivery must share real job entrypoints')
-}
-
-if (!runtime.includes('dominion_core::engine::Engine::drive(')) {
-  throw new Error('Product entrypoints must invoke the native driver')
-}
-if (/while\s+!\s*(?:self\.)?finished/.test(runtime + adapter)) {
-  throw new Error('Retired product model retry loop reintroduced')
-}
-for (const phase of ['initialize', 'plan', 'model', 'verify', 'dispatch_tool', 'verify_tools']) {
-  if (!driver.includes(`host.${phase}(`)) throw new Error(`Native driver must own ${phase}`)
-}
-for (const file of ['crates/dominion-core/src/engine.rs', 'src/engine/chat/product.rs']) {
-  if (!sources.includes(file)) throw new Error(`RSI must inspect the live driver/adapter: ${file}`)
-}
-console.log(`Runtime architecture OK: ${members.map(pkg => pkg.name).join(', ')}; ${sources.length} live RSI harness sources`)
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')
+const meta=JSON.parse(execFileSync('cargo',['metadata','--format-version','1','--no-deps','--locked'],{cwd:root,encoding:'utf8'}))
+const members=meta.packages.filter(pkg=>meta.workspace_members.includes(pkg.id))
+const product=members.find(pkg=>pkg.name==='dominion-rust')
+const core=members.find(pkg=>pkg.name==='dominion-core')
+if(!product||!core)throw Error('Missing product/native core workspace member')
+for(const pkg of members)if(!existsSync(pkg.manifest_path))throw Error('Missing manifest: '+pkg.manifest_path)
+if(!product.dependencies.some(dep=>dep.name===core.name&&dep.path===path.dirname(core.manifest_path)))
+  throw Error('Product must embed the Rust native execution core')
+const runtime=readFileSync(path.join(root,'src/engine/chat/runtime.rs'),'utf8')
+const adapter=readFileSync(path.join(root,'src/engine/chat/product.rs'),'utf8')
+const outcome=readFileSync(path.join(root,'src/engine/chat/outcome.rs'),'utf8')
+const driver=readFileSync(path.join(root,'crates/dominion-core/src/engine.rs'),'utf8')
+const modules=readFileSync(path.join(root,'src/engine/mod.rs'),'utf8')
+const tools=readFileSync(path.join(root,'src/engine/tools.rs'),'utf8')
+if(!runtime.includes('dominion_core::engine::Engine::drive('))throw Error('Native driver must run product turns')
+if(!outcome.includes('pub(super) fn determine_task_outcome(')||!runtime.includes('mod outcome;'))
+  throw Error('Outcome policy must remain independently verifiable')
+if(/while\s+!\s*(?:self\.)?finished/.test(runtime+adapter))throw Error('Legacy model retry loop reintroduced')
+for(const phase of ['initialize','plan','model','verify','dispatch_tool','verify_tools'])
+  if(!driver.includes(`host.${phase}(`))throw Error('Native driver missing phase: '+phase)
+if(/^pub mod (rsi|video)(?:_|;)/m.test(modules)||/tool\("(?:rsi_|algorithm_propose|unsafe_audit)"/.test(tools))
+  throw Error('Retired generation engine or tool schema still registered')
+for(const file of ['src/engine/video.rs','src/engine/rsi_evolve.rs','src/engine/rsi_worktree.rs'])
+  if(existsSync(path.join(root,file)))throw Error('Retired engine source remains: '+file)
+console.log(`Agent runtime graph OK: ${members.map(p=>p.name).join(', ')}`)

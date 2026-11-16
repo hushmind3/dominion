@@ -33,30 +33,5 @@ sandbox backend is unavailable.
 `reconcileRun` requires manual observation of interrupted effects; it never
 silently repeats a potentially applied filesystem or shell operation.
 
-## Video jobs from the same client
-
-```ts
-const video = await agent.createVideo({
-  brief: 'Three short shots about a new product',
-  scenes: ['Exterior opening', 'Close-up demonstration', 'Final detail'],
-  engine: 'comfyui',
-  duration: 18,
-  autoUpload: false,
-})
-const progress = await agent.getVideoJob(video.id)
-if (progress.status === 'completed') {
-  const derivative = await agent.regenerateVideoScene(
-    video.id, 1, 'Detailed hand-held product demonstration',
-  )
-  console.log(derivative.id) // new job, original remains immutable
-}
-```
-
-Methods `listVideoJobs`, `createVideo`, `getVideoJob`, `regenerateVideoScene`
-and `queueVideoUpload` use the existing Rust video endpoints. An
-`autoUpload: true` option must be explicit, requires YouTube credentials and
-creates a **private** upload job after rendering. Quality reports are technical
-container/stream checks, not semantic or aesthetic quality guarantees.
-
 Build separately with `npm install && npm run build` inside this package.
 Publication is not implied. See [Rust SDK architecture](../../docs/HARNESS.md).
