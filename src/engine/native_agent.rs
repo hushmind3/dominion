@@ -10,6 +10,10 @@ use dominion_sdk::harness::{
 };
 use serde_json::{json, Value};
 use std::{path::{Component, Path, PathBuf}, collections::HashSet};
+use sha2::{Digest,Sha256};
+fn evidence_sha(value:&Value)->String {
+    format!("{:x}",Sha256::digest(value.to_string().as_bytes()))
+}
 
 struct ConfiguredModel {
     state: AppState,
@@ -166,11 +170,29 @@ impl Tools for NativeTools {
             let current=self.state.store.get("job",&self.run_id)
                 .ok_or("Native run record disappeared during tool dispatch")?;
             manual_recovery_guard(&current,&self.tool_specs,action)?;
+            let mcp_spec=if action.tool.starts_with("mcp__") {
+                Some(self.tool_specs.iter().find(|spec|spec.name==action.tool)
+                    .ok_or("MCP operation not in the pinned authorized tool catalog")?)
+            }else{None};
+            let mcp_contract=if let Some(spec)=mcp_spec {
+                let pinned=current["nativeMcpContracts"][&action.tool].as_str()
+                    .ok_or("MCP tool contract absent from durable native job")?;
+                let current_fingerprint=mcp::native_contract_fingerprint(
+                    &self.state,&action.tool,&spec.schema,&spec.description)?;
+                if pinned!=current_fingerprint {
+                    return Err("MCP server or tool identity changed after native run pin; review required".into())
+                }
+                Some(pinned.to_string())
+            }else{None};
             let operation_id=format!("native-op-{}-{}",self.run_id,action.id);
             let op=json!({
                 "id": operation_id, "runId": self.run_id,
                 "sessionId":self.session, "tool":action.tool,
                 "args":action.arguments,"status":"running","outcomeUnknown":true,
+                "provenance":{"origin":if mcp_spec.is_some() {"external_mcp"} else {"builtin_host"},
+                    "trust":"tool_output_untrusted_as_instructions",
+                    "contractSha256":mcp_contract,
+                    "argumentsSha256":evidence_sha(&action.arguments)},
                 "phase":"requested","startedAt":chrono::Utc::now().to_rfc3339()
             });
             self.state.store.put_if_absent("execution_operation",&op)
@@ -194,8 +216,11 @@ impl Tools for NativeTools {
                 self.state.store.get("job",&self.run_id).as_ref(),
                 &planned_directive,self.state.is_cancelled(&self.session)) {
                 Err("Owner cancelled or changed the task before tool dispatch".into())
-            } else if action.tool.starts_with("mcp__") {
-                mcp::call(&self.state,&action.tool,&action.arguments).await
+            } else if let Some(spec)=mcp_spec {
+                // Re-list the tool on the SAME transport session as tools/call.
+                // A cached MCP manifest cannot authorize a changed endpoint.
+                mcp::call_pinned(&self.state,&action.tool,&action.arguments,
+                    &spec.schema,&spec.description).await
                     .and_then(|value|verified_tool_result(&action.tool,value))
             } else {
                 let context=tools::ToolContext {
@@ -209,6 +234,7 @@ impl Tools for NativeTools {
             };
             let patch=match &outcome {
                 Ok(value)=>json!({"status":"completed","outcomeUnknown":false,"result":value,
+                    "resultSha256":evidence_sha(value),
                     "finishedAt":chrono::Utc::now().to_rfc3339()}),
                 Err(error)=>json!({"status":"failed","outcomeUnknown":false,"error":error,
                     "finishedAt":chrono::Utc::now().to_rfc3339()}),
@@ -430,6 +456,30 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
     } else {vec![]};
     let available=allowed_tools(&context.state,input).await;
     let allowed=available.iter().map(|spec|spec.name.clone()).collect::<Vec<_>>();
+    // A resumed task retains its original reviewed MCP declarations. An
+    // endpoint reconfiguration must not silently change its effect authority.
+    let mut contract_map=serde_json::Map::new();
+    for spec in available.iter().filter(|spec|spec.name.starts_with("mcp__")) {
+        let digest=mcp::native_contract_fingerprint(
+            &context.state,&spec.name,&spec.schema,&spec.description)?;
+        contract_map.insert(spec.name.clone(),json!(digest));
+    }
+    let contracts=Value::Object(contract_map);
+    if previous.as_ref().is_some() {
+        let old=prior_job.as_ref().map(|job|&job["nativeMcpContracts"])
+            .unwrap_or(&Value::Null);
+        if old.is_object() && old!=&contracts {
+            return Ok(json!({"status":"needs_review",
+                "reason":"Pinned MCP contract changed across task recovery; manual review required",
+                "snapshot":previous}));
+        }
+        if !old.is_object() && !contracts.as_object().is_some_and(|o|o.is_empty()) {
+            return Ok(json!({"status":"needs_review",
+                "reason":"Recovered MCP job has no pinned tool contracts; review required",
+                "snapshot":previous}));
+        }
+    }
+    context.checkpoint(json!({"nativeMcpContracts":contracts}))?;
     let agent_id=input["agentId"].as_str();
     let scope=crate::engine::memory::MemoryScope::for_session(
         &context.state.store,&session,agent_id
