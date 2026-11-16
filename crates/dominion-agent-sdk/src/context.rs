@@ -15,9 +15,10 @@ pub(crate) fn internal_specs() -> [ToolSpec; 2] {
     [
         ToolSpec {
             name: RECEIPT_READ.into(),
-            description: "Read a bounded slice of the full durable result from a prior tool operation by operation id. Internal, read-only, no external effects.".into(),
+            description: "Read a bounded slice of the full durable result or original arguments from a prior operation by id. The field argument accepts result (default) or arguments. Internal, read-only, no external effects.".into(),
             schema: json!({"type":"object","properties":{
                 "id":{"type":"string","description":"Exact operation id returned by receipt search or observed in history"},
+                "field":{"type":"string","enum":["result","arguments"],"description":"Which immutable receipt field to read, default result"},
                 "startChar":{"type":"integer","minimum":0,"description":"Unicode character offset, default 0"},
                 "maxChars":{"type":"integer","minimum":128,"maximum":6000}
             },"required":["id"],"additionalProperties":false}),
@@ -61,7 +62,12 @@ fn read_receipt(args: &Value, receipts: &[Receipt]) -> Result<Value, String> {
     let limit = nonnegative_number(args, "maxChars", 3000)?.clamp(128,6000);
     let receipt=receipts.iter().find(|receipt|receipt.id==id)
         .ok_or("No matching receipt in this run")?;
-    let full=receipt.result.to_string();
+    let field=args.get("field").and_then(Value::as_str).unwrap_or("result");
+    let full=match field {
+        "result"=>receipt.result.to_string(),
+        "arguments"=>receipt.arguments.to_string(),
+        _=>return Err("Receipt field must be result or arguments".into()),
+    };
     let char_count=full.chars().count();
     if start > char_count {return Err("startChar exceeds receipt length".into());}
     let content=full.chars().skip(start).take(limit).collect::<String>();
@@ -74,7 +80,7 @@ fn read_receipt(args: &Value, receipts: &[Receipt]) -> Result<Value, String> {
             "preview":clip(&arguments_text,240,240)})
     } else {receipt.arguments.clone()};
     Ok(json!({"id":receipt.id,"tool":receipt.tool,"success":receipt.success,
-        "step":receipt.step,"arguments":arguments,
+        "step":receipt.step,"field":field,"arguments":arguments,
         "totalChars":char_count,"startChar":start,"text":content,
         "nextChar":(start+limit<char_count).then_some(start+limit)}))
 }
@@ -261,6 +267,15 @@ mod tests {
         assert!(answer.to_string().len()<2000,"bounded receipt must remain bounded");
         assert!(record.arguments["content"].as_str().unwrap().len()>20_000,
             "durable original arguments are never modified");
+        let raw=record.arguments.to_string();
+        let page=read_receipt(&json!({"id":"large-arguments","field":"arguments",
+            "startChar":100,"maxChars":128}),&[record.clone()]).unwrap();
+        assert_eq!(page["field"],"arguments");
+        assert_eq!(page["totalChars"],raw.chars().count());
+        assert_eq!(page["text"],raw.chars().skip(100).take(128).collect::<String>());
+        assert_eq!(page["nextChar"],228);
+        assert!(read_receipt(&json!({"id":"large-arguments","field":"untrusted"}),
+            &[record]).is_err());
     }
     #[test]
     fn low_cost_large_latest_receipt_is_clipped_not_silently_discarded() {
