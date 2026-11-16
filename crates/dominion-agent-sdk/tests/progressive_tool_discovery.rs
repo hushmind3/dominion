@@ -18,7 +18,7 @@ impl Tools for Host{
   }).collect::<Vec<_>>();
   specs.push(ToolSpec{
    name:"mcp__archive_publish".into(),
-   description:"Publish a generated archive to the destination".into(),
+   description:"Publish generated archive to remote artifact registry".into(),
    schema:json!({"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}),
    read_only:false,
   });
