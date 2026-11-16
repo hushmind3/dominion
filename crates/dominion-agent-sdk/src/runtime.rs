@@ -34,15 +34,19 @@ impl BudgetLedger {
             started: Instant::now(), local_rounds: 0, local_tools: 0, local_proposals: 0 }
     }
 
-    /// Restore charges already committed by a durable host session.
+    /// Restore durable charges without refunding consumption already
+    /// admitted by another branch of this shared execution.
+    /// Admission is monotonic even if a stale checkpoint is supplied.
     pub fn restore(&mut self, rounds: usize, tools: usize) {
         let mut usage = self.usage.lock().unwrap();
-        usage.rounds = rounds;
-        usage.tools = tools;
-        usage.proposals = tools;
-        self.local_rounds = rounds;
-        self.local_tools = tools;
-        self.local_proposals = tools;
+        usage.rounds = usage.rounds.max(rounds);
+        usage.tools = usage.tools.max(tools);
+        // Older host checkpoints record only rounds and tools. They provide
+        // a proposal lower bound, not permission to rewind live proposals.
+        usage.proposals = usage.proposals.max(tools);
+        self.local_rounds = self.local_rounds.max(rounds);
+        self.local_tools = self.local_tools.max(tools);
+        self.local_proposals = self.local_proposals.max(tools);
     }
 
     /// Assign a unique round sequence while charging the shared budget.
@@ -158,6 +162,41 @@ mod tests {
         all.sort_unstable();
         assert_eq!(all, (0..400).collect::<Vec<_>>());
         assert_eq!(root.snapshot()["rounds"],400);
+    }
+
+    #[test]
+    fn restore_cannot_refund_parallel_tool_or_proposal_usage() {
+        let mut root = BudgetLedger::new(3, 3, Duration::from_secs(60));
+        let mut branch = root.branch();
+        assert!(branch.charge_tool());
+        assert!(branch.charge_proposal());
+        assert_eq!(branch.next_round(), Some(0));
+        // A stale durable snapshot must never overwrite live shared charges.
+        root.restore(0, 0);
+        assert_eq!(root.snapshot()["tools"], 1);
+        assert_eq!(root.snapshot()["rounds"], 1);
+        assert_eq!(root.snapshot()["proposals"], 1);
+        assert!(root.reserve_tools(2));
+        assert!(!branch.charge_tool());
+        assert!(branch.charge_proposal());
+        root.restore(1, 1);
+        assert_eq!(root.snapshot()["tools"], 3);
+        assert_eq!(root.snapshot()["proposals"], 2);
+    }
+
+    #[test]
+    fn restore_advances_but_does_not_regress_durable_admission() {
+        let mut ledger = BudgetLedger::new(8, 8, Duration::from_secs(60));
+        ledger.restore(4, 5);
+        assert_eq!(ledger.snapshot()["rounds"], 4);
+        assert_eq!(ledger.snapshot()["tools"], 5);
+        assert_eq!(ledger.snapshot()["proposals"], 5);
+        ledger.restore(1, 2);
+        assert_eq!(ledger.snapshot()["rounds"], 4);
+        assert_eq!(ledger.snapshot()["tools"], 5);
+        assert_eq!(ledger.snapshot()["proposals"], 5);
+        assert!(ledger.reserve_tools(3));
+        assert!(!ledger.reserve_tools(1));
     }
 
     #[test]
