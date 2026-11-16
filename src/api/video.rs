@@ -186,6 +186,27 @@ pub async fn content(
         Err(_) => error(StatusCode::NOT_FOUND, "영상 파일을 열 수 없습니다."),
     }
 }
+/// Download owner-editable SRT with fixed safe filename, only after QA.
+pub async fn captions(
+    State(state):State<AppState>,Path(id):Path<String>,request:Request<Body>
+)->Response{
+    let output=match video::output_path(&state,&id){
+        Ok(path)=>path,Err(e)=>return error(StatusCode::NOT_FOUND,e),
+    };
+    let source=output.with_file_name("captions.srt");
+    if !source.is_file(){return error(StatusCode::NOT_FOUND,"이 영상에는 자막 파일이 없습니다.");}
+    match tower_http::services::ServeFile::new(source).try_call(request).await{
+        Ok(result)=>{
+            let mut response=result.into_response();
+            response.headers_mut().insert(axum::http::header::CONTENT_TYPE,
+                "text/plain; charset=utf-8".parse().unwrap());
+            response.headers_mut().insert(axum::http::header::CONTENT_DISPOSITION,
+                "attachment; filename=\"dominion-captions.srt\"".parse().unwrap());
+            response
+        }
+        Err(_)=>error(StatusCode::NOT_FOUND,"자막 파일을 찾지 못했습니다."),
+    }
+}
 pub async fn outputs_handler(State(state): State<AppState>) -> Json<Value> {
     Json(json!(outputs(&state)))
 }
