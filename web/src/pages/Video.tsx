@@ -90,7 +90,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  }
  const connectGoogle=async()=>{
   setError('');
-  try{await openOAuth('youtube')}catch(e){setError(t('vid.youtubeFailed',{error:(e as Error).message}))}
+  try{await openOAuth('youtube');await Promise.allSettled([youtube.reload(),oauth.reload()])}catch(e){setError(t('vid.youtubeFailed',{error:(e as Error).message}))}
  }
  const changeEngine=async(next:'native'|'comfyui')=>{
   if(savingConfig)return;
@@ -216,7 +216,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
      <Button size="sm" variant="secondary" onClick={useResult}><Youtube size={15}/> YouTube 게시 준비</Button>
     </div>}
     {videoJob.renderBudget?.mode==='economy'&&<p className="text-[11px] text-[#697B66]">절약 모드 적용 · 예상 연산량 {videoJob.renderBudget.estimatedWorkReductionPercent??0}% 감소</p>}
-    {['failed','needs_review','interrupted'].includes(videoJob.status)&&<Notice message={videoJob.error||'작업을 확인한 다음 재시도해 주세요.'}/>}
+    {['failed','needs_review','interrupted'].includes(videoJob.status)&&<><Notice message={videoJob.error||'작업을 확인한 다음 재시도해 주세요.'}/><Button size="sm" variant="secondary" onClick={()=>{setTitle(videoJob.title||'');setPrompt(videoJob.brief);setRatio((videoJob.aspectRatio==='16:9'||videoJob.aspectRatio==='1:1'?videoJob.aspectRatio:'9:16'));setTab('create')}}><RefreshCw size={14}/> 설정을 불러와 다시 만들기</Button></>}
    </div>}
   </div>
  </Panel>
@@ -231,7 +231,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
     <div className="flex flex-wrap items-center gap-2">
      <span className={'inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] '+(video.value.native?.available?'border-emerald-300/30 bg-emerald-300/10 text-emerald-100':'border-white/15 bg-white/5 text-white/70')}><HardDrive size={13}/> 로컬 {video.value.native?.available?'준비':'설정 필요'}</span>
      <span className={'inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] '+(video.value.comfy.reachable?'border-emerald-300/30 bg-emerald-300/10 text-emerald-100':'border-white/15 bg-white/5 text-white/70')}>{video.value.comfy.reachable?<Wifi size={13}/>:<WifiOff size={13}/>} ComfyUI {video.value.comfy.reachable?'연결됨':'미연결'}</span>
-     <button type="button" aria-label="영상 상태 새로고침" disabled={refreshing} onClick={async()=>{setRefreshing(true);try{await Promise.allSettled([video.reload(),outputs.reload(),catalog.reload(),downloads.reload(),youtube.reload()])}finally{setRefreshing(false)}}} className="flex size-9 items-center justify-center rounded-xl border border-white/20 bg-white/10 hover:bg-white/20 disabled:opacity-50"><RefreshCw size={16} className={refreshing?'animate-spin':''}/></button>
+     <button type="button" aria-label="영상 상태 새로고침" disabled={refreshing} onClick={async()=>{setRefreshing(true);try{await Promise.allSettled([video.reload(),outputs.reload(),catalog.reload(),downloads.reload(),youtube.reload(),oauth.reload()])}finally{setRefreshing(false)}}} className="flex size-9 items-center justify-center rounded-xl border border-white/20 bg-white/10 hover:bg-white/20 disabled:opacity-50"><RefreshCw size={16} className={refreshing?'animate-spin':''}/></button>
     </div>
    </div>
    <div className="relative mt-6 grid grid-cols-3 divide-x divide-white/10 rounded-2xl border border-white/10 bg-white/5 py-3">
