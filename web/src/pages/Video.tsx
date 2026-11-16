@@ -16,7 +16,7 @@ type Ratio='9:16'|'16:9'|'1:1'
 type StudioTab='create'|'library'|'publish'|'settings'
 type StudioMode='quick'|'scenes'
 type VideoModel={id:string;name:string;kind:string;available:boolean;hint:string;missingFiles?:number}
-type VideoConfig={engine:VideoEngine;comfyUrl:string;voice?:string;narration?:boolean;videoModel?:string;resolution?:string;steps?:number;comfyWorkflow?:unknown;comfyWorkflowName?:string}
+type VideoConfig={engine:VideoEngine;comfyUrl:string;voice?:string;narration?:boolean;videoModel?:string;resolution?:string;steps?:number;comfyWorkflow?:unknown;comfyWorkflowName?:string;comfyModelsDir?:string}
 type VideoJob=JobState & {
  kind:'video'|'youtube_upload';title?:string;brief?:string;engine?:VideoEngine;
  phase?:string;progress?:number;outputUrl?:string|null;createdAt?:string;
@@ -28,7 +28,7 @@ type VideoJob=JobState & {
  result?:{bytes?:number;sceneCount?:number;renderedScenes?:number;reusedScenes?:number;reusedFrames?:number;generatedFrames?:number;renderSeconds?:number;url?:string}
 }
 type UploadJob=JobState & {progress?:number;result?:{url?:string}}
-type VideoStatus={config:VideoConfig;native?:{available:boolean};comfy:{reachable:boolean;available?:boolean};workflows:{id:string;name:string;bytes:number}[];jobs:VideoJob[]}
+type VideoStatus={config:VideoConfig;modelDirectory?:string;native?:{available:boolean};comfy:{reachable:boolean;available?:boolean};workflows:{id:string;name:string;bytes:number}[];jobs:VideoJob[]}
 type YoutubeStatus={connected:boolean;uploadAllowed:boolean;account?:{displayName:string;scopes:string}|null;uploads:UploadJob[]}
 type Draft={title:string;prompt:string;negative:string;ratio:Ratio;seconds:number;fps:number;seed:string;scenes:string[];continuity:string;mode:StudioMode}
 const ratios:Record<Ratio,{label:string;w:number;h:number}>={
@@ -88,6 +88,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  const [tab,setTab]=useState<StudioTab>('create')
  const [engineChoice,setEngineChoice]=useState<VideoEngine|null>(null)
  const [comfyUrl,setComfyUrl]=useState('')
+ const [modelDir,setModelDir]=useState('')
  const [voice,setVoice]=useState('Yuna')
  const [narration,setNarration]=useState(true)
  const [reuseId,setReuseId]=useState('')
@@ -152,6 +153,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
 
  useEffect(()=>{try{localStorage.setItem(draftKey,JSON.stringify(draft))}catch{}},[draft])
  useEffect(()=>{setComfyUrl(statusConfig.comfyUrl||'')},[statusConfig.comfyUrl])
+ useEffect(()=>{setModelDir(statusConfig.comfyModelsDir||'')},[statusConfig.comfyModelsDir])
  useEffect(()=>{setVoice(statusConfig.voice||'Yuna');setNarration(statusConfig.narration!==false)},[statusConfig.voice,statusConfig.narration])
  useEffect(()=>{if(currentId||!sortedJobs.length)return;setCurrentId(sortedJobs[0].id)},[currentId,sortedJobs])
  useEffect(()=>{if(active.value?.status==='completed'){void outputs.reload();void jobs.reload()}},[active.value?.status,outputs.reload,jobs.reload])
@@ -544,6 +546,11 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
    <div className="grid gap-4">
     <Panel className="p-4 sm:p-6"><h2 className={panelTitle}>AI 영상 모델</h2><p className="mt-1 text-[12px] text-[#807469]">미설치 모델도 선택한 뒤 바로 다운로드할 수 있습니다.</p>
      <div className="mt-3 grid gap-3">
+      <div className="rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-3">
+       <FormField label="ComfyUI 모델 설치 폴더"><div className="flex flex-col gap-2 sm:flex-row"><TextInput value={modelDir} onChange={e=>setModelDir(e.target.value)} aria-label="모델 설치 폴더 경로" placeholder={video.value.modelDirectory||'ComfyUI/models'}/><Button variant="secondary" disabled={savingConfig} className="shrink-0" onClick={()=>void saveConfig({comfyModelsDir:modelDir.trim()})}>경로 저장</Button></div></FormField>
+       <p className="mt-2 break-all text-[11px] leading-5 text-[#817569]">현재 다운로드 위치: {video.value.modelDirectory||'서버에서 확인 중'}</p>
+       <p className="mt-1 text-[11px] leading-5 text-[#817569]">다운로드는 DOMINION이 실행되는 컴퓨터의 이 폴더에 저장됩니다. 원격 ComfyUI를 연결했다면 원격 서버의 실제 모델 경로와 일치하는지 확인해 주세요.</p>
+      </div>
       <FormField label="모델 선택"><SelectInput value={statusConfig.videoModel||''} disabled={savingConfig} onChange={e=>void saveConfig({videoModel:e.target.value})}><option value="">모델 선택</option>{catalog.value.videoModels.map(model=><option key={model.id} value={model.id}>{model.name} · {model.available?'설치됨':'미설치'}</option>)}</SelectInput></FormField>
       <div className={soft+' flex flex-wrap items-center justify-between gap-3 p-3'}><div className="min-w-0"><strong className="block text-[12px] text-[#40372E]">{installed?.name||'모델을 선택해 주세요'}</strong><p className="mt-1 text-[11px] text-[#84766A]">{installed?.hint||'로컬에 설치된 모델만 렌더에 사용할 수 있습니다.'}</p></div><StateTag online={installed?.available}>{installed?.available?'준비됨':'설치 필요'}</StateTag></div>
       {installed&&!installed.available&&<Button variant="secondary" disabled={downloadState?.status==='downloading'} onClick={()=>void startDownload()}><Download size={14}/>{downloadState?.status==='downloading'?'모델 다운로드 중 · '+downloadState.progress+'%':'선택 모델 다운로드'}</Button>}
