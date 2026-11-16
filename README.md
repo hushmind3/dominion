@@ -153,6 +153,10 @@ The native Rust `jobs::steer_with_mode` and `autonomy::execute` also implement a
 
 See [2026 source-guided harness comparison](docs/AGENT-HARNESS-2026.md) and [TypeScript SDK contract](sdk/typescript/README.md).
 
+## 🛑 Video job stop and GPU cancellation (Sub2 only)
+
+The Video Studio's active preview and project library now let you stop an in-progress video. The GUI and TypeScript SDK (`video.cancel(id)`) call `POST /api/video/jobs/:id/cancel` on the **same Rust job engine**. ComfyUI cancellation is sent only to the exact recorded prompt UUID (never globally); its accepted request and an uncertain remote result are distinguished in the durable job record and UI. Rust video checkpoints now preserve storyboard and scene counters while updating the active prompt ID. This work is isolated to `dominion-sub2`; it does not alter main or other branches. [Execution and regression scope](docs/SUB2-VIDEO-CANCEL-CHECKPOINT-2026-11-16.md).
+
 ## 🦀 Native Rust SDK and autonomous execution
 
 **Rust is Dominion's primary engine and SDK.** The desktop, HTTP API and external Rust consumers use the same native lifecycle in `src/sdk.rs` (`Dominion::open / start / submit / steer / wait`). This keeps model selection, tools, durable jobs, memory and permissions under Dominion's control, independently of any vendor's agent SDK.
