@@ -447,6 +447,13 @@ impl Kernel<'_> {
              \"tool\":\"name\",\"arguments\":{},\"dependsOn\":[]}],\"answer\":null}. \
              On task completion return actions=[] and answer=\"actual result\"."
         };
+        let discovery_hint=if tool_discovery::needed(&tools) {
+            "If a needed capability is absent from this turn's advertised tools, \
+             call dominion_tool_search; the exact authorized schema appears in the \
+             following turn. Tool discovery never increases host permissions."
+        }else{
+            "Every currently permitted host tool is directly available."
+        };
         let system=format!(
             "You are DOMINION's model planner. The Rust kernel owns action dispatch, \
              limits, permission checks and verification. Respect the owner's instructions \
@@ -459,11 +466,8 @@ impl Kernel<'_> {
              edit requires a workspace tool receipt with written=true. \
              Previous tool outputs remain in the durable journal. Use dominion_receipt_search \
              and dominion_receipt_read for prior details; never replay external effects merely \
-             to retrieve an observation. When a required tool is absent from this turn's \
-             advertised catalogue, first call dominion_tool_search with the required capability; \
-             the exact authorized schema will be disclosed on the following turn. \
-             The host never grants permission through discovery. Strategy: {:?}. Owner instructions: {}.",
-            response_contract,request.strategy,request.owner_instructions
+             to retrieve an observation. {} Strategy: {:?}. Owner instructions: {}.",
+            response_contract,discovery_hint,request.strategy,request.owner_instructions
         );
         let mut invalid = 0usize;
         self.journal.save(&run)?;
