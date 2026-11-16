@@ -57,7 +57,6 @@ pub async fn content(State(state):State<AppState>,Path(id):Path<String>,request:
         return error(StatusCode::NOT_FOUND,"보관된 파일이 없습니다.");
     };
     if !output.starts_with(&root) {return error(StatusCode::NOT_FOUND,"파일 경로가 올바르지 않습니다.");}
-    use tower::Service;
     match tower_http::services::ServeFile::new(output).try_call(request).await {
         Ok(response)=>{
             let mut response=response.into_response();

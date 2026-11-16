@@ -114,7 +114,7 @@ pub fn requires_approval(name: &str) -> bool {
 }
 
 pub fn observational(name:&str)->bool{
-    matches!(name,"workspace_git_status"|"workspace_git_diff"|"workspace_list"|"workspace_read"|"workspace_read_range"|"code_search"|"file_list"|"file_read"|"memory_search"|"web_search"|"http_fetch"|"task_status"|"task_result"|"account_status"|"unsafe_audit")
+    matches!(name,"workspace_git_status"|"workspace_git_diff"|"workspace_list"|"workspace_read"|"workspace_read_range"|"code_search"|"file_list"|"file_read"|"memory_search"|"web_search"|"http_fetch"|"task_status"|"task_result"|"account_status" )
 }
 
 pub async fn execute(
@@ -156,7 +156,7 @@ pub async fn execute(
             let text = result["content"].as_str().unwrap_or_default();
             let lines = text.lines().collect::<Vec<_>>();
             let begin = (start as usize).min(lines.len());
-            // Match the tool contract in RSI too. Silently cutting a requested
+            // Honor the bounded read-range contract. Silently cutting a requested
             // 400-line read to 120 forces repeated paid prefix replays.
             let line_cap = 399;
             let end = (requested_end as usize).min(lines.len()).max(begin).min(begin.saturating_add(line_cap));
@@ -678,7 +678,7 @@ fn search_code_index(
     if needle.is_empty() {
         return Err("code_search query는 비어 있을 수 없습니다.".into());
     }
-    // Search the current workspace's persisted code index; no RSI campaign binding.
+    // Search the current workspace's persisted code index.
     let meta=match crate::engine::code_index::get(ctx.state,ctx.workspace){
         Some(meta)=>meta,
         None=>crate::engine::code_index::refresh(ctx.state,ctx.workspace)?,
@@ -1529,12 +1529,11 @@ mod tests {
         let digest=format!("{:x}",Sha256::digest(source.as_bytes()));
         let ctx=ToolContext {workspace:&dir,store:&state.store,state:&state,
             session_id:"s",agent_id:None,tools_enabled:true,tools_execution_enabled:true};
-        state.store.put("session",&json!({"id":"s","rsiRun":true})).unwrap();
+        state.store.put("session",&json!({"id":"s"})).unwrap();
         let no_op=execute(&ctx,"workspace_replace_range",
             &json!({"path":"src/example.rs","startLine":3,"endLine":3,
                 "newText":"let value = 0;","expectedSha256":digest}),"run").await.unwrap();
         assert_eq!(no_op["unchanged"],true);
-        assert!(no_op["error"].is_string());
         assert_eq!(std::fs::read_to_string(&path).unwrap(),source);
         let args=json!({"path":"src/example.rs","startLine":3,"endLine":3,
             "newText":"let value = 42;","expectedSha256":digest});
@@ -1564,7 +1563,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("dominion-code-search-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::create_dir_all(dir.join("src/engine")).unwrap();
-        std::fs::write(dir.join("src/engine/agent_kernel.rs"),"fn run_loop() {}\nfn record_rsi_lesson() {}\n").unwrap();
+        std::fs::write(dir.join("src/engine/agent_kernel.rs"),"fn run_loop() {}\nfn record_agent_lesson() {}\n").unwrap();
         let config = Config {
             port: 0,
             data_dir: dir.clone(),
@@ -1593,7 +1592,7 @@ mod tests {
                     "path":"src/engine/agent_kernel.rs",
                     "symbols":[
                         {"name":"run_loop","kind":"fn","line":120},
-                        {"name":"record_rsi_lesson","kind":"fn","line":900}
+                        {"name":"record_agent_lesson","kind":"fn","line":900}
                     ]
                 }),
             )
@@ -1613,7 +1612,7 @@ mod tests {
         assert_eq!(result["matches"][0]["line"], 120);
         state.store.put("code_index",&json!({"id":"foreign","sourceDir":"/another/repository","generatedAt":"2099-01-01","files":1}));
         state.store.put("code_index_file",&json!({"id":"foreign-file","indexId":"foreign","path":"private.rs","symbols":[{"name":"run_loop","kind":"fn","line":999}]}));
-        let multi=search_code_index(&ctx,"fn run_loop record_rsi_lesson",10).unwrap();
+        let multi=search_code_index(&ctx,"fn run_loop record_agent_lesson",10).unwrap();
         assert_eq!(multi["matchCount"],2,"{multi}");
         assert!(multi["matches"].as_array().unwrap().iter().all(|row|row["path"]!="private.rs"));
         let path_result = search_code_index(&ctx, "agent_kernel.rs", 10).unwrap();

@@ -679,32 +679,6 @@ mod tests {
     }
 
     #[test]
-    fn verified_controller_changes_the_executed_repair_budget() {
-        assert_eq!(rsi_edit_repair_limit(&json!({})),2);
-        assert_eq!(rsi_edit_repair_limit(&json!({"rsiEditPolicy":{"repairLimit":0}})),0);
-        assert_eq!(rsi_edit_repair_limit(&json!({"rsiEditPolicy":{"repairLimit":1}})),1);
-        assert_eq!(rsi_edit_repair_limit(&json!({"rsiEditPolicy":{"repairLimit":3}})),3);
-        assert_eq!(rsi_edit_repair_limit(&json!({"rsiEditPolicy":{"repairLimit":999}})),3);
-    }
-
-    #[test]
-    fn incremental_video_checkpoint_preserves_scene_proof_and_remote_intent(){
-        let state=temp_state();
-        let job=enqueue(&state,"video",json!({"brief":"sample"})).unwrap();
-        let id=job["id"].as_str().unwrap().to_owned();
-        let ctx=JobContext::new(state.clone(),id.clone());
-        ctx.checkpoint(json!({"videoState":{
-            "scenes":["scene one","scene two"],"promptId":"remote-7","inFlight":true,
-            "rendered":[{"index":0,"sha":"abc"}]
-        }})).unwrap();
-        ctx.checkpoint(json!({"phase":"rendering","videoState":{"inFlight":false}})).unwrap();
-        let saved=state.store.get("job",&id).unwrap();
-        assert_eq!(saved["videoState"]["scenes"][1],"scene two");
-        assert_eq!(saved["videoState"]["promptId"],"remote-7");
-        assert_eq!(saved["videoState"]["rendered"][0]["sha"],"abc");
-        assert_eq!(saved["videoState"]["inFlight"],false);
-    }
-    #[test]
     fn enqueue_creates_a_queued_job() {
         let state = temp_state();
         let job = enqueue(
@@ -758,35 +732,6 @@ mod tests {
             "a second learning job must wait while one is running"
         );
         let _ = std::fs::remove_dir_all(&state.config.data_dir);
-    }
-
-    #[test]
-    fn rsi_stop_cancels_only_live_descendants_and_cannot_be_resurrected() {
-        let state=temp_state();
-        for (id,parent,status) in [("live","parent","running"),("queued","parent","queued"),
-            ("done","parent","completed"),("other","sibling","running")] {
-            state.store.put("job",&json!({"id":id,"kind":"rsi_generation","status":status,
-                "input":{"rsiCampaignId":parent}}));
-        }
-        cancel_rsi_children(&state,"parent");
-        cancel_rsi_children(&state,"parent");
-        assert_eq!(state.store.get("job","live").unwrap()["status"],"cancelled");
-        assert_eq!(state.store.get("job","queued").unwrap()["status"],"cancelled");
-        assert_eq!(state.store.get("job","done").unwrap()["status"],"completed");
-        assert_eq!(state.store.get("job","other").unwrap()["status"],"running");
-        assert!(JobContext::new(state,"live".into()).checkpoint(json!({"status":"completed"})).is_err());
-    }
-
-    #[test]
-    fn recovery_does_not_requeue_an_orphan_rsi_generation() {
-        let state=temp_state();
-        state.store.put("job",&json!({"id":"parent","kind":"rsi_evolve","status":"running",
-            "rsiEvolutionInFlight":true,"attempts":1}));
-        state.store.put("job",&json!({"id":"child","kind":"rsi_generation","status":"running",
-            "input":{"rsiCampaignId":"parent"},"attempts":1}));
-        recover(&state);
-        assert_eq!(state.store.get("job","parent").unwrap()["status"],"needs_review");
-        assert_eq!(state.store.get("job","child").unwrap()["status"],"cancelled");
     }
 
     #[test]

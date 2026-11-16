@@ -1,11 +1,8 @@
 //! Durable, deterministic repository inspection.
 //!
-//! The expensive part of self-improvement was not reading code once; it was
-//! making a model rediscover the same repository on every attempt. This module
-//! reads every source file once, stores a content hash, symbols, tests and
-//! static findings, and reuses unchanged files on later inspections. RSI then
-//! receives a compact file map and the full context of the likely targets
-//! instead of spending hundreds of thousands of input tokens listing the tree.
+//! Index workspace sources once, retain their hashes and symbols, and reuse
+//! unchanged inspections. Ordinary agents use this index for code_search
+//! without repeatedly sending full files to the model.
 use crate::{engine::memory, state::AppState};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -38,10 +35,8 @@ fn is_source(path: &Path) -> bool {
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or("");
-    // The coordinator's evaluation corpus is not source-edit context. Keep
-    // it out of discovery, target selection and automatically inlined excerpts.
-    if name == "rsi_oracle_fixture.rs" || name == "rsi_meta.rs"
-        || name.ends_with(".min.js") || name.ends_with(".lock") || name.starts_with('.') {
+    // Generated artifacts and lockfiles are not source-edit navigation targets.
+    if name.ends_with(".min.js") || name.ends_with(".lock") || name.starts_with('.') {
         return false;
     }
     matches!(
@@ -976,7 +971,7 @@ fn rank_focus_spans(
     ranking
 }
 
-/// Returns compact, source-hash-verified RSI context instead of repeatedly
+/// Returns compact, source-hash-verified workspace context instead of repeatedly
 /// sending an entire large source file to the model on every tool round.
 pub fn bounded_focus_context(
     state: &AppState, source: &Path, index_id: &str, path: &str,
@@ -1270,7 +1265,7 @@ mod tests {
     }
 
     #[test]
-    fn rsi_navigation_reuses_the_index_without_injecting_source_or_hotspots() {
+    fn repository_navigation_reuses_the_index_without_injecting_source_or_hotspots() {
         let (state,root)=temp_state();let source=root.join("repo");
         std::fs::create_dir_all(source.join("src")).unwrap();
         let content=format!("pub fn target() {{\n// {}\n}}\n","SOURCE_ONLY_NOT_A_TASK ".repeat(4000));
@@ -1324,8 +1319,8 @@ mod tests {
         let source = root.join("source");
         std::fs::create_dir_all(source.join("src/engine")).unwrap();
         std::fs::write(
-            source.join("src/engine/rsi_evolve.rs"),
-            "//! rsi\npub fn run_loop() {\n    // TODO: remove the cap\n}\n#[test]\nfn a_test() {}\n",
+            source.join("src/engine/agent_kernel.rs"),
+            "//! agent\npub fn run_loop() {\n    // TODO: remove the cap\n}\n#[test]\nfn a_test() {}\n",
         )
         .unwrap();
         let first = refresh(&state, &source).unwrap();
@@ -1338,15 +1333,15 @@ mod tests {
         assert_eq!(second["changedFiles"], 0);
         assert_eq!(second["reusedFiles"], 1);
         std::fs::write(
-            source.join("src/engine/rsi_evolve.rs"),
+            source.join("src/engine/agent_kernel.rs"),
             "pub fn run_loop() {}\n",
         )
         .unwrap();
         let third = refresh(&state, &source).unwrap();
         assert_eq!(third["changedFiles"], 1);
         assert_eq!(third["todos"], 0);
-        let (_, block) = prompt_context(&state, &source, &["src/engine/rsi_evolve.rs".into()]).unwrap();
-        assert!(block.contains("src/engine/rsi_evolve.rs"));
+        let (_, block) = prompt_context(&state, &source, &["src/engine/agent_kernel.rs".into()]).unwrap();
+        assert!(block.contains("src/engine/agent_kernel.rs"));
         assert!(block.contains("run_loop"));
         let _ = std::fs::remove_dir_all(root);
     }
