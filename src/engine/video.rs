@@ -577,6 +577,40 @@ fn render_budget(duration: u64, fps: u64, steps: u64,
     })
 }
 
+/// Preserve the main API's scene-level regeneration while using sub3's
+/// immutable video job inputs and verified clip reuse. No source mutation or
+/// automatic reposting is permitted for a derivative render.
+pub fn enqueue_regeneration(state:&AppState,source_id:&str,body:&Value)->Result<Value,String>{
+ let original=state.store.get("job",source_id)
+  .filter(|v|v["kind"]=="video"&&v["status"]=="completed")
+  .ok_or("완료된 원본 영상만 장면별 재제작할 수 있습니다.")?;
+ let mut scenes=original["input"]["scenes"].as_array().cloned()
+  .filter(|v|!v.is_empty())
+  .or_else(||original["videoState"]["scenes"].as_array().map(|items|
+   items.iter().map(|item|json!({"script":item,"visualPrompt":item})).collect()))
+  .ok_or("원본 영상에서 편집 가능한 장면 정보를 찾을 수 없습니다.")?;
+ let index=body["sceneIndex"].as_u64().ok_or("재제작할 장면 번호가 필요합니다.")? as usize;
+ if index>=scenes.len(){return Err("원본 영상에 해당 장면이 없습니다.".into())}
+ let prompt=body["prompt"].as_str().map(str::trim)
+  .filter(|s|!s.is_empty()&&s.len()<=2000)
+  .ok_or("수정된 장면 설명은 1~2000바이트여야 합니다.")?;
+ if !scenes[index].is_object(){
+  scenes[index]=json!({"script":scenes[index],"visualPrompt":scenes[index]});
+ }
+ scenes[index]["script"]=json!(prompt);
+ scenes[index]["visualPrompt"]=json!(prompt);
+ let mut input=original["input"].clone();
+ input["scenes"]=json!(scenes);
+ input["sourceJobId"]=json!(source_id);
+ input["regenerateSceneIndex"]=json!(index);
+ input["publish"]=json!(false);
+ input["autoUpload"]=json!(false);
+ input["studioAutoUpload"]=json!(false);
+ input["studioPrivacyStatus"]=json!("private");
+ jobs::enqueue(state,"video",input)
+  .map(|v|public_job(&v))
+  .ok_or("장면 재제작 작업 저장에 실패했습니다.".into())
+}
 pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
     enqueue_inner(state,body,None)
 }
