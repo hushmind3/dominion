@@ -1,6 +1,6 @@
 use crate::engine::chat::TurnRequest;
 use crate::engine::run_quiet;
-use crate::engine::{learning, reflect, rooms, workflows};
+use crate::engine::{learning, reflect, rooms};
 use crate::state::AppState;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
@@ -371,7 +371,6 @@ pub fn start(state: AppState) {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(30)).await;
-            schedule_automations(&state);
             // A process restart removes in-memory approval timers. The persisted
             // deadline still expires automatically during normal operation.
             crate::engine::chat::expire_stale_approvals(&state);
@@ -496,7 +495,6 @@ async fn run_job(state: AppState, job: Value) {
         .to_string();
 
     let result = match kind.as_str() {
-        "workflow" => workflows::run(&context, &job).await,
         "room" | "meeting" => rooms::run(&context, &job).await,
         "prompt" => run_prompt(&context, &job).await,
         "rsi_compare"|"rsi_evolve"|"rsi_generation" => Err(
@@ -748,59 +746,6 @@ async fn run_resume(context: &JobContext, job: &Value) -> Result<Value, String> 
     Ok(result)
 }
 
-fn schedule_automations(state: &AppState) {
-    let now = chrono::Utc::now();
-    for automation in state.store.all("automation") {
-        if automation.get("enabled").and_then(|value| value.as_bool()) != Some(true) {
-            continue;
-        }
-        let Some(next_at) = automation.get("nextAt").and_then(|value| value.as_str()) else {
-            continue;
-        };
-        let Ok(next) = chrono::DateTime::parse_from_rfc3339(next_at) else {
-            continue;
-        };
-        if next.with_timezone(&chrono::Utc) > now {
-            continue;
-        }
-        let kind = automation
-            .get("kind")
-            .and_then(|value| value.as_str())
-            .unwrap_or("prompt");
-        let input = automation
-            .get("input")
-            .cloned()
-            .unwrap_or_else(|| json!({}));
-        let job_kind = if kind == "meeting" { "room" } else { kind };
-        if !matches!(job_kind, "prompt" | "workflow" | "room" | "learn") {
-            continue;
-        }
-        // A scheduler restart between enqueue and nextAt persistence must
-        // NOT start the same due occurrence twice. The stable ID is bound to
-        // this automation and its exact scheduled time, not the wall clock.
-        let Some(automation_id)=automation["id"].as_str() else {continue;};
-        let run_id=format!("automation-{}",
-            crate::engine::memory::stable_id(&[automation_id,next_at]));
-        if enqueue_once(state,&run_id,job_kind,input).is_none(){
-            // A conflicting persisted occurrence is safer than double
-            // execution: leave nextAt intact for operator inspection.
-            state.store.audit("automation.enqueue_conflict",json!({
-                "automationId":automation_id,"dueAt":next_at,"jobId":run_id
-            }));
-            continue;
-        }
-        let mut updated = automation.clone();
-        let interval = automation
-            .get("intervalMinutes")
-            .and_then(|value| value.as_i64())
-            .unwrap_or(1440)
-            .max(1);
-        updated["lastAt"] = json!(now.to_rfc3339());
-        updated["nextAt"] = json!((now + chrono::Duration::minutes(interval)).to_rfc3339());
-        state.store.put("automation", &updated);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -844,32 +789,6 @@ mod tests {
         assert!(resume_owner_instruction(&json!({"resumeCount":1,"resumeEvidence":{
             "source":"owner_attestation","applied":true,"details":"Already done"
         }}),"Goal").is_err());
-    }
-
-    #[test]
-    fn scheduled_automation_occurrence_is_not_duplicated_after_restart_replay(){
-        let state=temp_state();
-        let due="2026-01-01T00:00:00Z";
-        let automation=state.store.put("automation",&json!({
-            "id":"schedule-a","enabled":true,"nextAt":due,
-            "intervalMinutes":1440,"kind":"prompt",
-            "input":{"prompt":"Read the project status","agentId":"worker-a"}
-        })).unwrap();
-        let id=automation["id"].as_str().unwrap().to_string();
-        schedule_automations(&state);
-        let jobs=state.store.all("job");
-        assert_eq!(jobs.len(),1);
-        assert_eq!(jobs[0]["status"],"queued");
-        // Simulate a crash before the nextAt update becomes durable: the
-        // old due occurrence is seen again, but it keeps the same job ID.
-        let mut reopened=state.store.get("automation",&id).unwrap();
-        reopened["nextAt"]=json!(due);
-        state.store.put("automation",&reopened).unwrap();
-        schedule_automations(&state);
-        assert_eq!(state.store.all("job").len(),1);
-        // A genuinely new scheduled occurrence still receives a new ID.
-        let after=state.store.get("automation",&id).unwrap();
-        assert_ne!(after["nextAt"],json!(due));
     }
 
     #[test]
@@ -928,12 +847,12 @@ mod tests {
         let state = temp_state();
         let job = enqueue(
             &state,
-            "workflow",
-            json!({ "workflowId": "w1", "input": "hi" }),
+            "prompt",
+            json!({ "prompt": "hi" }),
         )
         .expect("job");
         assert_eq!(job["status"], "queued");
-        assert_eq!(job["kind"], "workflow");
+        assert_eq!(job["kind"], "prompt");
         assert_eq!(job["stepTotal"], 0);
 
         let queued = next_queued(&state).expect("worker sees it");
@@ -995,8 +914,8 @@ mod tests {
         let state = temp_state();
         let job = enqueue(
             &state,
-            "workflow",
-            json!({ "workflowId": "w", "input": "" }),
+            "prompt",
+            json!({ "prompt": "w" }),
         )
         .unwrap();
         let mut running = job.clone();
@@ -1048,8 +967,8 @@ mod tests {
         let state = temp_state();
         let job = enqueue(
             &state,
-            "workflow",
-            json!({ "workflowId": "w", "input": "", "sessionId": "session-1" }),
+            "prompt",
+            json!({ "prompt": "w", "sessionId": "session-1" }),
         )
         .unwrap();
         let mut running = job.clone();
