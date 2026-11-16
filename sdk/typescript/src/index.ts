@@ -206,6 +206,11 @@ export class Dominion {
   }
   readonly health = () => this.request<Health>('GET','/api/health');
   readonly status = () => this.request<Record<string,unknown>>('GET','/api/status');
+  readonly evaluation = {
+    /** Root-task outcomes from real Rust finalizers, not self-scoring. */
+    summary:(options?:RequestOptions)=>this.request<Record<string,unknown>>(
+      'GET','/api/evaluation/summary',undefined,options),
+  };
   readonly jobs = {
     list: (options?: RequestOptions) => this.request<Job[]>('GET','/api/jobs',undefined,options),
     get: (key: string, options?: RequestOptions) => this.request<Job>('GET','/api/jobs/'+id(key),undefined,options),

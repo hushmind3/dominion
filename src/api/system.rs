@@ -226,6 +226,10 @@ pub async fn model_usage(State(state): State<AppState>) -> Json<Value> {
     Json(state.store.usage_summary())
 }
 
+pub async fn evaluation_summary(State(state):State<AppState>)->Json<Value>{
+    Json(crate::engine::evaluation::summary(&state))
+}
+
 pub async fn run_wakes(State(state): State<AppState>) -> Json<Value> {
     Json(json!(state.store.all("run_wake")))
 }
