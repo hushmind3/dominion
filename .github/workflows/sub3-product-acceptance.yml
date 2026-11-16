@@ -21,6 +21,7 @@ on:
       - 'src/api/video.rs'
       - 'src/api/video_studio.rs'
       - 'web/src/components/VideoAutopilot.tsx'
+      - 'web/src/components/VideoModelInstall.tsx'
       - 'src/engine/verification.rs'
       - 'src/engine/code_index.rs'
       - 'src/engine/rsi_system.rs'
@@ -75,6 +76,11 @@ jobs:
         env:
           DOMINION_REQUIRE_VIDEO_FFMPEG: '1'
         run: cargo test --bin dominion-rust engine::video_studio::tests -- --nocapture
+      - name: Verify one-action local video model installer and runtime safety
+        run: |
+          cargo test --bin dominion-rust api::video::tests::turnkey_installer_rejects_an_invalid_model_root_without_mutating_video_settings -- --nocapture
+          cargo test --bin dominion-rust api::video::tests::comfy_auto_launcher_refuses_remote_hosts_without_spawning -- --nocapture
+          cargo test --bin dominion-rust engine::video::tests::listed_model_sources_are_real_comfyui_layouts_and_nontrivial_assets -- --nocapture
       - name: Run real HTTP/LLM fixture integration paths (no paid API)
         run: |
           for contract in parallel_reads_ ordinary_chat_ room_selected_tools_ native_job_prompt_runs token_budget_is_enforced_ chat_fails_over_ delegate_task_runs_; do
