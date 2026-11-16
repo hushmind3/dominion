@@ -30,28 +30,10 @@ fn estimate_with_history(
 )->Option<(f64,u64)> {
     let baseline=estimate(price,input,output);
     let key=binding(route);
-    let mut samples=0u64;
-    let mut calls=0u64;
-    let mut total=0u64;
-    let mut cached=0u64;
-    let mut written=0u64;
-    for job in state.store.all("job") {
-        if job["nativeRoute"]["binding"].as_str()!=Some(key.as_str())
-            ||job["status"]!="completed" {
-            continue;
-        }
-        let meter=&job["nativeModelUsage"];
-        let measured=meter["cacheReportedCalls"].as_u64().unwrap_or(0);
-        if measured==0 || meter["unreportedCalls"].as_u64().unwrap_or(0)>0 {
-            continue;
-        }
-        let Some(used)=meter["inputTokens"].as_u64().filter(|v|*v>0) else{continue};
-        samples+=1;
-        calls=calls.saturating_add(measured);
-        total=total.saturating_add(used);
-        cached=cached.saturating_add(meter["cacheReadTokens"].as_u64().unwrap_or(0));
-        written=written.saturating_add(meter["cacheWriteTokens"].as_u64().unwrap_or(0));
-    }
+    // Expression index restricts SQLite work to completed jobs from this
+    // exact pinned route. Database failure is not evidence of a discount.
+    let (samples,calls,total,cached,written)=
+        state.store.native_route_cache_aggregate(&key).ok()?;
     if samples<3||calls<3||total<1024||cached.saturating_add(written)>total {
         return Some((baseline,0));
     }
