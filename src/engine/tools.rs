@@ -51,31 +51,6 @@ pub fn definitions() -> Vec<Value> {
         tool("memory_store", "Save a grounded memory for this agent. Quote the user's exact words; invented facts are rejected. Shared memories are managed by the user.", object(json!({"text": text("Fact to remember, maximum 1600 characters"), "evidenceQuote": text("Exact quote from the current user message supporting the fact"), "sourceMessageId": text("Optional earlier source message ID"), "type": json!({"type":"string","enum":["fact","preference","decision","procedure","lesson"]}), "key": text("Optional stable fact key; a new value replaces the previous value for this key"), "scope": json!({"type":"string","enum":["agent"]})}), vec!["text", "evidenceQuote"])),
         tool("memory_search", "Find saved knowledge relevant to a topic", object(json!({"query": text("Search query")}), vec!["query"])),
         tool("skill_propose", "Draft a reusable skill for user review", object(json!({"name": text("Skill name"), "instructions": text("Reusable instructions")}), vec!["name", "instructions"])),
-        tool("algorithm_propose", "Propose a new self-improvement search formula. It may be tried in the next scheduled generation; replay match is context only and never activates it.", object(json!({
-            "name": text("Algorithm name"),
-            "expression": text("Arithmetic over attempts, accepted, regressions, inconclusive, novelty, successRate, usefulGenerations, barrenRate, verifiedOutcomes, holdoutGains, gainPer10kTokens, tokenCost, objectiveMatch, unresolved, exploration"),
-            "targetExpression": text("Optional source-file ranking formula using pathEvidence, symbolEvidence, bodyEvidence, novelty, repeatPenalty, sourceCost and other validated source features"),
-            "description": text("Why this formula should choose better improvement targets"),
-            "evidence": json!({"type":"array","items":{"type":"string"},"description":"Observed failures or regressions that justify the formula"})
-        }), vec!["expression"])),
-        tool("unsafe_audit", "Scan workspace Rust files for unsafe blocks, functions, impls, traits or extern items without a preceding SAFETY justification. Read-only; available only during RSI generations.", object(json!({
-            "path": text("Optional relative file or folder; defaults to the workspace root")
-        }), vec![])),
-        tool("rsi_system_plan", "Propose a causal redesign of the active agent's algorithms, harness, memory, learning, tools or improvement method. Requires actual source changes and independent verification.", object(json!({
-            "component":text("Existing or newly invented subsystem role, or system for a coupled multi-component redesign"),
-            "components":json!({"type":"array","items":{"type":"string"},"minItems":2,"maxItems":32,"uniqueItems":true}),
-            "componentFiles":json!({"type":"object","description":"For component=system, map every component to its nonempty targetFiles subset; cover all declared files","additionalProperties":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":24}}),
-            "hypothesis":text("Observed limitation, causal reason and falsifiable outcome"),
-            "design":text("New executable architecture or algorithm to implement"),
-            "targetFiles":json!({"type":"array","items":{"type":"string"},"minItems":1,"maxItems":24,"uniqueItems":true}),
-            "nextDomain":json!({"type":"string","enum":crate::engine::rsi_evolve::DOMAINS})
-        }),vec!["component","hypothesis","design","targetFiles","nextDomain"])),
-        tool("rsi_method_propose", "Save a reusable executable procedure learned during RSI research. Existing procedure nodes run through the normal tool runtime in later scheduled work; registration is not improvement evidence.", object(json!({
-            "name":text("Reusable method name"),
-            "description":text("Principle, source and limits of the method"),
-            "domain":json!({"type":"string","enum":crate::engine::rsi_evolve::DOMAINS}),
-            "verification":json!({"type":"object","description":"Existing procedure format: type=procedure, appliesTo.requestContains, nodes [{id,tool,arguments}], edges [{from,to}], after [{kind:file_equals/file_contains/file_exists/tool_called,path,text,tool}]. Arguments can bind a prior node result via $node.field. Include concrete postconditions."})
-        }), vec!["name","domain","verification"])),
         tool("delegate_task", "Delegate a self-contained task to another agent and optionally wait for its result", object(json!({
             "agentId": text("Target agent id"),
             "prompt": text("Task instructions"),
@@ -98,6 +73,22 @@ pub fn definitions() -> Vec<Value> {
         }), vec!["action"])),
         tool("github_api", "Call the GitHub REST API as the connected account. Write methods require approval (approval required)", object(json!({"method": json!({"type": "string", "enum": ["GET", "POST", "PATCH", "PUT", "DELETE"]}), "path": text("GitHub API path beginning with /"), "body": json!({"type": "object"})}), vec!["method", "path"])),
     ]
+}
+
+#[cfg(test)]
+mod retired_tools_tests {
+    use super::*;
+    #[test]
+    fn general_agent_menu_excludes_autonomous_research_tools() {
+        let names = definitions().into_iter().filter_map(|tool|
+            tool["function"]["name"].as_str().map(str::to_string)
+        ).collect::<Vec<_>>();
+        for retired in ["algorithm_propose", "unsafe_audit", "rsi_system_plan", "rsi_method_propose"] {
+            assert!(!names.iter().any(|name| name == retired), "{retired} must not consume prompt tokens");
+        }
+        assert!(names.iter().any(|name| name == "workspace_write"));
+        assert!(names.iter().any(|name| name == "delegate_task"));
+    }
 }
 
 fn tool(name: &str, description: &str, parameters: Value) -> Value {
