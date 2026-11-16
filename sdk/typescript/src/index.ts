@@ -54,6 +54,7 @@ export interface NativeRun {
   usage?:{prompt_tokens:number;completion_tokens:number;cached_prompt_tokens:number}|null;
   pendingCall?:{id:string;name:string;arguments:unknown}|null;
   events?:Array<{kind:string;detail:unknown}>;
+  verificationChecks?:Array<{criterion:{type:string;path?:string;contains?:string};satisfied:boolean;explanation:string}>;
  }|null;
 }
 export interface NativeRunRequest {
