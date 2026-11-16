@@ -402,7 +402,6 @@ async fn run_turn_with_policy(
     let mut strategy_candidates = crate::engine::improve::active_values_with_execution(
         state, &improvement_scope, Some(&execution_id),
     );
-    strategy_candidates.extend(crate::engine::rsi_evolve::method_strategies(state, &session));
     // Derived prompts (goal iterations, room speakers) attach to the root the
     // parent lifecycle created. Only an owner-facing chat turn creates a root.
     let task_id = request.task_id.clone().unwrap_or_else(|| execution_id.clone());
