@@ -1104,27 +1104,4 @@ mod tests {
         assert!(stored["error"].as_str().unwrap().contains("대화방"));
     }
 
-}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let config = Config {
-            port: 0,
-            data_dir: dir.clone(),
-            web_dir: dir.join("web"),
-            workspace: dir.clone(),
-        };
-        let store = Store::open(&config.db_path()).unwrap();
-        let vault = Vault::open(&config.key_path());
-        let state = crate::state::AppState::new(config, store, vault);
-        state.store.put(
-            "job",
-            &json!({"id":"learn-failed","kind":"learn","status":"failed","attempts":1,"input":{},"error":"model unavailable"}),
-        );
-        assert_eq!(retry_failed_learning(&state), 1);
-        let job = state.store.get("job", "learn-failed").unwrap();
-        assert_eq!(job["status"], "queued");
-        assert!(job["availableAt"].is_string());
-        assert_eq!(job["lastError"], "model unavailable");
-        let _ = std::fs::remove_dir_all(dir);
-    }
 }
-
