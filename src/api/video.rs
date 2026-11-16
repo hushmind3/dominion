@@ -180,6 +180,53 @@ pub async fn job(State(state): State<AppState>, Path(id): Path<String>) -> Respo
         None => error(StatusCode::NOT_FOUND, "영상 작업을 찾을 수 없습니다."),
     }
 }
+/// Stop the durable Rust job first, then best-effort cancel ONLY its own
+/// recorded ComfyUI prompt. Never invoke global /interrupt on a shared server.
+/// The receipt separates local cancellation from remote confirmation.
+pub async fn cancel_job(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let Some(job) = state.store.get("job", &id).filter(|j| j["kind"] == "video") else {
+        return error(StatusCode::NOT_FOUND, "영상 제작 작업을 찾을 수 없습니다.");
+    };
+    if !matches!(job["status"].as_str(), Some("queued" | "running")) {
+        return error(StatusCode::CONFLICT, "진행 중인 영상만 중단할 수 있습니다.");
+    }
+    let is_comfy = job["input"]["engine"] == "comfyui";
+    let in_flight = job["videoState"]["inFlight"] == true;
+    let prompt_id = job["videoState"]["promptId"].as_str()
+        .and_then(|text| uuid::Uuid::parse_str(text).ok())
+        .map(|id| id.to_string());
+    let comfy_url = job["input"]["config"]["comfyUrl"].as_str().unwrap_or("").to_string();
+    let local = super::jobs::cancel(State(state.clone()), Path(id.clone())).await;
+    if !local.status().is_success() {
+        return local;
+    }
+    let remote = if !is_comfy || !in_flight {
+        json!({"status":"not_active"})
+    } else if let Some(prompt_id) = prompt_id {
+        match video::cancel_comfy_prompt(&comfy_url, &prompt_id).await {
+            Ok(true) => json!({"status":"requested","promptId":prompt_id}),
+            Ok(false) => json!({"status":"unconfirmed","promptId":prompt_id,
+                "reason":"원격 작업이 이미 종료되었거나 서버에서 해당 작업을 찾지 못했습니다."}),
+            Err(reason) => json!({"status":"unconfirmed","promptId":prompt_id,"reason":reason}),
+        }
+    } else {
+        // The submission may still be returning its ID. The Rust worker also
+        // checks cancellation immediately after the submission response.
+        json!({"status":"unconfirmed",
+            "reason":"원격 제출 응답 대기 중입니다. Rust 작업자가 응답 후 개별 취소를 시도합니다."})
+    };
+    let saved = state.store.patch_if("job", &id, "status", &json!("cancelled"),
+        &json!({"remoteCancel":remote}))
+        .or_else(|| state.store.get("job", &id));
+    state.store.audit("video.cancel", json!({"jobId":id,"remoteCancel":remote}));
+    if let Some(job) = saved {
+        state.bus.record("job", &job);
+        Json(json!({"job":video::public_job(&job),"remoteCancel":remote})).into_response()
+    } else {
+        error(StatusCode::CONFLICT, "영상 중단 결과를 저장할 수 없습니다.")
+    }
+}
+
 pub async fn upload(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -358,6 +405,27 @@ mod tests {
         assert!(video::enqueue(&s, &json!({"brief":"x","duration":900})).is_err());
         let dir=s.config.data_dir.clone(); drop(s); std::fs::remove_dir_all(dir).unwrap();
     }
+    #[tokio::test]
+    async fn video_cancel_does_not_require_a_remote_gpu_or_change_other_jobs() {
+        let s = state();
+        let first = s.store.put("job", &json!({
+            "kind":"video","status":"queued",
+            "input":{"engine":"native","brief":"테스트"}
+        })).unwrap();
+        let other = s.store.put("job", &json!({
+            "kind":"video","status":"queued",
+            "input":{"engine":"native","brief":"독립 작업"}
+        })).unwrap();
+        let id = first["id"].as_str().unwrap().to_string();
+        let response = cancel_job(State(s.clone()), Path(id.clone())).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let saved = s.store.get("job", &id).unwrap();
+        assert_eq!(saved["status"], "cancelled");
+        assert_eq!(saved["remoteCancel"]["status"], "not_active");
+        assert_eq!(s.store.get("job", other["id"].as_str().unwrap()).unwrap()["status"], "queued");
+        let dir=s.config.data_dir.clone(); drop(s); std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[tokio::test]
     async fn native_pipeline_produces_a_real_playable_container() {
         let s = state();
