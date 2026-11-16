@@ -173,6 +173,9 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_operation_run
                  ON records(json_extract(data,'$.runId'))
                  WHERE kind='execution_operation';
+             CREATE INDEX IF NOT EXISTS idx_operation_session
+                 ON records(json_extract(data,'$.sessionId'))
+                 WHERE kind='execution_operation';
              CREATE INDEX IF NOT EXISTS idx_execution_task
                  ON records(json_extract(data,'$.taskId'))
                  WHERE kind='execution';
@@ -269,6 +272,36 @@ impl Store {
         ).map_err(|error| error.to_string())?;
         let rows = statement.query_map([run_id], record_from_row).map_err(|error| error.to_string())?;
         rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
+    }
+
+    /// Materialize only the current run's journal rows instead of parsing
+    /// every historical tool receipt. Recent-first preserves the former
+    /// `all("execution_operation")` caller ordering.
+    pub fn execution_operations_recent(&self, run_id:&str) -> Result<Vec<Value>,String> {
+        self.execution_operation_subset("$.runId",run_id)
+    }
+
+    /// Effect inspection is scoped to the owning chat session, not all past
+    /// executions in the product. Retain recent-first ordering for callers
+    /// which explicitly reverse the list into chronological order.
+    pub fn session_execution_operations(&self, session_id:&str) -> Result<Vec<Value>,String> {
+        self.execution_operation_subset("$.sessionId",session_id)
+    }
+
+    fn execution_operation_subset(&self,field:&str,key:&str)->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let sql=match field {
+            "$.runId" => "SELECT data,id,created_at,updated_at FROM records
+                  WHERE kind='execution_operation' AND json_extract(data,'$.runId')=?1
+                  ORDER BY updated_at DESC",
+            "$.sessionId" => "SELECT data,id,created_at,updated_at FROM records
+                  WHERE kind='execution_operation' AND json_extract(data,'$.sessionId')=?1
+                  ORDER BY updated_at DESC",
+            _ => return Err("Unsupported execution operation filter".into()),
+        };
+        let mut stmt=conn.prepare(sql).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([key],record_from_row).map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
     }
 
     /// Error-preserving variant for the new learning/finalization paths.
