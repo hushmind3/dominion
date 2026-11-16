@@ -535,6 +535,29 @@ fn scene_key(render:&Value,workflow:&Value,scene:&str,index:usize)->String {
         "index":index,"version":1});
     format!("{:x}",Sha256::digest(contract.to_string().as_bytes()))
 }
+/// Safely replace a finished video even on Windows, where rename cannot
+/// overwrite an existing output. On failure the previously good MP4 remains.
+fn install_video_output(part:&Path,destination:&Path)->Result<(),String>{
+    if !part.metadata().is_ok_and(|file|file.is_file()&&file.len()>100){
+        return Err("인코딩 완료된 영상 파일을 찾을 수 없습니다.".into());
+    }
+    if !destination.exists(){
+        return std::fs::rename(part,destination).map_err(|e|e.to_string());
+    }
+    let backup=destination.with_extension("previous.mp4");
+    if backup.exists(){
+        std::fs::remove_file(&backup).map_err(|e|e.to_string())?;
+    }
+    std::fs::rename(destination,&backup).map_err(|e|e.to_string())?;
+    if let Err(error)=std::fs::rename(part,destination){
+        let rollback=std::fs::rename(&backup,destination);
+        return Err(format!("영상 파일 교체 실패: {error}; 복구: {}",
+            if rollback.is_ok(){"이전 영상 복원"}else{"백업 파일 보존"}));
+    }
+    let _=std::fs::remove_file(&backup);
+    Ok(())
+}
+
 fn file_sha256(file:&Path)->Result<String,String>{
     use std::io::Read;
     // Video clips may be hundreds of MiB. Hash with a fixed-size buffer so
@@ -1007,8 +1030,7 @@ async fn native(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, St
             String::from_utf8_lossy(&output.stderr).chars().take(1500).collect::<String>()
         ));
     }
-    std::fs::rename(dir.join("output.part.mp4"), dir.join("output.mp4"))
-        .map_err(|e| e.to_string())?;
+    install_video_output(&dir.join("output.part.mp4"),&dir.join("output.mp4"))?;
     Ok(json!({
         "engine":"native",
         "description":if narration.is_some() {"한국어 내레이션 카드 영상"} else {"Rust 자막 카드 영상 · 무음"},
@@ -1276,8 +1298,7 @@ async fn comfy(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, Str
                                 output.write_all(&chunk).await.map_err(|e| e.to_string())?;
                             }
                             drop(output);
-                            std::fs::rename(dir.join("output.part.mp4"), dir.join("output.mp4"))
-                                .map_err(|e| e.to_string())?;
+                            install_video_output(&dir.join("output.part.mp4"),&dir.join("output.mp4"))?;
                             ctx.checkpoint(
                                 json!({"videoState":{"inFlight":false,"promptId":prompt_id}}),
                             )?;
@@ -1441,8 +1462,7 @@ async fn comfy_storyboard(ctx:&JobContext,input:&Value,root:&Path)->Result<Value
                     .chars().take(1000).collect::<String>()));
         }
     }
-    std::fs::rename(root.join("output.part.mp4"),root.join("output.mp4"))
-        .map_err(|e|e.to_string())?;
+    install_video_output(&root.join("output.part.mp4"),&root.join("output.mp4"))?;
     progress(ctx,"quality_check",96)?;
     let actual_duration=probe_duration(&encoder.with_file_name("ffprobe"),
         &root.join("output.mp4")).await;
@@ -1755,6 +1775,21 @@ mod tests {
         assert_eq!(storyboard_scenes(&json!({"brief":"단일 장면"})).unwrap().len(),1);
         assert!(storyboard_scenes(&json!({"scenes":[1,"scene"]})).is_err());
         assert!(storyboard_scenes(&json!({"scenes":["a","b","c","d","e","f","g","h","i"]})).is_err());
+    }
+
+    #[test]
+    fn installing_a_new_final_mp4_replaces_existing_output_on_all_platforms() {
+        let root=std::env::temp_dir().join(format!("dominion-mp4-swap-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let target=root.join("output.mp4");
+        let staged=root.join("output.part.mp4");
+        std::fs::write(&target,vec![1u8;1024]).unwrap();
+        std::fs::write(&staged,vec![2u8;2048]).unwrap();
+        install_video_output(&staged,&target).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(),vec![2u8;2048]);
+        assert!(!staged.exists());
+        assert!(!root.join("output.previous.mp4").exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
