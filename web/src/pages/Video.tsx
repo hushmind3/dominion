@@ -15,7 +15,7 @@ type VideoEngine='native'|'comfyui'
 type Ratio='9:16'|'16:9'|'1:1'
 type StudioTab='create'|'library'|'publish'|'settings'
 type StudioMode='quick'|'scenes'
-type VideoModel={id:string;name:string;family:string;task:'text-to-video';quantization:string;kind:string;weightGB:number;totalDownloadGB:number;recommended:boolean;available:boolean;hint:string;missingFiles?:number}
+type VideoModel={id:string;name:string;family:string;familyId:string;task:'text-to-video';quantization:string;kind:string;weightGB:number;totalDownloadGB:number;recommended:boolean;available:boolean;hint:string;missingFiles?:number}
 type VideoConfig={engine:VideoEngine;comfyUrl:string;voice?:string;narration?:boolean;videoModel?:string;resolution?:string;steps?:number;comfyWorkflow?:unknown;comfyWorkflowName?:string;comfyModelsDir?:string;ffmpegPath?:string}
 type VideoJob=JobState & {
  kind:'video'|'youtube_upload';title?:string;brief?:string;engine?:VideoEngine;
@@ -131,6 +131,9 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  const installed=catalog.value.videoModels.find(model=>model.id===statusConfig.videoModel)
  const selectedModelId=selectedVideoVariant||statusConfig.videoModel||'wan21-t2v-1.3b-q4'
  const selectedVideoModel=catalog.value.videoModels.find(model=>model.id===selectedModelId)
+ const videoOnlyModels=catalog.value.videoModels.filter(model=>model.task==='text-to-video')
+ const videoFamilies=videoOnlyModels.filter((model,index,models)=>models.findIndex(x=>x.familyId===model.familyId)===index)
+ const selectedVideoFamily=selectedVideoModel?.familyId||videoFamilies[0]?.familyId||''
  const selectedVideoDownload=downloads.value.downloads.find(row=>row.model===selectedModelId)
  const downloadState=downloads.value.downloads.find(row=>row.model===statusConfig.videoModel)
  const savedWorkflow=video.value.workflows[0]
@@ -379,25 +382,32 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
    <Panel className="mb-4 border-[#E2C4AD] bg-[#FFFDF9] p-4 sm:p-5">
     <div className="flex flex-wrap items-center justify-between gap-3">
      <div><h3 className="text-[16px] font-bold text-[#342A24]">🎬 AI 영상 모델</h3>
-      <p className="mt-1 text-[12px] text-[#786E62]">영상 생성 모델만 표시합니다. 용량에 맞는 양자화를 고르고 다운로드하세요.</p>
+      <p className="mt-1 text-[12px] text-[#786E62]">영상 제작용 모델을 고르고 양자화·용량을 선택해 바로 다운로드하세요.</p>
      </div>
      {selectedVideoModel&&<StateTag online={selectedVideoModel.available}>{selectedVideoModel.available?'설치됨':'미설치'}</StateTag>}
     </div>
     <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-     <FormField label="영상 모델"><SelectInput value="wan21-t2v-1.3b" disabled aria-label="영상 생성 모델 계열">
-      <option value="wan21-t2v-1.3b">Wan 2.1 · 텍스트 → 영상 · 1.3B</option>
+     <FormField label="영상 모델"><SelectInput value={selectedVideoFamily} aria-label="영상 생성 모델 선택"
+      disabled={!videoFamilies.length||Boolean(preparingModel)}
+      onChange={e=>{
+       const choices=videoOnlyModels.filter(model=>model.familyId===e.target.value)
+       const next=choices.find(model=>model.available)||choices.find(model=>model.recommended)||choices[0]
+       if(next)setSelectedVideoVariant(next.id)
+      }}>
+      {videoFamilies.length===0&&<option value="">모델을 불러오는 중</option>}
+      {videoFamilies.map(model=><option key={model.familyId} value={model.familyId}>{model.family}</option>)}
      </SelectInput></FormField>
      <FormField label="양자화 · 저장 용량"><SelectInput aria-label="영상 모델 양자화 선택"
-      value={selectedModelId} disabled={!catalog.value.videoModels.length||Boolean(preparingModel)}
+      value={selectedModelId} disabled={!videoOnlyModels.length||Boolean(preparingModel)}
       onChange={e=>setSelectedVideoVariant(e.target.value)}>
-      {catalog.value.videoModels.filter(model=>model.task==='text-to-video').map(model=>
+      {videoOnlyModels.filter(model=>model.familyId===selectedVideoFamily).map(model=>
        <option key={model.id} value={model.id}>{model.quantization} · 총 약 {model.totalDownloadGB.toFixed(2)} GB{model.recommended?' · 추천':''}{model.available?' · 설치됨':''}</option>)}
      </SelectInput></FormField>
     </div>
     {selectedVideoModel?<div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E6D9CB] bg-white p-3.5">
      <div>
       <strong className="text-[12px] text-[#3D352F]">{selectedVideoModel.quantization}{selectedVideoModel.recommended?' · 권장':''}</strong>
-      <p className="mt-1 text-[11px] leading-5 text-[#7C7064]">영상 가중치 약 {selectedVideoModel.weightGB.toFixed(2)} GB · 전체 설치 약 {selectedVideoModel.totalDownloadGB.toFixed(2)} GB</p>
+      <p className="mt-1 text-[11px] leading-5 text-[#7C7064]">{selectedVideoModel.family} · 가중치 약 {selectedVideoModel.weightGB.toFixed(2)} GB · 전체 설치 약 {selectedVideoModel.totalDownloadGB.toFixed(2)} GB</p>
       <p className="text-[11px] leading-5 text-[#8B7F72]">영상 생성용 인코더·VAE 포함 · 이미 받은 공통 파일은 재사용</p>
       {selectedVideoModel.kind==='gguf'&&<p className="mt-1 text-[10px] text-[#897D72]">GGUF 모델은 영상 렌더러에 GGUF 확장이 필요합니다.</p>}
      </div>
