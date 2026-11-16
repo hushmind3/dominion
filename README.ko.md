@@ -32,6 +32,8 @@
 
 기존 프론트·모델 인증·도구 승인·제품 데이터는 유지합니다. 이전 독립 실행기·CLI·워크스페이스 패키지는 삭제했습니다. 경로와 검증 범위는 [Rust 하네스 문서](docs/HARNESS.md)에 정리했습니다.
 
+[TypeScript SDK](packages/sdk-typescript/README.md)의 `waitForRun`은 완료·승인·수동 복구 상태를 구별하고, `waitForVerifiedRun`은 실제 검증 증거가 있는 `taskOutcome: "succeeded"`만 성공으로 처리합니다. 모델이 답변을 생성했다는 사실과 작업 산출물 검증은 구별됩니다. SDK 작업과 사용자 지정 예산·작업공간 설정은 하나의 SQLite 트랜잭션에 기록됩니다.
+
 ## 📸 DOMINION 미리보기
 
 **그룹 대화 · 회의 — 여러 에이전트가 한 공간에서 대화하고 협업하는 화면**

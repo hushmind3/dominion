@@ -132,12 +132,14 @@ Native Rust agent harness
        ├── Chat / streaming / tool calls / approvals
        ├── Memory / experience / workflows / multi-agent rooms
        ├── Skills / MCP / Telegram / Discord
-       ├── Experimental self-improvement and evaluation campaigns
+       ├── Verified outcomes / explicit error recovery / durable checkpoints
        ├── User-configured model APIs
        └── Local inference (GGUF / llama.cpp and other configured runtimes)
 ```
 
 The agent execution engine is written in **Rust**. Node.js is used to build the React frontend rather than to host the agent runtime. Some local-model integrations and MCP servers may require their own processes.
+
+**Native API / SDK:** The TypeScript client in [`packages/sdk-typescript`](packages/sdk-typescript/README.md) uses the same Rust execution path as chat. Its `waitForRun` stops at completion, approval and manual-recovery boundaries; `waitForVerifiedRun` requires `taskOutcome: "succeeded"` with independent verification evidence. SDK run creation persists task limits and the execution owner atomically. A text answer alone is not evidence of an implemented or tested artifact.
 
 **Technical docs:** [Engine](ENGINE.md) · [Documentation index](docs/INDEX.md) · [Agent harness contract](docs/HARNESS.md).
 
