@@ -148,6 +148,18 @@ impl ModelTokenBudget {
     pub fn exceeded(&self) -> bool { self.charged > self.limit }
 }
 
+/// Shared classification for built-in host tools. A name not explicitly
+/// known here is effectful by default, including every MCP tool. Only
+/// inspection/search/GET/status functions may join a parallel read batch.
+pub fn builtin_is_read_only(name:&str)->bool {
+    matches!(name,
+        "workspace_list" | "workspace_read" | "workspace_read_range" |
+        "code_search" | "file_list" | "file_read" |
+        "web_search" | "http_fetch" | "memory_search" |
+        "task_status" | "task_result" | "account_status"
+    )
+}
+
 /// Only adjacent reads may share a batch. An effect is an ordering barrier:
 /// a later observation must never overtake the write it was meant to inspect.
 pub fn read_batch_end<T>(calls: &[T], start: usize, max_parallel: usize,
@@ -164,6 +176,24 @@ pub fn read_batch_end<T>(calls: &[T], start: usize, max_parallel: usize,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn builtin_tool_effect_policy_is_consistent_and_fails_closed() {
+        for name in [
+            "workspace_list","workspace_read","workspace_read_range",
+            "code_search","file_list","file_read","web_search","http_fetch",
+            "memory_search","task_status","task_result","account_status"
+        ] {
+            assert!(builtin_is_read_only(name),"expected read-only: {name}");
+        }
+        for name in [
+            "workspace_write","workspace_replace","shell_exec","terminal_exec",
+            "delegate_task","github_api","mcp__server__search",
+            "unrecognized_tool",""
+        ] {
+            assert!(!builtin_is_read_only(name),"unknown/effectful: {name}");
+        }
+    }
 
     #[test]
     fn shared_model_token_budget_reconciles_estimated_and_actual_usage() {
