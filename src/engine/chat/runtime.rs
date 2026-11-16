@@ -5816,19 +5816,9 @@ pub(super) fn finalize_execution(
             for observation in &observations {
                 state.bus.record("strategy_observation", observation);
             }
-            let queued = crate::engine::improve::schedule_experiments(state);
-            crate::engine::policy::meta_improve(state);
-            let proposed = crate::engine::policy::propose_candidates(state);
-            if !queued.is_empty() || !proposed.is_empty() {
-                state.store.audit(
-                    "experiment.scheduled",
-                    json!({
-                        "executionId": execution_id,
-                        "requests": queued.len(),
-                        "policyCandidates": proposed.len()
-                    }),
-                );
-            }
+            // No unattended RSI experiment scheduling, policy mutation
+            // or automatic candidate promotion after ordinary chat.
+            // The trusted execution/failure evidence remains durable.
         }
         Ok(crate::db::FinalizeOutcome::AlreadyApplied) => {
             state.store.audit(
@@ -5868,28 +5858,8 @@ pub(super) fn finalize_execution(
         );
     }
 
-    // Every terminal execution updates only this agent's growth record:
-    // runs, failures, failing tools and concrete guidance for next time.
-    // A deterministic shortcut is excluded: zero model calls is not growth.
-    if record["deterministicShortcut"].is_null() {
-        if let Some(agent_id) = record["agentId"]
-            .as_str()
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-            .or_else(|| {
-                record["sessionId"].as_str().and_then(|session_id| {
-                    state
-                        .store
-                        .get("session", session_id)
-                        .and_then(|session| session["agentId"].as_str().map(str::to_string))
-                })
-            })
-        {
-            let mut growth_record = record.clone();
-            growth_record["agentId"] = json!(agent_id);
-            let _ = crate::engine::agent_growth::record(state, &growth_record);
-        }
-    }
+    // Independent automatic agent-growth campaigns are retired. The user
+    // still retains execution records, verification and manual corrections.
     // Close the principle loop before learning new ones: a used principle
     // gains a supporting case or counterexample for this run.
     let _ = crate::engine::principle::finalize_usage(
@@ -5903,8 +5873,8 @@ pub(super) fn finalize_execution(
         // bank: room speakers and repeat task attempts are not independent
         // evidence for conditional intervention rules.
         if record_success_experience(state, &record, execution_id, task_outcome).is_some() {
-            let _ = crate::engine::experience::learn_verified_adaptations(state, &record);
-            let _ = crate::engine::principle::learn_from_execution(state, &record);
+            // Preserve verified success examples without automatically
+            // inventing/adopting new strategies or altering the runtime.
         }
     }
     mark_run_signals(state, &record);
