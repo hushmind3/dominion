@@ -1,0 +1,119 @@
+//! Deterministic, zero-provider-cost evidence replay.
+//!
+//! Replays durable MODEL DECISIONS and TOOL RECEIPTS as immutable observations.
+//! It does not execute old tools, tests, approvals, browser actions, or model
+//! generations. It is for incident reconstruction and paired comparisons,
+//! never for claiming the workspace still satisfies historical checks.
+use crate::{Snapshot,Status};
+use serde_json::{json,Value};
+use std::collections::{BTreeMap,BTreeSet};
+
+pub fn trace(snapshot:&Snapshot)->Value{
+ let mut issues=Vec::<String>::new();
+ let mut seen=BTreeSet::new();
+ let mut by_id=BTreeMap::new();
+ let mut last_step=0usize;
+ for receipt in &snapshot.receipts{
+  if receipt.id.is_empty()||!seen.insert(&receipt.id){
+   issues.push(format!("Duplicate or empty receipt id: {}",receipt.id));
+  }
+  if receipt.step<last_step||receipt.step==0||receipt.step>snapshot.step {
+   issues.push(format!("Invalid receipt order or step: {}",receipt.id));
+  }
+  last_step=receipt.step;
+  by_id.insert(receipt.id.as_str(),receipt);
+ }
+ let mut actions=Vec::new();
+ let mut planned=BTreeSet::new();
+ for (turn,decision) in snapshot.decision_tape.iter().enumerate(){
+  for action in &decision.actions{
+   if !planned.insert(action.id.as_str()){
+    issues.push(format!("Repeated planned action id: {}",action.id));
+   }
+   let receipt=by_id.get(action.id.as_str());
+   let status=match receipt {
+    Some(r) if r.success=>"observed_success",
+    Some(r) if r.result["skipped"]==true=>"skipped",
+    Some(_)=>"observed_failure",
+    None=>"not_dispatched",
+   };
+   // A bridge target differs from the model's fixed tool-call name.
+   if let Some(r)=receipt{
+    if r.tool!=action.tool && action.tool!="dominion_tool_call" {
+     issues.push(format!("Action identity mismatch for {}",action.id));
+    }
+   }
+   actions.push(json!({"turn":turn+1,"id":action.id,
+    "plannedTool":action.tool,"observedTool":receipt.map(|r|r.tool.as_str()),
+    "step":receipt.map(|r|r.step),"status":status,
+    "dependsOn":action.depends_on,
+    "diagnostic":receipt.filter(|r|!r.success)
+     .and_then(|r|r.result["error"].as_str()).map(|s|s.chars().take(500).collect::<String>())}));
+  }
+ }
+ let legacy=snapshot.decision_tape.is_empty();
+ let no_pending=snapshot.in_flight.is_empty()&&!snapshot.model_in_flight;
+ let satisfied=snapshot.checks.iter().filter(|c|c.satisfied).count();
+ let checked=snapshot.checks.len();
+ let complete=matches!(snapshot.status,Status::Completed);
+ let replayable=!legacy && no_pending && issues.is_empty();
+ json!({
+  "runId":snapshot.id,"mode":"offline_decision_and_receipt_reconstruction",
+  "modelOrExternalToolCalls":0,"newExternalEffects":false,
+  "decisionTapeAvailable":!legacy,"traceConsistent":issues.is_empty(),
+  "safeToAutoReplayExternalEffects":false,
+  "requiresManualReconciliation":!no_pending,
+  "modelCallsRecorded":snapshot.model_calls,
+  "plannerTurnsReconstructed":snapshot.decision_tape.len(),
+  "receiptsReconstructed":snapshot.receipts.len(),
+  "stepsRecorded":snapshot.step,"estimatedTokensRecorded":snapshot.charged_tokens,
+  "status":snapshot.status,
+  "reportedCompleted":complete,
+  "acceptanceChecks":{"satisfied":satisfied,"total":checked,
+    "allSatisfied":checked>0&&satisfied==checked},
+  "replayableTrace":replayable,
+  "issues":issues,"actions":actions,
+  "accuracyLimit":"Recorded observations are reproducible; model behavior and physical side effects are NOT rerun. Historical acceptance is not current-world proof."
+ })
+}
+#[cfg(test)]
+mod tests{
+ use super::*;
+ use crate::{RunRequest,Limits,Decision,Action,Receipt,Strategy};
+ #[test]
+ fn preserves_failures_and_dependencies_without_executing_tools(){
+  let req=RunRequest{id:"r1".into(),instruction:"test".into(),
+   owner_instructions:String::new(),strategy:Strategy::Balanced,
+   limits:Limits::default(),allowed_tools:vec![],checks:vec![],
+   require_evidence:true};
+  let mut s=Snapshot::from_request(&req);
+  s.step=2;s.model_calls=2;s.status=Status::NeedsReview;
+  s.decision_tape.push(Decision{plan:vec![],answer:None,
+   actions:vec![Action{id:"x".into(),tool:"shell_exec".into(),
+    arguments:json!({"command":"fail"}),depends_on:vec![]}]});
+  s.receipts.push(Receipt{id:"x".into(),tool:"shell_exec".into(),
+   arguments:json!({"command":"fail"}),success:false,
+   result:json!({"error":"script failed"}),step:2});
+  let report=trace(&s);
+  assert_eq!(report["modelOrExternalToolCalls"],0);
+  assert_eq!(report["actions"][0]["status"],"observed_failure");
+  assert_eq!(report["actions"][0]["diagnostic"],"script failed");
+  assert_eq!(report["traceConsistent"],true);
+  let mut tampered=s.clone();tampered.receipts[0].tool="other".into();
+  assert_eq!(trace(&tampered)["traceConsistent"],false);
+  let mut unresolved=s;unresolved.model_in_flight=true;
+  assert_eq!(trace(&unresolved)["requiresManualReconciliation"],true);
+ }
+ #[test]
+ fn legacy_snapshots_deserialize_and_report_missing_decision_tape(){
+  let req=RunRequest{id:"legacy".into(),instruction:"test".into(),
+   owner_instructions:String::new(),strategy:Strategy::Balanced,
+   limits:Limits::default(),allowed_tools:vec![],checks:vec![],
+   require_evidence:false};
+  let snapshot=Snapshot::from_request(&req);
+  let mut encoded=serde_json::to_value(&snapshot).unwrap();
+  encoded.as_object_mut().unwrap().remove("decisionTape");
+  let legacy:Snapshot=serde_json::from_value(encoded).unwrap();
+  assert_eq!(trace(&legacy)["replayableTrace"],false);
+ }
+}
