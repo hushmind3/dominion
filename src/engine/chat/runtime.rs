@@ -905,10 +905,10 @@ async fn run_turn_body(
     } else {
         300
     };
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(request_timeout))
-        .build()
-        .map_err(|error| error.to_string())?;
+    // Every room speaker previously rebuilt TLS/proxy settings and a new
+    // connection pool. The durable AppState now shares transports among
+    // sequential speakers without sharing per-request credentials or history.
+    let client = state.provider_http_client(request_timeout)?;
 
     let mut final_content = String::new();
     let mut final_reasoning = String::new();
