@@ -62,14 +62,18 @@ fn public_view(state: &AppState, job: &Value) -> Value {
     // A persisted approval may outlive its in-process waiter after a crash.
     // The main UI's Approve button must be shown only for a real pending
     // Rust tool call that can actually consume the owner's answer.
-    let live_approvals=state.approvals.lock().unwrap().keys().cloned()
-        .collect::<std::collections::HashSet<_>>();
-    let pending = state.store.all("approval").into_iter().find(|record| {
-        !session.is_empty()
-            && record["sessionId"] == session
-            && record["status"] == "pending"
-            && record["id"].as_str().is_some_and(|id|live_approvals.contains(id))
-    });
+    // The UI polls this endpoint frequently. Reading every historical
+    // approval row on every poll scales with lifetime DB size, not live work.
+    // Only IDs with an actual in-process waiter can be actionable.
+    let mut live_ids=state.approvals.lock().unwrap().keys().cloned()
+        .collect::<Vec<_>>();
+    live_ids.sort();
+    let pending=if session.is_empty(){None}else{
+        live_ids.into_iter().find_map(|id|{
+            state.store.get("approval",&id).filter(|record|
+                record["sessionId"]==session && record["status"]=="pending")
+        })
+    };
     let steps = job.pointer("/autonomousState/receipts")
         .and_then(Value::as_array).cloned().unwrap_or_default();
     let calls: usize = steps.iter().map(|step| {
@@ -135,14 +139,21 @@ fn public_view(state: &AppState, job: &Value) -> Value {
             }
         })).collect()
     };
-    let answer = if session.is_empty() { Value::Null } else {
-        let message_id = job.pointer("/result/messageId").and_then(Value::as_str);
-        state.store.messages(session).into_iter().rev()
-            .find(|message| message["role"] == "assistant"
-                && message_id.is_none_or(|id| message["id"].as_str() == Some(id)))
-            .map(|message| message["content"].clone())
-            .unwrap_or(Value::Null)
-    };
+    // Avoid fetching the full conversation on every progress poll. A job
+    // result owns its message ID, and must never display a foreign session's
+    // answer. Preserve the old fallback only for terminal legacy receipts
+    // without an explicit message ID.
+    let answer=if session.is_empty(){Value::Null}
+        else if let Some(id)=job.pointer("/result/messageId").and_then(Value::as_str){
+            state.store.message(id).filter(|message|
+                message["session_id"]==session && message["role"]=="assistant")
+                .map(|message|message["content"].clone()).unwrap_or(Value::Null)
+        }else if matches!(job["status"].as_str(),
+            Some("completed"|"needs_review"|"failed"|"cancelled")){
+            state.store.messages(session).into_iter().rev()
+                .find(|message|message["role"]=="assistant")
+                .map(|message|message["content"].clone()).unwrap_or(Value::Null)
+        }else{Value::Null};
     let status = status_for_panel(job, pending_call.is_some());
     json!({
         "id": job["id"],
@@ -456,6 +467,53 @@ mod tests {
         let view=public_view(&state,&running);
         assert_eq!(view["status"],"running");
         assert_eq!(view["checkpoint"]["pendingCall"],Value::Null);
+    }
+
+    #[test]
+    fn panel_poll_uses_live_approval_ids_and_scoped_answer_receipts(){
+        let state=state();
+        let session=state.store.put("session",&json!({"title":"Live"})).unwrap();
+        let session_id=session["id"].as_str().unwrap().to_owned();
+        let other_session=state.store.put("session",&json!({"title":"Other"})).unwrap();
+        let foreign=state.store.write_message(&json!({
+            "session_id":other_session["id"],"role":"assistant",
+            "content":"Do not leak another session's answer"
+        })).unwrap();
+        let prior=state.store.write_message(&json!({
+            "session_id":session_id,"role":"assistant",
+            "content":"Previous run's answer"
+        })).unwrap();
+        let job=engine::jobs::enqueue(&state,"prompt",json!({
+            "prompt":"New task","uiSource":SOURCE,"autonomous":true
+        })).unwrap();
+        let id=job["id"].as_str().unwrap().to_owned();
+        let running=state.store.patch_if("job",&id,"status",&json!("queued"),
+            &json!({"status":"running","sessionId":session_id})).unwrap();
+        state.store.put("approval",&json!({
+            "id":"historic","status":"pending","sessionId":session_id,
+            "tool":"workspace_write","args":{"path":"historic.txt"}
+        })).unwrap();
+        let view=public_view(&state,&running);
+        assert_eq!(view["checkpoint"]["pendingCall"],Value::Null);
+        assert_eq!(view["answer"],Value::Null,"in-progress work must not show an old answer");
+
+        let (sender,_rx)=tokio::sync::oneshot::channel::<bool>();
+        state.approvals.lock().unwrap().insert("live-request".into(),sender);
+        state.store.put("approval",&json!({
+            "id":"live-request","status":"pending","sessionId":session_id,
+            "tool":"workspace_read","args":{"path":"project"}
+        })).unwrap();
+        let view=public_view(&state,&running);
+        assert_eq!(view["checkpoint"]["pendingCall"]["id"],"live-request");
+        let done=state.store.patch_if("job",&id,"status",&json!("running"),
+            &json!({"status":"completed","result":{"messageId":foreign["id"]}})).unwrap();
+        assert_eq!(public_view(&state,&done)["answer"],Value::Null,
+            "a message from another session may not satisfy this job");
+        let corrected=state.store.put("job",&json!({
+            "id":id,"kind":"prompt","status":"completed","sessionId":session_id,
+            "result":{"messageId":prior["id"]}
+        })).unwrap();
+        assert_eq!(public_view(&state,&corrected)["answer"],"Previous run's answer");
     }
 
     #[tokio::test]

@@ -86,3 +86,11 @@ test('cancellation supervisor is separated from model/provider runtime and prese
  assert.match(cancel,/durable_cross_process_cancellation_works_without_local_notification/);
  assert.match(cancel,/local_cancel_notifies_without_waiting_for_the_persistence_backstop/);
 });
+
+test('Home SDK progress polls only active approval IDs and exact stored result messages',()=>{
+ const bridge=file('src/api/sdk_bridge.rs');
+ assert.doesNotMatch(bridge,/state\.store\.all\("approval"\)/);
+ assert.match(bridge,/live_ids\.into_iter\(\)\.find_map/);
+ assert.match(bridge,/state\.store\.message\(id\)/);
+ assert.match(bridge,/panel_poll_uses_live_approval_ids_and_scoped_answer_receipts/);
+});

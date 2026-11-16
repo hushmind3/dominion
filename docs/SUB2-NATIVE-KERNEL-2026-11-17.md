@@ -24,3 +24,7 @@ The independent `BudgetLedger` now refuses to admit new rounds, proposals or too
 ## Dedicated cancellation supervisor
 
 `src/engine/chat/cancellation.rs` is the single owner of waiting for cancel, draining in-flight tool receipts, and recording unknown effects after a timeout. The 5.6k-line chat runtime only calls `supervise_tool_cancellation` and cannot silently mark an in-progress effect as rolled back. Integration tests exercise both immediate in-process notification and the persisted epoch fallback without a shared notifier.
+
+## Bounded main UI polling
+
+The Home `/api/sdk/runs` adapter now looks up pending approvals only from the engine's live waiter IDs rather than reading all historical approval records for every poll. Final answers are fetched directly by the persisted message ID and checked against the session; running jobs no longer show an unrelated prior assistant response. Legacy terminal jobs without an explicit message ID keep a fallback lookup. The persisted JSON API contract is unchanged; this is a query-path optimization, not a new scheduler or cache.
