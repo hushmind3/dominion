@@ -13,7 +13,7 @@ DOMINION is an owner-controlled, model/provider-independent **Rust agent executi
 - `src/engine/mcp.rs`, `src/engine/skills.rs`, `src/api/extensions.rs`: explicit external MCP server/tool manifests and skill/plugin import; reviewed tools are verified against their pinned manifest at execution.
 - `sdk/typescript`, `sdk/rust`, `packages/sdk-typescript`: API clients for the same native Rust product/harness; no replicated agent planning loop.
 - `web/src`: the existing conversation, workspace, memory, providers, rooms, channels, plugins, developer tools, job state and operator controls.
-- `src/state.rs`, `src/engine/chat/runtime.rs`, `src/engine/rooms.rs`: reusable, timeout-scoped model HTTP clients, durable per-speaker latency observations, and progress-aware room E2E coverage on slow CI platforms.
+- `src/state.rs`, `src/engine/chat/runtime.rs`, `src/engine/rooms.rs`: reusable, timeout-scoped model HTTP clients, durable per-speaker latency observations, progress-aware room E2E coverage, and event-driven cancellation with a low-frequency cross-process reconciliation fallback instead of 50ms SQLite polling.
 
 ## No unattended self-modification
 
