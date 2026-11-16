@@ -59,7 +59,7 @@ fn request()->RunRequest {
         instruction:"Implement code in a source file".into(),
         owner_instructions:"Preserve tool evidence".into(),
         strategy:Strategy::Balanced,limits:Limits{
-            max_steps:6,max_model_calls:6,max_estimated_tokens:20_000,
+            max_steps:6,max_model_calls:6,max_tool_calls:96,max_estimated_tokens:20_000,
             max_parallel_reads:2,max_result_chars:1500},
         allowed_tools:vec!["workspace_write".into()],checks:vec![],
         require_evidence:true}
