@@ -273,6 +273,38 @@ pub fn public_job(job: &Value) -> Value {
     let ready = job["kind"] == "video" && job["status"] == "completed";
     json!({"id":id,"kind":job["kind"],"title":job["input"]["title"],"brief":job["input"]["brief"],"engine":job["input"]["engine"],"status":job["status"],"phase":job.get("phase").unwrap_or(&job["status"]),"progress":job["progress"],"error":job["error"],"createdAt":job.get("createdAt").or(job.get("created_at")),"videoJobId":job["input"]["videoJobId"],"privacyStatus":job["input"]["privacyStatus"],"outputUrl":ready.then(||format!("/api/video/jobs/{id}/content")),"storyboard":job["videoState"]["scenes"].as_array().map(|_|job["videoState"]["scenes"].clone()).unwrap_or_else(||job["input"]["scenes"].clone()),"quality":job["result"]["quality"],"result":job["result"],"duration":job["input"]["duration"],"aspectRatio":job["input"]["aspectRatio"]})
 }
+
+fn planned_scenes(brief:&str,engine:&str,duration:u64,explicit:&Value)->Result<Option<Vec<String>>,String>{
+    if engine!="comfyui" && !explicit.is_array(){return Ok(None);}
+    let mut scenes=if let Some(items)=explicit.as_array(){
+        items.iter().map(|item|item.as_str().map(str::to_owned)
+            .ok_or("장면 설명은 문자열 배열이어야 합니다.".to_string()))
+            .collect::<Result<Vec<_>,_>>()?
+    }else{
+        brief.split(['\n','.','!','?','。']).map(str::trim)
+            .filter(|scene|!scene.is_empty()).take(24)
+            .map(str::to_owned).collect::<Vec<_>>()
+    };
+    if scenes.is_empty() || scenes.len()>24 || scenes.iter()
+        .any(|text|text.trim().is_empty()||text.len()>2000) {
+        return Err("스토리보드는 1~24개 장면, 각 1~2000바이트여야 합니다.".into());
+    }
+    if engine=="comfyui" {
+        let minimum=duration.div_ceil(9) as usize;
+        let count=minimum.max(scenes.len());
+        if count>24 || count as u64 *3>duration {
+            return Err("ComfyUI 영상은 장면당 3~9초, 최대 24장면이어야 합니다.".into());
+        }
+        let seeds=scenes.clone();
+        while scenes.len()<count {
+            scenes.push(seeds[scenes.len()%seeds.len()].clone());
+        }
+    }else if scenes.len()>12{
+        return Err("네이티브 영상은 최대 12장면까지 지원합니다.".into());
+    }
+    Ok(Some(scenes))
+}
+
 pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
     let cfg = config(state);
     let brief = body["brief"].as_str().unwrap_or("").trim();
@@ -304,6 +336,11 @@ pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
         .unwrap_or(15);
     if !(3..=180).contains(&duration) {
         return Err("영상 길이는 3~180초입니다.".into());
+    }
+    let scenes=planned_scenes(brief,engine,duration,&body["scenes"])?;
+    if engine=="comfyui" && scenes.as_ref().is_some_and(|items|items.len()>1)
+        && ffmpeg_from_config(&cfg).is_none() {
+        return Err("여러 ComfyUI 장면을 합치려면 FFmpeg를 설정해야 합니다.".into());
     }
     let aspect = body["aspectRatio"]
         .as_str()
@@ -355,7 +392,7 @@ pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
     };
     let input = json!({
         "brief":brief, "title":title, "engine":engine, "duration":duration,
-        "aspectRatio":aspect, "config":cfg, "publish":false,
+        "aspectRatio":aspect, "config":cfg, "publish":false, "scenes":scenes,
         "render":{"prompt":brief,"negative":negative_prompt,"negativePrompt":negative_prompt,
                   "duration":duration,"width":width,"height":height,"fps":fps,"frames":duration*fps,"seed":seed}
     });
@@ -378,6 +415,8 @@ pub fn enqueue_regeneration(state:&AppState,source_id:&str,body:&Value)->Result<
         .ok_or("수정된 장면 설명은 1~2000바이트여야 합니다.")?;
     scenes[index]=json!(new_prompt);
     let mut input=original["input"].clone();
+    // Original workflow and seed remain frozen. A new derivative job may
+    // touch exactly one clip; it never changes the source job or remote ID.
     input["scenes"]=json!(scenes);
     input["sourceJobId"]=json!(source_id);
     input["regenerateSceneIndex"]=json!(index);
@@ -801,12 +840,100 @@ async fn comfy(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, Str
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
 }
+
+async fn comfy_story(ctx:&JobContext,input:&Value,dir:&Path)->Result<Value,String>{
+    let scenes=input["scenes"].as_array().ok_or("ComfyUI 스토리보드를 찾을 수 없습니다.")?;
+    if scenes.is_empty(){return Err("장면이 없습니다.".into());}
+    ctx.checkpoint(json!({"phase":"storyboard","progress":5,
+        "videoState":{"scenes":scenes}}))?;
+    let duration=input["duration"].as_u64().unwrap_or(5);
+    let fps=input["render"]["fps"].as_u64().unwrap_or(16).clamp(1,60);
+    let seed=input["render"]["seed"].as_i64().unwrap_or(1);
+    let reuse=if let (Some(source),Some(index))=(
+        input["sourceJobId"].as_str(),input["regenerateSceneIndex"].as_u64()
+    ){Some((directory(&ctx.state,source)?,index as usize))}else{None};
+    let mut prompts=Vec::new();
+    let mut sources=Vec::new();
+    let mut reused=0usize;
+    for (i,scene) in scenes.iter().enumerate(){
+        let prompt=scene.as_str().ok_or("장면 내용 오류")?;
+        let path=dir.join(format!("scene-{i:02}"));
+        std::fs::create_dir_all(&path).map_err(|e|e.to_string())?;
+        let clip=path.join("output.mp4");
+        let can_reuse=reuse.as_ref().is_some_and(|(source,changed)|{
+            i!=*changed && source.join(format!("scene-{i:02}")).join("output.mp4").is_file()
+        });
+        if can_reuse {
+            let (source,_)=reuse.as_ref().unwrap();
+            std::fs::copy(source.join(format!("scene-{i:02}")).join("output.mp4"),&clip)
+                .map_err(|e|format!("이전 장면 복원 실패: {e}"))?;
+            reused+=1;
+        }else if clip.is_file() && quality::inspect(&clip,None).await.is_ok(){
+            // A completed local clip is a durable receipt. Re-encode is safe
+            // without resubmitting an already-finished remote scene.
+            reused+=1;
+        }else{
+            let _=std::fs::remove_file(&clip);
+            let start=(i as u64*duration)/scenes.len() as u64;
+            let end=((i as u64+1)*duration)/scenes.len() as u64;
+            let seconds=(end-start).clamp(3,9);
+            let mut scene_input=input.clone();
+            scene_input["brief"]=json!(prompt);
+            scene_input["duration"]=json!(seconds);
+            scene_input["render"]["prompt"]=json!(prompt);
+            scene_input["render"]["duration"]=json!(seconds);
+            scene_input["render"]["frames"]=json!(seconds.saturating_mul(fps));
+            scene_input["render"]["seed"]=json!(seed.saturating_add(i as i64));
+            let result=comfy(ctx,&scene_input,&path).await?;
+            prompts.push(result["promptId"].clone());
+        }
+        if quality::inspect(&clip,None).await.is_err(){
+            return Err(format!("장면 {}의 MP4가 손상되었습니다.",i+1));
+        }
+        sources.push(format!("file 'scene-{i:02}/output.mp4'\n"));
+        ctx.checkpoint(json!({"phase":"rendering",
+            "progress":10+((i+1)*75/scenes.len()) as u64,
+            "videoState":{"renderedScenes":i+1,"inFlight":false}}))?;
+    }
+    if scenes.len()==1 {
+        std::fs::copy(dir.join("scene-00/output.mp4"),dir.join("output.mp4"))
+            .map_err(|e|e.to_string())?;
+    }else{
+        std::fs::write(dir.join("clips.txt"),sources.join("")).map_err(|e|e.to_string())?;
+        let encoder=ffmpeg_from_config(&input["config"]).ok_or("FFmpeg가 필요합니다.")?;
+        let mut command=tokio::process::Command::new(encoder);
+        command.current_dir(dir).args([
+            "-hide_banner","-loglevel","error","-nostdin","-y",
+            "-f","concat","-safe","0","-i","clips.txt",
+            "-c:v","libx264","-preset","veryfast","-crf","22",
+            "-pix_fmt","yuv420p","-c:a","aac","-movflags","+faststart",
+            "output.part.mp4"
+        ]);
+        progress(ctx,"encoding",88)?;
+        let output=tools::run_command(&mut command,Duration::from_secs(600)).await?;
+        if !output.status.success(){
+            return Err(format!("장면 결합 실패: {}",
+                String::from_utf8_lossy(&output.stderr).chars().take(900).collect::<String>()));
+        }
+        std::fs::rename(dir.join("output.part.mp4"),dir.join("output.mp4"))
+            .map_err(|e|e.to_string())?;
+    }
+    std::fs::write(dir.join("storyboard.json"),json!({
+        "scenes":scenes,"duration":duration,"engine":"comfyui","scenePrompts":prompts,
+        "reusedScenes":reused
+    }).to_string()).map_err(|e|e.to_string())?;
+    Ok(json!({"engine":"comfyui","scenes":scenes.len(),"duration":duration,
+        "reusedScenes":reused,"newSceneCalls":prompts.len(),
+        "sourceJobId":input["sourceJobId"],"regeneratedSceneIndex":input["regenerateSceneIndex"]}))
+}
+
 pub async fn run(ctx: &JobContext, job: &Value) -> Result<Value, String> {
     let dir = directory(&ctx.state, &ctx.job_id)?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let input = &job["input"];
     let result = if input["engine"] == "comfyui" {
-        comfy(ctx, input, &dir).await
+        if input["scenes"].is_array(){comfy_story(ctx,input,&dir).await}
+        else{comfy(ctx,input,&dir).await}
     } else {
         native(ctx, input, &dir).await
     };
@@ -1027,6 +1154,16 @@ mod tests {
         assert!(bytes.starts_with(b"\x89PNG"));
         assert!(bytes.len() > 10000);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn comfy_storyboard_enforces_segment_duration_and_frozen_prompts(){
+        assert_eq!(planned_scenes("single","comfyui",17,&Value::Null).unwrap()
+            .unwrap().len(),2);
+        assert_eq!(planned_scenes("a","comfyui",180,&Value::Null).unwrap()
+            .unwrap().len(),20);
+        assert!(planned_scenes("a","comfyui",3,&json!(["a","b"])).is_err());
+        assert!(planned_scenes("x","native",3,&json!(["x","y"])).unwrap().is_some());
+        assert!(planned_scenes("x","native",3,&Value::Null).unwrap().is_none());
     }
     #[test]
     fn template_substitution_never_changes_json_structure() {
