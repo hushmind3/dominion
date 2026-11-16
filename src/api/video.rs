@@ -64,7 +64,7 @@ pub async fn status(State(state): State<AppState>) -> Json<Value> {
         cfg["comfyUrl"].as_str().unwrap_or(""),"Wan22ImageToVideoLatent").await {
         missing_nodes.push("Wan22ImageToVideoLatent");
     }
-    let comfy = && (custom_workflow || built_in)
+    let comfy = reachable && (custom_workflow || built_in)
         && missing_nodes.is_empty();
     let workflows = workflows_from_config(&cfg);
     let jobs = state.store.all("job").iter()
