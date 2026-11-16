@@ -1158,6 +1158,17 @@ pub async fn save_provider(State(state): State<AppState>, Json(body): Json<Value
     if body.get("accountId").and_then(Value::as_str).is_some_and(|value| value.len() > 128) {
         return error(StatusCode::BAD_REQUEST, "Account ID가 너무 깁니다.");
     }
+    if let Some(pricing)=body.get("pricing").filter(|v|!v.is_null()){
+        let Some(rates)=pricing.as_object() else{
+            return error(StatusCode::BAD_REQUEST,"모델 단가 형식을 확인하세요.");
+        };
+        let valid=|name:&str|rates.get(name).and_then(Value::as_f64)
+            .is_some_and(|value|value.is_finite()&&value>=0.0&&value<=100_000.0);
+        if !valid("inputUsdPerMillion")||!valid("outputUsdPerMillion")
+            ||(rates.contains_key("cachedInputUsdPerMillion")&&!valid("cachedInputUsdPerMillion")){
+            return error(StatusCode::BAD_REQUEST,"모델 단가는 0~100000 사이의 숫자여야 합니다.");
+        }
+    }
     let mut record = body.clone();
     record["id"] = json!(id);
     record["name"] = json!(name);
