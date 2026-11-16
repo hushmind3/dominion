@@ -104,7 +104,7 @@ impl BudgetLedger {
     }
 
     pub fn expired(&self) -> bool {
-        self.started.elapsed() > self.max_elapsed
+        self.started.elapsed() >= self.max_elapsed
     }
 
     pub fn snapshot(&self) -> Value {

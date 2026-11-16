@@ -126,3 +126,14 @@ test('GitHub repo file workflow uses connected OAuth, optimistic SHA and owner a
  assert.match(projection,/github_file_read/);
  assert.match(oauth,/updated\["refresh_token"\]/);
 });
+
+test('runtime scoped receipt lookups avoid global history scans',()=>{
+ const runtime=file('src/engine/chat/runtime.rs');
+ const db=file('src/db.rs');
+ const live=runtime.split('#[cfg(test)]')[0];
+ assert.doesNotMatch(live,/\.all\("execution_operation"\)/);
+ assert.doesNotMatch(live,/\.all\("execution"\)/);
+ assert.match(live,/session_operations\(session_id\)/);
+ assert.match(live,/task_executions\(task_id\)/);
+ assert.match(db,/idx_operation_session/);
+});

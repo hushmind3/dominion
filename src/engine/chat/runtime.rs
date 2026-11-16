@@ -1364,14 +1364,8 @@ async fn run_turn_body(
 
         if completion.tool_calls.is_empty() {
             {
-                let mut operations = state
-                    .store
-                    .all("execution_operation")
-                    .into_iter()
-                    .filter(|operation| {
-                        operation["runId"].as_str() == Some(execution_id)
-                            && operation["status"].as_str() == Some("completed")
-                    })
+                let mut operations=state.store.execution_operations(execution_id)?
+                    .into_iter().filter(|operation|operation["status"]=="completed")
                     .collect::<Vec<_>>();
                 crate::engine::procedure::sort_operations(&mut operations);
                 let violations = strategy_candidates
@@ -1787,14 +1781,8 @@ async fn run_turn_body(
                     continue;
                 }
             };
-            let completed_operations = state
-                .store
-                .all("execution_operation")
-                .into_iter()
-                .filter(|operation| {
-                    operation["runId"].as_str() == Some(execution_id)
-                        && operation["status"].as_str() == Some("completed")
-                })
+            let completed_operations=state.store.execution_operations(execution_id)?
+                .into_iter().filter(|operation|operation["status"]=="completed")
                 .collect::<Vec<_>>();
             let procedure_violation = strategy_candidates.iter().find_map(|strategy| {
                 if !crate::engine::procedure::applies(
@@ -2230,12 +2218,7 @@ async fn run_harness_nodes(
             {
                 return Err("실행이 중단되었습니다.".into());
             }
-            let operations = state
-                .store
-                .all("execution_operation")
-                .into_iter()
-                .filter(|operation| operation["runId"].as_str() == Some(execution_id))
-                .collect::<Vec<_>>();
+            let operations=state.store.execution_operations(execution_id)?;
             for operation in &operations {
                 if operation["origin"].as_str() == Some("procedure")
                     && operation["procedureStrategyId"].as_str() == strategy["id"].as_str()
@@ -2629,7 +2612,7 @@ fn restore_program_state(
 ) -> Result<(), String> {
     let source = state
         .store
-        .all("execution")
+        .task_executions(task_id)?
         .into_iter()
         .filter(|execution| {
             execution["id"].as_str() != Some(execution_id)
@@ -3734,12 +3717,7 @@ async fn deterministic_tool(
     op_seq: u64,
     metrics: &std::sync::Mutex<Metrics>,
 ) -> Result<(Value, Value), String> {
-    let mut operations = state
-        .store
-        .all("execution_operation")
-        .into_iter()
-        .filter(|operation| operation["sessionId"].as_str() == Some(session_id))
-        .collect::<Vec<_>>();
+    let mut operations=state.store.session_operations(session_id)?;
     operations.reverse();
     let effect = crate::engine::effect::prepare(session_id, tool, arguments, &operations);
     let operation_id = format!("{execution_id}:frozen:{op_seq}:{tool}");
@@ -4080,12 +4058,7 @@ async fn dispatch_tool_call(
     // Record what the effect would be before asking for approval or running it.
     // Only mutating calls need the session history scan.
     let mut effect_operations = if crate::engine::effect::is_effectful(&call.name, &arguments) {
-        state
-            .store
-            .all("execution_operation")
-            .into_iter()
-            .filter(|operation| operation["sessionId"].as_str() == Some(session_id))
-            .collect::<Vec<_>>()
+        state.store.session_operations(session_id)?
     } else {
         Vec::new()
     };
@@ -4322,7 +4295,7 @@ async fn dispatch_tool_call(
         && sealed["toolReceipt"]["verified"].as_bool() == Some(true)
     {
         if let Some(resource) = effect["resourceKey"].as_str() {
-            let operations = state.store.all("execution_operation");
+            let operations=state.store.session_operations(session_id)?;
             for updated in crate::engine::effect::mark_inspected(
                 &operations,
                 resource,

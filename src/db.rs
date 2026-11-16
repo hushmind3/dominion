@@ -171,6 +171,9 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_operation_run
                  ON records(json_extract(data,'$.runId'))
                  WHERE kind='execution_operation';
+             CREATE INDEX IF NOT EXISTS idx_operation_session
+                 ON records(json_extract(data,'$.sessionId'))
+                 WHERE kind='execution_operation';
              CREATE INDEX IF NOT EXISTS idx_execution_task
                  ON records(json_extract(data,'$.taskId'))
                  WHERE kind='execution';",
@@ -241,6 +244,32 @@ impl Store {
         let rows = statement.query_map([session_id], record_from_row)
             .map_err(|error| error.to_string())?;
         rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
+    }
+
+    /// Only this session's execution effects, in newest-first order.
+    pub fn session_operations(&self, session_id:&str) -> Result<Vec<Value>, String> {
+        let conn=self.conn.lock().unwrap();
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='execution_operation' AND json_extract(data,'$.sessionId')=?1
+             ORDER BY updated_at DESC,id DESC"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([session_id],record_from_row)
+            .map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    /// Resume only snapshots of the requested task, not all executions.
+    pub fn task_executions(&self, task_id:&str) -> Result<Vec<Value>, String> {
+        let conn=self.conn.lock().unwrap();
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='execution' AND json_extract(data,'$.taskId')=?1
+             ORDER BY created_at DESC,id DESC"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([task_id],record_from_row)
+            .map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
     }
 
     pub fn execution_operations(&self, run_id: &str) -> Result<Vec<Value>, String> {
