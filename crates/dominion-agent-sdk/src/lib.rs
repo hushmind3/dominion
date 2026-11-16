@@ -27,13 +27,16 @@ pub enum Strategy { #[default] Balanced, VerifyFirst, LowCost }
 pub struct Limits {
     pub max_steps: usize,
     pub max_model_calls: usize,
+    /// Hard operation ceiling across every checkpoint, including verification tools.
+    pub max_tool_calls: usize,
     pub max_estimated_tokens: u64,
     pub max_parallel_reads: usize,
     pub max_result_chars: usize,
 }
 impl Default for Limits {
     fn default() -> Self {
-        Self { max_steps: 24, max_model_calls: 32, max_estimated_tokens: 100_000,
+        Self { max_steps: 24, max_model_calls: 32, max_tool_calls: 96,
+            max_estimated_tokens: 100_000,
             max_parallel_reads: 4, max_result_chars: 3000 }
     }
 }
@@ -41,6 +44,7 @@ impl Limits {
     pub fn validate(&self) -> Result<(), String> {
         if !(1..=200).contains(&self.max_steps)
             || !(1..=250).contains(&self.max_model_calls)
+            || !(1..=4096).contains(&self.max_tool_calls)
             || !(1..=20_000_000).contains(&self.max_estimated_tokens)
             || !(1..=16).contains(&self.max_parallel_reads)
             || !(128..=16_384).contains(&self.max_result_chars) {
@@ -378,6 +382,7 @@ enum AcceptanceRun {
     OwnerChanged,
     Cancelled,
     ToolUnavailable,
+    ToolBudgetExceeded,
 }
 
 impl Kernel<'_> {
@@ -403,7 +408,8 @@ impl Kernel<'_> {
                 return Err("Checkpoint has an uncertain tool or model outcome; manual review required".into());
             }
             if saved.step > request.limits.max_steps ||
-                saved.model_calls > request.limits.max_model_calls {
+                saved.model_calls > request.limits.max_model_calls ||
+                saved.receipts.len() > request.limits.max_tool_calls {
                 return Err("Checkpoint exceeds the current execution limits".into());
             }
             if !matches!(saved.status, Status::Running) {
@@ -494,7 +500,8 @@ impl Kernel<'_> {
                 "verificationGaps":run.checks.iter().filter(|v| !v.satisfied)
                     .map(|v| &v.explanation).collect::<Vec<_>>(),
                 "remainingSteps":request.limits.max_steps-step,
-                "modelBudgetRemaining":request.limits.max_model_calls-run.model_calls
+                "modelBudgetRemaining":request.limits.max_model_calls-run.model_calls,
+                "toolBudgetRemaining":request.limits.max_tool_calls.saturating_sub(run.receipts.len())
             }).to_string();
             // Latest owner instruction is reloaded as a higher-priority
             // instruction on every turn; stale models cannot hide it in a
@@ -628,6 +635,12 @@ impl Kernel<'_> {
                             self.journal.save(&run)?;
                             return Ok(run);
                         }
+                        AcceptanceRun::ToolBudgetExceeded => {
+                            run.stop(Status::NeedsReview,
+                                "Owner-required verification would exceed the durable tool-call budget");
+                            self.journal.save(&run)?;
+                            return Ok(run);
+                        }
                         AcceptanceRun::ToolUnavailable => {
                             run.stop(Status::NeedsReview,
                                 "Required shell verification is not allowed by this run's tool permissions");
@@ -696,6 +709,14 @@ impl Kernel<'_> {
                 self.journal.save(&run)?;
                 if invalid >= 3 { break; }
                 continue;
+            }
+            // Reserve the entire proposed batch by checking the persisted
+            // operation count first. Over-budget plans dispatch zero tools.
+            // This also guards against slow no-progress loops with cheap reads.
+            if decision.actions.len() > request.limits.max_tool_calls.saturating_sub(run.receipts.len()) {
+                run.stop(Status::NeedsReview,"Tool-call budget exhausted before dispatch");
+                self.journal.save(&run)?;
+                return Ok(run);
             }
             // The Rust SDK, not the model, owns the dependency graph and
             // read-only concurrency. Invalid batches are sent back for
@@ -818,6 +839,9 @@ impl Kernel<'_> {
             }
             if !tools.contains_key("shell_exec") {
                 return Ok(AcceptanceRun::ToolUnavailable);
+            }
+            if run.receipts.len() >= request.limits.max_tool_calls {
+                return Ok(AcceptanceRun::ToolBudgetExceeded);
             }
             if self.journal.cancelled(&request.id) {
                 return Ok(AcceptanceRun::Cancelled);
