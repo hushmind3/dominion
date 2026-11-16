@@ -37,17 +37,26 @@ impl BudgetLedger {
     /// Restore charges already committed by a durable host session.
     pub fn restore(&mut self, rounds: usize, tools: usize) {
         let mut usage = self.usage.lock().unwrap();
-        usage.rounds = rounds;
-        usage.tools = tools;
-        usage.proposals = tools;
+        // A late durable checkpoint must not rewind admission already shared
+        // with an active branch. Restores only move the global ledger forward.
+        usage.rounds = usage.rounds.max(rounds);
+        usage.tools = usage.tools.max(tools);
+        usage.proposals = usage.proposals.max(tools);
         self.local_rounds = rounds;
         self.local_tools = tools;
         self.local_proposals = tools;
     }
 
     pub fn next_round(&mut self) -> Option<usize> {
-        let round = self.usage.lock().unwrap().rounds;
-        self.charge_round().then_some(round)
+        // Reserve the round and its sequence number under the same lock.
+        // Separate reads and charges can hand out duplicate round numbers when
+        // independent branches race, despite correctly bounding total usage.
+        let mut usage = self.usage.lock().unwrap();
+        if usage.rounds >= self.max_rounds || self.expired() { return None; }
+        let round = usage.rounds;
+        usage.rounds += 1;
+        self.local_rounds += 1;
+        Some(round)
     }
 
     pub fn charge_round(&mut self) -> bool {
@@ -143,4 +152,44 @@ mod tests {
         assert_eq!(read_batch_end(&calls, 3, 4, |read| *read), 4);
         assert_eq!(read_batch_end(&calls, 4, 4, |read| *read), 5);
     }
+    #[test]
+    fn restore_cannot_refund_charges_from_an_active_branch() {
+        let mut root = BudgetLedger::new(3, 2, Duration::from_secs(60));
+        let mut branch = root.branch();
+        assert_eq!(branch.next_round(), Some(0));
+        assert!(branch.charge_tool());
+        assert!(branch.charge_proposal());
+        root.restore(0, 0);
+        assert_eq!(root.snapshot()["rounds"], 1);
+        assert_eq!(root.snapshot()["tools"], 1);
+        assert_eq!(root.snapshot()["proposals"], 1);
+        assert_eq!(root.next_round(), Some(1));
+        assert!(root.charge_tool());
+        assert!(!branch.charge_tool());
+    }
+
+    #[test]
+    fn concurrent_branches_claim_unique_bounded_round_numbers() {
+        let root = BudgetLedger::new(128, 0, Duration::from_secs(60));
+        let rounds = std::thread::scope(|scope| {
+            let workers = (0..16).map(|_| {
+                let mut branch = root.branch();
+                scope.spawn(move || {
+                    let mut claimed = Vec::new();
+                    while let Some(round) = branch.next_round() {
+                        claimed.push(round);
+                        std::thread::yield_now();
+                    }
+                    claimed
+                })
+            }).collect::<Vec<_>>();
+            workers.into_iter().flat_map(|worker| worker.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        let mut ordered = rounds;
+        ordered.sort_unstable();
+        assert_eq!(ordered, (0..128).collect::<Vec<_>>());
+        assert_eq!(root.snapshot()["rounds"], 128);
+    }
+
 }
