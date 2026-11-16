@@ -1,7 +1,7 @@
 use crate::{engine::{video,video_hub}, state::AppState};
 use axum::{
     body::Body,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{Request, StatusCode},
     response::{IntoResponse, Response},
     Json,
@@ -333,6 +333,29 @@ pub async fn download_model(
     }
 }
 
+/// Discovery is video-only and does not mutate any selected chat or video model.
+pub async fn hub_search(Query(query):Query<std::collections::HashMap<String,String>>)->Response{
+    let term=query.get("q").map(String::as_str).unwrap_or("");
+    match video_hub::search(term).await{
+        Ok(value)=>Json(value).into_response(),
+        Err(message)=>error(StatusCode::BAD_REQUEST,message)
+    }
+}
+pub async fn hub_files(Query(query):Query<std::collections::HashMap<String,String>>)->Response{
+    let repo=query.get("repo").map(String::as_str).unwrap_or("");
+    match video_hub::files(repo).await{
+        Ok(value)=>Json(value).into_response(),
+        Err(message)=>error(StatusCode::BAD_REQUEST,message)
+    }
+}
+pub async fn hub_download(State(state):State<AppState>,Json(body):Json<Value>)->Response{
+    let repo=body["repo"].as_str().unwrap_or("");
+    let path=body["path"].as_str().unwrap_or("");
+    match video_hub::download(state,repo,path).await{
+        Ok(value)=>(StatusCode::ACCEPTED,Json(value)).into_response(),
+        Err(message)=>error(StatusCode::BAD_REQUEST,message)
+    }
+}
 pub async fn model_downloads(State(state): State<AppState>) -> Json<Value> {
     Json(json!({"downloads": video::downloads(&state)}))
 }
