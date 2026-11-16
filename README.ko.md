@@ -1,254 +1,33 @@
-# DOMINION
+# 도미니언 — Rust 자율 에이전트 플랫폼
 
-<p align="center">
-  <img src="src-tauri/icons/icon.png" alt="DOMINION icon" width="88" />
-</p>
+도미니언은 **사용자가 요청한 일을 끝내는 Rust 실행 플랫폼**입니다. 모델·공급자에 종속되지 않고 코드 수정, 파일 작업, 검색, 브라우저, 그룹 협업, 도구 위임, 테스트·검증, 승인·취소·복구를 실행합니다.
 
-<p align="center"><strong>Bring your own model. Run your own agents. Own your workflow.</strong></p>
-<p align="center"><a href="README.md">English</a> · <strong>한국어</strong></p>
-<p align="center">내 모델로 실제 작업을 수행하는 오픈소스 AI 에이전트 워크스페이스.</p>
+## 제품 범위
 
-<p align="center">
-  <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-3B82F6" /></a>
-  <img alt="Rust backend" src="https://img.shields.io/badge/engine-Rust-222222" />
-  <img alt="React interface" src="https://img.shields.io/badge/UI-React-149ECA" />
-  <img alt="Models" src="https://img.shields.io/badge/models-local%20%2B%20API-4F46E5" />
-</p>
+**유지:** 일반 채팅과 스트리밍, 기억, 파일, 검증된 절차와 실패 기록, Rust 하네스, TypeScript/Rust SDK, 장기 작업, MCP, 플러그인·스킬, 연결된 채널, OAuth, 브라우저, 로컬 모델, 외부 API.
 
-<p align="center">
-  <a href="#-빠른-시작">빠른 시작</a> ·
-  <a href="#-주요-기능">주요 기능</a> ·
-  <a href="#-어떤-프로젝트인가요">프로젝트 소개</a> ·
-  <a href="#english">English</a> ·
-  <a href="docs/GETTING-STARTED.md">설치 문서</a> ·
-  <a href="ENGINE.md">엔진 상세</a>
-</p>
+**제거:** 내장 영상·오디오 제작 및 업로드 파이프라인, 영상 모델 설치/다운로드, 독립 RSI 연구 엔진, 세대 반복·자동 채점·자동 코어 수정·자동 채택, 실험 스케줄러 및 해당 UI/API/실행 스크립트. 영상·음성이 필요하면 향후 사용자가 승인한 **외부 MCP·플러그인 도구**로 연결합니다.
 
----
+## 실행 구조
 
-## 📸 DOMINION 미리보기
+- `crates/dominion-agent-sdk`: 실행·계획·도구 발견·인수 검증·예산·체크포인트·검증·복구를 소유하는 독립 Rust 커널.
+- `src/engine/native_agent.rs`: 실제 모델·MCP·파일·권한·영수증을 SDK에 연결하는 제품 어댑터.
+- `src/engine/chat/runtime.rs`: 스트리밍 대화·세션·기억·도구 실행을 유지하면서 RSI 전용 판단 분기를 제거한 일반 채팅 경로.
+- `src/engine/jobs.rs`, `src/db.rs`: SQLite 작업 큐, 인덱스 기반 대기/실행 기록 조회, 작업 도착 시 알림, 승인·취소·복구 및 기록 보존.
+- `src/engine/mcp.rs`, `src/engine/skills.rs`: 외부 MCP 도구 및 플러그인·스킬 연결. 허용된 도구는 실행 직전 계약을 다시 검사합니다.
+- `sdk/typescript`, `sdk/rust`, `packages/sdk-typescript`: 하나의 Rust 실행 제품을 사용하는 SDK 클라이언트.
+- `web/src`: 채팅·기억·프로바이더·에이전트·그룹·채널·설정·개발 도구 등 기존 화면.
 
-**그룹 대화 · 회의 — 여러 에이전트가 한 공간에서 대화하고 협업하는 화면**
+## 안전한 데이터 유지와 자원 절약
 
-<p align="center">
-  <a href="docs/01-multi-agent-room.webp">
-    <img src="docs/01-multi-agent-room.webp" alt="DOMINION multi-agent room with participants, shared conversation and room controls" width="100%" />
-  </a>
-</p>
+기존 SQLite의 메시지·기억·파일·작업 및 실패 기록은 삭제하지 않습니다. 이전 영상/RSI 작업은 **재실행을 금지**합니다. 대기 중인 작업은 취소 처리하고, 실행 중이었다면 확인 필요로 표시합니다. 과거에 완료된 기록과 결과는 그대로 열람할 수 있습니다.
 
-<table>
-  <tr>
-    <td width="50%" align="center"><strong>💬 채팅 · 모델 선택</strong></td>
-    <td width="50%" align="center"><strong>🤖 에이전트 스튜디오</strong></td>
-  </tr>
-  <tr>
-    <td><a href="docs/02-chat-workspace.webp"><img src="docs/02-chat-workspace.webp" alt="DOMINION chat workspace and model controls" width="100%" /></a></td>
-    <td><a href="docs/03-agent-studio.webp"><img src="docs/03-agent-studio.webp" alt="DOMINION agent studio with configurable agents and roles" width="100%" /></a></td>
-  </tr>
-  <tr>
-    <td align="center">API/로컬 모델을 선택하고 작업을 지시하는 채팅 공간</td>
-    <td align="center">에이전트별 역할·지침·모델을 관리하는 화면</td>
-  </tr>
-</table>
+일반 채팅의 `autoLearning`은 기본 해제, 5분마다 돌던 성장·증류 점검과 대화 종료 후 무인 정책 실험을 중단합니다. 작업 대기열은 과거 Job 전체를 400ms마다 재조회하는 대신 활성 상태만 SQL 인덱스로 읽고, 새 작업에는 `Notify`로 반응합니다. 정상적인 사용자 요청에 따른 편집·테스트·검증과 명시적 기억 저장은 유지합니다.
 
-<sub>실제 개발 중인 DOMINION UI 캡처입니다. 스크린샷은 특정 기능의 실모델 검증 결과를 보증하지 않습니다.</sub>
+## 실제 API 및 검증
 
----
+`POST /api/chat`, `/api/jobs`, `/api/sdk/runs`, `/api/harness/runs`에서 채팅·자율 실행·검증·승인·복구를 수행합니다. `/api/sdk/runs/:id/replay`, `/api/sdk/runs/:id/compare`는 저장된 증거를 읽어 **모델·외부 도구 재호출 없이** 실패 원인과 동일 조건 실행을 비교합니다. 외부 도구는 `/api/mcp/catalog`, `/api/mcp/discover`, `/api/skill-catalog`, `/api/channels`로 연결됩니다.
 
-## 🚀 어떤 프로젝트인가요?
+프런트 빌드: `npm ci --prefix web && npm run typecheck --prefix web && npm run build --prefix web`. Rust: `cargo test --release --locked`. 제품 잔재 검사: `node scripts/check-lean-product.mjs`. 최신 브랜치 HEAD에서의 CI를 최종 판정 근거로 삼습니다.
 
-**DOMINION은 LLM 모델이 아니라, 여러분이 선택한 모델로 일을 수행하는 에이전트 도구입니다.**
-
-클라우드 API 키를 직접 연결하거나 로컬 모델을 사용하세요. 채팅으로 작업을 지시하면 Rust 실행 엔진이 도구 호출, 승인, 결과 기록, 기억 및 작업 흐름을 관리합니다. 여러 에이전트를 만들고 그룹 대화나 워크플로에 배치할 수도 있습니다.
-
-**모델은 사용자가 선택하고, 실행 흐름은 DOMINION이 관리합니다.** 특정 모델 판매나 자체 API 크레딧 재판매를 전제로 하지 않습니다.
-
-> **개발자 프리뷰** · 소스코드와 실행 방법을 공개하는 단계입니다. 모든 OS·모델·채널 조합의 실사용 안정성을 보장하지 않으며, 자기개선(RSI)은 별도의 실험 기능입니다. 현재 [GitHub Releases](https://github.com/hushmind3/dominion-rust/releases)에서 사전 빌드된 배포 파일을 제공하지 않으므로 아래의 소스 실행 안내를 먼저 확인해 주세요.
-
-## ✨ 주요 기능
-
-| 영역 | DOMINION에서 할 수 있는 일 |
-| --- | --- |
-| **🔌 모델 선택 / BYOK** | 자신이 보유한 모델 API 키를 등록하고 제공자·모델을 선택합니다. API 사용료는 해당 제공자 정책에 따릅니다. |
-| **🖥️ 로컬 모델** | GGUF/llama.cpp, Ollama 등 로컬 추론 경로를 연결합니다. macOS에는 MLX 경로도 있습니다. |
-| **🤖 에이전트** | 에이전트별 지시사항, 모델, 기억을 분리하고 작업을 수행합니다. |
-| **🧠 기억과 경험** | 대화·도구 결과·사용자 정정을 로컬에 기록하고 관련 정보를 다음 작업에 재사용합니다. 모델 가중치를 재훈련하는 기능은 아닙니다. |
-| **🛠️ 실제 도구 실행** | 파일·셸·HTTP·검색·MCP 도구를 호출하며, 승인/취소 및 실행 증거를 관리합니다. |
-| **👥 멀티 에이전트** | 공용 기록을 읽는 그룹 대화, 순번 발언, 멘션, 다단계 워크플로를 구성합니다. |
-| **💬 외부 채널** | Telegram·Discord용 Rust 연결 드라이버가 있습니다. 현재 봇 토큰·채널 정보 등의 **수동 설정이 필요**합니다. |
-| **🧪 실험적 자기개선** | 소스 변경·평가·채택을 다루는 연구 경로를 제공합니다. 반복적인 지능 향상은 실증된 완성 기능이 아닙니다. |
-
-### 왜 별도의 에이전트 도구인가요?
-
-- **모델 종속을 줄입니다.** 한 모델·한 공급자만 사용하도록 강제하지 않습니다.
-- **실행 기록이 남습니다.** 답변뿐 아니라 도구 호출과 오류, 승인, 작업 상태도 추적합니다.
-- **로컬에서 운영할 수 있습니다.** SQLite 데이터와 기억은 기본적으로 로컬에 저장되며, 클라우드 모델 연결은 사용자가 선택합니다.
-- **직접 확장할 수 있습니다.** Apache-2.0 공개 소스와 Rust/React 구조를 제공합니다.
-
-## ⚡ 빠른 시작
-
-macOS 또는 Windows에서 **소스코드로 실행**하는 방법입니다. Git, Rust stable/Cargo, **Node.js 24.12+**, OS별 C/C++ 빌드 도구가 필요합니다. Windows는 MSVC 빌드 도구 및 Windows SDK를 준비하세요.
-
-~~~bash
-git clone https://github.com/hushmind3/dominion-rust.git
-cd dominion-rust
-npm ci --prefix web
-npm run build --prefix web
-cargo run --release -- --home .
-~~~
-
-실행 후 브라우저에서 **http://127.0.0.1:4317** 을 엽니다.
-
-1. **모델 관리**에서 본인의 API 제공자 또는 로컬 모델을 연결합니다.
-2. **채팅**에서 모델을 선택하고 간단한 작업을 맡깁니다.
-3. 필요한 경우 **에이전트·기억·워크플로·그룹 대화**를 설정합니다.
-4. Telegram/Discord는 연결 설정에서 본인의 봇 토큰 및 대상 정보를 등록합니다.
-
-상세 설치·OS별 준비 사항은 **[설치와 첫 사용](docs/GETTING-STARTED.md)** 을 참고해 주세요. 외부 API 이용 시 사용료가 발생할 수 있으며, 로컬 모델은 사용자의 하드웨어 자원을 사용합니다.
-
-## 🧩 구조
-
-~~~text
-React UI (web/)
-       │
-       ▼
-Rust API / agent harness (Axum)
-       ├── Agent chat · tools · approval · cancellation
-       ├── Memory · experience · jobs · multi-agent rooms
-       ├── Skills · MCP · Telegram · Discord
-       ├── SQLite (local state and execution history)
-       ├── User-selected model APIs
-       └── Local model runtimes (e.g. GGUF / llama.cpp)
-~~~
-
-Node.js는 프론트엔드 **빌드 도구**로 사용하며, 에이전트 실행 엔진은 Rust입니다. 실제 공급자 연결·로컬 실행 환경에 따라 추가 프로세스가 필요할 수 있습니다.
-
-## 🧪 현재 개발 상태와 한계
-
-DOMINION은 기능 수보다 **실제 작업 성공률과 안정적인 실행 경험**을 개선해 가는 프로젝트입니다.
-
-- 채팅·도구·기억·그룹 대화·작업 큐 등의 구현이 있으며, 실제 모델/운영 환경에 따라 동작 차이가 있습니다.
-- 그룹 대화의 일부 검증은 모의 모델 기반입니다. 실모델 장시간 동작을 모두 검증했다는 뜻은 아닙니다.
-- Telegram/Discord는 현재 **원클릭 봇 생성이 아닌 수동 연동**입니다.
-- 공급자별 캐시·컨텍스트 최적화 경로가 존재하지만 **일정한 토큰 절감률을 보장하지 않습니다**.
-- RSI는 소스 수정과 검증 절차를 연구하는 기능이며, **범용 재귀적 지능 향상을 입증한 제품은 아닙니다**.
-- 빌드/테스트 결과는 [GitHub Actions](https://github.com/hushmind3/dominion-rust/actions)에서 커밋별로 확인해 주세요.
-
-## 🤝 참여하기
-
-실제 사용 중 발견한 문제나 개선 제안이 가장 유용합니다.
-
-- **[Issues](https://github.com/hushmind3/dominion-rust/issues)** — OS, 모델/제공자, 재현 절차, 기대 결과를 포함해 문제를 제보해 주세요. API 키·개인 대화·토큰은 올리지 마세요.
-- **[Pull Requests](https://github.com/hushmind3/dominion-rust/pulls)** — Rust 하네스, UI, 모델 연결, 채널 드라이버, 문서 등 개선을 환영합니다.
-- 실제 화면을 보여주는 스크린샷과 재현 가능한 테스트도 프로젝트를 개선하는 데 도움이 됩니다.
-
-더 깊은 구현 자료: [엔진 설명](ENGINE.md) · [문서 목차](docs/INDEX.md) · [RSI 실행 계약](docs/RSI-MAIN-INTEGRATION-2026-11-12.md) · [이전 상세 README 보관본](docs/README-TECHNICAL-SNAPSHOT-2026-11-14.md)
-
-## English
-
-**DOMINION is an open-source, local-first AI agent workspace — not an LLM model or a hosted API resale service.**
-
-Bring your own API credentials or connect a local model, then use a Rust-native execution harness to run tool-using agents with persistent memory, approvals, logs, workflows, and multi-agent rooms. Telegram and Discord adapters are implemented but currently require manual bot configuration. Experimental self-improvement research is available separately; autonomous recursive intelligence gains are **not** claimed.
-
-**Getting started:** [Installation guide](docs/GETTING-STARTED.md) · [Engine internals](ENGINE.md) · [Issues](https://github.com/hushmind3/dominion-rust/issues) · [Pull requests](https://github.com/hushmind3/dominion-rust/pulls)
-
-**License:** [Apache License 2.0](LICENSE).
-
-
-## 🧩 Rust / TypeScript SDK (서브3)
-
-도미니언 자체 Rust 엔진과 동일한 API·작업 상태를 사용하는 별도 SDK를 추가했습니다.
-
-- [Rust SDK](sdk/rust/README.md): `dominion-sdk` — 독립 Rust 실행 커널(자율 판단·실제 도구 실행·사용자 중간 지시·검증·복구)과 선택형 HTTP 클라이언트.
-- [TypeScript SDK](sdk/typescript/README.md): `@dominion-ai/sdk` — 타입 기반 API, 스트림 재접속, 작업 상태/취소·완료 대기.
-- [구조·2026 프런티어 비교](docs/SDK-ARCHITECTURE-2026-11-15.md).
-
-CLI 하네스나 타사 에이전트 실행기를 SDK에 넣지 않습니다. 실제 판단·도구·메모리·체크포인트는 `src/engine/`이 담당하고 SDK와 GUI는 `/api/*`에 연결됩니다. 두 패키지는 아직 패키지 레지스트리에 게시하지 않았으며 Rust SDK 컴파일과 실모델 통합 검증은 별도 환경에서 진행해야 합니다.
-
-
-### Codex WebSocket 세션·장기 문맥 보호 (서브3, 2026-11-15)
-
-Rust 대화 전송 계층은 `previous_response_not_found`처럼 명시적으로 거부된 체인의 안전한 전체 재전송과, 이미 모델에 전달됐을 수 있으나 완료를 확인하지 못한 요청을 구분합니다. 후자는 WebSocket/HTTP/다른 모델로 자동 중복 생성하지 않고 비용 미확정 감사 기록을 남깁니다. 이미지·음성 등 구조화 입력은 순서와 내용을 해시로 비교하며 원본 미디어를 연결 레지스트리에 중복 저장하지 않습니다. 독립 Rust SDK는 최신 대형 도구 결과가 LowCost 문맥 한도를 넘더라도 잘라서 표시하고 원본 영수증은 영구 검색·조회 대상으로 유지합니다. 상세: [Codex 전송](docs/SUB3-NATIVE-STREAM-2026-11-15.md), [장기 문맥](docs/SUB3-DURABLE-CONTEXT-2026-11-15.md). 전송량 추정은 실제 청구 토큰 절감 수치가 아닙니다. 신규 집중 검증 [GitHub Actions #43688832106](https://github.com/hushmind3/dominion-rust/actions/runs/43688832106) 성공: Rust SDK 45개, 네이티브 모델/호스트 41개, Codex WebSocket 15개, 워크플로 복구 1개로 **102/102** 통과, TypeScript 타입 검사 및 Vite 배포 빌드도 통과했습니다. 실제 유료 제공자 장기 완수율·청구 절감률은 별도 측정 대상입니다.
-
-
-### 자율 작업의 제공자별 모델 문맥 상한 (서브3)
-
-`native_model::fit_native_context`는 모델 호출 직전에 제공자의 설정된 문맥 용량과 출력 예약량을 확인하고, 오래된 도구 호출·결과를 **쌍 단위**로 덜어냅니다. 사용자의 현재 목표·시스템 지시·도구 정의는 잘라내지 않고, 전체 도구 영수증은 Rust SDK에 보존해 재검색할 수 있습니다. 필수 입력만으로 문맥을 초과하면 유료 모델 요청 전에 중단하며, 생략 건수와 추정 입력량을 기록합니다. 최신 [GitHub Actions #43689095869](https://github.com/hushmind3/dominion-rust/actions/runs/43689095869)에서 Rust SDK 45개, 네이티브 호스트 43개, Codex WebSocket 15개, 복구 1개 등 **104/104** 통과하고 프런트 타입 검사·빌드도 성공했습니다. 상세 내용은 [장기 문맥 설계](docs/SUB3-DURABLE-CONTEXT-2026-11-15.md)를 참조하십시오.
-
-
-### 자율 에이전트 Codex WebSocket 세션 연속성 (서브3, 2026-11-15)
-
-`/api/jobs`의 실제 Rust 실행 커널에 `src/engine/native_codex_ws.rs`를 연결했습니다. 모델이 완료한 응답 ID를 기준으로 **직접 실행해 영수증이 남은 도구 결과**와 최신 작업 상태만 다음 WebSocket 요청에 보냅니다. 세션·문맥이 달라지거나 이전 응답이 만료되면 안전하게 전체 문맥을 다시 구성합니다. 요청의 성공 여부가 불명확하면 HTTP·다른 모델로 자동 중복 생성하지 않고 검토 상태를 보존합니다. 설정된 모델 문맥 한도에 가까워지면 제공자가 보고한 토큰을 바탕으로 응답 체인을 새로 시작합니다. Rust의 권한·승인·검증·저장·복구 구조와 TypeScript SDK/API·GUI는 기존 경로를 그대로 사용합니다. 상세 구현과 검증 범위: [서브3 Codex 자율 작업 WebSocket](docs/SUB3-NATIVE-CODEX-WS-2026-11-15.md).
-
-**자율 작업 WebSocket 집중 검증:** [GitHub Actions #43690699582](https://github.com/hushmind3/dominion-rust/actions/runs/43690699582)에서 Rust SDK·네이티브 호스트·대화용 WebSocket·워크플로 복구 **112/112 통과**, TypeScript 타입 검사와 Vite 빌드도 성공했습니다. 실제 유료 Codex 계정 호출, 청구 토큰 절감률, 장기 작업 벤치마크는 별도로 측정해야 합니다.
-
-### 🔧 자율 작업 토큰·캐시 사용량 실측 표시 (서브3, 2026-11-15)
-
-Rust 엔진이 모델 제공자의 실제 응답에서 입력·출력·캐시 읽기·캐시 쓰기 토큰을 수집하고, 작업별 누적 기록인 `nativeModelUsage`를 저장합니다. 제공자가 사용량을 보내지 않은 호출은 **미보고 횟수로 분리**해 0원·0토큰으로 위장하지 않습니다. Anthropic의 별도 캐시 읽기·생성 토큰도 Rust 실행 예산의 입력 토큰 합계에 포함합니다. Rust 작업 기록과 TypeScript SDK에는 상세한 실측·미보고 정보가 유지됩니다. 고정된 메인 UI는 `/api/sdk/runs`를 통해 제공자 보고 입력·출력·캐시 읽기 수치만 표시하며, 미보고 상세 정보는 공개 작업 API에서 조회합니다. [세부 설계](docs/SUB3-NATIVE-METERING-2026-11-15.md). [GitHub Actions #43691823640](https://github.com/hushmind3/dominion-rust/actions/runs/43691823640)에서 **Rust 115/115**, 독립 **TypeScript SDK 7/7**, React 타입 검사·Vite 빌드 모두 통과했습니다. 실제 API 청구원가와 절감률은 제공자별 계정 요금 검증 전까지 금액으로 단정하지 않습니다.
-
-메인 `879dc23d` 프런트 원본을 그대로 사용하므로 서브3에서 만들었던 **GUI 토큰 예산 고급 입력은 제거했습니다**. 토큰 예산 설정은 기존 `/api/jobs`의 `input.tokenBudget`와 TypeScript SDK 경로에서 계속 작동합니다. 메인 UI는 자체 Rust SDK 작업의 기본 실행·결과·승인·취소 기능을 제공합니다.
-
-최종 GUI 예산 연동까지 반영한 [집중 CI #43692151683](https://github.com/hushmind3/dominion-rust/actions/runs/43692151683)도 **Rust 115/115 · TypeScript SDK 7/7 · 프런트 타입 검사·빌드 전부 통과**했습니다.
-
-
-### 🔧 자율 에이전트 프롬프트 캐시·중복 청구 방지 (서브3, 2026-11-15)
-
-Rust 자율 작업의 일반 OpenAI 호환 모델 호출을 **1회 전송** 경로로 전환했습니다. 네트워크가 끊겼다고 이미 모델이 수신했을 수 있는 유료 요청을 임의로 재전송하지 않습니다. Anthropic 모델에서는 반복되는 **도구 정의·시스템 지시**에 5분짜리 명시적 캐시 경계를 설정하고, 매 턴 바뀌는 현재 작업·관찰 내용은 캐시 쓰기 대상으로 지정하지 않습니다. 캐시를 지원하지 않는 제공자가 `cache_control`을 명시적으로 거부한 경우에만 원본 요청을 한 번 재시도하며, 해당 호환성 결과를 제공자·모델별로 기억합니다. 로컬 Anthropic 호환 서버는 캐시 지원을 명시적으로 선언한 경우에만 사용합니다. 캐시 쓰기/읽기 실측과 작업 예산은 기존 Rust 엔진·SDK·GUI 경로를 그대로 사용합니다. [구현 구조 및 테스트](docs/SUB3-NATIVE-PROMPT-CACHE-2026-11-15.md).
-
-실제 TCP·HTTP 회귀 테스트를 포함한 [서브3 집중 CI #43693114690](https://github.com/hushmind3/dominion-rust/actions/runs/43693114690)에서 **Rust 121/121**, **TypeScript SDK 7/7**, 프런트엔드 타입 검사·빌드가 전부 통과했습니다. 연결이 끊긴 모델 호출 재실행 금지, 캐시 힌트 명시적 거부 후 안전한 원본 재요청, 캐시 읽기·쓰기 토큰 누적을 검증했습니다. 유료 제공자의 실청구 절감률은 아직 별도 측정 대상입니다.
-
-### 🧠 Rust 품질 보존형 모델·비용 자동 선택 (서브3, 2026-11-15)
-
-Rust Provider API에는 모델별 품질 점수와 입력·출력·캐시 읽기·쓰기 단가(원/100만 토큰), `quality_cost` 경로가 유지됩니다. 프런트는 요청하신 메인 `879dc23d` 원본으로 통일하여 **서브3 전용 가격 등록·자동 라우팅 UI는 사용하지 않습니다**. API/TypeScript SDK에서 경로를 설정하면 Rust 엔진이 품질 조건과 사용자 직접 지정 모델을 적용합니다.
-
-선택된 제공자·모델·엔드포인트·인증 계약은 작업 기록에 고정됩니다. 작업을 재개하거나 진행 중 제공자 설정이 바뀌어도 임의로 다른 모델에 요청하지 않습니다. 캐시 사용량 기록이 3개 이상의 완료 작업에서 충분히 쌓인 경우에만 **보수적으로** 예상 캐시 절감을 계산에 반영합니다. 완료된 호출의 실측 토큰에 등록 단가를 곱한 **원화 비용 추산**은 Rust 작업 API와 TypeScript SDK에서 확인할 수 있으며, 단가 또는 사용량이 없는 호출은 비용 미산정으로 구분합니다. 실청구서 확인 없이 확정 지출이라고 표시하지 않습니다. [설계·API·검증](docs/SUB3-NATIVE-QUALITY-COST-ROUTING-2026-11-15.md).
-
-품질 보존형 라우팅과 캐시 이력까지 적용한 [집중 CI #43695469189](https://github.com/hushmind3/dominion-rust/actions/runs/43695469189)에서 **Rust 126/126 · TypeScript SDK 7/7 · 프런트 타입 검사·빌드 모두 통과**했습니다. 실제 로컬 HTTP 호출까지 이어진 Rust 작업 통합 테스트에서 모델 선택·고정·원화 비용 추산·엔드포인트 변경 시 재개 차단을 확인했습니다. 유료 제공자의 실청구서와 작업 성공률 개선 효과는 별도 실측 대상으로 남깁니다.
-
-### 🛠️ 서브3 RSI 실동작·독립 평가·실행 잔재 강화 (2026-11-15)
-
-기존 Rust RSI의 실제 경로 **소스 지정 → Git 분리 실험 → 개선기 바이너리 재빌드 → 후손 작업으로 실제 소스 편집 → 동일 기준 원본/후보 A/B 컴파일·검증 → 승격·다음 세대**를 따라 실행 정합성을 수정했습니다. 이제 평가 보고서의 원본·후보 Git 트리를 별도의 Rust 임시 Git 인덱스로 재구성해 대조하고, **채택·브랜치 적용 시에도 정확히 같은 코드 트리**인지 검증합니다. 후손 작업이 검증 실패를 반환했는데 성공 완료로 기록하던 문제를 고쳤으며, 실험 초기화·A/B 실행 실패 후 Git worktree 등록 정보가 남는 잔재 경로도 정리했습니다. 단순 성공 플래그가 아닌 **실제로 컴파일되는 소형 Rust 프로젝트의 원본/개선본 A/B 검사**를 추가했습니다. [실제 실행 흐름과 검증 문서](docs/SUB3-RSI-EXECUTION-INTEGRITY-2026-11-15.md). 유료 모델을 이용한 여러 세대 RSI 완주·성공률 향상 검증은 별도의 남은 작업입니다.
-
-**2026-11-15 RSI 집중 검증:** [GitHub Actions #43697949313](https://github.com/hushmind3/dominion-rust/actions/runs/43697949313)에서 **Rust 223/223**, 실제 Git·Cargo A/B **2/2**, TypeScript SDK **7/7**, React 타입 검사·Vite 빌드 전부 통과했습니다. 특히 진짜 Rust 개선기 바이너리 재빌드 → 새로운 세대 실행 → Git 실험 계보 채택 → 소스 브랜치 반영을 실제 프로세스 통합 테스트에서 확인했습니다. 상용 모델을 이용한 자율 다세대 RSI 완주와 프런티어 벤치마크는 현재 검증 결과에 포함되지 않습니다.
-
-### 🧠 2026년 최신 연구 반영: 캐시 비용 고려형 도구 출력 정리
-
-최근 논문 Agency(2026-11-09), Anthropic Context Editing 및 Hermes Agent 실제 소스를 검토하고, **서브3의 일반 채팅·Anthropic 전송 경로**에 선택적 도구 출력 압축을 구현했습니다. 오래된 큰 읽기 결과만 줄이고 쓰기·오류·최근 결과와 원본 실행 기록은 보존합니다. 새 요약 모델 호출 없이 처리하며 줄인 직렬화 문자량은 감사 기록으로 추적하되 **과금 절감률과 혼동하지 않습니다**. [구현·자료·테스트](docs/SUB3-2026-CONTEXT-EDITING.md).
-
-### 🔧 메인 동작 보존 보강 (2026-11-15)
-
-도구 호출 순서·병렬 읽기 장벽·도구 결과 ID별 복원·한국어 파일 생성 검증과 메인 언어 선택 동작을 서브3에 반영했습니다. 불필요한 RSI 소스 재검색 대상도 줄였습니다. [구체적인 실제 호출 경로·회귀 테스트·남은 미검증 범위](docs/SUB3-MAIN-PARITY-2026-11-15.md)를 확인하세요. 메인 API 210/210개 및 웹 소스 56/56개 일치를 다시 확인했습니다. [제품 집중 검증 #43712789490](https://github.com/hushmind3/dominion-rust/actions/runs/43712789490)에서 **Rust 본체·채팅·검증·FFprobe 확인 H.264 MP4·실제 HTTP 통합 테스트 10개·React 빌드 통과**, [SDK/RSI 집중 검증 #43711861791](https://github.com/hushmind3/dominion-rust/actions/runs/43711861791)도 통과했습니다. 영상에는 무API 장면별 디자인·카메라 움직임·Windows 오프라인 음성 경로를 보강했습니다. 전체 동작 동등성 및 상용 모델 실비용은 별도 검증 대상입니다.
-
-### 🖥️ 현재 최신 메인 프런트 동기화 (2026-11-15)
-
-서브3 `web/` 전체 **56개 파일이 메인 커밋 `879dc23dce309688691c200b001b180bead95a12`의 Git blob과 완전히 동일**합니다. `NativeAgentPanel.tsx`와 `Models.tsx`를 원본으로 복원했으며, UI를 재작성하지 않았습니다. 메인의 `/api/sdk/runs` 호출은 `src/api/sdk_runs.rs`에서 기존 `/api/jobs` 검증·큐 등록, Rust SDK 실행 상태, 실제 승인 기록, 안전한 취소에 연동합니다. 변경 결과가 미확정인 작업은 임의로 재실행하지 않습니다. 서브3 전용 예산·비용·라우팅 API/SDK 기능은 Rust 엔진에 남고, 고정된 메인 화면에 없는 설정은 별도 API에서 사용합니다.
-
-수동 복구 버튼은 이제 상태만 기록하는 동작이 아닙니다. 불확실한 도구 실행을 사용자께서 확인하면 **Rust SDK 체크포인트에 미검증 관찰 영수증을 남기고, 재개 가능한 중단 상태로 전환**합니다. 적용됐다고 확인한 작업은 중복 실행을 차단하고, 새 변경 전에 읽기 도구 영수증을 요구합니다. 실행 대기자가 없는 승인 요청은 승인 버튼에서 제외했습니다. 메인 API 경로 210개는 서브3에 모두 존재합니다. 현재 메인 버전과 연결 증거는 [최신 메인 UI 호환 문서](docs/SUB3-CURRENT-MAIN-FRONTEND-2026-11-15.md)에 기록했습니다. 해당 `879dc23d`는 확인 시점 최신 메인이지 영구 고정값이 아닙니다.
-
-**메인 프런트 동기화 검증:** [집중 CI #43707625721](https://github.com/hushmind3/dominion-rust/actions/runs/43707625721)에서 **Rust 236/236, 실제 A/B 2/2, TypeScript SDK 7/7, 프런트 타입 검사·프로덕션 빌드 전부 통과**했습니다. 최신 메인 화면은 그대로 보존하면서 승인·확인·안전한 재개가 실제 Rust SDK/DB 상태를 바꾸는지 회귀 테스트로 확인했습니다.
-
-**메인 자동 작업 화면 기능 정합성:** 모델 자동 선택에서 CLI/호환 전용 모델을 건너뛰고 실행 가능한 제공자를 먼저 찾습니다. 적격 모델이 없으면 시작 전에 오류를 안내합니다. 자동 작업 목록은 해당 화면에서 만든 작업만 표시하고, 진행 이벤트는 Rust가 저장한 실제 호출·도구 영수증을 사용합니다. 수동 확인·재개 버튼도 실제 체크포인트가 허용하는 상태에서만 나오게 서버 응답을 수정했습니다. 메인 `web/` 전체 56개 파일은 수정 없이 유지했습니다. [정확한 호출 경로](docs/SUB3-CURRENT-MAIN-FRONTEND-2026-11-15.md).
-
-**메인 프런트 자동 작업 기능 회귀:** [집중 CI #43709108553](https://github.com/hushmind3/dominion-rust/actions/runs/43709108553)에서 **Rust 239/239 · 실제 Git/Cargo A/B 2/2 · TypeScript SDK 7/7**, 프런트 타입 검사와 프로덕션 빌드 모두 통과했습니다. 화면에 없는 기능을 추가하지 않고, 실제 동작 불가 모델의 사전 거부·메뉴 간 작업 기록 분리·진행 영수증 표시·불안전한 재개 차단을 확인했습니다.
-
-### 영상 스토리보드 편집과 기획 실패 복구
-
-기존 **영상 → 자율 콘텐츠 제작** 화면에서 장면 추가·복제·삭제·순서 이동·대본 수정을 지원합니다. 초기 기획이 실패하면 **기획 다시 실행** 버튼으로 새 작업을 명시적으로 등록합니다. Rust 엔진은 프로젝트 상태와 새 작업을 SQLite 단일 트랜잭션으로 연결하며 이전 실패 기록은 유지합니다. API: `POST /api/video/projects/{id}/retry-plan` (본문: `{"revision":0}`). 자세한 실행 경로는 [서브3 영상 문서](docs/SUB3-VIDEO-TURNKEY-2026-11-16.md)를 참고하세요.
-
-영상 생성 결과가 불확실한 작업은 자동으로 재호출하지 않습니다. 사용자가 이전 작업 기록을 검토한 뒤 영상 화면의 **검토 후 새 버전 렌더링**을 누르면 `POST /api/video/projects/{id}/render`의 `acknowledgeUnknown:true`로 새 버전을 생성합니다. 실패한 이전 작업에서 이미 만들어진 영상 클립도 SHA-256과 생성 설정이 일치할 경우 재사용합니다.
-
-### Rust 실행 커널의 독립 산출물 검증·작업 예산 (서브3, 2026-11-16)
-
-에이전트가 파일 수정에 성공했다고 보고해도 **최종 파일의 SHA-256을 Rust가 독립 재검증**합니다. 검증 실패 시 완료 처리하지 않고 오류 증거를 저장해 다음 수정 판단으로 돌려보냅니다. 모델이 제안한 도구 호출과 최종 검증 명령은 동일한 **maxToolCalls** 예산을 사용하며, 한도를 넘는 작업 묶음은 실행 전 통째로 차단합니다. 기존 에이전트 화면·공개 API·TypeScript SDK가 같은 Rust 실행 결과와 검증 기록을 사용합니다. [기술 구조와 테스트 근거](docs/SUB3-EVIDENCE-GOVERNOR-2026-11-16.md).
-
-### 고정 스키마·점진적 도구 발견 (서브3, 2026-11-16)
-
-Rust 자율 에이전트는 허용 도구가 많아져도 모델에 최대 **13개의 도구 스키마**만 기본 공개합니다. 모델이 `dominion_tool_search`로 허용된 도구를 찾으면 `dominion_tool_call`이 기존 Rust 승인·실행·복구 경로로 실제 작업을 수행합니다. 검색 후에도 Provider의 함수 목록은 변하지 않아 프롬프트 캐시 접두부를 안정적으로 유지합니다. API/SDK의 허용 목록 한도는 64개에서 1,024개로 확대하되 권한과 메타데이터 크기 검증을 유지합니다. [실제 실행 구조·테스트·2026년 소스 비교](docs/SUB3-PROGRESSIVE-TOOLS-2026-11-16.md).
-
-### MCP 계약 고정·실행 재현·비용 인덱스 (서브3, 2026-11-16)
-
-Rust 에이전트는 허용된 MCP 서버·도구 스키마를 작업에 고정하고, 실제 호출 직전 **같은 MCP 연결에서 `tools/list`를 다시 확인**합니다. 모든 도구 인수는 Rust가 JSON 스키마로 검증하며 실행 인수·결과와 MCP 계약의 SHA-256을 기록합니다. 모델 라우팅은 완료 작업 전체 순회 대신 SQLite 인덱스로 실제 보고된 캐시 사용량을 집계합니다. 저장된 모델 결정·도구 실행 기록으로 **외부 호출 없이 실패 경로를 재구성**하고, 동일 조건 2개 실행의 검증·토큰·도구 수·처리 시간·원화 원가를 비교하는 읽기 전용 API와 기존 자동 작업 UI를 연결했습니다. 메인의 장면별 재제작 API도 원본을 수정하거나 자동 게시하지 않는 실제 파생 영상 작업으로 연동했습니다. [심판 제출용 전체 근거·한계](docs/SUB3-JUDGE-READY-2026-11-16.md).
-
-### Rust 하네스 중심 경량화 전환 (서브3, 2026-11-16)
-
-신규 제품 방향에 따라 내장 영상·오디오 제작과 독립 RSI 캠페인·자동 코어 채택을 **SDK로 옮기지 않고 의존성을 분리해 정리**합니다. 1차 반영으로 Rust 작업자에서 400ms 전체 이력 조회를 중단하고 SQLite 실행 중·대기 중 작업 인덱스와 알림 기반 깨우기를 적용했습니다. 일반 채팅의 자동 학습 기본값을 끄고 5분 주기 성장·증류·학습 점검과 채팅 종료 후 무인 정책 실험·전략 제안을 중단했습니다. 기존 세션·기억·실패 기록·승인·검증·SDK는 유지합니다. **기존 영상·RSI 소스 및 API는 아직 완전히 제거되지 않았습니다.** [변경된 경로, 테스트, 남은 제거 범위](docs/SUB3-LEAN-COMPLEXITY-2026-11-16.md).
+[경량화 구조·회귀 기준](docs/SUB3-LEAN-COMPLEXITY-2026-11-16.md) · [실행 기록·독립 검증](docs/SUB3-JUDGE-READY-2026-11-16.md).

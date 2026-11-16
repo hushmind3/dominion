@@ -1,24 +1,11 @@
-# 도미니언 Rust 실행 코어
+# DOMINION Rust Native Agent SDK
 
-`origin/dominion-sub3`의 `dominion-agent-sdk`를 가져온 공통 실행 크레이트입니다.
+The independent **`dominion-agent-sdk`** crate owns budgeted model/tool execution, plan/decision snapshots, tool authorization contracts, bounded JSON Schema validation, durable receipts, independent acceptance checks and fail-closed crash/recovery behavior. It is not a built-in media renderer or an autonomous self-improving RSI engine.
 
-- `Kernel::run`: 모델·도구·증거·저장 어댑터를 받는 구조화된 작업 루프
-- `dispatch_batch`: 도구 실행 전 체크포인트, 취소·선행 조건 검사, 실행 결과 기록
-- `runtime::BudgetLedger`: 대화 턴과 병렬 프로그램이 함께 사용하는 실행 예산
-- `runtime::read_batch_end`: 쓰기 순서를 보존하면서 인접 읽기만 묶는 배치 경계
+For large allowed MCP registries, `dominion_tool_search` and fixed `dominion_tool_call` bridge offer progressive discovery without changing provider function schemas. The host validates final arguments, tool allowlists and pinned MCP manifests before effectful execution. Owner intervention never becomes a fabricated success receipt.
 
-현재 웹 채팅은 `/api/chat` → `chat/runtime.rs` → 이 크레이트의 배치 dispatch로 연결됩니다. 모델 공급자 연결, 네이티브 도구 호출 프로토콜, 추론·본문 스트리밍, 기억 검색과 그룹 문맥은 기존 제품 어댑터가 담당합니다. 구조화된 JSON 계획 형식을 기존 모델 호출에 강제하지 않습니다.
+`replay::trace(&snapshot)` reconstructs recorded decisions and effects **offline**; it neither calls a model nor repeats tools or automatically promotes code. The product host `src/engine/native_replay.rs` cross-checks independent operation journals, reported cache usage and configured KRW tariffs.
 
-제품 실행 기록의 `kernelState`에는 실행 중인 도구와 완료 영수증이 저장됩니다. 취소나 프로세스 중단으로 결과가 불명확한 작업은 기존 효과 기록과 함께 확인할 수 있습니다. 체크포인트 저장이 실패하면 새 도구를 실행하지 않습니다.
+This SDK does not implement generation-level campaigns, autonomous core mutation, video/audio production, or unattended optimizer policies. User-requested coding/refactoring/testing tasks run through the normal Rust harness and acceptance criteria.
 
-기존 `dominion-harness` 호환 실행기도 이 크레이트의 예산을 사용합니다. 호환 실행기의 모델 루프 전체를 제품 채팅과 통합한 것은 아닙니다.
-
-빌드·회귀 검사와 실제 모델의 작업 성능은 별도로 판단합니다.
-
-## Fixed-provider tool-search bridge (2026-11-16)
-
-For a catalogue larger than 18 owner-approved tools the kernel exposes up to 13 native function definitions. `dominion_tool_search({query,limit})` is a zero-provider-call read-only operation against the **allowed** catalogue and returns full tool schemas as durable receipts. The model invokes hidden capabilities through `dominion_tool_call({name,arguments})`; the kernel demands a prior successful same-run discovery receipt, checks allowlist membership again and records the **real** tool in the operation receipt. Native function declarations remain unchanged after discovery. No external host tool is called by searching, and the bridge does not bypass approval, cancellation or crash-recovery paths. For small catalogues the legacy full catalogue remains visible. Large allowlists accept up to 1,024 tools and at most 65,536 bytes of approved names. See [design and tests](../../../docs/SUB3-PROGRESSIVE-TOOLS-2026-11-16.md).
-
-## Validated tools and durable offline decision replay
-
-The Rust kernel validates the **host-authorized** JSON argument schema before every dispatched action, including names resolved through the fixed tool-search bridge. Unsupported high-impact schema keywords reject execution instead of claiming validation. `Snapshot.decisionTape` records the actual model decision prior to dispatch without breaking old checkpoints (`serde(default)`), and `dominion_agent_sdk::replay::trace` reconstructs failures, receipt consistency, and uncertain effects without sending any model/tool call. Host adapter pins MCP contracts and writes separate operation journals; this crate never provides permission to replay outside effects. [Submission trace and tests](../../../docs/SUB3-JUDGE-READY-2026-11-16.md).
+Run `cargo test -p dominion-agent-sdk`. See [lean product architecture](../../../docs/SUB3-LEAN-COMPLEXITY-2026-11-16.md).
