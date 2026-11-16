@@ -57,6 +57,8 @@ pub async fn status(State(state): State<AppState>) -> Json<Value> {
         "jobs": jobs,
         "models": model_inventory,
         "modelsReady": built_in,
+        "modelsDir": video::models_dir(&state),
+        "modelsDirReady": video::models_dir_ready(&state),
         "workflows": workflows,
         "installed": reachable
     }))
@@ -273,6 +275,16 @@ pub async fn models(State(state): State<AppState>) -> Json<Value> {
     Json(json!(items))
 }
 
+/// User-facing one-action model setup: save selected engine, validate actual
+/// ComfyUI models folder, and start/resume missing model assets.
+pub async fn setup_model(
+    State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>
+)->Response{
+    match video::setup_model(state,&id,&body){
+        Ok(value)=>(StatusCode::ACCEPTED,Json(value)).into_response(),
+        Err(error)=>error(StatusCode::BAD_REQUEST,error),
+    }
+}
 pub async fn download_model(
     State(state): State<AppState>, Path(id): Path<String>,
 ) -> Response {
