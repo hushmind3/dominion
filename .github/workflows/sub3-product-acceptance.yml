@@ -17,7 +17,10 @@ on:
       - 'packages/sdk-typescript/**'
       - 'src/engine/chat/**'
       - 'src/engine/video.rs'
+      - 'src/engine/video_studio.rs'
       - 'src/api/video.rs'
+      - 'src/api/video_studio.rs'
+      - 'web/src/components/VideoAutopilot.tsx'
       - 'src/engine/verification.rs'
       - 'src/engine/code_index.rs'
       - 'src/engine/rsi_system.rs'
@@ -68,6 +71,10 @@ jobs:
         env:
           DOMINION_REQUIRE_VIDEO_FFMPEG: '1'
         run: cargo test --bin dominion-rust native_pipeline_produces_a_real_playable_container -- --nocapture
+      - name: Autonomous video project and editable-scene acceptance
+        env:
+          DOMINION_REQUIRE_VIDEO_FFMPEG: '1'
+        run: cargo test --bin dominion-rust engine::video_studio::tests -- --nocapture
       - name: Run real HTTP/LLM fixture integration paths (no paid API)
         run: |
           for contract in parallel_reads_ ordinary_chat_ room_selected_tools_ native_job_prompt_runs token_budget_is_enforced_ chat_fails_over_ delegate_task_runs_; do
