@@ -997,6 +997,90 @@ fn substitute(value: &mut Value, variables: &Value) {
         _ => {}
     }
 }
+/// Cache identity is the immutable input delivered to one ComfyUI video clip,
+/// not an optimistic "same project" label. A changed seed, sampler, model,
+/// node graph, prompt, dimensions or duration always invalidates reuse.
+fn clip_fingerprint(child: &Value, index: usize) -> String {
+    use sha2::{Digest,Sha256};
+    let snapshot=json!({
+        "version":"dominion-comfy-clip-v1","position":index,
+        "config":child["config"],"render":child["render"],
+        "duration":child["duration"],"aspectRatio":child["aspectRatio"],
+    });
+    format!("{:x}",Sha256::digest(snapshot.to_string().as_bytes()))
+}
+fn file_sha256(path: &Path) -> Result<String,String> {
+    use sha2::{Digest,Sha256};
+    use std::io::Read;
+    let mut source=std::fs::File::open(path).map_err(|e|e.to_string())?;
+    let mut digest=Sha256::new();
+    let mut chunk=[0u8;64*1024];
+    loop {
+        let n=source.read(&mut chunk).map_err(|e|e.to_string())?;
+        if n==0{break}
+        digest.update(&chunk[..n]);
+    }
+    Ok(format!("{:x}",digest.finalize()))
+}
+fn valid_clip(path: &Path) -> bool {
+    use std::io::Read;
+    if !std::fs::metadata(path).is_ok_and(|m|m.is_file()&&m.len()>1024){
+        return false;
+    }
+    let Ok(mut file)=std::fs::File::open(path) else{return false};
+    let mut first=[0u8;12];
+    file.read_exact(&mut first).is_ok()&&&first[4..8]==b"ftyp"
+}
+fn clip_receipt(dir:&Path,index:usize)->PathBuf{
+    dir.join(format!("segment-{index:02}.receipt.json"))
+}
+fn record_clip(dir:&Path,index:usize,key:&str)->Result<(),String>{
+    let file=dir.join(format!("segment-{index:02}.mp4"));
+    if !valid_clip(&file) {
+        return Err("ComfyUI 생성 클립이 올바른 MP4가 아닙니다.".into());
+    }
+    let digest=file_sha256(&file)?;
+    let receipt=json!({"fingerprint":key,"sha256":digest,"bytes":
+        std::fs::metadata(file).map_err(|e|e.to_string())?.len()});
+    let path=clip_receipt(dir,index);
+    let temp=path.with_extension("tmp");
+    std::fs::write(&temp,receipt.to_string()).map_err(|e|e.to_string())?;
+    std::fs::rename(temp,path).map_err(|e|e.to_string())?;
+    Ok(())
+}
+/// Reuse only a *completed* render for the same project. Hashing the bytes
+/// prevents stale/mutated clips from being imported as verified outputs.
+fn reuse_completed_clip(state:&AppState,input:&Value,index:usize,key:&str,dst:&Path)->bool{
+    let Some(project)=input["projectId"].as_str() else{return false};
+    if uuid::Uuid::parse_str(project).is_err(){return false}
+    for old in state.store.all("job").into_iter().rev(){
+        if old["kind"]!="video"||old["status"]!="completed"
+            ||old["input"]["engine"]!="comfyui"
+            ||old["input"]["projectId"]!=project {continue}
+        let Some(id)=old["id"].as_str() else{continue};
+        let Ok(dir)=directory(state,id) else{continue};
+        let source=dir.join(format!("segment-{index:02}.mp4"));
+        let receipt=std::fs::read_to_string(clip_receipt(&dir,index)).ok()
+            .and_then(|data|serde_json::from_str::<Value>(&data).ok());
+        let Some(receipt)=receipt else{continue};
+        if receipt["fingerprint"]!=key||!valid_clip(&source){continue}
+        let Ok(actual)=file_sha256(&source) else{continue};
+        if receipt["sha256"]!=actual {continue}
+        let temp=dst.with_extension("part");
+        if std::fs::copy(&source,&temp).is_err(){
+            let _=std::fs::remove_file(temp);
+            continue;
+        }
+        if std::fs::rename(&temp,dst).is_err(){
+            let _=std::fs::remove_file(temp);
+            continue;
+        }
+        // The receipt is deliberately saved after the file is complete, so
+        // subsequent revisions can use this clip without a paid GPU request.
+        return true;
+    }
+    false
+}
 async fn comfy(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, String> {
     let Some(shots)=input["scenes"].as_array() else {
         return comfy_single(ctx,input,dir).await;
@@ -1020,6 +1104,7 @@ async fn comfy(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, Str
     let encoder=ffmpeg_from_config(&input["config"])
         .ok_or("여러 ComfyUI 장면을 하나의 영상으로 합치려면 FFmpeg가 필요합니다.")?;
     let mut concat=String::new();
+    let mut clips_reused=0usize;
     for (index,shot) in shots.iter().enumerate(){
         ctx.checkpoint(json!({"phase":"rendering",
             "progress":10+(index*75/shots.len()) as u64,
@@ -1036,10 +1121,20 @@ async fn comfy(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, Str
         child["render"]["frames"]=json!(seconds.saturating_mul(fps));
         let base_seed=input["render"]["seed"].as_i64().unwrap_or(0);
         child["render"]["seed"]=json!(base_seed.saturating_add(index as i64));
-        comfy_single(ctx,&child,dir).await?;
         let file=format!("segment-{index:02}.mp4");
-        std::fs::rename(dir.join("output.mp4"),dir.join(&file))
-            .map_err(|e|e.to_string())?;
+        let destination=dir.join(&file);
+        let fingerprint=clip_fingerprint(&child,index);
+        if reuse_completed_clip(&ctx.state,input,index,&fingerprint,&destination){
+            clips_reused+=1;
+            ctx.checkpoint(json!({"phase":"clip_reused",
+                "sceneIndex":index+1,"sceneTotal":shots.len(),
+                "segmentsReused":clips_reused}))?;
+        }else{
+            comfy_single(ctx,&child,dir).await?;
+            std::fs::rename(dir.join("output.mp4"),&destination)
+                .map_err(|e|e.to_string())?;
+        }
+        record_clip(dir,index,&fingerprint)?;
         concat.push_str(&format!("file '{file}'\n"));
     }
     std::fs::write(dir.join("segments.txt"),concat).map_err(|e|e.to_string())?;
@@ -1056,7 +1151,8 @@ async fn comfy(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, Str
     }
     std::fs::rename(dir.join("output.part.mp4"),dir.join("output.mp4"))
         .map_err(|e|e.to_string())?;
-    Ok(json!({"engine":"comfyui","sceneCount":shots.len(),"composition":"scene_montage"}))
+    Ok(json!({"engine":"comfyui","sceneCount":shots.len(),"composition":"scene_montage",
+        "segmentsReused":clips_reused,"segmentsGenerated":shots.len()-clips_reused}))
 }
 async fn comfy_single(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, String> {
     let cfg = &input["config"];
@@ -1401,6 +1497,50 @@ pub async fn upload(ctx: &JobContext, job: &Value) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn clip_test_state()->AppState{
+        let root=std::env::temp_dir().join(format!("dominion-clip-reuse-{}",uuid::Uuid::new_v4()));
+        let cfg=crate::config::Config{
+            port:0,data_dir:root.clone(),web_dir:root.join("web"),workspace:root.clone()
+        };
+        AppState::new(cfg.clone(),crate::db::Store::open(&cfg.db_path()).unwrap(),
+            crate::vault::Vault::open(&cfg.key_path()))
+    }
+    #[test]
+    fn unchanged_clips_reuse_completed_artifact_but_changed_scene_is_not_reused(){
+        let state=clip_test_state();
+        let project=uuid::Uuid::new_v4().to_string();
+        let id=uuid::Uuid::new_v4().to_string();
+        let dir=directory(&state,&id).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        let old=json!({"id":id,"kind":"video","status":"completed","input":{
+            "projectId":project,"engine":"comfyui"}});
+        state.store.put("job",&old);
+        let base=json!({"config":{"videoModel":"wan21","steps":8},
+            "render":{"prompt":"street scene","seed":9,"fps":12,"frames":48,
+                "width":384,"height":672},
+            "duration":4,"aspectRatio":"9:16"});
+        let key=clip_fingerprint(&base,0);
+        let previous=dir.join("segment-00.mp4");
+        let mut fake=vec![0u8;4096];
+        fake[4..8].copy_from_slice(b"ftyp");
+        std::fs::write(&previous,fake).unwrap();
+        record_clip(&dir,0,&key).unwrap();
+        let next=directory(&state,&uuid::Uuid::new_v4().to_string()).unwrap();
+        std::fs::create_dir_all(&next).unwrap();
+        let unchanged=next.join("segment-00.mp4");
+        let input=json!({"projectId":project});
+        assert!(reuse_completed_clip(&state,&input,0,&key,&unchanged));
+        assert!(valid_clip(&unchanged));
+        let mut changed=base.clone();
+        changed["render"]["prompt"]=json!("different city");
+        let revised=clip_fingerprint(&changed,0);
+        assert_ne!(key,revised);
+        assert!(!reuse_completed_clip(&state,&input,0,&revised,&next.join("new.mp4")));
+        assert_ne!(key,clip_fingerprint(&base,1),"position and seed allocation matter");
+        std::fs::write(&previous,vec![0u8;4096]).unwrap();
+        assert!(!reuse_completed_clip(&state,&input,0,&key,&next.join("tampered.mp4")));
+        crate::test_support::cleanup_dir(state.config.data_dir.clone());
+    }
     #[test]
     fn imported_comfy_workflows_must_not_claim_unenforced_economy_reduction() {
         let custom=json!({"comfyWorkflow":{"1":{"class_type":"CustomSampler",
