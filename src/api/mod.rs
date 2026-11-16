@@ -148,6 +148,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/jobs/:id",get(jobs::one))
         .route("/api/jobs/:id/cancel",post(jobs::cancel))
         .route("/api/jobs/:id/directive",post(jobs::directive))
+        .route("/api/jobs/:id/steer",post(jobs::steer))
         // Main @879dc23d frontend uses this stable view of the SAME Rust SDK jobs.
         // Preserve main's independent Rust harness contract alongside the
         // native-product job-backed SDK used by the existing GUI.
@@ -163,6 +164,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/sdk/runs/:id/cancel",post(sdk_runs::cancel))
         .route("/api/sdk/runs/:id/resume",post(sdk_runs::resume))
         .route("/api/sdk/runs/:id/reconcile",post(sdk_runs::reconcile))
+        .route("/api/sdk/runs/:id/steer",post(sdk_runs::steer))
         .route("/api/tasks", get(tasks::list))
         .route("/api/tasks/:id", get(tasks::one))
         .route("/api/tools", get(extensions::list_tools))
