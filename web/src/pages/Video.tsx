@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
 import {FormField,Headline,Notice,Panel,StateTag,useRemote} from '../components/UI'
-import {openOAuth,post} from '../api'
+import {openOAuth,post,type Provider} from '../api'
 import {jobFinished,useJob,type JobState} from '../hooks/useJob'
 import {useLocale} from '../i18n'
 
@@ -84,6 +84,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  const downloads=useRemote<{downloads:{id:string;model:string;status:string;progress:number;bytes:number;total:number;filesTotal?:number;filesCompleted?:number;currentFile?:string|null;error?:string}[]}>('/api/video/models/downloads',{downloads:[]})
  const youtube=useRemote<YoutubeStatus>('/api/youtube/status',{connected:false,uploadAllowed:false,account:null,uploads:[]})
  const oauth=useRemote<{id:string;configured:boolean;callback?:string}[]>('/api/oauth/providers',[])
+ const providers=useRemote<Provider[]>('/api/providers',[])
  const [draft,setDraft]=useState<Draft>(loadDraft)
  const [tab,setTab]=useState<StudioTab>('create')
  const [engineChoice,setEngineChoice]=useState<VideoEngine|null>(null)
@@ -97,6 +98,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  const [budgetEnabled,setBudgetEnabled]=useState(false)
  const [maxNewScenes,setMaxNewScenes]=useState(1)
  const [advanced,setAdvanced]=useState(false)
+ const [autoPlan,setAutoPlan]=useState(true)
  const [currentId,setCurrentId]=useState('')
  const [submitted,setSubmitted]=useState<VideoJob|null>(null)
  const [uploadFile,setUploadFile]=useState('')
@@ -138,7 +140,9 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  const validDuration=Number.isInteger(draft.seconds)&&draft.seconds>=3&&draft.seconds<=maxDuration
  const validFps=Number.isInteger(draft.fps)&&draft.fps>=1&&draft.fps<=60
  const validBrief=new TextEncoder().encode(actualScenes.join('\n\n')).length<=16000
- const multiSceneRequiresFfmpeg=usingComfy&&draft.mode==='scenes'&&sceneItems.length>1&&!video.value.native?.available
+ const planner=providers.value.find(provider=>provider.enabled!==false&&Boolean(provider.model?.trim()))
+ const planningEnabled=usingComfy&&draft.mode==='quick'&&autoPlan&&Boolean(planner)&&draft.seconds>=6&&(!budgetEnabled||maxNewScenes>=2)
+ const multiSceneRequiresFfmpeg=usingComfy&&((draft.mode==='scenes'&&sceneItems.length>1)||planningEnabled)&&!video.value.native?.available
  const ready=usingComfy?Boolean(video.value.comfy.available):Boolean(video.value.native?.available)
  const prerequisite=usingComfy
   ? !statusConfig.comfyUrl?.trim()?'먼저 ComfyUI 서버 주소를 등록해 주세요.'
@@ -179,7 +183,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  const patchDraft=(patch:Partial<Draft>)=>setDraft(previous=>({...previous,...patch}))
  const reload=async()=>{
   setRefreshing(true);setError('')
-  try{await Promise.allSettled([video.reload(),jobs.reload(),outputs.reload(),catalog.reload(),downloads.reload(),youtube.reload(),oauth.reload()])}
+  try{await Promise.allSettled([video.reload(),jobs.reload(),outputs.reload(),catalog.reload(),downloads.reload(),youtube.reload(),oauth.reload(),providers.reload()])}
   finally{setRefreshing(false)}
  }
  const saveConfig=async(patch:Partial<VideoConfig>)=>{
@@ -261,6 +265,8 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
      scenes:actualScenes,
      negativePrompt:draft.negative,fps:draft.fps,seed:Number(draft.seed),
      continuity:draft.continuity,
+     autoStoryboard:planningEnabled&&!reuseId,
+     ...(planningEnabled?{planningProviderId:planner?.id}:{}),
      ...(reuseId?{reuseVideoJobId:reuseId,regenerateScenes:regenerate}:{}),
      ...(budgetEnabled?{maxNewScenes}: {})
     }:{})
@@ -460,6 +466,11 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
         </div>
         {usingComfy&&<FormField label="일관된 캐릭터 / 영상 스타일" hint="모든 장면에 같은 인물·의상·색감 등을 유지하도록 전달합니다."><TextArea rows={2} maxLength={2000} value={draft.continuity} onChange={e=>patchDraft({continuity:e.target.value})} placeholder="예: 같은 주인공, 남색 재킷, 따뜻한 필름 색감, 자연스러운 움직임"/></FormField>}
        </>}
+       {draft.mode==='quick'&&usingComfy&&<div className="rounded-xl border border-[#E4D4C7] bg-[#FAF6F0] p-3">
+        <label className="flex items-center gap-2 text-[12px] font-bold text-[#47392F]"><input type="checkbox" checked={autoPlan} onChange={e=>setAutoPlan(e.target.checked)}/> AI가 자동으로 대본·장면 구성</label>
+        <p className="mt-1 text-[11px] leading-5 text-[#786B5D]">연결된 텍스트 AI가 장면을 기획하고, 영상 엔진이 장면별 생성·합성을 진행합니다. 대본 기획에 모델 토큰이 사용될 수 있습니다.</p>
+        {autoPlan&&<p className="mt-1 text-[11px] font-semibold text-[#9A6544]">{!planner?'사용 가능한 텍스트 AI 제공자가 없어 현재는 단일 장면으로 생성됩니다.':draft.seconds<6?'6초 이상부터 장면 자동 기획을 사용합니다.':budgetEnabled&&maxNewScenes<2?'새 렌더 예산 2장면 이상일 때 자동 기획을 사용합니다.':!video.value.native?.available?'장면 합성을 위해 FFmpeg 설치가 필요합니다.':'자동 기획 준비됨 · '+(planner.name||planner.id)}</p>}
+       </div>}
        <div className="flex flex-wrap gap-2">
         <Button variant="ghost" size="sm" onClick={()=>{if(window.confirm('영상 아이디어와 장면 내용을 초기화하시겠습니까?')){setDraft({...defaults});setReuseId('');setRegenerate([])}}}><RotateCcw size={14}/> 새 프로젝트</Button>
         {reuseId&&<span className="inline-flex items-center gap-1.5 rounded-xl bg-[#EAF3E8] px-3 py-2 text-[11px] font-medium text-[#466647]"><CheckCircle2 size={13}/> 이전 프로젝트를 기반으로 수정 중 <button type="button" className="ml-1 underline" onClick={()=>{setReuseId('');setRegenerate([])}}>연결 해제</button></span>}
@@ -516,7 +527,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
       {invalidTime&&<p role="alert" className="mt-3 text-[12px] font-semibold text-rose-700">장면 {sceneItems.length}개의 최소 길이는 {sceneItems.length*3}초입니다. 시간을 늘리거나 장면을 줄여주세요.</p>}
       {invalidScenes&&<p role="alert" className="mt-3 text-[12px] font-semibold text-rose-700">모든 장면에 설명을 입력해 주세요. 최대 8개, 각 4,000바이트입니다.</p>}
       {!validBrief&&<p role="alert" className="mt-3 text-[12px] font-semibold text-rose-700">전체 영상 설명은 16,000바이트 이하로 작성해 주세요.</p>}
-      {multiSceneRequiresFfmpeg&&<p role="alert" className="mt-3 text-[12px] font-semibold text-rose-700">AI 장면 2개 이상을 합치려면 FFmpeg를 설치해야 합니다.</p>}
+      {multiSceneRequiresFfmpeg&&<p role="alert" className="mt-3 text-[12px] font-semibold text-rose-700">여러 AI 장면을 합치려면 FFmpeg를 설치해야 합니다.</p>}
      </Panel>
      <Panel className="p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-2"><h3 className={panelTitle}>3. 제작 준비</h3><StateTag online={ready}>{ready?'생성 가능':'설정 확인'}</StateTag></div>
