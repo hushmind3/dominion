@@ -26,7 +26,7 @@ type VideoJob=JobState & {
  renderParams?:{fps?:number;seed?:number;width?:number;height?:number};
  sceneProgress?:{index?:number|null;total?:number|null;rendered?:number|null;reused?:number|null};
  renderWorkload?:{frames?:number;pixelFrames?:number;megapixelFrames?:number;estimatedMoneyCost?:number|null};
- result?:{bytes?:number;sceneCount?:number;renderedScenes?:number;reusedScenes?:number;resumedScenes?:number;reusedFrames?:number;generatedFrames?:number;renderSeconds?:number;narrated?:boolean;captions?:boolean;narrationWarning?:string;url?:string}
+ result?:{bytes?:number;sceneCount?:number;renderedScenes?:number;reusedScenes?:number;resumedScenes?:number;reusedFrames?:number;generatedFrames?:number;renderSeconds?:number;narrated?:boolean;captions?:boolean;narrationWarning?:string;qualityGate?:{status:string;warnings?:string[];errors?:string[]};url?:string}
 }
 type UploadJob=JobState & {progress?:number;result?:{url?:string}}
 type VideoStatus={config:VideoConfig;modelDirectory?:string;native?:{available:boolean};comfy:{reachable:boolean;available?:boolean;missingNodes?:string[]};workflows:{id:string;name:string;bytes:number}[];jobs:VideoJob[]}
@@ -608,6 +608,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
        </div>}
        {previewJob.status==='cancelled'&&previewJob.remoteCancel?.status==='requested'&&<p role="status" className="mt-3 text-[11px] text-[#6F655C]">로컬 작업 중단 · ComfyUI에 해당 원격 작업의 취소 요청 전달됨 (실제 GPU 종료는 서버 상태에 따름)</p>}
        {previewJob.status==='cancelled'&&previewJob.remoteCancel?.status==='unconfirmed'&&<p role="alert" className="mt-3 text-[11px] text-amber-800">로컬 작업 중단 · 원격 GPU 중단 확인 필요: {previewJob.remoteCancel.reason||'ComfyUI 작업 상태를 확인하세요.'}</p>}
+       {previewJob.result?.qualityGate&&<p role="status" className="mt-2 text-[11px] text-[#5D5148]">MP4 기술 검사: {previewJob.result.qualityGate.status==='passed'?'통과':previewJob.result.qualityGate.status==='warning'?'주의':'별도 검증 필요'} · 인물 일관성·립싱크는 별도 검증 대상</p>}
        {previewJob.result?.narrationWarning&&<p role="status" className="mt-2 text-[11px] text-amber-800">{previewJob.result.narrationWarning}</p>}
        {previewJob.error&&<Notice message={previewJob.error}/>}
        {previewJob.status==='completed'&&previewJob.outputUrl&&<div className="mt-3 grid gap-2 sm:grid-cols-2">

@@ -1807,6 +1807,24 @@ pub async fn run(ctx: &JobContext, job: &Value) -> Result<Value, String> {
                 return Err("생성된 영상이 비어 있습니다.".into());
             }
             value["bytes"] = json!(bytes);
+            // Probe the *final* muxed file, not only the original scene clips.
+            // Machine checks are distinct from human semantic/video quality.
+            let codec=ffmpeg_from_config(&input["config"]);
+            if let Some(ffmpeg)=codec {
+                let ffprobe=ffmpeg.with_file_name(if cfg!(windows){"ffprobe.exe"}else{"ffprobe"});
+                let quality=crate::engine::video_quality::inspect(
+                    &ffprobe,&dir.join("output.mp4"),
+                    input["duration"].as_u64().unwrap_or(0),
+                    value["narrated"]==true,value["captions"]==true,
+                ).await;
+                if quality["status"]=="failed" {
+                    return Err(format!("완성본 기술 품질 검사 실패: {}",quality["errors"]));
+                }
+                value["qualityGate"]=quality;
+            }else{
+                value["qualityGate"]=json!({"status":"unverified",
+                    "reason":"FFprobe 실행 경로를 찾지 못했습니다."});
+            }
             value["outputUrl"] = json!(format!("/api/video/jobs/{}/content", ctx.job_id));
             progress(ctx, "completed", 100)?;
             Ok(value)
