@@ -90,6 +90,9 @@ pub fn create(state:&AppState,body:&Value)->Result<Value,String>{
  if !matches!(engine,"native"|"comfyui"){return Err("지원하지 않는 엔진입니다.".into())}
  let seconds=body["targetSeconds"].as_u64().unwrap_or(30);
  if !(3..=180).contains(&seconds){return Err("영상은 3~180초여야 합니다.".into())}
+ if engine=="comfyui"&&seconds>60{
+  return Err("현재 ComfyUI 턴키 제작은 최대 60초를 5초 이하 장면으로 분할합니다.".into())
+ }
  let aspect=body["aspectRatio"].as_str().unwrap_or("9:16");
  if !matches!(aspect,"9:16"|"16:9"|"1:1"){return Err("화면 비율을 확인하세요.".into())}
  let ai=body["useAI"]==true;
