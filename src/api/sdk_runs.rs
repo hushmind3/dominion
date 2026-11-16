@@ -144,6 +144,7 @@ fn project(state:&AppState,job:&Value)->Value{
             "toolCalls":snapshot["receipts"].as_array().map(Vec::len)
                 .or_else(||result["toolCalls"].as_u64().map(|n|n as usize)).unwrap_or(0),
             "answer":snapshot["answer"],"usage":usage,
+            "verificationChecks":snapshot["checks"],
             "pendingCall":approval,"events":events
         }
     })
