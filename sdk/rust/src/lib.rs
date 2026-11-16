@@ -188,16 +188,6 @@ impl Dominion {
     pub async fn executions(&self) -> Result<Vec<Value>, Error> {
         self.get(&["api", "executions"]).await
     }
-    pub async fn video_jobs(&self) -> Result<Vec<Value>, Error> {
-        self.get(&["api", "video", "jobs"]).await
-    }
-    pub async fn create_video(&self, input: Value) -> Result<Value, Error> {
-        self.post(&["api", "video", "jobs"], input).await
-    }
-    pub async fn rsi_campaigns(&self) -> Result<Value, Error> {
-        self.get(&["api", "rsi", "campaigns"]).await
-    }
-
     /// Returns the same durable sequence as GET /api/events?after=N.
     /// Persist the last event seq on the caller side for crash-safe resubscription.
     pub async fn events(&self, after: u64) -> Result<EventStream<Event>, Error> {

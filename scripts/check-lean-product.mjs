@@ -50,6 +50,11 @@ for(const signature of ['retired_legacy_kind','active_jobs()','job_wakeup.notifi
 assert.ok(!read('src/bootstrap.rs').includes('schedule_experiments'),'Auto-experiment boot hook survived');
 assert.ok(native.includes('dominion_sdk::harness::'),'Native job stopped using owned Rust SDK');
 assert.ok(kernel.includes('mod schema;')&&kernel.includes('pub mod replay;'),'Kernel lost proven argument/evidence operations');
+const rustSdk=read('sdk/rust/src/lib.rs');
+for(const old of ['pub async fn video_jobs','pub async fn create_video','pub async fn rsi_campaigns'])
+ assert.ok(!rustSdk.includes(old),'Retired Rust SDK method survived: '+old);
+for(const retained of ['pub async fn jobs','pub async fn chat','pub async fn events'])
+ assert.ok(rustSdk.includes(retained),'Rust SDK lost normal work/chat continuity: '+retained);
 const ts=read('sdk/typescript/src/index.ts');
 assert.ok(!ts.includes('readonly video=')&&!ts.includes('readonly rsi='),'Retired TS SDK methods remain');
 assert.ok(ts.includes('readonly nativeRuns=')&&ts.includes('readonly jobs='),
