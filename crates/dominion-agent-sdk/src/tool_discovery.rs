@@ -181,6 +181,7 @@ mod tests{
     description:format!("Execute {name}"),schema:json!({}),read_only:false});
   }
   tools.insert(SEARCH.into(),spec());
+  tools.insert(CALL.into(),call_spec());
   tools
  }
  #[test]
