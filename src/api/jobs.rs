@@ -58,7 +58,7 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
                 value["ownerInstructions"]=json!(owner);
             }
             if let Some(items)=input.get("allowedTools") {
-                let Some(items)=items.as_array().filter(|items| items.len()<=64&&items.iter().all(|item|
+                let Some(items)=items.as_array().filter(|items| items.len()<=1024&&items.iter().all(|item|
                     item.as_str().is_some_and(|s|!s.is_empty()&&s.len()<=128&&s.chars().all(|c|
                         c.is_ascii_alphanumeric()||matches!(c,'_'|'-'|'.')))))
                 else{return error(StatusCode::BAD_REQUEST,"허용 도구 목록을 확인하세요.");};
