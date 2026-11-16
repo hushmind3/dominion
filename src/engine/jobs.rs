@@ -1,6 +1,6 @@
 use crate::engine::chat::TurnRequest;
 use crate::engine::run_quiet;
-use crate::engine::{learning, reflect, rooms, workflows};
+use crate::engine::{learning, reflect, rooms};
 use crate::state::AppState;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
@@ -334,7 +334,6 @@ pub fn start(state: AppState) {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(30)).await;
-            schedule_automations(&state);
             // Approval expiration must run whether the UI is connected or not.
             crate::engine::chat::expire_stale_approvals(&state);
         }
@@ -385,7 +384,7 @@ fn next_queued(state: &AppState) -> Option<Value> {
         .cloned()
         .filter(|job| job.get("status").and_then(|value| value.as_str()) == Some("queued"))
         // Learning is background work: at most one at a time, so it can never
-        // occupy every worker while a prompt/room/workflow job waits.
+        // occupy every worker while a prompt/room job waits.
         .filter(|job| !(job["kind"] == "learn" && learning_running))
         .filter(|job| {
             if !matches!(job["kind"].as_str(), Some("room" | "meeting")) {
@@ -502,7 +501,6 @@ async fn run_job(state: AppState, job: Value) {
     }
 
     let result = match kind.as_str() {
-        "workflow" => workflows::run(&context, &job).await,
         "room" | "meeting" => rooms::run(&context, &job).await,
         "prompt" => run_prompt(&context, &job).await,
         "resume" => run_resume(&context, &job).await,
@@ -684,95 +682,6 @@ async fn run_resume(context: &JobContext, job: &Value) -> Result<Value, String> 
     Ok(result)
 }
 
-fn schedule_automations(state: &AppState) {
-    let now = chrono::Utc::now();
-    let due = match state.store.due_automations(&now.to_rfc3339()) {
-        Ok(records) => records,
-        Err(error) => {
-            state.store.audit("automation.due_read_failed", json!({"error":error}));
-            return;
-        }
-    };
-    for automation in due {
-        if automation.get("enabled").and_then(|value| value.as_bool()) != Some(true) {
-            continue;
-        }
-        let Some(next_at) = automation.get("nextAt").and_then(|value| value.as_str()) else {
-            continue;
-        };
-        let Ok(next) = chrono::DateTime::parse_from_rfc3339(next_at) else {
-            continue;
-        };
-        if next.with_timezone(&chrono::Utc) > now {
-            continue;
-        }
-        let kind = automation
-            .get("kind")
-            .and_then(|value| value.as_str())
-            .unwrap_or("prompt");
-        let input = automation
-            .get("input")
-            .cloned()
-            .unwrap_or_else(|| json!({}));
-        let job_kind = if kind == "meeting" { "room" } else { kind };
-        if !matches!(job_kind, "prompt" | "workflow" | "room" | "learn") {
-            continue;
-        }
-        let Some(automation_id) = automation["id"].as_str().filter(|id| !id.is_empty()) else {
-            continue;
-        };
-        let interval = automation["intervalMinutes"].as_i64().unwrap_or(1440).max(1);
-        let job = json!({
-            "id": uuid::Uuid::new_v4().to_string(),
-            "kind": job_kind,
-            "status": "queued",
-            "queuedAt": now.to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
-            "input": input,
-            "attempts": 0,
-            "stepIndex": 0,
-            "stepTotal": 0,
-            "events": [],
-        });
-        // A job and its next execution time are one durable transaction.
-        // A restart or concurrent maintenance tick cannot enqueue the same due
-        // automation twice, nor advance the schedule without creating the job.
-        // The minimal initial record deliberately fails if it was deleted.
-        let outcome = state.store.mutate_record(
-            "automation",
-            automation_id,
-            json!({"id": automation_id}),
-            |current| {
-                if current["enabled"] != true
-                    || current["nextAt"] != automation["nextAt"]
-                    || current["kind"] != automation["kind"]
-                    || current["input"] != automation["input"]
-                    || current["intervalMinutes"] != automation["intervalMinutes"]
-                {
-                    return Err("automation_changed".into());
-                }
-                current["lastAt"] = json!(now.to_rfc3339());
-                current["nextAt"] =
-                    json!((now + chrono::Duration::minutes(interval)).to_rfc3339());
-                Ok(vec![("job".to_string(), job.clone())])
-            },
-        );
-        match outcome {
-            Ok(_) => {
-                state.bus.record("job", &job);
-                state.store.audit(
-                    "job.queued",
-                    json!({"kind":job_kind,"jobId":job["id"],"automationId":automation_id}),
-                );
-            }
-            Err(error) if error == "automation_changed" => {}
-            Err(error) => state.store.audit(
-                "automation.queue_failed",
-                json!({"automationId":automation_id,"error":error}),
-            ),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -792,47 +701,6 @@ mod tests {
         let store = Store::open(&config.db_path()).unwrap();
         let vault = Vault::open(&config.key_path());
         AppState::new(config, store, vault)
-    }
-
-    #[test]
-    fn scheduled_automation_enqueues_once_and_advances_durably() {
-        let state = temp_state();
-        state.store.put("automation", &json!({
-            "id":"auto-once","enabled":true,"kind":"prompt",
-            "nextAt":"2020-01-01T00:00:00Z","intervalMinutes":60,
-            "input":{"prompt":"hello"}
-        }));
-        schedule_automations(&state);
-        schedule_automations(&state);
-        let jobs = state.store.all("job");
-        assert_eq!(jobs.len(), 1, "a second tick cannot repeat a queued run");
-        assert_eq!(jobs[0]["kind"], "prompt");
-        assert_eq!(jobs[0]["input"]["prompt"], "hello");
-        let automation = state.store.get("automation", "auto-once").unwrap();
-        let next_at = chrono::DateTime::parse_from_rfc3339(
-            automation["nextAt"].as_str().unwrap(),
-        ).unwrap();
-        assert!(next_at > chrono::Utc::now());
-        assert!(automation["lastAt"].as_str().is_some());
-        let _ = std::fs::remove_dir_all(&state.config.data_dir);
-    }
-
-    #[test]
-    fn disabled_and_future_automations_do_not_enqueue() {
-        let state = temp_state();
-        state.store.put("automation", &json!({
-            "id":"disabled","enabled":false,"kind":"prompt",
-            "nextAt":"2020-01-01T00:00:00Z","input":{"prompt":"no"}
-        }));
-        state.store.put("automation", &json!({
-            "id":"future","enabled":true,"kind":"prompt",
-            "nextAt":"2099-01-01T00:00:00Z","input":{"prompt":"later"}
-        }));
-        schedule_automations(&state);
-        assert!(state.store.all("job").is_empty());
-        assert!(state.store.get("automation","disabled").unwrap()["lastAt"].is_null());
-        assert!(state.store.get("automation","future").unwrap()["lastAt"].is_null());
-        let _ = std::fs::remove_dir_all(&state.config.data_dir);
     }
 
     #[test]
@@ -862,12 +730,12 @@ mod tests {
         let state = temp_state();
         let job = enqueue(
             &state,
-            "workflow",
-            json!({ "workflowId": "w1", "input": "hi" }),
+            "prompt",
+            json!({ "prompt": "hi" }),
         )
         .expect("job");
         assert_eq!(job["status"], "queued");
-        assert_eq!(job["kind"], "workflow");
+        assert_eq!(job["kind"], "prompt");
         assert_eq!(job["stepTotal"], 0);
 
         let queued = next_queued(&state).expect("worker sees it");
@@ -916,8 +784,8 @@ mod tests {
     #[test]
     fn recovery_keeps_completed_history_and_flags_inflight_external_tools() {
         let state = temp_state();
-        let job = enqueue(&state, "workflow",
-            json!({"workflowId":"w", "sessionId":"session-uncertain"})).unwrap();
+        let job = enqueue(&state, "prompt",
+            json!({"prompt":"w", "sessionId":"session-uncertain"})).unwrap();
         let mut running = job.clone();
         running["status"] = json!("running");
         state.store.put("job", &running);
@@ -948,8 +816,8 @@ mod tests {
         let state = temp_state();
         let job = enqueue(
             &state,
-            "workflow",
-            json!({ "workflowId": "w", "input": "" }),
+            "prompt",
+            json!({ "prompt": "w" }),
         )
         .unwrap();
         let mut running = job.clone();
@@ -974,8 +842,8 @@ mod tests {
         let state = temp_state();
         let job = enqueue(
             &state,
-            "workflow",
-            json!({ "workflowId": "w", "input": "", "sessionId": "session-1" }),
+            "prompt",
+            json!({ "prompt": "w", "sessionId": "session-1" }),
         )
         .unwrap();
         let mut running = job.clone();

@@ -268,17 +268,8 @@ pub fn router(state: AppState) -> Router {
             "/api/model-library/jobs/:id/:action",
             post(models::job_action),
         )
-        .route("/api/dev/status", get(dev::status))
-        .route(
-            "/api/dev/config",
-            get(dev::get_config).post(dev::save_config),
-        )
-        .route("/api/dev/connect", post(dev::connect))
-        .route("/api/dev/diff", get(dev::diff))
         .route("/api/dev/jobs/:id", get(dev::get_job))
-        .route("/api/dev/preview/:action", post(dev::preview))
         .route("/api/dev/update", get(dev::update_status).post(dev::update))
-        .route("/api/dev/:kind", post(dev::start_job))
         .route("/api/oauth/providers", get(oauth::providers))
         .route("/api/oauth/connections", get(channels::connections))
         .route("/api/oauth/providers/:id", post(oauth::save))

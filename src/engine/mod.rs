@@ -56,7 +56,6 @@ pub mod skills;
 pub mod telegram;
 pub mod tools;
 pub mod vault_rotation;
-pub mod workflows;
 pub mod wake;
 
 use crate::state::AppState;
