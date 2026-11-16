@@ -18,6 +18,7 @@ mod context;
 mod tool_discovery;
 mod schema;
 pub use schema::validate_arguments;
+pub mod replay;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -263,13 +264,18 @@ pub struct Snapshot {
     pub in_flight: Vec<Action>,
     /// A crash during paid generation must not silently repeat the model call.
     #[serde(default)] pub model_in_flight: bool,
+    /// Exact typed model decisions before dispatch, persisted for replay.
+    /// Prior checkpoint JSON remains loadable; legacy runs have an empty tape.
+    #[serde(default,skip_serializing_if="Vec::is_empty")]
+    pub decision_tape: Vec<Decision>,
 }
 impl Snapshot {
     pub fn from_request(request: &RunRequest) -> Self {
         Self { id: request.id.clone(), status: Status::Running,
             instruction: request.instruction.clone(), plan: vec![], step: 0,
             model_calls: 0, charged_tokens: 0, receipts: vec![], checks: vec![],
-            answer: None, error: None, in_flight: vec![], model_in_flight: false }
+            answer: None, error: None, in_flight: vec![], model_in_flight: false,
+            decision_tape: vec![] }
     }
     fn stop(&mut self, status: Status, reason: impl Into<String>) {
         self.status = status;
@@ -587,6 +593,11 @@ impl Kernel<'_> {
                     continue;
                 }
             };
+            // Store the MODEL decision, before any host action or acceptance
+            // outcome, so historical failures are reproducible offline.
+            // This is durable evidence, never authority to re-execute effects.
+            run.decision_tape.push(decision.clone());
+            self.journal.save(&run)?;
             if decision.plan.len() <= 32 {
                 run.plan = decision.plan.into_iter().map(|s| s.chars().take(400).collect()).collect();
             }
