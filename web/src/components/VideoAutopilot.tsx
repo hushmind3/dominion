@@ -1,5 +1,5 @@
 import {useEffect,useState} from 'react'
-import {ArrowDown,ArrowRight,ArrowUp,CheckCircle2,Clapperboard,Film,LoaderCircle,RefreshCw,Save,ShieldCheck,Sparkles,Upload,Wallet,WandSparkles} from 'lucide-react'
+import {ArrowDown,ArrowRight,ArrowUp,CheckCircle2,Clapperboard,Copy,Film,LoaderCircle,Plus,RefreshCw,Save,ShieldCheck,Sparkles,Trash2,Upload,Wallet,WandSparkles} from 'lucide-react'
 import {post} from '../api'
 import {useRemote,Notice,Panel,StateTag,FormField} from './UI'
 import {Button,SelectInput,TextArea,TextInput} from './Primitives'
@@ -7,8 +7,8 @@ import {useJob,jobFinished} from '../hooks/useJob'
 import {VideoModelInstall} from './VideoModelInstall'
 
 type Scene={id:string;script:string;visualPrompt:string;overlay:string;seconds:number}
-type Project={id:string;title:string;brief:string;status:string;targetSeconds:number;aspectRatio:string;platform:string;engine:string;style:string;audience:string;revision:number;scenes:Scene[];useAI:boolean;planningSource?:string;autoRender:boolean;autoUpload:boolean;planJobId?:string;renderJobId?:string;uploadJobId?:string;planningError?:string;renderError?:string}
-type VideoJob={id:string;status:string;title?:string;brief?:string;outputUrl?:string;captionsUrl?:string;progress?:number;error?:string;result?:{bytes?:number;segmentsReused?:number;segmentsGenerated?:number;qa?:{containerVerified?:boolean;captionsReady?:boolean;segmentsReused?:number;segmentsGenerated?:number}}}
+type Project={id:string;title:string;brief:string;status:string;targetSeconds:number;aspectRatio:string;platform:string;engine:string;style:string;audience:string;revision:number;scenes:Scene[];useAI:boolean;planningSource?:string;autoRender:boolean;autoUpload:boolean;planJobId?:string;renderJobId?:string;uploadJobId?:string;planningError?:string;renderError?:string;planAttempts?:number}
+type VideoJob={id:string;status:string;title?:string;brief?:string;outputUrl?:string;captionsUrl?:string;progress?:number;sceneIndex?:number;sceneTotal?:number;error?:string;result?:{bytes?:number;segmentsReused?:number;segmentsGenerated?:number;qa?:{containerVerified?:boolean;captionsReady?:boolean;segmentsReused?:number;segmentsGenerated?:number}}}
 type Provider={id:string;name:string;model?:string;enabled?:boolean}
 type Props={nativeReady:boolean;comfyReady:boolean;onSettings:()=>void;onModelInstalled:()=>void;onPublish:(job:VideoJob)=>void}
 
@@ -74,6 +74,29 @@ export function VideoAutopilot({nativeReady,comfyReady,onSettings,onModelInstall
   setDraft(previous=>previous.map((item,i)=>i===index?{...item,[key]:value}:item))
   setDirty(true)
  }
+ const addScene=(after:number)=>{
+  if(draft.length>=12)return
+  const scene:Scene={id:'draft-'+Math.random().toString(36).slice(2),
+   script:'',visualPrompt:'',overlay:'',seconds:5}
+  setDraft(previous=>[...previous.slice(0,after+1),scene,...previous.slice(after+1)])
+  setDirty(true)
+ }
+ const duplicateScene=(index:number)=>{
+  if(draft.length>=12)return
+  setDraft(previous=>{
+   const scene=previous[index]
+   if(!scene)return previous
+   return [...previous.slice(0,index+1),
+    {...scene,id:'draft-'+Math.random().toString(36).slice(2)},
+    ...previous.slice(index+1)]
+  })
+  setDirty(true)
+ }
+ const deleteScene=(index:number)=>{
+  if(draft.length<=1)return
+  setDraft(previous=>previous.filter((_,i)=>i!==index))
+  setDirty(true)
+ }
  const move=(index:number,delta:number)=>{
   const next=index+delta
   if(next<0||next>=draft.length)return
@@ -116,6 +139,24 @@ export function VideoAutopilot({nativeReady,comfyReady,onSettings,onModelInstall
   }catch(e){setError((e as Error).message)}
   finally{setWorking(false)}
  }
+ const retryPlan=async()=>{
+  if(!project||working||project.status!=='failed'||project.scenes?.length)return
+  setWorking(true);setError('')
+  try{
+   const updated=await post<Project>('/api/video/projects/'+encodeURIComponent(project.id)+'/retry-plan',
+    {revision:project.revision})
+   detail.setValue(updated)
+   await projects.reload()
+  }catch(e){setError((e as Error).message)}
+  finally{setWorking(false)}
+ }
+ const draftSeconds=draft.reduce((sum,scene)=>sum+Number(scene.seconds||0),0)
+ const draftClips=project?.engine==='comfyui'?draft.reduce((sum,scene)=>sum+Math.ceil(Number(scene.seconds||0)/5),0):0
+ const draftIssue=draft.length>12?'장면은 최대 12개입니다.':
+  draft.some(scene=>!scene.script.trim()||!Number.isInteger(scene.seconds)||scene.seconds<1||scene.seconds>180)
+   ?'각 장면에 내레이션과 1~180초 길이를 입력하세요.':
+  draftSeconds<3||draftSeconds>180?'영상 총 길이는 3~180초여야 합니다.':
+  project?.engine==='comfyui'&&draftClips>12?'AI 영상은 최대 12개 클립(각 5초)까지 생성할 수 있습니다.':''
  const active=project?.status==='planning'||project?.status==='rendering'
  return <section className="grid min-w-0 gap-5">
   <div className="overflow-hidden rounded-[26px] bg-[linear-gradient(125deg,#242E37,#354C50_58%,#345748)] p-6 text-white sm:p-8">
@@ -163,18 +204,22 @@ export function VideoAutopilot({nativeReady,comfyReady,onSettings,onModelInstall
       {project.planningSource&&<p className="mt-3 flex items-center gap-2 text-[11px] text-[#82776B]"><CheckCircle2 size={14} className="text-emerald-700"/> 대본 작성 방식: {project.planningSource==='provider'?'연결된 AI 모델':'오프라인 규칙'}</p>}
       {project.status==='planning'&&<p className="mt-3 flex items-center gap-2 text-[11px] text-[#9B7556]"><LoaderCircle size={14} className="animate-spin"/> {planned.value?.status==='failed'?'기획 작업에서 오류가 발생했습니다.':'대본과 장면을 준비 중입니다.'}</p>}
       {(project.planningError||planned.value?.error||project.renderError)&&<Notice message={project.planningError||planned.value?.error||project.renderError||''}/>}
+      {project.status==='failed'&&(!project.scenes?.length)&&<div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E6D6C8] bg-[#FBF2E9] p-3">
+       <p className="max-w-md text-[11px] leading-5 text-[#836B57]">기획이 완료되지 않았습니다. 이전 작업 기록은 보존하고 새 작업으로 다시 실행합니다.{project.useAI?' 연결된 AI를 다시 호출하면 별도 사용료가 발생할 수 있습니다.':''}</p>
+       <Button size="sm" variant="primary" disabled={working} onClick={()=>void retryPlan()}>{working?<LoaderCircle size={14} className="animate-spin"/>:<RefreshCw size={14}/>} 기획 다시 실행</Button>
+      </div>}
      </div>
-     {draft.length>0&&<div className={card}><div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-[15px] font-bold">장면별 대본 · 스토리보드</h3><p className="mt-1 text-[11px] text-[#92877A]">수정한 대본은 실제 렌더링과 내레이션에 반영됩니다.</p></div><span className="rounded-lg bg-[#F6F1E9] px-2.5 py-1.5 text-[11px]">{draft.length}장면 · {draft.reduce((n,s)=>n+Number(s.seconds||0),0)}초</span></div>
+     {draft.length>0&&<div className={card}><div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-[15px] font-bold">장면별 대본 · 스토리보드</h3><p className="mt-1 text-[11px] text-[#92877A]">수정한 대본은 실제 렌더링과 내레이션에 반영됩니다.</p></div><div className="flex flex-wrap items-center gap-2"><span className="rounded-lg bg-[#F6F1E9] px-2.5 py-1.5 text-[11px]">{draft.length}장면 · {draftSeconds}초</span><Button size="sm" variant="secondary" disabled={active||working||draft.length>=12} onClick={()=>addScene(draft.length-1)}><Plus size={13}/> 장면 추가</Button></div></div>
       <FormField label="영상 제목"><TextInput value={draftTitle} disabled={active} onChange={e=>{setDraftTitle(e.target.value);setDirty(true)}}/></FormField>
-      <div className="mt-4 max-h-[680px] space-y-3 overflow-y-auto pr-1">{draft.map((shot,i)=><article key={shot.id} className="rounded-xl border border-[#E8DFD5] bg-[#FDFBF7] p-4"><div className="mb-3 flex items-center justify-between gap-2"><strong className="text-[12px]">장면 {i+1}</strong><div className="flex items-center gap-1"><Button variant="ghost" size="sm" aria-label={'장면 '+(i+1)+' 위로 이동'} disabled={active||i===0} onClick={()=>move(i,-1)}><ArrowUp size={14}/></Button><Button variant="ghost" size="sm" aria-label={'장면 '+(i+1)+' 아래로 이동'} disabled={active||i===draft.length-1} onClick={()=>move(i,1)}><ArrowDown size={14}/></Button></div></div>
+      <div className="mt-4 max-h-[680px] space-y-3 overflow-y-auto pr-1">{draft.map((shot,i)=><article key={shot.id} className="rounded-xl border border-[#E8DFD5] bg-[#FDFBF7] p-4"><div className="mb-3 flex items-center justify-between gap-2"><strong className="text-[12px]">장면 {i+1}</strong><div className="flex items-center gap-1"><Button variant="ghost" size="sm" aria-label={'장면 '+(i+1)+' 위로 이동'} disabled={active||i===0} onClick={()=>move(i,-1)}><ArrowUp size={14}/></Button><Button variant="ghost" size="sm" aria-label={'장면 '+(i+1)+' 아래로 이동'} disabled={active||i===draft.length-1} onClick={()=>move(i,1)}><ArrowDown size={14}/></Button><Button variant="ghost" size="sm" aria-label={'장면 '+(i+1)+' 복제'} disabled={active||working||draft.length>=12} onClick={()=>duplicateScene(i)}><Copy size={14}/></Button><Button variant="ghost" size="sm" aria-label={'장면 '+(i+1)+' 삭제'} disabled={active||working||draft.length<=1} onClick={()=>deleteScene(i)}><Trash2 size={14}/></Button></div></div>
        <div className="space-y-3"><FormField label="내레이션 대본"><TextArea rows={3} maxLength={1800} disabled={active} value={shot.script} onChange={e=>changedDraft(i,'script',e.target.value)}/></FormField><FormField label="영상 생성/연출 지시"><TextArea rows={2} maxLength={1800} disabled={active} value={shot.visualPrompt} onChange={e=>changedDraft(i,'visualPrompt',e.target.value)}/></FormField><div className="grid grid-cols-[minmax(0,1fr)_100px] gap-2"><FormField label="화면 문구"><TextInput maxLength={180} disabled={active} value={shot.overlay} onChange={e=>changedDraft(i,'overlay',e.target.value)}/></FormField><FormField label="초"><TextInput type="number" min={1} max={180} disabled={active} value={shot.seconds} onChange={e=>changedDraft(i,'seconds',Number(e.target.value))}/></FormField></div></div>
       </article>)}</div>
-      <div className="mt-4 flex flex-wrap gap-2"><Button variant="secondary" disabled={!dirty||working||active} onClick={()=>void save()}><Save size={14}/> 장면 수정 저장</Button><Button variant="primary" disabled={working||dirty||active} onClick={()=>void renderNow()}><Film size={15}/> {project.status==='ready'?'새 버전 렌더링':'이 대본으로 영상 렌더링'}</Button></div>
-      {dirty&&<p className="mt-2 text-[11px] text-amber-700">변경 내용을 저장한 뒤 렌더링할 수 있습니다.</p>}
+      <div className="mt-4 flex flex-wrap gap-2"><Button variant="secondary" disabled={!dirty||working||active||Boolean(draftIssue)} onClick={()=>void save()}><Save size={14}/> 장면 수정 저장</Button><Button variant="primary" disabled={working||dirty||active} onClick={()=>void renderNow()}><Film size={15}/> {project.status==='ready'?'새 버전 렌더링':'이 대본으로 영상 렌더링'}</Button></div>
+      {dirty&&<p className="mt-2 text-[11px] text-amber-700">{draftIssue||'변경 내용을 저장한 뒤 렌더링할 수 있습니다.'}</p>}
      </div>}
      {project.renderJobId&&<div className={card}><div className="mb-3 flex items-center justify-between"><h3 className="text-[14px] font-bold">영상 결과 · 품질 검수</h3><StateTag online={render.value?.status==='completed'}>{render.value?.status||'조회 중'}</StateTag></div>
       {render.value?.outputUrl?<div className="overflow-hidden rounded-xl bg-[#1A222A] p-2"><video key={render.value.id} className="mx-auto max-h-[440px] max-w-full rounded-lg" src={render.value.outputUrl} controls playsInline preload="metadata"/></div>:<div className="flex min-h-32 items-center justify-center rounded-xl bg-[#252D37] text-[12px] text-white/75">{render.value?.status==='failed'?'제작 오류':'장면 합성·음성 처리·인코딩 중'}</div>}
-      {!jobFinished(render.value?.status)&&<div className="mt-3"><div className="mb-1 flex justify-between text-[11px]"><span>렌더링 진행 상황</span><span>{render.value?.progress||0}%</span></div><div className="h-2 rounded-full bg-[#EBE5DD]"><div className="h-full rounded-full bg-[#C96442]" style={{width:Math.max(0,Math.min(100,render.value?.progress||0))+'%'}}/></div></div>}
+      {!jobFinished(render.value?.status)&&<div className="mt-3"><div className="mb-1 flex justify-between text-[11px]"><span>렌더링 진행 상황{render.value?.sceneIndex&&render.value?.sceneTotal?' · 장면 '+render.value.sceneIndex+'/'+render.value.sceneTotal:''}</span><span>{render.value?.progress||0}%</span></div><div className="h-2 rounded-full bg-[#EBE5DD]"><div className="h-full rounded-full bg-[#C96442]" style={{width:Math.max(0,Math.min(100,render.value?.progress||0))+'%'}}/></div></div>}
       {render.value?.result?.segmentsGenerated!==undefined&&<p className="mt-3 rounded-xl border border-[#DCE8D8] bg-[#F3FAF0] p-3 text-[11px] text-[#416D4D]">AI 영상 장면 재사용: <strong>{render.value.result.segmentsReused??0}개</strong> · 새 GPU 생성: <strong>{render.value.result.segmentsGenerated}개</strong>. 동일한 모델·프롬프트·시드·해상도·설정의 검증된 기존 클립만 재사용했습니다.</p>}
       {render.value?.error&&<Notice message={render.value.error}/>}
       {render.value?.status==='completed'&&<div className="mt-3 flex flex-wrap gap-2"><a download href={render.value.outputUrl} className="inline-flex items-center gap-2 rounded-xl bg-[#C96442] px-3.5 py-2 text-[12px] font-semibold text-white"><Upload size={14}/> MP4 저장</a>{render.value.captionsUrl&&<a href={render.value.captionsUrl} download className="inline-flex items-center gap-2 rounded-xl border border-[#E1D9CC] bg-[#FFFDF9] px-3.5 py-2 text-[12px] font-semibold text-[#3A342D]"><Save size={14}/> SRT 자막</a>}
