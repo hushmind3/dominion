@@ -1577,6 +1577,37 @@ mod tests {
             crate::vault::Vault::open(&cfg.key_path()))
     }
     #[test]
+    fn per_scene_regeneration_creates_derivative_without_mutating_original_or_autopublishing(){
+        let state=clip_test_state();
+        let original=json!({"id":"video-source","kind":"video","status":"completed",
+            "input":{"brief":"An editorial film","title":"One story","engine":"comfyui",
+                "projectId":uuid::Uuid::new_v4().to_string(),"duration":10,
+                "aspectRatio":"16:9","studioAutoUpload":true,
+                "config":{"comfyWorkflow":{"node":{"inputs":{"text":"{{prompt}}"}}}},
+                "render":{"seed":12},"scenes":[
+                    {"script":"first","visualPrompt":"first","seconds":3},
+                    {"script":"second","visualPrompt":"second","seconds":3}]}} );
+        state.store.put("job",&original).unwrap();
+        let derived=enqueue_regeneration(&state,"video-source",
+            &json!({"sceneIndex":1,"prompt":"new second scene"})).unwrap();
+        let new_id=derived["id"].as_str().unwrap();
+        assert_ne!(new_id,"video-source");
+        let input=&state.store.get("job",new_id).unwrap()["input"];
+        assert_eq!(input["scenes"][0],original["input"]["scenes"][0]);
+        assert_eq!(input["scenes"][1]["visualPrompt"],"new second scene");
+        assert_eq!(input["render"]["seed"],12);
+        assert_eq!(input["studioAutoUpload"],false);
+        assert_eq!(input["studioPrivacyStatus"],"private");
+        assert_eq!(input["sourceJobId"],"video-source");
+        assert_eq!(state.store.get("job","video-source").unwrap()["input"],
+                   original["input"]);
+        assert!(enqueue_regeneration(&state,"video-source",&json!({"sceneIndex":8,
+            "prompt":"bad"})).is_err());
+        assert!(enqueue_regeneration(&state,"video-source",&json!({"sceneIndex":0,
+            "prompt":""})).is_err());
+    }
+
+    #[test]
     fn unchanged_clips_reuse_completed_artifact_but_changed_scene_is_not_reused(){
         let state=clip_test_state();
         let project=uuid::Uuid::new_v4().to_string();
