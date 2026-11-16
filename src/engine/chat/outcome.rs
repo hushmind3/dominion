@@ -450,19 +450,8 @@ pub(super) fn finalize_execution(
             for observation in &observations {
                 state.bus.record("strategy_observation", observation);
             }
-            let queued = crate::engine::improve::schedule_experiments(state);
-            crate::engine::policy::meta_improve(state);
-            let proposed = crate::engine::policy::propose_candidates(state);
-            if !queued.is_empty() || !proposed.is_empty() {
-                state.store.audit(
-                    "experiment.scheduled",
-                    json!({
-                        "executionId": execution_id,
-                        "requests": queued.len(),
-                        "policyCandidates": proposed.len()
-                    }),
-                );
-            }
+            // Persist real verifier evidence, not autonomous improvement
+            // campaigns. Any policy/harness experiments require owner action.
         }
         Ok(crate::db::FinalizeOutcome::AlreadyApplied) => {
             state.store.audit(

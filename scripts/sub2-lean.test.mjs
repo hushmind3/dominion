@@ -48,3 +48,11 @@ test('legacy generation and RSI effects cannot be started by worker or HTTP',()=
   assert.match(media('src/api/video.rs'),/pub async fn content/);
   assert.doesNotMatch(media('src/engine/mod.rs'),/pub mod video;/);
 });
+
+test('no background improvement campaigns triggered by normal execution completion',()=>{
+ const outcome=src('src/engine/chat/outcome.rs');
+ assert.doesNotMatch(outcome,/improve::schedule_experiments\(state\)/);
+ assert.doesNotMatch(outcome,/policy::meta_improve\(state\)/);
+ assert.doesNotMatch(outcome,/policy::propose_candidates\(state\)/);
+ assert.match(outcome,/route_calibration::observe_verified/);
+});
