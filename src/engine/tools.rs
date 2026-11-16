@@ -1001,6 +1001,7 @@ async fn checked_write(
             "bytes": content.len(),
             "written": true,
             "conditionalSha256": observed,
+            "postSha256":format!("{:x}",Sha256::digest(content.as_bytes())),
         }));
     };
     let canonical = canonical.map_err(|error| error.to_string())?;
@@ -1049,7 +1050,8 @@ async fn checked_write(
             file.flush().await.map_err(|error| error.to_string())?;
             return Ok(
                 json!({"path": path.to_string_lossy(), "bytes": content.len(), "written": true,
-                "preflightPath": target}),
+                "preflightPath": target,
+                "postSha256":format!("{:x}",Sha256::digest(content.as_bytes()))}),
             );
         }
         Err(error) => return Err(error.to_string()),
@@ -1113,7 +1115,8 @@ async fn checked_write(
         .map_err(|error| error.to_string())?;
     Ok(
         json!({"path": path.to_string_lossy(), "bytes": content.len(), "written": true,
-        "preflightRevision": policy["revision"], "preflightPath": target, "observedSha256": observed}),
+        "preflightRevision": policy["revision"], "preflightPath": target, "observedSha256": observed,
+        "postSha256":format!("{:x}",Sha256::digest(content.as_bytes()))}),
     )
 }
 
@@ -1129,7 +1132,8 @@ async fn write_text(path: &Path, content: &str) -> Result<Value, String> {
     Ok(json!({
         "path": path.to_string_lossy(),
         "bytes": content.len(),
-        "written": true
+        "written": true,
+        "postSha256":format!("{:x}",Sha256::digest(content.as_bytes()))
     }))
 }
 
