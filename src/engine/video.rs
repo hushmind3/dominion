@@ -432,9 +432,10 @@ pub fn public_job(job: &Value) -> Value {
     let id = job["id"].as_str().unwrap_or("");
     let ready = job["kind"] == "video" && job["status"] == "completed";
     let render = &job["input"]["render"];
-    let storyboard = job["input"]["scenes"].as_array()
-        .map(|items| json!(items))
-        .unwrap_or_else(||job["videoState"]["scenes"].clone());
+    let storyboard = job["videoState"]["scenes"].as_array()
+        .filter(|items|!items.is_empty())
+        .map(|items|json!(items))
+        .unwrap_or_else(||job["input"]["scenes"].clone());
     json!({
         "id":id,"kind":job["kind"],"title":job["input"]["title"],
         "brief":job["input"]["brief"],"engine":job["input"]["engine"],
@@ -452,6 +453,7 @@ pub fn public_job(job: &Value) -> Value {
         "renderParams":{"fps":render["fps"],"seed":render["seed"],
             "width":render["width"],"height":render["height"]},
         "continuity":job["input"]["continuity"],
+        "autoStoryboard":job["input"]["autoStoryboard"],
         "negativePrompt":render["negativePrompt"],
         "reuseVideoJobId":job["input"]["reuseVideoJobId"],
         "maxNewScenes":job["input"]["maxNewScenes"],
@@ -496,6 +498,13 @@ pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
         return Err("영상 길이는 3~180초입니다.".into());
     }
     let scenes=storyboard_scenes(body)?;
+    let auto_storyboard=body["autoStoryboard"]==true;
+    if auto_storyboard && engine=="comfyui" && duration>=6 && ffmpeg(state).is_none() {
+        return Err("자동 장면 기획으로 여러 장면을 합치려면 FFmpeg가 필요합니다.".into());
+    }
+    if auto_storyboard && !body["reuseVideoJobId"].as_str().unwrap_or("").is_empty() {
+        return Err("기존 장면 재사용과 새 자동 스토리보드 생성은 함께 사용할 수 없습니다.".into());
+    }
     if engine=="comfyui" {
         // Every scene needs at least three seconds. Reject impossible briefs
         // instead of silently outputting a longer video than was requested.
@@ -601,6 +610,8 @@ pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
         "brief":brief, "title":title, "engine":engine, "duration":duration,
         "aspectRatio":aspect, "config":cfg, "publish":false,
         "scenes":scenes,
+        "autoStoryboard":auto_storyboard,
+        "planningProviderId":body["planningProviderId"].as_str().unwrap_or(""),
         "continuity":body["continuity"].as_str().unwrap_or("").chars().take(2000).collect::<String>(),
         "reuseVideoJobId":body["reuseVideoJobId"].as_str().unwrap_or(""),
         "regenerateScenes":regenerate,
@@ -747,14 +758,15 @@ async fn native(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, St
     let brief = input["brief"].as_str().unwrap_or("");
     let title = input["title"].as_str().unwrap_or("");
     let cfg = &input["config"];
-    let mut scenes: Vec<String> = brief
-        .split(['\n', '.', '!', '?', '。'])
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .take(12)
-        .map(str::to_string)
-        .collect();
-    if cfg["useModel"] == true {
+    let mut scenes: Vec<String> = if input["autoStoryboard"]==true {
+        input["scenes"].as_array().map(|items|items.iter()
+            .filter_map(|s|s.as_str().map(str::to_string)).collect())
+            .unwrap_or_default()
+    } else {
+        brief.split(['\n', '.', '!', '?', '。']).map(str::trim)
+            .filter(|s|!s.is_empty()).take(12).map(str::to_string).collect()
+    };
+    if cfg["useModel"]==true && input["autoStoryboard"]!=true {
         let text=crate::engine::llm::complete(&ctx.state,cfg["providerId"].as_str().unwrap_or(""),cfg["model"].as_str().unwrap_or(""),"영상 자막 스토리보드를 만드세요. JSON 문자열 배열만 반환하세요. 3~8개 장면, 장면당 한국어 100자 이내. 사실을 지어내지 마세요.",brief).await?;
         scenes = serde_json::from_str::<Vec<String>>(
             text.trim()
@@ -1180,10 +1192,58 @@ async fn comfy_storyboard(ctx:&JobContext,input:&Value,root:&Path)->Result<Value
         "assembly":"local ffmpeg concat"}))
 }
 
+fn parse_video_storyboard(text:&str,limit:usize)->Result<Vec<String>,String>{
+    let text=text.trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+    let scenes:Vec<String>=serde_json::from_str(text)
+        .map_err(|_|"장면 기획 모델이 JSON 문자열 배열을 반환하지 않았습니다.")?;
+    if scenes.len()<2 || scenes.len()>limit
+        || scenes.iter().any(|s|s.trim().is_empty()||s.len()>4000)
+        || scenes.join("\n\n").len()>16000 {
+        return Err("자동 스토리보드 장면 수 또는 내용 길이가 유효하지 않습니다.".into());
+    }
+    Ok(scenes.into_iter().map(|s|s.trim().to_string()).collect())
+}
+
+async fn plan_video_scenes(ctx:&JobContext,input:&Value)->Result<Option<Vec<String>>,String>{
+    if input["autoStoryboard"]!=true{return Ok(None);}
+    let duration=input["duration"].as_u64().unwrap_or(6);
+    let max_by_time=(duration/3).clamp(1,4) as usize;
+    let limit=input["maxNewScenes"].as_u64().unwrap_or(4)
+        .min(max_by_time as u64) as usize;
+    if limit<2{return Ok(None);}
+    ctx.checkpoint(json!({"phase":"storyboard","progress":3}))?;
+    let preferred=input["planningProviderId"].as_str().unwrap_or("");
+    let route=crate::engine::gateway::resolve(&ctx.state,preferred,None)
+        .map_err(|_|"자동 대본 기획에 사용할 텍스트 AI 제공자를 먼저 연결하세요.")?;
+    let system=format!(
+        "당신은 짧은 영상 감독입니다. 다음 주제의 영상 스토리보드 장면을 2~{limit}개 작성하세요. \
+         JSON 문자열 배열만 반환하세요. 각 문자열은 동일한 등장인물과 시각 스타일을 유지하는 \
+         구체적인 영상 장면 지시문이며 4000바이트 미만이어야 합니다. \
+         사실을 지어내지 말고 장면 전환을 자연스럽게 이어 주세요."
+    );
+    let brief=input["brief"].as_str().unwrap_or("");
+    let text=crate::engine::llm::complete(&ctx.state,&route.id,&route.model,
+        &system,brief).await?;
+    let scenes=parse_video_storyboard(&text,limit)?;
+    ctx.checkpoint(json!({
+        "phase":"storyboard","progress":9,
+        "videoState":{"scenes":scenes,"sceneTotal":scenes.len()}
+    }))?;
+    Ok(Some(scenes))
+}
+
 pub async fn run(ctx: &JobContext, job: &Value) -> Result<Value, String> {
     let dir = directory(&ctx.state, &ctx.job_id)?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let input = &job["input"];
+    let mut input = job["input"].clone();
+    if let Some(planned)=plan_video_scenes(ctx,&input).await? {
+        input["scenes"]=json!(planned);
+    }
+    let input=&input;
     let result = if input["engine"] == "comfyui" {
         if input["scenes"].as_array().is_some_and(|items|items.len()>1){
             comfy_storyboard(ctx,input,&dir).await
@@ -1480,6 +1540,15 @@ mod tests {
         assert_eq!(state.store.get("video_model_download",id).unwrap()["status"],"interrupted");
         drop(state);
         let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn auto_storyboard_uses_bounded_structured_scene_contract() {
+        assert_eq!(parse_video_storyboard("[\"opening\",\"ending\"]",2).unwrap().len(),2);
+        assert_eq!(parse_video_storyboard("```json\n[\"opening\",\"ending\"]\n```",2).unwrap().len(),2);
+        assert!(parse_video_storyboard("[\"one\"]",2).is_err());
+        assert!(parse_video_storyboard("[\"one\",\"two\",\"three\"]",2).is_err());
+        assert!(parse_video_storyboard("[\"one\",17]",2).is_err());
     }
 
     #[test]
