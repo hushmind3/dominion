@@ -353,6 +353,13 @@ fn render_budget(duration: u64, fps: u64, steps: u64,
 }
 
 pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
+    enqueue_inner(state,body,None)
+}
+pub fn enqueue_project(state:&AppState,body:&Value,job_id:&str)->Result<Value,String>{
+    uuid::Uuid::parse_str(job_id).map_err(|_|"영상 렌더 ID 오류")?;
+    enqueue_inner(state,body,Some(job_id))
+}
+fn enqueue_inner(state: &AppState, body: &Value, job_id:Option<&str>) -> Result<Value, String> {
     let cfg = config(state);
     let brief = body["brief"].as_str().unwrap_or("").trim();
     if brief.is_empty() || brief.len() > 16_000 {
@@ -449,14 +456,19 @@ pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
     let input = json!({
         "brief":brief, "title":title, "engine":engine, "duration":duration,
         "aspectRatio":aspect, "config":frozen_cfg, "publish":false,
+        "projectId":body["projectId"],"projectRevision":body["projectRevision"],
+        "scenes":body["scenes"],"studioAutoUpload":body["studioAutoUpload"],
+        "studioPrivacyStatus":body["studioPrivacyStatus"],
         "render":{"prompt":brief,"negative":negative_prompt,"negativePrompt":negative_prompt,
                   "duration":duration,"width":width,"height":height,
                   "fps":effective_fps,"frames":duration*effective_fps,
                   "steps":plan["steps"],"economy":applicable_economy,
                   "economyRequested":economy,"budget":plan,"seed":seed}
     });
-    jobs::enqueue(state, "video", input)
-        .map(|j| public_job(&j))
+    let queued=if let Some(job_id)=job_id {
+        jobs::enqueue_once(state,job_id,"video",input)
+    }else{jobs::enqueue(state,"video",input)};
+    queued.map(|j|public_job(&j))
         .ok_or("영상 작업을 저장할 수 없습니다.".into())
 }
 fn progress(ctx: &JobContext, phase: &str, percent: u64) -> Result<(), String> {
