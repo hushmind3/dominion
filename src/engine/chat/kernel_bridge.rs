@@ -15,12 +15,14 @@ pub(super) struct ChatKernelJournal<'a> {
 }
 impl dominion_agent_sdk::Journal for ChatKernelJournal<'_> {
     fn save(&self, snapshot: &dominion_agent_sdk::Snapshot) -> Result<(), String> {
-        let mut execution = self.state.store.get("execution", self.execution_id)
-            .ok_or("Rust 코어 실행 기록이 없습니다.")?;
-        execution["runtime"] = json!("dominion-agent-sdk");
-        execution["kernelState"] = serde_json::to_value(snapshot).map_err(|error| error.to_string())?;
-        self.state.store.put("execution", &execution)
-            .ok_or("Rust 코어 체크포인트를 저장할 수 없습니다.")?;
+        // This is an atomic field patch, not a stale full-record rewrite:
+        // concurrent stream usage, provider route and cancellation updates
+        // must survive a kernel checkpoint. A terminal run is never revived.
+        let data=serde_json::to_value(snapshot).map_err(|error|error.to_string())?;
+        self.state.store.patch_if(
+            "execution",self.execution_id,"status",&json!("running"),
+            &json!({"runtime":"dominion-agent-sdk","kernelState":data}),
+        ).ok_or("Rust 코어 실행이 종료되었거나 체크포인트 저장에 실패했습니다.")?;
         Ok(())
     }
     fn cancelled(&self, _: &str) -> bool {
@@ -73,11 +75,13 @@ pub(super) struct KernelCheckpoint<'a> {
 }
 impl Drop for KernelCheckpoint<'_> {
     fn drop(&mut self) {
-        if let Some(mut execution) = self.state.store.get("execution", self.execution_id) {
-            execution["runtime"] = json!("dominion-agent-sdk");
-            execution["budget"] = self.budget.snapshot();
-            self.state.store.put("execution", &execution);
-        }
+        // No stale full-record rewrite during shutdown/error unwinding.
+        // Preserve a terminal execution's state and all concurrent metadata.
+        self.state.store.patch_if(
+            "execution",self.execution_id,"status",&json!("running"),
+            &json!({"runtime":"dominion-agent-sdk",
+                "budget":self.budget.snapshot()}),
+        );
     }
 }
 
