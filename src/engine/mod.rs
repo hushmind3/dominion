@@ -83,9 +83,6 @@ pub mod telegram;
 pub mod tools;
 pub mod unsafe_audit;
 pub mod vault_rotation;
-pub mod video;
-pub mod video_hub;
-pub mod video_studio;
 pub mod workflows;
 pub mod wake;
 

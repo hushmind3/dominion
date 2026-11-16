@@ -8,6 +8,11 @@ use std::time::Duration;
 
 const MAX_EVENTS: usize = 200;
 
+fn retired_legacy_kind(kind: &str) -> bool {
+    matches!(kind, "video" | "video_plan" | "youtube_upload"
+        | "rsi_evolve" | "rsi_compare" | "rsi_generation")
+}
+
 /// Shared handle a running job uses to report progress and persist its state.
 #[derive(Clone)]
 pub struct JobContext {
@@ -139,19 +144,22 @@ pub fn cancel_rsi_children(state: &AppState, campaign: &str) {
 /// Recovers work left behind by a crash: running jobs are re-queued (unless
 /// they already exhausted retries) and running executions become interrupted.
 pub fn recover(state: &AppState) {
-    // Model transfers are process-local tasks, not persisted worker jobs.
-    // A terminated process must never leave the UI permanently showing
-    // "downloading". Keep .part files so a later button press resumes them.
-    for mut transfer in state.store.all("video_model_download") {
-        if transfer["status"]=="downloading" {
-            transfer["status"]=json!("interrupted");
-            transfer["error"]=json!("이전 실행이 종료됐습니다. 설치 버튼을 누르면 이어받습니다.");
-            transfer["finishedAt"]=json!(chrono::Utc::now().to_rfc3339());
-            state.store.put("video_model_download",&transfer);
-            state.bus.record("video_model_download",&transfer);
-        }
-    }
     for job in state.store.all("job") {
+        // Removed capabilities cannot restart paid generation or experiments.
+        if retired_legacy_kind(job["kind"].as_str().unwrap_or("")) {
+            if matches!(job["status"].as_str(),Some("queued"|"running")) {
+                if let Some(id)=job["id"].as_str() {
+                    let uncertain=job["status"]=="running";
+                    if let Some(saved)=state.store.patch_if("job",id,"status",&job["status"],&json!({
+                        "status":if uncertain {"needs_review"} else {"cancelled"},
+                        "legacyRetired":true,"cancelRequested":true,
+                        "error":"Retired built-in media/RSI task: execution disabled; historical data retained",
+                        "finishedAt":chrono::Utc::now().to_rfc3339()
+                    })) {state.bus.record("job",&saved);}
+                }
+            }
+            continue;
+        }
         if job.get("status").and_then(|value| value.as_str()) != Some("running") {
             continue;
         }
@@ -170,8 +178,6 @@ pub fn recover(state: &AppState) {
             "/roomState/inFlight",
             "/workflowState/inFlight",
             "/discordState/inFlight",
-            "/videoState/inFlight",
-            "/videoPlanInFlight",
         ]
         .iter()
         .any(|path| {
@@ -211,22 +217,6 @@ pub fn recover(state: &AppState) {
                 json!("재시작 전 작업 결과를 확정할 수 없습니다. 실행 기록을 확인하세요.");
         }
         state.store.put("job", &updated);
-        // Paid video planning may have reached the provider just before a
-        // crash. Surface the review state in the owning project instead of
-        // leaving its production board spinning forever.
-        if job["kind"]=="video_plan"&&updated["status"]=="needs_review"{
-            if let Some(project_id)=job["input"]["projectId"].as_str(){
-                if state.store.get("video_project",project_id).is_some_and(|p|
-                    p["planJobId"]==job["id"]){
-                    if let Some(saved)=state.store.patch_if("video_project",project_id,
-                        "status",&json!("planning"),
-                        &json!({"status":"needs_review",
-                                "planningError":updated["error"]})){
-                        state.bus.record("video_project",&saved);
-                    }
-                }
-            }
-        }
         if matches!(job["kind"].as_str(), Some("room" | "meeting")) {
             if let Some(id) = job.pointer("/input/roomId").and_then(Value::as_str) {
                 let status = updated["status"].as_str().unwrap_or("needs_review");
@@ -379,6 +369,7 @@ fn next_queued(state: &AppState) -> Option<Value> {
         .iter()
         .cloned()
         .filter(|job| job.get("status").and_then(|value| value.as_str()) == Some("queued"))
+        .filter(|job| !retired_legacy_kind(job["kind"].as_str().unwrap_or("")))
         // Learning is background work: at most one at a time, so it can never
         // occupy every worker while a prompt/room/workflow job waits.
         .filter(|job| !(job["kind"] == "learn" && learning_running))
@@ -483,6 +474,12 @@ async fn run_job(state: AppState, job: Value) {
         .unwrap_or("")
         .to_string();
 
+    if retired_legacy_kind(&kind) {
+        context.patch(json!({"status":"needs_review","legacyRetired":true,
+            "cancelRequested":true,"error":"Retired feature cannot execute",
+            "finishedAt":chrono::Utc::now().to_rfc3339()}));
+        return;
+    }
     let result = match kind.as_str() {
         "workflow" => workflows::run(&context, &job).await,
         "room" | "meeting" => rooms::run(&context, &job).await,
@@ -493,9 +490,6 @@ async fn run_job(state: AppState, job: Value) {
         "learn" => learning::run(&context, &job).await,
         "reflect" => reflect::run(&context, &job).await,
         "discord" => crate::engine::discord::run(&context, &job).await,
-        "video" => crate::engine::video::run(&context, &job).await,
-        "video_plan" => crate::engine::video_studio::run_plan(&context,&job).await,
-        "youtube_upload" => crate::engine::video::upload(&context, &job).await,
         other => Err(format!("지원하지 않는 작업 종류입니다: {other}")),
     };
 
@@ -540,40 +534,6 @@ async fn run_job(state: AppState, job: Value) {
                 "job.failed",
                 json!({ "jobId": job_id, "kind": kind, "error": error }),
             );
-        }
-    }
-    if kind == "video" {
-        if let Some(saved)=state.store.get("job",&job_id) {
-            crate::engine::video_studio::finish_render(&state,&saved);
-            if saved["status"]=="completed"&&saved["input"]["studioAutoUpload"]==true {
-                let privacy=saved["input"]["studioPrivacyStatus"].as_str().unwrap_or("private");
-                // Explicit project opt-in only; never auto-public on behalf of the owner.
-                if matches!(privacy,"private"|"unlisted") {
-                    let title=saved["input"]["title"].as_str().unwrap_or("DOMINION");
-                    let brief=saved["input"]["brief"].as_str().unwrap_or("");
-                    match crate::engine::video::enqueue_upload(&state,&job_id,
-                        &json!({"title":title,"description":brief,"privacyStatus":privacy})) {
-                        Ok(upload)=>{
-                            if let Some(project_id)=saved["input"]["projectId"].as_str(){
-                                if let Some(project)=state.store.get("video_project",project_id){
-                                    let _=state.store.patch_if("video_project",project_id,
-                                        "revision",&project["revision"],
-                                        &json!({"uploadJobId":upload["id"],"publishStatus":"queued"}));
-                                }
-                            }
-                        }
-                        Err(error)=>{
-                            state.store.audit("video.auto_upload_failed",
-                                json!({"projectId":saved["input"]["projectId"],"error":error}));
-                        }
-                    }
-                }
-            }
-        }
-    }
-    if kind == "video_plan" {
-        if let Some(saved)=state.store.get("job",&job_id) {
-            crate::engine::video_studio::finish_plan(&state,&saved);
         }
     }
     if kind == "rsi_evolve" {
