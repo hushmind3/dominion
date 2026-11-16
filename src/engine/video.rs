@@ -92,7 +92,7 @@ pub fn setup_model(state:AppState,id:&str,body:&Value)->Result<Value,String>{
     cfg["comfyModelsDir"]=json!(library.to_string_lossy().to_string());
     state.store.put("video_config",&cfg).ok_or("영상 모델 설정을 저장하지 못했습니다.")?;
     state.bus.record("video_config",&json!({"id":"default"}));
-    let installed=files.iter().all(|(relative,_)|model_asset_ready(&library.join(relative)));
+    let installed=files.iter().all(|(relative,_)|model_file_ready(relative,&library.join(relative)));
     if installed{
         return Ok(json!({"model":id,"status":"ready","modelsDir":library}));
     }
@@ -111,8 +111,22 @@ fn model_asset_ready(path: &Path) -> bool {
     std::fs::metadata(path)
         .is_ok_and(|meta| meta.is_file() && meta.len() >= MIN_MODEL_ASSET_BYTES)
 }
+// Each listed checkpoint has a verified multi-hundred-MB or multi-GB
+// upstream payload. A 1-MB interrupted transfer is not a usable model.
+fn asset_min_bytes(relative:&str)->u64{
+    if relative.contains("Wan2.1-T2V-1.3B-Q4_K_M") {700_000_000}
+    else if relative.contains("wan2.1_t2v_1.3B_fp16") {2_500_000_000}
+    else if relative.contains("umt5-xxl-encoder-Q4_K_M") {3_000_000_000}
+    else if relative.contains("umt5_xxl_fp8") {2_000_000_000}
+    else if relative.contains("wan_2.1_vae") {200_000_000}
+    else {MIN_MODEL_ASSET_BYTES}
+}
+fn model_file_ready(relative:&str,path:&Path)->bool{
+    std::fs::metadata(path).is_ok_and(|meta|
+        meta.is_file()&&meta.len()>=asset_min_bytes(relative))
+}
 fn present(state: &AppState, relative: &str) -> bool {
-    model_asset_ready(&models_dir(state).join(relative))
+    model_file_ready(relative,&models_dir(state).join(relative))
 }
 
 /// Built-in one-click models. Availability is a real file check, not a claim.
@@ -243,7 +257,7 @@ async fn download_files(
     let mut done = 0u64;
     for (index, (relative, url)) in files.iter().enumerate() {
         let target = base.join(relative);
-        if model_asset_ready(&target) { continue; }
+        if model_file_ready(relative,&target) { continue; }
         if let Some(parent) = target.parent() {
             tokio::fs::create_dir_all(parent).await.map_err(|e| e.to_string())?;
         }
@@ -319,7 +333,7 @@ async fn download_files(
         if remaining.is_some_and(|length| received != length) {
             return Err(format!("모델 파일이 불완전합니다: {relative} (expected {remaining:?}, received {received})"));
         }
-        if !model_asset_ready(&part) {
+        if !model_file_ready(relative,&part) {
             return Err(format!("모델 파일 크기가 비정상적입니다: {relative}"));
         }
         if target.exists() { tokio::fs::remove_file(&target).await.map_err(|e| e.to_string())?; }
