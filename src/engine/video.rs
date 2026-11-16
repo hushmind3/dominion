@@ -801,6 +801,67 @@ fn substitute(value: &mut Value, variables: &Value) {
     }
 }
 async fn comfy(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, String> {
+    let Some(shots)=input["scenes"].as_array() else {
+        return comfy_single(ctx,input,dir).await;
+    };
+    if shots.len()<=1 {
+        let mut single=input.clone();
+        if let Some(shot)=shots.first(){
+            let prompt=shot["visualPrompt"].as_str().filter(|s|!s.trim().is_empty())
+                .or_else(||shot["script"].as_str()).unwrap_or("");
+            single["brief"]=json!(prompt);
+            single["render"]["prompt"]=json!(prompt);
+        }
+        return comfy_single(ctx,&single,dir).await;
+    }
+    // Custom graphs may ignore the input prompt or frame budget. Never silently
+    // run the same hard-coded graph 8 times and label it a scene montage.
+    if input["config"]["comfyWorkflow"].is_object()
+        && !input["config"]["comfyWorkflow"].to_string().contains("{{prompt}}") {
+        return Err("멀티 장면 생성에는 {{prompt}} 변수를 사용하는 ComfyUI API 워크플로가 필요합니다.".into());
+    }
+    let encoder=ffmpeg_from_config(&input["config"])
+        .ok_or("여러 ComfyUI 장면을 하나의 영상으로 합치려면 FFmpeg가 필요합니다.")?;
+    let mut concat=String::new();
+    for (index,shot) in shots.iter().enumerate(){
+        ctx.checkpoint(json!({"phase":"rendering",
+            "progress":10+(index*75/shots.len()) as u64,
+            "sceneIndex":index+1,"sceneTotal":shots.len()}))?;
+        let prompt=shot["visualPrompt"].as_str().filter(|s|!s.trim().is_empty())
+            .or_else(||shot["script"].as_str()).unwrap_or("");
+        let seconds=shot["seconds"].as_u64().unwrap_or(3);
+        let fps=input["render"]["fps"].as_u64().unwrap_or(16);
+        let mut child=input.clone();
+        child["brief"]=json!(prompt);
+        child["duration"]=json!(seconds);
+        child["render"]["prompt"]=json!(prompt);
+        child["render"]["duration"]=json!(seconds);
+        child["render"]["frames"]=json!(seconds.saturating_mul(fps));
+        let base_seed=input["render"]["seed"].as_i64().unwrap_or(0);
+        child["render"]["seed"]=json!(base_seed.saturating_add(index as i64));
+        comfy_single(ctx,&child,dir).await?;
+        let file=format!("segment-{index:02}.mp4");
+        std::fs::rename(dir.join("output.mp4"),dir.join(&file))
+            .map_err(|e|e.to_string())?;
+        concat.push_str(&format!("file '{file}'\n"));
+    }
+    std::fs::write(dir.join("segments.txt"),concat).map_err(|e|e.to_string())?;
+    ctx.checkpoint(json!({"phase":"encoding","progress":90}))?;
+    let mut command=tokio::process::Command::new(encoder);
+    command.current_dir(dir).args(["-hide_banner","-loglevel","error","-nostdin",
+        "-y","-f","concat","-safe","1","-i","segments.txt",
+        "-c:v","libx264","-preset","veryfast","-crf","22",
+        "-c:a","aac","-movflags","+faststart","output.part.mp4"]);
+    let outcome=tools::run_command(&mut command,Duration::from_secs(600)).await?;
+    if !outcome.status.success(){
+        return Err(format!("AI 장면 합성 실패: {}",
+            String::from_utf8_lossy(&outcome.stderr).chars().take(1500).collect::<String>()));
+    }
+    std::fs::rename(dir.join("output.part.mp4"),dir.join("output.mp4"))
+        .map_err(|e|e.to_string())?;
+    Ok(json!({"engine":"comfyui","sceneCount":shots.len(),"composition":"scene_montage"}))
+}
+async fn comfy_single(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, String> {
     let cfg = &input["config"];
     let base = cfg["comfyUrl"].as_str().unwrap_or("").trim_end_matches('/');
     let parsed = reqwest::Url::parse(base).map_err(|_| "ComfyUI 주소 오류")?;
