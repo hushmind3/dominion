@@ -418,6 +418,30 @@ mod tests {
         )
     }
     #[test]
+    fn turnkey_installer_rejects_an_invalid_model_root_without_mutating_video_settings(){
+        let s=state();
+        let old=video::config(&s);
+        let nonexistent=s.config.data_dir.join("missing-comfy-root").join("models");
+        let result=video::setup_model(s.clone(),"wan21-t2v-1.3b-fp16",
+            &json!({"modelsDir":nonexistent.to_string_lossy(),
+                "comfyUrl":"http://127.0.0.1:8188"}));
+        assert!(result.is_err());
+        assert_eq!(video::config(&s)["videoModel"],old["videoModel"]);
+        assert!(s.store.all("video_model_download").is_empty());
+        assert!(video::setup_model(s.clone(),"unknown-model",&json!({})).is_err());
+        crate::test_support::cleanup_dir(s.config.data_dir.clone());
+    }
+    #[tokio::test]
+    async fn comfy_auto_launcher_refuses_remote_hosts_without_spawning(){
+        let s=state();
+        let mut cfg=video::config(&s);
+        cfg["comfyUrl"]=json!("https://example.com");
+        s.store.put("video_config",&cfg);
+        assert!(video::launch_comfy(s.clone()).await.is_err());
+        assert!(!s.active.lock().unwrap().contains("comfy-runtime-launch"));
+        crate::test_support::cleanup_dir(s.config.data_dir.clone());
+    }
+    #[test]
     fn enqueue_is_durable_and_never_publishes_implicitly() {
         let s = state();
         let result = video::enqueue(
