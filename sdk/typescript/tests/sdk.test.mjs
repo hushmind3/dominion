@@ -152,3 +152,29 @@ test('SSE accepts mixed CRLF + LF, LF + CRLF, and CR + CRLF separators',async()=
   for await(const event of sdk.events()){found.push(event.type);}
   assert.deepEqual(found,['mixed-one','mixed-two','mixed-three']);
 });
+
+test('video project SDK uses the Rust production routes and explicit owner recovery acknowledgement',async()=>{
+  const calls=[];
+  const project={id:'project/1',kind:'content_project',status:'planned',revision:1,scenes:[]};
+  const sdk=new Dominion({adminToken:'owner',fetch:async(url,init)=>{
+    calls.push({url,init});return reply(project,init?.method==='POST'?202:200);
+  }});
+  const scene={id:'scene-1',script:'Hello',visualPrompt:'Wide shot',overlay:'Hi',seconds:5};
+  await sdk.video.projects();
+  await sdk.video.createProject({brief:'A complete video',engine:'native',autoRender:false});
+  await sdk.video.project('project/1');
+  await sdk.video.editScenes('project/1',1,[scene],'Title');
+  await sdk.video.retryPlan('project/1',0);
+  await sdk.video.retryPlan('project/1',0,true);
+  await sdk.video.renderProject('project/1',2,true);
+  assert.deepEqual(calls.map(x=>new URL(x.url).pathname),[
+    '/api/video/projects','/api/video/projects','/api/video/projects/project%2F1',
+    '/api/video/projects/project%2F1/scenes','/api/video/projects/project%2F1/retry-plan',
+    '/api/video/projects/project%2F1/retry-plan','/api/video/projects/project%2F1/render'
+  ]);
+  assert.deepEqual(JSON.parse(calls[3].init.body),{revision:1,scenes:[scene],title:'Title'});
+  assert.deepEqual(JSON.parse(calls[4].init.body),{revision:0,acknowledgeUnknown:false});
+  assert.deepEqual(JSON.parse(calls[5].init.body),{revision:0,acknowledgeUnknown:true});
+  assert.deepEqual(JSON.parse(calls[6].init.body),{revision:2,acknowledgeUnknown:true});
+  assert.equal(calls[6].init.headers['X-Dominion-Token'],'owner');
+});
