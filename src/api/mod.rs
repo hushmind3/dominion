@@ -22,6 +22,7 @@ pub mod experiments;
 pub mod chat;
 pub mod jobs;
 pub mod sdk_runs;
+pub mod native_replay;
 pub mod sdk;
 pub mod system;
 pub mod attachments;
