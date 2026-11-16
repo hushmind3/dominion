@@ -63,7 +63,7 @@ async fn stale_artifact_bytes_force_repair_before_any_completion(){
  let request=RunRequest{
   id:"witness".into(),instruction:"Update src/output.rs".into(),
   owner_instructions:String::new(),strategy:Strategy::VerifyFirst,
-  limits:Limits{max_steps:8,max_model_calls:8,
+  limits:Limits{max_steps:8,max_model_calls:8,max_tool_calls:96,
     max_estimated_tokens:100_000,max_parallel_reads:2,max_result_chars:1000},
   allowed_tools:vec!["workspace_write".into()],
   checks:vec![],require_evidence:true
