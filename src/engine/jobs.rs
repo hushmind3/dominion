@@ -454,6 +454,7 @@ async fn run_job(state: AppState, job: Value) {
         "reflect" => reflect::run(&context, &job).await,
         "discord" => crate::engine::discord::run(&context, &job).await,
         "video" => crate::engine::video::run(&context, &job).await,
+        "video_plan" => crate::engine::video_studio::run_plan(&context,&job).await,
         "youtube_upload" => crate::engine::video::upload(&context, &job).await,
         other => Err(format!("지원하지 않는 작업 종류입니다: {other}")),
     };
@@ -499,6 +500,48 @@ async fn run_job(state: AppState, job: Value) {
                 "job.failed",
                 json!({ "jobId": job_id, "kind": kind, "error": error }),
             );
+        }
+    }
+    if kind == "video" {
+        if let Some(saved)=state.store.get("job",&job_id) {
+            crate::engine::video_studio::finish_render(&state,&saved);
+            if saved["status"]=="completed"&&saved["input"]["studioAutoUpload"]==true {
+                let privacy=saved["input"]["studioPrivacyStatus"].as_str().unwrap_or("private");
+                // Explicit project opt-in only; never auto-public on behalf of the owner.
+                if matches!(privacy,"private"|"unlisted") {
+                    let title=saved["input"]["title"].as_str().unwrap_or("DOMINION");
+                    let brief=saved["input"]["brief"].as_str().unwrap_or("");
+                    match crate::engine::video::enqueue_upload(&state,&job_id,
+                        &json!({"title":title,"description":brief,"privacyStatus":privacy})) {
+                        Ok(upload)=>{
+                            if let Some(project_id)=saved["input"]["projectId"].as_str(){
+                                if let Some(project)=state.store.get("video_project",project_id){
+                                    let _=state.store.patch_if("video_project",project_id,
+                                        "revision",&project["revision"],
+                                        &json!({"uploadJobId":upload["id"],"publishStatus":"queued"}));
+                                }
+                            }
+                        }
+                        Err(error)=>{
+                            state.store.audit("video.auto_upload_failed",
+                                json!({"projectId":saved["input"]["projectId"],"error":error}));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if kind == "video_plan" {
+        if let Some(saved)=state.store.get("job",&job_id) {
+            if saved["status"]=="failed" {
+                if let Some(project_id)=saved["input"]["projectId"].as_str(){
+                    if let Some(project)=state.store.get("video_project",project_id){
+                        let _=state.store.patch_if("video_project",project_id,
+                            "revision",&project["revision"],
+                            &json!({"status":"failed","planningError":saved["error"]}));
+                    }
+                }
+            }
         }
     }
     if kind == "rsi_evolve" {
