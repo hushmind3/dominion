@@ -977,6 +977,7 @@ async fn run_turn_body(
     let mut last_reasoning = String::new();
     let mut continuation_projection = None;
     let mut total_tokens: u64 = 0;
+    let mut model_token_budget=super::budget::ModelTokenBudget::new(MAX_TOKENS,0);
     let mut prompt_tokens_total: u64 = 0;
     let mut completion_tokens_total: u64 = 0;
     let mut cached_prompt_tokens_total: u64 = 0;
@@ -1254,7 +1255,11 @@ async fn run_turn_body(
         } else {
             call_prompt + call_completion
         };
-        total_tokens += call_total;
+        // The provider usage settlement is owned by the same SDK primitive
+        // used by native agent jobs. Record overrun for audit, but never allow
+        // a tool call or final answer from an over-budget model response.
+        let within_token_budget=model_token_budget.charge(call_total);
+        total_tokens=model_token_budget.charged();
         if is_room {
             if let Some(mut execution)=state.store.get("execution",execution_id) {
                 execution["inputContext"]["providerPromptTokens"]=json!(prompt_tokens_total);
@@ -1266,7 +1271,8 @@ async fn run_turn_body(
             }
         }
         metrics.lock().unwrap().tokens = total_tokens;
-        if total_tokens > MAX_TOKENS {
+        if !within_token_budget {
+            mark_budget_exhausted(state,execution_id);
             return Err(format!(
                 "토큰 예산({MAX_TOKENS})을 초과했습니다. 요청을 나눠 다시 시도하세요."
             ));
