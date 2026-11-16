@@ -139,39 +139,67 @@ pub fn model_files(id: &str) -> Option<Vec<(&'static str, &'static str)>> {
     Some(files)
 }
 
-/// Start a background download and record real progress. The UI polls the
-/// record; nothing is marked installed until the file exists on disk.
-pub fn start_download(state: AppState, id: &str) -> Result<Value, String> {
-    let files = model_files(id).ok_or("알 수 없는 영상 모델입니다.")?;
-    let key = format!("video_model_download:{id}");
-    if state.store.get("video_model_download", &key)
-        .is_some_and(|row| row["status"] == "downloading")
-    {
-        return Err("이미 다운로드 중입니다.".into());
-    }
-    state.store.put("video_model_download", &json!({
-        "id": key, "model": id, "status": "downloading", "progress": 0,
-        "bytes": 0, "total": 0, "filesTotal": files.len(),
-        "filesCompleted": 0, "currentFile": null,
-        "startedAt": chrono::Utc::now().to_rfc3339(),
-    })).ok_or("다운로드 기록을 저장할 수 없습니다.")?;
-    let base = models_dir(&state);
-    tokio::spawn(async move {
-        let outcome = download_files(&state, &key, &base, &files).await;
-        let mut record = state.store.get("video_model_download", &key).unwrap_or_else(|| json!({"id": key}));
-        match outcome {
-            Ok(()) => {
-                record["status"] = json!("completed");
-                record["progress"] = json!(100);
-                record["filesCompleted"] = json!(files.len());
-                record["currentFile"] = Value::Null;
-            }
-            Err(error) => { record["status"] = json!("failed"); record["error"] = json!(error); }
+/// Real in-flight operations are process-local. Persisted "downloading"
+/// receipts may survive a crash, but no task is running after restart.
+fn active_model_downloads()->&'static std::sync::Mutex<std::collections::HashSet<String>>{
+    static ACTIVE:std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>>=
+        std::sync::OnceLock::new();
+    ACTIVE.get_or_init(||std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+fn model_download_key(base:&Path,id:&str)->String {
+    format!("{}::{id}",base.display())
+}
+struct DownloadGuard(String);
+impl Drop for DownloadGuard {
+    fn drop(&mut self){
+        if let Ok(mut active)=active_model_downloads().lock(){
+            active.remove(&self.0);
         }
-        record["finishedAt"] = json!(chrono::Utc::now().to_rfc3339());
-        state.store.put("video_model_download", &record);
+    }
+}
+pub fn start_download(state:AppState,id:&str)->Result<Value,String>{
+    let files=model_files(id).ok_or("알 수 없는 영상 모델입니다.")?;
+    let key=format!("video_model_download:{id}");
+    let base=models_dir(&state);
+    let active_key=model_download_key(&base,id);
+    {
+        let mut active=active_model_downloads().lock()
+            .map_err(|_|"모델 다운로드 상태를 읽지 못했습니다.")?;
+        if !active.insert(active_key.clone()){
+            return Err("이미 다운로드 중입니다.".into());
+        }
+    }
+    let guard=DownloadGuard(active_key);
+    if state.store.put("video_model_download",&json!({
+        "id":key,"model":id,"status":"downloading","progress":0,
+        "bytes":0,"total":0,"filesTotal":files.len(),
+        "filesCompleted":0,"currentFile":null,
+        "startedAt":chrono::Utc::now().to_rfc3339(),
+    })).is_none(){
+        return Err("다운로드 기록을 저장할 수 없습니다.".into());
+    }
+    let id=id.to_string();
+    tokio::spawn(async move {
+        let _guard=guard;
+        let outcome=download_files(&state,&key,&base,&files).await;
+        let mut record=state.store.get("video_model_download",&key)
+            .unwrap_or_else(||json!({"id":key,"model":id}));
+        match outcome {
+            Ok(())=>{
+                record["status"]=json!("completed");
+                record["progress"]=json!(100);
+                record["filesCompleted"]=json!(files.len());
+                record["currentFile"]=Value::Null;
+            }
+            Err(error)=>{
+                record["status"]=json!("failed");
+                record["error"]=json!(error);
+            }
+        }
+        record["finishedAt"]=json!(chrono::Utc::now().to_rfc3339());
+        state.store.put("video_model_download",&record);
     });
-    Ok(json!({"model": id, "status": "downloading"}))
+    Ok(json!({"model":id,"status":"downloading"}))
 }
 
 /// Reports verified completed files and within-file progress. Summing only
@@ -264,8 +292,21 @@ async fn download_files(
 }
 
 
-pub fn downloads(state: &AppState) -> Vec<Value> {
-    state.store.all("video_model_download")
+pub fn downloads(state:&AppState)->Vec<Value>{
+    let base=models_dir(state);
+    state.store.all("video_model_download").into_iter().map(|mut row|{
+        let interrupted=row["status"]=="downloading"
+            && row["model"].as_str().is_some_and(|id|{
+                let key=model_download_key(&base,id);
+                active_model_downloads().lock().is_ok_and(|items|!items.contains(&key))
+            });
+        if interrupted {
+            row["status"]=json!("interrupted");
+            row["error"]=json!("다운로드가 중단되었습니다. 영상 제작에서 다시 받기를 눌러주세요.");
+            state.store.put("video_model_download",&row);
+        }
+        row
+    }).collect()
 }
 
 pub fn ffmpeg(state: &AppState) -> Option<PathBuf> {
@@ -1417,6 +1458,28 @@ mod tests {
         assert!(within_new_scene_budget(0,Some(1)));
         assert!(!within_new_scene_budget(1,Some(1)));
         assert!(within_new_scene_budget(999,None));
+    }
+
+    #[test]
+    fn crashed_model_transfer_is_reported_as_interrupted_not_forever_downloading() {
+        let dir=std::env::temp_dir().join(format!(
+            "dominion-download-restart-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg=crate::config::Config{
+            port:0,data_dir:dir.clone(),web_dir:dir.join("web"),workspace:dir.clone()
+        };
+        let state=AppState::new(cfg.clone(),
+            crate::db::Store::open(&cfg.db_path()).unwrap(),
+            crate::vault::Vault::open(&cfg.key_path()));
+        let id="video_model_download:wan21-t2v-1.3b-q4";
+        state.store.put("video_model_download",&json!({
+            "id":id,"model":"wan21-t2v-1.3b-q4","status":"downloading"
+        }));
+        let row=downloads(&state).into_iter().find(|v|v["id"]==id).unwrap();
+        assert_eq!(row["status"],"interrupted");
+        assert_eq!(state.store.get("video_model_download",id).unwrap()["status"],"interrupted");
+        drop(state);
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]
