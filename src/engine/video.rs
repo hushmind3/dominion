@@ -30,10 +30,77 @@ pub fn config(state: &AppState) -> Value {
 /// Where ComfyUI keeps downloaded model files.
 pub fn models_dir(state: &AppState) -> PathBuf {
     let cfg = config(state);
-    match cfg["comfyModelsDir"].as_str().filter(|value| !value.is_empty()) {
-        Some(path) => PathBuf::from(path),
-        None => std::env::var("HOME").map(|home| PathBuf::from(home).join("ComfyUI/models"))
-            .unwrap_or_else(|_| PathBuf::from("models")),
+    if let Some(path)=cfg["comfyModelsDir"].as_str().filter(|value|!value.is_empty()) {
+        return PathBuf::from(path);
+    }
+    // Discover portable installs too; never advertise the process working
+    // directory's arbitrary "models" as a ready ComfyUI model library.
+    let mut candidates=Vec::new();
+    if let Some(path)=std::env::var_os("COMFYUI_MODELS_DIR") {
+        candidates.push(PathBuf::from(path));
+    }
+    if let Some(home)=std::env::var_os("USERPROFILE").or_else(||std::env::var_os("HOME")) {
+        let home=PathBuf::from(home);
+        candidates.push(home.join("ComfyUI").join("models"));
+        candidates.push(home.join("ComfyUI_windows_portable").join("ComfyUI").join("models"));
+    }
+    if let Ok(cwd)=std::env::current_dir() {
+        candidates.push(cwd.join("ComfyUI").join("models"));
+        candidates.push(cwd.join("ComfyUI_windows_portable").join("ComfyUI").join("models"));
+    }
+    candidates.into_iter().find(|candidate|candidate.is_dir())
+        .unwrap_or_else(||state.config.data_dir.join("comfy-models-unconfigured"))
+}
+pub fn models_dir_ready(state:&AppState)->bool{
+    models_dir(state).is_dir()
+}
+/// Single setup action: choose the real ComfyUI models folder, persist the
+/// model choice, and begin/resume all weight downloads without a shell.
+pub fn setup_model(state:AppState,id:&str,body:&Value)->Result<Value,String>{
+    let files=model_files(id).ok_or("지원하지 않는 영상 모델입니다.")?;
+    let mut cfg=config(&state);
+    if let Some(path)=body["modelsDir"].as_str().filter(|v|!v.trim().is_empty()){
+        if path.len()>4096{return Err("모델 폴더 경로가 너무 깁니다.".into());}
+        let folder=PathBuf::from(path);
+        let absolute=folder.canonicalize()
+            .map_err(|_|"존재하는 ComfyUI/models 폴더를 선택하세요.")?;
+        if !absolute.is_dir(){return Err("모델 저장 경로가 폴더가 아닙니다.".into());}
+        cfg["comfyModelsDir"]=json!(absolute.to_string_lossy().to_string());
+    }
+    if let Some(url)=body["comfyUrl"].as_str().filter(|v|!v.trim().is_empty()){
+        let parsed=reqwest::Url::parse(url).map_err(|_|"ComfyUI 연결 주소가 올바르지 않습니다.")?;
+        if !matches!(parsed.scheme(),"http"|"https")||!parsed.username().is_empty()
+            ||parsed.password().is_some(){return Err("ComfyUI 연결 주소가 올바르지 않습니다.".into());}
+        cfg["comfyUrl"]=json!(url.trim());
+    }else if cfg["comfyUrl"].as_str().unwrap_or("").trim().is_empty(){
+        cfg["comfyUrl"]=json!("http://127.0.0.1:8188");
+    }
+    // Validate before changing saved configuration. Otherwise a failed
+    // install can silently redirect subsequent renders to an invalid folder.
+    let configured=cfg["comfyModelsDir"].as_str().map(PathBuf::from);
+    let library=configured.unwrap_or_else(||models_dir(&state));
+    if !library.is_dir(){
+        return Err("ComfyUI의 models 폴더를 선택하세요. 설치되지 않은 폴더에 모델을 받지 않습니다.".into());
+    }
+    if !files.iter().all(|(relative,_)| {
+        let name=Path::new(relative);
+        !name.is_absolute()&&name.components().all(|component|
+            matches!(component,std::path::Component::Normal(_)))
+    }) {return Err("모델 경로 검증에 실패했습니다.".into())}
+    cfg["engine"]=json!("comfyui");
+    cfg["videoModel"]=json!(id);
+    cfg["comfyModelsDir"]=json!(library.to_string_lossy().to_string());
+    state.store.put("video_config",&cfg).ok_or("영상 모델 설정을 저장하지 못했습니다.")?;
+    state.bus.record("video_config",&json!({"id":"default"}));
+    let installed=files.iter().all(|(relative,_)|model_asset_ready(&library.join(relative)));
+    if installed{
+        return Ok(json!({"model":id,"status":"ready","modelsDir":library}));
+    }
+    match start_download(state.clone(),id){
+        Ok(_) => Ok(json!({"model":id,"status":"downloading","modelsDir":library})),
+        Err(error) if error=="이미 다운로드 중입니다." =>
+            Ok(json!({"model":id,"status":"downloading","modelsDir":library})),
+        Err(error)=>Err(error),
     }
 }
 
@@ -53,7 +120,7 @@ pub fn video_models(state: &AppState) -> Vec<Value> {
     let entries = [
         ("wan21-t2v-1.3b-q4", "Wan2.1 T2V 1.3B · 4비트", "gguf",
             ["unet/Wan2.1-T2V-1.3B-Q4_K_M.gguf",
-             "clip/umt5-xxl-encoder-Q4_K_M.gguf",
+             "text_encoders/umt5-xxl-encoder-Q4_K_M.gguf",
              "vae/wan_2.1_vae.safetensors"]),
         ("wan21-t2v-1.3b-fp16", "Wan2.1 T2V 1.3B · fp16", "fp16",
             ["diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors",
@@ -122,7 +189,7 @@ pub fn model_files(id: &str) -> Option<Vec<(&'static str, &'static str)>> {
         "wan21-t2v-1.3b-q4" => vec![
             ("unet/Wan2.1-T2V-1.3B-Q4_K_M.gguf",
              "https://huggingface.co/samuelchristlie/Wan2.1-T2V-1.3B-GGUF/resolve/main/Wan2.1-T2V-1.3B-Q4_K_M.gguf"),
-            ("clip/umt5-xxl-encoder-Q4_K_M.gguf",
+            ("text_encoders/umt5-xxl-encoder-Q4_K_M.gguf",
              "https://huggingface.co/city96/umt5-xxl-encoder-gguf/resolve/main/umt5-xxl-encoder-Q4_K_M.gguf"),
             ("vae/wan_2.1_vae.safetensors",
              "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"),
