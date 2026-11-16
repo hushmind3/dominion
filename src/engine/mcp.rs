@@ -605,6 +605,31 @@ mod tests {
     }
 
     #[test]
+    fn pinned_native_contract_changes_on_server_reconfiguration_and_slug_collision(){
+        let state=temp_state();
+        let schema=json!({"type":"object","required":["value"],
+            "properties":{"value":{"type":"string"}}});
+        let server=json!({"id":"mcp-a","name":"Echo Lab","transport":"http",
+            "url":"http://127.0.0.1:12112/mcp","enabled":true});
+        state.store.put("mcp",&server).unwrap();
+        let first=native_contract_fingerprint(&state,"mcp__echo_lab__echo",
+            &schema,"Returns echo").unwrap();
+        let second=native_contract_fingerprint(&state,"mcp__echo_lab__echo",
+            &schema,"Returns echo").unwrap();
+        assert_eq!(first,second);
+        let mut changed=server.clone();
+        changed["url"]=json!("http://127.0.0.1:12113/mcp");
+        state.store.put("mcp",&changed).unwrap();
+        let changed=native_contract_fingerprint(&state,"mcp__echo_lab__echo",
+            &schema,"Returns echo").unwrap();
+        assert_ne!(first,changed,"reconfigured endpoints cannot inherit approval");
+        state.store.put("mcp",&json!({"id":"mcp-b","name":"Echo-Lab",
+            "transport":"http","enabled":true,"url":"http://127.0.0.1:9999"})).unwrap();
+        assert!(native_contract_fingerprint(&state,"mcp__echo_lab__echo",
+            &schema,"Returns echo").is_err(),"duplicate namespaces must fail closed");
+    }
+
+    #[test]
     fn qualified_names_are_namespaced() {
         let tool = McpTool {
             server_name: "Echo Lab".into(),
