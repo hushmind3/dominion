@@ -95,6 +95,10 @@ pub fn setup_model(state:AppState,id:&str,body:&Value)->Result<Value,String>{
     }) {return Err("모델 경로 검증에 실패했습니다.".into())}
     cfg["engine"]=json!("comfyui");
     cfg["videoModel"]=json!(id);
+    // A previously imported user graph would otherwise override the newly
+    // selected model and make one-click setup appear to do nothing.
+    cfg["comfyWorkflow"]=Value::Null;
+    cfg["comfyWorkflowName"]=Value::Null;
     cfg["comfyModelsDir"]=json!(library.to_string_lossy().to_string());
     state.store.put("video_config",&cfg).ok_or("영상 모델 설정을 저장하지 못했습니다.")?;
     state.bus.record("video_config",&json!({"id":"default"}));
@@ -181,7 +185,7 @@ pub fn workflow_for(model: &str, steps: u64) -> Option<Value> {
          json!({"class_type":"CLIPLoaderGGUF","inputs":{"clip_name":clip,"type":"wan"}}))
     } else {
         (json!({"class_type":"UNETLoader","inputs":{"unet_name":unet,"weight_dtype":"default"}}),
-         json!({"class_type":"CLIPLoader","inputs":{"clip_name":clip,"type":"wan"}}))
+         json!({"class_type":"CLIPLoader","inputs":{"clip_name":clip,"type":"wan","device":"default"}}))
     };
     Some(json!({
         "1": unet_node,
