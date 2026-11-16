@@ -402,7 +402,7 @@ async fn github_api(ctx: &ToolContext<'_>, args: &Value) -> Result<Value, String
 fn github_file_url(args:&Value)->Result<reqwest::Url,String>{
     let owner=required_arg(args,"owner")?;
     let repo=required_arg(args,"repo")?;
-    if [owner,repo].iter().any(|s|s.is_empty()||s.len()>100||
+    if [owner.as_str(),repo.as_str()].iter().any(|s|s.is_empty()||s.len()>100||
         !s.bytes().all(|b|b.is_ascii_alphanumeric()||matches!(b,b'-'|b'_'|b'.'))){
         return Err("GitHub 저장소 소유자/이름이 올바르지 않습니다.".into());
     }
@@ -489,7 +489,7 @@ async fn github_file_update(ctx:&ToolContext<'_>,args:&Value)->Result<Value,Stri
     if commit_sha.is_empty()||file_sha.is_empty(){
         return Err("GitHub 응답에 커밋 또는 파일 SHA가 없습니다. 원격에서 확인하세요.".into());
     }
-    url.query_pairs_mut().append_pair("ref",required_arg(args,"branch")?);
+    url.query_pairs_mut().append_pair("ref",&required_arg(args,"branch")?);
     let confirmed=client.get(url).bearer_auth(&token)
         .header("Accept","application/vnd.github+json")
         .header("User-Agent","DOMINION").send().await.map_err(|e|e.to_string())?;
