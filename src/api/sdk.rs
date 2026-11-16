@@ -207,8 +207,11 @@ pub async fn start(State(state):State<AppState>,Json(input):Json<Start>)->Respon
         state.store.audit("sdk.start_failed",json!({"error":message}));
         return error(StatusCode::INTERNAL_SERVER_ERROR,"SDK 작업과 설정을 함께 저장하지 못했습니다.");
     }
-    launch(state.clone(),record.clone(),false);
-    (StatusCode::ACCEPTED,Json(public_view(&state,record))).into_response()
+    // Preserve existing API metadata (createdAt/updatedAt) returned by Store
+    // while the session and SDK run remain transactionally durable.
+    let saved=state.store.get("sdk_run",&id).unwrap_or(record);
+    launch(state.clone(),saved.clone(),false);
+    (StatusCode::ACCEPTED,Json(public_view(&state,saved))).into_response()
 }
 fn launch(state:AppState,record:Value,resume:bool){
     tokio::spawn(async move{
