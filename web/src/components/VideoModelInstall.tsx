@@ -65,10 +65,12 @@ export function VideoModelInstall({onChanged}:{onChanged:()=>void}){
   if(busy||!chosen)return
   setBusy(true);setError('');setNotice('')
   try{
-   const result=await post<{status:string;modelsDir?:string}>(
-    '/api/video/models/'+encodeURIComponent(chosen)+'/setup',{}
-   )
-   setNotice(result.status==='ready'?'선택한 영상 모델을 사용할 수 있도록 등록했습니다.':'선택한 영상 모델과 필수 구성 파일 다운로드를 시작했습니다.')
+   // Download only must never overwrite a running video engine or a user's
+   // imported ComfyUI workflow. Activation is a separate explicit choice.
+   const endpoint='/api/video/models/'+encodeURIComponent(chosen)
+    +(installed?'/setup':'/download')
+   const result=await post<{status:string;modelsDir?:string}>(endpoint,{})
+   setNotice(installed?'선택한 영상 모델을 생성 엔진에 연결했습니다.':'선택한 양자화 모델과 필수 구성 파일 다운로드를 시작했습니다.')
    await Promise.all([catalog.reload(),downloads.reload()])
    onChanged()
   }catch(e){setError((e as Error).message)}
