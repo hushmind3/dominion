@@ -63,3 +63,21 @@ The API also exposes `list()`, `cancel(id)`, `resume(id)`, and
 operator's recorded observation. Server responses are authoritative:
 the SDK does not fabricate progress, retry ambiguous side effects or
 run a client-side agent loop.
+
+## Video project lifecycle (2026-11-16)
+
+The first-party SDK and production GUI call the same Rust-owned project routes. The SDK does **not** run a parallel video workflow:
+
+```ts
+const project = await sdk.video.createProject({
+  brief: 'A 30-second guide', engine: 'native', autoRender: false
+});
+const current = await sdk.video.project(project.id);
+// Once current.status === 'planned':
+await sdk.video.editScenes(project.id, current.revision, current.scenes);
+await sdk.video.renderProject(project.id, current.revision + 1);
+```
+
+Use `sdk.video.projects()` for durable project history and `sdk.video.retryPlan(id,revision)` to explicitly retry failed planning. When a paid planning request ended with an unknown result, the server requires `sdk.video.retryPlan(id,revision,true)` as the owner's acknowledgement of possible duplicate cost. Similarly, `sdk.video.renderProject(id,revision,true)` is required to request a fresh render after an uncertain remote video job. Verified completed video clips from earlier failed runs are reused by the Rust kernel. Read the returned project revision before each mutation; HTTP 409 signals a concurrent edit.
+
+These methods wrap `/api/video/projects*`; they do not bypass Rust validation, persistence, approval, or billing boundaries.
