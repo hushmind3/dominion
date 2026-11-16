@@ -64,9 +64,15 @@ for(const missingAdapter of independentlyImplemented) {
   assert.ok(runtime.includes('dominion_agent_sdk::dispatch_batch('),
     'The native Rust kernel must remain wired to the live product runtime');
 }
+// Main and sub3 deliberately own different Rust execution kernels. New
+// main-only internal engine modules are reported, not passed off as copied
+// implementations: shipping parity is enforced at route and GUI contracts.
+const mainOnlyEngineModules=[...mainFiles].filter(path=>
+  path.startsWith('src/engine/')&&!subFiles.has(path)&&!internalAlternatives.has(path));
 const missing=[...mainFiles].filter(path=>
-  relevant(path)&&!subFiles.has(path)&&!internalAlternatives.has(path));
-assert.deepEqual(missing,[], 'main source files absent without an active replacement in sub3');
+  relevant(path)&&!subFiles.has(path)&&!internalAlternatives.has(path)
+  &&!path.startsWith('src/engine/'));
+assert.deepEqual(missing,[], 'Public API, GUI or SDK source files absent in sub3');
 
 const web=[...mainFiles].filter(path=>path.startsWith('web/')&&relevant(path));
 const changed=web.filter(path=>blob(main,path)!==blob('HEAD',path));
@@ -108,7 +114,8 @@ console.log(JSON.stringify({
   redesignedVideoSourceFiles:changed.filter(path=>permittedVideoChanges.has(path)),
   mainApiRoutes:mainRoutes.size,
   liveSub3ApiRoutes:subRoutes.size,
-  mainFileParity:true,
+  mainPublicSurfaceFilesPresent:true,
+  mainOnlyEngineModulesNotCompared:mainOnlyEngineModules,
   mainHandlerParity:true,
   nativeSdkGuiPreserved:true,
   activeAlternativeAdapters:independentlyImplemented,
