@@ -543,6 +543,7 @@ impl Kernel<'_> {
                     .map(|v| &v.explanation).collect::<Vec<_>>(),
                 "remainingSteps":request.limits.max_steps-step,
                 "modelBudgetRemaining":request.limits.max_model_calls-run.model_calls,
+                "tokenBudgetRemaining":request.limits.max_estimated_tokens.saturating_sub(run.charged_tokens),
                 "toolBudgetRemaining":request.limits.max_tool_calls.saturating_sub(run.receipts.len()),
                 "authorizedToolCount":tools.len(),
                 "advertisedToolCount":visible_tools.len()
@@ -555,7 +556,10 @@ impl Kernel<'_> {
             }else{format!("{system}\n{catalog_for_prompt}")};
             // Model response generation is bounded by the user budget, too.
             let estimated = estimate_tokens(&active_system) + estimate_tokens(&prompt) + 1024;
-            if run.charged_tokens.saturating_add(estimated) > request.limits.max_estimated_tokens {
+            let mut model_tokens=runtime::ModelTokenBudget::new(
+                request.limits.max_estimated_tokens,run.charged_tokens,
+            );
+            if !model_tokens.can_admit(estimated) {
                 run.stop(Status::NeedsReview, "Model token budget exhausted");
                 self.journal.save(&run)?;
                 return Ok(run);
@@ -590,17 +594,19 @@ impl Kernel<'_> {
             // Persist the fact that generation ended before deciding next actions.
             // If this checkpoint fails, no actions are dispatched.
             run.model_in_flight = false;
-            run.charged_tokens = run.charged_tokens.saturating_add(
-                reply.input_tokens.unwrap_or_else(|| estimate_tokens(&active_system) + estimate_tokens(&prompt))
-                    .saturating_add(reply.output_tokens.unwrap_or_else(|| estimate_tokens(&reply.content)))
-            );
+            let actual_tokens=reply.input_tokens
+                .unwrap_or_else(||estimate_tokens(&active_system)+estimate_tokens(&prompt))
+                .saturating_add(reply.output_tokens
+                    .unwrap_or_else(||estimate_tokens(&reply.content)));
+            let within_token_budget=model_tokens.charge(actual_tokens);
+            run.charged_tokens=model_tokens.charged();
             self.journal.save(&run)?;
             // The preflight reserve is an estimate, not authorization to
             // exceed the owner's actual token budget. Provider-reported usage
             // may exceed that reserve. Preserve the paid result in the durable
             // checkpoint, but do not accept a final answer or dispatch any
             // external effect from an over-budget model turn.
-            if run.charged_tokens > request.limits.max_estimated_tokens {
+            if !within_token_budget {
                 run.stop(Status::NeedsReview,
                     "Provider-reported token usage exceeded the owner budget; no actions dispatched");
                 self.journal.save(&run)?;
