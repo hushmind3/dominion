@@ -140,7 +140,7 @@ impl TurnRequest {
             tools_enabled: value
                 .get("toolsEnabled")
                 .and_then(|item| item.as_bool())
-                .unwrap_or(true),
+                .unwrap_or(false),
             tools_execution_enabled: value
                 .get("toolsExecutionEnabled")
                 .and_then(|item| item.as_bool())
