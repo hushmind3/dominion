@@ -52,38 +52,58 @@ fn present(state: &AppState, relative: &str) -> bool {
 /// Text encoders and the VAE are dependencies bundled into each video model
 /// install, not independent models exposed in the video model picker.
 /// Sizes are approximate decimal GB, including shared companions.
-const WAN_T2V_VARIANTS:[(&str,&str,&str,&str,f64,f64);6]=[
-    ("wan21-t2v-1.3b-q3","Q3_K_M","gguf",
+/// Video generation families and their actual model variants.
+/// Every entry has a manifest, and a ComfyUI API-format workflow below.
+/// Download sizes include companion T5 and VAE files; shared assets are reused.
+const VIDEO_T2V_VARIANTS:[(&str,&str,&str,&str,&str,f64,f64);9]=[
+    ("wan21-t2v-1.3b-q3","wan21-t2v-1.3b","Q3_K_M","gguf",
         "unet/Wan2.1-T2V-1.3B-Q3_K_M.gguf",0.729,4.64),
-    ("wan21-t2v-1.3b-q4","Q4_K_M","gguf",
+    ("wan21-t2v-1.3b-q4","wan21-t2v-1.3b","Q4_K_M","gguf",
         "unet/Wan2.1-T2V-1.3B-Q4_K_M.gguf",0.983,4.90),
-    ("wan21-t2v-1.3b-q5","Q5_K_M","gguf",
+    ("wan21-t2v-1.3b-q5","wan21-t2v-1.3b","Q5_K_M","gguf",
         "unet/Wan2.1-T2V-1.3B-Q5_K_M.gguf",1.090,5.00),
-    ("wan21-t2v-1.3b-q6","Q6_K","gguf",
+    ("wan21-t2v-1.3b-q6","wan21-t2v-1.3b","Q6_K","gguf",
         "unet/Wan2.1-T2V-1.3B-Q6_K.gguf",1.200,5.11),
-    ("wan21-t2v-1.3b-q8","Q8_0","gguf",
+    ("wan21-t2v-1.3b-q8","wan21-t2v-1.3b","Q8_0","gguf",
         "unet/Wan2.1-T2V-1.3B-Q8_0.gguf",1.540,5.45),
-    ("wan21-t2v-1.3b-fp16","FP16","fp16",
+    ("wan21-t2v-1.3b-fp16","wan21-t2v-1.3b","FP16","fp16",
         "diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors",2.840,9.83),
+    ("wan21-t2v-14b-fp8","wan21-t2v-14b","FP8","fp8",
+        "diffusion_models/wan2.1_t2v_14B_fp8_scaled.safetensors",14.3,20.9),
+    ("wan21-t2v-14b-fp16","wan21-t2v-14b","FP16","fp16",
+        "diffusion_models/wan2.1_t2v_14B_fp16.safetensors",28.6,35.2),
+    ("wan22-ti2v-5b-fp16","wan22-ti2v-5b","FP16","fp16",
+        "diffusion_models/wan2.2_ti2v_5B_fp16.safetensors",10.0,17.7),
 ];
+fn video_model_family(id:&str)->Option<&'static str>{
+    VIDEO_T2V_VARIANTS.iter().find(|entry|entry.0==id).map(|entry|entry.1)
+}
 pub fn video_models(state:&AppState)->Vec<Value>{
-    WAN_T2V_VARIANTS.iter().map(|(id,quant,kind,weight,weight_gb,total_gb)|{
-        let companions=if *kind=="fp16"{
-            ["text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
-             "vae/wan_2.1_vae.safetensors"]
-        }else{
-            ["clip/umt5-xxl-encoder-Q4_K_M.gguf",
-             "vae/wan_2.1_vae.safetensors"]
+    VIDEO_T2V_VARIANTS.iter().map(|(id,family,quant,kind,weight,weight_gb,total_gb)|{
+        let (name,clip,vae)=match *family {
+            "wan21-t2v-1.3b"=>(
+                "Wan 2.1 · Text to Video · 1.3B",
+                if *kind=="gguf"{"clip/umt5-xxl-encoder-Q4_K_M.gguf"}
+                else{"text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"},
+                "vae/wan_2.1_vae.safetensors"),
+            "wan21-t2v-14b"=>(
+                "Wan 2.1 · Text to Video · 14B",
+                "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+                "vae/wan_2.1_vae.safetensors"),
+            _=>(
+                "Wan 2.2 · Text/Image to Video · 5B",
+                "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+                "vae/wan2.2_vae.safetensors"),
         };
-        let files=[*weight,companions[0],companions[1]];
+        let files=[*weight,clip,vae];
         let missing=files.iter().filter(|file|!present(state,file)).count();
         json!({
-            "id":id,"family":"Wan 2.1 · T2V 1.3B","task":"text-to-video",
-            "name":format!("Wan 2.1 T2V 1.3B · {quant}"),
+            "id":id,"familyId":family,"family":name,"task":"text-to-video",
+            "name":format!("{name} · {quant}"),
             "quantization":quant,"kind":kind,"files":files,
             "weightGB":weight_gb,"totalDownloadGB":total_gb,
             "available":missing==0,"missingFiles":missing,
-            "recommended":*quant=="Q4_K_M",
+            "recommended":*id=="wan21-t2v-1.3b-q4"||*id=="wan22-ti2v-5b-fp16",
             "hint":if missing==0{"설치 완료".to_string()}else{
                 format!("구성 파일 {missing}개 설치 필요")
             }
@@ -111,8 +131,43 @@ pub fn workflow_for(model: &str, steps: u64) -> Option<Value> {
             "wan_2.1_vae.safetensors",
             "fp16",
         ),
+        "wan21-t2v-14b-fp8" => (
+            "wan2.1_t2v_14B_fp8_scaled.safetensors",
+            "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+            "wan_2.1_vae.safetensors","fp8"),
+        "wan21-t2v-14b-fp16" => (
+            "wan2.1_t2v_14B_fp16.safetensors",
+            "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+            "wan_2.1_vae.safetensors","fp16"),
+        "wan22-ti2v-5b-fp16" => (
+            "wan2.2_ti2v_5B_fp16.safetensors",
+            "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+            "wan2.2_vae.safetensors","wan22"),
         _ => return None,
     };
+    if loader=="wan22" {
+        // Comfy-Org's published Wan 2.2 5B TI2V graph uses
+        // Wan22ImageToVideoLatent and the 8-shift ModelSamplingSD3 node.
+        return Some(json!({
+            "1":{"class_type":"UNETLoader","inputs":{"unet_name":unet,"weight_dtype":"default"}},
+            "2":{"class_type":"CLIPLoader","inputs":{"clip_name":clip,"type":"wan","device":"default"}},
+            "3":{"class_type":"VAELoader","inputs":{"vae_name":vae}},
+            "4":{"class_type":"CLIPTextEncode","inputs":{"text":"{{prompt}}","clip":["2",0]}},
+            "5":{"class_type":"CLIPTextEncode","inputs":{"text":"{{negative}}","clip":["2",0]}},
+            "6":{"class_type":"Wan22ImageToVideoLatent","inputs":{
+                "vae":["3",0],"width":"{{width}}","height":"{{height}}",
+                "length":"{{frames}}","batch_size":1}},
+            "7":{"class_type":"ModelSamplingSD3","inputs":{"model":["1",0],"shift":8.0}},
+            "8":{"class_type":"KSampler","inputs":{
+                "model":["7",0],"positive":["4",0],"negative":["5",0],"latent_image":["6",0],
+                "seed":"{{seed}}","steps":steps,"cfg":5.0,
+                "sampler_name":"uni_pc","scheduler":"simple","denoise":1.0}},
+            "9":{"class_type":"VAEDecode","inputs":{"samples":["8",0],"vae":["3",0]}},
+            "10":{"class_type":"CreateVideo","inputs":{"images":["9",0],"fps":"{{fps}}"}},
+            "11":{"class_type":"SaveVideo","inputs":{
+                "video":["10",0],"filename_prefix":"dominion/wan22","format":"auto","codec":"auto"}}
+        }));
+    }
     let (unet_node, clip_node) = if loader == "gguf" {
         (json!({"class_type":"UnetLoaderGGUF","inputs":{"unet_name":unet}}),
          json!({"class_type":"CLIPLoaderGGUF","inputs":{"clip_name":clip,"type":"wan"}}))
@@ -167,6 +222,15 @@ pub fn model_files(id:&str)->Option<Vec<(&'static str,&'static str)>>{
         "wan21-t2v-1.3b-fp16"=>(
             "diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors",
             "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors",true),
+        "wan21-t2v-14b-fp8"=>(
+            "diffusion_models/wan2.1_t2v_14B_fp8_scaled.safetensors",
+            "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_t2v_14B_fp8_scaled.safetensors",true),
+        "wan21-t2v-14b-fp16"=>(
+            "diffusion_models/wan2.1_t2v_14B_fp16.safetensors",
+            "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_t2v_14B_fp16.safetensors",true),
+        "wan22-ti2v-5b-fp16"=>(
+            "diffusion_models/wan2.2_ti2v_5B_fp16.safetensors",
+            "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors",true),
         _=>return None,
     };
     let mut files=vec![(weight,url)];
@@ -177,8 +241,13 @@ pub fn model_files(id:&str)->Option<Vec<(&'static str,&'static str)>>{
         files.push(("clip/umt5-xxl-encoder-Q4_K_M.gguf",
             "https://huggingface.co/city96/umt5-xxl-encoder-gguf/resolve/main/umt5-xxl-encoder-Q4_K_M.gguf"));
     }
-    files.push(("vae/wan_2.1_vae.safetensors",
-        "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"));
+    if video_model_family(id)==Some("wan22-ti2v-5b"){
+        files.push(("vae/wan2.2_vae.safetensors",
+            "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/vae/wan2.2_vae.safetensors"));
+    }else{
+        files.push(("vae/wan_2.1_vae.safetensors",
+            "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"));
+    }
     Some(files)
 }
 
@@ -1616,15 +1685,19 @@ mod tests {
 
     #[test]
     fn every_video_quant_variant_has_matching_workflow_and_downloadable_manifest() {
-        for (id,quant,kind,weight,_,_) in WAN_T2V_VARIANTS {
+        for (id,_,quant,kind,weight,_,_) in VIDEO_T2V_VARIANTS {
             let files=model_files(id).expect("every video variant must download");
             assert_eq!(files.len(),3);
             assert_eq!(files[0].0,weight);
             assert!(files.iter().all(|(_,url)|url.starts_with("https://huggingface.co/")));
             let graph=workflow_for(id,20).expect("every video variant must render");
             let name=graph["1"]["inputs"]["unet_name"].as_str().unwrap();
-            assert!(name.contains(if kind=="fp16"{"1.3B"}else{quant}),
-                "workflow selected an incompatible video model {id}");
+            assert_eq!(name,weight.rsplit('/').next().unwrap(),
+                "workflow selected an incompatible video model {id} ({quant}, {kind})");
+            if id=="wan22-ti2v-5b-fp16"{
+                assert_eq!(graph["6"]["class_type"],"Wan22ImageToVideoLatent");
+                assert_eq!(files[2].0,"vae/wan2.2_vae.safetensors");
+            }
         }
         assert!(model_files("llama-3").is_none());
         assert!(workflow_for("llama-3",20).is_none());
