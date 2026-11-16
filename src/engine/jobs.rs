@@ -307,6 +307,13 @@ pub fn retry_failed_learning(state: &AppState) -> usize {
     retried
 }
 
+/// Wake job dispatch only on queue changes or completed work. The periodic
+/// fallback also catches durable jobs written without an in-process event.
+fn queued_job_event(event: &Value) -> bool {
+    event["type"] == "record" && event["kind"] == "job"
+        && event["record"]["status"] == "queued"
+}
+
 pub fn start(state: AppState) {
     crate::engine::channel_adapter::start(state.clone());
     let workers = std::env::var("DOMINION_JOB_WORKERS")
@@ -314,36 +321,78 @@ pub fn start(state: AppState) {
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(4)
         .clamp(1, 16);
-    for _ in 0..workers {
-        let worker_state = state.clone();
-        tokio::spawn(async move {
-            loop {
-                match next_queued(&worker_state) {
-                    Some(job) => run_job(worker_state.clone(), job).await,
-                    None => tokio::time::sleep(Duration::from_millis(400)).await,
-                }
+    let capacity = Arc::new(tokio::sync::Semaphore::new(workers));
+    let finished = Arc::new(tokio::sync::Notify::new());
+    let mut job_events = state.bus.subscribe();
+    let dispatch_state = state.clone();
+    tokio::spawn(async move {
+        loop {
+            // A single dispatcher checks the durable queue once per wake,
+            // not once per worker every 400 ms when the queue is empty.
+            while let Ok(permit) = capacity.clone().try_acquire_owned() {
+                let Some(job) = next_queued(&dispatch_state) else {
+                    drop(permit);
+                    break;
+                };
+                let worker_state = dispatch_state.clone();
+                let wake = finished.clone();
+                tokio::spawn(async move {
+                    run_job(worker_state, job).await;
+                    drop(permit);
+                    wake.notify_one();
+                });
             }
-        });
-    }
+            tokio::select! {
+                _ = finished.notified() => {},
+                event = job_events.recv() => match event {
+                    Ok(event) if queued_job_event(&event) => {},
+                    Ok(_) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {},
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                },
+                _ = tokio::time::sleep(Duration::from_secs(10)) => {},
+            }
+        }
+    });
 
     let maintenance_state = state.clone();
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(30)).await;
             schedule_automations(&state);
-            // A process restart removes in-memory approval timers. The persisted
-            // deadline still expires automatically during normal operation.
+            // Approval expiration must run whether the UI is connected or not.
             crate::engine::chat::expire_stale_approvals(&state);
         }
     });
 
     tokio::spawn(async move {
+        // Deterministic guidance and correction extraction are retained, but
+        // idle sessions no longer trigger a full database sweep every 5 min.
+        let mut changes = maintenance_state.bus.subscribe();
+        let mut tick = tokio::time::interval(Duration::from_secs(300));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut dirty = true; // one startup recovery sweep for existing evidence
         loop {
-            tokio::time::sleep(Duration::from_secs(300)).await;
-            retry_failed_learning(&maintenance_state);
-            crate::engine::agent_growth::sweep(&maintenance_state);
-            crate::engine::distill::sweep(&maintenance_state);
-            crate::engine::memory::learning_sweep(&maintenance_state);
+            tokio::select! {
+                _ = tick.tick() => {
+                    if dirty {
+                        crate::engine::agent_growth::sweep(&maintenance_state);
+                        crate::engine::distill::sweep(&maintenance_state);
+                        dirty = false;
+                    }
+                },
+                event = changes.recv() => match event {
+                    Ok(event) if event["type"] == "message"
+                        || (event["type"] == "record"
+                            && (event["kind"] == "execution"
+                                || (event["kind"] == "job" && event["record"]["status"] == "completed"))) => {
+                        dirty = true;
+                    },
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => dirty = true,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    _ => {},
+                },
+            }
         }
     });
 }
@@ -1240,6 +1289,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 }
+
+#[cfg(test)]
+mod dispatcher_tests {
+    use super::*;
+    #[test]
+    fn only_newly_queued_job_events_wake_dispatcher() {
+        assert!(queued_job_event(&json!({"type":"record","kind":"job","record":{"status":"queued"}})));
+        assert!(!queued_job_event(&json!({"type":"record","kind":"job","record":{"status":"running"}})));
+        assert!(!queued_job_event(&json!({"type":"record","kind":"memory","record":{"status":"queued"}})));
+        assert!(!queued_job_event(&json!({"type":"message","message":{}})));
+    }
+}
+
 
 #[cfg(test)]
 mod rsi_native_preflight_tests {
