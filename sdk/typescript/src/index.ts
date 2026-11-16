@@ -47,6 +47,8 @@ export interface VideoJobInput {
   brief: string; title?: string; engine?: 'native'|'comfyui';
   duration?: number; aspectRatio?: '9:16'|'16:9'|'1:1';
   scenes?: string[]; continuity?: string; fps?: number;
+  /** Optional owner-authored narration; if absent, autoStoryboard may plan it. */
+  narrationScript?: string;
   /** Opt-in autonomous LLM planning before GPU rendering (maximum 4 scenes). */
   autoStoryboard?: boolean; planningProviderId?: string;
   width?: number; height?: number; seed?: number; negativePrompt?: string;
@@ -62,8 +64,13 @@ export interface VideoJob extends RecordItem {
   remoteCancel?: VideoCancelOutcome['remoteCancel']|null;
   kind: 'video'|'youtube_upload'; status: JobStatus;
   engine?: 'native'|'comfyui'; title?: string; outputUrl?: string|null;
-  maxNewScenes?: number|null; result?: unknown;
+  maxNewScenes?: number|null; result?: {
+    narrated?:boolean;captions?:boolean;narrationWarning?:string;
+    resumedScenes?:number;renderedScenes?:number;reusedScenes?:number;
+    [key:string]:unknown;
+  };
   autoStoryboard?: boolean; storyboard?: string[]|null;
+  narrationScript?: string|null; narrationLines?: string[]|null;
   sceneProgress?: {index?:number|null;total?:number|null;rendered?:number|null;reused?:number|null};
   renderWorkload?: {
     frames: number; pixelFrames: number; megapixelFrames: number;

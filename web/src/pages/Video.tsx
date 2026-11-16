@@ -16,29 +16,29 @@ type Ratio='9:16'|'16:9'|'1:1'
 type StudioTab='create'|'library'|'publish'|'settings'
 type StudioMode='quick'|'scenes'
 type VideoModel={id:string;name:string;family:string;familyId:string;task:'text-to-video';quantization:string;kind:string;weightGB:number;totalDownloadGB:number;recommended:boolean;available:boolean;hint:string;missingFiles?:number}
-type VideoConfig={engine:VideoEngine;comfyUrl:string;voice?:string;narration?:boolean;videoModel?:string;resolution?:string;steps?:number;comfyWorkflow?:unknown;comfyWorkflowName?:string;comfyModelsDir?:string;ffmpegPath?:string}
+type VideoConfig={engine:VideoEngine;comfyUrl:string;voice?:string;narration?:boolean;subtitles?:boolean;videoModel?:string;resolution?:string;steps?:number;comfyWorkflow?:unknown;comfyWorkflowName?:string;comfyModelsDir?:string;ffmpegPath?:string}
 type VideoJob=JobState & {
  remoteCancel?:{status:string;reason?:string;promptId?:string}|null;
  kind:'video'|'youtube_upload';title?:string;brief?:string;engine?:VideoEngine;
  phase?:string;progress?:number;outputUrl?:string|null;createdAt?:string;
  duration?:number;aspectRatio?:Ratio;storyboard?:string[]|null;continuity?:string|null;
- negativePrompt?:string|null;reuseVideoJobId?:string|null;maxNewScenes?:number|null;
+ negativePrompt?:string|null;narrationScript?:string|null;narrationLines?:string[]|null;reuseVideoJobId?:string|null;maxNewScenes?:number|null;
  renderParams?:{fps?:number;seed?:number;width?:number;height?:number};
  sceneProgress?:{index?:number|null;total?:number|null;rendered?:number|null;reused?:number|null};
  renderWorkload?:{frames?:number;pixelFrames?:number;megapixelFrames?:number;estimatedMoneyCost?:number|null};
- result?:{bytes?:number;sceneCount?:number;renderedScenes?:number;reusedScenes?:number;reusedFrames?:number;generatedFrames?:number;renderSeconds?:number;url?:string}
+ result?:{bytes?:number;sceneCount?:number;renderedScenes?:number;reusedScenes?:number;resumedScenes?:number;reusedFrames?:number;generatedFrames?:number;renderSeconds?:number;narrated?:boolean;captions?:boolean;narrationWarning?:string;url?:string}
 }
 type UploadJob=JobState & {progress?:number;result?:{url?:string}}
 type VideoStatus={config:VideoConfig;modelDirectory?:string;native?:{available:boolean};comfy:{reachable:boolean;available?:boolean;missingNodes?:string[]};workflows:{id:string;name:string;bytes:number}[];jobs:VideoJob[]}
 type YoutubeStatus={connected:boolean;uploadAllowed:boolean;account?:{displayName:string;scopes:string}|null;uploads:UploadJob[]}
-type Draft={title:string;prompt:string;negative:string;ratio:Ratio;seconds:number;fps:number;seed:string;scenes:string[];continuity:string;mode:StudioMode}
+type Draft={title:string;prompt:string;negative:string;narrationScript:string;ratio:Ratio;seconds:number;fps:number;seed:string;scenes:string[];continuity:string;mode:StudioMode}
 const ratios:Record<Ratio,{label:string;w:number;h:number}>={
  '9:16':{label:'세로 · 쇼츠 / 릴스',w:360,h:640},
  '16:9':{label:'가로 · 유튜브',w:640,h:360},
  '1:1':{label:'정사각형 · 피드',w:480,h:480}
 }
 const draftKey='dominion.video.studio.draft.v1'
-const defaults:Draft={title:'',prompt:'',negative:'',ratio:'9:16',seconds:6,fps:16,seed:'-1',scenes:[''],continuity:'',mode:'quick'}
+const defaults:Draft={title:'',prompt:'',negative:'',narrationScript:'',ratio:'9:16',seconds:6,fps:16,seed:'-1',scenes:[''],continuity:'',mode:'quick'}
 function loadDraft():Draft {
  try{
   const saved=JSON.parse(localStorage.getItem(draftKey)||'null') as Partial<Draft>|null
@@ -47,6 +47,7 @@ function loadDraft():Draft {
    title:typeof saved.title==='string'?saved.title:'',
    prompt:typeof saved.prompt==='string'?saved.prompt:'',
    negative:typeof saved.negative==='string'?saved.negative:'',
+   narrationScript:typeof saved.narrationScript==='string'?saved.narrationScript:'',
    ratio:saved.ratio && saved.ratio in ratios?saved.ratio:'9:16',
    seconds:Number.isInteger(saved.seconds)&&Number(saved.seconds)>=3&&Number(saved.seconds)<=180?Number(saved.seconds):6,
    fps:Number.isInteger(saved.fps)&&Number(saved.fps)>=1&&Number(saved.fps)<=60?Number(saved.fps):16,
@@ -94,6 +95,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  const [ffmpegPath,setFfmpegPath]=useState('')
  const [voice,setVoice]=useState('Yuna')
  const [narration,setNarration]=useState(true)
+ const [subtitles,setSubtitles]=useState(true)
  const [reuseId,setReuseId]=useState('')
  const [regenerate,setRegenerate]=useState<number[]>([])
  const [budgetEnabled,setBudgetEnabled]=useState(false)
@@ -149,6 +151,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  const validDuration=Number.isInteger(draft.seconds)&&draft.seconds>=3&&draft.seconds<=maxDuration
  const validFps=Number.isInteger(draft.fps)&&draft.fps>=1&&draft.fps<=60
  const validBrief=new TextEncoder().encode(actualScenes.join('\n\n')).length<=16000
+ const validNarration=new TextEncoder().encode(draft.narrationScript).length<=8000
  const planner=providers.value.find(provider=>provider.enabled!==false&&Boolean(provider.model?.trim()))
  const planningEnabled=usingComfy&&draft.mode==='quick'&&autoPlan&&Boolean(planner)&&draft.seconds>=6&&(!budgetEnabled||maxNewScenes>=2)
  const multiSceneRequiresFfmpeg=usingComfy&&((draft.mode==='scenes'&&sceneItems.length>1)||planningEnabled)&&!video.value.native?.available
@@ -161,7 +164,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
   : !video.value.native?.available?'네이티브 영상 제작에는 FFmpeg 설치가 필요합니다.':''
  const submittedState=sortedJobs.find(j=>j.id===submitted?.id)??(active.value?.id===submitted?.id?active.value:submitted)
  const busy=generating||Boolean(submittedState&&running(submittedState.status))
- const canGenerate=ready&&!busy&&actualScenes.length>0&&validBrief&&!invalidScenes&&!invalidTime&&!invalidSeed&&!multiSceneRequiresFfmpeg&&validDuration&&(!usingComfy||validFps)
+ const canGenerate=ready&&!busy&&actualScenes.length>0&&validBrief&&validNarration&&!invalidScenes&&!invalidTime&&!invalidSeed&&!multiSceneRequiresFfmpeg&&validDuration&&(!usingComfy||validFps)
  const suggestedMaxNew=actualScenes.length
  const progress=typeof videoJob?.progress==='number'?Math.max(0,Math.min(100,Math.round(videoJob.progress))):null
  const editingSource=sortedJobs.find(j=>j.id===reuseId)
@@ -172,7 +175,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  useEffect(()=>{setComfyUrl(statusConfig.comfyUrl||'')},[statusConfig.comfyUrl])
  useEffect(()=>{setModelDir(statusConfig.comfyModelsDir||'')},[statusConfig.comfyModelsDir])
  useEffect(()=>{setFfmpegPath(statusConfig.ffmpegPath||'')},[statusConfig.ffmpegPath])
- useEffect(()=>{setVoice(statusConfig.voice||'Yuna');setNarration(statusConfig.narration!==false)},[statusConfig.voice,statusConfig.narration])
+ useEffect(()=>{setVoice(statusConfig.voice||'Yuna');setNarration(statusConfig.narration!==false);setSubtitles(statusConfig.subtitles!==false)},[statusConfig.voice,statusConfig.narration,statusConfig.subtitles])
  useEffect(()=>{if(currentId||!sortedJobs.length)return;setCurrentId(sortedJobs[0].id)},[currentId,sortedJobs])
  useEffect(()=>{if(active.value?.status==='completed'){void outputs.reload();void jobs.reload()}},[active.value?.status,outputs.reload,jobs.reload])
  useEffect(()=>{
@@ -273,7 +276,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
      // Quick mode remains ONE scene even when the idea contains blank lines.
      // Only the storyboard mode opts into multiple remote GPU renders.
      scenes:actualScenes,
-     negativePrompt:draft.negative,fps:draft.fps,seed:Number(draft.seed),
+     negativePrompt:draft.negative,narrationScript:draft.narrationScript.trim(),fps:draft.fps,seed:Number(draft.seed),
      continuity:draft.continuity,
      autoStoryboard:planningEnabled&&!reuseId,
      ...(planningEnabled?{planningProviderId:planner?.id}:{}),
@@ -305,7 +308,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
    mode:job.engine==='comfyui'?'scenes':'quick',
    ratio:job.aspectRatio&&job.aspectRatio in ratios?job.aspectRatio:'9:16',
    seconds:job.duration??6,fps:job.renderParams?.fps??16,
-   seed:'-1',negative:job.negativePrompt||'',continuity:job.continuity||''
+   seed:'-1',negative:job.negativePrompt||'',narrationScript:job.narrationScript||'',continuity:job.continuity||''
   })
   if(job.engine==='comfyui'){
    setEngineChoice('comfyui')
@@ -490,6 +493,10 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
         </div>
         {usingComfy&&<FormField label="일관된 캐릭터 / 영상 스타일" hint="모든 장면에 같은 인물·의상·색감 등을 유지하도록 전달합니다."><TextArea rows={2} maxLength={2000} value={draft.continuity} onChange={e=>patchDraft({continuity:e.target.value})} placeholder="예: 같은 주인공, 남색 재킷, 따뜻한 필름 색감, 자연스러운 움직임"/></FormField>}
        </>}
+       {usingComfy&&<FormField label="🎙️ 내레이션 대본 · 선택" hint="직접 입력하면 음성·자막에 사용합니다. 비워두면 AI 자동 기획이 장면별 짧은 대본도 생성합니다. 음성 사용 여부는 환경 설정에서 조절합니다.">
+        <TextArea value={draft.narrationScript} onChange={e=>patchDraft({narrationScript:e.target.value})} rows={3} placeholder="예: 새벽의 도시가 깨어납니다. 오늘도 새로운 이야기가 시작됩니다."/>
+        <p className="mt-1 text-right text-[10px] text-[#827568]">{new TextEncoder().encode(draft.narrationScript).length.toLocaleString('ko-KR')} / 8,000 byte</p>
+       </FormField>}
        {draft.mode==='quick'&&usingComfy&&<div className="rounded-xl border border-[#E4D4C7] bg-[#FAF6F0] p-3">
         <label className="flex items-center gap-2 text-[12px] font-bold text-[#47392F]"><input type="checkbox" checked={autoPlan} onChange={e=>setAutoPlan(e.target.checked)}/> AI가 자동으로 대본·장면 구성</label>
         <p className="mt-1 text-[11px] leading-5 text-[#786B5D]">연결된 텍스트 AI가 장면을 기획하고, 영상 엔진이 장면별 생성·합성을 진행합니다. 대본 기획에 모델 토큰이 사용될 수 있습니다.</p>
@@ -551,6 +558,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
       {invalidTime&&<p role="alert" className="mt-3 text-[12px] font-semibold text-rose-700">장면 {sceneItems.length}개의 최소 길이는 {sceneItems.length*3}초입니다. 시간을 늘리거나 장면을 줄여주세요.</p>}
       {invalidScenes&&<p role="alert" className="mt-3 text-[12px] font-semibold text-rose-700">모든 장면에 설명을 입력해 주세요. 최대 8개, 각 4,000바이트입니다.</p>}
       {!validBrief&&<p role="alert" className="mt-3 text-[12px] font-semibold text-rose-700">전체 영상 설명은 16,000바이트 이하로 작성해 주세요.</p>}
+      {!validNarration&&<p role="alert" className="mt-3 text-[12px] font-semibold text-rose-700">내레이션 대본은 8,000바이트 이하로 작성해 주세요.</p>}
       {multiSceneRequiresFfmpeg&&<p role="alert" className="mt-3 text-[12px] font-semibold text-rose-700">여러 AI 장면을 합치려면 FFmpeg를 설치해야 합니다.</p>}
      </Panel>
      <Panel className="p-4 sm:p-6">
@@ -591,6 +599,8 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
         <div><span className="block text-[10px] text-[#81776B]">재사용한 장면</span><strong className="text-[12px] text-[#507A4C]">{previewJob.result.reusedScenes??0}개</strong></div>
         <div><span className="block text-[10px] text-[#81776B]">새로 만든 장면</span><strong className="text-[12px] text-[#473A30]">{previewJob.result.renderedScenes??'-'}개</strong></div>
         <div><span className="block text-[10px] text-[#81776B]">동일 작업량 기준</span><strong className="text-[12px] text-[#473A30]">{(previewJob.renderWorkload?.frames??0).toLocaleString('ko-KR')} frames</strong></div>
+        <div><span className="block text-[10px] text-[#81776B]">재시작에서 복원한 장면</span><strong className="text-[12px] text-[#507A4C]">{previewJob.result.resumedScenes??0}개</strong></div>
+        <div><span className="block text-[10px] text-[#81776B]">음성 / 자막</span><strong className="text-[12px] text-[#473A30]">{previewJob.result.narrated?'음성 있음':'무음'} · {previewJob.result.captions?'자막 있음':'자막 없음'}</strong></div>
        </div>}
        {['queued','running'].includes(previewJob.status)&&<div className="mt-3 flex items-center gap-3">
         <Button variant="secondary" size="sm" disabled={Boolean(cancellingId)} onClick={()=>void cancelVideo(previewJob)}><Square size={14}/>{cancellingId===previewJob.id?'중단 요청 중':'영상 제작 중단'}</Button>
@@ -598,6 +608,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
        </div>}
        {previewJob.status==='cancelled'&&previewJob.remoteCancel?.status==='requested'&&<p role="status" className="mt-3 text-[11px] text-[#6F655C]">로컬 작업 중단 · ComfyUI에 해당 원격 작업의 취소 요청 전달됨 (실제 GPU 종료는 서버 상태에 따름)</p>}
        {previewJob.status==='cancelled'&&previewJob.remoteCancel?.status==='unconfirmed'&&<p role="alert" className="mt-3 text-[11px] text-amber-800">로컬 작업 중단 · 원격 GPU 중단 확인 필요: {previewJob.remoteCancel.reason||'ComfyUI 작업 상태를 확인하세요.'}</p>}
+       {previewJob.result?.narrationWarning&&<p role="status" className="mt-2 text-[11px] text-amber-800">{previewJob.result.narrationWarning}</p>}
        {previewJob.error&&<Notice message={previewJob.error}/>}
        {previewJob.status==='completed'&&previewJob.outputUrl&&<div className="mt-3 grid gap-2 sm:grid-cols-2">
         <Button variant="secondary" onClick={()=>editJob(previewJob)}><RotateCcw size={15}/> 장면 다시 편집</Button>
@@ -677,7 +688,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
       <div className="grid gap-3 sm:grid-cols-2"><FormField label="기본 렌더 해상도"><SelectInput disabled={savingConfig} value={statusConfig.resolution||'480x832'} onChange={e=>void saveConfig({resolution:e.target.value})}>{['256x448','384x672','480x832','832x480','448x448'].map(x=><option key={x} value={x}>{x}</option>)}</SelectInput></FormField><FormField label="샘플링 스텝"><SelectInput disabled={savingConfig} value={statusConfig.steps??20} onChange={e=>void saveConfig({steps:Number(e.target.value)})}>{[4,8,12,20,30,40].map(x=><option key={x} value={x}>{x} steps</option>)}</SelectInput></FormField></div>
      </div>
     </Panel>
-    <Panel className="p-4 sm:p-6"><h2 className={panelTitle}>내레이션</h2><div className="mt-3 grid gap-3 sm:grid-cols-2"><FormField label="음성"><SelectInput value={voice} disabled={savingConfig} onChange={e=>{setVoice(e.target.value);void saveConfig({voice:e.target.value})}}><option value="Yuna">Yuna</option></SelectInput></FormField><label className="mt-6 flex items-center gap-2 text-[12px] text-[#4B4035]"><input type="checkbox" checked={narration} disabled={savingConfig} onChange={e=>{setNarration(e.target.checked);void saveConfig({narration:e.target.checked})}}/> 내레이션 자동 생성</label></div><p className="mt-2 text-[11px] text-[#81766B]">지원되는 음성 엔진이 있으면 음성을 합성합니다. 지원되지 않는 환경에서는 무음으로 영상을 생성합니다.</p></Panel>
+    <Panel className="p-4 sm:p-6"><h2 className={panelTitle}>내레이션</h2><div className="mt-3 grid gap-3 sm:grid-cols-2"><FormField label="음성"><SelectInput value={voice} disabled={savingConfig} onChange={e=>{setVoice(e.target.value);void saveConfig({voice:e.target.value})}}><option value="Yuna">Yuna</option></SelectInput></FormField><div className="mt-6 grid gap-2"><label className="flex items-center gap-2 text-[12px] text-[#4B4035]"><input type="checkbox" checked={narration} disabled={savingConfig} onChange={e=>{setNarration(e.target.checked);void saveConfig({narration:e.target.checked})}}/> 내레이션 합성</label><label className="flex items-center gap-2 text-[12px] text-[#4B4035]"><input type="checkbox" checked={subtitles} disabled={savingConfig} onChange={e=>{setSubtitles(e.target.checked);void saveConfig({subtitles:e.target.checked})}}/> MP4 자막 트랙 생성</label></div></div><p className="mt-2 text-[11px] text-[#81766B]">AI 장면은 같은 기획 호출에서 내레이션 대본을 생성하고, FFmpeg로 영상·음성·자막을 결합합니다. Windows/macOS의 설치된 시스템 음성을 사용하며 지원되지 않는 환경에서는 자막만 제공합니다.</p></Panel>
    </div>
   </div>}
  </div>

@@ -165,6 +165,20 @@ test('video SDK publication calls the existing Rust approval-gated upload endpoi
   assert.equal(receipt.kind,'youtube_upload');
 });
 
+test('video SDK passes narration text through the same Rust video enqueue',async()=>{
+  let body;
+  const client=new Dominion({fetch:async(_url,init)=>{
+    body=JSON.parse(init.body);
+    return json({id:'video-narrated',kind:'video',status:'queued',
+      narrationScript:body.narrationScript});
+  }});
+  const created=await client.video.create({brief:'River in the morning',
+    engine:'comfyui',duration:9,autoStoryboard:true,
+    narrationScript:'아침 강가의 새로운 이야기입니다.'});
+  assert.equal(body.narrationScript,'아침 강가의 새로운 이야기입니다.');
+  assert.equal(created.narrationScript,body.narrationScript);
+});
+
 test('video SDK preserves render budget and returns engine work receipts',async()=>{
   let route,request;
   const client=new Dominion({fetch:async(url,init)=>{
