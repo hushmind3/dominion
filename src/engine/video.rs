@@ -1604,6 +1604,35 @@ mod tests {
     }
 
     #[test]
+    fn video_only_catalog_offers_real_quantizations_and_includes_supporting_weights(){
+        let ids=["wan21-t2v-1.3b-q3km","wan21-t2v-1.3b-q4",
+            "wan21-t2v-1.3b-q5km","wan21-t2v-1.3b-q8",
+            "wan21-t2v-1.3b-fp16"];
+        let root=std::env::temp_dir().join(format!("dominion-model-catalog-{}",uuid::Uuid::new_v4()));
+        let cfg=crate::config::Config{port:0,data_dir:root.clone(),
+            web_dir:root.join("web"),workspace:root.clone()};
+        let state=AppState::new(cfg.clone(),crate::db::Store::open(&cfg.db_path()).unwrap(),
+            crate::vault::Vault::open(&cfg.key_path()));
+        let models=video_models(&state);
+        assert_eq!(models.len(),5);
+        for id in ids{
+            let model=models.iter().find(|item|item["id"]==id).expect("video variant");
+            assert_eq!(model["task"],"text-to-video");
+            assert_eq!(model["family"],"Wan2.1");
+            assert!(model["totalBytes"].as_u64().unwrap()>model["weightBytes"].as_u64().unwrap());
+            assert_eq!(model_files(id).unwrap().len(),3);
+            assert!(workflow_for(id,8).is_some());
+        }
+        let q3=model_files(ids[0]).unwrap();
+        let q5=model_files(ids[2]).unwrap();
+        assert_eq!(q3[1],q5[1],"quantizations must reuse the text encoder");
+        assert_eq!(q3[2],q5[2],"quantizations must reuse the VAE");
+        assert!(models_dir(&state).ends_with("video-models")||
+            models_dir(&state).is_dir(),"managed library or real discovered ComfyUI library");
+        assert!(model_files("text-llm").is_none(),"catalog must not offer chat models");
+        crate::test_support::cleanup_dir(state.config.data_dir.clone());
+    }
+    #[test]
     fn listed_model_sources_are_real_comfyui_layouts_and_nontrivial_assets(){
         let q4=model_files("wan21-t2v-1.3b-q4").unwrap();
         assert!(q4.iter().any(|(path,_)|path.starts_with("text_encoders/")));
