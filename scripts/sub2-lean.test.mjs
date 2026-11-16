@@ -33,3 +33,15 @@ test('built-in video and RSI screens are absent from the primary navigation',()=
   assert.match(nav,/\{id:'connections',label:'nav\.connections'/);
   assert.match(nav,/\{id:'memory',label:'nav\.memory'/);
 });
+
+test('legacy generation and RSI effects cannot be started by worker or HTTP',()=>{
+  const api=src('src/api/mod.rs');
+  const jobs=src('src/engine/jobs.rs');
+  assert.match(api,/async fn retired_capability\(/);
+  assert.match(api,/get\(rsi::list\)\.post\(retired_capability\)/);
+  assert.match(api,/get\(video::list_jobs\)\.post\(retired_capability\)/);
+  assert.doesNotMatch(jobs,/"rsi_evolve"\s*=>\s*crate::engine::rsi_evolve::run/);
+  assert.doesNotMatch(jobs,/"video"\s*=>\s*crate::engine::video::run/);
+  assert.doesNotMatch(jobs,/start_rsi_install\(state.clone\(\)/);
+  assert.match(api,/\/api\/video\/jobs\/:id\/content/);
+});

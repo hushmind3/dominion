@@ -12,8 +12,12 @@ Existing conversations, user memories, file and output history, credentials and 
 4. Default chat/room auto-learning set false across Rust request parser, room save defaults and browser controls. Previously saved explicit values/records are preserved, not rewritten.
 5. Removed the embedded Video and SelfImprovement page imports and menu navigation. Existing user records, MP4 files and old APIs/engines are not deleted by the transition.
 
+## Retired live entrances (stage 2)
+- HTTP mutating endpoints for RSI campaigns, worktree adoption, built-in video models/rendering and video publishing return HTTP 410. Legacy GET paths remain for read-only job and output inspection.
+- The normal Rust worker refuses `rsi_evolve`, `rsi_compare`, `video` and `youtube_upload` jobs; previously queued jobs are preserved as terminal `needs_review` records when claimed, never silently submitted. The former `rsiApplyWhenFinished` installation branch has been removed.
+
 ## Next cleanup boundaries
-- Disable new RSI/video generation and auto-adoption at ingress while retaining **read-only history** for existing jobs and outputs. Reconcile previously queued/running cases to `needs_review` without claiming success or deleting data.
+- Remove remaining Rust/TypeScript SDK mutation methods, unused RSI/video modules and feature-specific library dependencies topologically, with old SQLite/job/archive fixtures retained.
 - Trace all `src/engine/{rsi*,video*}` references in `jobs.rs`, `chat/runtime.rs`, SDKs, API routes, tool definitions, build scripts and web navigation. Remove modules topologically only once normal chat, room, task execution and MCP contracts are verified.
 - Separate manual code editing/evaluation and verified memory/procedure reuse from RSI-specific campaign semantics.
 - Verify a genuine chat turn with tool calls, file editing, approvals, interruptions and restart on Windows/Linux/macOS against existing database fixtures and API contract tests.
