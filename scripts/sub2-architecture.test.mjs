@@ -130,7 +130,7 @@ test('GitHub repo file workflow uses connected OAuth, optimistic SHA and owner a
 test('runtime scoped receipt lookups avoid global history scans',()=>{
  const runtime=file('src/engine/chat/runtime.rs');
  const db=file('src/db.rs');
- const live=runtime.split('#[cfg(test)]')[0];
+ const live=runtime.split(/#\[cfg\(test\)\]\s*mod /)[0];
  assert.doesNotMatch(live,/\.all\("execution_operation"\)/);
  assert.doesNotMatch(live,/\.all\("execution"\)/);
  assert.match(live,/session_operations\(session_id\)/);
