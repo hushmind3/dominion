@@ -162,6 +162,16 @@ Contributions are welcome — particularly **reproducible bug reports, test case
 **License:** [Apache 2.0](LICENSE) · **한국어:** [README.ko.md](README.ko.md)
 
 
+## 🎬 Sub3 turnkey content studio and model install (2026-11-16)
+
+This section applies to **`dominion-sub3` only**, not to `main`. **Video → 자율 콘텐츠 제작** leads from a goal to an optional AI storyboard, editable scene scripts and timings, native FFmpeg/ComfyUI rendering, MP4 + SRT + production manifest export, and opt-in private/unlisted YouTube delivery.
+
+To preview the **actual branch** at the local Rust port, run `git switch dominion-sub3`, `npm ci --prefix web`, `npm run build --prefix web`, and `cargo run --release -- --home .`. Open **http://127.0.0.1:4317**. A running server pointing at an old `web/dist` will still show the old UI until rebuilt.
+
+Selecting **ComfyUI AI** now exposes **model selection → native folder picker → download/install progress → local ComfyUI runtime start** directly on the production screen. The model folder must be the real ComfyUI `models` tree; incomplete weights and missing ComfyUI graph nodes cannot qualify as ready. A compatible ComfyUI installation and Python/GPU runtime must already exist; the app only starts an installed portable/venv server. `Wan2.1 1.3B FP16` uses standard ComfyUI nodes; GGUF needs the ComfyUI-GGUF extension. These weight downloads are multi-gigabyte, and performance and GPU fit are machine-dependent.
+
+**[Sub3 video setup, code/API map, 2026 upstream sources and testing limits](docs/SUB3-VIDEO-TURNKEY-2026-11-16.md).** ComfyUI model generation on a physical 8 GB GPU and remote provider uploads have not been proven by CI; the focused acceptance uses a real local FFmpeg video plus simulated model/HTTP fixtures.
+
 ## 🧩 SDKs and public Rust API (dominion-sub3)
 
 The native Rust SDK core and companion TypeScript client now target the same **native Dominion Rust execution engine** as the React desktop UI:
