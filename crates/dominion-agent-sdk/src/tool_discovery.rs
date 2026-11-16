@@ -78,7 +78,7 @@ fn ranked(catalog:&HashMap<String,ToolSpec>,query:&str)->Vec<String>{
 /// Deterministic stable shortlist. Internal discovery receives no permissions
 /// beyond the already-authorized catalog, and the original host owns dispatch.
 pub(crate) fn select(catalog:&HashMap<String,ToolSpec>,task:&str,owner:&str,
- directive:Option<&str>,plan:&[String],receipts:&[Receipt])->Vec<ToolSpec>{
+ directive:Option<&str>,_plan:&[String],receipts:&[Receipt])->Vec<ToolSpec>{
  if !needed(catalog){
   let mut all=catalog.values().cloned().collect::<Vec<_>>();
   all.sort_by(|a,b|a.name.cmp(&b.name));
