@@ -53,6 +53,7 @@ impl Model for SequencedNative{
    let decision=match self.steps.fetch_add(1,Ordering::SeqCst){
     0=>{
      assert!(tools.iter().any(|s|s.name=="dominion_tool_search"));
+     assert!(tools.iter().any(|s|s.name=="dominion_tool_call"));
      assert!(!tools.iter().any(|s|s.name=="mcp__archive_publish"));
      Decision{plan:vec!["Find the archive service first".into()],
        actions:vec![Action{id:"lookup".into(),tool:"dominion_tool_search".into(),
@@ -60,10 +61,13 @@ impl Model for SequencedNative{
        answer:None}
     }
     1=>{
-     assert!(tools.iter().any(|s|s.name=="mcp__archive_publish"));
-     Decision{plan:vec!["Publish using discovered schema".into()],
-       actions:vec![Action{id:"publish".into(),tool:"mcp__archive_publish".into(),
-         arguments:json!({"id":"abc"}),depends_on:vec!["lookup".into()]}],
+     assert!(!tools.iter().any(|s|s.name=="mcp__archive_publish"),
+       "native schemas must stay fixed after discovery for prefix caching");
+     assert!(tools.iter().any(|s|s.name=="dominion_tool_call"));
+     Decision{plan:vec!["Publish using discovered schema via fixed bridge".into()],
+       actions:vec![Action{id:"publish".into(),tool:"dominion_tool_call".into(),
+         arguments:json!({"name":"mcp__archive_publish","arguments":{"id":"abc"}}),
+         depends_on:vec!["lookup".into()]}],
        answer:None}
     }
     2=>Decision{plan:vec![],actions:vec![],answer:Some("Archive published".into())},
@@ -114,7 +118,8 @@ async fn discovery_is_local_durable_and_promotes_only_owner_allowed_schemas(){
  assert_eq!(seen.len(),3);
  assert!(seen.iter().all(|c|c.len()<=13));
  assert!(seen.iter().all(|c|!c.contains(&"mcp__excluded_secret".into())));
- assert!(seen[1].contains(&"mcp__archive_publish".into()));
+ assert_eq!(seen[0],seen[1],"discovery must not invalidate tool-prefix cache");
+ assert_eq!(seen[1],seen[2],"stable catalog even after hidden host effects");
  let full=serde_json::to_string(&host.definitions()).unwrap().len();
  let first=seen[0].iter().filter_map(|name|host.definitions().into_iter().find(|s|s.name==*name))
    .collect::<Vec<_>>();
@@ -122,5 +127,8 @@ async fn discovery_is_local_durable_and_promotes_only_owner_allowed_schemas(){
  assert!(selected*3<full,"large catalog must be compressed before inference");
  let durable=journal.snapshots.lock().unwrap();
  assert!(durable.iter().any(|s|s.receipts.iter().any(|r|
-  r.tool=="dominion_tool_search"&&r.result["nextTurnSchemas"]==true)));
+  r.tool=="dominion_tool_search"&&r.result["nextTurnSchemas"]==false)));
+ assert!(state.receipts.iter().any(|r|r.id=="publish"
+  && r.tool=="mcp__archive_publish"&&r.success),
+  "the bridge must store the real invoked tool, not a synthetic wrapper");
 }
