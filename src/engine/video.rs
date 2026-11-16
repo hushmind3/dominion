@@ -178,12 +178,12 @@ pub fn start_download(state:AppState,id:&str)->Result<Value,String>{
     })).is_none(){
         return Err("다운로드 기록을 저장할 수 없습니다.".into());
     }
-    let id=id.to_string();
+    let background_model_id=id.to_string();
     tokio::spawn(async move {
         let _guard=guard;
         let outcome=download_files(&state,&key,&base,&files).await;
         let mut record=state.store.get("video_model_download",&key)
-            .unwrap_or_else(||json!({"id":key,"model":id}));
+            .unwrap_or_else(||json!({"id":key,"model":background_model_id}));
         match outcome {
             Ok(())=>{
                 record["status"]=json!("completed");
