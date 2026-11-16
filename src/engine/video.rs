@@ -1310,7 +1310,9 @@ pub async fn run(ctx: &JobContext, job: &Value) -> Result<Value, String> {
                 return Err("렌더 결과가 올바른 MP4 컨테이너가 아닙니다.".into());
             }
             let mut qa=json!({"containerVerified":true,"bytes":bytes,
-                "captionTimeline":"source_scene_seconds"});
+                "captionTimeline":"source_scene_seconds",
+                "segmentsReused":value["segmentsReused"],
+                "segmentsGenerated":value["segmentsGenerated"]});
             if let Some(srt)=subtitles(input) {
                 std::fs::write(dir.join("captions.srt"),srt).map_err(|e|e.to_string())?;
                 qa["captionsReady"]=json!(true);
