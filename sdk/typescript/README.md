@@ -97,3 +97,7 @@ const job=await sdk.jobs.create({kind:'prompt',input:{
 The budget covers model-proposed tools **and the owner-required final check**; an oversized batch is rejected before executing its first tool. The live native-run API also accepts `sdk.nativeRuns.start({instruction:'...',maxToolCalls:80})`. Its `checkpoint.verificationChecks` contains durable host-observed acceptance results including per-file SHA readback for trusted workspace edits; `checkpoint.toolCalls` and `checkpoint.toolBudget` report actual use. Do not infer that a matching hash proves logical task correctness—include independent acceptance tests.
 
 [Full execution and recovery contract](../../docs/SUB3-EVIDENCE-GOVERNOR-2026-11-16.md).
+
+## Large authorized tool sets via progressive discovery
+
+The existing `sdk.jobs.create({kind:'prompt',input:{prompt,allowedTools:[...]}})` endpoint accepts a bounded explicit allowlist of up to 1,024 tool names; the native Rust worker still evaluates their permissions, prompts, approvals, budget and durable outcomes. When many MCP tools are connected, models initially see no more than 13 schemas, can retrieve a particular allowed schema through `dominion_tool_search`, and invoke it through the fixed `dominion_tool_call` bridge. The TypeScript SDK does **not** implement a duplicate planning or tool loop. [Detailed Rust and API contract](../../docs/SUB3-PROGRESSIVE-TOOLS-2026-11-16.md).
