@@ -352,6 +352,11 @@ fn decode(content: &str) -> Result<Decision, String> {
     } else { raw };
     let decision: Decision = serde_json::from_str(json_text)
         .map_err(|error| format!("Invalid model decision JSON: {error}"))?;
+    validate_decision_plan(decision)
+}
+/// Native provider function calls and text-only JSON planners must satisfy
+/// the identical bounded plan contract before any decision is journaled.
+fn validate_decision_plan(decision: Decision) -> Result<Decision, String> {
     if decision.plan.len() > 32 || decision.plan.iter().any(|item| item.len() > 1000) {
         return Err("Plan exceeds maximum structure size".into());
     }
@@ -580,7 +585,7 @@ impl Kernel<'_> {
                     .saturating_add(reply.output_tokens.unwrap_or_else(|| estimate_tokens(&reply.content)))
             );
             self.journal.save(&run)?;
-            let decision = match native_decision.map_or_else(||decode(&reply.content),Ok) {
+            let decision = match native_decision.map_or_else(||decode(&reply.content),validate_decision_plan) {
                 Ok(d) => d,
                 Err(error) => {
                     invalid += 1;
@@ -963,6 +968,21 @@ impl Kernel<'_> {
 #[cfg(test)]
 mod owner_effect_tests {
     use super::*;
+    #[test]
+    fn native_and_text_only_model_decisions_share_bounded_plans() {
+        let oversized_plan=Decision{plan:vec!["step".into();33],
+            actions:vec![],answer:None};
+        assert!(validate_decision_plan(oversized_plan).is_err());
+        let oversized_step=Decision{plan:vec!["x".repeat(1001)],
+            actions:vec![],answer:None};
+        assert!(validate_decision_plan(oversized_step).is_err());
+        let text=serde_json::json!({"plan":vec!["step";33],
+            "actions":[],"answer":null}).to_string();
+        assert!(decode(&text).is_err());
+        let accepted=Decision{plan:vec!["inspect".into(),"verify".into()],
+            actions:vec![],answer:Some("complete".into())};
+        assert!(validate_decision_plan(accepted).is_ok());
+    }
     #[test]
     fn manual_uncertain_tool_observation_is_not_a_forged_success_receipt(){
         let request=RunRequest{
