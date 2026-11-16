@@ -114,6 +114,45 @@ async fn duplicate_or_reserved_host_tool_names_never_reach_model_or_dispatch(){
     }
 }
 
+/// A provider can report many more tokens than the cheap preflight guess.
+/// Such a paid response must not authorize any external side effect.
+struct ExpensiveProvider {
+    calls: std::sync::atomic::AtomicUsize,
+}
+impl Model for ExpensiveProvider {
+    fn complete<'a>(&'a self,_:&'a str,_:&'a str)
+        -> BoxFuture<'a,Result<ModelReply,String>> {
+        Box::pin(async move {
+            self.calls.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
+            Ok(ModelReply {
+                content:decide(json!([op("unauthorized-overbudget","write",&[])]),None).to_string(),
+                input_tokens:Some(10_000),output_tokens:Some(9_000),
+            })
+        })
+    }
+}
+
+#[tokio::test]
+async fn provider_reported_token_overrun_cannot_dispatch_any_tool_effect(){
+    let model=ExpensiveProvider{calls:std::sync::atomic::AtomicUsize::new(0)};
+    let tools=RecordingTools::new(&[]);
+    let journal=RecordingJournal::default();
+    let kernel=Kernel{model:&model,tools:&tools,evidence:&AlwaysTrueEvidence,journal:&journal};
+    let mut req=request("token-overshoot");
+    req.limits.max_estimated_tokens=10_000;
+    let result=kernel.run(req).await.unwrap();
+    assert!(matches!(result.status,Status::NeedsReview),"{result:?}");
+    assert_eq!(result.charged_tokens,19_000,"actual usage stays auditable");
+    assert_eq!(result.model_calls,1);
+    assert!(result.receipts.is_empty());
+    assert!(result.decision_tape.is_empty(),"an over-budget reply is not accepted as a plan");
+    assert_eq!(model.calls.load(std::sync::atomic::Ordering::SeqCst),1);
+    assert!(tools.called.lock().unwrap().is_empty());
+    let saved=journal.snapshots.lock().unwrap();
+    assert!(matches!(saved.last().unwrap().status,Status::NeedsReview));
+    assert!(!saved.last().unwrap().model_in_flight);
+}
+
 #[tokio::test]
 async fn failed_read_replans_and_never_dispatches_dependent_write(){
     let model=ScriptedModel::new(vec![
