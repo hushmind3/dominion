@@ -221,6 +221,19 @@ test('RSI SDK starts, verifies, chooses and applies using the authoritative Rust
   });
 });
 
+test('evaluation summary SDK accesses the same Rust persisted scorecard as GUI',async()=>{
+  const calls=[];
+  const client=new Dominion({fetch:async(url,init)=>{
+    calls.push({url,method:init.method});
+    return json({rootTasks:2,verified:{passed:1,failed:1,successRate:0.5},
+      pricingCoverage:{pricedCalls:0,unpricedCalls:2}});
+  }});
+  const result=await client.evaluation.summary();
+  assert.equal(calls[0].url,'http://127.0.0.1:4317/api/evaluation/summary');
+  assert.equal(calls[0].method,'GET');
+  assert.equal(result.verified.successRate,0.5);
+});
+
 test('video SDK preserves render budget and returns engine work receipts',async()=>{
   let route,request;
   const client=new Dominion({fetch:async(url,init)=>{

@@ -38,4 +38,5 @@ jobs:
       - run: node --check scripts/rsi-measure.mjs
       - run: node --check scripts/rsi-git-path.mjs
       - run: node --test scripts/rsi-lab.test.mjs
+      - run: node --test scripts/sub2-compare.test.mjs
       - run: cargo test --release
