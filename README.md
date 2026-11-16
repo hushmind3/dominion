@@ -153,6 +153,13 @@ The native Rust `jobs::steer_with_mode` and `autonomy::execute` also implement a
 
 See [2026 source-guided harness comparison](docs/AGENT-HARNESS-2026.md) and [TypeScript SDK contract](sdk/typescript/README.md).
 
+## 🧠 Sub2 harness boundaries and atomic job recovery (2026-11-16)
+
+On `dominion-sub2`, the native Rust harness has dedicated `chat/tool_projection.rs` for room/Home/agent tool-schema selection and actual serialized-size ceilings, and `chat/outcome.rs` for terminal verdicts, idempotent finalization fingerprints and evidence-gated success memory. The owner-controlled execution loop remains in `chat/runtime.rs` and retains its existing GUI/TypeScript/Rust SDK contract. Empty or malformed tools are rejected before they reach the model, and a single oversize schema can no longer exceed the declared tool budget.
+
+`Store::patch_if_all_merge` merges nested checkpoint state under the same SQLite connection lock as the cancellation/status guards. The Rust job worker uses it for `videoState`: simultaneous scene/prompt checkpoints cannot overwrite one another, and a terminal/cancelled job cannot be advanced by late progress. No database migration, model change, new API or UI redesign is required. [Implementation, comparisons and limitations](docs/SUB2-HARNESS-BOUNDARIES-2026-11-16.md).
+
+
 ## 🎬 Sub2 integrated video postproduction and safe multi-agent budgets
 
 The `dominion-sub2` branch now builds an AI scene plan **and** concise voiceover lines in one configured text-model call, freezes both for crash replay, reuses only SHA-256-verifiable clips, optionally adds system TTS and timed selectable MP4 subtitles with FFmpeg, and exposes the resulting narrated/captioned output for owner-approved YouTube publication. The editor preserves its existing four tabs, adds narration override and reports audio and recovered-scene receipts. Large model downloads now support strong-ETag range resumption and serialize writes to shared CLIP/VAE files within each model folder. Speech uses installed macOS/Windows voices; no neural-TTS fidelity claim is made. Both Rust and TypeScript SDKs share the native video job lifecycle. [End-to-end contract](docs/SUB2-VIDEO-POSTPRODUCTION-2026-11-16.md).

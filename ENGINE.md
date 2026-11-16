@@ -199,6 +199,17 @@ DM·음성·파일 첨부·슬래시 명령·Gateway 실시간 이벤트는 이�
 - [Discord 메시지 API](https://docs.discord.com/developers/resources/message)
 - [Discord 요청 제한](https://docs.discord.com/developers/topics/rate-limits)
 
+## Sub2 — 모듈 책임·체크포인트 일관성 (2026-11-16)
+
+- `chat/runtime.rs`: 실제 턴 상태·도구 실행·세션·프로그램 체크포인트·취소를 소유하며 `tool_projection`과 `outcome`을 호출합니다.
+- `chat/tool_projection.rs`: 제공자 모델이 보는 도구 이름/스키마를 방/홈/자동 실행 맥락에 따라 투영하고 직렬화 바이트 예산을 준수합니다. 실행 권한·승인 정책은 이 모듈로 이동하지 않았습니다.
+- `chat/outcome.rs`: 완수 조건·확인된 위반·작업 결과 해시·증거 기반 성공 경험 기록을 판정합니다. DB 최종 트랜잭션은 기존 런타임/DB가 담당합니다.
+- `db.rs::patch_if_all_merge`: fresh DB 상태에 guards를 검증한 뒤 중첩 키만 원자 병합하는 공통 저장소 API. `jobs.rs::JobContext::checkpoint`는 `status`·`cancelRequested`를 동시에 조건 검사하고 `videoState`를 병합합니다.
+- 기존 `sdk::Dominion` / `api/jobs` / GUI / TS SDK는 변경된 인터페이스가 없으며 동일 Rust 엔진에서 실행됩니다.
+
+[기술 경계·검증 범위](docs/SUB2-HARNESS-BOUNDARIES-2026-11-16.md)
+
+
 ## Sub2 — Rust event bus, optional TypeScript SDK and main-branch frontend (2026-11-15)
 
 - `src/events.rs::Bus::emit`: synchronize sequence allocation, SQLite persistence and broadcast to preserve order across concurrent cloned writers.
