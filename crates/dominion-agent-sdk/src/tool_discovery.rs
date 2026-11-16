@@ -15,7 +15,7 @@ const VISIBLE:usize=13;
 pub(crate) fn spec()->ToolSpec {
  ToolSpec{
   name:SEARCH.into(),
-  description:"Discover owner-authorized capabilities by intent. Search before assuming an unavailable tool; matching tool schemas are enabled in the NEXT model turn. Internal and read-only.".into(),
+  description:"Discover owner-authorized capabilities by intent. Search before assuming an unavailable tool; full JSON schemas are returned in the search evidence for use with dominion_tool_call. Internal and read-only.".into(),
   schema:json!({"type":"object","properties":{
    "query":{"type":"string","minLength":1,"maxLength":256,
       "description":"Describe the missing action, service, or tool capability"},
@@ -93,7 +93,7 @@ fn ranked(catalog:&HashMap<String,ToolSpec>,query:&str)->Vec<String>{
 /// Deterministic stable shortlist. Internal discovery receives no permissions
 /// beyond the already-authorized catalog, and the original host owns dispatch.
 pub(crate) fn select(catalog:&HashMap<String,ToolSpec>,task:&str,owner:&str,
- directive:Option<&str>,_plan:&[String],receipts:&[Receipt])->Vec<ToolSpec>{
+ directive:Option<&str>,_plan:&[String],_receipts:&[Receipt])->Vec<ToolSpec>{
  if !needed(catalog){
   let mut all=catalog.values().cloned().collect::<Vec<_>>();
   all.sort_by(|a,b|a.name.cmp(&b.name));
@@ -105,10 +105,8 @@ pub(crate) fn select(catalog:&HashMap<String,ToolSpec>,task:&str,owner:&str,
  // The selected provider tool-list is stable until the owner changes the
  // goal or directive. Search results are DATA, not edits to provider schemas.
  // Durable receipts give the bridge authority to call exactly discovered tools.
- if !receipts.is_empty(){
-  for name in ["dominion_receipt_search","dominion_receipt_read"]{
-   if displayed.len()<VISIBLE&&catalog.contains_key(name){displayed.insert(name.into());}
-  }
+ for name in ["dominion_receipt_search","dominion_receipt_read"]{
+  if displayed.len()<VISIBLE&&catalog.contains_key(name){displayed.insert(name.into());}
  }
  let query=format!("{task} {owner} {}",directive.unwrap_or(""));
  for name in ranked(catalog,&query) {
@@ -194,6 +192,7 @@ mod tests{
              b.iter().map(|s|&s.name).collect::<Vec<_>>());
   assert!(a.len()<=VISIBLE);
   assert!(a.iter().any(|s|s.name=="dominion_tool_search"));
+  assert!(a.iter().any(|s|s.name=="dominion_tool_call"));
   assert!(a.iter().any(|s|s.name=="shell_exec"));
   assert!(a.iter().any(|s|s.name=="workspace_replace_range"));
   let full=serde_json::to_string(&c).unwrap().len();
@@ -210,8 +209,19 @@ mod tests{
     .any(|r|r["name"]=="mcp__archive_publish"));
   let receipt=Receipt{id:"lookup".into(),tool:SEARCH.into(),
     arguments:a.arguments,success:true,result:reply,step:1};
-  let visible=select(&c,"Read a repository","",None,&[],&[receipt]);
-  assert!(visible.iter().any(|s|s.name=="mcp__archive_publish"));
+  let visible=select(&c,"Read a repository","",None,&[],&[receipt.clone()]);
+  // Discovery never mutates the provider function-declaration prefix.
+  assert_eq!(visible.iter().map(|s|&s.name).collect::<Vec<_>>(),
+     select(&c,"Read a repository","",None,&[],&[]).iter().map(|s|&s.name).collect::<Vec<_>>());
+  let bridge=Action{id:"publish".into(),tool:CALL.into(),
+    arguments:json!({"name":"mcp__archive_publish","arguments":{"id":"example"}}),
+    depends_on:vec!["lookup".into()]};
+  let resolved=resolve_bridge(&bridge,&c,&[receipt]).unwrap().unwrap();
+  assert_eq!(resolved.tool,"mcp__archive_publish");
+  assert_eq!(resolved.arguments,json!({"id":"example"}));
+  assert!(resolve_bridge(&bridge,&c,&[]).is_err());
+  let unknown=Action{arguments:json!({"name":"unapproved","arguments":{}}),..bridge};
+  assert!(resolve_bridge(&unknown,&c,&[]).is_err());
   assert!(search(&json!({"query":"","limit":99}),&c).is_err());
   assert!(visible.iter().all(|s|c.contains_key(&s.name)));
  }
