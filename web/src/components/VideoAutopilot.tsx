@@ -4,17 +4,18 @@ import {post} from '../api'
 import {useRemote,Notice,Panel,StateTag,FormField} from './UI'
 import {Button,SelectInput,TextArea,TextInput} from './Primitives'
 import {useJob,jobFinished} from '../hooks/useJob'
+import {VideoModelInstall} from './VideoModelInstall'
 
 type Scene={id:string;script:string;visualPrompt:string;overlay:string;seconds:number}
 type Project={id:string;title:string;brief:string;status:string;targetSeconds:number;aspectRatio:string;platform:string;engine:string;style:string;audience:string;revision:number;scenes:Scene[];useAI:boolean;planningSource?:string;autoRender:boolean;autoUpload:boolean;planJobId?:string;renderJobId?:string;uploadJobId?:string;planningError?:string;renderError?:string}
 type VideoJob={id:string;status:string;title?:string;brief?:string;outputUrl?:string;captionsUrl?:string;progress?:number;error?:string;result?:{bytes?:number;qa?:{containerVerified?:boolean;captionsReady?:boolean}}}
 type Provider={id:string;name:string;model?:string;enabled?:boolean}
-type Props={nativeReady:boolean;comfyReady:boolean;onSettings:()=>void;onPublish:(job:VideoJob)=>void}
+type Props={nativeReady:boolean;comfyReady:boolean;onSettings:()=>void;onModelInstalled:()=>void;onPublish:(job:VideoJob)=>void}
 
 const stages=[{key:'planning',name:'기획·대본'},{key:'planned',name:'장면 구성'},{key:'rendering',name:'영상·음성 생성'},{key:'ready',name:'검수·배포'}] as const
 const statusText:Record<string,string>={planning:'콘텐츠 기획 중',planned:'대본 편집 가능',rendering:'영상 제작 중',ready:'검수 준비 완료',failed:'작업 오류',queued:'실행 대기'}
 const card='rounded-2xl border border-[#E5DED3] bg-[#FFFDF9] p-5 shadow-[0_6px_24px_#2D292306]'
-export function VideoAutopilot({nativeReady,comfyReady,onSettings,onPublish}:Props){
+export function VideoAutopilot({nativeReady,comfyReady,onSettings,onModelInstalled,onPublish}:Props){
  const projects=useRemote<Project[]>('/api/video/projects',[],false)
  const providers=useRemote<Provider[]>('/api/providers',[])
  const [chosen,setChosen]=useState('')
@@ -135,7 +136,8 @@ export function VideoAutopilot({nativeReady,comfyReady,onSettings,onPublish}:Pro
       <div className="grid gap-3 sm:grid-cols-2"><FormField label="제목 · 선택"><TextInput value={title} onChange={e=>setTitle(e.target.value)} maxLength={180} placeholder="자동으로 만들 수도 있습니다"/></FormField><FormField label="목표 시청자"><TextInput value={audience} maxLength={180} onChange={e=>setAudience(e.target.value)}/></FormField></div>
       <div className="grid gap-3 sm:grid-cols-2"><FormField label="연출 톤"><SelectInput value={style} onChange={e=>setStyle(e.target.value)}><option>친근한 정보 전달</option><option>뉴스 브리핑</option><option>여행 다큐멘터리</option><option>제품 리뷰</option><option>스토리텔링</option></SelectInput></FormField><FormField label="콘텐츠 목표"><SelectInput value={platform} onChange={e=>{const p=e.target.value;setPlatform(p);setAspect(p==='youtube'?'16:9':'9:16');if(p!=='youtube'&&p!=='shorts')setAutoUpload(false)}}><option value="shorts">YouTube 쇼츠</option><option value="youtube">YouTube 일반 영상</option><option value="reels">Instagram 릴스 (파일)</option><option value="tiktok">TikTok (파일)</option><option value="local">로컬 MP4</option></SelectInput></FormField></div>
       <div className="grid grid-cols-3 gap-3"><FormField label="길이 (초)"><TextInput type="number" min={3} max={180} value={seconds} onChange={e=>setSeconds(Number(e.target.value))}/></FormField><FormField label="화면 비율"><SelectInput value={aspect} onChange={e=>setAspect(e.target.value)}><option value="9:16">9:16 세로</option><option value="16:9">16:9 가로</option><option value="1:1">1:1 정사각</option></SelectInput></FormField><FormField label="렌더링"><SelectInput value={engine} onChange={e=>setEngine(e.target.value)}><option value="native">FFmpeg 로컬</option><option value="comfyui">ComfyUI AI</option></SelectInput></FormField></div>
-      <div className="rounded-xl border border-[#E8DFD3] bg-[#FBF7F0] p-4">
+      {engine==='comfyui'&&<VideoModelInstall onChanged={onModelInstalled}/>}
+       <div className="rounded-xl border border-[#E8DFD3] bg-[#FBF7F0] p-4">
        <label className="flex cursor-pointer items-start gap-3"><input type="checkbox" checked={ai} onChange={e=>setAi(e.target.checked)} className="mt-1 accent-[#C96442]"/><span><strong className="block text-[12px]">연결된 AI로 기획·대본 생성</strong><small className="mt-1 block text-[11px] text-[#867B6F]">해제하면 로컬 규칙 기반으로 주제를 장면으로 나눕니다. AI 비용을 쓰지 않습니다.</small></span></label>
        {ai&&<FormField label="기획 모델 Provider"><SelectInput value={provider} onChange={e=>setProvider(e.target.value)} className="mt-3"><option value="">연결된 Provider 선택</option>{providers.value.filter(p=>p.enabled!==false).map(p=><option key={p.id} value={p.id}>{p.name||p.id} · {p.model||'기본 모델'}</option>)}</SelectInput></FormField>}
       </div>
