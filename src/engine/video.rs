@@ -271,7 +271,7 @@ pub fn output_path(state: &AppState, id: &str) -> Result<PathBuf, String> {
 pub fn public_job(job: &Value) -> Value {
     let id = job["id"].as_str().unwrap_or("");
     let ready = job["kind"] == "video" && job["status"] == "completed";
-    json!({"id":id,"kind":job["kind"],"title":job["input"]["title"],"brief":job["input"]["brief"],"engine":job["input"]["engine"],"status":job["status"],"phase":job.get("phase").unwrap_or(&job["status"]),"progress":job["progress"],"error":job["error"],"createdAt":job.get("createdAt").or(job.get("created_at")),"videoJobId":job["input"]["videoJobId"],"privacyStatus":job["input"]["privacyStatus"],"outputUrl":ready.then(||format!("/api/video/jobs/{id}/content")),"deliveryJobId":job["deliveryJobId"],"storyboard":job["videoState"]["scenes"].as_array().map(|_|job["videoState"]["scenes"].clone()).unwrap_or_else(||job["input"]["scenes"].clone()),"quality":job["result"]["quality"],"result":job["result"],"duration":job["input"]["duration"],"aspectRatio":job["input"]["aspectRatio"]})
+    json!({"id":id,"kind":job["kind"],"title":job["input"]["title"],"brief":job["input"]["brief"],"engine":job["input"]["engine"],"status":job["status"],"phase":job.get("phase").unwrap_or(&job["status"]),"progress":job["progress"],"error":job["error"],"createdAt":job.get("createdAt").or(job.get("created_at")),"videoJobId":job["input"]["videoJobId"],"privacyStatus":job["input"]["privacyStatus"],"outputUrl":ready.then(||format!("/api/video/jobs/{id}/content")),"deliveryJobId":job["deliveryJobId"],"deliveryError":job["deliveryError"],"storyboard":job["videoState"]["scenes"].as_array().map(|_|job["videoState"]["scenes"].clone()).unwrap_or_else(||job["input"]["scenes"].clone()),"quality":job["result"]["quality"],"result":job["result"],"duration":job["input"]["duration"],"aspectRatio":job["input"]["aspectRatio"]})
 }
 
 fn planned_scenes(brief:&str,engine:&str,duration:u64,explicit:&Value)->Result<Option<Vec<String>>,String>{
@@ -338,6 +338,13 @@ pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
         return Err("영상 길이는 3~180초입니다.".into());
     }
     let scenes=planned_scenes(brief,engine,duration,&body["scenes"])?;
+    if engine=="comfyui" && cfg["comfyWorkflow"].is_object()
+        && scenes.as_ref().is_some_and(|items|items.len()>1) {
+        let graph=cfg["comfyWorkflow"].to_string();
+        if !graph.contains("{{prompt}}") || !graph.contains("{{frames}}"){
+            return Err("다중 장면 ComfyUI 워크플로에는 {{prompt}}·{{frames}} 변수가 필요합니다.".into());
+        }
+    }
     let auto_upload=body["autoUpload"]==true;
     if auto_upload && oauth::access_token(state,"youtube").is_none() {
         return Err("자동 업로드를 사용하려면 YouTube 계정을 연결해야 합니다.".into());
@@ -419,6 +426,11 @@ pub fn enqueue_regeneration(state:&AppState,source_id:&str,body:&Value)->Result<
         .filter(|text|!text.is_empty()&&text.len()<=2000)
         .ok_or("수정된 장면 설명은 1~2000바이트여야 합니다.")?;
     scenes[index]=json!(new_prompt);
+    if original["input"]["engine"]=="comfyui"
+        && original["input"]["config"]["comfyWorkflow"].is_object()
+        && !original["input"]["config"]["comfyWorkflow"].to_string().contains("{{prompt}}"){
+        return Err("선택한 ComfyUI 워크플로에는 {{prompt}} 템플릿이 없어 장면 설명을 교체할 수 없습니다.".into());
+    }
     let mut input=original["input"].clone();
     // Original workflow and seed remain frozen. A new derivative job may
     // touch exactly one clip; it never changes the source job or remote ID.
@@ -741,7 +753,8 @@ async fn comfy(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, Str
     };
     let legacy = json!({"prompt":input["brief"],"duration":input["duration"]});
     substitute(&mut workflow, input.get("render").unwrap_or(&legacy));
-    ctx.checkpoint(json!({"phase":"submitting","progress":10,"videoState":{"inFlight":true}}))?;
+    ctx.checkpoint(json!({"phase":"submitting","progress":10,
+        "videoState":{"inFlight":true,"promptId":null,"sceneIndex":input["sceneIndex"]}}))?;
     let response = client
         .post(format!("{base}/prompt"))
         .json(&json!({"prompt":workflow,"client_id":ctx.job_id}))
@@ -874,7 +887,10 @@ async fn comfy_story(ctx:&JobContext,input:&Value,dir:&Path)->Result<Value,Strin
             std::fs::copy(source.join(format!("scene-{i:02}")).join("output.mp4"),&clip)
                 .map_err(|e|format!("이전 장면 복원 실패: {e}"))?;
             reused+=1;
-        }else if clip.is_file() && quality::inspect(&clip,None).await.is_ok(){
+        }else if clip.is_file() && {
+            let encoder=ffmpeg_from_config(&input["config"]);
+            quality::inspect(&clip,encoder.as_deref()).await.is_ok()
+        }{
             // A completed local clip is a durable receipt. Re-encode is safe
             // without resubmitting an already-finished remote scene.
             reused+=1;
@@ -885,6 +901,7 @@ async fn comfy_story(ctx:&JobContext,input:&Value,dir:&Path)->Result<Value,Strin
             let seconds=(end-start).clamp(3,9);
             let mut scene_input=input.clone();
             scene_input["brief"]=json!(prompt);
+            scene_input["sceneIndex"]=json!(i);
             scene_input["duration"]=json!(seconds);
             scene_input["render"]["prompt"]=json!(prompt);
             scene_input["render"]["duration"]=json!(seconds);
