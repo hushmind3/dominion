@@ -2194,13 +2194,13 @@ mod tests {
                     if offset>0 {
                         observations.fetch_add(1,Ordering::SeqCst);
                         (axum::http::StatusCode::PARTIAL_CONTENT,
-                            [("etag",etag),("content-range",
+                            [("etag",etag.to_string()),("content-range",
                                 format!("bytes {offset}-{}/{}",length-1,length))],
-                            fixture[offset..].to_vec()).into_response()
+                            fixture[offset..].to_vec())
                     } else {
                         (axum::http::StatusCode::OK,
-                            [("etag",etag),("content-range",String::new())],
-                            fixture.to_vec()).into_response()
+                            [("etag",etag.to_string()),("content-range",String::new())],
+                            fixture.to_vec())
                     }
                 }
             }));
