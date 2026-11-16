@@ -696,10 +696,15 @@ async fn native(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, St
         scenes.push(brief.into());
     }
     ctx.checkpoint(json!({"videoState":{"scenes":scenes},"phase":"rendering","progress":20}))?;
+    // The creative editor controls both spoken words and optional on-screen text.
+    let cards=authored.map(|shots|shots.iter().enumerate().map(|(i,shot)|
+        shot["overlay"].as_str().filter(|s|!s.trim().is_empty())
+            .unwrap_or_else(||scenes.get(i).map(String::as_str).unwrap_or(""))
+            .to_string()).collect::<Vec<_>>()).unwrap_or_else(||scenes.clone());
     make_cards(
         dir,
         title,
-        &scenes,
+        &cards,
         input["aspectRatio"].as_str().unwrap_or("9:16"),
     )?;
     let encoder = ffmpeg_from_config(&input["config"]).ok_or("FFmpeg를 찾을 수 없습니다.")?;
