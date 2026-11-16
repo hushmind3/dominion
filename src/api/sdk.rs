@@ -158,17 +158,37 @@ pub async fn start(State(state):State<AppState>,Json(input):Json<Start>)->Respon
     if input.verify_command.as_ref().is_some_and(|c|c.trim().is_empty()||c.len()>2048){return error(StatusCode::BAD_REQUEST,"검증 명령의 길이를 확인하세요.");}
     let route=match gateway::resolve(&state,input.provider_id.as_deref().unwrap_or(""),input.model.as_deref()){Ok(r)=>r,Err(e)=>return error(StatusCode::BAD_REQUEST,&e)};
     let options=match engine::job_control::options(&state,&input.options){Ok(value)=>value,Err(e)=>return error(StatusCode::BAD_REQUEST,&e)};
-    let id=uuid::Uuid::new_v4().to_string();let session=uuid::Uuid::new_v4().to_string();
-    if state.store.put("session",&json!({"id":session,"title":input.instruction.chars().take(40).collect::<String>(),"providerId":route.id,"model":route.model,"nativeSdkRunId":id,"nativeSdkMaxRounds":input.max_rounds.unwrap_or(24).clamp(1,80),"nativeSdkVerifyCommand":input.verify_command})).is_none(){return error(StatusCode::INTERNAL_SERVER_ERROR,"작업 세션 저장에 실패했습니다.");}
-    if let Some(mut saved)=state.store.get("session",&session){
-        for (key,value) in options.as_object().unwrap(){saved[key]=value.clone();}
-        saved["budgetOwnerId"]=json!(format!("sdk:{id}"));
-        state.store.put("session",&saved);
+    let id=uuid::Uuid::new_v4().to_string();
+    let session=uuid::Uuid::new_v4().to_string();
+    let mut session_row=json!({
+        "id":session,
+        "title":input.instruction.chars().take(40).collect::<String>(),
+        "providerId":route.id,"model":route.model,
+        "nativeSdkRunId":id,
+        "nativeSdkMaxRounds":input.max_rounds.unwrap_or(24).clamp(1,80),
+        "nativeSdkVerifyCommand":input.verify_command,
+    });
+    for (key,value) in options.as_object().unwrap() {
+        session_row[key]=value.clone();
     }
-    let record=json!({"id":id,"sessionId":session,"status":"queued","instruction":input.instruction,"providerId":route.id,"model":route.model,"runtime":"dominion-core","verifyCommand":input.verify_command,"maxRounds":input.max_rounds.unwrap_or(24).clamp(1,80)});
-    let Some(saved)=state.store.put("sdk_run",&record)else{return error(StatusCode::INTERNAL_SERVER_ERROR,"작업 저장에 실패했습니다.");};
-    launch(state.clone(),saved.clone(),false);
-    (StatusCode::ACCEPTED,Json(public_view(&state,saved))).into_response()
+    session_row["budgetOwnerId"]=json!(format!("sdk:{id}"));
+    let record=json!({
+        "id":id,"sessionId":session,"status":"queued",
+        "instruction":input.instruction,"providerId":route.id,"model":route.model,
+        "runtime":"dominion-core","verifyCommand":input.verify_command,
+        "maxRounds":input.max_rounds.unwrap_or(24).clamp(1,80)
+    });
+    // User limits, workspace scope and the run are committed together.
+    // A failed session write must never launch a model without its budget.
+    if let Err(message)=state.store.transaction(&[
+        ("session".to_string(),session_row),
+        ("sdk_run".to_string(),record.clone()),
+    ]) {
+        state.store.audit("sdk.start_failed",json!({"error":message}));
+        return error(StatusCode::INTERNAL_SERVER_ERROR,"SDK 작업과 설정을 함께 저장하지 못했습니다.");
+    }
+    launch(state.clone(),record.clone(),false);
+    (StatusCode::ACCEPTED,Json(public_view(&state,record))).into_response()
 }
 fn launch(state:AppState,record:Value,resume:bool){
     tokio::spawn(async move{

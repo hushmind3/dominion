@@ -1699,6 +1699,25 @@ mod tests {
 
 
     #[test]
+    fn sdk_session_and_limits_roll_back_together_when_run_persistence_fails() {
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        let session=json!({"id":"sdk-session","tokenBudget":4096,
+            "budgetOwnerId":"sdk:run","nativeSdkRunId":"run"});
+        assert!(store.transaction(&[
+            ("session".to_string(),session.clone()),
+            ("sdk_run".to_string(),json!({"status":"queued"}))
+        ]).is_err());
+        assert!(store.get("session","sdk-session").is_none(),
+            "a failed run insert must not leave an orphaned or unbounded session");
+        store.transaction(&[
+            ("session".to_string(),session),
+            ("sdk_run".to_string(),json!({"id":"run","sessionId":"sdk-session","status":"queued"}))
+        ]).unwrap();
+        assert_eq!(store.get("session","sdk-session").unwrap()["tokenBudget"],4096);
+        assert_eq!(store.get("sdk_run","run").unwrap()["sessionId"],"sdk-session");
+    }
+
+    #[test]
     fn sdk_projection_only_loads_related_latest_executions_and_unknown_effects() {
         let store=Store::open(std::path::Path::new(":memory:")).unwrap();
         store.put("sdk_run",&json!({"id":"sdk","sessionId":"owned"}));
