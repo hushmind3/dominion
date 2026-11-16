@@ -26,5 +26,23 @@ pub(super) fn evidence_for_source(state:&AppState,session:&str,source:&str,execu
     // Earlier native room speakers may already have performed this exact
     // owner's request. Their persisted operations prevent duplicate execution.
     for message in state.store.messages(session){if message["metadata"]["replyToMessageId"].as_str()==Some(source){if let Some(run)=message["metadata"]["executionId"].as_str(){runs.insert(run.to_string());}}}
-    state.store.all("execution_operation").into_iter().filter(|operation|operation["status"]=="completed"&&operation["runId"].as_str().is_some_and(|id|runs.contains(id))).collect()
+    // Only the owner's current run and its earlier room-speaker runs are
+    // relevant. A global scan/parse of every past execution receipt made
+    // verification progressively slower as the workspace accumulated jobs.
+    let mut receipts=Vec::new();
+    for run_id in runs {
+        match state.store.execution_operations(&run_id) {
+            Ok(items)=>receipts.extend(items.into_iter()
+                .filter(|item|item["status"]=="completed")),
+            Err(error)=>{
+                // Do not treat failed evidence lookup as a verified action.
+                state.store.audit("acceptance.evidence_read_failed",
+                    serde_json::json!({"runId":run_id,"error":error}));
+                return Vec::new();
+            }
+        }
+    }
+    receipts.sort_by(|a,b|a["startedAt"].as_str().cmp(&b["startedAt"].as_str())
+        .then_with(||a["opSeq"].as_u64().cmp(&b["opSeq"].as_u64())));
+    receipts
 }

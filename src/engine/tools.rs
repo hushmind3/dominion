@@ -660,21 +660,27 @@ fn task_payload(ctx: &ToolContext<'_>, args: &Value, with_result: bool) -> Resul
         .chars()
         .take(8000)
         .collect::<String>();
-    let operations = ctx
-        .state
-        .store
-        .all("execution_operation")
-        .into_iter()
-        .filter(|operation| {
-            operation["runId"].as_str().is_some()
-                && operation["sessionId"].as_str() == Some(session_id)
-                && operation["status"] == "completed"
-        })
-        .map(|operation| {
-            json!({"tool":operation["tool"],"arguments":operation["arguments"],"result":operation["result"]})
-        })
-        .take(20)
-        .collect::<Vec<_>>();
+    // Delegated result queries must not deserialize every historical tool
+    // receipt across every session. Fetch only executions for this session,
+    // then use the indexed runId lookup to collect its bounded evidence.
+    let mut operations=Vec::new();
+    let executions=ctx.state.store.session_executions(session_id)?;
+    for execution in executions {
+        if let Some(run_id)=execution["id"].as_str(){
+            let items=ctx.state.store.execution_operations(run_id)?;
+            for operation in items {
+                if operation["status"]=="completed" {
+                    operations.push(json!({
+                        "tool":operation["tool"],
+                        "arguments":operation["arguments"],
+                        "result":operation["result"],
+                    }));
+                    if operations.len()>=20 {break;}
+                }
+            }
+        }
+        if operations.len()>=20 {break;}
+    }
     payload["sessionId"] = json!(session_id);
     payload["content"] = json!(answer);
     payload["operations"] = json!(operations);

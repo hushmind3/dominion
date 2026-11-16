@@ -94,3 +94,17 @@ test('Home SDK progress polls only active approval IDs and exact stored result m
  assert.match(bridge,/state\.store\.message\(id\)/);
  assert.match(bridge,/panel_poll_uses_live_approval_ids_and_scoped_answer_receipts/);
 });
+
+test('verification and delegated work read indexed per-run receipts rather than all history',()=>{
+ const evidence=file('src/engine/chat/evidence.rs');
+ const tools=file('src/engine/tools.rs');
+ assert.match(evidence,/execution_operations\(&run_id\)/);
+ assert.doesNotMatch(evidence,/store\.all\("execution_operation"\)/);
+ const start=tools.indexOf('fn task_payload(');
+ const end=tools.indexOf('fn required_arg(',start);
+ assert.ok(start>=0 && end>start);
+ const payload=tools.slice(start,end);
+ assert.match(payload,/session_executions\(session_id\)/);
+ assert.match(payload,/execution_operations\(run_id\)/);
+ assert.doesNotMatch(payload,/\.all\("execution_operation"\)/);
+});
