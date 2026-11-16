@@ -11,6 +11,7 @@ type SdkRun = {
   usage?: {prompt_tokens:number; completion_tokens:number; cached_prompt_tokens:number};
   pendingCall?: {id:string; name:string; arguments:unknown} | null;
   events?: {kind:string; detail:unknown}[];
+  verificationChecks?:{criterion?:{type?:string;path?:string};satisfied:boolean;explanation:string}[];
  } | null
 }
 const running = new Set(['queued', 'running'])
