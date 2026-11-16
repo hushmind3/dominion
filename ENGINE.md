@@ -1,3 +1,12 @@
+## Sub2 — Lean-core cutover: runtime before optional capabilities (2026-11-16)
+
+- New owner decision: Rust executes requested tasks, no automatic core evolution. MCP/Connections provide optional video/voice tools.
+- Live queue: `Bus::subscribe` on queued Job records, 5-second delayed-job/restart fallback; `Store::active_jobs` uses the `idx_job_status` partial expression index.
+- `jobs::start` no longer launches the 5-minute `retry_failed_learning` / `agent_growth::sweep` / `distill::sweep` / `memory::learning_sweep` loop.
+- New chats, new rooms and implicit chat requests default `autoLearning=false`. Historical explicit room settings and existing persisted records remain intact.
+- The Video and RSI navigation/page imports are disconnected in `App.tsx` and `WorkspaceShell.tsx`; existing Rust engines, HTTP adapters and SDKs remain while dependent calls, data migration and cleanup are audited.
+- This is **phase 1**, not a claim that all video/RSI source or API has been removed. [Cutover plan](docs/SUB2-LEAN-CUTOVER-2026-11-16.md).
+
 # DOMINION 자체 Rust 엔진
 
 실행 경로는 `src/engine`의 Rust 모듈입니다. OpenClaw/Hermes 런타임, 봇 프레임워크,

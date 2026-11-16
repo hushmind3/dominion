@@ -1,3 +1,9 @@
+## 🦀 Lean Rust agent core — owner-directed improvements (transition, 2026-11-16)
+
+**The current product direction supersedes the previous built-in video/RSI scoring brief.** DOMINION should execute owner-assigned tasks (planning, tools, approval, delegation, budgets, cancellation, durable state, recovery and result verification). Changes to the harness itself are **owner-directed coding tasks**, never an automatically adopted core mutation campaign. Optional video/audio generation is connected through MCP/connected tools rather than a permanent built-in rendering engine.
+
+On the `dominion-sub2` transition branch, new chat and room configurations default `autoLearning` to `false`; the 5-minute automatic growth/distill/learning retry sweeps are disabled; workers sleep on durable job events with a 5-second delayed-job/restart backstop; SQLite scans only indexed queued/running jobs. The embedded video and self-improvement page entries are removed from navigation. **Historical data and actual Rust video/RSI modules remain on disk while their remaining API/SDK call chains are audited.** The transition is not yet a full source/dependency deletion. [Migration and preservation audit](docs/SUB2-LEAN-CUTOVER-2026-11-16.md).
+
 # DOMINION
 
 <p align="center">
