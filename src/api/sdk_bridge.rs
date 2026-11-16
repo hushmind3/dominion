@@ -491,14 +491,19 @@ mod tests {
         let id=job["id"].as_str().unwrap().to_owned();
         let updated=state.store.patch_if("job",&id,"status",&json!("queued"),
             &json!({"status":"running","sessionId":session_id})).unwrap();
+        // A persisted execution must begin after the queued job's real
+        // creation time; a hard-coded clock from earlier that day is not
+        // evidence of progress for this job.
+        let started=(chrono::Utc::now()+chrono::Duration::seconds(1)).to_rfc3339();
+        let tool_started=(chrono::Utc::now()+chrono::Duration::seconds(2)).to_rfc3339();
         let execution=state.store.put("execution",&json!({
             "sessionId":session_id,"status":"running",
-            "startedAt":"2026-11-16T10:00:00Z","iterations":2
+            "startedAt":started,"iterations":2
         })).unwrap();
         state.store.put("execution_operation",&json!({
             "runId":execution["id"],"sessionId":session_id,
             "tool":"workspace_read","status":"running",
-            "opSeq":1,"startedAt":"2026-11-16T10:00:01Z"
+            "opSeq":1,"startedAt":tool_started
         })).unwrap();
         let view=public_view(&state,&updated);
         assert_eq!(view["checkpoint"]["rounds"],2);
