@@ -101,3 +101,7 @@ The budget covers model-proposed tools **and the owner-required final check**; a
 ## Large authorized tool sets via progressive discovery
 
 The existing `sdk.jobs.create({kind:'prompt',input:{prompt,allowedTools:[...]}})` endpoint accepts a bounded explicit allowlist of up to 1,024 tool names; the native Rust worker still evaluates their permissions, prompts, approvals, budget and durable outcomes. When many MCP tools are connected, models initially see no more than 13 schemas, can retrieve a particular allowed schema through `dominion_tool_search`, and invoke it through the fixed `dominion_tool_call` bridge. The TypeScript SDK does **not** implement a duplicate planning or tool loop. [Detailed Rust and API contract](../../docs/SUB3-PROGRESSIVE-TOOLS-2026-11-16.md).
+
+## Offline run replay and paired comparison
+
+`await sdk.nativeRuns.replay(runId)` reads persisted Rust decision tapes, tool receipts, host-operation provenance, verification and **KRW cost when fully reported**. `await sdk.nativeRuns.compare(baselineRunId, candidateRunId)` compares the *same instruction, owner criteria, model, limits and tool allowlist*, returning a quality-comparability flag and measured execution deltas, without another paid generation or external tool call. The existing job API exposes `sdk.jobs.replay(id)` and `sdk.jobs.compare(baselineId,candidateId)`; both are read-only and return explicit uncertainty rather than approving unknown effects. Source: [Rust implementation and test evidence](../../docs/SUB3-JUDGE-READY-2026-11-16.md).
