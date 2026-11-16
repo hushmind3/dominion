@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
+use sha2::{Digest,Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
@@ -232,6 +233,86 @@ pub async fn call(state: &AppState, qualified: &str, args: &Value) -> Result<Val
         drop(session);
         result
     }
+}
+
+/// Bind the complete MCP server identity and its approved tool declaration.
+/// This is calculated once before native execution and checked again at each
+/// dispatched action. An API token is not placed in the job record.
+pub(crate) fn native_contract_fingerprint(
+ state:&AppState,qualified:&str,schema:&Value,description:&str
+)->Result<String,String>{
+ let server_slug=qualified.strip_prefix("mcp__")
+  .and_then(|rest|rest.split_once("__").map(|(slug,_)|slug))
+  .ok_or("Invalid MCP-qualified tool name")?;
+ let servers=enabled_servers(state).into_iter().filter(|v|
+  slug(v["name"].as_str().unwrap_or("mcp"))==server_slug)
+  .collect::<Vec<_>>();
+ if servers.len()!=1{return Err("Ambiguous or unavailable MCP server identity".into())}
+ let data=json!({"server":servers[0],"qualified":qualified,
+   "schema":schema,"description":description});
+ Ok(format!("{:x}",Sha256::digest(data.to_string().as_bytes())))
+}
+
+/// Validate an uncached tools/list response from the SAME MCP session that
+/// will execute tools/call. A 120-second discovery cache is never authority
+/// to dispatch a previously approved but changed external capability.
+fn verify_pinned_tool(list:&Value,name:&str,schema:&Value,description:&str)->Result<(),String>{
+ let available=list["tools"].as_array()
+  .ok_or("MCP tools/list did not contain a tool array")?;
+ let matched=available.iter().filter(|item|item["name"].as_str()==Some(name))
+  .collect::<Vec<_>>();
+ if matched.len()!=1{return Err("MCP tool missing or duplicated during pinned dispatch".into())}
+ let live_schema=matched[0].get("inputSchema")
+  .cloned().unwrap_or_else(||json!({"type":"object","properties":{}}));
+ let live_description=matched[0]["description"].as_str().unwrap_or("");
+ if &live_schema!=schema||live_description!=description{
+  return Err("MCP tool schema or description changed after owner-approved catalog; review required".into())
+ }
+ Ok(())
+}
+
+/// Approval and the last-minute manifest check happen in the product Rust
+/// host. The tools/list and tools/call are then made on one MCP session.
+pub(crate) async fn call_pinned(state:&AppState,qualified:&str,args:&Value,
+ schema:&Value,description:&str)->Result<Value,String>{
+ let (server_slug,tool_name)=qualified.strip_prefix("mcp__")
+  .and_then(|rest|rest.split_once("__"))
+  .ok_or("Cannot parse pinned MCP tool name")?;
+ let servers=enabled_servers(state).into_iter().filter(|server|
+  slug(server["name"].as_str().unwrap_or("mcp"))==server_slug).collect::<Vec<_>>();
+ if servers.len()!=1{return Err("Ambiguous or unavailable MCP server identity".into())}
+ let server=&servers[0];
+ let params=json!({"name":tool_name,"arguments":args});
+ let transport=server["transport"].as_str().unwrap_or("stdio");
+ if transport=="http"{
+  let mut session=HttpSession::open(server,state).await?;
+  let fresh=session.request("tools/list",json!({})).await?;
+  verify_pinned_tool(&fresh,tool_name,schema,description)?;
+  session.request("tools/call",params).await
+ }else{
+  let mut session=StdioSession::open(server,&state.config.workspace).await?;
+  let fresh=session.request("tools/list",json!({})).await?;
+  verify_pinned_tool(&fresh,tool_name,schema,description)?;
+  session.request("tools/call",params).await
+ }
+}
+#[cfg(test)]
+mod pinned_tests{
+ use super::*;
+ #[test]
+ fn same_session_manifest_rejects_changed_schema_duplicate_and_description(){
+  let schema=json!({"type":"object","required":["id"],
+   "properties":{"id":{"type":"string"}}});
+  let original=json!({"tools":[{"name":"publish","description":"Publish safely",
+   "inputSchema":schema}]});
+  assert!(verify_pinned_tool(&original,"publish",&schema,"Publish safely").is_ok());
+  let changed=json!({"tools":[{"name":"publish","description":"Publish safely",
+   "inputSchema":{"type":"object"}}]});
+  assert!(verify_pinned_tool(&changed,"publish",&schema,"Publish safely").is_err());
+  assert!(verify_pinned_tool(&original,"publish",&schema,"Not the reviewed description").is_err());
+  assert!(verify_pinned_tool(&json!({"tools":[original["tools"][0],original["tools"][0]]}),
+    "publish",&schema,"Publish safely").is_err());
+ }
 }
 
 // ------------------------------------------------------------------ stdio
