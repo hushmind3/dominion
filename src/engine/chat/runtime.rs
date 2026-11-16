@@ -19,6 +19,8 @@ use super::outcome::{
     record_success_experience,
 };
 pub(super) use super::outcome::{finalize_execution, finish_attempt};
+#[cfg(test)]
+use super::outcome::compliance_detail;
 use super::tool_projection::{
     recent_room_tools, select_panel_tool_definitions, select_room_tools,
     select_tool_definitions, tool_name, trim_tool_definitions,
