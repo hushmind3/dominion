@@ -15,7 +15,7 @@ type VideoEngine='native'|'comfyui'
 type Ratio='9:16'|'16:9'|'1:1'
 type StudioTab='create'|'library'|'publish'|'settings'
 type StudioMode='quick'|'scenes'
-type VideoModel={id:string;name:string;kind:string;available:boolean;hint:string;missingFiles?:number}
+type VideoModel={id:string;name:string;family:string;task:'text-to-video';quantization:string;kind:string;weightGB:number;totalDownloadGB:number;recommended:boolean;available:boolean;hint:string;missingFiles?:number}
 type VideoConfig={engine:VideoEngine;comfyUrl:string;voice?:string;narration?:boolean;videoModel?:string;resolution?:string;steps?:number;comfyWorkflow?:unknown;comfyWorkflowName?:string;comfyModelsDir?:string;ffmpegPath?:string}
 type VideoJob=JobState & {
  kind:'video'|'youtube_upload';title?:string;brief?:string;engine?:VideoEngine;
@@ -113,6 +113,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  const [gBusy,setGBusy]=useState(false)
  const [savingConfig,setSavingConfig]=useState(false)
  const [preparingModel,setPreparingModel]=useState('')
+ const [selectedVideoVariant,setSelectedVideoVariant]=useState('')
  const [generating,setGenerating]=useState(false)
  const [uploading,setUploading]=useState(false)
  const [refreshing,setRefreshing]=useState(false)
@@ -128,6 +129,9 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  const uploadJob=activeUpload.value
  const statusConfig=video.value.config
  const installed=catalog.value.videoModels.find(model=>model.id===statusConfig.videoModel)
+ const selectedModelId=selectedVideoVariant||statusConfig.videoModel||'wan21-t2v-1.3b-q4'
+ const selectedVideoModel=catalog.value.videoModels.find(model=>model.id===selectedModelId)
+ const selectedVideoDownload=downloads.value.downloads.find(row=>row.model===selectedModelId)
  const downloadState=downloads.value.downloads.find(row=>row.model===statusConfig.videoModel)
  const savedWorkflow=video.value.workflows[0]
  const google=oauth.value.find(provider=>provider.id==='youtube')
@@ -220,6 +224,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
     comfyUrl:nextUrl,comfyWorkflow:null,comfyWorkflowName:''
    })
    setEngineChoice('comfyui')
+   setSelectedVideoVariant(model.id)
    setComfyUrl(nextUrl)
    await Promise.all([video.reload(),catalog.reload()])
    if(!model.available){
@@ -372,55 +377,50 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
     </div>)}
    </div>
    <Panel className="mb-4 border-[#E2C4AD] bg-[#FFFDF9] p-4 sm:p-5">
-    <div className="flex flex-wrap items-start justify-between gap-3">
-     <div><span className="inline-flex items-center gap-1.5 rounded-full bg-[#F6E7D9] px-2.5 py-1 text-[10px] font-bold text-[#955231]"><Sparkles size={12}/> 턴키 AI 영상</span>
-      <h3 className="mt-2 text-[15px] font-bold text-[#342A24]">영상 모델 선택 · 다운로드</h3>
-      <p className="mt-1 text-[12px] text-[#796F63]">이곳에서 모델을 준비한 뒤 주제만 입력하세요. 별도 메뉴로 이동할 필요 없습니다.</p>
+    <div className="flex flex-wrap items-center justify-between gap-3">
+     <div><h3 className="text-[16px] font-bold text-[#342A24]">🎬 AI 영상 모델</h3>
+      <p className="mt-1 text-[12px] text-[#786E62]">영상 생성 모델만 표시합니다. 용량에 맞는 양자화를 고르고 다운로드하세요.</p>
      </div>
-     <StateTag online={Boolean(usingComfy&&ready)}>{usingComfy&&ready?'AI 영상 제작 준비 완료':'모델·렌더러 준비'}</StateTag>
+     {selectedVideoModel&&<StateTag online={selectedVideoModel.available}>{selectedVideoModel.available?'설치됨':'미설치'}</StateTag>}
     </div>
-    <div className="mt-4 grid gap-3 md:grid-cols-2">
-     {catalog.value.videoModels.length===0?<p className="text-[12px] text-[#807568]">영상 모델 목록을 불러오는 중입니다. <button className="underline" type="button" onClick={()=>void catalog.reload()}>다시 불러오기</button></p>:
-      catalog.value.videoModels.map(model=>{
-       const record=downloads.value.downloads.find(item=>item.model===model.id)
-       const isDownloading=record?.status==='downloading'
-       const selected=statusConfig.videoModel===model.id&&usingComfy
-       const installedNow=model.available||record?.status==='completed'
-       return <div key={model.id} className={'rounded-2xl border p-4 '+(selected?'border-[#CB8B67] bg-[#FFF5EC]':'border-[#E6D9CB] bg-white')}>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-         <strong className="text-[13px] text-[#3A3028]">{model.name}</strong>
-         <span className={'rounded-full px-2 py-1 text-[10px] font-bold '+(model.available?'bg-[#E7F2E5] text-[#467448]':'bg-[#FAEBD9] text-[#8D5837]')}>{model.available?'설치 완료':isDownloading?'다운로드 중':'설치 필요'}</span>
-        </div>
-        <p className="mt-2 text-[11px] leading-5 text-[#7D7064]">{model.kind==='gguf'?'경량 4비트 · ComfyUI-GGUF 확장 노드가 필요합니다.':'원본 fp16 · 더 많은 RAM/VRAM이 필요합니다.'} {model.hint}</p>
-        <Button variant={selected&&model.available?'secondary':'primary'} size="sm" className="mt-3 w-full"
-         disabled={Boolean(preparingModel)||savingConfig||isDownloading||Boolean(selected&&model.available)}
-         onClick={()=>void prepareVideoModel(model)}>
-         {preparingModel===model.id?<><LoaderCircle size={14} className="animate-spin"/> 준비 중</>:
-          isDownloading?<><LoaderCircle size={14} className="animate-spin"/> 모델 다운로드 진행 중</>:
-          selected&&model.available?<><Check size={14}/> 이 모델 사용 중</>:
-          model.available?<><CheckCircle2 size={14}/> 설치된 모델 선택</>:
-          <><Download size={14}/> 모델 선택하고 다운로드</>}
-        </Button>
-        {isDownloading&&<div className="mt-3 grid gap-1.5" role="status" aria-live="polite">
-         <div className="flex justify-between gap-2 text-[11px] text-[#695D50]"><span>파일 {record.filesCompleted??0}/{record.filesTotal??'?'} · {fmtBytes(record.bytes)}</span><span className="tabular-nums">{record.progress??0}%</span></div>
-         <div role="progressbar" aria-label={model.name+' 다운로드'} aria-valuemin={0} aria-valuemax={100} aria-valuenow={record.progress??0} className="h-2 overflow-hidden rounded-full bg-[#F2E5D8]"><div className="h-full rounded-full bg-[#C96442] transition-all" style={{width:Math.max(0,Math.min(100,record.progress??0))+'%'}}/></div>
-         {record.currentFile&&<span className="truncate text-[10px] text-[#907F71]" title={record.currentFile}>{record.currentFile}</span>}
-        </div>}
-        {record?.status==='failed'&&<p role="alert" className="mt-2 text-[11px] text-rose-700">{record.error||'모델 다운로드에 실패했습니다. 다시 시도할 수 있습니다.'}</p>}
-       </div>
-      })}
+    <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+     <FormField label="영상 모델"><SelectInput value="wan21-t2v-1.3b" disabled aria-label="영상 생성 모델 계열">
+      <option value="wan21-t2v-1.3b">Wan 2.1 · 텍스트 → 영상 · 1.3B</option>
+     </SelectInput></FormField>
+     <FormField label="양자화 · 저장 용량"><SelectInput aria-label="영상 모델 양자화 선택"
+      value={selectedModelId} disabled={!catalog.value.videoModels.length||Boolean(preparingModel)}
+      onChange={e=>setSelectedVideoVariant(e.target.value)}>
+      {catalog.value.videoModels.filter(model=>model.task==='text-to-video').map(model=>
+       <option key={model.id} value={model.id}>{model.quantization} · 총 약 {model.totalDownloadGB.toFixed(2)} GB{model.recommended?' · 추천':''}{model.available?' · 설치됨':''}</option>)}
+     </SelectInput></FormField>
     </div>
-    <div className="mt-3 flex flex-wrap items-end gap-3 rounded-xl bg-[#F7F2EB] p-3">
-     <div className="min-w-[205px] flex-1"><label className="mb-1.5 block text-[11px] font-semibold text-[#5D5145]" htmlFor="studio-comfy-url">AI 렌더링 서버 · ComfyUI</label><TextInput id="studio-comfy-url" value={comfyUrl} onChange={e=>setComfyUrl(e.target.value)} placeholder="http://127.0.0.1:8188"/></div>
-     <Button variant="secondary" disabled={savingConfig||!comfyUrl.trim()} onClick={()=>void saveConfig({comfyUrl:comfyUrl.trim()})}><RefreshCw size={14}/> 연결 확인</Button>
-     <span className={'text-[11px] font-semibold '+(video.value.comfy.reachable?'text-[#42774D]':'text-[#906349]')}>{video.value.comfy.reachable?'● 연결됨':'○ 서버 연결 필요'}</span>
-    </div>
-    {!video.value.comfy.reachable&&<p className="mt-2 text-[11px] leading-5 text-[#836D5B]">모델 파일 다운로드는 바로 시작할 수 있습니다. AI 렌더링에는 실행 중인 ComfyUI 서버도 필요합니다. 기본 연결 주소는 127.0.0.1:8188입니다.</p>}
-    {usingComfy&&video.value.comfy.reachable&&Boolean(video.value.comfy.missingNodes?.length)&&<div role="alert" className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[12px] text-amber-900">
-     <span>GGUF 영상 생성에 필요한 ComfyUI 확장 노드가 없습니다: {video.value.comfy.missingNodes?.join(', ')}. 모델 파일만으로는 렌더링할 수 없습니다.</span>
-     <a href="https://github.com/city96/ComfyUI-GGUF" target="_blank" rel="noreferrer" className="font-bold underline">GGUF 확장 설치 안내 <ExternalLink size={12} className="inline"/></a>
+    {selectedVideoModel?<div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E6D9CB] bg-white p-3.5">
+     <div>
+      <strong className="text-[12px] text-[#3D352F]">{selectedVideoModel.quantization}{selectedVideoModel.recommended?' · 권장':''}</strong>
+      <p className="mt-1 text-[11px] leading-5 text-[#7C7064]">영상 가중치 약 {selectedVideoModel.weightGB.toFixed(2)} GB · 전체 설치 약 {selectedVideoModel.totalDownloadGB.toFixed(2)} GB</p>
+      <p className="text-[11px] leading-5 text-[#8B7F72]">영상 생성용 인코더·VAE 포함 · 이미 받은 공통 파일은 재사용</p>
+      {selectedVideoModel.kind==='gguf'&&<p className="mt-1 text-[10px] text-[#897D72]">GGUF 모델은 영상 렌더러에 GGUF 확장이 필요합니다.</p>}
+     </div>
+     <Button variant={selectedVideoModel.available?'secondary':'primary'} size="sm"
+      disabled={Boolean(preparingModel)||savingConfig||selectedVideoDownload?.status==='downloading'||Boolean(selectedVideoModel.available&&statusConfig.videoModel===selectedVideoModel.id&&usingComfy)}
+      onClick={()=>void prepareVideoModel(selectedVideoModel)}>
+      {preparingModel===selectedVideoModel.id?<><LoaderCircle size={14} className="animate-spin"/> 준비 중</>:
+       selectedVideoDownload?.status==='downloading'?<><LoaderCircle size={14} className="animate-spin"/> 다운로드 중</>:
+       selectedVideoModel.available&&statusConfig.videoModel===selectedVideoModel.id&&usingComfy?<><Check size={14}/> 사용 중</>:
+       selectedVideoModel.available?<><CheckCircle2 size={14}/> 이 모델 사용</>:<><Download size={14}/> 다운로드</>}
+     </Button>
+    </div>:<p className="mt-3 text-[12px] text-[#887669]">영상 모델 정보를 불러오는 중입니다.</p>}
+    {selectedVideoDownload?.status==='downloading'&&<div className="mt-3 grid gap-2 rounded-xl bg-[#FAF1E9] p-3" role="status" aria-live="polite">
+     <div className="flex justify-between gap-2 text-[11px] font-semibold text-[#705B4B]"><span>다운로드 {selectedVideoDownload.filesCompleted??0}/{selectedVideoDownload.filesTotal??'?'}파일 · {fmtBytes(selectedVideoDownload.bytes)}</span><span className="tabular-nums">{selectedVideoDownload.progress??0}%</span></div>
+     <div role="progressbar" aria-label="영상 모델 다운로드" aria-valuemin={0} aria-valuemax={100} aria-valuenow={selectedVideoDownload.progress??0} className="h-2 overflow-hidden rounded-full bg-[#E5D7CB]"><div className="h-full rounded-full bg-[#C96442] transition-all" style={{width:Math.max(0,Math.min(100,selectedVideoDownload.progress??0))+'%'}}/></div>
+     {selectedVideoDownload.currentFile&&<span className="truncate text-[10px] text-[#846F60]">{selectedVideoDownload.currentFile}</span>}
     </div>}
-    <p className="mt-1 text-[11px] leading-5 text-[#887769]">모델 파일은 DOMINION을 실행 중인 컴퓨터에 저장됩니다. 원격 ComfyUI를 사용하면 서버의 모델 경로와 일치시켜 주세요.</p>
+    {(selectedVideoDownload?.status==='failed'||selectedVideoDownload?.status==='interrupted')&&<div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[12px] text-amber-900" role="alert">
+     {selectedVideoDownload.error||'다운로드가 중단되었습니다. 다시 다운로드할 수 있습니다.'}
+    </div>}
+    {usingComfy&&video.value.comfy.reachable&&Boolean(video.value.comfy.missingNodes?.length)&&<p className="mt-2 text-[11px] text-amber-800">
+     영상 렌더에 필요한 GGUF 확장이 없습니다. <a href="https://github.com/city96/ComfyUI-GGUF" target="_blank" rel="noreferrer" className="underline">설치 안내</a>
+    </p>}
    </Panel>
    <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.8fr)]">
     <div className="grid min-w-0 content-start gap-4">
