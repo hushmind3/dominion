@@ -282,7 +282,7 @@ pub async fn setup_model(
 )->Response{
     match video::setup_model(state,&id,&body){
         Ok(value)=>(StatusCode::ACCEPTED,Json(value)).into_response(),
-        Err(error)=>error(StatusCode::BAD_REQUEST,error),
+        Err(message)=>error(StatusCode::BAD_REQUEST,message),
     }
 }
 pub async fn download_model(
