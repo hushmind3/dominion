@@ -854,6 +854,14 @@ impl Kernel<'_> {
         // Independent final-byte witnesses are derived from trusted write
         // receipts and verified through the host, never from model prose.
         let artifact_witnesses=acceptance::artifact_witnesses(&run.receipts);
+        if artifact_witnesses.len()>64 {
+            return vec![CheckResult {
+                criterion:Criterion{kind:CriterionKind::ToolSucceeded,
+                    path:None,contains:None,tool:Some("artifact_witness_budget".into())},
+                satisfied:false,
+                explanation:format!("{} changed files exceed the 64-file final-byte verification budget; split the task or verify with an owner check",artifact_witnesses.len()),
+            }];
+        }
         let mut checks = Vec::with_capacity(request.checks.len()+artifact_witnesses.len());
         for criterion in request.checks.iter().chain(artifact_witnesses.iter()) {
             let observation = if criterion.kind == CriterionKind::ToolSucceeded {
