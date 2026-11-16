@@ -1279,6 +1279,35 @@ mod tests {
     }
 
     #[test]
+    fn indexed_operation_views_ignore_unrelated_history_and_preserve_recent_order() {
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        for i in 0..300 {
+            let run=if i==80||i==120 {"run-focus"}else{"run-other"};
+            let session=if i==80||i==120 {"session-focus"}else{"session-other"};
+            store.put("execution_operation",&json!({
+                "id":format!("op-{i:03}"),"runId":run,"sessionId":session,
+                "opSeq":i,"status":"completed","tool":"workspace_read",
+                "result":{"content":"x".repeat(1000)}
+            })).unwrap();
+        }
+        let run=store.execution_operations_recent("run-focus").unwrap();
+        let session=store.session_execution_operations("session-focus").unwrap();
+        assert_eq!(run.len(),2);
+        assert_eq!(session.len(),2);
+        assert!(run.iter().all(|op|op["runId"]=="run-focus"));
+        assert!(session.iter().all(|op|op["sessionId"]=="session-focus"));
+        assert_eq!(store.execution_operations_recent("absent").unwrap().len(),0);
+        let conn=store.conn.lock().unwrap();
+        for (sql,key,index_name) in [
+            ("EXPLAIN QUERY PLAN SELECT data FROM records WHERE kind='execution_operation' AND json_extract(data,'$.runId')=?1","run-focus","idx_operation_run"),
+            ("EXPLAIN QUERY PLAN SELECT data FROM records WHERE kind='execution_operation' AND json_extract(data,'$.sessionId')=?1","session-focus","idx_operation_session")
+        ] {
+            let explain:String=conn.query_row(sql,[key],|row|row.get(3)).unwrap();
+            assert!(explain.contains(index_name),"{explain}");
+        }
+    }
+
+    #[test]
     fn indexed_active_job_view_excludes_terminated_history_and_keeps_order(){
         let store=Store::open(std::path::Path::new(":memory:")).unwrap();
         for i in 0..500 {
