@@ -81,3 +81,19 @@ await sdk.video.renderProject(project.id, current.revision + 1);
 Use `sdk.video.projects()` for durable project history and `sdk.video.retryPlan(id,revision)` to explicitly retry failed planning. When a paid planning request ended with an unknown result, the server requires `sdk.video.retryPlan(id,revision,true)` as the owner's acknowledgement of possible duplicate cost. Similarly, `sdk.video.renderProject(id,revision,true)` is required to request a fresh render after an uncertain remote video job. Verified completed video clips from earlier failed runs are reused by the Rust kernel. Read the returned project revision before each mutation; HTTP 409 signals a concurrent edit.
 
 These methods wrap `/api/video/projects*`; they do not bypass Rust validation, persistence, approval, or billing boundaries.
+
+## Rust-owned artifact witnesses and hard operation budget (2026-11-16)
+
+A native prompt job may set `maxToolCalls`, for example:
+
+```ts
+const job=await sdk.jobs.create({kind:'prompt',input:{
+  prompt:'Repair the repository and run cargo test',
+  strategy:'verify_first', maxSteps:40, maxToolCalls:80,
+  acceptanceChecks:[{type:'command_succeeded',command:'cargo test'}],
+}});
+```
+
+The budget covers model-proposed tools **and the owner-required final check**; an oversized batch is rejected before executing its first tool. The live native-run API also accepts `sdk.nativeRuns.start({instruction:'...',maxToolCalls:80})`. Its `checkpoint.verificationChecks` contains durable host-observed acceptance results including per-file SHA readback for trusted workspace edits; `checkpoint.toolCalls` and `checkpoint.toolBudget` report actual use. Do not infer that a matching hash proves logical task correctness—include independent acceptance tests.
+
+[Full execution and recovery contract](../../docs/SUB3-EVIDENCE-GOVERNOR-2026-11-16.md).
