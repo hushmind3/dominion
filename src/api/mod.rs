@@ -313,6 +313,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/video/projects",get(video_studio::list).post(video_studio::create))
         .route("/api/video/projects/:id",get(video_studio::one))
         .route("/api/video/projects/:id/scenes",post(video_studio::scenes))
+        .route("/api/video/projects/:id/retry-plan",post(video_studio::retry_plan))
         .route("/api/video/projects/:id/render",post(video_studio::render))
         .route("/api/video/status", get(video::status))
         .route(
