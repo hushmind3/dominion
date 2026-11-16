@@ -2633,12 +2633,7 @@ fn parallel_read_admitted(
 }
 
 fn tool_is_read_only(name: &str) -> bool {
-    matches!(
-        name,
-        "workspace_list" | "workspace_read" | "workspace_read_range" | "file_list" | "file_read"
-            | "web_search" | "http_fetch" | "memory_search"
-            | "task_status" | "task_result" | "account_status"
-    )
+    dominion_agent_sdk::runtime::builtin_is_read_only(name)
 }
 
 fn mark_tool_argument_signal(
