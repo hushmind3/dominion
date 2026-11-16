@@ -3,6 +3,7 @@ import {ArrowDownToLine,CheckCircle2,ChevronDown,FolderOpen,HardDrive,LoaderCirc
 import {post} from '../api'
 import {Button,TextInput} from './Primitives'
 import {Notice,StateTag,useRemote} from './UI'
+import {VideoHubBrowser} from './VideoHubBrowser'
 
 type VideoModel={
  id:string;name:string;family?:string;task?:string;kind:string;
@@ -104,11 +105,13 @@ export function VideoModelInstall({onChanged}:{onChanged:()=>void}){
    onChanged()
   }catch(e){setError((e as Error).message);setStarting(false)}
  }
- return <section className="rounded-2xl border border-[#E0D6CA] bg-[#FFFDF9] p-4 sm:p-5" aria-label="AI 영상 모델 원클릭 설치">
+ return <div className="space-y-4">
+ <VideoHubBrowser/>
+ <section className="rounded-2xl border border-[#E0D6CA] bg-[#FFFDF9] p-4 sm:p-5" aria-label="AI 영상 모델 원클릭 설치">
   <div className="flex flex-wrap items-start justify-between gap-3">
    <div><p className="text-[10px] font-bold uppercase tracking-[.12em] text-[#AF7657]">VIDEO MODEL LIBRARY</p>
-    <h3 className="mt-1 flex items-center gap-2 text-[15px] font-bold"><HardDrive size={18}/> 영상 모델 다운로드</h3>
-    <p className="mt-1 text-[11px] text-[#84786D]">영상 생성용 모델만 표시합니다. 원하는 양자화를 골라 받으세요.</p>
+    <h3 className="mt-1 flex items-center gap-2 text-[15px] font-bold"><HardDrive size={18}/> 바로 연결 가능한 기본 모델 · Wan2.1</h3>
+    <p className="mt-1 text-[11px] text-[#84786D]">위에서 다양한 모델을 검색할 수 있습니다. 이 영역은 도미니온 내장 워크플로가 있는 Wan2.1 계열의 양자화 선택입니다.</p>
    </div>
    <StateTag online={ready}>{ready?'생성 준비 완료':installed?'모델 다운로드 완료':'모델 선택'}</StateTag>
   </div>
@@ -168,4 +171,5 @@ export function VideoModelInstall({onChanged}:{onChanged:()=>void}){
    </div>
   </details>
  </section>
+ </div>
 }
