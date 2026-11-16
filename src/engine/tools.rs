@@ -1723,7 +1723,10 @@ mod tests {
             &json!({"path":"src/example.rs","startLine":3,"endLine":3,
                 "newText":"let value = 0;","expectedSha256":digest}),"run").await.unwrap();
         assert_eq!(no_op["unchanged"],true);
-        assert!(no_op["error"].is_string());
+        // A no-op in ordinary user-directed editing is reported precisely;
+        // the retired RSI-only self-scoring rule must not reject it.
+        assert!(no_op["error"].is_null());
+        assert_eq!(no_op["written"],false);
         assert_eq!(std::fs::read_to_string(&path).unwrap(),source);
         let args=json!({"path":"src/example.rs","startLine":3,"endLine":3,
             "newText":"let value = 42;","expectedSha256":digest});
