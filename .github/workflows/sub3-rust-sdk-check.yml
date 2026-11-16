@@ -21,6 +21,10 @@ on:
       - 'sdk/typescript/**'
       - 'src/engine/chat/codex_ws.rs'
       - 'src/engine/chat/provider.rs'
+      - 'src/engine/chat/runtime.rs'
+      - 'src/engine/chat/budget.rs'
+      - 'src/engine/chat/kernel_bridge.rs'
+      - 'src/engine/chat/mod.rs'
       - 'src/engine/workflows.rs'
       - 'src/engine/jobs.rs'
       - 'src/api/mod.rs'
@@ -56,6 +60,12 @@ jobs:
           cargo test -p dominion-agent-sdk --test multifile_fault_recovery -- --nocapture
       - name: Compile and execute Rust SDK tests, including real file and shell repair
         run: cargo test --manifest-path crates/dominion-agent-sdk/Cargo.toml -- --nocapture
+      - name: Chat and native SDK share budget, effect classification and durable journal
+        run: |
+          cargo test -p dominion-agent-sdk --lib shared_model_token_budget_reconciles_estimated_and_actual_usage
+          cargo test -p dominion-agent-sdk --lib builtin_tool_effect_policy_is_consistent_and_fails_closed
+          cargo test --bin dominion-rust engine::chat::budget::tests -- --nocapture
+          cargo test --bin dominion-rust engine::chat::kernel_bridge::tests -- --nocapture
       - name: Compile full Dominion Rust host and run native adapter contract tests
         run: cargo test --manifest-path Cargo.toml --bin dominion-rust native_ -- --nocapture
       - name: Retired media and RSI jobs cannot restart and existing history survives
