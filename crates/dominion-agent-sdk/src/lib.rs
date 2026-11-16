@@ -438,15 +438,25 @@ impl Kernel<'_> {
             if !request.allowed_tools.contains(&spec.name) {
                 continue;
             }
+            if tools.contains_key(&spec.name) {
+                return Err(format!("Ambiguous duplicate authorized tool: {}", spec.name));
+            }
             tools.insert(spec.name.clone(), spec);
         }
-        // Internal observation tools only read immutable same-run receipts.
-        // They never dispatch an external action or increase user permissions.
+        // Internal observation/discovery tools are reserved Rust capabilities.
+        // Host declarations must not silently shadow them or be shadowed by
+        // them; a collision can change routing or the effective permissions.
         for spec in context::internal_specs() {
+            if tools.contains_key(&spec.name) {
+                return Err(format!("Reserved kernel tool name: {}", spec.name));
+            }
             tools.insert(spec.name.clone(),spec);
         }
         if tool_discovery::needed(&tools) {
             for spec in [tool_discovery::spec(),tool_discovery::call_spec()] {
+                if tools.contains_key(&spec.name) {
+                    return Err(format!("Reserved kernel tool name: {}", spec.name));
+                }
                 tools.insert(spec.name.clone(),spec);
             }
         }
