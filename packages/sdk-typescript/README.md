@@ -13,6 +13,8 @@ const agent = new DominionAgentClient({
 const run = await agent.startRun({
   instruction: 'Check and repair this repository',
   verifyCommand: 'cargo test',
+  workspaceDir: '/absolute/path/to/project',
+  tokenBudget: 100000,
 })
 const current = await agent.getRun(run.id)
 if (current.status === 'awaiting_approval') {
@@ -22,7 +24,12 @@ if (current.status === 'awaiting_approval') {
 }
 ```
 
-Other methods: `listRuns`, `resumeRun`, `cancelRun`, `reconcileRun`.
+Other methods: `listRuns`, `resumeRun`, `cancelRun`, `reconcileRun`,
+`steerRun(run.id, instruction, "append" | "replace")`. Steering changes the
+active owner goal in the same native execution; usage and effect receipts remain
+cumulative. `budgetUsd` is an alternative to `tokenBudget` and requires configured
+provider prices. `shellSandbox: "required"` rejects shell execution when the OS
+sandbox backend is unavailable.
 `reconcileRun` requires manual observation of interrupted effects; it never
 silently repeats a potentially applied filesystem or shell operation.
 
