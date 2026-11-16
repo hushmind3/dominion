@@ -67,3 +67,11 @@ Default model suggestion for limited storage: **Wan2.1 T2V 1.3B Q4_K_M**, with o
 - [Wan 1.3B GGUF model files](https://huggingface.co/samuelchristlie/Wan2.1-T2V-1.3B-GGUF/tree/main)
 - [ComfyUI-GGUF custom loaders](https://github.com/city96/ComfyUI-GGUF)
 - [ComfyUI official runtime](https://github.com/Comfy-Org/ComfyUI)
+
+## 2026-11-16: real failure recovery and storyboard editor
+
+The project-first page now lets the owner **add, duplicate, delete, and reorder** storyboard scenes without replacing the original video navigation or layout. UI validation mirrors Rust's duration/scene limits before submitting a revision; the Rust API remains the final authority. Newly saved edits flow through the existing `POST /api/video/projects/:id/scenes` and `POST /api/video/projects/:id/render` endpoints; the unchanged ComfyUI clip-cache fingerprint path remains intact.
+
+A failed first planning run is no longer a dead-end: the production board shows **기획 다시 실행**, which calls `POST /api/video/projects/:id/retry-plan` with its expected revision. The Rust service uses `Store::transaction_if_status` to atomically replace the project link and insert a fresh immutable `video_plan` job; simultaneous clicks cannot queue two competing active planning jobs. Old job history is retained and `run_plan` refuses orphaned or superseded job IDs. Re-running a paid AI plan is an **explicit** owner action, never a silent retry. Failed rendering continues to use the existing versioned re-render path.
+
+Regression test: `engine::video_studio::tests::failed_planning_retry_has_atomic_new_job_and_stale_job_is_rejected`. The test checks revision conflict, single-winner transition, old job preservation, stale-worker rejection, and successful subsequent offline plan execution. CI status should be read from the commit's workflow checks; do not confuse compiling with testing a paid remote model, GPU render, or social upload.
