@@ -188,6 +188,14 @@ pub async fn job(State(state): State<AppState>, Path(id): Path<String>) -> Respo
         None => error(StatusCode::NOT_FOUND, "영상 작업을 찾을 수 없습니다."),
     }
 }
+pub async fn regenerate(
+    State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>,
+)->Response{
+    match video::enqueue_regeneration(&state,&id,&body){
+        Ok(job)=>(StatusCode::ACCEPTED,Json(job)).into_response(),
+        Err(message)=>error(StatusCode::BAD_REQUEST,message)
+    }
+}
 pub async fn upload(
     State(state): State<AppState>,
     Path(id): Path<String>,
