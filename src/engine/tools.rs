@@ -350,8 +350,10 @@ pub async fn execute(
 }
 
 async fn github_api(ctx: &ToolContext<'_>, args: &Value) -> Result<Value, String> {
-    let token = crate::engine::oauth::access_token(ctx.state, "github")
-        .ok_or("GitHub 계정이 연결되지 않았습니다. 설정 > 계정 연동에서 연결하세요.")?;
+    // Use the same renewable grant as the connected-account UI instead of
+    // bypassing expiry checks. The access token never leaves api.github.com.
+    let token = crate::engine::oauth::fresh_access_token(ctx.state, "github").await
+        .map_err(|message|format!("GitHub 계정 연결을 확인하세요: {message}"))?;
     let method = string_arg(args, "method").unwrap_or("GET").to_uppercase();
     if !matches!(method.as_str(), "GET" | "POST" | "PATCH" | "PUT" | "DELETE") {
         return Err("지원하지 않는 HTTP 메서드입니다.".into());

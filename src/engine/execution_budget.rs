@@ -82,12 +82,10 @@ impl Execution {
             || record["kernelState"]["native"]["read_batch_in_flight"]
                 .as_array()
                 .is_some_and(|calls| !calls.is_empty())
-            || self
-                .state
-                .store
-                .all("execution_operation")
-                .iter()
-                .any(|op| op["runId"] == self.execution && op["outcomeUnknown"] == true);
+            // On DB error retain the reservation; releasing an uncertain
+            // external effect without evidence would permit duplicate billing.
+            || self.state.store.has_unknown_execution_effect(&self.execution)
+                .unwrap_or(true);
         let result = mutate(
             &self.state,
             b["treeId"].as_str().unwrap_or(""),
@@ -197,11 +195,8 @@ pub fn refresh_after_observation(state: &AppState, execution_id: &str) -> Result
         || run["kernelState"]["native"]["read_batch_in_flight"]
             .as_array()
             .is_some_and(|a| !a.is_empty())
-        || state
-            .store
-            .all("execution_operation")
-            .iter()
-            .any(|op| op["runId"] == execution_id && op["outcomeUnknown"] == true);
+        || state.store.has_unknown_execution_effect(execution_id)
+            .map_err(|error|format!("미확정 실행 효과 조회 실패: {error}"))?;
     let tree_id = binding["treeId"]
         .as_str()
         .ok_or("예산 트리가 없습니다.")?
@@ -701,11 +696,9 @@ pub fn reconcile(
         || execution["kernelState"]["native"]["read_batch_in_flight"]
             .as_array()
             .is_some_and(|items| !items.is_empty())
-        || state
-            .store
-            .all("execution_operation")
-            .iter()
-            .any(|op| op["runId"] == execution["id"] && op["outcomeUnknown"] == true);
+        || state.store.has_unknown_execution_effect(
+            execution["id"].as_str().ok_or("실행 식별자가 없습니다.")?
+        ).map_err(|error|format!("미확정 실행 효과 조회 실패: {error}"))?;
     let saved = mutate(state, tree_id, |tree, _| {
         if !tree.account(account)?.calls.contains_key(call_id) {
             return Err("이 실행에서 불명확한 호출을 찾을 수 없습니다.".into());

@@ -380,6 +380,22 @@ impl Store {
         rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
     }
 
+    /// Indexed existence probe without loading or parsing historical receipts.
+    /// Errors are returned to the caller so budget release can fail closed.
+    pub fn has_unknown_execution_effect(&self, run_id: &str) -> Result<bool, String> {
+        let conn=self.conn.lock().map_err(|error|error.to_string())?;
+        let found=conn.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM records
+                 WHERE kind='execution_operation'
+                   AND json_extract(data,'$.runId')=?1
+                   AND json_extract(data,'$.outcomeUnknown')=1
+             )",
+            [run_id],|row|row.get::<_,i64>(0)
+        ).map_err(|error|error.to_string())?;
+        Ok(found!=0)
+    }
+
     pub fn execution_operations(&self, run_id: &str) -> Result<Vec<Value>, String> {
         let conn = self.conn.lock().unwrap();
         let mut statement = conn.prepare(
@@ -1789,6 +1805,23 @@ mod tests {
         assert_eq!(store.get("execution_operation","op").unwrap()["effectState"],"applied");
         assert!(!store.reconcile_sdk_effect_once("sdk","interrupted",
             "op","wrong-run",&records).unwrap());
+    }
+
+    #[test]
+    fn indexed_unknown_effect_probe_is_run_scoped(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        store.put("execution_operation",&json!({"id":"old",
+            "runId":"unrelated","outcomeUnknown":true}));
+        store.put("execution_operation",&json!({"id":"checked",
+            "runId":"target","outcomeUnknown":false}));
+        assert!(!store.has_unknown_execution_effect("target").unwrap());
+        assert!(store.has_unknown_execution_effect("unrelated").unwrap());
+        store.put("execution_operation",&json!({"id":"current",
+            "runId":"target","outcomeUnknown":true}));
+        assert!(store.has_unknown_execution_effect("target").unwrap());
+        store.put("execution_operation",&json!({"id":"current",
+            "runId":"target","outcomeUnknown":false}));
+        assert!(!store.has_unknown_execution_effect("target").unwrap());
     }
 
     #[test]
