@@ -22,7 +22,7 @@ export function VideoAutopilot({nativeReady,comfyReady,onSettings,onModelInstall
  const detail=useRemote<Project|null>(chosen?'/api/video/projects/'+encodeURIComponent(chosen):null,null,false)
  const project=detail.value??projects.value.find(row=>row.id===chosen)
  const render=useJob<VideoJob>(project?.renderJobId?'/api/video/jobs/'+encodeURIComponent(project.renderJobId):null,null)
- const planned=useJob<VideoJob>(project?.planJobId?'/api/video/jobs/'+encodeURIComponent(project.planJobId):null,null)
+ const planned=useJob<VideoJob>(project?.planJobId?'/api/jobs/'+encodeURIComponent(project.planJobId):null,null)
  const upload=useJob<VideoJob>(project?.uploadJobId?'/api/youtube/uploads/'+encodeURIComponent(project.uploadJobId):null,null)
  const [goal,setGoal]=useState('')
  const [title,setTitle]=useState('')
