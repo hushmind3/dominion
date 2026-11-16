@@ -80,6 +80,40 @@ fn op(id:&str,tool:&str,deps:&[&str])->Value {
     json!({"id":id,"tool":tool,"arguments":{},"dependsOn":deps})
 }
 
+/// Reject ambiguous tool catalogues before making a paid model request.
+struct MalformedCatalogue { names: Vec<&'static str> }
+impl Tools for MalformedCatalogue {
+    fn definitions(&self)->Vec<ToolSpec>{
+        self.names.iter().map(|name|ToolSpec{
+            name:(*name).into(),description:"host tool".into(),
+            schema:json!({"type":"object"}),read_only:true,
+        }).collect()
+    }
+    fn execute<'a>(&'a self,_:&'a Action)->BoxFuture<'a,Result<Value,String>>{
+        Box::pin(async move{panic!("Untrusted duplicate/reserved tool must never run")})
+    }
+}
+
+#[tokio::test]
+async fn duplicate_or_reserved_host_tool_names_never_reach_model_or_dispatch(){
+    for (id,names,expected) in [
+        ("duplicate-catalog",vec!["read","read"],"duplicate"),
+        ("internal-shadow",vec!["dominion_receipt_read"],"Reserved"),
+    ] {
+        let model=ScriptedModel::new(vec![]);
+        let tools=MalformedCatalogue{names};
+        let journal=RecordingJournal::default();
+        let kernel=Kernel{model:&model,tools:&tools,evidence:&AlwaysTrueEvidence,journal:&journal};
+        let mut req=request(id);
+        req.allowed_tools.push("dominion_receipt_read".into());
+        let err=kernel.run(req).await.err().expect("bad catalogue must be rejected");
+        assert!(err.contains(expected),"{err}");
+        assert!(journal.snapshots.lock().unwrap().is_empty(),
+            "must reject before any model/tool checkpoint");
+        assert!(model.prompts.lock().unwrap().is_empty());
+    }
+}
+
 #[tokio::test]
 async fn failed_read_replans_and_never_dispatches_dependent_write(){
     let model=ScriptedModel::new(vec![
