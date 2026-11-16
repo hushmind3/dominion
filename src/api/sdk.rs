@@ -5,6 +5,7 @@ use axum::{extract::{Path,State},http::StatusCode,response::{IntoResponse,Respon
 use serde::Deserialize;
 use serde_json::{json,Value};
 use super::response::error;
+use std::collections::{HashMap,HashSet};
 
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase")]
@@ -21,28 +22,84 @@ fn execution(state:&AppState,record:&Value)->Option<Value>{
     state.store.all("execution").into_iter().filter(|e|e["sessionId"].as_str()==Some(session))
         .max_by_key(|e|e["startedAt"].as_str().unwrap_or("").to_owned())
 }
-fn public_view(state:&AppState,mut record:Value)->Value{
+/// A consistent read snapshot for SDK listings: collect executions,
+/// approvals and uncertain effects once rather than scanning them per run.
+/// The single-run response reuses this same projection contract.
+struct ViewIndex {
+    runs:HashMap<String,Value>,
+    pending:HashMap<String,Value>,
+    uncertain:HashSet<String>,
+}
+impl ViewIndex{
+    fn from_rows(executions:Vec<Value>,approvals:Vec<Value>,operations:Vec<Value>)->Self{
+        let mut runs=HashMap::<String,Value>::new();
+        for run in executions {
+            let Some(session)=run["sessionId"].as_str().map(str::to_string) else{continue};
+            let newer=runs.get(&session).is_none_or(|prior|
+                run["startedAt"].as_str().unwrap_or("") >= prior["startedAt"].as_str().unwrap_or(""));
+            if newer {runs.insert(session,run);}
+        }
+        let mut pending=HashMap::<String,Value>::new();
+        for approval in approvals {
+            if approval["status"]=="pending" {
+                if let Some(session)=approval["sessionId"].as_str(){
+                    pending.entry(session.to_string()).or_insert(approval);
+                }
+            }
+        }
+        let uncertain=operations.into_iter().filter(|op|op["outcomeUnknown"]==true)
+            .filter_map(|op|op["runId"].as_str().map(str::to_string)).collect();
+        Self{runs,pending,uncertain}
+    }
+    fn load(state:&AppState)->Self{
+        Self::from_rows(state.store.all("execution"),
+            state.store.all("approval"),state.store.all("execution_operation"))
+    }
+}
+fn public_view_indexed(state:&AppState,mut record:Value,index:&ViewIndex)->Value{
     let Some(session)=record["sessionId"].as_str().map(str::to_owned)else{
         record["readOnly"]=json!(true);return record;
     };
-    let pending=state.store.all("approval").into_iter().find(|a|a["sessionId"]==session&&a["status"]=="pending");
-    let run=execution(state,&record);
-    if let Some(ref approval)=pending{record["status"]=json!("awaiting_approval");record["pendingApprovalId"]=approval["id"].clone();}
-    else if run.as_ref().is_some_and(|e|state.store.all("execution_operation").iter().any(|op|op["runId"]==e["id"]&&op["outcomeUnknown"]==true)){
+    let pending=index.pending.get(&session);
+    let run=index.runs.get(&session);
+    if let Some(approval)=pending{
+        record["status"]=json!("awaiting_approval");
+        record["pendingApprovalId"]=approval["id"].clone();
+    }else if run.is_some_and(|run|run["id"].as_str().is_some_and(|id|index.uncertain.contains(id))){
         record["status"]=json!("in_doubt");
-    }else if record["status"]=="running"&&run.as_ref().is_some_and(|run|run["status"]=="interrupted")&&!state.active.lock().unwrap().contains(&session){record["status"]=json!("interrupted");}
+    }else if record["status"]=="running"
+        && run.is_some_and(|run|run["status"]=="interrupted")
+        && !state.active.lock().unwrap().contains(&session){
+        record["status"]=json!("interrupted");
+    }
     if let Some(run)=run{
         let message=run["finalMessageId"].as_str().and_then(|id|state.store.message(id));
-        let usage=message.as_ref().map(|m|json!({"prompt_tokens":m["metadata"]["usage"]["promptTokens"],"completion_tokens":m["metadata"]["usage"]["completionTokens"],"cached_prompt_tokens":m["metadata"]["usage"]["cachedPromptTokens"]}));
+        let usage=message.as_ref().map(|m|json!({
+            "prompt_tokens":m["metadata"]["usage"]["promptTokens"],
+            "completion_tokens":m["metadata"]["usage"]["completionTokens"],
+            "cached_prompt_tokens":m["metadata"]["usage"]["cachedPromptTokens"]
+        }));
         let mut events=run["kernelState"]["native"]["events"].as_array().cloned().unwrap_or_default();
         if let Some(items)=record["observations"].as_array(){events.extend(items.clone());}
-        record["checkpoint"]=json!({"state":{"state":record["status"]},"rounds":run["modelCalls"],"toolCalls":run["toolCalls"],"answer":record["answer"],"usage":usage,"events":events,
-            "pendingCall":pending.map(|a|json!({"id":a["id"],"name":a["tool"],"arguments":a["args"]})),"executionId":run["id"]});
+        record["checkpoint"]=json!({
+            "state":{"state":record["status"]},"rounds":run["modelCalls"],
+            "toolCalls":run["toolCalls"],"answer":record["answer"],
+            "usage":usage,"events":events,
+            "pendingCall":pending.map(|a|json!({"id":a["id"],"name":a["tool"],"arguments":a["args"]})),
+            "executionId":run["id"]
+        });
         record["runtime"]=json!("dominion-core");
     }
     record
 }
-pub async fn list(State(state):State<AppState>)->Json<Value>{Json(json!(state.store.all("sdk_run").into_iter().map(|r|public_view(&state,r)).collect::<Vec<_>>()))}
+fn public_view(state:&AppState,record:Value)->Value{
+    public_view_indexed(state,record,&ViewIndex::load(state))
+}
+pub async fn list(State(state):State<AppState>)->Json<Value>{
+    let index=ViewIndex::load(&state);
+    Json(json!(state.store.all("sdk_run").into_iter()
+        .map(|record|public_view_indexed(&state,record,&index)).collect::<Vec<_>>()))
+}
 pub async fn one(State(state):State<AppState>,Path(id):Path<String>)->Response{
     state.store.get("sdk_run",&id).map(|r|Json(public_view(&state,r)).into_response()).unwrap_or_else(||error(StatusCode::NOT_FOUND,"작업이 없습니다."))
 }
@@ -144,4 +201,40 @@ pub(crate) fn recover(state:&AppState){
 
 pub async fn steer(State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>)->Response{
     super::jobs::steering_response(engine::job_control::steer(&state,"sdk_run",&id,body["instruction"].as_str().unwrap_or(""),body["mode"].as_str().unwrap_or("append")))
+}
+
+
+#[cfg(test)]
+mod view_tests{
+    use super::*;
+    #[test]
+    fn batch_view_projects_latest_execution_and_exact_uncertain_effect(){
+        let index=ViewIndex::from_rows(
+            vec![json!({"id":"old","sessionId":"a","startedAt":"2026-01-01","status":"completed"}),
+                 json!({"id":"new","sessionId":"a","startedAt":"2026-11-16","status":"interrupted","modelCalls":4,"toolCalls":2}),
+                 json!({"id":"other","sessionId":"b","startedAt":"2026-11-16","status":"running"})],
+            vec![json!({"id":"ap1","sessionId":"b","status":"resolved"}),
+                 json!({"id":"ap2","sessionId":"b","status":"pending","tool":"write_file"})],
+            vec![json!({"runId":"old","outcomeUnknown":true}),
+                 json!({"runId":"new","outcomeUnknown":false})]
+        );
+        assert_eq!(index.runs["a"]["id"],"new");
+        assert_eq!(index.pending["b"]["id"],"ap2");
+        assert!(!index.uncertain.contains("new"));
+        assert!(index.uncertain.contains("old"));
+        let same_session=ViewIndex::from_rows(
+            vec![json!({"id":"a","sessionId":"s","startedAt":"1"}),
+                 json!({"id":"b","sessionId":"s","startedAt":"2"})],
+            vec![],vec![json!({"runId":"a","outcomeUnknown":true})]
+        );
+        assert_eq!(same_session.runs["s"]["id"],"b");
+        assert!(!same_session.uncertain.contains("b"));
+    }
+    #[test]
+    fn batch_view_handles_empty_and_legacy_records(){
+        let index=ViewIndex::from_rows(vec![],vec![],vec![]);
+        assert!(index.runs.is_empty());
+        assert!(index.pending.is_empty());
+        assert!(index.uncertain.is_empty());
+    }
 }
