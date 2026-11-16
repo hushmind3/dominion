@@ -47,9 +47,13 @@ try {
    '영상 모델 다운로드','aria-label="영상 모델 다운로드"']) {
   assert.ok(installer.includes(contract),'Lost one-click model setup: '+contract)
  }
+ for(const contract of ['role="radiogroup"','video-quantization',
+  'item.quantization','item.weightBytes','item.totalBytes','고급 설정 · 기존 ComfyUI 연결']){
+  assert.ok(installer.includes(contract),'Lost video quantization catalog: '+contract)
+ }
  const autopilot=await readFile(join(root,'src/components/VideoAutopilot.tsx'),'utf8')
- assert.ok(autopilot.includes("engine==='comfyui'&&")&&autopilot.includes("<VideoModelInstall onChanged="),
-  'Autonomous producer must expose model installation for AI video')
+ assert.ok(autopilot.includes("<VideoModelInstall onChanged="),
+  'Autonomous producer must expose video-only model downloads by default')
  console.log(JSON.stringify({ok:true,renderedCharacters:html.length,
   workflows:['create','jobs','publish','settings'],
   evidence:'real React SSR + product route and control assertions'},null,2))
