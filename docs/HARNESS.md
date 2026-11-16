@@ -7,7 +7,7 @@
 `채팅 / 그룹 / 작업 / 워크플로 / RSI / SDK 자동 작업 → 메인 제품 어댑터 → dominion-core → 기존 모델·승인·도구 어댑터 → SQLite`
 
 - `crates/dominion-core/src/engine.rs`의 `Engine::drive`가 계획 → 모델 → 도구 → 검증 → 교정 반복과 종료를 진행합니다. 메인의 이전 `while !finished` 모델 실행 루프는 제거했습니다.
-- `src/engine/chat/runtime.rs`는 제품 진입점·문맥·SQLite를 연결하고, `product.rs`는 모델 전송·RSI·그룹·학습·검증 규칙을 단계별로 제공합니다. 제품 어댑터는 검증 결과를 반환하며 다음 실행 단계는 코어가 결정합니다.
+- `src/engine/chat/runtime.rs`는 제품 진입점·문맥·SQLite를 연결하고, `product.rs`는 모델 전송·RSI·그룹·학습·검증 규칙을 단계별로 제공합니다. 완료 판정·전략 준수 집계·불변 종료 해시는 `src/engine/chat/outcome.rs`가 담당합니다. 제품 어댑터는 검증 결과를 반환하며 다음 실행 단계는 코어가 결정합니다.
 - 계획·독립 리뷰·오류 적응·프로그램 수선 호출도 코어의 모델 실행 전 기록을 사용합니다. 메인 실행과 보조 호출을 중단하면 진행 중 기록이 남고, 저장 실패 시 모델·도구를 시작하지 않습니다.
 - `src/api/sdk.rs`의 기존 별도 모델 반복기와 파일 체크포인트 실행 경로는 제거했습니다. SDK 자동 작업도 일반 채팅과 같은 모델·인증·도구·검증을 사용합니다. Codex·Anthropic 등은 기존 메인 제공자 어댑터를 그대로 사용합니다.
 - 네이티브 상태는 기존 SQLite의 `execution.kernelState`에 저장됩니다. 명시적인 병렬 프로그램 분기는 부모 예산을 공유하는 `native_frame`으로 기록하여 기존 동시 실행 기능을 보존합니다.
