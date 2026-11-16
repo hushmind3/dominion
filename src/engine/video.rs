@@ -55,7 +55,7 @@ fn present(state: &AppState, relative: &str) -> bool {
 /// Video generation families and their actual model variants.
 /// Every entry has a manifest, and a ComfyUI API-format workflow below.
 /// Download sizes include companion T5 and VAE files; shared assets are reused.
-const VIDEO_T2V_VARIANTS:[(&str,&str,&str,&str,&str,f64,f64);9]=[
+const VIDEO_T2V_VARIANTS:[(&str,&str,&str,&str,&str,f64,f64);13]=[
     ("wan21-t2v-1.3b-q3","wan21-t2v-1.3b","Q3_K_M","gguf",
         "unet/Wan2.1-T2V-1.3B-Q3_K_M.gguf",0.729,4.64),
     ("wan21-t2v-1.3b-q4","wan21-t2v-1.3b","Q4_K_M","gguf",
@@ -68,6 +68,14 @@ const VIDEO_T2V_VARIANTS:[(&str,&str,&str,&str,&str,f64,f64);9]=[
         "unet/Wan2.1-T2V-1.3B-Q8_0.gguf",1.540,5.45),
     ("wan21-t2v-1.3b-fp16","wan21-t2v-1.3b","FP16","fp16",
         "diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors",2.840,9.83),
+    ("wan21-t2v-14b-q3","wan21-t2v-14b","Q3_K_M","gguf",
+        "unet/wan2.1-t2v-14b-Q3_K_M.gguf",7.65,11.57),
+    ("wan21-t2v-14b-q4","wan21-t2v-14b","Q4_K_M","gguf",
+        "unet/wan2.1-t2v-14b-Q4_K_M.gguf",10.1,14.02),
+    ("wan21-t2v-14b-q5","wan21-t2v-14b","Q5_K_M","gguf",
+        "unet/wan2.1-t2v-14b-Q5_K_M.gguf",11.3,15.22),
+    ("wan21-t2v-14b-q8","wan21-t2v-14b","Q8_0","gguf",
+        "unet/wan2.1-t2v-14b-Q8_0.gguf",15.9,19.82),
     ("wan21-t2v-14b-fp8","wan21-t2v-14b","FP8","fp8",
         "diffusion_models/wan2.1_t2v_14B_fp8_scaled.safetensors",14.3,20.9),
     ("wan21-t2v-14b-fp16","wan21-t2v-14b","FP16","fp16",
@@ -88,7 +96,8 @@ pub fn video_models(state:&AppState)->Vec<Value>{
                 "vae/wan_2.1_vae.safetensors"),
             "wan21-t2v-14b"=>(
                 "Wan 2.1 · Text to Video · 14B",
-                "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+                if *kind=="gguf"{"clip/umt5-xxl-encoder-Q4_K_M.gguf"}
+                else{"text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"},
                 "vae/wan_2.1_vae.safetensors"),
             _=>(
                 "Wan 2.2 · Text/Image to Video · 5B",
@@ -103,7 +112,8 @@ pub fn video_models(state:&AppState)->Vec<Value>{
             "quantization":quant,"kind":kind,"files":files,
             "weightGB":weight_gb,"totalDownloadGB":total_gb,
             "available":missing==0,"missingFiles":missing,
-            "recommended":*id=="wan21-t2v-1.3b-q4"||*id=="wan22-ti2v-5b-fp16",
+            "recommended":matches!(*id,
+                "wan21-t2v-1.3b-q4"|"wan21-t2v-14b-q4"|"wan22-ti2v-5b-fp16"),
             "hint":if missing==0{"설치 완료".to_string()}else{
                 format!("구성 파일 {missing}개 설치 필요")
             }
@@ -131,6 +141,14 @@ pub fn workflow_for(model: &str, steps: u64) -> Option<Value> {
             "wan_2.1_vae.safetensors",
             "fp16",
         ),
+        "wan21-t2v-14b-q3" => ("wan2.1-t2v-14b-Q3_K_M.gguf",
+            "umt5-xxl-encoder-Q4_K_M.gguf","wan_2.1_vae.safetensors","gguf"),
+        "wan21-t2v-14b-q4" => ("wan2.1-t2v-14b-Q4_K_M.gguf",
+            "umt5-xxl-encoder-Q4_K_M.gguf","wan_2.1_vae.safetensors","gguf"),
+        "wan21-t2v-14b-q5" => ("wan2.1-t2v-14b-Q5_K_M.gguf",
+            "umt5-xxl-encoder-Q4_K_M.gguf","wan_2.1_vae.safetensors","gguf"),
+        "wan21-t2v-14b-q8" => ("wan2.1-t2v-14b-Q8_0.gguf",
+            "umt5-xxl-encoder-Q4_K_M.gguf","wan_2.1_vae.safetensors","gguf"),
         "wan21-t2v-14b-fp8" => (
             "wan2.1_t2v_14B_fp8_scaled.safetensors",
             "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
@@ -222,6 +240,18 @@ pub fn model_files(id:&str)->Option<Vec<(&'static str,&'static str)>>{
         "wan21-t2v-1.3b-fp16"=>(
             "diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors",
             "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors",true),
+        "wan21-t2v-14b-q3"=>(
+            "unet/wan2.1-t2v-14b-Q3_K_M.gguf",
+            "https://huggingface.co/city96/Wan2.1-T2V-14B-gguf/resolve/main/wan2.1-t2v-14b-Q3_K_M.gguf",false),
+        "wan21-t2v-14b-q4"=>(
+            "unet/wan2.1-t2v-14b-Q4_K_M.gguf",
+            "https://huggingface.co/city96/Wan2.1-T2V-14B-gguf/resolve/main/wan2.1-t2v-14b-Q4_K_M.gguf",false),
+        "wan21-t2v-14b-q5"=>(
+            "unet/wan2.1-t2v-14b-Q5_K_M.gguf",
+            "https://huggingface.co/city96/Wan2.1-T2V-14B-gguf/resolve/main/wan2.1-t2v-14b-Q5_K_M.gguf",false),
+        "wan21-t2v-14b-q8"=>(
+            "unet/wan2.1-t2v-14b-Q8_0.gguf",
+            "https://huggingface.co/city96/Wan2.1-T2V-14B-gguf/resolve/main/wan2.1-t2v-14b-Q8_0.gguf",false),
         "wan21-t2v-14b-fp8"=>(
             "diffusion_models/wan2.1_t2v_14B_fp8_scaled.safetensors",
             "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_t2v_14B_fp8_scaled.safetensors",true),
