@@ -44,7 +44,8 @@ pub fn models_dir(state: &AppState) -> PathBuf {
 }
 
 fn present(state: &AppState, relative: &str) -> bool {
-    models_dir(state).join(relative).is_file()
+    models_dir(state).join(relative).metadata()
+        .is_ok_and(|item|item.is_file()&&item.len()>1024*1024)
 }
 
 /// Built-in one-click models. Availability is a real file check, not a claim.
@@ -223,7 +224,7 @@ async fn download_files(
     let mut completed = 0usize;
     for (relative,url) in files {
         let target = base.join(relative);
-        if target.is_file() {
+        if target.metadata().is_ok_and(|m|m.is_file()&&m.len()>1024*1024) {
             completed+=1;
             if let Some(mut record)=state.store.get("video_model_download",key) {
                 record["filesCompleted"]=json!(completed);
@@ -277,6 +278,9 @@ async fn download_files(
         }
         file.flush().await.map_err(|e| e.to_string())?;
         drop(file);
+        if current_received<=1024*1024 || (this_total>0 && current_received!=this_total) {
+            return Err(format!("모델 파일이 불완전합니다: {relative} ({current_received}/{this_total}바이트). 다시 다운로드해 주세요."));
+        }
         tokio::fs::rename(&part,&target).await.map_err(|e| e.to_string())?;
         completed+=1;
         if let Some(mut record)=state.store.get("video_model_download",key) {
