@@ -6,21 +6,6 @@ use crate::{
 use std::future::IntoFuture;
 
 pub async fn run(args: Vec<String>) -> Result<(), String> {
-    if args.first().map(String::as_str)==Some("--rsi-worker-identity") {
-        println!("{}",option_env!("DOMINION_BUILD_COMMIT").unwrap_or("unknown"));
-        return Ok(());
-    }
-    if args.first().map(String::as_str)==Some("--rsi-diagnose") {
-        println!("{}",engine::rsi_evolve::diagnose_capabilities());
-        return Ok(());
-    }
-    if args.first().map(String::as_str)==Some("--rsi-plan-generation") {
-        return engine::rsi_evolve::plan_generation_from_file(
-            args.get(1).ok_or("다음 세대 계획 파일이 필요합니다.")?);
-    }
-    if args.first().map(String::as_str)==Some("--rsi-worker-job") {
-        return engine::rsi_evolve::worker(args.get(1).ok_or("세대 작업 ID가 필요합니다.")?).await;
-    }
     if platform::handle_control(&args)? {
         return Ok(());
     }
@@ -79,11 +64,7 @@ async fn serve(mut config: Config, open_browser: bool, parent_bound: bool) -> Re
     }
     engine::jobs::recover(&state);
     engine::wake::recover(&state);
-    engine::improve::recover_finalizations(&state);
-    engine::improve::schedule_experiments(&state);
     engine::algorithms::seed(&state);
-    engine::policy::meta_improve(&state);
-    engine::policy::propose_candidates(&state);
     engine::jobs::start(state.clone());
     engine::maintenance::start(state.clone());
     {
@@ -96,7 +77,6 @@ async fn serve(mut config: Config, open_browser: bool, parent_bound: bool) -> Re
             }
         });
     }
-    engine::scheduler::start(state.clone());
     engine::discord::start(state.clone());
     engine::telegram::start(state.clone());
     let app = api::router(state);

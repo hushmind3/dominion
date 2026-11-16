@@ -29,23 +29,6 @@ export interface NativeRouteSelection {
 export type RoutingMode='default'|'quality_cost';
 export interface Job extends RecordItem {kind:string;status:string;input?:unknown;result?:unknown;error?:string;sessionId?:string;stepIndex?:number;stepTotal?:number;
  nativeRoute?:NativeRouteSelection;nativeModelUsage?:NativeModelUsage;nativeState?:{chargedTokens?:number;modelCalls?:number;modelInFlight?:boolean}}
-/** Durable Rust video project; GUI and SDK call the same video-studio API. */
-export interface VideoScene {id:string;script:string;visualPrompt:string;overlay:string;seconds:number}
-export interface VideoProject extends RecordItem {
-  kind:'content_project';status:string;brief:string;title:string;revision:number;
-  scenes:VideoScene[];targetSeconds:number;aspectRatio:'9:16'|'16:9'|'1:1';
-  engine:'native'|'comfyui';platform:string;useAI:boolean;autoRender:boolean;autoUpload:boolean;
-  planJobId?:string|null;renderJobId?:string|null;uploadJobId?:string|null;
-  planningError?:string|null;renderError?:string|null;
-}
-export interface CreateVideoProject {
-  brief:string;title?:string;audience?:string;style?:string;
-  targetSeconds?:number;aspectRatio?:VideoProject['aspectRatio'];
-  platform?:'youtube'|'shorts'|'reels'|'tiktok'|'local';
-  engine?:VideoProject['engine'];useAI?:boolean;providerId?:string;model?:string;
-  autoRender?:boolean;autoUpload?:boolean;privacyStatus?:'private'|'unlisted';
-  economy?:boolean;
-}
 /** Persisted Rust native job state shared with the autonomous UI. */
 export interface NativeRun {
  id:string;status:string;instruction:string;answer?:string|null;error?:string|null;
@@ -250,30 +233,6 @@ export class Dominion{
     get:(executionId:string)=>this.request<unknown>('GET','/api/executions/'+id(executionId)),
     operations:(executionId:string)=>this.request<unknown[]>('GET','/api/executions/'+id(executionId)+'/operations'),
     cancel:(executionId:string)=>this.request<unknown>('POST','/api/executions/'+id(executionId)+'/cancel',{})
-  };
-  readonly video={
-    status:()=>this.request<unknown>('GET','/api/video/status'),
-    list:()=>this.request<Job[]>('GET','/api/video/jobs'),
-    create:(input:Record<string,unknown>)=>this.request<Job>('POST','/api/video/jobs',input),
-    get:(jobId:string)=>this.request<Job>('GET','/api/video/jobs/'+id(jobId)),
-    outputs:()=>this.request<unknown[]>('GET','/api/video/outputs'),
-    projects:()=>this.request<VideoProject[]>('GET','/api/video/projects'),
-    project:(projectId:string)=>this.request<VideoProject>('GET','/api/video/projects/'+id(projectId)),
-    createProject:(input:CreateVideoProject)=>this.request<VideoProject>('POST','/api/video/projects',input),
-    editScenes:(projectId:string,revision:number,scenes:VideoScene[],title?:string)=>
-      this.request<VideoProject>('POST','/api/video/projects/'+id(projectId)+'/scenes',
-        {revision,scenes,...(title!==undefined?{title}:{})}),
-    retryPlan:(projectId:string,revision:number,acknowledgeUnknown=false)=>
-      this.request<VideoProject>('POST','/api/video/projects/'+id(projectId)+'/retry-plan',
-        {revision,acknowledgeUnknown}),
-    renderProject:(projectId:string,revision:number,acknowledgeUnknown=false)=>
-      this.request<VideoProject>('POST','/api/video/projects/'+id(projectId)+'/render',
-        {revision,acknowledgeUnknown}),
-    download:async(jobId:string)=>{const res=await this.open('GET','/api/video/jobs/'+id(jobId)+'/content');return res.blob();}
-  };
-  readonly rsi={
-    campaigns:()=>this.request<unknown[]>('GET','/api/rsi/campaigns'),
-    get:(campaignId:string)=>this.request<unknown>('GET','/api/rsi/campaigns/'+id(campaignId))
   };
   private async *stream(path:string,method:'GET'|'POST',body?:unknown,signal?:AbortSignal):AsyncGenerator<unknown>{
     const response=await this.open(method,path,body,signal,true);

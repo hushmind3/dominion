@@ -9,34 +9,6 @@ use axum::{
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-pub async fn youtube_uploads(State(state): State<AppState>) -> Json<Value> {
-    let mut uploads = state
-        .store
-        .all("job")
-        .iter()
-        .filter(|job| job["kind"] == "youtube_upload")
-        .map(crate::engine::video::public_job)
-        .collect::<Vec<_>>();
-    uploads.sort_by(|a, b| {
-        b["createdAt"]
-            .as_str()
-            .unwrap_or("")
-            .cmp(a["createdAt"].as_str().unwrap_or(""))
-    });
-    Json(json!(uploads))
-}
-
-pub async fn youtube_status(State(state): State<AppState>) -> Json<Value> {
-    let connection = crate::engine::oauth::status(&state)
-        .into_iter()
-        .find(|p| p["id"] == "youtube")
-        .unwrap_or(json!({}));
-    Json(
-        json!({"connected":connection["connected"],"uploadAllowed":connection["connected"]==true&&connection["grantedScopes"].as_str().is_some_and(|s|s.split_whitespace().any(|s|s=="https://www.googleapis.com/auth/youtube.upload")),"account":connection["account"],"uploads":state.store.all("job").iter().filter(|j|j["kind"]=="youtube_upload").map(crate::engine::video::public_job).collect::<Vec<_>>(),"channel":null}),
-    )
-}
-
-
 /// Opens the platform folder picker. Headless hosts can set DOMINION_FOLDER
 /// to bypass the dialog; the result is always a real existing directory.
 pub async fn pick_folder() -> Response {
@@ -138,44 +110,6 @@ pub async fn webhook(
     match crate::engine::jobs::enqueue(&state, "prompt", input) {
         Some(job) => Json(json!({"accepted": true, "job": job})).into_response(),
         None => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error":"could not enqueue"}))).into_response(),
-    }
-}
-
-/// Compatibility actions for YouTube live/upload flows. Each maps to the
-/// existing OAuth/video implementation instead of a 501 stub.
-pub async fn youtube_action(
-    State(state): State<AppState>,
-    Path(action): Path<String>,
-    Json(body): Json<Value>,
-) -> Response {
-    match action.as_str() {
-        "connect" | "auth" => match crate::engine::oauth::start(&state, "youtube") {
-            Ok(value) => Json(value).into_response(),
-            Err(error) => (StatusCode::BAD_REQUEST, Json(json!({"error": error}))).into_response(),
-        },
-        "disconnect" => {
-            crate::engine::oauth::disconnect(&state, "youtube");
-            Json(json!({"disconnected": true, "status": crate::engine::oauth::status(&state)}))
-                .into_response()
-        }
-        "upload" => {
-            let id = body["jobId"]
-                .as_str()
-                .or_else(|| body["id"].as_str())
-                .unwrap_or("");
-            if id.is_empty() {
-                return (StatusCode::BAD_REQUEST, Json(json!({"error":"jobId is required"}))).into_response();
-            }
-            match crate::engine::video::enqueue_upload(&state, id, &body) {
-                Ok(job) => Json(job).into_response(),
-                Err(error) => (StatusCode::BAD_REQUEST, Json(json!({"error": error}))).into_response(),
-            }
-        }
-        other => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": format!("unknown youtube action: {other}")})),
-        )
-            .into_response(),
     }
 }
 

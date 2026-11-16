@@ -2,7 +2,6 @@ mod response;
 #[cfg(test)]
 mod tests;
 pub mod algorithms;
-pub mod rsi;
 pub mod translation;
 pub mod settings;
 pub mod improvements;
@@ -35,8 +34,6 @@ pub mod models;
 pub mod oauth;
 pub mod personas;
 pub mod rooms;
-pub mod video;
-pub mod video_studio;
 
 use crate::state::AppState;
 use axum::{
@@ -88,25 +85,6 @@ pub fn router(state: AppState) -> Router {
         .route("/api/run-wakes", get(system::run_wakes))
         .route("/api/experiment-requests", get(system::experiment_requests))
         .route("/api/optimizers", get(experiments::optimizers))
-        .route("/api/rsi", get(rsi::list).post(rsi::propose))
-        .route("/api/rsi/start", post(rsi::start))
-        .route("/api/rsi/issues", post(rsi::report_issue))
-        .route("/api/rsi/issues/:id", get(rsi::issue))
-        .route("/api/rsi/evaluation-profiles", get(rsi::evaluation_profiles))
-        .route("/api/rsi/signals", get(rsi::signals))
-        .route("/api/rsi/index", get(rsi::index))
-        .route("/api/rsi/inspect", post(rsi::inspect))
-        .route("/api/rsi/campaigns", get(rsi::campaigns))
-        .route("/api/rsi/campaigns/:id/choose", post(rsi::choose))
-        .route("/api/rsi/campaigns/:id/apply", post(rsi::apply_campaign))
-        .route("/api/rsi/campaigns/:id", get(rsi::campaign))
-        .route("/api/rsi/campaigns/:id/verify", get(rsi::verify))
-        .route("/api/rsi/:id", get(rsi::one))
-        .route("/api/rsi/:id/evaluate", post(rsi::evaluate))
-        .route("/api/rsi/:id/apply", post(rsi::apply))
-        .route("/api/rsi/:id/compare", post(rsi::compare))
-        .route("/api/rsi/:id/decide", post(rsi::decide))
-        .route("/api/rsi/:id/deployment", post(rsi::deployment))
         .route("/api/algorithms", get(algorithms::list).post(algorithms::register))
         .route("/api/algorithms/evaluate", get(algorithms::evaluate))
         .route("/api/algorithms/evaluations", get(algorithms::evaluations))
@@ -311,46 +289,6 @@ pub fn router(state: AppState) -> Router {
         .route("/api/oauth/:id/open", post(oauth::open))
         .route("/api/oauth/:id/callback", get(oauth::callback))
         .route("/api/oauth/:id", axum::routing::delete(oauth::disconnect))
-        .route("/api/youtube/status", get(compat::youtube_status))
-        .route("/api/youtube/uploads", get(compat::youtube_uploads))
-        .route("/api/youtube/uploads/:id", get(video::job))
-        .route("/api/youtube/:action", post(compat::youtube_action))
-        .route("/api/video/projects",get(video_studio::list).post(video_studio::create))
-        .route("/api/video/projects/:id",get(video_studio::one))
-        .route("/api/video/projects/:id/scenes",post(video_studio::scenes))
-        .route("/api/video/projects/:id/retry-plan",post(video_studio::retry_plan))
-        .route("/api/video/projects/:id/render",post(video_studio::render))
-        .route("/api/video/status", get(video::status))
-        .route(
-            "/api/video/config",
-            get(video::get_config).post(video::save_config),
-        )
-        .route("/api/video/outputs", get(video::outputs_handler))
-        .route("/api/video/locations", get(video::locations))
-        .route("/api/video/models", get(video::models))
-        .route("/api/video/catalog", get(video::catalog))
-        .route("/api/video/hub/search", get(video::hub_search))
-        .route("/api/video/hub/files", get(video::hub_files))
-        .route("/api/video/hub/download", post(video::hub_download))
-        .route("/api/video/models/:id/download", post(video::download_model))
-        .route("/api/video/models/:id/setup", post(video::setup_model))
-        .route("/api/video/comfy/start", post(video::start_comfy))
-        .route("/api/video/models/downloads", get(video::model_downloads))
-        .route("/api/video/files", get(video::files))
-        .route("/api/video/jobs/:id", get(video::job))
-        .route("/api/video/jobs/:id/regenerate",post(video::regenerate))
-        .route(
-            "/api/video/jobs",
-            get(video::list_jobs).post(video::create_job),
-        )
-        .route("/api/video/jobs/:id/upload", post(video::upload))
-        .route("/api/video/jobs/:id/content", get(video::content))
-        .route("/api/video/jobs/:id/captions",get(video::captions))
-        .route("/api/video/jobs/:id/production",get(video::production))
-        .route("/api/video/jobs/:id/reveal", post(video::reveal))
-        .route("/api/video/open-models", post(video::not_available))
-        .route("/api/video/workflows", get(video::workflows))
-        .route("/api/video/:action", post(video::not_available))
         .route("/api/system/pick-folder", post(compat::pick_folder))
         .route("/api/channels/catalog", get(channels::catalog_handler))
         .route("/api/channels", get(channels::list).post(channels::save))
