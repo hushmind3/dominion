@@ -2,6 +2,7 @@
 //! GUI HTTP server and Rust clients use the same runtime implementation.
 mod api;
 pub mod bootstrap;
+pub mod build_identity;
 mod config;
 mod db;
 mod engine;
