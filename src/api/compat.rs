@@ -32,7 +32,7 @@ pub async fn youtube_status(State(state): State<AppState>) -> Json<Value> {
         .find(|p| p["id"] == "youtube")
         .unwrap_or(json!({}));
     Json(
-        json!({"connected":connection["connected"],"uploadAllowed":connection["connected"]==true&&connection["grantedScopes"].as_str().is_some_and(|s|s.split_whitespace().any(|s|s=="https://www.googleapis.com/auth/youtube.upload")),"account":connection["account"],"uploads":state.store.all("job").iter().filter(|j|j["kind"]=="youtube_upload").map(crate::api::video::public_job).collect::<Vec<_>>(),"channel":null}),
+        json!({"connected":connection["connected"],"uploadAllowed":false,"archiveOnly":true,"replacement":"MCP/Connections","account":connection["account"],"uploads":state.store.all("job").iter().filter(|j|j["kind"]=="youtube_upload").map(crate::api::video::public_job).collect::<Vec<_>>(),"channel":null}),
     )
 }
 

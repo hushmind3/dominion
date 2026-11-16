@@ -68,3 +68,11 @@ test('old multimedia and RSI source/build dependencies are absent',()=>{
  const dev=src('src/engine/dev.rs');
  assert.doesNotMatch(dev,/fn start_rsi_install|install_rsi_source/);
 });
+
+test('no hidden failed-learning retry loop or retired YouTube uploader claim',()=>{
+ const jobs=src('src/engine/jobs.rs');
+ const compat=src('src/api/compat.rs');
+ assert.doesNotMatch(jobs,/pub fn retry_failed_learning\(/);
+ assert.match(compat,/"uploadAllowed":false/);
+ assert.match(compat,/"archiveOnly":true/);
+});
