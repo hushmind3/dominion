@@ -708,8 +708,6 @@ async fn say_scenes(
     dir: &Path, scenes: &[String], cfg: &Value, encoder: &Path,
 ) -> Option<(Vec<f64>, std::path::PathBuf)> {
     if cfg["narration"] == false { return None; }
-    #[cfg(not(any(target_os="macos",target_os="windows")))]
-    {let _=(dir,scenes,encoder);return None;}
     let voice = cfg["voice"].as_str().filter(|value| !value.is_empty()).unwrap_or("Yuna");
     let rate = cfg["rate"].as_u64().unwrap_or(170).clamp(80, 320).to_string();
     let ffprobe = encoder.with_file_name(if cfg!(windows) {"ffprobe.exe"} else {"ffprobe"});
@@ -740,6 +738,8 @@ async fn say_scenes(
                     .env("DOMINION_TTS_TEXT",scene).status()
             ).await.ok()?.ok()?
         };
+        #[cfg(not(any(target_os="macos",target_os="windows")))]
+        let status:std::process::ExitStatus=return None;
         if !status.success() { return None; }
         let seconds = probe_duration(&ffprobe, &path).await?;
         // Some installed "voices" are novelty entries that render silence;
