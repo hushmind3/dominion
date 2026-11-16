@@ -185,7 +185,17 @@ impl Store {
                  WHERE kind='execution';
              CREATE INDEX IF NOT EXISTS idx_running_operation
                  ON records(json_extract(data,'$.status'))
-                 WHERE kind='execution_operation';",
+                 WHERE kind='execution_operation';
+             CREATE INDEX IF NOT EXISTS idx_sdk_execution_session
+                 ON records(json_extract(data,'$.sessionId'),json_extract(data,'$.startedAt') DESC)
+                 WHERE kind='execution';
+             CREATE INDEX IF NOT EXISTS idx_sdk_run_session
+                 ON records(json_extract(data,'$.sessionId'))
+                 WHERE kind='sdk_run';
+             CREATE INDEX IF NOT EXISTS idx_sdk_unknown_operations
+                 ON records(json_extract(data,'$.runId'))
+                 WHERE kind='execution_operation'
+                   AND json_extract(data,'$.outcomeUnknown')=1;",
         )?;
         // Older databases predate reasoning/tool columns.
         for (column, decl) in [
@@ -267,6 +277,43 @@ impl Store {
             .map_err(|error| error.to_string())?;
         rows.collect::<Result<std::collections::HashSet<_>, _>>()
             .map_err(|error| error.to_string())
+    }
+
+    /// SDK status polling is scoped to sessions actually owned by SDK runs.
+    /// The latest execution is selected in SQLite, so a 1.5-second UI refresh
+    /// does not deserialize the whole execution history and tool log.
+    pub fn sdk_evidence_rows(&self) -> Result<(Vec<Value>, Vec<Value>), String> {
+        let conn = self.conn.lock().map_err(|error| error.to_string())?;
+        let mut latest = conn.prepare(
+            "SELECT e.data,e.id,e.created_at,e.updated_at FROM records AS sdk
+             JOIN records AS e ON e.kind='execution' AND e.id=(
+               SELECT current.id FROM records AS current
+               WHERE current.kind='execution'
+                 AND json_extract(current.data,'$.sessionId')=json_extract(sdk.data,'$.sessionId')
+               ORDER BY json_extract(current.data,'$.startedAt') DESC,current.id DESC LIMIT 1
+             )
+             WHERE sdk.kind='sdk_run'
+               AND json_type(sdk.data,'$.sessionId')='text'",
+        ).map_err(|error| error.to_string())?;
+        let executions = latest.query_map([], record_from_row)
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?;
+        let mut unknown = conn.prepare(
+            "SELECT op.data,op.id,op.created_at,op.updated_at
+             FROM records AS op
+             JOIN records AS execution
+               ON execution.kind='execution'
+               AND execution.id=json_extract(op.data,'$.runId')
+             JOIN records AS sdk
+               ON sdk.kind='sdk_run'
+               AND json_extract(sdk.data,'$.sessionId')=json_extract(execution.data,'$.sessionId')
+             WHERE op.kind='execution_operation'
+               AND json_extract(op.data,'$.outcomeUnknown')=1",
+        ).map_err(|error| error.to_string())?;
+        let operations = unknown.query_map([], record_from_row)
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?;
+        Ok((executions, operations))
     }
 
     /// Read only unresolved approvals; old decisions must not be decoded on every idle tick.
@@ -1650,6 +1697,33 @@ mod tests {
         assert!(store.finalize_once(&execution, &marker, &[], &[]).is_err());
     }
 
+
+    #[test]
+    fn sdk_projection_only_loads_related_latest_executions_and_unknown_effects() {
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        store.put("sdk_run",&json!({"id":"sdk","sessionId":"owned"}));
+        for (id,session,started) in [
+            ("first","owned","2026-01-01"),("latest","owned","2026-11-17"),
+            ("unrelated","other","2026-11-18")
+        ] {
+            store.put("execution",&json!({"id":id,"sessionId":session,"startedAt":started}));
+        }
+        store.put("execution_operation",&json!({
+            "id":"owned-effect","runId":"latest","outcomeUnknown":true
+        }));
+        store.put("execution_operation",&json!({
+            "id":"foreign-effect","runId":"unrelated","outcomeUnknown":true
+        }));
+        store.put("execution_operation",&json!({
+            "id":"known-effect","runId":"latest","outcomeUnknown":false
+        }));
+        let (runs,effects)=store.sdk_evidence_rows().unwrap();
+        assert_eq!(runs.len(),1,"only one latest SDK execution is needed");
+        assert_eq!(runs[0]["id"],"latest");
+        assert_eq!(effects.len(),1);
+        assert_eq!(effects[0]["id"],"owned-effect");
+        assert_eq!(store.all("execution").len(),3);
+    }
 
     #[test]
     fn recovery_queries_only_decode_running_records_and_uncertain_sessions() {

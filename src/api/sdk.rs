@@ -78,8 +78,21 @@ impl ViewIndex{
         Self{runs,pending,uncertain}
     }
     fn load(state:&AppState)->Self{
-        Self::from_rows(state.store.all("execution"),
-            state.store.all("approval"),state.store.all("execution_operation"))
+        let (executions,operations)=match state.store.sdk_evidence_rows(){
+            Ok(rows)=>rows,
+            Err(error)=>{
+                state.store.audit("sdk.evidence_query_failed",json!({"error":error}));
+                (state.store.all("execution"),state.store.all("execution_operation"))
+            }
+        };
+        let approvals=match state.store.pending_approvals(){
+            Ok(rows)=>rows,
+            Err(error)=>{
+                state.store.audit("sdk.approval_query_failed",json!({"error":error}));
+                state.store.all("approval")
+            }
+        };
+        Self::from_rows(executions,approvals,operations)
     }
 }
 fn public_view_indexed(state:&AppState,mut record:Value,index:&ViewIndex)->Value{
