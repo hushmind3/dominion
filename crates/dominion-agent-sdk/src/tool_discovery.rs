@@ -93,7 +93,10 @@ fn ranked(catalog:&HashMap<String,ToolSpec>,query:&str)->Vec<String>{
   .filter(|s|s.name!=SEARCH && s.name!=CALL && !s.name.starts_with("dominion_receipt_"))
   .map(|s|(score(s,query),s.name.clone())).collect::<Vec<_>>();
  candidates.sort_by(|a,b|b.0.cmp(&a.0).then_with(||a.1.cmp(&b.1)));
- candidates.into_iter().map(|(_,name)|name).collect()
+ // A nonmatch is not a recommendation: avoid arbitrary alphabetic
+ // schemas that dilute model attention and hide the discovery bridge.
+ candidates.into_iter().filter(|(score,_)|*score>0)
+  .map(|(_,name)|name).collect()
 }
 /// Deterministic stable shortlist. Internal discovery receives no permissions
 /// beyond the already-authorized catalog, and the original host owns dispatch.
