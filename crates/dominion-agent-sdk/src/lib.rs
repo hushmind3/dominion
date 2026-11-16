@@ -795,8 +795,9 @@ impl Kernel<'_> {
                     // Kernel-local observability never reaches the host. Every
                     // external effect still passes through normal permissions.
                     let history=&run.receipts;
+                    let tool_catalog=&tools;
                     let results=join_all(ready.iter().map(|action| async move {
-                        if let Some(result)=tool_discovery::execute_local(action,&tools)
+                        if let Some(result)=tool_discovery::execute_local(action,tool_catalog)
                             .or_else(||context::execute_local(action,history)) {
                             result
                         } else {self.tools.execute(action).await}
