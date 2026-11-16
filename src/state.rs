@@ -5,7 +5,7 @@ use crate::vault::Vault;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, Weak};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot,Notify};
 
 type FileMutations = Arc<Mutex<HashMap<PathBuf, Weak<tokio::sync::Mutex<()>>>>>;
 
@@ -14,6 +14,8 @@ pub struct AppState {
     pub config: Config,
     pub store: Store,
     pub bus: Bus,
+    /// Advisory wakeup for job workers. SQLite remains the durable authority.
+    pub job_wakeup: Arc<Notify>,
     pub vault: Arc<Vault>,
     /// Pending tool approvals: approval id -> waiter.
     pub approvals: Arc<Mutex<HashMap<String, oneshot::Sender<bool>>>>,
@@ -43,6 +45,7 @@ impl AppState {
             config,
             store,
             bus,
+            job_wakeup: Arc::new(Notify::new()),
             vault: Arc::new(vault),
             approvals: Arc::new(Mutex::new(HashMap::new())),
             cancelled: Arc::new(Mutex::new(HashSet::new())),
