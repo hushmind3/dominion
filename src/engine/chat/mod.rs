@@ -180,10 +180,12 @@ impl TurnRequest {
                 None => None,
             },
             reasoning_language: string("reasoningLanguage"),
+            // Experience recording and strategy improvement require an
+            // explicit owner opt-in; normal chat never starts RSI/learning.
             auto_learning: value
                 .get("autoLearning")
                 .and_then(|item| item.as_bool())
-                .unwrap_or(true),
+                .unwrap_or(false),
             system_override: string("systemOverride"),
             task_id: string("taskId"),
             parent_task_id: string("parentTaskId"),
