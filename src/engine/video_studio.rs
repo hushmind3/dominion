@@ -24,6 +24,33 @@ pub fn validate_scenes(v:&Value)->Result<Vec<Value>,String>{
  if !(3..=180).contains(&total){return Err("총 길이는 3~180초여야 합니다.".into())}
  Ok(scenes)
 }
+/// Wan on consumer GPUs is rendered as short bounded clips, never as
+/// one unbounded 30-second latent graph. Preserve scene order and total time.
+fn bounded_ai_shots(scenes:&[Value])->Result<Vec<Value>,String>{
+    let mut output=Vec::new();
+    for (index,scene) in scenes.iter().enumerate(){
+        let duration=scene["seconds"].as_u64().unwrap_or(0);
+        if duration==0{return Err("장면 길이가 올바르지 않습니다.".into())}
+        let pieces=duration.div_ceil(5);
+        if output.len()+pieces as usize>12{
+            return Err("이 모델의 자율 AI 영상은 최대 12장면 × 5초(60초)입니다. 장면을 줄이거나 FFmpeg 모드를 선택하세요.".into());
+        }
+        let mut remaining=duration;
+        for piece in 0..pieces {
+            let length=remaining.min(5);
+            remaining-=length;
+            let mut part=scene.clone();
+            part["id"]=json!(format!("scene-{}-clip-{}",index+1,piece+1));
+            part["seconds"]=json!(length);
+            if pieces>1{
+                let visual=scene["visualPrompt"].as_str().unwrap_or("");
+                part["visualPrompt"]=json!(format!("{visual}. Visual continuity across clip {} of {}; matching subjects, location and lighting.",piece+1,pieces));
+            }
+            output.push(part);
+        }
+    }
+    Ok(output)
+}
 fn offline(project:&Value)->Vec<Value>{
  let brief=project["brief"].as_str().unwrap_or("");
  let pieces=brief.split(['\n','.','!','?','。']).map(str::trim)
@@ -143,7 +170,8 @@ pub fn render(state:&AppState,id:&str,expected:Option<u64>)->Result<Value,String
     .ok_or("새 렌더링 버전을 생성하지 못했습니다.")?;
   rev+=1;
  }
- let scenes=validate_scenes(&project["scenes"])?;
+ let editable=validate_scenes(&project["scenes"])?;
+ let scenes=if project["engine"]=="comfyui"{bounded_ai_shots(&editable)?}else{editable};
  let brief=scenes.iter().filter_map(|v|v["script"].as_str()).collect::<Vec<_>>().join("\n");
  let duration=scenes.iter().map(|v|v["seconds"].as_u64().unwrap_or(0)).sum::<u64>();
  let mut params=json!({"title":project["title"],"brief":brief,
@@ -203,6 +231,9 @@ pub async fn run_plan(ctx:&JobContext,job:&Value)->Result<Value,String>{
    scenes[i]["seconds"]=json!(duration);
    left-=duration;
   }
+ }
+ if project["engine"]=="comfyui"{
+  scenes=bounded_ai_shots(&scenes)?;
  }
  let source=if ai_planning{"provider"}else{"offline"};
  let saved=ctx.state.store.patch_if("video_project",id,"revision",&json!(0),
@@ -310,6 +341,18 @@ mod tests{
   assert!(create(&state,&body).is_err());
   assert!(state.store.all("video_project").is_empty());
   crate::test_support::cleanup_dir(state.config.data_dir.clone());
+ }
+ #[test]
+ fn ai_video_is_split_into_bounded_scene_clips_with_correct_total_duration(){
+  let original=json!([{"script":"Take a journey through the city",
+   "visualPrompt":"City at night","overlay":"City trip","seconds":30}]);
+  let output=bounded_ai_shots(original.as_array().unwrap()).unwrap();
+  assert_eq!(output.len(),6);
+  assert_eq!(output.iter().map(|s|s["seconds"].as_u64().unwrap()).sum::<u64>(),30);
+  assert!(output.iter().all(|s|s["seconds"].as_u64().unwrap()<=5));
+  assert_eq!(output[0]["script"],original[0]["script"]);
+  assert!(bounded_ai_shots(&json!([{"script":"too long","seconds":61}])
+    .as_array().unwrap()).is_err());
  }
  #[test]fn scene_edits_are_validated(){
   assert!(validate_scenes(&json!([])).is_err());
