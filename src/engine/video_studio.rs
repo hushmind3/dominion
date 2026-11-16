@@ -308,6 +308,18 @@ pub async fn run_plan(ctx:&JobContext,job:&Value)->Result<Value,String>{
  if project["autoRender"]==true{render(&ctx.state,id,Some(1))?;}
  Ok(json!({"projectId":id,"sceneCount":scenes.len(),"planningSource":source}))
 }
+/// Only the currently linked planning job may change the project's error state.
+pub fn finish_plan(state:&AppState,job:&Value){
+ if job["status"]!="failed"{return}
+ let Some(id)=job["input"]["projectId"].as_str()else{return};
+ let Some(job_id)=job["id"].as_str()else{return};
+ let Some(project)=state.store.get("video_project",id)else{return};
+ if project["planJobId"]!=job_id{return}
+ if let Some(saved)=state.store.patch_if("video_project",id,"status",
+  &json!("planning"),&json!({"status":"failed","planningError":job["error"]})){
+  state.bus.record("video_project",&saved);
+ }
+}
 pub fn finish_render(state:&AppState,job:&Value){
  let Some(id)=job["input"]["projectId"].as_str()else{return};
  let rev=job["input"]["projectRevision"].as_u64().unwrap_or(0);
@@ -349,6 +361,9 @@ mod tests{
   assert_eq!(retried["planAttempts"],2);
   assert!(retried["planningError"].is_null());
   assert_ne!(retried["planJobId"],prior_job["id"]);
+  // An old worker may finish late: it must not fail the new planning attempt.
+  finish_plan(&state,&prior_job);
+  assert_eq!(get(&state,id).unwrap()["status"],"planning");
   assert!(retry_plan(&state,id,0,false).is_err());
   let orphan_ctx=JobContext::new(state.clone(),prior_id.into());
   assert!(run_plan(&orphan_ctx,&prior_job).await.is_err());
@@ -359,6 +374,22 @@ mod tests{
   run_plan(&ctx,&next).await.unwrap();
   assert_eq!(get(&state,id).unwrap()["status"],"planned");
   assert_eq!(get(&state,id).unwrap()["planJobId"],next["id"]);
+  crate::test_support::cleanup_dir(state.config.data_dir.clone());
+ }
+ #[test]
+ fn only_current_planning_job_can_mark_a_project_failed(){
+  let state=test_state();
+  let project=create(&state,&json!({"brief":"Plan me","autoRender":false})).unwrap();
+  let id=project["id"].as_str().unwrap();
+  let first=project["planJobId"].as_str().unwrap();
+  let failed=state.store.patch_if("job",first,"status",&json!("queued"),
+   &json!({"status":"failed","error":"schema failure"})).unwrap();
+  finish_plan(&state,&failed);
+  assert_eq!(get(&state,id).unwrap()["status"],"failed");
+  let retried=retry_plan(&state,id,0,false).unwrap();
+  finish_plan(&state,&failed);
+  assert_eq!(get(&state,id).unwrap()["status"],"planning");
+  assert_ne!(retried["planJobId"],failed["id"]);
   crate::test_support::cleanup_dir(state.config.data_dir.clone());
  }
  #[test]
