@@ -356,9 +356,7 @@ async fn allowed_tools(state:&AppState, input:&Value)->Vec<ToolSpec> {
         let function=&item["function"];
         let name=function["name"].as_str()?;
         if requested.as_ref().is_some_and(|allowed| !allowed.contains(name)) {return None;}
-        let read_only=matches!(name,
-            "workspace_list"|"workspace_read"|"workspace_read_range"|"code_search"|
-            "file_list"|"file_read"|"memory_search"|"task_status"|"task_result");
+        let read_only=dominion_agent_sdk::runtime::builtin_is_read_only(name);
         Some(ToolSpec {
             name:name.to_string(),
             description:function["description"].as_str().unwrap_or("").to_string(),
