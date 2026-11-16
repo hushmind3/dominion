@@ -179,7 +179,13 @@ impl Store {
                  WHERE kind='approval';
              CREATE INDEX IF NOT EXISTS idx_automation_enabled_due
                  ON records(kind, json_extract(data,'$.enabled'), json_extract(data,'$.nextAt'))
-                 WHERE kind='automation';",
+                 WHERE kind='automation';
+             CREATE INDEX IF NOT EXISTS idx_running_execution
+                 ON records(json_extract(data,'$.status'))
+                 WHERE kind='execution';
+             CREATE INDEX IF NOT EXISTS idx_running_operation
+                 ON records(json_extract(data,'$.status'))
+                 WHERE kind='execution_operation';",
         )?;
         // Older databases predate reasoning/tool columns.
         for (column, decl) in [
@@ -227,6 +233,40 @@ impl Store {
             ORDER BY json_extract(data,'$.queuedAt'),id").map_err(|e|e.to_string())?;
         let rows=stmt.query_map([],record_from_row).map_err(|e|e.to_string())?;
         rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    /// Recovery only deserializes work that was still running at restart.
+    pub fn running_recovery_records(&self, kind: &str) -> Result<Vec<Value>, String> {
+        let sql = match kind {
+            "execution" => "SELECT data,id,created_at,updated_at FROM records
+                WHERE kind='execution' AND json_extract(data,'$.status')='running'",
+            "execution_operation" => "SELECT data,id,created_at,updated_at FROM records
+                WHERE kind='execution_operation' AND json_extract(data,'$.status')='running'",
+            _ => return Err(format!("unsupported recovery kind: {kind}")),
+        };
+        let conn = self.conn.lock().map_err(|error| error.to_string())?;
+        let mut stmt = conn.prepare(sql).map_err(|error| error.to_string())?;
+        let rows = stmt.query_map([], record_from_row).map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
+    }
+
+    /// A single SQL join replaces N per-job scans of the complete tool log.
+    /// A tool left in flight is uncertain even before outcomeUnknown is saved.
+    pub fn uncertain_effect_sessions(&self) -> Result<std::collections::HashSet<String>, String> {
+        let conn = self.conn.lock().map_err(|error| error.to_string())?;
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT json_extract(ex.data,'$.sessionId')
+             FROM records AS op JOIN records AS ex
+               ON ex.kind='execution' AND ex.id=json_extract(op.data,'$.runId')
+             WHERE op.kind='execution_operation'
+               AND (json_extract(op.data,'$.outcomeUnknown')=1
+                    OR json_extract(op.data,'$.status')='running')
+               AND json_extract(ex.data,'$.sessionId') IS NOT NULL",
+        ).map_err(|error| error.to_string())?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?;
+        rows.collect::<Result<std::collections::HashSet<_>, _>>()
+            .map_err(|error| error.to_string())
     }
 
     /// Read only unresolved approvals; old decisions must not be decoded on every idle tick.
@@ -1610,6 +1650,32 @@ mod tests {
         assert!(store.finalize_once(&execution, &marker, &[], &[]).is_err());
     }
 
+
+    #[test]
+    fn recovery_queries_only_decode_running_records_and_uncertain_sessions() {
+        let store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        for (kind, id, status) in [
+            ("execution", "run-live", "running"),
+            ("execution", "run-old", "completed"),
+            ("execution_operation", "op-live", "running"),
+            ("execution_operation", "op-old", "completed"),
+        ] {
+            let mut record = json!({"id":id,"status":status});
+            if kind == "execution" && id == "run-live" {
+                record["sessionId"] = json!("session-1");
+            }
+            if kind == "execution_operation" {
+                record["runId"] = json!(if id == "op-live" {"run-live"} else {"run-old"});
+            }
+            store.put(kind, &record);
+        }
+        assert_eq!(store.running_recovery_records("execution").unwrap().len(), 1);
+        assert_eq!(store.running_recovery_records("execution_operation").unwrap().len(), 1);
+        let sessions = store.uncertain_effect_sessions().unwrap();
+        assert!(sessions.contains("session-1"));
+        assert_eq!(sessions.len(), 1);
+        assert!(store.running_recovery_records("job").is_err());
+    }
 
     #[test]
     fn periodic_queries_skip_historical_approvals_and_future_automations() {

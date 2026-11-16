@@ -123,7 +123,21 @@ pub fn enqueue_once(state: &AppState, id: &str, kind: &str, input: Value) -> Opt
 /// Recovers work left behind by a crash: running jobs are re-queued (unless
 /// they already exhausted retries) and running executions become interrupted.
 pub fn recover(state: &AppState) {
-    for job in state.store.all("job") {
+    let jobs = match state.store.active_jobs() {
+        Ok(jobs) => jobs,
+        Err(error) => {
+            state.store.audit("recovery.jobs_read_failed", json!({"error":error}));
+            Vec::new()
+        }
+    };
+    let uncertain_sessions = match state.store.uncertain_effect_sessions() {
+        Ok(sessions) => Some(sessions),
+        Err(error) => {
+            state.store.audit("recovery.effects_read_failed", json!({"error":error}));
+            None // Fail closed: never replay an effect we could not inspect.
+        }
+    };
+    for job in jobs {
         if job.get("status").and_then(|value| value.as_str()) != Some("running") {
             continue;
         }
@@ -153,13 +167,7 @@ pub fn recover(state: &AppState) {
             .as_str()
             .or_else(|| job.pointer("/input/sessionId").and_then(Value::as_str));
         let unknown_external_result = job_session.is_some_and(|session| {
-            state.store.all("execution_operation").iter().any(|operation| {
-                operation["outcomeUnknown"] == true
-                    && operation["runId"]
-                        .as_str()
-                        .and_then(|run_id| state.store.get("execution", run_id))
-                        .is_some_and(|run| run["sessionId"].as_str() == Some(session))
-            })
+            uncertain_sessions.as_ref().is_none_or(|sessions| sessions.contains(session))
         });
         let uncertain = flagged || unknown_external_result;
         updated["status"] = json!(if attempts >= 3 || uncertain {
@@ -197,8 +205,15 @@ pub fn recover(state: &AppState) {
             }
         }
     }
-    for execution in state.store.all("execution") {
-        if execution.get("status").and_then(|value| value.as_str()) == Some("running") {
+    let running_executions = match state.store.running_recovery_records("execution") {
+        Ok(records) => records,
+        Err(error) => {
+            state.store.audit("recovery.executions_read_failed", json!({"error":error}));
+            Vec::new()
+        }
+    };
+    for execution in running_executions {
+        {
             let mut updated = execution.clone();
             if let Ok(mut snapshot)=serde_json::from_value::<dominion_core::hosted::Snapshot>(updated["kernelState"].clone()){
                 dominion_core::journal::recover(&mut snapshot.native);
@@ -213,8 +228,15 @@ pub fn recover(state: &AppState) {
             state.store.put("execution", &updated);
         }
     }
-    for mut operation in state.store.all("execution_operation") {
-        if operation["status"] == "running" {
+    let running_operations = match state.store.running_recovery_records("execution_operation") {
+        Ok(records) => records,
+        Err(error) => {
+            state.store.audit("recovery.operations_read_failed", json!({"error":error}));
+            Vec::new()
+        }
+    };
+    for mut operation in running_operations {
+        {
             operation["status"] = json!("interrupted");
             operation["outcomeUnknown"] = json!(true);
             operation["phase"] = json!("interrupted");
@@ -834,6 +856,36 @@ mod tests {
             next_queued(&state).is_none(),
             "a second learning job must wait while one is running"
         );
+        let _ = std::fs::remove_dir_all(&state.config.data_dir);
+    }
+
+    #[test]
+    fn recovery_keeps_completed_history_and_flags_inflight_external_tools() {
+        let state = temp_state();
+        let job = enqueue(&state, "workflow",
+            json!({"workflowId":"w", "sessionId":"session-uncertain"})).unwrap();
+        let mut running = job.clone();
+        running["status"] = json!("running");
+        state.store.put("job", &running);
+        state.store.put("job", &json!({"id":"history","status":"completed"}));
+        state.store.put("execution", &json!({
+            "id":"run-inflight","sessionId":"session-uncertain","status":"running"
+        }));
+        state.store.put("execution", &json!({"id":"run-past","status":"completed"}));
+        state.store.put("execution_operation", &json!({
+            "id":"tool-inflight","runId":"run-inflight","status":"running","tool":"shell_exec"
+        }));
+        state.store.put("execution_operation", &json!({
+            "id":"tool-past","runId":"run-past","status":"completed","tool":"shell_exec"
+        }));
+        recover(&state);
+        assert_eq!(state.store.get("job",job["id"].as_str().unwrap()).unwrap()["status"],
+            "needs_review", "interrupted tools may already have external effects");
+        assert_eq!(state.store.get("job","history").unwrap()["status"], "completed");
+        assert_eq!(state.store.get("execution","run-inflight").unwrap()["status"], "interrupted");
+        assert_eq!(state.store.get("execution","run-past").unwrap()["status"], "completed");
+        assert_eq!(state.store.get("execution_operation","tool-inflight").unwrap()["outcomeUnknown"], true);
+        assert_eq!(state.store.get("execution_operation","tool-past").unwrap()["status"], "completed");
         let _ = std::fs::remove_dir_all(&state.config.data_dir);
     }
 
