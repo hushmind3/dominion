@@ -632,7 +632,14 @@ async fn run_resume(context: &JobContext, job: &Value) -> Result<Value, String> 
 
 fn schedule_automations(state: &AppState) {
     let now = chrono::Utc::now();
-    for automation in state.store.all("automation") {
+    let due = match state.store.due_automations(&now.to_rfc3339()) {
+        Ok(records) => records,
+        Err(error) => {
+            state.store.audit("automation.due_read_failed", json!({"error":error}));
+            return;
+        }
+    };
+    for automation in due {
         if automation.get("enabled").and_then(|value| value.as_bool()) != Some(true) {
             continue;
         }

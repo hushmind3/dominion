@@ -348,8 +348,8 @@ pub async fn provider_catalog(State(state): State<AppState>) -> Json<Value> {
 }
 
 /// Refreshes every enabled provider's model catalogue and stores the
-/// free/paid/unknown classification with a timestamp. Runs on demand and from
-/// the background scheduler; the Models page reads the cached result.
+/// free/paid/unknown classification with a timestamp. Invoked explicitly
+/// from the Models page; idle sessions never call provider model endpoints.
 pub async fn refresh_free_catalog(state: &AppState) -> Value {
     let lock = "free-catalog-refresh";
     if !state.begin_session(lock) {

@@ -173,7 +173,13 @@ impl Store {
                  WHERE kind='execution_operation';
              CREATE INDEX IF NOT EXISTS idx_execution_task
                  ON records(json_extract(data,'$.taskId'))
-                 WHERE kind='execution';",
+                 WHERE kind='execution';
+             CREATE INDEX IF NOT EXISTS idx_approval_pending
+                 ON records(kind, json_extract(data,'$.status'))
+                 WHERE kind='approval';
+             CREATE INDEX IF NOT EXISTS idx_automation_enabled_due
+                 ON records(kind, json_extract(data,'$.enabled'), json_extract(data,'$.nextAt'))
+                 WHERE kind='automation';",
         )?;
         // Older databases predate reasoning/tool columns.
         for (column, decl) in [
@@ -221,6 +227,31 @@ impl Store {
             ORDER BY json_extract(data,'$.queuedAt'),id").map_err(|e|e.to_string())?;
         let rows=stmt.query_map([],record_from_row).map_err(|e|e.to_string())?;
         rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    /// Read only unresolved approvals; old decisions must not be decoded on every idle tick.
+    pub fn pending_approvals(&self) -> Result<Vec<Value>, String> {
+        let conn = self.conn.lock().map_err(|error| error.to_string())?;
+        let mut stmt = conn.prepare(
+            "SELECT data, id, created_at, updated_at FROM records
+             WHERE kind='approval' AND json_extract(data,'$.status')='pending'",
+        ).map_err(|error| error.to_string())?;
+        let rows = stmt.query_map([], record_from_row).map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
+    }
+
+    /// SQLite filters the due queue by actual timestamps; legacy time-zone offsets stay valid.
+    /// Disabled and future automations are not deserialized by the periodic dispatcher.
+    pub fn due_automations(&self, now_rfc3339: &str) -> Result<Vec<Value>, String> {
+        let conn = self.conn.lock().map_err(|error| error.to_string())?;
+        let mut stmt = conn.prepare(
+            "SELECT data, id, created_at, updated_at FROM records
+             WHERE kind='automation' AND json_extract(data,'$.enabled')=1
+               AND julianday(json_extract(data,'$.nextAt')) <= julianday(?1)",
+        ).map_err(|error| error.to_string())?;
+        let rows = stmt.query_map([now_rfc3339], record_from_row)
+            .map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
     }
 
     pub fn execution_operations(&self, run_id: &str) -> Result<Vec<Value>, String> {
@@ -1577,5 +1608,37 @@ mod tests {
         let execution = json!({"id":"broken","status":"completed"});
         let marker = json!({"id":"execution:broken","payloadHash":"hash"});
         assert!(store.finalize_once(&execution, &marker, &[], &[]).is_err());
+    }
+
+
+    #[test]
+    fn periodic_queries_skip_historical_approvals_and_future_automations() {
+        let store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        for (id, status) in [
+            ("waiting", "pending"),
+            ("approved", "approved"),
+            ("expired", "expired"),
+        ] {
+            store.put("approval", &json!({"id":id,"status":status}));
+        }
+        let pending = store.pending_approvals().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0]["id"], "waiting");
+
+        for (id, enabled, next) in [
+            ("due", true, "2026-11-16T20:30:00Z"),
+            ("future", true, "2026-11-16T22:00:00Z"),
+            ("disabled", false, "2026-11-16T20:00:00Z"),
+            ("bad-time", true, "not-a-date"),
+        ] {
+            store.put("automation", &json!({
+                "id":id, "enabled":enabled, "nextAt":next,
+            }));
+        }
+        // 2026-11-17 06:00 KST equals 2026-11-16 21:00 UTC.
+        let due = store.due_automations("2026-11-17T06:00:00+09:00").unwrap();
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0]["id"], "due");
+        assert_eq!(store.all("automation").len(), 4, "existing records are preserved");
     }
 }

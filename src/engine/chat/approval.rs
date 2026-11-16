@@ -165,10 +165,14 @@ pub(super) fn close_pending_approvals(state: &AppState, session_id: &str) {
 pub(super) fn expire_stale_approvals(state: &AppState) -> usize {
     let now = chrono::Utc::now();
     let mut expired = 0;
-    for record in state.store.all("approval") {
-        if record["status"] != "pending" {
-            continue;
+    let pending = match state.store.pending_approvals() {
+        Ok(records) => records,
+        Err(error) => {
+            state.store.audit("approval.expiry_read_failed", json!({"error":error}));
+            return 0;
         }
+    };
+    for record in pending {
         let stale = match record["requestedAt"].as_str()
             .and_then(|raw| chrono::DateTime::parse_from_rfc3339(raw).ok())
         {
