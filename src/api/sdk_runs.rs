@@ -220,6 +220,16 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
             "작업 응답이 올바르지 않습니다.")
     }
 }
+/// The public SDK run route steers only its own native-panel jobs.
+pub async fn steer(State(state):State<AppState>,Path(id):Path<String>,
+    Json(body):Json<Value>)->Response {
+    if prompt_job(&state,&id).is_none(){
+        return error(StatusCode::NOT_FOUND,"SDK 작업을 찾지 못했습니다.");
+    }
+    let response=jobs::steer(State(state.clone()),Path(id.clone()),Json(body)).await;
+    if !response.status().is_success(){return response;}
+    one(State(state),Path(id)).await
+}
 pub async fn cancel(State(state):State<AppState>,Path(id):Path<String>)->Response{
     if prompt_job(&state,&id).is_none(){
         return error(StatusCode::NOT_FOUND,"SDK 작업을 찾지 못했습니다.");
