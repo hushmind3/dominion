@@ -1,256 +1,553 @@
-import {useEffect,useState} from 'react'
-import {Check,Clapperboard,ExternalLink,LoaderCircle,Play,Power,RefreshCw,Upload} from 'lucide-react'
+import {useEffect,useMemo,useState} from 'react'
+import {
+ ArrowDown,ArrowRight,ArrowUp,Check,CheckCircle2,Clapperboard,Clock3,
+ Download,ExternalLink,Film,FolderOpen,Layers3,LoaderCircle,Plus,
+ RefreshCw,RotateCcw,Settings2,ShieldCheck,SlidersHorizontal,
+ Sparkles,Trash2,Upload,Video as VideoIcon,WandSparkles
+} from 'lucide-react'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
-import {Action,FormField,Headline,Notice,Panel,StateTag,Subheading,useRemote} from '../components/UI'
+import {FormField,Headline,Notice,Panel,StateTag,useRemote} from '../components/UI'
 import {openOAuth,post} from '../api'
 import {jobFinished,useJob,type JobState} from '../hooks/useJob'
 import {t,useLocale} from '../i18n'
 
-type Workflow={id:string;name:string;bytes:number}
-type VideoJob=JobState & {progress?:number;kind:'video';title?:string;brief:string;outputUrl?:string;result?:{bytes:number}}
 type VideoEngine='native'|'comfyui'
-type VideoStatus={config:{engine:VideoEngine;comfyUrl:string;voice?:string;narration?:boolean;videoModel?:string;resolution?:string;steps?:number};native?:{available:boolean};comfy:{reachable:boolean;available?:boolean};workflows:Workflow[];jobs:VideoJob[]}
-type VideoModel={id:string;name:string;kind:string;available:boolean;hint:string}
-type UploadJob=JobState & {progress?:number;result?:{url:string}}
+type Ratio='9:16'|'16:9'|'1:1'
+type StudioTab='create'|'library'|'publish'|'settings'
+type StudioMode='quick'|'scenes'
+type VideoModel={id:string;name:string;kind:string;available:boolean;hint:string;missingFiles?:number}
+type VideoConfig={engine:VideoEngine;comfyUrl:string;voice?:string;narration?:boolean;videoModel?:string;resolution?:string;steps?:number;comfyWorkflow?:unknown;comfyWorkflowName?:string}
+type VideoJob=JobState & {
+ kind:'video'|'youtube_upload';title?:string;brief?:string;engine?:VideoEngine;
+ phase?:string;progress?:number;outputUrl?:string|null;createdAt?:string;
+ duration?:number;aspectRatio?:Ratio;storyboard?:string[]|null;continuity?:string|null;
+ negativePrompt?:string|null;reuseVideoJobId?:string|null;maxNewScenes?:number|null;
+ renderParams?:{fps?:number;seed?:number;width?:number;height?:number};
+ sceneProgress?:{index?:number|null;total?:number|null;rendered?:number|null;reused?:number|null};
+ renderWorkload?:{frames?:number;pixelFrames?:number;megapixelFrames?:number;estimatedMoneyCost?:number|null};
+ result?:{bytes?:number;sceneCount?:number;renderedScenes?:number;reusedScenes?:number;reusedFrames?:number;generatedFrames?:number;renderSeconds?:number;url?:string}
+}
+type UploadJob=JobState & {progress?:number;result?:{url?:string}}
+type VideoStatus={config:VideoConfig;native?:{available:boolean};comfy:{reachable:boolean;available?:boolean};workflows:{id:string;name:string;bytes:number}[];jobs:VideoJob[]}
 type YoutubeStatus={connected:boolean;uploadAllowed:boolean;account?:{displayName:string;scopes:string}|null;uploads:UploadJob[]}
-const ratios={'9:16':{width:360,height:640,label:'vid.ratio.shorts'},'16:9':{width:640,height:360,label:'vid.ratio.landscape'},'1:1':{width:480,height:480,label:'vid.ratio.square'}} as const
-const terminal=jobFinished
-const statusLabel=(status:string)=>status==='completed'?t('vid.status.completed'):status==='running'?t('vid.status.running'):status==='queued'?t('vid.status.queued'):status==='downloading'?t('vid.status.downloading'):status==='failed'?t('vid.status.failed'):status
-const fmtBytes=(bytes=0)=>bytes>=1024**3?(bytes/1024**3).toFixed(1)+' GB':bytes>=1024**2?Math.round(bytes/1024**2)+' MB':'0 MB'
+type Draft={title:string;prompt:string;negative:string;ratio:Ratio;seconds:number;fps:number;seed:string;scenes:string[];continuity:string;mode:StudioMode}
+const ratios:Record<Ratio,{label:string;w:number;h:number}>={
+ '9:16':{label:'세로 · 쇼츠 / 릴스',w:360,h:640},
+ '16:9':{label:'가로 · 유튜브',w:640,h:360},
+ '1:1':{label:'정사각형 · 피드',w:480,h:480}
+}
+const draftKey='dominion.video.studio.draft.v1'
+const defaults:Draft={title:'',prompt:'',negative:'',ratio:'9:16',seconds:6,fps:16,seed:'-1',scenes:[''],continuity:'',mode:'quick'}
+function loadDraft():Draft {
+ try{
+  const saved=JSON.parse(localStorage.getItem(draftKey)||'null') as Partial<Draft>|null
+  if(!saved || typeof saved!=='object')return defaults
+  return {...defaults,
+   title:typeof saved.title==='string'?saved.title:'',
+   prompt:typeof saved.prompt==='string'?saved.prompt:'',
+   negative:typeof saved.negative==='string'?saved.negative:'',
+   ratio:saved.ratio && saved.ratio in ratios?saved.ratio:'9:16',
+   seconds:Number.isInteger(saved.seconds)&&Number(saved.seconds)>=3&&Number(saved.seconds)<=180?Number(saved.seconds):6,
+   fps:Number.isInteger(saved.fps)&&Number(saved.fps)>=1&&Number(saved.fps)<=60?Number(saved.fps):16,
+   seed:typeof saved.seed==='string'?saved.seed:'-1',
+   mode:saved.mode==='scenes'?'scenes':'quick',
+   scenes:Array.isArray(saved.scenes)?saved.scenes.filter((v):v is string=>typeof v==='string').slice(0,8):[''],
+   continuity:typeof saved.continuity==='string'?saved.continuity:''
+  }
+ }catch{return defaults}
+}
+const running=(status?:string)=>Boolean(status && !jobFinished(status))
+const statusText=(status?:string)=>({
+ completed:'완료',running:'제작 중',queued:'대기 중',failed:'실패',
+ cancelled:'취소됨',needs_review:'확인 필요',interrupted:'중단됨',downloading:'다운로드 중'
+} as Record<string,string>)[status||'']||'상태 확인 중'
+const phaseText=(phase?:string)=>({
+ storyboard:'장면 준비 중',submitting:'렌더러에 요청 중',rendering:'장면 제작 중',
+ encoding:'영상 합성 중',complete:'완료',completed:'완료',uploading:'업로드 중'
+} as Record<string,string>)[phase||'']||'처리 중'
+const fmtBytes=(bytes=0)=>bytes>=1024**3?(bytes/1024**3).toFixed(1)+' GB':bytes>=1024**2?(bytes/1024**2).toFixed(1)+' MB':bytes>0?Math.round(bytes/1024)+' KB':'크기 확인 중'
+const shortDate=(iso?:string)=>{
+ if(!iso)return ''
+ const d=new Date(iso);return Number.isNaN(d.valueOf())?'':d.toLocaleDateString('ko-KR',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})
+}
+const panelTitle='text-[15px] font-bold tracking-tight text-[#302A24]'
+const soft='rounded-2xl border border-[#E7E0D5] bg-[#FBF8F3]'
+const focus='focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C96442] focus-visible:ring-offset-2'
+const tabStyle='inline-flex min-h-10 items-center gap-2 rounded-xl px-3 py-2 text-[13px] font-semibold transition-colors'
 
 export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  useLocale()
- const video=useRemote<VideoStatus>('/api/video/status',{config:{engine:'comfyui',comfyUrl:''},comfy:{reachable:false},workflows:[],jobs:[]},false)
- const youtube=useRemote<YoutubeStatus>('/api/youtube/status',{connected:false,uploadAllowed:false,account:null,uploads:[]})
- const oauth=useRemote<{id:string;configured:boolean;callback?:string}[]>('/api/oauth/providers',[])
- const outputs=useRemote<VideoJob[]>('/api/video/outputs',[])
+ const video=useRemote<VideoStatus>('/api/video/status',{config:{engine:'native',comfyUrl:''},native:{available:false},comfy:{reachable:false},workflows:[],jobs:[]},false)
+ const jobs=useRemote<VideoJob[]>('/api/video/jobs',[],true)
+ const outputs=useRemote<VideoJob[]>('/api/video/outputs',[],true)
  const catalog=useRemote<{videoModels:VideoModel[]}>('/api/video/catalog',{videoModels:[]})
  const downloads=useRemote<{downloads:{id:string;model:string;status:string;progress:number;bytes:number;total:number;error?:string}[]}>('/api/video/models/downloads',{downloads:[]})
- const [workflow,setWorkflow]=useState(''),[title,setTitle]=useState(''),[prompt,setPrompt]=useState(''),[negative,setNegative]=useState(''),[ratio,setRatio]=useState<keyof typeof ratios>('9:16'),[seconds,setSeconds]=useState(3),[fps,setFps]=useState(16),[seed,setSeed]=useState('-1')
- const [engineChoice,setEngine]=useState<'native'|'comfyui'>(),[comfyUrl,setComfyUrl]=useState(''),[savingConfig,setSavingConfig]=useState(false)
- const [voice,setVoice]=useState('Yuna'),[narration,setNarration]=useState(true)
- const [tab,setTab]=useState<'create'|'settings'>('create'),[refreshing,setRefreshing]=useState(false),[gid,setGid]=useState(''),[gsecret,setGsecret]=useState(''),[gBusy,setGBusy]=useState(false)
- const [videoSubmission,setVideoSubmission]=useState<VideoJob|null>(null),[generating,setGenerating]=useState(false),[error,setError]=useState('')
- const [uploadFile,setUploadFile]=useState(''),[uploadTitle,setUploadTitle]=useState(''),[uploadDescription,setUploadDescription]=useState(''),[uploadPrivacy,setUploadPrivacy]=useState('private'),[uploadTags,setUploadTags]=useState('')
- const [uploadSubmission,setUploadSubmission]=useState<UploadJob|null>(null),[uploading,setUploading]=useState(false)
- const activeVideo=useJob(videoSubmission?'/api/video/jobs/'+videoSubmission.id:null,videoSubmission)
- const activeUpload=useJob(uploadSubmission?'/api/youtube/uploads/'+uploadSubmission.id:null,uploadSubmission)
- const videoJob=activeVideo.value??outputs.value[0]
- const uploadJob=activeUpload.value
- const uploadStatus=oauth.value.find(item=>item.id==='youtube')
- const gReady=uploadStatus?.configured
- const gCallback=uploadStatus?.callback
- const selectedOutput=uploadFile
-  ? outputs.value.find(item=>item.id===uploadFile)??(videoJob?.id===uploadFile&&videoJob.outputUrl?videoJob:undefined)
-  : outputs.value[0]
- const engine=engineChoice??(video.value.config.engine==='native'?'native':'comfyui')
+ const youtube=useRemote<YoutubeStatus>('/api/youtube/status',{connected:false,uploadAllowed:false,account:null,uploads:[]})
+ const oauth=useRemote<{id:string;configured:boolean;callback?:string}[]>('/api/oauth/providers',[])
+ const [draft,setDraft]=useState<Draft>(loadDraft)
+ const [tab,setTab]=useState<StudioTab>('create')
+ const [engineChoice,setEngineChoice]=useState<VideoEngine|null>(null)
+ const [comfyUrl,setComfyUrl]=useState('')
+ const [voice,setVoice]=useState('Yuna')
+ const [narration,setNarration]=useState(true)
+ const [reuseId,setReuseId]=useState('')
+ const [regenerate,setRegenerate]=useState<number[]>([])
+ const [budgetEnabled,setBudgetEnabled]=useState(false)
+ const [maxNewScenes,setMaxNewScenes]=useState(1)
+ const [advanced,setAdvanced]=useState(false)
+ const [currentId,setCurrentId]=useState('')
+ const [submitted,setSubmitted]=useState<VideoJob|null>(null)
+ const [uploadFile,setUploadFile]=useState('')
+ const [uploadTitle,setUploadTitle]=useState('')
+ const [uploadDescription,setUploadDescription]=useState('')
+ const [uploadPrivacy,setUploadPrivacy]=useState('private')
+ const [uploadTags,setUploadTags]=useState('')
+ const [uploadId,setUploadId]=useState('')
+ const [uploadSubmission,setUploadSubmission]=useState<UploadJob|null>(null)
+ const [gid,setGid]=useState('')
+ const [gsecret,setGsecret]=useState('')
+ const [gBusy,setGBusy]=useState(false)
+ const [savingConfig,setSavingConfig]=useState(false)
+ const [generating,setGenerating]=useState(false)
+ const [uploading,setUploading]=useState(false)
+ const [refreshing,setRefreshing]=useState(false)
+ const [error,setError]=useState('')
+ const engine:VideoEngine=engineChoice??(video.value.config.engine==='comfyui'?'comfyui':'native')
  const usingComfy=engine==='comfyui'
- const ready=usingComfy?Boolean(video.value.comfy.available&&(workflow||video.value.config.videoModel)):Boolean(video.value.native?.available)
- const maxDuration=usingComfy?9:180
- useEffect(()=>{setComfyUrl(video.value.config.comfyUrl)},[video.value.config.comfyUrl])
+ const active=useJob<VideoJob>(currentId?'/api/video/jobs/'+encodeURIComponent(currentId):null,submitted?.id===currentId?submitted:null)
+ const activeUpload=useJob<UploadJob>(uploadId?'/api/youtube/uploads/'+encodeURIComponent(uploadId):null,uploadSubmission)
+ const sortedJobs=useMemo(()=>[...jobs.value].filter(j=>j.kind==='video').sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))),[jobs.value])
+ const videoJob=active.value??sortedJobs.find(j=>j.id===currentId)??sortedJobs[0]??null
+ const completed=useMemo(()=>sortedJobs.filter(j=>j.status==='completed'&&Boolean(j.outputUrl)),[sortedJobs])
+ const selectedOutput=completed.find(j=>j.id===uploadFile)??completed[0]??outputs.value.find(j=>j.id===uploadFile)??outputs.value[0]??null
+ const uploadJob=activeUpload.value
+ const statusConfig=video.value.config
+ const installed=catalog.value.videoModels.find(model=>model.id===statusConfig.videoModel)
+ const downloadState=downloads.value.downloads.find(row=>row.model===statusConfig.videoModel)
+ const savedWorkflow=video.value.workflows[0]
+ const google=oauth.value.find(provider=>provider.id==='youtube')
+ const sceneItems=draft.scenes.map(s=>s.trim()).filter(Boolean)
+ const actualScenes=usingComfy&&draft.mode==='scenes'?sceneItems:[draft.prompt.trim()].filter(Boolean)
+ const maxDuration=usingComfy&&draft.mode==='quick'?9:180
+ const invalidTime=usingComfy&&draft.mode==='scenes'&&sceneItems.length>1&&draft.seconds<sceneItems.length*3
+ const invalidScenes=draft.mode==='scenes'&&usingComfy&&(!sceneItems.length||sceneItems.length>8||draft.scenes.some(s=>!s.trim())||draft.scenes.some(s=>new TextEncoder().encode(s).length>4000))
+ const invalidSeed=usingComfy&&(!draft.seed.trim()||!Number.isSafeInteger(Number(draft.seed))||Number(draft.seed)<-1)
+ const validDuration=Number.isInteger(draft.seconds)&&draft.seconds>=3&&draft.seconds<=maxDuration
+ const validFps=Number.isInteger(draft.fps)&&draft.fps>=1&&draft.fps<=60
+ const ready=usingComfy?Boolean(video.value.comfy.available):Boolean(video.value.native?.available)
+ const prerequisite=usingComfy
+  ? !statusConfig.comfyUrl?.trim()?'먼저 ComfyUI 서버 주소를 등록해 주세요.'
+   : !video.value.comfy.reachable?'ComfyUI 서버에 연결되지 않았습니다. 주소와 실행 상태를 확인해 주세요.'
+   : !video.value.comfy.available?'영상 모델을 설치하거나 API 워크플로를 등록해 주세요.':''
+  : !video.value.native?.available?'네이티브 영상 제작에는 FFmpeg 설치가 필요합니다.':''
+ const busy=generating||Boolean(submitted&&running(active.value?.status??submitted.status))
+ const canGenerate=ready&&!busy&&actualScenes.length>0&&!invalidScenes&&!invalidTime&&!invalidSeed&&validDuration&&(!usingComfy||validFps)
+ const suggestedMaxNew=actualScenes.length
+ const progress=typeof videoJob?.progress==='number'?Math.max(0,Math.min(100,Math.round(videoJob.progress))):null
+ const editingSource=sortedJobs.find(j=>j.id===reuseId)
+ const ratioWidth=ratios[draft.ratio].w
+ const ratioHeight=ratios[draft.ratio].h
+
+ useEffect(()=>{try{localStorage.setItem(draftKey,JSON.stringify(draft))}catch{}},[draft])
+ useEffect(()=>{setComfyUrl(statusConfig.comfyUrl||'')},[statusConfig.comfyUrl])
+ useEffect(()=>{setVoice(statusConfig.voice||'Yuna');setNarration(statusConfig.narration!==false)},[statusConfig.voice,statusConfig.narration])
+ useEffect(()=>{if(currentId||!sortedJobs.length)return;setCurrentId(sortedJobs[0].id)},[currentId,sortedJobs])
+ useEffect(()=>{if(active.value?.status==='completed'){void outputs.reload();void jobs.reload()}},[active.value?.status,outputs.reload,jobs.reload])
  useEffect(()=>{
-  setVoice(video.value.config.voice||'Yuna')
-  setNarration(video.value.config.narration!==false)
- },[video.value.config.voice,video.value.config.narration])
- useEffect(()=>{
-  if(!video.value.workflows.some(item=>item.id===workflow))setWorkflow(video.value.workflows[0]?.id||'')
- },[video.value.workflows,workflow])
- useEffect(()=>{
-  if(activeVideo.value?.status==='completed')void outputs.reload()
- },[activeVideo.value?.status,outputs.reload])
- const saveGoogle=async()=>{
-  setGBusy(true);setError('');
-  try{await post('/api/oauth/providers/youtube',{clientId:gid.trim(),clientSecret:gsecret.trim()});setGsecret('');await oauth.reload()}
-  catch(e){setError((e as Error).message)}finally{setGBusy(false)}
- }
- const connectGoogle=async()=>{
-  setError('');
-  try{await openOAuth('youtube')}catch(e){setError(t('vid.youtubeFailed',{error:(e as Error).message}))}
- }
- const changeEngine=async(next:'native'|'comfyui')=>{
-  if(savingConfig)return;
-  setEngine(next);setSavingConfig(true);setError('');
-  try{await post('/api/video/config',{engine:next,comfyUrl:comfyUrl.trim()||video.value.config.comfyUrl});await video.reload()}
-  catch(e){setError((e as Error).message)}finally{setSavingConfig(false)}
- }
- const saveComfy=async()=>{
-  if(savingConfig)return;
-  setSavingConfig(true);setError('');
-  try{await post('/api/video/config',{engine:'comfyui',comfyUrl:comfyUrl.trim()});await video.reload()}
-  catch(e){setError((e as Error).message)}finally{setSavingConfig(false)}
- }
- const importWorkflow=async(file:File)=>{
-  if(savingConfig)return;
-  setSavingConfig(true);setError('');
-  try{
-   if(file.size>1024*1024)throw Error(t('vid.workflowTooBig'))
-   const comfyWorkflow:unknown=JSON.parse(await file.text());
-   await post('/api/video/config',{engine:'comfyui',comfyWorkflow,comfyWorkflowName:file.name});
-   await video.reload();
-  }catch(e){setError((e as Error).message)}finally{setSavingConfig(false)}
- }
- const saveAudio=async(patch:{voice?:string;narration?:boolean})=>{
-  if(patch.voice!==undefined)setVoice(patch.voice)
-  if(patch.narration!==undefined)setNarration(patch.narration)
-  setSavingConfig(true);setError('')
-  try{await post('/api/video/config',patch);await video.reload()}
-  catch(e){setError((e as Error).message)}finally{setSavingConfig(false)}
- }
- const saveModel=async(patch:{videoModel?:string;resolution?:string;steps?:number})=>{
-  setSavingConfig(true);setError('')
-  try{await post('/api/video/config',patch);await video.reload();await catalog.reload()}
-  catch(e){setError((e as Error).message)}finally{setSavingConfig(false)}
- }
- const selectedModel=catalog.value.videoModels.find(model=>model.id===video.value.config.videoModel)
- const downloadState=downloads.value.downloads.find(row=>row.model===video.value.config.videoModel)
+  if(!sortedJobs.some(j=>running(j.status)))return
+  const timer=window.setInterval(()=>void jobs.reload(),4000)
+  return()=>window.clearInterval(timer)
+ },[sortedJobs,jobs.reload])
  useEffect(()=>{
   if(downloadState?.status!=='downloading')return
   const timer=window.setInterval(()=>void downloads.reload(),3000)
   return()=>window.clearInterval(timer)
  },[downloadState?.status,downloads.reload])
- useEffect(()=>{
-  if(downloadState?.status==='completed')void catalog.reload()
- },[downloadState?.status,catalog.reload])
+ useEffect(()=>{if(downloadState?.status==='completed'){void catalog.reload();void video.reload()}},[downloadState?.status,catalog.reload,video.reload])
+
+ const patchDraft=(patch:Partial<Draft>)=>setDraft(previous=>({...previous,...patch}))
+ const reload=async()=>{
+  setRefreshing(true);setError('')
+  try{await Promise.allSettled([video.reload(),jobs.reload(),outputs.reload(),catalog.reload(),downloads.reload(),youtube.reload(),oauth.reload()])}
+  finally{setRefreshing(false)}
+ }
+ const saveConfig=async(patch:Partial<VideoConfig>)=>{
+  if(savingConfig)return
+  setSavingConfig(true);setError('')
+  try{await post('/api/video/config',patch);await Promise.all([video.reload(),catalog.reload()])}
+  catch(e){setError((e as Error).message)}
+  finally{setSavingConfig(false)}
+ }
+ const changeEngine=async(next:VideoEngine)=>{
+  setEngineChoice(next);await saveConfig({engine:next})
+ }
+ const importWorkflow=async(file:File)=>{
+  if(savingConfig)return
+  if(file.size>1024*1024){setError('워크플로는 1 MB 이하의 API 형식 JSON이어야 합니다.');return}
+  try{
+   const text=await file.text()
+   const parsed=JSON.parse(text) as Record<string,unknown>
+   if(!parsed||typeof parsed!=='object'||Array.isArray(parsed)||!Object.values(parsed).every(node=>
+    Boolean(node&&typeof node==='object'&&!Array.isArray(node)&&'class_type' in node&&'inputs' in node)
+   ))throw Error('ComfyUI API 형식 JSON이 필요합니다. 일반 UI 워크플로 JSON은 그대로 실행할 수 없습니다.')
+   await saveConfig({engine:'comfyui',comfyWorkflow:parsed,comfyWorkflowName:file.name})
+  }catch(e){setError((e as Error).message)}
+ }
  const startDownload=async()=>{
-  if(!video.value.config.videoModel)return
+  if(!statusConfig.videoModel)return
   setError('')
-  try{await post('/api/video/models/'+encodeURIComponent(video.value.config.videoModel)+'/download',{});await downloads.reload()}
+  try{await post('/api/video/models/'+encodeURIComponent(statusConfig.videoModel)+'/download',{});await downloads.reload()}
   catch(e){setError((e as Error).message)}
  }
  const reveal=async(id:string)=>{
-  try{await post('/api/video/jobs/'+id+'/reveal',{})}catch(e){setError((e as Error).message)}
+  try{await post('/api/video/jobs/'+encodeURIComponent(id)+'/reveal',{})}catch(e){setError((e as Error).message)}
+ }
+ const mutateScene=(index:number,text:string)=>patchDraft({scenes:draft.scenes.map((scene,i)=>i===index?text:scene)})
+ const swapScene=(index:number,other:number)=>{
+  const next=[...draft.scenes]
+  ;[next[index],next[other]]=[next[other],next[index]]
+  patchDraft({scenes:next});setRegenerate([])
+ }
+ const addScene=()=>{
+  if(draft.scenes.length>=8)return
+  patchDraft({scenes:[...draft.scenes,''],seconds:Math.max(draft.seconds,(draft.scenes.length+1)*3)})
+  setMaxNewScenes(v=>Math.max(v,draft.scenes.length+1))
  }
  const generate=async()=>{
-  if(!ready||!prompt.trim()||generating)return;
-  const requestedSeed=Number(seed);
-  if(!Number.isInteger(seconds)||seconds<3||seconds>maxDuration||
-   (usingComfy&&(!seed.trim()||!Number.isSafeInteger(requestedSeed)||requestedSeed < -1||!Number.isInteger(fps)||fps<1||fps>60))){
-   setError(t('vid.checkValues'));return;
+  if(!canGenerate)return
+  if(budgetEnabled&&(!Number.isInteger(maxNewScenes)||maxNewScenes<0||maxNewScenes>actualScenes.length)){
+   setError('새로 생성할 장면 수는 0부터 전체 장면 수까지 입력해 주세요.');return
   }
-  setGenerating(true);setError('');
+  if(budgetEnabled&&maxNewScenes===0&&!reuseId){
+   setError('새 렌더 0회는 이전에 만든 영상의 검증된 장면을 재사용할 때만 사용할 수 있습니다.');return
+  }
+  setGenerating(true);setError('')
   try{
-   setVideoSubmission(await post<VideoJob>('/api/video/jobs',{
-    engine,title,brief:prompt,aspectRatio:ratio,duration:seconds,
-    ...(usingComfy?{negativePrompt:negative,fps,seed:requestedSeed}:{}),
-   }));
+   const newJob=await post<VideoJob>('/api/video/jobs',{
+    engine,title:draft.title.trim(),brief:actualScenes.join('\n\n'),
+    aspectRatio:draft.ratio,duration:draft.seconds,
+    ...(usingComfy?{
+     scenes:draft.mode==='scenes'?sceneItems:undefined,
+     negativePrompt:draft.negative,fps:draft.fps,seed:Number(draft.seed),
+     continuity:draft.continuity,
+     ...(reuseId?{reuseVideoJobId:reuseId,regenerateScenes:regenerate}:{}),
+     ...(budgetEnabled?{maxNewScenes}: {})
+    }:{})
+   })
+   setSubmitted(newJob);setCurrentId(newJob.id);setTab('create')
+   void jobs.reload()
   }catch(e){setError((e as Error).message)}finally{setGenerating(false)}
  }
- const useResult=()=>{
-  if(!videoJob?.outputUrl)return
-  setUploadFile(videoJob.id)
-  setUploadTitle((videoJob.title||videoJob.brief).slice(0,90))
-  setUploadDescription(videoJob.brief)
+ const editJob=(job:VideoJob)=>{
+  const scenes=job.storyboard?.length?job.storyboard:
+   (job.brief||'').split('\n\n').map(s=>s.trim()).filter(Boolean)
+  patchDraft({
+   title:job.title||'',prompt:job.brief||'',scenes:scenes.length?scenes:[''],
+   mode:job.engine==='comfyui'?'scenes':'quick',
+   ratio:job.aspectRatio&&job.aspectRatio in ratios?job.aspectRatio:'9:16',
+   seconds:job.duration??6,fps:job.renderParams?.fps??16,
+   seed:'-1',negative:job.negativePrompt||'',continuity:job.continuity||''
+  })
+  if(job.engine==='comfyui'){
+   setEngineChoice('comfyui')
+   void saveConfig({engine:'comfyui'})
+   setReuseId(job.id);setBudgetEnabled(false);setRegenerate([])
+  }else{setReuseId('');setEngineChoice('native');void saveConfig({engine:'native'})}
+  setCurrentId(job.id);setTab('create')
+ }
+ const chooseForUpload=(job:VideoJob)=>{
+  if(!job.outputUrl)return
+  setUploadFile(job.id)
+  setUploadTitle((job.title||job.brief||'').slice(0,100))
+  setUploadDescription(job.brief||'')
+  setTab('publish')
+ }
+ const connectYoutube=async()=>{setError('');try{await openOAuth('youtube')}catch(e){setError((e as Error).message)}}
+ const saveGoogle=async()=>{
+  if(!gid.trim()||!gsecret.trim())return
+  setGBusy(true);setError('')
+  try{
+   await post('/api/oauth/providers/youtube',{clientId:gid.trim(),clientSecret:gsecret.trim()})
+   setGsecret('');await oauth.reload()
+  }catch(e){setError((e as Error).message)}finally{setGBusy(false)}
  }
  const startUpload=async()=>{
-  if(!youtube.value.uploadAllowed){setError(t('vid.connectYoutubeFirst'));return}
-  if(!selectedOutput||!uploadTitle.trim()||uploading)return;
-  setUploading(true);setError('');
+  if(!selectedOutput?.outputUrl||!uploadTitle.trim()||uploading)return
+  if(!youtube.value.uploadAllowed){setError('YouTube 계정을 먼저 연결해 주세요.');return}
+  setUploading(true);setError('')
   try{
-   setUploadSubmission(await post<UploadJob>('/api/video/jobs/'+selectedOutput.id+'/upload',{
-    title:uploadTitle,description:uploadDescription,privacyStatus:uploadPrivacy,tags:uploadTags,
-   }));
+   const job=await post<UploadJob>('/api/video/jobs/'+encodeURIComponent(selectedOutput.id)+'/upload',{
+    title:uploadTitle.trim(),description:uploadDescription,privacyStatus:uploadPrivacy,tags:uploadTags
+   })
+   setUploadSubmission(job);setUploadId(job.id)
   }catch(e){setError((e as Error).message)}finally{setUploading(false)}
  }
- return <div className="mx-auto w-full max-w-[1400px] overflow-x-hidden px-5 py-4 sm:px-7 lg:px-6 lg:pb-8">
-  <Headline eyebrow={t('ui.eyebrow.video')} title={t('video.title')} description={t('video.description')} actions={<div className="flex items-center gap-2"><Button variant="secondary" onClick={()=>void connectGoogle()}>{t('vid.connectYoutube')}</Button><Button variant="secondary" disabled={refreshing} onClick={async()=>{setRefreshing(true);try{await Promise.allSettled([video.reload(),youtube.reload()])}finally{setRefreshing(false)}}}><RefreshCw size={16} className={refreshing?'animate-spin':''}/> {refreshing?t('video.refreshing'):t('video.refresh')}</Button></div>}/>
-  {(error||video.error||outputs.error||activeVideo.error||activeUpload.error)&&<Notice message={error||video.error||outputs.error||activeVideo.error||activeUpload.error}/>}
-  <div className="mb-3 flex flex-wrap items-center gap-2"><Button variant={tab==='create'?'primary':'ghost'} onClick={()=>setTab('create')}>{t('video.tab.create')}</Button><Button variant={tab==='settings'?'primary':'ghost'} onClick={()=>setTab('settings')}>{t('video.tab.settings')}</Button></div>
-  {tab==='settings'&&<>
-  <Panel className="mb-4 p-4">
-   <div className="flex items-center gap-2"><Clapperboard size={18} className="text-[#C96442]"/><strong className="text-[13px] text-[#24211D]">영상 모델</strong></div>
-   <div className="mt-3 grid gap-3 sm:grid-cols-3">
-    <FormField label="모델"><SelectInput value={video.value.config.videoModel||''} disabled={savingConfig} onChange={e=>void saveModel({videoModel:e.target.value})}>
-     {!catalog.value.videoModels.length&&<option value="">모델 없음</option>}
-     {catalog.value.videoModels.map(model=><option key={model.id} value={model.id} disabled={!model.available}>{model.name}{model.available?'':' · 미설치'}</option>)}
-    </SelectInput></FormField>
-    <FormField label="해상도"><SelectInput value={video.value.config.resolution||'480x832'} disabled={savingConfig} onChange={e=>void saveModel({resolution:e.target.value})}>
-     {['256x448','384x672','480x832','832x480','448x448'].map(size=><option key={size} value={size}>{size}</option>)}
-    </SelectInput></FormField>
-    <FormField label="스텝"><SelectInput value={String(video.value.config.steps??20)} disabled={savingConfig} onChange={e=>void saveModel({steps:Number(e.target.value)})}>
-     {[4,8,12,20,30,40].map(step=><option key={step} value={step}>{step}</option>)}
-    </SelectInput></FormField>
-   </div>
-   <p className="mt-2 text-[11px] text-[#8A8176]">{catalog.value.videoModels.find(model=>model.id===video.value.config.videoModel)?.hint||'모델을 선택하면 한 번에 생성됩니다.'}</p>
-   {selectedModel&&!selectedModel.available&&<div className="mt-3 flex flex-wrap items-center gap-2">
-    <Button variant="secondary" disabled={downloadState?.status==='downloading'} onClick={()=>void startDownload()}>
-     {downloadState?.status==='downloading'?`다운로드 중 ${downloadState.progress||0}%`:'모델 다운로드'}
-    </Button>
-    {downloadState?.status==='failed'&&<span className="text-[11px] text-rose-600">{downloadState.error||'다운로드 실패'}</span>}
-    {downloadState?.status==='completed'&&<span className="text-[11px] text-[#4E6B45]">설치 완료</span>}
-   </div>}
-  </Panel>
-  <Panel className="mb-4 p-4">
-   <div className="flex flex-wrap items-center justify-between gap-3">
-    <div className="flex items-center gap-2"><Clapperboard size={18} className="text-[#C96442]"/><strong className="text-[13px] text-[#24211D]">{t('vid.engine')}</strong></div>
-    <div className="flex flex-wrap items-center gap-2">
-     <SelectInput aria-label={t('vid.engine')} value={engine} onChange={e=>void changeEngine(e.target.value as 'native'|'comfyui')} disabled={savingConfig} className="!w-auto !text-[12px]"><option value="native">{t('vid.engine.native')}</option><option value="comfyui">{t('vid.engine.comfy')}</option></SelectInput>
+
+ const errorMessage=error||video.error||jobs.error||outputs.error||active.error||activeUpload.error
+ const sections:[StudioTab,string,typeof Clapperboard][]=[
+  ['create','영상 만들기',WandSparkles],['library','프로젝트',Layers3],
+  ['publish','게시하기',Upload],['settings','환경 설정',Settings2]
+ ]
+ const previewJob=videoJob
+ const previewWidth=previewJob?.aspectRatio&&previewJob.aspectRatio in ratios?ratios[previewJob.aspectRatio].w:ratioWidth
+ const previewHeight=previewJob?.aspectRatio&&previewJob.aspectRatio in ratios?ratios[previewJob.aspectRatio].h:ratioHeight
+ return <div className="mx-auto w-full max-w-[1536px] min-w-0 overflow-x-hidden px-4 pb-16 pt-5 sm:px-6 lg:px-8">
+  <Headline eyebrow="DOMINION · VIDEO STUDIO" title="영상 스튜디오" description="아이디어부터 장면 구성, 생성, 수정, 게시까지 한곳에서 작업합니다."
+   actions={<Button variant="secondary" disabled={refreshing} onClick={()=>void reload()}><RefreshCw size={15} className={refreshing?'animate-spin':''}/> 새로고침</Button>}/>
+  {errorMessage&&<Notice message={errorMessage}/>}
+  <section className="relative mb-5 overflow-hidden rounded-[24px] bg-[#202A38] p-5 text-white shadow-[0_14px_44px_rgba(23,34,52,.14)] sm:p-7">
+   <div className="pointer-events-none absolute -right-16 -top-32 h-72 w-72 rounded-full bg-[#EAA178]/15 blur-3xl"/>
+   <div className="relative flex flex-col justify-between gap-5 lg:flex-row lg:items-center">
+    <div className="max-w-xl">
+     <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-[11px] font-semibold text-[#FFE4CD]"><Sparkles size={13}/> 아이디어를 영상으로</div>
+     <h2 className="text-[23px] font-bold leading-tight tracking-tight sm:text-[27px]">만들고, 확인하고, 필요한 장면만 다시 만드세요.</h2>
+     <p className="mt-2 text-[12px] leading-6 text-[#CDD5DF]">간단한 자막 영상부터 여러 장면으로 구성된 AI 영상까지. 완성된 결과는 프로젝트에서 다시 열 수 있습니다.</p>
     </div>
-   </div>
-  </Panel>
-  <Panel className="mb-4 p-4">
-   <div className="grid gap-3 sm:grid-cols-2">
-    <FormField label="내레이션 음성"><SelectInput value={voice} disabled={savingConfig} onChange={e=>void saveAudio({voice:e.target.value})}>
-     {['Yuna'].map(name=><option key={name} value={name}>{name}</option>)}
-    </SelectInput></FormField>
-    <label className="mt-6 flex items-center gap-2 text-[12px]"><input type="checkbox" checked={narration} disabled={savingConfig} onChange={e=>void saveAudio({narration:e.target.checked})}/>내레이션 자동 생성</label>
-   </div>
-   <p className="mt-2 text-[11px] leading-5 text-[#8A8176]">제목과 주제만 넣고 생성하면 선택한 음성으로 읽고, 소리까지 합쳐 영상이 나옵니다. 음성 엔진이 없으면 무음으로 만듭니다.</p>
-  </Panel>
-  <div className="mb-4 grid grid-cols-1 items-start gap-3 md:grid-cols-2">
-   {engine==='comfyui'&&<Panel className={'p-4 '+(video.value.comfy.reachable?'border-emerald-200 bg-emerald-50/50':'border-amber-200 bg-amber-50/50')}>
-    <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2"><Clapperboard size={18} className={video.value.comfy.reachable?'text-emerald-700':'text-amber-700'}/><strong className="text-[13px] text-[#24211D]">{t('vid.comfyTitle')}</strong></div><StateTag online={video.value.comfy.reachable}>{video.value.comfy.reachable?t('vid.reachable'):t('vid.unreachable')}</StateTag></div>
-    <p className="mt-2 text-sm text-[#5C544A]">{t('vid.comfyNote')}</p>
-    <div className="mt-2 flex flex-wrap gap-2"><TextInput aria-label={t('vid.comfyUrl')} value={comfyUrl} onChange={e=>setComfyUrl(e.target.value)} placeholder="http://127.0.0.1:8188"/><Button variant="secondary" disabled={savingConfig||!comfyUrl.trim()} onClick={()=>void saveComfy()}>{savingConfig?t('agents.saving'):t('vid.save')}</Button></div>
-   </Panel>}
-  </div>
-   {usingComfy&&<div className="mb-4 rounded-xl border border-[#EED9CC] bg-[#FFF9F5] p-4">
-     <strong className="text-[12px] text-[#3A342D]">{video.value.workflows.length?t('vid.savedWorkflow',{name:video.value.workflows[0].name}):t('vid.noWorkflow')}</strong>
-     <ol className="mt-2 grid gap-1 text-[11px] leading-5 text-[#5C544A]">
-      <li>{t('vid.step1')}</li>
-      <li>{t('vid.step2')}</li>
-      <li>{t('vid.step3')}</li>
-     </ol>
-     <div className="mt-2 flex flex-wrap items-center gap-2"><label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-[#E1D9CC] bg-[#FFFDF9] px-3 py-2 text-[12px] font-semibold text-[#3A342D] hover:bg-[#F7F2EA]">
-           {t('vid.openJson')}
-           <input type="file" className="hidden" accept=".json,application/json" disabled={savingConfig} onChange={e=>{
-             const file=e.currentTarget.files?.[0];e.currentTarget.value='';
-             if(file)void importWorkflow(file);
-           }}/>
-         </label><Button variant="ghost" onClick={()=>void video.reload()}>{t('vid.recheck')}</Button></div>
-    </div>}
-  </>}
-  <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,380px)]">
-   <div className="grid min-w-0 content-start gap-4">
-    {tab==='create'&&<Panel className="min-w-0 p-5">
-     <Subheading title={t('vid.generate')} extra={<span className="text-[11px] text-[#8A8176]">{usingComfy?t('vid.workflowCount',{count:video.value.workflows.length}):t('vid.ffmpegCard')}</span>}/>
-     <div className="grid gap-4">
-      <FormField label={t('vid.videoTitle')} hint={t('vid.videoTitleHint')}><TextInput value={title} onChange={e=>setTitle(e.target.value)} placeholder={t('vid.videoTitlePlaceholder')}/></FormField>
-      <FormField label={t('vid.prompt')}><TextArea rows={4} value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder={t('vid.promptPlaceholder')}/></FormField>
-      {usingComfy&&<FormField label={t('vid.negative')} hint={t('vid.negativeHint')}><TextInput value={negative} onChange={e=>setNegative(e.target.value)} placeholder="low quality, blurry, watermark"/></FormField>}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3"><FormField label={t('vid.ratio')} hint={`${ratios[ratio].width}×${ratios[ratio].height}px`}><SelectInput value={ratio} onChange={e=>setRatio(e.target.value as keyof typeof ratios)}>{(Object.keys(ratios) as Array<keyof typeof ratios>).map(key=><option key={key} value={key}>{t(ratios[key].label)}</option>)}</SelectInput></FormField><FormField label={t('vid.seconds')} hint={t('vid.max',{count:maxDuration})}><TextInput type="number" min={3} max={maxDuration} value={seconds} onChange={e=>setSeconds(Number(e.target.value))}/></FormField>{usingComfy&&<FormField label="FPS" hint={t('vid.fpsHint')}><TextInput type="number" min={1} max={60} value={fps} onChange={e=>setFps(Number(e.target.value))}/></FormField>}</div>
-      {usingComfy&&<FormField label={t('vid.seed')} hint={t('vid.seedHint')}><div className="flex gap-2"><TextInput value={seed} onChange={e=>setSeed(e.target.value)} placeholder={t('vid.randomValue')}/><Button variant="secondary" className="shrink-0" onClick={()=>setSeed('-1')}>{t('vid.random')}</Button></div></FormField>}
-      <div className="flex flex-wrap items-center justify-between gap-3">{usingComfy?<p className="text-[11px] leading-5 text-[#8A8176]">{t('vid.placeholderNote')}</p>:<p className="text-[11px] leading-5 text-[#8A8176]">{ready?t('vid.silentNote'):t('vid.ffmpegRequired')}</p>}<Action disabled={generating||Boolean(videoSubmission&&!terminal(activeVideo.value?.status))||!ready||!prompt.trim()} onClick={()=>void generate()}>{generating?<><LoaderCircle size={15} className="animate-spin"/> {t('vid.requesting')}</>:<><Play size={15}/> {t('vid.generate')}</>}</Action></div>
+    <div className="grid grid-cols-2 gap-2 sm:min-w-[290px]">
+     <div className="rounded-xl border border-white/15 bg-white/10 px-4 py-3">
+      <span className="text-[11px] text-[#CAD5DF]">제작 환경</span>
+      <div className="mt-1 flex items-center gap-1.5 text-[13px] font-semibold">{ready?<CheckCircle2 size={15} className="text-[#A7DFB2]"/>:<Clock3 size={15} className="text-[#F7CC8F]"/>}{ready?'생성 준비 완료':'설정 필요'}</div>
      </div>
-    </Panel>}
-    {tab==='settings'&&<Panel className="min-w-0 p-5">
-     <div className="mt-4 rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-3">
-     <div className="flex items-center justify-between gap-2"><strong className="text-[12px] text-[#3A342D]">{t('vid.youtube')}</strong><StateTag online={gReady}>{gReady?t('vid.appReady'):t('vid.appNeeded')}</StateTag></div>
-     <p className="mt-1 text-[10px] leading-4 text-[#8A8176]">{t('vid.redirectNote')}</p>{gCallback&&<div className="mt-1 flex items-center gap-2 rounded border border-[#E7E0D5] bg-[#FFFDF9] p-2"><code className="min-w-0 flex-1 break-all text-[10px] text-[#3A342D]">{gCallback}</code><Button variant="ghost" className="!px-2 !py-0.5 !text-[10px]" onClick={async()=>{try{await navigator.clipboard.writeText(gCallback);setError(t('vid.copied'))}catch(e){setError((e as Error).message)}}}>{t('vid.copy')}</Button></div>}
-     <div className="mt-2 grid gap-2 sm:grid-cols-2"><TextInput value={gid} onChange={e=>setGid(e.target.value)} placeholder="Client ID"/><TextInput type="password" value={gsecret} onChange={e=>setGsecret(e.target.value)} placeholder="Client Secret"/></div>
-     <div className="mt-2 flex flex-wrap gap-2"><Button variant="secondary" disabled={gBusy||!gid.trim()||!gsecret.trim()} onClick={()=>void saveGoogle()}>{gBusy?t('agents.saving'):t('vid.saveApp')}</Button><Button variant="secondary" onClick={()=>void connectGoogle()}>{t('vid.connectAccount')}</Button></div>
+     <div className="rounded-xl border border-white/15 bg-white/10 px-4 py-3">
+      <span className="text-[11px] text-[#CAD5DF]">완료한 영상</span>
+      <div className="mt-1 text-[19px] font-bold tabular-nums">{completed.length}<span className="ml-1 text-[11px] font-medium text-[#CAD5DF]">개</span></div>
+     </div>
     </div>
-    </Panel>}
    </div>
-   {tab==='create'&&<div className="grid min-w-0 content-start gap-4">
-    <Panel className="min-w-0 p-5"><Subheading title={t('vid.results')} extra={videoJob?<StateTag online={videoJob.status==='completed'}>{statusLabel(videoJob.status)}</StateTag>:<span className="text-[11px] text-[#8A8176]">{t('vid.waiting')}</span>}/>{!videoJob?<div className="flex w-full flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[#D8CFC2] bg-[#FAF7F1] text-[12px] text-[#8A8176]" style={{aspectRatio:ratios[ratio].width+" / "+ratios[ratio].height,maxHeight:420}}><Clapperboard size={24}/>{t('vid.resultsEmpty')} <small className="text-[10px]">{t(ratios[ratio].label)} · {ratios[ratio].width}×{ratios[ratio].height}</small></div>:<div className="grid gap-3">{!terminal(videoJob.status)&&<><div className="flex justify-between text-[11px] text-[#7C7469]"><span>{videoJob.status==='queued'?t('vid.waitingJob'):videoJob.status==='downloading'?t('vid.savingResult'):t('vid.generating')}</span><span>{(videoJob.progress??0)}%</span></div><div className="h-2 overflow-hidden rounded-full bg-[#F3EEE5]"><div className="h-full bg-[#C96442]" style={{width:Math.max(4,(videoJob.progress??0))+'%'}}/></div></>}{videoJob.outputUrl&&<div className="flex justify-center rounded-xl bg-black p-2"><video className="max-h-[520px] w-auto max-w-full rounded-lg" src={videoJob.outputUrl} controls playsInline/></div>}{videoJob.status==='completed'&&videoJob.outputUrl&&<div className="grid gap-2"><div className="flex min-w-0 items-center gap-2 rounded bg-[#FAF7F1] p-2"><span className="min-w-0 flex-1 truncate text-[11px] text-[#5C544A]" title={videoJob.title}>{videoJob.title||"output.mp4"}</span><Button variant="ghost" className="!px-2 !py-1 !text-[10px]" onClick={()=>void reveal(videoJob.id)}>{t('vid.openFolder')}</Button></div><Action onClick={useResult} className="w-full"><Upload size={14}/> {t('vid.fillForm')}</Action></div>}{(videoJob.status==='failed'||videoJob.status==='needs_review'||videoJob.status==='interrupted')&&<Notice message={videoJob.error||t('vid.generateFailed')}/>}</div>}</Panel>
-    <Panel className="min-w-0 p-5"><Subheading title={t('vid.upload')} extra={<span className="text-[11px] text-[#8A8176]">{selectedOutput?t('vid.fileReady'):t('vid.pickFile')}</span>}/><div className="grid gap-3"><FormField label={t('vid.videoFile')} hint={t('vid.generatedNote')}><div className="flex flex-col gap-2">{outputs.value.length?<SelectInput value={selectedOutput?.id||''} onChange={e=>{
- const picked=outputs.value.find(item=>item.id===e.target.value);
- if(!picked)return;
- setUploadFile(picked.id);
- setUploadTitle(picked.title||'');
- setUploadDescription(picked.brief);
- }}>{outputs.value.map(item=><option key={item.id} value={item.id}>{item.title||'output.mp4'} · {fmtBytes(item.result?.bytes)}</option>)}</SelectInput>:<p className="text-[11px] text-[#8A8176]">{t('vid.noUploads')}</p>}</div></FormField><FormField label={t('vid.formTitle')}><TextInput value={uploadTitle} onChange={e=>setUploadTitle(e.target.value)} placeholder={t('vid.videoTitle')} maxLength={100}/></FormField><FormField label={t('vid.formDesc')}><TextArea rows={3} value={uploadDescription} onChange={e=>setUploadDescription(e.target.value)} placeholder={t('vid.formDesc')}/></FormField><div className="grid grid-cols-2 gap-3"><FormField label={t('vid.public')}><SelectInput value={uploadPrivacy} onChange={e=>setUploadPrivacy(e.target.value)}><option value="private">{t('vid.private')}</option><option value="unlisted">{t('vid.unlisted')}</option><option value="public">{t('vid.public')}</option></SelectInput></FormField><FormField label={t('vid.tags')}><TextInput value={uploadTags} onChange={e=>setUploadTags(e.target.value)} placeholder={t('vid.comma')}/></FormField></div><Action disabled={uploading||Boolean(uploadSubmission&&!terminal(uploadJob?.status))||!youtube.value.uploadAllowed||!selectedOutput||!uploadTitle.trim()} onClick={()=>void startUpload()} className="w-full">{uploading?<><LoaderCircle size={15} className="animate-spin"/> {t('vid.requesting')}</>:<><Upload size={15}/> {t('vid.upload')}</>}</Action>{uploadJob&&<div className="rounded-lg border border-[#E7E0D5] bg-[#FAF7F1] p-3 text-[11px]"><div className="flex justify-between"><span>{uploadJob.status}</span><span>{uploadJob.progress??0}%</span></div>{uploadJob.result?.url&&<a className="mt-1 inline-flex items-center gap-1 font-semibold text-[#C96442]" href={uploadJob.result.url} target="_blank" rel="noreferrer">{t('vid.openYoutube')} <ExternalLink size={12}/></a>}{uploadJob.error&&<p className="mt-1 text-rose-600">{uploadJob.error}</p>}</div>}</div></Panel>
-   </div>}
-  </div>
+  </section>
+  <nav role="tablist" aria-label="영상 작업 메뉴" className="mb-5 flex flex-wrap gap-1 rounded-2xl border border-[#E7E0D5] bg-[#F5F0E8] p-1.5">
+   {sections.map(([name,label,Icon])=><button key={name} type="button" role="tab" aria-selected={tab===name}
+    onClick={()=>setTab(name)}
+    className={tabStyle+' '+focus+' '+(tab===name?'bg-white text-[#A44C2F] shadow-sm':'text-[#6F675D] hover:bg-white/60')}>
+    <Icon size={15}/>{label}{name==='library'&&sortedJobs.length>0&&<span className="rounded-full bg-[#F2E7DA] px-1.5 py-0.5 text-[10px] text-[#8E5942]">{sortedJobs.length}</span>}
+   </button>)}
+  </nav>
+
+  {tab==='create'&&<>
+   <div className="mb-4 grid gap-2 sm:grid-cols-3">
+    {[
+     ['01','아이디어 / 스토리보드',true],
+     ['02','영상 규격 / 비용 관리',ready],
+     ['03','미리보기 / 수정',Boolean(previewJob)]
+    ].map(([number,label,active])=><div key={String(number)} className={'flex items-center gap-3 rounded-xl border p-3 '+(active?'border-[#E5C0AD] bg-[#FFF6EF]':'border-[#E7E0D5] bg-white')}>
+     <span className={'flex size-8 shrink-0 items-center justify-center rounded-lg text-[11px] font-bold '+(active?'bg-[#C96442] text-white':'bg-[#F3EEE5] text-[#8E8174]')}>{number}</span>
+     <span className="text-[12px] font-semibold text-[#4A4036]">{label}</span>
+    </div>)}
+   </div>
+   <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.8fr)]">
+    <div className="grid min-w-0 content-start gap-4">
+     <Panel className="p-4 sm:p-6">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+       <div><h3 className={panelTitle}>1. 어떤 영상을 만드시겠어요?</h3><p className="mt-1 text-[12px] text-[#82796E]">원하는 수준에 맞춰 제작 방식을 선택하세요.</p></div>
+       <span className="rounded-full bg-[#F1ECE4] px-3 py-1 text-[11px] text-[#6B6257]">입력 내용은 이 기기에 임시 저장</span>
+      </div>
+      <div className="mb-5 grid gap-3 sm:grid-cols-2">
+       <button type="button" onClick={()=>patchDraft({mode:'quick'})} aria-pressed={draft.mode==='quick'}
+        className={'rounded-2xl border p-4 text-left transition-all '+focus+' '+(draft.mode==='quick'?'border-[#C96442] bg-[#FFF4EC] ring-1 ring-[#C96442]/30':'border-[#E2DACF] bg-white hover:border-[#D7BEAD]')}>
+        <span className="inline-flex items-center gap-2 text-[13px] font-bold text-[#393029]"><Sparkles size={18} className="text-[#C96442]"/> 간편 제작</span>
+        <p className="mt-1 text-[11px] leading-5 text-[#756B60]">주제 한 번 입력하고 바로 생성. 빠른 샘플과 자막 영상에 추천합니다.</p>
+       </button>
+       <button type="button" onClick={()=>patchDraft({mode:'scenes',scenes:draft.scenes.length?draft.scenes:[draft.prompt]})} aria-pressed={draft.mode==='scenes'}
+        className={'rounded-2xl border p-4 text-left transition-all '+focus+' '+(draft.mode==='scenes'?'border-[#C96442] bg-[#FFF4EC] ring-1 ring-[#C96442]/30':'border-[#E2DACF] bg-white hover:border-[#D7BEAD]')}>
+        <span className="inline-flex items-center gap-2 text-[13px] font-bold text-[#393029]"><Layers3 size={18} className="text-[#C96442]"/> 스토리보드 제작</span>
+        <p className="mt-1 text-[11px] leading-5 text-[#756B60]">장면을 나누고 수정한 뒤 필요한 부분만 다시 만들 수 있습니다.</p>
+       </button>
+      </div>
+      <div className="grid gap-4">
+       <FormField label="프로젝트 제목" hint="영상 목록과 게시 정보에 사용합니다."><TextInput value={draft.title} maxLength={90} onChange={e=>patchDraft({title:e.target.value})} placeholder="예: 서울의 새벽, 15초 여행 쇼츠"/></FormField>
+       {draft.mode==='quick'||!usingComfy?<FormField label="영상 아이디어 / 대본" hint="핵심 장면, 분위기, 움직임을 구체적으로 적으면 결과를 비교하기 쉽습니다.">
+        <TextArea value={draft.prompt} onChange={e=>patchDraft({prompt:e.target.value})} rows={5} placeholder="예: 따뜻한 아침 햇살, 푸른 바다 위로 카메라가 천천히 이동하는 장면. 부드러운 시네마틱 분위기."/>
+       </FormField>:<>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+         <div><h4 className="text-[13px] font-bold text-[#363029]">장면별 스토리보드</h4><p className="text-[11px] text-[#807466]">최대 8장면 · 장면당 최소 3초 · 위에서 아래 순서대로 재생</p></div>
+         <Button variant="secondary" size="sm" disabled={draft.scenes.length>=8} onClick={addScene}><Plus size={14}/> 장면 추가</Button>
+        </div>
+        <div className="grid gap-2">
+         {draft.scenes.map((scene,index)=><div key={index} className={'rounded-xl border bg-[#FEFDFB] p-3 '+(regenerate.includes(index)?'border-[#D6A27C]':'border-[#E7DED3]')}>
+          <div className="mb-2 flex items-center justify-between gap-2">
+           <div className="flex items-center gap-2"><span className="rounded-md bg-[#F4E5D8] px-2 py-1 text-[11px] font-bold text-[#975335]">SCENE {index+1}</span>{reuseId&&<label className="flex items-center gap-1.5 text-[11px] text-[#6B6257]"><input type="checkbox" checked={regenerate.includes(index)} onChange={e=>setRegenerate(prev=>e.target.checked?[...prev,index]:prev.filter(i=>i!==index))}/> 새로 렌더</label>}</div>
+           <div className="flex items-center gap-1">
+            <Button variant="ghost" size="icon" aria-label={'장면 '+(index+1)+' 위로'} disabled={index===0} onClick={()=>swapScene(index,index-1)}><ArrowUp size={14}/></Button>
+            <Button variant="ghost" size="icon" aria-label={'장면 '+(index+1)+' 아래로'} disabled={index===draft.scenes.length-1} onClick={()=>swapScene(index,index+1)}><ArrowDown size={14}/></Button>
+            <Button variant="ghost" size="icon" aria-label={'장면 '+(index+1)+' 삭제'} disabled={draft.scenes.length<=1} onClick={()=>{patchDraft({scenes:draft.scenes.filter((_,i)=>i!==index)});setRegenerate([])}}><Trash2 size={14}/></Button>
+           </div>
+          </div>
+          <TextArea aria-label={'장면 '+(index+1)+' 설명'} value={scene} onChange={e=>mutateScene(index,e.target.value)} rows={2} placeholder={'장면 '+(index+1)+'에서 보여줄 모습과 카메라 움직임을 적으세요.'}/>
+          <div className="mt-1 text-right text-[10px] tabular-nums text-[#8E8174]">{new TextEncoder().encode(scene).length.toLocaleString('ko-KR')} / 4,000 byte</div>
+         </div>)}
+        </div>
+        <FormField label="일관된 캐릭터 / 영상 스타일" hint="모든 장면에 같은 인물·의상·색감 등을 유지하도록 전달합니다."><TextArea rows={2} maxLength={2000} value={draft.continuity} onChange={e=>patchDraft({continuity:e.target.value})} placeholder="예: 같은 주인공, 남색 재킷, 따뜻한 필름 색감, 자연스러운 움직임"/></FormField>
+       </>}
+       <div className="flex flex-wrap gap-2">
+        <Button variant="ghost" size="sm" onClick={()=>{if(window.confirm('영상 아이디어와 장면 내용을 초기화하시겠습니까?')){setDraft({...defaults});setReuseId('');setRegenerate([])}}}><RotateCcw size={14}/> 새 프로젝트</Button>
+        {reuseId&&<span className="inline-flex items-center gap-1.5 rounded-xl bg-[#EAF3E8] px-3 py-2 text-[11px] font-medium text-[#466647]"><CheckCircle2 size={13}/> 이전 프로젝트를 기반으로 수정 중 <button type="button" className="ml-1 underline" onClick={()=>{setReuseId('');setRegenerate([])}}>연결 해제</button></span>}
+       </div>
+      </div>
+     </Panel>
+
+     <Panel className="p-4 sm:p-6">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+       <h3 className={panelTitle}>2. 영상 설정</h3>
+       <Button variant="ghost" size="sm" onClick={()=>setTab('settings')}><Settings2 size={14}/> 환경 설정</Button>
+      </div>
+      <div className="mb-4 grid gap-2 sm:grid-cols-2">
+       <button type="button" aria-pressed={engine==='native'} onClick={()=>void changeEngine('native')}
+        className={'flex items-start gap-3 rounded-xl border p-3 text-left '+focus+' '+(engine==='native'?'border-[#C96442] bg-[#FFF4EC]':'border-[#E5DDD1] hover:border-[#D7BEAD]')}>
+        <Film size={20} className="mt-0.5 shrink-0 text-[#C96442]"/><span><strong className="block text-[12px] text-[#382F29]">자막 · 카드 영상</strong><small className="mt-1 block text-[11px] text-[#7C7165]">FFmpeg로 로컬 합성 · AI 렌더 불필요</small></span>
+       </button>
+       <button type="button" aria-pressed={engine==='comfyui'} onClick={()=>void changeEngine('comfyui')}
+        className={'flex items-start gap-3 rounded-xl border p-3 text-left '+focus+' '+(engine==='comfyui'?'border-[#C96442] bg-[#FFF4EC]':'border-[#E5DDD1] hover:border-[#D7BEAD]')}>
+        <VideoIcon size={20} className="mt-0.5 shrink-0 text-[#C96442]"/><span><strong className="block text-[12px] text-[#382F29]">AI 장면 생성</strong><small className="mt-1 block text-[11px] text-[#7C7165]">ComfyUI · 로컬/연결 서버 GPU 렌더</small></span>
+       </button>
+      </div>
+      <fieldset className="mb-4">
+       <legend className="mb-2 text-[12px] font-semibold text-[#4A4036]">화면 비율</legend>
+       <div className="grid grid-cols-3 gap-2">
+        {(Object.keys(ratios) as Ratio[]).map(key=><button key={key} type="button" aria-pressed={draft.ratio===key} onClick={()=>patchDraft({ratio:key})}
+         className={'flex min-h-20 flex-col items-center justify-center gap-2 rounded-xl border p-2 text-center '+focus+' '+(draft.ratio===key?'border-[#C96442] bg-[#FFF5EC] text-[#A54F33]':'border-[#E5DDD1] bg-white text-[#74685C]')}>
+         <span style={{aspectRatio:key,width:key==='16:9'?30:key==='1:1'?23:15,height:key==='16:9'?17:key==='1:1'?23:27}} className={'block border-2 '+(draft.ratio===key?'border-[#C96442]':'border-[#B5A99A]')}/>
+         <span className="text-[11px] font-bold">{key}</span>
+        </button>)}
+       </div>
+       <p className="mt-2 text-[11px] text-[#82796E]">{ratios[draft.ratio].label} · 실제 픽셀 크기는 모델/렌더 설정에 따릅니다.</p>
+      </fieldset>
+      <div className="grid gap-3 sm:grid-cols-2">
+       <FormField label="영상 길이 · 초" hint={usingComfy&&draft.mode==='scenes'?'전체 장면의 합계 시간':'기본 6초 · 최대 '+maxDuration+'초'}><TextInput type="number" min={3} max={maxDuration} step={1} value={draft.seconds} onChange={e=>patchDraft({seconds:Number(e.target.value)})}/></FormField>
+       {usingComfy?<FormField label="프레임 / 초 (FPS)" hint="프레임이 많을수록 생성 작업량이 증가합니다."><SelectInput value={draft.fps} onChange={e=>patchDraft({fps:Number(e.target.value)})}>{[8,12,16,20,24,30].map(n=><option value={n} key={n}>{n} FPS</option>)}</SelectInput></FormField>:
+        <div className={soft+' flex items-center gap-2 p-3 text-[12px] text-[#766B60]'}><CheckCircle2 size={17} className="text-[#58724D]"/> 자막 카드 방식은 추가 모델 API 호출 없이 합성합니다.</div>}
+      </div>
+      {usingComfy&&<div className="mt-4 grid gap-2">
+       <button type="button" className={tabStyle+' '+focus+' !px-0 !text-[#8B543A]'} aria-expanded={advanced} onClick={()=>setAdvanced(!advanced)}><SlidersHorizontal size={15}/> {advanced?'고급 옵션 닫기':'고급 렌더 옵션 열기'} <ArrowRight size={14} className={advanced?'rotate-90 transition-transform':'transition-transform'}/></button>
+       {advanced&&<div className="grid gap-3 rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-3">
+        <FormField label="제외할 요소 (Negative Prompt)"><TextInput value={draft.negative} onChange={e=>patchDraft({negative:e.target.value})} placeholder="blur, watermark, low quality"/></FormField>
+        <FormField label="시드 · 같은 장면을 재현하는 값" hint="-1은 새 프로젝트에 랜덤 시드를 적용합니다. 이전 프로젝트를 수정할 때는 기존 시드를 이어받습니다.">
+         <div className="flex gap-2"><TextInput value={draft.seed} onChange={e=>patchDraft({seed:e.target.value})}/><Button variant="secondary" size="sm" onClick={()=>patchDraft({seed:'-1'})}>랜덤</Button></div>
+        </FormField>
+       </div>}
+       <div className={soft+' p-4'}>
+        <div className="flex flex-wrap items-center justify-between gap-2"><strong className="text-[12px] text-[#3D352E]">새 장면 렌더 예산</strong><label className="flex items-center gap-2 text-[12px] font-semibold"><input type="checkbox" checked={budgetEnabled} onChange={e=>{setBudgetEnabled(e.target.checked);setMaxNewScenes(suggestedMaxNew)}}/> 상한 사용</label></div>
+        <p className="mt-1 text-[11px] leading-5 text-[#817366]">외부 GPU가 실제로 새로 생성할 장면 수를 제한합니다. 이전 영상을 재사용하면 비용을 줄일 수 있습니다.</p>
+        {budgetEnabled&&<div className="mt-3 flex items-center gap-3"><TextInput type="number" min={reuseId?0:1} max={suggestedMaxNew} value={maxNewScenes} onChange={e=>setMaxNewScenes(Number(e.target.value))} aria-label="최대 신규 렌더 장면 수" className="max-w-[105px]"/><span className="text-[12px] text-[#756A5D]">/ 전체 {suggestedMaxNew}장면 · 상한 초과 시 생성이 중지됩니다.</span></div>}
+        {editingSource&&<p className="mt-2 text-[11px] text-[#597452]"><ShieldCheck size={13} className="mr-1 inline"/> 장면 재사용은 서버에서 기존 파일 지문과 SHA-256 검증 후 결정합니다. 내용·시드·규격이 바뀌면 새 렌더가 필요할 수 있습니다.</p>}
+       </div>
+      </div>}
+      {invalidTime&&<p role="alert" className="mt-3 text-[12px] font-semibold text-rose-700">장면 {sceneItems.length}개의 최소 길이는 {sceneItems.length*3}초입니다. 시간을 늘리거나 장면을 줄여주세요.</p>}
+      {invalidScenes&&<p role="alert" className="mt-3 text-[12px] font-semibold text-rose-700">모든 장면에 설명을 입력해 주세요. 최대 8개, 각 4,000바이트입니다.</p>}
+     </Panel>
+     <Panel className="p-4 sm:p-6">
+      <div className="flex flex-wrap items-center justify-between gap-2"><h3 className={panelTitle}>3. 제작 준비</h3><StateTag online={ready}>{ready?'생성 가능':'설정 확인'}</StateTag></div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+       <div className={soft+' p-3'}><span className="block text-[11px] text-[#807568]">렌더 방식</span><strong className="mt-1 block text-[13px] text-[#3D342E]">{usingComfy?'AI 장면 생성 (ComfyUI)':'자막 · 카드 합성 (FFmpeg)'}</strong></div>
+       <div className={soft+' p-3'}><span className="block text-[11px] text-[#807568]">예상 처리량 · 비용이 아님</span><strong className="mt-1 block text-[13px] text-[#3D342E]">{usingComfy?(draft.seconds*draft.fps).toLocaleString('ko-KR')+' frames':'로컬 합성'}</strong></div>
+      </div>
+      {prerequisite&&<div role="status" className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[12px] text-amber-900"><span>{prerequisite}</span><Button size="sm" variant="secondary" onClick={()=>setTab('settings')}>설정으로 이동 <ArrowRight size={14}/></Button></div>}
+      <div className="mt-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+       <p className="max-w-md text-[11px] leading-5 text-[#81766B]">{usingComfy?'실제 금전 비용은 연결 서버의 GPU·서비스 요금에 따릅니다. 임의의 가격을 표시하지 않습니다.':'영상은 로컬 도구로 만들어지며, 게시하기 전에는 외부에 공개되지 않습니다.'}</p>
+       <Button variant="primary" className="min-h-11 shrink-0 !px-6" disabled={!canGenerate} onClick={()=>void generate()}>
+        {generating?<><LoaderCircle size={16} className="animate-spin"/> 요청 중</>:<><PlayIcon/> 영상 생성하기 <ArrowRight size={16}/></>}
+       </Button>
+      </div>
+      {busy&&<p role="status" className="mt-2 text-[11px] text-[#86664D]">현재 작업이 진행 중입니다. 다른 장면을 제출하기 전에 기존 작업 결과를 확인해 주세요.</p>}
+     </Panel>
+    </div>
+    <aside className="grid min-w-0 content-start gap-4">
+     <Panel className="p-4 sm:p-5">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><h3 className={panelTitle}>실시간 미리보기</h3>{previewJob&&<span className={'rounded-full px-2.5 py-1 text-[11px] font-bold '+(previewJob.status==='completed'?'bg-[#EAF4E9] text-[#456A46]':'bg-[#F8EEE3] text-[#A1623D]')}>{statusText(previewJob.status)}</span>}</div>
+      {!previewJob?<div className="flex min-h-72 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-[#D9CFBF] bg-[#FBF8F4] p-4 text-center"><div className="flex size-14 items-center justify-center rounded-2xl bg-[#F2E2D6]"><Clapperboard size={27} className="text-[#B46645]"/></div><strong className="text-[13px] text-[#55483C]">첫 번째 영상을 만들어 보세요</strong><p className="max-w-[250px] text-[11px] leading-5 text-[#83776A]">제작을 시작하면 여기서 진행 상태와 완성된 영상을 확인할 수 있습니다.</p></div>:<>
+       <div className="flex min-h-[230px] items-center justify-center overflow-hidden rounded-2xl bg-[#171D28] p-3" style={{maxHeight:440}}>
+        {previewJob.outputUrl?<video key={previewJob.id} controls playsInline preload="metadata" src={previewJob.outputUrl} className="max-h-[420px] max-w-full rounded-xl object-contain" style={{aspectRatio:String(previewWidth)+' / '+String(previewHeight)}}/>:
+         <div className="flex min-h-[225px] flex-col items-center justify-center gap-3 px-4 text-center text-white"><LoaderCircle size={27} className={running(previewJob.status)?'animate-spin text-[#F5BF9B]':'text-[#E9B28A]'}/><strong className="text-[13px]">{statusText(previewJob.status)}</strong><span className="text-[11px] text-[#B9C1CA]">{phaseText(previewJob.phase)}</span></div>}
+       </div>
+       <div className="mt-3 flex items-start justify-between gap-2"><div className="min-w-0"><strong className="block truncate text-[13px] text-[#3B342D]" title={previewJob.title}>{previewJob.title||'이름 없는 영상'}</strong><span className="mt-1 block text-[11px] text-[#897B6D]">{shortDate(previewJob.createdAt)} · {previewJob.duration||'-'}초 · {previewJob.aspectRatio||'9:16'}</span></div>{previewJob.outputUrl&&<Button variant="ghost" size="icon" aria-label="영상 저장 폴더 열기" onClick={()=>void reveal(previewJob.id)}><FolderOpen size={17}/></Button>}</div>
+       {running(previewJob.status)&&<div className="mt-3" role="status" aria-live="polite">
+        <div className="mb-1.5 flex justify-between gap-2 text-[11px] text-[#75685A]"><span>{phaseText(previewJob.phase)}{typeof previewJob.sceneProgress?.index==='number'&&previewJob.sceneProgress.total?' · '+(previewJob.sceneProgress.index+1)+'/'+previewJob.sceneProgress.total+' 장면':''}</span><span className="tabular-nums">{progress===null?'진행률 측정 중':progress+'%'}</span></div>
+        <div role="progressbar" aria-label="영상 생성 진행률" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress??undefined} className="h-2 overflow-hidden rounded-full bg-[#EFE7DE]"><div className={'h-full rounded-full bg-[#C96442] transition-all '+(progress===null?'w-1/3 animate-pulse':'')} style={progress===null?undefined:{width:String(progress)+'%'}}/></div>
+       </div>}
+       {previewJob.result&&previewJob.status==='completed'&&<div className={soft+' mt-3 grid grid-cols-2 gap-3 p-3'}>
+        <div><span className="block text-[10px] text-[#81776B]">결과 파일</span><strong className="text-[12px] text-[#473A30]">{fmtBytes(previewJob.result.bytes)}</strong></div>
+        <div><span className="block text-[10px] text-[#81776B]">재사용한 장면</span><strong className="text-[12px] text-[#507A4C]">{previewJob.result.reusedScenes??0}개</strong></div>
+        <div><span className="block text-[10px] text-[#81776B]">새로 만든 장면</span><strong className="text-[12px] text-[#473A30]">{previewJob.result.renderedScenes??'-'}개</strong></div>
+        <div><span className="block text-[10px] text-[#81776B]">동일 작업량 기준</span><strong className="text-[12px] text-[#473A30]">{(previewJob.renderWorkload?.frames??0).toLocaleString('ko-KR')} frames</strong></div>
+       </div>}
+       {previewJob.error&&<Notice message={previewJob.error}/>}
+       {previewJob.status==='completed'&&previewJob.outputUrl&&<div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <Button variant="secondary" onClick={()=>editJob(previewJob)}><RotateCcw size={15}/> 장면 다시 편집</Button>
+        <Button variant="primary" onClick={()=>chooseForUpload(previewJob)}><Upload size={15}/> 게시 준비</Button>
+       </div>}
+      </>}
+     </Panel>
+     <Panel className="p-4 sm:p-5">
+      <div className="mb-3 flex items-center justify-between gap-2"><h3 className={panelTitle}>최근 작업</h3><Button variant="ghost" size="sm" onClick={()=>setTab('library')}>전체 보기 <ArrowRight size={14}/></Button></div>
+      {!sortedJobs.length?<p className="rounded-xl bg-[#F9F5EF] p-4 text-[12px] text-[#807366]">아직 제작한 영상이 없습니다.</p>:<div className="grid gap-2">{sortedJobs.slice(0,5).map(job=><button key={job.id} type="button" onClick={()=>setCurrentId(job.id)} aria-current={videoJob?.id===job.id?'true':undefined}
+       className={'flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left '+focus+' '+(videoJob?.id===job.id?'border-[#D6A27C] bg-[#FFF6ED]':'border-[#E9E2D9] bg-white hover:bg-[#FAF7F1]')}>
+       <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[#F2E8DE]"><Film size={16} className="text-[#AA6A46]"/></span><span className="min-w-0 flex-1"><strong className="block truncate text-[12px] text-[#453A31]">{job.title||job.brief||'이름 없는 영상'}</strong><span className="text-[10px] text-[#897C70]">{shortDate(job.createdAt)} · {job.engine==='comfyui'?'AI 생성':'자막 영상'}</span></span><span className="shrink-0 text-[10px] font-semibold text-[#8B6A51]">{statusText(job.status)}</span>
+       </button>)}</div>}
+     </Panel>
+    </aside>
+   </div>
+  </>}
+
+  {tab==='library'&&<div className="grid gap-4">
+   <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-[19px] font-bold text-[#342C25]">프로젝트 라이브러리</h2><p className="mt-1 text-[12px] text-[#817468]">이전 결과를 다시 열고, 장면 일부를 수정하거나 게시할 수 있습니다.</p></div><Button variant="primary" onClick={()=>setTab('create')}><Plus size={16}/> 새 영상</Button></div>
+   {!sortedJobs.length?<Panel className="flex min-h-64 flex-col items-center justify-center gap-3 p-6 text-center"><Clapperboard size={32} className="text-[#BE825F]"/><strong className="text-[14px] text-[#453B30]">첫 프로젝트를 만들어 보세요</strong><p className="text-[12px] text-[#83776B]">완성된 영상과 작업 중인 영상이 이곳에 쌓입니다.</p><Button variant="primary" onClick={()=>setTab('create')}>영상 만들기 <ArrowRight size={14}/></Button></Panel>:
+    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{sortedJobs.map(job=><Panel key={job.id} className="overflow-hidden p-0">
+     <div className="flex min-h-[190px] items-center justify-center bg-[#222A35] p-3">{job.outputUrl?<video src={job.outputUrl} controls playsInline preload="metadata" className="max-h-[230px] max-w-full rounded-lg"/>:<div className="flex flex-col items-center gap-3 py-10 text-center text-white"><Film size={26} className="text-[#EEB38D]"/><span className="text-[12px]">{statusText(job.status)}</span>{running(job.status)&&<LoaderCircle size={14} className="animate-spin"/>}</div>}</div>
+     <div className="grid gap-3 p-4">
+      <div className="flex items-center justify-between gap-3"><strong className="min-w-0 truncate text-[14px] text-[#3C322A]">{job.title||job.brief||'이름 없는 영상'}</strong><span className="shrink-0 text-[10px] text-[#8D7764]">{statusText(job.status)}</span></div>
+      <span className="text-[11px] text-[#8A7D70]">{shortDate(job.createdAt)} · {job.duration||'-'}초 · {job.engine==='comfyui'?'ComfyUI':'FFmpeg'}</span>
+      {job.error&&<p className="line-clamp-2 text-[11px] text-rose-600">{job.error}</p>}
+      <div className="flex flex-wrap gap-2"><Button size="sm" variant="secondary" onClick={()=>{setCurrentId(job.id);setTab('create')}}>상태·미리보기</Button><Button size="sm" variant="secondary" onClick={()=>editJob(job)}><RotateCcw size={13}/> 편집</Button>{job.outputUrl&&<Button size="sm" variant="primary" onClick={()=>chooseForUpload(job)}>게시 준비 <ArrowRight size={13}/></Button>}</div>
+     </div>
+    </Panel>)}</div>}
+  </div>}
+
+  {tab==='publish'&&<div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(310px,0.8fr)]">
+   <Panel className="p-4 sm:p-6">
+    <div className="mb-4 flex items-center justify-between gap-3"><h2 className={panelTitle}>YouTube 게시 준비</h2><span className="rounded-full bg-[#E9F0E5] px-3 py-1 text-[11px] font-bold text-[#55734A]">기본값 비공개</span></div>
+    {!completed.length&&!outputs.value.length?<div className="flex min-h-36 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-[#D9CDBF] text-center"><p className="text-[12px] text-[#7D7266]">게시할 완료 영상이 없습니다. 먼저 영상을 제작해 주세요.</p><Button variant="primary" onClick={()=>setTab('create')}>영상 만들기 <ArrowRight size={14}/></Button></div>:<div className="grid gap-4">
+     <FormField label="게시할 영상"><SelectInput value={selectedOutput?.id||''} onChange={e=>{const job=completed.find(j=>j.id===e.target.value)??outputs.value.find(j=>j.id===e.target.value);if(job){setUploadFile(job.id);setUploadTitle(job.title||'');setUploadDescription(job.brief||'')}}}>{(completed.length?completed:outputs.value).map(job=><option value={job.id} key={job.id}>{job.title||job.brief||'이름 없는 영상'} · {fmtBytes(job.result?.bytes)}</option>)}</SelectInput></FormField>
+     <FormField label="영상 제목"><TextInput value={uploadTitle} maxLength={100} onChange={e=>setUploadTitle(e.target.value)} placeholder="게시할 제목을 적어 주세요"/></FormField>
+     <FormField label="영상 설명"><TextArea rows={4} value={uploadDescription} onChange={e=>setUploadDescription(e.target.value)} placeholder="영상 설명을 적어 주세요"/></FormField>
+     <div className="grid gap-3 sm:grid-cols-2"><FormField label="공개 범위"><SelectInput value={uploadPrivacy} onChange={e=>setUploadPrivacy(e.target.value)}><option value="private">비공개 · 나만 보기</option><option value="unlisted">일부 공개 · 링크 공유</option><option value="public">전체 공개</option></SelectInput></FormField><FormField label="태그"><TextInput value={uploadTags} onChange={e=>setUploadTags(e.target.value)} placeholder="여행, 브이로그, 일상"/></FormField></div>
+     <Button className="min-h-11" variant="primary" disabled={uploading||Boolean(uploadSubmission&&running(uploadJob?.status))||!youtube.value.uploadAllowed||!selectedOutput?.outputUrl||!uploadTitle.trim()} onClick={()=>void startUpload()}>{uploading?<LoaderCircle size={15} className="animate-spin"/>:<Upload size={15}/>} YouTube에 업로드</Button>
+     {!youtube.value.uploadAllowed&&<p role="status" className="text-[12px] text-[#976342]">아래에서 YouTube 계정을 연결하면 업로드 버튼이 활성화됩니다.</p>}
+     {uploadJob&&<div className={soft+' p-3'} role="status"><div className="flex items-center justify-between gap-2 text-[12px]"><strong>{statusText(uploadJob.status)}</strong><span>{uploadJob.progress==null?'':uploadJob.progress+'%'}</span></div>{uploadJob.result?.url&&<a href={uploadJob.result.url} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#A55133]">YouTube에서 열기 <ExternalLink size={13}/></a>}{uploadJob.error&&<Notice message={uploadJob.error}/>}</div>}
+    </div>}
+   </Panel>
+   <div className="grid gap-4">
+    <Panel className="p-4 sm:p-5">
+     <div className="mb-2 flex items-center justify-between gap-3"><h3 className={panelTitle}>계정 연결</h3><StateTag online={youtube.value.uploadAllowed}>{youtube.value.uploadAllowed?'업로드 준비됨':'연결 필요'}</StateTag></div>
+     <p className="text-[12px] leading-5 text-[#776B60]">영상 제작과 게시 권한은 별개입니다. 사용자가 업로드 버튼을 누를 때만 게시 요청이 실행됩니다.</p>
+     {youtube.value.account?.displayName&&<p className="mt-2 text-[12px] font-semibold text-[#45684C]">{youtube.value.account.displayName}</p>}
+     <div className="mt-3 flex flex-wrap gap-2"><Button variant="secondary" onClick={()=>void connectYoutube()}>YouTube 연결 <ExternalLink size={14}/></Button><Button variant="ghost" onClick={()=>void youtube.reload()}>연결 상태 확인 <RefreshCw size={14}/></Button></div>
+     {!google?.configured&&<div className="mt-4 grid gap-3 rounded-xl bg-[#FAF7F1] p-3"><p className="text-[11px] text-[#807467]">최초 연결 시 Google OAuth 앱의 Client ID와 Secret이 필요합니다.</p><TextInput aria-label="Google Client ID" value={gid} onChange={e=>setGid(e.target.value)} placeholder="Client ID"/><TextInput type="password" aria-label="Google Client Secret" value={gsecret} onChange={e=>setGsecret(e.target.value)} placeholder="Client Secret"/><Button variant="secondary" disabled={gBusy||!gid.trim()||!gsecret.trim()} onClick={()=>void saveGoogle()}>{gBusy?'저장 중':'연결 정보 저장'}</Button>{google?.callback&&<div className="text-[10px] break-all text-[#756A60]">리디렉션 주소: {google.callback} <button type="button" className="ml-1 underline" onClick={()=>void navigator.clipboard.writeText(google.callback||'')}>복사</button></div>}</div>}
+    </Panel>
+    {selectedOutput?.outputUrl&&<Panel className="p-4 sm:p-5"><h3 className={panelTitle}>업로드할 영상</h3><video className="mt-3 max-h-[320px] w-full rounded-xl bg-black" src={selectedOutput.outputUrl} controls playsInline preload="metadata"/><p className="mt-2 text-[11px] text-[#81766B]">{selectedOutput.title||'영상'} · {fmtBytes(selectedOutput.result?.bytes)}</p><Button variant="ghost" size="sm" onClick={()=>void reveal(selectedOutput.id)}><FolderOpen size={14}/> 파일 위치 열기</Button></Panel>}
+   </div>
+  </div>}
+
+  {tab==='settings'&&<div className="grid items-start gap-4 lg:grid-cols-2">
+   <Panel className="p-4 sm:p-6"><div className="mb-4 flex items-center justify-between gap-2"><h2 className={panelTitle}>영상 엔진과 연결</h2><StateTag online={ready}>{ready?'사용 가능':'확인 필요'}</StateTag></div>
+    <FormField label="영상 엔진"><SelectInput value={engine} disabled={savingConfig} onChange={e=>void changeEngine(e.target.value as VideoEngine)}><option value="native">로컬 FFmpeg · 자막 카드 영상</option><option value="comfyui">ComfyUI · AI 장면 생성</option></SelectInput></FormField>
+    <div className={soft+' mt-4 p-3'}><div className="flex items-center justify-between gap-2"><strong className="text-[12px] text-[#453B32]">FFmpeg</strong><StateTag online={Boolean(video.value.native?.available)}>{video.value.native?.available?'설치됨':'미설치'}</StateTag></div><p className="mt-1 text-[11px] text-[#7E7366]">자막 영상 제작과 여러 AI 장면을 하나의 MP4로 합칠 때 사용합니다.</p></div>
+    <div className="mt-4 grid gap-2"><div className="flex items-center justify-between gap-2"><strong className="text-[12px] text-[#453B32]">ComfyUI 서버</strong><StateTag online={video.value.comfy.reachable}>{video.value.comfy.reachable?'연결됨':'연결 안 됨'}</StateTag></div><div className="flex gap-2"><TextInput aria-label="ComfyUI 주소" value={comfyUrl} onChange={e=>setComfyUrl(e.target.value)} placeholder="http://127.0.0.1:8188"/><Button variant="secondary" disabled={savingConfig||!comfyUrl.trim()} onClick={()=>void saveConfig({comfyUrl:comfyUrl.trim()})}>저장</Button></div><p className="text-[11px] text-[#81766B]">ComfyUI가 실행 중인 로컬 또는 원격 HTTP(S) 주소를 입력하세요.</p></div>
+    <div className="mt-4 rounded-xl border border-[#E7E0D5] p-3"><h3 className="mb-2 text-[12px] font-bold text-[#453A31]">외부 워크플로 가져오기</h3>{savedWorkflow&&<p className="mb-2 text-[11px] text-[#597450]"><Check size={13} className="mr-1 inline"/>{savedWorkflow.name} · 등록됨</p>}<label className={'inline-flex cursor-pointer items-center gap-2 rounded-xl border border-[#DCCCBF] bg-[#FFFDF9] px-3 py-2 text-[12px] font-semibold text-[#694A38] '+focus}><Upload size={14}/> API 워크플로 JSON 선택<input type="file" accept=".json,application/json" className="sr-only" disabled={savingConfig} onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void importWorkflow(file)}}/></label><p className="mt-2 text-[11px] text-[#81766B]">ComfyUI에서 API 형식으로 내보낸 JSON을 사용합니다. 일반 UI 그래프 JSON과 구별됩니다.</p></div>
+   </Panel>
+   <div className="grid gap-4">
+    <Panel className="p-4 sm:p-6"><h2 className={panelTitle}>AI 영상 모델</h2><p className="mt-1 text-[12px] text-[#807469]">미설치 모델도 선택한 뒤 바로 다운로드할 수 있습니다.</p>
+     <div className="mt-3 grid gap-3">
+      <FormField label="모델 선택"><SelectInput value={statusConfig.videoModel||''} disabled={savingConfig} onChange={e=>void saveConfig({videoModel:e.target.value})}><option value="">모델 선택</option>{catalog.value.videoModels.map(model=><option key={model.id} value={model.id}>{model.name} · {model.available?'설치됨':'미설치'}</option>)}</SelectInput></FormField>
+      <div className={soft+' flex flex-wrap items-center justify-between gap-3 p-3'}><div className="min-w-0"><strong className="block text-[12px] text-[#40372E]">{installed?.name||'모델을 선택해 주세요'}</strong><p className="mt-1 text-[11px] text-[#84766A]">{installed?.hint||'로컬에 설치된 모델만 렌더에 사용할 수 있습니다.'}</p></div><StateTag online={installed?.available}>{installed?.available?'준비됨':'설치 필요'}</StateTag></div>
+      {installed&&!installed.available&&<Button variant="secondary" disabled={downloadState?.status==='downloading'} onClick={()=>void startDownload()}><Download size={14}/>{downloadState?.status==='downloading'?'모델 다운로드 중 · '+downloadState.progress+'%':'선택 모델 다운로드'}</Button>}
+      {downloadState?.status==='downloading'&&<div role="progressbar" aria-label="모델 다운로드" aria-valuemin={0} aria-valuemax={100} aria-valuenow={downloadState.progress||0} className="h-2 overflow-hidden rounded-full bg-[#EAE3DA]"><div className="h-full rounded-full bg-[#C96442]" style={{width:Math.min(100,Math.max(0,downloadState.progress||0))+'%'}}/></div>}
+      {downloadState?.status==='failed'&&<Notice message={downloadState.error||'모델 다운로드 실패'}/>}
+      {downloadState?.status==='completed'&&<p className="text-[11px] text-[#537C4D]">모델 다운로드 완료 · 설치 상태를 다시 확인합니다.</p>}
+      <div className="grid gap-3 sm:grid-cols-2"><FormField label="기본 렌더 해상도"><SelectInput disabled={savingConfig} value={statusConfig.resolution||'480x832'} onChange={e=>void saveConfig({resolution:e.target.value})}>{['256x448','384x672','480x832','832x480','448x448'].map(x=><option key={x} value={x}>{x}</option>)}</SelectInput></FormField><FormField label="샘플링 스텝"><SelectInput disabled={savingConfig} value={statusConfig.steps??20} onChange={e=>void saveConfig({steps:Number(e.target.value)})}>{[4,8,12,20,30,40].map(x=><option key={x} value={x}>{x} steps</option>)}</SelectInput></FormField></div>
+     </div>
+    </Panel>
+    <Panel className="p-4 sm:p-6"><h2 className={panelTitle}>내레이션</h2><div className="mt-3 grid gap-3 sm:grid-cols-2"><FormField label="음성"><SelectInput value={voice} disabled={savingConfig} onChange={e=>{setVoice(e.target.value);void saveConfig({voice:e.target.value})}}><option value="Yuna">Yuna</option></SelectInput></FormField><label className="mt-6 flex items-center gap-2 text-[12px] text-[#4B4035]"><input type="checkbox" checked={narration} disabled={savingConfig} onChange={e=>{setNarration(e.target.checked);void saveConfig({narration:e.target.checked})}}/> 내레이션 자동 생성</label></div><p className="mt-2 text-[11px] text-[#81766B]">지원되는 음성 엔진이 있으면 음성을 합성합니다. 지원되지 않는 환경에서는 무음으로 영상을 생성합니다.</p></Panel>
+   </div>
+  </div>}
  </div>
 }
+function PlayIcon(){return <Clapperboard size={16}/>}
