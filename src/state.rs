@@ -16,6 +16,9 @@ pub struct AppState {
     pub bus: Bus,
     /// Advisory wakeup for job workers. SQLite remains the durable authority.
     pub job_wakeup: Arc<Notify>,
+    /// Reusable provider HTTP transports keyed by per-request timeout in seconds.
+    /// Shared by all speakers and jobs in this process to retain connection pooling.
+    provider_http_clients: Arc<Mutex<HashMap<u64, reqwest::Client>>>,
     pub vault: Arc<Vault>,
     /// Pending tool approvals: approval id -> waiter.
     pub approvals: Arc<Mutex<HashMap<String, oneshot::Sender<bool>>>>,
@@ -46,6 +49,7 @@ impl AppState {
             store,
             bus,
             job_wakeup: Arc::new(Notify::new()),
+            provider_http_clients: Arc::new(Mutex::new(HashMap::new())),
             vault: Arc::new(vault),
             approvals: Arc::new(Mutex::new(HashMap::new())),
             cancelled: Arc::new(Mutex::new(HashSet::new())),
@@ -56,6 +60,22 @@ impl AppState {
             instance_id,
             maintenance: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    /// Build a provider client once per timeout policy. Clients carry pooled
+    /// sockets and TLS configuration; cloning a handle is cheap. Never hold
+    /// the mutex while awaiting a network operation. Credentials belong to
+    /// individual requests, not these process-wide transport handles.
+    pub fn provider_http_client(&self, timeout_secs: u64) -> Result<reqwest::Client, String> {
+        if let Some(client) = self.provider_http_clients.lock().unwrap()
+            .get(&timeout_secs).cloned() {
+            return Ok(client);
+        }
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(timeout_secs))
+            .build().map_err(|error|error.to_string())?;
+        let mut cache = self.provider_http_clients.lock().unwrap();
+        Ok(cache.entry(timeout_secs).or_insert(client).clone())
     }
 
     pub fn set_maintenance(&self, enabled: bool) {
@@ -201,6 +221,18 @@ mod tests {
         let store = Store::open(&cfg.db_path()).unwrap();
         let vault = Vault::open(&cfg.key_path());
         (AppState::new(cfg, store, vault), dir)
+    }
+
+    #[test]
+    fn provider_clients_are_reused_by_timeout_and_across_state_clones() {
+        let (state, dir) = temp_state();
+        assert!(state.provider_http_clients.lock().unwrap().is_empty());
+        state.provider_http_client(60).unwrap();
+        state.clone().provider_http_client(60).unwrap();
+        assert_eq!(state.provider_http_clients.lock().unwrap().len(), 1);
+        state.provider_http_client(300).unwrap();
+        assert_eq!(state.provider_http_clients.lock().unwrap().len(), 2);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
