@@ -6,20 +6,8 @@ use crate::{
 use std::future::IntoFuture;
 
 pub async fn run(args: Vec<String>) -> Result<(), String> {
-    if args.first().map(String::as_str)==Some("--rsi-worker-identity") {
-        println!("{}",option_env!("DOMINION_BUILD_COMMIT").unwrap_or("unknown"));
-        return Ok(());
-    }
-    if args.first().map(String::as_str)==Some("--rsi-diagnose") {
-        println!("{}",engine::rsi_evolve::diagnose_capabilities());
-        return Ok(());
-    }
-    if args.first().map(String::as_str)==Some("--rsi-plan-generation") {
-        return engine::rsi_evolve::plan_generation_from_file(
-            args.get(1).ok_or("다음 세대 계획 파일이 필요합니다.")?);
-    }
-    if args.first().map(String::as_str)==Some("--rsi-worker-job") {
-        return engine::rsi_evolve::worker(args.get(1).ok_or("세대 작업 ID가 필요합니다.")?).await;
+    if args.first().is_some_and(|arg| arg.starts_with("--rsi-")) {
+        return Err("RSI 자동 실행 CLI는 종료되었습니다.".into());
     }
     if platform::handle_control(&args)? {
         return Ok(());
