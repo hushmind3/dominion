@@ -53,6 +53,8 @@ if(!jobs.includes('store.uncertain_effect_sessions()')||!store.includes('pub fn 
 if(!jobs.includes('context.finish_terminal(')||!jobs.includes('job.finalization_failed'))
   throw Error('Job success must have a durable terminal claim before audit')
 const sdkApi=readFileSync(path.join(root,'src/api/sdk.rs'),'utf8')
+if(!sdkApi.includes('state.store.reconcile_sdk_effect_once('))
+  throw Error('SDK tool reconciliations must be a durable single claim')
 if(!sdkApi.includes('state.store.sdk_evidence_for_session(session)')||
     !store.includes('pub fn sdk_evidence_for_session('))
   throw Error('SDK individual run polling must use its session-scoped evidence read')

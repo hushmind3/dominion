@@ -308,10 +308,18 @@ pub async fn resume(State(state):State<AppState>,Path(id):Path<String>)->Respons
 pub async fn reconcile(State(state):State<AppState>,Path(id):Path<String>,Json(input):Json<ReconcileInput>)->Response{
     if input.details.trim().is_empty()||input.details.len()>8192{return error(StatusCode::BAD_REQUEST,"실제 확인한 결과를 1~8192자로 입력하세요.");}
     let Some(mut record)=state.store.get("sdk_run",&id)else{return error(StatusCode::NOT_FOUND,"작업이 없습니다.");};
+    let expected_status=record["status"].as_str().unwrap_or("").to_string();
+    if !matches!(expected_status.as_str(),"failed"|"interrupted"){
+        return error(StatusCode::CONFLICT,"실행·완료·취소된 작업의 결과를 변경할 수 없습니다.");
+    }
     let Some(session)=record["sessionId"].as_str()else{return error(StatusCode::CONFLICT,"구형 하네스 기록은 읽기 전용입니다.");};
     if state.active.lock().unwrap().contains(session){return error(StatusCode::CONFLICT,"실행 중에는 복구 결과를 변경할 수 없습니다.");}
     let Some(run)=execution(&state,&record)else{return error(StatusCode::CONFLICT,"복구할 실행 기록이 없습니다.");};
-    let pending=state.store.all("execution_operation").into_iter().filter(|op|op["runId"]==run["id"]&&op["outcomeUnknown"]==true).collect::<Vec<_>>();
+    let run_id=run["id"].as_str().unwrap_or("");
+    let pending=match state.store.execution_operations(run_id) {
+        Ok(rows)=>rows.into_iter().filter(|op|op["outcomeUnknown"]==true).collect::<Vec<_>>(),
+        Err(message)=>return error(StatusCode::INTERNAL_SERVER_ERROR,&message),
+    };
     if pending.len()!=1{return error(StatusCode::CONFLICT,"효과가 불명확한 도구 하나만 수동 확인할 수 있습니다.");}
     let mut op=pending[0].clone();op["outcomeUnknown"]=json!(false);op["effectState"]=json!(if input.applied{"applied"}else{"not_applied"});
     op["operatorObservation"]=json!({"applied":input.applied,"details":input.details,"observedAt":chrono::Utc::now().to_rfc3339()});
@@ -328,8 +336,22 @@ pub async fn reconcile(State(state):State<AppState>,Path(id):Path<String>,Json(i
             saved["kernelState"]=serde_json::to_value(snapshot).unwrap_or(Value::Null);updates.push((kind,saved));
         }
     }
-    if let Err(message)=state.store.put_native_observation(&updates){return error(StatusCode::INTERNAL_SERVER_ERROR,&message);}
-    if let Err(message)=engine::execution_budget::refresh_after_observation(&state,run["id"].as_str().unwrap_or("")) { return error(StatusCode::INTERNAL_SERVER_ERROR,&message); }
+    let operation_id=op["id"].as_str().unwrap_or("");
+    match state.store.reconcile_sdk_effect_once(
+        &id,&expected_status,operation_id,run_id,&updates
+    ){
+        Ok(true)=>{},
+        Ok(false)=>return error(StatusCode::CONFLICT,
+            "이미 확인한 도구 효과이거나 SDK 작업 상태가 변경되었습니다."),
+        Err(message)=>return error(StatusCode::INTERNAL_SERVER_ERROR,&message),
+    }
+    state.bus.record("sdk_run",&record);
+    if let Err(message)=engine::execution_budget::refresh_after_observation(&state,run_id){
+        state.store.audit("native.reconciliation_budget_refresh_failed",
+            json!({"runId":run_id,"operationId":operation_id,"error":message}));
+        return error(StatusCode::INTERNAL_SERVER_ERROR,
+            "도구 결과는 저장됐지만 예산 재계산에 실패했습니다. 실행 기록을 확인하세요.");
+    }
     state.store.audit("native.operator_reconciled",json!({"runId":run["id"],"operationId":op["id"],"observation":op["operatorObservation"]}));
     Json(public_view(&state,record)).into_response()
 }
@@ -432,6 +454,26 @@ mod view_tests{
         assert_eq!(unverified["status"],"completed");
         assert_eq!(unverified["verified"],false);
         assert!(unverified["taskOutcome"].is_null());
+    }
+    #[tokio::test]
+    async fn reconcile_rejects_completed_and_cancelled_runs_without_mutation(){
+        let state=fixture();
+        for status in ["completed","cancelled"]{
+            state.store.put("session",&json!({"id":format!("session-{status}")}));
+            state.store.put("sdk_run",&json!({"id":status,
+                "sessionId":format!("session-{status}"),"status":status}));
+            state.store.put("execution",&json!({"id":format!("run-{status}"),
+                "sessionId":format!("session-{status}"),"status":"interrupted"}));
+            state.store.put("execution_operation",&json!({"id":format!("op-{status}"),
+                "runId":format!("run-{status}"),"outcomeUnknown":true}));
+            let response=reconcile(State(state.clone()),Path(status.into()),
+                Json(ReconcileInput{applied:true,details:"observed".into()})).await;
+            assert_eq!(response.status(),StatusCode::CONFLICT,"{status}");
+            assert_eq!(state.store.get("sdk_run",status).unwrap()["status"],status);
+            assert_eq!(state.store.get("execution_operation",
+                &format!("op-{status}")).unwrap()["outcomeUnknown"],true);
+        }
+        let _=std::fs::remove_dir_all(&state.config.data_dir);
     }
     #[tokio::test]
     async fn resume_refuses_real_unreconciled_tool_effect_in_sqlite(){

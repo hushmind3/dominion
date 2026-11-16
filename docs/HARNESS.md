@@ -39,6 +39,13 @@ A room speaker's completed response now records elapsed milliseconds in its dura
 
 SDK startup stores the run and its session (including budget owner, token/price limits and workspace scope) in one SQLite transaction. Neither an unbounded orphaned session nor a queued run without its configured budget can be created by a partial commit.
 
+Manual tool reconciliation is a single claim: the SDK owner must be failed
+or interrupted, the latest operation must still be unobserved, and both facts
+are verified within the same SQLite transaction that saves the observation
+and native journal changes. Concurrent or repeated operator decisions cannot
+replace the first recorded effect, and already-completed/cancelled runs cannot
+be reopened by a stale reconciliation request.
+
 SDK `in_doubt` status takes precedence over `failed` and `interrupted` whenever the latest native run retains an unknown tool effect. `resume` fails closed until the operator reconciles the effect; terminal completed/cancelled history is not rewritten by the read projection.
 
 SDK tool approvals require a live, uncancelled owner run and propagate resolver failures. Cancellation first atomically claims the SDK run's live status, then signals the shared session epoch; a late cancellation never overwrites completed history or silently stops a finished job.
