@@ -49,7 +49,7 @@ pub fn models_dir(state: &AppState) -> PathBuf {
         candidates.push(cwd.join("ComfyUI_windows_portable").join("ComfyUI").join("models"));
     }
     candidates.into_iter().find(|candidate|candidate.is_dir())
-        .unwrap_or_else(||state.config.data_dir.join("comfy-models-unconfigured"))
+        .unwrap_or_else(||state.config.data_dir.join("video-models"))
 }
 pub fn models_dir_ready(state:&AppState)->bool{
     models_dir(state).is_dir()
@@ -161,9 +161,11 @@ pub fn setup_model(state:AppState,id:&str,body:&Value)->Result<Value,String>{
     // install can silently redirect subsequent renders to an invalid folder.
     let configured=cfg["comfyModelsDir"].as_str().map(PathBuf::from);
     let library=configured.unwrap_or_else(||models_dir(&state));
-    if !library.is_dir(){
-        return Err("ComfyUI의 models 폴더를 선택하세요. 설치되지 않은 폴더에 모델을 받지 않습니다.".into());
-    }
+    // Model acquisition is independent of ComfyUI setup. Dominion owns a
+    // default library under its data directory; users never pick a folder
+    // just to download a video model.
+    std::fs::create_dir_all(&library)
+        .map_err(|e|format!("영상 모델 저장소를 만들지 못했습니다: {e}"))?;
     if !files.iter().all(|(relative,_)| {
         let name=Path::new(relative);
         !name.is_absolute()&&name.components().all(|component|
@@ -200,7 +202,10 @@ fn model_asset_ready(path: &Path) -> bool {
 // Each listed checkpoint has a verified multi-hundred-MB or multi-GB
 // upstream payload. A 1-MB interrupted transfer is not a usable model.
 fn asset_min_bytes(relative:&str)->u64{
-    if relative.contains("Wan2.1-T2V-1.3B-Q4_K_M") {700_000_000}
+    if relative.contains("Wan2.1-T2V-1.3B-Q3_K_M") {600_000_000}
+    else if relative.contains("Wan2.1-T2V-1.3B-Q4_K_M") {700_000_000}
+    else if relative.contains("Wan2.1-T2V-1.3B-Q5_K_M") {900_000_000}
+    else if relative.contains("Wan2.1-T2V-1.3B-Q8_0") {1_300_000_000}
     else if relative.contains("wan2.1_t2v_1.3B_fp16") {2_500_000_000}
     else if relative.contains("umt5-xxl-encoder-Q4_K_M") {3_000_000_000}
     else if relative.contains("umt5_xxl_fp8") {2_000_000_000}
@@ -215,25 +220,35 @@ fn present(state: &AppState, relative: &str) -> bool {
     model_file_ready(relative,&models_dir(state).join(relative))
 }
 
-/// Built-in one-click models. Availability is a real file check, not a claim.
-pub fn video_models(state: &AppState) -> Vec<Value> {
-    let entries = [
-        ("wan21-t2v-1.3b-q4", "Wan2.1 T2V 1.3B · 4비트", "gguf",
-            ["unet/Wan2.1-T2V-1.3B-Q4_K_M.gguf",
-             "text_encoders/umt5-xxl-encoder-Q4_K_M.gguf",
-             "vae/wan_2.1_vae.safetensors"]),
-        ("wan21-t2v-1.3b-fp16", "Wan2.1 T2V 1.3B · fp16", "fp16",
-            ["diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors",
-             "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
-             "vae/wan_2.1_vae.safetensors"]),
+/// Video-generation-only catalog. Sizes are approximate publisher file sizes
+/// including the required text encoder and VAE, not just the diffusion GGUF.
+pub fn video_models(state:&AppState)->Vec<Value>{
+    let variants=[
+        ("wan21-t2v-1.3b-q3km","Wan2.1 1.3B · Q3_K_M","gguf","Q3_K_M",
+            "unet/Wan2.1-T2V-1.3B-Q3_K_M.gguf",729_000_000u64,4_640_000_000u64),
+        ("wan21-t2v-1.3b-q4","Wan2.1 1.3B · Q4_K_M","gguf","Q4_K_M",
+            "unet/Wan2.1-T2V-1.3B-Q4_K_M.gguf",983_000_000,4_900_000_000),
+        ("wan21-t2v-1.3b-q5km","Wan2.1 1.3B · Q5_K_M","gguf","Q5_K_M",
+            "unet/Wan2.1-T2V-1.3B-Q5_K_M.gguf",1_090_000_000,5_010_000_000),
+        ("wan21-t2v-1.3b-q8","Wan2.1 1.3B · Q8_0","gguf","Q8_0",
+            "unet/Wan2.1-T2V-1.3B-Q8_0.gguf",1_540_000_000,5_460_000_000),
+        ("wan21-t2v-1.3b-fp16","Wan2.1 1.3B · FP16 + FP8 encoder","fp16","FP16",
+            "diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors",
+            2_840_000_000,9_840_000_000)
     ];
-    entries.iter().map(|(id, name, kind, files)| {
-        let missing = files.iter().filter(|file| !present(state, file)).count();
+    variants.into_iter().map(|(id,name,kind,quantization,weight,weight_bytes,total_bytes)|{
+        let files=model_files(id).unwrap_or_default();
+        let missing=files.iter().filter(|(relative,_)|!present(state,relative)).count();
         json!({
-            "id": id, "name": name, "kind": kind, "files": files,
-            "available": missing == 0,
-            "missingFiles": missing,
-            "hint": if missing == 0 { "설치됨".to_string() } else { format!("파일 {missing}개 없음") },
+            "id":id,"name":name,"kind":kind,"family":"Wan2.1",
+            "task":"text-to-video","quantization":quantization,
+            "weightBytes":weight_bytes,"totalBytes":total_bytes,
+            "files":files.iter().map(|(file,_)|file).collect::<Vec<_>>(),
+            "available":missing==0,"missingFiles":missing,
+            "hint":if missing==0{"다운로드 완료".to_string()}
+                else{format!("필수 파일 {missing}개 다운로드 필요")},
+            "notes":if kind=="gguf"{"생성 시 ComfyUI-GGUF 노드 필요"}
+                else{"ComfyUI 기본 모델 로더 사용"}
         })
     }).collect()
 }
@@ -241,20 +256,24 @@ pub fn video_models(state: &AppState) -> Vec<Value> {
 /// Workflow used when no imported workflow is set. Four-bit and fp16 loaders
 /// differ only in the loader node; the sampler graph is identical.
 pub fn workflow_for(model: &str, steps: u64) -> Option<Value> {
-    let (unet, clip, vae, loader) = match model {
-        "wan21-t2v-1.3b-q4" => (
-            "Wan2.1-T2V-1.3B-Q4_K_M.gguf",
-            "umt5-xxl-encoder-Q4_K_M.gguf",
-            "wan_2.1_vae.safetensors",
-            "gguf",
-        ),
-        "wan21-t2v-1.3b-fp16" => (
+    let (unet,clip,vae,loader)=match model{
+        "wan21-t2v-1.3b-q3km"=>(
+            "Wan2.1-T2V-1.3B-Q3_K_M.gguf","umt5-xxl-encoder-Q4_K_M.gguf",
+            "wan_2.1_vae.safetensors","gguf"),
+        "wan21-t2v-1.3b-q4"=>(
+            "Wan2.1-T2V-1.3B-Q4_K_M.gguf","umt5-xxl-encoder-Q4_K_M.gguf",
+            "wan_2.1_vae.safetensors","gguf"),
+        "wan21-t2v-1.3b-q5km"=>(
+            "Wan2.1-T2V-1.3B-Q5_K_M.gguf","umt5-xxl-encoder-Q4_K_M.gguf",
+            "wan_2.1_vae.safetensors","gguf"),
+        "wan21-t2v-1.3b-q8"=>(
+            "Wan2.1-T2V-1.3B-Q8_0.gguf","umt5-xxl-encoder-Q4_K_M.gguf",
+            "wan_2.1_vae.safetensors","gguf"),
+        "wan21-t2v-1.3b-fp16"=>(
             "wan2.1_t2v_1.3B_fp16.safetensors",
             "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
-            "wan_2.1_vae.safetensors",
-            "fp16",
-        ),
-        _ => return None,
+            "wan_2.1_vae.safetensors","fp16"),
+        _=>return None
     };
     let (unet_node, clip_node) = if loader == "gguf" {
         (json!({"class_type":"UnetLoaderGGUF","inputs":{"unet_name":unet}}),
@@ -284,36 +303,50 @@ pub fn workflow_for(model: &str, steps: u64) -> Option<Value> {
 
 /// Download sources for the built-in models. Kept out of the repository:
 /// weights are large and licensed separately from the source.
-pub fn model_files(id: &str) -> Option<Vec<(&'static str, &'static str)>> {
-    let files = match id {
-        "wan21-t2v-1.3b-q4" => vec![
-            ("unet/Wan2.1-T2V-1.3B-Q4_K_M.gguf",
-             "https://huggingface.co/samuelchristlie/Wan2.1-T2V-1.3B-GGUF/resolve/main/Wan2.1-T2V-1.3B-Q4_K_M.gguf"),
+pub fn model_files(id:&str)->Option<Vec<(&'static str,&'static str)>>{
+    let gguf=match id{
+        "wan21-t2v-1.3b-q3km"=>Some((
+            "unet/Wan2.1-T2V-1.3B-Q3_K_M.gguf",
+            "https://huggingface.co/samuelchristlie/Wan2.1-T2V-1.3B-GGUF/resolve/main/Wan2.1-T2V-1.3B-Q3_K_M.gguf")),
+        "wan21-t2v-1.3b-q4"=>Some((
+            "unet/Wan2.1-T2V-1.3B-Q4_K_M.gguf",
+            "https://huggingface.co/samuelchristlie/Wan2.1-T2V-1.3B-GGUF/resolve/main/Wan2.1-T2V-1.3B-Q4_K_M.gguf")),
+        "wan21-t2v-1.3b-q5km"=>Some((
+            "unet/Wan2.1-T2V-1.3B-Q5_K_M.gguf",
+            "https://huggingface.co/samuelchristlie/Wan2.1-T2V-1.3B-GGUF/resolve/main/Wan2.1-T2V-1.3B-Q5_K_M.gguf")),
+        "wan21-t2v-1.3b-q8"=>Some((
+            "unet/Wan2.1-T2V-1.3B-Q8_0.gguf",
+            "https://huggingface.co/samuelchristlie/Wan2.1-T2V-1.3B-GGUF/resolve/main/Wan2.1-T2V-1.3B-Q8_0.gguf")),
+        _=>None
+    };
+    if let Some(diffusion)=gguf{
+        return Some(vec![
+            diffusion,
             ("text_encoders/umt5-xxl-encoder-Q4_K_M.gguf",
              "https://huggingface.co/city96/umt5-xxl-encoder-gguf/resolve/main/umt5-xxl-encoder-Q4_K_M.gguf"),
             ("vae/wan_2.1_vae.safetensors",
-             "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"),
-        ],
-        "wan21-t2v-1.3b-fp16" => vec![
+             "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors")
+        ]);
+    }
+    if id=="wan21-t2v-1.3b-fp16"{
+        return Some(vec![
             ("diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors",
              "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors"),
             ("text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
              "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"),
             ("vae/wan_2.1_vae.safetensors",
-             "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"),
-        ],
-        _ => return None,
-    };
-    Some(files)
+             "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors")
+        ])
+    }
+    None
 }
 
 /// Start a background download and record real progress. The UI polls the
 /// record; nothing is marked installed until the file exists on disk.
 pub fn start_download(state: AppState, id: &str) -> Result<Value, String> {
     let files = model_files(id).ok_or("알 수 없는 영상 모델입니다.")?;
-    if !models_dir_ready(&state) {
-        return Err("ComfyUI/models 폴더가 설정되지 않았습니다. 자율 콘텐츠 제작 화면에서 모델 저장 폴더를 먼저 선택하세요.".into());
-    }
+    std::fs::create_dir_all(models_dir(&state))
+        .map_err(|e|format!("영상 모델 저장 폴더 오류: {e}"))?;
     let key = format!("video_model_download:{id}");
     if state.store.get("video_model_download", &key)
         .is_some_and(|row| row["status"] == "downloading")
