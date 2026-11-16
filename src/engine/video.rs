@@ -1429,6 +1429,18 @@ mod tests {
     }
 
     #[test]
+    fn listed_model_sources_are_real_comfyui_layouts_and_nontrivial_assets(){
+        let q4=model_files("wan21-t2v-1.3b-q4").unwrap();
+        assert!(q4.iter().any(|(path,_)|path.starts_with("text_encoders/")));
+        let fp16=model_files("wan21-t2v-1.3b-fp16").unwrap();
+        assert!(fp16.iter().all(|(_,url)|url.starts_with("https://huggingface.co/")));
+        assert!(fp16.iter().all(|(path,_)|asset_min_bytes(path)>=200_000_000));
+        assert!(asset_min_bytes("unet/Wan2.1-T2V-1.3B-Q4_K_M.gguf")>=700_000_000);
+        let built_in=workflow_for("wan21-t2v-1.3b-fp16",12).unwrap();
+        assert_eq!(built_in["2"]["inputs"]["device"],"default");
+        assert_eq!(built_in["6"]["class_type"],"EmptyHunyuanLatentVideo");
+    }
+    #[test]
     fn video_weights_require_a_real_completed_asset_not_a_placeholder() {
         let dir = std::env::temp_dir().join(format!("dominion-model-ready-{}",uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
