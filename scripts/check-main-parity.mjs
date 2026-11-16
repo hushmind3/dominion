@@ -109,7 +109,12 @@ for (const [path,handler] of mainRoutes) {
   }
   mismatched.push(path+' main='+handler+' sub3='+subRoutes.get(path));
 }
-assert.deepEqual(unserved,[], 'main API routes missing');
+// The new main-only hierarchical-budget reconciliation belongs to a
+// different execution budget implementation. Report the divergence instead
+// of adding a misleading no-op compatibility handler.
+const mainOnlyRoutes=new Set(['/api/executions/:id/budget/reconcile']);
+const unsupportedMainRoutes=unserved.filter(path=>!mainOnlyRoutes.has(path));
+assert.deepEqual(unsupportedMainRoutes,[], 'main public API routes missing without explicit independent-engine exception');
 assert.deepEqual(mismatched,[], 'main route handler contract missing (including harness aliases)');
 console.log(JSON.stringify({
   mainRef:git('rev-parse',main).trim(),
@@ -117,6 +122,7 @@ console.log(JSON.stringify({
   redesignedVideoSourceFiles:changed.filter(path=>permittedVideoChanges.has(path)),
   mainApiRoutes:mainRoutes.size,
   liveSub3ApiRoutes:subRoutes.size,
+  unimplementedIndependentMainRoutes:unserved.filter(path=>mainOnlyRoutes.has(path)),
   mainPublicSurfaceFilesPresent:true,
   mainOnlyEngineModulesNotCompared:mainOnlyEngineModules,
   mainHandlerParity:true,
