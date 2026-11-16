@@ -61,6 +61,13 @@ fn offline(project:&Value)->Vec<Value>{
  pieces.iter().enumerate().map(|(i,s)|json!({"script":s,
   "visualPrompt":s,"overlay":"","seconds":total/n+u64::from((i as u64)<total%n)})).collect()
 }
+/// The same project keeps the same base seed across edit revisions.
+/// Without this, video::enqueue would randomize each job's seed, making
+/// unchanged scenes miss the clip cache and spend GPU time unnecessarily.
+fn project_seed(id:&str)->i64{
+ let hash=Sha256::digest(format!("dominion-content-scene-seed:{id}"));
+ i64::from(u32::from_be_bytes(hash[..4].try_into().unwrap()))
+}
 fn render_id(id:&str,version:u64)->String{
  let digest=Sha256::digest(format!("dominion-content:{id}:{version}"));
  let mut bytes=[0u8;16];bytes.copy_from_slice(&digest[..16]);
@@ -180,6 +187,7 @@ pub fn render(state:&AppState,id:&str,expected:Option<u64>)->Result<Value,String
  let mut params=json!({"title":project["title"],"brief":brief,
   "duration":duration,"aspectRatio":project["aspectRatio"],"engine":project["engine"],
   "economy":project["economy"],"projectId":id,"projectRevision":rev,"scenes":scenes,
+  "seed":project_seed(id),
   "studioAutoUpload":project["autoUpload"],"studioPrivacyStatus":project["privacyStatus"]});
  if project["engine"]=="comfyui"{params["brief"]=project["brief"].clone()}
  let queued=video::enqueue_project(state,&params,&render_id(id,rev))?;
@@ -319,6 +327,9 @@ mod tests{
   assert_eq!(job["input"]["scenes"][0]["script"],"Spoken sentence one");
   assert_eq!(job["input"]["scenes"][0]["overlay"],"Visible title one");
   assert_eq!(job["input"]["scenes"][1]["seconds"],2);
+  assert_eq!(job["input"]["render"]["seed"],project_seed(id));
+  assert_eq!(project_seed(id),project_seed(id));
+  assert_ne!(project_seed(id),project_seed("other-video-project"));
   let ctx=JobContext::new(state.clone(),render_id.into());
   let output=video::run(&ctx,&job).await.unwrap();
   assert_eq!(output["qa"]["containerVerified"],true);
