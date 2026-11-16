@@ -308,6 +308,7 @@ mod tests {
         let source = root.join("project");
         std::fs::create_dir_all(&source).unwrap();
         git(&source, &["init", "-q"]).await.unwrap();
+        git(&source, &["config", "core.autocrlf", "false"]).await.unwrap();
         git(&source, &["config", "user.name", "Fixture"])
             .await
             .unwrap();

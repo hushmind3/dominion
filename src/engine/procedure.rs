@@ -1013,11 +1013,23 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(&outside, "outside").unwrap();
         #[cfg(unix)]
-        std::os::unix::fs::symlink(&outside, dir.join("link.txt")).unwrap();
-        assert!(matches!(
-            read_workspace_file(&dir, "link.txt"),
-            FileRead::Unknown
-        ));
+        {
+            std::os::unix::fs::symlink(&outside, dir.join("link.txt")).unwrap();
+            assert!(matches!(
+                read_workspace_file(&dir, "link.txt"),
+                FileRead::Unknown
+            ));
+        }
+        #[cfg(windows)]
+        {
+            // Windows link creation needs Developer Mode or symlink privilege.
+            // A path not created at all must stay Missing, not Unknown.
+            if std::os::windows::fs::symlink_file(&outside, dir.join("link.txt")).is_ok() {
+                assert!(matches!(read_workspace_file(&dir, "link.txt"), FileRead::Unknown));
+            } else {
+                assert!(matches!(read_workspace_file(&dir, "link.txt"), FileRead::Missing));
+            }
+        }
         let big = "x".repeat((MAX_PROCEDURE_FILE_BYTES + 1) as usize);
         std::fs::write(dir.join("big.txt"), big).unwrap();
         assert!(matches!(

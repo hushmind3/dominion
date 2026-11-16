@@ -822,7 +822,8 @@ mod tests {
         assert!(matches!(result,Err(WsError::HintRejected(_))));
         assert_eq!(requests.recv().await.unwrap()["prompt_cache_key"],"stable-key");
         assert!(requests.try_recv().is_err(),"do not open another socket to send the same rejected hint");
-        server.abort();std::fs::remove_dir_all(root).unwrap();
+        server.abort();drop(state);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]
@@ -880,6 +881,7 @@ mod tests {
         assert_eq!(outcome.transport["mode"], "full");
         forget(&key);
         server.abort();
+        drop(state);
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -921,7 +923,8 @@ mod tests {
             assert!(output.try_recv().is_err());
             forget(&registry_key(&provider, "fixture", "session"));
             server.abort();
-            std::fs::remove_dir_all(root).unwrap();
+            drop(state);
+        std::fs::remove_dir_all(root).unwrap();
         }
     }
 
@@ -954,6 +957,7 @@ mod tests {
         assert!(matches!(result, Err(WsError::Fatal(_))));
         forget(&registry_key(&provider, "fixture", "session"));
         server.abort();
+        drop(state);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

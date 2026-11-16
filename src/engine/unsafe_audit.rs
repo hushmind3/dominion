@@ -96,7 +96,9 @@ fn collect(path: &Path, source: &str, findings: &mut Vec<String>) {
         if justified(&lines, index) {
             continue;
         }
-        findings.push(format!("{}:{}", path.display(), index + 1));
+        // Tool/API findings use portable slash paths, including on Windows.
+        let portable_path = path.to_string_lossy().replace('\\', "/");
+        findings.push(format!("{portable_path}:{}", index + 1));
     }
 }
 

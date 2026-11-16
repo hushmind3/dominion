@@ -6,14 +6,23 @@ import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 const root=process.env.RSI_TEMP;
 const plan=JSON.parse(fs.readFileSync(process.env.RSI_PLAN,'utf8'));
+// Windows std::fs::canonicalize returns \\?\-prefixed paths. Those are
+// valid filesystem paths but not reliable Cargo child-process arguments.
+const nativeToolPath=(value)=>{
+ if(process.platform!=='win32')return value;
+ if(value.startsWith('\\\\?\\UNC\\'))return '\\\\'+value.slice(8);
+ if(value.startsWith('\\\\?\\'))return value.slice(4);
+ return value;
+};
 const hash=data=>crypto.createHash('sha256').update(data).digest('hex');
 const logs=[];
+const targetCache=nativeToolPath(process.env.RSI_BUILD_CACHE||path.join(root,'build'));
 const run=(exe,args,cwd)=>{
  const result=spawnSync(exe,args,{cwd,encoding:'utf8',timeout:360000,maxBuffer:8*1024*1024,
-  env:{...process.env,CARGO_TARGET_DIR:path.join(process.env.RSI_BUILD_CACHE||path.join(root,'build'),path.basename(cwd))}});
+  env:{...process.env,CARGO_TARGET_DIR:path.join(targetCache,path.basename(cwd))}});
  const text=(result.stdout||'')+'\n'+(result.stderr||'');
  logs.push(text.slice(-80000));
- return {ok:result.status===0&&!result.error,text,stdout:result.stdout||''};
+ return {ok:result.status===0&&!result.error,text,stdout:result.stdout||'',error:result.error?.message||''};
 };
 const median=values=>{const sorted=[...values].sort((a,b)=>a-b),mid=Math.floor(sorted.length/2);return sorted.length%2?sorted[mid]:(sorted[mid-1]+sorted[mid])/2};
 const oracle=plan.oracleFixture?fs.readFileSync(plan.oracleFixture):null;
@@ -38,7 +47,9 @@ for(const label of ['baseline','candidate']){
    const name=line.slice(0,-6);tests.set(name,[...(tests.get(name)||[]),binary]);
   }
  }
- variants[label]={dir,ok:built.ok&&binaries.length>0,tests};
+ variants[label]={dir,ok:built.ok&&binaries.length>0,tests,
+  buildDiagnostic:built.ok&&binaries.length>0?null:
+   (built.error||built.text||'Cargo emitted no test executable').slice(-2400)};
 }
 const cases=[];
 for(const spec of plan.cases){
@@ -104,6 +115,7 @@ fs.mkdirSync(path.dirname(process.env.RSI_REPORT),{recursive:true});
 fs.writeFileSync(process.env.RSI_REPORT+'.evidence.txt',evidence);
 const report={baseCommit:process.env.RSI_BASE_SHA,patchSha256:hash(fs.readFileSync(process.env.RSI_PATCH)),
  oracleVersion:plan.oracleVersion,oracleSha256:plan.oracleSha256||null,runner:'balanced-frozen-rsi-lab-v2',
- reportSha256:hash(evidence),baselineBuildOk:variants.baseline.ok,candidateBuildOk:variants.candidate.ok,cases};
+ reportSha256:hash(evidence),baselineBuildOk:variants.baseline.ok,candidateBuildOk:variants.candidate.ok,
+ buildFailures:{baseline:variants.baseline.buildDiagnostic,candidate:variants.candidate.buildDiagnostic},cases};
 fs.writeFileSync(process.env.RSI_REPORT,JSON.stringify(report,null,2)+'\n');
 console.log(JSON.stringify({report:process.env.RSI_REPORT,pairedCases:cases.length}));

@@ -16,7 +16,16 @@ const run=(args,cwd=process.cwd())=>{
  return result.stdout.trim();
 };
 const root=run(['rev-parse','--show-toplevel']);
-const patch=fs.realpathSync(patchArg),planFile=fs.realpathSync(planArg),report=path.resolve(reportArg);
+// Git for Windows cannot read Node's extended-length \\?\ paths in git apply.
+// Normalize only the child-process path, preserving the same canonical file.
+const gitPath=(input)=>{
+ const canonical=fs.realpathSync(input);
+ if(process.platform!=='win32')return canonical;
+ if(canonical.startsWith('\\\\?\\UNC\\'))return '\\\\'+canonical.slice(8);
+ if(canonical.startsWith('\\\\?\\'))return canonical.slice(4);
+ return canonical;
+};
+const patch=gitPath(patchArg),planFile=gitPath(planArg),report=path.resolve(reportArg);
 const plan=JSON.parse(fs.readFileSync(planFile,'utf8'));
 if(!Array.isArray(plan.cases)||plan.cases.length<2||plan.cases.length>128)throw Error('2..128 cases required');
 if(!/^[A-Za-z0-9_.-]{1,120}$/.test(plan.oracleVersion||''))throw Error('oracleVersion required');

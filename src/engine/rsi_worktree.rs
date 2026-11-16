@@ -192,9 +192,54 @@ fn digest(value:&str)->String {
 async fn run(mut command: Command, limit: Duration) -> Result<std::process::Output,String> {
     tools::run_command(&mut command, limit).await
 }
+/// Git for Windows does not accept Rust's canonical "\\?\" device paths
+/// as worktree/patch CLI arguments (Git sees "//?/C:/..." as invalid).
+/// Preserve UNC paths while converting the device prefix to Win32 syntax.
+fn windows_git_path(value: &str) -> String {
+    if let Some(rest) = value.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    if let Some(rest) = value.strip_prefix(r"\\?\") {
+        return rest.to_string();
+    }
+    if let Some(rest) = value.strip_prefix("//?/UNC/") {
+        return format!("//{rest}");
+    }
+    if let Some(rest) = value.strip_prefix("//?/") {
+        return rest.to_string();
+    }
+    value.to_string()
+}
+
+pub(crate) fn git_cli_arg(value: &str) -> String {
+    if cfg!(windows) { windows_git_path(value) } else { value.to_string() }
+}
+
+pub(crate) fn git_cli_dir(dir: &Path) -> PathBuf {
+    if cfg!(windows) {
+        PathBuf::from(windows_git_path(&dir.to_string_lossy()))
+    } else {
+        dir.to_path_buf()
+    }
+}
+
+#[cfg(test)]
+mod windows_git_path_tests {
+    use super::windows_git_path;
+
+    #[test]
+    fn native_device_paths_become_git_compatible_without_losing_unc_shares() {
+        assert_eq!(windows_git_path(r"\\?\C:\src\project"), r"C:\src\project");
+        assert_eq!(windows_git_path(r"\\?\UNC\server\share\src"), r"\\server\share\src");
+        assert_eq!(windows_git_path("//?/C:/src/project"), "C:/src/project");
+        assert_eq!(windows_git_path("//?/UNC/server/share"), "//server/share");
+        assert_eq!(windows_git_path(r"C:\already\regular"), r"C:\already\regular");
+    }
+}
+
 async fn git(dir:&Path, args:&[&str])->Result<String,String>{
     let mut command=Command::new("git");
-    command.current_dir(dir).args(args);
+    command.current_dir(git_cli_dir(dir)).args(args.iter().map(|value|git_cli_arg(value)));
     let output=run(command,GIT_LIMIT).await?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).chars().take(900).collect());
@@ -965,6 +1010,7 @@ pub(crate) async fn compare_at(context:&JobContext,id:&str,source:&Path,_runner_
         .arg(candidate["baseCommit"].as_str().unwrap_or(""))
         .arg(&patch_file).arg(&plan_file).arg(&report_file)
         .env("PATH", path)
+        .env("DOMINION_CARGO",cargo_executable())
         .env("RSI_BUILD_CACHE",std::fs::canonicalize(&state.config.data_dir).map_err(|e|e.to_string())?.join("rsi-paired-build").join(&context.job_id));
     let outcome=crate::engine::rsi_evolve::command(context,command,Duration::from_secs(1200)).await?;
     if !outcome.status.success() {
@@ -1119,6 +1165,7 @@ mod tests {
         assert!(prompt.contains("정적 검사 실패"));
         assert!(prompt.contains("cargo check --all-targets"));
         assert!(!prompt.contains("실제 성능 향상 검증"));
+        drop(state);
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
@@ -1305,6 +1352,7 @@ mod tests {
         assert!(tools::execute(&ctx,"workspace_write",&json!({"path":".git","content":"tamper"}),"run").await.is_err());
         assert!(tools::execute(&ctx,"workspace_write",&json!({"path":"Cargo.toml","content":"tamper"}),"run").await.is_err());
         assert!(!outside.exists());
+        drop(state);
         std::fs::remove_dir_all(root).unwrap();
     }
 

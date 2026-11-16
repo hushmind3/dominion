@@ -422,6 +422,7 @@ mod tests {
         let resumed=prepare(&restored,&provider,&request,"room:one","full persona",&json!({"effort":"low"})).unwrap();
         assert_eq!(first["cacheKey"],resumed["cacheKey"]);
         assert_eq!(resumed["previousReplyMessageId"],message["id"]);
+        drop(restored);
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -546,6 +547,7 @@ mod tests {
         restored.store.put("room",&json!({"id":"test","contextBudgetTokens":2000}));
         let (after_restart,_)=project(&restored,&provider,&second,&[],"room:test",&mut resumed);
         assert_eq!(after_restart,second_wire);
+        drop(restored);
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -584,6 +586,7 @@ mod tests {
         state.store.clear_messages("s");
         project(&state,&provider,&fresh,&[],"s",&mut next);
         assert_eq!(next["workingView"]["rebaseReason"],"transcript_reset");
+        drop(state);
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -626,6 +629,7 @@ mod tests {
         state.store.patch_if("memory","a","status",&json!("active"),&json!({"status":"archived"}));
         let (revoked,_)=project(&state,&provider,&messages("owner2",&["b"]),&[],"room:r",&mut next);
         assert!(!json!(revoked).to_string().contains("FACT_a"));
+        drop(state);
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -643,6 +647,7 @@ mod tests {
         let id=feature_id(&provider,CacheWire::Key);
         state.store.patch_if("provider_wire_feature",&id,"accepted",&json!(false),&json!({"expiresAt":0}));
         assert_eq!(hinted_body(&state,&provider,&original,&mut plan,CacheWire::Key)["prompt_cache_key"],"stable-participant-key");
+        drop(state);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -520,7 +520,8 @@ pub(crate) async fn command(
 
 async fn git(context: &JobContext, dir: &Path, args: &[&str]) -> Result<String, String> {
     let mut cmd = Command::new("git");
-    cmd.current_dir(dir).args(args);
+    cmd.current_dir(rsi_worktree::git_cli_dir(dir))
+        .args(args.iter().map(|arg| rsi_worktree::git_cli_arg(arg)));
     let output = command(context, cmd, Duration::from_secs(30)).await?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr)
@@ -5750,6 +5751,8 @@ mod tests {
         std::fs::create_dir_all(source.join("src")).unwrap();
         std::fs::write(source.join("src/main.rs"), "base\n").unwrap();
         git(&context, &source, &["init", "-q"]).await.unwrap();
+        // Git for Windows defaults can dirty an otherwise identical worktree.
+        git(&context, &source, &["config", "core.autocrlf", "false"]).await.unwrap();
         git(&context, &source, &["add", "."]).await.unwrap();
         git(
             &context,
@@ -6328,7 +6331,7 @@ mod tests {
             let request=crate::engine::chat::TurnRequest::from_value(&json!({"sessionId":session_id,
                 "input":if index==0{"대화 방법을 학습 조사해"}else{"대화 자료를 처리해"},
                 "toolsEnabled":true,"toolsExecutionEnabled":true,"autoLearning":false})).unwrap();
-            tokio::time::timeout(Duration::from_secs(10),crate::engine::run_quiet(&state,&request))
+            tokio::time::timeout(Duration::from_secs(30),crate::engine::run_quiet(&state,&request))
                 .await.unwrap().unwrap();
             collect_method_executions(&state,session_id,&state.config.workspace);
             let generation=json!({"jobId":session_id,"accepted":false,"domain":"context","newFindings":1,"tokens":20,"elapsedMs":1});

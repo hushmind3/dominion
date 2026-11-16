@@ -164,7 +164,14 @@ fn install(state: &AppState, source_dir: &Path) -> Result<Value, String> {
         })
         .collect();
     let target = state.config.data_dir.join("skills").join(&slug);
-    copy_dir(source_dir, &target).map_err(|error| format!("스킬 복사 실패: {error}"))?;
+    // On a case-insensitive filesystem, reviewer/ and Reviewer/ refer to the
+    // same folder. Importing an existing skill must not copy onto itself.
+    let already_at_target = source_dir.canonicalize().ok()
+        .zip(target.canonicalize().ok())
+        .is_some_and(|(source, destination)| source == destination);
+    if !already_at_target {
+        copy_dir(source_dir, &target).map_err(|error| format!("스킬 복사 실패: {error}"))?;
+    }
 
     let record = state.store.put(
         "skill",
@@ -283,6 +290,22 @@ mod tests {
         assert!(dir.join("skills/Reviewer/SKILL.md").exists());
 
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn importing_an_existing_skill_directory_never_overwrites_itself() {
+        let (state, dir) = temp_state();
+        let source = dir.join("skills/Reviewer");
+        std::fs::create_dir_all(&source).unwrap();
+        let contents = "---\nname: Reviewer\n---\nRead existing source before editing.\n";
+        std::fs::write(source.join("SKILL.md"), contents).unwrap();
+        let catalog = catalog(&state);
+        let id = catalog["items"][0]["id"].as_str().unwrap();
+        let record = import(&state, id).expect("import same directory");
+        assert_eq!(record["name"], "Reviewer");
+        assert_eq!(std::fs::read_to_string(source.join("SKILL.md")).unwrap(), contents);
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

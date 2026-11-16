@@ -354,7 +354,7 @@ pub fn installed(state: &AppState) -> Vec<Value> {
                 .strip_prefix(&dir)
                 .unwrap_or(&path)
                 .to_string_lossy()
-                .to_string();
+                .replace('\\', "/");
             let file = path
                 .file_name()
                 .map(|value| value.to_string_lossy().to_string())
@@ -426,7 +426,7 @@ fn mlx_model_from_dir(dir: &Path, root: &Path) -> Option<Value> {
                 .strip_prefix(root)
                 .ok()?
                 .to_string_lossy()
-                .to_string();
+                .replace('\\', "/");
             Some(json!({
                 "id": format!("mlx:{repo}"),
                 "repo": repo,

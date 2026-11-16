@@ -297,6 +297,7 @@ mod tests {
                 .len(),
             3
         );
+        drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -310,6 +311,7 @@ mod tests {
         let episode = state.store.get("task_episode", "task-room-1").unwrap();
         assert_eq!(episode["rootOutcome"], "unknown");
         assert_eq!(episode["rootFinal"], true);
+        drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -325,6 +327,7 @@ mod tests {
         )
         .is_none());
         assert_eq!(state.store.count("task_episode"), 0);
+        drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

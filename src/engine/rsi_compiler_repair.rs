@@ -36,13 +36,17 @@ fn suggestions(output: &[u8], changed: &BTreeSet<String>) -> Vec<Suggestion> {
                 if span["suggestion_applicability"] != "MachineApplicable" {
                     continue;
                 }
-                let Some(path) = span["file_name"].as_str() else { continue };
-                if !rsi::safe_path(path) || !changed.contains(path) { continue; }
+                let Some(raw_path) = span["file_name"].as_str() else { continue };
+                // rustc emits Windows spans as src\lib.rs; git diff --name-only
+                // uses src/lib.rs. Normalize before validating against changed
+                // tracked files so valid machine-applicable edits are not lost.
+                let path = raw_path.replace('\\', "/");
+                if !rsi::safe_path(&path) || !changed.contains(&path) { continue; }
                 let Some(start) = span["byte_start"].as_u64().and_then(|n| usize::try_from(n).ok()) else { continue };
                 let Some(end) = span["byte_end"].as_u64().and_then(|n| usize::try_from(n).ok()) else { continue };
                 let Some(replacement) = span["suggested_replacement"].as_str() else { continue };
                 if start > end || replacement.len() > 512 { continue; }
-                let key = (path.to_string(), start, end, replacement.to_string());
+                let key = (path.clone(), start, end, replacement.to_string());
                 if seen.insert(key) {
                     found.push(Suggestion {
                         path: path.to_string(), start, end,
@@ -179,6 +183,10 @@ mod tests {
             &changed);
         assert_eq!(accepted.len(), 1);
         assert_eq!(accepted[0].replacement, "*");
+        assert_eq!(suggestions(
+            &diagnostic(r"src\engine\decompose.rs", 4, 4, "MachineApplicable"),
+            &changed
+        ), accepted, "rustc Windows paths must resolve to tracked git paths");
         assert!(suggestions(
             &diagnostic("src/engine/decompose.rs", 4, 4, "MaybeIncorrect"),
             &changed).is_empty());

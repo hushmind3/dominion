@@ -1465,6 +1465,7 @@ mod tests {
             &json!({"sessionId":"other-room"}),
         );
         assert!(ensure_room_session(&state, "r").is_err());
+        drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
@@ -1491,6 +1492,7 @@ mod tests {
         assert_eq!(everyone, vec!["a", "b", "c", "d", "e"]);
         let mentioned = plan_speakers(&state, &config, "@나루 답해", None).unwrap();
         assert_eq!(mentioned, vec!["b"]);
+        drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1537,6 +1539,7 @@ mod tests {
         )
         .unwrap()
         .is_empty());
+        drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[tokio::test]
@@ -1598,6 +1601,7 @@ mod tests {
         );
         drop(requests);
         server.abort();
+        drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[tokio::test]
@@ -1642,6 +1646,7 @@ mod tests {
             1
         );
         server.abort();
+        drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
@@ -1663,6 +1668,7 @@ mod tests {
         assert_eq!(speaker_window(&state, &room, "나머지도 말해라", &ids).len(), 9);
         room["maxTurns"] = json!(0);
         assert_eq!(speaker_window(&state, &room, "짧게 말해", &ids).len(), 2);
+        drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1683,6 +1689,7 @@ mod tests {
         assert_eq!(result["outputs"][0]["agentId"], "b");
         assert_eq!(bodies.lock().unwrap().len(), 1);
         server.abort();
+        drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1714,6 +1721,7 @@ mod tests {
         assert_eq!(speakers, vec!["b"]);
         assert_eq!(bodies.lock().unwrap().len(), 2);
         server.abort();
+        drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1761,6 +1769,7 @@ mod tests {
         assert_eq!(result["turns"], 1);
         assert_eq!(result["yieldedToMessageId"], "new-owner");
         server.abort();
+        drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[tokio::test]
@@ -1775,6 +1784,7 @@ mod tests {
         let result = run(&run_context(&state, "uncertain"), &job).await.unwrap();
         assert_eq!(result["status"], "needs_review");
         assert_eq!(state.store.count("execution"), 0);
+        drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[tokio::test]
@@ -1836,6 +1846,7 @@ mod tests {
             1
         );
         server.abort();
+        drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[tokio::test]
@@ -1867,6 +1878,7 @@ mod tests {
             1
         );
         server.abort();
+        drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[tokio::test]
@@ -1913,6 +1925,7 @@ mod tests {
         );
         assert_eq!(bodies.lock().unwrap().len(), 9);
         server.abort();
+        drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
@@ -1944,6 +1957,7 @@ mod tests {
             Err(tokio::sync::broadcast::error::TryRecvError::Empty)
         ));
         assert_eq!(room(&state), record);
+        drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

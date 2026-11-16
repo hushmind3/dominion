@@ -35,7 +35,4 @@ jobs:
       - run: node --check scripts/rsi-lab.mjs
       - run: node --test scripts/rsi-lab.test.mjs
       - run: node scripts/check-runtime-architecture.mjs
-      # Windows-only fixture failures must not hide a green macOS/Linux
-      # contract, and must stay visible in the job log.
       - run: cargo test --workspace --release
-        continue-on-error: ${{ matrix.os == 'windows-latest' }}

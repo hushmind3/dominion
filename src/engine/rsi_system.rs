@@ -720,6 +720,7 @@ mod tests {
         disabled["input"]["rsiSystemEvolution"]=json!(false);
         state.store.put("job",&disabled).unwrap();
         assert!(propose(&state,"session",&request).is_err());
+        drop(state);
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
@@ -821,6 +822,7 @@ mod integration_contract_tests {
         assert!(validate_plan_evidence(&state,&root,"revision",index["id"].as_str().unwrap(),&new_role).is_ok());
         fs::write(root.join("src/engine/tools.rs"),"pub fn act_differently() {}\n").unwrap();
         assert!(validate_plan_evidence(&state,&root,"revision",index["id"].as_str().unwrap(),&new_role).is_err());
+        drop(state);
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
@@ -835,6 +837,7 @@ mod integration_contract_tests {
         assert!(rows[0]["usageSignalCount"].as_u64().unwrap()>0);
         assert_eq!(usage_evidence(&state)["signals"][0]["evidence"][0]["executionId"],"ordinary-task");
         assert_eq!(rows[0]["qualityProven"],false);
+        drop(state);
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
@@ -845,6 +848,7 @@ mod integration_contract_tests {
             "focusFiles":["src/engine/memory.rs"],"systemDesign":{"component":"memory"}});
         let rows=architecture_frontier(&state,&model,&[fake],index["id"].as_str().unwrap(),&root);
         assert_eq!(rows[0]["verifiedRoleChanged"],false);assert_eq!(rows[0]["sourceAttempts"],1);
+        drop(state);
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
@@ -870,6 +874,7 @@ mod integration_contract_tests {
         assert!(inherited_domain(&[history.clone()]).is_none());
         history["acceptedSourceHashes"]["src/engine/new_planner.rs"]=json!("d".repeat(64));
         assert_eq!(inherited_domain(&[history]),Some("memory".into()));
+        drop(state);
         fs::remove_dir_all(root).unwrap();
     }
     // These are simulated recorded-experiment receipts, not claims of new live
@@ -933,6 +938,7 @@ mod integration_contract_tests {
         state.store.put("execution_operation",&operation);
         history[1]["acceptedSourceHashes"]["src/engine/learning_part.rs"]=Value::Null;
         assert_eq!(handoff_evidence(&state,&history)["demonstrated"],false);
+        drop(state);
         fs::remove_dir_all(root).unwrap();
     }
 }

@@ -283,6 +283,13 @@ pub fn evaluate(state: &AppState, id: &str, body: &Value) -> Result<Value, Strin
     if body["baselineBuildOk"] != true || body["candidateBuildOk"] != true {
         outcome["eligible"] = json!(false);
         outcome["verdict"] = json!("build_failed");
+        // Preserve independent compiler receipts so another generation can
+        // repair a concrete build failure without inventing improved metrics.
+        if let Some(failures)=body["buildFailures"].as_object() {
+            outcome["buildFailures"]=json!(failures.iter().map(|(name,log)|(
+                name.clone(),log.as_str().unwrap_or("").chars().take(2400).collect::<String>()
+            )).collect::<std::collections::BTreeMap<_,_>>());
+        }
     }
     let status = if outcome["verdict"] == "improved" { "verified" }
         else if outcome["verdict"] == "regressed" || outcome["verdict"] == "build_failed" {

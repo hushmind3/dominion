@@ -1749,6 +1749,8 @@ mod tests {
         bad["endLine"]=json!(999);
         bad["expectedSha256"]=json!(format!("{:x}",Sha256::digest(std::fs::read(&path).unwrap())));
         assert!(execute(&ctx,"workspace_replace_range",&bad,"run").await.is_err());
+        drop(ctx);
+        drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

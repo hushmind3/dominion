@@ -257,6 +257,7 @@ mod tests {
             state.store.get("memory", "only-legacy").unwrap()["text"],
             "retained"
         );
+        drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
@@ -285,6 +286,7 @@ mod tests {
             state.store.get("approval", "a").unwrap()["status"],
             "interrupted"
         );
+        drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -304,6 +306,7 @@ mod tests {
         assert_eq!(stored["scoreVersion"], 1);
         assert_eq!(stored["legacyCounters"]["uses"], 7);
         assert_eq!(stored["evidenceGrade"], "legacy_observed");
+        drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -17,6 +17,10 @@ fn digest(text: &str) -> String {
 /// with one accumulator. Expression and counterexample policies still execute
 /// their original interpreters; verified payoff and objective constraints stay.
 fn stream_verified_domain_selection(source: &str) -> Option<String> {
+    // Git checkouts on Windows may use CRLF. Source operators work on
+    // normalized line endings so the same verified edit is portable.
+    let normalized = source.replace("\r\n", "\n");
+    let source = normalized.as_str();
     let entry="pub(crate) fn select_domain(algorithm: &Value, history: &[Value], objective: &str) -> String {";
     let features_start=source.find("fn search_features(")?;
     let score_start=source[features_start..].find("\nfn score_domain(")?+features_start+1;
@@ -50,6 +54,10 @@ fn stream_verified_domain_selection(source: &str) -> Option<String> {
     /// message table for each remembered fact at every subsequent recall.
     /// Legacy facts retain the existing origin lookup for compatibility.
 fn materialize_verified_owner_provenance(source: &str) -> Option<String> {
+    // Git checkouts on Windows may use CRLF. Source operators work on
+    // normalized line endings so the same verified edit is portable.
+    let normalized = source.replace("\r\n", "\n");
+    let source = normalized.as_str();
     let guard="|| message[\"metadata\"][\"origin\"].is_object()";
     let creation="        \"status\": \"active\",\n    }));";
     let original="        .filter(|(_, fact)| {\n            !fact[\"sourceMessageId\"]\n                .as_str()\n                .and_then(|id| state.store.message(id))\n                .is_some_and(|source| source[\"metadata\"][\"origin\"].is_object())\n        })";
@@ -65,6 +73,10 @@ fn materialize_verified_owner_provenance(source: &str) -> Option<String> {
 /// invariant query. Hoist its allocation once, preserving the original
 /// intersection, domain bonus, ordering, and tie-breaking expressions.
 fn hoist_invariant_query_terms(source: &str) -> Option<String> {
+    // Git checkouts on Windows may use CRLF. Source operators work on
+    // normalized line endings so the same verified edit is portable.
+    let normalized = source.replace("\r\n", "\n");
+    let source = normalized.as_str();
     let term_line = "    let query_tokens = memory::terms(query);\n";
     let ranking_anchor = "    let mut ranked = facts\n";
     if source.matches(term_line).count() != 1 || source.matches(ranking_anchor).count() != 1 {
@@ -122,6 +134,10 @@ fn hoist_invariant_query_terms(source: &str) -> Option<String> {
 /// holdout gains. The older Sub2 optimization drops those features and must
 /// never overwrite Sub3's richer selection algorithm.
 fn stream_verified_policy_statistics(source: &str) -> Option<String> {
+    // Git checkouts on Windows may use CRLF. Source operators work on
+    // normalized line endings so the same verified edit is portable.
+    let normalized = source.replace("\r\n", "\n");
+    let source = normalized.as_str();
     const START: &str =
         "    let rows = history\n        .iter()\n        .filter(|row| row[\"domain\"] == domain)\n        .collect::<Vec<_>>();";
     const END: &str = "    let gain_efficiency=if verified_tokens>0.0 {";
@@ -191,6 +207,10 @@ fn stream_verified_policy_statistics(source: &str) -> Option<String> {
 }
 
 fn stream_search_policy_statistics(source: &str) -> Option<String> {
+    // Git checkouts on Windows may use CRLF. Source operators work on
+    // normalized line endings so the same verified edit is portable.
+    let normalized = source.replace("\r\n", "\n");
+    let source = normalized.as_str();
     let first = "fn search_features(history: &[Value], domain: &str, objective: &str) -> BTreeMap<String, f64> {";
     let after = "\n}\n\nfn score_domain(";
     let start = source.find(first)?;
@@ -264,6 +284,10 @@ fn stream_search_policy_statistics(source: &str) -> Option<String> {
 /// Cache the exact terms of the *stored, truncated* text at ingestion. Legacy
 /// rows keep the original runtime tokenization path, preserving behavior.
 fn cache_invariant_fact_terms(source: &str) -> Option<String> {
+    // Git checkouts on Windows may use CRLF. Source operators work on
+    // normalized line endings so the same verified edit is portable.
+    let normalized = source.replace("\r\n", "\n");
+    let source = normalized.as_str();
     let scorer = "fn query_relevance(query: &str, text: &str, query_tokens: &std::collections::BTreeSet<String>) -> usize {";
     let call = "query_relevance(query, text, &query_tokens)";
     let text_calc = "    let text_tokens = memory::terms(text);\n    score + query_tokens.intersection(&text_tokens).count().min(12)";
@@ -304,6 +328,10 @@ fn cache_invariant_fact_terms(source: &str) -> Option<String> {
 /// is invariant across all candidate facts, and that no stated domain lookup
 /// is required when the requested domain is absent.
 fn hoist_invariant_query_domain(source: &str) -> Option<String> {
+    // Git checkouts on Windows may use CRLF. Source operators work on
+    // normalized line endings so the same verified edit is portable.
+    let normalized = source.replace("\r\n", "\n");
+    let source = normalized.as_str();
     let marker = "    let query_tokens = memory::terms(query);\n    let mut ranked = facts\n";
     let old = "    if let (Some(asked), Some(stated)) = (fact_domain(query), fact_domain(text)) {\n        if asked == stated {\n            score += 32;\n        }\n    }";
     if source.matches(marker).count()!=1 || source.matches(old).count()!=1 {
@@ -372,7 +400,7 @@ pub(crate) fn induce(
     if input["rsiFailedPatchRecovery"]["candidateId"].is_string() { return Ok(None); }
     // Do not append a native edit to model-written or inherited source. Only
     // create a new candidate when the *whole* disposable tree is pristine.
-    let clean=std::process::Command::new("git").current_dir(isolated)
+    let clean=std::process::Command::new("git").current_dir(crate::engine::rsi_worktree::git_cli_dir(isolated))
         .args(["status","--porcelain","--untracked-files=normal"])
         .output().map_err(|e|e.to_string())?;
     if !clean.status.success() || !clean.stdout.is_empty() {
@@ -502,8 +530,8 @@ mod tests {
     fn verified_owner_origin_cache_keeps_legacy_validation() {
         // The compiled descendant may already contain these mutations. A
         // source-evolution regression test must survive actual adoption.
-        let original=include_str!("room_state.rs");
-        let first=materialize_verified_owner_provenance(original)
+        let original=include_str!("room_state.rs").replace("\r\n","\n");
+        let first=materialize_verified_owner_provenance(&original)
             .unwrap_or_else(||original.to_string());
         assert!(first.contains("\"verifiedLocalOwner\": true"));
         assert!(first.contains("fact[\"verifiedLocalOwner\"]==true || !fact[\"sourceMessageId\"]"));
@@ -523,8 +551,8 @@ mod tests {
 
     #[test]
     fn current_engine_has_two_distinct_source_generations() {
-        let original=include_str!("room_state.rs");
-        let first=hoist_invariant_query_terms(original)
+        let original=include_str!("room_state.rs").replace("\r\n","\n");
+        let first=hoist_invariant_query_terms(&original)
             .unwrap_or_else(||original.to_string());
         assert!(first.contains("let query_tokens = memory::terms(query);\n    let mut ranked = facts"));
         let second=hoist_invariant_query_domain(&first)
