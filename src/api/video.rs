@@ -310,6 +310,12 @@ pub async fn models(State(state): State<AppState>) -> Json<Value> {
 
 /// User-facing one-action model setup: save selected engine, validate actual
 /// ComfyUI models folder, and start/resume missing model assets.
+pub async fn start_comfy(State(state):State<AppState>)->Response{
+    match video::launch_comfy(state).await {
+        Ok(info)=>(StatusCode::ACCEPTED,Json(info)).into_response(),
+        Err(message)=>error(StatusCode::BAD_REQUEST,message),
+    }
+}
 pub async fn setup_model(
     State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>
 )->Response{
