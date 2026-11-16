@@ -136,6 +136,7 @@ mod tests {
         assert!(result.unwrap_err().contains("중단"));
         server.abort();
         drop(control);
+        drop(context);
         drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -163,6 +164,7 @@ mod tests {
         state.store.remove("goal", "g");
         assert!(control.is_cancelled());
         drop(control);
+        drop(context);
         drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }

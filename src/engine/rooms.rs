@@ -1601,6 +1601,7 @@ mod tests {
         );
         drop(requests);
         server.abort();
+        drop(context);
         drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -1750,9 +1751,12 @@ mod tests {
         assert_eq!(result["turns"], 3);
         assert_eq!(result["pauseReason"], "turn_limit");
         server.abort();
-        let state_clone = state.clone();
+        // The one-shot owner interjection must release its DB clone after
+        // firing, even if Axum keeps the HTTP connection task alive.
+        let state_clone = Arc::new(Mutex::new(Some(state.clone())));
         let callback: Callback = Arc::new(move |index, _| {
             if index == 0 {
+                let state_clone = state_clone.lock().unwrap().take().unwrap();
                 state_clone.store.write_message(&json!({"id":"new-owner","session_id":"room:r","role":"user","content":"잠깐, 새 주제로 바꿔","metadata":{"authorKind":"owner","roomId":"r"}}));
             }
         });
@@ -1878,6 +1882,7 @@ mod tests {
             1
         );
         server.abort();
+        drop(context);
         drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
