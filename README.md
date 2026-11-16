@@ -6,8 +6,8 @@ DOMINION is an owner-controlled, model/provider-independent **Rust agent executi
 
 ## Core architecture
 
-- `crates/dominion-agent-sdk`: deterministic kernel and job snapshots; budgets, discovery of authorized tools, fixed provider schema prefix, bounded JSON argument validation, checkpoints, verification, cancellation, and crash/approval recovery.
-- `src/engine/native_agent.rs`: product adapter binding real model providers, workspace, host tools, MCP, authorization and stored job receipts to the Rust SDK.
+- `crates/dominion-agent-sdk`: deterministic kernel and job snapshots; budgets, collision-safe discovery of authorized tools, fixed provider schema prefix, bounded JSON argument validation, checkpoints, verification, cancellation, and crash/approval recovery. Old receipt results and arguments are accessible through bounded, read-only pages instead of repeated host calls.
+- `src/engine/native_agent.rs`: product adapter binding real model providers, workspace, host tools, MCP, authorization and stored job receipts to the Rust SDK. Native jobs pin tool-name/schema/read-only contracts and acceptance requirements before the first model/tool call; changed authority on restart requires review.
 - `src/engine/chat/runtime.rs`: existing streaming chat/room history, context selection and native Rust tool dispatcher; user-requested edits remain testable, with acceptance checks. No autonomous RSI policy/campaign branch.
 - `src/engine/jobs.rs` and `src/db.rs`: SQLite job/operation journal, indexed active-queue selection, Tokio Notify worker wakeups, durable CAS and legacy effect recovery. Idle reconciliation runs every 5 seconds; completed historic jobs are retained without being polled on each turn.
 - `src/engine/mcp.rs`, `src/engine/skills.rs`, `src/api/extensions.rs`: explicit external MCP server/tool manifests and skill/plugin import; reviewed tools are verified against their pinned manifest at execution.
