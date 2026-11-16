@@ -77,6 +77,10 @@
 
 [2026년 실제 소스 비교·구현 범위](docs/AGENT-HARNESS-2026.md) · [TypeScript SDK](sdk/typescript/README.md)
 
+## 🛑 영상 제작 중단 및 체크포인트 보존 (서브2 전용)
+
+영상 스튜디오의 미리보기·프로젝트 화면에서 진행 중인 제작을 중단할 수 있습니다. UI와 TypeScript SDK의 `video.cancel(id)`는 같은 Rust 엔진의 `POST /api/video/jobs/:id/cancel`로 연결됩니다. ComfyUI에서는 기록된 **해당 영상의 원격 작업 UUID만** 취소 요청하며, 서버가 취소 요청을 수락한 상태와 실제 GPU 종료가 불확실한 상태를 구분해 표시·기록합니다. Rust 체크포인트에서도 장면 목록·장면별 진행 기록을 보존하도록 수정했습니다. **`dominion-sub2` 브랜치만 변경했으며 메인은 수정하지 않았습니다.** [구현 및 검증 범위](docs/SUB2-VIDEO-CANCEL-CHECKPOINT-2026-11-16.md).
+
 ## 🦀 Rust SDK가 본체인 자율 실행 플랫폼
 
 도미니온의 실행 주체는 **Rust SDK와 자체 하네스**입니다. `src/sdk.rs`의 `Dominion::open / start / submit / steer / wait`가 기존 Rust 실행 엔진·도구·기억·권한·SQLite 작업 상태를 직접 이용합니다. GUI와 TypeScript SDK는 외부 연동 및 사용자 편의를 위한 보조 인터페이스입니다.
