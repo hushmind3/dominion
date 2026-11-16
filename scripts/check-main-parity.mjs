@@ -70,7 +70,20 @@ assert.deepEqual(missing,[], 'main source files absent without an active replace
 
 const web=[...mainFiles].filter(path=>path.startsWith('web/')&&relevant(path));
 const changed=web.filter(path=>blob(main,path)!==blob('HEAD',path));
-assert.deepEqual(changed,[], 'Shipping web source differs from canonical main');
+// Sub3 is explicitly improving only the video workspace's user experience.
+// Every other shipping UI file must still exactly match main.
+const permittedVideoChanges=new Set(['web/src/pages/Video.tsx']);
+const unexpected=changed.filter(path=>!permittedVideoChanges.has(path));
+assert.deepEqual(unexpected,[], 'Unrelated shipping web source differs from canonical main');
+if(changed.includes('web/src/pages/Video.tsx')) {
+  const studio=git('show','HEAD:web/src/pages/Video.tsx');
+  for(const route of ['/api/video/jobs','/api/video/config','/api/video/outputs',
+    '/api/video/catalog','/api/youtube/status']) {
+    assert.ok(studio.includes(route),'Video studio disconnected from existing product endpoint: '+route);
+  }
+  assert.ok(studio.includes('video.value') && studio.includes('useJob('),
+    'Video studio must stay connected to live state and durable jobs');
+}
 
 const mainRoutes=parseRoutes(git('show',main+':src/api/mod.rs'));
 const subRoutes=parseRoutes(git('show','HEAD:src/api/mod.rs'));
@@ -91,7 +104,8 @@ assert.deepEqual(unserved,[], 'main API routes missing');
 assert.deepEqual(mismatched,[], 'main route handler contract missing (including harness aliases)');
 console.log(JSON.stringify({
   mainRef:git('rev-parse',main).trim(),
-  matchingWebSourceFiles:web.length,
+  matchingWebSourceFiles:web.length-changed.length,
+  redesignedVideoSourceFiles:changed.filter(path=>permittedVideoChanges.has(path)),
   mainApiRoutes:mainRoutes.size,
   liveSub3ApiRoutes:subRoutes.size,
   mainFileParity:true,
