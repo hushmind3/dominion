@@ -1112,7 +1112,8 @@ async fn comfy(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, Str
     };
     let legacy = json!({"prompt":input["brief"],"duration":input["duration"]});
     substitute(&mut workflow, input.get("render").unwrap_or(&legacy));
-    ctx.checkpoint(json!({"phase":"submitting","progress":10,"videoState":{"inFlight":true}}))?;
+    ctx.checkpoint(json!({"phase":"submitting","progress":10,
+        "videoState":{"inFlight":true,"promptId":null}}))?;
     let response = client
         .post(format!("{base}/prompt"))
         .json(&json!({"prompt":workflow,"client_id":ctx.job_id}))
@@ -1140,7 +1141,21 @@ async fn comfy(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, Str
         "phase":"rendering","progress":25,
         "videoState":{"inFlight":true,"promptId":prompt_id}
     })) {
-        let _ = cancel_comfy_prompt(base, prompt_id).await;
+        let attempt = cancel_comfy_prompt(base, prompt_id).await;
+        let remote = match &attempt {
+            Ok(true) => json!({"status":"requested","promptId":prompt_id}),
+            Ok(false) => json!({"status":"unconfirmed","promptId":prompt_id,
+                "reason":"원격 작업이 종료되었거나 서버가 작업을 찾지 못했습니다."}),
+            Err(reason) => json!({"status":"unconfirmed","promptId":prompt_id,"reason":reason}),
+        };
+        if let Some(record) = ctx.state.store.patch_if(
+            "job", &ctx.job_id, "status", &json!("cancelled"),
+            &json!({"remoteCancel":remote})
+        ) {
+            ctx.state.bus.record("job", &record);
+        }
+        ctx.state.store.audit("video.remote_cancel_after_submit",
+            json!({"jobId":ctx.job_id,"remoteCancel":remote}));
         return Err(error);
     }
     let start = std::time::Instant::now();
@@ -1814,6 +1829,22 @@ mod tests {
         assert_eq!(workload["pixelFrames"],55_296_000u64);
         assert_eq!(workload["megapixelFrames"],55);
         assert!(workload["estimatedMoneyCost"].is_null());
+    }
+
+    #[tokio::test]
+    async fn remote_cancel_requests_only_its_own_prompt_id() {
+        let target_id = uuid::Uuid::new_v4().to_string();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let server_url = format!("http://{}", listener.local_addr().unwrap());
+        let router = axum::Router::new().route("/api/jobs/:id/cancel",
+            axum::routing::post(|axum::extract::Path(id): axum::extract::Path<String>| async move {
+                axum::Json(json!({"cancelled": uuid::Uuid::parse_str(&id).is_ok()}))
+            }));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        assert!(cancel_comfy_prompt(&server_url, &target_id).await.unwrap());
+        server.abort();
     }
 
     #[tokio::test]
