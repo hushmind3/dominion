@@ -101,17 +101,23 @@ fn public_view_indexed(state:&AppState,mut record:Value,index:&ViewIndex)->Value
     };
     let pending=index.pending.get(&session);
     let run=index.runs.get(&session);
-    if matches!(record["status"].as_str(),Some("running"|"queued")) {
-      if let Some(approval)=pending{
-        record["status"]=json!("awaiting_approval");
-        record["pendingApprovalId"]=approval["id"].clone();
-    }else if run.is_some_and(|run|run["id"].as_str().is_some_and(|id|index.uncertain.contains(id))){
+    // In-doubt effects must remain visible for *interrupted and failed* SDK
+    // runs as well. Otherwise resume() could approve a replay from a failed
+    // status while its last tool result remains unobserved.
+    let revisitable=matches!(record["status"].as_str(),
+        Some("queued"|"running"|"failed"|"interrupted"));
+    if revisitable && run.is_some_and(|run|
+        run["id"].as_str().is_some_and(|id|index.uncertain.contains(id))){
         record["status"]=json!("in_doubt");
-    }else if record["status"]=="running"
-        && run.is_some_and(|run|run["status"]=="interrupted")
-        && !state.active.lock().unwrap().contains(&session){
-        record["status"]=json!("interrupted");
-      }
+    }else if matches!(record["status"].as_str(),Some("queued"|"running")) {
+        if let Some(approval)=pending {
+            record["status"]=json!("awaiting_approval");
+            record["pendingApprovalId"]=approval["id"].clone();
+        }else if record["status"]=="running"
+            && run.is_some_and(|run|run["status"]=="interrupted")
+            && !state.active.lock().unwrap().contains(&session){
+            record["status"]=json!("interrupted");
+        }
     }
     if let Some(run)=run{
         // Legacy records lacked a verdict field. Read but never rewrite them.
@@ -412,6 +418,32 @@ mod view_tests{
         assert_eq!(unverified["status"],"completed");
         assert_eq!(unverified["verified"],false);
         assert!(unverified["taskOutcome"].is_null());
+    }
+    #[test]
+    fn failed_or_interrupted_runs_show_in_doubt_until_tool_effect_is_reconciled(){
+        let state=fixture();
+        let running=json!({"id":"execution-1","sessionId":"sdk-session",
+            "status":"interrupted","startedAt":"2026-11-17T00:00:00Z"});
+        let pending_effect=json!({"id":"op-1","runId":"execution-1","outcomeUnknown":true});
+        let index=ViewIndex::from_rows(vec![running.clone()],vec![],
+            vec![pending_effect]);
+        for status in ["failed","interrupted","running"] {
+            let viewed=public_view_indexed(&state,json!({
+                "id":"sdk-1","sessionId":"sdk-session","status":status
+            }),&index);
+            assert_eq!(viewed["status"],"in_doubt", "{status}");
+        }
+        let completed=public_view_indexed(&state,json!({
+            "id":"sdk-1","sessionId":"sdk-session","status":"completed"
+        }),&index);
+        assert_eq!(completed["status"],"completed",
+            "a persisted terminal outcome is never rewritten by projection");
+        let clear=ViewIndex::from_rows(vec![running],vec![],vec![]);
+        let resumable=public_view_indexed(&state,json!({
+            "id":"sdk-1","sessionId":"sdk-session","status":"interrupted"
+        }),&clear);
+        assert_eq!(resumable["status"],"interrupted");
+        let _=std::fs::remove_dir_all(&state.config.data_dir);
     }
     #[test]
     fn terminal_sdk_response_is_not_masked_by_a_stale_approval(){
