@@ -87,7 +87,7 @@ You choose the models. You control the credentials. You run the workspace.
 | **Persistent memory** | Store conversation context, verified experience, corrections, and execution history locally. |
 | **Multi-agent rooms** | Give agents separate roles, run shared discussions, and coordinate workflows with multiple participants. |
 | **Durable jobs** | Track tasks, approvals, execution evidence, cancellation, and recovery in SQLite. |
-| **AI video creation** | A dedicated video workspace for prompt-based generation jobs with native/ComfyUI backends, output management, and YouTube upload integration. Requires appropriate local backends and account setup. |
+| **AI video creation** | A native FFmpeg storyboard/narration pipeline or multi-shot ComfyUI workflows (up to 24 shots), frozen scene inputs, original-preserving scene regeneration, MP4 quality checks, and an opt-in private YouTube delivery queue. ComfyUI models and long-video stitching require configured local backends. |
 | **Messaging channels** | Native Telegram and Discord adapters; currently require bot credentials and manual configuration. |
 | **Recursive self-improvement (RSI) research** | Experiment with source-editing campaigns, independent evaluations, candidate selection, evidence records, and controlled adoption. This does **not** claim proven general recursive intelligence gains. |
 
@@ -96,6 +96,8 @@ You choose the models. You control the credentials. You run the workspace.
 - **Model flexibility:** use supported cloud models or run locally without locking the entire workflow to one provider.
 - **Execution you can inspect:** tasks have tool calls, outcomes, approvals, and error records, not just chat messages.
 - **Local-first state:** SQLite stores agent data and history locally by default.
+- **Inspectable video delivery:** MP4 metadata is validated when FFprobe is available. This is a technical media check, not an aesthetic video-quality score; scene re-use saves redundant renders, but actual GPU usage and dollar costs depend on your backend.
+- **RSI evidence hygiene:** independent evaluation plans cannot count the same executable test as multiple train/held-out cases. The development system does not claim demonstrated general self-improvement without reproduced descendant evidence.
 - **Open code:** inspect and extend a Rust engine with a React UI under the Apache-2.0 license.
 
 ## ⚡ Quick start

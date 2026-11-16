@@ -46,6 +46,15 @@ if (!sources.includes('src/engine/chat/outcome.rs')) {
   throw new Error('RSI harness map must inspect the live finalization policy module')
 }
 const driver = readFileSync(path.join(root, 'crates/dominion-core/src/engine.rs'), 'utf8')
+const video = readFileSync(path.join(root, 'src/engine/video.rs'), 'utf8')
+const videoQuality = readFileSync(path.join(root, 'src/engine/video_quality.rs'), 'utf8')
+const jobs = readFileSync(path.join(root, 'src/engine/jobs.rs'), 'utf8')
+if (!video.includes('quality::inspect(') || !video.includes('comfy_story(') ||
+    !video.includes('enqueue_regeneration(') || !videoQuality.includes('pub async fn inspect(') ||
+    !jobs.includes('if kind=="video" && job["input"]["autoUpload"]==true')) {
+  throw new Error('Video creation, quality verification and opt-in delivery must share real job entrypoints')
+}
+
 if (!runtime.includes('dominion_core::engine::Engine::drive(')) {
   throw new Error('Product entrypoints must invoke the native driver')
 }

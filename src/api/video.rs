@@ -363,6 +363,33 @@ mod tests {
             video::output_path(&s, &id).is_err(),
             "unfinished job must not be served"
         );
+        // The original remains intact; a derivative modifies only the chosen
+        // scene and reuses the unchanged image from the prior completed run.
+        s.store.patch_if("job",&id,"status",&json!("queued"),&json!({"status":"completed"}))
+            .unwrap();
+        let original_dir=video::directory(&s,&id).unwrap();
+        let first=std::fs::read(original_dir.join("card-00.png")).unwrap();
+        let second=std::fs::read(original_dir.join("card-01.png")).unwrap();
+        let derivative=video::enqueue_regeneration(&s,&id,&json!({
+            "sceneIndex":1,"prompt":"새 장면으로 바뀐 영상입니다"
+        })).unwrap();
+        let new_id=derivative["id"].as_str().unwrap().to_string();
+        let saved=s.store.get("job",&new_id).unwrap();
+        assert_eq!(saved["input"]["sourceJobId"],id);
+        assert_eq!(saved["input"]["autoUpload"],false);
+        let job_ctx=crate::engine::jobs::JobContext::new(s.clone(),new_id.clone());
+        let result=video::run(&job_ctx,&saved).await.unwrap();
+        assert!(result["quality"]["status"]=="passed"
+            || result["quality"]["status"]=="container_only");
+        let derivative_dir=video::directory(&s,&new_id).unwrap();
+        assert_eq!(first,std::fs::read(derivative_dir.join("card-00.png")).unwrap());
+        assert_ne!(second,std::fs::read(derivative_dir.join("card-01.png")).unwrap());
+        assert!(video::enqueue_regeneration(&s,&id,&json!({
+            "sceneIndex":100,"prompt":"invalid"
+        })).is_err());
+        assert!(video::enqueue(&s,&json!({
+            "brief":"x","engine":"native","autoUpload":true
+        })).is_err(),"nonconsensual delivery must never queue");
         let cleanup_dir = s.config.data_dir.clone();
         drop(s);
         std::fs::remove_dir_all(cleanup_dir).unwrap();
