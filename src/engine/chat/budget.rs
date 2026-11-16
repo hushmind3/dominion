@@ -1,5 +1,5 @@
 //! Product adapter to the shared Dominion Rust execution kernel.
-pub use dominion_agent_sdk::runtime::BudgetLedger;
+pub use dominion_agent_sdk::runtime::{BudgetLedger, ModelTokenBudget};
 
 #[cfg(test)]
 mod tests {
@@ -18,6 +18,16 @@ mod tests {
         assert!(ledger.charge_proposal());
         assert!(ledger.charge_proposal());
         assert!(!ledger.charge_proposal());
+    }
+
+    #[test]
+    fn chat_and_native_model_calls_share_the_same_token_settlement_contract() {
+        let mut tokens=ModelTokenBudget::new(250_000,245_000);
+        assert!(tokens.can_admit(5_000));
+        assert!(!tokens.charge(8_000));
+        assert_eq!(tokens.charged(),253_000);
+        assert_eq!(tokens.remaining(),0);
+        assert!(tokens.exceeded());
     }
 
     #[test]
