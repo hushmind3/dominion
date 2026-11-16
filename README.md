@@ -14,7 +14,7 @@ On `dominion-sub2`, new chats and rooms default `autoLearning=false`; perpetual 
 
 <p align="center">
   <strong>An open-source, local-first AI agent workspace powered by a native Rust execution engine.</strong><br/>
-  Connect your own cloud or local LLMs. Run tool-using agents, collaborate across multiple agents, generate videos, and explore experimental recursive self-improvement.
+  Connect your own cloud or local LLMs. Run tool-using agents, collaborate across multiple agents, and invoke optional media-generation tools through MCP or Connections.
 </p>
 
 <p align="center">
@@ -42,7 +42,7 @@ On `dominion-sub2`, new chats and rooms default `autoLearning=false`; perpetual 
 
 ## What is DOMINION?
 
-RSI experimental adoption is bound to frozen paired evaluation. The evaluator records the candidate's pre-oracle Git tree and checks it against adopted descendants. Each system-evolution generation also verifies its spawned executable hash and controller identity before candidate promotion. Rust independently reconstructs the frozen candidate's Git tree before launching the paired evaluator; details are in [the Sub2 tree-proof note](docs/SUB2-RSI-TREE-PROOF-2026-11-15.md) and [the spawned-worker note](docs/SUB2-RSI-DESCENDANT-2026-11-15.md). In automatic system evolution, the rebuilt descendant may select a measured A→B→A return experiment from independently verified history, with an immutable coordinator guard and [an explicit cross-domain audit](docs/SUB2-RSI-CROSS-DOMAIN-2026-11-15.md).
+The built-in media renderer and independent generational RSI engine have been retired on `dominion-sub2`. Their historical records remain readable; the Rust harness now focuses on user-requested tasks, verification and recovery. [Current lean cutover](docs/SUB2-LEAN-CUTOVER-2026-11-17.md) · [historical research index](docs/INDEX.md).
 
 
 **DOMINION is an AI agent tool, not another AI model or a token-reselling service.**
@@ -117,7 +117,7 @@ Open **http://127.0.0.1:4317** in your browser.
 
 1. Add your own API provider, or configure a compatible local-model runtime in **Models**.
 2. Select a model in **Chat** and try a task.
-3. Explore **Agents**, **Multi-Agent Rooms**, **Memory**, **Workflows**, **Video**, **Self-Improvement**, and **MCP / Skills**.
+3. Explore **Agents**, **Multi-Agent Rooms**, **Memory**, **Workflows**, and **MCP / Skills**.
 4. To use Telegram or Discord, configure your bot credentials and destination IDs in **Connections**.
 
 Cloud-model usage is billed by your provider. Local models use your own hardware. **Prebuilt release downloads are not yet available** — follow the source build above.
@@ -199,7 +199,7 @@ sdk.start()?; // in a Tokio runtime
 let job = sdk.submit(Prompt::new("Inspect, fix and verify the code"))?;
 ```
 
-The [TypeScript SDK](sdk/typescript/README.md) is an **optional auxiliary client**, not a harness. The sub2 `web/` frontend has its own video-studio improvements while keeping the shared API contract and its `web/src/api.ts` client; the optional TypeScript SDK is for external consumers. Both clients communicate with the same Rust `/api/*` runtime and persisted results. See [2026 frontier source comparison](docs/FRONTIER-COMPARISON-SUB2-2026-11-15.md) and [execution contract](docs/SUB2-SDK-DURABLE-EVENTS-2026-11-15.md). Frontier-equivalent performance is not yet benchmarked. The main GUI's `/api/sdk/runs` requests now bridge into the same Rust job worker via `src/api/sdk_bridge.rs`, including real approval resolution, cancel, bounded live operation progress and an owner-reconciled resume (or safe retry when no tool effects were recorded). Verification commands require actual successful tool evidence after the last file edit. The engine additionally supports bounded read-only parallel subagent investigation (`delegate_parallel`) and content-fingerprinted ComfyUI storyboard clip reuse. [Implementation notes](docs/SUB2-RUNTIME-VIDEO-2026-11-15.md).
+The [TypeScript SDK](sdk/typescript/README.md) is an **optional auxiliary client**, not a harness. The sub2 `web/` frontend keeps the shared API contract and its `web/src/api.ts` client without the retired video-studio or RSI screens; the optional TypeScript SDK is for external consumers. Both clients communicate with the same Rust `/api/*` runtime and persisted results. See [2026 frontier source comparison](docs/FRONTIER-COMPARISON-SUB2-2026-11-15.md) and [execution contract](docs/SUB2-SDK-DURABLE-EVENTS-2026-11-15.md). Frontier-equivalent performance is not yet benchmarked. The main GUI's `/api/sdk/runs` requests now bridge into the same Rust job worker via `src/api/sdk_bridge.rs`, including real approval resolution, cancel, bounded live operation progress and an owner-reconciled resume (or safe retry when no tool effects were recorded). Verification commands require actual successful tool evidence after the last file edit. The engine additionally supports bounded read-only parallel subagent investigation (`delegate_parallel`). Archived media design notes remain historical only; no built-in ComfyUI renderer runs.
 
 ## 🚧 Project status
 
@@ -209,15 +209,15 @@ DOMINION is an **active developer preview**, not a managed SaaS or a fully valid
 - Multi-agent behavior includes mocked-model tests; long-running real-model reliability is still an area to validate.
 - Telegram and Discord integration currently require manual bot setup rather than one-click provisioning.
 - Cache and context-management code exists, but no fixed token-saving percentage is guaranteed.
-- Video generation requires a configured native engine or compatible ComfyUI environment; YouTube upload requires account authorization.
-- Recursive source-improvement mechanisms are **experimental**. The project does not claim demonstrated, indefinitely compounding intelligence gains.
+- New media generation and publishing require an explicitly connected external provider or MCP tool; retired built-in renderer and uploader jobs cannot be started.
+- Independent generational RSI campaigns and automatic source adoption are retired. User-requested code edits and verifiable task improvements remain supported.
 - Check the [CI results](https://github.com/hushmind3/dominion-rust/actions) for the status of a particular commit.
 
 ## 🤝 Contributing
 
 Contributions are welcome — particularly **reproducible bug reports, test cases, model/provider compatibility fixes, Rust harness improvements, UI work, and documentation**.
 
-- [Join Discussions](https://github.com/hushmind3/dominion-rust/discussions) — ask questions, share your setup, and propose ideas for agents, video workflows, and RSI research.
+- [Join Discussions](https://github.com/hushmind3/dominion-rust/discussions) — ask questions, share your setup, and propose ideas for agents, external MCP workflows, and task verification.
 - [Open an issue](https://github.com/hushmind3/dominion-rust/issues) — include your OS, model/provider, reproduction steps, and expected vs. actual behavior.
 - [Submit a pull request](https://github.com/hushmind3/dominion-rust/pulls) — explain the change and include appropriate tests when possible.
 - Never include API keys, bot tokens, private conversations, or other secrets in reports.

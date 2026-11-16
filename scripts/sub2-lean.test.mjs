@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {readFileSync,existsSync} from 'node:fs';
 const src=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
 test('no default automatic learning or perpetual maintenance sweeps',()=>{
   const chat=src('src/engine/chat/mod.rs');
@@ -75,4 +75,28 @@ test('no hidden failed-learning retry loop or retired YouTube uploader claim',()
  assert.doesNotMatch(jobs,/pub fn retry_failed_learning\(/);
  assert.match(compat,/"uploadAllowed":false/);
  assert.match(compat,/"archiveOnly":true/);
+});
+
+test('SDK start does not enqueue autonomous policies or experiments after restart',()=>{
+  const sdk=src('src/sdk.rs');
+  assert.match(sdk,/engine::improve::recover_finalizations\(&self\.state\)/);
+  assert.doesNotMatch(sdk,/engine::improve::schedule_experiments\(&self\.state\)/);
+  assert.doesNotMatch(sdk,/engine::policy::meta_improve\(&self\.state\)/);
+  assert.doesNotMatch(sdk,/engine::policy::propose_candidates\(&self\.state\)/);
+});
+test('retired RSI UI links and source-generation workflows are absent',()=>{
+  const chat=src('web/src/pages/Chat.tsx');
+  const nav=src('web/src/components/WorkspaceShell.tsx');
+  assert.doesNotMatch(chat,/openImprovementIssue|\/api\/rsi\/issues/);
+  assert.doesNotMatch(nav,/'video'\|'models'|\|'developer'\|'rsi'/);
+  for(const name of [
+    'web/src/components/ImprovementNotice.tsx',
+    'scripts/sub3-live-model-campaign.mjs',
+    '.github/workflows/sub3-live-model-cycle.yml',
+    '.github/workflows/sub3-first-gain.yml',
+    'tests/fixtures/rsi-generation-worker.rs'
+  ])assert.equal(existsSync(new URL('../'+name,import.meta.url)),false,name);
+  // Historical job/MP4 access is intentionally preserved.
+  assert.match(src('src/api/video.rs'),/pub async fn content/);
+  assert.match(src('src/api/rsi.rs'),/Read-only archival RSI records/);
 });

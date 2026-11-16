@@ -202,7 +202,7 @@ impl std::fmt::Display for CancelJobError {
     }
 }
 
-/// One native cancellation policy for Rust SDK, HTTP and the video worker.
+/// One native cancellation policy for Rust SDK and HTTP job clients.
 pub fn cancel_job(state:&AppState,id:&str)->Result<Value,CancelJobError>{
     let job=state.store.get("job",id).ok_or(CancelJobError::NotFound)?;
     if !matches!(job["status"].as_str(),Some("queued"|"running")){

@@ -4,8 +4,8 @@
 - Live queue: `Bus::subscribe` on queued Job records, 5-second delayed-job/restart fallback; `Store::active_jobs` uses the `idx_job_status` partial expression index.
 - `jobs::start` no longer launches the 5-minute `retry_failed_learning` / `agent_growth::sweep` / `distill::sweep` / `memory::learning_sweep` loop.
 - New chats, new rooms and implicit chat requests default `autoLearning=false`. Historical explicit room settings and existing persisted records remain intact.
-- The Video and RSI navigation/page imports are disconnected in `App.tsx` and `WorkspaceShell.tsx`; existing Rust engines, HTTP adapters and SDKs remain while dependent calls, data migration and cleanup are audited.
-- This is **phase 1**, not a claim that all video/RSI source or API has been removed. [Cutover plan](docs/SUB2-LEAN-CUTOVER-2026-11-16.md).
+- Built-in video rendering and independent RSI mutation workers, screens, startup campaigns and source-generation workflows have been removed on `dominion-sub2`.
+- Archival HTTP/SDK reads for existing MP4, jobs and RSI records are intentionally retained. [Current lean cutover](docs/SUB2-LEAN-CUTOVER-2026-11-17.md).
 
 # DOMINION 자체 Rust 엔진
 

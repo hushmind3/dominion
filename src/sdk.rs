@@ -80,11 +80,10 @@ impl Dominion {
         if self.started.swap(true,Ordering::AcqRel){return Ok(());}
         engine::jobs::recover(&self.state);
         engine::wake::recover(&self.state);
+        // Restore persisted completion evidence, not retired self-improvement
+        // campaigns or autonomous policy/experiment generation.
         engine::improve::recover_finalizations(&self.state);
-        engine::improve::schedule_experiments(&self.state);
         engine::algorithms::seed(&self.state);
-        engine::policy::meta_improve(&self.state);
-        engine::policy::propose_candidates(&self.state);
         engine::jobs::start(self.state.clone());
         engine::maintenance::start(self.state.clone());
         engine::scheduler::start(self.state.clone());
