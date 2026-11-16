@@ -103,6 +103,9 @@ for (const [path,handler] of mainRoutes) {
   if (path.startsWith('/api/sdk/runs')) {
     const legacy='/api/harness'+path.slice('/api/sdk'.length);
     if (subRoutes.get(legacy)===handler) continue;
+    // Public SDK native-job steering is a separate, real implementation.
+    if (path==='/api/sdk/runs/:id/steer' &&
+        subRoutes.get(path)==='post(sdk_runs::steer)') continue;
   }
   mismatched.push(path+' main='+handler+' sub3='+subRoutes.get(path));
 }
