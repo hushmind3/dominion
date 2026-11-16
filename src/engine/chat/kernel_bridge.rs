@@ -85,3 +85,80 @@ impl Drop for KernelCheckpoint<'_> {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dominion_agent_sdk::{Journal, RunRequest, Snapshot};
+    use serde_json::json;
+
+    fn fixture() -> (AppState, std::path::PathBuf) {
+        let dir=std::env::temp_dir().join(format!(
+            "dominion-kernel-bridge-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=crate::config::Config{
+            port:0,data_dir:dir.clone(),web_dir:dir.join("web"),
+            workspace:dir.clone(),
+        };
+        let store=crate::db::Store::open(&config.db_path()).unwrap();
+        let vault=crate::vault::Vault::open(&config.key_path());
+        (AppState::new(config,store,vault),dir)
+    }
+
+    #[test]
+    fn kernel_journal_merges_live_chat_fields_and_rejects_terminal_revival() {
+        let (state,dir)=fixture();
+        state.store.put("execution",&json!({
+            "id":"shared-run","status":"running",
+            "modelContinuity":{"responseId":"durable-1"},
+            "usage":{"promptTokens":42}
+        })).unwrap();
+        let req:RunRequest=serde_json::from_value(json!({
+            "id":"shared-run","instruction":"Inspect repository"
+        })).unwrap();
+        let mut snapshot=Snapshot::from_request(&req);
+        snapshot.step=1;
+        let generation=state.cancellation_generation("shared-session");
+        let journal=ChatKernelJournal{
+            state:&state,execution_id:"shared-run",
+            session_id:"shared-session",generation,
+        };
+        Journal::save(&journal,&snapshot).unwrap();
+        let saved=state.store.get("execution","shared-run").unwrap();
+        assert_eq!(saved["kernelState"]["step"],1);
+        assert_eq!(saved["modelContinuity"]["responseId"],"durable-1");
+        assert_eq!(saved["usage"]["promptTokens"],42);
+        state.store.patch_if("execution","shared-run","status",
+            &json!("running"),&json!({"status":"cancelled"})).unwrap();
+        snapshot.step=2;
+        assert!(Journal::save(&journal,&snapshot).is_err());
+        let final_record=state.store.get("execution","shared-run").unwrap();
+        assert_eq!(final_record["status"],"cancelled");
+        assert_eq!(final_record["kernelState"]["step"],1);
+        drop(journal);
+        drop(state);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn budget_drop_does_not_overwrite_a_terminal_execution() {
+        let (state,dir)=fixture();
+        state.store.put("execution",&json!({
+            "id":"budget-run","status":"completed","answer":"finished",
+            "modelCalls":3
+        })).unwrap();
+        {
+            let _snapshot=KernelCheckpoint{
+                state:&state,execution_id:"budget-run",
+                budget:dominion_agent_sdk::runtime::BudgetLedger::new(
+                    4,8,std::time::Duration::from_secs(60)),
+            };
+        }
+        let persisted=state.store.get("execution","budget-run").unwrap();
+        assert_eq!(persisted["status"],"completed");
+        assert_eq!(persisted["answer"],"finished");
+        assert!(persisted["budget"].is_null());
+        drop(state);
+        let _=std::fs::remove_dir_all(dir);
+    }
+}
