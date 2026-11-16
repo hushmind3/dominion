@@ -5,7 +5,7 @@ use crate::state::AppState;
 use futures_util::StreamExt;
 use serde_json::{json,Value};
 use sha2::{Digest,Sha256};
-use std::{path::Path,time::Duration};
+use std::{path::{Path,PathBuf},time::Duration};
 
 pub const FEATURED: [(&str,&str);6]=[
     ("Wan-AI/Wan2.2-TI2V-5B","Wan 2.2 · 영상 생성 5B"),
