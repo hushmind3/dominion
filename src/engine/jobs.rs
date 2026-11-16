@@ -1522,44 +1522,6 @@ mod tests {
 }
 
 #[cfg(test)]
-mod video_checkpoint_tests {
-    use super::*;
-    #[test]
-    fn checkpoint_preserves_scene_provenance_and_rejects_post_cancel_writes() {
-        let state={
-            let dir=std::env::temp_dir().join(format!("dominion-checkpoint-{}",uuid::Uuid::new_v4()));
-            std::fs::create_dir_all(&dir).unwrap();
-            let cfg=crate::config::Config{port:0,data_dir:dir.clone(),
-                web_dir:dir.join("web"),workspace:dir.clone()};
-            AppState::new(cfg.clone(),
-                crate::db::Store::open(&cfg.db_path()).unwrap(),
-                crate::vault::Vault::open(&cfg.key_path()))
-        };
-        let job=state.store.put("job",&json!({
-            "status":"queued","kind":"video","videoState":{
-                "scenes":["A","B"],"sceneTotal":2,"renderedScenes":0
-            }
-        })).unwrap();
-        let id=job["id"].as_str().unwrap().to_string();
-        let ctx=JobContext::new(state.clone(),id.clone());
-        ctx.checkpoint(json!({"videoState":{"inFlight":true,"promptId":null}})).unwrap();
-        ctx.checkpoint(json!({"videoState":{"sceneIndex":1,"renderedScenes":1}})).unwrap();
-        let current=state.store.get("job",&id).unwrap();
-        assert_eq!(current["videoState"]["scenes"],json!(["A","B"]));
-        assert_eq!(current["videoState"]["sceneIndex"],1);
-        assert_eq!(current["videoState"]["sceneTotal"],2);
-        assert_eq!(current["videoState"]["renderedScenes"],1);
-        assert!(current["videoState"]["promptId"].is_null());
-        state.store.patch_if("job",&id,"status",&json!("queued"),
-            &json!({"status":"cancelled","cancelRequested":true})).unwrap();
-        assert!(ctx.checkpoint(json!({"progress":100})).is_err());
-        assert!(state.store.get("job",&id).unwrap()["progress"].is_null());
-        let root=state.config.data_dir.clone();drop(ctx);drop(state);
-        std::fs::remove_dir_all(root).unwrap();
-    }
-}
-
-#[cfg(test)]
 mod rsi_native_preflight_tests {
     use super::*;
     #[test]

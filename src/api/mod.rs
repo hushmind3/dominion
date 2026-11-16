@@ -313,14 +313,14 @@ pub fn router(state: AppState) -> Router {
             get(video::get_config).post(retired_capability),
         )
         .route("/api/video/outputs", get(video::outputs_handler))
-        .route("/api/video/locations", get(video::locations))
-        .route("/api/video/models", get(video::models))
-        .route("/api/video/catalog", get(video::catalog))
+        .route("/api/video/locations", get(retired_capability))
+        .route("/api/video/models", get(retired_capability))
+        .route("/api/video/catalog", get(retired_capability))
         .route("/api/video/models/:id/download", post(retired_capability))
-        .route("/api/video/models/downloads", get(video::model_downloads))
-        .route("/api/video/files", get(video::files))
+        .route("/api/video/models/downloads", get(retired_capability))
+        .route("/api/video/files", get(video::outputs_handler))
         .route("/api/video/jobs/:id", get(video::job))
-        .route("/api/video/jobs/:id/cancel", post(video::cancel_job))
+        .route("/api/video/jobs/:id/cancel", post(retired_capability))
         .route(
             "/api/video/jobs",
             get(video::list_jobs).post(retired_capability),
@@ -328,9 +328,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/video/jobs/:id/upload", post(retired_capability))
         .route("/api/video/jobs/:id/content", get(video::content))
         .route("/api/video/jobs/:id/reveal", post(retired_capability))
-        .route("/api/video/open-models", post(video::not_available))
-        .route("/api/video/workflows", get(video::workflows))
-        .route("/api/video/:action", post(video::not_available))
+        .route("/api/video/open-models", post(retired_capability))
+        .route("/api/video/workflows", get(retired_capability))
+        .route("/api/video/:action", post(retired_capability))
         .route("/api/system/pick-folder", post(compat::pick_folder))
         .route("/api/channels/catalog", get(channels::catalog_handler))
         .route("/api/channels", get(channels::list).post(channels::save))

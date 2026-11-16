@@ -60,18 +60,6 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
     match engine::jobs::enqueue(&state,kind,clean){Some(job)=>(StatusCode::ACCEPTED,Json(job)).into_response(),None=>error(StatusCode::INTERNAL_SERVER_ERROR,"작업을 대기열에 저장할 수 없습니다.")}
 }
 pub async fn cancel(State(state):State<AppState>,Path(id):Path<String>)->Response{
-    // Legacy /api/jobs cancellation remains compatible, including video.
-    // Video uses the shared native stop path to avoid orphaning remote GPU work.
-    if state.store.get("job",&id).is_some_and(|job|job["kind"]=="video"){
-        return match engine::video::cancel_video(&state,&id).await{
-            Ok(_)=>state.store.get("job",&id).map(|job|Json(job).into_response())
-                .unwrap_or_else(||error(StatusCode::CONFLICT,"중단한 작업을 읽지 못했습니다.")),
-            Err(engine::jobs::CancelJobError::NotFound)=>
-                error(StatusCode::NOT_FOUND,"작업이 없습니다."),
-            Err(engine::jobs::CancelJobError::Conflict)=>
-                error(StatusCode::CONFLICT,"진행 중인 작업만 중단할 수 있습니다."),
-        };
-    }
     match engine::jobs::cancel_job(&state,&id){
         Ok(job)=>Json(job).into_response(),
         Err(engine::jobs::CancelJobError::NotFound)=>

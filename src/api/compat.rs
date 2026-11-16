@@ -15,7 +15,7 @@ pub async fn youtube_uploads(State(state): State<AppState>) -> Json<Value> {
         .all("job")
         .iter()
         .filter(|job| job["kind"] == "youtube_upload")
-        .map(crate::engine::video::public_job)
+        .map(crate::api::video::public_job)
         .collect::<Vec<_>>();
     uploads.sort_by(|a, b| {
         b["createdAt"]
@@ -32,7 +32,7 @@ pub async fn youtube_status(State(state): State<AppState>) -> Json<Value> {
         .find(|p| p["id"] == "youtube")
         .unwrap_or(json!({}));
     Json(
-        json!({"connected":connection["connected"],"uploadAllowed":connection["connected"]==true&&connection["grantedScopes"].as_str().is_some_and(|s|s.split_whitespace().any(|s|s=="https://www.googleapis.com/auth/youtube.upload")),"account":connection["account"],"uploads":state.store.all("job").iter().filter(|j|j["kind"]=="youtube_upload").map(crate::engine::video::public_job).collect::<Vec<_>>(),"channel":null}),
+        json!({"connected":connection["connected"],"uploadAllowed":connection["connected"]==true&&connection["grantedScopes"].as_str().is_some_and(|s|s.split_whitespace().any(|s|s=="https://www.googleapis.com/auth/youtube.upload")),"account":connection["account"],"uploads":state.store.all("job").iter().filter(|j|j["kind"]=="youtube_upload").map(crate::api::video::public_job).collect::<Vec<_>>(),"channel":null}),
     )
 }
 
@@ -143,42 +143,6 @@ pub async fn webhook(
 
 /// Compatibility actions for YouTube live/upload flows. Each maps to the
 /// existing OAuth/video implementation instead of a 501 stub.
-pub async fn youtube_action(
-    State(state): State<AppState>,
-    Path(action): Path<String>,
-    Json(body): Json<Value>,
-) -> Response {
-    match action.as_str() {
-        "connect" | "auth" => match crate::engine::oauth::start(&state, "youtube") {
-            Ok(value) => Json(value).into_response(),
-            Err(error) => (StatusCode::BAD_REQUEST, Json(json!({"error": error}))).into_response(),
-        },
-        "disconnect" => {
-            crate::engine::oauth::disconnect(&state, "youtube");
-            Json(json!({"disconnected": true, "status": crate::engine::oauth::status(&state)}))
-                .into_response()
-        }
-        "upload" => {
-            let id = body["jobId"]
-                .as_str()
-                .or_else(|| body["id"].as_str())
-                .unwrap_or("");
-            if id.is_empty() {
-                return (StatusCode::BAD_REQUEST, Json(json!({"error":"jobId is required"}))).into_response();
-            }
-            match crate::engine::video::enqueue_upload(&state, id, &body) {
-                Ok(job) => Json(job).into_response(),
-                Err(error) => (StatusCode::BAD_REQUEST, Json(json!({"error": error}))).into_response(),
-            }
-        }
-        other => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": format!("unknown youtube action: {other}")})),
-        )
-            .into_response(),
-    }
-}
-
 pub async fn upload(
     State(state): State<AppState>,
     Query(query): Query<HashMap<String, String>>,
