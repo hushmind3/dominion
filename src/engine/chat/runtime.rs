@@ -1325,14 +1325,9 @@ async fn run_turn_body(
 
         if completion.tool_calls.is_empty() {
             {
-                let mut operations = state
-                    .store
-                    .all("execution_operation")
+                let mut operations = state.store.execution_operations_recent(execution_id)?
                     .into_iter()
-                    .filter(|operation| {
-                        operation["runId"].as_str() == Some(execution_id)
-                            && operation["status"].as_str() == Some("completed")
-                    })
+                    .filter(|operation| operation["status"].as_str() == Some("completed"))
                     .collect::<Vec<_>>();
                 crate::engine::procedure::sort_operations(&mut operations);
                 let violations = strategy_candidates
@@ -1598,14 +1593,9 @@ async fn run_turn_body(
                     continue;
                 }
             };
-            let completed_operations = state
-                .store
-                .all("execution_operation")
+            let completed_operations = state.store.execution_operations_recent(execution_id)?
                 .into_iter()
-                .filter(|operation| {
-                    operation["runId"].as_str() == Some(execution_id)
-                        && operation["status"].as_str() == Some("completed")
-                })
+                .filter(|operation| operation["status"].as_str() == Some("completed"))
                 .collect::<Vec<_>>();
             let procedure_violation = strategy_candidates.iter().find_map(|strategy| {
                 if !crate::engine::procedure::applies(
@@ -2079,12 +2069,7 @@ async fn run_harness_nodes(
             {
                 return Err("실행이 중단되었습니다.".into());
             }
-            let operations = state
-                .store
-                .all("execution_operation")
-                .into_iter()
-                .filter(|operation| operation["runId"].as_str() == Some(execution_id))
-                .collect::<Vec<_>>();
+            let operations = state.store.execution_operations_recent(execution_id)?;
             for operation in &operations {
                 if operation["origin"].as_str() == Some("procedure")
                     && operation["procedureStrategyId"].as_str() == strategy["id"].as_str()
@@ -3847,12 +3832,7 @@ async fn deterministic_tool(
     op_seq: u64,
     metrics: &std::sync::Mutex<Metrics>,
 ) -> Result<(Value, Value), String> {
-    let mut operations = state
-        .store
-        .all("execution_operation")
-        .into_iter()
-        .filter(|operation| operation["sessionId"].as_str() == Some(session_id))
-        .collect::<Vec<_>>();
+    let mut operations = state.store.session_execution_operations(session_id)?;
     operations.reverse();
     let effect = crate::engine::effect::prepare(session_id, tool, arguments, &operations);
     let operation_id = format!("{execution_id}:frozen:{op_seq}:{tool}");
@@ -4193,12 +4173,7 @@ pub(super) async fn dispatch_tool_call(
     // Record what the effect would be before asking for approval or running it.
     // Only mutating calls need the session history scan.
     let mut effect_operations = if crate::engine::effect::is_effectful(&call.name, &arguments) {
-        state
-            .store
-            .all("execution_operation")
-            .into_iter()
-            .filter(|operation| operation["sessionId"].as_str() == Some(session_id))
-            .collect::<Vec<_>>()
+        state.store.session_execution_operations(session_id)?
     } else {
         Vec::new()
     };
@@ -4426,7 +4401,7 @@ pub(super) async fn dispatch_tool_call(
         && sealed["toolReceipt"]["verified"].as_bool() == Some(true)
     {
         if let Some(resource) = effect["resourceKey"].as_str() {
-            let operations = state.store.all("execution_operation");
+            let operations = state.store.session_execution_operations(session_id)?;
             for updated in crate::engine::effect::mark_inspected(
                 &operations,
                 resource,
@@ -5057,7 +5032,8 @@ pub(super) fn finalize_execution(
     }
     record["phase"] = json!(final_phase(&status));
     record["phaseUpdatedAt"] = json!(chrono::Utc::now().to_rfc3339());
-    for mut operation in state.store.all("execution_operation") {
+    for mut operation in state.store.execution_operations_recent(execution_id)
+        .unwrap_or_else(|_|state.store.all("execution_operation")) {
         if operation["runId"] == execution_id && operation["status"] == "running" {
             operation["status"] = json!("interrupted");
             operation["outcomeUnknown"] = json!(true);
@@ -5074,12 +5050,10 @@ pub(super) fn finalize_execution(
             }
         }
     }
-    let mut operations = state
-        .store
-        .all("execution_operation")
-        .into_iter()
-        .filter(|operation| operation["runId"].as_str() == Some(execution_id))
-        .collect::<Vec<_>>();
+    let mut operations = state.store.execution_operations_recent(execution_id)
+        .unwrap_or_else(|_|state.store.all("execution_operation").into_iter()
+            .filter(|operation|operation["runId"].as_str()==Some(execution_id))
+            .collect());
     crate::engine::procedure::sort_operations(&mut operations);
     record["effectSummary"] = crate::engine::effect::summary(&operations);
     let request_text = record["request"].as_str().unwrap_or("");
@@ -5331,11 +5305,9 @@ fn mark_run_signals(state: &AppState, record: &Value) {
             );
         }
         if let Some(available) = execution["discoveredTools"].as_array() {
-            let used = state
-                .store
-                .all("execution_operation")
+            let used = state.store.execution_operations_recent(execution_id)
+                .unwrap_or_default()
                 .into_iter()
-                .filter(|operation| operation["runId"].as_str() == Some(execution_id))
                 .filter_map(|operation| operation["tool"].as_str().map(str::to_string))
                 .collect::<Vec<_>>();
             if !used.is_empty() && !available.is_empty() {
