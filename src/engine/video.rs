@@ -701,28 +701,45 @@ fn make_cards(dir: &Path, title: &str, scenes: &[String], aspect: &str) -> Resul
     }
     Ok(())
 }
-/// Offline Korean narration. Each scene is spoken to its own file so the
-/// video length follows the audio, not a fixed duration.
+/// Platform-native offline narration. This keeps creation usable without
+/// purchasing a TTS API: macOS uses say, Windows uses installed SAPI voices.
+/// Missing speech support is an explicit silent-video fallback.
 async fn say_scenes(
     dir: &Path, scenes: &[String], cfg: &Value, encoder: &Path,
 ) -> Option<(Vec<f64>, std::path::PathBuf)> {
     if cfg["narration"] == false { return None; }
+    #[cfg(not(any(target_os="macos",target_os="windows")))]
+    {let _=(dir,scenes,encoder);return None;}
     let voice = cfg["voice"].as_str().filter(|value| !value.is_empty()).unwrap_or("Yuna");
     let rate = cfg["rate"].as_u64().unwrap_or(170).clamp(80, 320).to_string();
-    let ffprobe = encoder.with_file_name("ffprobe");
+    let ffprobe = encoder.with_file_name(if cfg!(windows) {"ffprobe.exe"} else {"ffprobe"});
     let mut durations = Vec::new();
     let mut list = String::new();
     for (index, scene) in scenes.iter().enumerate() {
-        let file = format!("narration-{index:02}.aiff");
+        let file = format!("narration-{index:02}.{}",if cfg!(windows){"wav"}else{"aiff"});
         let path = dir.join(&file);
-        let status = tokio::process::Command::new("say")
-            .args(["-v", voice, "-r", &rate, "-o"])
-            .arg(&path)
-            .arg("--")
-            .arg(scene)
-            .status()
-            .await
-            .ok()?;
+        #[cfg(target_os="macos")]
+        let status = tokio::time::timeout(Duration::from_secs(45),
+            tokio::process::Command::new("say")
+                .args(["-v", voice, "-r", &rate, "-o"])
+                .arg(&path).arg("--").arg(scene).status()
+        ).await.ok()?.ok()?;
+        #[cfg(target_os="windows")]
+        let status = {
+            // Voice and scene text enter through environment variables, never
+            // as PowerShell source. A missing Yuna voice falls back to the
+            // Windows default installed SAPI voice.
+            let script=r#"Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $v = $env:DOMINION_TTS_VOICE; if ($v) { try { $s.SelectVoice($v) } catch {} }; $s.Rate = [int]$env:DOMINION_TTS_RATE; $s.SetOutputToWaveFile($env:DOMINION_TTS_PATH); $s.Speak($env:DOMINION_TTS_TEXT); $s.Dispose()"#;
+            let sapi_rate=((rate.parse::<i32>().unwrap_or(170)-170)/20).clamp(-7,7);
+            tokio::time::timeout(Duration::from_secs(45),
+                tokio::process::Command::new("powershell.exe")
+                    .args(["-NoProfile","-NonInteractive","-Command",script])
+                    .env("DOMINION_TTS_VOICE",voice)
+                    .env("DOMINION_TTS_RATE",sapi_rate.to_string())
+                    .env("DOMINION_TTS_PATH",&path)
+                    .env("DOMINION_TTS_TEXT",scene).status()
+            ).await.ok()?.ok()?
+        };
         if !status.success() { return None; }
         let seconds = probe_duration(&ffprobe, &path).await?;
         // Some installed "voices" are novelty entries that render silence;
