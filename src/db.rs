@@ -165,6 +165,11 @@ impl Store {
              );
              CREATE INDEX IF NOT EXISTS idx_records_kind_updated
                  ON records(kind, updated_at DESC);
+             -- Only current work is scanned by workers; historical job JSON
+             -- cannot grow the polling cost.
+             CREATE INDEX IF NOT EXISTS idx_job_active_status
+                 ON records(json_extract(data,'$.status'), json_extract(data,'$.queuedAt'))
+                 WHERE kind='job';
              CREATE INDEX IF NOT EXISTS idx_operation_run
                  ON records(json_extract(data,'$.runId'))
                  WHERE kind='execution_operation';
@@ -239,6 +244,20 @@ impl Store {
         ))).map_err(|e|e.to_string())?;
         Ok((raw.0.max(0) as u64,raw.1.max(0) as u64,
             raw.2.max(0) as u64,raw.3.max(0) as u64,raw.4.max(0) as u64))
+    }
+
+    /// Worker-only indexed view of queued/running jobs. Preserves old job
+    /// JSON and room/learning concurrency policies without materializing
+    /// every completed execution on every idle wakeup.
+    pub fn active_jobs(&self)->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='job' AND json_extract(data,'$.status') IN ('queued','running')
+             ORDER BY json_extract(data,'$.queuedAt'),id"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([],record_from_row).map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
     }
 
     pub fn execution_operations(&self, run_id: &str) -> Result<Vec<Value>, String> {
@@ -1224,6 +1243,28 @@ mod tests {
         assert!(plan.contains("idx_native_job_route_completed"),"{plan}");
         drop(conn);
         let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn indexed_active_job_view_excludes_terminated_history_and_keeps_order(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        for i in 0..500 {
+            let status=if i==10||i==20 {"queued"}else if i==30 {"running"}else{"completed"};
+            store.put("job",&json!({"id":format!("job-{i:03}"),
+                "kind":"prompt","status":status,
+                "queuedAt":format!("2026-11-16T{:04}Z",i)})).unwrap();
+        }
+        let active=store.active_jobs().unwrap();
+        assert_eq!(active.len(),3);
+        assert_eq!(active[0]["id"],"job-010");
+        assert_eq!(active[1]["id"],"job-020");
+        assert_eq!(active[2]["id"],"job-030");
+        let conn=store.conn.lock().unwrap();
+        let explain:String=conn.query_row(
+            "EXPLAIN QUERY PLAN SELECT data FROM records WHERE kind='job'
+             AND json_extract(data,'$.status') IN ('queued','running')",
+            [],|row|row.get(3)).unwrap();
+        assert!(explain.contains("idx_job_active_status"),"{explain}");
     }
 
     #[test]
