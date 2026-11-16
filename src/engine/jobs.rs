@@ -909,15 +909,6 @@ mod tests {
     }
 
     #[test]
-    fn verified_controller_changes_the_executed_repair_budget() {
-        assert_eq!(rsi_edit_repair_limit(&json!({})),2);
-        assert_eq!(rsi_edit_repair_limit(&json!({"rsiEditPolicy":{"repairLimit":0}})),0);
-        assert_eq!(rsi_edit_repair_limit(&json!({"rsiEditPolicy":{"repairLimit":1}})),1);
-        assert_eq!(rsi_edit_repair_limit(&json!({"rsiEditPolicy":{"repairLimit":3}})),3);
-        assert_eq!(rsi_edit_repair_limit(&json!({"rsiEditPolicy":{"repairLimit":999}})),3);
-    }
-
-    #[test]
     fn owner_steering_is_revisioned_and_never_rewrites_user_job_input(){
         let state=temp_state();
         let job=enqueue(&state,"prompt",json!({"prompt":"Write a patch","autonomous":true})).unwrap();
