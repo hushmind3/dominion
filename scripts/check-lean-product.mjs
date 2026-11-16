@@ -27,11 +27,11 @@ for(const p of ['nav.chat','nav.memory','nav.connections','nav.rooms'])
  assert.ok(nav.includes(p),'Retained navigation missing: '+p);
 assert.ok(!/id:'(?:video|rsi)'/.test(nav),'Retired navigation remains');
 const routes=read('src/api/mod.rs');
-for(const pattern of ['/api/video','/api/youtube','/api/rsi','/api/experiment-requests','/api/benchmark/','/api/algorithms/','/api/improvements']){
+for(const pattern of ['/api/video','/api/youtube','/api/rsi','/api/experiment-requests','/api/benchmark/policies','/api/algorithms/generate','/api/algorithms/evaluate','/api/improvements']){
  assert.ok(!routes.includes('"'+pattern),'Retired public endpoint remains: '+pattern);
 }
 for(const route of ['/api/chat','/api/jobs','/api/sdk/runs','/api/harness/runs',
- '/api/mcp','/api/attachments','/api/sessions','/api/events']){
+ '/api/mcp/catalog','/api/algorithms','/api/attachments','/api/sessions','/api/events']){
  assert.ok(routes.includes(route),'Rust app missing existing product contract: '+route);
 }
 const native=read('src/engine/native_agent.rs'),
