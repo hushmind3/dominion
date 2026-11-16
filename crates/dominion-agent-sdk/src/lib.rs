@@ -595,6 +595,17 @@ impl Kernel<'_> {
                     .saturating_add(reply.output_tokens.unwrap_or_else(|| estimate_tokens(&reply.content)))
             );
             self.journal.save(&run)?;
+            // The preflight reserve is an estimate, not authorization to
+            // exceed the owner's actual token budget. Provider-reported usage
+            // may exceed that reserve. Preserve the paid result in the durable
+            // checkpoint, but do not accept a final answer or dispatch any
+            // external effect from an over-budget model turn.
+            if run.charged_tokens > request.limits.max_estimated_tokens {
+                run.stop(Status::NeedsReview,
+                    "Provider-reported token usage exceeded the owner budget; no actions dispatched");
+                self.journal.save(&run)?;
+                return Ok(run);
+            }
             let decision = match native_decision.map_or_else(||decode(&reply.content),validate_decision_plan) {
                 Ok(d) => d,
                 Err(error) => {
