@@ -83,12 +83,12 @@ pub fn list(state:&AppState)->Vec<Value>{
  rows.truncate(80);rows
 }
 /// Explicitly retry a failed *planning* job without replaying an immutable job ID.
-pub fn retry_plan(state:&AppState,id:&str,expected_revision:u64)->Result<Value,String>{
+pub fn retry_plan(state:&AppState,id:&str,expected_revision:u64,acknowledge_unknown:bool)->Result<Value,String>{
  let previous=get(state,id)?;
  if previous["revision"].as_u64()!=Some(expected_revision){
   return Err("기획 버전이 바뀌었습니다. 다시 불러오세요.".into())
  }
- if previous["status"]!="failed"||
+ if !matches!(previous["status"].as_str(),Some("failed"|"needs_review"))||
     previous["scenes"].as_array().is_some_and(|items|!items.is_empty()){
   return Err("실패한 최초 기획만 다시 실행할 수 있습니다. 영상 오류는 렌더링을 다시 실행하세요.".into())
  }
@@ -97,8 +97,11 @@ pub fn retry_plan(state:&AppState,id:&str,expected_revision:u64)->Result<Value,S
  if old_job["kind"]!="video_plan"||old_job["input"]["projectId"]!=id{
   return Err("기획 작업 연결이 올바르지 않습니다.".into())
  }
- if !matches!(old_job["status"].as_str(),Some("failed"|"cancelled"|"interrupted")){
+ if !matches!(old_job["status"].as_str(),Some("failed"|"cancelled"|"interrupted"|"needs_review")){
   return Err("이전 기획 작업의 결과를 검토한 뒤 재시도하세요.".into())
+ }
+ if old_job["status"]=="needs_review"&&!acknowledge_unknown{
+  return Err("이전 유료 모델 호출의 결과가 불확실합니다. 중복 비용 가능성을 확인하고 다시 요청하세요.".into())
  }
  let attempt=previous["planAttempts"].as_u64().unwrap_or(1).saturating_add(1);
  let job_id=uuid::Uuid::new_v4().to_string();
@@ -116,7 +119,8 @@ pub fn retry_plan(state:&AppState,id:&str,expected_revision:u64)->Result<Value,S
  // The failed-status CAS makes simultaneous retry button presses single-winner.
  let records=vec![("video_project".to_string(),updated),
                    ("job".to_string(),job.clone())];
- if !state.store.transaction_if_status("video_project",id,"failed",&records)?{
+ if !state.store.transaction_if_status("video_project",id,
+   previous["status"].as_str().unwrap_or("failed"),&records)?{
   return Err("다른 창에서 재시도했습니다. 다시 불러오세요.".into())
  }
  let saved=get(state,id)?;
@@ -339,13 +343,13 @@ mod tests{
   let failed=state.store.patch_if("video_project",id,"status",&json!("planning"),
    &json!({"status":"failed","planningError":"model returned invalid JSON"})).unwrap();
   assert_eq!(failed["revision"],0);
-  assert!(retry_plan(&state,id,1).is_err());
-  let retried=retry_plan(&state,id,0).unwrap();
+  assert!(retry_plan(&state,id,1,false).is_err());
+  let retried=retry_plan(&state,id,0,false).unwrap();
   assert_eq!(retried["status"],"planning");
   assert_eq!(retried["planAttempts"],2);
   assert!(retried["planningError"].is_null());
   assert_ne!(retried["planJobId"],prior_job["id"]);
-  assert!(retry_plan(&state,id,0).is_err());
+  assert!(retry_plan(&state,id,0,false).is_err());
   let orphan_ctx=JobContext::new(state.clone(),prior_id.into());
   assert!(run_plan(&orphan_ctx,&prior_job).await.is_err());
   let job_id=retried["planJobId"].as_str().unwrap();
@@ -355,6 +359,26 @@ mod tests{
   run_plan(&ctx,&next).await.unwrap();
   assert_eq!(get(&state,id).unwrap()["status"],"planned");
   assert_eq!(get(&state,id).unwrap()["planJobId"],next["id"]);
+  crate::test_support::cleanup_dir(state.config.data_dir.clone());
+ }
+ #[test]
+ fn recovered_paid_plan_requires_explicit_acknowledgement_before_retry(){
+  let state=test_state();
+  let project=create(&state,&json!({"brief":"One. Two.","autoRender":false})).unwrap();
+  let id=project["id"].as_str().unwrap();
+  let first=project["planJobId"].as_str().unwrap();
+  state.store.patch_if("job",first,"status",&json!("queued"),
+   &json!({"status":"running","videoPlanInFlight":true})).unwrap();
+  jobs::recover(&state);
+  let interrupted=state.store.get("job",first).unwrap();
+  assert_eq!(interrupted["status"],"needs_review");
+  let unresolved=get(&state,id).unwrap();
+  assert_eq!(unresolved["status"],"needs_review");
+  assert!(retry_plan(&state,id,0,false).is_err());
+  let retried=retry_plan(&state,id,0,true).unwrap();
+  assert_eq!(retried["status"],"planning");
+  assert_ne!(retried["planJobId"],interrupted["id"]);
+  assert_eq!(state.store.get("job",first).unwrap()["status"],"needs_review");
   crate::test_support::cleanup_dir(state.config.data_dir.clone());
  }
  #[tokio::test]
