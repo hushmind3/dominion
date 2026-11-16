@@ -137,6 +137,18 @@ pub fn cancel_rsi_children(state: &AppState, campaign: &str) {
 /// Recovers work left behind by a crash: running jobs are re-queued (unless
 /// they already exhausted retries) and running executions become interrupted.
 pub fn recover(state: &AppState) {
+    // Model transfers are process-local tasks, not persisted worker jobs.
+    // A terminated process must never leave the UI permanently showing
+    // "downloading". Keep .part files so a later button press resumes them.
+    for mut transfer in state.store.all("video_model_download") {
+        if transfer["status"]=="downloading" {
+            transfer["status"]=json!("interrupted");
+            transfer["error"]=json!("이전 실행이 종료됐습니다. 설치 버튼을 누르면 이어받습니다.");
+            transfer["finishedAt"]=json!(chrono::Utc::now().to_rfc3339());
+            state.store.put("video_model_download",&transfer);
+            state.bus.record("video_model_download",&transfer);
+        }
+    }
     for job in state.store.all("job") {
         if job.get("status").and_then(|value| value.as_str()) != Some("running") {
             continue;
