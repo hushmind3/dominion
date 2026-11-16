@@ -58,7 +58,7 @@ export interface NativeRun {
  }|null;
 }
 export interface NativeRunRequest {
- instruction:string;providerId?:string;model?:string;verifyCommand?:string;maxRounds?:number;
+ instruction:string;providerId?:string;model?:string;verifyCommand?:string;maxRounds?:number;maxToolCalls?:number;
 }
 export interface NativeReconciliation {applied:boolean;details:string}
 export interface Approval extends RecordItem {status:string;sessionId?:string;tool?:string;args?:unknown}
