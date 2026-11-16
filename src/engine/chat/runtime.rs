@@ -1869,29 +1869,10 @@ async fn run_turn_body(
                         gaps.dedup();
                         next_action = review.next_action.unwrap_or_default();
                         metrics.lock().unwrap().model_calls += 1;
-                        if !next_action.trim().is_empty() {
-                            let scope = crate::engine::memory::MemoryScope::for_session(
-                                &state.store, session_id, request.agent_id.as_deref(),
-                            );
-                            let mut evidence_ids = evidence
-                                .iter()
-                                .filter_map(|operation| operation["id"].as_str().map(str::to_string))
-                                .take(8)
-                                .collect::<Vec<_>>();
-                            if evidence_ids.is_empty() {
-                                evidence_ids.push(execution_id.to_string());
-                            }
-                            let _ = crate::engine::improve::propose(
-                                state,
-                                &scope,
-                                "strategy",
-                                &next_action,
-                                &format!("리뷰어가 실패 원인을 분석해 제안: {}", gaps.join("; ")),
-                                &evidence_ids,
-                                None,
-                                "shared",
-                            );
-                        }
+                        // The reviewer may guide the CURRENT repair turn;
+                        // it must not create autonomous RSI strategy records.
+                        // Existing failure evidence and nextAction are saved
+                        // immediately below for later user-requested reuse.
                         state.store.audit("acceptance.review", json!({
                             "sessionId": session_id,
                             "executionId": execution_id,
@@ -6010,32 +5991,13 @@ fn ensure_session(state: &AppState, request: &TurnRequest) -> Result<Value, Stri
     session.ok_or_else(|| "세션을 만들 수 없습니다.".to_string())
 }
 
-fn record_tool_stat(state: &AppState, session_id: &str, agent_id: Option<&str>, name: &str, ok: bool) {
-    let Some(stat) = state.store.increment_counters(
-        "tool_stat",
-        name,
-        &["attempts", if ok { "successes" } else { "failures" }],
-    ) else {
-        return;
-    };
-    let attempts = stat["attempts"].as_u64().unwrap_or(0);
-    let failures = stat["failures"].as_u64().unwrap_or(0);
-    if attempts >= 3 && failures * 2 >= attempts {
-        let scope = crate::engine::memory::MemoryScope::for_session(&state.store, session_id, agent_id);
-        let text = format!(
-            "{name} 도구의 실패가 반복됩니다. 가능하면 다른 도구를 먼저 사용하고, 사용할 때는 인자를 단순화하세요."
-        );
-        let _ = crate::engine::improve::propose(
-            state,
-            &scope,
-            "tool_policy",
-            &text,
-            "도구별 성공/실패 통계에서 반복 실패를 확인했습니다.",
-            &[format!("tool-stat:{name}")],
-            Some(name),
-            "shared",
-        );
-    }
+fn record_tool_stat(state: &AppState, _session_id: &str, _agent_id: Option<&str>, name: &str, ok: bool) {
+    // Statistics are durable evidence for later user-directed repairs,
+    // not a trigger for unattended strategy proposals or RSI campaigns.
+    let _ = state.store.increment_counters(
+        "tool_stat",name,
+        &["attempts", if ok { "successes" } else { "failures" }]
+    );
 }
 
 #[cfg(test)]
