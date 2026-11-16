@@ -1,90 +1,53 @@
 import {useEffect,useState} from 'react'
-import {ArrowDownToLine,CheckCircle2,FolderOpen,HardDrive,LoaderCircle,RefreshCw,Server,Wifi,WifiOff} from 'lucide-react'
+import {ArrowDownToLine,CheckCircle2,ChevronDown,FolderOpen,HardDrive,LoaderCircle,RefreshCw,Server,Wifi,WifiOff} from 'lucide-react'
 import {post} from '../api'
-import {Button,SelectInput,TextInput} from './Primitives'
-import {FormField,Notice,StateTag,useRemote} from './UI'
+import {Button,TextInput} from './Primitives'
+import {Notice,StateTag,useRemote} from './UI'
 
-type VideoModel={id:string;name:string;kind:string;available:boolean;missingFiles:number;hint:string}
-type Catalog={videoModels:VideoModel[];selectedVideoModel?:string;modelsDir?:string;modelsDirReady?:boolean;comfyReachable?:boolean;comfyAvailable?:boolean;missingNodes?:string[];comfyUrl?:string}
+type VideoModel={
+ id:string;name:string;family?:string;task?:string;kind:string;
+ quantization?:string;weightBytes?:number;totalBytes?:number;
+ available:boolean;missingFiles:number;hint:string;notes?:string
+}
+type Catalog={
+ videoModels:VideoModel[];selectedVideoModel?:string;modelsDir?:string;
+ comfyReachable?:boolean;comfyAvailable?:boolean;comfyUrl?:string;missingNodes?:string[]
+}
 type Download={id:string;model:string;status:string;progress:number;bytes:number;total:number;error?:string}
-const DEFAULT_MODEL='wan21-t2v-1.3b-fp16'
-const fmt=(n=0)=>n>=1024**3?(n/1024**3).toFixed(2)+' GB':n>=1024**2?(n/1024**2).toFixed(1)+' MB':Math.round(n/1024)+' KB'
+const DEFAULT_MODEL='wan21-t2v-1.3b-q4'
+const gb=(bytes=0)=>bytes>=1e9?(bytes/1e9).toFixed(2)+' GB':(bytes/1e6).toFixed(0)+' MB'
+const recommendation=(quant?:string)=>quant==='Q4_K_M'?'용량·품질 균형':quant==='Q3_K_M'?'공간 절약':quant==='Q5_K_M'?'고화질 양자화':quant==='Q8_0'?'대용량 양자화':'고정밀'
 
 export function VideoModelInstall({onChanged}:{onChanged:()=>void}){
  const catalog=useRemote<Catalog>('/api/video/catalog',{videoModels:[]},false)
  const downloads=useRemote<{downloads:Download[]}>('/api/video/models/downloads',{downloads:[]},false)
  const [chosen,setChosen]=useState(DEFAULT_MODEL)
- const [folder,setFolder]=useState('')
- const [folderDirty,setFolderDirty]=useState(false)
- const [url,setUrl]=useState('http://127.0.0.1:8188')
  const [busy,setBusy]=useState(false)
  const [starting,setStarting]=useState(false)
+ const [folder,setFolder]=useState('')
+ const [url,setUrl]=useState('http://127.0.0.1:8188')
  const [error,setError]=useState('')
  const [notice,setNotice]=useState('')
- const model=catalog.value.videoModels.find(m=>m.id===chosen)
+ const model=catalog.value.videoModels.find(item=>item.id===chosen)
  const transfer=downloads.value.downloads.find(row=>row.model===chosen)
  const installed=Boolean(model?.available)
  const selected=installed&&catalog.value.selectedVideoModel===chosen
  const server=Boolean(catalog.value.comfyReachable)
- const ready=selected&&server&&Boolean(catalog.value.comfyAvailable)
+ const ready=selected&&Boolean(catalog.value.comfyAvailable)
  useEffect(()=>{
-  if(catalog.value.selectedVideoModel&&catalog.value.videoModels.some(m=>m.id===catalog.value.selectedVideoModel))
-   setChosen(catalog.value.selectedVideoModel)
+  const active=catalog.value.selectedVideoModel
+  if(active&&catalog.value.videoModels.some(item=>item.id===active))setChosen(active)
  },[catalog.value.selectedVideoModel,catalog.value.videoModels.length])
- useEffect(()=>{
-  if(!folderDirty&&catalog.value.modelsDirReady&&catalog.value.modelsDir)
-   setFolder(catalog.value.modelsDir)
- },[catalog.value.modelsDir,catalog.value.modelsDirReady,folderDirty])
- useEffect(()=>{
-  if(catalog.value.comfyUrl)setUrl(catalog.value.comfyUrl)
- },[catalog.value.comfyUrl])
+ useEffect(()=>{if(catalog.value.modelsDir)setFolder(catalog.value.modelsDir)},[catalog.value.modelsDir])
+ useEffect(()=>{if(catalog.value.comfyUrl)setUrl(catalog.value.comfyUrl)},[catalog.value.comfyUrl])
  useEffect(()=>{
   if(transfer?.status!=='downloading')return
-  const timer=window.setInterval(()=>{
-   void Promise.all([downloads.reload(),catalog.reload()])
-  },2500)
+  const timer=window.setInterval(()=>{void Promise.all([downloads.reload(),catalog.reload()])},2500)
   return()=>window.clearInterval(timer)
  },[transfer?.status,downloads.reload,catalog.reload])
  useEffect(()=>{
-  if(transfer?.status==='completed'){
-   void catalog.reload()
-   onChanged()
-  }
+  if(transfer?.status==='completed'){void catalog.reload();onChanged()}
  },[transfer?.status,catalog.reload,onChanged])
- const chooseFolder=async()=>{
-  setError('')
-  try{
-   const value=await post<{path?:string;cancelled?:boolean}>('/api/system/pick-folder',{})
-   if(value.path){setFolder(value.path);setFolderDirty(true)}
-  }catch(e){setError((e as Error).message)}
- }
- const setup=async()=>{
-  if(busy||!chosen)return
-  setBusy(true);setError('');setNotice('')
-  try{
-   const result=await post<{status:string;modelsDir?:string}>(
-    '/api/video/models/'+encodeURIComponent(chosen)+'/setup',
-    {modelsDir:folder.trim(),comfyUrl:url.trim()}
-   )
-   if(result.modelsDir){setFolder(result.modelsDir);setFolderDirty(false)}
-   setNotice(result.status==='ready'
-    ?'모델 파일이 준비됐습니다. ComfyUI 연결 상태를 확인하세요.'
-    :'필요한 영상 모델 파일 다운로드를 시작했습니다. 중단 후 다시 누르면 이어받기를 시도합니다.')
-   await Promise.all([catalog.reload(),downloads.reload()])
-   onChanged()
-  }catch(e){setError((e as Error).message)}
-  finally{setBusy(false)}
- }
- const startRuntime=async()=>{
-  if(starting)return
-  setError('');setStarting(true)
-  try{
-   const started=await post<{status:string}>('/api/video/comfy/start',{})
-   setNotice(started.status==='running'?'ComfyUI가 실행 중입니다.':'설치된 ComfyUI를 실행했습니다. 모델 로딩 상태를 확인합니다.')
-   await catalog.reload()
-   onChanged()
-  }catch(e){setError((e as Error).message);setStarting(false)}
- }
  useEffect(()=>{
   if(!starting)return
   let count=0
@@ -96,58 +59,111 @@ export function VideoModelInstall({onChanged}:{onChanged:()=>void}){
   },2500)
   return()=>window.clearInterval(timer)
  },[starting,catalog.reload,onChanged])
- useEffect(()=>{if(starting&&server)setStarting(false)},[starting,server])
+ useEffect(()=>{if(starting&&server)setStarting(false)},[server,starting])
  const refresh=()=>void Promise.all([catalog.reload(),downloads.reload()]).then(onChanged)
- return <section className="mt-4 rounded-2xl border-2 border-[#D6A17E] bg-[#FFF8F0] p-4 sm:p-5" aria-label="AI 영상 모델 원클릭 설치">
+ const setup=async()=>{
+  if(busy||!chosen)return
+  setBusy(true);setError('');setNotice('')
+  try{
+   const result=await post<{status:string;modelsDir?:string}>(
+    '/api/video/models/'+encodeURIComponent(chosen)+'/setup',{}
+   )
+   setNotice(result.status==='ready'?'선택한 영상 모델을 사용할 수 있도록 등록했습니다.':'선택한 영상 모델과 필수 구성 파일 다운로드를 시작했습니다.')
+   await Promise.all([catalog.reload(),downloads.reload()])
+   onChanged()
+  }catch(e){setError((e as Error).message)}
+  finally{setBusy(false)}
+ }
+ const chooseFolder=async()=>{
+  setError('')
+  try{
+   const result=await post<{path?:string;cancelled?:boolean}>('/api/system/pick-folder',{})
+   if(result.path)setFolder(result.path)
+  }catch(e){setError((e as Error).message)}
+ }
+ const advancedSetup=async()=>{
+  if(busy)return
+  setBusy(true);setError('')
+  try{
+   await post('/api/video/models/'+encodeURIComponent(chosen)+'/setup',
+    {modelsDir:folder.trim(),comfyUrl:url.trim()})
+   await Promise.all([catalog.reload(),downloads.reload()])
+   onChanged()
+  }catch(e){setError((e as Error).message)}
+  finally{setBusy(false)}
+ }
+ const launch=async()=>{
+  if(starting)return
+  setStarting(true);setError('')
+  try{
+   await post('/api/video/comfy/start',{})
+   setNotice('연결된 ComfyUI 실행 상태를 확인 중입니다.')
+   await catalog.reload()
+   onChanged()
+  }catch(e){setError((e as Error).message);setStarting(false)}
+ }
+ return <section className="rounded-2xl border border-[#E0D6CA] bg-[#FFFDF9] p-4 sm:p-5" aria-label="AI 영상 모델 원클릭 설치">
   <div className="flex flex-wrap items-start justify-between gap-3">
-   <div><p className="text-[10px] font-bold tracking-[.12em] text-[#B66846]">AI MODEL SETUP</p>
-    <h4 className="mt-1 flex items-center gap-2 text-[15px] font-bold"><HardDrive size={18}/> 영상 모델 다운로드·설치</h4>
-    <p className="mt-1 text-[11px] leading-5 text-[#7F7368]">내 컴퓨터의 ComfyUI 모델 폴더에 다운로드하고 자율 제작에 연결합니다.</p>
+   <div><p className="text-[10px] font-bold uppercase tracking-[.12em] text-[#AF7657]">VIDEO MODEL LIBRARY</p>
+    <h3 className="mt-1 flex items-center gap-2 text-[15px] font-bold"><HardDrive size={18}/> 영상 모델 다운로드</h3>
+    <p className="mt-1 text-[11px] text-[#84786D]">영상 생성용 모델만 표시합니다. 원하는 양자화를 골라 받으세요.</p>
    </div>
-   <StateTag online={ready}>{ready?'모델·서버 준비':'설치·연결 점검'}</StateTag>
+   <StateTag online={ready}>{ready?'생성 준비 완료':installed?'모델 다운로드 완료':'모델 선택'}</StateTag>
   </div>
-  <div className="mt-4 grid gap-3 sm:grid-cols-2">
-   <FormField label="영상 모델">
-    <SelectInput value={chosen} onChange={e=>setChosen(e.target.value)}>
-     {catalog.value.videoModels.length===0&&<option value={DEFAULT_MODEL}>Wan2.1 1.3B FP16</option>}
-     {catalog.value.videoModels.map(m=><option key={m.id} value={m.id}>{m.name}{m.available?' · 설치됨':' · 다운로드 가능'}</option>)}
-    </SelectInput>
-   </FormField>
-   <div className="flex items-center justify-between rounded-xl border border-[#EBE1D6] bg-white px-3 py-2.5">
-    <span><strong className="block text-[12px]">{model?.kind==='gguf'?'저메모리 4비트':'표준 모델 · 우선 추천'}</strong>
-    <small className="mt-1 block text-[10px] text-[#918477]">{model?.kind==='gguf'?'ComfyUI-GGUF 확장 필요':'기본 ComfyUI 노드 사용'}</small></span>
-    {installed?<CheckCircle2 size={19} className="text-emerald-700"/>:<ArrowDownToLine size={19} className="text-[#BE714B]"/>}
+  <div className="mt-4 flex items-center justify-between gap-2 border-b border-[#EEE6DE] pb-2">
+   <strong className="text-[12px]">Wan2.1 · Text-to-Video · 1.3B</strong>
+   <span className="text-[10px] text-[#87796D]">양자화별 용량 비교</span>
+  </div>
+  <div className="mt-2 grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="영상 모델 양자화 선택">
+   {(catalog.value.videoModels.length?catalog.value.videoModels:[]).filter(item=>item.task==='text-to-video').map(item=>{
+    const active=item.id===chosen
+    return <label key={item.id} className={'flex cursor-pointer items-start gap-2.5 rounded-xl border px-3 py-3 '+(active?'border-[#C88763] bg-[#FFF4E8]':'border-[#E7DFD5] bg-white hover:border-[#D2BCA9]')}>
+     <input type="radio" name="video-quantization" value={item.id} checked={active}
+      onChange={()=>{setChosen(item.id);setNotice('');setError('')}} className="mt-1 accent-[#C96442]"/>
+     <span className="min-w-0 flex-1"><span className="flex flex-wrap items-center gap-2">
+      <strong className="text-[12px]">{item.quantization||item.name}</strong>
+      {item.available&&<CheckCircle2 size={14} className="text-emerald-700"/>}
+      {item.quantization==='Q4_K_M'&&<span className="rounded bg-[#F5E1D2] px-1.5 py-0.5 text-[9px] text-[#91573F]">추천</span>}
+     </span><small className="mt-1 block text-[10px] text-[#81776C]">{recommendation(item.quantization)} · 본체 {gb(item.weightBytes)}</small>
+     <small className="mt-0.5 block text-[10px] font-semibold text-[#514B43]">필수 파일 전체 약 {gb(item.totalBytes)}</small>
+     </span>
+    </label>
+   })}
+  </div>
+  {!catalog.value.videoModels.length&&<p className="mt-3 text-[11px] text-[#8B796C]">영상 전용 모델 목록을 불러오는 중입니다.</p>}
+  <p className="mt-3 text-[10px] leading-5 text-[#887A6E]">전체 용량에는 영상 모델 본체·텍스트 인코더·VAE가 포함됩니다. 이미 받은 공통 파일은 다시 받지 않습니다. 디스크 용량과 실행 VRAM은 다릅니다.</p>
+  <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+   <span className="text-[11px] text-[#82776D]">{model?.hint||'모델을 선택하세요'}</span>
+   <div className="flex gap-2">
+    <Button size="sm" variant="ghost" onClick={refresh}><RefreshCw size={14}/> 갱신</Button>
+    <Button size="sm" variant="primary" onClick={()=>void setup()}
+     disabled={busy||transfer?.status==='downloading'||!model}>
+     {busy?<><LoaderCircle size={14} className="animate-spin"/> 처리 중</>:
+      selected?'다운로드 완료':installed?'이 모델 사용':<><ArrowDownToLine size={14}/> {transfer?.status==='interrupted'?'이어받기':'다운로드'}</>}
+    </Button>
    </div>
   </div>
-  <div className="mt-3 space-y-3">
-   <FormField label="ComfyUI models 폴더" hint="ComfyUI를 실제 실행하는 설치 폴더 아래의 models를 선택하세요. 다른 폴더에 다운로드하면 ComfyUI가 모델을 읽지 못합니다.">
-    <div className="flex gap-2"><TextInput value={folder} onChange={e=>{setFolder(e.target.value);setFolderDirty(true)}} placeholder="예: C:\ComfyUI_windows_portable\ComfyUI\models"/>
-     <Button size="sm" variant="secondary" onClick={()=>void chooseFolder()}><FolderOpen size={15}/> 폴더 선택</Button></div>
-   </FormField>
-   <FormField label="ComfyUI 주소">
-    <TextInput value={url} onChange={e=>setUrl(e.target.value)} placeholder="http://127.0.0.1:8188"/>
-   </FormField>
-  </div>
-  {Boolean(catalog.value.missingNodes?.length)&&<div role="status" className="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-[11px] text-amber-900"><strong>ComfyUI에서 찾지 못한 실행 노드</strong><p className="mt-1 break-all">{catalog.value.missingNodes?.join(', ')}</p><p className="mt-1">모델 다운로드가 완료되어도 이 노드가 없으면 생성할 수 없습니다.</p></div>}
-  {model?.kind==='gguf'&&<p className="mt-3 text-[11px] leading-5 text-amber-900">4비트 모델은 <a className="font-semibold underline" href="https://github.com/city96/ComfyUI-GGUF" target="_blank" rel="noreferrer">ComfyUI-GGUF 확장</a>이 설치되어야 실행됩니다. 확장 없이 시작하려면 FP16을 선택하세요.</p>}
-  <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-   <div className="flex items-center gap-2 text-[11px] text-[#85796B]">{server?<Wifi size={15} className="text-emerald-700"/>:<WifiOff size={15} className="text-amber-600"/>}{server?'ComfyUI 연결됨':'ComfyUI 실행·연결 필요'} <span className="text-[#AEA49A]">·</span> {model?.hint||'모델 조회 중'}</div>
-   <div className="flex flex-wrap gap-2">
-    {!server&&<Button size="sm" variant="secondary" disabled={starting||!catalog.value.modelsDirReady} onClick={()=>void startRuntime()}>{starting?<><LoaderCircle size={14} className="animate-spin"/> 서버 시작 중</>:<><Server size={14}/> ComfyUI 실행</>}</Button>}
-    <Button size="sm" variant="ghost" onClick={refresh}><RefreshCw size={14}/> 상태 확인</Button>
-    <Button size="sm" variant="primary" disabled={busy||transfer?.status==='downloading'||!chosen} onClick={()=>void setup()}>
-     {busy?<><LoaderCircle size={15} className="animate-spin"/> 연결 중</>:selected?'설정 다시 확인':installed?'모델 연결하기':<><ArrowDownToLine size={15}/> 선택·다운로드·설치</>}</Button></div>
-  </div>
-  {transfer&&<div className="mt-4 rounded-xl border border-[#E8DBCB] bg-white p-3" aria-live="polite">
-   <div className="mb-2 flex justify-between gap-2 text-[11px]">
-    <span className="font-semibold">{transfer.status==='downloading'?'모델 다운로드 진행 중':transfer.status==='completed'?'모델 파일 다운로드 완료':transfer.status==='failed'?'다운로드 실패':transfer.status==='interrupted'?'다운로드 중단 · 이어받기 가능':transfer.status}</span>
-    <span className="tabular-nums text-[#8E8174]">{Math.round(transfer.progress||0)}% · {fmt(transfer.bytes)}{transfer.total?' / '+fmt(transfer.total):''}</span>
-   </div>
-   <div role="progressbar" aria-label="영상 모델 다운로드" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.max(0,Math.min(100,transfer.progress||0))} className="h-2 overflow-hidden rounded-full bg-[#EEE8DF]"><div className="h-full rounded-full bg-[#C96442] transition-[width]" style={{width:Math.max(0,Math.min(100,transfer.progress||0))+'%'}}/></div>
+  {transfer&&<div className="mt-3 rounded-lg border border-[#E6DED5] bg-white p-3" aria-live="polite">
+   <div className="mb-2 flex justify-between gap-2 text-[11px]"><strong>
+    {transfer.status==='downloading'?'다운로드 중':transfer.status==='completed'?'다운로드 완료':transfer.status==='failed'?'다운로드 오류':transfer.status==='interrupted'?'중단됨 · 이어받기 가능':transfer.status}
+   </strong><span className="tabular-nums">{Math.round(transfer.progress||0)}% · {gb(transfer.bytes)}{transfer.total?' / '+gb(transfer.total):''}</span></div>
+   <div role="progressbar" aria-label="영상 모델 다운로드" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.max(0,Math.min(100,transfer.progress||0))} className="h-2 overflow-hidden rounded-full bg-[#EDE6DC]">
+    <div className="h-full rounded-full bg-[#C96442]" style={{width:Math.max(0,Math.min(100,transfer.progress||0))+'%'}}/></div>
    {transfer.error&&<p className="mt-2 text-[11px] text-rose-700">{transfer.error}</p>}
   </div>}
-  {notice&&<p role="status" className="mt-3 flex items-center gap-2 text-[11px] text-emerald-800"><CheckCircle2 size={14}/>{notice}</p>}
+  {notice&&<p role="status" className="mt-3 text-[11px] text-emerald-800">{notice}</p>}
   {error&&<Notice message={error}/>}
-  {!server&&<p className="mt-3 flex items-center gap-2 text-[11px] text-[#8F7766]"><Server size={14}/> ComfyUI Portable 또는 가상환경이 이미 설치돼 있다면 위의 실행 버튼으로 로컬 서버를 시작할 수 있습니다. 실행 환경이 없다면 <a href="https://github.com/Comfy-Org/ComfyUI" target="_blank" rel="noreferrer" className="underline">공식 ComfyUI 설치 안내</a>를 사용하세요.</p>}
+  <details className="mt-4 border-t border-[#EEE5DA] pt-3">
+   <summary className="flex cursor-pointer items-center gap-1 text-[11px] text-[#7E756A]"><ChevronDown size={13}/> 고급 설정 · 기존 ComfyUI 연결</summary>
+   <p className="mt-3 text-[11px] text-[#897B6F]">모델 다운로드에는 이 설정이 필요하지 않습니다. 영상 생성 실행기가 따로 있는 경우에만 사용하세요.</p>
+   <div className="mt-3 space-y-3">
+    <label className="block text-[11px] font-semibold">모델 저장 경로 변경<div className="mt-1 flex gap-2"><TextInput value={folder} onChange={e=>setFolder(e.target.value)}/><Button size="sm" variant="secondary" onClick={()=>void chooseFolder()}><FolderOpen size={14}/> 폴더</Button></div></label>
+    <label className="block text-[11px] font-semibold">ComfyUI 주소<TextInput value={url} onChange={e=>setUrl(e.target.value)} className="mt-1"/></label>
+    <div className="flex flex-wrap gap-2"><Button size="sm" variant="secondary" onClick={()=>void advancedSetup()} disabled={busy}>연결 설정 저장</Button>
+     <Button size="sm" variant="secondary" onClick={()=>void launch()} disabled={starting}>{starting?<LoaderCircle size={14} className="animate-spin"/>:<Server size={14}/>} ComfyUI 실행</Button></div>
+    <p className="flex items-center gap-1 text-[11px] text-[#897C6D]">{server?<Wifi size={13}/>:<WifiOff size={13}/>}
+     {server?'실행기 연결됨':'실행기 미연결'}{catalog.value.missingNodes?.length?' · 누락 노드: '+catalog.value.missingNodes.join(', '):''}</p>
+   </div>
+  </details>
  </section>
 }
