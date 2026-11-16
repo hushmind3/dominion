@@ -562,15 +562,7 @@ async fn run_job(state: AppState, job: Value) {
     }
     if kind == "video_plan" {
         if let Some(saved)=state.store.get("job",&job_id) {
-            if saved["status"]=="failed" {
-                if let Some(project_id)=saved["input"]["projectId"].as_str(){
-                    if let Some(project)=state.store.get("video_project",project_id){
-                        let _=state.store.patch_if("video_project",project_id,
-                            "revision",&project["revision"],
-                            &json!({"status":"failed","planningError":saved["error"]}));
-                    }
-                }
-            }
+            crate::engine::video_studio::finish_plan(&state,&saved);
         }
     }
     if kind == "rsi_evolve" {
