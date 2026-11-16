@@ -146,14 +146,21 @@ pub fn start_download(state: AppState, id: &str) -> Result<Value, String> {
     }
     state.store.put("video_model_download", &json!({
         "id": key, "model": id, "status": "downloading", "progress": 0,
-        "bytes": 0, "total": 0, "startedAt": chrono::Utc::now().to_rfc3339(),
+        "bytes": 0, "total": 0, "filesTotal": files.len(),
+        "filesCompleted": 0, "currentFile": null,
+        "startedAt": chrono::Utc::now().to_rfc3339(),
     })).ok_or("다운로드 기록을 저장할 수 없습니다.")?;
     let base = models_dir(&state);
     tokio::spawn(async move {
         let outcome = download_files(&state, &key, &base, &files).await;
         let mut record = state.store.get("video_model_download", &key).unwrap_or_else(|| json!({"id": key}));
         match outcome {
-            Ok(()) => { record["status"] = json!("completed"); record["progress"] = json!(100); }
+            Ok(()) => {
+                record["status"] = json!("completed");
+                record["progress"] = json!(100);
+                record["filesCompleted"] = json!(files.len());
+                record["currentFile"] = Value::Null;
+            }
             Err(error) => { record["status"] = json!("failed"); record["error"] = json!(error); }
         }
         record["finishedAt"] = json!(chrono::Utc::now().to_rfc3339());
@@ -162,48 +169,95 @@ pub fn start_download(state: AppState, id: &str) -> Result<Value, String> {
     Ok(json!({"model": id, "status": "downloading"}))
 }
 
+/// Reports verified completed files and within-file progress. Summing only
+/// known Content-Length headers used to show 99% after the first huge weight
+/// while two more model files were still pending.
+fn model_download_percent(completed:usize,total:usize,current_bytes:u64,current_total:u64)->u64 {
+    if total==0 {return 0;}
+    let partial=if current_total>0 {
+        current_bytes.saturating_mul(100).saturating_div(current_total).min(99)
+    }else{0};
+    ((completed as u64).saturating_mul(100).saturating_add(partial)
+        / total as u64).min(99)
+}
+
 async fn download_files(
     state: &AppState, key: &str, base: &Path, files: &[(&'static str, &'static str)],
 ) -> Result<(), String> {
     let client = reqwest::Client::builder().build().map_err(|e| e.to_string())?;
-    let mut total = 0u64;
-    let mut done = 0u64;
-    for (relative, url) in files {
+    let mut total_known = 0u64;
+    let mut received = 0u64;
+    let mut completed = 0usize;
+    for (relative,url) in files {
         let target = base.join(relative);
-        if target.is_file() { continue; }
-        if let Some(parent) = target.parent() { let _ = std::fs::create_dir_all(parent); }
+        if target.is_file() {
+            completed+=1;
+            if let Some(mut record)=state.store.get("video_model_download",key) {
+                record["filesCompleted"]=json!(completed);
+                record["progress"]=json!(model_download_percent(completed,files.len(),0,0));
+                state.store.put("video_model_download",&record);
+            }
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
         let response = client.get(*url).send().await.map_err(|e| e.to_string())?;
         if !response.status().is_success() {
             return Err(format!("다운로드 실패: HTTP {}", response.status()));
         }
-        total += response.content_length().unwrap_or(0);
+        let this_total = response.content_length().unwrap_or(0);
+        total_known=total_known.saturating_add(this_total);
+        if let Some(mut record)=state.store.get("video_model_download",key) {
+            record["currentFile"]=json!(relative);
+            record["filesCompleted"]=json!(completed);
+            record["bytes"]=json!(received);
+            record["total"]=json!(total_known);
+            record["progress"]=json!(model_download_percent(completed,files.len(),0,this_total));
+            state.store.put("video_model_download",&record);
+        }
         let part = target.with_extension("part");
         let mut file = tokio::fs::File::create(&part).await.map_err(|e| e.to_string())?;
         use futures_util::StreamExt;
         use tokio::io::AsyncWriteExt;
         let mut stream = response.bytes_stream();
-        let mut since_update = 0u64;
+        let mut current_received=0u64;
+        let mut since_update=0u64;
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|e| e.to_string())?;
             file.write_all(&chunk).await.map_err(|e| e.to_string())?;
-            done += chunk.len() as u64;
-            since_update += chunk.len() as u64;
+            let n=chunk.len() as u64;
+            received=received.saturating_add(n);
+            current_received=current_received.saturating_add(n);
+            since_update=since_update.saturating_add(n);
             if since_update >= 8 * 1024 * 1024 {
-                since_update = 0;
-                let mut record = state.store.get("video_model_download", key)
-                    .unwrap_or_else(|| json!({"id": key}));
-                record["bytes"] = json!(done);
-                record["total"] = json!(total.max(done));
-                record["progress"] = json!(((done * 100) / total.max(done)).min(99));
-                state.store.put("video_model_download", &record);
+                since_update=0;
+                if let Some(mut record)=state.store.get("video_model_download",key) {
+                    record["bytes"]=json!(received);
+                    record["total"]=json!(total_known.max(received));
+                    record["filesCompleted"]=json!(completed);
+                    record["progress"]=json!(model_download_percent(
+                        completed,files.len(),current_received,this_total));
+                    state.store.put("video_model_download",&record);
+                }
             }
         }
         file.flush().await.map_err(|e| e.to_string())?;
         drop(file);
-        tokio::fs::rename(&part, &target).await.map_err(|e| e.to_string())?;
+        tokio::fs::rename(&part,&target).await.map_err(|e| e.to_string())?;
+        completed+=1;
+        if let Some(mut record)=state.store.get("video_model_download",key) {
+            record["filesCompleted"]=json!(completed);
+            record["currentFile"]=Value::Null;
+            record["bytes"]=json!(received);
+            record["total"]=json!(total_known.max(received));
+            record["progress"]=json!(model_download_percent(completed,files.len(),0,0));
+            state.store.put("video_model_download",&record);
+        }
     }
     Ok(())
 }
+
 
 pub fn downloads(state: &AppState) -> Vec<Value> {
     state.store.all("video_model_download")
@@ -1358,6 +1412,16 @@ mod tests {
         assert!(within_new_scene_budget(0,Some(1)));
         assert!(!within_new_scene_budget(1,Some(1)));
         assert!(within_new_scene_budget(999,None));
+    }
+
+    #[test]
+    fn multi_file_model_progress_never_claims_completion_early() {
+        assert_eq!(model_download_percent(0,3,0,100),0);
+        assert_eq!(model_download_percent(0,3,50,100),16);
+        assert_eq!(model_download_percent(1,3,0,0),33);
+        assert_eq!(model_download_percent(1,3,99,100),66);
+        assert_eq!(model_download_percent(2,3,99,100),99);
+        assert_eq!(model_download_percent(3,3,0,0),99);
     }
 
     #[test]
