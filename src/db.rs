@@ -170,7 +170,10 @@ impl Store {
                  WHERE kind='execution_operation';
              CREATE INDEX IF NOT EXISTS idx_execution_task
                  ON records(json_extract(data,'$.taskId'))
-                 WHERE kind='execution';",
+                 WHERE kind='execution';
+             CREATE INDEX IF NOT EXISTS idx_native_job_route_completed
+                 ON records(json_extract(data,'$.nativeRoute.binding'))
+                 WHERE kind='job' AND json_extract(data,'$.status')='completed';",
         )?;
         // Older databases predate reasoning/tool columns.
         for (column, decl) in [
@@ -208,6 +211,34 @@ impl Store {
             Err(_) => return Vec::new(),
         };
         rows.filter_map(|row| row.ok()).collect()
+    }
+
+    /// Indexed SQLite aggregation of settled, provider-reported cache usage.
+    /// Reads only matching route records; does not materialize every job as
+    /// JSON in the Rust router. Old databases gain the partial expression
+    /// index through the existing idempotent Store::open migration.
+    pub fn native_route_cache_aggregate(&self,binding:&str)
+        -> Result<(u64,u64,u64,u64,u64),String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let sql="SELECT COUNT(*),
+              COALESCE(SUM(CAST(json_extract(data,'$.nativeModelUsage.cacheReportedCalls') AS INTEGER)),0),
+              COALESCE(SUM(CAST(json_extract(data,'$.nativeModelUsage.inputTokens') AS INTEGER)),0),
+              COALESCE(SUM(MAX(0,COALESCE(CAST(json_extract(data,'$.nativeModelUsage.cacheReadTokens') AS INTEGER),0))),0),
+              COALESCE(SUM(MAX(0,COALESCE(CAST(json_extract(data,'$.nativeModelUsage.cacheWriteTokens') AS INTEGER),0))),0)
+             FROM records
+             WHERE kind='job' AND json_extract(data,'$.status')='completed'
+             AND json_extract(data,'$.nativeRoute.binding')=?1
+             AND json_type(data,'$.nativeModelUsage.cacheReportedCalls')='integer'
+             AND CAST(json_extract(data,'$.nativeModelUsage.cacheReportedCalls') AS INTEGER)>0
+             AND COALESCE(CAST(json_extract(data,'$.nativeModelUsage.unreportedCalls') AS INTEGER),0)=0
+             AND json_type(data,'$.nativeModelUsage.inputTokens')='integer'
+             AND CAST(json_extract(data,'$.nativeModelUsage.inputTokens') AS INTEGER)>0";
+        let raw=conn.query_row(sql,[binding],|row|Ok((
+            row.get::<_,i64>(0)?,row.get::<_,i64>(1)?,
+            row.get::<_,i64>(2)?,row.get::<_,i64>(3)?,row.get::<_,i64>(4)?
+        ))).map_err(|e|e.to_string())?;
+        Ok((raw.0.max(0) as u64,raw.1.max(0) as u64,
+            raw.2.max(0) as u64,raw.3.max(0) as u64,raw.4.max(0) as u64))
     }
 
     pub fn execution_operations(&self, run_id: &str) -> Result<Vec<Value>, String> {
