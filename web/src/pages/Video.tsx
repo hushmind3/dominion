@@ -178,6 +178,13 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
   setUploadDescription(videoJob.brief)
   setTab('publish')
  }
+ const enterTab=(next:'create'|'jobs'|'publish'|'settings')=>{
+  if(next==='publish'&&!uploadFile){
+   const prepared=videoJob?.outputUrl?videoJob:outputs.value[0]
+   if(prepared){setUploadFile(prepared.id);setUploadTitle(current=>current||prepared.title||prepared.brief.slice(0,90));setUploadDescription(current=>current||prepared.brief)}
+  }
+  setTab(next)
+ }
  const startUpload=async()=>{
   if(!youtube.value.uploadAllowed){setError(t('vid.connectYoutubeFirst'));return}
   if(!selectedOutput||!uploadTitle.trim()||uploading)return;
@@ -242,7 +249,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
   </header>
   {(error||video.error||outputs.error||activeVideo.error||activeUpload.error)&&<Notice message={error||video.error||outputs.error||activeVideo.error||activeUpload.error}/>}
   <nav aria-label="영상 스튜디오 메뉴" className="mb-5 flex min-w-0 flex-wrap items-center gap-1 rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-1.5">
-   {([{key:'create',text:'영상 만들기',icon:Sparkles},{key:'jobs',text:'작업함',icon:Film},{key:'publish',text:'YouTube 게시',icon:Youtube},{key:'settings',text:'환경설정',icon:Settings2}] as const).map(item=><button type="button" key={item.key} aria-current={tab===item.key?'page':undefined} onClick={()=>setTab(item.key)} className={'inline-flex min-h-10 items-center justify-center gap-2 rounded-xl px-3.5 text-[12px] font-semibold transition-colors '+(tab===item.key?'bg-[#C96442] text-white shadow-sm':'text-[#746B60] hover:bg-[#F3EEE5]')}><item.icon size={16}/><span>{item.text}</span>{item.key==='jobs'&&activeCount>0&&<span className={'rounded-full px-1.5 py-0.5 text-[10px] '+(tab===item.key?'bg-white/20':'bg-[#F4E4D9] text-[#B45636]')}>{activeCount}</span>}</button>)}
+   {([{key:'create',text:'영상 만들기',icon:Sparkles},{key:'jobs',text:'작업함',icon:Film},{key:'publish',text:'YouTube 게시',icon:Youtube},{key:'settings',text:'환경설정',icon:Settings2}] as const).map(item=><button type="button" key={item.key} aria-current={tab===item.key?'page':undefined} onClick={()=>enterTab(item.key)} className={'inline-flex min-h-10 items-center justify-center gap-2 rounded-xl px-3.5 text-[12px] font-semibold transition-colors '+(tab===item.key?'bg-[#C96442] text-white shadow-sm':'text-[#746B60] hover:bg-[#F3EEE5]')}><item.icon size={16}/><span>{item.text}</span>{item.key==='jobs'&&activeCount>0&&<span className={'rounded-full px-1.5 py-0.5 text-[10px] '+(tab===item.key?'bg-white/20':'bg-[#F4E4D9] text-[#B45636]')}>{activeCount}</span>}</button>)}
   </nav>
   {tab==='create'&&<div className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(330px,.95fr)]">
    <div className="min-w-0 space-y-5">
