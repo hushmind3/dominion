@@ -9,7 +9,7 @@ import {t,useLocale} from '../i18n'
 type Workflow={id:string;name:string;bytes:number}
 type VideoJob=JobState & {progress?:number;kind:'video';title?:string;brief:string;outputUrl?:string;result?:{bytes:number};duration?:number;aspectRatio?:string;createdAt?:string;engine?:VideoEngine;phase?:string;renderBudget?:{mode?:string;estimatedWorkReductionPercent?:number;frames?:number;steps?:number}}
 type VideoEngine='native'|'comfyui'
-type VideoStatus={config:{engine:VideoEngine;comfyUrl:string;voice?:string;narration?:boolean;videoModel?:string;resolution?:string;steps?:number;economy?:boolean};native?:{available:boolean};comfy:{reachable:boolean;available?:boolean};workflows:Workflow[];jobs:VideoJob[]}
+type VideoStatus={config:{engine:VideoEngine;comfyUrl:string;voice?:string;narration?:boolean;videoModel?:string;resolution?:string;steps?:number;economy?:boolean;ffmpegPath?:string;useModel?:boolean};native?:{available:boolean};comfy:{reachable:boolean;available?:boolean};workflows:Workflow[];jobs:VideoJob[]}
 type VideoModel={id:string;name:string;kind:string;available:boolean;hint:string}
 type UploadJob=JobState & {progress?:number;result?:{url:string}}
 type YoutubeStatus={connected:boolean;uploadAllowed:boolean;account?:{displayName:string;scopes:string}|null;uploads:UploadJob[]}
@@ -28,7 +28,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  const downloads=useRemote<{downloads:{id:string;model:string;status:string;progress:number;bytes:number;total:number;error?:string}[]}>('/api/video/models/downloads',{downloads:[]})
  const [workflow,setWorkflow]=useState(''),[title,setTitle]=useState(''),[prompt,setPrompt]=useState(''),[negative,setNegative]=useState(''),[ratio,setRatio]=useState<keyof typeof ratios>('9:16'),[seconds,setSeconds]=useState(3),[fps,setFps]=useState(16),[seed,setSeed]=useState('-1')
  const [engineChoice,setEngine]=useState<'native'|'comfyui'>(),[comfyUrl,setComfyUrl]=useState(''),[savingConfig,setSavingConfig]=useState(false)
- const [voice,setVoice]=useState('Yuna'),[narration,setNarration]=useState(true)
+ const [voice,setVoice]=useState('Yuna'),[narration,setNarration]=useState(true),[ffmpegPath,setFfmpegPath]=useState('')
  const [tab,setTab]=useState<'create'|'jobs'|'publish'|'settings'>('create'),[refreshing,setRefreshing]=useState(false),[gid,setGid]=useState(''),[gsecret,setGsecret]=useState(''),[gBusy,setGBusy]=useState(false)
  const [economy,setEconomy]=useState(false),[advanced,setAdvanced]=useState(false),[selectedJobId,setSelectedJobId]=useState(''),[jobFilter,setJobFilter]=useState<'all'|'active'|'completed'>('all')
  const [videoSubmission,setVideoSubmission]=useState<VideoJob|null>(null),[generating,setGenerating]=useState(false),[error,setError]=useState('')
@@ -57,8 +57,10 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  const shortSide=Math.min(1024,Math.max(128,Math.round(longSide*9/16/16)*16))
  const squareSide=Math.min(configDimensions[0]||480,configDimensions[1]||832)
  const renderSize=ratio==='1:1'?{width:squareSide,height:squareSide}:ratio==='16:9'?{width:longSide,height:shortSide}:{width:shortSide,height:longSide}
- const renderFps=usingComfy&&economy?Math.min(fps,12):fps
- const renderSteps=usingComfy&&economy?Math.min(video.value.config.steps??20,12):video.value.config.steps??20
+ const economyAllowed=!usingComfy||!hasWorkflow
+ const effectiveEconomy=economy&&economyAllowed
+ const renderFps=usingComfy&&effectiveEconomy?Math.min(fps,12):fps
+ const renderSteps=usingComfy&&effectiveEconomy?Math.min(video.value.config.steps??20,12):video.value.config.steps??20
  const baselineUnits=seconds*fps*(video.value.config.steps??20)*renderSize.width*renderSize.height
  const economyUnits=seconds*renderFps*renderSteps*renderSize.width*renderSize.height
  const reduction=baselineUnits>0?Math.round((1-economyUnits/baselineUnits)*100):0
@@ -70,6 +72,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
   !video.value.comfy.reachable?'ComfyUI에 연결되지 않았습니다. 환경설정에서 연결 상태를 확인하세요.':
   !hasWorkflow&&!selectedModel?.available?'실행 가능한 영상 모델 또는 ComfyUI 워크플로가 필요합니다.':''
  useEffect(()=>{setComfyUrl(video.value.config.comfyUrl)},[video.value.config.comfyUrl])
+ useEffect(()=>{setFfmpegPath(video.value.config.ffmpegPath||'')},[video.value.config.ffmpegPath])
  useEffect(()=>{
   setVoice(video.value.config.voice||'Yuna')
   setNarration(video.value.config.narration!==false)
@@ -91,8 +94,14 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  }
  const changeEngine=async(next:'native'|'comfyui')=>{
   if(savingConfig)return;
-  setEngine(next);setSavingConfig(true);setError('');
-  try{await post('/api/video/config',{engine:next,comfyUrl:comfyUrl.trim()||video.value.config.comfyUrl});await video.reload()}
+  setSavingConfig(true);setError('');
+  try{await post('/api/video/config',{engine:next,comfyUrl:comfyUrl.trim()||video.value.config.comfyUrl});setEngine(next);if(next==='comfyui')setSeconds(current=>Math.min(current,9));await video.reload()}
+  catch(e){setError((e as Error).message)}finally{setSavingConfig(false)}
+ }
+ const saveFfmpeg=async()=>{
+  if(savingConfig)return
+  setSavingConfig(true);setError('')
+  try{await post('/api/video/config',{ffmpegPath:ffmpegPath.trim()});await video.reload()}
   catch(e){setError((e as Error).message)}finally{setSavingConfig(false)}
  }
  const saveComfy=async()=>{
@@ -156,7 +165,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
   setGenerating(true);setError('');
   try{
    const created=await post<VideoJob>('/api/video/jobs',{
-    engine,title,brief:prompt,aspectRatio:ratio,duration:seconds,economy,
+    engine,title,brief:prompt,aspectRatio:ratio,duration:seconds,economy:effectiveEconomy,
     ...(usingComfy?{negativePrompt:negative,fps,seed:requestedSeed,width:renderSize.width,height:renderSize.height}:{}),
    });
    setVideoSubmission(created);setSelectedJobId(created.id);void video.reload()
@@ -281,10 +290,10 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
      </div>
      <div className="mt-4 rounded-2xl border border-[#E6DDCF] bg-[#FAF7F0] p-4">
       <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><Wallet size={17} className="text-[#B36F50]"/><div><strong className="text-[13px]">절약 모드</strong><p className="text-[11px] text-[#8B7E71]">적은 자원으로 빠르게 시도하기</p></div></div>
-       <button type="button" role="switch" aria-checked={economy} aria-label="영상 절약 모드" onClick={()=>setEconomy(!economy)} className={'relative h-7 w-12 rounded-full transition-colors '+(economy?'bg-[#C96442]':'bg-[#CBC2B5]')}><span className={'absolute top-1 size-5 rounded-full bg-white shadow-sm transition-all '+(economy?'left-6':'left-1')}/></button>
+       <button type="button" role="switch" aria-checked={effectiveEconomy} aria-label="영상 절약 모드" disabled={!economyAllowed} onClick={()=>setEconomy(!economy)} className={'relative h-7 w-12 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40 '+(effectiveEconomy?'bg-[#C96442]':'bg-[#CBC2B5]')}><span className={'absolute top-1 size-5 rounded-full bg-white shadow-sm transition-all '+(effectiveEconomy?'left-6':'left-1')}/></button>
       </div>
-      {usingComfy?<div className="mt-3 grid grid-cols-3 gap-2 border-t border-[#E9DFD2] pt-3 text-center"><div><strong className="block text-[15px] tabular-nums">{renderFps}</strong><span className="text-[10px] text-[#8B7E71]">FPS</span></div><div><strong className="block text-[15px] tabular-nums">{renderSteps}</strong><span className="text-[10px] text-[#8B7E71]">생성 스텝</span></div><div><strong className="block text-[15px] tabular-nums">{economy?reduction+'%':'기본'}</strong><span className="text-[10px] text-[#8B7E71]">예상 연산량 감소</span></div></div>:<p className="mt-3 border-t border-[#E9DFD2] pt-3 text-[11px] leading-5 text-[#827669]">{economy?'선택적 유료 AI 스토리보드를 사용하지 않습니다.':'로컬 합성은 기본적으로 별도의 영상 생성 API 호출이 필요하지 않습니다.'}</p>}
-      <p className="mt-2 text-[10px] text-[#A09385]">연산량은 프레임·스텝·해상도 기준 상대 추정입니다. 실제 생성 시간이나 요금은 아닙니다.</p>
+      {usingComfy?<div className="mt-3 grid grid-cols-3 gap-2 border-t border-[#E9DFD2] pt-3 text-center"><div><strong className="block text-[15px] tabular-nums">{renderFps}</strong><span className="text-[10px] text-[#8B7E71]">FPS</span></div><div><strong className="block text-[15px] tabular-nums">{renderSteps}</strong><span className="text-[10px] text-[#8B7E71]">생성 스텝</span></div><div><strong className="block text-[15px] tabular-nums">{effectiveEconomy?reduction+'%':'기본'}</strong><span className="text-[10px] text-[#8B7E71]">예상 연산량 감소</span></div></div>:<p className="mt-3 border-t border-[#E9DFD2] pt-3 text-[11px] leading-5 text-[#827669]">{effectiveEconomy?'선택적 유료 AI 스토리보드를 사용하지 않습니다.':'로컬 합성은 기본적으로 별도의 영상 생성 API 호출이 필요하지 않습니다.'}</p>}
+      <p className="mt-2 text-[10px] text-[#A09385]">{usingComfy&&hasWorkflow?'사용자 워크플로는 임의의 노드를 포함할 수 있어 절약 모드를 자동 적용하지 않습니다.':'연산량은 프레임·스텝·해상도 기준 상대 추정입니다. 실제 생성 시간이나 요금은 아닙니다.'}</p>
      </div>
      {usingComfy&&<div className="mt-4 rounded-xl border border-[#EAE2D8]">
       <button type="button" aria-expanded={advanced} onClick={()=>setAdvanced(!advanced)} className="flex w-full items-center justify-between rounded-xl px-4 py-3 text-left text-[12px] font-semibold text-[#665B50] hover:bg-[#FAF7F1]"><span><Settings2 size={14} className="mr-2 inline"/>고급 생성 설정</span><ChevronDown size={15} className={'transition-transform '+(advanced?'rotate-180':'')}/></button>
@@ -336,6 +345,8 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
     <Panel className="p-5 sm:p-6"><div className="mb-4 flex items-center gap-2"><Settings2 size={19} className="text-[#C96442]"/><h2 className="text-[16px] font-bold">영상 생성 환경</h2></div>
      <div className="space-y-4"><FormField label="기본 엔진"><SelectInput value={engine} disabled={savingConfig} onChange={e=>void changeEngine(e.target.value as VideoEngine)}><option value="native">빠른 자막 영상 (FFmpeg)</option><option value="comfyui">AI 영상 (ComfyUI)</option></SelectInput></FormField>
      <div className="rounded-xl border border-[#EAE2D9] bg-[#FAF7F2] p-3"><p className="flex items-center gap-2 text-[12px] font-semibold"><HardDrive size={15}/> FFmpeg <StateTag online={Boolean(video.value.native?.available)}>{video.value.native?.available?'사용 가능':'경로 확인 필요'}</StateTag></p><p className="mt-2 text-[11px] text-[#887D70]">로컬 자막 영상 인코딩에 필요합니다. FFmpeg 경로는 서버의 영상 설정을 따릅니다.</p></div>
+     <FormField label="FFmpeg 실행 파일 경로"><TextInput aria-label="FFmpeg 실행 파일 경로" value={ffmpegPath} onChange={e=>setFfmpegPath(e.target.value)} placeholder="자동 탐지 · 직접 지정할 경우 절대경로 입력"/></FormField>
+     <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-[10px] text-[#8B8072]">비워 두면 PATH에서 자동 탐색합니다.</p><Button size="sm" variant="secondary" disabled={savingConfig} onClick={()=>void saveFfmpeg()}>FFmpeg 경로 저장</Button></div>
      <FormField label="ComfyUI 주소"><TextInput value={comfyUrl} onChange={e=>setComfyUrl(e.target.value)} placeholder="http://127.0.0.1:8188"/></FormField><div className="flex flex-wrap items-center justify-between gap-2"><StateTag online={video.value.comfy.reachable}>{video.value.comfy.reachable?'연결 확인됨':'서버 미연결'}</StateTag><Button size="sm" variant="primary" disabled={savingConfig||!comfyUrl.trim()} onClick={()=>void saveComfy()}>{savingConfig?'저장 중':'주소 저장·연결 확인'}</Button></div></div>
     </Panel>
     <Panel className="p-5 sm:p-6"><h2 className="mb-4 text-[16px] font-bold">내레이션 설정</h2><div className="grid gap-3 sm:grid-cols-2"><FormField label="음성"><SelectInput value={voice} disabled={savingConfig} onChange={e=>void saveAudio({voice:e.target.value})}><option value="Yuna">Yuna</option></SelectInput></FormField><label className="flex items-center gap-3 rounded-xl border border-[#E6DFD5] bg-[#FAF8F4] p-3 text-[12px]"><input type="checkbox" checked={narration} disabled={savingConfig} onChange={e=>void saveAudio({narration:e.target.checked})} className="accent-[#C96442]"/> 내레이션 사용</label></div><p className="mt-3 text-[11px] text-[#8A8176]">운영체제에 지원 음성이 없으면 영상은 무음으로 생성됩니다.</p></Panel>
