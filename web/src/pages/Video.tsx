@@ -110,6 +110,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  const [gsecret,setGsecret]=useState('')
  const [gBusy,setGBusy]=useState(false)
  const [savingConfig,setSavingConfig]=useState(false)
+ const [preparingModel,setPreparingModel]=useState('')
  const [generating,setGenerating]=useState(false)
  const [uploading,setUploading]=useState(false)
  const [refreshing,setRefreshing]=useState(false)
@@ -171,6 +172,13 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
   return()=>window.clearInterval(timer)
  },[downloadState?.status,downloads.reload])
  useEffect(()=>{if(downloadState?.status==='completed'){void catalog.reload();void video.reload()}},[downloadState?.status,catalog.reload,video.reload])
+ // Keep real model availability fresh while a download is pending. The UI
+ // re-reads both install receipts and the disk-backed catalog.
+ useEffect(()=>{
+  if(!downloads.value.downloads.some(row=>row.status==='downloading'))return
+  const timer=window.setInterval(()=>void downloads.reload(),3000)
+  return()=>window.clearInterval(timer)
+ },[downloads.value.downloads,downloads.reload])
 
  const patchDraft=(patch:Partial<Draft>)=>setDraft(previous=>({...previous,...patch}))
  const reload=async()=>{
@@ -200,11 +208,33 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
    await saveConfig({engine:'comfyui',comfyWorkflow:parsed,comfyWorkflowName:file.name})
   }catch(e){setError((e as Error).message)}
  }
+ // The first-time setup is part of video creation: choose a model,
+ // freeze a built-in workflow, and install its weights without leaving the studio.
+ const prepareVideoModel=async(model:VideoModel)=>{
+  if(savingConfig||preparingModel)return
+  setPreparingModel(model.id);setError('')
+  try{
+   const nextUrl=statusConfig.comfyUrl?.trim()||'http://127.0.0.1:8188'
+   await post('/api/video/config',{
+    engine:'comfyui',videoModel:model.id,
+    comfyUrl:nextUrl,comfyWorkflow:null,comfyWorkflowName:''
+   })
+   setEngineChoice('comfyui')
+   setComfyUrl(nextUrl)
+   await Promise.all([video.reload(),catalog.reload()])
+   if(!model.available){
+    const record=downloads.value.downloads.find(item=>item.model===model.id)
+    if(record?.status!=='downloading'){
+     await post('/api/video/models/'+encodeURIComponent(model.id)+'/download',{})
+    }
+    await downloads.reload()
+   }
+  }catch(e){setError((e as Error).message)}
+  finally{setPreparingModel('')}
+ }
  const startDownload=async()=>{
-  if(!statusConfig.videoModel)return
-  setError('')
-  try{await post('/api/video/models/'+encodeURIComponent(statusConfig.videoModel)+'/download',{});await downloads.reload()}
-  catch(e){setError((e as Error).message)}
+  const selected=catalog.value.videoModels.find(m=>m.id===statusConfig.videoModel)
+  if(selected)await prepareVideoModel(selected)
  }
  const reveal=async(id:string)=>{
   try{await post('/api/video/jobs/'+encodeURIComponent(id)+'/reveal',{})}catch(e){setError((e as Error).message)}
@@ -343,6 +373,53 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
      <span className="text-[12px] font-semibold text-[#4A4036]">{label}</span>
     </div>)}
    </div>
+   <Panel className="mb-4 border-[#E2C4AD] bg-[#FFFDF9] p-4 sm:p-5">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+     <div><span className="inline-flex items-center gap-1.5 rounded-full bg-[#F6E7D9] px-2.5 py-1 text-[10px] font-bold text-[#955231]"><Sparkles size={12}/> 턴키 AI 영상</span>
+      <h3 className="mt-2 text-[15px] font-bold text-[#342A24]">영상 모델 선택 · 다운로드</h3>
+      <p className="mt-1 text-[12px] text-[#796F63]">이곳에서 모델을 준비한 뒤 주제만 입력하세요. 별도 메뉴로 이동할 필요 없습니다.</p>
+     </div>
+     <StateTag online={Boolean(usingComfy&&ready)}>{usingComfy&&ready?'AI 영상 제작 준비 완료':'모델·렌더러 준비'}</StateTag>
+    </div>
+    <div className="mt-4 grid gap-3 md:grid-cols-2">
+     {catalog.value.videoModels.length===0?<p className="text-[12px] text-[#807568]">영상 모델 목록을 불러오는 중입니다. <button className="underline" type="button" onClick={()=>void catalog.reload()}>다시 불러오기</button></p>:
+      catalog.value.videoModels.map(model=>{
+       const record=downloads.value.downloads.find(item=>item.model===model.id)
+       const isDownloading=record?.status==='downloading'
+       const selected=statusConfig.videoModel===model.id&&usingComfy
+       const installedNow=model.available||record?.status==='completed'
+       return <div key={model.id} className={'rounded-2xl border p-4 '+(selected?'border-[#CB8B67] bg-[#FFF5EC]':'border-[#E6D9CB] bg-white')}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+         <strong className="text-[13px] text-[#3A3028]">{model.name}</strong>
+         <span className={'rounded-full px-2 py-1 text-[10px] font-bold '+(model.available?'bg-[#E7F2E5] text-[#467448]':'bg-[#FAEBD9] text-[#8D5837]')}>{model.available?'설치 완료':isDownloading?'다운로드 중':'설치 필요'}</span>
+        </div>
+        <p className="mt-2 text-[11px] leading-5 text-[#7D7064]">{model.kind==='gguf'?'경량 4비트 · ComfyUI-GGUF 확장 노드가 필요합니다.':'원본 fp16 · 더 많은 RAM/VRAM이 필요합니다.'} {model.hint}</p>
+        <Button variant={selected&&model.available?'secondary':'primary'} size="sm" className="mt-3 w-full"
+         disabled={Boolean(preparingModel)||savingConfig||isDownloading||Boolean(selected&&model.available)}
+         onClick={()=>void prepareVideoModel(model)}>
+         {preparingModel===model.id?<><LoaderCircle size={14} className="animate-spin"/> 준비 중</>:
+          isDownloading?<><LoaderCircle size={14} className="animate-spin"/> 모델 다운로드 진행 중</>:
+          selected&&model.available?<><Check size={14}/> 이 모델 사용 중</>:
+          model.available?<><CheckCircle2 size={14}/> 설치된 모델 선택</>:
+          <><Download size={14}/> 모델 선택하고 다운로드</>}
+        </Button>
+        {isDownloading&&<div className="mt-3 grid gap-1.5" role="status" aria-live="polite">
+         <div className="flex justify-between gap-2 text-[11px] text-[#695D50]"><span>파일 {record.filesCompleted??0}/{record.filesTotal??'?'} · {fmtBytes(record.bytes)}</span><span className="tabular-nums">{record.progress??0}%</span></div>
+         <div role="progressbar" aria-label={model.name+' 다운로드'} aria-valuemin={0} aria-valuemax={100} aria-valuenow={record.progress??0} className="h-2 overflow-hidden rounded-full bg-[#F2E5D8]"><div className="h-full rounded-full bg-[#C96442] transition-all" style={{width:Math.max(0,Math.min(100,record.progress??0))+'%'}}/></div>
+         {record.currentFile&&<span className="truncate text-[10px] text-[#907F71]" title={record.currentFile}>{record.currentFile}</span>}
+        </div>}
+        {record?.status==='failed'&&<p role="alert" className="mt-2 text-[11px] text-rose-700">{record.error||'모델 다운로드에 실패했습니다. 다시 시도할 수 있습니다.'}</p>}
+       </div>
+      })}
+    </div>
+    <div className="mt-3 flex flex-wrap items-end gap-3 rounded-xl bg-[#F7F2EB] p-3">
+     <div className="min-w-[205px] flex-1"><label className="mb-1.5 block text-[11px] font-semibold text-[#5D5145]" htmlFor="studio-comfy-url">AI 렌더링 서버 · ComfyUI</label><TextInput id="studio-comfy-url" value={comfyUrl} onChange={e=>setComfyUrl(e.target.value)} placeholder="http://127.0.0.1:8188"/></div>
+     <Button variant="secondary" disabled={savingConfig||!comfyUrl.trim()} onClick={()=>void saveConfig({comfyUrl:comfyUrl.trim()})}><RefreshCw size={14}/> 연결 확인</Button>
+     <span className={'text-[11px] font-semibold '+(video.value.comfy.reachable?'text-[#42774D]':'text-[#906349]')}>{video.value.comfy.reachable?'● 연결됨':'○ 서버 연결 필요'}</span>
+    </div>
+    {!video.value.comfy.reachable&&<p className="mt-2 text-[11px] leading-5 text-[#836D5B]">모델 파일 다운로드는 바로 시작할 수 있습니다. AI 렌더링에는 실행 중인 ComfyUI 서버도 필요합니다. 기본 연결 주소는 127.0.0.1:8188입니다.</p>}
+    <p className="mt-1 text-[11px] leading-5 text-[#887769]">모델 파일은 DOMINION을 실행 중인 컴퓨터에 저장됩니다. 원격 ComfyUI를 사용하면 서버의 모델 경로와 일치시켜 주세요.</p>
+   </Panel>
    <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.8fr)]">
     <div className="grid min-w-0 content-start gap-4">
      <Panel className="p-4 sm:p-6">
@@ -559,16 +636,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
        <p className="mt-2 break-all text-[11px] leading-5 text-[#817569]">현재 다운로드 위치: {video.value.modelDirectory||'서버에서 확인 중'}</p>
        <p className="mt-1 text-[11px] leading-5 text-[#817569]">다운로드는 DOMINION이 실행되는 컴퓨터의 이 폴더에 저장됩니다. 원격 ComfyUI를 연결했다면 원격 서버의 실제 모델 경로와 일치하는지 확인해 주세요.</p>
       </div>
-      <FormField label="모델 선택"><SelectInput value={statusConfig.videoModel||''} disabled={savingConfig} onChange={e=>void saveConfig({videoModel:e.target.value})}><option value="">모델 선택</option>{catalog.value.videoModels.map(model=><option key={model.id} value={model.id}>{model.name} · {model.available?'설치됨':'미설치'}</option>)}</SelectInput></FormField>
-      <div className={soft+' flex flex-wrap items-center justify-between gap-3 p-3'}><div className="min-w-0"><strong className="block text-[12px] text-[#40372E]">{installed?.name||'모델을 선택해 주세요'}</strong><p className="mt-1 text-[11px] text-[#84766A]">{installed?.hint||'로컬에 설치된 모델만 렌더에 사용할 수 있습니다.'}</p></div><StateTag online={installed?.available}>{installed?.available?'준비됨':'설치 필요'}</StateTag></div>
-      {installed&&!installed.available&&<Button variant="secondary" disabled={downloadState?.status==='downloading'} onClick={()=>void startDownload()}><Download size={14}/>{downloadState?.status==='downloading'?'모델 다운로드 중 · '+downloadState.progress+'%':'선택 모델 다운로드'}</Button>}
-      {downloadState?.status==='downloading'&&<div className="grid gap-2" role="status">
-       <div className="flex items-center justify-between gap-2 text-[11px] text-[#776A60]"><span>파일 {downloadState.filesCompleted??0} / {downloadState.filesTotal??'?'}개 완료</span><span className="tabular-nums">{downloadState.progress??0}% · {fmtBytes(downloadState.bytes)}</span></div>
-       {downloadState.currentFile&&<p className="truncate text-[10px] text-[#9A8A79]" title={downloadState.currentFile}>다운로드 중: {downloadState.currentFile}</p>}
-       <div role="progressbar" aria-label="모델 다운로드" aria-valuemin={0} aria-valuemax={100} aria-valuenow={downloadState.progress||0} className="h-2 overflow-hidden rounded-full bg-[#EAE3DA]"><div className="h-full rounded-full bg-[#C96442]" style={{width:Math.min(100,Math.max(0,downloadState.progress||0))+'%'}}/></div>
-      </div>}
-      {downloadState?.status==='failed'&&<Notice message={downloadState.error||'모델 다운로드 실패'}/>}
-      {downloadState?.status==='completed'&&<p className="text-[11px] text-[#537C4D]">모델 다운로드 완료 · 설치 상태를 다시 확인합니다.</p>}
+      <p className="text-[11px] leading-5 text-[#827567]">모델 선택과 다운로드는 영상 만들기 메뉴에서 진행합니다.</p>
       <div className="grid gap-3 sm:grid-cols-2"><FormField label="기본 렌더 해상도"><SelectInput disabled={savingConfig} value={statusConfig.resolution||'480x832'} onChange={e=>void saveConfig({resolution:e.target.value})}>{['256x448','384x672','480x832','832x480','448x448'].map(x=><option key={x} value={x}>{x}</option>)}</SelectInput></FormField><FormField label="샘플링 스텝"><SelectInput disabled={savingConfig} value={statusConfig.steps??20} onChange={e=>void saveConfig({steps:Number(e.target.value)})}>{[4,8,12,20,30,40].map(x=><option key={x} value={x}>{x} steps</option>)}</SelectInput></FormField></div>
      </div>
     </Panel>
