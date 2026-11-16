@@ -65,8 +65,16 @@ fn read_receipt(args: &Value, receipts: &[Receipt]) -> Result<Value, String> {
     let char_count=full.chars().count();
     if start > char_count {return Err("startChar exceeds receipt length".into());}
     let content=full.chars().skip(start).take(limit).collect::<String>();
+    // 'maxChars' must not be defeated by a huge argument payload carried
+    // alongside a bounded result. Keep the full immutable receipt in storage;
+    // only replace oversized model-visible arguments with a short preview.
+    let arguments_text=receipt.arguments.to_string();
+    let arguments=if arguments_text.chars().count()>2048 {
+        json!({"truncated":true,"totalChars":arguments_text.chars().count(),
+            "preview":clip(&arguments_text,240,240)})
+    } else {receipt.arguments.clone()};
     Ok(json!({"id":receipt.id,"tool":receipt.tool,"success":receipt.success,
-        "step":receipt.step,"arguments":receipt.arguments,
+        "step":receipt.step,"arguments":arguments,
         "totalChars":char_count,"startChar":start,"text":content,
         "nextChar":(start+limit<char_count).then_some(start+limit)}))
 }
@@ -241,6 +249,18 @@ mod tests {
         assert_eq!(read["id"],"r0");
         assert_eq!(read["text"].as_str().unwrap().chars().count(),200);
         assert!(read["nextChar"].is_number());
+    }
+    #[test]
+    fn receipt_read_cannot_expand_unbounded_arguments_into_model_context() {
+        let mut record=receipt("large-arguments",1,true,json!("short result"));
+        record.arguments=json!({"content":"\\\"".repeat(20_000)});
+        let answer=read_receipt(&json!({"id":"large-arguments","maxChars":128}),
+            &[record.clone()]).unwrap();
+        assert_eq!(answer["arguments"]["truncated"],true);
+        assert!(answer["arguments"]["preview"].as_str().unwrap().len()<1300);
+        assert!(answer.to_string().len()<2000,"bounded receipt must remain bounded");
+        assert!(record.arguments["content"].as_str().unwrap().len()>20_000,
+            "durable original arguments are never modified");
     }
     #[test]
     fn low_cost_large_latest_receipt_is_clipped_not_silently_discarded() {
