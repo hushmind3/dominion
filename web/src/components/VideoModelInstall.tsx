@@ -18,6 +18,7 @@ export function VideoModelInstall({onChanged}:{onChanged:()=>void}){
  const [folderDirty,setFolderDirty]=useState(false)
  const [url,setUrl]=useState('http://127.0.0.1:8188')
  const [busy,setBusy]=useState(false)
+ const [starting,setStarting]=useState(false)
  const [error,setError]=useState('')
  const [notice,setNotice]=useState('')
  const model=catalog.value.videoModels.find(m=>m.id===chosen)
@@ -74,6 +75,28 @@ export function VideoModelInstall({onChanged}:{onChanged:()=>void}){
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
+ const startRuntime=async()=>{
+  if(starting)return
+  setError('');setStarting(true)
+  try{
+   const started=await post<{status:string}>('/api/video/comfy/start',{})
+   setNotice(started.status==='running'?'ComfyUI가 실행 중입니다.':'설치된 ComfyUI를 실행했습니다. 모델 로딩 상태를 확인합니다.')
+   await catalog.reload()
+   onChanged()
+  }catch(e){setError((e as Error).message);setStarting(false)}
+ }
+ useEffect(()=>{
+  if(!starting)return
+  let count=0
+  const timer=window.setInterval(()=>{
+   count+=1
+   void catalog.reload()
+   onChanged()
+   if(count>=40)setStarting(false)
+  },2500)
+  return()=>window.clearInterval(timer)
+ },[starting,catalog.reload,onChanged])
+ useEffect(()=>{if(starting&&server)setStarting(false)},[starting,server])
  const refresh=()=>void Promise.all([catalog.reload(),downloads.reload()]).then(onChanged)
  return <section className="mt-4 rounded-2xl border-2 border-[#D6A17E] bg-[#FFF8F0] p-4 sm:p-5" aria-label="AI 영상 모델 원클릭 설치">
   <div className="flex flex-wrap items-start justify-between gap-3">
@@ -109,7 +132,9 @@ export function VideoModelInstall({onChanged}:{onChanged:()=>void}){
   {model?.kind==='gguf'&&<p className="mt-3 text-[11px] leading-5 text-amber-900">4비트 모델은 <a className="font-semibold underline" href="https://github.com/city96/ComfyUI-GGUF" target="_blank" rel="noreferrer">ComfyUI-GGUF 확장</a>이 설치되어야 실행됩니다. 확장 없이 시작하려면 FP16을 선택하세요.</p>}
   <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
    <div className="flex items-center gap-2 text-[11px] text-[#85796B]">{server?<Wifi size={15} className="text-emerald-700"/>:<WifiOff size={15} className="text-amber-600"/>}{server?'ComfyUI 연결됨':'ComfyUI 실행·연결 필요'} <span className="text-[#AEA49A]">·</span> {model?.hint||'모델 조회 중'}</div>
-   <div className="flex gap-2"><Button size="sm" variant="ghost" onClick={refresh}><RefreshCw size={14}/> 상태 확인</Button>
+   <div className="flex flex-wrap gap-2">
+    {!server&&<Button size="sm" variant="secondary" disabled={starting||!catalog.value.modelsDirReady} onClick={()=>void startRuntime()}>{starting?<><LoaderCircle size={14} className="animate-spin"/> 서버 시작 중</>:<><Server size={14}/> ComfyUI 실행</>}</Button>}
+    <Button size="sm" variant="ghost" onClick={refresh}><RefreshCw size={14}/> 상태 확인</Button>
     <Button size="sm" variant="primary" disabled={busy||transfer?.status==='downloading'||!chosen} onClick={()=>void setup()}>
      {busy?<><LoaderCircle size={15} className="animate-spin"/> 연결 중</>:selected?'설정 다시 확인':installed?'모델 연결하기':<><ArrowDownToLine size={15}/> 선택·다운로드·설치</>}</Button></div>
   </div>
@@ -123,6 +148,6 @@ export function VideoModelInstall({onChanged}:{onChanged:()=>void}){
   </div>}
   {notice&&<p role="status" className="mt-3 flex items-center gap-2 text-[11px] text-emerald-800"><CheckCircle2 size={14}/>{notice}</p>}
   {error&&<Notice message={error}/>}
-  {!server&&<p className="mt-3 flex items-center gap-2 text-[11px] text-[#8F7766]"><Server size={14}/> 모델 가중치 다운로드와 ComfyUI 서버 실행은 별개입니다. 먼저 <a href="https://github.com/Comfy-Org/ComfyUI" target="_blank" rel="noreferrer" className="underline">ComfyUI</a>를 실행하면 연결 상태를 다시 확인합니다.</p>}
+  {!server&&<p className="mt-3 flex items-center gap-2 text-[11px] text-[#8F7766]"><Server size={14}/> ComfyUI Portable 또는 가상환경이 이미 설치돼 있다면 위의 실행 버튼으로 로컬 서버를 시작할 수 있습니다. 실행 환경이 없다면 <a href="https://github.com/Comfy-Org/ComfyUI" target="_blank" rel="noreferrer" className="underline">공식 ComfyUI 설치 안내</a>를 사용하세요.</p>}
  </section>
 }
