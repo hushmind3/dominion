@@ -34,7 +34,8 @@ pub async fn retry_plan(State(state):State<AppState>,Path(id):Path<String>,
  let Some(revision)=body["revision"].as_u64() else{
   return error("기획 버전이 필요합니다.".into())
  };
- match video_studio::retry_plan(&state,&id,revision){
+ match video_studio::retry_plan(&state,&id,revision,
+  body["acknowledgeUnknown"]==true){
   Ok(project)=>(StatusCode::ACCEPTED,Json(project)).into_response(),
   Err(message)=>error(message),
  }
