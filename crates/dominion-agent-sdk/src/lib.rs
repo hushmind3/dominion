@@ -88,7 +88,8 @@ impl RunRequest {
         if self.id.trim().is_empty() || self.id.len() > 128
             || self.instruction.trim().is_empty() || self.instruction.len() > 64_000
             || self.owner_instructions.len() > 32_000
-            || self.allowed_tools.len() > 64 || self.checks.len() > 32 {
+            || self.allowed_tools.len() > 1024 || self.checks.len() > 32
+            || self.allowed_tools.iter().map(String::len).sum::<usize>() > 65_536 {
             return Err("Invalid agent request size or identity".into());
         }
         for tool in &self.allowed_tools {
