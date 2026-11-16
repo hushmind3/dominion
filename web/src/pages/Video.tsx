@@ -9,7 +9,7 @@ import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
 import {FormField,Headline,Notice,Panel,StateTag,useRemote} from '../components/UI'
 import {openOAuth,post} from '../api'
 import {jobFinished,useJob,type JobState} from '../hooks/useJob'
-import {t,useLocale} from '../i18n'
+import {useLocale} from '../i18n'
 
 type VideoEngine='native'|'comfyui'
 type Ratio='9:16'|'16:9'|'1:1'
@@ -51,7 +51,7 @@ function loadDraft():Draft {
    fps:Number.isInteger(saved.fps)&&Number(saved.fps)>=1&&Number(saved.fps)<=60?Number(saved.fps):16,
    seed:typeof saved.seed==='string'?saved.seed:'-1',
    mode:saved.mode==='scenes'?'scenes':'quick',
-   scenes:Array.isArray(saved.scenes)?saved.scenes.filter((v):v is string=>typeof v==='string').slice(0,8):[''],
+   scenes:Array.isArray(saved.scenes)&&saved.scenes.some(v=>typeof v==='string')?saved.scenes.filter((v):v is string=>typeof v==='string').slice(0,8):[''],
    continuity:typeof saved.continuity==='string'?saved.continuity:''
   }
  }catch{return defaults}
@@ -127,13 +127,15 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  const savedWorkflow=video.value.workflows[0]
  const google=oauth.value.find(provider=>provider.id==='youtube')
  const sceneItems=draft.scenes.map(s=>s.trim()).filter(Boolean)
- const actualScenes=usingComfy&&draft.mode==='scenes'?sceneItems:[draft.prompt.trim()].filter(Boolean)
+ const actualScenes=draft.mode==='scenes'?sceneItems:[draft.prompt.trim()].filter(Boolean)
  const maxDuration=usingComfy&&draft.mode==='quick'?9:180
  const invalidTime=usingComfy&&draft.mode==='scenes'&&sceneItems.length>1&&draft.seconds<sceneItems.length*3
- const invalidScenes=draft.mode==='scenes'&&usingComfy&&(!sceneItems.length||sceneItems.length>8||draft.scenes.some(s=>!s.trim())||draft.scenes.some(s=>new TextEncoder().encode(s).length>4000))
+ const invalidScenes=draft.mode==='scenes'&&(!sceneItems.length||sceneItems.length>8||draft.scenes.some(s=>!s.trim())||draft.scenes.some(s=>new TextEncoder().encode(s).length>4000))
  const invalidSeed=usingComfy&&(!draft.seed.trim()||!Number.isSafeInteger(Number(draft.seed))||Number(draft.seed)<-1)
  const validDuration=Number.isInteger(draft.seconds)&&draft.seconds>=3&&draft.seconds<=maxDuration
  const validFps=Number.isInteger(draft.fps)&&draft.fps>=1&&draft.fps<=60
+ const validBrief=new TextEncoder().encode(actualScenes.join('\n\n')).length<=16000
+ const multiSceneRequiresFfmpeg=usingComfy&&draft.mode==='scenes'&&sceneItems.length>1&&!video.value.native?.available
  const ready=usingComfy?Boolean(video.value.comfy.available):Boolean(video.value.native?.available)
  const prerequisite=usingComfy
   ? !statusConfig.comfyUrl?.trim()?'먼저 ComfyUI 서버 주소를 등록해 주세요.'
@@ -141,7 +143,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
    : !video.value.comfy.available?'영상 모델을 설치하거나 API 워크플로를 등록해 주세요.':''
   : !video.value.native?.available?'네이티브 영상 제작에는 FFmpeg 설치가 필요합니다.':''
  const busy=generating||Boolean(submitted&&running(active.value?.status??submitted.status))
- const canGenerate=ready&&!busy&&actualScenes.length>0&&!invalidScenes&&!invalidTime&&!invalidSeed&&validDuration&&(!usingComfy||validFps)
+ const canGenerate=ready&&!busy&&actualScenes.length>0&&validBrief&&!invalidScenes&&!invalidTime&&!invalidSeed&&!multiSceneRequiresFfmpeg&&validDuration&&(!usingComfy||validFps)
  const suggestedMaxNew=actualScenes.length
  const progress=typeof videoJob?.progress==='number'?Math.max(0,Math.min(100,Math.round(videoJob.progress))):null
  const editingSource=sortedJobs.find(j=>j.id===reuseId)
@@ -187,7 +189,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
   try{
    const text=await file.text()
    const parsed=JSON.parse(text) as Record<string,unknown>
-   if(!parsed||typeof parsed!=='object'||Array.isArray(parsed)||!Object.values(parsed).every(node=>
+   if(!parsed||typeof parsed!=='object'||Array.isArray(parsed)||!Object.keys(parsed).length||!Object.values(parsed).every(node=>
     Boolean(node&&typeof node==='object'&&!Array.isArray(node)&&'class_type' in node&&'inputs' in node)
    ))throw Error('ComfyUI API 형식 JSON이 필요합니다. 일반 UI 워크플로 JSON은 그대로 실행할 수 없습니다.')
    await saveConfig({engine:'comfyui',comfyWorkflow:parsed,comfyWorkflowName:file.name})
@@ -218,8 +220,8 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
   if(budgetEnabled&&(!Number.isInteger(maxNewScenes)||maxNewScenes<0||maxNewScenes>actualScenes.length)){
    setError('새로 생성할 장면 수는 0부터 전체 장면 수까지 입력해 주세요.');return
   }
-  if(budgetEnabled&&maxNewScenes===0&&!reuseId){
-   setError('새 렌더 0회는 이전에 만든 영상의 검증된 장면을 재사용할 때만 사용할 수 있습니다.');return
+  if(budgetEnabled&&maxNewScenes===0&&(!reuseId||actualScenes.length===1)){
+   setError('렌더 0회는 2장면 이상의 이전 영상에서 검증된 장면만 재사용할 때 적용할 수 있습니다.');return
   }
   setGenerating(true);setError('')
   try{
@@ -347,7 +349,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
         <span className="inline-flex items-center gap-2 text-[13px] font-bold text-[#393029]"><Sparkles size={18} className="text-[#C96442]"/> 간편 제작</span>
         <p className="mt-1 text-[11px] leading-5 text-[#756B60]">주제 한 번 입력하고 바로 생성. 빠른 샘플과 자막 영상에 추천합니다.</p>
        </button>
-       <button type="button" onClick={()=>patchDraft({mode:'scenes',scenes:draft.scenes.length?draft.scenes:[draft.prompt]})} aria-pressed={draft.mode==='scenes'}
+       <button type="button" onClick={()=>patchDraft({mode:'scenes',scenes:draft.scenes.some(s=>s.trim())?draft.scenes:[draft.prompt]})} aria-pressed={draft.mode==='scenes'}
         className={'rounded-2xl border p-4 text-left transition-all '+focus+' '+(draft.mode==='scenes'?'border-[#C96442] bg-[#FFF4EC] ring-1 ring-[#C96442]/30':'border-[#E2DACF] bg-white hover:border-[#D7BEAD]')}>
         <span className="inline-flex items-center gap-2 text-[13px] font-bold text-[#393029]"><Layers3 size={18} className="text-[#C96442]"/> 스토리보드 제작</span>
         <p className="mt-1 text-[11px] leading-5 text-[#756B60]">장면을 나누고 수정한 뒤 필요한 부분만 다시 만들 수 있습니다.</p>
@@ -355,7 +357,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
       </div>
       <div className="grid gap-4">
        <FormField label="프로젝트 제목" hint="영상 목록과 게시 정보에 사용합니다."><TextInput value={draft.title} maxLength={90} onChange={e=>patchDraft({title:e.target.value})} placeholder="예: 서울의 새벽, 15초 여행 쇼츠"/></FormField>
-       {draft.mode==='quick'||!usingComfy?<FormField label="영상 아이디어 / 대본" hint="핵심 장면, 분위기, 움직임을 구체적으로 적으면 결과를 비교하기 쉽습니다.">
+       {draft.mode==='quick'?<FormField label="영상 아이디어 / 대본" hint="핵심 장면, 분위기, 움직임을 구체적으로 적으면 결과를 비교하기 쉽습니다.">
         <TextArea value={draft.prompt} onChange={e=>patchDraft({prompt:e.target.value})} rows={5} placeholder="예: 따뜻한 아침 햇살, 푸른 바다 위로 카메라가 천천히 이동하는 장면. 부드러운 시네마틱 분위기."/>
        </FormField>:<>
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -365,7 +367,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
         <div className="grid gap-2">
          {draft.scenes.map((scene,index)=><div key={index} className={'rounded-xl border bg-[#FEFDFB] p-3 '+(regenerate.includes(index)?'border-[#D6A27C]':'border-[#E7DED3]')}>
           <div className="mb-2 flex items-center justify-between gap-2">
-           <div className="flex items-center gap-2"><span className="rounded-md bg-[#F4E5D8] px-2 py-1 text-[11px] font-bold text-[#975335]">SCENE {index+1}</span>{reuseId&&<label className="flex items-center gap-1.5 text-[11px] text-[#6B6257]"><input type="checkbox" checked={regenerate.includes(index)} onChange={e=>setRegenerate(prev=>e.target.checked?[...prev,index]:prev.filter(i=>i!==index))}/> 새로 렌더</label>}</div>
+           <div className="flex items-center gap-2"><span className="rounded-md bg-[#F4E5D8] px-2 py-1 text-[11px] font-bold text-[#975335]">SCENE {index+1}</span>{reuseId&&usingComfy&&<label className="flex items-center gap-1.5 text-[11px] text-[#6B6257]"><input type="checkbox" checked={regenerate.includes(index)} onChange={e=>setRegenerate(prev=>e.target.checked?[...prev,index]:prev.filter(i=>i!==index))}/> 새로 렌더</label>}</div>
            <div className="flex items-center gap-1">
             <Button variant="ghost" size="icon" aria-label={'장면 '+(index+1)+' 위로'} disabled={index===0} onClick={()=>swapScene(index,index-1)}><ArrowUp size={14}/></Button>
             <Button variant="ghost" size="icon" aria-label={'장면 '+(index+1)+' 아래로'} disabled={index===draft.scenes.length-1} onClick={()=>swapScene(index,index+1)}><ArrowDown size={14}/></Button>
@@ -376,7 +378,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
           <div className="mt-1 text-right text-[10px] tabular-nums text-[#8E8174]">{new TextEncoder().encode(scene).length.toLocaleString('ko-KR')} / 4,000 byte</div>
          </div>)}
         </div>
-        <FormField label="일관된 캐릭터 / 영상 스타일" hint="모든 장면에 같은 인물·의상·색감 등을 유지하도록 전달합니다."><TextArea rows={2} maxLength={2000} value={draft.continuity} onChange={e=>patchDraft({continuity:e.target.value})} placeholder="예: 같은 주인공, 남색 재킷, 따뜻한 필름 색감, 자연스러운 움직임"/></FormField>
+        {usingComfy&&<FormField label="일관된 캐릭터 / 영상 스타일" hint="모든 장면에 같은 인물·의상·색감 등을 유지하도록 전달합니다."><TextArea rows={2} maxLength={2000} value={draft.continuity} onChange={e=>patchDraft({continuity:e.target.value})} placeholder="예: 같은 주인공, 남색 재킷, 따뜻한 필름 색감, 자연스러운 움직임"/></FormField>}
        </>}
        <div className="flex flex-wrap gap-2">
         <Button variant="ghost" size="sm" onClick={()=>{if(window.confirm('영상 아이디어와 장면 내용을 초기화하시겠습니까?')){setDraft({...defaults});setReuseId('');setRegenerate([])}}}><RotateCcw size={14}/> 새 프로젝트</Button>
@@ -433,6 +435,8 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
       </div>}
       {invalidTime&&<p role="alert" className="mt-3 text-[12px] font-semibold text-rose-700">장면 {sceneItems.length}개의 최소 길이는 {sceneItems.length*3}초입니다. 시간을 늘리거나 장면을 줄여주세요.</p>}
       {invalidScenes&&<p role="alert" className="mt-3 text-[12px] font-semibold text-rose-700">모든 장면에 설명을 입력해 주세요. 최대 8개, 각 4,000바이트입니다.</p>}
+      {!validBrief&&<p role="alert" className="mt-3 text-[12px] font-semibold text-rose-700">전체 영상 설명은 16,000바이트 이하로 작성해 주세요.</p>}
+      {multiSceneRequiresFfmpeg&&<p role="alert" className="mt-3 text-[12px] font-semibold text-rose-700">AI 장면 2개 이상을 합치려면 FFmpeg를 설치해야 합니다.</p>}
      </Panel>
      <Panel className="p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-2"><h3 className={panelTitle}>3. 제작 준비</h3><StateTag online={ready}>{ready?'생성 가능':'설정 확인'}</StateTag></div>
