@@ -41,6 +41,15 @@ try {
   'onClick={()=>void startDownload()}','setSelectedJobId(job.id)']) {
   assert.ok(code.includes(contract),'Lost video operation: '+contract)
  }
+ const installer=await readFile(join(root,'src/components/VideoModelInstall.tsx'),'utf8')
+ for(const contract of ['AI 영상 모델 원클릭 설치','/api/video/models/',
+   '/setup','/api/system/pick-folder','/api/video/comfy/start',
+   '영상 모델 다운로드','aria-label="영상 모델 다운로드"']) {
+  assert.ok(installer.includes(contract),'Lost one-click model setup: '+contract)
+ }
+ const autopilot=await readFile(join(root,'src/components/VideoAutopilot.tsx'),'utf8')
+ assert.ok(autopilot.includes("engine==='comfyui'&&<VideoModelInstall"),
+  'Autonomous producer must expose model installation for AI video')
  console.log(JSON.stringify({ok:true,renderedCharacters:html.length,
   workflows:['create','jobs','publish','settings'],
   evidence:'real React SSR + product route and control assertions'},null,2))
