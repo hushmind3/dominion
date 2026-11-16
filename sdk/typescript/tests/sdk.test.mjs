@@ -92,6 +92,26 @@ test('native run controls share the real Rust autonomous UI job routes',async()=
   assert.deepEqual(JSON.parse(calls[6].init.body),{applied:false,details:'Workspace checked'});
   assert.ok(calls.every(call=>call.init.headers['X-Dominion-Token']==='owner-token'));
 });
+test('offline replay and paired cost comparison use exact Rust read-only endpoints',async()=>{
+  const calls=[];
+  const sdk=new Dominion({adminToken:'owner',fetch:async(url,init)=>{
+    calls.push({url,init});
+    return reply({mode:'offline_decision_and_receipt_reconstruction',externalCalls:0});
+  }});
+  await sdk.jobs.replay('base/a');
+  await sdk.jobs.compare('base/a','candidate/b');
+  await sdk.nativeRuns.replay('run/1');
+  await sdk.nativeRuns.compare('run/1','candidate/b');
+  assert.deepEqual(calls.map(c=>new URL(c.url).pathname),[
+    '/api/jobs/base%2Fa/replay','/api/jobs/base%2Fa/compare',
+    '/api/sdk/runs/run%2F1/replay','/api/sdk/runs/run%2F1/compare'
+  ]);
+  assert.deepEqual(JSON.parse(calls[1].init.body),{candidateRunId:'candidate/b'});
+  assert.deepEqual(JSON.parse(calls[3].init.body),{candidateRunId:'candidate/b'});
+  assert.equal(calls[0].init.method,'GET');
+  assert.equal(calls[1].init.method,'POST');
+  assert.ok(calls.every(c=>c.init.headers['X-Dominion-Token']==='owner'));
+});
 test('native approval conflict is never turned into optimistic success',async()=>{
   const sdk=new Dominion({fetch:async()=>reply({error:'Approval expired'},409)});
   await assert.rejects(()=>sdk.nativeRuns.approve('n1','expired'),error=>
