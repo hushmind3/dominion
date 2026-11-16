@@ -81,10 +81,7 @@ async fn serve(mut config: Config, open_browser: bool, parent_bound: bool) -> Re
     api::sdk::recover(&state);
     engine::wake::recover(&state);
     engine::improve::recover_finalizations(&state);
-    engine::improve::schedule_experiments(&state);
     engine::algorithms::seed(&state);
-    engine::policy::meta_improve(&state);
-    engine::policy::propose_candidates(&state);
     engine::jobs::start(state.clone());
     engine::maintenance::start(state.clone());
     {
