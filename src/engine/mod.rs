@@ -28,6 +28,7 @@ pub mod program;
 pub mod verification;
 pub mod reflect;
 pub mod gateway;
+pub mod github_work;
 pub mod model_cost;
 pub mod resource_lock;
 pub mod evaluation;

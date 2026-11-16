@@ -1913,7 +1913,7 @@ async fn run_turn_body(
             let mutating = matches!(
                 call.name.as_str(),
                 "workspace_write" | "workspace_replace" | "workspace_replace_range" | "file_write" | "shell_exec" | "terminal_exec"
-                    | "github_api" | "delegate_task"
+                    | "github_api" | "github_file_commit" | "delegate_task"
             );
             if mutating {
             if recovery_mode != "allow-all" {
@@ -1999,7 +1999,7 @@ async fn run_turn_body(
                 failed_calls.remove(&call_key);
                 if matches!(
                     call.name.as_str(),
-                    "workspace_write" | "workspace_replace" | "workspace_replace_range" | "workspace_apply_patch" | "file_write" | "shell_exec" | "terminal_exec" | "github_api" | "delegate_task"
+                    "workspace_write" | "workspace_replace" | "workspace_replace_range" | "workspace_apply_patch" | "file_write" | "shell_exec" | "terminal_exec" | "github_api" | "github_file_commit" | "delegate_task"
                 ) {
                     environment_version += 1;
                 }
@@ -2044,7 +2044,7 @@ async fn run_turn_body(
                         if tool_succeeded(result)
                             && matches!(
                                 selected["tool"].as_str(),
-                                Some("workspace_write" | "workspace_replace" | "workspace_replace_range" | "workspace_apply_patch" | "file_write" | "shell_exec" | "terminal_exec" | "github_api" | "delegate_task")
+                                Some("workspace_write" | "workspace_replace" | "workspace_replace_range" | "workspace_apply_patch" | "file_write" | "shell_exec" | "terminal_exec" | "github_api" | "github_file_commit" | "delegate_task")
                             )
                         {
                             environment_version += 1;

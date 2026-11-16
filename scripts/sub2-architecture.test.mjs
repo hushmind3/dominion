@@ -108,3 +108,21 @@ test('verification and delegated work read indexed per-run receipts rather than 
  assert.match(payload,/execution_operations\(run_id\)/);
  assert.doesNotMatch(payload,/\.all\("execution_operation"\)/);
 });
+
+test('GitHub repo file workflow uses connected OAuth, optimistic SHA and owner approval',()=>{
+ const work=file('src/engine/github_work.rs');
+ const tools=file('src/engine/tools.rs');
+ const oauth=file('src/engine/oauth.rs');
+ const effect=file('src/engine/effect.rs');
+ const projection=file('src/engine/chat/tool_projection.rs');
+ assert.match(work,/fresh_access_token\(state,"github"\)/);
+ assert.match(work,/expectedSha/);
+ assert.match(work,/get_json\(&client,url,&token\)/);
+ assert.match(work,/outcomeUnknown/);
+ assert.match(tools,/github_file_read/);
+ assert.match(tools,/github_file_commit/);
+ assert.match(tools,/github_file_commit"\s*\|/);
+ assert.match(effect,/github_file_commit/);
+ assert.match(projection,/github_file_read/);
+ assert.match(oauth,/updated\["refresh_token"\]/);
+});

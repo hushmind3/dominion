@@ -79,6 +79,17 @@ pub fn definitions() -> Vec<Value> {
             "text": text("Text to type into the indexed element"),
             "key": text("Key to press: Enter, Escape, Tab, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Backspace")
         }), vec!["action"])),
+
+        tool("github_file_read", "Read a UTF-8 text file from an explicitly selected GitHub owner/repository/branch through the connected account; returns SHA for safe updates.", object(json!({
+            "owner":text("Repository owner"),"repo":text("Repository name"),
+            "path":text("Repository-relative file path"),"branch":text("Optional ref, defaults to repository default branch")
+        }),vec!["owner","repo","path"])),
+        tool("github_file_commit", "Commit a text file through the connected GitHub account after owner approval. Read first, provide expectedSha for existing files, then verify by remote re-read. Never blindly retry uncertain effects.", object(json!({
+            "owner":text("Repository owner"),"repo":text("Repository name"),
+            "path":text("Repository-relative file path"),"branch":text("Target branch; defaults to repository default"),
+            "content":text("Complete UTF-8 file contents"),"message":text("Commit message"),
+            "expectedSha":text("Exact prior SHA returned by github_file_read, required for existing files")
+        }),vec!["owner","repo","path","content","message"])),
         tool("github_api", "Call the GitHub REST API as the connected account. Write methods require approval (approval required)", object(json!({"method": json!({"type": "string", "enum": ["GET", "POST", "PATCH", "PUT", "DELETE"]}), "path": text("GitHub API path beginning with /"), "body": json!({"type": "object"})}), vec!["method", "path"])),
     ]
 }
@@ -101,6 +112,7 @@ pub fn requires_approval(name: &str) -> bool {
             | "shell_exec"
             | "terminal_exec"
             | "github_api"
+            | "github_file_commit"
             | "browser_control"
     )
 }
@@ -109,7 +121,8 @@ pub fn requires_approval(name: &str) -> bool {
 /// arbitrary absolute reads, external MCP and further delegation are denied.
 pub fn parallel_read_only_tool(name:&str)->bool{
     matches!(name,"workspace_list"|"workspace_read"|"workspace_read_range"|
-        "code_search"|"memory_search"|"web_search"|"http_fetch")
+        "code_search"|"memory_search"|"web_search"|"http_fetch"|
+        "github_file_read")
 }
 
 /// The UI's optional capabilities are a persisted execution policy.
@@ -371,13 +384,15 @@ pub async fn execute(
             "providers": crate::engine::oauth::status(ctx.state),
         })),
         "github_api" => github_api(ctx, args).await,
+        "github_file_read" => crate::engine::github_work::read(ctx.state,args).await,
+        "github_file_commit" => crate::engine::github_work::commit(ctx.state,args).await,
         other => Err(format!("Unknown tool: {other}")),
     }
 }
 
 async fn github_api(ctx: &ToolContext<'_>, args: &Value) -> Result<Value, String> {
-    let token = crate::engine::oauth::access_token(ctx.state, "github")
-        .ok_or("GitHub 계정이 연결되지 않았습니다. 설정 > 계정 연동에서 연결하세요.")?;
+    let token = crate::engine::oauth::fresh_access_token(ctx.state,"github").await
+        .map_err(|error|format!("{error} GitHub 계정을 다시 연결하거나 권한을 확인하세요."))?;
     let method = string_arg(args, "method").unwrap_or("GET").to_uppercase();
     if !matches!(method.as_str(), "GET" | "POST" | "PATCH" | "PUT" | "DELETE") {
         return Err("지원하지 않는 HTTP 메서드입니다.".into());

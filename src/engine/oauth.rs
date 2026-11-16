@@ -407,6 +407,11 @@ pub async fn fresh_access_token(state: &AppState, id: &str) -> Result<String, St
         .ok_or("갱신된 토큰이 없습니다.")?
         .to_string();
     token["accessToken"] = json!(access);
+    // GitHub rotating refresh tokens are single-use: persist the replacement
+    // or the next expiry would strand an otherwise authorized account.
+    if let Some(next_refresh)=updated["refresh_token"].as_str().filter(|s|!s.is_empty()){
+        token["refreshToken"]=json!(next_refresh);
+    }
     token["expiresAt"] =
         json!(chrono::Utc::now().timestamp() + updated["expires_in"].as_i64().unwrap_or(3600));
     state.save_secret(&format!("oauth:{id}:token"), &token.to_string());

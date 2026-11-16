@@ -71,6 +71,13 @@ pub fn resource_key(tool: &str, arguments: &Value) -> Option<String> {
             path.map(|path| format!("file:{}", normalize_path(path)))
         }
         "github_api" => path.map(|path| format!("github:{}", normalize_path(path))),
+        "github_file_read"|"github_file_commit" => {
+            Some(format!("github:{}/{}:{}:{}",
+                arguments["owner"].as_str().unwrap_or(""),
+                arguments["repo"].as_str().unwrap_or(""),
+                arguments["branch"].as_str().unwrap_or("default"),
+                normalize_path(path.unwrap_or(""))))
+        },
         "http_fetch" => arguments["url"].as_str().map(|url| format!("http:{url}")),
         "shell_exec" | "terminal_exec" => Some(format!(
             "process:{}",
@@ -100,6 +107,8 @@ pub fn is_effectful(tool: &str, arguments: &Value) -> bool {
     if matches!(tool, "shell_exec" | "terminal_exec") {
         return true;
     }
+    if tool == "github_file_read" {return false;}
+    if tool == "github_file_commit" {return true;}
     if tool == "github_api" {
         return arguments["method"]
             .as_str()
