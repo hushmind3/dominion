@@ -31,13 +31,15 @@ test('pricing, evidence, locks, QA and UI share real native routes',()=>{
 
 test('the native owner task loop delegates decisions to a model-free execution kernel',()=>{
  const autonomy=file('src/engine/autonomy.rs');
- const kernel=file('src/engine/agent_kernel.rs');
+ const kernel=file('crates/dominion-agent-kernel/src/lib.rs');
+ const adapter=file('src/engine/agent_kernel.rs');
+ assert.match(adapter,/pub use dominion_agent_kernel::\*/);
  assert.match(autonomy,/engine::agent_kernel::/);
  assert.match(autonomy,/run_quiet_outcome/);
  assert.doesNotMatch(autonomy,/fn side_effect_unknown\(/);
  assert.doesNotMatch(autonomy,/fn decide\(/);
- for(const signature of ['pub(crate) fn decide(', 'pub(crate) fn side_effect_unknown(',
-   'pub(crate) fn owner_intent(', 'pub(crate) fn next_instruction('])
+ for(const signature of ['pub fn decide(', 'pub fn side_effect_unknown(',
+   'pub fn owner_intent(', 'pub fn next_instruction('])
     assert.ok(kernel.includes(signature),signature);
  assert.match(kernel,/outcomeUnknown/);
 });

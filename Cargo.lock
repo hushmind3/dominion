@@ -332,12 +332,12 @@ dependencies = [
 name = "dominion-rust"
 version = "0.3.0"
 dependencies = [
- "dominion-agent-kernel",
  "async-stream",
  "axum",
  "base64 0.22.1",
  "chacha20poly1305",
  "chrono",
+ "dominion-agent-kernel",
  "futures-util",
  "rand 0.8.8",
  "reqwest",

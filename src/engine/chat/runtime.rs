@@ -440,8 +440,8 @@ async fn run_turn_body(
         .ok_or("Session not found")?;
     // A completed SDK job must not leave tool gates, planning or budgets
     // active on the ordinary chat session that it used.
-    session["sdkUiPolicy"] =
-        crate::engine::execution_scope::active_panel_policy(state,&session);
+    let policy=crate::engine::execution_scope::active_panel_policy(state,&session);
+    session["sdkUiPolicy"]=policy;
     let strategy_candidates = state
         .store
         .get("execution", execution_id)
