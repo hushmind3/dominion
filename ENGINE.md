@@ -199,6 +199,17 @@ DM·음성·파일 첨부·슬래시 명령·Gateway 실시간 이벤트는 이�
 - [Discord 메시지 API](https://docs.discord.com/developers/resources/message)
 - [Discord 요청 제한](https://docs.discord.com/developers/topics/rate-limits)
 
+## Sub2 — 자동 라우팅·가격·평가·도구 자원 소유권 (2026-11-16)
+
+- `router.rs`: 경량/표준/심층 분류와 기존 공급자 기본 선호, 사용자 명시적 선택 우선
+- `route_calibration.rs`: 실제 채택된 독립 검증 근거로만 작업 난이도별 하한 성공률 계산, 충분한 비교 표본 없으면 기존 라우터 유지
+- `model_cost.rs` + `gateway.rs`: 제공자 직접 입력 요금표의 캐시 읽기 반영 추정액, 미계측 요금/원가 분리; `db.rs`의 세션·전체 사용량 집계
+- `resource_lock.rs` + `tools.rs`: 셸·패치·쓰기의 동일 작업공간 충돌 직렬화, 다른 작업공간과 읽기는 병렬 실행
+- `video_quality.rs` + `video.rs`: 최종 MP4 실제 스트림을 검사하는 기술 QA. 의미적 영상 품질 평가와 구분
+- `evaluation.rs` → `api/system.rs` → `/api/evaluation/summary` → TS SDK `evaluation.summary()` 및 활동 화면: 실검증 작업 단위 지표. 대규모 공개 벤치마크 성능 주장은 하지 않음
+
+[구현 흐름·재현 절차](docs/SUB2-COST-ROUTING-EVALUATION-2026-11-16.md)
+
 ## Sub2 — 모듈 책임·체크포인트 일관성 (2026-11-16)
 
 - `chat/runtime.rs`: 실제 턴 상태·도구 실행·세션·프로그램 체크포인트·취소를 소유하며 `tool_projection`과 `outcome`을 호출합니다.
