@@ -7,7 +7,7 @@ type SdkState = {state: string; detail?: {call_id?: string; tool?: string}}
 type SdkRun = {
  id: string; status: string; instruction: string; answer?: string; error?: string;
  checkpoint?: {
-  state?: SdkState; rounds?: number; toolCalls?: number; answer?: string;
+  state?: SdkState; rounds?: number; toolCalls?: number; toolBudget?:number; answer?: string;
   usage?: {prompt_tokens:number; completion_tokens:number; cached_prompt_tokens:number};
   pendingCall?: {id:string; name:string; arguments:unknown} | null;
   events?: {kind:string; detail:unknown}[];
@@ -30,6 +30,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const [instruction,setInstruction]=useState('')
  const [providerId,setProviderId]=useState('')
  const [verification,setVerification]=useState('')
+ const [maxToolCalls,setMaxToolCalls]=useState(96)
  const [observation,setObservation]=useState('')
  const [run,setRun]=useState<SdkRun|null>(null)
  const [busy,setBusy]=useState(false)
@@ -55,7 +56,8 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   try{
    const created=await post<SdkRun>('/api/sdk/runs',{
     instruction:instruction.trim(),providerId:providerId||undefined,
-    verifyCommand:verification.trim()||undefined
+    verifyCommand:verification.trim()||undefined,
+    maxToolCalls
    })
    setRun(created)
   }catch(e){setError((e as Error).message)}
@@ -124,11 +126,18 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      maxLength={2048} placeholder="cargo test"
      className="mt-1 h-9 w-full rounded-lg border border-[#E7E0D5] px-3 text-[12px]"/>
    </details>
+   <details className="text-[11px] text-[#746A5F]">
+    <summary className="cursor-pointer select-none">{en?'Tool execution budget':'도구 실행 예산'}</summary>
+    <label htmlFor="sdk-tool-limit" className="mt-2 block">{en?'Maximum tool calls (includes final verification)':'최대 도구 호출 횟수 (최종 검증 포함)'}</label>
+    <input id="sdk-tool-limit" type="number" min={1} max={4096} value={maxToolCalls}
+     onChange={event=>setMaxToolCalls(Math.max(1,Math.min(4096,Number(event.target.value)||1)))}
+     className="mt-1 h-9 w-32 rounded-lg border border-[#E7E0D5] px-3 text-[12px]"/>
+   </details>
    {error&&<p role="alert" className="rounded-lg bg-[#FFF3EE] p-3 text-[11px] text-[#A54027]">{error}</p>}
    {run&&<div className="rounded-xl border border-[#E7E0D5] bg-[#FCFBF9] p-3">
     <div className="flex flex-wrap items-center justify-between gap-2">
      <strong className="text-[12px]">{en?stateNames[status]?.[1]||status:stateNames[status]?.[0]||status}</strong>
-     <span className="text-[11px] text-[#82796D]">{run.checkpoint?.rounds??0} {en?'rounds':'회 판단'} · {run.checkpoint?.toolCalls??0} {en?'actions':'회 도구 실행'}</span>
+     <span className="text-[11px] text-[#82796D]">{run.checkpoint?.rounds??0} {en?'rounds':'회 판단'} · {run.checkpoint?.toolCalls??0}/{run.checkpoint?.toolBudget??96} {en?'actions':'회 도구 실행'}</span>
     {run.checkpoint?.usage&&<p className="mt-2 text-[11px] text-[#82796D]">
      {en?'Provider-reported tokens':'제공자 보고 토큰'}: {run.checkpoint.usage.prompt_tokens.toLocaleString()} {en?'input':'입력'} · {run.checkpoint.usage.completion_tokens.toLocaleString()} {en?'output':'출력'} · {run.checkpoint.usage.cached_prompt_tokens.toLocaleString()} {en?'cached input':'캐시 입력'}
     </p>}
