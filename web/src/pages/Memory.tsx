@@ -5,7 +5,6 @@ import {Button, TextInput, TextArea, SelectInput} from '../components/Primitives
 import {Action, FormField, Headline, Notice, Panel, Subheading, useRemote} from '../components/UI'
 import {LearningRecords} from './memory/LearningRecords'
 import {t,useLocale,type LocaleKey} from '../i18n'
-import {GrowthDashboard} from './memory/Growth'
 
 type Memory={
  id:string;text:string;scope?:string;agentId?:string;sessionId?:string;partitionKey?:string;
@@ -92,10 +91,6 @@ export function MemoryPage(){
   <details className="mt-6 rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] p-4" onToggle={event=>setShowRecords(event.currentTarget.open)}>
    <summary className="cursor-pointer font-semibold">{t('memory.records')}</summary>
    {showRecords&&<LearningRecords/>}
-  </details>
-  <details className="mt-3 rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] p-4">
-   <summary className="cursor-pointer font-semibold">{t('memory.growth')}</summary>
-   <GrowthDashboard/>
   </details>
  </div>
 }

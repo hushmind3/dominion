@@ -113,7 +113,7 @@ pub async fn execute(
             let text = result["content"].as_str().unwrap_or_default();
             let lines = text.lines().collect::<Vec<_>>();
             let begin = (start as usize).min(lines.len());
-            // Match the tool contract in RSI too. Silently cutting a requested
+            // Respect the advertised read contract. Silently cutting a requested
             // 400-line read to 120 forces repeated paid prefix replays.
             let line_cap = 399;
             let end = (requested_end as usize).min(lines.len()).max(begin).min(begin.saturating_add(line_cap));
@@ -1536,12 +1536,12 @@ mod tests {
             .put(
                 "code_index_file",
                 &json!({
-                    "id":"idx-test:src/engine/rsi_evolve.rs",
+                    "id":"idx-test:src/engine/example.rs",
                     "indexId":crate::engine::code_index::index_id(&dir.canonicalize().unwrap()),
-                    "path":"src/engine/rsi_evolve.rs",
+                    "path":"src/engine/example.rs",
                     "symbols":[
                         {"name":"run_loop","kind":"fn","line":120},
-                        {"name":"record_rsi_lesson","kind":"fn","line":900}
+                        {"name":"record_example_lesson","kind":"fn","line":900}
                     ]
                 }),
             )
@@ -1557,14 +1557,14 @@ mod tests {
         };
         let result = search_code_index(&ctx, "run_loop", 10).unwrap();
         assert_eq!(result["matchCount"], 1, "{result}");
-        assert_eq!(result["matches"][0]["path"], "src/engine/rsi_evolve.rs");
+        assert_eq!(result["matches"][0]["path"], "src/engine/example.rs");
         assert_eq!(result["matches"][0]["line"], 120);
         state.store.put("code_index",&json!({"id":"foreign","sourceDir":"/another/repository","generatedAt":"2099-01-01","files":1}));
         state.store.put("code_index_file",&json!({"id":"foreign-file","indexId":"foreign","path":"private.rs","symbols":[{"name":"run_loop","kind":"fn","line":999}]}));
-        let multi=search_code_index(&ctx,"fn run_loop record_rsi_lesson",10).unwrap();
+        let multi=search_code_index(&ctx,"fn run_loop record_example_lesson",10).unwrap();
         assert_eq!(multi["matchCount"],2,"{multi}");
         assert!(multi["matches"].as_array().unwrap().iter().all(|row|row["path"]!="private.rs"));
-        let path_result = search_code_index(&ctx, "rsi_evolve.rs", 10).unwrap();
+        let path_result = search_code_index(&ctx, "example.rs", 10).unwrap();
         assert!(path_result["matches"]
             .as_array()
             .unwrap()

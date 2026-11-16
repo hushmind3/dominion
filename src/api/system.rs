@@ -151,10 +151,6 @@ pub async fn run_wakes(State(state): State<AppState>) -> Json<Value> {
     Json(json!(state.store.all("run_wake")))
 }
 
-pub async fn experiment_requests(State(state): State<AppState>) -> Json<Value> {
-    Json(json!(state.store.all("experiment_request")))
-}
-
 pub async fn policies(State(state): State<AppState>) -> Json<Value> {
     Json(json!(crate::engine::policy::list(&state)))
 }

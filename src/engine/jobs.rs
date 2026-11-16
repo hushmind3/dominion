@@ -83,6 +83,8 @@ impl JobContext {
 }
 
 pub fn enqueue(state: &AppState, kind: &str, input: Value) -> Option<Value> {
+    if retired_legacy_kind(kind){return None;}
+
     let job = state.store.put(
         "job",
         &json!({
@@ -110,6 +112,8 @@ pub fn enqueue(state: &AppState, kind: &str, input: Value) -> Option<Value> {
 /// Atomically deduplicate an immutable operation across HTTP requests and
 /// workers. The supplied ID belongs to the engine, never a client record.
 pub fn enqueue_once(state: &AppState, id: &str, kind: &str, input: Value) -> Option<Value> {
+    if retired_legacy_kind(kind){return None;}
+
     let candidate = json!({"id":id,"kind":kind,"input":input,"status":"queued",
         "queuedAt":chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros,true),
         "attempts":0,"stepIndex":0,"stepTotal":0,"events":[]});
@@ -159,8 +163,6 @@ pub fn recover(state: &AppState) {
             "/inFlight",
             "/promptState/inFlight",
             "/nativeInFlight",
-            "/rsiCompareInFlight",
-            "/rsiEvolutionInFlight",
             "/roomState/inFlight",
             "/workflowState/inFlight",
             "/discordState/inFlight",
@@ -339,8 +341,6 @@ fn next_queued(state: &AppState) -> Option<Value> {
     let learning_running = jobs
         .iter()
         .any(|job| job["status"] == "running" && job["kind"] == "learn");
-    let comparison_running = jobs.iter().any(|job|
-        job["status"]=="running"&&job["kind"]=="rsi_compare");
     let mut queued = jobs
         .iter()
         .cloned()
@@ -349,7 +349,6 @@ fn next_queued(state: &AppState) -> Option<Value> {
         // Learning is background work: at most one at a time, so it can never
         // occupy every worker while a prompt/room/workflow job waits.
         .filter(|job| !(job["kind"] == "learn" && learning_running))
-        .filter(|job| !(job["kind"] == "rsi_compare" && comparison_running))
         .filter(|job| {
             if !matches!(job["kind"].as_str(), Some("room" | "meeting")) {
                 return true;
@@ -376,7 +375,7 @@ fn next_queued(state: &AppState) -> Option<Value> {
         })
         .collect::<Vec<_>>();
     queued.sort_by(|a, b| {
-        let priority = |job: &Value| u8::from(matches!(job["kind"].as_str(),Some("learn"|"rsi_compare")));
+        let priority = |job: &Value| u8::from(matches!(job["kind"].as_str(),Some("learn")));
         let by_priority = priority(a).cmp(&priority(b));
         if by_priority != std::cmp::Ordering::Equal {
             return by_priority;
@@ -600,7 +599,7 @@ fn schedule_automations(state: &AppState) {
             .cloned()
             .unwrap_or_else(|| json!({}));
         let job_kind = if kind == "meeting" { "room" } else { kind };
-        if !matches!(job_kind, "prompt" | "workflow" | "room" | "learn") {
+        if !matches!(job_kind, "prompt" | "workflow" | "room") {
             continue;
         }
         enqueue(state, job_kind, input);
@@ -713,6 +712,8 @@ mod tests {
         assert_eq!(state.store.get("job","old-media").unwrap()["legacyRetired"],true);
         assert_eq!(state.store.get("job","old-upload").unwrap()["cancelRequested"],true);
         assert_eq!(state.store.get("job","historical").unwrap()["result"]["output"],"preserved");
+        assert!(enqueue(&state,"rsi_evolve",json!({})).is_none());
+        assert!(enqueue_once(&state,"new-retired","video",json!({})).is_none());
     }
 
     #[test]
