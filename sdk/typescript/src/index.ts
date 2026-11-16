@@ -212,7 +212,7 @@ export class Dominion {
   };
   readonly video = {
     catalog: (options?:RequestOptions) => this.request<{
-      videoModels:Array<{id:string;family:string;task:'text-to-video';name:string;quantization:string;kind:string;weightGB:number;totalDownloadGB:number;recommended:boolean;available:boolean;missingFiles:number;hint:string}>;
+      videoModels:Array<{id:string;family:string;familyId:string;task:'text-to-video';name:string;quantization:string;kind:string;weightGB:number;totalDownloadGB:number;recommended:boolean;available:boolean;missingFiles:number;hint:string}>;
       selectedVideoModel?:string;
     }>('GET','/api/video/catalog',undefined,options),
     modelDownloads: (options?:RequestOptions) => this.request<{downloads:Array<{
