@@ -1190,6 +1190,43 @@ mod tests {
     }
 
     #[test]
+    fn native_route_usage_is_indexed_precise_and_excludes_invalid_jobs() {
+        let (store,dir)=temp_store();
+        for i in 0..150 {
+            let route=if i%3==0 {"selected"}else{"unrelated"};
+            store.put("job",&json!({"id":format!("job-{i}"),
+                "status":"completed","nativeRoute":{"binding":route},
+                "nativeModelUsage":{"cacheReportedCalls":1,"unreportedCalls":0,
+                    "inputTokens":10000,"cacheReadTokens":8000,"cacheWriteTokens":0}})).unwrap();
+        }
+        store.put("job",&json!({"id":"unfinished","status":"running",
+            "nativeRoute":{"binding":"selected"},
+            "nativeModelUsage":{"cacheReportedCalls":1,"inputTokens":10000,
+                "cacheReadTokens":8000}})).unwrap();
+        store.put("job",&json!({"id":"unreported","status":"completed",
+            "nativeRoute":{"binding":"selected"},
+            "nativeModelUsage":{"cacheReportedCalls":1,"unreportedCalls":1,
+                "inputTokens":10000,"cacheReadTokens":8000}})).unwrap();
+        store.put("job",&json!({"id":"malformed","status":"completed",
+            "nativeRoute":{"binding":"selected"},
+            "nativeModelUsage":{"cacheReportedCalls":"1","unreportedCalls":0,
+                "inputTokens":"10000"}})).unwrap();
+        assert_eq!(store.native_route_cache_aggregate("selected").unwrap(),
+            (50,50,500000,400000,0));
+        assert_eq!(store.native_route_cache_aggregate("absent").unwrap(),
+            (0,0,0,0,0));
+        let conn=store.conn.lock().unwrap();
+        let plan:String=conn.query_row(
+            "EXPLAIN QUERY PLAN SELECT COUNT(*) FROM records WHERE kind='job'
+             AND json_extract(data,'$.status')='completed'
+             AND json_extract(data,'$.nativeRoute.binding')=?1",
+            ["selected"],|r|r.get(3)).unwrap();
+        assert!(plan.contains("idx_native_job_route_completed"),"{plan}");
+        drop(conn);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn run_leases_are_exclusive_and_recover_after_crash() {
         let store = Store::open(std::path::Path::new(":memory:")).unwrap();
         assert!(store.acquire_lease("session:s", "owner-a", 60_000).is_some());
