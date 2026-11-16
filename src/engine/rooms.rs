@@ -662,6 +662,9 @@ async fn run_locked(
         if let Some(note) = crate::engine::debate::guidance(&conflict_resolution) {
             request.system_override = Some(note.to_string());
         }
+        // Durable per-speaker latency allows room stalls to be diagnosed
+        // without assuming every speaker has the same generation time.
+        let speaker_started=std::time::Instant::now();
         let message = match run_room_quiet(state, &request, source_id).await {
             Ok(Some(message)) => message,
             Ok(None) => return Err(format!("{name}의 응답이 비어 있습니다.")),
@@ -696,6 +699,7 @@ async fn run_locked(
             continue;
         }
         let evidence_count = message_evidence_count(state, &message);
+        let elapsed_ms=speaker_started.elapsed().as_millis() as u64;
         outputs.push(json!({
             "agentId":agent_id,
             "name":name,
@@ -703,7 +707,11 @@ async fn run_locked(
             "messageId":message["id"],
             "evidenceCount":evidence_count,
             "toolCalls":message["tool_calls"].clone(),
+            "elapsedMs":elapsed_ms,
         }));
+        context.emit(json!({"type":"speaker_finished","roomId":room_id,
+            "agentId":agent_id,"elapsedMs":elapsed_ms,"step":outputs.len(),
+            "stepTotal":budget}));
         let resolution =
             crate::engine::debate::resolve(owner_text, &outputs, &conflict_strategy);
         if resolution["conflict"].as_bool() == Some(true)
@@ -1912,6 +1920,9 @@ mod tests {
         let job = save_owner_job(&state, "nine", "다 같이 편하게 얘기해보자");
         let result = run(&run_context(&state, "nine"), &job).await.unwrap();
         assert_eq!(result["turns"], 9);
+        assert!(result["outputs"].as_array().unwrap().iter().all(|output|
+            output["elapsedMs"].as_u64().is_some()),
+            "each persisted speaker output should contain measured latency");
         let messages = state.store.messages("room:r");
         assert_eq!(
             messages
