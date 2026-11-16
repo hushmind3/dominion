@@ -512,6 +512,17 @@ async fn run_job(state: AppState, job: Value) {
         .unwrap_or("")
         .to_string();
 
+    // Retired built-in media and RSI jobs are never resumed automatically.
+    // Their persisted inputs, checkpoints, and outputs stay intact for review.
+    if matches!(kind.as_str(), "video" | "youtube_upload" | "rsi_evolve" | "rsi_compare" | "rsi_generation") {
+        context.patch(json!({
+            "status": "needs_review",
+            "error": "내장 영상/음성 제작 및 RSI 자동 실행 기능이 종료되었습니다. 이전 작업 기록은 보존됩니다.",
+            "finishedAt": chrono::Utc::now().to_rfc3339(),
+        }));
+        return;
+    }
+
     let result = match kind.as_str() {
         "workflow" => workflows::run(&context, &job).await,
         "room" | "meeting" => rooms::run(&context, &job).await,
@@ -1244,6 +1255,23 @@ mod tests {
             "an unknown external result must not be replayed: {stored}"
         );
         assert!(stored["error"].as_str().is_some_and(|text| text.contains("확정")));
+    }
+
+    #[test]
+    fn retired_media_and_rsi_jobs_keep_their_persisted_records() {
+        let state = temp_state();
+        for kind in ["video", "rsi_evolve"] {
+            let job = enqueue(&state, kind, json!({"brief":"saved input"})).unwrap();
+            let id = job["id"].as_str().unwrap().to_string();
+            let running = state.store.patch_if("job",&id,"status",&json!("queued"),
+                &json!({"status":"running"})).unwrap();
+            tokio::runtime::Builder::new_current_thread().enable_all()
+                .build().unwrap().block_on(run_job(state.clone(),running));
+            let saved = state.store.get("job",&id).unwrap();
+            assert_eq!(saved["status"],"needs_review");
+            assert_eq!(saved["input"]["brief"],"saved input");
+            assert!(saved["error"].as_str().unwrap().contains("보존"));
+        }
     }
 
     #[test]
