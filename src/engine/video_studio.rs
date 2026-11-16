@@ -206,6 +206,11 @@ pub fn edit(state:&AppState,id:&str,body:&Value)->Result<Value,String>{
  state.bus.record("video_project",&saved);Ok(saved)
 }
 pub fn render(state:&AppState,id:&str,expected:Option<u64>)->Result<Value,String>{
+ render_with_ack(state,id,expected,false)
+}
+/// An uncertain remote render is replayed only after a user-visible approval.
+pub fn render_with_ack(state:&AppState,id:&str,expected:Option<u64>,
+ acknowledge_unknown:bool)->Result<Value,String>{
  let mut project=get(state,id)?;
  let mut rev=project["revision"].as_u64().unwrap_or(0);
  if expected.is_some_and(|v|v!=rev){return Err("기획 버전이 바뀌었습니다.".into())}
@@ -216,7 +221,7 @@ pub fn render(state:&AppState,id:&str,expected:Option<u64>)->Result<Value,String
     && project["renderJobId"].is_string(){
   if let Some(old)=project["renderJobId"].as_str()
     .and_then(|job_id|state.store.get("job",job_id)){
-    if old["status"]=="needs_review"{
+    if old["status"]=="needs_review"&&!acknowledge_unknown{
       return Err("이전 영상의 원격 생성 결과가 불확실합니다. 먼저 작업 기록을 확인하세요.".into())
     }
   }
@@ -374,6 +379,31 @@ mod tests{
   run_plan(&ctx,&next).await.unwrap();
   assert_eq!(get(&state,id).unwrap()["status"],"planned");
   assert_eq!(get(&state,id).unwrap()["planJobId"],next["id"]);
+  crate::test_support::cleanup_dir(state.config.data_dir.clone());
+ }
+ #[tokio::test]
+ async fn uncertain_video_re_render_requires_explicit_owner_acknowledgement(){
+  let state=test_state();
+  if video::ffmpeg(&state).is_none(){return}
+  let created=create(&state,&json!({"brief":"Street. Skyline.","targetSeconds":6,
+   "engine":"native","autoRender":false})).unwrap();
+  let id=created["id"].as_str().unwrap();
+  let plan_id=created["planJobId"].as_str().unwrap();
+  let plan=state.store.get("job",plan_id).unwrap();
+  run_plan(&JobContext::new(state.clone(),plan_id.into()),&plan).await.unwrap();
+  let planned=get(&state,id).unwrap();
+  let first=render(&state,id,planned["revision"].as_u64()).unwrap();
+  let video_id=first["renderJobId"].as_str().unwrap();
+  let uncertain=state.store.patch_if("job",video_id,"status",&json!("queued"),
+   &json!({"status":"needs_review","error":"external result unknown"})).unwrap();
+  finish_render(&state,&uncertain);
+  let failed=get(&state,id).unwrap();
+  assert_eq!(failed["status"],"failed");
+  assert!(render(&state,id,failed["revision"].as_u64()).is_err());
+  let replay=render_with_ack(&state,id,failed["revision"].as_u64(),true).unwrap();
+  assert_ne!(replay["renderJobId"],first["renderJobId"]);
+  assert_eq!(replay["status"],"rendering");
+  assert_eq!(state.store.get("job",video_id).unwrap()["status"],"needs_review");
   crate::test_support::cleanup_dir(state.config.data_dir.clone());
  }
  #[test]
