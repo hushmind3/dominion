@@ -8,21 +8,6 @@ use std::time::Duration;
 
 const MAX_EVENTS: usize = 200;
 
-/// Video checkpoints are incremental: a remote submit/scene counter must not
-/// erase the frozen storyboard or previous scene completion counts.
-/// Keep this merge confined to videoState, leaving all other job patches alone.
-fn preserve_video_checkpoint(previous: &Value, mut patch: Value) -> Value {
-    if let (Some(old), Some(next)) = (
-        previous["videoState"].as_object(),
-        patch.get_mut("videoState").and_then(Value::as_object_mut),
-    ) {
-        for (key, value) in old {
-            next.entry(key.clone()).or_insert_with(|| value.clone());
-        }
-    }
-    patch
-}
-
 /// Shared handle a running job uses to report progress and persist its state.
 #[derive(Clone)]
 pub struct JobContext {
@@ -73,21 +58,20 @@ impl JobContext {
             .store
             .get("job", &self.job_id)
             .ok_or("작업 체크포인트를 찾을 수 없습니다.")?;
-        if job["cancelRequested"].as_bool() == Some(true) {
-            return Err("사용자 요청으로 실행이 중단되었습니다.".into());
+        if job["cancelRequested"] == true
+            || !matches!(job["status"].as_str(),Some("queued"|"running")) {
+            return Err("사용자 요청으로 실행이 중단되었거나 작업이 이미 종료되었습니다.".into());
         }
-        let patch = preserve_video_checkpoint(&job, patch);
-        let saved = self
-            .state
-            .store
-            .patch_if(
-                "job",
-                &self.job_id,
-                "cancelRequested",
-                job.get("cancelRequested").unwrap_or(&Value::Null),
-                &patch,
-            )
-            .ok_or("작업 체크포인트가 변경되었거나 실행이 중단되었습니다.")?;
+        // Both status and cancellation must still match inside the write lock.
+        // videoState is merged against the *current* record under that lock,
+        // not against the stale snapshot above.
+        let guards=[
+            ("status", &job["status"]),
+            ("cancelRequested",job.get("cancelRequested").unwrap_or(&Value::Null)),
+        ];
+        let saved = self.state.store.patch_if_all_merge(
+            "job",&self.job_id,&guards,&patch,&["videoState"],
+        ).ok_or("작업 체크포인트가 변경되었거나 실행이 중단되었습니다.")?;
         self.state.bus.record("job", &saved);
         Ok(())
     }
@@ -1509,26 +1493,37 @@ mod tests {
 mod video_checkpoint_tests {
     use super::*;
     #[test]
-    fn video_checkpoint_keeps_storyboard_scene_progress_and_frozen_remote_receipts() {
-        let mut record = json!({"videoState":{
-            "scenes":["A","B"],"sceneTotal":2,"sceneIndex":0,"renderedScenes":0
-        }});
-        let patch = preserve_video_checkpoint(&record,json!({
-            "videoState":{"inFlight":true,"promptId":null}
-        }));
-        record["videoState"]=patch["videoState"].clone();
-        assert_eq!(record["videoState"]["scenes"],json!(["A","B"]));
-        assert_eq!(record["videoState"]["sceneTotal"],2);
-        let patch=preserve_video_checkpoint(&record,json!({
-            "videoState":{"sceneIndex":1,"renderedScenes":1,"inFlight":false}
-        }));
-        assert_eq!(patch["videoState"]["sceneIndex"],1);
-        assert_eq!(patch["videoState"]["renderedScenes"],1);
-        assert_eq!(patch["videoState"]["scenes"],json!(["A","B"]));
-        assert_eq!(patch["videoState"]["inFlight"],false);
-        assert!(patch["videoState"]["promptId"].is_null());
-        assert_eq!(preserve_video_checkpoint(&record,json!({"status":"running"})),
-            json!({"status":"running"}));
+    fn checkpoint_preserves_scene_provenance_and_rejects_post_cancel_writes() {
+        let state={
+            let dir=std::env::temp_dir().join(format!("dominion-checkpoint-{}",uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let cfg=crate::config::Config{port:0,data_dir:dir.clone(),
+                web_dir:dir.join("web"),workspace:dir.clone()};
+            AppState::new(cfg.clone(),
+                crate::db::Store::open(&cfg.db_path()).unwrap(),
+                crate::vault::Vault::open(&cfg.key_path()))
+        };
+        let job=state.store.put("job",&json!({
+            "status":"queued","kind":"video","videoState":{
+                "scenes":["A","B"],"sceneTotal":2,"renderedScenes":0
+            }
+        })).unwrap();
+        let id=job["id"].as_str().unwrap().to_string();
+        let ctx=JobContext::new(state.clone(),id.clone());
+        ctx.checkpoint(json!({"videoState":{"inFlight":true,"promptId":null}})).unwrap();
+        ctx.checkpoint(json!({"videoState":{"sceneIndex":1,"renderedScenes":1}})).unwrap();
+        let current=state.store.get("job",&id).unwrap();
+        assert_eq!(current["videoState"]["scenes"],json!(["A","B"]));
+        assert_eq!(current["videoState"]["sceneIndex"],1);
+        assert_eq!(current["videoState"]["sceneTotal"],2);
+        assert_eq!(current["videoState"]["renderedScenes"],1);
+        assert!(current["videoState"]["promptId"].is_null());
+        state.store.patch_if("job",&id,"status",&json!("queued"),
+            &json!({"status":"cancelled","cancelRequested":true})).unwrap();
+        assert!(ctx.checkpoint(json!({"progress":100})).is_err());
+        assert!(state.store.get("job",&id).unwrap()["progress"].is_null());
+        let root=state.config.data_dir.clone();drop(ctx);drop(state);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
 

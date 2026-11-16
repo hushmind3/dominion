@@ -459,6 +459,51 @@ impl Store {
         Some(record)
     }
 
+    /// Atomically merge a checkpoint against the latest persisted record.
+    /// Guards are checked inside the same SQLite connection lock that writes
+    /// the result. Nested object keys merge against the *fresh* record, so
+    /// concurrent workers cannot drop a scene plan, receipt, or progress field.
+    /// Callers own the allowed-state policy; the database only enforces it.
+    pub fn patch_if_all_merge(
+        &self,
+        kind: &str,
+        id: &str,
+        guards: &[(&str, &Value)],
+        patch: &Value,
+        nested_objects: &[&str],
+    ) -> Option<Value> {
+        let conn = self.conn.lock().ok()?;
+        let mut record = conn
+            .query_row(
+                "SELECT data,id,created_at,updated_at FROM records WHERE kind=?1 AND id=?2",
+                params![kind, id], record_from_row,
+            ).ok()?;
+        if guards.iter().any(|(key, expected)|
+            record.get(*key).unwrap_or(&Value::Null) != *expected) {
+            return None;
+        }
+        for (key, value) in patch.as_object()? {
+            if key == "id" { continue; }
+            if nested_objects.iter().any(|nested| *nested == key.as_str()) {
+                if let (Some(current), Some(update)) = (
+                    record.get_mut(key).and_then(Value::as_object_mut),
+                    value.as_object(),
+                ) {
+                    for (field, new_value) in update {
+                        current.insert(field.clone(), new_value.clone());
+                    }
+                    continue;
+                }
+            }
+            record[key] = value.clone();
+        }
+        conn.execute(
+            "UPDATE records SET data=?3, updated_at=datetime('now') WHERE kind=?1 AND id=?2",
+            params![kind, id, record.to_string()],
+        ).ok()?;
+        Some(record)
+    }
+
     pub fn patch_records(&self, kind: &str, ids: &[String], patch: &Value) -> Option<Vec<Value>> {
         let patch = patch.as_object()?;
         let mut conn = self.conn.lock().unwrap();
@@ -1252,6 +1297,57 @@ mod tests {
         assert_eq!(groups[0]["providerId"], "p1");
         assert_eq!(groups[0]["calls"], 2);
         assert_eq!(groups[1]["estimatedCalls"], 0);
+    }
+
+    #[test]
+    fn checkpoint_merges_concurrent_scene_updates_without_lost_progress() {
+        let (store,dir)=temp_store();
+        let initial=store.put("job",&json!({
+            "status":"running","cancelRequested":false,
+            "videoState":{"scenes":["scene-1","scene-2"],"sceneTotal":2}
+        })).unwrap();
+        let id=initial["id"].as_str().unwrap().to_string();
+        let guard_status=json!("running");
+        let guard_cancel=json!(false);
+        let conditions=[("status",&guard_status),("cancelRequested",&guard_cancel)];
+        std::thread::scope(|scope|{
+            let s1=store.clone();
+            let id1=id.clone();
+            let g1=guard_status.clone();
+            let c1=guard_cancel.clone();
+            scope.spawn(move||{
+                let guards=[("status",&g1),("cancelRequested",&c1)];
+                s1.patch_if_all_merge("job",&id1,&guards,
+                    &json!({"videoState":{"promptId":"prompt-1","inFlight":true}}),
+                    &["videoState"]).unwrap();
+            });
+            let s2=store.clone();
+            let id2=id.clone();
+            let g2=guard_status.clone();
+            let c2=guard_cancel.clone();
+            scope.spawn(move||{
+                let guards=[("status",&g2),("cancelRequested",&c2)];
+                s2.patch_if_all_merge("job",&id2,&guards,
+                    &json!({"videoState":{"renderedScenes":1,"sceneIndex":1}}),
+                    &["videoState"]).unwrap();
+            });
+        });
+        let saved=store.get("job",&id).unwrap();
+        assert_eq!(saved["videoState"]["scenes"],json!(["scene-1","scene-2"]));
+        assert_eq!(saved["videoState"]["promptId"],"prompt-1");
+        assert_eq!(saved["videoState"]["renderedScenes"],1);
+        assert_eq!(saved["videoState"]["sceneIndex"],1);
+        assert_eq!(saved["videoState"]["sceneTotal"],2);
+        assert!(store.patch_if_all_merge("job",&id,&conditions,
+            &json!({"videoState":{"promptId":null}}),&["videoState"]).is_some());
+        assert!(store.get("job",&id).unwrap()["videoState"]["promptId"].is_null());
+        store.patch_if("job",&id,"status",&json!("running"),
+            &json!({"status":"cancelled","cancelRequested":true})).unwrap();
+        assert!(store.patch_if_all_merge("job",&id,&conditions,
+            &json!({"progress":100}),&["videoState"]).is_none());
+        assert!(store.get("job",&id).unwrap()["progress"].is_null());
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
