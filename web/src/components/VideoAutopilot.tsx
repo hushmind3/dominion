@@ -13,7 +13,7 @@ type Provider={id:string;name:string;model?:string;enabled?:boolean}
 type Props={nativeReady:boolean;comfyReady:boolean;onSettings:()=>void;onModelInstalled:()=>void;onPublish:(job:VideoJob)=>void}
 
 const stages=[{key:'planning',name:'기획·대본'},{key:'planned',name:'장면 구성'},{key:'rendering',name:'영상·음성 생성'},{key:'ready',name:'검수·배포'}] as const
-const statusText:Record<string,string>={planning:'콘텐츠 기획 중',planned:'대본 편집 가능',rendering:'영상 제작 중',ready:'검수 준비 완료',failed:'작업 오류',queued:'실행 대기'}
+const statusText:Record<string,string>={planning:'콘텐츠 기획 중',planned:'대본 편집 가능',rendering:'영상 제작 중',ready:'검수 준비 완료',failed:'작업 오류',needs_review:'기획 결과 확인 필요',queued:'실행 대기'}
 const card='rounded-2xl border border-[#E5DED3] bg-[#FFFDF9] p-5 shadow-[0_6px_24px_#2D292306]'
 export function VideoAutopilot({nativeReady,comfyReady,onSettings,onModelInstalled,onPublish}:Props){
  const projects=useRemote<Project[]>('/api/video/projects',[],false)
@@ -140,11 +140,11 @@ export function VideoAutopilot({nativeReady,comfyReady,onSettings,onModelInstall
   finally{setWorking(false)}
  }
  const retryPlan=async()=>{
-  if(!project||working||project.status!=='failed'||project.scenes?.length)return
+  if(!project||working||!['failed','needs_review'].includes(project.status)||project.scenes?.length)return
   setWorking(true);setError('')
   try{
    const updated=await post<Project>('/api/video/projects/'+encodeURIComponent(project.id)+'/retry-plan',
-    {revision:project.revision})
+    {revision:project.revision,acknowledgeUnknown:project.status==='needs_review'})
    detail.setValue(updated)
    await projects.reload()
   }catch(e){setError((e as Error).message)}
@@ -204,9 +204,9 @@ export function VideoAutopilot({nativeReady,comfyReady,onSettings,onModelInstall
       {project.planningSource&&<p className="mt-3 flex items-center gap-2 text-[11px] text-[#82776B]"><CheckCircle2 size={14} className="text-emerald-700"/> 대본 작성 방식: {project.planningSource==='provider'?'연결된 AI 모델':'오프라인 규칙'}</p>}
       {project.status==='planning'&&<p className="mt-3 flex items-center gap-2 text-[11px] text-[#9B7556]"><LoaderCircle size={14} className="animate-spin"/> {planned.value?.status==='failed'?'기획 작업에서 오류가 발생했습니다.':'대본과 장면을 준비 중입니다.'}</p>}
       {(project.planningError||planned.value?.error||project.renderError)&&<Notice message={project.planningError||planned.value?.error||project.renderError||''}/>}
-      {project.status==='failed'&&(!project.scenes?.length)&&<div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E6D6C8] bg-[#FBF2E9] p-3">
-       <p className="max-w-md text-[11px] leading-5 text-[#836B57]">기획이 완료되지 않았습니다. 이전 작업 기록은 보존하고 새 작업으로 다시 실행합니다.{project.useAI?' 연결된 AI를 다시 호출하면 별도 사용료가 발생할 수 있습니다.':''}</p>
-       <Button size="sm" variant="primary" disabled={working} onClick={()=>void retryPlan()}>{working?<LoaderCircle size={14} className="animate-spin"/>:<RefreshCw size={14}/>} 기획 다시 실행</Button>
+      {(project.status==='failed'||project.status==='needs_review')&&(!project.scenes?.length)&&<div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E6D6C8] bg-[#FBF2E9] p-3">
+       <p className="max-w-md text-[11px] leading-5 text-[#836B57]">{project.status==='needs_review'?'기획 도중 시스템이 재시작되어 이전 AI 호출 결과가 불명확합니다. 다시 호출하면 중복 비용이 발생할 수 있습니다. 작업 기록을 확인한 뒤 재실행하세요.':'기획이 완료되지 않았습니다. 이전 작업 기록은 보존하고 새 작업으로 다시 실행합니다.'}{project.useAI&&project.status!=='needs_review'?' AI 기획을 다시 호출하면 별도 사용료가 발생할 수 있습니다.':''}</p>
+       <Button size="sm" variant="primary" disabled={working} onClick={()=>void retryPlan()}>{working?<LoaderCircle size={14} className="animate-spin"/>:<RefreshCw size={14}/>} {project.status==='needs_review'?'결과 확인 후 재실행':'기획 다시 실행'}</Button>
       </div>}
      </div>
      {draft.length>0&&<div className={card}><div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-[15px] font-bold">장면별 대본 · 스토리보드</h3><p className="mt-1 text-[11px] text-[#92877A]">수정한 대본은 실제 렌더링과 내레이션에 반영됩니다.</p></div><div className="flex flex-wrap items-center gap-2"><span className="rounded-lg bg-[#F6F1E9] px-2.5 py-1.5 text-[11px]">{draft.length}장면 · {draftSeconds}초</span><Button size="sm" variant="secondary" disabled={active||working||draft.length>=12} onClick={()=>addScene(draft.length-1)}><Plus size={13}/> 장면 추가</Button></div></div>
