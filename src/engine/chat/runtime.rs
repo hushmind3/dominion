@@ -4097,16 +4097,22 @@ fn execute_nodes<'a>(
                         }
                         continue;
                     }
-                    let base = budget.branch();
-                    let mut futures = Vec::new();
-                    for child in children.clone() {
+                    // Pre-allocate each branch's model/tool budget and a
+                    // disjoint operation sequence range BEFORE concurrency.
+                    // Merging counters only after join cannot undo paid tools.
+                    let shares=budget.parallel_shares(children.len());
+                    let mut reserved_until=op_seq;
+                    let mut futures=Vec::new();
+                    for (child,share) in children.clone().into_iter().zip(shares) {
+                        let child_start=reserved_until;
+                        reserved_until=reserved_until.saturating_add(share.tool_capacity() as u64);
                         futures.push(execute_nodes(
                             ctx,
                             vec![child],
                             resolved.clone(),
                             checkpoint.clone(),
-                            base.branch(),
-                            op_seq,
+                            share,
+                            child_start,
                             depth + 1,
                             false,
                             true,
@@ -4145,6 +4151,10 @@ fn execute_nodes<'a>(
                         messages.extend(frame.messages);
                         paused |= frame.paused;
                     }
+                    // Gaps are deliberate: a child need not exhaust its
+                    // reservation. The next operation must remain globally
+                    // unique and monotonically beyond every reserved range.
+                    op_seq=op_seq.max(reserved_until);
                     resolved["last"] = Value::Object(parallel_last);
                     checkpoint["pendingOperationIds"] = json!([]);
                     checkpoint["resolvedInputs"] = resolved.clone();

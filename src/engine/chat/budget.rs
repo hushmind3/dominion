@@ -69,6 +69,29 @@ impl BudgetLedger {
         }
     }
 
+    /// Reserve *disjoint* work budgets before concurrent execution. Giving
+    /// every child the entire remaining budget would overspend by fanout N.
+    /// The shared wall-clock deadline is unchanged because branches overlap.
+    pub fn parallel_shares(&self, count:usize)->Vec<Self>{
+        if count==0 {return Vec::new();}
+        let available_rounds=self.max_rounds.saturating_sub(self.rounds);
+        let available_tools=self.max_tools.saturating_sub(self.tools);
+        let available_proposals=self.max_proposals.saturating_sub(self.proposals);
+        let left=self.max_elapsed.saturating_sub(self.started.elapsed());
+        let split=|total:usize,index:usize|total/count+usize::from(index<total%count);
+        (0..count).map(|index|Self{
+            max_rounds:split(available_rounds,index),
+            max_tools:split(available_tools,index),
+            max_proposals:split(available_proposals,index),
+            max_elapsed:left,
+            rounds:0,tools:0,proposals:0,started:Instant::now(),
+        }).collect()
+    }
+
+    /// The caller uses the exact reserved tool capacity to allocate a
+    /// disjoint operation sequence range for each parallel child.
+    pub fn tool_capacity(&self)->usize{self.max_tools}
+
     /// Adds the usage of a completed branch back into this ledger.
     pub fn merge_usage(&mut self, branch: &Self) {
         self.rounds = self.rounds.saturating_add(branch.rounds);
@@ -101,6 +124,28 @@ impl BudgetLedger {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parallel_fanout_cannot_multiply_remaining_executable_budget() {
+        let mut parent=BudgetLedger::new(5,7,Duration::from_secs(12));
+        assert!(parent.charge_round());
+        assert!(parent.charge_tool());
+        let mut shares=parent.parallel_shares(4);
+        assert_eq!(shares.iter().map(|share|share.max_rounds).sum::<usize>(),4);
+        assert_eq!(shares.iter().map(|share|share.max_tools).sum::<usize>(),6);
+        assert_eq!(shares.iter().map(|share|share.max_proposals).sum::<usize>(),14);
+        for share in &mut shares {
+            for _ in 0..share.tool_capacity(){assert!(share.charge_tool());}
+            assert!(!share.charge_tool(),"child cannot borrow another child's quota");
+            while share.charge_round(){}
+            while share.charge_proposal(){}
+            parent.merge_usage(share);
+        }
+        assert_eq!(parent.snapshot()["tools"],7);
+        assert_eq!(parent.snapshot()["rounds"],5);
+        assert_eq!(parent.snapshot()["proposals"],14);
+        assert_eq!(parent.parallel_shares(0).len(),0);
+    }
 
     #[test]
     fn ledger_bounds_rounds_tools_and_proposals() {
