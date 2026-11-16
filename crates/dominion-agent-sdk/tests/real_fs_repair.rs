@@ -133,7 +133,7 @@ fn request(id:&str)->RunRequest {
         instruction:"코드 파일 수정 후 실제 테스트 통과".into(),
         owner_instructions:"Only confirmed file edits count".into(),
         strategy:Strategy::Balanced,
-        limits:Limits{max_steps:8,max_model_calls:8,max_estimated_tokens:100_000,
+        limits:Limits{max_steps:8,max_model_calls:8,max_tool_calls:96,max_estimated_tokens:100_000,
             max_parallel_reads:2,max_result_chars:2000},
         allowed_tools:vec!["workspace_write".into(),"shell_exec".into()],
         checks:vec![Criterion{kind:CriterionKind::ToolSucceeded,
