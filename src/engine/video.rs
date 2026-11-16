@@ -283,13 +283,15 @@ pub fn model_files(id:&str)->Option<Vec<(&'static str,&'static str)>>{
 
 /// Real in-flight operations are process-local. Persisted "downloading"
 /// receipts may survive a crash, but no task is running after restart.
-fn active_model_downloads()->&'static std::sync::Mutex<std::collections::HashSet<String>>{
-    static ACTIVE:std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>>=
+fn active_model_downloads()->&'static std::sync::Mutex<std::collections::HashMap<String,String>>{
+    static ACTIVE:std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String,String>>>=
         std::sync::OnceLock::new();
-    ACTIVE.get_or_init(||std::sync::Mutex::new(std::collections::HashSet::new()))
+    ACTIVE.get_or_init(||std::sync::Mutex::new(std::collections::HashMap::new()))
 }
-fn model_download_key(base:&Path,id:&str)->String {
-    format!("{}::{id}",base.display())
+// Models share large CLIP/VAE files and .part paths. Only one downloader may
+// write a given model directory at a time, even for different model variants.
+fn model_download_key(base:&Path,_id:&str)->String {
+    base.display().to_string()
 }
 struct DownloadGuard(String);
 impl Drop for DownloadGuard {
@@ -307,9 +309,10 @@ pub fn start_download(state:AppState,id:&str)->Result<Value,String>{
     {
         let mut active=active_model_downloads().lock()
             .map_err(|_|"모델 다운로드 상태를 읽지 못했습니다.")?;
-        if !active.insert(active_key.clone()){
-            return Err("이미 다운로드 중입니다.".into());
+        if let Some(running)=active.get(&active_key){
+            return Err(format!("이 폴더에서 영상 모델 {running} 다운로드 중입니다. 완료 후 다른 모델을 설치하세요."));
         }
+        active.insert(active_key.clone(),id.to_string());
     }
     let guard=DownloadGuard(active_key);
     if state.store.put("video_model_download",&json!({
@@ -356,8 +359,26 @@ fn model_download_percent(completed:usize,total:usize,current_bytes:u64,current_
         / total as u64).min(99)
 }
 
+/// Only a strong version validator permits resuming previously written model
+/// bytes. A byte-range response without the exact expected start or total is
+/// never appended, even if the remote server erroneously says HTTP 206.
+fn strong_etag(value:&str)->bool {
+    let text=value.trim();
+    text.len()>=3 && text.starts_with('"') && text.ends_with('"')
+        && !text.starts_with("W/")
+        && !text.chars().any(|c|c.is_control())
+}
+fn content_range_start_total(header:&str)->Option<(u64,u64)>{
+    let (range,total)=header.trim().strip_prefix("bytes ")?.split_once('/')?;
+    let (start,end)=range.split_once('-')?;
+    let start=start.parse::<u64>().ok()?;
+    let end=end.parse::<u64>().ok()?;
+    let total=total.parse::<u64>().ok()?;
+    (start<=end && end<total).then_some((start,total))
+}
+
 async fn download_files(
-    state: &AppState, key: &str, base: &Path, files: &[(&'static str, &'static str)],
+    state: &AppState, key: &str, base: &Path, files: &[(&str, &str)],
 ) -> Result<(), String> {
     let client = reqwest::Client::builder().build().map_err(|e| e.to_string())?;
     let mut total_known = 0u64;
@@ -377,26 +398,64 @@ async fn download_files(
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        let response = client.get(*url).send().await.map_err(|e| e.to_string())?;
+        let part = target.with_extension("part");
+        let validator_file = target.with_extension("part.etag");
+        let partial_bytes=part.metadata().ok().filter(|m|m.is_file())
+            .map(|m|m.len()).unwrap_or(0);
+        let previous_etag=std::fs::read_to_string(&validator_file).ok()
+            .map(|s|s.trim().to_string()).filter(|etag|strong_etag(etag));
+        let try_resume=partial_bytes>0 && previous_etag.is_some();
+        use reqwest::header::{ACCEPT_ENCODING,CONTENT_RANGE,ETAG,IF_RANGE,RANGE};
+        let mut request=client.get(*url).header(ACCEPT_ENCODING,"identity");
+        if let Some(etag)=previous_etag.as_ref().filter(|_|try_resume){
+            request=request.header(RANGE,format!("bytes={partial_bytes}-"))
+                .header(IF_RANGE,etag.as_str());
+        }
+        let response=request.send().await.map_err(|e|e.to_string())?;
         if !response.status().is_success() {
             return Err(format!("다운로드 실패: HTTP {}", response.status()));
         }
-        let this_total = response.content_length().unwrap_or(0);
-        total_known=total_known.saturating_add(this_total);
+        let new_etag=response.headers().get(ETAG).and_then(|v|v.to_str().ok())
+            .filter(|etag|strong_etag(etag)).map(str::to_owned);
+        let resumed=if response.status()==reqwest::StatusCode::PARTIAL_CONTENT {
+            let (start,total)=response.headers().get(CONTENT_RANGE)
+                .and_then(|v|v.to_str().ok())
+                .and_then(content_range_start_total)
+                .ok_or("원격 다운로드 구간 응답이 올바르지 않습니다.")?;
+            if !try_resume || start!=partial_bytes
+                || previous_etag.as_deref()!=new_etag.as_deref() || total<=partial_bytes {
+                return Err("다운로드 재개 검증 실패: 서버 파일 버전이나 응답 범위가 변경되었습니다.".into());
+            }
+            Some(total)
+        }else{None};
+        // If-Range mismatch returns 200 and a new whole resource. Truncate
+        // stale partial data, never mix two HuggingFace model revisions.
+        let this_total=resumed.unwrap_or_else(||response.content_length().unwrap_or(0));
+        if this_total>0 {total_known=total_known.saturating_add(this_total);}
+        let mut current_received=if resumed.is_some(){partial_bytes}else{0};
+        received=received.saturating_add(current_received);
+        if let Some(etag)=new_etag.as_ref(){
+            std::fs::write(&validator_file,etag).map_err(|e|e.to_string())?;
+        }else{
+            let _=std::fs::remove_file(&validator_file);
+        }
         if let Some(mut record)=state.store.get("video_model_download",key) {
             record["currentFile"]=json!(relative);
             record["filesCompleted"]=json!(completed);
             record["bytes"]=json!(received);
-            record["total"]=json!(total_known);
-            record["progress"]=json!(model_download_percent(completed,files.len(),0,this_total));
+            record["total"]=json!(total_known.max(received));
+            record["resumedBytes"]=json!(current_received);
+            record["progress"]=json!(model_download_percent(completed,files.len(),current_received,this_total));
             state.store.put("video_model_download",&record);
         }
-        let part = target.with_extension("part");
-        let mut file = tokio::fs::File::create(&part).await.map_err(|e| e.to_string())?;
+        let mut file=if resumed.is_some(){
+            tokio::fs::OpenOptions::new().append(true).open(&part).await
+        }else{
+            tokio::fs::File::create(&part).await
+        }.map_err(|e|e.to_string())?;
         use futures_util::StreamExt;
         use tokio::io::AsyncWriteExt;
         let mut stream = response.bytes_stream();
-        let mut current_received=0u64;
         let mut since_update=0u64;
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|e| e.to_string())?;
@@ -423,6 +482,7 @@ async fn download_files(
             return Err(format!("모델 파일이 불완전합니다: {relative} ({current_received}/{this_total}바이트). 다시 다운로드해 주세요."));
         }
         tokio::fs::rename(&part,&target).await.map_err(|e| e.to_string())?;
+        let _=std::fs::remove_file(&validator_file);
         completed+=1;
         if let Some(mut record)=state.store.get("video_model_download",key) {
             record["filesCompleted"]=json!(completed);
@@ -443,7 +503,8 @@ pub fn downloads(state:&AppState)->Vec<Value>{
         let interrupted=row["status"]=="downloading"
             && row["model"].as_str().is_some_and(|id|{
                 let key=model_download_key(&base,id);
-                active_model_downloads().lock().is_ok_and(|items|!items.contains(&key))
+                active_model_downloads().lock().is_ok_and(|items|
+                    items.get(&key).map(String::as_str)!=Some(id))
             });
         if interrupted {
             row["status"]=json!("interrupted");
@@ -2072,6 +2133,93 @@ mod tests {
         assert!(within_new_scene_budget(0,Some(1)));
         assert!(!within_new_scene_budget(1,Some(1)));
         assert!(within_new_scene_budget(999,None));
+    }
+
+    #[test]
+    fn model_directory_download_lock_prevents_shared_vae_clobbering() {
+        let base=std::env::temp_dir().join(format!("models-{}",uuid::Uuid::new_v4()));
+        let key=model_download_key(&base,"wan21");
+        assert_eq!(key,model_download_key(&base,"wan22"));
+        let mut active=active_model_downloads().lock().unwrap();
+        assert!(active.insert(key.clone(),"wan21".into()).is_none());
+        assert_eq!(active.get(&key).map(String::as_str),Some("wan21"));
+        assert_ne!(active.get(&key).map(String::as_str),Some("wan22"));
+        active.remove(&key);
+    }
+
+    #[test]
+    fn http_model_resumption_requires_matching_strong_version_and_exact_range() {
+        assert!(strong_etag("\"abc123\""));
+        assert!(!strong_etag("W/\"abc\""));
+        assert!(!strong_etag("abc"));
+        assert_eq!(content_range_start_total("bytes 128-255/256"),Some((128,256)));
+        assert_eq!(content_range_start_total("bytes 0-999/10"),None);
+        assert_eq!(content_range_start_total("bytes 100-50/256"),None);
+        assert_eq!(content_range_start_total("bytes */256"),None);
+    }
+
+    #[tokio::test]
+    async fn interrupted_download_resumes_only_matching_server_bytes() {
+        use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
+        let state={
+            let dir=std::env::temp_dir().join(format!("video-resume-{}",uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let cfg=crate::config::Config{port:0,data_dir:dir.clone(),
+                web_dir:dir.join("web"),workspace:dir.clone()};
+            crate::state::AppState::new(cfg.clone(),
+                crate::db::Store::open(&cfg.db_path()).unwrap(),
+                crate::vault::Vault::open(&cfg.key_path()))
+        };
+        let base=state.config.data_dir.join("models");
+        let path=base.join("unet/test-weight.bin");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let bytes=Arc::new(vec![17u8;2*1024*1024+128]);
+        let calls=Arc::new(AtomicUsize::new(0));
+        let fixture=bytes.clone();
+        let observations=calls.clone();
+        let router=axum::Router::new().route("/weight",
+            axum::routing::get(move |headers:axum::http::HeaderMap|{
+                let fixture=fixture.clone();
+                let observations=observations.clone();
+                async move{
+                    let length=fixture.len();
+                    let from=headers.get("range").and_then(|r|r.to_str().ok())
+                        .and_then(|r|r.strip_prefix("bytes="))
+                        .and_then(|r|r.strip_suffix('-'))
+                        .and_then(|r|r.parse::<usize>().ok());
+                    let etag="\"frozen-v1\"";
+                    let range_ok=headers.get("if-range")
+                        .and_then(|r|r.to_str().ok())==Some(etag);
+                    let offset=from.filter(|_|range_ok).unwrap_or(0);
+                    if offset>0 {
+                        observations.fetch_add(1,Ordering::SeqCst);
+                        (axum::http::StatusCode::PARTIAL_CONTENT,
+                            [("etag",etag),("content-range",
+                                format!("bytes {offset}-{}/{}",length-1,length))],
+                            fixture[offset..].to_vec()).into_response()
+                    } else {
+                        (axum::http::StatusCode::OK,
+                            [("etag",etag),("content-range",String::new())],
+                            fixture.to_vec()).into_response()
+                    }
+                }
+            }));
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url=format!("http://{}/weight",listener.local_addr().unwrap());
+        let server=tokio::spawn(async move{axum::serve(listener,router).await.unwrap()});
+        let part=path.with_extension("part");
+        std::fs::write(&part,&bytes[..1024*1024]).unwrap();
+        std::fs::write(path.with_extension("part.etag"),"\"frozen-v1\"").unwrap();
+        let key="resume-weight";
+        state.store.put("video_model_download",&json!({"id":key,"model":"test"})).unwrap();
+        download_files(&state,key,&base,&[("unet/test-weight.bin",url.as_str())]).await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst),1,"server should serve only missing bytes");
+        assert_eq!(std::fs::read(&path).unwrap(),*bytes);
+        assert!(!part.exists());
+        assert!(!path.with_extension("part.etag").exists());
+        server.abort();
+        let root=state.config.data_dir.clone();drop(state);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
