@@ -116,7 +116,15 @@ pub async fn dispatch_batch<D:Dispatcher>(snapshot:&mut Snapshot,actions:&[Actio
     }
     let mut outputs=Vec::new();
     for (action,call) in actions.iter().zip(&calls){
-        if store.cancelled(&snapshot.native.id.to_string()){store.save(snapshot)?;return Err("실행이 중단되었습니다.".into());}
+        if store.cancelled(&snapshot.native.id.to_string()){
+            let skipped=journal::cancel_unstarted(&mut snapshot.native)?;
+            for call in skipped {
+                snapshot.receipts.push(Receipt{id:call.id,tool:call.name,arguments:call.arguments,
+                    success:false,result:json!({"error":"cancelled_before_dispatch"}),step:snapshot.step});
+            }
+            store.save(snapshot)?;
+            return Err("실행이 중단되었습니다.".into());
+        }
         journal::begin(&mut snapshot.native,call)?;store.save(snapshot)?;
         // A host error cannot establish whether an external effect happened.
         let result=dispatcher.execute(action).await?;
@@ -141,6 +149,49 @@ mod tests{
     fn action()->Action{Action{id:"c".into(),tool:"workspace_write".into(),arguments:json!({"path":"a","content":""}),depends_on:vec![]}}
     #[tokio::test]
     async fn failed_write_ahead_storage_prevents_dispatch(){let mut s=run();let d=Tool(AtomicUsize::new(0));let j=Memory{saved:Mutex::new(None),fail:true};assert!(dispatch_batch(&mut s,&[action()],&d,&j).await.is_err());assert_eq!(d.0.load(Ordering::SeqCst),0);}
+
+    #[tokio::test]
+    async fn cancelled_serial_batch_records_skipped_tools_without_dispatch(){
+        use std::sync::{Arc,atomic::AtomicBool};
+        struct CancelJournal{saved:Mutex<Option<Snapshot>>,stop:Arc<AtomicBool>}
+        impl Journal for CancelJournal{
+            fn save(&self,s:&Snapshot)->Result<(),String>{
+                *self.saved.lock().unwrap()=Some(s.clone());Ok(())
+            }
+            fn cancelled(&self,_:&str)->bool{self.stop.load(Ordering::SeqCst)}
+        }
+        struct FirstThenCancel{count:AtomicUsize,stop:Arc<AtomicBool>}
+        impl Dispatcher for FirstThenCancel{
+            type Output=();
+            fn execute<'a>(&'a self,_:&'a Action)->BoxFuture<'a,Result<DispatchResult<()>,String>>{
+                Box::pin(async move{
+                    self.count.fetch_add(1,Ordering::SeqCst);
+                    self.stop.store(true,Ordering::SeqCst);
+                    Ok(DispatchResult{output:(),observation:json!({"ok":true}),success:true})
+                })
+            }
+        }
+        let stop=Arc::new(AtomicBool::new(false));
+        let journal=CancelJournal{saved:Mutex::new(None),stop:stop.clone()};
+        let tool=FirstThenCancel{count:AtomicUsize::new(0),stop};
+        let mut snapshot=run();
+        let mut a=action();a.id="a".into();
+        let mut b=action();b.id="b".into();
+        let result=dispatch_batch(&mut snapshot,&[a,b],&tool,&journal).await;
+        assert!(result.is_err());
+        assert_eq!(tool.count.load(Ordering::SeqCst),1);
+        assert_eq!(snapshot.native.status,RunStatus::Cancelled);
+        assert!(snapshot.native.queued_calls.is_empty());
+        assert_eq!(snapshot.receipts.len(),2);
+        assert!(snapshot.receipts[0].success);
+        assert!(!snapshot.receipts[1].success);
+        let saved=journal.saved.lock().unwrap();
+        assert_eq!(saved.as_ref().unwrap().native.status,RunStatus::Cancelled);
+        for id in ["a","b"]{
+            assert_eq!(snapshot.native.messages.iter().filter(|m|
+                m["role"]=="tool"&&m["tool_call_id"]==id).count(),1);
+        }
+    }
     #[tokio::test]
     async fn native_journal_finishes_exact_call_and_blocks_replay(){let mut s=run();let d=Tool(AtomicUsize::new(0));let j=Memory{saved:Mutex::new(None),fail:false};dispatch_batch(&mut s,&[action()],&d,&j).await.unwrap();assert!(s.native.in_flight.is_none());assert!(s.native.queued_calls.is_empty());assert_eq!(s.receipts.len(),1);assert!(dispatch_batch(&mut s,&[action()],&d,&j).await.is_err());assert_eq!(d.0.load(Ordering::SeqCst),1);}
 }

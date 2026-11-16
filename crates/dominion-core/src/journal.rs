@@ -34,6 +34,43 @@ fn pending_exact(run:&Run,call:&ToolCall)->bool {
     run.pending_approval.as_ref().is_some_and(|p|same_call(p,call))
 }
 
+
+/** Complete the model protocol for calls never sent to a tool executor. */
+fn record_unstarted_abort(run:&mut Run,call:&ToolCall){
+    run.messages.push(json!({"role":"tool","tool_call_id":call.id,
+        "content":"TOOL ERROR [ABORTED_BEFORE_DISPATCH]: cancelled"}));
+    run.event("tool_aborted_before_dispatch",
+        format!("Cancelled unstarted {} ({})",call.name,call.id),
+        Some(json!({"call_id":call.id,"name":call.name})));
+}
+fn abort_queued_calls(run:&mut Run)->Vec<ToolCall>{
+    let skipped=std::mem::take(&mut run.queued_calls);
+    for call in &skipped{record_unstarted_abort(run,call);}
+    skipped
+}
+
+/// Cancellation without an unresolved effect is terminal. Every advertised
+/// assistant tool-call ID gets one result, including unstarted approved calls.
+pub fn cancel_unstarted(run:&mut Run)->Result<Vec<ToolCall>,String>{
+    if !matches!(run.status,RunStatus::Running|RunStatus::Queued|RunStatus::Paused|RunStatus::AwaitingApproval)
+        ||run.in_flight.is_some()||!run.read_batch_in_flight.is_empty(){
+        return Err("cannot cancel while a tool outcome is unresolved".into());
+    }
+    let mut skipped=abort_queued_calls(run);
+    if let Some(call)=run.pending_approval.take(){
+        if !skipped.iter().any(|item|item.id==call.id){
+            record_unstarted_abort(run,&call);
+            skipped.push(call);
+        }
+    }
+    run.approval_decision=None;
+    run.cancel_after_tool=false;
+    run.status=RunStatus::Cancelled;
+    run.event("cancelled","Cancelled without dispatching queued tools",
+        Some(json!({"unstarted_tool_count":skipped.len()})));
+    Ok(skipped)
+}
+
 /// Validate before adding the assistant response to durable model history.
 /// Tool-call IDs are correlation keys, not mere display values.
 pub fn validate_new_calls(run:&Run,calls:&[ToolCall])->Result<(),String>{
@@ -120,12 +157,7 @@ pub fn finish_read_batch(run:&mut Run,calls:&[ToolCall],results:&[Result<String,
     run.queued_calls.drain(0..calls.len());
     run.read_batch_in_flight.clear();
     if run.cancel_after_tool{
-        // Keep transcript pairing valid even for the tail that was never
-        // dispatched after the user requested cancellation.
-        for call in run.queued_calls.drain(..){
-            run.messages.push(json!({"role":"tool","tool_call_id":call.id,
-                "content":"TOOL ERROR [ABORTED_BEFORE_DISPATCH]: cancelled"}));
-        }
+        abort_queued_calls(run);
         run.cancel_after_tool=false;
         run.status=RunStatus::Cancelled;
         run.event("cancelled","Cancellation completed after all started read tools settled",None);
@@ -258,6 +290,11 @@ pub fn finish(run:&mut Run,call:&ToolCall,outcome:&Result<String,String>,observe
     if pending_exact(run,call){
         run.pending_approval=None;
         run.approval_decision=None;
+        // Older checkpoints may also keep an approved call in the queue.
+        // Remove it so cancellation never emits a second result for this ID.
+        if let Some(index)=run.queued_calls.iter().position(|c|same_call(c,call)){
+            run.queued_calls.remove(index);
+        }
     }else{
         let index=run.queued_calls.iter().position(|c|same_call(c,call))
             .ok_or("tool call was removed from durable queue")?;
@@ -280,7 +317,7 @@ pub fn finish(run:&mut Run,call:&ToolCall,outcome:&Result<String,String>,observe
     if run.cancel_after_tool{
         run.cancel_after_tool=false;
         run.status=RunStatus::Cancelled;
-        run.queued_calls.clear();
+        abort_queued_calls(run);
         run.event("cancelled","Cancelled after durable tool result/reconciliation",None);
     }
     Ok(())
@@ -294,7 +331,10 @@ pub fn recover(run:&mut Run)->bool{
         && run.approval_decision.is_some();
     let malformed_terminal=run.terminal() && run.in_flight.is_some();
     let paused_read_batch=run.status==RunStatus::Paused && !run.read_batch_in_flight.is_empty();
-    if !interrupted && !approved_but_not_started && !malformed_terminal && !paused_read_batch{return false;}
+    let cancellation_without_effect=run.cancel_after_tool && !run.terminal()
+        && run.in_flight.is_none() && run.read_batch_in_flight.is_empty();
+    if !interrupted && !approved_but_not_started && !malformed_terminal
+        && !paused_read_batch && !cancellation_without_effect{return false;}
     run.status=RunStatus::Paused;
     if !run.read_batch_in_flight.is_empty(){
         // Nothing in this batch can cause user-visible mutations.
@@ -303,10 +343,7 @@ pub fn recover(run:&mut Run)->bool{
         let count=run.read_batch_in_flight.len();
         run.read_batch_in_flight.clear();
         if run.cancel_after_tool {
-            for call in run.queued_calls.drain(..){
-                run.messages.push(json!({"role":"tool","tool_call_id":call.id,
-                    "content":"TOOL ERROR [ABORTED_BEFORE_DISPATCH]: cancelled on restart"}));
-            }
+            abort_queued_calls(run);
             run.cancel_after_tool=false;run.status=RunStatus::Cancelled;
             run.event("cancelled","Read batch cancellation recovered without side effects",None);
             return false;
@@ -336,7 +373,9 @@ pub fn recover(run:&mut Run)->bool{
         return false;
     }
     if run.cancel_after_tool {
-        run.event("recovered_uncertain","Cancellation pending a durable tool outcome",None);
+        // There is no unresolved tool effect here; do not leave the run paused
+        // forever or retry an unstarted write after a cancelled restart.
+        let _=cancel_unstarted(run);
         return false;
     }
     if run.pending_approval.is_some() && run.approval_decision.is_none(){
@@ -541,6 +580,54 @@ mod tests{
         assert!(validate_new_calls(&run,&[call.clone(),call.clone()]).is_err());
         run.messages.push(json!({"role":"assistant","tool_calls":[{"id":"dup"}]}));
         assert!(validate_new_calls(&run,&[call]).is_err());
+    }
+
+    #[test]
+    fn sequential_cancel_preserves_every_assistant_tool_pair(){
+        let mut run=running();
+        let first=tool("write_file","w1");
+        let second=tool("write_file","w2");
+        let third=tool("read_file","r3");
+        run.messages.push(json!({"role":"assistant","tool_calls":[
+            {"id":"w1"},{"id":"w2"},{"id":"r3"}]}));
+        run.queued_calls.extend([first.clone(),second,third]);
+        begin(&mut run,&first).unwrap();
+        run.cancel_after_tool=true;
+        finish(&mut run,&first,&Ok("written".into()),false).unwrap();
+        assert_eq!(run.status,RunStatus::Cancelled);
+        assert!(run.queued_calls.is_empty());
+        assert!(run.in_flight.is_none());
+        for id in ["w1","w2","r3"]{
+            let results=run.messages.iter().filter(|m|
+                m["role"]=="tool" && m["tool_call_id"]==id).collect::<Vec<_>>();
+            assert_eq!(results.len(),1,"missing or duplicated result for {id}");
+            if id!="w1"{assert!(results[0]["content"].as_str().unwrap().contains("ABORTED_BEFORE_DISPATCH"));}
+        }
+        assert!(!recover(&mut run));
+    }
+    #[test]
+    fn cancelled_unstarted_queue_recovers_as_terminal_without_replay(){
+        let mut run=running();
+        run.queued_calls.push(tool("write_file","unstarted"));
+        run.cancel_after_tool=true;
+        run.status=RunStatus::Paused;
+        assert!(!recover(&mut run));
+        assert_eq!(run.status,RunStatus::Cancelled);
+        assert!(run.queued_calls.is_empty());
+        assert_eq!(run.messages.last().unwrap()["tool_call_id"],"unstarted");
+    }
+    #[test]
+    fn cancelled_approved_call_is_receipted_only_once(){
+        let mut run=running();
+        let call=tool("shell","approved");
+        run.queued_calls.push(call.clone());
+        run.pending_approval=Some(call.clone());
+        run.approval_decision=Some(true);
+        begin(&mut run,&call).unwrap();
+        run.cancel_after_tool=true;
+        finish(&mut run,&call,&Ok("done".into()),false).unwrap();
+        assert_eq!(run.messages.iter().filter(|m|
+            m["role"]=="tool" && m["tool_call_id"]=="approved").count(),1);
     }
     #[test]
     fn approved_unstarted_tool_and_cancellation_recover_correctly(){
