@@ -16,12 +16,22 @@ Existing conversations, user memories, file and output history, credentials and 
 - HTTP mutating endpoints for RSI campaigns, worktree adoption, built-in video models/rendering and video publishing return HTTP 410. Legacy GET paths remain for read-only job and output inspection.
 - The normal Rust worker refuses `rsi_evolve`, `rsi_compare`, `video` and `youtube_upload` jobs; previously queued jobs are preserved as terminal `needs_review` records when claimed, never silently submitted. The former `rsiApplyWhenFinished` installation branch has been removed.
 
-## Next cleanup boundaries
-- Remove remaining Rust/TypeScript SDK mutation methods, unused RSI/video modules and feature-specific library dependencies topologically, with old SQLite/job/archive fixtures retained.
+## Stage 3 — source and dependency removal
+
+- Removed 23 separate `src/engine/rsi*.rs` research/generation/worktree files, native `src/engine/video.rs` and `video_quality.rs`, their `engine/mod.rs` exports, the embedded Video/SelfImprovement pages and 5 RSI lab scripts.
+- Removed former `dev::start_rsi_install`, source promotion/rebuild/restart, RSI-only autonomous prompt controller and extra tool descriptors. Native source edits still use ordinary code tools, owner approval and frozen verifier evidence.
+- Replaced `api/rsi.rs` and `api/video.rs` with read-only archive adapters. Old MP4 paths remain sandboxed under their original job IDs; outgoing creation and publishing return HTTP 410. TypeScript SDK removes all built-in creation/install/adoption mutations and retains only legacy retrieval.
+- Removed the unused `resvg` direct dependency and pruned its 51 orphaned lockfile packages. No archived SQLite tables, file contents or migration histories were deleted.
+- Routine job completion no longer schedules algorithm-search experiments or policy meta-improvement.
+
+## Stage 4 — verification
+
+- CI checks TypeScript web type safety, TypeScript SDK contract tests, lean/static architecture guards, browser build, and `cargo test --release` on Linux, macOS and Windows.
+- Separate Rust tests cover durable job lifecycle, real tool approval, crash/restart behavior, shared session context, library archive reads and MCP. The exact final CI SHA is authoritative. Real model end-to-end performance is not inferred from synthetic fixtures.
 - Trace all `src/engine/{rsi*,video*}` references in `jobs.rs`, `chat/runtime.rs`, SDKs, API routes, tool definitions, build scripts and web navigation. Remove modules topologically only once normal chat, room, task execution and MCP contracts are verified.
 - Separate manual code editing/evaluation and verified memory/procedure reuse from RSI-specific campaign semantics.
 - Verify a genuine chat turn with tool calls, file editing, approvals, interruptions and restart on Windows/Linux/macOS against existing database fixtures and API contract tests.
 - Rewrite scorecard to prioritize task completion, context/token budget, durable work, MCP/provider integration and codebase simplicity; legacy RSI/video point floors no longer match the product.
 
 ## Limits / evidence
-No major source deletion is claimed at this stage. Static queue/index/UI contracts are tested; idle CPU reduction requires actual before/after profiling. Shared bus wakes workers only in one instance, so the finite polling backstop remains mandatory. Past explicit autoLearning values still exist in stored configurations. CI success means only the exact tested commit. Existing CI failures (SDK progress and RSI campaign fixture on the prior commit) must not be masked as successes.
+Source/module deletion is complete for the built-in media and RSI research paths, retaining historical API/DB records and manual code tools. The 5-second watchdog is still required for delayed jobs and external writers. Real CPU savings need profiling. Past explicitly enabled autoLearning settings remain respected. CI claims require the exact final-commit run; only a completed all-OS run counts as a release pass.

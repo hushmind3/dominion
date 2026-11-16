@@ -214,7 +214,7 @@ DM·음성·파일 첨부·슬래시 명령·Gateway 실시간 이벤트는 이�
 - `route_calibration.rs`: 실제 채택된 독립 검증 근거로만 작업 난이도별 하한 성공률 계산, 충분한 비교 표본 없으면 기존 라우터 유지
 - `model_cost.rs` + `gateway.rs`: 제공자 직접 입력 요금표의 캐시 읽기 반영 추정액, 미계측 요금/원가 분리; `db.rs`의 세션·전체 사용량 집계
 - `resource_lock.rs` + `tools.rs`: 셸·패치·쓰기의 동일 작업공간 충돌 직렬화, 다른 작업공간과 읽기는 병렬 실행
-- `video_quality.rs` + `video.rs`: 최종 MP4 실제 스트림을 검사하는 기술 QA. 의미적 영상 품질 평가와 구분
+- **내장 영상·음성 렌더러 및 독립 RSI 엔진은 제거**되었습니다. 기존 출력은 `api/video.rs`에서 기록 조회·MP4 다운로드만 제공합니다.
 - `evaluation.rs` → `api/system.rs` → `/api/evaluation/summary` → TS SDK `evaluation.summary()` 및 활동 화면: 실검증 작업 단위 지표. 대규모 공개 벤치마크 성능 주장은 하지 않음
 
 [구현 흐름·재현 절차](docs/SUB2-COST-ROUTING-EVALUATION-2026-11-16.md)
@@ -224,7 +224,7 @@ DM·음성·파일 첨부·슬래시 명령·Gateway 실시간 이벤트는 이�
 - `chat/runtime.rs`: 실제 턴 상태·도구 실행·세션·프로그램 체크포인트·취소를 소유하며 `tool_projection`과 `outcome`을 호출합니다.
 - `chat/tool_projection.rs`: 제공자 모델이 보는 도구 이름/스키마를 방/홈/자동 실행 맥락에 따라 투영하고 직렬화 바이트 예산을 준수합니다. 실행 권한·승인 정책은 이 모듈로 이동하지 않았습니다.
 - `chat/outcome.rs`: 완수 조건·확인된 위반·작업 결과 해시·증거 기반 성공 경험 기록을 판정합니다. DB 최종 트랜잭션은 기존 런타임/DB가 담당합니다.
-- `db.rs::patch_if_all_merge`: fresh DB 상태에 guards를 검증한 뒤 중첩 키만 원자 병합하는 공통 저장소 API. `jobs.rs::JobContext::checkpoint`는 `status`·`cancelRequested`를 동시에 조건 검사하고 `videoState`를 병합합니다.
+- `db.rs::patch_if_all_merge`: fresh DB 상태에 guards를 검증한 뒤 중첩 키만 원자 병합하는 공통 저장소 API. `jobs.rs::JobContext::checkpoint`는 `status`·`cancelRequested`를 동시에 조건 검사하고 기존 작업 기록의 중첩 상태도 안전하게 병합합니다.
 - 기존 `sdk::Dominion` / `api/jobs` / GUI / TS SDK는 변경된 인터페이스가 없으며 동일 Rust 엔진에서 실행됩니다.
 
 [기술 경계·검증 범위](docs/SUB2-HARNESS-BOUNDARIES-2026-11-16.md)
@@ -234,7 +234,7 @@ DM·음성·파일 첨부·슬래시 명령·Gateway 실시간 이벤트는 이�
 
 - `src/events.rs::Bus::emit`: synchronize sequence allocation, SQLite persistence and broadcast to preserve order across concurrent cloned writers.
 - `src/api/system.rs::events`: bounded paginated replay, gap notification and live recovery. `/api/events?after=` and `Last-Event-ID` share the cursor; expired history emits `event_gap` and asks clients to resynchronize state.
-- `sdk/typescript/src/index.ts`: independently consumable, typed client for **the same** Rust `/api/*` endpoints, including job polling, approval, room idempotency, video, RSI, and abortable SSE/chat. the main-branch `web/src/api.ts` remains independent rather than importing the auxiliary SDK. Both clients reach the same Rust `/api/*` server.
+- `sdk/typescript/src/index.ts`: independently consumable, typed client for **the same** Rust `/api/*` endpoints, including job polling, approval, room idempotency, archived video/RSI reads, and abortable SSE/chat. the main-branch `web/src/api.ts` remains independent rather than importing the auxiliary SDK. Both clients reach the same Rust `/api/*` server.
 - [Implementation trace and evidence](docs/SUB2-SDK-DURABLE-EVENTS-2026-11-15.md). Unit tests added; no live provider benchmark claimed.
 
 ### Autonomous Rust execution path
@@ -266,4 +266,4 @@ Public Codex and DeepSeek Harness sources motivated a concrete fix: the previous
 - `src/api/sdk_bridge.rs`: `/api/sdk/runs` is the main frontend's compatibility surface over the existing native prompt job scheduler; it is not a new agent engine. The UI's requested approvals are resolved only through the actual session-bound durable approval API. Owner reconciliation is explicitly distinguished from engine verification. Resume requires owner-attested absence of prior effects, with a bounded replay count.
 - `src/engine/autonomy.rs`: explicit `verifyCommand` is a frozen `command_succeeded` criterion, requiring real success **after the last source mutation**. Final acceptance and user steering share the same SQLite CAS gate.
 - `src/engine/tools.rs` + `src/engine/chat/runtime.rs`: `delegate_parallel` uses the durable prompt worker to execute 2–4 independent child sessions, read-only in both advertised and executed tool paths; per-parent total 8 and nested depth 4.
-- `src/engine/video.rs`: partial-scene ComfyUI rerender, SHA-256 clip manifests, deterministic seeds, frozen total duration, memory-bounded streaming hashing and FFmpeg concatenation with re-encode fallback. No quantified GPU savings or final film quality score claimed. [Code trace](docs/SUB2-RUNTIME-VIDEO-2026-11-15.md). See [source comparison](docs/FRONTIER-COMPARISON-SUB2-2026-11-15.md).
+- **Deprecated media archival:** legacy video MP4 and job records remain readable through `api/video.rs`; new media must use MCP/Connections. Old implementation details are archived at [historical trace](docs/SUB2-RUNTIME-VIDEO-2026-11-15.md).

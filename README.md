@@ -1,8 +1,8 @@
-## 🦀 Lean Rust agent core — owner-directed improvements (transition, 2026-11-16)
+## 🦀 Lean Rust agent core — owner-directed improvements (2026-11-16)
 
 **The current product direction supersedes the previous built-in video/RSI scoring brief.** DOMINION should execute owner-assigned tasks (planning, tools, approval, delegation, budgets, cancellation, durable state, recovery and result verification). Changes to the harness itself are **owner-directed coding tasks**, never an automatically adopted core mutation campaign. Optional video/audio generation is connected through MCP/connected tools rather than a permanent built-in rendering engine.
 
-On the `dominion-sub2` transition branch, new chat and room configurations default `autoLearning` to `false`; the 5-minute automatic growth/distill/learning retry sweeps are disabled; workers sleep on durable job events with a 5-second delayed-job/restart backstop; SQLite scans only indexed queued/running jobs. The embedded video and self-improvement page entries are removed from navigation. **Historical data and actual Rust video/RSI modules remain on disk while their remaining API/SDK call chains are audited.** The transition is not yet a full source/dependency deletion. [Migration and preservation audit](docs/SUB2-LEAN-CUTOVER-2026-11-16.md).
+On `dominion-sub2`, new chats and rooms default `autoLearning=false`; perpetual growth/distillation/experimental-policy loops no longer run; the job scheduler wakes from events with a 5-second recovery backstop and indexed live-job lookup. The built-in video/audio renderer and autonomous RSI research/generation source modules, write APIs, frontend screens, JS scripts and unused SVG-renderer dependencies have been removed. **Archived jobs, SQLite records, previous MP4s, memory and conversations remain readable.** New media generation is delegated through MCP/Connections. [Lean-core source and compatibility audit](docs/SUB2-LEAN-CUTOVER-2026-11-16.md).
 
 # DOMINION
 
@@ -90,9 +90,9 @@ You choose the models. You control the credentials. You run the workspace.
 | **Persistent memory** | Store conversation context, verified experience, corrections, and execution history locally. |
 | **Multi-agent rooms** | Give agents separate roles, run shared discussions, and coordinate workflows with multiple participants. |
 | **Durable jobs** | Track tasks, approvals, execution evidence, cancellation, and recovery in SQLite. |
-| **AI video creation** | A dedicated studio with selectable video-generation families (Wan 2.1 1.3B / 14B and Wan 2.2 5B), family-specific Q3/Q4/Q5/Q6/Q8/FP8/FP16 options and approximate full-package disk sizes, model-guided multi-scene storyboarding, native/ComfyUI rendering, clip reuse and YouTube upload. A running compatible ComfyUI environment remains required for AI video rendering. |
+| **Media via MCP/Connections** | Invoke external generation services on demand; the Rust executable does not embed video models, FFmpeg rendering or speech synthesis. Historical finished MP4s remain accessible. |
 | **Messaging channels** | Native Telegram and Discord adapters; currently require bot credentials and manual configuration. |
-| **Recursive self-improvement (RSI) research** | Experiment with source-editing campaigns, independent evaluations, candidate selection, evidence records, and controlled adoption. This does **not** claim proven general recursive intelligence gains. |
+| **Owner-directed code improvement** | Edit repositories, execute real tests, inspect failures and seek user approval for adoption. No autonomous core mutation or generational RSI campaigns. |
 
 ### Why a separate agent workspace?
 
@@ -137,15 +137,15 @@ Native Rust agent harness
        ├── Chat / streaming / tool calls / approvals
        ├── Memory / experience / workflows / multi-agent rooms
        ├── Skills / MCP / Telegram / Discord
-       ├── Video generation jobs (native / ComfyUI) and YouTube integration
-       ├── Experimental self-improvement and evaluation campaigns
+       ├── On-demand external media and specialized tools through MCP
+       ├── Owner-directed source editing, tests and verifier evidence
        ├── User-configured model APIs
        └── Local inference (GGUF / llama.cpp and other configured runtimes)
 ```
 
 The agent execution engine is written in **Rust**. Node.js is used to build the React frontend rather than to host the agent runtime. Some local-model integrations and MCP servers may require their own processes.
 
-**Technical docs:** [Engine](ENGINE.md) · [Documentation index](docs/INDEX.md) · [Self-improvement execution contract](docs/RSI-MAIN-INTEGRATION-2026-11-12.md).
+**Technical docs:** [Engine](ENGINE.md) · [Documentation index](docs/INDEX.md) · [Lean-core migration contract](docs/SUB2-LEAN-CUTOVER-2026-11-16.md).
 
 ## 💰 Per-job provider token ceilings
 
@@ -163,24 +163,18 @@ See [2026 source-guided harness comparison](docs/AGENT-HARNESS-2026.md) and [Typ
 
 On `dominion-sub2`, the native Rust harness has dedicated `chat/tool_projection.rs` for room/Home/agent tool-schema selection and actual serialized-size ceilings, and `chat/outcome.rs` for terminal verdicts, idempotent finalization fingerprints and evidence-gated success memory. The owner-controlled execution loop remains in `chat/runtime.rs` and retains its existing GUI/TypeScript/Rust SDK contract. Empty or malformed tools are rejected before they reach the model, and a single oversize schema can no longer exceed the declared tool budget.
 
-`Store::patch_if_all_merge` merges nested checkpoint state under the same SQLite connection lock as the cancellation/status guards. The Rust job worker uses it for `videoState`: simultaneous scene/prompt checkpoints cannot overwrite one another, and a terminal/cancelled job cannot be advanced by late progress. No database migration, model change, new API or UI redesign is required. [Implementation, comparisons and limitations](docs/SUB2-HARNESS-BOUNDARIES-2026-11-16.md).
+`Store::patch_if_all_merge` merges nested checkpoint state under the same SQLite connection lock as the cancellation/status guards. The native job worker checks durable cancellation/terminal state under the same lock; obsolete nested checkpoint records remain compatible for historical jobs. No database migration, model change, new API or UI redesign is required. [Implementation, comparisons and limitations](docs/SUB2-HARNESS-BOUNDARIES-2026-11-16.md).
 
 
 ## 🎯 Sub2 verified-cost routing and native task scorecard
 
 Auto model routing now learns a cautious lower confidence bound **only from independently verified, completed native Rust work** and refuses to substitute fabricated model benchmarks or self-graded answers. Existing explicitly selected providers, capabilities, fallback and the default router remain intact until every candidate has at least 8 comparable verified cases. A local pricing panel accepts owner-entered input/output/cache-read model tariffs. `model.usage` records configured-rate estimates and unpriced coverage, never provider invoices. The native evaluation view is linked end-to-end from `engine/evaluation.rs` to `GET /api/evaluation/summary`, TypeScript SDK `evaluation.summary()` and the existing Activity screen; it reports verified success, missing evidence, tokens and latency. Use `node scripts/sub2-compare.mjs baseline.json candidate.json` on matching exported cohorts, with tool-schema and budget metadata, for reproducible comparisons.
 
-Parallel mutating tools now use Rust resource-scoped locks across agent sessions: shell, terminal and patches serialize on the same workspace; safe concurrent reads and independent workspaces retain parallelism. Finished videos receive an offline `ffprobe` technical QA receipt checking playable video, duration and required audio/subtitle tracks. Semantic/video-character continuity and neural speech quality remain unmeasured without a real multimodal evaluator. [Judge-ready contracts, caveats and test map](docs/SUB2-COST-ROUTING-EVALUATION-2026-11-16.md).
+Parallel mutating tools now use Rust resource-scoped locks across agent sessions: shell, terminal and patches serialize on the same workspace; safe concurrent reads and independent workspaces retain parallelism. The previously built-in video QA module was removed with the media renderer. User-selected external MCP media providers own their generation and quality evaluation, while old MP4 files remain retrievable. [Judge-ready contracts, caveats and test map](docs/SUB2-COST-ROUTING-EVALUATION-2026-11-16.md).
 
-## 🎬 Sub2 integrated video postproduction and safe multi-agent budgets
+## ⚙️ Parallel Rust harness budgets
 
-The `dominion-sub2` branch now builds an AI scene plan **and** concise voiceover lines in one configured text-model call, freezes both for crash replay, reuses only SHA-256-verifiable clips, optionally adds system TTS and timed selectable MP4 subtitles with FFmpeg, and exposes the resulting narrated/captioned output for owner-approved YouTube publication. The editor preserves its existing four tabs, adds narration override and reports audio and recovered-scene receipts. Large model downloads now support strong-ETag range resumption and serialize writes to shared CLIP/VAE files within each model folder. Speech uses installed macOS/Windows voices; no neural-TTS fidelity claim is made. Both Rust and TypeScript SDKs share the native video job lifecycle. [End-to-end contract](docs/SUB2-VIDEO-POSTPRODUCTION-2026-11-16.md).
-
-Parallel native agent program branches now receive **nonoverlapping model-round/tool-call/proposal quotas** and unique operation sequence ranges, instead of each independently inheriting the full remaining budget. Existing isolation and cancellation policies remain intact. These are bounded operation counts, not a shared multi-provider monetary billing guarantee.
-
-## 🛑 Video job stop and GPU cancellation (Sub2 only)
-
-The Video Studio's active preview and project library now let you stop an in-progress video. The GUI and TypeScript SDK (`video.cancel(id)`) call `POST /api/video/jobs/:id/cancel` on the **same Rust job engine**. ComfyUI cancellation is sent only to the exact recorded prompt UUID (never globally); its accepted request and an uncertain remote result are distinguished in the durable job record and UI. Rust video checkpoints now preserve storyboard and scene counters while updating the active prompt ID. This work is isolated to `dominion-sub2`; it does not alter main or other branches. [Execution and regression scope](docs/SUB2-VIDEO-CANCEL-CHECKPOINT-2026-11-16.md).
+Independent agent branches reserve non-overlapping model-round, tool-call and proposal budgets as well as durable operation identifiers. Workspace mutations and shell commands serialize by resource lock while read-only tasks can run concurrently. These are operation budgets rather than proof of billed cost.
 
 ## 🦀 Native Rust SDK and autonomous execution
 

@@ -56,3 +56,15 @@ test('no background improvement campaigns triggered by normal execution completi
  assert.doesNotMatch(outcome,/policy::propose_candidates\(state\)/);
  assert.match(outcome,/route_calibration::observe_verified/);
 });
+
+test('old multimedia and RSI source/build dependencies are absent',()=>{
+ const engine=src('src/engine/mod.rs');
+ const cargo=src('Cargo.toml');
+ assert.doesNotMatch(engine,/pub mod rsi(?:_\w+)?;/);
+ assert.doesNotMatch(engine,/pub mod video;/);
+ assert.doesNotMatch(cargo,/\bresvg\s*=/);
+ const runtime=src('src/engine/chat/runtime.rs');
+ assert.doesNotMatch(runtime,/crate::engine::rsi_evolve|rsiRun/);
+ const dev=src('src/engine/dev.rs');
+ assert.doesNotMatch(dev,/fn start_rsi_install|install_rsi_source/);
+});
