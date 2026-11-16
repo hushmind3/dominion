@@ -48,7 +48,7 @@ assert.ok(!tools.includes('tool("rsi_')&&!tools.includes('tool("algorithm_propos
 for(const signature of ['retired_legacy_kind','active_jobs()','job_wakeup.notified()'])
  assert.ok(jobs.includes(signature),'Worker lost archival safety or indexed wakeup: '+signature);
 assert.ok(!read('src/bootstrap.rs').includes('schedule_experiments'),'Auto-experiment boot hook survived');
-assert.ok(native.includes('dominion_agent_sdk::'),'Native job stopped using owned Rust SDK');
+assert.ok(native.includes('dominion_sdk::harness::'),'Native job stopped using owned Rust SDK');
 assert.ok(kernel.includes('mod schema;')&&kernel.includes('pub mod replay;'),'Kernel lost proven argument/evidence operations');
 const ts=read('sdk/typescript/src/index.ts');
 assert.ok(!ts.includes('readonly video=')&&!ts.includes('readonly rsi='),'Retired TS SDK methods remain');
