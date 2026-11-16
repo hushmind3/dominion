@@ -326,10 +326,42 @@ fn render_workload(input: &Value) -> Value {
     })
 }
 
+/// Frontend-safe durable video receipt. Keep the storyboard available even
+/// before rendering begins; only expose playback for a completed job.
 pub fn public_job(job: &Value) -> Value {
     let id = job["id"].as_str().unwrap_or("");
     let ready = job["kind"] == "video" && job["status"] == "completed";
-    json!({"id":id,"kind":job["kind"],"title":job["input"]["title"],"brief":job["input"]["brief"],"engine":job["input"]["engine"],"status":job["status"],"phase":job.get("phase").unwrap_or(&job["status"]),"progress":job["progress"],"error":job["error"],"createdAt":job.get("createdAt").or(job.get("created_at")),"videoJobId":job["input"]["videoJobId"],"privacyStatus":job["input"]["privacyStatus"],"outputUrl":ready.then(||format!("/api/video/jobs/{id}/content")),"storyboard":job["videoState"]["scenes"],"result":job["result"],"duration":job["input"]["duration"],"aspectRatio":job["input"]["aspectRatio"],"renderWorkload":render_workload(&job["input"]),"maxNewScenes":job["input"]["maxNewScenes"]})
+    let render = &job["input"]["render"];
+    let storyboard = job["input"]["scenes"].as_array()
+        .map(|items| json!(items))
+        .unwrap_or_else(||job["videoState"]["scenes"].clone());
+    json!({
+        "id":id,"kind":job["kind"],"title":job["input"]["title"],
+        "brief":job["input"]["brief"],"engine":job["input"]["engine"],
+        "status":job["status"],
+        "phase":job.get("phase").unwrap_or(&job["status"]),
+        "progress":job["progress"],"error":job["error"],
+        "createdAt":job.get("createdAt").or(job.get("created_at")),
+        "videoJobId":job["input"]["videoJobId"],
+        "privacyStatus":job["input"]["privacyStatus"],
+        "outputUrl":ready.then(||format!("/api/video/jobs/{id}/content")),
+        "storyboard":storyboard,"result":job["result"],
+        "duration":job["input"]["duration"],
+        "aspectRatio":job["input"]["aspectRatio"],
+        "renderWorkload":render_workload(&job["input"]),
+        "renderParams":{"fps":render["fps"],"seed":render["seed"],
+            "width":render["width"],"height":render["height"]},
+        "continuity":job["input"]["continuity"],
+        "negativePrompt":render["negativePrompt"],
+        "reuseVideoJobId":job["input"]["reuseVideoJobId"],
+        "maxNewScenes":job["input"]["maxNewScenes"],
+        "sceneProgress":{
+            "index":job["videoState"]["sceneIndex"],
+            "total":job["videoState"]["sceneTotal"],
+            "rendered":job["videoState"]["renderedScenes"],
+            "reused":job["videoState"]["reusedScenes"],
+        }
+    })
 }
 pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
     let cfg = config(state);
@@ -1335,6 +1367,20 @@ mod tests {
         assert_eq!(comfy_result_status(&json!({"status":"in_progress"})),"running");
         assert_eq!(comfy_result_status(&json!({"status":{"status_str":"error"}})),"failed");
         assert_eq!(comfy_result_status(&json!({"status":"cancelled"})),"cancelled");
+    }
+
+    #[test]
+    fn public_video_receipt_shows_storyboard_before_render_without_false_playback() {
+        let queued=json!({"id":"abc","kind":"video","status":"queued",
+            "input":{"engine":"comfyui","title":"Project","brief":"Plan",
+                "scenes":["intro","outro"],"render":{"fps":16,"seed":42,
+                    "width":480,"height":832,"frames":96}}});
+        let result=public_job(&queued);
+        assert_eq!(result["storyboard"],json!(["intro","outro"]));
+        assert_eq!(result["renderParams"]["seed"],42);
+        assert_eq!(result["renderParams"]["fps"],16);
+        assert_eq!(result["sceneProgress"]["index"],Value::Null);
+        assert_eq!(result["outputUrl"],Value::Null);
     }
 
     #[test]
