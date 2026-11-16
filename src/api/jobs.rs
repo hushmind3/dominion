@@ -42,6 +42,7 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
             value["limits"] = json!({
                 "maxSteps":max_steps,
                 "maxModelCalls":max_calls,
+                "maxToolCalls":input["maxToolCalls"].as_u64().unwrap_or(max_steps.saturating_mul(4)).clamp(1,4096),
                 "maxEstimatedTokens":input["tokenBudget"].as_u64().unwrap_or(100_000).clamp(1,20_000_000),
                 "maxParallelReads":input["parallelReads"].as_u64().unwrap_or(4).clamp(1,16),
                 "maxResultChars":input["maxResultChars"].as_u64().unwrap_or(3000).clamp(128,16384)
