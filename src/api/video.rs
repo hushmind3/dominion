@@ -207,6 +207,27 @@ pub async fn captions(
         Err(_)=>error(StatusCode::NOT_FOUND,"자막 파일을 찾지 못했습니다."),
     }
 }
+/// Frozen production bundle metadata accompanies the completed video.
+pub async fn production(
+    State(state):State<AppState>,Path(id):Path<String>,request:Request<Body>
+)->Response{
+    let output=match video::output_path(&state,&id){
+        Ok(path)=>path,Err(e)=>return error(StatusCode::NOT_FOUND,e),
+    };
+    let source=output.with_file_name("production.json");
+    if !source.is_file(){return error(StatusCode::NOT_FOUND,"제작 기록이 없습니다.");}
+    match tower_http::services::ServeFile::new(source).try_call(request).await{
+        Ok(result)=>{
+            let mut response=result.into_response();
+            response.headers_mut().insert(axum::http::header::CONTENT_TYPE,
+                "application/json; charset=utf-8".parse().unwrap());
+            response.headers_mut().insert(axum::http::header::CONTENT_DISPOSITION,
+                "attachment; filename=\"dominion-production.json\"".parse().unwrap());
+            response
+        }
+        Err(_)=>error(StatusCode::NOT_FOUND,"제작 기록을 찾지 못했습니다."),
+    }
+}
 pub async fn outputs_handler(State(state): State<AppState>) -> Json<Value> {
     Json(json!(outputs(&state)))
 }
