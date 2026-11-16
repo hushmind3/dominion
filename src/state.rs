@@ -14,6 +14,9 @@ pub struct AppState {
     pub config: Config,
     pub store: Store,
     pub bus: Bus,
+    /// Shared HTTP transport pools, keyed by request timeout. API credentials
+    /// remain request-local and are never stored in this cache.
+    provider_http_clients: Arc<Mutex<HashMap<u64, reqwest::Client>>>,
     pub vault: Arc<Vault>,
     /// Pending tool approvals: approval id -> waiter.
     pub approvals: Arc<Mutex<HashMap<String, oneshot::Sender<bool>>>>,
@@ -43,6 +46,7 @@ impl AppState {
             config,
             store,
             bus,
+            provider_http_clients: Arc::new(Mutex::new(HashMap::new())),
             vault: Arc::new(vault),
             approvals: Arc::new(Mutex::new(HashMap::new())),
             cancelled: Arc::new(Mutex::new(HashSet::new())),
@@ -53,6 +57,22 @@ impl AppState {
             instance_id,
             maintenance: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    /// Reuse TLS connections across ordinary chats, rooms and SDK turns.
+    /// The state lock is released before any await, and the cache contains no
+    /// bearer token, provider URL or other user-specific credentials.
+    pub fn provider_http_client(&self, timeout_secs: u64) -> Result<reqwest::Client, String> {
+        if let Some(client) = self.provider_http_clients.lock().unwrap()
+            .get(&timeout_secs).cloned() {
+            return Ok(client);
+        }
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(timeout_secs))
+            .build()
+            .map_err(|error| error.to_string())?;
+        let mut cache = self.provider_http_clients.lock().unwrap();
+        Ok(cache.entry(timeout_secs).or_insert(client).clone())
     }
 
     pub fn set_maintenance(&self, enabled: bool) {
@@ -195,6 +215,19 @@ mod tests {
         let store = Store::open(&cfg.db_path()).unwrap();
         let vault = Vault::open(&cfg.key_path());
         (AppState::new(cfg, store, vault), dir)
+    }
+
+    #[test]
+    fn provider_transport_pool_is_shared_by_clones_and_split_by_timeout() {
+        let (state, dir) = temp_state();
+        let cloned = state.clone();
+        assert!(state.provider_http_client(60).is_ok());
+        assert!(cloned.provider_http_client(60).is_ok());
+        assert_eq!(state.provider_http_clients.lock().unwrap().len(), 1);
+        assert!(state.provider_http_client(300).is_ok());
+        assert_eq!(cloned.provider_http_clients.lock().unwrap().len(), 2);
+        assert!(Arc::ptr_eq(&state.provider_http_clients, &cloned.provider_http_clients));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
