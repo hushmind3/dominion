@@ -114,6 +114,40 @@ impl BudgetLedger {
     }
 }
 
+/// Shared provider token admission for native jobs and ordinary chat.
+///
+/// Preflight works on an estimate before a paid call; settlement uses actual
+/// provider usage (or a host estimate when exact telemetry is unavailable).
+/// The charged total is monotonic even if the provider overruns the budget.
+/// A model reply admitted on the estimate cannot dispatch effects when its
+/// actual settlement exceeds the owner's ceiling.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ModelTokenBudget {
+    limit: u64,
+    charged: u64,
+}
+impl ModelTokenBudget {
+    /// Recover the exact previously charged usage without resetting it.
+    pub fn new(limit: u64, already_charged: u64) -> Self {
+        Self { limit, charged: already_charged }
+    }
+    /// A conservative preflight authorization, not a promise that the
+    /// provider will honor the estimate. Use `charge` after each response.
+    pub fn can_admit(&self, estimated_additional: u64) -> bool {
+        self.charged.saturating_add(estimated_additional) <= self.limit
+    }
+    /// Charge even an over-budget provider response for audit/recovery.
+    /// Returning false forbids executing tools or accepting a final answer
+    /// derived from that reply.
+    pub fn charge(&mut self, actual_additional: u64) -> bool {
+        self.charged = self.charged.saturating_add(actual_additional);
+        self.charged <= self.limit
+    }
+    pub fn charged(&self) -> u64 { self.charged }
+    pub fn remaining(&self) -> u64 { self.limit.saturating_sub(self.charged) }
+    pub fn exceeded(&self) -> bool { self.charged > self.limit }
+}
+
 /// Only adjacent reads may share a batch. An effect is an ordering barrier:
 /// a later observation must never overtake the write it was meant to inspect.
 pub fn read_batch_end<T>(calls: &[T], start: usize, max_parallel: usize,
@@ -130,6 +164,35 @@ pub fn read_batch_end<T>(calls: &[T], start: usize, max_parallel: usize,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_model_token_budget_reconciles_estimated_and_actual_usage() {
+        let mut budget=ModelTokenBudget::new(10_000,0);
+        assert!(budget.can_admit(3_000));
+        assert!(budget.charge(4_000));
+        assert_eq!(budget.remaining(),6_000);
+        assert!(!budget.can_admit(6_001));
+        assert!(budget.can_admit(6_000));
+        assert!(!budget.charge(7_000),
+            "provider usage overrun must be retained, but never authorized");
+        assert_eq!(budget.charged(),11_000);
+        assert_eq!(budget.remaining(),0);
+        assert!(budget.exceeded());
+        assert!(!budget.can_admit(0));
+    }
+
+    #[test]
+    fn recovered_token_budget_never_refunds_reported_provider_usage() {
+        let mut budget=ModelTokenBudget::new(2_000,1_900);
+        assert!(budget.can_admit(100));
+        assert!(!budget.can_admit(101));
+        assert!(budget.charge(100));
+        assert!(!budget.charge(1));
+        assert_eq!(budget.charged(),2_001);
+        let recovered=ModelTokenBudget::new(2_000,budget.charged());
+        assert!(recovered.exceeded());
+        assert_eq!(recovered.remaining(),0);
+    }
 
     #[test]
     fn parallel_branches_share_one_admission_budget() {
