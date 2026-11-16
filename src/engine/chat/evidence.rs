@@ -27,7 +27,56 @@ pub(super) fn evidence_for_source(state:&AppState,session:&str,source:&str,execu
     // owner's request. Their persisted operations prevent duplicate execution.
     for message in state.store.messages(session){if message["metadata"]["replyToMessageId"].as_str()==Some(source){if let Some(run)=message["metadata"]["executionId"].as_str(){runs.insert(run.to_string());}}}
     let epoch=state.store.get("execution",execution).and_then(|e|e["ownerEvidenceEpoch"].as_u64()).unwrap_or(0);
-    state.store.all("execution_operation").into_iter().filter(|operation|operation["status"]=="completed"
-        &&operation["runId"].as_str().is_some_and(|id|runs.contains(id))
-        &&(epoch==0||(operation["runId"]==execution&&operation["opSeq"].as_u64().unwrap_or(0)>epoch))).collect()
+    // Query only relevant persisted receipts. The historical operation table
+    // grows indefinitely, but ordinary turn verification must not scan it.
+    let mut evidence=Vec::new();
+    let mut ids=runs.into_iter().collect::<Vec<_>>();
+    ids.sort();
+    for run_id in ids {
+        let operations=match state.store.execution_operations(&run_id){
+            Ok(rows)=>rows,
+            Err(error)=>{
+                state.store.audit("chat.evidence_query_failed",
+                    serde_json::json!({"executionId":execution,"runId":run_id,"error":error}));
+                return Vec::new();
+            }
+        };
+        evidence.extend(operations.into_iter().filter(|operation|
+            operation["status"]=="completed"
+            &&(epoch==0||(run_id==execution
+                &&operation["opSeq"].as_u64().unwrap_or(0)>epoch))
+        ));
+    }
+    evidence
+}
+
+#[cfg(test)]
+mod evidence_tests {
+    use super::*;
+    use serde_json::json;
+    use std::path::Path;
+    #[test]
+    fn evidence_reads_selected_run_and_honors_owner_epoch() {
+        let root=std::env::temp_dir().join(format!("dominion-evidence-{}",uuid::Uuid::new_v4()));
+        let config=crate::config::Config{
+            port:0,data_dir:root.clone(),web_dir:root.join("web"),workspace:root.clone()
+        };
+        let store=crate::db::Store::open(Path::new(":memory:")).unwrap();
+        let state=AppState::new(config.clone(),store,
+            crate::vault::Vault::open(&config.key_path()));
+        state.store.put("execution",&json!({"id":"current","ownerEvidenceEpoch":2}));
+        for (id,run,seq,status) in [
+            ("old","current",1,"completed"),
+            ("current-op","current",3,"completed"),
+            ("pending","current",4,"running"),
+            ("foreign","other",3,"completed")
+        ] {
+            state.store.put("execution_operation",&json!({
+                "id":id,"runId":run,"opSeq":seq,"status":status
+            }));
+        }
+        let evidence=evidence_for_source(&state,"session","source","current");
+        assert_eq!(evidence.len(),1);
+        assert_eq!(evidence[0]["id"],"current-op");
+    }
 }

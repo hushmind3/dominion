@@ -1,5 +1,6 @@
 mod api;
 mod bootstrap;
+mod build_identity;
 mod config;
 mod db;
 mod engine;

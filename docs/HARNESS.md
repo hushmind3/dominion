@@ -60,3 +60,13 @@ The SDK retains the model reply for inspection but exposes the terminal `taskOut
 ## Regression contract
 
 CI validates TypeScript UI and SDK types, the native architecture graph, and Rust workspace tests on Windows, macOS and Linux. Core acceptance cases include durable state, cancellation, approvals, tool receipts, delegation isolation, chat, memory and retrieval. Deployment is not declared successful until all matrix jobs pass.
+
+## Git metadata and scoped acceptance evidence
+
+Source builds do not watch `.git/HEAD` or moving refs as Cargo inputs. An
+explicit packaged release can embed `DOMINION_RELEASE_COMMIT`,
+`DOMINION_RELEASE_BRANCH`, and `DOMINION_RELEASE_DIRTY`. A normal local source
+checkout reports its observed Git revision once at runtime with
+`identitySource: source-checkout`, rather than claiming to embed that revision.
+Ordinary chat acceptance reads `execution_operations(runId)` only for relevant
+executions, not the entire historical tool log.

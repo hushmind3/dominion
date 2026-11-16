@@ -22,9 +22,10 @@ pub async fn health() -> Json<Value> {
         "executionKernel": "dominion-core",
         "executionKernelOrigin": "dominion-sub4",
         "instanceId":std::env::var("DOMINION_ENGINE_INSTANCE").ok(),
-        "commit": option_env!("DOMINION_BUILD_COMMIT").unwrap_or("unknown"),
-        "branch": option_env!("DOMINION_BUILD_BRANCH").unwrap_or("unknown"),
-        "dirty": option_env!("DOMINION_BUILD_DIRTY").map(|value| value == "true"),
+        "commit": crate::build_identity::running().commit,
+        "branch": crate::build_identity::running().branch,
+        "dirty": crate::build_identity::running().dirty,
+        "identitySource": crate::build_identity::running().source,
     }))
 }
 
@@ -44,9 +45,10 @@ pub async fn benchmark_identity(State(state): State<AppState>) -> Json<Value> {
         "dataRoot": canonical(&state.config.data_dir),
         "workspace": canonical(&state.config.workspace),
         "build": env!("CARGO_PKG_VERSION"),
-        "commit": option_env!("DOMINION_BUILD_COMMIT").unwrap_or("unknown"),
-        "branch": option_env!("DOMINION_BUILD_BRANCH").unwrap_or("unknown"),
-        "dirty": option_env!("DOMINION_BUILD_DIRTY").map(|value| value == "true"),
+        "commit": crate::build_identity::running().commit,
+        "branch": crate::build_identity::running().branch,
+        "dirty": crate::build_identity::running().dirty,
+        "identitySource": crate::build_identity::running().source,
         "pid": std::process::id(),
     }))
 }

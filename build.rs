@@ -1,27 +1,16 @@
-use std::process::Command;
-
-fn git(args: &[&str]) -> Option<String> {
-    let output = Command::new("git").args(args).output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    (!text.is_empty()).then_some(text)
-}
-
+// Build scripts must not make moving Git refs inputs to the Rust crate.
 fn main() {
-    println!("cargo:rerun-if-env-changed=DOMINION_RSI_BUILD_COMMIT");
-    let commit = git(&["rev-parse", "HEAD"]).unwrap_or_else(|| "unknown".into());
-    let branch =
-        git(&["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_else(|| "unknown".into());
-    let dirty = git(&["status", "--porcelain", "--untracked-files=no"])
-        .map(|status| (!status.is_empty()).to_string())
-        .unwrap_or_else(|| "unknown".into());
-    println!("cargo:rustc-env=DOMINION_BUILD_COMMIT={commit}");
-    println!("cargo:rustc-env=DOMINION_BUILD_BRANCH={branch}");
-    println!("cargo:rustc-env=DOMINION_BUILD_DIRTY={dirty}");
-    println!("cargo:rerun-if-changed=.git/HEAD");
-    if branch != "HEAD" && branch != "unknown" {
-        println!("cargo:rerun-if-changed=.git/refs/heads/{branch}");
+    println!("cargo:rerun-if-changed=build.rs");
+    for (source, target) in [
+        ("DOMINION_RELEASE_COMMIT", "DOMINION_BUILD_COMMIT"),
+        ("DOMINION_RELEASE_BRANCH", "DOMINION_BUILD_BRANCH"),
+        ("DOMINION_RELEASE_DIRTY", "DOMINION_BUILD_DIRTY"),
+    ] {
+        println!("cargo:rerun-if-env-changed={source}");
+        if let Ok(value) = std::env::var(source) {
+            if !value.trim().is_empty() && !value.contains('\n') && !value.contains('\r') {
+                println!("cargo:rustc-env={target}={value}");
+            }
+        }
     }
 }
