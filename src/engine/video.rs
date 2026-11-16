@@ -1258,6 +1258,25 @@ async fn comfy(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, Str
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
 }
+/// Read a completed clip only when the saved manifest and its bytes match the
+/// *current* frozen render input. This is valid for both prior projects and
+/// the same job after an interrupted, safely re-queued execution.
+fn verified_scene_clip(project: &Path, index: usize, fingerprint: &str) -> bool {
+    let scene_dir = project.join(format!("scene-{index:02}"));
+    let clip = scene_dir.join("output.mp4");
+    let proof = std::fs::read_to_string(scene_dir.join("manifest.json"))
+        .ok().and_then(|text| serde_json::from_str::<Value>(&text).ok());
+    let contained = clip.canonicalize().ok().zip(project.canonicalize().ok())
+        .is_some_and(|(source, root)| source.starts_with(root));
+    let Some(proof) = proof else { return false; };
+    contained
+        && proof["fingerprint"].as_str() == Some(fingerprint)
+        && proof["sceneIndex"].as_u64() == Some(index as u64)
+        && proof["engine"] == "comfyui"
+        && clip.metadata().is_ok_and(|file| file.is_file() && file.len() > 100)
+        && file_sha256(&clip).ok().as_deref() == proof["sha256"].as_str()
+}
+
 /// Keep each generated clip and its input fingerprint. A failed or cancelled
 /// project can reuse verified, unchanged clips in a fresh job rather than
 /// paying for the same GPU work again. Assembly uses local FFmpeg.
@@ -1269,6 +1288,7 @@ async fn comfy_storyboard(ctx:&JobContext,input:&Value,root:&Path)->Result<Value
         .ok_or("다중 장면 영상에 FFmpeg가 필요합니다.")?;
     let mut index_file=String::new();
     let mut reused=0usize;
+    let mut resumed=0usize;
     let mut reused_frames=0u64;
     let mut rendered=0usize;
     let mut render_seconds=0.0_f64;
@@ -1314,34 +1334,29 @@ async fn comfy_storyboard(ctx:&JobContext,input:&Value,root:&Path)->Result<Value
         let target=scene_dir.join("output.mp4");
         let manifest=scene_dir.join("manifest.json");
         let forced=force.iter().any(|value|value.as_u64()==Some(index as u64));
+        // Recovered queued jobs keep their original output directory. Reusing
+        // their own already verified clips avoids re-paying for finished scenes.
+        // An explicit regenerateScenes selection always overrides both caches.
         let mut used_previous=false;
-        if !forced {
-            if let Some(old_root)=previous.as_ref(){
-                let source_dir=old_root.join(format!("scene-{index:02}"));
-                let source=source_dir.join("output.mp4");
-                let recorded=std::fs::read_to_string(source_dir.join("manifest.json"))
-                    .ok().and_then(|text|serde_json::from_str::<Value>(&text).ok());
-                if let Some(recorded)=recorded {
-                    let canonical_root=old_root.canonicalize().ok();
-                    let canonical_source=source.canonicalize().ok();
-                    let in_root=canonical_source.as_ref()
-                        .zip(canonical_root.as_ref())
-                        .is_some_and(|(source,root)|source.starts_with(root));
-                    if in_root && recorded["fingerprint"]==signature
-                        && source.metadata().is_ok_and(|metadata|metadata.len()>100)
-                        && file_sha256(&source).ok().as_deref()==recorded["sha256"].as_str()
-                    {
-                        std::fs::copy(&source,&target).map_err(|e|e.to_string())?;
-                        std::fs::copy(source_dir.join("manifest.json"),&manifest)
-                            .map_err(|e|e.to_string())?;
-                        reused+=1;
-                        reused_frames=reused_frames.saturating_add(seconds.saturating_mul(fps));
-                        used_previous=true;
-                    }
+        if !forced && verified_scene_clip(root,index,&signature) {
+            used_previous=true;
+            resumed+=1;
+        } else if !forced {
+            if let Some(old_root)=previous.as_ref() {
+                if verified_scene_clip(old_root,index,&signature) {
+                    let source_dir=old_root.join(format!("scene-{index:02}"));
+                    std::fs::copy(source_dir.join("output.mp4"),&target)
+                        .map_err(|e|e.to_string())?;
+                    std::fs::copy(source_dir.join("manifest.json"),&manifest)
+                        .map_err(|e|e.to_string())?;
+                    used_previous=true;
                 }
             }
         }
-        if !used_previous {
+        if used_previous {
+            reused+=1;
+            reused_frames=reused_frames.saturating_add(seconds.saturating_mul(fps));
+        } else {
             if !within_new_scene_budget(rendered,input["maxNewScenes"].as_u64()) {
                 return Err(format!("새 장면 렌더 예산을 초과했습니다: {rendered}개 완료, 다음 장면 {index}. 기존 장면은 재사용할 수 있습니다."));
             }
@@ -1399,7 +1414,7 @@ async fn comfy_storyboard(ctx:&JobContext,input:&Value,root:&Path)->Result<Value
     }
     Ok(json!({"engine":"comfyui","mode":"storyboard",
         "sceneCount":total,"renderedScenes":rendered,"reusedScenes":reused,
-        "renderSeconds":render_seconds,
+        "resumedScenes":resumed,"renderSeconds":render_seconds,
         "generatedFrames":input["render"]["fps"].as_u64().unwrap_or(16)
             .saturating_mul(input["duration"].as_u64().unwrap_or(0))
             .saturating_sub(reused_frames),
@@ -1457,7 +1472,13 @@ pub async fn run(ctx: &JobContext, job: &Value) -> Result<Value, String> {
     let dir = directory(&ctx.state, &ctx.job_id)?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let mut input = job["input"].clone();
-    if let Some(planned)=plan_video_scenes(ctx,&input).await? {
+    // Recover a previously frozen LLM plan before any further paid model call.
+    // A malformed saved plan is an explicit failure, not permission to silently
+    // generate a different plan and invalidate all scene fingerprints.
+    if input["autoStoryboard"] == true && job["videoState"]["scenes"].is_array() {
+        let saved=parse_video_storyboard(&job["videoState"]["scenes"].to_string(),4)?;
+        input["scenes"]=json!(saved);
+    } else if let Some(planned)=plan_video_scenes(ctx,&input).await? {
         input["scenes"]=json!(planned);
     }
     let input=&input;
@@ -1695,6 +1716,35 @@ mod tests {
         assert_eq!(storyboard_scenes(&json!({"brief":"단일 장면"})).unwrap().len(),1);
         assert!(storyboard_scenes(&json!({"scenes":[1,"scene"]})).is_err());
         assert!(storyboard_scenes(&json!({"scenes":["a","b","c","d","e","f","g","h","i"]})).is_err());
+    }
+
+    #[test]
+    fn resuming_uses_only_complete_matching_scene_artifacts() {
+        let root=std::env::temp_dir().join(format!("dominion-resume-{}",uuid::Uuid::new_v4()));
+        let scene=root.join("scene-00");
+        std::fs::create_dir_all(&scene).unwrap();
+        let clip=scene.join("output.mp4");
+        std::fs::write(&clip,vec![42u8;4096]).unwrap();
+        let fp="frozen-scene-fingerprint";
+        let proof=json!({"fingerprint":fp,"sha256":file_sha256(&clip).unwrap(),
+            "sceneIndex":0,"engine":"comfyui"});
+        std::fs::write(scene.join("manifest.json"),proof.to_string()).unwrap();
+        assert!(verified_scene_clip(&root,0,fp));
+        assert!(!verified_scene_clip(&root,0,"new-input"));
+        assert!(!verified_scene_clip(&root,1,fp));
+        std::fs::write(&clip,vec![13u8;4096]).unwrap();
+        assert!(!verified_scene_clip(&root,0,fp),"tampered bytes cannot be reused");
+        std::fs::remove_file(scene.join("manifest.json")).unwrap();
+        assert!(!verified_scene_clip(&root,0,fp),"uncommitted clips cannot be reused");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn restored_ai_storyboard_passes_the_same_frozen_validator() {
+        let scenes=json!(["Character enters a blue station",
+            "Same character walks out with the same jacket"]);
+        assert_eq!(parse_video_storyboard(&scenes.to_string(),4).unwrap().len(),2);
+        assert!(parse_video_storyboard(&json!(["only one"]).to_string(),4).is_err());
     }
 
     #[test]
