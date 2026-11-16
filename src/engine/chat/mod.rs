@@ -140,7 +140,7 @@ impl TurnRequest {
             tools_enabled: value
                 .get("toolsEnabled")
                 .and_then(|item| item.as_bool())
-                .unwrap_or(false),
+                .unwrap_or(true),
             tools_execution_enabled: value
                 .get("toolsExecutionEnabled")
                 .and_then(|item| item.as_bool())
@@ -162,7 +162,7 @@ impl TurnRequest {
             auto_learning: value
                 .get("autoLearning")
                 .and_then(|item| item.as_bool())
-                .unwrap_or(true),
+                .unwrap_or(false),
             system_override: string("systemOverride"),
             task_id: string("taskId"),
             parent_task_id: string("parentTaskId"),
