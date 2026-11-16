@@ -99,6 +99,10 @@ pub fn select_provider(state: &AppState, complexity: Complexity) -> Option<Value
             });
         }
     }
+    if let Some(verified_order) =
+        crate::engine::route_calibration::rank_with_verified_evidence(state,complexity,&candidates){
+        candidates=verified_order;
+    }
     candidates.into_iter().next()
 }
 

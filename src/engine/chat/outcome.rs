@@ -440,6 +440,7 @@ pub(super) fn finalize_execution(
     {
         Ok(crate::db::FinalizeOutcome::Applied) => {
             applied = true;
+            crate::engine::route_calibration::observe_verified(state,&record,task_outcome);
             if let Some(saved) = state.store.get("execution", execution_id) {
                 state.bus.record("execution", &saved);
             }

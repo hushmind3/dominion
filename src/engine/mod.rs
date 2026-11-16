@@ -70,6 +70,7 @@ pub mod policy_patch;
 pub mod preflight_fixture;
 pub mod principle;
 pub mod router;
+pub mod route_calibration;
 pub mod rooms;
 pub mod room_knowledge;
 pub mod room_state;
