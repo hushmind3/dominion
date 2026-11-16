@@ -235,6 +235,46 @@ mod tests{
   assert_eq!(list(&state).len(),1);
   crate::test_support::cleanup_dir(state.config.data_dir.clone());
  }
+ #[tokio::test]
+ async fn editor_changes_flow_into_a_real_encoded_mp4_and_downloadable_srt(){
+  let state=test_state();
+  if video::ffmpeg(&state).is_none(){return}
+  let project=create(&state,&json!({"brief":"two short scenes.","targetSeconds":3,
+    "engine":"native","useAI":false,"autoRender":false})).unwrap();
+  let id=project["id"].as_str().unwrap();
+  let plan_id=project["planJobId"].as_str().unwrap();
+  let plan=state.store.get("job",plan_id).unwrap();
+  let plan_ctx=JobContext::new(state.clone(),plan_id.into());
+  run_plan(&plan_ctx,&plan).await.unwrap();
+  let edited=edit(&state,id,&json!({"revision":1,
+    "title":"Edited producer title",
+    "scenes":[{"script":"Spoken sentence one","overlay":"Visible title one",
+      "visualPrompt":"Wide angle street","seconds":1},
+      {"script":"Spoken sentence two","overlay":"Visible title two",
+       "visualPrompt":"City skyline","seconds":2}]})).unwrap();
+  let render_project=render(&state,id,edited["revision"].as_u64()).unwrap();
+  let render_id=render_project["renderJobId"].as_str().unwrap();
+  let job=state.store.get("job",render_id).unwrap();
+  assert_eq!(job["input"]["scenes"][0]["script"],"Spoken sentence one");
+  assert_eq!(job["input"]["scenes"][0]["overlay"],"Visible title one");
+  assert_eq!(job["input"]["scenes"][1]["seconds"],2);
+  let ctx=JobContext::new(state.clone(),render_id.into());
+  let output=video::run(&ctx,&job).await.unwrap();
+  assert_eq!(output["qa"]["containerVerified"],true);
+  assert_eq!(output["qa"]["captionsReady"],true);
+  let dir=video::directory(&state,render_id).unwrap();
+  let srt=std::fs::read_to_string(dir.join("captions.srt")).unwrap();
+  assert!(srt.contains("Visible title one"));
+  assert!(srt.contains("00:00:01,000 --> 00:00:03,000"));
+  let manifest=std::fs::read_to_string(dir.join("production.json")).unwrap();
+  assert!(manifest.contains("Spoken sentence two"));
+  let saved=state.store.patch_if("job",render_id,"status",&json!("queued"),
+   &json!({"status":"completed","result":output})).unwrap();
+  finish_render(&state,&saved);
+  assert_eq!(get(&state,id).unwrap()["status"],"ready");
+  assert!(video::output_path(&state,render_id).is_ok());
+  crate::test_support::cleanup_dir(state.config.data_dir.clone());
+ }
  #[test]
  fn auto_upload_requires_explicit_non_public_authorization(){
   let state=test_state();
