@@ -153,6 +153,12 @@ The native Rust `jobs::steer_with_mode` and `autonomy::execute` also implement a
 
 See [2026 source-guided harness comparison](docs/AGENT-HARNESS-2026.md) and [TypeScript SDK contract](sdk/typescript/README.md).
 
+## 🎬 Sub2 integrated video postproduction and safe multi-agent budgets
+
+The `dominion-sub2` branch now builds an AI scene plan **and** concise voiceover lines in one configured text-model call, freezes both for crash replay, reuses only SHA-256-verifiable clips, optionally adds system TTS and timed selectable MP4 subtitles with FFmpeg, and exposes the resulting narrated/captioned output for owner-approved YouTube publication. The editor preserves its existing four tabs, adds narration override and reports audio and recovered-scene receipts. Speech uses installed macOS/Windows voices; no neural-TTS fidelity claim is made. Both Rust and TypeScript SDKs share the native video job lifecycle. [End-to-end contract](docs/SUB2-VIDEO-POSTPRODUCTION-2026-11-16.md).
+
+Parallel native agent program branches now receive **nonoverlapping model-round/tool-call/proposal quotas** and unique operation sequence ranges, instead of each independently inheriting the full remaining budget. Existing isolation and cancellation policies remain intact. These are bounded operation counts, not a shared multi-provider monetary billing guarantee.
+
 ## 🛑 Video job stop and GPU cancellation (Sub2 only)
 
 The Video Studio's active preview and project library now let you stop an in-progress video. The GUI and TypeScript SDK (`video.cancel(id)`) call `POST /api/video/jobs/:id/cancel` on the **same Rust job engine**. ComfyUI cancellation is sent only to the exact recorded prompt UUID (never globally); its accepted request and an uncertain remote result are distinguished in the durable job record and UI. Rust video checkpoints now preserve storyboard and scene counters while updating the active prompt ID. This work is isolated to `dominion-sub2`; it does not alter main or other branches. [Execution and regression scope](docs/SUB2-VIDEO-CANCEL-CHECKPOINT-2026-11-16.md).

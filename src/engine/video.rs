@@ -1173,6 +1173,18 @@ fn substitute(value: &mut Value, variables: &Value) {
 /// Shared native Rust cancellation: API and Rust SDK call the same
 /// durable state machine. Remote renderers receive only prompt-scoped IDs.
 /// Acknowledgement is not treated as proof that GPU execution has stopped.
+fn preferable_cancel_receipt(existing:&Value,proposed:&Value)->Value {
+    // A later generic/unconfirmed observation cannot erase a scoped remote
+    // cancel request already acknowledged during the submission race.
+    if existing["status"]=="requested"{return existing.clone();}
+    if proposed["status"]=="requested"{return proposed.clone();}
+    if existing["status"]=="unconfirmed"
+        && (proposed["status"]=="not_active" || proposed["promptId"].is_null()){
+        return existing.clone();
+    }
+    proposed.clone()
+}
+
 pub async fn cancel_video(state:&AppState,id:&str)->Result<Value,jobs::CancelJobError>{
     let job=state.store.get("job",id)
         .filter(|record|record["kind"]=="video")
@@ -1200,13 +1212,30 @@ pub async fn cancel_video(state:&AppState,id:&str)->Result<Value,jobs::CancelJob
         json!({"status":"unconfirmed",
             "reason":"원격 제출 응답 대기 중입니다. Rust 작업자가 ID 확인 후 개별 취소를 시도합니다."})
     };
-    let saved=state.store.patch_if("job",id,"status",&json!("cancelled"),
-        &json!({"remoteCancel":remote}))
-        .or_else(||state.store.get("job",id))
+    // CAS on the receipt field, not only terminal status. A worker can finish
+    // its /prompt response and record an acknowledged remote cancellation
+    // at the same moment this HTTP/native SDK stop finishes.
+    let mut saved=None;
+    for _ in 0..3 {
+        let current=state.store.get("job",id)
+            .ok_or(jobs::CancelJobError::NotFound)?;
+        let accepted=preferable_cancel_receipt(&current["remoteCancel"],&remote);
+        if accepted==current["remoteCancel"] {
+            saved=Some(current);
+            break;
+        }
+        if let Some(updated)=state.store.patch_if("job",id,"remoteCancel",
+            &current["remoteCancel"],&json!({"remoteCancel":accepted})){
+            saved=Some(updated);
+            break;
+        }
+    }
+    let saved=saved.or_else(||state.store.get("job",id))
         .ok_or(jobs::CancelJobError::Conflict)?;
-    state.store.audit("video.cancel",json!({"jobId":id,"remoteCancel":remote}));
+    let receipt=saved["remoteCancel"].clone();
+    state.store.audit("video.cancel",json!({"jobId":id,"remoteCancel":receipt}));
     state.bus.record("job",&saved);
-    Ok(json!({"job":public_job(&saved),"remoteCancel":remote}))
+    Ok(json!({"job":public_job(&saved),"remoteCancel":receipt}))
 }
 
 /// Cancel only the prompt ID produced by this DOMINION job. Never call
@@ -1498,9 +1527,11 @@ async fn comfy_storyboard(ctx:&JobContext,input:&Value,root:&Path)->Result<Value
         let forced=force.iter().any(|value|value.as_u64()==Some(index as u64));
         // Recovered queued jobs keep their original output directory. Reusing
         // their own already verified clips avoids re-paying for finished scenes.
-        // An explicit regenerateScenes selection always overrides both caches.
+        // A forced render from an earlier attempt is still safe to reuse
+        // from THIS job once its new manifest is committed; only old jobs
+        // must ignore the selected force-regenerate scene.
         let mut used_previous=false;
-        if !forced && verified_scene_clip(root,index,&signature) {
+        if verified_scene_clip(root,index,&signature) {
             used_previous=true;
             resumed+=1;
         } else if !forced {
@@ -1926,6 +1957,14 @@ mod tests {
         assert!(storyboard_scenes(&json!({"scenes":["a","b","c","d","e","f","g","h","i"]})).is_err());
     }
 
+    #[test]
+    fn late_remote_cancel_receipts_cannot_be_downgraded_by_owner_stop_races(){
+        let acknowledged=json!({"status":"requested","promptId":"known"});
+        let pending=json!({"status":"unconfirmed","reason":"awaiting id"});
+        assert_eq!(preferable_cancel_receipt(&acknowledged,&pending),acknowledged);
+        assert_eq!(preferable_cancel_receipt(&pending,&acknowledged),acknowledged);
+        assert_eq!(preferable_cancel_receipt(&pending,&json!({"status":"not_active"})),pending);
+    }
     #[test]
     fn installing_a_new_final_mp4_replaces_existing_output_on_all_platforms() {
         let root=std::env::temp_dir().join(format!("dominion-mp4-swap-{}",uuid::Uuid::new_v4()));
