@@ -2166,13 +2166,16 @@ fn trim_tool_definitions(definitions: Vec<Value>, budget: usize) -> Vec<Value> {
     kept
 }
 
-fn save_program_checkpoint(state: &AppState, execution_id: &str, checkpoint: &Value) {
-    if let Some(mut execution) = state.store.get("execution", execution_id) {
-        execution["programCheckpoint"] = checkpoint.clone();
-        if let Some(saved) = state.store.put("execution", &execution) {
-            state.bus.record("execution", &saved);
-        }
-    }
+/// A write-ahead checkpoint must be durable before program tool dispatch.
+/// A missing execution or failed SQLite write is never a successful no-op.
+fn save_program_checkpoint(state: &AppState, execution_id: &str, checkpoint: &Value) -> Result<(),String> {
+    let mut execution = state.store.get("execution", execution_id)
+        .ok_or("프로그램 체크포인트를 저장할 실행 기록이 없습니다.")?;
+    execution["programCheckpoint"] = checkpoint.clone();
+    let saved = state.store.put("execution", &execution)
+        .ok_or("프로그램 체크포인트 저장에 실패하여 도구 실행을 중단했습니다.")?;
+    state.bus.record("execution", &saved);
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2215,7 +2218,7 @@ async fn execute_program_tool(
     checkpoint["pendingOperationIds"] = json!([node_id]);
     checkpoint["resolvedInputs"] = resolved.clone();
     if persist {
-        save_program_checkpoint(state, execution_id, checkpoint);
+        save_program_checkpoint(state, execution_id, checkpoint)?;
     }
     let (result, _ok, _content) = dispatch_tool_call(
         state,
@@ -2249,7 +2252,7 @@ async fn execute_program_tool(
     resolved[key] = result.clone();
     checkpoint["resolvedInputs"] = resolved.clone();
     if persist {
-        save_program_checkpoint(state, execution_id, checkpoint);
+        save_program_checkpoint(state, execution_id, checkpoint)?;
     }
     Ok(result)
 }
@@ -2363,7 +2366,7 @@ fn execute_nodes<'a>(
                     "index": index,
                 }]);
                 checkpoint["resolvedInputs"] = resolved.clone();
-                save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
             }
             match node["type"].as_str().unwrap_or("") {
                 "observe" => {
@@ -2410,7 +2413,7 @@ fn execute_nodes<'a>(
                         if persist {
                             save_program_checkpoint(
                                 ctx.state, ctx.execution_id, &checkpoint,
-                            );
+                            )?;
                         }
                         return Ok(ProgramFrame {
                             resolved, checkpoint, budget, op_seq, messages,
@@ -2444,7 +2447,7 @@ fn execute_nodes<'a>(
                             if persist {
                                 save_program_checkpoint(
                                     ctx.state, ctx.execution_id, &checkpoint,
-                                );
+                                )?;
                             }
                             messages.push(json!({
                                 "role":"system",
@@ -2473,7 +2476,7 @@ fn execute_nodes<'a>(
                     if frame.paused {
                         checkpoint["resolvedInputs"] = resolved.clone();
                         if persist {
-                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
                         }
                         return Ok(ProgramFrame {
                             resolved,
@@ -2502,7 +2505,7 @@ fn execute_nodes<'a>(
                     if frame.paused {
                         checkpoint["resolvedInputs"] = resolved.clone();
                         if persist {
-                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
                         }
                         return Ok(ProgramFrame {
                             resolved,
@@ -2526,7 +2529,7 @@ fn execute_nodes<'a>(
                     checkpoint["parallelMode"] = json!("concurrent");
                     checkpoint["resolvedInputs"] = resolved.clone();
                     if persist {
-                        save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                        save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
                     }
                     let parallel_mode = crate::engine::algorithms::choose_for_agent(
                         ctx.state,
@@ -2571,7 +2574,7 @@ fn execute_nodes<'a>(
                             if persist {
                                 save_program_checkpoint(
                                     ctx.state, ctx.execution_id, &checkpoint,
-                                );
+                                )?;
                             }
                             return Ok(ProgramFrame {
                                 resolved, checkpoint, budget, op_seq, messages,
@@ -2588,7 +2591,7 @@ fn execute_nodes<'a>(
                         if persist {
                             save_program_checkpoint(
                                 ctx.state, ctx.execution_id, &checkpoint,
-                            );
+                            )?;
                         }
                         continue;
                     }
@@ -2646,7 +2649,7 @@ fn execute_nodes<'a>(
                     if paused {
                         checkpoint["status"] = json!("paused");
                         if persist {
-                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
                         }
                         return Ok(ProgramFrame {
                             resolved,
@@ -2797,7 +2800,7 @@ fn execute_nodes<'a>(
                         checkpoint["loopProgress"][node_id] = json!(iterations);
                         checkpoint["resolvedInputs"] = resolved.clone();
                         if persist {
-                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
                         }
                         if frame.paused {
                             checkpoint["status"] = json!("paused");
@@ -2821,7 +2824,7 @@ fn execute_nodes<'a>(
                     checkpoint["nextIndex"] = json!(index + 1);
                     checkpoint["resolvedInputs"] = resolved.clone();
                     if persist {
-                        save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                        save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
                     }
                     messages.push(json!({
                         "role":"system",
@@ -2841,7 +2844,7 @@ fn execute_nodes<'a>(
             }
             checkpoint["resolvedInputs"] = resolved.clone();
             if persist {
-                save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
             }
         }
         Ok(ProgramFrame {
@@ -3039,7 +3042,7 @@ async fn run_program(
                 checkpoint["nextIndex"] = json!(0);
                 checkpoint["status"] = json!("running");
                 save_revised_program(state, execution_id, &revised);
-                save_program_checkpoint(state, execution_id, &checkpoint);
+                save_program_checkpoint(state, execution_id, &checkpoint)?;
                 crate::engine::algorithms::mark_signal(
                     state, execution_id, "program.repair", true,
                 );
@@ -3086,14 +3089,14 @@ async fn run_program(
         .unwrap_or(0);
     checkpoint["resolvedInputs"] = resolved;
     if checkpoint["status"].as_str() == Some("paused") {
-        save_program_checkpoint(state, execution_id, &checkpoint);
+        save_program_checkpoint(state, execution_id, &checkpoint)?;
         return Ok(messages);
     }
     if !checkpoint["programFailure"].is_null() {
         // The program could not be repaired. Do not pretend it completed:
         // preserve the failure and require review/model continuation.
         checkpoint["status"] = json!("needs_review");
-        save_program_checkpoint(state, execution_id, &checkpoint);
+        save_program_checkpoint(state, execution_id, &checkpoint)?;
         messages.push(json!({
             "role":"system",
             "content": format!(
@@ -3106,7 +3109,7 @@ async fn run_program(
     }
     checkpoint["nextIndex"] = json!(node_count);
     checkpoint["status"] = json!("completed");
-    save_program_checkpoint(state, execution_id, &checkpoint);
+    save_program_checkpoint(state, execution_id, &checkpoint)?;
     messages.push(json!({
         "role": "system",
         "content": format!(
@@ -4564,6 +4567,32 @@ mod outcome_tests {
             "acceptanceText": acceptance_text,
             "strategyCompliance": []
         })
+    }
+
+    #[tokio::test]
+    async fn missing_program_checkpoint_prevents_any_tool_dispatch(){
+        let (state,dir)=state();
+        let session=json!({"id":"s1"});
+        let request=TurnRequest::from_value(&json!({"input":"create a file"})).unwrap();
+        let (tx,_rx)=tokio::sync::mpsc::unbounded_channel();
+        let metrics=std::sync::Mutex::new(Metrics::default());
+        let mut budget=super::super::budget::BudgetLedger::new(
+            MAX_ROUNDS,MAX_TOOL_CALLS,MAX_ELAPSED
+        );
+        let node=json!({"type":"call_tool","id":"write1","tool":"workspace_write",
+            "inputs":{"path":"new.txt","content":"should not be written"}});
+        let mut resolved=json!({});
+        let mut checkpoint=json!({});
+        let mut seq=0u64;
+        let result=execute_program_tool(
+            &state,&tx,&session,&request,"s1","nonexistent-execution",
+            &node,&mut resolved,&mut checkpoint,&metrics,&mut budget,&mut seq,0,true,
+        ).await;
+        assert!(result.is_err(),"missing write-ahead record must block dispatch");
+        assert!(result.unwrap_err().contains("체크포인트"));
+        assert!(state.store.all("execution_operation").is_empty());
+        assert!(!dir.join("new.txt").exists());
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]
