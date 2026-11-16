@@ -8,6 +8,8 @@ use crate::{
     state::AppState,
 };
 use serde_json::{json, Value};
+#[path = "video_quality.rs"]
+mod quality;
 use std::{
     path::{Path, PathBuf},
     time::Duration,
@@ -269,7 +271,7 @@ pub fn output_path(state: &AppState, id: &str) -> Result<PathBuf, String> {
 pub fn public_job(job: &Value) -> Value {
     let id = job["id"].as_str().unwrap_or("");
     let ready = job["kind"] == "video" && job["status"] == "completed";
-    json!({"id":id,"kind":job["kind"],"title":job["input"]["title"],"brief":job["input"]["brief"],"engine":job["input"]["engine"],"status":job["status"],"phase":job.get("phase").unwrap_or(&job["status"]),"progress":job["progress"],"error":job["error"],"createdAt":job.get("createdAt").or(job.get("created_at")),"videoJobId":job["input"]["videoJobId"],"privacyStatus":job["input"]["privacyStatus"],"outputUrl":ready.then(||format!("/api/video/jobs/{id}/content")),"storyboard":job["videoState"]["scenes"],"result":job["result"],"duration":job["input"]["duration"],"aspectRatio":job["input"]["aspectRatio"]})
+    json!({"id":id,"kind":job["kind"],"title":job["input"]["title"],"brief":job["input"]["brief"],"engine":job["input"]["engine"],"status":job["status"],"phase":job.get("phase").unwrap_or(&job["status"]),"progress":job["progress"],"error":job["error"],"createdAt":job.get("createdAt").or(job.get("created_at")),"videoJobId":job["input"]["videoJobId"],"privacyStatus":job["input"]["privacyStatus"],"outputUrl":ready.then(||format!("/api/video/jobs/{id}/content")),"storyboard":job["videoState"]["scenes"].as_array().map(|_|job["videoState"]["scenes"].clone()).unwrap_or_else(||job["input"]["scenes"].clone()),"quality":job["result"]["quality"],"result":job["result"],"duration":job["input"]["duration"],"aspectRatio":job["input"]["aspectRatio"]})
 }
 pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
     let cfg = config(state);
@@ -361,6 +363,29 @@ pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
         .map(|j| public_job(&j))
         .ok_or("영상 작업을 저장할 수 없습니다.".into())
 }
+
+pub fn enqueue_regeneration(state:&AppState,source_id:&str,body:&Value)->Result<Value,String>{
+    let original=state.store.get("job",source_id)
+        .filter(|job|job["kind"]=="video"&&job["status"]=="completed")
+        .ok_or("완료된 원본 영상만 장면별 재제작할 수 있습니다.")?;
+    let mut scenes=original["videoState"]["scenes"].as_array()
+        .or_else(||original["input"]["scenes"].as_array())
+        .cloned().unwrap_or_else(||vec![original["input"]["brief"].clone()]);
+    let index=body["sceneIndex"].as_u64().ok_or("재제작할 장면 번호가 필요합니다.")? as usize;
+    if index>=scenes.len(){return Err("원본 영상에 해당 장면이 없습니다.".into());}
+    let new_prompt=body["prompt"].as_str().map(str::trim)
+        .filter(|text|!text.is_empty()&&text.len()<=2000)
+        .ok_or("수정된 장면 설명은 1~2000바이트여야 합니다.")?;
+    scenes[index]=json!(new_prompt);
+    let mut input=original["input"].clone();
+    input["scenes"]=json!(scenes);
+    input["sourceJobId"]=json!(source_id);
+    input["regenerateSceneIndex"]=json!(index);
+    input["publish"]=json!(false);
+    jobs::enqueue(state,"video",input)
+        .map(|job|public_job(&job))
+        .ok_or("장면 재제작 작업 저장에 실패했습니다.".into())
+}
 fn progress(ctx: &JobContext, phase: &str, percent: u64) -> Result<(), String> {
     ctx.checkpoint(json!({"phase":phase,"progress":percent}))
 }
@@ -392,7 +417,7 @@ fn wrap(s: &str, width: usize) -> Vec<String> {
     lines.truncate(8);
     lines
 }
-fn make_cards(dir: &Path, title: &str, scenes: &[String], aspect: &str) -> Result<(), String> {
+fn make_cards(dir: &Path, title: &str, scenes: &[String], aspect: &str, reuse: Option<(&Path,usize)>) -> Result<(), String> {
     let (w, h) = match aspect {
         "16:9" => (1280, 720),
         "1:1" => (900, 900),
@@ -414,6 +439,13 @@ fn make_cards(dir: &Path, title: &str, scenes: &[String], aspect: &str) -> Resul
         .map(|f| f.0.clone())
         .unwrap_or_else(|| "sans-serif".into());
     for (i, scene) in scenes.iter().enumerate() {
+        if let Some((source,changed))=reuse {
+            if i!=changed && source.join(format!("card-{i:02}.png")).is_file(){
+                std::fs::copy(source.join(format!("card-{i:02}.png")),dir.join(format!("card-{i:02}.png")))
+                    .map_err(|error|format!("이전 장면 자산 재사용 실패: {error}"))?;
+                continue;
+            }
+        }
         let font = if aspect == "16:9" { 42 } else { 38 };
         let lines = wrap(scene, if aspect == "16:9" { 48 } else { 29 });
         let mut text = String::new();
@@ -443,6 +475,7 @@ fn make_cards(dir: &Path, title: &str, scenes: &[String], aspect: &str) -> Resul
 /// video length follows the audio, not a fixed duration.
 async fn say_scenes(
     dir: &Path, scenes: &[String], cfg: &Value, encoder: &Path,
+    reuse: Option<(&Path,usize)>,
 ) -> Option<(Vec<f64>, std::path::PathBuf)> {
     if cfg["narration"] == false { return None; }
     let voice = cfg["voice"].as_str().filter(|value| !value.is_empty()).unwrap_or("Yuna");
@@ -453,15 +486,23 @@ async fn say_scenes(
     for (index, scene) in scenes.iter().enumerate() {
         let file = format!("narration-{index:02}.aiff");
         let path = dir.join(&file);
-        let status = tokio::process::Command::new("say")
-            .args(["-v", voice, "-r", &rate, "-o"])
-            .arg(&path)
-            .arg("--")
-            .arg(scene)
-            .status()
-            .await
-            .ok()?;
-        if !status.success() { return None; }
+        let reused=if let Some((source,changed))=reuse {
+            if index!=changed && source.join(&file).is_file(){
+                std::fs::copy(source.join(&file),&path).ok()?;
+                true
+            }else{false}
+        }else{false};
+        if !reused {
+            let status = tokio::process::Command::new("say")
+                .args(["-v", voice, "-r", &rate, "-o"])
+                .arg(&path)
+                .arg("--")
+                .arg(scene)
+                .status()
+                .await
+                .ok()?;
+            if !status.success() { return None; }
+        }
         let seconds = probe_duration(&ffprobe, &path).await?;
         // Some installed "voices" are novelty entries that render silence;
         // a near-zero file would make -shortest truncate the whole video.
@@ -503,7 +544,9 @@ async fn native(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, St
         .take(12)
         .map(str::to_string)
         .collect();
-    if cfg["useModel"] == true {
+    if let Some(frozen)=input["scenes"].as_array(){
+        scenes=frozen.iter().filter_map(|scene|scene.as_str().map(str::to_owned)).collect();
+    } else if cfg["useModel"] == true {
         let text=crate::engine::llm::complete(&ctx.state,cfg["providerId"].as_str().unwrap_or(""),cfg["model"].as_str().unwrap_or(""),"영상 자막 스토리보드를 만드세요. JSON 문자열 배열만 반환하세요. 3~8개 장면, 장면당 한국어 100자 이내. 사실을 지어내지 마세요.",brief).await?;
         scenes = serde_json::from_str::<Vec<String>>(
             text.trim()
@@ -517,21 +560,28 @@ async fn native(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, St
             return Err("스토리보드 장면 수나 길이가 범위를 넘었습니다.".into());
         }
     }
-    if scenes.is_empty() {
-        scenes.push(brief.into());
+    if scenes.is_empty() || scenes.len()>12 || scenes.iter().any(|scene|scene.trim().is_empty()||scene.len()>2000){
+        return Err("영상 장면은 1~12개, 각각 1~2000바이트여야 합니다.".into());
     }
+    let reuse=if let (Some(source),Some(index))=(
+        input["sourceJobId"].as_str(),input["regenerateSceneIndex"].as_u64()
+    ){
+        Some((directory(&ctx.state,source)?,index as usize))
+    }else{None};
+    let reusable=reuse.as_ref().map(|(dir,index)|(dir.as_path(),*index));
     ctx.checkpoint(json!({"videoState":{"scenes":scenes},"phase":"rendering","progress":20}))?;
     make_cards(
         dir,
         title,
         &scenes,
         input["aspectRatio"].as_str().unwrap_or("9:16"),
+        reusable,
     )?;
     let encoder = ffmpeg_from_config(&input["config"]).ok_or("FFmpeg를 찾을 수 없습니다.")?;
     let requested = input["duration"].as_u64().unwrap_or(15);
     // Turnkey: speak every scene first. Fall back to a silent slideshow when
     // no voice engine is available, never failing the whole render for audio.
-    let narration = say_scenes(dir, &scenes, &input["config"], &encoder).await;
+    let narration = say_scenes(dir, &scenes, &input["config"], &encoder, reusable).await;
     let mut concat = String::new();
     let total_seconds;
     if let Some((durations, _)) = &narration {
@@ -589,6 +639,9 @@ async fn native(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, St
         "duration":total_seconds.round() as u64,
         "scenes":scenes.len(),
         "narrated":narration.is_some(),
+        "reusedSceneCount":reusable.map(|(_,changed)| scenes.len().saturating_sub(1).min(changed.saturating_add(scenes.len()))).unwrap_or(0),
+        "regeneratedSceneIndex":input["regenerateSceneIndex"],
+        "sourceJobId":input["sourceJobId"],
     }))
 }
 
@@ -759,6 +812,10 @@ pub async fn run(ctx: &JobContext, job: &Value) -> Result<Value, String> {
     };
     match result {
         Ok(mut value) => {
+            progress(ctx,"quality",92)?;
+            let report=quality::inspect(&dir.join("output.mp4"),ffmpeg_from_config(&input["config"]).as_deref()).await?;
+            ctx.checkpoint(json!({"videoState":{"quality":report}}))?;
+            value["quality"]=report;
             let bytes = std::fs::metadata(dir.join("output.mp4"))
                 .map_err(|e| e.to_string())?
                 .len();
@@ -963,6 +1020,7 @@ mod tests {
             "테스트 <제목>",
             &["한글 자막 & 실제 프레임".into()],
             "9:16",
+            None,
         )
         .unwrap();
         let bytes = std::fs::read(dir.join("card-00.png")).unwrap();
