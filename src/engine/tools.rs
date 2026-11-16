@@ -65,6 +65,17 @@ pub fn definitions() -> Vec<Value> {
             "text": text("Text to type into the indexed element"),
             "key": text("Key to press: Enter, Escape, Tab, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Backspace")
         }), vec!["action"])),
+        tool("github_file_read", "Read a UTF-8 file on a specific GitHub repository branch. Returns a blob SHA for safe, conflict-checked updates.", object(json!({
+            "owner":text("GitHub repository owner"),"repo":text("Repository name"),
+            "branch":text("Exact branch to inspect"),"path":text("Relative repository file path")
+        }),vec!["owner","repo","branch","path"])),
+        tool("github_file_commit", "Commit a UTF-8 file to the exact selected GitHub branch after checking its observed blob SHA; remotely re-read and verify (approval required).", object(json!({
+            "owner":text("GitHub repository owner"),"repo":text("Repository name"),
+            "branch":text("Exact branch to update"),"path":text("Relative repository file path"),
+            "content":text("Complete replacement UTF-8 content"),"message":text("Commit message"),
+            "expectedSha":text("Exact blobSha from github_file_read; mandatory for existing files"),
+            "createNew":json!({"type":"boolean","description":"Explicitly create a missing file; cannot overwrite existing source"})
+        }),vec!["owner","repo","branch","path","content","message"])),
         tool("github_api", "Call the GitHub REST API as the connected account. Write methods require approval (approval required)", object(json!({"method": json!({"type": "string", "enum": ["GET", "POST", "PATCH", "PUT", "DELETE"]}), "path": text("GitHub API path beginning with /"), "body": json!({"type": "object"})}), vec!["method", "path"])),
     ]
 }
@@ -86,6 +97,7 @@ pub fn requires_approval(name: &str) -> bool {
             | "shell_exec"
             | "terminal_exec"
             | "github_api"
+            | "github_file_commit"
             | "browser_control"
     )
 }
@@ -288,6 +300,8 @@ pub async fn execute(
         "account_status" => Ok(json!({
             "providers": crate::engine::oauth::status(ctx.state),
         })),
+        "github_file_read" => crate::engine::github_files::read(ctx.state,args).await,
+        "github_file_commit" => crate::engine::github_files::commit(ctx.state,args).await,
         "github_api" => github_api(ctx, args).await,
         other => Err(format!("Unknown tool: {other}")),
     }
