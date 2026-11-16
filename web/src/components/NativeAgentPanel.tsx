@@ -134,6 +134,15 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     </p>}
     </div>
     <p className="mt-2 line-clamp-2 text-[11px] text-[#766F67]">{run.instruction}</p>
+    {Boolean(run.checkpoint?.verificationChecks?.length)&&<div className="mt-3 rounded-lg border border-[#E7E0D5] bg-white p-3">
+     <p className="text-[11px] font-semibold">{en?'Independent artifact verification':'Rust 독립 산출물 검증'} · {run.checkpoint?.verificationChecks?.filter(check=>check.satisfied).length??0}/{run.checkpoint?.verificationChecks?.length??0}</p>
+     {(run.checkpoint?.verificationChecks??[]).filter(check=>!check.satisfied).slice(0,4).map((check,i)=>
+      <p key={i} role="status" className="mt-1 break-all text-[11px] text-[#A54027]">
+       {check.criterion?.path?check.criterion.path+' · ':''}{check.explanation}
+      </p>)}
+     {run.checkpoint?.verificationChecks?.every(check=>check.satisfied)&&
+      <p className="mt-1 text-[11px] text-[#607A58]">{en?'All recorded checks passed against the current workspace.':'현재 작업공간의 독립 검증 조건을 모두 통과했습니다.'}</p>}
+    </div>}
     {events.length>0&&<div className="mt-3 space-y-1 border-t border-[#E7E0D5] pt-2">
      {events.map((event,i)=><p key={i} className="text-[11px] text-[#82796D]">
       {event.kind==='tool_started'?(en?'Running tool':'도구 실행'):
