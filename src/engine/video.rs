@@ -62,7 +62,13 @@ pub fn setup_model(state:AppState,id:&str,body:&Value)->Result<Value,String>{
     if let Some(path)=body["modelsDir"].as_str().filter(|v|!v.trim().is_empty()){
         if path.len()>4096{return Err("모델 폴더 경로가 너무 깁니다.".into());}
         let folder=PathBuf::from(path);
-        let absolute=folder.canonicalize()
+        // The native picker often returns ComfyUI's root, or the portable
+        // distribution root. Resolve both into the actual models directory.
+        let candidates=[folder.join("ComfyUI").join("models"),
+            folder.join("models"),folder.clone()];
+        let candidate=candidates.into_iter().find(|candidate|candidate.is_dir())
+            .ok_or("존재하는 ComfyUI/models 폴더를 선택하세요.")?;
+        let absolute=candidate.canonicalize()
             .map_err(|_|"존재하는 ComfyUI/models 폴더를 선택하세요.")?;
         if !absolute.is_dir(){return Err("모델 저장 경로가 폴더가 아닙니다.".into());}
         cfg["comfyModelsDir"]=json!(absolute.to_string_lossy().to_string());
@@ -225,6 +231,9 @@ pub fn model_files(id: &str) -> Option<Vec<(&'static str, &'static str)>> {
 /// record; nothing is marked installed until the file exists on disk.
 pub fn start_download(state: AppState, id: &str) -> Result<Value, String> {
     let files = model_files(id).ok_or("알 수 없는 영상 모델입니다.")?;
+    if !models_dir_ready(&state) {
+        return Err("ComfyUI/models 폴더가 설정되지 않았습니다. 자율 콘텐츠 제작 화면에서 모델 저장 폴더를 먼저 선택하세요.".into());
+    }
     let key = format!("video_model_download:{id}");
     if state.store.get("video_model_download", &key)
         .is_some_and(|row| row["status"] == "downloading")
