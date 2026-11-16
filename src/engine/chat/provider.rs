@@ -758,8 +758,15 @@ async fn stream_completion_once(
         "tools":ordered_tools,"toolMode":provider.tool_mode});
     let mut continuity=super::continuity::prepare(state,provider,request,session_id,&instructions,&settings)?;
     let (projected, projection)=super::continuity::project(state,provider,messages,&ordered_tools,session_id,&mut continuity);
-    let mut completion=stream_completion_once_body(state,client,provider,&projected,&ordered_tools,
-        request,session_id,tx,convert_native_history,&mut continuity).await?;
+    let input=super::room_context::input_estimate(&projected,&ordered_tools) as u64;
+    let (budget_call,output)=crate::engine::execution_budget::prepare_call(state,session_id,
+        &provider.id,&provider.model,provider.local,input,provider.max_output_tokens.unwrap_or(8192))?;
+    let mut selected=provider.clone();
+    if output<provider.max_output_tokens.unwrap_or(8192){selected.max_output_tokens=Some(output);}
+    let result=stream_completion_once_body(state,client,&selected,&projected,&ordered_tools,
+        request,session_id,tx,convert_native_history,&mut continuity).await;
+    crate::engine::execution_budget::finish_call(budget_call,result.is_ok(),result.as_ref().err().map(String::as_str))?;
+    let mut completion=result?;
     completion.projection=projection;
     completion.continuity=Some(continuity);
     Ok(completion)

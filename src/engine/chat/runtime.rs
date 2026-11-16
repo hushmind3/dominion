@@ -468,6 +468,9 @@ async fn run_turn_with_policy(
     state.bus.record("execution", &execution);
     crate::engine::run_state::apply(state, &execution_id, "start");
     let metrics = std::sync::Mutex::new(Metrics::default());
+    let execution_budget = match crate::engine::execution_budget::begin(state,&session,&execution_id){
+        Ok(budget)=>budget,Err(error)=>{finish_attempt(state,&execution_id,&Err(error.clone()),&metrics);return Err(error);}
+    };
     if provider.context_tokens.is_some() {
         if let Some(mut execution) = state.store.get("execution", &execution_id) {
             execution["contextChecked"] = json!(true);
@@ -490,6 +493,7 @@ async fn run_turn_with_policy(
         _ = wait_cancelled(state, &session_id, generation) => Err("실행이 중단되었습니다.".into()),
     };
     finish_attempt(state, &execution_id, &result, &metrics);
+    execution_budget.finish();
     close_pending_approvals(state, &session_id);
 
     if request.auto_learning {
@@ -1042,6 +1046,7 @@ async fn run_turn_body(
     // native calls or the text-tool manual for whichever local/API model
     // actually handles each round, including after failover.
 
+    if session["readOnly"]==true {tool_definitions.retain(|tool|tools::observational(tool_name(tool)));}
     let discovered_tool_names = tool_definitions
         .iter()
         .filter_map(|definition| {
@@ -1056,6 +1061,7 @@ async fn run_turn_body(
         execution["budgetChecked"] = json!(true);
         state.store.put("execution", &execution);
     }
+    if session["readOnly"]==true {tool_definitions.retain(|tool|tools::observational(tool_name(tool)));}
     let native_tool_names = tool_definitions
         .iter()
         .filter_map(|definition| {
@@ -1992,7 +1998,7 @@ fn select_room_tools(
         (&["스킬", "skill"], &["skill_propose"]),
         (
             &["위임", "delegate", "task", "에이전트"],
-            &["delegate_task", "task_status", "task_result"],
+            &["delegate_task", "task_integrate", "task_status", "task_result"],
         ),
         (
             &["브라우저", "browser", "클릭", "click"],
@@ -3495,7 +3501,9 @@ async fn dispatch_tool_call(
             tools_enabled: request.tools_enabled,
             tools_execution_enabled: request.tools_execution_enabled,
         };
-        let outcome = if state.store.get("session",session_id).is_some_and(|s|s["rsiRun"]==true)
+        let outcome = if session["readOnly"]==true&&!tools::observational(&call.name){
+            Err("읽기 전용 위임 작업에는 이 도구를 실행할 권한이 없습니다.".into())
+        } else if state.store.get("session",session_id).is_some_and(|s|s["rsiRun"]==true)
             && !tools::rsi_allowed(&call.name) {
             Err("자기개선 작업의 허용 도구 범위를 벗어났습니다.".into())
         } else if call.name.starts_with("mcp__") {

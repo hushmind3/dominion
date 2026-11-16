@@ -13,3 +13,5 @@ mod mcp {
         format!("dominion-{:x}",Sha256::digest(format!("{run}:{}:{}:{}",call.id,call.name,call.arguments)))
     }
 }
+
+pub mod delegation;

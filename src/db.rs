@@ -324,6 +324,23 @@ impl Store {
         Ok(saved)
     }
 
+    /// Read/modify one durable aggregate and optional new records under the
+    /// same SQLite transaction. The callback must not re-enter this Store.
+    pub fn mutate_record<F>(&self,kind:&str,id:&str,initial:Value,mutate:F)->Result<Value,String>
+    where F:FnOnce(&mut Value)->Result<Vec<(String,Value)>,String> {
+        let mut conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let tx=conn.transaction().map_err(|e|e.to_string())?;
+        let raw:Option<String>=tx.query_row("SELECT data FROM records WHERE kind=?1 AND id=?2",
+            params![kind,id],|row|row.get(0)).optional().map_err(|e|e.to_string())?;
+        let mut value=match raw {Some(raw)=>serde_json::from_str(&raw).map_err(|e|e.to_string())?,None=>initial};
+        if value["id"].as_str()!=Some(id){return Err("원자적 갱신 기록의 식별자가 다릅니다.".into());}
+        let extra=mutate(&mut value)?;
+        upsert_tx(&tx,kind,&value)?;
+        for (kind,record) in extra {upsert_tx(&tx,&kind,&record)?;}
+        tx.commit().map_err(|e|e.to_string())?;
+        Ok(value)
+    }
+
     /// Transaction that only commits when the current record still has the
     /// expected status value. Returns false on a CAS miss.
     pub fn transaction_if_status(

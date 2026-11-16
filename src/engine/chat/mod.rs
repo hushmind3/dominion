@@ -61,7 +61,7 @@ const MAX_ROUNDS: usize = 8;
 const MAX_TOOL_CALLS: usize = 40;
 
 /// Hard token budget per turn. Usage is read from the provider stream.
-const MAX_TOKENS: u64 = 250_000;
+pub(crate) const MAX_TOKENS: u64 = 250_000;
 
 const MAX_ELAPSED: Duration = Duration::from_secs(600);
 

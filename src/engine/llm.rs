@@ -17,14 +17,22 @@ async fn try_complete(
     let route = gateway::resolve(state, provider_id, Some(model))?;
     if route.kind=="cli"{
         let source=route.base_url.strip_prefix("cli://").ok_or("CLI 제공자 주소 오류")?;
-        let text=crate::engine::cli_model::generate(source,&route.model,&[
+        let (budget_call,_)=if let Some(session)=session_id{
+            crate::engine::execution_budget::prepare_call(state,session,&route.id,&route.model,route.local,
+                crate::engine::chat::estimate_text_tokens(&format!("{system}{prompt}")),8192)?
+        }else{(None,8192)};
+        let generated=crate::engine::cli_model::generate(source,&route.model,&[
             json!({"role":"system","content":system}),
             json!({"role":"user","content":prompt})
-        ]).await?;
-        let prompt_tokens=(system.len()+prompt.len()).div_ceil(4) as u64;
+        ]).await;
+        let text=match generated{Ok(text)=>text,Err(error)=>{
+            crate::engine::execution_budget::finish_call(budget_call,false,Some(&error))?;return Err(error);
+        }};
+        let prompt_tokens=crate::engine::chat::estimate_text_tokens(&format!("{system}{prompt}"));
         let output_tokens=text.len().div_ceil(4) as u64;
         gateway::record_usage_tokens(state,&route.id,&route.model,false,"helper",session_id,
             prompt_tokens,output_tokens,prompt_tokens+output_tokens,true);
+        crate::engine::execution_budget::finish_call(budget_call,true,None)?;
         return Ok(text);
     }
     // Thinking models can consume the entire completion budget on reasoning
@@ -48,19 +56,34 @@ async fn try_complete(
             body["think"] = json!(false);
             body["chat_template_kwargs"] = json!({"enable_thinking": false});
         }
-        let response = gateway::send(&route, &client, &body, Duration::from_secs(240)).await?;
+        let (budget_call,output)=if let Some(session)=session_id {
+            crate::engine::execution_budget::prepare_call(state,session,&route.id,&route.model,route.local,
+                crate::engine::chat::estimate_text_tokens(&format!("{system}{prompt}")),max_tokens)?
+        }else{(None,max_tokens)};
+        body["max_tokens"]=json!(output);
+        let sent=gateway::send(&route,&client,&body,Duration::from_secs(240)).await;
+        let response=match sent {Ok(response)=>response,Err(error)=>{
+            crate::engine::execution_budget::finish_call(budget_call,false,Some(&error))?;return Err(error);
+        }};
         let response = response.response;
         if !response.status().is_success() {
-            return Err(format!("모델 호출 실패: HTTP {}", response.status()));
+            let error=format!("모델 호출 실패: HTTP {}",response.status());
+            crate::engine::execution_budget::finish_call(budget_call,false,Some(&error))?;
+            return Err(error);
         }
-        let value: Value = response.json().await.map_err(|error| error.to_string())?;
-        gateway::record_usage(
-            state,
-            &route,
-            gateway::usage_from(&value),
-            "helper",
-            session_id,
-        );
+        let value:Value=match response.json().await {
+            Ok(value)=>value,Err(error)=>{
+                if let Some(call)=budget_call{call.completed_without_usage()?;}
+                return Err(error.to_string());
+            }
+        };
+        let usage=gateway::usage_from(&value);
+        if usage.total_tokens==0&&usage.prompt_tokens==0&&usage.completion_tokens==0 {
+            let input=crate::engine::chat::estimate_text_tokens(&format!("{system}{prompt}"));
+            let output=value["choices"][0]["message"]["content"].as_str().unwrap_or("").len().div_ceil(4) as u64;
+            gateway::record_usage_tokens(state,&route.id,&route.model,route.local,"helper",session_id,input,output,input+output,true);
+        }else{gateway::record_usage(state,&route,usage,"helper",session_id);}
+        crate::engine::execution_budget::finish_call(budget_call,true,None)?;
         let choice = value
             .get("choices")
             .and_then(|choices| choices.get(0))

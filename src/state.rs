@@ -79,6 +79,7 @@ impl AppState {
     }
 
     pub fn cancel_session(&self, session_id: &str) {
+        let newly_cancelled=!self.is_cancelled(session_id);
         self.cancelled
             .lock()
             .unwrap()
@@ -106,6 +107,14 @@ impl AppState {
                     if let Some(saved) = self.store.patch_if("job",id,"status",&job["status"],&serde_json::json!({
                         "status":"cancelled","cancelRequested":true,"finishedAt":chrono::Utc::now().to_rfc3339(),"error":"사용자 요청으로 실행이 중단되었습니다."
                     })) { self.bus.record("job",&saved); }
+                }
+            }
+        }
+        if newly_cancelled {
+            for child in self.store.all("session").into_iter().filter(|s|s["delegated"]==true&&s["parentSessionId"]==session_id){
+                if let Some(id)=child["id"].as_str(){
+                    self.cancel_session(id);
+                    crate::engine::execution_budget::close_unstarted_child(self,id);
                 }
             }
         }

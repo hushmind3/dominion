@@ -44,7 +44,12 @@ pub async fn list(State(state): State<AppState>, Query(page): Query<Page>) -> Js
 
 pub async fn one(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     match state.store.get("execution", &id) {
-        Some(execution) => Json(execution).into_response(),
+        Some(mut execution) => {
+            if let Some(tree)=execution["budgetBinding"]["treeId"].as_str().and_then(|id|state.store.get("budget_tree",id)){
+                execution["hierarchicalBudget"]=tree;
+            }
+            Json(execution).into_response()
+        },
         None => (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": "실행 기록을 찾을 수 없습니다." })),
@@ -114,4 +119,14 @@ pub async fn execution_operations(
         .filter(|record| record.get("runId").and_then(|value| value.as_str()) == Some(id.as_str()))
         .collect::<Vec<_>>();
     Json(json!(items))
+}
+
+pub async fn reconcile_budget(State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>)->Response{
+    let Some(execution)=state.store.get("execution",&id)else{return (StatusCode::NOT_FOUND,Json(json!({"error":"실행이 없습니다."}))).into_response()};
+    let (Some(call),Some(charged),Some(details))=(body["callId"].as_str(),body["charged"].as_u64(),body["details"].as_str())else{
+        return (StatusCode::BAD_REQUEST,Json(json!({"error":"callId, charged(계정 단위), details가 필요합니다."}))).into_response();
+    };
+    match crate::engine::execution_budget::reconcile(&state,&execution,call,charged,details){
+        Ok(tree)=>Json(tree).into_response(),Err(error)=>(StatusCode::CONFLICT,Json(json!({"error":error}))).into_response()
+    }
 }

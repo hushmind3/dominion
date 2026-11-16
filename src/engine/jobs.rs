@@ -510,6 +510,14 @@ async fn run_job(state: AppState, job: Value) {
             );
         }
     }
+    if state.store.get("job",&job_id).is_some_and(|j|j["status"]=="completed"){
+        if let Err(error)=crate::engine::delegation_worktree::freeze_result(&state,&job).await{
+            state.store.patch_if("job",&job_id,"status",&json!("completed"),&json!({"status":"needs_review","error":error}));
+        }
+    }
+    if let Some(session)=job["input"]["sessionId"].as_str(){
+        crate::engine::execution_budget::close_unstarted_child(&state,session);
+    }
     if kind == "rsi_evolve" {
         if state.store.get("job", &job_id).is_some_and(|j|
             !matches!(j["status"].as_str(), Some("queued" | "running"))) {
@@ -673,6 +681,9 @@ pub(crate) async fn run_prompt(context: &JobContext, job: &Value) -> Result<Valu
     // captures the real diff and verifier evidence before removing that copy.
     let mut scoped_state = context.state.clone();
     if let Some(worktree)=&rsi_workspace {scoped_state.config.workspace=worktree.path.clone();}
+    else if let Some(session)=context.state.store.get("session",&session_id){
+        if let Some(path)=crate::engine::delegation_worktree::scoped_workspace(&context.state,&session)?{scoped_state.config.workspace=path;}
+    }
     // An independently accepted ancestor already supplied an executable
     // improvement procedure and measured next-domain target. Run that
     // procedure FIRST, rather than letting a new model turn overwrite its

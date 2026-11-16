@@ -78,8 +78,12 @@ pub fn definitions() -> Vec<Value> {
             "agentId": text("Target agent id"),
             "prompt": text("Task instructions"),
             "wait": json!({"type":"boolean","description":"Wait for completion (default true)"}),
-            "timeoutSeconds": json!({"type":"number","description":"5-300 seconds"})
+            "timeoutSeconds": json!({"type":"number","description":"5-300 seconds"}),
+            "budget": json!({"type":"integer","minimum":1,"description":"Child allowance in the parent budget unit (tokens or USD micros)"}),
+            "readOnly":json!({"type":"boolean","description":"Constrain the worker to observational tools"}),
+            "isolatedWorktree":json!({"type":"boolean","description":"Use an independent Git worktree and enforced shell sandbox; integrate explicitly with task_integrate"})
         }), vec!["agentId", "prompt"])),
+        tool("task_integrate","Integrate a completed isolated child patch into this parent workspace (approval required)",object(json!({"jobId":text("Completed child job id")}),vec!["jobId"])),
         tool("task_status", "Check a delegated task's status", object(json!({"jobId": text("Job id")}), vec!["jobId"])),
         tool("task_result", "Read a delegated task's result, artifacts and final answer", object(json!({"jobId": text("Job id")}), vec!["jobId"])),
         tool("account_status", "List OAuth accounts connected to DOMINION", object(json!({}), vec![])),
@@ -110,9 +114,14 @@ pub fn requires_approval(name: &str) -> bool {
             | "file_write"
             | "shell_exec"
             | "terminal_exec"
+            | "task_integrate"
             | "github_api"
             | "browser_control"
     )
+}
+
+pub fn observational(name:&str)->bool{
+    matches!(name,"workspace_list"|"workspace_read"|"workspace_read_range"|"code_search"|"file_list"|"file_read"|"memory_search"|"web_search"|"http_fetch"|"task_status"|"task_result"|"account_status"|"unsafe_audit")
 }
 
 pub fn rsi_allowed(name:&str)->bool{
@@ -125,6 +134,15 @@ pub async fn execute(
     args: &Value,
     run_id: &str,
 ) -> Result<Value, String> {
+    if ctx.store.get("session",ctx.session_id).is_some_and(|s|s["readOnly"]==true)
+        && !observational(name) {
+        return Err("읽기 전용 위임 작업에는 이 도구를 실행할 권한이 없습니다.".into());
+    }
+    if ctx.store.get("session",ctx.session_id).is_some_and(|s|s["delegationWorkspace"].is_object())
+        && matches!(name,"file_write"|"file_read"|"file_list") {
+        let target=canonical_target(Path::new(&required_arg(args,"path")?)).map_err(|e|e.to_string())?;
+        if !target.starts_with(ctx.workspace.canonicalize().map_err(|e|e.to_string())?){return Err("격리 위임에서는 외부 파일에 접근할 수 없습니다.".into());}
+    }
     let isolated_rsi = ctx.store.get("session",ctx.session_id)
         .is_some_and(|s|s["rsiRun"]==true);
     if isolated_rsi && !rsi_allowed(name) {
@@ -248,6 +266,12 @@ pub async fn execute(
                 Some(dir) => PathBuf::from(dir),
                 None => ctx.workspace.to_path_buf(),
             };
+            if crate::engine::sandbox::required(ctx.state,ctx.session_id){
+                if !cwd.canonicalize().map_err(|e|e.to_string())?.starts_with(ctx.workspace.canonicalize().map_err(|e|e.to_string())?){return Err("격리 셸의 작업 폴더는 위임 작업공간 내부여야 합니다.".into());}
+                let mut child=crate::engine::sandbox::script(ctx.workspace,&command)?;
+                child.current_dir(&cwd);
+                return run_command(&mut child,Duration::from_secs(120)).await.map(|output|output_payload(&output));
+            }
             shell(&command, &cwd).await
         }
         "terminal_exec" => {
@@ -262,6 +286,10 @@ pub async fn execute(
                         .collect()
                 })
                 .unwrap_or_default();
+            if crate::engine::sandbox::required(ctx.state,ctx.session_id){
+                let mut child=crate::engine::sandbox::command(ctx.workspace,&command,&argv)?;
+                return run_command(&mut child,Duration::from_secs(120)).await.map(|output|output_payload(&output));
+            }
             executable(&command, &argv, ctx.workspace).await
         }
         "browser_control" => {
@@ -392,6 +420,7 @@ pub async fn execute(
             Ok(crate::engine::unsafe_audit::audit_path(&path))
         }
         "delegate_task" => delegate(ctx, args).await,
+        "task_integrate" => crate::engine::delegation_worktree::integrate(ctx,args).await,
         "task_status" => task_payload(ctx, args, false),
         "task_result" => task_payload(ctx, args, true),
         "account_status" => Ok(json!({
@@ -478,40 +507,26 @@ async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Value, String> 
         .unwrap_or(90)
         .clamp(5, 300);
 
-    let session = ctx
-        .state
-        .store
-        .put(
-            "session",
-            &json!({
-                "title": format!("Delegate · {}", prompt.chars().take(36).collect::<String>()),
-                "agentId": agent_id,
-                "providerId": agent["providerId"],
-                "model": agent["model"],
-                "parentSessionId": ctx.session_id,
-                "delegated": true,
-            }),
-        )
-        .ok_or("위임 세션을 만들 수 없습니다.")?;
-    let session_id = session["id"].as_str().unwrap_or("").to_string();
-    let job = crate::engine::jobs::enqueue(
-        ctx.state,
-        "prompt",
-        json!({
-            "prompt": prompt,
-            "agentId": agent_id,
-            "providerId": agent["providerId"],
-            "model": agent["model"],
-            "sessionId": session_id,
-            "toolsEnabled": ctx.tools_enabled && ctx.tools_execution_enabled,
-            "toolsExecutionEnabled": ctx.tools_execution_enabled,
-            "parentSessionId": ctx.session_id,
-            "parentAgentId": ctx.agent_id,
-            "delegation": true,
-        }),
-    )
-    .ok_or("위임 작업을 만들 수 없습니다.")?;
-    let job_id = job["id"].as_str().unwrap_or("").to_string();
+    let session_id=uuid::Uuid::new_v4().to_string();
+    let job_id=uuid::Uuid::new_v4().to_string();
+    let mut session=json!({"id":session_id,"title":format!("Delegate · {}",prompt.chars().take(36).collect::<String>()),
+        "agentId":agent_id,"providerId":agent["providerId"],"model":agent["model"],
+        "parentSessionId":ctx.session_id,"delegated":true,"readOnly":args["readOnly"]==true});
+    if args["isolatedWorktree"]==true {
+        session["delegationWorkspace"]=crate::engine::delegation_worktree::prepare(ctx.state,ctx.workspace,&job_id).await?;
+        session["shellSandbox"]=json!("required");
+    }
+    let job=json!({"id":job_id,"kind":"prompt","status":"queued","queuedAt":chrono::Utc::now().to_rfc3339(),
+        "attempts":0,"stepIndex":0,"stepTotal":0,"events":[],"input":{
+            "prompt":prompt,"agentId":agent_id,"providerId":agent["providerId"],"model":agent["model"],
+            "sessionId":session_id,"toolsEnabled":ctx.tools_enabled&&ctx.tools_execution_enabled,
+            "toolsExecutionEnabled":ctx.tools_execution_enabled,"parentSessionId":ctx.session_id,
+            "parentAgentId":ctx.agent_id,"delegation":true}});
+    let prepared=session["delegationWorkspace"].clone();
+    if let Err(error)=crate::engine::execution_budget::enqueue_child(ctx.state,ctx.session_id,session,job,args["budget"].as_u64()){
+        if prepared.is_object(){let _=crate::engine::delegation_worktree::discard_prepared(&prepared).await;}
+        return Err(error);
+    }
     crate::engine::jobs::start_now(ctx.state.clone(), job_id.clone());
 
     if !wait {
@@ -523,7 +538,8 @@ async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Value, String> 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
     loop {
         if ctx.state.is_cancelled(ctx.session_id) {
-            return Err("실행이 중단되었습니다. 위임 작업은 백그라운드에서 계속됩니다.".into());
+            ctx.state.cancel_session(&session_id);
+            return Err("부모 실행과 위임 작업이 함께 중단되었습니다.".into());
         }
         let Some(current) = ctx.state.store.get("job", &job_id) else {
             return Err("위임 작업 기록이 사라졌습니다.".into());
@@ -565,6 +581,9 @@ fn task_payload(ctx: &ToolContext<'_>, args: &Value, with_result: bool) -> Resul
         "stepTotal": job["stepTotal"],
         "error": job["error"],
         "result": job["result"],
+        "workspace":job["delegationWorkspace"],
+        "patchSha256":job["delegationPatchSha256"],
+        "budget":job["input"]["delegationBudget"],
     });
     if !with_result || !matches!(status, "completed" | "failed" | "needs_review") {
         return Ok(payload);
@@ -940,6 +959,15 @@ async fn replace_range(
     Ok(result)
 }
 
+pub(crate) fn mutation_lock(state:&crate::state::AppState,path:&Path)->std::sync::Arc<tokio::sync::Mutex<()>>{
+    let canonical=canonical_target(path).unwrap_or_else(|_|path.to_owned());
+    let mut locks=state.file_mutations.lock().unwrap();
+    locks.retain(|_,lock|lock.strong_count()!=0);
+    if let Some(lock)=locks.get(&canonical).and_then(std::sync::Weak::upgrade){return lock;}
+    let lock=std::sync::Arc::new(tokio::sync::Mutex::new(()));
+    locks.insert(canonical,std::sync::Arc::downgrade(&lock));lock
+}
+
 async fn checked_write(
     ctx: &ToolContext<'_>,
     path: &Path,
@@ -957,17 +985,7 @@ async fn checked_write(
         Err(error) if policy.is_some() => return Err(error.to_string()),
         Err(_) => path,
     };
-    let lock = {
-        let mut locks = ctx.state.file_mutations.lock().unwrap();
-        locks.retain(|_, lock| lock.strong_count() != 0);
-        if let Some(lock) = locks.get(lock_path).and_then(std::sync::Weak::upgrade) {
-            lock
-        } else {
-            let lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
-            locks.insert(lock_path.to_path_buf(), std::sync::Arc::downgrade(&lock));
-            lock
-        }
-    };
+    let lock=mutation_lock(ctx.state,lock_path);
     let _guard = lock.lock().await;
     let Some(policy) = policy else {
         // Even without the opt-in guard, a caller that supplies a frozen

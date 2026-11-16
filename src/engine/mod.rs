@@ -268,7 +268,8 @@ mod outcome_tests {
             .put("policy", &json!({"id":"default","autoApproveAll":true}));
         let request=chat::TurnRequest::from_value(&json!({"sessionId":"s","providerId":"p","input":"Write the proof file","autoLearning":false})).unwrap();
         let (outcome, stats) = run_quiet_outcome(&state, &request).await;
-        assert!(outcome.unwrap_err().contains("503"));
+        let error=outcome.unwrap_err();
+        assert!(error.contains("503"),"{error}");
         assert_eq!(
             std::fs::read_to_string(root.join("proof.txt")).unwrap(),
             "proof"
@@ -286,3 +287,8 @@ mod outcome_tests {
 }
 
 pub mod rsi_profile;
+
+pub mod execution_budget;
+
+pub mod sandbox;
+pub mod delegation_worktree;
