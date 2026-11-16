@@ -34,25 +34,6 @@ pub mod gateway;
 pub mod cli_model;
 pub mod improve;
 pub mod code_index;
-pub mod rsi;
-pub mod rsi_archive;
-pub mod rsi_forecast;
-pub mod rsi_edit_method;
-pub mod rsi_metrics;
-pub mod rsi_meta;
-pub mod rsi_evolve;
-pub mod rsi_system;
-pub mod rsi_edit_genome;
-pub mod rsi_edit_program;
-pub mod rsi_decision_rules;
-pub mod rsi_rule_tournament;
-pub mod rsi_rule_rewrite;
-pub mod rsi_rule_induction;
-pub mod rsi_scan;
-pub mod rsi_worktree;
-pub mod rsi_compiler_repair;
-pub mod rsi_mutation;
-pub mod rsi_repair_synthesis;
 pub mod recovery;
 pub mod reasoning;
 pub mod remote_backup;
@@ -77,11 +58,9 @@ pub mod rooms;
 pub mod room_knowledge;
 pub mod room_state;
 pub mod run_state;
-pub mod scheduler;
 pub mod skills;
 pub mod telegram;
 pub mod tools;
-pub mod unsafe_audit;
 pub mod vault_rotation;
 pub mod workflows;
 pub mod wake;
@@ -292,4 +271,3 @@ mod outcome_tests {
     }
 }
 
-pub mod rsi_profile;
