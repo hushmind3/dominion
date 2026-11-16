@@ -27,6 +27,7 @@ pub mod verification;
 pub mod reflect;
 pub mod gateway;
 pub mod model_cost;
+pub mod resource_lock;
 pub mod cli_model;
 pub mod improve;
 pub mod code_index;

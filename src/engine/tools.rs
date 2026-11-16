@@ -188,6 +188,10 @@ pub async fn execute(
             return Err("자기개선은 허용된 소스코드 경로만 수정할 수 있습니다.".into());
         }
     }
+    // Cross-job resource locks: shell / terminal / source mutations must not
+    // race on the same workspace. Safe parallel reads remain unrestricted.
+    // Held until the tool returns, including its committed evidence.
+    let _resource_guard=crate::engine::resource_lock::acquire(ctx.workspace,name,args).await;
     match name {
         "workspace_list" => {
             let path = resolve_workspace(ctx.workspace, string_arg(args, "path").unwrap_or("."))?;
