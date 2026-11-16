@@ -2463,7 +2463,7 @@ fn restore_program_state(
 ) -> Result<(), String> {
     let source = state
         .store
-        .all("execution")
+        .task_executions(task_id)?
         .into_iter()
         .filter(|execution| {
             execution["id"].as_str() != Some(execution_id)
