@@ -181,6 +181,7 @@ fn request()->RunRequest {
 
 #[tokio::test]
 async fn two_file_crash_restore_failed_test_repair_and_verified_completion(){
+    let started=std::time::Instant::now();
     let root=workspace();
     let host=RealRustHost{root:root.clone(),invoked:Mutex::new(Vec::new())};
     let evidence=RealEvidence{root:root.clone()};
@@ -225,5 +226,22 @@ async fn two_file_crash_restore_failed_test_repair_and_verified_completion(){
         "planner must see the real failure before rewriting source");
     assert!(matches!(recovered_journal.load().status,Status::Completed));
     assert!(result.charged_tokens>0);
+    let failed_tests=result.receipts.iter().filter(|r|
+        r.tool=="shell_exec" && !r.success).count();
+    let successful_tests=result.receipts.iter().filter(|r|
+        r.tool=="shell_exec" && r.success).count();
+    println!("DOMINION_FAULT_BENCHMARK {}",json!({
+        "scenario":"two_real_rust_files_crash_recover_repair",
+        "provider":"deterministic_scripted_no_paid_api",
+        "completed":matches!(result.status,Status::Completed),
+        "sourceFiles":2,
+        "modelCalls":result.model_calls,
+        "toolReceipts":result.receipts.len(),
+        "failedTests":failed_tests,
+        "successfulTests":successful_tests,
+        "replayedEffects":0,
+        "reportedScriptedTokens":result.charged_tokens,
+        "wallMs":started.elapsed().as_millis(),
+    }));
     let _=fs::remove_dir_all(&root);
 }
