@@ -57,3 +57,17 @@ test('a standalone Rust task kernel is consumed by the same native owner worker'
  assert.match(adapter,/pub use dominion_agent_kernel::\*/);
  assert.match(worker,/agent_kernel::/);
 });
+
+test('chat budgets and cancellation share the real kernel instead of polling SQLite at 20Hz',()=>{
+ const kernel=file('crates/dominion-agent-kernel/src/budget.rs');
+ const adapter=file('src/engine/chat/budget.rs');
+ const runtime=file('src/engine/chat/runtime.rs');
+ const state=file('src/state.rs');
+ assert.match(kernel,/pub struct BudgetLedger/);
+ assert.match(kernel,/self\.rounds >= self\.max_rounds \|\| self\.expired\(\)/);
+ assert.match(adapter,/pub use dominion_agent_kernel::BudgetLedger;/);
+ assert.match(runtime,/cancel_notify\.notified\(\)/);
+ assert.match(runtime,/MissedTickBehavior::Skip/);
+ assert.match(state,/cancel_notify\.notify_waiters\(\)/);
+ assert.doesNotMatch(runtime,/tokio::time::sleep\(Duration::from_millis\(50\)\)/);
+});

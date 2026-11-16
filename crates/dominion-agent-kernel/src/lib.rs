@@ -2,6 +2,9 @@
 //! The async runtime owns providers, tools, checkpoints and persistent state;
 //! this module owns bounded repair/review, effect replay safety, goal steering
 //! and usage deltas. No mutation or autonomous campaign can start here.
+mod budget;
+pub use budget::BudgetLedger;
+
 use serde_json::{json,Value};
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]

@@ -415,9 +415,23 @@ where F:std::future::Future<Output=Result<Option<Value>,String>>{
 }
 
 async fn wait_cancelled(state: &AppState, session_id: &str, generation: u64) {
-    while !state.is_cancelled(session_id) && state.cancellation_generation(session_id) == generation
-    {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+    // Same-process cancellation is event-driven; only the slower backstop
+    // checks the durable epoch for a cancellation written by another process.
+    // Register the waiter before inspecting state to avoid missing a wakeup.
+    let mut backstop=tokio::time::interval(Duration::from_secs(1));
+    backstop.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        let notified=state.cancel_notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if state.is_cancelled(session_id)
+            || state.cancellation_generation(session_id)!=generation {
+            return;
+        }
+        tokio::select! {
+            _=&mut notified=>{},
+            _=backstop.tick()=>{},
+        }
     }
 }
 

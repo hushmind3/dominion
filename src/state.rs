@@ -5,7 +5,7 @@ use crate::vault::Vault;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, Weak};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Notify};
 
 type FileMutations = Arc<Mutex<HashMap<PathBuf, Weak<tokio::sync::Mutex<()>>>>>;
 
@@ -19,6 +19,8 @@ pub struct AppState {
     pub approvals: Arc<Mutex<HashMap<String, oneshot::Sender<bool>>>>,
     /// Sessions the user asked to stop. The engine checks between rounds/tools.
     pub cancelled: Arc<Mutex<HashSet<String>>>,
+    /// Local cancellation wakeup. Persisted generations still govern cross-process safety.
+    pub cancel_notify: Arc<Notify>,
     /// Sessions currently executing. Prevents two turns racing on one history.
     pub active: Arc<Mutex<HashSet<String>>>,
     /// Coordinates checked and unchecked writes to the same canonical path.
@@ -46,6 +48,7 @@ impl AppState {
             vault: Arc::new(vault),
             approvals: Arc::new(Mutex::new(HashMap::new())),
             cancelled: Arc::new(Mutex::new(HashSet::new())),
+            cancel_notify: Arc::new(Notify::new()),
             active: Arc::new(Mutex::new(HashSet::new())),
             file_mutations: Arc::new(Mutex::new(HashMap::new())),
             principle_learning: Arc::new(Mutex::new(())),
@@ -83,6 +86,10 @@ impl AppState {
             .lock()
             .unwrap()
             .insert(session_id.to_string());
+        // Wake local in-flight model/tool waiters immediately. This avoids a
+        // 50ms SQLite polling loop per active turn. Durable state below remains
+        // authoritative for crash recovery and multi-process cancellation.
+        self.cancel_notify.notify_waiters();
         if self.store.cancel_session_epoch(session_id).is_none() {
             self.store.audit(
                 "session.cancel_persistence_failed",
@@ -139,6 +146,7 @@ impl AppState {
             return false;
         }
         self.cancelled.lock().unwrap().remove(session_id);
+        self.cancel_notify.notify_waiters();
         true
     }
 
