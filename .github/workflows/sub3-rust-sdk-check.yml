@@ -1,8 +1,7 @@
 name: Sub3 Rust SDK focused verification
 
-# A narrow isolated compiler/test check, NOT the full Dominion release CI.
-# Only SDK source and this workflow trigger it; the regular repo CI excludes
-# dominion-sub3 and remains untouched.
+# Focused cross-runtime acceptance for sub3. Full cross-platform release CI
+# remains a separate gate, with the same branch HEAD when explicitly triggered.
 on:
   push:
     branches: [dominion-sub3]
@@ -51,6 +50,10 @@ jobs:
           cargo test -p dominion-agent-sdk --lib escaped_oversized_failure_keeps_the_actionable_diagnostic
           cargo test -p dominion-agent-sdk --lib one_unrepresentable_error_does_not_hide_smaller_old_failure
           cargo test -p dominion-agent-sdk --lib empty_query_lists_a_bounded_recent_page_without_full_log_projection
+      - name: Verify budget settlement and crash/recovery of two real Rust files
+        run: |
+          cargo test -p dominion-agent-sdk --test kernel_replanning provider_reported_token_overrun_cannot_dispatch_any_tool_effect
+          cargo test -p dominion-agent-sdk --test multifile_fault_recovery -- --nocapture
       - name: Compile and execute Rust SDK tests, including real file and shell repair
         run: cargo test --manifest-path crates/dominion-agent-sdk/Cargo.toml -- --nocapture
       - name: Compile full Dominion Rust host and run native adapter contract tests
