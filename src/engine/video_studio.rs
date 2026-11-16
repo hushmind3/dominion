@@ -187,6 +187,47 @@ pub fn finish_render(state:&AppState,job:&Value){
 #[cfg(test)]
 mod tests{
  use super::*;
+ fn test_state()->AppState{
+  let dir=std::env::temp_dir().join(format!("dominion-video-project-{}",uuid::Uuid::new_v4()));
+  let cfg=crate::config::Config{port:0,data_dir:dir.join("data"),
+   web_dir:dir.join("web"),workspace:dir.join("workspace")};
+  AppState::new(cfg.clone(),crate::db::Store::open(&cfg.db_path()).unwrap(),
+   crate::vault::Vault::open(&cfg.key_path()))
+ }
+ #[tokio::test]
+ async fn real_project_plan_is_persistent_editable_and_revision_safe(){
+  let state=test_state();
+  let project=create(&state,&json!({"brief":"intro. facts. final.","targetSeconds":30,
+   "platform":"shorts","autoRender":false,"useAI":false})).unwrap();
+  assert_eq!(project["status"],"planning");
+  let id=project["id"].as_str().unwrap();
+  let plan_id=project["planJobId"].as_str().unwrap();
+  let job=state.store.get("job",plan_id).unwrap();
+  assert_eq!(job["kind"],"video_plan");
+  let ctx=JobContext::new(state.clone(),plan_id.into());
+  let result=run_plan(&ctx,&job).await.unwrap();
+  assert_eq!(result["sceneCount"],3);
+  let stored=get(&state,id).unwrap();
+  assert_eq!(stored["status"],"planned");
+  assert_eq!(stored["revision"],1);
+  let edit_result=edit(&state,id,&json!({"revision":1,"title":"Edited",
+    "scenes":[{"script":"new script","visualPrompt":"a street at night",
+        "overlay":"Text on screen","seconds":5}]})).unwrap();
+  assert_eq!(edit_result["revision"],2);
+  assert_eq!(edit_result["scenes"][0]["overlay"],"Text on screen");
+  assert!(edit(&state,id,&json!({"revision":1,"scenes":stored["scenes"]})).is_err());
+  assert_eq!(list(&state).len(),1);
+  crate::test_support::cleanup_dir(state.config.data_dir.clone());
+ }
+ #[test]
+ fn auto_upload_requires_explicit_non_public_authorization(){
+  let state=test_state();
+  let body=json!({"brief":"video","autoRender":true,"autoUpload":true,
+   "privacyStatus":"public","platform":"shorts"});
+  assert!(create(&state,&body).is_err());
+  assert!(state.store.all("video_project").is_empty());
+  crate::test_support::cleanup_dir(state.config.data_dir.clone());
+ }
  #[test]fn scene_edits_are_validated(){
   assert!(validate_scenes(&json!([])).is_err());
   assert!(validate_scenes(&json!([{"script":"one","seconds":3}])).is_ok());
