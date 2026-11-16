@@ -106,7 +106,7 @@ mod tests {
         };
         let receipts=vec![
             write("old","workspace_write","src/main.rs",&hash_a),
-            receipt("read","workspace_read","","",true),
+            receipt("read","workspace_read","",true),
             write("new","workspace_replace","src/main.rs",&hash_b),
             write("other","workspace_write","src/lib.rs",&hash_a),
             write("absolute","workspace_write","/outside.rs",&hash_b),
