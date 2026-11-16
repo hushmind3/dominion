@@ -82,6 +82,50 @@ pub fn list(state:&AppState)->Vec<Value>{
  rows.sort_by(|a,b|b["createdAt"].as_str().unwrap_or("").cmp(a["createdAt"].as_str().unwrap_or("")));
  rows.truncate(80);rows
 }
+/// Explicitly retry a failed *planning* job without replaying an immutable job ID.
+pub fn retry_plan(state:&AppState,id:&str,expected_revision:u64)->Result<Value,String>{
+ let previous=get(state,id)?;
+ if previous["revision"].as_u64()!=Some(expected_revision){
+  return Err("기획 버전이 바뀌었습니다. 다시 불러오세요.".into())
+ }
+ if previous["status"]!="failed"||
+    previous["scenes"].as_array().is_some_and(|items|!items.is_empty()){
+  return Err("실패한 최초 기획만 다시 실행할 수 있습니다. 영상 오류는 렌더링을 다시 실행하세요.".into())
+ }
+ let old_id=previous["planJobId"].as_str().ok_or("이전 기획 작업이 없습니다.")?;
+ let old_job=state.store.get("job",old_id).ok_or("이전 기획 기록이 없습니다.")?;
+ if old_job["kind"]!="video_plan"||old_job["input"]["projectId"]!=id{
+  return Err("기획 작업 연결이 올바르지 않습니다.".into())
+ }
+ if !matches!(old_job["status"].as_str(),Some("failed"|"cancelled"|"interrupted")){
+  return Err("이전 기획 작업의 결과를 검토한 뒤 재시도하세요.".into())
+ }
+ let attempt=previous["planAttempts"].as_u64().unwrap_or(1).saturating_add(1);
+ let job_id=uuid::Uuid::new_v4().to_string();
+ let mut updated=previous.clone();
+ updated["status"]=json!("planning");
+ updated["planJobId"]=json!(job_id);
+ updated["planAttempts"]=json!(attempt);
+ updated["planningError"]=Value::Null;
+ updated["updatedAt"]=json!(chrono::Utc::now().to_rfc3339());
+ let job=json!({"id":job_id,"kind":"video_plan","input":{"projectId":id},
+  "status":"queued","queuedAt":chrono::Utc::now().to_rfc3339_opts(
+   chrono::SecondsFormat::Micros,true),
+  "attempts":0,"stepIndex":0,"stepTotal":0,"events":[]});
+ // Commit the new work and its owner-visible link in one SQLite transaction.
+ // The failed-status CAS makes simultaneous retry button presses single-winner.
+ let records=vec![("video_project".to_string(),updated),
+                   ("job".to_string(),job.clone())];
+ if !state.store.transaction_if_status("video_project",id,"failed",&records)?{
+  return Err("다른 창에서 재시도했습니다. 다시 불러오세요.".into())
+ }
+ let saved=get(state,id)?;
+ state.bus.record("job",&job);
+ state.bus.record("video_project",&saved);
+ state.store.audit("video.plan_retried",json!({"projectId":id,
+  "previousJobId":old_id,"jobId":job_id,"attempt":attempt}));
+ Ok(saved)
+}
 pub fn create(state:&AppState,body:&Value)->Result<Value,String>{
  let brief=field(body,"brief",16000,true)?;
  let title=field(body,"title",180,false)?;
@@ -132,7 +176,7 @@ pub fn create(state:&AppState,body:&Value)->Result<Value,String>{
   "targetSeconds":seconds,"aspectRatio":aspect,"engine":engine,"useAI":ai,
   "providerId":provider,"model":model,"autoRender":auto,"autoUpload":upload,
   "privacyStatus":privacy,"economy":body["economy"].as_bool().unwrap_or(true),
-  "revision":0,"scenes":[],"planJobId":null,"renderJobId":null,
+  "revision":0,"scenes":[],"planJobId":null,"planAttempts":1,"renderJobId":null,
   "createdAt":chrono::Utc::now().to_rfc3339()});
  state.store.put_if_absent("video_project",&project).ok_or("프로젝트 저장 실패")?;
  let job=jobs::enqueue_once(state,&render_id(&id,0),"video_plan",json!({"projectId":id}))
@@ -199,6 +243,10 @@ pub fn render(state:&AppState,id:&str,expected:Option<u64>)->Result<Value,String
 pub async fn run_plan(ctx:&JobContext,job:&Value)->Result<Value,String>{
  let id=job["input"]["projectId"].as_str().ok_or("프로젝트 ID가 없습니다.")?;
  let project=get(&ctx.state,id)?;
+ // A superseded or orphaned planning job must never change the active project.
+ if project["planJobId"]!=job["id"] {
+  return Err("다른 기획 작업으로 교체된 실행입니다.".into())
+ }
  if project["revision"].as_u64().unwrap_or(0)>0{
   if project["autoRender"]==true&&project["renderJobId"].is_null(){
    render(&ctx.state,id,project["revision"].as_u64())?;
@@ -278,6 +326,36 @@ mod tests{
    web_dir:dir.join("web"),workspace:dir.join("workspace")};
   AppState::new(cfg.clone(),crate::db::Store::open(&cfg.db_path()).unwrap(),
    crate::vault::Vault::open(&cfg.key_path()))
+ }
+ #[tokio::test]
+ async fn failed_planning_retry_has_atomic_new_job_and_stale_job_is_rejected(){
+  let state=test_state();
+  let created=create(&state,&json!({"brief":"First. Second.","targetSeconds":15,
+    "useAI":false,"autoRender":false})).unwrap();
+  let id=created["id"].as_str().unwrap();
+  let prior_id=created["planJobId"].as_str().unwrap();
+  let prior_job=state.store.patch_if("job",prior_id,"status",&json!("queued"),
+   &json!({"status":"failed","error":"model returned invalid JSON"})).unwrap();
+  let failed=state.store.patch_if("video_project",id,"status",&json!("planning"),
+   &json!({"status":"failed","planningError":"model returned invalid JSON"})).unwrap();
+  assert_eq!(failed["revision"],0);
+  assert!(retry_plan(&state,id,1).is_err());
+  let retried=retry_plan(&state,id,0).unwrap();
+  assert_eq!(retried["status"],"planning");
+  assert_eq!(retried["planAttempts"],2);
+  assert!(retried["planningError"].is_null());
+  assert_ne!(retried["planJobId"],prior_job["id"]);
+  assert!(retry_plan(&state,id,0).is_err());
+  let orphan_ctx=JobContext::new(state.clone(),prior_id.into());
+  assert!(run_plan(&orphan_ctx,&prior_job).await.is_err());
+  let job_id=retried["planJobId"].as_str().unwrap();
+  let next=state.store.get("job",job_id).unwrap();
+  assert_eq!(next["status"],"queued");
+  let ctx=JobContext::new(state.clone(),job_id.into());
+  run_plan(&ctx,&next).await.unwrap();
+  assert_eq!(get(&state,id).unwrap()["status"],"planned");
+  assert_eq!(get(&state,id).unwrap()["planJobId"],next["id"]);
+  crate::test_support::cleanup_dir(state.config.data_dir.clone());
  }
  #[tokio::test]
  async fn real_project_plan_is_persistent_editable_and_revision_safe(){
