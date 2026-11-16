@@ -7,7 +7,7 @@ import {useJob,jobFinished} from '../hooks/useJob'
 
 type Scene={id:string;script:string;visualPrompt:string;overlay:string;seconds:number}
 type Project={id:string;title:string;brief:string;status:string;targetSeconds:number;aspectRatio:string;platform:string;engine:string;style:string;audience:string;revision:number;scenes:Scene[];useAI:boolean;planningSource?:string;autoRender:boolean;autoUpload:boolean;planJobId?:string;renderJobId?:string;uploadJobId?:string;planningError?:string;renderError?:string}
-type VideoJob={id:string;status:string;title?:string;brief?:string;outputUrl?:string;progress?:number;error?:string;result?:{bytes?:number}}
+type VideoJob={id:string;status:string;title?:string;brief?:string;outputUrl?:string;captionsUrl?:string;progress?:number;error?:string;result?:{bytes?:number;qa?:{containerVerified?:boolean;captionsReady?:boolean}}}
 type Provider={id:string;name:string;model?:string;enabled?:boolean}
 type Props={nativeReady:boolean;comfyReady:boolean;onSettings:()=>void;onPublish:(job:VideoJob)=>void}
 
@@ -173,7 +173,9 @@ export function VideoAutopilot({nativeReady,comfyReady,onSettings,onPublish}:Pro
       {render.value?.outputUrl?<div className="overflow-hidden rounded-xl bg-[#1A222A] p-2"><video key={render.value.id} className="mx-auto max-h-[440px] max-w-full rounded-lg" src={render.value.outputUrl} controls playsInline preload="metadata"/></div>:<div className="flex min-h-32 items-center justify-center rounded-xl bg-[#252D37] text-[12px] text-white/75">{render.value?.status==='failed'?'제작 오류':'장면 합성·음성 처리·인코딩 중'}</div>}
       {!jobFinished(render.value?.status)&&<div className="mt-3"><div className="mb-1 flex justify-between text-[11px]"><span>렌더링 진행 상황</span><span>{render.value?.progress||0}%</span></div><div className="h-2 rounded-full bg-[#EBE5DD]"><div className="h-full rounded-full bg-[#C96442]" style={{width:Math.max(0,Math.min(100,render.value?.progress||0))+'%'}}/></div></div>}
       {render.value?.error&&<Notice message={render.value.error}/>}
-      {render.value?.status==='completed'&&<div className="mt-3 flex flex-wrap gap-2"><a download href={render.value.outputUrl} className="inline-flex items-center gap-2 rounded-xl bg-[#C96442] px-3.5 py-2 text-[12px] font-semibold text-white"><Upload size={14}/> MP4 저장</a><Button variant="secondary" onClick={()=>onPublish(render.value!)}><ShieldCheck size={14}/> 게시 검토</Button></div>}
+      {render.value?.status==='completed'&&<div className="mt-3 flex flex-wrap gap-2"><a download href={render.value.outputUrl} className="inline-flex items-center gap-2 rounded-xl bg-[#C96442] px-3.5 py-2 text-[12px] font-semibold text-white"><Upload size={14}/> MP4 저장</a>{render.value.captionsUrl&&<a href={render.value.captionsUrl} download className="inline-flex items-center gap-2 rounded-xl border border-[#E1D9CC] bg-[#FFFDF9] px-3.5 py-2 text-[12px] font-semibold text-[#3A342D]"><Save size={14}/> SRT 자막</a>}
+       <a href={'/api/video/jobs/'+encodeURIComponent(render.value.id)+'/production'} download className="inline-flex items-center gap-2 rounded-xl border border-[#E1D9CC] bg-[#FFFDF9] px-3.5 py-2 text-[12px] font-semibold text-[#3A342D]"><Film size={14}/> 제작 기록</a>
+       <Button variant="secondary" onClick={()=>onPublish(render.value!)}><ShieldCheck size={14}/> 게시 검토</Button></div>}
       {project.uploadJobId&&<p className="mt-3 text-[11px] text-[#81756A]">자동 업로드: {upload.value?.status||'대기'}{upload.value?.error?' · '+upload.value.error:''}</p>}
      </div>}
     </>}
