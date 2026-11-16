@@ -573,6 +573,26 @@ mod native_evidence_tests {
         dir
     }
     #[tokio::test]
+    async fn host_rehashes_real_final_bytes_and_rejects_tampered_artifact(){
+        use sha2::{Digest,Sha256};
+        let root=temp();
+        let path=root.join("artifact.rs");
+        let content="fn main(){println!(\\\"verified\\\");}";
+        std::fs::write(&path,content).unwrap();
+        let digest=format!("{:x}",Sha256::digest(content.as_bytes()));
+        let evidence=FsEvidence{workspace:root.clone()};
+        let check=Criterion{kind:CriterionKind::FileSha256,
+            path:Some("artifact.rs".into()),contains:Some(digest),tool:None};
+        assert!(evidence.check(&check).await.unwrap());
+        std::fs::write(&path,"fn main(){}").unwrap();
+        assert!(!evidence.check(&check).await.unwrap(),
+            "a successful write receipt cannot certify mutated final bytes");
+        std::fs::remove_file(path).unwrap();
+        assert!(evidence.check(&check).await.is_err(),
+            "missing artifact must never pass a hash witness");
+        let _=std::fs::remove_dir_all(root);
+    }
+    #[tokio::test]
     async fn own_workspace_is_verifiable_but_parent_escape_is_not() {
         let root=temp();
         std::fs::write(root.join("output.md"),"verified artifact").unwrap();
