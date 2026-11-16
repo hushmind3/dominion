@@ -48,25 +48,45 @@ fn present(state: &AppState, relative: &str) -> bool {
         .is_ok_and(|item|item.is_file()&&item.len()>1024*1024)
 }
 
-/// Built-in one-click models. Availability is a real file check, not a claim.
-pub fn video_models(state: &AppState) -> Vec<Value> {
-    let entries = [
-        ("wan21-t2v-1.3b-q4", "Wan2.1 T2V 1.3B · 4비트", "gguf",
-            ["unet/Wan2.1-T2V-1.3B-Q4_K_M.gguf",
-             "clip/umt5-xxl-encoder-Q4_K_M.gguf",
-             "vae/wan_2.1_vae.safetensors"]),
-        ("wan21-t2v-1.3b-fp16", "Wan2.1 T2V 1.3B · fp16", "fp16",
-            ["diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors",
-             "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
-             "vae/wan_2.1_vae.safetensors"]),
-    ];
-    entries.iter().map(|(id, name, kind, files)| {
-        let missing = files.iter().filter(|file| !present(state, file)).count();
+/// The download catalog contains VIDEO-GENERATION model variants only.
+/// Text encoders and the VAE are dependencies bundled into each video model
+/// install, not independent models exposed in the video model picker.
+/// Sizes are approximate decimal GB, including shared companions.
+const WAN_T2V_VARIANTS:[(&str,&str,&str,&str,f64,f64);6]=[
+    ("wan21-t2v-1.3b-q3","Q3_K_M","gguf",
+        "unet/Wan2.1-T2V-1.3B-Q3_K_M.gguf",0.729,4.64),
+    ("wan21-t2v-1.3b-q4","Q4_K_M","gguf",
+        "unet/Wan2.1-T2V-1.3B-Q4_K_M.gguf",0.983,4.90),
+    ("wan21-t2v-1.3b-q5","Q5_K_M","gguf",
+        "unet/Wan2.1-T2V-1.3B-Q5_K_M.gguf",1.090,5.00),
+    ("wan21-t2v-1.3b-q6","Q6_K","gguf",
+        "unet/Wan2.1-T2V-1.3B-Q6_K.gguf",1.200,5.11),
+    ("wan21-t2v-1.3b-q8","Q8_0","gguf",
+        "unet/Wan2.1-T2V-1.3B-Q8_0.gguf",1.540,5.45),
+    ("wan21-t2v-1.3b-fp16","FP16","fp16",
+        "diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors",2.840,9.83),
+];
+pub fn video_models(state:&AppState)->Vec<Value>{
+    WAN_T2V_VARIANTS.iter().map(|(id,quant,kind,weight,weight_gb,total_gb)|{
+        let companions=if *kind=="fp16"{
+            ["text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+             "vae/wan_2.1_vae.safetensors"]
+        }else{
+            ["clip/umt5-xxl-encoder-Q4_K_M.gguf",
+             "vae/wan_2.1_vae.safetensors"]
+        };
+        let files=[*weight,companions[0],companions[1]];
+        let missing=files.iter().filter(|file|!present(state,file)).count();
         json!({
-            "id": id, "name": name, "kind": kind, "files": files,
-            "available": missing == 0,
-            "missingFiles": missing,
-            "hint": if missing == 0 { "설치됨".to_string() } else { format!("파일 {missing}개 없음") },
+            "id":id,"family":"Wan 2.1 · T2V 1.3B","task":"text-to-video",
+            "name":format!("Wan 2.1 T2V 1.3B · {quant}"),
+            "quantization":quant,"kind":kind,"files":files,
+            "weightGB":weight_gb,"totalDownloadGB":total_gb,
+            "available":missing==0,"missingFiles":missing,
+            "recommended":*quant=="Q4_K_M",
+            "hint":if missing==0{"설치 완료".to_string()}else{
+                format!("구성 파일 {missing}개 설치 필요")
+            }
         })
     }).collect()
 }
@@ -75,12 +95,16 @@ pub fn video_models(state: &AppState) -> Vec<Value> {
 /// differ only in the loader node; the sampler graph is identical.
 pub fn workflow_for(model: &str, steps: u64) -> Option<Value> {
     let (unet, clip, vae, loader) = match model {
-        "wan21-t2v-1.3b-q4" => (
-            "Wan2.1-T2V-1.3B-Q4_K_M.gguf",
-            "umt5-xxl-encoder-Q4_K_M.gguf",
-            "wan_2.1_vae.safetensors",
-            "gguf",
-        ),
+        "wan21-t2v-1.3b-q3" => ("Wan2.1-T2V-1.3B-Q3_K_M.gguf",
+            "umt5-xxl-encoder-Q4_K_M.gguf","wan_2.1_vae.safetensors","gguf"),
+        "wan21-t2v-1.3b-q4" => ("Wan2.1-T2V-1.3B-Q4_K_M.gguf",
+            "umt5-xxl-encoder-Q4_K_M.gguf","wan_2.1_vae.safetensors","gguf"),
+        "wan21-t2v-1.3b-q5" => ("Wan2.1-T2V-1.3B-Q5_K_M.gguf",
+            "umt5-xxl-encoder-Q4_K_M.gguf","wan_2.1_vae.safetensors","gguf"),
+        "wan21-t2v-1.3b-q6" => ("Wan2.1-T2V-1.3B-Q6_K.gguf",
+            "umt5-xxl-encoder-Q4_K_M.gguf","wan_2.1_vae.safetensors","gguf"),
+        "wan21-t2v-1.3b-q8" => ("Wan2.1-T2V-1.3B-Q8_0.gguf",
+            "umt5-xxl-encoder-Q4_K_M.gguf","wan_2.1_vae.safetensors","gguf"),
         "wan21-t2v-1.3b-fp16" => (
             "wan2.1_t2v_1.3B_fp16.safetensors",
             "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
@@ -115,28 +139,48 @@ pub fn workflow_for(model: &str, steps: u64) -> Option<Value> {
     }))
 }
 
-/// Download sources for the built-in models. Kept out of the repository:
-/// weights are large and licensed separately from the source.
-pub fn model_files(id: &str) -> Option<Vec<(&'static str, &'static str)>> {
-    let files = match id {
-        "wan21-t2v-1.3b-q4" => vec![
-            ("unet/Wan2.1-T2V-1.3B-Q4_K_M.gguf",
-             "https://huggingface.co/samuelchristlie/Wan2.1-T2V-1.3B-GGUF/resolve/main/Wan2.1-T2V-1.3B-Q4_K_M.gguf"),
-            ("clip/umt5-xxl-encoder-Q4_K_M.gguf",
-             "https://huggingface.co/city96/umt5-xxl-encoder-gguf/resolve/main/umt5-xxl-encoder-Q4_K_M.gguf"),
-            ("vae/wan_2.1_vae.safetensors",
-             "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"),
-        ],
-        "wan21-t2v-1.3b-fp16" => vec![
-            ("diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors",
-             "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors"),
-            ("text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
-             "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"),
-            ("vae/wan_2.1_vae.safetensors",
-             "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"),
-        ],
-        _ => return None,
+/// All file URLs correspond to the selected VIDEO model package.
+/// Shared T5/VAE assets are downloaded once; quantization variants reuse them.
+pub fn model_files(id:&str)->Option<Vec<(&'static str,&'static str)>>{
+    const GGUF_REPO:&str="https://huggingface.co/samuelchristlie/Wan2.1-T2V-1.3B-GGUF/resolve/main/";
+    // Keep literal URLs so download mirrors are auditable.
+    let (weight,url,fp16)=match id{
+        "wan21-t2v-1.3b-q3"=>(
+            "unet/Wan2.1-T2V-1.3B-Q3_K_M.gguf",
+            concat!("https://huggingface.co/samuelchristlie/Wan2.1-T2V-1.3B-GGUF/resolve/main/",
+                "Wan2.1-T2V-1.3B-Q3_K_M.gguf"),false),
+        "wan21-t2v-1.3b-q4"=>(
+            "unet/Wan2.1-T2V-1.3B-Q4_K_M.gguf",
+            concat!("https://huggingface.co/samuelchristlie/Wan2.1-T2V-1.3B-GGUF/resolve/main/",
+                "Wan2.1-T2V-1.3B-Q4_K_M.gguf"),false),
+        "wan21-t2v-1.3b-q5"=>(
+            "unet/Wan2.1-T2V-1.3B-Q5_K_M.gguf",
+            concat!("https://huggingface.co/samuelchristlie/Wan2.1-T2V-1.3B-GGUF/resolve/main/",
+                "Wan2.1-T2V-1.3B-Q5_K_M.gguf"),false),
+        "wan21-t2v-1.3b-q6"=>(
+            "unet/Wan2.1-T2V-1.3B-Q6_K.gguf",
+            concat!("https://huggingface.co/samuelchristlie/Wan2.1-T2V-1.3B-GGUF/resolve/main/",
+                "Wan2.1-T2V-1.3B-Q6_K.gguf"),false),
+        "wan21-t2v-1.3b-q8"=>(
+            "unet/Wan2.1-T2V-1.3B-Q8_0.gguf",
+            concat!("https://huggingface.co/samuelchristlie/Wan2.1-T2V-1.3B-GGUF/resolve/main/",
+                "Wan2.1-T2V-1.3B-Q8_0.gguf"),false),
+        "wan21-t2v-1.3b-fp16"=>(
+            "diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors",
+            "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors",true),
+        _=>return None,
     };
+    let _=GGUF_REPO;
+    let mut files=vec![(weight,url)];
+    if fp16{
+        files.push(("text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+            "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"));
+    }else{
+        files.push(("clip/umt5-xxl-encoder-Q4_K_M.gguf",
+            "https://huggingface.co/city96/umt5-xxl-encoder-gguf/resolve/main/umt5-xxl-encoder-Q4_K_M.gguf"));
+    }
+    files.push(("vae/wan_2.1_vae.safetensors",
+        "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"));
     Some(files)
 }
 
@@ -1570,6 +1614,22 @@ mod tests {
         assert!(parse_video_storyboard("[\"one\"]",2).is_err());
         assert!(parse_video_storyboard("[\"one\",\"two\",\"three\"]",2).is_err());
         assert!(parse_video_storyboard("[\"one\",17]",2).is_err());
+    }
+
+    #[test]
+    fn every_video_quant_variant_has_matching_workflow_and_downloadable_manifest() {
+        for (id,quant,kind,weight,_,_) in WAN_T2V_VARIANTS {
+            let files=model_files(id).expect("every video variant must download");
+            assert_eq!(files.len(),3);
+            assert_eq!(files[0].0,weight);
+            assert!(files.iter().all(|(_,url)|url.starts_with("https://huggingface.co/")));
+            let graph=workflow_for(id,20).expect("every video variant must render");
+            let name=graph["1"]["inputs"]["unet_name"].as_str().unwrap();
+            assert!(name.contains(if kind=="fp16"{"1.3B"}else{quant}),
+                "workflow selected an incompatible video model {id}");
+        }
+        assert!(model_files("llama-3").is_none());
+        assert!(workflow_for("llama-3",20).is_none());
     }
 
     #[test]
