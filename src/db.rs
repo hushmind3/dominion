@@ -195,7 +195,10 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_sdk_unknown_operations
                  ON records(json_extract(data,'$.runId'))
                  WHERE kind='execution_operation'
-                   AND json_extract(data,'$.outcomeUnknown')=1;",
+                   AND json_extract(data,'$.outcomeUnknown')=1;
+             CREATE INDEX IF NOT EXISTS idx_sdk_pending_approval_session
+                 ON records(json_extract(data,'$.sessionId'))
+                 WHERE kind='approval' AND json_extract(data,'$.status')='pending';",
         )?;
         // Older databases predate reasoning/tool columns.
         for (column, decl) in [
@@ -277,6 +280,42 @@ impl Store {
             .map_err(|error| error.to_string())?;
         rows.collect::<Result<std::collections::HashSet<_>, _>>()
             .map_err(|error| error.to_string())
+    }
+
+    /// Frequent single-SDK-run polls must not load other sessions' history.
+    pub fn sdk_evidence_for_session(&self, session: &str)
+        -> Result<(Vec<Value>,Vec<Value>,Vec<Value>),String> {
+        let conn=self.conn.lock().map_err(|error|error.to_string())?;
+        let mut execution=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='execution' AND json_extract(data,'$.sessionId')=?1
+             ORDER BY json_extract(data,'$.startedAt') DESC,id DESC LIMIT 1",
+        ).map_err(|error|error.to_string())?;
+        let runs=execution.query_map([session],record_from_row)
+            .map_err(|error|error.to_string())?
+            .collect::<Result<Vec<_>,_>>().map_err(|error|error.to_string())?;
+        let mut approvals=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='approval' AND json_extract(data,'$.sessionId')=?1
+               AND json_extract(data,'$.status')='pending'
+             ORDER BY updated_at DESC,id DESC",
+        ).map_err(|error|error.to_string())?;
+        let pending=approvals.query_map([session],record_from_row)
+            .map_err(|error|error.to_string())?
+            .collect::<Result<Vec<_>,_>>().map_err(|error|error.to_string())?;
+        let Some(run_id)=runs.first().and_then(|run|run["id"].as_str()) else{
+            return Ok((runs,pending,Vec::new()));
+        };
+        let mut effects=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='execution_operation'
+               AND json_extract(data,'$.runId')=?1
+               AND json_extract(data,'$.outcomeUnknown')=1",
+        ).map_err(|error|error.to_string())?;
+        let unknown=effects.query_map([run_id],record_from_row)
+            .map_err(|error|error.to_string())?
+            .collect::<Result<Vec<_>,_>>().map_err(|error|error.to_string())?;
+        Ok((runs,pending,unknown))
     }
 
     /// SDK status polling is scoped to sessions actually owned by SDK runs.
@@ -1697,6 +1736,36 @@ mod tests {
         assert!(store.finalize_once(&execution, &marker, &[], &[]).is_err());
     }
 
+
+    #[test]
+    fn sdk_single_run_projection_reads_only_its_session(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        for session in ["a","b"]{
+            for (id,at) in [("first","2026-01-01"),("last","2026-11-17")]{
+                store.put("execution",&json!({
+                    "id":format!("{session}-{id}"),"sessionId":session,"startedAt":at
+                }));
+            }
+            store.put("approval",&json!({"id":format!("{session}-pending"),
+                "sessionId":session,"status":"pending"}));
+            store.put("approval",&json!({"id":format!("{session}-closed"),
+                "sessionId":session,"status":"approved"}));
+            store.put("execution_operation",&json!({
+                "id":format!("{session}-unknown"),"runId":format!("{session}-last"),
+                "outcomeUnknown":true
+            }));
+        }
+        let (runs,pending,unknown)=store.sdk_evidence_for_session("a").unwrap();
+        assert_eq!(runs.len(),1);
+        assert_eq!(runs[0]["id"],"a-last");
+        assert_eq!(pending.len(),1);
+        assert_eq!(pending[0]["id"],"a-pending");
+        assert_eq!(unknown.len(),1);
+        assert_eq!(unknown[0]["id"],"a-unknown");
+        let (missing,pending,unknown)=store.sdk_evidence_for_session("none").unwrap();
+        assert!(missing.is_empty()&&pending.is_empty()&&unknown.is_empty());
+        assert_eq!(store.all("execution").len(),4);
+    }
 
     #[test]
     fn sdk_session_and_limits_roll_back_together_when_run_persistence_fails() {
