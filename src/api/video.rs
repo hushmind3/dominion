@@ -22,6 +22,34 @@ async fn comfy_reachable(url: &str) -> bool {
         .await
         .is_ok_and(|r| r.status().is_success())
 }
+/// Query the actual running ComfyUI node registry before enabling AI renders.
+/// A weight file on disk alone does not mean its graph can execute.
+async fn missing_video_nodes(url:&str,cfg:&Value)->Vec<String>{
+    let graph=if cfg["comfyWorkflow"].is_object(){
+        cfg["comfyWorkflow"].clone()
+    }else{
+        let model=cfg["videoModel"].as_str().unwrap_or("");
+        match video::workflow_for(model,cfg["steps"].as_u64().unwrap_or(20)){
+            Some(graph)=>graph,None=>return Vec::new(),
+        }
+    };
+    let Some(nodes)=graph.as_object() else{return Vec::new()};
+    let required=nodes.values().filter_map(|node|node["class_type"].as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let result=reqwest::Client::new()
+        .get(format!("{}/object_info",url.trim_end_matches('/')))
+        .timeout(Duration::from_secs(4)).send().await;
+    let info=match result{
+        Ok(response) if response.status().is_success()=>
+            match response.json::<Value>().await{
+                Ok(info)=>info,
+                Err(_)=>return vec!["ComfyUI 노드 정보를 읽을 수 없습니다.".into()],
+            },
+        _=>return vec!["ComfyUI 노드 목록에 연결할 수 없습니다.".into()],
+    };
+    required.into_iter().filter(|name|info.get(*name).is_none())
+        .map(str::to_owned).collect()
+}
 pub fn outputs(state: &AppState) -> Vec<Value> {
     state
         .store
@@ -38,7 +66,11 @@ pub async fn status(State(state): State<AppState>) -> Json<Value> {
     let model_inventory = video::video_models(&state);
     let built_in = model_inventory.iter()
         .any(|model| model["id"] == cfg["videoModel"] && model["available"] == true);
-    let comfy = reachable && (cfg["comfyWorkflow"].is_object() || built_in);
+    let missing_nodes=if reachable && (cfg["comfyWorkflow"].is_object() || built_in){
+        missing_video_nodes(cfg["comfyUrl"].as_str().unwrap_or(""),&cfg).await
+    }else{Vec::new()};
+    let comfy = reachable && (cfg["comfyWorkflow"].is_object() || built_in)
+        && missing_nodes.is_empty();
     let workflows = workflows_from_config(&cfg);
     let jobs = state.store.all("job").iter()
         .filter(|job| job["kind"] == "video")
@@ -49,7 +81,8 @@ pub async fn status(State(state): State<AppState>) -> Json<Value> {
         "available": executable.is_some() || comfy,
         "native": {"available": executable.is_some()},
         "ffmpeg": {"available": executable.is_some(), "path": executable},
-        "comfy": {"reachable": reachable, "available": comfy},
+        "comfy": {"reachable": reachable, "available": comfy,
+            "missingNodes":missing_nodes},
         "engines": [
             {"id":"native","name":"자막 카드 영상","available":executable.is_some(),"reason":if executable.is_some(){""}else{"FFmpeg 실행 파일 필요"}},
             {"id":"comfyui","name":"ComfyUI","available":comfy,"reason":if comfy{""}else{"서버와 API 워크플로 설정 필요"}}
@@ -302,8 +335,16 @@ pub async fn catalog(State(state): State<AppState>) -> Json<Value> {
     let cfg = video::config(&state);
     let native = video::ffmpeg(&state).is_some();
     let reachable = comfy_reachable(cfg["comfyUrl"].as_str().unwrap_or("")).await;
-    let comfy = reachable && cfg["comfyWorkflow"].is_object();
+    let available=video::video_models(&state).iter()
+        .any(|model|model["id"]==cfg["videoModel"]&&model["available"]==true);
+    let missing_nodes=if reachable&&(cfg["comfyWorkflow"].is_object()||available){
+        missing_video_nodes(cfg["comfyUrl"].as_str().unwrap_or(""),&cfg).await
+    }else{Vec::new()};
+    let comfy=reachable&&(cfg["comfyWorkflow"].is_object()||available)
+        && missing_nodes.is_empty();
     Json(json!({
+        "missingNodes":missing_nodes,
+        "comfyAvailable":comfy,
         "models": [
             {"id":"native","name":"DOMINION native (ffmpeg)","kind":"native","available":native},
             {"id":"comfyui","name":cfg["comfyWorkflowName"].as_str().unwrap_or("ComfyUI"),"kind":"comfyui","available":comfy},
