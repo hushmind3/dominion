@@ -438,7 +438,7 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
             "reason":"재시작 중 도구 또는 모델 호출 결과가 불명확합니다. 기존 실행 기록을 확인하세요.",
             "snapshot":previous}));
     }
-    let resume_snapshot=previous.map(|value|serde_json::from_value::<Snapshot>(value)
+    let resume_snapshot=previous.clone().map(|value|serde_json::from_value::<Snapshot>(value)
         .map_err(|e|format!("Invalid native checkpoint: {e}"))).transpose()?;
     if resume_snapshot.as_ref().is_some_and(|saved|
         !saved.in_flight.is_empty() || saved.model_in_flight) {
