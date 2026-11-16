@@ -557,7 +557,7 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
     );
     if previous.is_some() && prior_job.as_ref()
         .and_then(|job|job["nativeToolAuthoritySha256"].as_str())
-        .is_some_and(|pinned|pinned!=authority) {
+        .is_some_and(|pinned|pinned!=authority.as_str()) {
         return Ok(json!({"status":"needs_review",
             "reason":"Native tool permissions, argument schemas or acceptance requirements changed since checkpoint; review required",
             "snapshot":previous}));
