@@ -16,7 +16,7 @@ type Ratio='9:16'|'16:9'|'1:1'
 type StudioTab='create'|'library'|'publish'|'settings'
 type StudioMode='quick'|'scenes'
 type VideoModel={id:string;name:string;kind:string;available:boolean;hint:string;missingFiles?:number}
-type VideoConfig={engine:VideoEngine;comfyUrl:string;voice?:string;narration?:boolean;videoModel?:string;resolution?:string;steps?:number;comfyWorkflow?:unknown;comfyWorkflowName?:string;comfyModelsDir?:string}
+type VideoConfig={engine:VideoEngine;comfyUrl:string;voice?:string;narration?:boolean;videoModel?:string;resolution?:string;steps?:number;comfyWorkflow?:unknown;comfyWorkflowName?:string;comfyModelsDir?:string;ffmpegPath?:string}
 type VideoJob=JobState & {
  kind:'video'|'youtube_upload';title?:string;brief?:string;engine?:VideoEngine;
  phase?:string;progress?:number;outputUrl?:string|null;createdAt?:string;
@@ -89,6 +89,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  const [engineChoice,setEngineChoice]=useState<VideoEngine|null>(null)
  const [comfyUrl,setComfyUrl]=useState('')
  const [modelDir,setModelDir]=useState('')
+ const [ffmpegPath,setFfmpegPath]=useState('')
  const [voice,setVoice]=useState('Yuna')
  const [narration,setNarration]=useState(true)
  const [reuseId,setReuseId]=useState('')
@@ -155,6 +156,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  useEffect(()=>{try{localStorage.setItem(draftKey,JSON.stringify(draft))}catch{}},[draft])
  useEffect(()=>{setComfyUrl(statusConfig.comfyUrl||'')},[statusConfig.comfyUrl])
  useEffect(()=>{setModelDir(statusConfig.comfyModelsDir||'')},[statusConfig.comfyModelsDir])
+ useEffect(()=>{setFfmpegPath(statusConfig.ffmpegPath||'')},[statusConfig.ffmpegPath])
  useEffect(()=>{setVoice(statusConfig.voice||'Yuna');setNarration(statusConfig.narration!==false)},[statusConfig.voice,statusConfig.narration])
  useEffect(()=>{if(currentId||!sortedJobs.length)return;setCurrentId(sortedJobs[0].id)},[currentId,sortedJobs])
  useEffect(()=>{if(active.value?.status==='completed'){void outputs.reload();void jobs.reload()}},[active.value?.status,outputs.reload,jobs.reload])
@@ -542,7 +544,10 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
   {tab==='settings'&&<div className="grid items-start gap-4 lg:grid-cols-2">
    <Panel className="p-4 sm:p-6"><div className="mb-4 flex items-center justify-between gap-2"><h2 className={panelTitle}>영상 엔진과 연결</h2><StateTag online={ready}>{ready?'사용 가능':'확인 필요'}</StateTag></div>
     <FormField label="영상 엔진"><SelectInput value={engine} disabled={savingConfig} onChange={e=>void changeEngine(e.target.value as VideoEngine)}><option value="native">로컬 FFmpeg · 자막 카드 영상</option><option value="comfyui">ComfyUI · AI 장면 생성</option></SelectInput></FormField>
-    <div className={soft+' mt-4 p-3'}><div className="flex items-center justify-between gap-2"><strong className="text-[12px] text-[#453B32]">FFmpeg</strong><StateTag online={Boolean(video.value.native?.available)}>{video.value.native?.available?'설치됨':'미설치'}</StateTag></div><p className="mt-1 text-[11px] text-[#7E7366]">자막 영상 제작과 여러 AI 장면을 하나의 MP4로 합칠 때 사용합니다.</p></div>
+    <div className={soft+' mt-4 p-3'}><div className="flex items-center justify-between gap-2"><strong className="text-[12px] text-[#453B32]">FFmpeg</strong><StateTag online={Boolean(video.value.native?.available)}>{video.value.native?.available?'설치됨':'미설치'}</StateTag></div><p className="mt-1 text-[11px] text-[#7E7366]">자막 영상 제작과 여러 AI 장면을 하나의 MP4로 합칠 때 사용합니다.</p>
+     <div className="mt-3 flex flex-col gap-2 sm:flex-row"><TextInput aria-label="FFmpeg 실행 파일 경로" value={ffmpegPath} onChange={e=>setFfmpegPath(e.target.value)} placeholder="자동 검색 · 또는 FFmpeg 실행 파일의 전체 경로"/><Button variant="secondary" disabled={savingConfig} className="shrink-0" onClick={()=>void saveConfig({ffmpegPath:ffmpegPath.trim()})}>경로 저장</Button></div>
+     <p className="mt-1 text-[11px] text-[#81766B]">비워 두면 시스템에서 자동으로 검색합니다. FFmpeg가 설치됐는데 인식되지 않을 때 실행 파일 경로를 지정하세요.</p>
+    </div>
     <div className="mt-4 grid gap-2"><div className="flex items-center justify-between gap-2"><strong className="text-[12px] text-[#453B32]">ComfyUI 서버</strong><StateTag online={video.value.comfy.reachable}>{video.value.comfy.reachable?'연결됨':'연결 안 됨'}</StateTag></div><div className="flex gap-2"><TextInput aria-label="ComfyUI 주소" value={comfyUrl} onChange={e=>setComfyUrl(e.target.value)} placeholder="http://127.0.0.1:8188"/><Button variant="secondary" disabled={savingConfig||!comfyUrl.trim()} onClick={()=>void saveConfig({comfyUrl:comfyUrl.trim()})}>저장</Button></div><p className="text-[11px] text-[#81766B]">ComfyUI가 실행 중인 로컬 또는 원격 HTTP(S) 주소를 입력하세요.</p></div>
     <div className="mt-4 rounded-xl border border-[#E7E0D5] p-3"><h3 className="mb-2 text-[12px] font-bold text-[#453A31]">외부 워크플로 가져오기</h3>{savedWorkflow&&<div className="mb-3 rounded-lg bg-[#F0F4EA] p-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-[11px] font-semibold text-[#597450]"><Check size={13} className="mr-1 inline"/>{savedWorkflow.name} · 등록된 워크플로 사용 중</p><Button size="sm" variant="ghost" disabled={savingConfig} onClick={()=>void saveConfig({comfyWorkflow:null,comfyWorkflowName:''})}>등록 해제</Button></div><p className="mt-1 text-[11px] text-[#6B795F]">등록한 API 워크플로가 기본 모델보다 먼저 실행됩니다. 내장 모델로 바꾸려면 등록을 해제하세요.</p></div>}<label className={'inline-flex cursor-pointer items-center gap-2 rounded-xl border border-[#DCCCBF] bg-[#FFFDF9] px-3 py-2 text-[12px] font-semibold text-[#694A38] '+focus}><Upload size={14}/> API 워크플로 JSON 선택<input type="file" accept=".json,application/json" className="sr-only" disabled={savingConfig} onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void importWorkflow(file)}}/></label><p className="mt-2 text-[11px] text-[#81766B]">ComfyUI에서 API 형식으로 내보낸 JSON을 사용합니다. 일반 UI 그래프 JSON과 구별됩니다.</p></div>
    </Panel>
