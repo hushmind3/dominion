@@ -906,6 +906,21 @@ mod native_quality_route_end_to_end_tests {
         assert_eq!(saved["nativeModelUsage"]["configuredCostKRW"],115.0);
         assert_eq!(saved["nativeModelUsage"]["pricedCalls"],1);
         assert_eq!(count.load(Ordering::SeqCst),1);
+        assert_eq!(saved["nativeToolAuthoritySha256"].as_str().unwrap().len(),64);
+        // Reopening a completed run cannot repeat a paid provider call.
+        let repeated=run(&context,&saved).await.unwrap();
+        assert_eq!(repeated["status"],"completed");
+        assert_eq!(count.load(Ordering::SeqCst),1);
+        // A changed previously approved tool contract is rejected before
+        // any model/tool is re-run, even when the model endpoint is unchanged.
+        let mut altered=saved.clone();
+        altered["nativeToolAuthoritySha256"]=json!("invalid-authority");
+        state.store.put("job",&altered);
+        let refused=run(&context,&altered).await.unwrap();
+        assert_eq!(refused["status"],"needs_review");
+        assert!(refused["reason"].as_str().unwrap().contains("permissions"));
+        assert_eq!(count.load(Ordering::SeqCst),1);
+        state.store.put("job",&saved);
         // Revisions to the provider's endpoint are never admitted as a
         // continuation of the already-paid, durable task.
         let mut changed=state.store.get("provider","good").unwrap();
