@@ -1046,6 +1046,45 @@ fn substitute(value: &mut Value, variables: &Value) {
         _ => {}
     }
 }
+/// Shared native Rust cancellation: API and Rust SDK call the same
+/// durable state machine. Remote renderers receive only prompt-scoped IDs.
+/// Acknowledgement is not treated as proof that GPU execution has stopped.
+pub async fn cancel_video(state:&AppState,id:&str)->Result<Value,jobs::CancelJobError>{
+    let job=state.store.get("job",id)
+        .filter(|record|record["kind"]=="video")
+        .ok_or(jobs::CancelJobError::NotFound)?;
+    if !matches!(job["status"].as_str(),Some("queued"|"running")){
+        return Err(jobs::CancelJobError::Conflict);
+    }
+    let in_flight=job["videoState"]["inFlight"]==true;
+    let prompt_id=job["videoState"]["promptId"].as_str()
+        .and_then(|id|uuid::Uuid::parse_str(id).ok()).map(|id|id.to_string());
+    let base=job["input"]["config"]["comfyUrl"].as_str().unwrap_or("").to_string();
+    jobs::cancel_job(state,id)?;
+    let remote=if job["input"]["engine"]!="comfyui" || !in_flight{
+        json!({"status":"not_active"})
+    }else if let Some(prompt_id)=prompt_id{
+        match cancel_comfy_prompt(&base,&prompt_id).await{
+            Ok(true)=>json!({"status":"requested","promptId":prompt_id}),
+            Ok(false)=>json!({"status":"unconfirmed","promptId":prompt_id,
+                "reason":"원격 작업이 종료됐거나 서버에서 해당 작업을 찾지 못했습니다."}),
+            Err(reason)=>json!({"status":"unconfirmed","promptId":prompt_id,"reason":reason}),
+        }
+    }else{
+        // Submission response has no prompt ID yet. Worker will cancel the
+        // exact returned ID when the /prompt request completes.
+        json!({"status":"unconfirmed",
+            "reason":"원격 제출 응답 대기 중입니다. Rust 작업자가 ID 확인 후 개별 취소를 시도합니다."})
+    };
+    let saved=state.store.patch_if("job",id,"status",&json!("cancelled"),
+        &json!({"remoteCancel":remote}))
+        .or_else(||state.store.get("job",id))
+        .ok_or(jobs::CancelJobError::Conflict)?;
+    state.store.audit("video.cancel",json!({"jobId":id,"remoteCancel":remote}));
+    state.bus.record("job",&saved);
+    Ok(json!({"job":public_job(&saved),"remoteCancel":remote}))
+}
+
 /// Cancel only the prompt ID produced by this DOMINION job. Never call
 /// ComfyUI's global /interrupt: that would abort unrelated user workloads.
 /// Modern ComfyUI implements this idempotent, prompt-scoped endpoint.

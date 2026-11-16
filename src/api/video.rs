@@ -183,47 +183,13 @@ pub async fn job(State(state): State<AppState>, Path(id): Path<String>) -> Respo
 /// Stop the durable Rust job first, then best-effort cancel ONLY its own
 /// recorded ComfyUI prompt. Never invoke global /interrupt on a shared server.
 /// The receipt separates local cancellation from remote confirmation.
-pub async fn cancel_job(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    let Some(job) = state.store.get("job", &id).filter(|j| j["kind"] == "video") else {
-        return error(StatusCode::NOT_FOUND, "영상 제작 작업을 찾을 수 없습니다.");
-    };
-    if !matches!(job["status"].as_str(), Some("queued" | "running")) {
-        return error(StatusCode::CONFLICT, "진행 중인 영상만 중단할 수 있습니다.");
-    }
-    let is_comfy = job["input"]["engine"] == "comfyui";
-    let in_flight = job["videoState"]["inFlight"] == true;
-    let prompt_id = job["videoState"]["promptId"].as_str()
-        .and_then(|text| uuid::Uuid::parse_str(text).ok())
-        .map(|id| id.to_string());
-    let comfy_url = job["input"]["config"]["comfyUrl"].as_str().unwrap_or("").to_string();
-    let local = super::jobs::cancel(State(state.clone()), Path(id.clone())).await;
-    if !local.status().is_success() {
-        return local;
-    }
-    let remote = if !is_comfy || !in_flight {
-        json!({"status":"not_active"})
-    } else if let Some(prompt_id) = prompt_id {
-        match video::cancel_comfy_prompt(&comfy_url, &prompt_id).await {
-            Ok(true) => json!({"status":"requested","promptId":prompt_id}),
-            Ok(false) => json!({"status":"unconfirmed","promptId":prompt_id,
-                "reason":"원격 작업이 이미 종료되었거나 서버에서 해당 작업을 찾지 못했습니다."}),
-            Err(reason) => json!({"status":"unconfirmed","promptId":prompt_id,"reason":reason}),
-        }
-    } else {
-        // The submission may still be returning its ID. The Rust worker also
-        // checks cancellation immediately after the submission response.
-        json!({"status":"unconfirmed",
-            "reason":"원격 제출 응답 대기 중입니다. Rust 작업자가 응답 후 개별 취소를 시도합니다."})
-    };
-    let saved = state.store.patch_if("job", &id, "status", &json!("cancelled"),
-        &json!({"remoteCancel":remote}))
-        .or_else(|| state.store.get("job", &id));
-    state.store.audit("video.cancel", json!({"jobId":id,"remoteCancel":remote}));
-    if let Some(job) = saved {
-        state.bus.record("job", &job);
-        Json(json!({"job":video::public_job(&job),"remoteCancel":remote})).into_response()
-    } else {
-        error(StatusCode::CONFLICT, "영상 중단 결과를 저장할 수 없습니다.")
+pub async fn cancel_job(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    match video::cancel_video(&state,&id).await{
+        Ok(receipt)=>Json(receipt).into_response(),
+        Err(crate::engine::jobs::CancelJobError::NotFound)=>
+            error(StatusCode::NOT_FOUND,"영상 제작 작업을 찾을 수 없습니다."),
+        Err(crate::engine::jobs::CancelJobError::Conflict)=>
+            error(StatusCode::CONFLICT,"진행 중인 영상만 중단할 수 있습니다."),
     }
 }
 

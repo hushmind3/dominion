@@ -150,6 +150,21 @@ test('video SDK cancellation is scoped and reports remote GPU uncertainty separa
   assert.equal(result.remoteCancel.status,'unconfirmed');
 });
 
+test('video SDK publication calls the existing Rust approval-gated upload endpoint',async()=>{
+  const calls=[];
+  const client=new Dominion({fetch:async(url,init)=>{
+    calls.push({url,method:init.method,body:JSON.parse(init.body)});
+    return json({id:'upload-1',kind:'youtube_upload',status:'queued'});
+  }});
+  const receipt=await client.video.upload('source/1',{
+    title:'Final review',privacyStatus:'private',description:'Approved metadata',tags:'shorts'});
+  assert.equal(calls[0].url,
+    'http://127.0.0.1:4317/api/video/jobs/source%2F1/upload');
+  assert.deepEqual(calls[0].body,
+    {title:'Final review',privacyStatus:'private',description:'Approved metadata',tags:'shorts'});
+  assert.equal(receipt.kind,'youtube_upload');
+});
+
 test('video SDK preserves render budget and returns engine work receipts',async()=>{
   let route,request;
   const client=new Dominion({fetch:async(url,init)=>{

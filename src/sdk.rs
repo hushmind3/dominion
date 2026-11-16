@@ -163,6 +163,27 @@ impl Dominion {
         engine::jobs::enqueue(&self.state,"prompt",input)
             .ok_or_else(|| "cannot persist job".to_string())
     }
+    /// Create a durable video job via the identical Rust engine as the GUI.
+    /// Video inputs are validated and the rendering settings frozen at enqueue.
+    pub fn submit_video(&self,input:&Value)->Result<Value,String>{
+        engine::video::enqueue(&self.state,input)
+    }
+    /// Read a frontend-safe video receipt from the native store.
+    pub fn video_job(&self,id:&str)->Option<Value>{
+        self.state.store.get("job",id)
+            .filter(|job|job["kind"]=="video")
+            .map(|job|engine::video::public_job(&job))
+    }
+    /// Stop the same job from any surface and attempt scoped remote cancellation.
+    pub async fn cancel_video(&self,id:&str)->Result<Value,String>{
+        engine::video::cancel_video(&self.state,id).await
+            .map_err(|error|error.to_string())
+    }
+    /// Resolve a verified completed MP4. Never serve partially written outputs.
+    pub fn video_output_path(&self,id:&str)->Result<PathBuf,String>{
+        engine::video::output_path(&self.state,id)
+    }
+
     /// Claim a queued job through the same worker path, never a duplicate runner.
     pub fn schedule_now(&self,id:&str)->Result<(),String>{
         if self.state.store.get("job",id).is_none(){return Err("unknown job".into());}
@@ -255,6 +276,22 @@ mod tests {
         prompt.agent_id=Some("unknown-agent".into());
         assert!(sdk.submit(prompt).is_err());
         assert!(sdk.jobs().is_empty());
+        drop(sdk);let _=std::fs::remove_dir_all(dir);
+    }
+    #[tokio::test]
+    async fn native_video_sdk_uses_the_same_cancel_and_receipt_path_as_http(){
+        let (sdk,dir)=sdk();
+        let created=sdk.state.store.put("job",&json!({
+            "kind":"video","status":"queued",
+            "input":{"engine":"native","title":"Test","brief":"A scene"}
+        })).unwrap();
+        let id=created["id"].as_str().unwrap();
+        assert_eq!(sdk.video_job(id).unwrap()["status"],"queued");
+        let stopped=sdk.cancel_video(id).await.unwrap();
+        assert_eq!(stopped["job"]["status"],"cancelled");
+        assert_eq!(stopped["remoteCancel"]["status"],"not_active");
+        assert_eq!(sdk.video_job(id).unwrap()["status"],"cancelled");
+        assert!(sdk.video_output_path(id).is_err());
         drop(sdk);let _=std::fs::remove_dir_all(dir);
     }
     #[tokio::test]

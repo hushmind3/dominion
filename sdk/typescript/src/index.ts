@@ -233,6 +233,8 @@ export class Dominion {
     create: (input:VideoJobInput,options?:RequestOptions) => this.request<VideoJob>('POST','/api/video/jobs',input,options),
     cancel: (key:string,options?:RequestOptions) => this.request<VideoCancelOutcome>(
       'POST','/api/video/jobs/'+id(key)+'/cancel',{},options),
+    upload: (key:string,input:{title:string;description?:string;privacyStatus?:'private'|'unlisted'|'public';tags?:string},options?:RequestOptions) =>
+      this.request<Job>('POST','/api/video/jobs/'+id(key)+'/upload',input,options),
     outputs: (options?:RequestOptions) => this.request<unknown[]>('GET','/api/video/outputs',undefined,options),
     download: async (key:string,options?:RequestOptions) => {
       const response = await this.raw('/api/video/jobs/'+id(key)+'/content',{signal:options?.signal});

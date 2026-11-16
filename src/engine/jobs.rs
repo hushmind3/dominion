@@ -207,6 +207,39 @@ pub fn enqueue_once(state: &AppState, id: &str, kind: &str, input: Value) -> Opt
         .filter(|existing| existing["kind"] == kind && existing["input"] == candidate["input"])
 }
 
+#[derive(Debug)]
+pub enum CancelJobError { NotFound, Conflict }
+impl std::fmt::Display for CancelJobError {
+    fn fmt(&self, f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {
+        f.write_str(match self {
+            Self::NotFound=>"작업이 없습니다.",
+            Self::Conflict=>"진행 중인 작업만 중단할 수 있습니다.",
+        })
+    }
+}
+
+/// One native cancellation policy for Rust SDK, HTTP and the video worker.
+pub fn cancel_job(state:&AppState,id:&str)->Result<Value,CancelJobError>{
+    let job=state.store.get("job",id).ok_or(CancelJobError::NotFound)?;
+    if job["kind"]=="rsi_evolve"{
+        cancel_rsi_children(state,id);
+        if job["status"]=="cancelled"{return Ok(job);}
+    }
+    if !matches!(job["status"].as_str(),Some("queued"|"running")){
+        return Err(CancelJobError::Conflict);
+    }
+    if let Some(session)=job["sessionId"].as_str(){state.cancel_session(session);}
+    if let Some(saved)=state.store.patch_if("job",id,"status",&job["status"],
+        &json!({"status":"cancelled","cancelRequested":true,
+            "finishedAt":chrono::Utc::now().to_rfc3339()})){
+        state.bus.record("job",&saved);
+        state.store.audit("job.cancelled",json!({"jobId":id,"kind":job["kind"]}));
+        Ok(saved)
+    }else{
+        state.store.get("job",id).ok_or(CancelJobError::Conflict)
+    }
+}
+
 pub fn cancel_rsi_children(state: &AppState, campaign: &str) {
     for child in state.store.all("job") {
         if child["kind"] != "rsi_generation" || child["input"]["rsiCampaignId"] != campaign

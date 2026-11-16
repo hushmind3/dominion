@@ -60,19 +60,26 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
     match engine::jobs::enqueue(&state,kind,clean){Some(job)=>(StatusCode::ACCEPTED,Json(job)).into_response(),None=>error(StatusCode::INTERNAL_SERVER_ERROR,"작업을 대기열에 저장할 수 없습니다.")}
 }
 pub async fn cancel(State(state):State<AppState>,Path(id):Path<String>)->Response{
-    let Some(job)=state.store.get("job",&id)else{return error(StatusCode::NOT_FOUND,"작업이 없습니다.")};
-    if job["kind"]=="rsi_evolve" {
-        // Also clean up descendants when a client repeats Stop on a terminal parent.
-        engine::jobs::cancel_rsi_children(&state,&id);
-        if job["status"]=="cancelled" {return Json(job).into_response();}
+    // Legacy /api/jobs cancellation remains compatible, including video.
+    // Video uses the shared native stop path to avoid orphaning remote GPU work.
+    if state.store.get("job",&id).is_some_and(|job|job["kind"]=="video"){
+        return match engine::video::cancel_video(&state,&id).await{
+            Ok(_)=>state.store.get("job",&id).map(|job|Json(job).into_response())
+                .unwrap_or_else(||error(StatusCode::CONFLICT,"중단한 작업을 읽지 못했습니다.")),
+            Err(engine::jobs::CancelJobError::NotFound)=>
+                error(StatusCode::NOT_FOUND,"작업이 없습니다."),
+            Err(engine::jobs::CancelJobError::Conflict)=>
+                error(StatusCode::CONFLICT,"진행 중인 작업만 중단할 수 있습니다."),
+        };
     }
-    if !matches!(job["status"].as_str(),Some("queued"|"running")){return error(StatusCode::CONFLICT,"진행 중인 작업만 중단할 수 있습니다.");}
-    if let Some(session)=job["sessionId"].as_str(){state.cancel_session(session);}
-    match state.store.patch_if("job",&id,"status",&job["status"],&json!({"status":"cancelled","cancelRequested":true,"finishedAt":chrono::Utc::now().to_rfc3339()})){
-        Some(saved)=>{state.bus.record("job",&saved);Json(saved).into_response()},None=>state.store.get("job",&id).map(|j|Json(j).into_response()).unwrap_or_else(||error(StatusCode::CONFLICT,"작업 상태가 변경되었습니다."))
+    match engine::jobs::cancel_job(&state,&id){
+        Ok(job)=>Json(job).into_response(),
+        Err(engine::jobs::CancelJobError::NotFound)=>
+            error(StatusCode::NOT_FOUND,"작업이 없습니다."),
+        Err(engine::jobs::CancelJobError::Conflict)=>
+            error(StatusCode::CONFLICT,"진행 중인 작업만 중단할 수 있습니다."),
     }
 }
-
 
 /// HTTP is only an adapter to native Rust steering and authorization.
 pub async fn steer(
