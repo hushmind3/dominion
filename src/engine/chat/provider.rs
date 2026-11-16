@@ -446,15 +446,108 @@ fn clip_tool_for_provider(text: &str, allowed_encoded_chars: usize) -> String {
     prefix
 }
 
+/// Context editing for long tool-heavy sessions. Only provider-facing copies
+/// are changed: execution_operation and durable chat history remain exact.
+/// Inspired by 2026 context-editing practice, but uses no added model call.
+///
+/// Keep recent observations and all writes/errors intact. Older large reads
+/// are reduced only near a declared context limit AND when the reduction is
+/// large enough to justify losing a prompt-cache prefix.
+fn edit_stale_read_context(messages: &mut [Value], capacity: usize, schema_chars: usize) -> usize {
+    if capacity < 4096 { return 0; }
+    let mut total = fixed_prompt_chars(messages)
+        .saturating_add(schema_chars)
+        .saturating_add(512);
+    total = total.saturating_add(messages.iter()
+        .filter(|row| row["role"] == "tool")
+        .filter_map(|row| row["content"].as_str())
+        .map(escaped_content_chars).sum::<usize>());
+    if total <= capacity.saturating_mul(3) / 4 { return 0; }
+
+    // IDs are only unique within their assistant tool batch. Providers may
+    // reuse an ID in a later turn: never reclassify an older WRITE as a READ.
+    let mut pending = std::collections::HashMap::<String, String>::new();
+    let mut names_by_result = std::collections::HashMap::<usize, String>::new();
+    for (index, message) in messages.iter().enumerate() {
+        match message["role"].as_str() {
+            Some("assistant") => {
+                pending.clear();
+                for call in message["tool_calls"].as_array().into_iter().flatten() {
+                    if let (Some(id), Some(name)) = (call["id"].as_str(),
+                        call["function"]["name"].as_str().or_else(|| call["name"].as_str())) {
+                        pending.insert(id.to_owned(), name.to_owned());
+                    }
+                }
+            }
+            Some("tool") => {
+                if let Some(id) = message["tool_call_id"].as_str() {
+                    if let Some(name) = pending.remove(id) {
+                        names_by_result.insert(index, name);
+                    }
+                }
+            }
+            Some("user") => pending.clear(),
+            _ => {}
+        }
+    }
+    let mut recent = 0usize;
+    let mut candidates = Vec::<(usize, String, usize)>::new();
+    for (index, message) in messages.iter().enumerate().rev() {
+        if message["role"] != "tool" { continue; }
+        recent += 1;
+        if recent <= 3 { continue; }
+        let Some(id) = message["tool_call_id"].as_str() else { continue; };
+        let Some(tool) = names_by_result.get(&index) else { continue; };
+        if !matches!(tool.as_str(), "workspace_read" | "workspace_read_range"
+            | "workspace_list" | "file_read" | "file_list" | "web_search" | "http_fetch") {
+            continue;
+        }
+        let Some(content) = message["content"].as_str() else { continue; };
+        let size = escaped_content_chars(content);
+        if size < 2400 || content.starts_with("Error:")
+            || serde_json::from_str::<Value>(content).ok().is_some_and(|value|
+                value.get("error").is_some() || value.get("ok") == Some(&json!(false))) {
+            continue;
+        }
+        let begin: String = content.chars().take(240).collect();
+        let end: String = content.chars().rev().take(120).collect::<Vec<_>>()
+            .into_iter().rev().collect();
+        let compact = format!(
+            "[Older {tool} result compacted, call={id}, original_chars={}. \
+             Original observation remains in durable execution history; \
+             re-read if exact bytes are needed.]\n{begin}\n…\n{end}",
+            content.chars().count(),
+        );
+        let saving = size.saturating_sub(escaped_content_chars(&compact));
+        if saving > 1000 { candidates.push((index, compact, saving)); }
+    }
+    let minimum = (capacity / 12).clamp(8_000, 24_000);
+    if candidates.iter().map(|(_, _, saving)| saving).sum::<usize>() < minimum {
+        return 0;
+    }
+    // Oldest-first, then stop. This avoids needless cache invalidation on
+    // subsequent turns and leaves the most recent work available verbatim.
+    candidates.reverse();
+    let mut cleared = 0usize;
+    for (index, compact, saving) in candidates {
+        if total <= capacity.saturating_mul(3) / 5 && cleared >= minimum { break; }
+        messages[index]["content"] = json!(compact);
+        total = total.saturating_sub(saving);
+        cleared = cleared.saturating_add(saving);
+    }
+    cleared
+}
+
 /// Prepare a different model's copy from the original, unabridged tool
 /// observations. No 6k/20k/80k magic limits or local/cloud distinction.
-fn fit_tool_context(provider: &ProviderRef, messages: &mut [Value], schema_chars: usize) {
-    let Some(tokens) = provider.context_tokens else { return };
+fn fit_tool_context(provider: &ProviderRef, messages: &mut [Value], schema_chars: usize) -> usize {
+    let Some(tokens) = provider.context_tokens else { return 0 };
     let fixed = fixed_prompt_chars(messages)
         .saturating_add(schema_chars)
         .saturating_add(512);
-    let mut available = input_char_capacity(tokens, provider.max_output_tokens)
-        .saturating_sub(fixed);
+    let capacity = input_char_capacity(tokens, provider.max_output_tokens);
+    let reclaimed = edit_stale_read_context(messages, capacity, schema_chars);
+    let mut available = capacity.saturating_sub(fixed);
     // Preserve the most recent observation; old tool outputs get the
     // remaining space, with each tool-call ID kept intact.
     for message in messages.iter_mut().rev() {
@@ -466,6 +559,7 @@ fn fit_tool_context(provider: &ProviderRef, messages: &mut [Value], schema_chars
         available = available.saturating_sub(escaped_content_chars(&clipped));
         message["content"] = json!(clipped);
     }
+    reclaimed
 }
 
 fn room_route_keys(state: &AppState, session_id: &str) -> Option<std::collections::HashSet<String>> {
@@ -826,7 +920,15 @@ async fn stream_completion_once_body(
         tools.iter().map(|tool| tool.to_string().chars().count()).sum::<usize>()
     };
     let mut provider_messages = messages.to_vec();
-    fit_tool_context(provider, &mut provider_messages, schema_chars);
+    let reclaimed = fit_tool_context(provider, &mut provider_messages, schema_chars);
+    if reclaimed > 0 {
+        state.store.audit("chat.context_edit_prepared", json!({
+            "sessionId":session_id,"providerId":provider.id,"model":provider.model,
+            "wire":if compatible {"openai-compat"} else {"openai-native"},
+            "removedJsonCharsEstimate":reclaimed,
+            "billedTokenSavings":Value::Null
+        }));
+    }
     if convert_native_history {
         provider_messages = compat_messages(&provider_messages);
     }
@@ -1661,7 +1763,17 @@ async fn stream_anthropic_once(
     continuity: &mut Value,
 ) -> Result<Completion, String> {
     let started = std::time::Instant::now();
-    let (system, provider_messages) = anthropic_messages(messages);
+    let mut fitted_messages = messages.to_vec();
+    let schema_chars = tools.iter().map(|tool| tool.to_string().chars().count()).sum();
+    let reclaimed = fit_tool_context(provider, &mut fitted_messages, schema_chars);
+    if reclaimed > 0 {
+        state.store.audit("chat.context_edit_prepared", json!({
+            "sessionId":session_id,"providerId":provider.id,"model":provider.model,
+            "wire":"anthropic","removedJsonCharsEstimate":reclaimed,
+            "billedTokenSavings":Value::Null
+        }));
+    }
+    let (system, provider_messages) = anthropic_messages(&fitted_messages);
     let mut body = json!({
         "model": provider.model,
         "messages": provider_messages,
@@ -2105,6 +2217,89 @@ mod tests {
     }
 
     #[test]
+    fn cache_aware_context_editing_saves_old_reads_but_retains_effects_and_recent_results() {
+        let mut original = vec![json!({"role":"system","content":"standing owner task"})];
+        let entries = [
+            ("a", "workspace_read", "A".repeat(22_000)),
+            ("b", "file_read", "B".repeat(22_000)),
+            ("write", "workspace_write", "WRITE_PROOF".repeat(600)),
+            ("error", "workspace_read", json!({"error":"tool failed","details":"e".repeat(6_000)}).to_string()),
+            ("new1", "workspace_read", "X".repeat(5_000)),
+            ("new2", "workspace_read", "Y".repeat(5_000)),
+            ("new3", "workspace_read", "Z".repeat(5_000)),
+        ];
+        for (id, name, content) in entries {
+            original.push(json!({"role":"assistant","content":"","tool_calls":[{
+                "id":id,"type":"function",
+                "function":{"name":name,"arguments":"{}"}
+            }]}));
+            original.push(json!({"role":"tool","tool_call_id":id,"content":content}));
+        }
+        let before_chars=serde_json::to_string(&original).unwrap().chars().count();
+        let mut edited=original.clone();
+        let saved=edit_stale_read_context(&mut edited, before_chars + 2_000, 0);
+        assert!(saved > 30_000, "expected material reduction, got {saved}");
+        assert!(serde_json::to_string(&edited).unwrap().chars().count() < before_chars - 30_000);
+        assert!(edited[2]["content"].as_str().unwrap().contains("compacted"));
+        assert!(edited[4]["content"].as_str().unwrap().contains("compacted"));
+        for at in [6,8,10,12,14] {
+            assert_eq!(edited[at],original[at], "write, error and newest reads stay exact");
+        }
+        for at in (1..original.len()).step_by(2) {
+            assert_eq!(edited[at],original[at], "tool calls and IDs stay paired");
+        }
+        assert_eq!(original[2]["content"].as_str().unwrap().len(),22_000,
+            "durable context must never be mutated");
+        let mut short=original.clone();
+        assert_eq!(edit_stale_read_context(&mut short,before_chars * 2,0),0);
+        assert_eq!(short,original, "avoid breaking prompt cache far below threshold");
+    }
+
+    #[test]
+    fn reused_tool_ids_never_reclassify_an_earlier_write_as_a_read() {
+        let mut rows=vec![json!({"role":"system","content":"task"})];
+        for (id,name,text) in [
+            ("reused","workspace_write","WRITE_PROOF".repeat(4_000)),
+            ("reused","workspace_read","READ_RESULT".repeat(4_000)),
+            ("r1","workspace_read","new".repeat(2_000)),
+            ("r2","workspace_read","new".repeat(2_000)),
+            ("r3","workspace_read","new".repeat(2_000)),
+        ] {
+            rows.push(json!({"role":"assistant","content":"","tool_calls":[{
+                "id":id,"function":{"name":name,"arguments":"{}"},"type":"function"
+            }]}));
+            rows.push(json!({"role":"tool","tool_call_id":id,"content":text}));
+        }
+        let original=rows.clone();
+        let saved=edit_stale_read_context(&mut rows,40_000,0);
+        assert!(saved>8_000, "older read should be compacted");
+        assert_eq!(rows[2],original[2], "earlier write output cannot be cleared");
+        assert!(rows[4]["content"].as_str().unwrap().contains("compacted"),
+            "the newer read with the same ID is a separate operation");
+    }
+
+    #[test]
+    fn old_tool_error_and_write_receipt_are_never_context_edited() {
+        let mut messages=vec![json!({"role":"system","content":"task"})];
+        for (id,name,content) in [
+            ("w","workspace_write","updated".repeat(6_000)),
+            ("e","workspace_read",json!({"error":"bad","details":"z".repeat(10_000)}).to_string()),
+            ("a","workspace_read","new result".repeat(200)),
+            ("b","workspace_read","new result".repeat(200)),
+            ("c","workspace_read","new result".repeat(200)),
+        ] {
+            messages.push(json!({"role":"assistant","content":"","tool_calls":[{
+                "id":id,"type":"function","function":{"name":name,"arguments":"{}"}
+            }]}));
+            messages.push(json!({"role":"tool","tool_call_id":id,"content":content}));
+        }
+        let original=messages.clone();
+        let _=edit_stale_read_context(&mut messages,30_000,0);
+        assert_eq!(messages[2],original[2]);
+        assert_eq!(messages[4],original[4]);
+    }
+
+    #[test]
     fn json_escaped_tool_output_respects_provider_budget() {
         let original = "\"\n\\세션".repeat(120);
         let clipped = clip_tool_for_provider(&original, 160);
@@ -2388,6 +2583,50 @@ mod tests {
         assert_eq!(body["messages"][1]["content"][0]["type"], "tool_use");
         assert_eq!(body["messages"][2]["content"][0]["type"], "tool_result");
         assert_eq!(body["tools"][0]["input_schema"]["type"], "object");
+        drop(calls);
+        // Confirm that editing reaches the actual Anthropic HTTP payload;
+        // the durable input and assistant/tool IDs are not modified.
+        let mut pressure = vec![
+            json!({"role":"system","content":"Keep user's objective unchanged"}),
+            json!({"role":"user","content":"Continue the same task"}),
+        ];
+        for (id, name, content) in [
+            ("old1","workspace_read","A".repeat(28_000)),
+            ("old2","file_read","B".repeat(28_000)),
+            ("write","workspace_write","write receipt".repeat(450)),
+            ("error","workspace_read",json!({"error":"permission denied","text":"z".repeat(5_000)}).to_string()),
+            ("new1","workspace_read","recent-one".repeat(500)),
+            ("new2","workspace_read","recent-two".repeat(500)),
+            ("new3","workspace_read","recent-three".repeat(500)),
+        ] {
+            pressure.push(json!({"role":"assistant","content":"","tool_calls":[{
+                "id":id,"type":"function",
+                "function":{"name":name,"arguments":"{}"}
+            }]}));
+            pressure.push(json!({"role":"tool","tool_call_id":id,"content":content}));
+        }
+        let original=pressure.clone();
+        let mut limited=provider.clone();
+        limited.context_tokens=Some(28_000);
+        let (tx2,_rx2)=tokio::sync::mpsc::unbounded_channel();
+        let _completion=stream_completion_once(
+            &state, &reqwest::Client::new(), &limited, &pressure, &[],
+            &request, "s", &tx2, false,
+        ).await.unwrap();
+        let bodies=observed.lock().unwrap();
+        assert_eq!(bodies.len(),2);
+        let sent=bodies[1]["body"]["messages"].to_string();
+        assert!(sent.contains("compacted"), "large old reads must be reduced");
+        assert!(state.store.recent_audit(200).iter().any(|row|
+            row["event"]=="chat.context_edit_prepared"
+            && row["detail"]["wire"]=="anthropic"
+            && row["detail"]["removedJsonCharsEstimate"].as_u64().unwrap_or(0)>=8_000
+            && row["detail"]["billedTokenSavings"].is_null()),
+            "the reduction must be observable without inventing actual billed tokens");
+        assert!(sent.contains("recent-three"), "latest tool observations survive");
+        assert!(sent.contains("write receipt"), "write result must survive");
+        assert!(sent.contains("permission denied"), "tool errors must survive");
+        assert_eq!(pressure,original, "provider must only edit its transmitted copy");
         server.abort();
         let _ = std::fs::remove_dir_all(root);
     }
