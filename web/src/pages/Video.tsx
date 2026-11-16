@@ -38,7 +38,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  const activeVideo=useJob(videoSubmission?'/api/video/jobs/'+videoSubmission.id:null,videoSubmission)
  const activeUpload=useJob(uploadSubmission?'/api/youtube/uploads/'+uploadSubmission.id:null,uploadSubmission)
  const videoJob=activeVideo.value??outputs.value[0]
- const autoDelivery=useJob(videoJob?.deliveryJobId?'/api/youtube/uploads/'+videoJob.deliveryJobId:null,null)
+ const autoDelivery=useJob<UploadJob>(videoJob?.deliveryJobId?'/api/youtube/uploads/'+videoJob.deliveryJobId:null,null)
  useEffect(()=>{setSceneIndex(0);setSceneEdit(videoJob?.storyboard?.[0]||'')},[videoJob?.id])
  const uploadJob=activeUpload.value??autoDelivery.value
  const uploadStatus=oauth.value.find(item=>item.id==='youtube')
