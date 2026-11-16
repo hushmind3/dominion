@@ -322,10 +322,32 @@ pub fn output_path(state: &AppState, id: &str) -> Result<PathBuf, String> {
     }
     Ok(path)
 }
+/// Produce independently usable subtitle files for Shorts/Reels/TikTok.
+fn subtitle_time(seconds:u64)->String{
+    format!("{:02}:{:02}:{:02},000",seconds/3600,(seconds/60)%60,seconds%60)
+}
+fn subtitles(input:&Value)->Option<String>{
+    let scenes=input["scenes"].as_array()?;
+    let mut cursor=0u64;
+    let mut result=String::new();
+    for (i,scene) in scenes.iter().enumerate(){
+        let seconds=scene["seconds"].as_u64()?;
+        let caption=scene["overlay"].as_str().filter(|s|!s.trim().is_empty())
+            .or_else(||scene["script"].as_str()).unwrap_or("");
+        if caption.trim().is_empty()||seconds==0{return None}
+        result.push_str(&format!("{}\n{} --> {}\n{}\n\n",
+            i+1,subtitle_time(cursor),subtitle_time(cursor.saturating_add(seconds)),
+            caption.trim()));
+        cursor=cursor.saturating_add(seconds);
+    }
+    (!result.is_empty()).then_some(result)
+}
 pub fn public_job(job: &Value) -> Value {
     let id = job["id"].as_str().unwrap_or("");
     let ready = job["kind"] == "video" && job["status"] == "completed";
-    json!({"id":id,"kind":job["kind"],"title":job["input"]["title"],"brief":job["input"]["brief"],"engine":job["input"]["engine"],"status":job["status"],"phase":job.get("phase").unwrap_or(&job["status"]),"progress":job["progress"],"error":job["error"],"createdAt":job.get("createdAt").or(job.get("created_at")),"videoJobId":job["input"]["videoJobId"],"privacyStatus":job["input"]["privacyStatus"],"outputUrl":ready.then(||format!("/api/video/jobs/{id}/content")),"storyboard":job["videoState"]["scenes"],"result":job["result"],"duration":job["input"]["duration"],"aspectRatio":job["input"]["aspectRatio"],"renderBudget":job["input"]["render"]["budget"]})
+    json!({"id":id,"kind":job["kind"],"title":job["input"]["title"],"brief":job["input"]["brief"],"engine":job["input"]["engine"],"status":job["status"],"phase":job.get("phase").unwrap_or(&job["status"]),"progress":job["progress"],"error":job["error"],"createdAt":job.get("createdAt").or(job.get("created_at")),"videoJobId":job["input"]["videoJobId"],"privacyStatus":job["input"]["privacyStatus"],"outputUrl":ready.then(||format!("/api/video/jobs/{id}/content")),
+        "captionsUrl":(ready&&job["input"]["scenes"].is_array())
+            .then(||format!("/api/video/jobs/{id}/captions")),"storyboard":job["videoState"]["scenes"],"result":job["result"],"duration":job["input"]["duration"],"aspectRatio":job["input"]["aspectRatio"],"renderBudget":job["input"]["render"]["budget"]})
 }
 /// Deterministic preflight work estimate: frames x diffusion steps x pixels.
 //// Economy is explicit opt-in; it never silently changes the user's quality.
@@ -1011,6 +1033,28 @@ pub async fn run(ctx: &JobContext, job: &Value) -> Result<Value, String> {
             if bytes < 100 {
                 return Err("생성된 영상이 비어 있습니다.".into());
             }
+            // A finished file must be a genuine ISO-BMFF MP4 container.
+            // This is cheap and always enforced before any publishing job.
+            use std::io::Read;
+            let mut file=std::fs::File::open(dir.join("output.mp4"))
+                .map_err(|e|e.to_string())?;
+            let mut header=[0u8;12];
+            file.read_exact(&mut header).map_err(|e|e.to_string())?;
+            if &header[4..8]!=b"ftyp"{
+                return Err("렌더 결과가 올바른 MP4 컨테이너가 아닙니다.".into());
+            }
+            let mut qa=json!({"containerVerified":true,"bytes":bytes,
+                "captionTimeline":"source_scene_seconds"});
+            if let Some(srt)=subtitles(input) {
+                std::fs::write(dir.join("captions.srt"),srt).map_err(|e|e.to_string())?;
+                qa["captionsReady"]=json!(true);
+            }
+            let manifest=json!({"title":input["title"],"projectId":input["projectId"],
+                "projectRevision":input["projectRevision"],"scenes":input["scenes"],
+                "render":input["render"],"qa":qa});
+            std::fs::write(dir.join("production.json"),manifest.to_string())
+                .map_err(|e|e.to_string())?;
+            value["qa"]=qa;
             value["bytes"] = json!(bytes);
             value["outputUrl"] = json!(format!("/api/video/jobs/{}/content", ctx.job_id));
             progress(ctx, "completed", 100)?;
