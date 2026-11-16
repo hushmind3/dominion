@@ -1081,13 +1081,15 @@ fn record_clip(dir:&Path,index:usize,key:&str)->Result<(),String>{
     std::fs::rename(temp,path).map_err(|e|e.to_string())?;
     Ok(())
 }
-/// Reuse only a *completed* render for the same project. Hashing the bytes
-/// prevents stale/mutated clips from being imported as verified outputs.
+/// Reuse verified finished clips from a prior terminal render, even when later
+/// scenes failed. The per-clip receipt, immutable input fingerprint, and file
+/// SHA-256 remain mandatory; unfinished or tampered clips are never imported.
 fn reuse_completed_clip(state:&AppState,input:&Value,index:usize,key:&str,dst:&Path)->bool{
     let Some(project)=input["projectId"].as_str() else{return false};
     if uuid::Uuid::parse_str(project).is_err(){return false}
     for old in state.store.all("job").into_iter().rev(){
-        if old["kind"]!="video"||old["status"]!="completed"
+        if old["kind"]!="video"
+            ||!matches!(old["status"].as_str(),Some("completed"|"failed"|"cancelled"|"needs_review"))
             ||old["input"]["engine"]!="comfyui"
             ||old["input"]["projectId"]!=project {continue}
         let Some(id)=old["id"].as_str() else{continue};
@@ -1574,6 +1576,18 @@ mod tests {
         assert_ne!(key,clip_fingerprint(&base,1),"position and seed allocation matter");
         std::fs::write(&previous,vec![0u8;4096]).unwrap();
         assert!(!reuse_completed_clip(&state,&input,0,&key,&next.join("tampered.mp4")));
+        // A failed multi-scene render can have genuine completed early clips.
+        // Reuse them instead of paying to regenerate every earlier scene.
+        let old_id=old["id"].as_str().unwrap();
+        state.store.patch_if("job",old_id,"status",&json!("completed"),
+         &json!({"status":"failed"})).unwrap();
+        std::fs::write(&previous,vec![0u8;4096]).unwrap();
+        let mut repaired=vec![0u8;4096];
+        repaired[4..8].copy_from_slice(b"ftyp");
+        std::fs::write(&previous,repaired).unwrap();
+        record_clip(&dir,0,&key).unwrap();
+        assert!(reuse_completed_clip(&state,&input,0,&key,&next.join("from-failed.mp4")));
+        assert!(!reuse_completed_clip(&state,&input,0,&revised,&next.join("changed-from-failed.mp4")));
         crate::test_support::cleanup_dir(state.config.data_dir.clone());
     }
     #[test]
