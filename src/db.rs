@@ -168,7 +168,8 @@ impl Store {
              -- Only current work is scanned by workers; historical job JSON
              -- cannot grow the polling cost.
              CREATE INDEX IF NOT EXISTS idx_job_active_status
-                 ON records(kind, json_extract(data,'$.status'), json_extract(data,'$.queuedAt'));
+                 ON records(kind, json_extract(data,'$.status'), json_extract(data,'$.queuedAt'))
+                 WHERE kind='job';
              CREATE INDEX IF NOT EXISTS idx_operation_run
                  ON records(json_extract(data,'$.runId'))
                  WHERE kind='execution_operation';
