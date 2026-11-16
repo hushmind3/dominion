@@ -36,6 +36,13 @@ jobs:
         run: node scripts/check-lean-product.mjs
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Validate monotonic shared budget and bounded failure/receipt projection
+        run: |
+          cargo test -p dominion-agent-sdk --lib restore_cannot_refund_parallel_tool_or_proposal_usage
+          cargo test -p dominion-agent-sdk --lib restore_advances_but_does_not_regress_durable_admission
+          cargo test -p dominion-agent-sdk --lib escaped_oversized_failure_keeps_the_actionable_diagnostic
+          cargo test -p dominion-agent-sdk --lib one_unrepresentable_error_does_not_hide_smaller_old_failure
+          cargo test -p dominion-agent-sdk --lib empty_query_lists_a_bounded_recent_page_without_full_log_projection
       - name: Compile actual backend
         run: cargo check --bin dominion-rust
       - name: Chat and durable tool-order regressions

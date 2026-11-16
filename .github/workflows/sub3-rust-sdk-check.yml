@@ -44,6 +44,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Validate monotonic shared budget and bounded failure/receipt projection
+        run: |
+          cargo test -p dominion-agent-sdk --lib restore_cannot_refund_parallel_tool_or_proposal_usage
+          cargo test -p dominion-agent-sdk --lib restore_advances_but_does_not_regress_durable_admission
+          cargo test -p dominion-agent-sdk --lib escaped_oversized_failure_keeps_the_actionable_diagnostic
+          cargo test -p dominion-agent-sdk --lib one_unrepresentable_error_does_not_hide_smaller_old_failure
+          cargo test -p dominion-agent-sdk --lib empty_query_lists_a_bounded_recent_page_without_full_log_projection
       - name: Compile and execute Rust SDK tests, including real file and shell repair
         run: cargo test --manifest-path crates/dominion-agent-sdk/Cargo.toml -- --nocapture
       - name: Compile full Dominion Rust host and run native adapter contract tests
