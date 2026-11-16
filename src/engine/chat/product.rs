@@ -903,7 +903,7 @@ impl Host for MainTurn<'_> {
             {
                 return Err("실행이 중단되었습니다.".into());
             }
-            let mut arguments = match serde_json::from_str::<Value>(&call.arguments) {
+            let arguments = match serde_json::from_str::<Value>(&call.arguments) {
                 Ok(value) if value.is_object() => value,
                 _ => {
                     mark_tool_argument_signal(self.state, &self.request, self.execution_id, false);
@@ -1270,7 +1270,6 @@ impl Host for MainTurn<'_> {
     ) -> BoxFuture<'a, Result<(), String>> {
         Box::pin(async move {
             let round = ctx.round;
-            let execution_id = self.execution_id;
             let call = self.round_calls[call_index].clone();
             let arguments = self.prepared_arguments.clone();
             let call_key = self.prepared_key.clone();

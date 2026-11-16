@@ -603,7 +603,7 @@ async fn run_turn_body(
     } else {
         None
     };
-    let (prompt_context, mut history_messages) = if let Some(compiled) = compiled {
+    let (prompt_context, history_messages) = if let Some(compiled) = compiled {
         let delivered_memories = compiled.system.items.iter()
             .filter(|item| item["kind"] == "memory")
             .filter_map(|item| item["id"].as_str().and_then(|id| state.store.get("memory", id)))

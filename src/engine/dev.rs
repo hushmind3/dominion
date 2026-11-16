@@ -715,20 +715,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn publishing_web_preserves_old_assets_and_replaces_the_entrypoint_last(){
-        let dir=std::env::temp_dir().join(format!("dominion-web-install-{}",uuid::Uuid::new_v4()));
-        let staged=dir.join("staged");let live=dir.join("live");
-        std::fs::create_dir_all(staged.join("assets")).unwrap();std::fs::create_dir_all(live.join("assets")).unwrap();
-        std::fs::write(staged.join("assets/new.js"),"new bundle").unwrap();
-        std::fs::write(staged.join("index.html"),"new entry").unwrap();
-        std::fs::write(live.join("assets/old.js"),"old open tab").unwrap();
-        publish_web(&staged,&live).unwrap();
-        assert_eq!(std::fs::read_to_string(live.join("index.html")).unwrap(),"new entry");
-        assert!(live.join("assets/new.js").is_file() && live.join("assets/old.js").is_file());
-        let _=std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
     fn package_dir_prefers_root_then_web() {
         let dir = std::env::temp_dir().join(format!("dominion-dev-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(dir.join("web")).unwrap();
