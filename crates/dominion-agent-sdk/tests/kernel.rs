@@ -50,6 +50,7 @@ impl Evidence for FileEvidence {
                 CriterionKind::FileAbsent => Ok(!target.exists()),
                 CriterionKind::FileContains =>
                     Ok(std::fs::read_to_string(target).map_err(|e|e.to_string())?.contains(check.contains.as_deref().unwrap_or(""))),
+                CriterionKind::FileSha256 => Err("this fake file host does not implement SHA verification".into()),
                 CriterionKind::ToolSucceeded => Err("kernel verifies receipts itself".into()),
             }
         })
