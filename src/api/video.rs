@@ -22,6 +22,15 @@ async fn comfy_reachable(url: &str) -> bool {
         .await
         .is_ok_and(|r| r.status().is_success())
 }
+// A GGUF weight file is not enough to run the built-in ComfyUI graph:
+// both loader node classes must be present on the actual rendering server.
+async fn comfy_node_present(url:&str,class:&str)->bool {
+    if url.is_empty(){return false;}
+    let endpoint=format!("{}/object_info/{class}",url.trim_end_matches('/'));
+    reqwest::Client::new().get(endpoint)
+        .timeout(Duration::from_secs(3)).send().await
+        .is_ok_and(|reply|reply.status().is_success())
+}
 pub fn outputs(state: &AppState) -> Vec<Value> {
     state
         .store
@@ -37,7 +46,20 @@ pub async fn status(State(state): State<AppState>) -> Json<Value> {
     let reachable = comfy_reachable(cfg["comfyUrl"].as_str().unwrap_or("")).await;
     let built_in = video::video_models(&state).iter()
         .any(|model| model["id"] == cfg["videoModel"] && model["available"] == true);
-    let comfy = reachable && (cfg["comfyWorkflow"].is_object() || built_in);
+    let custom_workflow=cfg["comfyWorkflow"].is_object();
+    let gguf_needed=!custom_workflow
+        && cfg["videoModel"]=="wan21-t2v-1.3b-q4";
+    let mut missing_nodes=vec![];
+    if reachable && gguf_needed {
+        let (unet,clip)=tokio::join!(
+            comfy_node_present(cfg["comfyUrl"].as_str().unwrap_or(""),"UnetLoaderGGUF"),
+            comfy_node_present(cfg["comfyUrl"].as_str().unwrap_or(""),"CLIPLoaderGGUF")
+        );
+        if !unet {missing_nodes.push("UnetLoaderGGUF");}
+        if !clip {missing_nodes.push("CLIPLoaderGGUF");}
+    }
+    let comfy = reachable && (custom_workflow || built_in)
+        && missing_nodes.is_empty();
     let workflows = workflows_from_config(&cfg);
     let jobs = state.store.all("job").iter()
         .filter(|job| job["kind"] == "video")
@@ -49,7 +71,7 @@ pub async fn status(State(state): State<AppState>) -> Json<Value> {
         "available": executable.is_some() || comfy,
         "native": {"available": executable.is_some()},
         "ffmpeg": {"available": executable.is_some(), "path": executable},
-        "comfy": {"reachable": reachable, "available": comfy},
+        "comfy": {"reachable": reachable, "available": comfy, "missingNodes": missing_nodes},
         "engines": [
             {"id":"native","name":"자막 카드 영상","available":executable.is_some(),"reason":if executable.is_some(){""}else{"FFmpeg 실행 파일 필요"}},
             {"id":"comfyui","name":"ComfyUI","available":comfy,"reason":if comfy{""}else{"서버와 API 워크플로 설정 필요"}}
