@@ -84,7 +84,7 @@ You choose the models. You control the credentials. You run the workspace.
 | **Persistent memory** | Store conversation context, verified experience, corrections, and execution history locally. |
 | **Multi-agent rooms** | Give agents separate roles, run shared discussions, and coordinate workflows with multiple participants. |
 | **Durable jobs** | Track tasks, approvals, execution evidence, cancellation, and recovery in SQLite. |
-| **AI video creation** | A dedicated studio with video-model-only downloads, selectable Q3/Q4/Q5/Q6/Q8/FP16 Wan 2.1 variants and approximate total disk sizes, model-guided multi-scene storyboarding, native/ComfyUI rendering, clip reuse and YouTube upload. A running compatible ComfyUI environment remains required for AI video rendering. |
+| **AI video creation** | A dedicated studio with selectable video-generation families (Wan 2.1 1.3B / 14B and Wan 2.2 5B), family-specific Q3/Q4/Q5/Q6/Q8/FP8/FP16 options and approximate full-package disk sizes, model-guided multi-scene storyboarding, native/ComfyUI rendering, clip reuse and YouTube upload. A running compatible ComfyUI environment remains required for AI video rendering. |
 | **Messaging channels** | Native Telegram and Discord adapters; currently require bot credentials and manual configuration. |
 | **Recursive self-improvement (RSI) research** | Experiment with source-editing campaigns, independent evaluations, candidate selection, evidence records, and controlled adoption. This does **not** claim proven general recursive intelligence gains. |
 
