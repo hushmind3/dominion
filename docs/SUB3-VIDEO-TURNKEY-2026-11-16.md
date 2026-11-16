@@ -32,6 +32,12 @@ The Rust host serves the compiled React UI at **http://127.0.0.1:4317** by defau
 
 The integrated AI video project accepts up to **60 seconds** of intended output and divides each rendered Wan scene into clips of at most **5 seconds**. This keeps any one ComfyUI latent graph bounded and preserves scene ordering and target running time. It does not imply that 5-second inference will be fast or fit every 8 GB GPU; actual runtime depends on node offloading and the configured model. Each clip can be inspected and its visual prompt adjusted before rendering.
 
+## Incremental scene re-rendering and real GPU cost signals
+
+When a ComfyUI render completes, every generated short segment gets an immutable receipt containing the frozen configuration/scene render fingerprint and a SHA-256 digest of the actual MP4 bytes. For a revised project, the Rust renderer searches **only completed video jobs of that same project**, verifies matching render settings, clip header, and clip bytes, then reuses an unchanged segment instead of submitting a new ComfyUI GPU request. Changed prompts, seeds, duration, model or graph force regeneration. This preserves existing high-quality clips and reduces repeat GPU work without inventing a percentage or money saving.
+
+The completed video result and production QA record expose `segmentsReused` and `segmentsGenerated`; the Video page displays both counts. Existing source files stay immutable; the new project revision gets its own copy. The test `engine::video::tests::unchanged_clips_reuse_completed_artifact_but_changed_scene_is_not_reused` proves matching, invalidation and tamper rejection with a real database and MP4 fixtures, without paid model calls.
+
 ## Model choice and resource limits
 
 Default model suggestion: **Wan2.1 T2V 1.3B FP16**, using official Comfy-Org model weights and built-in ComfyUI nodes. The 4-bit Wan GGUF option reduces the diffusion-model weight size but **requires separately installed ComfyUI-GGUF custom nodes** and a sizeable UMT5 text encoder. A multi-GB download and sufficient RAM/VRAM/disk space are required even for the 4-bit path. Local inference speed and visual continuity depend heavily on hardware, graph and scene settings; no paid API or fixed saving percentage is claimed.
