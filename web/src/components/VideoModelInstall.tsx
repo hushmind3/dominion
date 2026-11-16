@@ -5,7 +5,7 @@ import {Button,SelectInput,TextInput} from './Primitives'
 import {FormField,Notice,StateTag,useRemote} from './UI'
 
 type VideoModel={id:string;name:string;kind:string;available:boolean;missingFiles:number;hint:string}
-type Catalog={videoModels:VideoModel[];selectedVideoModel?:string;modelsDir?:string;modelsDirReady?:boolean;comfyReachable?:boolean;comfyUrl?:string}
+type Catalog={videoModels:VideoModel[];selectedVideoModel?:string;modelsDir?:string;modelsDirReady?:boolean;comfyReachable?:boolean;comfyAvailable?:boolean;missingNodes?:string[];comfyUrl?:string}
 type Download={id:string;model:string;status:string;progress:number;bytes:number;total:number;error?:string}
 const DEFAULT_MODEL='wan21-t2v-1.3b-fp16'
 const fmt=(n=0)=>n>=1024**3?(n/1024**3).toFixed(2)+' GB':n>=1024**2?(n/1024**2).toFixed(1)+' MB':Math.round(n/1024)+' KB'
@@ -25,7 +25,7 @@ export function VideoModelInstall({onChanged}:{onChanged:()=>void}){
  const installed=Boolean(model?.available)
  const selected=installed&&catalog.value.selectedVideoModel===chosen
  const server=Boolean(catalog.value.comfyReachable)
- const ready=selected&&server
+ const ready=selected&&server&&Boolean(catalog.value.comfyAvailable)
  useEffect(()=>{
   if(catalog.value.selectedVideoModel&&catalog.value.videoModels.some(m=>m.id===catalog.value.selectedVideoModel))
    setChosen(catalog.value.selectedVideoModel)
@@ -105,6 +105,7 @@ export function VideoModelInstall({onChanged}:{onChanged:()=>void}){
     <TextInput value={url} onChange={e=>setUrl(e.target.value)} placeholder="http://127.0.0.1:8188"/>
    </FormField>
   </div>
+  {Boolean(catalog.value.missingNodes?.length)&&<div role="status" className="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-[11px] text-amber-900"><strong>ComfyUI에서 찾지 못한 실행 노드</strong><p className="mt-1 break-all">{catalog.value.missingNodes?.join(', ')}</p><p className="mt-1">모델 다운로드가 완료되어도 이 노드가 없으면 생성할 수 없습니다.</p></div>}
   {model?.kind==='gguf'&&<p className="mt-3 text-[11px] leading-5 text-amber-900">4비트 모델은 <a className="font-semibold underline" href="https://github.com/city96/ComfyUI-GGUF" target="_blank" rel="noreferrer">ComfyUI-GGUF 확장</a>이 설치되어야 실행됩니다. 확장 없이 시작하려면 FP16을 선택하세요.</p>}
   <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
    <div className="flex items-center gap-2 text-[11px] text-[#85796B]">{server?<Wifi size={15} className="text-emerald-700"/>:<WifiOff size={15} className="text-amber-600"/>}{server?'ComfyUI 연결됨':'ComfyUI 실행·연결 필요'} <span className="text-[#AEA49A]">·</span> {model?.hint||'모델 조회 중'}</div>
