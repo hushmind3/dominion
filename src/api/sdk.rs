@@ -328,9 +328,9 @@ pub async fn reconcile(State(state):State<AppState>,Path(id):Path<String>,Json(i
     op["operatorObservation"]=json!({"applied":input.applied,"details":input.details,"observedAt":chrono::Utc::now().to_rfc3339()});
     record["status"]=json!("interrupted");let mut observations=record["observations"].as_array().cloned().unwrap_or_default();
     observations.push(json!({"kind":"operator_observation","detail":op["operatorObservation"]}));record["observations"]=json!(observations);
-    let mut updates=vec![("execution_operation",op.clone()),("sdk_run",record.clone())];
-    let mut checkpoints=vec![("execution",run.clone())];
-    checkpoints.extend(state.store.all("native_frame").into_iter().filter(|frame|frame["parentExecutionId"]==run["id"]).map(|frame|("native_frame",frame)));
+    let mut updates=vec![("execution_operation".to_string(),op.clone()),("sdk_run".to_string(),record.clone())];
+    let mut checkpoints=vec![("execution".to_string(),run.clone())];
+    checkpoints.extend(state.store.all("native_frame").into_iter().filter(|frame|frame["parentExecutionId"]==run["id"]).map(|frame|("native_frame".to_string(),frame)));
     for (kind,mut saved) in checkpoints{
         let Ok(mut snapshot)=serde_json::from_value::<dominion_core::hosted::Snapshot>(saved["kernelState"].clone())else{continue;};
         if let Some(call)=snapshot.native.in_flight.clone().filter(|call|call.name==op["tool"]&&call.arguments==op["arguments"]){
