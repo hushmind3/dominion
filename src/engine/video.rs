@@ -602,6 +602,7 @@ pub fn public_job(job: &Value) -> Value {
         "negativePrompt":render["negativePrompt"],
         "reuseVideoJobId":job["input"]["reuseVideoJobId"],
         "maxNewScenes":job["input"]["maxNewScenes"],
+        "remoteCancel":job["remoteCancel"],
         "sceneProgress":{
             "index":job["videoState"]["sceneIndex"],
             "total":job["videoState"]["sceneTotal"],
@@ -1045,6 +1046,36 @@ fn substitute(value: &mut Value, variables: &Value) {
         _ => {}
     }
 }
+/// Cancel only the prompt ID produced by this DOMINION job. Never call
+/// ComfyUI's global /interrupt: that would abort unrelated user workloads.
+/// Modern ComfyUI implements this idempotent, prompt-scoped endpoint.
+pub async fn cancel_comfy_prompt(base: &str, prompt_id: &str) -> Result<bool, String> {
+    uuid::Uuid::parse_str(prompt_id).map_err(|_| "원격 렌더 작업 ID가 올바르지 않습니다.")?;
+    let base = base.trim_end_matches('/');
+    let url = reqwest::Url::parse(base).map_err(|_| "ComfyUI 주소 오류")?;
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("ComfyUI HTTP(S) 주소를 확인하세요.".into());
+    }
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(6))
+        .build().map_err(|e| e.to_string())?;
+    let response = client.post(format!("{base}/api/jobs/{prompt_id}/cancel"))
+        .send().await.map_err(|e| format!("원격 취소 응답을 받지 못했습니다: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("원격 취소를 확인하지 못했습니다: HTTP {}", response.status()));
+    }
+    let receipt: Value = response.json().await
+        .map_err(|_| "원격 취소 확인 응답이 유효하지 않습니다.")?;
+    receipt["cancelled"].as_bool()
+        .ok_or_else(|| "원격 취소 확인 값이 없습니다.".to_string())
+}
+
 /// Accept legacy /history/{id} and modern /api/jobs/{id} receipts without
 /// mistaking a queued job for completion or a failed job for a missing output.
 fn comfy_result_status(result: &Value) -> &'static str {
@@ -1102,7 +1133,16 @@ async fn comfy(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, Str
         .ok_or("needs_review: ComfyUI prompt_id가 없습니다.")?;
     uuid::Uuid::parse_str(prompt_id)
         .map_err(|_|"needs_review: ComfyUI prompt_id 형식 오류")?;
-    ctx.checkpoint(json!({"phase":"rendering","progress":25,"videoState":{"inFlight":true,"promptId":prompt_id}}))?;
+    // The user can cancel while /prompt is still returning. If cancellation
+    // wins before the remote ID was journaled, stop the newly submitted prompt
+    // by its exact ID rather than leaving an orphan GPU render.
+    if let Err(error) = ctx.checkpoint(json!({
+        "phase":"rendering","progress":25,
+        "videoState":{"inFlight":true,"promptId":prompt_id}
+    })) {
+        let _ = cancel_comfy_prompt(base, prompt_id).await;
+        return Err(error);
+    }
     let start = std::time::Instant::now();
     loop {
         ctx.checkpoint(json!({}))?;
@@ -1774,6 +1814,15 @@ mod tests {
         assert_eq!(workload["pixelFrames"],55_296_000u64);
         assert_eq!(workload["megapixelFrames"],55);
         assert!(workload["estimatedMoneyCost"].is_null());
+    }
+
+    #[tokio::test]
+    async fn remote_cancel_rejects_invalid_target_before_network_io() {
+        let prompt = uuid::Uuid::new_v4().to_string();
+        assert!(cancel_comfy_prompt("file:///tmp/comfy", &prompt).await.is_err());
+        assert!(cancel_comfy_prompt("http://localhost:8188", "../interrupt").await.is_err());
+        assert!(cancel_comfy_prompt("http://user:password@localhost:8188", &prompt).await.is_err());
+        assert!(cancel_comfy_prompt("http://localhost:8188/?bad=1", &prompt).await.is_err());
     }
 
     #[test]
