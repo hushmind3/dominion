@@ -10,26 +10,13 @@ on:
       - 'crates/harness/**'
       - 'src/api/sdk.rs'
       - 'src/api/mod.rs'
-      - 'src/engine/rsi.rs'
-      - 'src/engine/rsi_evolve.rs'
       - 'tests/e2e.rs'
-      - 'scripts/check-main-parity.mjs'
+      - 'scripts/check-lean-product.mjs'
       - 'packages/sdk-typescript/**'
       - 'src/engine/chat/**'
-      - 'src/engine/video.rs'
-      - 'src/engine/video_hub.rs'
-      - 'src/engine/video_studio.rs'
-      - 'web/src/components/VideoHubBrowser.tsx'
-      - 'web/scripts/video-studio-smoke.mjs'
-      - 'src/api/video.rs'
-      - 'src/api/video_studio.rs'
-      - 'web/src/components/VideoAutopilot.tsx'
-      - 'web/src/components/VideoModelInstall.tsx'
       - 'src/engine/verification.rs'
       - 'src/engine/code_index.rs'
-      - 'src/engine/rsi_system.rs'
       - 'web/src/pages/Chat.tsx'
-      - 'web/src/pages/Video.tsx'
   workflow_dispatch:
 
 permissions:
@@ -45,10 +32,8 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
-      - name: Verify current main source, GUI and API-handler parity
-        run: |
-          git fetch --no-tags --depth=1 origin main
-          node scripts/check-main-parity.mjs
+      - name: Verify lean product source/API/GUI contracts
+        run: node scripts/check-lean-product.mjs
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Compile actual backend
@@ -63,32 +48,13 @@ jobs:
           cargo test --bin dominion-rust engine::chat::provider::tests::anthropic_native_stream_translates_messages_tools_and_usage -- --nocapture
       - name: Artifact verification contracts
         run: cargo test --bin dominion-rust engine::verification -- --nocapture
-      - name: Require FFmpeg binaries before media test
+      - name: Retired jobs, immutable historical metadata and strict no-replay
+        run: cargo test --bin dominion-rust retired_media_and_rsi_work_is_never_requeued_and_history_survives -- --nocapture
+      - name: Rust native agent adapter and replay paths
         run: |
-          if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y ffmpeg
-          fi
-          command -v ffmpeg
-          command -v ffprobe
-      - name: Real playable native video
-        env:
-          DOMINION_REQUIRE_VIDEO_FFMPEG: '1'
-        run: cargo test --bin dominion-rust native_pipeline_produces_a_real_playable_container -- --nocapture
-      - name: Autonomous video project and editable-scene acceptance
-        env:
-          DOMINION_REQUIRE_VIDEO_FFMPEG: '1'
-        run: cargo test --bin dominion-rust engine::video_studio::tests -- --nocapture
-      - name: Verify unchanged ComfyUI clips are reused without re-running the GPU
-        run: cargo test --bin dominion-rust engine::video::tests::unchanged_clips_reuse_completed_artifact_but_changed_scene_is_not_reused -- --nocapture
-      - name: Verify video family discovery and safe external model download contracts
-        run: cargo test --bin dominion-rust engine::video_hub::tests -- --nocapture
-      - name: Verify one-action local video model installer and runtime safety
-        run: |
-          cargo test --bin dominion-rust api::video::tests::turnkey_installer_rejects_an_invalid_model_root_without_mutating_video_settings -- --nocapture
-          cargo test --bin dominion-rust api::video::tests::comfy_auto_launcher_refuses_remote_hosts_without_spawning -- --nocapture
-          cargo test --bin dominion-rust engine::video::tests::listed_model_sources_are_real_comfyui_layouts_and_nontrivial_assets -- --nocapture
-          cargo test --bin dominion-rust engine::video::tests::video_only_catalog_offers_real_quantizations_and_includes_supporting_weights -- --nocapture
+          cargo test --bin dominion-rust engine::native_agent -- --nocapture
+          cargo test --bin dominion-rust engine::native_replay -- --nocapture
+          cargo test --bin dominion-rust api::native_replay -- --nocapture
       - name: Run real HTTP/LLM fixture integration paths (no paid API)
         run: |
           for contract in parallel_reads_ ordinary_chat_ room_selected_tools_ native_job_prompt_runs token_budget_is_enforced_ chat_fails_over_ delegate_task_runs_; do
@@ -114,7 +80,6 @@ jobs:
           npm ci --prefix web
           npm run typecheck --prefix web
           npm run build --prefix web
-          node web/scripts/video-studio-smoke.mjs
       - name: Typecheck and build main's independent TypeScript client
         run: |
           npm install --prefix packages/sdk-typescript --no-package-lock --ignore-scripts --no-audit

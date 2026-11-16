@@ -34,15 +34,8 @@ jobs:
       - run: npm ci --prefix web
       - run: npm run typecheck --prefix web
       - run: npm run build --prefix web
-      - run: node web/scripts/video-studio-smoke.mjs
-      - run: node --check scripts/rsi-lab.mjs
-      - run: node --test scripts/rsi-lab.test.mjs
+      - run: node scripts/check-lean-product.mjs
       - run: cargo test --release
-      - name: Validate source/API/GUI parity with current main (sub3)
-        if: matrix.os == 'ubuntu-latest' && github.ref == 'refs/heads/dominion-sub3'
-        run: |
-          git fetch --no-tags --depth=1 origin main
-          node scripts/check-main-parity.mjs
       - name: Validate both TypeScript SDK public clients (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
