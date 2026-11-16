@@ -213,7 +213,6 @@ pub fn recover(state: &AppState) {
         }
     };
     for execution in running_executions {
-        {
             let mut updated = execution.clone();
             if let Ok(mut snapshot)=serde_json::from_value::<dominion_core::hosted::Snapshot>(updated["kernelState"].clone()){
                 dominion_core::journal::recover(&mut snapshot.native);
@@ -226,7 +225,6 @@ pub fn recover(state: &AppState) {
             updated["reason"] = json!("백엔드가 재시작되어 실행이 중단되었습니다.");
             updated["finishedAt"] = json!(chrono::Utc::now().to_rfc3339());
             state.store.put("execution", &updated);
-        }
     }
     let running_operations = match state.store.running_recovery_records("execution_operation") {
         Ok(records) => records,
@@ -236,14 +234,12 @@ pub fn recover(state: &AppState) {
         }
     };
     for mut operation in running_operations {
-        {
             operation["status"] = json!("interrupted");
             operation["outcomeUnknown"] = json!(true);
             operation["phase"] = json!("interrupted");
             operation["reason"] = json!("백엔드가 재시작되어 도구 결과를 확정할 수 없습니다.");
             operation["finishedAt"] = json!(chrono::Utc::now().to_rfc3339());
             state.store.put("execution_operation", &operation);
-        }
     }
     // After interrupted executions have been recorded, expire durable approvals
     // that outlived their live waiter before wake decisions are made.

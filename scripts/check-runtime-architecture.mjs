@@ -44,7 +44,7 @@ if(!store.includes('pub fn due_automations(')||!jobs.includes('store.due_automat
   throw Error('Indexed due-automation dispatch was bypassed')
 if(!store.includes('pub fn pending_approvals(')||!approval.includes('store.pending_approvals('))
   throw Error('Indexed pending-approval expiry was bypassed')
-if(!jobs.includes('store.mutate_record(\n            "automation"')||!jobs.includes('("job".to_string(), job.clone())'))
+if(!/store\\.mutate_record\\(\\s*"automation"/.test(jobs)||!jobs.includes('("job".to_string(), job.clone())'))
   throw Error('Durable automation scheduling must commit the job and next timestamp together')
 if(!jobs.includes('store.running_recovery_records("execution")')||!jobs.includes('store.running_recovery_records("execution_operation")'))
   throw Error('Restart recovery must not deserialize every completed execution/operation')
