@@ -595,7 +595,8 @@ pub fn enqueue_regeneration(state:&AppState,source_id:&str,body:&Value)->Result<
   .filter(|s|!s.is_empty()&&s.len()<=2000)
   .ok_or("수정된 장면 설명은 1~2000바이트여야 합니다.")?;
  if !scenes[index].is_object(){
-  scenes[index]=json!({"script":scenes[index],"visualPrompt":scenes[index]});
+  let prior=scenes[index].clone();
+  scenes[index]=json!({"script":prior,"visualPrompt":prior});
  }
  scenes[index]["script"]=json!(prompt);
  scenes[index]["visualPrompt"]=json!(prompt);
