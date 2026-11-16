@@ -392,6 +392,96 @@ mod tests {
         let dir=s.config.data_dir.clone(); drop(s); std::fs::remove_dir_all(dir).unwrap();
     }
 
+    /// A fully offline ComfyUI emulator returns a real local MP4. The test
+    /// exercises input -> Rust job -> remote prompt -> clips -> FFmpeg -> output,
+    /// then verifies restart replay skips already-proofed GPU scene work.
+    #[tokio::test]
+    async fn video_comfyui_end_to_end_replays_only_unverified_scene_clips() {
+        use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
+        #[derive(Clone)]
+        struct Renderer {
+            prompt_id:String,
+            calls:Arc<AtomicUsize>,
+            mp4:axum::body::Bytes,
+        }
+        let s=state();
+        let Some(encoder)=video::ffmpeg(&s) else {
+            let dir=s.config.data_dir.clone();
+            drop(s);std::fs::remove_dir_all(dir).unwrap();return;
+        };
+        let fixture=s.config.data_dir.join("fixture.mp4");
+        let output=tokio::process::Command::new(&encoder)
+            .args(["-hide_banner","-loglevel","error","-y","-f","lavfi",
+                "-i","color=c=black:s=160x160:r=8","-t","3",
+                "-c:v","mpeg4","-pix_fmt","yuv420p"])
+            .arg(&fixture).output().await.unwrap();
+        assert!(output.status.success(),"FFmpeg fixture: {:?}",
+            String::from_utf8_lossy(&output.stderr));
+        let fixture_bytes=std::fs::read(&fixture).unwrap();
+        assert!(fixture_bytes.len()>100);
+        let renderer=Renderer{
+            prompt_id:uuid::Uuid::new_v4().to_string(),
+            calls:Arc::new(AtomicUsize::new(0)),
+            mp4:axum::body::Bytes::from(fixture_bytes),
+        };
+        let seen=renderer.calls.clone();
+        let api=axum::Router::new()
+            .route("/prompt",axum::routing::post(
+                |axum::extract::State(r):axum::extract::State<Renderer>| async move {
+                    r.calls.fetch_add(1,Ordering::SeqCst);
+                    axum::Json(json!({"prompt_id":r.prompt_id}))
+                }))
+            .route("/history/:id",axum::routing::get(
+                |axum::extract::State(r):axum::extract::State<Renderer>| async move {
+                    let mut rows=serde_json::Map::new();
+                    rows.insert(r.prompt_id,json!({
+                        "status":{"status_str":"success"},
+                        "outputs":{"11":{"videos":[{
+                            "filename":"scene.mp4","subfolder":"","type":"output"}]}}
+                    }));
+                    axum::Json(Value::Object(rows))
+                }))
+            .route("/view",axum::routing::get(
+                |axum::extract::State(r):axum::extract::State<Renderer>| async move {
+                    r.mp4
+                }))
+            .with_state(renderer);
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint=format!("http://{}",listener.local_addr().unwrap());
+        let server=tokio::spawn(async move {axum::serve(listener,api).await.unwrap()});
+        s.store.put("video_config",&json!({
+            "id":"default","engine":"comfyui","comfyUrl":endpoint,
+            "comfyWorkflow":{"11":{"class_type":"SaveVideo",
+                "inputs":{"video":["10",0],"filename_prefix":"test"}}}
+        })).unwrap();
+        let job=video::enqueue(&s,&json!({
+            "engine":"comfyui","brief":"two-shot demo","duration":6,
+            "scenes":["first scene","second scene"],"fps":8,
+        })).unwrap();
+        let id=job["id"].as_str().unwrap().to_string();
+        let stored=s.store.get("job",&id).unwrap();
+        let context=crate::engine::jobs::JobContext::new(s.clone(),id.clone());
+        let first=video::run(&context,&stored).await.unwrap();
+        assert_eq!(first["renderedScenes"],2);
+        assert_eq!(seen.load(Ordering::SeqCst),2);
+        let root=video::directory(&s,&id).unwrap();
+        assert!(root.join("output.mp4").metadata().unwrap().len()>100);
+        let second=video::run(&context,&stored).await.unwrap();
+        assert_eq!(second["resumedScenes"],2);
+        assert_eq!(second["renderedScenes"],0);
+        assert_eq!(seen.load(Ordering::SeqCst),2,
+            "restart must not pay for already verified clips");
+        // A corrupt clip breaks its hash and is regenerated alone.
+        std::fs::write(root.join("scene-00/output.mp4"),b"corrupted").unwrap();
+        let third=video::run(&context,&stored).await.unwrap();
+        assert_eq!(third["renderedScenes"],1);
+        assert_eq!(third["resumedScenes"],1);
+        assert_eq!(seen.load(Ordering::SeqCst),3);
+        server.abort();
+        let dir=s.config.data_dir.clone();drop(s);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[tokio::test]
     async fn native_pipeline_produces_a_real_playable_container() {
         let s = state();
