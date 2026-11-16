@@ -213,17 +213,50 @@ fn launch(state:AppState,record:Value,resume:bool){
 }
 pub async fn approve(State(state):State<AppState>,Path(id):Path<String>,Json(input):Json<Approve>)->Response{
     let Some(record)=state.store.get("sdk_run",&id)else{return error(StatusCode::NOT_FOUND,"작업이 없습니다.");};
+    if record["status"]!="running" {
+        return error(StatusCode::CONFLICT,"실행 중인 SDK 작업만 도구를 승인할 수 있습니다.");
+    }
+    let Some(session)=record["sessionId"].as_str()else{
+        return error(StatusCode::CONFLICT,"작업 세션을 찾을 수 없습니다.");
+    };
+    if state.is_cancelled(session){
+        return error(StatusCode::CONFLICT,"중단된 세션의 도구는 승인할 수 없습니다.");
+    }
     let Some(approval)=state.store.get("approval",&input.call_id)else{return error(StatusCode::CONFLICT,"승인 요청을 찾을 수 없습니다.");};
-    if approval["sessionId"]!=record["sessionId"]||approval["status"]!="pending"{return error(StatusCode::CONFLICT,"이 작업의 대기 중인 승인이 아닙니다.");}
-    let _=super::approvals::resolve_approval(State(state.clone()),Json(json!({"id":input.call_id,"allow":true}))).await;
-    Json(public_view(&state,record)).into_response()
+    if approval["sessionId"]!=record["sessionId"]||approval["status"]!="pending"{
+        return error(StatusCode::CONFLICT,"이 작업의 대기 중인 승인이 아닙니다.");
+    }
+    let resolved=super::approvals::resolve_approval(
+        State(state.clone()),Json(json!({"id":input.call_id,"allow":true}))
+    ).await;
+    if !resolved.status().is_success(){return resolved;}
+    if state.store.get("approval",&input.call_id)
+        .is_none_or(|saved|saved["status"]!="approved"){
+        return error(StatusCode::CONFLICT,"승인 처리 중 다른 요청이 먼저 상태를 변경했습니다.");
+    }
+    let current=state.store.get("sdk_run",&id).unwrap_or(record);
+    Json(public_view(&state,current)).into_response()
 }
 pub async fn cancel(State(state):State<AppState>,Path(id):Path<String>)->Response{
-    let Some(mut record)=state.store.get("sdk_run",&id)else{return error(StatusCode::NOT_FOUND,"작업이 없습니다.");};
-    if matches!(record["status"].as_str(),Some("completed"|"cancelled")){return error(StatusCode::CONFLICT,"종료된 작업은 중단할 수 없습니다.");}
-    if let Some(session)=record["sessionId"].as_str(){state.cancel_session(session);}
-    record["status"]=json!("cancelled");
-    state.store.put("sdk_run",&record).map(|r|Json(public_view(&state,r)).into_response()).unwrap_or_else(||error(StatusCode::INTERNAL_SERVER_ERROR,"중단 상태 저장에 실패했습니다."))
+    let Some(record)=state.store.get("sdk_run",&id)else{return error(StatusCode::NOT_FOUND,"작업이 없습니다.");};
+    if !matches!(record["status"].as_str(),Some("queued"|"running")){
+        return error(StatusCode::CONFLICT,"진행 중인 작업만 중단할 수 있습니다.");
+    }
+    let Some(session)=record["sessionId"].as_str()else{
+        return error(StatusCode::CONFLICT,"구형 하네스 기록은 읽기 전용입니다.");
+    };
+    // The terminal state wins the race against concurrent model completion.
+    // A failed claim must not cancel a session that has already finished.
+    let Some(saved)=state.store.patch_if(
+        "sdk_run",&id,"status",&record["status"],
+        &json!({"status":"cancelled","cancelRequested":true,
+            "finishedAt":chrono::Utc::now().to_rfc3339()})
+    )else{
+        return error(StatusCode::CONFLICT,"작업 상태가 변경되어 중단할 수 없습니다.");
+    };
+    state.cancel_session(session);
+    state.bus.record("sdk_run",&saved);
+    Json(public_view(&state,saved)).into_response()
 }
 pub async fn resume(State(state):State<AppState>,Path(id):Path<String>)->Response{
     let Some(record)=state.store.get("sdk_run",&id)else{return error(StatusCode::NOT_FOUND,"작업이 없습니다.");};
@@ -292,6 +325,49 @@ pub async fn steer(State(state):State<AppState>,Path(id):Path<String>,Json(body)
 #[cfg(test)]
 mod view_tests{
     use super::*;
+    fn fixture() -> AppState {
+        let root=std::env::temp_dir().join(format!("sdk-lifecycle-{}",uuid::Uuid::new_v4()));
+        let cfg=crate::config::Config{port:0,data_dir:root.clone(),
+            web_dir:root.join("web"),workspace:root.clone()};
+        AppState::new(cfg.clone(),crate::db::Store::open(&cfg.db_path()).unwrap(),
+            crate::vault::Vault::open(&cfg.key_path()))
+    }
+    #[tokio::test]
+    async fn cancel_claims_live_status_without_overwriting_terminal_history(){
+        let state=fixture();
+        state.store.put("session",&json!({"id":"sdk-session"}));
+        state.store.put("sdk_run",&json!({"id":"live","sessionId":"sdk-session",
+            "status":"running","instruction":"create artifact"}));
+        let response=cancel(State(state.clone()),Path("live".into())).await;
+        assert_eq!(response.status(),StatusCode::OK);
+        let saved=state.store.get("sdk_run","live").unwrap();
+        assert_eq!(saved["status"],"cancelled");
+        assert_eq!(saved["cancelRequested"],true);
+        assert!(state.is_cancelled("sdk-session"));
+
+        state.store.put("session",&json!({"id":"completed-session"}));
+        state.store.put("sdk_run",&json!({"id":"done","sessionId":"completed-session",
+            "status":"completed","answer":"written"}));
+        let response=cancel(State(state.clone()),Path("done".into())).await;
+        assert_eq!(response.status(),StatusCode::CONFLICT);
+        assert_eq!(state.store.get("sdk_run","done").unwrap()["status"],"completed");
+        assert!(!state.is_cancelled("completed-session"));
+        let _=std::fs::remove_dir_all(&state.config.data_dir);
+    }
+    #[tokio::test]
+    async fn approval_rejects_completed_runs_without_releasing_tool_waiters(){
+        let state=fixture();
+        state.store.put("session",&json!({"id":"s"}));
+        state.store.put("sdk_run",&json!({"id":"done","sessionId":"s",
+            "status":"completed"}));
+        state.store.put("approval",&json!({"id":"a","sessionId":"s",
+            "status":"pending","tool":"workspace_write"}));
+        let response=approve(State(state.clone()),Path("done".into()),
+            Json(Approve{call_id:"a".into()})).await;
+        assert_eq!(response.status(),StatusCode::CONFLICT);
+        assert_eq!(state.store.get("approval","a").unwrap()["status"],"pending");
+        let _=std::fs::remove_dir_all(&state.config.data_dir);
+    }
     #[test]
     fn model_answer_does_not_invent_verified_task_success(){
         let reply=json!({"id":"message","content":"done"});
