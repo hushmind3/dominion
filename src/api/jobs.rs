@@ -128,24 +128,45 @@ pub async fn cancel(State(state):State<AppState>,Path(id):Path<String>)->Respons
     }
 }
 
-/// Accept the owner's mid-task correction at a safe Rust SDK step boundary.
-/// The user directive never grants additional tool privileges.
-pub async fn directive(
-    State(state):State<AppState>, Path(id):Path<String>, Json(body):Json<Value>
-)->Response {
-    let Some(instruction)=body["instruction"].as_str().map(str::trim)
-        .filter(|text|!text.is_empty()&&text.len()<=16_000)
-    else {return error(StatusCode::BAD_REQUEST,"작업 변경 지시가 필요합니다.");};
-    let Some(job)=state.store.get("job",&id)
-    else {return error(StatusCode::NOT_FOUND,"작업을 찾을 수 없습니다.");};
+/// Native job steering is revisioned through a single CAS mutation. It
+/// never changes tool permissions or replays completed effects. Both existing
+/// /directive and the current main /steer route use this authority.
+fn apply_steering(state:&AppState,id:&str,instruction:&str,mode:&str)->Response {
+    let instruction=instruction.trim();
+    if instruction.is_empty()||instruction.len()>16_000 {
+        return error(StatusCode::BAD_REQUEST,"작업 변경 지시가 필요합니다.");
+    }
+    if !matches!(mode,"append"|"replace") {
+        return error(StatusCode::BAD_REQUEST,"변경 방식은 append 또는 replace여야 합니다.");
+    }
+    let Some(job)=state.store.get("job",id)
+    else{return error(StatusCode::NOT_FOUND,"작업을 찾을 수 없습니다.");};
     if job["kind"]!="prompt"||!matches!(job["status"].as_str(),Some("queued"|"running")){
         return error(StatusCode::CONFLICT,"진행 중인 일반 작업에만 새 지시를 전달할 수 있습니다.");
     }
-    let Some(updated)=state.store.patch_if("job",&id,"status",&job["status"],&json!({
-        "nativeDirective":instruction,"directiveUpdatedAt":chrono::Utc::now().to_rfc3339()
-    })) else {return error(StatusCode::CONFLICT,"작업 상태가 변경되었습니다.");};
+    let old=job["nativeDirective"].as_str().unwrap_or("");
+    let directive=if mode=="append"&&!old.trim().is_empty() {
+        format!("{old}\n\n{instruction}")
+    }else{instruction.to_string()};
+    if directive.len()>32_000 {
+        return error(StatusCode::BAD_REQUEST,"작업 변경 지시가 너무 깁니다.");
+    }
+    let Some(updated)=state.store.patch_if("job",id,"status",&job["status"],&json!({
+        "nativeDirective":directive,"directiveUpdatedAt":chrono::Utc::now().to_rfc3339()
+    })) else{return error(StatusCode::CONFLICT,"작업 상태가 변경되었습니다.");};
     state.bus.record("job",&updated);
-    Json(json!({"ok":true,"jobId":id,"directive":instruction})).into_response()
+    Json(json!({"ok":true,"jobId":id,"directive":directive,"mode":mode})).into_response()
+}
+pub async fn steer(State(state):State<AppState>,Path(id):Path<String>,
+    Json(body):Json<Value>)->Response{
+    apply_steering(&state,&id,body["instruction"].as_str().unwrap_or(""),
+        body["mode"].as_str().unwrap_or("append"))
+}
+/// Legacy native job directive endpoint: replacement remains its default.
+pub async fn directive(State(state):State<AppState>,Path(id):Path<String>,
+    Json(body):Json<Value>)->Response {
+    apply_steering(&state,&id,body["instruction"].as_str().unwrap_or(""),
+        body["mode"].as_str().unwrap_or("replace"))
 }
 
 #[cfg(test)]
