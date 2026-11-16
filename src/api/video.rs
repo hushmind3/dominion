@@ -47,8 +47,10 @@ pub async fn status(State(state): State<AppState>) -> Json<Value> {
     let built_in = video::video_models(&state).iter()
         .any(|model| model["id"] == cfg["videoModel"] && model["available"] == true);
     let custom_workflow=cfg["comfyWorkflow"].is_object();
+    let model_id=cfg["videoModel"].as_str().unwrap_or("");
     let gguf_needed=!custom_workflow
-        && cfg["videoModel"]=="wan21-t2v-1.3b-q4";
+        && video::video_models(&state).iter().any(|m|m["id"]==model_id && m["kind"]=="gguf");
+    let wan22_needed=!custom_workflow && model_id=="wan22-ti2v-5b-fp16";
     let mut missing_nodes=vec![];
     if reachable && gguf_needed {
         let (unet,clip)=tokio::join!(
@@ -58,7 +60,11 @@ pub async fn status(State(state): State<AppState>) -> Json<Value> {
         if !unet {missing_nodes.push("UnetLoaderGGUF");}
         if !clip {missing_nodes.push("CLIPLoaderGGUF");}
     }
-    let comfy = reachable && (custom_workflow || built_in)
+    if reachable && wan22_needed && !comfy_node_present(
+        cfg["comfyUrl"].as_str().unwrap_or(""),"Wan22ImageToVideoLatent").await {
+        missing_nodes.push("Wan22ImageToVideoLatent");
+    }
+    let comfy = && (custom_workflow || built_in)
         && missing_nodes.is_empty();
     let workflows = workflows_from_config(&cfg);
     let jobs = state.store.all("job").iter()
@@ -77,8 +83,8 @@ pub async fn status(State(state): State<AppState>) -> Json<Value> {
             {"id":"comfyui","name":"ComfyUI","available":comfy,"reason":if comfy{""}else{"서버와 API 워크플로 설정 필요"}}
         ],
         "jobs": jobs,
-        "models": [],
-        "modelsReady": false,
+        "models": video::video_models(&state),
+        "modelsReady": built_in,
         "workflows": workflows,
         "installed": reachable
     }))
