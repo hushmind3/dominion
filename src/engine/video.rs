@@ -626,6 +626,10 @@ async fn native(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, St
         Some((directory(&ctx.state,source)?,index as usize))
     }else{None};
     let reusable=reuse.as_ref().map(|(dir,index)|(dir.as_path(),*index));
+    let reused_card_count=reusable.map(|(source,changed)|{
+        (0..scenes.len()).filter(|index|*index!=changed
+            && source.join(format!("card-{index:02}.png")).is_file()).count()
+    }).unwrap_or(0);
     ctx.checkpoint(json!({"videoState":{"scenes":scenes},"phase":"rendering","progress":20}))?;
     make_cards(
         dir,
@@ -696,7 +700,7 @@ async fn native(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, St
         "duration":total_seconds.round() as u64,
         "scenes":scenes.len(),
         "narrated":narration.is_some(),
-        "reusedSceneCount":reusable.map(|(_,changed)| scenes.len().saturating_sub(1).min(changed.saturating_add(scenes.len()))).unwrap_or(0),
+        "reusedSceneCount":reused_card_count,
         "regeneratedSceneIndex":input["regenerateSceneIndex"],
         "sourceJobId":input["sourceJobId"],
     }))
