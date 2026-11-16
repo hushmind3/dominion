@@ -52,7 +52,7 @@ impl JobContext {
         }
     }
 
-    pub fn checkpoint(&self, patch: Value) -> Result<(), String> {
+    pub fn checkpoint(&self, mut patch: Value) -> Result<(), String> {
         let job = self
             .state
             .store
@@ -60,6 +60,16 @@ impl JobContext {
             .ok_or("작업 체크포인트를 찾을 수 없습니다.")?;
         if job["cancelRequested"].as_bool() == Some(true) {
             return Err("사용자 요청으로 실행이 중단되었습니다.".into());
+        }
+        // Video checkpoints are incremental: a progress heartbeat must not
+        // erase the scene manifest, ComfyUI prompt ID or prior quality results.
+        // Other job schemas retain their existing patch semantics.
+        if let Some(incoming) = patch.get_mut("videoState").and_then(Value::as_object_mut) {
+            if let Some(previous) = job["videoState"].as_object() {
+                for (key, value) in previous {
+                    incoming.entry(key.to_owned()).or_insert_with(|| value.clone());
+                }
+            }
         }
         let saved = self
             .state
@@ -1002,6 +1012,23 @@ mod tests {
         assert_eq!(rsi_edit_repair_limit(&json!({"rsiEditPolicy":{"repairLimit":999}})),3);
     }
 
+    #[test]
+    fn incremental_video_checkpoint_preserves_scene_proof_and_remote_intent(){
+        let state=temp_state();
+        let job=enqueue(&state,"video",json!({"brief":"sample"})).unwrap();
+        let id=job["id"].as_str().unwrap().to_owned();
+        let ctx=JobContext::new(state.clone(),id.clone());
+        ctx.checkpoint(json!({"videoState":{
+            "scenes":["scene one","scene two"],"promptId":"remote-7","inFlight":true,
+            "rendered":[{"index":0,"sha":"abc"}]
+        }})).unwrap();
+        ctx.checkpoint(json!({"phase":"rendering","videoState":{"inFlight":false}})).unwrap();
+        let saved=state.store.get("job",&id).unwrap();
+        assert_eq!(saved["videoState"]["scenes"][1],"scene two");
+        assert_eq!(saved["videoState"]["promptId"],"remote-7");
+        assert_eq!(saved["videoState"]["rendered"][0]["sha"],"abc");
+        assert_eq!(saved["videoState"]["inFlight"],false);
+    }
     #[test]
     fn enqueue_creates_a_queued_job() {
         let state = temp_state();
