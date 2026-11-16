@@ -414,7 +414,7 @@ fn github_file_url(args:&Value)->Result<reqwest::Url,String>{
     let mut url=reqwest::Url::parse("https://api.github.com").map_err(|e|e.to_string())?;
     {
         let mut parts=url.path_segments_mut().map_err(|_|"GitHub API URL 오류")?;
-        parts.extend(["repos",owner,repo,"contents"]);
+        parts.extend(["repos",owner.as_str(),repo.as_str(),"contents"]);
         for segment in path.split('/') {parts.push(segment);}
     }
     if let Some(branch)=args["branch"].as_str(){
