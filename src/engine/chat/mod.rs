@@ -13,6 +13,7 @@ pub(crate) use evidence::prepare_owner_action;
 mod protocol;
 mod provider;
 mod runtime;
+mod tool_projection;
 #[cfg(test)]
 mod tests;
 mod transport;
