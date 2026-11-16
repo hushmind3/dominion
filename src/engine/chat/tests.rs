@@ -26,6 +26,16 @@ fn temp_state() -> AppState {
 }
 
 #[test]
+fn ordinary_chat_never_enables_background_learning_implicitly() {
+    let default=TurnRequest::from_value(&json!({"input":"Read the file"})).unwrap();
+    assert!(!default.auto_learning);
+    let explicit=TurnRequest::from_value(
+        &json!({"input":"Remember the verified lesson","autoLearning":true})
+    ).unwrap();
+    assert!(explicit.auto_learning,"explicit owner learning remains opt-in");
+}
+
+#[test]
 fn split_korean_utf8_and_crlf_events_are_lossless() {
     let bytes = "data: {\"text\":\"장기기억\"}\r\n\r\ndata: [DONE]\n\n".as_bytes();
     let mut buffer = SseBuffer::default();
