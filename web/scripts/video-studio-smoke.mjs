@@ -54,6 +54,13 @@ try {
  const autopilot=await readFile(join(root,'src/components/VideoAutopilot.tsx'),'utf8')
  assert.ok(autopilot.includes("<VideoModelInstall onChanged="),
   'Autonomous producer must expose video-only model downloads by default')
+ const browser=await readFile(join(root,'src/components/VideoHubBrowser.tsx'),'utf8')
+ for(const contract of ['LTX-Video','LTX-2.3','HunyuanVideo','CogVideoX','Mochi',
+  '/api/video/hub/search','/api/video/hub/files','/api/video/hub/download','quantization','선택 파일 다운로드']){
+  assert.ok(browser.includes(contract),'Video model discovery missing: '+contract)
+ }
+ assert.ok(installer.includes('<VideoHubBrowser/>'),
+  'Production model library must actually expose alternate video model families')
  console.log(JSON.stringify({ok:true,renderedCharacters:html.length,
   workflows:['create','jobs','publish','settings'],
   evidence:'real React SSR + product route and control assertions'},null,2))
