@@ -54,7 +54,12 @@ export interface VideoJobInput {
   /** 0 forbids paid new scenes, while SHA256-verified previous scenes can be reused. */
   maxNewScenes?: number;
 }
+export interface VideoCancelOutcome {
+  job: VideoJob;
+  remoteCancel: {status:'requested'|'unconfirmed'|'not_active';promptId?:string;reason?:string};
+}
 export interface VideoJob extends RecordItem {
+  remoteCancel?: VideoCancelOutcome['remoteCancel']|null;
   kind: 'video'|'youtube_upload'; status: JobStatus;
   engine?: 'native'|'comfyui'; title?: string; outputUrl?: string|null;
   maxNewScenes?: number|null; result?: unknown;
@@ -226,6 +231,8 @@ export class Dominion {
     list: (options?:RequestOptions) => this.request<VideoJob[]>('GET','/api/video/jobs',undefined,options),
     get: (key:string,options?:RequestOptions) => this.request<VideoJob>('GET','/api/video/jobs/'+id(key),undefined,options),
     create: (input:VideoJobInput,options?:RequestOptions) => this.request<VideoJob>('POST','/api/video/jobs',input,options),
+    cancel: (key:string,options?:RequestOptions) => this.request<VideoCancelOutcome>(
+      'POST','/api/video/jobs/'+id(key)+'/cancel',{},options),
     outputs: (options?:RequestOptions) => this.request<unknown[]>('GET','/api/video/outputs',undefined,options),
     download: async (key:string,options?:RequestOptions) => {
       const response = await this.raw('/api/video/jobs/'+id(key)+'/content',{signal:options?.signal});
