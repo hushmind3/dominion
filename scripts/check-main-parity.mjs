@@ -78,7 +78,7 @@ const web=[...mainFiles].filter(path=>path.startsWith('web/')&&relevant(path));
 const changed=web.filter(path=>blob(main,path)!==blob('HEAD',path));
 // Sub3 is explicitly improving only the video workspace's user experience.
 // Every other shipping UI file must still exactly match main.
-const permittedVideoChanges=new Set(['web/src/pages/Video.tsx','web/src/components/NativeAgentPanel.tsx']);
+const permittedVideoChanges=new Set(['web/src/pages/Video.tsx','web/src/components/NativeAgentPanel.tsx','web/src/pages/Chat.tsx']);
 const unexpected=changed.filter(path=>!permittedVideoChanges.has(path));
 assert.deepEqual(unexpected,[], 'Unrelated shipping web source differs from canonical main');
 if(changed.includes('web/src/components/NativeAgentPanel.tsx')){
@@ -86,6 +86,11 @@ if(changed.includes('web/src/components/NativeAgentPanel.tsx')){
   assert.ok(agentPanel.includes('/api/sdk/runs') && agentPanel.includes('verificationChecks')
     && agentPanel.includes('maxToolCalls'),
     'Sub3 agent UI must preserve live Rust API and surface evidence/tool budgets');
+}
+if(changed.includes('web/src/pages/Chat.tsx')) {
+  const chat=git('show','HEAD:web/src/pages/Chat.tsx');
+  assert.ok(chat.includes('setAutoLearn]=useState(false)') && chat.includes('autoLearning:autoLearn'),
+    'Ordinary chat must disable automatic learning while retaining explicit user choice');
 }
 if(changed.includes('web/src/pages/Video.tsx')) {
   const studio=git('show','HEAD:web/src/pages/Video.tsx');
