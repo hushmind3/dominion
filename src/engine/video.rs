@@ -951,6 +951,7 @@ async fn comfy_story(ctx:&JobContext,input:&Value,dir:&Path)->Result<Value,Strin
 }
 
 pub async fn run(ctx: &JobContext, job: &Value) -> Result<Value, String> {
+    let started=std::time::Instant::now();
     let dir = directory(&ctx.state, &ctx.job_id)?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let input = &job["input"];
@@ -964,8 +965,17 @@ pub async fn run(ctx: &JobContext, job: &Value) -> Result<Value, String> {
         Ok(mut value) => {
             progress(ctx,"quality",92)?;
             let report=quality::inspect(&dir.join("output.mp4"),ffmpeg_from_config(&input["config"]).as_deref()).await?;
+            if input["engine"]=="comfyui" && report["status"]=="passed" {
+                if let Some(actual)=report["durationSeconds"].as_f64(){
+                    let requested=input["duration"].as_u64().unwrap_or(0) as f64;
+                    if requested>0.0 && (actual<requested*0.7 || actual>requested*1.5){
+                        return Err(format!("완성 영상 길이 불일치: 요청 {:.1}초 / 실제 {:.1}초",requested,actual));
+                    }
+                }
+            }
             ctx.checkpoint(json!({"videoState":{"quality":report}}))?;
             value["quality"]=report;
+            value["renderWallSeconds"]=json!(started.elapsed().as_secs_f64());
             let bytes = std::fs::metadata(dir.join("output.mp4"))
                 .map_err(|e| e.to_string())?
                 .len();

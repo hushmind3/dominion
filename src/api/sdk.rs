@@ -189,9 +189,12 @@ pub async fn reconcile(State(state):State<AppState>,Path(id):Path<String>,Json(i
 /// A process restart cannot replay a possibly billed model request. Recover
 /// completed replies from SQLite; leave interrupted SDK work for explicit resume.
 pub(crate) fn recover(state:&AppState){
+    // One snapshot avoids scanning every execution for each SDK run at startup.
+    let index=ViewIndex::load(state);
     for mut record in state.store.all("sdk_run"){
         if record["sessionId"].as_str().is_none()||!matches!(record["status"].as_str(),Some("running"|"queued")){continue;}
-        let completed=execution(state,&record).filter(|run|run["status"]=="completed")
+        let completed=record["sessionId"].as_str().and_then(|session|index.runs.get(session))
+            .filter(|run|run["status"]=="completed")
             .and_then(|run|run["finalMessageId"].as_str().and_then(|id|state.store.message(id)));
         if let Some(message)=completed{record["status"]=json!("completed");record["answer"]=message["content"].clone();record["finalMessageId"]=message["id"].clone();}
         else{record["status"]=json!("interrupted");record["error"]=json!("서버가 재시작되었습니다. 실행 기록을 확인한 뒤 재개하세요.");}
