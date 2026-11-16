@@ -20,10 +20,11 @@ User / Home UI / room / TypeScript SDK / native Rust SDK
 ## Before / after and structural ownership
 
 - Before: `chat/runtime.rs` was **7,290 lines**, including tool inventory ranking, Home/room selection, size trimming, finalization semantic fingerprints, completion compliance and success experience. The main and sub3 branches still carry tool selection inside `runtime.rs` at inspection.
-- After: approximately **6,773 runtime lines**; **344 lines** in `chat/tool_projection.rs`; **238 lines** in `chat/outcome.rs`. Public agent, SDK, video, OAuth, room UI, DB schema and provider APIs remain unchanged. This is a responsibility boundary change, not a benchmarked latency or quality gain.
+- After the further finalization ownership move: approximately **6,385 runtime lines**; **344 lines** in `chat/tool_projection.rs`; **632 lines** in `chat/outcome.rs`. The latter owns the actual terminal SQLite finalization, strategy feedback, replay-safe success evidence and signal recording, not just helper predicates. Public agent, SDK, video, OAuth, room UI, DB schema and provider APIs remain unchanged. This is a responsibility boundary change, not a benchmarked latency or quality gain.
 - Tool definitions with empty, missing, whitespace-containing or control-character names are excluded. The former `trim_tool_definitions` could keep its first oversized schema; the new implementation uses serialized bytes and obeys `budget` including the first entry. Type-specific dispatch approval remains in the existing tool dispatcher, not in the projection.
 - Before: `JobContext::checkpoint` read a job, merged `videoState` on that stale snapshot and called CAS only against `cancelRequested`. Two simultaneous writes with unchanged cancellation status could lose each other's nested data.
 - After: `Store::patch_if_all_merge` checks both `status` and `cancelRequested` and merges the nested keys against the most recent row while holding the same SQLite connection lock used for the update. Queued/running jobs may checkpoint; cancelled/terminal ones cannot. No new table, migration or serialization format.
+- The job worker now audits `job.completed`, `job.failed` or `job.needs_review` **only after** its final checkpoint actually persists. Losing to owner cancellation emits `job.finalization_conflict` instead of falsely recording a success/failure. A regression fixture checks that neither late success nor late failure can resurrect a cancelled job.
 
 ## Comparator source reading
 
@@ -36,6 +37,7 @@ User / Home UI / room / TypeScript SDK / native Rust SDK
 1. Existing runtime tool projection tests still call the extracted actual functions; newly added independent module tests reject malformed definitions and verify the first oversized schema is excluded.
 2. `db::tests::checkpoint_merges_concurrent_scene_updates_without_lost_progress` forks two threads, checks persisted scenes/prompt/counters and verifies a cancellation blocks the next write.
 3. `jobs::video_checkpoint_tests::checkpoint_preserves_scene_provenance_and_rejects_post_cancel_writes` uses a real temporary SQLite store and checks the native `JobContext` path.
-4. CI on Windows/macOS/Linux runs type checks, SDK contracts, web bundle, scripted RSI evaluation and `cargo test --release`. The exact post-change SHA and individual CI results determine pass/fail.
+4. `jobs::tests::cancellation_wins_against_late_terminal_receipt_without_false_success` verifies a terminal conflict cannot change a cancelled job.
+5. CI on Windows/macOS/Linux runs type checks, SDK contracts, web bundle, scripted RSI evaluation and `cargo test --release`. The exact post-change SHA and individual CI results determine pass/fail.
 
 **No performance claims without controlled measurements:** no same-task/model pre/post cost or quality delta was measured in this patch. A full refactor of program interpreter state (and the absence of a `product.rs` file in this branch) remains explicitly out of scope. Cancellations of already-dispatched remote side effects retain the existing independent reconciliation policy. These source and contract checks are not a substitute for real model/GPU/YouTube acceptance tests.
