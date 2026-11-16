@@ -8,6 +8,7 @@ use serde_json::{json,Value};
 use std::collections::{BTreeSet,HashMap};
 
 pub(crate) const SEARCH: &str="dominion_tool_search";
+pub(crate) const CALL: &str="dominion_tool_call";
 const THRESHOLD:usize=18;
 const VISIBLE:usize=13;
 
@@ -21,6 +22,20 @@ pub(crate) fn spec()->ToolSpec {
    "limit":{"type":"integer","minimum":1,"maximum":8}
   },"required":["query"],"additionalProperties":false}),
   read_only:true,
+ }
+}
+/// Fixed provider-visible bridge. Hidden tools are never added to the native
+/// function declarations: search returns their schemas as tool evidence,
+/// then the bridge resolves their invocation through ordinary host approval.
+pub(crate) fn call_spec()->ToolSpec {
+ ToolSpec{
+  name:CALL.into(),
+  description:"Invoke a previously discovered owner-approved tool by exact name, using its retrieved JSON parameters. Rust verifies the discovery receipt and dispatches through the normal approval and durable tool worker.".into(),
+  schema:json!({"type":"object","properties":{
+   "name":{"type":"string","description":"Exact authorized tool name from dominion_tool_search"},
+   "arguments":{"type":"object","description":"Arguments conforming to that tool's retrieved JSON schema"}
+  },"required":["name","arguments"],"additionalProperties":false}),
+  read_only:false,
  }
 }
 pub(crate) fn needed(catalog:&HashMap<String,ToolSpec>)->bool {
@@ -70,7 +85,7 @@ fn score(spec:&ToolSpec, query:&str)->i32{
 }
 fn ranked(catalog:&HashMap<String,ToolSpec>,query:&str)->Vec<String>{
  let mut candidates=catalog.values()
-  .filter(|s|s.name!=SEARCH && !s.name.starts_with("dominion_receipt_"))
+  .filter(|s|s.name!=SEARCH && s.name!=CALL && !s.name.starts_with("dominion_receipt_"))
   .map(|s|(score(s,query),s.name.clone())).collect::<Vec<_>>();
  candidates.sort_by(|a,b|b.0.cmp(&a.0).then_with(||a.1.cmp(&b.1)));
  candidates.into_iter().map(|(_,name)|name).collect()
@@ -86,32 +101,15 @@ pub(crate) fn select(catalog:&HashMap<String,ToolSpec>,task:&str,owner:&str,
  }
  let mut displayed=BTreeSet::new();
  displayed.insert(SEARCH.to_string());
- if !receipts.is_empty() {
-  for name in ["dominion_receipt_search","dominion_receipt_read"] {
-   if catalog.contains_key(name){displayed.insert(name.into());}
+ displayed.insert(CALL.to_string());
+ // The selected provider tool-list is stable until the owner changes the
+ // goal or directive. Search results are DATA, not edits to provider schemas.
+ // Durable receipts give the bridge authority to call exactly discovered tools.
+ if !receipts.is_empty(){
+  for name in ["dominion_receipt_search","dominion_receipt_read"]{
+   if displayed.len()<VISIBLE&&catalog.contains_key(name){displayed.insert(name.into());}
   }
  }
- // Promotion is tied to an actual successful kernel-local discovery receipt.
- for receipt in receipts.iter().rev().filter(|r|r.tool==SEARCH&&r.success).take(3) {
-  if let Some(matches)=receipt.result["matches"].as_array(){
-   for item in matches.iter().take(8) {
-    if let Some(name)=item["name"].as_str(){
-     if displayed.len()<VISIBLE && catalog.contains_key(name){
-      displayed.insert(name.into());
-     }
-    }
-   }
-  }
- }
- // Keep tools used successfully in recent actions visible for follow-up
- // edits; failed tools can still be recovered through explicit discovery.
- for r in receipts.iter().rev().take(8) {
-  if displayed.len()<VISIBLE && r.success && catalog.contains_key(&r.tool){
-   displayed.insert(r.tool.clone());
-  }
- }
- // A mutable model plan must not thrash the provider's cached schema prefix.
- // Only the owner goal/directive and explicit discovery change the shortlist.
  let query=format!("{task} {owner} {}",directive.unwrap_or(""));
  for name in ranked(catalog,&query) {
   if displayed.len()>=VISIBLE{break}
@@ -136,11 +134,37 @@ fn search(args:&Value,catalog:&HashMap<String,ToolSpec>)->Result<Value,String>{
   .filter_map(|name|catalog.get(&name))
   .map(|spec|json!({"name":spec.name,"description":
     spec.description.chars().take(170).collect::<String>(),
-    "readOnly":spec.read_only}))
+    "readOnly":spec.read_only,"parameters":spec.schema}))
   .collect::<Vec<_>>();
  Ok(json!({"query":query,"authorizedToolCount":catalog.len().saturating_sub(1),
-  "matches":chosen,"nextTurnSchemas":true,
-  "note":"These are already owner-approved host tools. Their full schemas appear in the next model turn."}))
+  "matches":chosen,"nextTurnSchemas":false,
+  "note":"Use dominion_tool_call with the exact discovered name and JSON arguments. The provider tool list stays fixed; Rust preserves normal authorization."}))
+}
+
+
+/// Resolve a discovered call without changing the host permissions or
+/// persisting a fictitious wrapper effect. The original action ID is retained
+/// so crash recovery and dependency edges continue to refer to one operation.
+pub(crate) fn resolve_bridge(action:&Action,catalog:&HashMap<String,ToolSpec>,
+ receipts:&[Receipt])->Result<Option<Action>,String>{
+ if action.tool!=CALL{return Ok(None)}
+ let name=action.arguments["name"].as_str()
+  .filter(|s|!s.is_empty()&&s.len()<=128)
+  .ok_or("Bridge calls require a valid discovered tool name")?;
+ if name==CALL||name==SEARCH||name.starts_with("dominion_receipt_"){
+  return Err("Internal tools cannot be invoked through the external tool bridge".into())
+ }
+ if !catalog.contains_key(name) {
+  return Err(format!("Tool is not authorized by the owner: {name}"))
+ }
+ let found=receipts.iter().any(|r|r.tool==SEARCH && r.success
+  && r.result["matches"].as_array().is_some_and(|list|list.iter()
+    .any(|item|item["name"].as_str()==Some(name))));
+ if !found {return Err("Tool not previously discovered in this execution; call dominion_tool_search first".into())}
+ let arguments=action.arguments["arguments"].as_object()
+  .ok_or("Bridge arguments must be a JSON object matching the retrieved schema")?;
+ Ok(Some(Action{id:action.id.clone(),tool:name.into(),
+  arguments:Value::Object(arguments.clone()),depends_on:action.depends_on.clone()}))
 }
 
 #[cfg(test)]
