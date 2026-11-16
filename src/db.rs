@@ -1294,6 +1294,29 @@ mod tests {
     }
 
     #[test]
+    fn indexed_task_recovery_reads_only_the_owners_execution_history() {
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        for i in 0..200 {
+            let task=if i==23 || i==107 {"requested-task"}else{"other-task"};
+            store.put("execution",&json!({
+                "id":format!("execution-{i:03}"),"taskId":task,
+                "status":"interrupted","programResumeApproved":true,
+                "programCheckpoint":{"programRevision":"p1"}
+            })).unwrap();
+        }
+        let selected=store.task_executions("requested-task").unwrap();
+        assert_eq!(selected.len(),2);
+        assert!(selected.iter().all(|item|item["taskId"]=="requested-task"));
+        assert_eq!(store.task_executions("absent-task").unwrap().len(),0);
+        let conn=store.conn.lock().unwrap();
+        let plan:String=conn.query_row(
+            "EXPLAIN QUERY PLAN SELECT data FROM records WHERE kind='execution'
+             AND json_extract(data,'$.taskId')=?1",
+            ["requested-task"],|row|row.get(3)).unwrap();
+        assert!(plan.contains("idx_execution_task"),"{plan}");
+    }
+
+    #[test]
     fn indexed_operation_views_ignore_unrelated_history_and_preserve_recent_order() {
         let store=Store::open(std::path::Path::new(":memory:")).unwrap();
         for i in 0..300 {
