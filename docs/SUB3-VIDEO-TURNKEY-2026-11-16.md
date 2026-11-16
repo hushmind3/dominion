@@ -28,6 +28,10 @@ The Rust host serves the compiled React UI at **http://127.0.0.1:4317** by defau
 - Completion checks the MP4 file signature and writes `captions.srt` and `production.json`; these accompany the MP4 through `/api/video/jobs/:id/*` endpoints.
 - Explicit `autoUpload` is limited to private or unlisted YouTube delivery and uses the existing OAuth plus resumable-upload job. Unknown external outcomes require review rather than blind replay.
 
+## Consumer-GPU clip budget
+
+The integrated AI video project accepts up to **60 seconds** of intended output and divides each rendered Wan scene into clips of at most **5 seconds**. This keeps any one ComfyUI latent graph bounded and preserves scene ordering and target running time. It does not imply that 5-second inference will be fast or fit every 8 GB GPU; actual runtime depends on node offloading and the configured model. Each clip can be inspected and its visual prompt adjusted before rendering.
+
 ## Model choice and resource limits
 
 Default model suggestion: **Wan2.1 T2V 1.3B FP16**, using official Comfy-Org model weights and built-in ComfyUI nodes. The 4-bit Wan GGUF option reduces the diffusion-model weight size but **requires separately installed ComfyUI-GGUF custom nodes** and a sizeable UMT5 text encoder. A multi-GB download and sufficient RAM/VRAM/disk space are required even for the 4-bit path. Local inference speed and visual continuity depend heavily on hardware, graph and scene settings; no paid API or fixed saving percentage is claimed.
