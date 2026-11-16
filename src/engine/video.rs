@@ -271,7 +271,7 @@ pub fn output_path(state: &AppState, id: &str) -> Result<PathBuf, String> {
 pub fn public_job(job: &Value) -> Value {
     let id = job["id"].as_str().unwrap_or("");
     let ready = job["kind"] == "video" && job["status"] == "completed";
-    json!({"id":id,"kind":job["kind"],"title":job["input"]["title"],"brief":job["input"]["brief"],"engine":job["input"]["engine"],"status":job["status"],"phase":job.get("phase").unwrap_or(&job["status"]),"progress":job["progress"],"error":job["error"],"createdAt":job.get("createdAt").or(job.get("created_at")),"videoJobId":job["input"]["videoJobId"],"privacyStatus":job["input"]["privacyStatus"],"outputUrl":ready.then(||format!("/api/video/jobs/{id}/content")),"storyboard":job["videoState"]["scenes"].as_array().map(|_|job["videoState"]["scenes"].clone()).unwrap_or_else(||job["input"]["scenes"].clone()),"quality":job["result"]["quality"],"result":job["result"],"duration":job["input"]["duration"],"aspectRatio":job["input"]["aspectRatio"]})
+    json!({"id":id,"kind":job["kind"],"title":job["input"]["title"],"brief":job["input"]["brief"],"engine":job["input"]["engine"],"status":job["status"],"phase":job.get("phase").unwrap_or(&job["status"]),"progress":job["progress"],"error":job["error"],"createdAt":job.get("createdAt").or(job.get("created_at")),"videoJobId":job["input"]["videoJobId"],"privacyStatus":job["input"]["privacyStatus"],"outputUrl":ready.then(||format!("/api/video/jobs/{id}/content")),"deliveryJobId":job["deliveryJobId"],"storyboard":job["videoState"]["scenes"].as_array().map(|_|job["videoState"]["scenes"].clone()).unwrap_or_else(||job["input"]["scenes"].clone()),"quality":job["result"]["quality"],"result":job["result"],"duration":job["input"]["duration"],"aspectRatio":job["input"]["aspectRatio"]})
 }
 
 fn planned_scenes(brief:&str,engine:&str,duration:u64,explicit:&Value)->Result<Option<Vec<String>>,String>{
@@ -338,6 +338,10 @@ pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
         return Err("영상 길이는 3~180초입니다.".into());
     }
     let scenes=planned_scenes(brief,engine,duration,&body["scenes"])?;
+    let auto_upload=body["autoUpload"]==true;
+    if auto_upload && oauth::access_token(state,"youtube").is_none() {
+        return Err("자동 업로드를 사용하려면 YouTube 계정을 연결해야 합니다.".into());
+    }
     if engine=="comfyui" && scenes.as_ref().is_some_and(|items|items.len()>1)
         && ffmpeg_from_config(&cfg).is_none() {
         return Err("여러 ComfyUI 장면을 합치려면 FFmpeg를 설정해야 합니다.".into());
@@ -393,6 +397,7 @@ pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
     let input = json!({
         "brief":brief, "title":title, "engine":engine, "duration":duration,
         "aspectRatio":aspect, "config":cfg, "publish":false, "scenes":scenes,
+        "autoUpload":auto_upload,
         "render":{"prompt":brief,"negative":negative_prompt,"negativePrompt":negative_prompt,
                   "duration":duration,"width":width,"height":height,"fps":fps,"frames":duration*fps,"seed":seed}
     });
@@ -421,6 +426,7 @@ pub fn enqueue_regeneration(state:&AppState,source_id:&str,body:&Value)->Result<
     input["sourceJobId"]=json!(source_id);
     input["regenerateSceneIndex"]=json!(index);
     input["publish"]=json!(false);
+    input["autoUpload"]=json!(false); // Derivatives never publish without a fresh opt-in.
     jobs::enqueue(state,"video",input)
         .map(|job|public_job(&job))
         .ok_or("장면 재제작 작업 저장에 실패했습니다.".into())

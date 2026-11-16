@@ -526,6 +526,29 @@ async fn run_job(state: AppState, job: Value) {
             state.store.patch_if("job",&job_id,"status",&json!("completed"),&json!({"status":"needs_review","error":error}));
         }
     }
+    // An explicit owner opt-in creates a separate idempotent upload job only
+    // AFTER the MP4 is validated and the video job is durably completed.
+    // Re-running completion cannot duplicate an already queued YouTube upload.
+    if kind=="video" && job["input"]["autoUpload"]==true
+        && state.store.get("job",&job_id).is_some_and(|j|j["status"]=="completed"){
+        match crate::engine::video::enqueue_upload(&state,&job_id,&json!({
+            "privacyStatus":"private",
+            "title":job["input"]["title"],
+            "description":job["input"]["brief"]
+        })){
+            Ok(delivery)=>{
+                let upload_id=delivery["id"].clone();
+                if let Some(saved)=state.store.patch_if("job",&job_id,"status",&json!("completed"),
+                    &json!({"deliveryJobId":upload_id})) {
+                    state.bus.record("job",&saved);
+                }
+            }
+            Err(error)=>{
+                state.store.patch_if("job",&job_id,"status",&json!("completed"),
+                    &json!({"deliveryError":error}));
+            }
+        }
+    }
     if let Some(session)=job["input"]["sessionId"].as_str(){
         crate::engine::execution_budget::close_unstarted_child(&state,session);
     }
