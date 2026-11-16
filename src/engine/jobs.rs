@@ -430,6 +430,29 @@ pub fn start_now(state: AppState, job_id: String) {
     });
 }
 
+/// Never report a completed/failed result unless its terminal checkpoint
+/// actually reached durable storage. Cancellation or concurrent replacement
+/// can make a post-execution checkpoint invalid; the existing job record
+/// remains authoritative and is left untouched in that case.
+fn commit_terminal_job(
+    context:&JobContext, kind:&str, status:&str, patch:Value, audit_detail:Value,
+) -> bool {
+    match context.checkpoint(patch) {
+        Ok(()) => {
+            context.state.store.audit(&format!("job.{status}"),audit_detail);
+            true
+        }
+        Err(error) => {
+            context.state.store.audit("job.final_checkpoint_refused",
+                json!({"jobId":context.job_id,"kind":kind,
+                    "attemptedStatus":status,"error":error,
+                    "storedStatus":context.state.store.get("job",&context.job_id)
+                        .map(|job|job["status"].clone())}));
+            false
+        }
+    }
+}
+
 async fn run_job(state: AppState, job: Value) {
     let job_id = job
         .get("id")
@@ -473,16 +496,12 @@ async fn run_job(state: AppState, job: Value) {
                 .and_then(Value::as_str)
                 .filter(|status| matches!(*status, "needs_review" | "cancelled" | "failed"))
                 .unwrap_or("completed");
-            context.patch(json!({
+            commit_terminal_job(&context,&kind,status,json!({
                 "status": status,
                 "result": result,
                 "finishedAt": chrono::Utc::now().to_rfc3339(),
                 "events": context.events.lock().unwrap().clone(),
-            }));
-            state.store.audit(
-                &format!("job.{status}"),
-                json!({ "jobId": job_id, "kind": kind }),
-            );
+            }),json!({ "jobId": job_id, "kind": kind }));
         }
         Err(error) => {
             if error.starts_with("deferred:") {
@@ -497,16 +516,12 @@ async fn run_job(state: AppState, job: Value) {
             } else {
                 "failed"
             };
-            context.patch(json!({
+            commit_terminal_job(&context,&kind,status,json!({
                 "status": status,
                 "error": error,
                 "finishedAt": chrono::Utc::now().to_rfc3339(),
                 "events": context.events.lock().unwrap().clone(),
-            }));
-            state.store.audit(
-                "job.failed",
-                json!({ "jobId": job_id, "kind": kind, "error": error }),
-            );
+            }),json!({ "jobId": job_id, "kind": kind, "error": error }));
         }
     }
 }
@@ -801,6 +816,27 @@ mod tests {
             "an unknown external result must not be replayed: {stored}"
         );
         assert!(stored["error"].as_str().is_some_and(|text| text.contains("확정")));
+    }
+
+    #[test]
+    fn terminal_checkpoint_cannot_turn_cancelled_work_into_a_completed_job() {
+        let state=temp_state();
+        state.store.put("job",&json!({"id":"terminal-race",
+            "kind":"prompt","status":"running","cancelRequested":false}));
+        let context=JobContext::new(state.clone(),"terminal-race".into());
+        assert!(commit_terminal_job(&context,"prompt","completed",
+            json!({"status":"completed","result":{"answer":"done"}}),
+            json!({"jobId":"terminal-race"})));
+        assert_eq!(state.store.get("job","terminal-race").unwrap()["status"],"completed");
+        state.store.put("job",&json!({"id":"terminal-race",
+            "kind":"prompt","status":"cancelled","cancelRequested":true}));
+        assert!(!commit_terminal_job(&context,"prompt","completed",
+            json!({"status":"completed","result":{"answer":"stale"}}),
+            json!({"jobId":"terminal-race"})));
+        let persisted=state.store.get("job","terminal-race").unwrap();
+        assert_eq!(persisted["status"],"cancelled");
+        assert!(persisted["result"].is_null(),
+            "a stale worker cannot publish a success after cancellation");
     }
 
     #[test]
