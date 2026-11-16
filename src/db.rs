@@ -480,6 +480,34 @@ impl Store {
         Some(saved)
     }
 
+    /// Reconcile an uncertain external effect exactly once. Both the SDK
+    /// owner's status and the operation's unknown-effect bit are checked
+    /// under the same SQLite transaction before any checkpoint is rewritten.
+    pub fn reconcile_sdk_effect_once(
+        &self,sdk_id:&str,expected_status:&str,operation_id:&str,run_id:&str,
+        records:&[(String,Value)],
+    )->Result<bool,String>{
+        let mut conn=self.conn.lock().map_err(|error|error.to_string())?;
+        let tx=conn.transaction().map_err(|error|error.to_string())?;
+        let owner=tx.query_row(
+            "SELECT json_extract(data,'$.status') FROM records
+             WHERE kind='sdk_run' AND id=?1",
+            [sdk_id],|row|row.get::<_,String>(0),
+        ).optional().map_err(|error|error.to_string())?;
+        if owner.as_deref()!=Some(expected_status){return Ok(false);}
+        let unknown=tx.query_row(
+            "SELECT 1 FROM records
+             WHERE kind='execution_operation' AND id=?1
+               AND json_extract(data,'$.runId')=?2
+               AND json_extract(data,'$.outcomeUnknown')=1",
+            params![operation_id,run_id],|row|row.get::<_,i64>(0),
+        ).optional().map_err(|error|error.to_string())?;
+        if unknown!=Some(1){return Ok(false);}
+        for (kind,value) in records{upsert_tx(&tx,kind,value)?;}
+        tx.commit().map_err(|error|error.to_string())?;
+        Ok(true)
+    }
+
     /// Writes several records in one SQLite transaction. Any failure rolls
     /// back all of them, which is required for experiment promotion.
     pub fn transaction(&self, records: &[(String, Value)]) -> Result<Vec<Value>, String> {
@@ -1736,6 +1764,32 @@ mod tests {
         assert!(store.finalize_once(&execution, &marker, &[], &[]).is_err());
     }
 
+
+    #[test]
+    fn external_effect_reconciliation_is_single_claim_and_does_not_reopen_owner(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        store.put("sdk_run",&json!({"id":"sdk","status":"interrupted"}));
+        store.put("execution_operation",&json!({
+            "id":"op","runId":"run","outcomeUnknown":true
+        }));
+        let records=[
+            ("execution_operation".to_string(),json!({
+                "id":"op","runId":"run","outcomeUnknown":false,
+                "effectState":"applied"
+            })),
+            ("sdk_run".to_string(),json!({
+                "id":"sdk","status":"interrupted","reconciledAt":"now"
+            }))
+        ];
+        assert!(store.reconcile_sdk_effect_once("sdk","interrupted",
+            "op","run",&records).unwrap());
+        assert!(!store.reconcile_sdk_effect_once("sdk","interrupted",
+            "op","run",&records).unwrap(),
+            "a second operator cannot overwrite an already observed effect");
+        assert_eq!(store.get("execution_operation","op").unwrap()["effectState"],"applied");
+        assert!(!store.reconcile_sdk_effect_once("sdk","interrupted",
+            "op","wrong-run",&records).unwrap());
+    }
 
     #[test]
     fn sdk_single_run_projection_reads_only_its_session(){
