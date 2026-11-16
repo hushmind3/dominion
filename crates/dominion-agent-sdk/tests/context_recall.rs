@@ -57,7 +57,7 @@ fn request()->RunRequest {
         id:"long-context".into(),instruction:"Recall initial error, no external operations".into(),
         owner_instructions:"Keep all exact evidence available".into(),
         strategy:Strategy::Balanced,limits:Limits{
-            max_steps:64,max_model_calls:64,max_estimated_tokens:1_000_000,
+            max_steps:64,max_model_calls:64,max_tool_calls:96,max_estimated_tokens:1_000_000,
             max_parallel_reads:4,max_result_chars:1200,
         },allowed_tools:vec![],checks:vec![],require_evidence:false}
 }
