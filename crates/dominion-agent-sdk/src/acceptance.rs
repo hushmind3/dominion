@@ -2,7 +2,34 @@
 //! Tool schemas and the authority to execute are provided by the Rust host,
 //! never by the model. A successful check is invalidated by later side effects.
 use crate::{Criterion, CriterionKind, Receipt, ToolSpec};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::path::{Component, Path};
+
+/// The *latest* successful workspace write for each path defines the expected
+/// final bytes. Reads, shell tests and agent self-reports are not witnesses.
+/// Host evidence rehashes the file during completion; changed bytes block it.
+pub(crate) fn artifact_witnesses(receipts: &[Receipt]) -> Vec<Criterion> {
+    let mut latest = BTreeMap::<String,String>::new();
+    for receipt in receipts {
+        if !receipt.success || receipt.result["written"] != true ||
+           !matches!(receipt.tool.as_str(),
+             "workspace_write" | "workspace_replace" | "workspace_replace_range") {
+            continue;
+        }
+        let Some(path)=receipt.arguments["path"].as_str() else {continue};
+        let Some(hash)=receipt.result["postSha256"].as_str() else {continue};
+        if path.is_empty() || path.len()>4096 ||
+           !Path::new(path).components().all(|component|matches!(component,Component::Normal(_))) ||
+           hash.len()!=64 || !hash.bytes().all(|byte|byte.is_ascii_hexdigit()) {
+            continue;
+        }
+        latest.insert(path.to_string(),hash.to_ascii_lowercase());
+    }
+    latest.into_iter().map(|(path,hash)| Criterion {
+        kind:CriterionKind::FileSha256,
+        path:Some(path),contains:Some(hash),tool:None,
+    }).collect()
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CommandState {
@@ -68,6 +95,40 @@ mod tests {
     fn receipt(id:&str, tool:&str, command:&str, success:bool) -> Receipt {
         Receipt {id:id.into(),tool:tool.into(),arguments:json!({"command":command}),
             success,result:json!({}),step:1}
+    }
+    #[test]
+    fn final_artifact_witness_tracks_latest_bytes_not_earlier_write_claim(){
+        let hash_a="a".repeat(64);
+        let hash_b="b".repeat(64);
+        let write = |id:&str,tool:&str,path:&str,hash:&str| Receipt {
+            id:id.into(),tool:tool.into(),step:1,success:true,
+            arguments:json!({"path":path}),result:json!({"written":true,"postSha256":hash})
+        };
+        let receipts=vec![
+            write("old","workspace_write","src/main.rs",&hash_a),
+            receipt("read","workspace_read","","",true),
+            write("new","workspace_replace","src/main.rs",&hash_b),
+            write("other","workspace_write","src/lib.rs",&hash_a),
+            write("absolute","workspace_write","/outside.rs",&hash_b),
+        ];
+        let witnesses=artifact_witnesses(&receipts);
+        assert_eq!(witnesses.len(),2);
+        assert_eq!(witnesses[0].path.as_deref(),Some("src/lib.rs"));
+        assert_eq!(witnesses[1].path.as_deref(),Some("src/main.rs"));
+        assert_eq!(witnesses[1].contains.as_deref(),Some(hash_b.as_str()));
+        assert_eq!(witnesses[1].kind,CriterionKind::FileSha256);
+    }
+    #[test]
+    fn unverified_and_failing_writes_never_claim_independent_evidence(){
+        let receipts=vec![
+            Receipt{id:"first".into(),tool:"workspace_write".into(),step:1,
+                arguments:json!({"path":"src/main.rs"}),
+                result:json!({"written":true}),success:true},
+            Receipt{id:"second".into(),tool:"workspace_write".into(),step:2,
+                arguments:json!({"path":"src/test.rs"}),
+                result:json!({"written":true,"postSha256":"f".repeat(64)}),success:false},
+        ];
+        assert!(artifact_witnesses(&receipts).is_empty());
     }
     #[test]
     fn only_the_exact_command_is_accepted() {
