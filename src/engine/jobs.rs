@@ -570,16 +570,15 @@ async fn run_job(state: AppState, job: Value) {
                 .and_then(Value::as_str)
                 .filter(|status| matches!(*status, "needs_review" | "cancelled" | "failed"))
                 .unwrap_or("completed");
-            context.patch(json!({
+            // Do not claim completed/failed in audit unless the terminal
+            // checkpoint actually reached SQLite. Owner cancellation may
+            // win the race between the last tool and this final transition.
+            finalize_job(&context, &kind, status, json!({
                 "status": status,
                 "result": result,
                 "finishedAt": chrono::Utc::now().to_rfc3339(),
                 "events": context.events.lock().unwrap().clone(),
             }));
-            state.store.audit(
-                &format!("job.{status}"),
-                json!({ "jobId": job_id, "kind": kind }),
-            );
         }
         Err(error) => {
             if error.starts_with("deferred:") {
@@ -594,16 +593,12 @@ async fn run_job(state: AppState, job: Value) {
             } else {
                 "failed"
             };
-            context.patch(json!({
+            finalize_job(&context, &kind, status, json!({
                 "status": status,
                 "error": error,
                 "finishedAt": chrono::Utc::now().to_rfc3339(),
                 "events": context.events.lock().unwrap().clone(),
             }));
-            state.store.audit(
-                "job.failed",
-                json!({ "jobId": job_id, "kind": kind, "error": error }),
-            );
         }
     }
     if kind == "rsi_evolve" {
@@ -624,6 +619,25 @@ async fn run_job(state: AppState, job: Value) {
                         "headCommit", &campaign["headCommit"], &json!({"applicationError":error})); }
                 }
             }
+        }
+    }
+}
+
+/// Publish a terminal outcome only if the job was still live at commit time.
+/// Losing a cancellation race is an expected state conflict, not a successful
+/// terminal transition. Keep diagnostic evidence without falsifying outcome.
+fn finalize_job(context:&JobContext,kind:&str,status:&str,patch:Value)->bool{
+    match context.checkpoint(patch){
+        Ok(())=>{
+            context.state.store.audit(&format!("job.{status}"),
+                json!({"jobId":context.job_id,"kind":kind}));
+            true
+        }
+        Err(reason)=>{
+            context.state.store.audit("job.finalization_conflict",
+                json!({"jobId":context.job_id,"kind":kind,
+                    "attemptedStatus":status,"reason":reason}));
+            false
         }
     }
 }
@@ -1443,6 +1457,23 @@ mod tests {
             "an unknown external result must not be replayed: {stored}"
         );
         assert!(stored["error"].as_str().is_some_and(|text| text.contains("확정")));
+    }
+
+    #[test]
+    fn cancellation_wins_against_late_terminal_receipt_without_false_success() {
+        let state=temp_state();
+        let job=enqueue(&state,"prompt",json!({"prompt":"demo"})).unwrap();
+        let id=job["id"].as_str().unwrap().to_string();
+        state.store.patch_if("job",&id,"status",&json!("queued"),
+            &json!({"status":"cancelled","cancelRequested":true})).unwrap();
+        let context=JobContext::new(state.clone(),id.clone());
+        assert!(!finalize_job(&context,"prompt","completed",
+            json!({"status":"completed","result":{"verified":true}})));
+        assert_eq!(state.store.get("job",&id).unwrap()["status"],"cancelled");
+        assert!(state.store.get("job",&id).unwrap()["result"].is_null());
+        assert!(!finalize_job(&context,"prompt","failed",
+            json!({"status":"failed","error":"late provider error"})));
+        assert_eq!(state.store.get("job",&id).unwrap()["status"],"cancelled");
     }
 
     #[test]
