@@ -142,7 +142,6 @@ pub fn workflow_for(model: &str, steps: u64) -> Option<Value> {
 /// All file URLs correspond to the selected VIDEO model package.
 /// Shared T5/VAE assets are downloaded once; quantization variants reuse them.
 pub fn model_files(id:&str)->Option<Vec<(&'static str,&'static str)>>{
-    const GGUF_REPO:&str="https://huggingface.co/samuelchristlie/Wan2.1-T2V-1.3B-GGUF/resolve/main/";
     // Keep literal URLs so download mirrors are auditable.
     let (weight,url,fp16)=match id{
         "wan21-t2v-1.3b-q3"=>(
@@ -170,7 +169,6 @@ pub fn model_files(id:&str)->Option<Vec<(&'static str,&'static str)>>{
             "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors",true),
         _=>return None,
     };
-    let _=GGUF_REPO;
     let mut files=vec![(weight,url)];
     if fp16{
         files.push(("text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
