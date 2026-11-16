@@ -1,5 +1,5 @@
 import {useEffect,useState} from 'react'
-import {Check,Clapperboard,ExternalLink,LoaderCircle,Play,Power,RefreshCw,Upload} from 'lucide-react'
+import {ArrowDownToLine,ArrowRight,Check,CheckCircle2,ChevronDown,Clapperboard,Clock3,Download,ExternalLink,Film,FolderOpen,HardDrive,LoaderCircle,MonitorPlay,Play,RefreshCw,Settings2,ShieldCheck,Sparkles,Upload,Wallet,Wifi,WifiOff,Youtube} from 'lucide-react'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
 import {Action,FormField,Headline,Notice,Panel,StateTag,Subheading,useRemote} from '../components/UI'
 import {openOAuth,post} from '../api'
@@ -7,9 +7,9 @@ import {jobFinished,useJob,type JobState} from '../hooks/useJob'
 import {t,useLocale} from '../i18n'
 
 type Workflow={id:string;name:string;bytes:number}
-type VideoJob=JobState & {progress?:number;kind:'video';title?:string;brief:string;outputUrl?:string;result?:{bytes:number}}
+type VideoJob=JobState & {progress?:number;kind:'video';title?:string;brief:string;outputUrl?:string;result?:{bytes:number};duration?:number;aspectRatio?:string;createdAt?:string;engine?:VideoEngine;phase?:string;renderBudget?:{mode?:string;estimatedWorkReductionPercent?:number;frames?:number;steps?:number}}
 type VideoEngine='native'|'comfyui'
-type VideoStatus={config:{engine:VideoEngine;comfyUrl:string;voice?:string;narration?:boolean;videoModel?:string;resolution?:string;steps?:number};native?:{available:boolean};comfy:{reachable:boolean;available?:boolean};workflows:Workflow[];jobs:VideoJob[]}
+type VideoStatus={config:{engine:VideoEngine;comfyUrl:string;voice?:string;narration?:boolean;videoModel?:string;resolution?:string;steps?:number;economy?:boolean};native?:{available:boolean};comfy:{reachable:boolean;available?:boolean};workflows:Workflow[];jobs:VideoJob[]}
 type VideoModel={id:string;name:string;kind:string;available:boolean;hint:string}
 type UploadJob=JobState & {progress?:number;result?:{url:string}}
 type YoutubeStatus={connected:boolean;uploadAllowed:boolean;account?:{displayName:string;scopes:string}|null;uploads:UploadJob[]}
@@ -29,13 +29,16 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  const [workflow,setWorkflow]=useState(''),[title,setTitle]=useState(''),[prompt,setPrompt]=useState(''),[negative,setNegative]=useState(''),[ratio,setRatio]=useState<keyof typeof ratios>('9:16'),[seconds,setSeconds]=useState(3),[fps,setFps]=useState(16),[seed,setSeed]=useState('-1')
  const [engineChoice,setEngine]=useState<'native'|'comfyui'>(),[comfyUrl,setComfyUrl]=useState(''),[savingConfig,setSavingConfig]=useState(false)
  const [voice,setVoice]=useState('Yuna'),[narration,setNarration]=useState(true)
- const [tab,setTab]=useState<'create'|'settings'>('create'),[refreshing,setRefreshing]=useState(false),[gid,setGid]=useState(''),[gsecret,setGsecret]=useState(''),[gBusy,setGBusy]=useState(false)
+ const [tab,setTab]=useState<'create'|'jobs'|'publish'|'settings'>('create'),[refreshing,setRefreshing]=useState(false),[gid,setGid]=useState(''),[gsecret,setGsecret]=useState(''),[gBusy,setGBusy]=useState(false)
+ const [economy,setEconomy]=useState(false),[advanced,setAdvanced]=useState(false),[selectedJobId,setSelectedJobId]=useState(''),[jobFilter,setJobFilter]=useState<'all'|'active'|'completed'>('all')
  const [videoSubmission,setVideoSubmission]=useState<VideoJob|null>(null),[generating,setGenerating]=useState(false),[error,setError]=useState('')
  const [uploadFile,setUploadFile]=useState(''),[uploadTitle,setUploadTitle]=useState(''),[uploadDescription,setUploadDescription]=useState(''),[uploadPrivacy,setUploadPrivacy]=useState('private'),[uploadTags,setUploadTags]=useState('')
  const [uploadSubmission,setUploadSubmission]=useState<UploadJob|null>(null),[uploading,setUploading]=useState(false)
- const activeVideo=useJob(videoSubmission?'/api/video/jobs/'+videoSubmission.id:null,videoSubmission)
+ const focusId=selectedJobId||videoSubmission?.id||video.value.jobs[0]?.id||outputs.value[0]?.id||''
+ const focusInitial=videoSubmission?.id===focusId?videoSubmission:video.value.jobs.find(item=>item.id===focusId)||outputs.value.find(item=>item.id===focusId)||null
+ const activeVideo=useJob<VideoJob>(focusId?'/api/video/jobs/'+encodeURIComponent(focusId):null,focusInitial)
  const activeUpload=useJob(uploadSubmission?'/api/youtube/uploads/'+uploadSubmission.id:null,uploadSubmission)
- const videoJob=activeVideo.value??outputs.value[0]
+ const videoJob=activeVideo.value??focusInitial??outputs.value[0]
  const uploadJob=activeUpload.value
  const uploadStatus=oauth.value.find(item=>item.id==='youtube')
  const gReady=uploadStatus?.configured
@@ -45,8 +48,27 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
   : outputs.value[0]
  const engine=engineChoice??(video.value.config.engine==='native'?'native':'comfyui')
  const usingComfy=engine==='comfyui'
- const ready=usingComfy?Boolean(video.value.comfy.available&&(workflow||video.value.config.videoModel)):Boolean(video.value.native?.available)
+ const selectedModel=catalog.value.videoModels.find(model=>model.id===video.value.config.videoModel)
+ const hasWorkflow=video.value.workflows.length>0
+ const ready=usingComfy?Boolean(video.value.comfy.reachable&&(hasWorkflow||selectedModel?.available)):Boolean(video.value.native?.available)
  const maxDuration=usingComfy?9:180
+ const configDimensions=(video.value.config.resolution||'480x832').split('x').map(Number)
+ const longSide=Math.max(configDimensions[0]||480,configDimensions[1]||832)
+ const shortSide=Math.min(1024,Math.max(128,Math.round(longSide*9/16/16)*16))
+ const squareSide=Math.min(configDimensions[0]||480,configDimensions[1]||832)
+ const renderSize=ratio==='1:1'?{width:squareSide,height:squareSide}:ratio==='16:9'?{width:longSide,height:shortSide}:{width:shortSide,height:longSide}
+ const renderFps=usingComfy&&economy?Math.min(fps,12):fps
+ const renderSteps=usingComfy&&economy?Math.min(video.value.config.steps??20,12):video.value.config.steps??20
+ const baselineUnits=seconds*fps*(video.value.config.steps??20)*renderSize.width*renderSize.height
+ const economyUnits=seconds*renderFps*renderSteps*renderSize.width*renderSize.height
+ const reduction=baselineUnits>0?Math.round((1-economyUnits/baselineUnits)*100):0
+ const jobs=video.value.jobs.length?video.value.jobs:outputs.value
+ const activeCount=jobs.filter(job=>!terminal(job.status)).length
+ const completedCount=jobs.filter(job=>job.status==='completed').length
+ const filteredJobs=jobs.filter(job=>jobFilter==='all'||(jobFilter==='active'?!terminal(job.status):job.status==='completed'))
+ const readinessIssue=!usingComfy?(!video.value.native?.available?'FFmpeg 실행 파일이 필요합니다. 환경설정에서 경로를 지정하세요.':''):
+  !video.value.comfy.reachable?'ComfyUI에 연결되지 않았습니다. 환경설정에서 연결 상태를 확인하세요.':
+  !hasWorkflow&&!selectedModel?.available?'실행 가능한 영상 모델 또는 ComfyUI 워크플로가 필요합니다.':''
  useEffect(()=>{setComfyUrl(video.value.config.comfyUrl)},[video.value.config.comfyUrl])
  useEffect(()=>{
   setVoice(video.value.config.voice||'Yuna')
@@ -101,7 +123,6 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
   try{await post('/api/video/config',patch);await video.reload();await catalog.reload()}
   catch(e){setError((e as Error).message)}finally{setSavingConfig(false)}
  }
- const selectedModel=catalog.value.videoModels.find(model=>model.id===video.value.config.videoModel)
  const downloadState=downloads.value.downloads.find(row=>row.model===video.value.config.videoModel)
  useEffect(()=>{
   if(downloadState?.status!=='downloading')return
@@ -109,8 +130,13 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
   return()=>window.clearInterval(timer)
  },[downloadState?.status,downloads.reload])
  useEffect(()=>{
-  if(downloadState?.status==='completed')void catalog.reload()
- },[downloadState?.status,catalog.reload])
+  if(downloadState?.status==='completed')void Promise.all([catalog.reload(),video.reload()])
+ },[downloadState?.status,catalog.reload,video.reload])
+ useEffect(()=>{
+  if(!jobs.some(job=>!terminal(job.status)))return
+  const timer=window.setInterval(()=>void video.reload(),4000)
+  return()=>window.clearInterval(timer)
+ },[jobs,video.reload])
  const startDownload=async()=>{
   if(!video.value.config.videoModel)return
   setError('')
@@ -129,10 +155,11 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
   }
   setGenerating(true);setError('');
   try{
-   setVideoSubmission(await post<VideoJob>('/api/video/jobs',{
-    engine,title,brief:prompt,aspectRatio:ratio,duration:seconds,
-    ...(usingComfy?{negativePrompt:negative,fps,seed:requestedSeed}:{}),
-   }));
+   const created=await post<VideoJob>('/api/video/jobs',{
+    engine,title,brief:prompt,aspectRatio:ratio,duration:seconds,economy,
+    ...(usingComfy?{negativePrompt:negative,fps,seed:requestedSeed,width:renderSize.width,height:renderSize.height}:{}),
+   });
+   setVideoSubmission(created);setSelectedJobId(created.id);void video.reload()
   }catch(e){setError((e as Error).message)}finally{setGenerating(false)}
  }
  const useResult=()=>{
@@ -140,6 +167,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
   setUploadFile(videoJob.id)
   setUploadTitle((videoJob.title||videoJob.brief).slice(0,90))
   setUploadDescription(videoJob.brief)
+  setTab('publish')
  }
  const startUpload=async()=>{
   if(!youtube.value.uploadAllowed){setError(t('vid.connectYoutubeFirst'));return}
