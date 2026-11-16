@@ -493,14 +493,13 @@ fn task_payload(ctx: &ToolContext<'_>, args: &Value, with_result: bool) -> Resul
         .chars()
         .take(8000)
         .collect::<String>();
-    let operations = ctx
-        .state
-        .store
-        .all("execution_operation")
+    // An agent asking for one delegated result must not deserialize every
+    // operation ever recorded by unrelated sessions. Keep newest-first order
+    // and the existing 20-receipt payload bound.
+    let operations = ctx.state.store.session_execution_operations(session_id)?
         .into_iter()
         .filter(|operation| {
             operation["runId"].as_str().is_some()
-                && operation["sessionId"].as_str() == Some(session_id)
                 && operation["status"] == "completed"
         })
         .map(|operation| {
