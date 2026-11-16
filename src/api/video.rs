@@ -457,12 +457,15 @@ mod tests {
         let job=video::enqueue(&s,&json!({
             "engine":"comfyui","brief":"two-shot demo","duration":6,
             "scenes":["first scene","second scene"],"fps":8,
+            "narrationScript":"Two scenes form a short story.",
         })).unwrap();
         let id=job["id"].as_str().unwrap().to_string();
         let stored=s.store.get("job",&id).unwrap();
         let context=crate::engine::jobs::JobContext::new(s.clone(),id.clone());
         let first=video::run(&context,&stored).await.unwrap();
         assert_eq!(first["renderedScenes"],2);
+        assert_eq!(first["captions"],true);
+        assert!(s.config.data_dir.join("video").exists());
         assert_eq!(seen.load(Ordering::SeqCst),2);
         let root=video::directory(&s,&id).unwrap();
         assert!(root.join("output.mp4").metadata().unwrap().len()>100);
