@@ -303,3 +303,7 @@ At the time of synchronization, `main` HEAD was `879dc23dce309688691c200b001b180
 ### Video studio: editing and explicit recovery
 
 On the existing **Video → Autonomous Content** screen, storyboard scenes can be added, copied, deleted, reordered and edited before saving a new project revision. An initial planning failure can be explicitly retried without overwriting the failed job: `POST /api/video/projects/{id}/retry-plan` accepts `{"revision":0}` and returns an accepted project, or a conflict when another tab has already retried. The Rust job kernel owns the atomic project/job transition; paid planning calls are not silently repeated. See [Sub3 video production and recovery](docs/SUB3-VIDEO-TURNKEY-2026-11-16.md).
+
+### Evidence-bound Rust execution (sub3, 2026-11-16)
+
+The native Rust kernel now verifies the **final SHA-256 of modified workspace artifacts** against trusted write receipts before reporting completion. A mismatch becomes durable verification evidence and sends the agent back to repair; a model's claim or a passing earlier tool call cannot override it. All tools, including mandatory owner verification commands, share a persisted **maxToolCalls** limit that rejects an over-budget batch before side effects. The existing GUI displays the kernel's real verification checks and operation budget. TypeScript SDK and API use the same engine, not a replicated planner. [Implementation, tests and 2026 research](docs/SUB3-EVIDENCE-GOVERNOR-2026-11-16.md).
