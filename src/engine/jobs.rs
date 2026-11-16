@@ -8,6 +8,21 @@ use std::time::Duration;
 
 const MAX_EVENTS: usize = 200;
 
+/// Video checkpoints are incremental: a remote submit/scene counter must not
+/// erase the frozen storyboard or previous scene completion counts.
+/// Keep this merge confined to videoState, leaving all other job patches alone.
+fn preserve_video_checkpoint(previous: &Value, mut patch: Value) -> Value {
+    if let (Some(old), Some(next)) = (
+        previous["videoState"].as_object(),
+        patch.get_mut("videoState").and_then(Value::as_object_mut),
+    ) {
+        for (key, value) in old {
+            next.entry(key.clone()).or_insert_with(|| value.clone());
+        }
+    }
+    patch
+}
+
 /// Shared handle a running job uses to report progress and persist its state.
 #[derive(Clone)]
 pub struct JobContext {
@@ -61,6 +76,7 @@ impl JobContext {
         if job["cancelRequested"].as_bool() == Some(true) {
             return Err("사용자 요청으로 실행이 중단되었습니다.".into());
         }
+        let patch = preserve_video_checkpoint(&job, patch);
         let saved = self
             .state
             .store
@@ -1453,6 +1469,33 @@ mod tests {
         assert!(job["availableAt"].is_string());
         assert_eq!(job["lastError"], "model unavailable");
         let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[cfg(test)]
+mod video_checkpoint_tests {
+    use super::*;
+    #[test]
+    fn video_checkpoint_keeps_storyboard_scene_progress_and_frozen_remote_receipts() {
+        let mut record = json!({"videoState":{
+            "scenes":["A","B"],"sceneTotal":2,"sceneIndex":0,"renderedScenes":0
+        }});
+        let patch = preserve_video_checkpoint(&record,json!({
+            "videoState":{"inFlight":true,"promptId":null}
+        }));
+        record["videoState"]=patch["videoState"].clone();
+        assert_eq!(record["videoState"]["scenes"],json!(["A","B"]));
+        assert_eq!(record["videoState"]["sceneTotal"],2);
+        let patch=preserve_video_checkpoint(&record,json!({
+            "videoState":{"sceneIndex":1,"renderedScenes":1,"inFlight":false}
+        }));
+        assert_eq!(patch["videoState"]["sceneIndex"],1);
+        assert_eq!(patch["videoState"]["renderedScenes"],1);
+        assert_eq!(patch["videoState"]["scenes"],json!(["A","B"]));
+        assert_eq!(patch["videoState"]["inFlight"],false);
+        assert!(patch["videoState"]["promptId"].is_null());
+        assert_eq!(preserve_video_checkpoint(&record,json!({"status":"running"})),
+            json!({"status":"running"}));
     }
 }
 
