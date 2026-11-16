@@ -93,6 +93,7 @@ jobs:
           npm ci --prefix web
           npm run typecheck --prefix web
           npm run build --prefix web
+          node web/scripts/video-studio-smoke.mjs
       - name: Typecheck and build main's independent TypeScript client
         run: |
           npm install --prefix packages/sdk-typescript --no-package-lock --ignore-scripts --no-audit
