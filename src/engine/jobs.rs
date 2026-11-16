@@ -97,6 +97,7 @@ pub fn enqueue(state: &AppState, kind: &str, input: Value) -> Option<Value> {
             "job.queued",
             json!({ "kind": kind, "jobId": job.get("id") }),
         );
+        state.job_wakeup.notify_one();
     }
     job
 }
@@ -112,6 +113,7 @@ pub fn enqueue_once(state: &AppState, id: &str, kind: &str, input: Value) -> Opt
         state
             .store
             .audit("job.queued", json!({"kind":kind,"jobId":id}));
+        state.job_wakeup.notify_one();
         return Some(saved);
     }
     state
@@ -329,13 +331,22 @@ pub fn start(state: AppState) {
             loop {
                 match next_queued(&worker_state) {
                     Some(job) => run_job(worker_state.clone(), job).await,
-                    None => tokio::time::sleep(Duration::from_millis(400)).await,
+                    None => {
+                        // Wake instantly when the same-process API enqueues,
+                        // and run a bounded reconciliation sweep every 5s
+                        // for crash recovery, deferred retries, and other
+                        // writers. This avoids ~10 whole-job reads per second
+                        // on a four-worker idle deployment.
+                        tokio::select! {
+                            _ = worker_state.job_wakeup.notified() => {},
+                            _ = tokio::time::sleep(Duration::from_secs(5)) => {},
+                        }
+                    },
                 }
             }
         });
     }
 
-    let maintenance_state = state.clone();
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(30)).await;
@@ -346,19 +357,19 @@ pub fn start(state: AppState) {
         }
     });
 
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_secs(300)).await;
-            retry_failed_learning(&maintenance_state);
-            crate::engine::agent_growth::sweep(&maintenance_state);
-            crate::engine::distill::sweep(&maintenance_state);
-            crate::engine::memory::learning_sweep(&maintenance_state);
-        }
-    });
+    // No periodic RSI/strategy growth/distillation or automatic learning.
+    // Explicit user-requested edits, tests and verification still use the
+    // durable native Rust job loop. Saved memory/history is untouched.
 }
 
 fn next_queued(state: &AppState) -> Option<Value> {
-    let jobs = state.store.all("job");
+    let jobs = match state.store.active_jobs() {
+        Ok(jobs)=>jobs,
+        Err(error)=>{
+            state.store.audit("job.scheduler_query_failed",json!({"error":error}));
+            return None;
+        }
+    };
     let learning_running = jobs
         .iter()
         .any(|job| job["status"] == "running" && job["kind"] == "learn");
