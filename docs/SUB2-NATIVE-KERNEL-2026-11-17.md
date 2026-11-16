@@ -20,3 +20,7 @@ This work does not modify `main`, does not restore retired RSI campaigns or medi
 The chat turn's cancellation watcher registers with `AppState.cancel_notify` before checking the persisted session epoch. Same-process cancel wakes listeners immediately; a 1-second fallback observes cancellation persisted by another process or a crash/restart without relying on in-memory notification. The previous 50ms loop queried cancellation and generation from SQLite on every interval (up to 40 individual lookups per second per active watcher). The replacement reduces the **configured polling frequency** to at most two epoch lookups per fallback check; runtime CPU/DB measurements are pending.
 
 The independent `BudgetLedger` now refuses to admit new rounds, proposals or tools after its wall-clock deadline, including parallel branches. Its existing disjoint child allocation and reconciliation behavior is covered by the kernel's own Rust unit tests.
+
+## Dedicated cancellation supervisor
+
+`src/engine/chat/cancellation.rs` is the single owner of waiting for cancel, draining in-flight tool receipts, and recording unknown effects after a timeout. The 5.6k-line chat runtime only calls `supervise_tool_cancellation` and cannot silently mark an in-progress effect as rolled back. Integration tests exercise both immediate in-process notification and the persisted epoch fallback without a shared notifier.

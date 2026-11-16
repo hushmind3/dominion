@@ -71,3 +71,17 @@ test('chat budgets and cancellation share the real kernel instead of polling SQL
  assert.match(state,/cancel_notify\.notify_waiters\(\)/);
  assert.doesNotMatch(runtime,/tokio::time::sleep\(Duration::from_millis\(50\)\)/);
 });
+
+test('cancellation supervisor is separated from model/provider runtime and preserves durable review',()=>{
+ const runtime=file('src/engine/chat/runtime.rs');
+ const cancel=file('src/engine/chat/cancellation.rs');
+ const module=file('src/engine/chat/mod.rs');
+ assert.match(module,/mod cancellation;/);
+ assert.match(runtime,/cancellation::supervise_tool_cancellation/);
+ assert.doesNotMatch(runtime,/fn supervise_tool_cancellation</);
+ assert.match(cancel,/pub\(super\) async fn supervise_tool_cancellation/);
+ assert.match(cancel,/tool\.unsettled_after_cancel/);
+ assert.match(cancel,/outcomeUnknown/);
+ assert.match(cancel,/durable_cross_process_cancellation_works_without_local_notification/);
+ assert.match(cancel,/local_cancel_notifies_without_waiting_for_the_persistence_backstop/);
+});
