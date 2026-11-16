@@ -483,9 +483,15 @@ pub fn record_usage(
     if usage.total_tokens == 0 && usage.prompt_tokens == 0 && usage.completion_tokens == 0 {
         return;
     }
+    let quoted=state.store.get("provider",&route.id).filter(|p|
+        p["model"].as_str()==Some(route.model.as_str()))
+        .map(|p|crate::engine::model_cost::estimate(&p,
+            usage.prompt_tokens,usage.completion_tokens,None,false))
+        .unwrap_or(Value::Null);
     state.store.audit(
         "model.usage",
         json!({
+            "configuredCost":quoted,
             "providerId": route.id,
             "model": route.model,
             "kind": route.kind,
@@ -542,6 +548,13 @@ pub fn record_usage_tokens_cached(
     let cache_hits=if estimated {None} else {
         cached_prompt_tokens.map(|count|count.min(prompt_tokens))
     };
+    // Only the selected configured model may contribute owner-entered rates;
+    // an unknown or overridden model has no reliable pricing.
+    let quoted=state.store.get("provider",provider_id)
+        .filter(|p|p["model"].as_str()==Some(model))
+        .map(|p|crate::engine::model_cost::estimate(&p,
+            prompt_tokens,completion_tokens,cache_hits,estimated))
+        .unwrap_or(Value::Null);
     state.store.audit(
         "model.usage",
         json!({
@@ -555,6 +568,7 @@ pub fn record_usage_tokens_cached(
             "totalTokens": total_tokens,
             "estimated": estimated,
             "cachedPromptTokens": cache_hits,
+            "configuredCost":quoted,
             "uncachedPromptTokens": cache_hits.map(|hits|prompt_tokens.saturating_sub(hits)),
             "cacheEvidence": if cache_hits.is_some() {"provider_reported"} else {"unavailable"}
         }),
@@ -606,6 +620,24 @@ mod tests {
         AppState::new(config, store, vault)
     }
 
+    #[test]
+    fn provider_rate_card_flows_to_real_usage_without_inventing_unpriced_costs(){
+        let state=state();
+        state.store.put("provider",&json!({"id":"p","model":"m","pricing":{
+            "inputUsdPerMillion":2.0,"cachedInputUsdPerMillion":0.5,
+            "outputUsdPerMillion":8.0}}));
+        record_usage_tokens_cached(&state,"p","m",false,"chat",Some("priced"),
+            1000,200,1200,false,Some(800));
+        record_usage_tokens_cached(&state,"unknown","m",false,"chat",Some("priced"),
+            200,10,210,false,None);
+        let usage=state.store.session_usage("priced");
+        assert_eq!(usage["pricedCalls"],1);
+        assert_eq!(usage["unpricedCalls"],1);
+        assert!((usage["pricedSubtotalUsd"].as_f64().unwrap()-0.0024).abs()<1e-10);
+        assert!(usage["configuredCostUsd"].is_null(),
+            "incomplete pricing must not be presented as a full bill");
+    }
+    
     #[test]
     fn cache_usage_reports_verified_tokens_without_double_counting() {
         let state=state();

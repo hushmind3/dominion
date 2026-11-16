@@ -998,6 +998,8 @@ impl Store {
         let mut estimated = 0u64;
         let mut cached = 0u64;
         let mut cache_observed = 0u64;
+        let mut priced_calls = 0u64;
+        let mut cost_subtotal = 0.0f64;
         for row in rows.flatten() {
             let Ok(detail) = serde_json::from_str::<Value>(&row) else {
                 continue;
@@ -1018,9 +1020,19 @@ impl Store {
                     "estimatedCalls": 0,
                     "cachedPromptTokens": 0,
                     "cacheObservedCalls": 0,
+                    "pricedCalls":0,
+                    "pricedSubtotalUsd":0.0,
                 })
             });
             calls += 1;
+            if let Some(amount)=detail["configuredCost"]["amountUsd"].as_f64()
+                .filter(|v|v.is_finite() && *v>=0.0){
+                priced_calls+=1;
+                cost_subtotal+=amount;
+                entry["pricedCalls"]=json!(entry["pricedCalls"].as_u64().unwrap_or(0)+1);
+                entry["pricedSubtotalUsd"]=json!(
+                    entry["pricedSubtotalUsd"].as_f64().unwrap_or(0.0)+amount);
+            }
             let prompt_tokens = detail["promptTokens"].as_u64().unwrap_or(0);
             let completion_tokens = detail["completionTokens"].as_u64().unwrap_or(0);
             let total_tokens = detail["totalTokens"].as_u64().unwrap_or(0);
@@ -1069,6 +1081,11 @@ impl Store {
             "estimatedCalls": estimated,
             "cachedPromptTokens": cached,
             "cacheObservedCalls": cache_observed,
+            "pricedCalls":priced_calls,
+            "unpricedCalls":calls.saturating_sub(priced_calls),
+            "pricedSubtotalUsd":cost_subtotal,
+            "configuredCostUsd":if priced_calls==calls {json!(cost_subtotal)} else {Value::Null},
+            "costEvidence":"owner_configured_rates_only_excludes_gpu_and_provider_invoices",
             "groups": groups,
         })
     }
@@ -1093,7 +1110,10 @@ impl Store {
                     COALESCE(SUM(CASE WHEN json_type(detail,'$.cachedPromptTokens')='integer' AND json_extract(detail,'$.estimated')!=1
                         THEN CAST(json_extract(detail,'$.cachedPromptTokens') AS INTEGER) ELSE 0 END),0),
                     COALESCE(SUM(CASE WHEN json_type(detail,'$.cachedPromptTokens')='integer' AND json_extract(detail,'$.estimated')!=1
-                        THEN 1 ELSE 0 END),0)
+                        THEN 1 ELSE 0 END),0),
+                    COALESCE(SUM(CASE WHEN json_type(detail,'$.configuredCost.amountUsd') IN ('real','integer')
+                        THEN 1 ELSE 0 END),0),
+                    COALESCE(SUM(CAST(json_extract(detail,'$.configuredCost.amountUsd') AS REAL)),0)
              FROM audit
              WHERE event='model.usage' AND json_extract(detail,'$.sessionId')=?1",
             [session_id],
@@ -1106,11 +1126,13 @@ impl Store {
                     row.get::<_, i64>(4)?,
                     row.get::<_, i64>(5)?,
                     row.get::<_, i64>(6)?,
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, f64>(8)?,
                 ))
             },
         );
         match summary {
-            Ok((calls, prompt, completion, total, estimated, cached, cache_observed)) => json!({
+            Ok((calls, prompt, completion, total, estimated, cached, cache_observed, priced, cost)) => json!({
                 "calls": calls.max(0),
                 "promptTokens": prompt.max(0),
                 "completionTokens": completion.max(0),
@@ -1118,10 +1140,15 @@ impl Store {
                 "estimatedCalls": estimated.max(0),
                 "cachedPromptTokens":cached.max(0),
                 "cacheObservedCalls":cache_observed.max(0),
+                "pricedCalls":priced.max(0),
+                "unpricedCalls":(calls-priced).max(0),
+                "pricedSubtotalUsd":cost.max(0.0),
+                "configuredCostUsd":if priced==calls {json!(cost.max(0.0))} else {Value::Null},
             }),
             Err(_) => json!({
                 "calls":0,"promptTokens":0,"completionTokens":0,"totalTokens":0,"estimatedCalls":0,
-                "cachedPromptTokens":0,"cacheObservedCalls":0
+                "cachedPromptTokens":0,"cacheObservedCalls":0,
+                "pricedCalls":0,"unpricedCalls":0,"pricedSubtotalUsd":0.0,"configuredCostUsd":Value::Null
             }),
         }
     }
