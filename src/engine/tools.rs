@@ -49,31 +49,6 @@ pub fn definitions() -> Vec<Value> {
         tool("memory_store", "Save a grounded memory for this agent. Quote the user's exact words; invented facts are rejected. Shared memories are managed by the user.", object(json!({"text": text("Fact to remember, maximum 1600 characters"), "evidenceQuote": text("Exact quote from the current user message supporting the fact"), "sourceMessageId": text("Optional earlier source message ID"), "type": json!({"type":"string","enum":["fact","preference","decision","procedure","lesson"]}), "key": text("Optional stable fact key; a new value replaces the previous value for this key"), "scope": json!({"type":"string","enum":["agent"]})}), vec!["text", "evidenceQuote"])),
         tool("memory_search", "Find saved knowledge relevant to a topic", object(json!({"query": text("Search query")}), vec!["query"])),
         tool("skill_propose", "Draft a reusable skill for user review", object(json!({"name": text("Skill name"), "instructions": text("Reusable instructions")}), vec!["name", "instructions"])),
-        tool("algorithm_propose", "Propose a new self-improvement search formula. It may be tried in the next scheduled generation; replay match is context only and never activates it.", object(json!({
-            "name": text("Algorithm name"),
-            "expression": text("Arithmetic over attempts, accepted, regressions, inconclusive, novelty, successRate, usefulGenerations, barrenRate, verifiedOutcomes, holdoutGains, gainPer10kTokens, tokenCost, objectiveMatch, unresolved, exploration"),
-            "targetExpression": text("Optional source-file ranking formula using pathEvidence, symbolEvidence, bodyEvidence, novelty, repeatPenalty, sourceCost and other validated source features"),
-            "description": text("Why this formula should choose better improvement targets"),
-            "evidence": json!({"type":"array","items":{"type":"string"},"description":"Observed failures or regressions that justify the formula"})
-        }), vec!["expression"])),
-        tool("unsafe_audit", "Scan workspace Rust files for unsafe blocks, functions, impls, traits or extern items without a preceding SAFETY justification. Read-only; available only during RSI generations.", object(json!({
-            "path": text("Optional relative file or folder; defaults to the workspace root")
-        }), vec![])),
-        tool("rsi_system_plan", "Propose a causal redesign of the active agent's algorithms, harness, memory, learning, tools or improvement method. Requires actual source changes and independent verification.", object(json!({
-            "component":text("Existing or newly invented subsystem role, or system for a coupled multi-component redesign"),
-            "components":json!({"type":"array","items":{"type":"string"},"minItems":2,"maxItems":32,"uniqueItems":true}),
-            "componentFiles":json!({"type":"object","description":"For component=system, map every component to its nonempty targetFiles subset; cover all declared files","additionalProperties":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":24}}),
-            "hypothesis":text("Observed limitation, causal reason and falsifiable outcome"),
-            "design":text("New executable architecture or algorithm to implement"),
-            "targetFiles":json!({"type":"array","items":{"type":"string"},"minItems":1,"maxItems":24,"uniqueItems":true}),
-            "nextDomain":json!({"type":"string","enum":crate::engine::rsi_evolve::DOMAINS})
-        }),vec!["component","hypothesis","design","targetFiles","nextDomain"])),
-        tool("rsi_method_propose", "Save a reusable executable procedure learned during RSI research. Existing procedure nodes run through the normal tool runtime in later scheduled work; registration is not improvement evidence.", object(json!({
-            "name":text("Reusable method name"),
-            "description":text("Principle, source and limits of the method"),
-            "domain":json!({"type":"string","enum":crate::engine::rsi_evolve::DOMAINS}),
-            "verification":json!({"type":"object","description":"Existing procedure format: type=procedure, appliesTo.requestContains, nodes [{id,tool,arguments}], edges [{from,to}], after [{kind:file_equals/file_contains/file_exists/tool_called,path,text,tool}]. Arguments can bind a prior node result via $node.field. Include concrete postconditions."})
-        }), vec!["name","domain","verification"])),
         tool("delegate_task", "Delegate a self-contained task to another agent and optionally wait for its result", object(json!({
             "agentId": text("Target agent id"),
             "prompt": text("Task instructions"),
@@ -115,34 +90,12 @@ pub fn requires_approval(name: &str) -> bool {
     )
 }
 
-pub fn rsi_allowed(name:&str)->bool{
-    matches!(name,"code_search"|"workspace_read_range"|"workspace_replace"|"workspace_replace_range"|"workspace_write"|"web_search"|"http_fetch"|"algorithm_propose"|"unsafe_audit"|"rsi_method_propose"|"rsi_system_plan")
-}
-
 pub async fn execute(
     ctx: &ToolContext<'_>,
     name: &str,
     args: &Value,
     run_id: &str,
 ) -> Result<Value, String> {
-    let isolated_rsi = ctx.store.get("session",ctx.session_id)
-        .is_some_and(|s|s["rsiRun"]==true);
-    if isolated_rsi && !rsi_allowed(name) {
-        return Err("분리 자기개선 작업에서는 작업공간 내부 도구만 허용됩니다.".into());
-    }
-    if isolated_rsi && matches!(name,"workspace_read"|"workspace_read_range"
-        |"workspace_write"|"workspace_replace"|"workspace_replace_range") {
-        let path=resolve_workspace(ctx.workspace,&required_arg(args,"path")?)?;
-        if path.file_name().is_some_and(|name|name=="rsi_oracle_fixture.rs" || name=="rsi_meta.rs") {
-            return Err("동결 평가 사례는 자기개선 모델의 읽기·수정 대상이 아닙니다.".into());
-        }
-    }
-    if isolated_rsi && matches!(name, "workspace_write" | "workspace_replace" | "workspace_replace_range") {
-        let path=args["path"].as_str().unwrap_or("");
-        if !crate::engine::rsi::safe_path(path) {
-            return Err("자기개선은 허용된 소스코드 경로만 수정할 수 있습니다.".into());
-        }
-    }
     match name {
         "workspace_list" => {
             let path = resolve_workspace(ctx.workspace, string_arg(args, "path").unwrap_or("."))?;
@@ -328,68 +281,6 @@ pub async fn execute(
                 }),
             );
             Ok(json!({ "proposed": true, "skill": record }))
-        }
-        "rsi_method_propose" => crate::engine::rsi_evolve::propose_method(ctx.state, ctx.session_id, args),
-        "rsi_system_plan" => crate::engine::rsi_system::propose(ctx.state, ctx.session_id, args),
-        "algorithm_propose" => {
-            let session = ctx
-                .store
-                .get("session", ctx.session_id)
-                .ok_or("자기개선 세션을 찾을 수 없습니다.")?;
-            if session["rsiRun"] != true {
-                return Err("algorithm_propose는 자기개선 세대에서만 사용할 수 있습니다.".into());
-            }
-            let campaign_id = session["rsiCampaignId"]
-                .as_str()
-                .ok_or("진행 중인 자기개선 캠페인이 없습니다.")?;
-            let running = ctx.store.get("job", campaign_id).is_some_and(|job| {
-                job["kind"] == "rsi_evolve"
-                    && job["status"] == "running"
-                    && job["cancelRequested"] != true
-            });
-            if !running {
-                return Err("진행 중인 자기개선 캠페인이 없습니다.".into());
-            }
-            let expression = required_arg(args, "expression")?;
-            let name = string_arg(args, "name")
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or("rsi-search-expression");
-            let mut parameters = json!({"expression": expression});
-            if let Some(target) = args["targetExpression"].as_str() {
-                parameters["targetExpression"] = json!(target);
-            } else if !args["targetExpression"].is_null() {
-                return Err("targetExpression은 계산식 문자열이어야 합니다.".into());
-            }
-            let record = crate::engine::algorithms::register(
-                ctx.state,
-                &json!({
-                    "kind": "selfimprove.search",
-                    "name": name,
-                    "variant": name,
-                    "implementation": "expression",
-                    "parameters": parameters,
-                    "description": args["description"].as_str().unwrap_or(""),
-                    "source": "rsi-generated",
-                }),
-            )?;
-            Ok(json!({
-                "proposed": true,
-                "algorithmId": record["id"],
-                "algorithm": record,
-                "next": "다음 예정된 세대에서 제한적으로 시험 사용됩니다. 과거 일치율은 참고 기록이며 채택 근거가 아닙니다.",
-            }))
-        }
-        "unsafe_audit" => {
-            let session = ctx
-                .store
-                .get("session", ctx.session_id)
-                .ok_or("자기개선 세션을 찾을 수 없습니다.")?;
-            if session["rsiRun"] != true {
-                return Err("unsafe_audit는 자기개선 세대에서만 사용할 수 있습니다.".into());
-            }
-            let scope = string_arg(args, "path").unwrap_or(".");
-            let path = resolve_workspace(ctx.workspace, scope)?;
-            Ok(crate::engine::unsafe_audit::audit_path(&path))
         }
         "delegate_task" => delegate(ctx, args).await,
         "task_status" => task_payload(ctx, args, false),
@@ -740,13 +631,7 @@ fn search_code_index(
     if needle.is_empty() {
         return Err("code_search query는 비어 있을 수 없습니다.".into());
     }
-    let session=ctx.store.get("session",ctx.session_id).unwrap_or(Value::Null);
-    let bound=session["rsiCodeIndexId"].as_str()
-        .filter(|_|session["rsiRun"]==true)
-        .and_then(|id|ctx.store.get("code_index",id))
-        .filter(|meta|meta["sourceDir"].is_string() && meta["sourceDir"]==session["rsiSourceDir"]);
-    // Never search whichever unrelated repository happened to be indexed last.
-    let meta=match bound.or_else(||crate::engine::code_index::get(ctx.state,ctx.workspace)) {
+    let meta=match crate::engine::code_index::get(ctx.state,ctx.workspace) {
         Some(meta)=>meta,
         None=>crate::engine::code_index::refresh(ctx.state,ctx.workspace)?,
     };
@@ -765,7 +650,6 @@ fn search_code_index(
     for file in ctx.store.all("code_index_file") {
         if file["indexId"].as_str()!=Some(index_id) {continue;}
         let path=file["path"].as_str().unwrap_or("");
-        if session["rsiRun"]==true && !crate::engine::rsi::safe_path(path) {continue;}
         let rank=score(path);
         if rank>0 {matches.push((rank,json!({"path":path,"kind":"file","name":path,"line":1})));}
         for symbol in file["symbols"].as_array().into_iter().flatten() {
@@ -780,8 +664,7 @@ fn search_code_index(
         for file in ctx.store.all("code_index_file") {
             if file["indexId"].as_str()!=Some(index_id) {continue;}
             let Some(path)=file["path"].as_str() else {continue;};
-            if session["rsiRun"]==true && !crate::engine::rsi::safe_path(path) {continue;}
-            let Ok(full)=resolve_workspace(ctx.workspace,path) else {continue;};
+                let Ok(full)=resolve_workspace(ctx.workspace,path) else {continue;};
             let Ok(content)=std::fs::read_to_string(full) else {continue;};
             for (index,line) in content.lines().enumerate().filter(|(_,line)|line.to_lowercase().contains(&needle)).take(limit) {
                 matches.push((100,json!({"path":path,"kind":"literal","line":index+1,
@@ -796,46 +679,6 @@ fn search_code_index(
     matches.truncate(limit);
     let matches=matches.into_iter().map(|(_,row)|row).collect::<Vec<_>>();
     Ok(json!({"query":query,"indexId":index_id,"indexedFiles":meta["files"],"matchCount":matches.len(),"matches":matches}))
-}
-
-/// For an isolated RSI Rust patch, parse the *proposed bytes* before they
-/// become a verified source write. This does not run the frozen evaluator or
-/// edit the target file. Invalid syntax is fed back to the SAME model turn,
-/// so the tool budget can repair it without a costly full cargo build.
-async fn rsi_rust_syntax_failure(
-    ctx: &ToolContext<'_>, path: &Path, proposed: &str,
-) -> Option<Value> {
-    if path.extension().and_then(|ext|ext.to_str())!=Some("rs")
-        || !ctx.store.get("session",ctx.session_id)
-            .is_some_and(|session|session["rsiRun"]==true
-                && session["rsiCampaignId"].as_str().is_some_and(|campaign|
-                    ctx.store.get("job",campaign).is_some_and(|job|
-                        job["kind"]=="rsi_evolve" && job["status"]=="running"))) {
-        return None;
-    }
-    use tokio::io::AsyncWriteExt;
-    let mut command=tokio::process::Command::new("rustfmt");
-    command.args(["--emit","stdout","--edition","2021"])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true);
-    // A system without rustfmt retains the independent cargo-check path.
-    let Ok(mut child)=command.spawn() else {return None};
-    if let Some(mut stdin)=child.stdin.take() {
-        if stdin.write_all(proposed.as_bytes()).await.is_err() {return None;}
-    }
-    let Ok(Ok(output))=tokio::time::timeout(
-        Duration::from_secs(5),child.wait_with_output()).await else {return None};
-    if output.status.success() {return None;}
-    let diagnostic=String::from_utf8_lossy(&output.stderr);
-    Some(json!({
-        "path":path.to_string_lossy(),
-        "written":false,"syntaxInvalid":true,
-        "error":format!(
-            "Rust source was NOT written: syntax parsing failed. Repair the specific compiler-like error and retry with the CURRENT sourceSha256: {}",
-            diagnostic.chars().take(1100).collect::<String>()),
-    }))
 }
 
 async fn replace_text(
@@ -861,9 +704,6 @@ async fn replace_text(
         }));
     }
     let updated = text.replacen(old_text, new_text, 1);
-    if let Some(error)=rsi_rust_syntax_failure(ctx,path,&updated).await {
-        return Ok(error);
-    }
     let mut result = checked_write(ctx, path, &updated, run_id, true, expected_sha256).await?;
     result["replaced"] = json!(true);
     result["replacedChars"] = json!(old_text.chars().count());
@@ -914,19 +754,7 @@ async fn replace_range(
     }
     let updated = format!("{}{}{}", &source[..before], replacement, &source[after..]);
     if updated == source {
-        // A successful no-op is useful in ordinary editing, but for RSI it
-        // must be an explicit failed attempt, not evidence of an implementation.
-        let autonomous = ctx.store.get("session", ctx.session_id)
-            .is_some_and(|session| session["rsiRun"] == true);
-        if autonomous {
-            return Ok(json!({"path":path.to_string_lossy(), "written":false,
-                "unchanged":true,
-                "error":"The proposed replacement left source bytes unchanged. Write a different implementation, not the original source."}));
-        }
         return Ok(json!({"path":path.to_string_lossy(), "written":false, "unchanged":true}));
-    }
-    if let Some(error)=rsi_rust_syntax_failure(ctx,path,&updated).await {
-        return Ok(error);
     }
     let mut result = checked_write(ctx, path, &updated, run_id, true, Some(expected_sha256)).await?;
     if result["written"] == true {
@@ -1526,49 +1354,6 @@ fn strip_html(html: &str) -> String {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn rsi_navigation_finds_literal_diagnostics_and_honors_the_read_contract() {
-        use crate::{config::Config,db::Store,vault::Vault};
-        let dir=std::env::temp_dir().join(format!("rsi-navigation-{}",uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(dir.join("src")).unwrap();
-        let mut lines=(1..=450).map(|n|format!("// ordinary source line {n}")).collect::<Vec<_>>();
-        lines[229]="// unique_runtime_diagnostic_token".into();
-        std::fs::write(dir.join("src/subject.rs"),lines.join("\n")).unwrap();
-        let config=Config{port:0,data_dir:dir.join("data"),web_dir:dir.join("web"),workspace:dir.clone()};
-        let state=crate::state::AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),Vault::open(&config.key_path()));
-        state.store.put("session",&json!({"id":"rsi","rsiRun":true}));
-        let ctx=ToolContext{workspace:&dir,store:&state.store,state:&state,session_id:"rsi",agent_id:None,tools_enabled:true,tools_execution_enabled:true};
-        let found=search_code_index(&ctx,"unique_runtime_diagnostic_token",10).unwrap();
-        assert_eq!(found["matches"][0]["path"],"src/subject.rs");
-        assert_eq!(found["matches"][0]["line"],230);
-        let read=execute(&ctx,"workspace_read_range",&json!({"path":"src/subject.rs","startLine":1,"endLine":400}),"test").await.unwrap();
-        assert_eq!(read["endLine"],400);
-        assert!(read["content"].as_str().unwrap().contains("ordinary source line 400"));
-        let _=std::fs::remove_dir_all(dir);
-    }
-
-    #[tokio::test]
-    async fn rsi_cannot_read_or_overwrite_the_coordinators_holdout_source() {
-        use crate::{config::Config, db::Store, vault::Vault};
-        let dir=std::env::temp_dir().join(format!("rsi-holdout-{}",uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(dir.join("src/engine")).unwrap();
-        let path="src/engine/rsi_oracle_fixture.rs";
-        std::fs::write(dir.join(path),"secret holdout examples").unwrap();
-        let config=Config{port:0,data_dir:dir.join("data"),web_dir:dir.join("web"),workspace:dir.clone()};
-        let state=crate::state::AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),Vault::open(&config.key_path()));
-        state.store.put("session",&json!({"id":"rsi","rsiRun":true})).unwrap();
-        let ctx=ToolContext{workspace:&dir,store:&state.store,state:&state,session_id:"rsi",
-            agent_id:None,tools_enabled:true,tools_execution_enabled:true};
-        for tool in ["workspace_read_range","workspace_write","workspace_replace","workspace_replace_range"] {
-            let error=execute(&ctx,tool,&json!({"path":path,"content":"overwrite"}),"run").await.unwrap_err();
-            assert!(error.contains("동결 평가"),"{tool}: {error}");
-        }
-        crate::engine::code_index::refresh(&state,&dir).unwrap();
-        assert_eq!(search_code_index(&ctx,"rsi_oracle_fixture",10).unwrap()["matchCount"],0);
-        assert_eq!(std::fs::read_to_string(dir.join(path)).unwrap(),"secret holdout examples");
-        let _=std::fs::remove_dir_all(dir);
-    }
-
     #[test]
     fn workspace_paths_cannot_escape() {
         let dir = std::env::temp_dir().join(format!("dominion-ws-{}", uuid::Uuid::new_v4()));
@@ -1698,12 +1483,10 @@ mod tests {
         let digest=format!("{:x}",Sha256::digest(source.as_bytes()));
         let ctx=ToolContext {workspace:&dir,store:&state.store,state:&state,
             session_id:"s",agent_id:None,tools_enabled:true,tools_execution_enabled:true};
-        state.store.put("session",&json!({"id":"s","rsiRun":true})).unwrap();
         let no_op=execute(&ctx,"workspace_replace_range",
             &json!({"path":"src/example.rs","startLine":3,"endLine":3,
                 "newText":"let value = 0;","expectedSha256":digest}),"run").await.unwrap();
         assert_eq!(no_op["unchanged"],true);
-        assert!(no_op["error"].is_string());
         assert_eq!(std::fs::read_to_string(&path).unwrap(),source);
         let args=json!({"path":"src/example.rs","startLine":3,"endLine":3,
             "newText":"let value = 42;","expectedSha256":digest});
@@ -1721,135 +1504,6 @@ mod tests {
         bad["expectedSha256"]=json!(format!("{:x}",Sha256::digest(std::fs::read(&path).unwrap())));
         assert!(execute(&ctx,"workspace_replace_range",&bad,"run").await.is_err());
         crate::test_support::cleanup_dir(dir);
-    }
-
-    #[test]
-    fn rsi_can_read_only_a_range_or_replace_a_block() {
-        assert!(rsi_allowed("code_search"));
-        assert!(!rsi_allowed("workspace_list"));
-        assert!(rsi_allowed("workspace_read_range"));
-        assert!(rsi_allowed("workspace_replace"));
-        assert!(rsi_allowed("workspace_replace_range"));
-        assert!(rsi_allowed("workspace_write"));
-        assert!(rsi_allowed("algorithm_propose"));
-        assert!(rsi_allowed("unsafe_audit"));
-        assert!(!rsi_allowed("workspace_read"));
-        assert!(!rsi_allowed("shell_exec"));
-    }
-
-    #[tokio::test]
-    async fn algorithm_propose_is_limited_to_running_rsi_campaigns() {
-        use crate::config::Config;
-        use crate::db::Store;
-        use crate::vault::Vault;
-        let dir = std::env::temp_dir().join(format!("dominion-alg-tool-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let config = Config {
-            port: 0,
-            data_dir: dir.clone(),
-            web_dir: dir.join("web"),
-            workspace: dir.clone(),
-        };
-        let state = crate::state::AppState::new(
-            config.clone(),
-            Store::open(&config.db_path()).unwrap(),
-            Vault::open(&config.key_path()),
-        );
-        let ctx = ToolContext {
-            workspace: &dir,
-            store: &state.store,
-            state: &state,
-            session_id: "s",
-            agent_id: None,
-            tools_enabled: true,
-            tools_execution_enabled: true,
-        };
-        let proposal = json!({"name":"objective-first","expression":"objectiveMatch * 10 + novelty"});
-        assert!(execute(&ctx, "algorithm_propose", &proposal, "run").await.is_err());
-        state.store.put("session", &json!({"id":"s"})).unwrap();
-        assert!(execute(&ctx, "algorithm_propose", &proposal, "run").await.is_err());
-        state
-            .store
-            .put("session", &json!({"id":"s","rsiRun":true,"rsiCampaignId":"c"}))
-            .unwrap();
-        assert!(execute(&ctx, "algorithm_propose", &proposal, "run").await.is_err());
-        state
-            .store
-            .put("job", &json!({"id":"c","kind":"rsi_evolve","status":"running"}))
-            .unwrap();
-        let schema = definitions().into_iter()
-            .find(|tool| tool["function"]["name"] == "algorithm_propose").unwrap();
-        assert!(schema["function"]["parameters"]["properties"]["targetExpression"].is_object());
-        let saved = execute(&ctx, "algorithm_propose", &proposal, "run")
-            .await
-            .unwrap();
-        assert_eq!(saved["proposed"], true);
-        assert!(state
-            .store
-            .get("algorithm", saved["algorithmId"].as_str().unwrap())
-            .is_some());
-        let source_rule = json!({"name":"source-ranker","expression":"objectiveMatch + novelty",
-            "targetExpression":"pathEvidence * 3 + bodyEvidence - repeatPenalty - sourceCost"});
-        let ranked = execute(&ctx, "algorithm_propose", &source_rule, "run").await.unwrap();
-        assert_eq!(ranked["algorithm"]["parameters"]["targetExpression"],
-            source_rule["targetExpression"]);
-        let invalid_target = json!({"expression":"novelty",
-            "targetExpression":"invalidSourceFeature + pathEvidence"});
-        assert!(execute(&ctx, "algorithm_propose", &invalid_target, "run").await.is_err());
-        let invalid = json!({"expression":"unknownVariable * 2"});
-        assert!(execute(&ctx, "algorithm_propose", &invalid, "run").await.is_err());
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[tokio::test]
-    async fn unsafe_audit_is_limited_to_rsi_sessions_and_reports_findings() {
-        use crate::config::Config;
-        use crate::db::Store;
-        use crate::vault::Vault;
-        let dir = std::env::temp_dir().join(format!("dominion-unsafe-tool-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(dir.join("src")).unwrap();
-        std::fs::write(
-            dir.join("src/lib.rs"),
-            "// SAFETY: private process group\nunsafe { kill(-id, 9); }\n",
-        )
-        .unwrap();
-        std::fs::write(
-            dir.join("src/other.rs"),
-            "unsafe fn undocumented() {}\n",
-        )
-        .unwrap();
-        let config = Config {
-            port: 0,
-            data_dir: dir.clone(),
-            web_dir: dir.join("web"),
-            workspace: dir.clone(),
-        };
-        let state = crate::state::AppState::new(
-            config.clone(),
-            Store::open(&config.db_path()).unwrap(),
-            Vault::open(&config.key_path()),
-        );
-        let ctx = ToolContext {
-            workspace: &dir,
-            store: &state.store,
-            state: &state,
-            session_id: "s",
-            agent_id: None,
-            tools_enabled: true,
-            tools_execution_enabled: true,
-        };
-        assert!(execute(&ctx, "unsafe_audit", &json!({}), "run").await.is_err());
-        state
-            .store
-            .put("session", &json!({"id":"s","rsiRun":true}))
-            .unwrap();
-        let report = execute(&ctx, "unsafe_audit", &json!({}), "run").await.unwrap();
-        assert_eq!(report["scanned"], 2);
-        assert_eq!(report["passed"], false);
-        let findings = report["findings"].as_array().unwrap();
-        assert_eq!(findings.len(), 1);
-        assert!(findings[0].as_str().unwrap().ends_with("src/other.rs:1"));
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
