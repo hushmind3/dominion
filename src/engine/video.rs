@@ -664,6 +664,7 @@ async fn native(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, St
     let brief = input["brief"].as_str().unwrap_or("");
     let title = input["title"].as_str().unwrap_or("");
     let cfg = &input["config"];
+    let authored = input["scenes"].as_array();
     let mut scenes: Vec<String> = brief
         .split(['\n', '.', '!', '?', '。'])
         .map(str::trim)
@@ -671,7 +672,13 @@ async fn native(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, St
         .take(12)
         .map(str::to_string)
         .collect();
-    if cfg["useModel"] == true {
+    if let Some(authored) = authored {
+        scenes=authored.iter().filter_map(|v|v["script"].as_str())
+            .map(str::to_owned).collect();
+        if scenes.is_empty() || scenes.len()>12 {
+            return Err("저장된 스토리보드의 장면 수가 올바르지 않습니다.".into());
+        }
+    } else if cfg["useModel"] == true {
         let text=crate::engine::llm::complete(&ctx.state,cfg["providerId"].as_str().unwrap_or(""),cfg["model"].as_str().unwrap_or(""),"영상 자막 스토리보드를 만드세요. JSON 문자열 배열만 반환하세요. 3~8개 장면, 장면당 한국어 100자 이내. 사실을 지어내지 마세요.",brief).await?;
         scenes = serde_json::from_str::<Vec<String>>(
             text.trim()
@@ -709,8 +716,10 @@ async fn native(ctx: &JobContext, input: &Value, dir: &Path) -> Result<Value, St
         concat.push_str(&format!("file 'card-{:02}.png'\n", scenes.len() - 1));
         total_seconds = durations.iter().sum::<f64>();
     } else {
-        let seconds = requested as f64 / scenes.len() as f64;
         for index in 0..scenes.len() {
+            let seconds=authored.and_then(|a|a.get(index))
+                .and_then(|v|v["seconds"].as_f64())
+                .unwrap_or(requested as f64 / scenes.len() as f64);
             concat.push_str(&format!("file 'card-{index:02}.png'\nduration {seconds:.5}\n"));
         }
         concat.push_str(&format!("file 'card-{:02}.png'\n", scenes.len() - 1));
