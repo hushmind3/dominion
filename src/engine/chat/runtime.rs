@@ -579,7 +579,16 @@ where F:std::future::Future<Output=Result<Option<Value>,String>>{
     let limit=tokio::time::sleep(turn_limit);
     let mut limit=std::pin::pin!(limit);
     tokio::select!{
-        result=&mut body=>result,
+        // A completed tool future and a cancellation signal can become
+        // ready in the same scheduler tick. Once cancellation is committed,
+        // the saved tool receipt may be complete, but the turn must not
+        // return a successful answer from the cancelled epoch.
+        result=&mut body=>{
+            if state.is_cancelled(session_id)
+                || state.cancellation_generation(session_id)!=generation {
+                Err("실행이 중단되었습니다.".into())
+            } else { result }
+        },
         _=&mut limit=>{
             match mark_unsettled_tools(state,execution_id,
                 "턴 시간 제한 도달: 외부 도구 실행 결과를 확인하지 못했습니다."){
@@ -6832,12 +6841,15 @@ mod cancellation_drain_tests {
         let ready=Arc::new(AtomicBool::new(false));
         let started=ready.clone();
         let update=state.clone();
+        let (cancelled_tx,cancelled_rx)=tokio::sync::oneshot::channel();
         let future=async move{
             update.store.put("execution_operation",&json!({
                 "id":"operation-1","runId":"run-1","status":"running",
                 "effectState":"started","tool":"github_api",
             }));
             started.store(true,Ordering::SeqCst);
+            // Must not complete before cancellation is actually recorded.
+            let _=cancelled_rx.await;
             tokio::time::sleep(Duration::from_millis(80)).await;
             update.store.patch_if("execution_operation","operation-1",
                 "status",&json!("running"),&json!({
@@ -6847,11 +6859,16 @@ mod cancellation_drain_tests {
         };
         let cancel=state.clone();
         let seen=ready.clone();
+        // An explicit handshake guarantees cancellation was committed
+        // before the synthetic tool settles on slow Windows runners.
+        // Without this barrier an overloaded scheduler may finish the 80ms
+        // tool before polling the cancellation task at all.
         tokio::spawn(async move{
             while !seen.load(Ordering::SeqCst){
                 tokio::time::sleep(Duration::from_millis(2)).await;
             }
             cancel.cancel_session("session-1");
+            let _=cancelled_tx.send(());
         });
         let generation=state.cancellation_generation("session-1");
         let result=supervise_tool_cancellation(
