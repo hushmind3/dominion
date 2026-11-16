@@ -87,6 +87,7 @@ pub(crate) fn case_plan(value: &Value) -> Result<Vec<Value>, String> {
         return Err("평가 계획은 2~128개의 독립 사례를 포함해야 합니다.".into());
     }
     let mut seen = BTreeSet::new();
+    let mut seen_filters = BTreeSet::new();
     let mut result = Vec::new();
     for row in rows {
         let id = row["id"].as_str().filter(|v| !v.is_empty() && v.len() <= 120)
@@ -99,6 +100,12 @@ pub(crate) fn case_plan(value: &Value) -> Result<Vec<Value>, String> {
             .ok_or("각 사례는 동결된 Rust 테스트 함수 filter를 지정해야 합니다.")?;
         if !seen.insert(id.to_string()) {
             return Err(format!("중복 평가 사례: {id}"));
+        }
+        // Different display IDs do not make the same executable test
+        // independent. This also prevents a train case being duplicated into
+        // the holdout bucket under another name.
+        if !seen_filters.insert(filter.to_string()){
+            return Err(format!("중복 평가 테스트 필터: {filter}"));
         }
         let metrics = crate::engine::rsi_metrics::plan(&row["metrics"])?;
         result.push(json!({"id":id,"domain":domain,"holdout":row["holdout"] == true,"filter":filter,"metrics":metrics}));
@@ -780,6 +787,15 @@ mod tests {
         assert_eq!(decide(&state,id,&json!({"action":"approve","confirmation":"APPROVE",
             "baseCommit":base(),"patchSha256":record["patchSha256"],"operator":"owner"})).unwrap()["status"],"approved_for_merge");
         assert_eq!(state.store.all("rsi_evaluation").len(),1);
+        let _=std::fs::remove_dir_all(root);
+    }
+    #[test]
+    fn copied_test_filter_cannot_inflate_frozen_holdout_count(){
+        let (state,root)=state();
+        let mut proposal=proposal("harness");
+        proposal["cases"][1]["filter"]=proposal["cases"][0]["filter"].clone();
+        proposal["cases"][1]["holdout"]=json!(true);
+        assert!(super::propose(&state,&proposal).unwrap_err().contains("중복 평가 테스트"));
         let _=std::fs::remove_dir_all(root);
     }
     #[test]
