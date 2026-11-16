@@ -114,6 +114,8 @@ pub fn parallel_read_only_tool(name:&str)->bool{
 
 /// The UI's optional capabilities are a persisted execution policy.
 pub fn ui_tool_allowed(policy:&Value,name:&str)->bool{
+    if matches!(name,"rsi_system_plan"|"rsi_method_propose"|
+        "algorithm_propose"|"unsafe_audit"){return false;}
     if policy.is_null(){return true;}
     if name.starts_with("skill_") && policy["skillsEnabled"]==false{return false;}
     if name.starts_with("mcp__") && policy["mcpEnabled"]!=true{return false;}
@@ -811,13 +813,8 @@ fn search_code_index(
     if needle.is_empty() {
         return Err("code_search query는 비어 있을 수 없습니다.".into());
     }
-    let session=ctx.store.get("session",ctx.session_id).unwrap_or(Value::Null);
-    let bound=session["rsiCodeIndexId"].as_str()
-        .filter(|_|session["rsiRun"]==true)
-        .and_then(|id|ctx.store.get("code_index",id))
-        .filter(|meta|meta["sourceDir"].is_string() && meta["sourceDir"]==session["rsiSourceDir"]);
-    // Never search whichever unrelated repository happened to be indexed last.
-    let meta=match bound.or_else(||crate::engine::code_index::get(ctx.state,ctx.workspace)) {
+    // Index the selected real user workspace, never a detached campaign.
+    let meta=match crate::engine::code_index::get(ctx.state,ctx.workspace) {
         Some(meta) if meta["dirty"]!=true=>meta,
         _=>crate::engine::code_index::refresh(ctx.state,ctx.workspace)?,
     };
@@ -836,7 +833,6 @@ fn search_code_index(
     for file in ctx.store.all("code_index_file") {
         if file["indexId"].as_str()!=Some(index_id) {continue;}
         let path=file["path"].as_str().unwrap_or("");
-        if session["rsiRun"]==true && !crate::engine::rsi::safe_path(path) {continue;}
         let rank=score(path);
         if rank>0 {matches.push((rank,json!({"path":path,"kind":"file","name":path,"line":1})));}
         for symbol in file["symbols"].as_array().into_iter().flatten() {
@@ -1722,7 +1718,7 @@ mod tests {
         let digest=format!("{:x}",Sha256::digest(source.as_bytes()));
         let ctx=ToolContext {workspace:&dir,store:&state.store,state:&state,
             session_id:"s",agent_id:None,tools_enabled:true,tools_execution_enabled:true};
-        state.store.put("session",&json!({"id":"s","rsiRun":true})).unwrap();
+        state.store.put("session",&json!({"id":"s"})).unwrap();
         let no_op=execute(&ctx,"workspace_replace_range",
             &json!({"path":"src/example.rs","startLine":3,"endLine":3,
                 "newText":"let value = 0;","expectedSha256":digest}),"run").await.unwrap();
@@ -1777,12 +1773,12 @@ mod tests {
             .put(
                 "code_index_file",
                 &json!({
-                    "id":"idx-test:src/engine/rsi_evolve.rs",
+                    "id":"idx-test:src/engine/workspace_worker.rs",
                     "indexId":crate::engine::code_index::index_id(&dir.canonicalize().unwrap()),
-                    "path":"src/engine/rsi_evolve.rs",
+                    "path":"src/engine/workspace_worker.rs",
                     "symbols":[
                         {"name":"run_loop","kind":"fn","line":120},
-                        {"name":"record_rsi_lesson","kind":"fn","line":900}
+                        {"name":"record_verified_result","kind":"fn","line":900}
                     ]
                 }),
             )
@@ -1798,14 +1794,14 @@ mod tests {
         };
         let result = search_code_index(&ctx, "run_loop", 10).unwrap();
         assert_eq!(result["matchCount"], 1, "{result}");
-        assert_eq!(result["matches"][0]["path"], "src/engine/rsi_evolve.rs");
+        assert_eq!(result["matches"][0]["path"], "src/engine/workspace_worker.rs");
         assert_eq!(result["matches"][0]["line"], 120);
         state.store.put("code_index",&json!({"id":"foreign","sourceDir":"/another/repository","generatedAt":"2099-01-01","files":1}));
         state.store.put("code_index_file",&json!({"id":"foreign-file","indexId":"foreign","path":"private.rs","symbols":[{"name":"run_loop","kind":"fn","line":999}]}));
-        let multi=search_code_index(&ctx,"fn run_loop record_rsi_lesson",10).unwrap();
+        let multi=search_code_index(&ctx,"fn run_loop record_verified_result",10).unwrap();
         assert_eq!(multi["matchCount"],2,"{multi}");
         assert!(multi["matches"].as_array().unwrap().iter().all(|row|row["path"]!="private.rs"));
-        let path_result = search_code_index(&ctx, "rsi_evolve.rs", 10).unwrap();
+        let path_result = search_code_index(&ctx, "workspace_worker.rs", 10).unwrap();
         assert!(path_result["matches"]
             .as_array()
             .unwrap()
@@ -1987,7 +1983,7 @@ mod tests {
         assert!(names.iter().any(|name|name=="workspace_apply_patch"));
         assert!(requires_approval("workspace_apply_patch"));
         assert!(!parallel_read_only_tool("workspace_apply_patch"));
-        assert!(!rsi_allowed("workspace_apply_patch"));
+        assert!(!names.iter().any(|name|name=="rsi_system_plan"));
         assert!(parallel_read_only_tool("workspace_read_range"));
         assert!(!parallel_read_only_tool("shell_exec"));
         assert!(!parallel_read_only_tool("workspace_write"));
