@@ -16,6 +16,8 @@ mod scheduler;
 mod acceptance;
 mod context;
 mod tool_discovery;
+mod schema;
+pub use schema::validate_arguments;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -809,11 +811,18 @@ impl Kernel<'_> {
                             Ok(None)=>action.clone(),
                             Err(error)=>return (action.clone(),Err(error)),
                         };
-                        let outcome=if let Some(result)=
-                            tool_discovery::execute_local(&actual,tool_catalog)
-                            .or_else(||context::execute_local(&actual,history)) {
-                            result
-                        } else {self.tools.execute(&actual).await};
+                        // Every real and synthetic operation is validated against
+                        // the authoritative Rust catalog before any host effect.
+                        let outcome=if let Some(spec)=tool_catalog.get(&actual.tool){
+                            match schema::validate_arguments(&spec.schema,&actual.arguments){
+                                Err(error)=>Err(error),
+                                Ok(())=>if let Some(result)=
+                                    tool_discovery::execute_local(&actual,tool_catalog)
+                                    .or_else(||context::execute_local(&actual,history)) {
+                                    result
+                                } else {self.tools.execute(&actual).await}
+                            }
+                        }else{Err("Tool missing from authorized Rust catalog".into())};
                         (actual,outcome)
                     })).await;
                     for (action, (actual,outcome)) in ready.iter().zip(results) {
