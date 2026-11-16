@@ -8,7 +8,7 @@ use super::response::error;
 
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase")]
-pub struct Start{instruction:String,provider_id:Option<String>,model:Option<String>,verify_command:Option<String>,max_rounds:Option<usize>}
+pub struct Start{instruction:String,provider_id:Option<String>,model:Option<String>,verify_command:Option<String>,max_rounds:Option<usize>,#[serde(flatten)] options:Value}
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase")]
 pub struct Approve{call_id:String}
@@ -50,8 +50,14 @@ pub async fn start(State(state):State<AppState>,Json(input):Json<Start>)->Respon
     if input.instruction.trim().is_empty()||input.instruction.len()>64000{return error(StatusCode::BAD_REQUEST,"작업 지시는 1~64000자로 입력하세요.");}
     if input.verify_command.as_ref().is_some_and(|c|c.trim().is_empty()||c.len()>2048){return error(StatusCode::BAD_REQUEST,"검증 명령의 길이를 확인하세요.");}
     let route=match gateway::resolve(&state,input.provider_id.as_deref().unwrap_or(""),input.model.as_deref()){Ok(r)=>r,Err(e)=>return error(StatusCode::BAD_REQUEST,&e)};
+    let options=match engine::job_control::options(&state,&input.options){Ok(value)=>value,Err(e)=>return error(StatusCode::BAD_REQUEST,&e)};
     let id=uuid::Uuid::new_v4().to_string();let session=uuid::Uuid::new_v4().to_string();
     if state.store.put("session",&json!({"id":session,"title":input.instruction.chars().take(40).collect::<String>(),"providerId":route.id,"model":route.model,"nativeSdkRunId":id,"nativeSdkMaxRounds":input.max_rounds.unwrap_or(24).clamp(1,80),"nativeSdkVerifyCommand":input.verify_command})).is_none(){return error(StatusCode::INTERNAL_SERVER_ERROR,"작업 세션 저장에 실패했습니다.");}
+    if let Some(mut saved)=state.store.get("session",&session){
+        for (key,value) in options.as_object().unwrap(){saved[key]=value.clone();}
+        saved["budgetOwnerId"]=json!(format!("sdk:{id}"));
+        state.store.put("session",&saved);
+    }
     let record=json!({"id":id,"sessionId":session,"status":"queued","instruction":input.instruction,"providerId":route.id,"model":route.model,"runtime":"dominion-core","verifyCommand":input.verify_command,"maxRounds":input.max_rounds.unwrap_or(24).clamp(1,80)});
     let Some(saved)=state.store.put("sdk_run",&record)else{return error(StatusCode::INTERNAL_SERVER_ERROR,"작업 저장에 실패했습니다.");};
     launch(state.clone(),saved.clone(),false);
@@ -61,7 +67,10 @@ fn launch(state:AppState,record:Value,resume:bool){
     tokio::spawn(async move{
         let id=record["id"].as_str().unwrap_or("");
         if let Some(saved)=state.store.patch_if("sdk_run",id,"status",&record["status"],&json!({"status":"running"})){state.bus.record("sdk_run",&saved);}else{return;}
-        let request=TurnRequest::from_value(&json!({"sessionId":record["sessionId"],"input":record["instruction"],"providerId":record["providerId"],"model":record["model"],"autoLearning":false}));
+        let control=state.store.get("sdk_run",id).unwrap_or_else(||record.clone());
+        let goal=engine::job_control::intent(record["instruction"].as_str().unwrap_or(""),&control);
+        if let Some(session)=record["sessionId"].as_str(){state.store.patch_if("session",session,"id",&json!(session),&json!({"ownerAppliedRevision":control["steeringRevision"]}));}
+        let request=TurnRequest::from_value(&json!({"sessionId":record["sessionId"],"input":goal,"providerId":record["providerId"],"model":record["model"],"autoLearning":false}));
         let outcome=match request{Ok(request)=>if resume{engine::run_quiet_resume(&state,&request).await}else{engine::run_quiet(&state,&request).await},Err(e)=>Err(e)};
         let Some(mut latest)=state.store.get("sdk_run",id)else{return;};
         if latest["status"]=="cancelled"{return;}
@@ -114,6 +123,7 @@ pub async fn reconcile(State(state):State<AppState>,Path(id):Path<String>,Json(i
         }
     }
     if let Err(message)=state.store.put_native_observation(&updates){return error(StatusCode::INTERNAL_SERVER_ERROR,&message);}
+    if let Err(message)=engine::execution_budget::refresh_after_observation(&state,run["id"].as_str().unwrap_or("")) { return error(StatusCode::INTERNAL_SERVER_ERROR,&message); }
     state.store.audit("native.operator_reconciled",json!({"runId":run["id"],"operationId":op["id"],"observation":op["operatorObservation"]}));
     Json(public_view(&state,record)).into_response()
 }
@@ -130,4 +140,8 @@ pub(crate) fn recover(state:&AppState){
         else{record["status"]=json!("interrupted");record["error"]=json!("서버가 재시작되었습니다. 실행 기록을 확인한 뒤 재개하세요.");}
         state.store.put("sdk_run",&record);
     }
+}
+
+pub async fn steer(State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>)->Response{
+    super::jobs::steering_response(engine::job_control::steer(&state,"sdk_run",&id,body["instruction"].as_str().unwrap_or(""),body["mode"].as_str().unwrap_or("append")))
 }

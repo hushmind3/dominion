@@ -253,6 +253,7 @@ pub fn recover(state: &AppState) {
     // After interrupted executions have been recorded, expire durable approvals
     // that outlived their live waiter before wake decisions are made.
     crate::engine::chat::expire_stale_approvals(state);
+    crate::engine::job_control::recover_scopes(state);
 }
 
 /// Starts the durable job worker plus the automation scheduler.
@@ -558,7 +559,7 @@ fn rsi_native_preflight(input: &Value) -> bool {
 
 pub(crate) async fn run_prompt(context: &JobContext, job: &Value) -> Result<Value, String> {
     let input = job.get("input").cloned().unwrap_or_else(|| json!({}));
-    let prompt = input
+    let mut prompt = input
         .get("prompt")
         .and_then(|value| value.as_str())
         .unwrap_or("")
@@ -593,6 +594,10 @@ pub(crate) async fn run_prompt(context: &JobContext, job: &Value) -> Result<Valu
         None => context.state.store.put("session",&json!({"title":prompt.chars().take(40).collect::<String>(),"agentId":input.get("agentId")}))
             .and_then(|session|session["id"].as_str().map(str::to_string)).ok_or("작업 세션을 저장할 수 없습니다.")?,
     };
+    let _job_scope=if rsi_workspace.is_none(){
+        let (scope,goal)=crate::engine::job_control::configure(&context.state,job,&session_id)?;
+        prompt=goal;Some(scope)
+    }else{None};
     if rsi_workspace.is_some() {
         if let Some(mut session)=context.state.store.get("session",&session_id) {
             session["rsiRun"]=json!(true);
@@ -683,6 +688,7 @@ pub(crate) async fn run_prompt(context: &JobContext, job: &Value) -> Result<Valu
     if let Some(worktree)=&rsi_workspace {scoped_state.config.workspace=worktree.path.clone();}
     else if let Some(session)=context.state.store.get("session",&session_id){
         if let Some(path)=crate::engine::delegation_worktree::scoped_workspace(&context.state,&session)?{scoped_state.config.workspace=path;}
+        else if let Some(raw)=session["workspaceDir"].as_str(){scoped_state.config.workspace=crate::engine::workspace_scope::resolve(&context.state,raw)?;}
     }
     // An independently accepted ancestor already supplied an executable
     // improvement procedure and measured next-domain target. Run that

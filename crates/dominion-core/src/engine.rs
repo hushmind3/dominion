@@ -17,6 +17,7 @@ pub enum Flow {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModelDecision {
+    Continue,
     Verify,
     Tools,
 }
@@ -101,6 +102,9 @@ pub trait Host: Send {
     ) -> BoxFuture<'a, Result<Flow, String>>;
     fn exhausted(&mut self) -> Result<(), String>;
     fn completion(&self) -> Result<(String, usize, u64), String>;
+    fn confirm_completion(&mut self) -> Result<Flow, String> {
+        Ok(Flow::Complete)
+    }
 }
 
 /// Gate an auxiliary paid call (review, adaptation or program repair) through
@@ -139,6 +143,9 @@ impl Engine {
         ctx.journal.save(&ctx.snapshot)?;
         ctx.phase("initialize")?;
         let mut complete = host.initialize(&mut ctx).await? == Flow::Complete;
+        if complete {
+            complete = host.confirm_completion()? == Flow::Complete;
+        }
         if !complete && host.wants_plan() {
             ctx.snapshot = host.reload()?;
             ctx.check_cancelled()?;
@@ -156,6 +163,9 @@ impl Engine {
             ctx.check_cancelled()?;
             let Some(round) = ctx.snapshot.next_round(&mut ctx.budget, ctx.journal)? else {
                 host.exhausted()?;
+                if host.confirm_completion()? != Flow::Complete {
+                    return Err("예산 소진 후 작업 지시가 변경되어 완료할 수 없습니다.".into());
+                }
                 break;
             };
             ctx.round = round;
@@ -171,6 +181,7 @@ impl Engine {
             let decision = host.observe_model(&mut ctx, reply).await?;
             ctx.snapshot = host.reload()?;
             match decision {
+                ModelDecision::Continue => ctx.phase("superseded")?,
                 ModelDecision::Verify => {
                     ctx.phase("verify")?;
                     complete = host.verify(&mut ctx).await? == Flow::Complete;
@@ -190,6 +201,9 @@ impl Engine {
                     ctx.phase("verify_tools")?;
                     complete = host.verify_tools(&mut ctx).await? == Flow::Complete;
                 }
+            }
+            if complete {
+                complete = host.confirm_completion()? == Flow::Complete;
             }
         }
         ctx.snapshot = host.reload()?;

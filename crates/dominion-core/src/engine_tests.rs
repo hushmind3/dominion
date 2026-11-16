@@ -53,6 +53,7 @@ struct Fixture {
     plan: bool,
     shortcut: bool,
     cancel_after_model: bool,
+    confirmations: VecDeque<Flow>,
 }
 impl Fixture {
     fn new() -> Self {
@@ -71,6 +72,7 @@ impl Fixture {
             plan: false,
             shortcut: false,
             cancel_after_model: false,
+            confirmations: VecDeque::new(),
         }
     }
     async fn drive(&mut self, rounds: usize) -> Result<(), String> {
@@ -205,6 +207,9 @@ impl Host for Fixture {
     }
     fn exhausted(&mut self) -> Result<(), String> {
         Err("round budget exhausted".into())
+    }
+    fn confirm_completion(&mut self) -> Result<Flow, String> {
+        Ok(self.confirmations.pop_front().unwrap_or(Flow::Complete))
     }
     fn completion(&self) -> Result<(String, usize, u64), String> {
         Ok((
@@ -348,4 +353,31 @@ async fn uncertain_paid_call_cannot_restart_product_initialization() {
     assert!(host.drive(4).await.is_err());
     assert!(host.trace.is_empty());
     assert!(host.store.saved.lock().unwrap().model_in_flight);
+}
+
+#[tokio::test]
+async fn superseded_model_and_retracted_completion_stay_in_the_bounded_driver() {
+    let mut host = Fixture::new();
+    host.replies = [
+        ModelDecision::Continue,
+        ModelDecision::Verify,
+        ModelDecision::Verify,
+    ]
+    .into();
+    host.verdicts = [Flow::Complete, Flow::Complete].into();
+    host.confirmations = [Flow::Continue, Flow::Complete].into();
+    host.drive(3).await.unwrap();
+    assert_eq!(host.models, 3);
+    assert_eq!(host.effects.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        host.trace
+            .iter()
+            .filter(|phase| **phase == "verify")
+            .count(),
+        2
+    );
+    assert_eq!(
+        host.store.saved.lock().unwrap().native.status,
+        hosted::Status::Completed
+    );
 }

@@ -7,7 +7,9 @@ use dominion_core::hosted::BoxFuture;
 pub(super) struct MainTurn<'a> {
     pub(super) state: &'a AppState,
     pub(super) metrics: &'a std::sync::Mutex<Metrics>,
-    pub(super) request: &'a TurnRequest,
+    pub(super) request: TurnRequest,
+    pub(super) owner: Option<crate::engine::job_control::Owner>,
+    pub(super) owner_revision: u64,
     pub(super) tx: &'a UnboundedSender<Value>,
     pub(super) session_id: &'a str,
     pub(super) execution_id: &'a str,
@@ -96,6 +98,7 @@ impl Host for MainTurn<'_> {
         _ctx: &'a mut Context<'_>,
     ) -> BoxFuture<'a, Result<Flow, String>> {
         Box::pin(async move {
+            self.apply_owner_directives().await?;
             let metrics = self.metrics;
             if let Some(path) = self.simple_creation_target.as_ref().filter(|path| {
                 std::fs::metadata(path).is_ok_and(|file_metadata| file_metadata.is_file())
@@ -142,7 +145,7 @@ impl Host for MainTurn<'_> {
                     self.state,
                     self.tx,
                     &self.session,
-                    self.request,
+                    &self.request,
                     self.session_id,
                     self.execution_id,
                     &self.strategy_candidates,
@@ -179,7 +182,7 @@ impl Host for MainTurn<'_> {
             self.metrics.lock().unwrap().model_calls += 1;
             if let Some(plan) = action_plan(
                 self.state,
-                self.request,
+                &self.request,
                 self.acceptance
                     .as_ref()
                     .map(|(text, _)| text.as_str())
@@ -213,6 +216,7 @@ impl Host for MainTurn<'_> {
         _ctx: &'a mut Context<'_>,
     ) -> BoxFuture<'a, Result<Vec<Value>, String>> {
         Box::pin(async move {
+            self.apply_owner_directives().await?;
             let metrics = self.metrics;
             let max_tools = self.max_tools;
 
@@ -248,7 +252,7 @@ impl Host for MainTurn<'_> {
                             self.state,
                             self.tx,
                             &self.session,
-                            self.request,
+                            &self.request,
                             self.session_id,
                             self.execution_id,
                             &program,
@@ -662,7 +666,7 @@ impl Host for MainTurn<'_> {
                 &self.provider,
                 &self.wire_messages,
                 &self.round_tools,
-                self.request,
+                &self.request,
                 self.session_id,
                 self.tx,
                 self.allow_provider_fallback,
@@ -812,6 +816,13 @@ impl Host for MainTurn<'_> {
                 ));
             }
 
+            if self.owner_changed()? {
+                self.state.store.audit(
+                    "job.stale_model_reply",
+                    json!({"executionId":self.execution_id,"revision":self.owner_revision}),
+                );
+                return Ok(ModelDecision::Continue);
+            }
             if self.force_final {
                 // The deterministic checks already passed. Ignore any late tool
                 // request and let the model produce the final answer.
@@ -873,6 +884,10 @@ impl Host for MainTurn<'_> {
     }
     fn verify<'a>(&'a mut self, ctx: &'a mut Context<'_>) -> BoxFuture<'a, Result<Flow, String>> {
         Box::pin(async move {
+            if self.owner_changed()? {
+                return Ok(Flow::Continue);
+            }
+
             let round = ctx.round;
             let completion = self.completion.take().ok_or("모델 응답이 없습니다.")?;
 
@@ -1029,7 +1044,7 @@ impl Host for MainTurn<'_> {
                             "acceptance_review",
                             review_action(
                                 self.state,
-                                self.request,
+                                &self.request,
                                 acceptance_text,
                                 &self.final_content,
                                 &evidence,
@@ -1038,6 +1053,9 @@ impl Host for MainTurn<'_> {
                         )
                         .await?
                     };
+                    if self.owner_changed()? {
+                        return Ok(Flow::Continue);
+                    }
                     if let Some(review) = review {
                         gaps.extend(review.gaps);
                         gaps.sort();
@@ -1256,6 +1274,10 @@ impl Host for MainTurn<'_> {
         call_index: usize,
     ) -> BoxFuture<'a, Result<bool, String>> {
         Box::pin(async move {
+            if self.owner_changed()? {
+                return Ok(false);
+            }
+
             let call = self.round_calls[call_index].clone();
 
             // A disconnected SSE client must not stop work already promised by
@@ -1281,7 +1303,7 @@ impl Host for MainTurn<'_> {
                     self.state,
                     self.tx,
                     self.session_id,
-                    self.request,
+                    &self.request,
                     self.execution_id,
                     &call.name,
                     &call.id,
@@ -1297,7 +1319,7 @@ impl Host for MainTurn<'_> {
             let mut arguments = match serde_json::from_str::<Value>(&call.arguments) {
                 Ok(value) if value.is_object() => value,
                 _ => {
-                    mark_tool_argument_signal(self.state, self.request, self.execution_id, false);
+                    mark_tool_argument_signal(self.state, &self.request, self.execution_id, false);
                     let error = format!(
                         "invalid tool arguments: {} 도구 인수가 올바른 JSON 객체가 아닙니다. 인자를 고쳐 다시 호출하세요.",
                         call.name
@@ -1306,7 +1328,7 @@ impl Host for MainTurn<'_> {
                         self.state,
                         self.tx,
                         self.session_id,
-                        self.request,
+                        &self.request,
                         self.execution_id,
                         &call.name,
                         &call.id,
@@ -1366,7 +1388,7 @@ impl Host for MainTurn<'_> {
                         self.state,
                         self.tx,
                         self.session_id,
-                        self.request,
+                        &self.request,
                         self.execution_id,
                         &call.name,
                         &call.id,
@@ -1422,7 +1444,7 @@ impl Host for MainTurn<'_> {
                         self.state,
                         self.tx,
                         self.session_id,
-                        self.request,
+                        &self.request,
                         self.execution_id,
                         &call.name,
                         &call.id,
@@ -1481,6 +1503,7 @@ impl Host for MainTurn<'_> {
                     | "terminal_exec"
                     | "github_api"
                     | "delegate_task"
+                        | "task_integrate"
             );
             if mutating {
                 if recovery_mode != "allow-all" {
@@ -1495,7 +1518,7 @@ impl Host for MainTurn<'_> {
                             self.state,
                             self.tx,
                             self.session_id,
-                            self.request,
+                            &self.request,
                             self.execution_id,
                             &call.name,
                             &call.id,
@@ -1617,7 +1640,7 @@ impl Host for MainTurn<'_> {
                         state: self.state,
                         tx: self.tx,
                         session: &self.session,
-                        request: self.request,
+                        request: &self.request,
                         session_id: self.session_id,
                         execution_id: self.execution_id,
                         metrics,
@@ -1668,6 +1691,12 @@ impl Host for MainTurn<'_> {
             let arguments = self.prepared_arguments.clone();
             let call_key = self.prepared_key.clone();
             let (result, ok, tool_content) = observed;
+            if self.owner_changed()? {
+                self.messages
+                    .push(json!({"role":"tool","tool_call_id":call.id,"content":tool_content}));
+                return Ok(());
+            }
+
             self.ordering_used = true;
             if !ok {
                 self.ordering_ok = false;
@@ -1717,6 +1746,7 @@ impl Host for MainTurn<'_> {
                         | "terminal_exec"
                         | "github_api"
                         | "delegate_task"
+                        | "task_integrate"
                 ) {
                     self.environment_version += 1;
                 }
@@ -1749,7 +1779,7 @@ impl Host for MainTurn<'_> {
                         self.state,
                         self.tx,
                         &self.session,
-                        self.request,
+                        &self.request,
                         self.session_id,
                         self.execution_id,
                         round,
@@ -1786,6 +1816,7 @@ impl Host for MainTurn<'_> {
                                             | "terminal_exec"
                                             | "github_api"
                                             | "delegate_task"
+                        | "task_integrate"
                                     )
                                 )
                             {
@@ -1932,6 +1963,14 @@ impl Host for MainTurn<'_> {
         }
         Ok(())
     }
+    fn confirm_completion(&mut self) -> Result<Flow, String> {
+        if let Some(owner) = &self.owner {
+            if !owner.close(self.state, self.owner_revision)? {
+                return Ok(Flow::Continue);
+            }
+        }
+        Ok(Flow::Complete)
+    }
     fn completion(&self) -> Result<(String, usize, u64), String> {
         if self.final_content.trim().is_empty() && self.final_reasoning.trim().is_empty() {
             return Err("모델이 빈 응답을 반환했습니다.".into());
@@ -1944,6 +1983,193 @@ impl Host for MainTurn<'_> {
     }
 }
 impl MainTurn<'_> {
+    fn owner_changed(&self) -> Result<bool, String> {
+        self.owner
+            .as_ref()
+            .map(|owner| {
+                owner
+                    .revision(self.state)
+                    .map(|revision| revision != self.owner_revision)
+            })
+            .unwrap_or(Ok(false))
+    }
+    async fn apply_owner_directives(&mut self) -> Result<(), String> {
+        let Some(owner) = self.owner.clone() else {
+            return Ok(());
+        };
+        let row = owner.record(self.state)?;
+        let revision = row["steeringRevision"].as_u64().unwrap_or(0);
+        if revision == self.owner_revision {
+            if let Some(mut execution) = self.state.store.get("execution", self.execution_id) {
+                execution["ownerControl"] =
+                    json!({"kind":owner.kind,"id":owner.id,"revision":revision});
+                self.state
+                    .store
+                    .put("execution", &execution)
+                    .ok_or("작업 지시 권한을 저장할 수 없습니다.")?;
+            }
+            return Ok(());
+        }
+        let base = if owner.kind == "job" {
+            row["input"]["prompt"].as_str()
+        } else {
+            row["instruction"].as_str()
+        }
+        .ok_or("원래 작업 지시가 없습니다.")?;
+        let goal = crate::engine::job_control::intent(base, &row);
+        let updates = row["steering"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|d| d["revision"].as_u64().unwrap_or(0) > self.owner_revision)
+            .collect::<Vec<_>>();
+        let replaced = updates.iter().any(|d| d["mode"] == "replace");
+        let mut checks = if replaced {
+            prepare_owner_action(self.state, &goal)
+                .map(|(_, c)| c)
+                .unwrap_or(json!([]))
+        } else {
+            self.acceptance
+                .as_ref()
+                .map(|(_, c)| c.clone())
+                .unwrap_or(json!([]))
+        };
+        if !replaced {
+            for directive in &updates {
+                if let Some((_, extra)) = directive["instruction"]
+                    .as_str()
+                    .and_then(|text| prepare_owner_action(self.state, text))
+                {
+                    for check in extra.as_array().into_iter().flatten() {
+                        if !checks.as_array().unwrap().contains(check) {
+                            checks.as_array_mut().unwrap().push(check.clone());
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(command) = self.session["nativeSdkVerifyCommand"]
+            .as_str()
+            .or_else(|| self.session["nativeJobVerifyCommand"].as_str())
+        {
+            let check = json!({"type":"command_succeeded","command":command});
+            if !checks.as_array().unwrap().contains(&check) {
+                checks.as_array_mut().unwrap().push(check);
+            }
+        }
+        if let Some(items) = checks.as_array_mut() {
+            items.retain(|check| {
+                !(check["type"] == "file_replace_exact"
+                    && check["expectedSha256"].as_str().is_none())
+            });
+        }
+        let mut last_source = None;
+        for directive in &updates {
+            let id = format!(
+                "owner-steer-{}-{}-{}",
+                owner.kind,
+                owner.id,
+                directive["revision"].as_u64().unwrap_or(0)
+            );
+            let message = if let Some(saved) = self.state.store.message(&id) {
+                saved
+            } else {
+                let saved=self.state.store.write_message(&json!({"id":id,"session_id":self.session_id,"role":"user",
+                    "content":directive["instruction"],"metadata":{"authorKind":"owner","ownerControl":owner.id,
+                        "ownerRevision":directive["revision"],"mode":directive["mode"]}})).ok_or("사용자 지시를 저장할 수 없습니다.")?;
+                self.state.bus.message(&saved);
+                saved
+            };
+            last_source = message["id"].as_str().map(str::to_owned);
+        }
+        let epoch = if replaced {
+            self.state
+                .store
+                .all("execution_operation")
+                .into_iter()
+                .filter(|op| op["runId"] == self.execution_id)
+                .filter_map(|op| op["opSeq"].as_u64())
+                .max()
+                .unwrap_or(0)
+        } else {
+            self.state
+                .store
+                .get("execution", self.execution_id)
+                .and_then(|e| e["ownerEvidenceEpoch"].as_u64())
+                .unwrap_or(0)
+        };
+        let old_revision = self.owner_revision;
+        let mut execution = self
+            .state
+            .store
+            .get("execution", self.execution_id)
+            .ok_or("실행 기록이 없습니다.")?;
+        execution["ownerControl"] = json!({"kind":owner.kind,"id":owner.id,"revision":revision});
+        execution["ownerEvidenceEpoch"] = json!(epoch);
+        execution["ownerGoalChanged"] = json!(true);
+        execution["acceptanceText"] = json!(goal);
+        execution["acceptanceChecks"] = checks.clone();
+        if replaced {
+            execution["programCheckpoint"]["status"] = json!("superseded_by_owner");
+        }
+        self.state.store.mutate_record("task_episode",self.task_id,json!({"id":self.task_id}),|episode|{
+            let previous=episode["contract"].clone();
+            let mut contract:crate::engine::adaptation::types::TaskContract=serde_json::from_value(previous.clone()).map_err(|e|e.to_string())?;
+            contract.intent=bounded_contract_intent(&goal);contract.mandatory=checks.as_array().cloned().unwrap_or_default();
+            contract.revision=crate::engine::adaptation::types::revision_hash(&json!({"previous":previous,"ownerKind":owner.kind,"ownerId":owner.id,"ownerRevision":revision,"intent":contract.intent,"checks":checks}));
+            contract.validate()?;
+            let mut history=episode["ownerRevisionHistory"].as_array().cloned().unwrap_or_default();
+            history.push(json!({"contract":previous,"ownerRevision":old_revision}));episode["ownerRevisionHistory"]=json!(history);
+            episode["contract"]=serde_json::to_value(&contract).map_err(|e|e.to_string())?;
+            episode["ownerText"]=json!(goal);episode["rootOutcome"]=json!("running");
+            if let Some(source)=last_source.as_deref(){episode["sourceMessageId"]=json!(source);}
+            execution["taskContractRevision"]=json!(contract.revision);
+            Ok(vec![("execution".into(),execution)])
+        })?;
+        if replaced {
+            self.reply_to = last_source;
+            self.program_finished = true;
+        }
+        self.request.input = goal.clone();
+        self.acceptance = if checks.as_array().is_some_and(|c| !c.is_empty()) {
+            Some((goal.clone(), checks))
+        } else {
+            None
+        };
+        self.acceptance_passed = false;
+        self.force_final = false;
+        self.finished = false;
+        self.final_content.clear();
+        self.acceptance_retries = 0;
+        self.procedure_repairs = 0;
+        self.simple_creation_target = simple_file_creation(self.state, &goal, &self.acceptance);
+        self.messages.push(json!({"role":"user","content":format!("사용자가 작업 지시를 갱신했습니다 (revision={revision}). 현재 유효한 전체 목표:\n{goal}\n이미 수행한 변경은 보존하고 새 목표의 검증 조건으로 계속하세요.")}));
+        if self.request.tools_enabled && self.request.tools_execution_enabled {
+            self.tool_definitions = tools::definitions();
+            self.tool_definitions
+                .extend(mcp::definitions(self.state).await);
+            if self.session["readOnly"] == true {
+                self.tool_definitions
+                    .retain(|tool| tools::observational(tool_name(tool)));
+            }
+        }
+        self.metadata.as_object_mut().unwrap().remove("completionSource");
+        self.metadata["reasoningLanguageEffective"]=json!(self.request.effective_reasoning_language());
+        self.continuation_projection=None;
+        let mut position=0;
+        self.messages.retain(|message|{
+            let at=position;position+=1;
+            let text=message["content"].as_str().unwrap_or("");
+            !(at>0&&message["role"]=="system"&&(
+                text.starts_with("모든 검증 조건이 충족되었습니다.")
+                ||text.starts_with("연속 적응 실행이 진전 없이 실패했습니다.")
+                ||(replaced&&(text.starts_with("Internal execution plan.")||text.starts_with("Engine-owned task decomposition.")))))
+        });
+        if self.session["delegationWorkspace"].is_object(){self.tool_definitions.retain(|tool|!tool_name(tool).starts_with("mcp__")&&!matches!(tool_name(tool),"github_api"|"browser_control"));}
+        self.owner_revision = revision;
+        self.state.store.audit("job.owner_revision_applied",json!({"executionId":self.execution_id,"revision":revision,"mode":if replaced{"replace"}else{"append"}}));
+        Ok(())
+    }
     pub(super) async fn save(&mut self) -> Result<Option<Value>, String> {
         // Preserve provider reasoning as received. Display language requests are
         // best effort; never send private reasoning to a hidden translation API.

@@ -325,6 +325,12 @@ async fn run_turn_with_policy(
         .and_then(|value| value.as_str())
         .ok_or("Session has no id")?
         .to_string();
+    let mut workspace_state=state.clone();
+    if session["rsiRun"]!=true{
+        if let Some(path)=crate::engine::delegation_worktree::scoped_workspace(state,&session)? {workspace_state.config.workspace=path;}
+        else if let Some(raw)=session["workspaceDir"].as_str(){workspace_state.config.workspace=crate::engine::workspace_scope::resolve(state,raw)?;}
+    }
+    let state=&workspace_state;
     if !state.begin_session(&session_id) {
         return Err("Session is already running".into());
     }
@@ -630,9 +636,10 @@ async fn run_turn_body(
                 let acceptance = &message["metadata"]["acceptance"];
                 Some((acceptance["request"].as_str()?.to_owned(), acceptance["checks"].clone()))
             })
+            .or_else(|| crate::engine::job_control::initial_acceptance(state,&session,acceptance_source.as_deref().unwrap_or(&request.input)))
             .or_else(|| acceptance_source.as_deref().and_then(|text| prepare_owner_action(state, text)))
     };
-    if let Some(command)=session["nativeSdkVerifyCommand"].as_str().filter(|s|!s.trim().is_empty()){
+    if let Some(command)=session["nativeSdkVerifyCommand"].as_str().or_else(||session["nativeJobVerifyCommand"].as_str()).filter(|s|!s.trim().is_empty()){
         let (text,mut checks)=acceptance.take().unwrap_or_else(||(request.input.clone(),json!([])));
         if let Some(items)=checks.as_array_mut(){items.push(json!({"type":"command_succeeded","command":command}));}
         acceptance=Some((text,checks));
@@ -1046,6 +1053,7 @@ async fn run_turn_body(
     // native calls or the text-tool manual for whichever local/API model
     // actually handles each round, including after failover.
 
+    if session["delegationWorkspace"].is_object(){tool_definitions.retain(|tool|!tool_name(tool).starts_with("mcp__")&&!matches!(tool_name(tool),"github_api"|"browser_control"));}
     if session["readOnly"]==true {tool_definitions.retain(|tool|tools::observational(tool_name(tool)));}
     let discovered_tool_names = tool_definitions
         .iter()
@@ -1200,8 +1208,10 @@ async fn run_turn_body(
     let program_finished=program_policy.is_none();
     let mut adapter=product::MainTurn{
         metrics,
+        owner:crate::engine::job_control::Owner::from_session(state,&session),
+        owner_revision:session["ownerAppliedRevision"].as_u64().unwrap_or(0),
         state,
-        request,
+        request:request.clone(),
         tx,
         session_id,
         execution_id,
@@ -3412,7 +3422,7 @@ async fn dispatch_tool_call(
         tools::requires_approval(&call.name)
     };
     let operation_id = format!("{execution_id}:{round}:{call_index}:{}", call.id);
-    let allowed = if effect_block.is_some() {
+    let mut allowed = if effect_block.is_some() {
         false
     } else if needs_approval {
         request_approval(
@@ -3430,6 +3440,11 @@ async fn dispatch_tool_call(
         true
     };
 
+    if let Some(control)=state.store.get("execution",execution_id).and_then(|e|e.get("ownerControl").cloned()){
+        if let (Some(kind),Some(id),Some(revision))=(control["kind"].as_str(),control["id"].as_str(),control["revision"].as_u64()){
+            if state.store.get(kind,id).is_none_or(|row|row["steeringRevision"].as_u64().unwrap_or(0)!=revision){allowed=false;}
+        }
+    }
     let initial_effect_state = if effect_block.is_some() {
         "needs_review"
     } else if allowed {
@@ -3501,7 +3516,9 @@ async fn dispatch_tool_call(
             tools_enabled: request.tools_enabled,
             tools_execution_enabled: request.tools_execution_enabled,
         };
-        let outcome = if session["readOnly"]==true&&!tools::observational(&call.name){
+        let outcome = if session["delegationWorkspace"].is_object()&&(call.name.starts_with("mcp__")||matches!(call.name.as_str(),"github_api"|"browser_control")){
+            Err("격리 위임 작업에서는 외부 변경 도구를 실행할 수 없습니다.".into())
+        } else if session["readOnly"]==true&&!tools::observational(&call.name){
             Err("읽기 전용 위임 작업에는 이 도구를 실행할 권한이 없습니다.".into())
         } else if state.store.get("session",session_id).is_some_and(|s|s["rsiRun"]==true)
             && !tools::rsi_allowed(&call.name) {
@@ -3973,7 +3990,7 @@ fn record_success_experience(
     }
     // Deterministic execution is a shortcut, not evidence that the harness
     // learned to solve a new task.
-    if record["deterministicShortcut"].is_object() {
+    if record["deterministicShortcut"].is_object() || record["ownerGoalChanged"]==true {
         return None;
     }
     let acceptance_text = record["acceptanceText"].as_str()?;

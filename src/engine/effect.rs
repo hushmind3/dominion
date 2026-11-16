@@ -70,6 +70,7 @@ pub fn resource_key(tool: &str, arguments: &Value) -> Option<String> {
         "file_read" | "file_write" | "file_list" => {
             path.map(|path| format!("file:{}", normalize_path(path)))
         }
+        "task_integrate"=>arguments["jobId"].as_str().map(|id|format!("delegated_patch:{id}")),
         "github_api" => path.map(|path| format!("github:{}", normalize_path(path))),
         "http_fetch" => arguments["url"].as_str().map(|url| format!("http:{url}")),
         "shell_exec" | "terminal_exec" => Some(format!(
@@ -97,7 +98,7 @@ pub fn resource_key(tool: &str, arguments: &Value) -> Option<String> {
 /// world. A read can still have side effects (locks, billing reservations), so
 /// callers must not treat this classification as a safety proof.
 pub fn is_effectful(tool: &str, arguments: &Value) -> bool {
-    if matches!(tool, "shell_exec" | "terminal_exec") {
+    if matches!(tool, "shell_exec" | "terminal_exec" | "task_integrate") {
         return true;
     }
     if tool == "github_api" {
@@ -151,7 +152,7 @@ fn replay_is_safe(tool: &str) -> bool {
 /// expose a resource that an observation can resolve.
 fn gated(tool: &str, arguments: &Value) -> bool {
     is_effectful(tool, arguments)
-        && (tool == "github_api"
+        && (tool == "task_integrate" || tool == "github_api"
             || tool.starts_with("mcp__")
             || tool.contains("http_request"))
 }

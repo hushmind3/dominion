@@ -35,6 +35,8 @@ pub fn definitions() -> Vec<Value> {
         tool("workspace_list", "List files and folders in the workspace", object(json!({"path": text("Relative folder path")}), vec![])),
         tool("workspace_read", "Read a UTF-8 file from the workspace", object(json!({"path": text("Relative file path")}), vec!["path"])),
         tool("workspace_read_range", "Read only a line range from a workspace file. Use the line numbers from the repository index instead of reading a large file end to end.", object(json!({"path": text("Relative file path"), "startLine": json!({"type":"integer","minimum":1}), "endLine": json!({"type":"integer","minimum":1, "description":"Inclusive end line; at most 400 lines are returned"})}), vec!["path","startLine"])),
+        tool("workspace_git_status","Inspect Git changes in the current workspace without running a shell",object(json!({}),vec![])),
+        tool("workspace_git_diff","Inspect the current workspace patch without shell hooks or external diff helpers",object(json!({}),vec![])),
         tool("code_search", "Search the persistent repository index for file paths, symbols and line numbers. Use this before reading a large file.", object(json!({"query": text("Function, type, path or keyword fragment"), "limit": json!({"type":"integer","minimum":1,"maximum":50})}), vec!["query"])),
         tool("workspace_replace_range", "Replace a previously read inclusive line range with newText only. Use startLine/endLine and sourceSha256 returned by workspace_read_range; old text is not required.", object(json!({"path": text("Relative file path"), "startLine": json!({"type":"integer","minimum":1}), "endLine": json!({"type":"integer","minimum":1,"description":"Inclusive line number; at most 120 lines"}), "newText": text("Replacement lines (without old source text)"), "expectedSha256": text("Exact sourceSha256 from the successful prior read")}), vec!["path","startLine","endLine","newText","expectedSha256"])),
         tool("workspace_replace", "Replace one exact block in a workspace file without resending the whole file (approval required). oldText must occur exactly once.", object(json!({"path": text("Relative file path"), "oldText": text("Exact existing text to replace; must occur exactly once"), "newText": text("Replacement text"), "expectedSha256": text("Optional SHA-256 observed before editing")}), vec!["path","oldText","newText"])),
@@ -121,7 +123,7 @@ pub fn requires_approval(name: &str) -> bool {
 }
 
 pub fn observational(name:&str)->bool{
-    matches!(name,"workspace_list"|"workspace_read"|"workspace_read_range"|"code_search"|"file_list"|"file_read"|"memory_search"|"web_search"|"http_fetch"|"task_status"|"task_result"|"account_status"|"unsafe_audit")
+    matches!(name,"workspace_git_status"|"workspace_git_diff"|"workspace_list"|"workspace_read"|"workspace_read_range"|"code_search"|"file_list"|"file_read"|"memory_search"|"web_search"|"http_fetch"|"task_status"|"task_result"|"account_status"|"unsafe_audit")
 }
 
 pub fn rsi_allowed(name:&str)->bool{
@@ -138,7 +140,14 @@ pub async fn execute(
         && !observational(name) {
         return Err("읽기 전용 위임 작업에는 이 도구를 실행할 권한이 없습니다.".into());
     }
-    if ctx.store.get("session",ctx.session_id).is_some_and(|s|s["delegationWorkspace"].is_object())
+    let parent_isolated=ctx.store.get("session",ctx.session_id).is_some_and(|s|s["delegationWorkspace"].is_object());
+    if parent_isolated&&(name.starts_with("mcp__")||matches!(name,"browser_control"|"github_api")){
+        return Err("격리 위임 작업에서는 외부 변경 도구를 실행할 수 없습니다.".into());
+    }
+    if parent_isolated&&name=="delegate_task"&&args["isolatedWorktree"]!=true{
+        return Err("격리 작업의 하위 위임도 isolatedWorktree가 필요합니다.".into());
+    }
+    if parent_isolated
         && matches!(name,"file_write"|"file_read"|"file_list") {
         let target=canonical_target(Path::new(&required_arg(args,"path")?)).map_err(|e|e.to_string())?;
         if !target.starts_with(ctx.workspace.canonicalize().map_err(|e|e.to_string())?){return Err("격리 위임에서는 외부 파일에 접근할 수 없습니다.".into());}
@@ -419,6 +428,8 @@ pub async fn execute(
             let path = resolve_workspace(ctx.workspace, scope)?;
             Ok(crate::engine::unsafe_audit::audit_path(&path))
         }
+        "workspace_git_status"=>crate::engine::delegation_worktree::inspect(ctx.workspace,false).await,
+        "workspace_git_diff"=>crate::engine::delegation_worktree::inspect(ctx.workspace,true).await,
         "delegate_task" => delegate(ctx, args).await,
         "task_integrate" => crate::engine::delegation_worktree::integrate(ctx,args).await,
         "task_status" => task_payload(ctx, args, false),
@@ -509,9 +520,10 @@ async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Value, String> 
 
     let session_id=uuid::Uuid::new_v4().to_string();
     let job_id=uuid::Uuid::new_v4().to_string();
-    let mut session=json!({"id":session_id,"title":format!("Delegate · {}",prompt.chars().take(36).collect::<String>()),
+    let mut session=json!({"id":session_id,"workspaceDir":ctx.workspace.canonicalize().map_err(|e|e.to_string())?,"title":format!("Delegate · {}",prompt.chars().take(36).collect::<String>()),
         "agentId":agent_id,"providerId":agent["providerId"],"model":agent["model"],
         "parentSessionId":ctx.session_id,"delegated":true,"readOnly":args["readOnly"]==true});
+    if crate::engine::sandbox::required(ctx.state,ctx.session_id){session["shellSandbox"]=json!("required");}
     if args["isolatedWorktree"]==true {
         session["delegationWorkspace"]=crate::engine::delegation_worktree::prepare(ctx.state,ctx.workspace,&job_id).await?;
         session["shellSandbox"]=json!("required");

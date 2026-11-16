@@ -26,5 +26,8 @@ pub(super) fn evidence_for_source(state:&AppState,session:&str,source:&str,execu
     // Earlier native room speakers may already have performed this exact
     // owner's request. Their persisted operations prevent duplicate execution.
     for message in state.store.messages(session){if message["metadata"]["replyToMessageId"].as_str()==Some(source){if let Some(run)=message["metadata"]["executionId"].as_str(){runs.insert(run.to_string());}}}
-    state.store.all("execution_operation").into_iter().filter(|operation|operation["status"]=="completed"&&operation["runId"].as_str().is_some_and(|id|runs.contains(id))).collect()
+    let epoch=state.store.get("execution",execution).and_then(|e|e["ownerEvidenceEpoch"].as_u64()).unwrap_or(0);
+    state.store.all("execution_operation").into_iter().filter(|operation|operation["status"]=="completed"
+        &&operation["runId"].as_str().is_some_and(|id|runs.contains(id))
+        &&(epoch==0||(operation["runId"]==execution&&operation["opSeq"].as_u64().unwrap_or(0)>epoch))).collect()
 }

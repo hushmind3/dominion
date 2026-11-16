@@ -24,16 +24,38 @@ where
             Ok(extra)
         })
 }
-fn requested(session: &Value) -> Result<(u64, Unit, bool), String> {
+fn requested(state: &AppState, session: &Value) -> Result<(u64, Unit, bool), String> {
+    let owner = session["budgetOwnerId"].as_str();
+    let prior = if let Some(owner) = owner {
+        state
+            .store
+            .all("budget_tree")
+            .into_iter()
+            .filter(|row| row["ownerId"] == owner)
+            .filter_map(|row| {
+                let tree: Tree = serde_json::from_value(row["tree"].clone()).ok()?;
+                let root = tree.account(row["id"].as_str()?).ok()?;
+                Some(root.limit.saturating_sub(root.remaining()))
+            })
+            .fold(0u64, u64::saturating_add)
+    } else {
+        0
+    };
     if let Some(usd) = session["budgetUsd"].as_f64() {
         if !usd.is_finite() || usd <= 0.0 || usd > 10000.0 {
             return Err("금액 예산은 0 초과 10000 USD 이하여야 합니다.".into());
         }
-        return Ok(((usd * 1_000_000.0).floor() as u64, Unit::UsdMicros, true));
+        return Ok((
+            ((usd * 1_000_000.0).floor() as u64).saturating_sub(prior),
+            Unit::UsdMicros,
+            true,
+        ));
     }
     let explicit = session["tokenBudget"].as_u64();
     Ok((
-        explicit.unwrap_or(crate::engine::chat::MAX_TOKENS),
+        explicit
+            .unwrap_or(crate::engine::chat::MAX_TOKENS)
+            .saturating_sub(if explicit.is_some() { prior } else { 0 }),
         Unit::Tokens,
         explicit.is_some(),
     ))
@@ -132,10 +154,10 @@ pub fn begin(state: &AppState, session: &Value, execution: &str) -> Result<Execu
             Ok(vec![("budget_binding".into(), b)])
         })?;
     } else {
-        let (limit, unit, limited) = requested(session)?;
+        let (limit, unit, limited) = requested(state, session)?;
         let tree = Tree::new(execution, limit, unit);
         state.store.transaction(&[
-            ("budget_tree".into(),json!({"id":execution,"tree":tree,"limited":limited})),
+            ("budget_tree".into(),json!({"id":execution,"tree":tree,"limited":limited,"ownerId":session["budgetOwnerId"]})),
             ("budget_binding".into(),json!({"id":id,"treeId":execution,"accountId":execution,"executionId":execution,"status":"active"}))
         ])?;
     }
@@ -151,6 +173,58 @@ pub fn begin(state: &AppState, session: &Value, execution: &str) -> Result<Execu
         session: id.into(),
         execution: execution.into(),
     })
+}
+/// Release a stopped tool hold only after durable operator observation. Paid
+/// model reservations remain held until their own billing receipt is reconciled.
+pub fn refresh_after_observation(state: &AppState, execution_id: &str) -> Result<(), String> {
+    let run = state
+        .store
+        .get("execution", execution_id)
+        .ok_or("실행 기록이 없습니다.")?;
+    let session = run["sessionId"].as_str().ok_or("세션이 없습니다.")?;
+    if state.active.lock().unwrap().contains(session) {
+        return Err("실행 중인 예산은 복구할 수 없습니다.".into());
+    }
+    let Some(mut binding) = state
+        .store
+        .get("budget_binding", session)
+        .filter(|b| b["executionId"] == execution_id)
+    else {
+        return Ok(());
+    };
+    let unknown = run["kernelState"]["modelInFlight"] == true
+        || !run["kernelState"]["native"]["in_flight"].is_null()
+        || run["kernelState"]["native"]["read_batch_in_flight"]
+            .as_array()
+            .is_some_and(|a| !a.is_empty())
+        || state
+            .store
+            .all("execution_operation")
+            .iter()
+            .any(|op| op["runId"] == execution_id && op["outcomeUnknown"] == true);
+    let tree_id = binding["treeId"]
+        .as_str()
+        .ok_or("예산 트리가 없습니다.")?
+        .to_owned();
+    let account = binding["accountId"]
+        .as_str()
+        .ok_or("예산 계정이 없습니다.")?
+        .to_owned();
+    mutate(state, &tree_id, |tree, _| {
+        let blocked = unknown || !tree.account(&account)?.calls.is_empty();
+        tree.accounts
+            .get_mut(&account)
+            .ok_or("예산 계정이 없습니다.")?
+            .blocked = blocked;
+        tree.close(&account, blocked)?;
+        binding["status"] = json!(if tree.account(&account)?.closed {
+            "closed"
+        } else {
+            "waiting"
+        });
+        Ok(vec![("budget_binding".into(), binding)])
+    })?;
+    Ok(())
 }
 /// Reserve before making the new job visible. Creation and the parent's
 /// allowance move together; a rejected sibling cannot leave an orphan worker.
@@ -206,17 +280,10 @@ impl Rates {
 }
 fn rates(state: &AppState, provider: &str, model: &str, local: bool) -> Result<Rates, String> {
     let p = state.store.get("provider", provider).unwrap_or(Value::Null);
-    if local || p["free"] == true {
-        return Ok(Rates {
-            input: 0.0,
-            output: 0.0,
-        });
-    }
     let price = p["modelPricing"].get(model).unwrap_or(&p["pricing"]);
-    let input = price["inputUsdPerMillion"].as_f64();
-    let output = price["outputUsdPerMillion"].as_f64();
-    match (input,output){
+    match (price["inputUsdPerMillion"].as_f64(),price["outputUsdPerMillion"].as_f64()){
         (Some(input),Some(output)) if input.is_finite()&&output.is_finite()&&input>=0.0&&output>=0.0&&input<=10000.0&&output<=10000.0=>Ok(Rates{input,output}),
+        (None,None) if local||p["free"]==true=>Ok(Rates{input:0.0,output:0.0}),
         _=>Err("금액 예산을 사용하려면 제공자 pricing.inputUsdPerMillion/outputUsdPerMillion을 설정하세요.".into())
     }
 }
@@ -258,7 +325,9 @@ impl Call {
             .as_u64()
             .unwrap_or(0)
             .saturating_sub(self.before["totalTokens"].as_u64().unwrap_or(0));
-        if success && after["calls"].as_u64().unwrap_or(0)==self.before["calls"].as_u64().unwrap_or(0) {
+        if success
+            && after["calls"].as_u64().unwrap_or(0) == self.before["calls"].as_u64().unwrap_or(0)
+        {
             return self.completed_without_usage();
         }
         let no_generation = error.is_some_and(|e| {
@@ -545,6 +614,41 @@ mod tests {
         assert_eq!(fixed["tree"]["accounts"]["run"]["closed"], true);
         assert!(reconcile(&state, &record, &id, 0, "cannot refund twice").is_err());
         drop(execution);
+    }
+    #[test]
+    fn observed_tool_releases_hold_but_unknown_model_cost_does_not() {
+        let state = state();
+        let s = session(&state, "parent", 100);
+        let execution = begin(&state, &s, "run").unwrap();
+        state.store.put("execution", &json!({"id":"run","sessionId":"parent","kernelState":{"native":{"in_flight":{"id":"tool"}}}}));
+        execution.finish();
+        assert_eq!(
+            state.store.get("budget_binding", "parent").unwrap()["status"],
+            "waiting"
+        );
+        state.store.put(
+            "execution",
+            &json!({"id":"run","sessionId":"parent","kernelState":{"native":{}}}),
+        );
+        refresh_after_observation(&state, "run").unwrap();
+        refresh_after_observation(&state, "run").unwrap();
+        assert_eq!(
+            state.store.get("budget_binding", "parent").unwrap()["status"],
+            "closed"
+        );
+        let s = session(&state, "other", 100);
+        let execution = begin(&state, &s, "paid").unwrap();
+        let (call, _) = prepare_call(&state, "other", "p", "m", true, 10, 50).unwrap();
+        drop(call);
+        state.store.put(
+            "execution",
+            &json!({"id":"paid","sessionId":"other","kernelState":{"modelInFlight":true}}),
+        );
+        execution.finish();
+        refresh_after_observation(&state, "paid").unwrap();
+        let row = state.store.get("budget_tree", "paid").unwrap();
+        assert_eq!(row["tree"]["accounts"]["paid"]["closed"], false);
+        assert_eq!(row["tree"]["accounts"]["paid"]["blocked"], true);
     }
     #[test]
     fn cancellation_cascades_and_refunds_only_unstarted_children() {

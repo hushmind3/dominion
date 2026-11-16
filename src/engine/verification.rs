@@ -425,6 +425,7 @@ pub(crate) fn is_action_evidence(item: &Value) -> bool {
     }
     match tool_name(item) {
         "workspace_write" | "file_write" => true,
+        "task_integrate" => item["result"]["changed"] == true,
         "shell_exec" | "terminal_exec" => {
             let args = item
                 .get("arguments")

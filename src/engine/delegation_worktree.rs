@@ -9,10 +9,35 @@ use std::{
 };
 use tokio::{io::AsyncWriteExt, process::Command};
 
+fn git_path(path: &Path) -> String {
+    let text = path.to_string_lossy();
+    #[cfg(windows)]
+    {
+        if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+            return format!("//{}", rest.replace('\\', "/"));
+        }
+        return text
+            .strip_prefix(r"\\?\")
+            .unwrap_or(&text)
+            .replace('\\', "/");
+    }
+    #[cfg(not(windows))]
+    {
+        text.into_owned()
+    }
+}
+
 async fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let output = tokio::time::timeout(
         std::time::Duration::from_secs(60),
         Command::new("git")
+            .args([
+                "-c",
+                "core.hooksPath=",
+                "-c",
+                "core.fsmonitor=false",
+                "--no-optional-locks",
+            ])
             .args(args)
             .current_dir(root)
             .kill_on_drop(true)
@@ -85,12 +110,10 @@ pub async fn prepare(state: &AppState, source: &Path, job: &str) -> Result<Value
     let root = state.config.data_dir.join("delegation-workspaces");
     std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
     let target = root.canonicalize().map_err(|e| e.to_string())?.join(job);
-    let target_text = target
-        .to_str()
-        .ok_or("작업공간 경로가 유효한 UTF-8이 아닙니다.")?;
+    let target_text = git_path(&target);
     git(
         &source,
-        &["worktree", "add", "--detach", target_text, head.trim()],
+        &["worktree", "add", "--detach", &target_text, head.trim()],
     )
     .await?;
     Ok(json!({"path":target,"source":source,"baseCommit":head.trim(),"jobId":job}))
@@ -102,7 +125,7 @@ pub async fn discard_prepared(workspace: &Value) -> Result<(), String> {
             .ok_or("원본 경로가 없습니다.")?,
     );
     let path = workspace["path"].as_str().ok_or("격리 경로가 없습니다.")?;
-    git(source, &["worktree", "remove", "--force", path]).await?;
+    git(source, &["worktree", "remove", "--force", &path]).await?;
     Ok(())
 }
 pub fn scoped_workspace(state: &AppState, session: &Value) -> Result<Option<PathBuf>, String> {
@@ -152,6 +175,26 @@ pub async fn freeze_result(state: &AppState, job: &Value) -> Result<(), String> 
         )
         .ok_or("완료된 위임 패치 증거를 고정할 수 없습니다.")?;
     Ok(())
+}
+
+pub async fn inspect(workspace: &Path, diff: bool) -> Result<Value, String> {
+    let args = if diff {
+        vec![
+            "diff",
+            "--binary",
+            "--no-ext-diff",
+            "--no-textconv",
+            "HEAD",
+            "--",
+        ]
+    } else {
+        vec!["status", "--short", "--untracked-files=normal"]
+    };
+    let bytes = git(workspace, &args).await?;
+    let text = String::from_utf8_lossy(&bytes);
+    Ok(
+        json!({"content":text.chars().take(32000).collect::<String>(),"truncated":text.chars().count()>32000}),
+    )
 }
 
 pub async fn integrate(ctx: &ToolContext<'_>, args: &Value) -> Result<Value, String> {
@@ -232,17 +275,25 @@ pub async fn integrate(ctx: &ToolContext<'_>, args: &Value) -> Result<Value, Str
         );
     }
     apply(&source, &patch, true).await?;
-    apply(&source, &patch, false).await?;
-    let saved = ctx
-        .store
-        .patch_if(
-            "job",
-            id,
-            "integratedAt",
-            &Value::Null,
-            &json!({"integratedAt":chrono::Utc::now().to_rfc3339()}),
-        )
-        .ok_or("통합 결과 기록에 실패했습니다. 패치를 재실행하지 말고 현재 파일을 확인하세요.")?;
+    if let Err(error) = apply(&source, &patch, false).await {
+        return Ok(
+            json!({"jobId":id,"error":error,"outcomeUnknown":true,"patchSha256":job["delegationPatchSha256"]}),
+        );
+    }
+    let saved = match ctx.store.patch_if(
+        "job",
+        id,
+        "integratedAt",
+        &Value::Null,
+        &json!({"integratedAt":chrono::Utc::now().to_rfc3339()}),
+    ) {
+        Some(saved) => saved,
+        None => {
+            return Ok(
+                json!({"jobId":id,"error":"통합 결과 기록에 실패했습니다. 현재 파일을 확인하세요.","outcomeUnknown":true,"patchSha256":job["delegationPatchSha256"]}),
+            )
+        }
+    };
     ctx.state.bus.record("job", &saved);
     Ok(json!({"jobId":id,"changed":true,"patchBytes":patch.len()}))
 }

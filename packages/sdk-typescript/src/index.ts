@@ -42,6 +42,10 @@ export interface StartRun {
   model?: string;
   verifyCommand?: string;
   maxRounds?: number;
+  workspaceDir?: string;
+  tokenBudget?: number;
+  budgetUsd?: number;
+  shellSandbox?: 'required' | 'off';
 }
 export interface ClientOptions {
   baseUrl?: string;
@@ -104,6 +108,9 @@ export class DominionAgentClient {
   }
   startRun(input: StartRun, signal?: AbortSignal): Promise<AgentRun> {
     return this.request('POST', '/api/sdk/runs', input, signal);
+  }
+  steerRun(id: string, instruction: string, mode: 'append' | 'replace' = 'append', signal?: AbortSignal): Promise<{id: string; revision: number; appliesAt: string}> {
+    return this.request('POST', `/api/sdk/runs/${encodeURIComponent(id)}/steer`, {instruction, mode}, signal);
   }
   approveCall(id: string, callId: string, signal?: AbortSignal): Promise<AgentRun> {
     return this.request('POST', `/api/sdk/runs/${encodeURIComponent(id)}/approve`,

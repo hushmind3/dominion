@@ -1,5 +1,6 @@
 use crate::state::AppState;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
@@ -48,6 +49,23 @@ fn slug(value: &str) -> String {
     out.trim_matches('_').to_string()
 }
 
+/// Preserve original MCP tool names for non-colliding servers. When two
+/// distinct display names normalize to the same identifier, use a stable
+/// server-ID suffix instead of silently routing the wrong account's call.
+fn server_namespace(server:&Value, servers:&[Value]) -> String {
+    let mut name=slug(server["name"].as_str().unwrap_or("mcp"));
+    if name.is_empty() {name="mcp".to_string();}
+    let same=servers.iter().filter(|item|{
+        let mut candidate=slug(item["name"].as_str().unwrap_or("mcp"));
+        if candidate.is_empty(){candidate="mcp".to_string();}
+        candidate==name
+    }).count();
+    if same<=1 {return name;}
+    let identity=server["id"].as_str().unwrap_or("");
+    let digest=format!("{:x}",Sha256::digest(identity.as_bytes()));
+    format!("{}_{}",name,&digest[..16])
+}
+
 fn enabled_servers(state: &AppState) -> Vec<Value> {
     state
         .store
@@ -60,7 +78,8 @@ fn enabled_servers(state: &AppState) -> Vec<Value> {
 /// Fetch (and cache) the tool list of every enabled MCP server.
 pub async fn tools(state: &AppState) -> Vec<McpTool> {
     let mut collected = Vec::new();
-    for server in enabled_servers(state) {
+    let servers=enabled_servers(state);
+    for server in &servers {
         let id = server
             .get("id")
             .and_then(|value| value.as_str())
@@ -69,18 +88,22 @@ pub async fn tools(state: &AppState) -> Vec<McpTool> {
         if id.is_empty() {
             continue;
         }
-        if let Some((at, tools)) = cache().lock().unwrap().get(&id) {
+        let namespace=server_namespace(server,&servers);
+        // Namespace is part of the cache key so adding a colliding server
+        // cannot reuse a stale definition with its old unqualified name.
+        let cache_key=format!("{id}:{namespace}");
+        if let Some((at, tools)) = cache().lock().unwrap().get(&cache_key) {
             if at.elapsed() < CACHE_TTL {
                 collected.extend(tools.clone());
                 continue;
             }
         }
-        match list_server(state, &server).await {
+        match list_server(state, server, &namespace).await {
             Ok(tools) => {
                 cache()
                     .lock()
                     .unwrap()
-                    .insert(id.clone(), (Instant::now(), tools.clone()));
+                    .insert(cache_key, (Instant::now(), tools.clone()));
                 collected.extend(tools);
             }
             Err(error) => {
@@ -93,13 +116,12 @@ pub async fn tools(state: &AppState) -> Vec<McpTool> {
     collected
 }
 
-async fn list_server(state: &AppState, server: &Value) -> Result<Vec<McpTool>, String> {
+async fn list_server(state: &AppState, server: &Value, server_slug:&str) -> Result<Vec<McpTool>, String> {
     let server_name = server
         .get("name")
         .and_then(|value| value.as_str())
         .unwrap_or("mcp")
         .to_string();
-    let server_slug = slug(&server_name);
     let transport = server
         .get("transport")
         .and_then(|value| value.as_str())
@@ -130,7 +152,7 @@ async fn list_server(state: &AppState, server: &Value) -> Result<Vec<McpTool>, S
                 .to_string();
             Some(McpTool {
                 server_name: server_name.clone(),
-                slug: server_slug.clone(),
+                slug: server_slug.to_string(),
                 tool: name,
                 description: tool
                     .get("description")
@@ -184,14 +206,7 @@ pub fn requires_approval(state: &AppState, qualified: &str) -> bool {
     let servers = enabled_servers(state);
     servers
         .iter()
-        .find(|server| {
-            slug(
-                server
-                    .get("name")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("mcp"),
-            ) == server_slug
-        })
+        .find(|server| server_namespace(server,&servers)==server_slug)
         .and_then(|server| server.get("approval").and_then(|value| value.as_bool()))
         .unwrap_or(true)
 }
@@ -205,16 +220,9 @@ pub async fn call(state: &AppState, qualified: &str, args: &Value) -> Result<Val
         .split_once("__")
         .ok_or_else(|| format!("MCP 도구 이름을 해석할 수 없습니다: {qualified}"))?;
 
-    let server = enabled_servers(state)
-        .into_iter()
-        .find(|server| {
-            slug(
-                server
-                    .get("name")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("mcp"),
-            ) == server_slug
-        })
+    let servers=enabled_servers(state);
+    let server=servers.iter()
+        .find(|server|server_namespace(server,&servers)==server_slug)
         .ok_or_else(|| format!("MCP 서버를 찾을 수 없습니다: {server_slug}"))?;
 
     let transport = server
@@ -224,10 +232,10 @@ pub async fn call(state: &AppState, qualified: &str, args: &Value) -> Result<Val
     let params = json!({ "name": tool_name, "arguments": args });
 
     if transport == "http" {
-        let mut session = HttpSession::open(&server, state).await?;
+        let mut session = HttpSession::open(server, state).await?;
         session.request("tools/call", params).await
     } else {
-        let mut session = StdioSession::open(&server, &state.config.workspace).await?;
+        let mut session = StdioSession::open(server, &state.config.workspace).await?;
         let result = session.request("tools/call", params).await;
         drop(session);
         result
@@ -534,6 +542,38 @@ mod tests {
         };
         assert_eq!(slug("Echo Lab"), "echo_lab");
         assert_eq!(tool.qualified(), "mcp__echo_lab__echo");
+    }
+
+    #[test]
+    fn collision_renames_only_ambiguous_server_namespaces() {
+        let first=json!({"id":"one","name":"Search Lab","approval":false});
+        let second=json!({"id":"two","name":"Search-Lab","approval":true});
+        let lone=vec![first.clone()];
+        assert_eq!(server_namespace(&first,&lone),"search_lab");
+        let both=vec![first.clone(),second.clone()];
+        let a=server_namespace(&first,&both);
+        let b=server_namespace(&second,&both);
+        assert_ne!(a,b);
+        assert!(a.starts_with("search_lab_"));
+        assert!(b.starts_with("search_lab_"));
+        assert_eq!(a,server_namespace(&first,&both));
+    }
+
+    #[test]
+    fn colliding_mcp_servers_retain_independent_approval_policies() {
+        let state=temp_state();
+        let first=state.store.put("mcp",&json!({"id":"mcp-one",
+            "name":"Search Lab","approval":false})).unwrap();
+        let second=state.store.put("mcp",&json!({"id":"mcp-two",
+            "name":"Search-Lab","approval":true})).unwrap();
+        let servers=enabled_servers(&state);
+        let a=format!("mcp__{}__lookup",server_namespace(&first,&servers));
+        let b=format!("mcp__{}__lookup",server_namespace(&second,&servers));
+        assert_ne!(a,b);
+        assert!(!requires_approval(&state,&a));
+        assert!(requires_approval(&state,&b));
+        // An ambiguous legacy alias must never silently target the first.
+        assert!(requires_approval(&state,"mcp__search_lab__lookup"));
     }
 
     #[test]

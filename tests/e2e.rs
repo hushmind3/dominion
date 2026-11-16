@@ -7324,3 +7324,80 @@ fn native_sdk_approval_resolves_the_shared_chat_waiter_without_restarting_the_mo
     assert_eq!(requests.lock().unwrap().len(),1,"approval must resume the same native execution");
     assert_eq!(app.get("/api/executions").as_array().unwrap().len(),1);
 }
+
+#[test]
+fn owner_replacement_discards_stale_tool_calls_inside_the_same_native_driver(){
+    let _serial=serial();
+    use std::sync::atomic::{AtomicBool,Ordering};
+    let started=Arc::new(AtomicBool::new(false));let release=Arc::new(AtomicBool::new(false));
+    let started_model=started.clone();let release_model=release.clone();
+    let calls=Arc::new(std::sync::atomic::AtomicUsize::new(0));let count=calls.clone();
+    let (port,requests)=scripted_provider(move |_|{
+        let n=count.fetch_add(1,Ordering::SeqCst);
+        if n==0 {started_model.store(true,Ordering::SeqCst);let deadline=std::time::Instant::now()+Duration::from_secs(10);
+            while !release_model.load(Ordering::SeqCst)&&std::time::Instant::now()<deadline {std::thread::sleep(Duration::from_millis(5));}}
+        let path=if n==0{"old-target.md"}else{"new-target.md"};
+        vec![json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":format!("owner-call-{n}"),"type":"function",
+            "function":{"name":"workspace_write","arguments":json!({"path":path,"content":""}).to_string()}}]},"finish_reason":"tool_calls"}],
+            "usage":{"prompt_tokens":20,"completion_tokens":10,"total_tokens":30}})]
+    });
+    let app=TestApp::new(port,"native");app.post("/api/policy",&json!({"autoApproveAll":true}));
+    let run=app.post("/api/sdk/runs",&json!({"instruction":"old-target.md 파일을 만들어줘"}));
+    let id=run["id"].as_str().unwrap();
+    for _ in 0..200 {if started.load(Ordering::SeqCst){break;}std::thread::sleep(Duration::from_millis(10));}
+    assert!(started.load(Ordering::SeqCst));
+    let changed=app.post(&format!("/api/sdk/runs/{id}/steer"),&json!({"mode":"replace","instruction":"new-target.md 파일을 만들어줘"}));
+    assert_eq!(changed["revision"],1);release.store(true,Ordering::SeqCst);
+    let mut final_run=Value::Null;
+    for _ in 0..250 {final_run=app.get(&format!("/api/sdk/runs/{id}"));if matches!(final_run["status"].as_str(),Some("completed"|"failed")){break;}std::thread::sleep(Duration::from_millis(20));}
+    assert_eq!(final_run["status"],"completed","{final_run}");
+    assert!(!app._root.join("old-target.md").exists());assert!(app._root.join("new-target.md").is_file());
+    let execution=&app.get("/api/executions")[0];
+    assert_eq!(execution["kernelState"]["receipts"].as_array().unwrap().len(),1);
+    assert_eq!(execution["modelCalls"],2);
+    let seen=requests.lock().unwrap();assert_eq!(seen.len(),2);
+    assert!(seen[1]["messages"].to_string().contains("현재 유효한 전체 목표"));
+}
+
+#[test]
+fn explicit_job_quota_blocks_the_first_over_budget_http_request(){
+    let _serial=serial();
+    let (port,requests)=scripted_provider(|_|vec![json!({"choices":[{"delta":{"content":"unexpected model invocation"},"finish_reason":"stop"}]})]);
+    let app=TestApp::new(port,"native");
+    let run=app.post("/api/sdk/runs",&json!({"instruction":format!("현재 프로젝트의 실행 구조를 설명해줘. 참고 자료: {}","가".repeat(1500)),"tokenBudget":1024}));
+    let id=run["id"].as_str().unwrap();let mut final_run=Value::Null;
+    for _ in 0..200 {final_run=app.get(&format!("/api/sdk/runs/{id}"));if matches!(final_run["status"].as_str(),Some("completed"|"failed")){break;}std::thread::sleep(Duration::from_millis(20));}
+    assert_eq!(final_run["status"],"failed","{final_run}");
+    assert!(final_run["error"].as_str().unwrap_or("").contains("예산"),"{final_run}");
+    assert_eq!(requests.lock().unwrap().len(),0,"quota must be checked before the paid model endpoint");
+}
+
+#[test]
+fn owner_replacement_during_approval_cannot_write_the_old_goal_or_escape_workspace(){
+    let _serial=serial();
+    let count=Arc::new(std::sync::atomic::AtomicUsize::new(0));let calls=count.clone();
+    let (port,requests)=scripted_provider(move |_|{
+        let n=calls.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
+        let path=if n==0{"stale-approved.md"}else{"current-approved.md"};
+        vec![json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":format!("steered-approved-{n}"),"type":"function","function":{"name":"workspace_write","arguments":json!({"path":path,"content":""}).to_string()}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":20,"completion_tokens":10,"total_tokens":30}})]
+    });
+    let app=TestApp::new(port,"native");
+    let project=app._root.join("selected-project");std::fs::create_dir_all(&project).unwrap();
+    let run=app.post("/api/sdk/runs",&json!({"instruction":"stale-approved.md 파일을 만들어줘","workspaceDir":project}));
+    let id=run["id"].as_str().unwrap();let mut view=Value::Null;
+    for _ in 0..150{view=app.get(&format!("/api/sdk/runs/{id}"));if view["status"]=="awaiting_approval"{break;}std::thread::sleep(Duration::from_millis(20));}
+    assert_eq!(view["status"],"awaiting_approval","{view}");
+    let old_call=view["checkpoint"]["pendingCall"]["id"].clone();
+    let changed=app.post(&format!("/api/sdk/runs/{id}/steer"),&json!({"mode":"replace","instruction":"current-approved.md 파일을 만들어줘"}));
+    assert_eq!(changed["revision"],1);
+    app.post(&format!("/api/sdk/runs/{id}/approve"),&json!({"callId":old_call}));
+    for _ in 0..150{view=app.get(&format!("/api/sdk/runs/{id}"));if view["status"]=="awaiting_approval"&&view["checkpoint"]["pendingCall"]["id"]!=old_call{break;}std::thread::sleep(Duration::from_millis(20));}
+    let new_call=view["checkpoint"]["pendingCall"]["id"].clone();assert_ne!(new_call,old_call,"{view}");
+    assert!(!project.join("stale-approved.md").exists());
+    app.post(&format!("/api/sdk/runs/{id}/approve"),&json!({"callId":new_call}));
+    for _ in 0..150{view=app.get(&format!("/api/sdk/runs/{id}"));if matches!(view["status"].as_str(),Some("completed"|"failed")){break;}std::thread::sleep(Duration::from_millis(20));}
+    assert_eq!(view["status"],"completed","{view}");
+    assert!(project.join("current-approved.md").is_file());
+    assert!(!project.join("stale-approved.md").exists());assert!(!app._root.join("current-approved.md").exists());
+    assert_eq!(requests.lock().unwrap().len(),2);
+}

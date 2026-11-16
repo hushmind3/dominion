@@ -292,3 +292,6 @@ pub mod execution_budget;
 
 pub mod sandbox;
 pub mod delegation_worktree;
+
+pub mod workspace_scope;
+pub mod job_control;
