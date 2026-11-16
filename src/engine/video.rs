@@ -33,8 +33,13 @@ pub fn models_dir(state: &AppState) -> PathBuf {
     let cfg = config(state);
     match cfg["comfyModelsDir"].as_str().filter(|value| !value.is_empty()) {
         Some(path) => PathBuf::from(path),
-        None => std::env::var("HOME").map(|home| PathBuf::from(home).join("ComfyUI/models"))
-            .unwrap_or_else(|_| PathBuf::from("models")),
+        // HOME is commonly absent on Windows; a working-directory-relative
+        // "models" folder made installed files appear missing after restart.
+        // Keep explicit ComfyUI paths authoritative on every platform.
+        None => std::env::var_os("HOME")
+            .or_else(||std::env::var_os("USERPROFILE"))
+            .map(|home|PathBuf::from(home).join("ComfyUI").join("models"))
+            .unwrap_or_else(||state.config.data_dir.join("comfy-models")),
     }
 }
 
