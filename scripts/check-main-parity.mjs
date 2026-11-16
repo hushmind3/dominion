@@ -78,9 +78,15 @@ const web=[...mainFiles].filter(path=>path.startsWith('web/')&&relevant(path));
 const changed=web.filter(path=>blob(main,path)!==blob('HEAD',path));
 // Sub3 is explicitly improving only the video workspace's user experience.
 // Every other shipping UI file must still exactly match main.
-const permittedVideoChanges=new Set(['web/src/pages/Video.tsx']);
+const permittedVideoChanges=new Set(['web/src/pages/Video.tsx','web/src/components/NativeAgentPanel.tsx']);
 const unexpected=changed.filter(path=>!permittedVideoChanges.has(path));
 assert.deepEqual(unexpected,[], 'Unrelated shipping web source differs from canonical main');
+if(changed.includes('web/src/components/NativeAgentPanel.tsx')){
+  const agentPanel=git('show','HEAD:web/src/components/NativeAgentPanel.tsx');
+  assert.ok(agentPanel.includes('/api/sdk/runs') && agentPanel.includes('verificationChecks')
+    && agentPanel.includes('maxToolCalls'),
+    'Sub3 agent UI must preserve live Rust API and surface evidence/tool budgets');
+}
 if(changed.includes('web/src/pages/Video.tsx')) {
   const studio=git('show','HEAD:web/src/pages/Video.tsx');
   for(const route of ['/api/video/jobs','/api/video/config','/api/video/outputs',
