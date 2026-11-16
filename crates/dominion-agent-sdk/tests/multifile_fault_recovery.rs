@@ -151,11 +151,11 @@ impl Journal for FaultJournal {
     }
 }
 fn workspace()->PathBuf {
+    let nonce=std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     let root=std::env::temp_dir().join(format!(
-        "dominion-fault-multifile-{}",std::process::id()));
-    let root=root.join(format!("{:?}",std::thread::current().id())
-        .replace(['(',')',' '],"-"));
-    // Stable within a single test invocation, isolated across processes.
+        "dominion-fault-multifile-{}-{nonce}",std::process::id()));
+    // Isolated across CI processes and repeated local invocations.
     fs::create_dir_all(root.join("src")).unwrap();
     root
 }
