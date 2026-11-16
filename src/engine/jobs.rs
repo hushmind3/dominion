@@ -664,16 +664,58 @@ fn schedule_automations(state: &AppState) {
         if !matches!(job_kind, "prompt" | "workflow" | "room" | "learn") {
             continue;
         }
-        enqueue(state, job_kind, input);
-        let mut updated = automation.clone();
-        let interval = automation
-            .get("intervalMinutes")
-            .and_then(|value| value.as_i64())
-            .unwrap_or(1440)
-            .max(1);
-        updated["lastAt"] = json!(now.to_rfc3339());
-        updated["nextAt"] = json!((now + chrono::Duration::minutes(interval)).to_rfc3339());
-        state.store.put("automation", &updated);
+        let Some(automation_id) = automation["id"].as_str().filter(|id| !id.is_empty()) else {
+            continue;
+        };
+        let interval = automation["intervalMinutes"].as_i64().unwrap_or(1440).max(1);
+        let job = json!({
+            "id": uuid::Uuid::new_v4().to_string(),
+            "kind": job_kind,
+            "status": "queued",
+            "queuedAt": now.to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
+            "input": input,
+            "attempts": 0,
+            "stepIndex": 0,
+            "stepTotal": 0,
+            "events": [],
+        });
+        // A job and its next execution time are one durable transaction.
+        // A restart or concurrent maintenance tick cannot enqueue the same due
+        // automation twice, nor advance the schedule without creating the job.
+        // The minimal initial record deliberately fails if it was deleted.
+        let outcome = state.store.mutate_record(
+            "automation",
+            automation_id,
+            json!({"id": automation_id}),
+            |current| {
+                if current["enabled"] != true
+                    || current["nextAt"] != automation["nextAt"]
+                    || current["kind"] != automation["kind"]
+                    || current["input"] != automation["input"]
+                    || current["intervalMinutes"] != automation["intervalMinutes"]
+                {
+                    return Err("automation_changed".into());
+                }
+                current["lastAt"] = json!(now.to_rfc3339());
+                current["nextAt"] =
+                    json!((now + chrono::Duration::minutes(interval)).to_rfc3339());
+                Ok(vec![("job".to_string(), job.clone())])
+            },
+        );
+        match outcome {
+            Ok(_) => {
+                state.bus.record("job", &job);
+                state.store.audit(
+                    "job.queued",
+                    json!({"kind":job_kind,"jobId":job["id"],"automationId":automation_id}),
+                );
+            }
+            Err(error) if error == "automation_changed" => {}
+            Err(error) => state.store.audit(
+                "automation.queue_failed",
+                json!({"automationId":automation_id,"error":error}),
+            ),
+        }
     }
 }
 
@@ -696,6 +738,47 @@ mod tests {
         let store = Store::open(&config.db_path()).unwrap();
         let vault = Vault::open(&config.key_path());
         AppState::new(config, store, vault)
+    }
+
+    #[test]
+    fn scheduled_automation_enqueues_once_and_advances_durably() {
+        let state = temp_state();
+        state.store.put("automation", &json!({
+            "id":"auto-once","enabled":true,"kind":"prompt",
+            "nextAt":"2020-01-01T00:00:00Z","intervalMinutes":60,
+            "input":{"prompt":"hello"}
+        }));
+        schedule_automations(&state);
+        schedule_automations(&state);
+        let jobs = state.store.all("job");
+        assert_eq!(jobs.len(), 1, "a second tick cannot repeat a queued run");
+        assert_eq!(jobs[0]["kind"], "prompt");
+        assert_eq!(jobs[0]["input"]["prompt"], "hello");
+        let automation = state.store.get("automation", "auto-once").unwrap();
+        let next_at = chrono::DateTime::parse_from_rfc3339(
+            automation["nextAt"].as_str().unwrap(),
+        ).unwrap();
+        assert!(next_at > chrono::Utc::now());
+        assert!(automation["lastAt"].as_str().is_some());
+        let _ = std::fs::remove_dir_all(&state.config.data_dir);
+    }
+
+    #[test]
+    fn disabled_and_future_automations_do_not_enqueue() {
+        let state = temp_state();
+        state.store.put("automation", &json!({
+            "id":"disabled","enabled":false,"kind":"prompt",
+            "nextAt":"2020-01-01T00:00:00Z","input":{"prompt":"no"}
+        }));
+        state.store.put("automation", &json!({
+            "id":"future","enabled":true,"kind":"prompt",
+            "nextAt":"2099-01-01T00:00:00Z","input":{"prompt":"later"}
+        }));
+        schedule_automations(&state);
+        assert!(state.store.all("job").is_empty());
+        assert!(state.store.get("automation","disabled").unwrap()["lastAt"].is_null());
+        assert!(state.store.get("automation","future").unwrap()["lastAt"].is_null());
+        let _ = std::fs::remove_dir_all(&state.config.data_dir);
     }
 
     #[test]

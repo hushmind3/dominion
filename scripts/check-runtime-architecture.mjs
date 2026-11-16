@@ -44,6 +44,8 @@ if(!store.includes('pub fn due_automations(')||!jobs.includes('store.due_automat
   throw Error('Indexed due-automation dispatch was bypassed')
 if(!store.includes('pub fn pending_approvals(')||!approval.includes('store.pending_approvals('))
   throw Error('Indexed pending-approval expiry was bypassed')
+if(!jobs.includes('store.mutate_record(\n            "automation"')||!jobs.includes('("job".to_string(), job.clone())'))
+  throw Error('Durable automation scheduling must commit the job and next timestamp together')
 const frontend=readFileSync(path.join(root,'web/src/App.tsx'),'utf8')+readFileSync(path.join(root,'web/src/components/WorkspaceShell.tsx'),'utf8')
 if(/VideoPage|SelfImprovementPage|id:'(?:video|rsi)'/.test(frontend))throw Error('Retired UI is reachable')
 if(existsSync(path.join(root,'web/src/components/ImprovementNotice.tsx')))throw Error('Retired RSI prompt widget remains')
