@@ -43,7 +43,12 @@ pub(crate) fn needed(catalog:&HashMap<String,ToolSpec>)->bool {
 }
 fn words(s:&str)->BTreeSet<String>{
  s.to_lowercase().split(|c:char|!c.is_alphanumeric())
-  .filter(|w|w.chars().count()>=2).map(str::to_owned).collect()
+  .filter(|w|w.chars().count()>=2 && !matches!(*w,
+   "the"|"and"|"for"|"with"|"this"|"that"|"from"|"your"|"you"|
+   "use"|"using"|"can"|"will"|"need"|"after"|"into"|"then"|
+   "are"|"was"|"have"|"has"|"should"|"not"|"please"|"all"|
+   "tool"|"tools"|"service" // services are indistinguishable without domain nouns
+  )).map(str::to_owned).collect()
 }
 fn enrich(text:&str)->String {
  let lower=text.to_lowercase();
