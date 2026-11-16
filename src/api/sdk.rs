@@ -149,7 +149,21 @@ fn public_view_indexed(state:&AppState,mut record:Value,index:&ViewIndex)->Value
     record
 }
 fn public_view(state:&AppState,record:Value)->Value{
-    public_view_indexed(state,record,&ViewIndex::load(state))
+    let Some(session)=record["sessionId"].as_str() else{
+        let mut record=record;
+        record["readOnly"]=json!(true);
+        return record;
+    };
+    match state.store.sdk_evidence_for_session(session){
+        Ok((runs,approvals,operations))=>{
+            let index=ViewIndex::from_rows(runs,approvals,operations);
+            public_view_indexed(state,record,&index)
+        }
+        Err(error)=>{
+            state.store.audit("sdk.single_evidence_query_failed",json!({"error":error}));
+            public_view_indexed(state,record,&ViewIndex::load(state))
+        }
+    }
 }
 pub async fn list(State(state):State<AppState>)->Json<Value>{
     let index=ViewIndex::load(&state);
@@ -418,6 +432,27 @@ mod view_tests{
         assert_eq!(unverified["status"],"completed");
         assert_eq!(unverified["verified"],false);
         assert!(unverified["taskOutcome"].is_null());
+    }
+    #[tokio::test]
+    async fn resume_refuses_real_unreconciled_tool_effect_in_sqlite(){
+        let state=fixture();
+        state.store.put("session",&json!({"id":"sdk-session"}));
+        state.store.put("sdk_run",&json!({
+            "id":"sdk-1","sessionId":"sdk-session","status":"interrupted"
+        }));
+        state.store.put("execution",&json!({
+            "id":"exec-1","sessionId":"sdk-session","status":"interrupted",
+            "startedAt":"2026-11-17T00:00:00Z"
+        }));
+        state.store.put("execution_operation",&json!({
+            "id":"op-1","runId":"exec-1","outcomeUnknown":true
+        }));
+        let snapshot=public_view(&state,state.store.get("sdk_run","sdk-1").unwrap());
+        assert_eq!(snapshot["status"],"in_doubt");
+        let response=resume(State(state.clone()),Path("sdk-1".into())).await;
+        assert_eq!(response.status(),StatusCode::CONFLICT);
+        assert_eq!(state.store.get("sdk_run","sdk-1").unwrap()["status"],"interrupted");
+        let _=std::fs::remove_dir_all(&state.config.data_dir);
     }
     #[test]
     fn failed_or_interrupted_runs_show_in_doubt_until_tool_effect_is_reconciled(){

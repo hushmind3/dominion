@@ -43,6 +43,11 @@ SDK `in_doubt` status takes precedence over `failed` and `interrupted` whenever 
 
 SDK tool approvals require a live, uncancelled owner run and propagate resolver failures. Cancellation first atomically claims the SDK run's live status, then signals the shared session epoch; a late cancellation never overwrites completed history or silently stops a finished job.
 
+A single SDK run's poll reads only that session's latest execution, pending
+approval and unknown tool effects through dedicated SQLite indexes. Global SDK
+listing still batches its projection once; a session-less legacy record stays
+read-only without constructing a global index.
+
 The SDK retains the model reply for inspection but exposes the terminal `taskOutcome`, `verified`, and `acceptancePassed` from the canonical native execution. SDK status views query only the latest execution of SDK-owned sessions and unknown associated tool effects, using SQLite partial indexes rather than deserializing full historical execution/tool collections on every UI poll. A requested verification command without independent success evidence cannot return a successful SDK status. Terminal writes use a status compare-and-patch so cancelled runs and owner edits cannot be overwritten by an obsolete completion. On restart, completed SDK runs are settled from their persisted execution verdict, not answer text alone. Legacy conversational clients still receive a `completed` status without an explicit verification request, alongside `verified: false` for unproven outcomes.
 
 ## Regression contract

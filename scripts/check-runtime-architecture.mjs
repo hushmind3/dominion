@@ -53,6 +53,9 @@ if(!jobs.includes('store.uncertain_effect_sessions()')||!store.includes('pub fn 
 if(!jobs.includes('context.finish_terminal(')||!jobs.includes('job.finalization_failed'))
   throw Error('Job success must have a durable terminal claim before audit')
 const sdkApi=readFileSync(path.join(root,'src/api/sdk.rs'),'utf8')
+if(!sdkApi.includes('state.store.sdk_evidence_for_session(session)')||
+    !store.includes('pub fn sdk_evidence_for_session('))
+  throw Error('SDK individual run polling must use its session-scoped evidence read')
 if(!sdkApi.includes('state.store.sdk_evidence_rows()')||!store.includes('pub fn sdk_evidence_rows('))
   throw Error('SDK status polling must not scan full execution and tool history')
 const frontend=readFileSync(path.join(root,'web/src/App.tsx'),'utf8')+readFileSync(path.join(root,'web/src/components/WorkspaceShell.tsx'),'utf8')
