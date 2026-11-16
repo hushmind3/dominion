@@ -15,7 +15,7 @@ use std::{
 };
 
 pub fn config(state: &AppState) -> Value {
-    let mut value = json!({"id":"default","engine":"native","duration":15,"aspectRatio":"9:16","comfyUrl":"","comfyWorkflow":null,"workflowDir":"","outputDir":"","ffmpegPath":"","providerId":"","model":"","useModel":false,"narration":true,"voice":"Yuna","rate":170,"videoModel":"","resolution":"480x832","steps":20,"comfyModelsDir":""});
+    let mut value = json!({"id":"default","engine":"native","duration":15,"aspectRatio":"9:16","comfyUrl":"","comfyWorkflow":null,"workflowDir":"","outputDir":"","ffmpegPath":"","providerId":"","model":"","useModel":false,"narration":true,"subtitles":true,"voice":"Yuna","rate":170,"videoModel":"","resolution":"480x832","steps":20,"comfyModelsDir":""});
     if let Some(saved) = state.store.get("video_config", "default") {
         if let Some(map) = saved.as_object() {
             for (k, v) in map {
@@ -625,6 +625,8 @@ pub fn public_job(job: &Value) -> Value {
         "negativePrompt":render["negativePrompt"],
         "reuseVideoJobId":job["input"]["reuseVideoJobId"],
         "maxNewScenes":job["input"]["maxNewScenes"],
+        "narrationScript":job["input"]["narrationScript"],
+        "narrationLines":job["videoState"]["narrationLines"],
         "remoteCancel":job["remoteCancel"],
         "sceneProgress":{
             "index":job["videoState"]["sceneIndex"],
@@ -698,6 +700,10 @@ pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
     let fps = body["fps"].as_u64().unwrap_or(16);
     let seed = body["seed"].as_i64().unwrap_or(-1);
     let negative_prompt = body["negativePrompt"].as_str().unwrap_or("");
+    let narration_script = body["narrationScript"].as_str().unwrap_or("").trim();
+    if narration_script.len()>8000 {
+        return Err("내레이션 대본은 8000바이트 이하로 입력하세요.".into());
+    }
     if !(1..=60).contains(&fps) || seed < -1 || negative_prompt.len() > 16_000 {
         return Err("FPS, 시드, 네거티브 프롬프트 값을 확인하세요.".into());
     }
@@ -780,6 +786,7 @@ pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
         "aspectRatio":aspect, "config":cfg, "publish":false,
         "scenes":scenes,
         "autoStoryboard":auto_storyboard,
+        "narrationScript":narration_script,
         "planningProviderId":body["planningProviderId"].as_str().unwrap_or(""),
         "continuity":body["continuity"].as_str().unwrap_or("").chars().take(2000).collect::<String>(),
         "reuseVideoJobId":body["reuseVideoJobId"].as_str().unwrap_or(""),
@@ -927,6 +934,101 @@ async fn say_scenes(
         .ok()?;
     if !status.success() { return None; }
     Some((durations, dir.join("narration.m4a")))
+}
+
+/// These subtitles are real muxed MP4 mov_text tracks, not fake UI labels.
+fn srt_stamp(ms:u64)->String {
+    let s=ms/1000;
+    format!("{:02}:{:02}:{:02},{:03}",s/3600,(s/60)%60,s%60,ms%1000)
+}
+fn captions_from_narration(input:&Value,script:&str)->String {
+    let duration_ms=input["duration"].as_u64().unwrap_or(6).saturating_mul(1000);
+    let mut lines=input["narrationLines"].as_array()
+        .map(|items|items.iter().filter_map(Value::as_str)
+            .map(str::trim).filter(|s|!s.is_empty()).map(str::to_owned)
+            .collect::<Vec<_>>()).unwrap_or_default();
+    if lines.is_empty(){
+        lines=script.split(['\n','。','!','?','.'])
+            .map(str::trim).filter(|s|!s.is_empty())
+            .map(str::to_owned).collect();
+    }
+    if lines.is_empty(){lines.push(script.trim().to_owned());}
+    let count=lines.len() as u64;
+    let mut out=String::new();
+    for (index,line) in lines.iter().enumerate(){
+        // Each cue takes its own time slice, with no overlapping boundaries.
+        let start=duration_ms.saturating_mul(index as u64)/count;
+        let end=duration_ms.saturating_mul(index as u64+1)/count;
+        out.push_str(&format!("{}\n{} --> {}\n{}\n\n",
+            index+1,srt_stamp(start),srt_stamp(end),line));
+    }
+    out
+}
+
+/// A complete AI-rendered clip is independently useful even when the host
+/// lacks a speech voice. Optional narration/captions use FFmpeg offline and
+/// atomically replace the old video only after the output validates.
+async fn postprocess_narration(ctx:&JobContext,input:&Value,dir:&Path)->Result<Value,String>{
+    let config=&input["config"];
+    let explicit=input["narrationScript"].as_str().unwrap_or("").trim();
+    let planned=input["narrationLines"].as_array()
+        .map(|lines|lines.iter().filter_map(Value::as_str)
+            .filter(|s|!s.trim().is_empty()).collect::<Vec<_>>().join(" "))
+        .unwrap_or_default();
+    let script=if explicit.is_empty(){planned.as_str()}else{explicit};
+    if script.trim().is_empty() {
+        return Ok(json!({"narrated":false,"captions":false}));
+    }
+    ctx.checkpoint(json!({"phase":"audio","progress":92}))?;
+    let ffmpeg=ffmpeg_from_config(config)
+        .ok_or("내레이션과 자막 합성에는 FFmpeg가 필요합니다.")?;
+    let audio=if config["narration"]==false{None}
+        else{say_scenes(dir,&[script.to_string()],config,&ffmpeg).await};
+    let add_captions=config["subtitles"]!=false;
+    if !add_captions && audio.is_none(){
+        return Ok(json!({"narrated":false,"captions":false,
+            "narrationWarning":"음성 엔진이 없어 소리를 생성하지 못했습니다."}));
+    }
+    if add_captions {
+        std::fs::write(dir.join("captions.srt"),captions_from_narration(input,script))
+            .map_err(|e|e.to_string())?;
+    }
+    let mut cmd=tokio::process::Command::new(&ffmpeg);
+    cmd.current_dir(dir).args(["-hide_banner","-loglevel","error","-nostdin",
+        "-y","-i","output.mp4"]);
+    if audio.is_some(){cmd.args(["-i","narration.m4a"]);}
+    if add_captions{cmd.args(["-f","srt","-i","captions.srt"]);}
+    cmd.args(["-map","0:v:0","-c:v","copy"]);
+    if audio.is_some() {
+        cmd.args(["-map","1:a:0","-c:a","aac","-af","apad"]);
+    }else{
+        cmd.args(["-map","0:a?","-c:a","copy"]);
+    }
+    if add_captions {
+        let subtitle_map=if audio.is_some(){"2:s:0"}else{"1:s:0"};
+        cmd.args(["-map",subtitle_map,"-c:s","mov_text"]);
+    }
+    cmd.args(["-shortest","-movflags","+faststart","output.narrated.part.mp4"]);
+    let process=tools::run_command(&mut cmd,Duration::from_secs(180));
+    tokio::pin!(process);
+    let output=loop {
+        tokio::select! {
+            result=&mut process=>break result?,
+            _=tokio::time::sleep(Duration::from_millis(500))=>{
+                ctx.checkpoint(json!({}))?;
+            }
+        }
+    };
+    if !output.status.success(){
+        return Err(format!("영상 음성·자막 합성 실패: {}",
+            String::from_utf8_lossy(&output.stderr).chars().take(600).collect::<String>()));
+    }
+    install_video_output(&dir.join("output.narrated.part.mp4"),&dir.join("output.mp4"))?;
+    let warning=if audio.is_none()&&config["narration"]!=false {
+        "이 환경에서 음성 합성이 지원되지 않아 자막만 추가했습니다."
+    }else{""};
+    Ok(json!({"narrated":audio.is_some(),"captions":add_captions,
+        "narrationWarning":warning}))
 }
 
 async fn probe_duration(ffprobe: &Path, file: &Path) -> Option<f64> {
@@ -1499,7 +1601,32 @@ fn parse_video_storyboard(text:&str,limit:usize)->Result<Vec<String>,String>{
     Ok(scenes.into_iter().map(|s|s.trim().to_string()).collect())
 }
 
-async fn plan_video_scenes(ctx:&JobContext,input:&Value)->Result<Option<Vec<String>>,String>{
+/// Structured one-call scene plan: visuals and concise spoken narration
+/// share a frozen boundary. Legacy JSON string arrays remain supported.
+fn parse_video_plan(text:&str,limit:usize)->Result<(Vec<String>,Vec<String>),String>{
+    let clean=text.trim().trim_start_matches("```json")
+        .trim_start_matches("```").trim_end_matches("```").trim();
+    let value:Value=serde_json::from_str(clean)
+        .map_err(|_|"AI 장면 계획은 JSON이어야 합니다.")?;
+    if value.is_array(){
+        return Ok((parse_video_storyboard(clean,limit)?,vec![]));
+    }
+    let objects=value["scenes"].as_array()
+        .ok_or("AI 장면 계획에 scenes 배열이 없습니다.")?;
+    let visuals=objects.iter()
+        .map(|scene|scene["visual"].as_str().unwrap_or("").trim().to_owned())
+        .collect::<Vec<_>>();
+    let visuals=parse_video_storyboard(&json!(visuals).to_string(),limit)?;
+    let narration=objects.iter().map(|scene|
+        scene["narration"].as_str().unwrap_or("").trim().to_owned()).collect::<Vec<_>>();
+    if narration.iter().any(|line|line.len()>600)
+        || narration.iter().any(|line|line.is_empty()){
+        return Err("AI 내레이션 대본이 누락됐거나 장면당 600바이트를 넘었습니다.".into());
+    }
+    Ok((visuals,narration))
+}
+
+async fn plan_video_scenes(ctx:&JobContext,input:&Value)->Result<Option<(Vec<String>,Vec<String>)>,String>{
     if input["autoStoryboard"]!=true{return Ok(None);}
     let duration=input["duration"].as_u64().unwrap_or(6);
     let max_by_time=(duration/3).clamp(1,4) as usize;
@@ -1511,20 +1638,22 @@ async fn plan_video_scenes(ctx:&JobContext,input:&Value)->Result<Option<Vec<Stri
     let route=crate::engine::gateway::resolve(&ctx.state,preferred,None)
         .map_err(|_|"자동 대본 기획에 사용할 텍스트 AI 제공자를 먼저 연결하세요.")?;
     let system=format!(
-        "당신은 짧은 영상 감독입니다. 다음 주제의 영상 스토리보드 장면을 2~{limit}개 작성하세요. \
-         JSON 문자열 배열만 반환하세요. 각 문자열은 동일한 등장인물과 시각 스타일을 유지하는 \
-         구체적인 영상 장면 지시문이며 4000바이트 미만이어야 합니다. \
-         사실을 지어내지 말고 장면 전환을 자연스럽게 이어 주세요."
+        "당신은 영상 감독이자 내레이터입니다. 2~{limit}장면을 구성하세요. \
+         JSON 객체 하나만 반환: {{\"scenes\":[{{\"visual\":\"구체적인 영상 생성 지시문\",\"narration\":\"해당 장면의 짧은 한국어 내레이션\"}}]}}. \
+         visual에는 같은 인물·의상·시각 스타일·카메라 움직임을 적고 4000바이트 미만으로 하세요. \
+         narration은 장면 길이 3초마다 약 12~20글자의 자연스러운 말투로 짧게 작성하세요. \
+         제공되지 않은 사실을 지어내지 말고 장면 전환을 이어주세요."
     );
     let brief=input["brief"].as_str().unwrap_or("");
     let text=crate::engine::llm::complete(&ctx.state,&route.id,&route.model,
         &system,brief).await?;
-    let scenes=parse_video_storyboard(&text,limit)?;
+    let (scenes,narration)=parse_video_plan(&text,limit)?;
     ctx.checkpoint(json!({
         "phase":"storyboard","progress":9,
-        "videoState":{"scenes":scenes,"sceneTotal":scenes.len()}
+        "videoState":{"scenes":scenes,"sceneTotal":scenes.len(),
+            "narrationLines":narration}
     }))?;
-    Ok(Some(scenes))
+    Ok(Some((scenes,narration)))
 }
 
 pub async fn run(ctx: &JobContext, job: &Value) -> Result<Value, String> {
@@ -1537,11 +1666,13 @@ pub async fn run(ctx: &JobContext, job: &Value) -> Result<Value, String> {
     if input["autoStoryboard"] == true && job["videoState"]["scenes"].is_array() {
         let saved=parse_video_storyboard(&job["videoState"]["scenes"].to_string(),4)?;
         input["scenes"]=json!(saved);
-    } else if let Some(planned)=plan_video_scenes(ctx,&input).await? {
+        input["narrationLines"]=job["videoState"]["narrationLines"].clone();
+    } else if let Some((planned,narration))=plan_video_scenes(ctx,&input).await? {
         input["scenes"]=json!(planned);
+        input["narrationLines"]=json!(narration);
     }
     let input=&input;
-    let result = if input["engine"] == "comfyui" {
+    let mut result = if input["engine"] == "comfyui" {
         if input["scenes"].as_array().is_some_and(|items|items.len()>1){
             comfy_storyboard(ctx,input,&dir).await
         }else{
@@ -1550,6 +1681,24 @@ pub async fn run(ctx: &JobContext, job: &Value) -> Result<Value, String> {
     } else {
         native(ctx, input, &dir).await
     };
+    if result.is_ok() && input["engine"] == "comfyui" {
+        match postprocess_narration(ctx,input,&dir).await {
+            Ok(post)=>if let Ok(value)=result.as_mut(){
+                for key in ["narrated","captions","narrationWarning"] {
+                    if !post[key].is_null(){value[key]=post[key].clone();}
+                }
+            },
+            Err(message)=>{
+                if ctx.state.store.get("job",&ctx.job_id)
+                    .is_some_and(|job|job["cancelRequested"]==true){
+                    result=Err(message);
+                }else if let Ok(value)=result.as_mut(){
+                    // A failed optional audio pass never destroys the rendered MP4.
+                    value["narrationWarning"]=json!(message);
+                }
+            }
+        }
+    }
     match result {
         Ok(mut value) => {
             let bytes = std::fs::metadata(dir.join("output.mp4"))
@@ -1813,6 +1962,19 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn structured_storyboard_produces_visuals_and_spoken_lines_without_extra_llm_calls(){
+        let sample=r#"{"scenes":[{"visual":"woman in blue jacket walking","narration":"도시의 아침이 밝습니다."},{"visual":"same woman reaches the station","narration":"그녀의 하루가 시작됩니다."}]}"#;
+        let (visuals,narration)=parse_video_plan(sample,4).unwrap();
+        assert_eq!(visuals.len(),2);
+        assert_eq!(narration.len(),2);
+        let input=json!({"duration":6,"narrationLines":narration});
+        let srt=captions_from_narration(&input,&narration.join(" "));
+        assert!(srt.contains("00:00:00,000 --> 00:00:03,000"));
+        assert!(srt.contains("00:00:03,000 --> 00:00:06,000"));
+        assert!(parse_video_plan(r#"{"scenes":[{"visual":"A","narration":""},{"visual":"B","narration":"B"}]}"#,4).is_err());
+        assert_eq!(parse_video_plan(r#"["A","B"]"#,4).unwrap().1.len(),0);
+    }
     #[test]
     fn restored_ai_storyboard_passes_the_same_frozen_validator() {
         let scenes=json!(["Character enters a blue station",
