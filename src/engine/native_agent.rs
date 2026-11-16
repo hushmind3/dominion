@@ -257,6 +257,16 @@ impl Evidence for FsEvidence {
                     let content=std::fs::read_to_string(&path).map_err(|e|e.to_string())?;
                     Ok(content.contains(criterion.contains.as_deref().unwrap_or("")))
                 }
+                CriterionKind::FileSha256=>{
+                    use sha2::{Digest,Sha256};
+                    let metadata=std::fs::metadata(&path).map_err(|e|e.to_string())?;
+                    if !metadata.is_file()||metadata.len()>16*1024*1024{
+                        return Err("Artifact hash verification requires a regular file <=16 MiB".into());
+                    }
+                    let content=std::fs::read(&path).map_err(|e|e.to_string())?;
+                    let actual=format!("{:x}",Sha256::digest(&content));
+                    Ok(criterion.contains.as_deref().is_some_and(|expected|actual.eq_ignore_ascii_case(expected)))
+                }
                 CriterionKind::ToolSucceeded=>Err("Tool success requires a durable tool receipt".into()),
             }
         })
