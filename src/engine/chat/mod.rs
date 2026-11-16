@@ -155,7 +155,7 @@ impl TurnRequest {
             auto_learning: value
                 .get("autoLearning")
                 .and_then(|item| item.as_bool())
-                .unwrap_or(true),
+                .unwrap_or(false),
             system_override: string("systemOverride"),
             task_id: string("taskId"),
             parent_task_id: string("parentTaskId"),

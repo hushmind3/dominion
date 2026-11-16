@@ -402,16 +402,41 @@ pub fn start(state: AppState) {
     for _ in 0..workers {
         let worker_state = state.clone();
         tokio::spawn(async move {
+            let mut receiver=worker_state.bus.subscribe();
             loop {
                 match next_queued(&worker_state) {
-                    Some(job) => run_job(worker_state.clone(), job).await,
-                    None => tokio::time::sleep(Duration::from_millis(400)).await,
+                    Some(job)=>run_job(worker_state.clone(),job).await,
+                    None=>{
+                        // Subscribe before first scan (below), so an enqueue
+                        // committed between scan and sleep cannot be missed.
+                        // Backstop catches delayed durable jobs and external
+                        // writers without continuous full-record polling.
+                        let timeout=tokio::time::sleep(Duration::from_secs(5));
+                        tokio::pin!(timeout);
+                        loop {
+                            tokio::select!{
+                                _=&mut timeout=>break,
+                                event=receiver.recv()=>{
+                                    match event {
+                                        Ok(event) if event["type"]=="record"
+                                            && event["kind"]=="job"
+                                            && event["record"]["status"]=="queued"=>break,
+                                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>break,
+                                        Err(tokio::sync::broadcast::error::RecvError::Closed)=>{
+                                            timeout.await;
+                                            break;
+                                        },
+                                        _=>{}
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         });
     }
 
-    let maintenance_state = state.clone();
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(30)).await;
@@ -422,19 +447,13 @@ pub fn start(state: AppState) {
         }
     });
 
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_secs(300)).await;
-            retry_failed_learning(&maintenance_state);
-            crate::engine::agent_growth::sweep(&maintenance_state);
-            crate::engine::distill::sweep(&maintenance_state);
-            crate::engine::memory::learning_sweep(&maintenance_state);
-        }
-    });
+    // No background learning/RSI/distillation sweeps. User-directed code
+    // improvement and explicit corrective memory remain available through
+    // their request-driven paths; never consume idle resources by default.
 }
 
 fn next_queued(state: &AppState) -> Option<Value> {
-    let jobs = state.store.all("job");
+    let jobs = state.store.active_jobs();
     let learning_running = jobs
         .iter()
         .any(|job| job["status"] == "running" && job["kind"] == "learn");

@@ -165,6 +165,9 @@ impl Store {
              );
              CREATE INDEX IF NOT EXISTS idx_records_kind_updated
                  ON records(kind, updated_at DESC);
+             CREATE INDEX IF NOT EXISTS idx_job_status
+                 ON records(json_extract(data,'$.status'))
+                 WHERE kind='job' AND json_extract(data,'$.status') IN ('queued','running');
              CREATE INDEX IF NOT EXISTS idx_operation_run
                  ON records(json_extract(data,'$.runId'))
                  WHERE kind='execution_operation';
@@ -208,6 +211,20 @@ impl Store {
             Err(_) => return Vec::new(),
         };
         rows.filter_map(|row| row.ok()).collect()
+    }
+
+    /// Queue worker read: the indexed active subset, not every historical
+    /// completed/cancelled/failed job. Old SQLite data remains untouched.
+    pub fn active_jobs(&self)->Vec<Value>{
+        let conn=self.conn.lock().unwrap();
+        let mut stmt=match conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='job' AND json_extract(data,'$.status') IN ('queued','running')"
+        ){Ok(s)=>s,Err(_)=>return Vec::new()};
+        let rows=match stmt.query_map([],record_from_row){
+            Ok(r)=>r,Err(_)=>return Vec::new(),
+        };
+        rows.filter_map(Result::ok).collect()
     }
 
     /// Main Home UI polls per-job progress frequently. Read only executions
