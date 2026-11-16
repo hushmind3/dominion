@@ -168,7 +168,7 @@ pub async fn run_plan(ctx:&JobContext,job:&Value)->Result<Value,String>{
    "planningSource":source,"updatedAt":chrono::Utc::now().to_rfc3339()}))
   .ok_or("기획 저장 충돌")?;
  ctx.state.bus.record("video_project",&saved);
- if project["autoRender"]==true{render(&ctx.state,id,Some(1))?}
+ if project["autoRender"]==true{render(&ctx.state,id,Some(1))?;}
  Ok(json!({"projectId":id,"sceneCount":scenes.len(),"planningSource":source}))
 }
 pub fn finish_render(state:&AppState,job:&Value){
