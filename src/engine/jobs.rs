@@ -324,6 +324,8 @@ pub fn start(state: AppState) {
     let capacity = Arc::new(tokio::sync::Semaphore::new(workers));
     let finished = Arc::new(tokio::sync::Notify::new());
     let mut job_events = state.bus.subscribe();
+    let mut fallback = tokio::time::interval(Duration::from_secs(10));
+    fallback.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let dispatch_state = state.clone();
     tokio::spawn(async move {
         loop {
@@ -350,7 +352,7 @@ pub fn start(state: AppState) {
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {},
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 },
-                _ = tokio::time::sleep(Duration::from_secs(10)) => {},
+                _ = fallback.tick() => {},
             }
         }
     });
