@@ -58,6 +58,23 @@ export interface StartRun {
   shellSandbox?: 'required' | 'off';
 }
 
+export interface WaitRunOptions {
+  /** Maximum elapsed time. A timeout never cancels the remote run. */
+  timeoutMs?: number;
+  /** Poll interval for durable checkpoints. */
+  intervalMs?: number;
+  signal?: AbortSignal;
+  /** Called once for each authoritative snapshot received from Rust. */
+  onUpdate?: (run: AgentRun) => void;
+}
+
+/** Returns when work is finished or the owner must take action. */
+export const isRunSettled = (run: AgentRun): boolean =>
+  new Set<SdkRunStatus>([
+    'completed', 'failed', 'cancelled', 'exhausted', 'denied',
+    'awaiting_approval', 'in_doubt', 'interrupted',
+  ]).has(run.status);
+
 export interface ClientOptions {
   baseUrl?: string;
   adminToken?: string;
@@ -144,5 +161,49 @@ export class DominionAgentClient {
       {}, signal);
   }
 
+  /**
+   * Waits for a terminal snapshot or an owner-action boundary, without
+   * inventing completion when approval or effect reconciliation is required.
+   */
+  async waitForRun(id: string, options: WaitRunOptions = {}): Promise<AgentRun> {
+    const timeoutMs = Math.max(0, options.timeoutMs ?? 30 * 60_000);
+    const intervalMs = Math.max(50, options.intervalMs ?? 1_000);
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      options.signal?.throwIfAborted();
+      const snapshot = await this.getRun(id, options.signal);
+      options.onUpdate?.(snapshot);
+      if (isRunSettled(snapshot)) return snapshot;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        throw new DominionSdkError('Dominion run wait timed out; the remote run is still durable', 408);
+      }
+      await new Promise<void>((resolve, reject) => {
+        const signal = options.signal;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const abort = () => {
+          if (timer !== undefined) clearTimeout(timer);
+          signal?.removeEventListener('abort', abort);
+          reject(signal?.reason ?? new DOMException('Aborted', 'AbortError'));
+        };
+        if (signal?.aborted) { abort(); return; }
+        timer = setTimeout(() => {
+          signal?.removeEventListener('abort', abort);
+          resolve();
+        }, Math.min(intervalMs, remaining));
+        signal?.addEventListener('abort', abort, {once: true});
+      });
+    }
+  }
 
+  /** Strict success gate: a text reply alone never constitutes verified work. */
+  async waitForVerifiedRun(id: string, options: WaitRunOptions = {}): Promise<AgentRun> {
+    const run = await this.waitForRun(id, options);
+    if (run.status === 'completed' && run.taskOutcome === 'succeeded'
+        && run.verified === true) return run;
+    throw new DominionSdkError(
+      run.error ?? `Dominion task is ${run.status}; verified success evidence is missing`,
+      run.status === 'awaiting_approval' || run.status === 'in_doubt' ? 409 : 422,
+    );
+  }
 }

@@ -29,6 +29,12 @@ and `run.taskOutcome === 'succeeded'` before claiming a task was completed
 successfully. A requested `verifyCommand` without successful acceptance
 evidence returns `status: 'failed'` while retaining the model answer for review.
 
+For external integrations, `await agent.waitForRun(run.id)` returns the
+authoritative snapshot at completion, interruption, approval or reconciliation
+boundaries. `await agent.waitForVerifiedRun(run.id)` accepts only independently
+verified `taskOutcome: 'succeeded'` and rejects an unverified text reply.
+Both helpers support `AbortSignal`, bounded timeouts and progress callbacks.
+
 Other methods: `listRuns`, `resumeRun`, `cancelRun`, `reconcileRun`,
 `steerRun(run.id, instruction, "append" | "replace")`. Steering changes the
 active owner goal in the same native execution; usage and effect receipts remain
