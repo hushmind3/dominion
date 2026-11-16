@@ -154,12 +154,25 @@ pub(crate) fn project(receipts:&[Receipt], strategy:Strategy, max_result_chars:u
     let mut important_failures=Vec::new();
     let mut failure_budget=cap/6;
     for receipt in receipts[..recent_start].iter().rev().filter(|r|!r.success).take(4) {
-        let item=json!({"id":receipt.id,"tool":receipt.tool,"step":receipt.step,
-            "result":clip(&receipt.result.to_string(),200,400)});
-        let size=item.to_string().chars().count();
-        if size>failure_budget {break;}
-        failure_budget-=size;
-        important_failures.push(item);
+        // Failed operations remain actionable even when diagnostics contain
+        // huge escaped strings. A fixed-size preview can exceed the budget
+        // after JSON serialization; shrink it instead of dropping the error.
+        let full=receipt.result.to_string();
+        let mut allowance=600usize.min(failure_budget.saturating_sub(96));
+        let mut selected=None;
+        for _ in 0..12 {
+            if allowance<32 {break;}
+            let item=json!({"id":receipt.id,"tool":receipt.tool,"step":receipt.step,
+                "result":clip(&full,allowance*2/5,allowance*3/5)});
+            let size=item.to_string().chars().count();
+            if size<=failure_budget {selected=Some((item,size));break;}
+            allowance=allowance*3/4;
+        }
+        if let Some((item,size))=selected {
+            failure_budget-=size;
+            important_failures.push(item);
+        }
+        // One oversized record must not hide every older failure.
     }
     important_failures.reverse();
     let mut history_index=Vec::new();
@@ -239,6 +252,29 @@ mod tests {
         data.extend((0..20).map(|i|receipt(&format!("r{i}"),i+2,true,json!("OK"))));
         let p=project(&data,Strategy::Balanced,800);
         assert!(serde_json::to_string(&p.important_failures).unwrap().contains("REAL_ERROR"));
+    }
+    #[test]
+    fn escaped_oversized_failure_keeps_the_actionable_diagnostic() {
+        let mut data=vec![receipt("huge-failure",1,false,
+            json!({"stderr":format!("{}ROOT_CAUSE_AT_END", "\\\"".repeat(20_000))}))];
+        data.extend((0..20).map(|i|receipt(&format!("read-{i}"),i+2,true,json!("OK"))));
+        let projection=project(&data,Strategy::LowCost,3200);
+        let failures=serde_json::to_string(&projection.important_failures).unwrap();
+        assert!(failures.contains("huge-failure"),"must keep error identity");
+        assert!(failures.contains("ROOT_CAUSE_AT_END"),"must keep diagnostic tail");
+        assert!(failures.chars().count()<=4500/6,
+            "failure index must remain inside its token budget");
+    }
+    #[test]
+    fn one_unrepresentable_error_does_not_hide_smaller_old_failure() {
+        let mut data=vec![
+            receipt("older-error",1,false,json!("SMALL_ROOT_CAUSE")),
+            receipt(&"x".repeat(2000),2,false,json!("oversized receipt identity"))
+        ];
+        data.extend((0..20).map(|i|receipt(&format!("read-{i}"),i+3,true,json!("OK"))));
+        let projection=project(&data,Strategy::LowCost,3200);
+        let failures=serde_json::to_string(&projection.important_failures).unwrap();
+        assert!(failures.contains("SMALL_ROOT_CAUSE"));
     }
     #[test]
     fn newer_failures_and_unicode_boundaries_retain_tail() {
