@@ -239,6 +239,10 @@ pub fn configure(
             if let Some(path) = workspace {
                 session["workspaceDir"] = json!(path);
             }
+            if let Some(object)=session.as_object_mut() {
+                if !input["tokenBudget"].is_null() { object.remove("budgetUsd"); }
+                if !input["budgetUsd"].is_null() { object.remove("tokenBudget"); }
+            }
             for key in ["tokenBudget", "budgetUsd", "shellSandbox"] {
                 if !input[key].is_null() {
                     session[key] = input[key].clone();
@@ -440,7 +444,7 @@ mod tests {
         let state = state();
         state.store.put(
             "session",
-            &json!({"id":"s","tokenBudget":9999,"shellSandbox":"off"}),
+            &json!({"id":"s","tokenBudget":9999,"budgetUsd":2.0,"shellSandbox":"off"}),
         );
         let job = json!({"id":"j","kind":"prompt","status":"running","input":{"prompt":"explain","tokenBudget":2048,"shellSandbox":"required"}});
         state.store.put("job", &job);
@@ -452,7 +456,9 @@ mod tests {
             state.store.get("session", "s").unwrap()["tokenBudget"],
             2048
         );
+        assert!(state.store.get("session","s").unwrap()["budgetUsd"].is_null());
         drop(scope);
+        assert_eq!(state.store.get("session","s").unwrap()["budgetUsd"],2.0);
         assert_eq!(
             state.store.get("session", "s").unwrap()["tokenBudget"],
             9999

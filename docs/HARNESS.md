@@ -40,7 +40,7 @@
 - `POST /api/jobs/:id/steer`, `POST /api/sdk/runs/:id/steer`의 `{instruction, mode:"append"|"replace"}`로 실행 중 지시를 변경합니다. 기존 실행의 예산·영수증을 유지하며 같은 코어에서 처리합니다. 이전 목표의 모델 응답과 승인 대기 도구는 새 목표의 효과를 만들 수 없습니다. 이미 적용된 효과는 기록에 남습니다. 완료와 지시 수락은 같은 리비전 게이트를 사용합니다.
 - `GET /api/executions/:id`의 `hierarchicalBudget`으로 예약·정산을 조회합니다. `POST /api/executions/:id/budget/reconcile`에 `{callId, charged, details}`로 중단된 모델 호출의 실제 관측 비용을 정산합니다. `charged` 단위는 해당 트리의 토큰 또는 USD 백만분의 일입니다. 도구 효과 확인 API와 별도이며, 확인되지 않은 비용을 자동 환불하지 않습니다.
 
-`delegate_task`의 `isolatedWorktree:true`는 깨끗한 Git 원본에서 독립 작업공간을 만들고 필수 셸 격리를 적용합니다. `readOnly:true`는 관찰 도구만 허용합니다. 격리 작업은 파일 접근을 자신의 폴더로 제한하고 외부 변경 도구를 차단합니다. `workspace_git_status`, `workspace_git_diff`는 고정된 읽기 명령으로 변경을 검사합니다. 자식 결과는 자동 합치지 않습니다. 부모의 승인 대상인 `task_integrate`가 완료 시 고정한 패치 해시·기준 커밋·충돌 여부를 검사하고 기존 파일 잠금 아래 적용합니다. 수정된 결과나 재적용은 거부합니다.
+`delegate_task`의 `isolatedWorktree:true`는 깨끗한 Git 원본에서 독립 작업공간을 만들고 필수 셸 격리를 적용합니다. `readOnly:true`는 관찰 도구만 허용합니다. 격리 작업의 파일 도구는 자신의 폴더로 제한하고 외부 변경 도구를 차단합니다. 격리 셸은 시스템 실행 파일을 읽고 임시 폴더에 쓸 수 있으며 네트워크와 원본 프로젝트 접근은 차단합니다. `workspace_git_status`, `workspace_git_diff`는 고정된 읽기 명령으로 변경을 검사합니다. 자식 결과는 자동 합치지 않습니다. 부모의 승인 대상인 `task_integrate`가 완료 시 고정한 패치 해시·기준 커밋·충돌 여부를 검사하고 기존 파일 잠금 아래 적용합니다. 수정된 결과나 재적용은 거부합니다.
 
 필수 셸 격리는 macOS Seatbelt, Linux bubblewrap을 사용합니다. 필요한 백엔드가 없거나 지원하지 않는 OS이면 격리 작업의 셸 실행을 거부합니다. 일반 채팅의 기본 셸 정책은 유지합니다.
 

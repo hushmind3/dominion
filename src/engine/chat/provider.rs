@@ -990,7 +990,7 @@ async fn stream_completion_once_body(
         &provider.base_url,
         &provider.model,
         provider.requests_per_minute,
-    )?;
+    ).map_err(|e|format!("[model_not_started] {e}"))?;
     let _permit = crate::engine::gateway::acquire(&provider.base_url, provider.local).await;
     let builder = crate::engine::gateway::benchmark_request(
         client.post(format!("{}/chat/completions", provider.base_url)),
@@ -1796,9 +1796,13 @@ async fn stream_anthropic_once(
             Some("medium") => 2048,
             _ => 4096,
         };
-        body["thinking"] = json!({"type": "enabled", "budget_tokens": budget});
-        let max_tokens = body["max_tokens"].as_u64().unwrap_or(4096).max(budget + 1024);
-        body["max_tokens"] = json!(max_tokens);
+        // Thinking is part of the admitted output, never an allowance added
+        // after reserving the shared budget.
+        let max_tokens = body["max_tokens"].as_u64().unwrap_or(4096);
+        if max_tokens <= 1024 {
+            return Err("[model_not_started] 남은 출력 예산으로 Anthropic 추론을 시작할 수 없습니다.".into());
+        }
+        body["thinking"] = json!({"type": "enabled", "budget_tokens": budget.min(max_tokens - 1)});
     }
 
     let _permit = crate::engine::gateway::acquire(&provider.base_url, provider.local).await;
@@ -2627,6 +2631,24 @@ mod tests {
         assert!(sent.contains("write receipt"), "write result must survive");
         assert!(sent.contains("permission denied"), "tool errors must survive");
         assert_eq!(pressure,original, "provider must only edit its transmitted copy");
+        drop(bodies);
+        // The provider reasoning adapter must not enlarge the output after
+        // budget admission, including when the remaining allowance is small.
+        let mut thinking_request=request.clone();thinking_request.thinking=Some(true);
+        limited.max_output_tokens=Some(1500);
+        let (tx3,_rx3)=tokio::sync::mpsc::unbounded_channel();
+        stream_completion_once(&state,&reqwest::Client::new(),&limited,&messages,&[],
+            &thinking_request,"s",&tx3,false).await.unwrap();
+        let bodies=observed.lock().unwrap();
+        assert_eq!(bodies[2]["body"]["max_tokens"],1500);
+        assert_eq!(bodies[2]["body"]["thinking"]["budget_tokens"],1499);
+        drop(bodies);
+        limited.max_output_tokens=Some(1024);
+        let (tx4,_rx4)=tokio::sync::mpsc::unbounded_channel();
+        let error=stream_completion_once(&state,&reqwest::Client::new(),&limited,&messages,&[],
+            &thinking_request,"s",&tx4,false).await.err().unwrap();
+        assert!(error.contains("[model_not_started]"));
+        assert_eq!(observed.lock().unwrap().len(),3,"unaffordable reasoning must not reach HTTP");
         server.abort();
         let _ = std::fs::remove_dir_all(root);
     }

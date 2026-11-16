@@ -331,7 +331,8 @@ impl Call {
             return self.completed_without_usage();
         }
         let no_generation = error.is_some_and(|e| {
-            e.contains("HTTP 4")
+            e.contains("[model_not_started]")
+                || e.contains("HTTP 4")
                 || e.contains("HTTP 5")
                 || e.contains("Connection refused")
                 || e.contains("tcp connect error")

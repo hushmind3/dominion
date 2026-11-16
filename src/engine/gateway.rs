@@ -412,6 +412,14 @@ pub fn verify_benchmark_route(response: &reqwest::Response) -> Result<(), String
     Ok(())
 }
 
+/// A transport-level classification made before erasing reqwest's error type.
+/// Only failed connection/request construction is known to precede generation.
+pub(crate) fn transport_error(error: reqwest::Error) -> String {
+    if error.is_connect() || error.is_builder() {
+        format!("[model_not_started] {error}")
+    } else { error.to_string() }
+}
+
 /// Sends a helper completion through shared admission and authentication.
 pub async fn send(
     route: &Route,
@@ -423,7 +431,7 @@ pub async fn send(
         &route.base_url,
         &route.model,
         route.requests_per_minute,
-    )?;
+    ).map_err(|e|format!("[model_not_started] {e}"))?;
     let permit = acquire(&route.base_url, route.local).await;
     let mut last_error = String::new();
     for attempt in 0..2 {
@@ -443,7 +451,9 @@ pub async fn send(
                 return Ok(GatewayResponse { response, _permit: permit });
             }
             Err(error) => {
-                last_error = error.to_string();
+                let before_generation = error.is_connect() || error.is_builder();
+                last_error = transport_error(error);
+                if !before_generation { break; }
                 if attempt == 0 {
                     tokio::time::sleep(Duration::from_millis(400)).await;
                 }
@@ -635,6 +645,29 @@ mod tests {
         assert_eq!(ordered[1].id, "c");
         assert_eq!(ordered[2].id, "a");
         assert_eq!(ordered[0].model, "tiny");
+    }
+
+    #[tokio::test]
+    async fn accepted_http_timeout_is_not_retried_or_labelled_unbilled() {
+        use std::sync::atomic::{AtomicUsize,Ordering};
+        let calls=Arc::new(AtomicUsize::new(0));let captured=calls.clone();
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address=listener.local_addr().unwrap();
+        let app=axum::Router::new().route("/v1/chat/completions",axum::routing::post(move || {
+            let captured=captured.clone();async move {
+                captured.fetch_add(1,Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                axum::Json(json!({"choices":[]}))
+            }
+        }));
+        let server=tokio::spawn(async move { axum::serve(listener,app).await.unwrap(); });
+        let state=state();
+        state.store.put("provider",&json!({"id":"timeout","name":"timeout","enabled":true,"baseUrl":format!("http://{address}/v1"),"model":"m"}));
+        let route=resolve(&state,"timeout",None).unwrap();
+        let error=send(&route,&reqwest::Client::new(),&json!({}),Duration::from_millis(100)).await.err().unwrap();
+        assert!(!error.contains("[model_not_started]"),"{error}");
+        assert_eq!(calls.load(Ordering::SeqCst),1,"an accepted request may already be billed");
+        server.abort();
     }
 
     #[test]

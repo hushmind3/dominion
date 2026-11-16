@@ -333,7 +333,7 @@ pub(super) async fn send(
             // affinity under its own header. No local proxy is involved.
             if opencode_go { request=request.header("x-opencode-session",id); }
         }
-        let response=request.json(&body).send().await.map_err(|e|format!("{} 연결 실패: {e}",provider.name))?;
+        let response=request.json(&body).send().await.map_err(|e|format!("{} 연결 실패: {}",provider.name,crate::engine::gateway::transport_error(e)))?;
         let status=response.status();
         if hinted && attempt==1 && matches!(status.as_u16(),400|422) {
             let headers=response.headers().clone();let version=response.version();
