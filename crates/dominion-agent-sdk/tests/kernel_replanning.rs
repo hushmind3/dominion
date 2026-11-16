@@ -428,3 +428,40 @@ async fn unmet_file_criterion_blocks_unnecessary_shell_verification() {
     assert!(matches!(result.status,Status::NeedsReview));
     assert_eq!(*tools.called.lock().unwrap(),vec!["edit"]);
 }
+
+#[tokio::test]
+async fn tool_budget_rejects_entire_batch_before_side_effects(){
+    let model=ScriptedModel::new(vec![decide(json!([
+        op("first","write",&[]),op("second","write",&[])
+    ]),None)]);
+    let tools=RecordingTools::new(&[]);
+    let journal=RecordingJournal::default();
+    let kernel=Kernel{model:&model,tools:&tools,evidence:&AlwaysTrueEvidence,journal:&journal};
+    let mut req=request("bounded-batch");
+    req.limits.max_tool_calls=1;
+    let result=kernel.run(req).await.unwrap();
+    assert!(matches!(result.status,Status::NeedsReview));
+    assert!(result.receipts.is_empty(),"over-budget batch must have no partial effects");
+    assert!(tools.called.lock().unwrap().is_empty());
+}
+#[tokio::test]
+async fn owner_verification_uses_same_tool_budget_as_model_actions(){
+    let model=ScriptedModel::new(vec![
+        decide(json!([op("read_1","read",&[])]),None),
+        decide(json!([]),Some("Observed")),
+    ]);
+    let tools=RecordingTools::new(&[]);
+    let journal=RecordingJournal::default();
+    let kernel=Kernel{model:&model,tools:&tools,evidence:&AlwaysTrueEvidence,journal:&journal};
+    let mut req=request("bounded-verification");
+    req.limits.max_tool_calls=1;
+    req.allowed_tools.push("shell_exec".into());
+    req.checks=vec![dominion_agent_sdk::Criterion{
+        kind:dominion_agent_sdk::CriterionKind::ToolSucceeded,
+        path:None,contains:Some("cargo test".into()),
+        tool:Some("shell_exec".into())}];
+    let result=kernel.run(req).await.unwrap();
+    assert!(matches!(result.status,Status::NeedsReview));
+    assert_eq!(*tools.called.lock().unwrap(),vec!["read_1"]);
+    assert!(!result.receipts.iter().any(|receipt|receipt.tool=="shell_exec"));
+}
