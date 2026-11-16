@@ -120,7 +120,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  const sortedJobs=useMemo(()=>[...jobs.value].filter(j=>j.kind==='video').sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))),[jobs.value])
  const videoJob=active.value??sortedJobs.find(j=>j.id===currentId)??sortedJobs[0]??null
  const completed=useMemo(()=>sortedJobs.filter(j=>j.status==='completed'&&Boolean(j.outputUrl)),[sortedJobs])
- const selectedOutput=completed.find(j=>j.id===uploadFile)??completed[0]??outputs.value.find(j=>j.id===uploadFile)??outputs.value[0]??null
+ const selectedOutput=completed.find(j=>j.id===uploadFile)??outputs.value.find(j=>j.id===uploadFile)??completed[0]??outputs.value[0]??null
  const uploadJob=activeUpload.value
  const statusConfig=video.value.config
  const installed=catalog.value.videoModels.find(model=>model.id===statusConfig.videoModel)
@@ -143,7 +143,8 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
    : !video.value.comfy.reachable?'ComfyUI 서버에 연결되지 않았습니다. 주소와 실행 상태를 확인해 주세요.'
    : !video.value.comfy.available?'영상 모델을 설치하거나 API 워크플로를 등록해 주세요.':''
   : !video.value.native?.available?'네이티브 영상 제작에는 FFmpeg 설치가 필요합니다.':''
- const busy=generating||Boolean(submitted&&running(active.value?.status??submitted.status))
+ const submittedState=sortedJobs.find(j=>j.id===submitted?.id)??(active.value?.id===submitted?.id?active.value:submitted)
+ const busy=generating||Boolean(submittedState&&running(submittedState.status))
  const canGenerate=ready&&!busy&&actualScenes.length>0&&validBrief&&!invalidScenes&&!invalidTime&&!invalidSeed&&!multiSceneRequiresFfmpeg&&validDuration&&(!usingComfy||validFps)
  const suggestedMaxNew=actualScenes.length
  const progress=typeof videoJob?.progress==='number'?Math.max(0,Math.min(100,Math.round(videoJob.progress))):null
@@ -231,7 +232,9 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
     engine,title:draft.title.trim(),brief:actualScenes.join('\n\n'),
     aspectRatio:draft.ratio,duration:draft.seconds,
     ...(usingComfy?{
-     scenes:draft.mode==='scenes'?sceneItems:undefined,
+     // Quick mode remains ONE scene even when the idea contains blank lines.
+     // Only the storyboard mode opts into multiple remote GPU renders.
+     scenes:actualScenes,
      negativePrompt:draft.negative,fps:draft.fps,seed:Number(draft.seed),
      continuity:draft.continuity,
      ...(reuseId?{reuseVideoJobId:reuseId,regenerateScenes:regenerate}:{}),
