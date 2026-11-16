@@ -433,8 +433,9 @@ impl Kernel<'_> {
             tools.insert(spec.name.clone(),spec);
         }
         if tool_discovery::needed(&tools) {
-            let spec=tool_discovery::spec();
-            tools.insert(spec.name.clone(),spec);
+            for spec in [tool_discovery::spec(),tool_discovery::call_spec()] {
+                tools.insert(spec.name.clone(),spec);
+            }
         }
         let native_wire=self.model.supports_native_tools();
         let response_contract=if native_wire {
@@ -448,9 +449,10 @@ impl Kernel<'_> {
              On task completion return actions=[] and answer=\"actual result\"."
         };
         let discovery_hint=if tool_discovery::needed(&tools) {
-            "If a needed capability is absent from this turn's advertised tools, \
-             call dominion_tool_search; the exact authorized schema appears in the \
-             following turn. Tool discovery never increases host permissions."
+            "If a capability is not advertised, call dominion_tool_search to read \
+             its authorized JSON schema, then dominion_tool_call with the exact \
+             discovered name and arguments. The provider function declaration \
+             list stays fixed; discovery never increases host permissions."
         }else{
             "Every currently permitted host tool is directly available."
         };
@@ -802,20 +804,27 @@ impl Kernel<'_> {
                     let history=&run.receipts;
                     let tool_catalog=&tools;
                     let results=join_all(ready.iter().map(|action| async move {
-                        if let Some(result)=tool_discovery::execute_local(action,tool_catalog)
-                            .or_else(||context::execute_local(action,history)) {
+                        let actual=match tool_discovery::resolve_bridge(action,tool_catalog,history) {
+                            Ok(Some(actual))=>actual,
+                            Ok(None)=>action.clone(),
+                            Err(error)=>return (action.clone(),Err(error)),
+                        };
+                        let outcome=if let Some(result)=
+                            tool_discovery::execute_local(&actual,tool_catalog)
+                            .or_else(||context::execute_local(&actual,history)) {
                             result
-                        } else {self.tools.execute(action).await}
+                        } else {self.tools.execute(&actual).await};
+                        (actual,outcome)
                     })).await;
-                    for (action, outcome) in ready.iter().zip(results) {
+                    for (action, (actual,outcome)) in ready.iter().zip(results) {
                         let (success, result) = match outcome {
                             Ok(data) => (true, data),
                             Err(error) => (false, json!({"error":error}))
                         };
                         skipped_any |= !success;
                         run.receipts.push(Receipt {
-                            id:action.id.clone(), tool:action.tool.clone(),
-                            arguments:action.arguments.clone(),
+                            id:action.id.clone(), tool:actual.tool,
+                            arguments:actual.arguments,
                             success, result, step:run.step,
                         });
                     }
