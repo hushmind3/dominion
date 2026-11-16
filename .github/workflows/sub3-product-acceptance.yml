@@ -17,7 +17,10 @@ on:
       - 'packages/sdk-typescript/**'
       - 'src/engine/chat/**'
       - 'src/engine/video.rs'
+      - 'src/engine/video_hub.rs'
       - 'src/engine/video_studio.rs'
+      - 'web/src/components/VideoHubBrowser.tsx'
+      - 'web/scripts/video-studio-smoke.mjs'
       - 'src/api/video.rs'
       - 'src/api/video_studio.rs'
       - 'web/src/components/VideoAutopilot.tsx'
@@ -78,6 +81,8 @@ jobs:
         run: cargo test --bin dominion-rust engine::video_studio::tests -- --nocapture
       - name: Verify unchanged ComfyUI clips are reused without re-running the GPU
         run: cargo test --bin dominion-rust engine::video::tests::unchanged_clips_reuse_completed_artifact_but_changed_scene_is_not_reused -- --nocapture
+      - name: Verify video family discovery and safe external model download contracts
+        run: cargo test --bin dominion-rust engine::video_hub::tests -- --nocapture
       - name: Verify one-action local video model installer and runtime safety
         run: |
           cargo test --bin dominion-rust api::video::tests::turnkey_installer_rejects_an_invalid_model_root_without_mutating_video_settings -- --nocapture
