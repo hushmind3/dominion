@@ -428,8 +428,11 @@ pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
         "1:1" => (480, 480),
         _ => (360, 640),
     });
+    // Imported workflows may contain hard-coded nodes, so don't claim that
+    // changing a budget field will reduce their actual compute.
+    let applicable_economy=economy&&(engine!="comfyui"||!cfg["comfyWorkflow"].is_object());
     let plan = render_budget(duration,fps,cfg["steps"].as_u64().unwrap_or(20).clamp(1,60),
-        width,height,economy && engine == "comfyui");
+        width,height,applicable_economy && engine == "comfyui");
     let mut frozen_cfg = cfg.clone();
     frozen_cfg["steps"] = plan["steps"].clone();
     if economy && engine == "native" {
@@ -449,7 +452,8 @@ pub fn enqueue(state: &AppState, body: &Value) -> Result<Value, String> {
         "render":{"prompt":brief,"negative":negative_prompt,"negativePrompt":negative_prompt,
                   "duration":duration,"width":width,"height":height,
                   "fps":effective_fps,"frames":duration*effective_fps,
-                  "steps":plan["steps"],"economy":economy,"budget":plan,"seed":seed}
+                  "steps":plan["steps"],"economy":applicable_economy,
+                  "economyRequested":economy,"budget":plan,"seed":seed}
     });
     jobs::enqueue(state, "video", input)
         .map(|j| public_job(&j))
@@ -1096,6 +1100,18 @@ pub async fn upload(ctx: &JobContext, job: &Value) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn imported_comfy_workflows_must_not_claim_unenforced_economy_reduction() {
+        let custom=json!({"comfyWorkflow":{"1":{"class_type":"CustomSampler",
+            "inputs":{"steps":44,"fps":48}}}});
+        assert!(custom["comfyWorkflow"].is_object());
+        let proposed=true;
+        let applies=proposed&&!custom["comfyWorkflow"].is_object();
+        let budget=render_budget(9,24,40,480,832,applies);
+        assert_eq!(budget["estimatedWorkReductionPercent"],0);
+        assert_eq!(budget["fps"],24);
+        assert_eq!(budget["steps"],40);
+    }
     #[test]
     fn economy_mode_reduces_real_diffusion_frames_and_steps_without_hiding_the_budget() {
         let normal = render_budget(12,24,40,480,832,false);
