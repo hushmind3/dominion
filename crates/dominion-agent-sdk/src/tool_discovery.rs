@@ -96,7 +96,9 @@ pub(crate) fn select(catalog:&HashMap<String,ToolSpec>,task:&str,owner:&str,
   if let Some(matches)=receipt.result["matches"].as_array(){
    for item in matches.iter().take(8) {
     if let Some(name)=item["name"].as_str(){
-     if catalog.contains_key(name){displayed.insert(name.into());}
+     if displayed.len()<VISIBLE && catalog.contains_key(name){
+      displayed.insert(name.into());
+     }
     }
    }
   }
@@ -104,7 +106,9 @@ pub(crate) fn select(catalog:&HashMap<String,ToolSpec>,task:&str,owner:&str,
  // Keep tools used successfully in recent actions visible for follow-up
  // edits; failed tools can still be recovered through explicit discovery.
  for r in receipts.iter().rev().take(8) {
-  if r.success && catalog.contains_key(&r.tool){displayed.insert(r.tool.clone());}
+  if displayed.len()<VISIBLE && r.success && catalog.contains_key(&r.tool){
+   displayed.insert(r.tool.clone());
+  }
  }
  let mut query=format!("{task} {owner} {}",directive.unwrap_or(""));
  for part in plan.iter().take(6){query.push(' ');query.push_str(part);}
