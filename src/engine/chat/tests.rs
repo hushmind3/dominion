@@ -26,6 +26,14 @@ fn temp_state() -> AppState {
 }
 
 #[test]
+fn post_turn_learning_requires_explicit_opt_in() {
+    let ordinary = TurnRequest::from_value(&json!({"input":"test"})).unwrap();
+    assert!(!ordinary.auto_learning);
+    let enabled = TurnRequest::from_value(&json!({"input":"test","autoLearning":true})).unwrap();
+    assert!(enabled.auto_learning);
+}
+
+#[test]
 fn split_korean_utf8_and_crlf_events_are_lossless() {
     let bytes = "data: {\"text\":\"장기기억\"}\r\n\r\ndata: [DONE]\n\n".as_bytes();
     let mut buffer = SseBuffer::default();
