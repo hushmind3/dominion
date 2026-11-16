@@ -199,6 +199,9 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
         input["maxSteps"]=json!(rounds);
         input["maxModelCalls"]=json!(rounds);
     }
+    if let Some(limit)=body["maxToolCalls"].as_u64(){
+        input["maxToolCalls"]=json!(limit.clamp(1,4096));
+    }
     if !verify.is_empty(){
         input["acceptanceChecks"]=json!([{"type":"command_succeeded",
             "command":verify}]);
