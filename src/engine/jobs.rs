@@ -52,6 +52,28 @@ impl JobContext {
         }
     }
 
+    /// Commit terminal state only from a live job. A cancelled, already
+    /// finished or missing job must never be resurrected by a late worker.
+    /// The audit is emitted by the caller only after this transaction commits.
+    pub fn finish_terminal(&self, patch: Value) -> Result<Value, String> {
+        let fields=patch.as_object().ok_or("터미널 체크포인트가 JSON 객체가 아닙니다.")?;
+        let saved=self.state.store.mutate_record(
+            "job",&self.job_id,json!({"id":self.job_id}),
+            |current| {
+                if current["cancelRequested"]==true ||
+                   !matches!(current["status"].as_str(),Some("queued"|"running")) {
+                    return Err("이미 종료되거나 중단된 작업은 다시 완료할 수 없습니다.".into());
+                }
+                for (key,value) in fields {
+                    if key!="id" { current[key]=value.clone(); }
+                }
+                Ok(vec![])
+            },
+        )?;
+        self.state.bus.record("job",&saved);
+        Ok(saved)
+    }
+
     pub fn checkpoint(&self, mut patch: Value) -> Result<(), String> {
         let job = self
             .state
@@ -468,11 +490,14 @@ async fn run_job(state: AppState, job: Value) {
     // Retired built-in media and RSI jobs are never resumed automatically.
     // Their persisted inputs, checkpoints, and outputs stay intact for review.
     if matches!(kind.as_str(), "video" | "youtube_upload" | "rsi_evolve" | "rsi_compare" | "rsi_generation") {
-        context.patch(json!({
+        if let Err(error)=context.finish_terminal(json!({
             "status": "needs_review",
             "error": "내장 영상/음성 제작 및 RSI 자동 실행 기능이 종료되었습니다. 이전 작업 기록은 보존됩니다.",
             "finishedAt": chrono::Utc::now().to_rfc3339(),
-        }));
+        })) {
+            state.store.audit("job.finalization_failed",
+                json!({"jobId":job_id,"kind":kind,"error":error}));
+        }
         return;
     }
 
@@ -487,52 +512,63 @@ async fn run_job(state: AppState, job: Value) {
         other => Err(format!("지원하지 않는 작업 종류입니다: {other}")),
     };
 
-    match result {
+    let patch=match result {
         Ok(result) => {
-            let status = result
-                .get("status")
-                .and_then(Value::as_str)
-                .filter(|status| matches!(*status, "needs_review" | "cancelled" | "failed"))
+            let status=result.get("status").and_then(Value::as_str)
+                .filter(|status|matches!(*status,"needs_review"|"cancelled"|"failed"))
                 .unwrap_or("completed");
-            context.patch(json!({
-                "status": status,
-                "result": result,
-                "finishedAt": chrono::Utc::now().to_rfc3339(),
-                "events": context.events.lock().unwrap().clone(),
-            }));
-            state.store.audit(
-                &format!("job.{status}"),
-                json!({ "jobId": job_id, "kind": kind }),
-            );
+            json!({"status":status,"result":result,
+                "finishedAt":chrono::Utc::now().to_rfc3339(),
+                "events":context.events.lock().unwrap().clone()})
+        }
+        Err(error) if error.starts_with("deferred:") => {
+            if let Err(checkpoint_error)=context.checkpoint(json!({
+                "status":"queued",
+                "availableAt":(chrono::Utc::now()+chrono::Duration::seconds(1)).to_rfc3339(),
+                "attempts":job["attempts"].as_u64().unwrap_or(1).saturating_sub(1),
+                "error":error
+            })) {
+                state.store.audit("job.defer_checkpoint_failed",
+                    json!({"jobId":job_id,"error":checkpoint_error}));
+            }
+            return;
         }
         Err(error) => {
-            if error.starts_with("deferred:") {
-                context.patch(json!({"status":"queued","availableAt":(chrono::Utc::now()+chrono::Duration::seconds(1)).to_rfc3339(),
-                    "attempts":job["attempts"].as_u64().unwrap_or(1).saturating_sub(1),"error":error}));
-                return;
-            }
-            let status = if error.starts_with("needs_review:") {
+            let status=if error.starts_with("needs_review:") {
                 "needs_review"
-            } else if error.contains("중단") || error.contains("cancelled") {
+            }else if error.contains("중단")||error.contains("cancelled") {
                 "cancelled"
-            } else {
-                "failed"
-            };
-            context.patch(json!({
-                "status": status,
-                "error": error,
-                "finishedAt": chrono::Utc::now().to_rfc3339(),
-                "events": context.events.lock().unwrap().clone(),
-            }));
-            state.store.audit(
-                "job.failed",
-                json!({ "jobId": job_id, "kind": kind, "error": error }),
-            );
+            }else{"failed"};
+            json!({"status":status,"error":error,
+                "finishedAt":chrono::Utc::now().to_rfc3339(),
+                "events":context.events.lock().unwrap().clone()})
         }
-    }
-    if state.store.get("job",&job_id).is_some_and(|j|j["status"]=="completed"){
-        if let Err(error)=crate::engine::delegation_worktree::freeze_result(&state,&job).await{
-            state.store.patch_if("job",&job_id,"status",&json!("completed"),&json!({"status":"needs_review","error":error}));
+    };
+    // No terminal audit or completion event is published if checkpoint
+    // persistence fails or the owner cancelled while the model was running.
+    match context.finish_terminal(patch) {
+        Ok(saved) => {
+            if saved["status"]=="completed" {
+                if let Err(error)=crate::engine::delegation_worktree::freeze_result(&state,&job).await {
+                    if let Some(review)=state.store.patch_if("job",&job_id,"status",
+                        &json!("completed"),&json!({"status":"needs_review","error":error})){
+                        state.bus.record("job",&review);
+                    } else {
+                        state.store.audit("job.freeze_failed",
+                            json!({"jobId":job_id,"error":error}));
+                    }
+                }
+            }
+            // Final audit reflects the frozen result, not a transient completed
+            // state before delegated worktree evidence has been captured.
+            let final_row=state.store.get("job",&job_id).unwrap_or(saved);
+            let status=final_row["status"].as_str().unwrap_or("unknown");
+            state.store.audit(&format!("job.{status}"),
+                json!({"jobId":job_id,"kind":kind,"error":final_row["error"]}));
+        }
+        Err(error)=>{
+            state.store.audit("job.finalization_failed",
+                json!({"jobId":job_id,"kind":kind,"error":error}));
         }
     }
     if let Some(session)=job["input"]["sessionId"].as_str(){
@@ -797,6 +833,28 @@ mod tests {
         assert!(state.store.get("automation","disabled").unwrap()["lastAt"].is_null());
         assert!(state.store.get("automation","future").unwrap()["lastAt"].is_null());
         let _ = std::fs::remove_dir_all(&state.config.data_dir);
+    }
+
+    #[test]
+    fn terminal_claim_rejects_cancelled_and_already_completed_jobs(){
+        let state=temp_state();
+        let job=enqueue(&state,"prompt",json!({"sessionId":"s","prompt":"work"})).unwrap();
+        let id=job["id"].as_str().unwrap().to_string();
+        let ctx=JobContext::new(state.clone(),id.clone());
+        state.cancel_session("s");
+        assert!(ctx.finish_terminal(json!({"status":"completed","result":{"ok":true}})).is_err());
+        let current=state.store.get("job",&id).unwrap();
+        assert_eq!(current["status"],"cancelled");
+        assert!(current["result"].is_null());
+
+        let complete=enqueue(&state,"prompt",json!({"prompt":"done"})).unwrap();
+        let completed_id=complete["id"].as_str().unwrap().to_string();
+        let ctx=JobContext::new(state.clone(),completed_id.clone());
+        assert_eq!(ctx.finish_terminal(json!({"status":"completed"})).unwrap()["status"],
+            "completed");
+        assert!(ctx.finish_terminal(json!({"status":"failed","error":"late"})).is_err());
+        assert_eq!(state.store.get("job",&completed_id).unwrap()["status"],"completed");
+        let _=std::fs::remove_dir_all(&state.config.data_dir);
     }
 
     #[test]

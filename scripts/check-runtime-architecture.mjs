@@ -50,6 +50,8 @@ if(!jobs.includes('store.running_recovery_records("execution")')||!jobs.includes
   throw Error('Restart recovery must not deserialize every completed execution/operation')
 if(!jobs.includes('store.uncertain_effect_sessions()')||!store.includes('pub fn uncertain_effect_sessions('))
   throw Error('Crash-uncertain tool effects must be examined once and fail closed')
+if(!jobs.includes('context.finish_terminal(')||!jobs.includes('job.finalization_failed'))
+  throw Error('Job success must have a durable terminal claim before audit')
 const sdkApi=readFileSync(path.join(root,'src/api/sdk.rs'),'utf8')
 if(!sdkApi.includes('state.store.sdk_evidence_rows()')||!store.includes('pub fn sdk_evidence_rows('))
   throw Error('SDK status polling must not scan full execution and tool history')
