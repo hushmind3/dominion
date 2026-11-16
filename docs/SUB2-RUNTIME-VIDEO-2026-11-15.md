@@ -48,3 +48,9 @@ On Windows, offline SAPI narration now complements macOS `say`. Audio is generat
 - Model availability is checked against the configured `comfyModelsDir` and file sizes, not assumed from a completed HTTP request; model selection does not install the ComfyUI application itself.
 - No actual GPU video-quality score, VRAM guarantee or model execution success is claimed from a frontend build. CI validates the source and regression suite; end-to-end GPU generation requires an attached ComfyUI instance with the corresponding models and nodes.
 - User-visible previews from `http://127.0.0.1:4317/#/video` require building `web/dist` on the `dominion-sub2` checkout and launching its Rust engine. A remote branch commit does not modify a separately running main process's static assets.
+
+### Model family picker (2026-11-16 correction)
+
+Video model **family is not a hard-coded disabled dropdown**. The creation panel groups `GET /api/video/catalog` entries using stable `familyId` identifiers, offers Wan 2.1 T2V 1.3B / 14B and Wan 2.2 TI2V 5B as distinct choices, and limits the adjacent quantization dropdown to variants available for the selected family. The backend stores and downloads each variant by its unique ID. No general-purpose chat LLM appears in this video catalog.
+
+The Wan 2.1 14B GGUF Q3/Q4/Q5/Q8 files originate from the published `city96/Wan2.1-T2V-14B-gguf` Hugging Face repository, with ComfyUI-GGUF for loading. Its FP8 and FP16 models originate from `Comfy-Org/Wan_2.1_ComfyUI_repackaged`. Wan 2.2 TI2V 5B FP16 originates from `Comfy-Org/Wan_2.2_ComfyUI_Repackaged`. Wan 2.2 has a distinct VAE and `Wan22ImageToVideoLatent` / `ModelSamplingSD3` graph based on the official ComfyUI template. Runtime readiness checks its required node. Approximate package sizes are metadata only; actual disk and GPU capacity depend on the renderer and download history. Extra workflow support for unrelated Hugging Face video architectures is **not** implied.
