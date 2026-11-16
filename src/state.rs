@@ -16,6 +16,8 @@ pub struct AppState {
     pub bus: Bus,
     /// Advisory wakeup for job workers. SQLite remains the durable authority.
     pub job_wakeup: Arc<Notify>,
+    /// Wakes active turns after same-process cancellation or epoch changes.
+    pub cancel_wakeup: Arc<Notify>,
     /// Reusable provider HTTP transports keyed by per-request timeout in seconds.
     /// Shared by all speakers and jobs in this process to retain connection pooling.
     provider_http_clients: Arc<Mutex<HashMap<u64, reqwest::Client>>>,
@@ -49,6 +51,7 @@ impl AppState {
             store,
             bus,
             job_wakeup: Arc::new(Notify::new()),
+            cancel_wakeup: Arc::new(Notify::new()),
             provider_http_clients: Arc::new(Mutex::new(HashMap::new())),
             vault: Arc::new(vault),
             approvals: Arc::new(Mutex::new(HashMap::new())),
@@ -112,6 +115,9 @@ impl AppState {
                 serde_json::json!({"sessionId":session_id}),
             );
         }
+        // Wake active turns once the cancellation epoch has been persisted.
+        // A bounded poll remains for changes written by another process.
+        self.cancel_wakeup.notify_waiters();
         // Cancellation survives a restart and cannot be cleared for old queued
         // work merely because the user starts a fresh foreground turn.
         for job in self.store.all("job") {
@@ -162,6 +168,7 @@ impl AppState {
             return false;
         }
         self.cancelled.lock().unwrap().remove(session_id);
+        self.cancel_wakeup.notify_waiters();
         true
     }
 
