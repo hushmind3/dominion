@@ -76,6 +76,23 @@ fn search_receipts(args: &Value, receipts: &[Receipt]) -> Result<Value, String> 
     let needle=query.to_lowercase();
     let offset=nonnegative_number(args,"offset",0)?;
     let limit=nonnegative_number(args,"limit",10)?.clamp(1,20);
+    let preview=|receipt:&Receipt| json!({
+        "id":receipt.id,"tool":receipt.tool,"step":receipt.step,
+        "success":receipt.success,
+        "arguments":clip(&receipt.arguments.to_string(),120,60),
+        "resultPreview":clip(&receipt.result.to_string(),160,260),
+    });
+    // The normal 'show recent history' call requires no keyword scan.
+    // Restrict serialization to the requested page instead of materializing
+    // every (potentially multi-megabyte) historic tool result.
+    if needle.is_empty() {
+        let total=receipts.len();
+        let matches=receipts.iter().rev().skip(offset).take(limit)
+            .map(preview).collect::<Vec<_>>();
+        return Ok(json!({"query":query,"offset":offset,"total":total,
+            "nextOffset":(offset+matches.len()<total).then_some(offset+matches.len()),
+            "matches":matches}));
+    }
     let mut matches=Vec::new();
     let mut total=0usize;
     for receipt in receipts.iter().rev() {
@@ -83,12 +100,7 @@ fn search_receipts(args: &Value, receipts: &[Receipt]) -> Result<Value, String> 
             receipt.arguments,receipt.result).to_lowercase();
         if !haystack.contains(&needle) {continue;}
         if total >= offset && matches.len() < limit {
-            matches.push(json!({
-                "id":receipt.id,"tool":receipt.tool,"step":receipt.step,
-                "success":receipt.success,
-                "arguments":clip(&receipt.arguments.to_string(),120,60),
-                "resultPreview":clip(&receipt.result.to_string(),160,260),
-            }));
+            matches.push(preview(receipt));
         }
         total+=1;
     }
@@ -285,6 +297,22 @@ mod tests {
             &[receipt("한글",1,false,json!({"error":text}))]).unwrap();
         assert_eq!(result["startChar"],1);
         assert!(result["text"].as_str().unwrap().chars().count()<=128);
+    }
+    #[test]
+    fn empty_query_lists_a_bounded_recent_page_without_full_log_projection() {
+        let data=(0..150).map(|i|receipt(&format!("r{i}"),i+1,true,
+            json!({"largeResult":"x".repeat(20_000)}))).collect::<Vec<_>>();
+        let first=search_receipts(&json!({"limit":3}),&data).unwrap();
+        assert_eq!(first["total"],150);
+        assert_eq!(first["matches"][0]["id"],"r149");
+        assert_eq!(first["nextOffset"],3);
+        assert!(first["matches"][0]["resultPreview"].as_str().unwrap().len()<1000);
+        let second=search_receipts(&json!({"offset":149,"limit":3}),&data).unwrap();
+        assert_eq!(second["matches"][0]["id"],"r0");
+        assert!(second["nextOffset"].is_null());
+        let past_end=search_receipts(&json!({"offset":999,"limit":3}),&data).unwrap();
+        assert!(past_end["matches"].as_array().unwrap().is_empty());
+        assert_eq!(past_end["total"],150);
     }
     #[test]
     fn search_pages_and_never_reads_other_run_ids() {
