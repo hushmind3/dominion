@@ -135,50 +135,18 @@ test('owner steering uses the same native job and revision contract',async()=>{
   assert.deepEqual(JSON.parse(call.init.body),{instruction:'Check the actual tests'});
 });
 
-test('video SDK cancellation is scoped and reports remote GPU uncertainty separately',async()=>{
-  const calls=[];
-  const client=new Dominion({fetch:async(url,init)=>{
-    calls.push({url,method:init.method});
-    return json({job:{id:'video/one',status:'cancelled',kind:'video'},
-      remoteCancel:{status:'unconfirmed',reason:'renderer offline'}});
-  }});
-  const result=await client.video.cancel('video/one');
-  assert.equal(calls.length,1);
-  assert.equal(calls[0].url,'http://127.0.0.1:4317/api/video/jobs/video%2Fone/cancel');
-  assert.equal(calls[0].method,'POST');
-  assert.equal(result.job.status,'cancelled');
-  assert.equal(result.remoteCancel.status,'unconfirmed');
+test('retired media SDK exposes archived records without mutation methods',async()=>{
+ const client=new Dominion({fetch:async(url)=>json(
+  url.endsWith('/jobs')?[{id:'old-video',kind:'video',status:'completed',archived:true}]
+  :{id:'old-video',kind:'video',status:'completed',archived:true})});
+ const rows=await client.video.list();
+ assert.equal(rows[0].archived,true);
+ assert.equal((await client.video.get('old-video')).archived,true);
+ assert.equal('create' in client.video,false);
+ assert.equal('cancel' in client.video,false);
+ assert.equal('upload' in client.video,false);
+ assert.equal('installModel' in client.video,false);
 });
-
-test('video SDK publication calls the existing Rust approval-gated upload endpoint',async()=>{
-  const calls=[];
-  const client=new Dominion({fetch:async(url,init)=>{
-    calls.push({url,method:init.method,body:JSON.parse(init.body)});
-    return json({id:'upload-1',kind:'youtube_upload',status:'queued'});
-  }});
-  const receipt=await client.video.upload('source/1',{
-    title:'Final review',privacyStatus:'private',description:'Approved metadata',tags:'shorts'});
-  assert.equal(calls[0].url,
-    'http://127.0.0.1:4317/api/video/jobs/source%2F1/upload');
-  assert.deepEqual(calls[0].body,
-    {title:'Final review',privacyStatus:'private',description:'Approved metadata',tags:'shorts'});
-  assert.equal(receipt.kind,'youtube_upload');
-});
-
-test('video SDK passes narration text through the same Rust video enqueue',async()=>{
-  let body;
-  const client=new Dominion({fetch:async(_url,init)=>{
-    body=JSON.parse(init.body);
-    return json({id:'video-narrated',kind:'video',status:'queued',
-      narrationScript:body.narrationScript});
-  }});
-  const created=await client.video.create({brief:'River in the morning',
-    engine:'comfyui',duration:9,autoStoryboard:true,
-    narrationScript:'아침 강가의 새로운 이야기입니다.'});
-  assert.equal(body.narrationScript,'아침 강가의 새로운 이야기입니다.');
-  assert.equal(created.narrationScript,body.narrationScript);
-});
-
 test('RSI SDK reads actual Rust envelope and never mis-types campaign lists',async()=>{
   const paths=[];
   const client=new Dominion({fetch:async(url)=>{
@@ -197,28 +165,10 @@ test('RSI SDK reads actual Rust envelope and never mis-types campaign lists',asy
   ]);
 });
 
-test('RSI SDK starts, verifies, chooses and applies using the authoritative Rust routes',async()=>{
-  const calls=[];
-  const client=new Dominion({fetch:async(url,init)=>{
-    calls.push({url,method:init.method,body:init.body&&JSON.parse(init.body)});
-    return json({id:'rsi-1',status:'running'});
-  }});
-  await client.rsi.start({providerId:'p',model:'m',mode:'continuous',
-    confirmation:'START_RSI_EVOLUTION',selectionPolicy:'automatic'});
-  await client.rsi.verify('rsi-1');
-  await client.rsi.choose('rsi-1',2,'candidate');
-  await client.rsi.applyVerified('rsi-1','a'.repeat(40));
-  assert.deepEqual(calls.map(c=>c.url),[
-    'http://127.0.0.1:4317/api/rsi/start',
-    'http://127.0.0.1:4317/api/rsi/campaigns/rsi-1/verify',
-    'http://127.0.0.1:4317/api/rsi/campaigns/rsi-1/choose',
-    'http://127.0.0.1:4317/api/rsi/campaigns/rsi-1/apply'
-  ]);
-  assert.equal(calls[0].body.confirmation,'START_RSI_EVOLUTION');
-  assert.deepEqual(calls[2].body,{attempt:2,choice:'candidate'});
-  assert.deepEqual(calls[3].body,{
-    confirmation:'APPLY_VERIFIED_CAMPAIGN_TO_SUB',commit:'a'.repeat(40)
-  });
+test('retired RSI SDK does not expose campaign mutation methods',()=>{
+ const client=new Dominion({fetch:async()=>json({})});
+ for(const method of ['start','apply','choose','applyVerified','verify'])
+  assert.equal(method in client.rsi,false);
 });
 
 test('evaluation summary SDK accesses the same Rust persisted scorecard as GUI',async()=>{
@@ -234,20 +184,3 @@ test('evaluation summary SDK accesses the same Rust persisted scorecard as GUI',
   assert.equal(result.verified.successRate,0.5);
 });
 
-test('video SDK preserves render budget and returns engine work receipts',async()=>{
-  let route,request;
-  const client=new Dominion({fetch:async(url,init)=>{
-    route=url;request=JSON.parse(init.body);
-    return json({id:'vid-1',kind:'video',status:'queued',engine:'comfyui',
-      maxNewScenes:0,renderWorkload:{frames:240,pixelFrames:55_296_000,
-        megapixelFrames:55,estimatedMoneyCost:null,unit:'pixel_frames_not_currency'}});
-  }});
-  const result=await client.video.create({brief:'Same actor in a city',
-    engine:'comfyui',duration:15,reuseVideoJobId:'previous',
-    regenerateScenes:[],maxNewScenes:0});
-  assert.equal(route,'http://127.0.0.1:4317/api/video/jobs');
-  assert.equal(request.maxNewScenes,0);
-  assert.equal(request.reuseVideoJobId,'previous');
-  assert.equal(result.renderWorkload.megapixelFrames,55);
-  assert.equal(result.renderWorkload.estimatedMoneyCost,null);
-});

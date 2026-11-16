@@ -26,5 +26,5 @@ test('pricing, evidence, locks, QA and UI share real native routes',()=>{
  assert.ok(file('sdk/typescript/src/index.ts').includes('evaluation = {'));
  assert.ok(file('web/src/pages/Operations.tsx').includes('/api/evaluation/summary'));
  assert.ok(file('src/engine/tools.rs').includes('resource_lock::acquire'));
- assert.ok(file('src/engine/video.rs').includes('video_quality::inspect'));
+ assert.doesNotMatch(file('src/engine/mod.rs'),/pub mod video;/);
 });

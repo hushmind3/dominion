@@ -42,67 +42,14 @@ export interface PromptJobInput {
   };
 }
 export interface WorkflowJobInput { kind: 'workflow'; input: { workflowId: string; input?: unknown } }
-/** Bounded, opt-in GPU budget measured in NEW remote scene renders. */
-export interface VideoJobInput {
-  brief: string; title?: string; engine?: 'native'|'comfyui';
-  duration?: number; aspectRatio?: '9:16'|'16:9'|'1:1';
-  scenes?: string[]; continuity?: string; fps?: number;
-  /** Optional owner-authored narration; if absent, autoStoryboard may plan it. */
-  narrationScript?: string;
-  /** Opt-in autonomous LLM planning before GPU rendering (maximum 4 scenes). */
-  autoStoryboard?: boolean; planningProviderId?: string;
-  width?: number; height?: number; seed?: number; negativePrompt?: string;
-  reuseVideoJobId?: string; regenerateScenes?: number[];
-  /** 0 forbids paid new scenes, while SHA256-verified previous scenes can be reused. */
-  maxNewScenes?: number;
-}
-/** Rust RSI start validates the owner-selected model, source/worktree and budgets. */
-export interface RsiStartInput {
-  providerId:string;
-  model:string;
-  mode?:'manual'|'continuous';
-  request?:string;
-  focusFiles?:string[];
-  issueId?:string;
-  localOnly?:boolean;
-  continueFrom?:string;
-  /** Continuous mode requires this explicit owner confirmation. */
-  confirmation?:'START_RSI_EVOLUTION';
-  evolutionTarget?:'product'|'system';
-  selectionPolicy?:'automatic'|'manual';
-  applyWhenFinished?:boolean;
-  expandAfterGain?:boolean;
-  crossDomainCycle?:boolean;
-  maxAttempts?:number;
-  tokenBudget?:number;
-  timeBudgetSeconds?:number;
-}
+/** Retired media and RSI are read-only historical records, not workloads. */
 export interface RsiOverview {
-  version:string;
-  candidates:RecordItem[];
-  campaigns:RecordItem[];
-  minPairedCases:number;
-}
-export interface VideoCancelOutcome {
-  job: VideoJob;
-  remoteCancel: {status:'requested'|'unconfirmed'|'not_active';promptId?:string;reason?:string};
+ version:string; candidates:RecordItem[]; campaigns:RecordItem[]; minPairedCases:number;
 }
 export interface VideoJob extends RecordItem {
-  remoteCancel?: VideoCancelOutcome['remoteCancel']|null;
-  kind: 'video'|'youtube_upload'; status: JobStatus;
-  engine?: 'native'|'comfyui'; title?: string; outputUrl?: string|null;
-  maxNewScenes?: number|null; result?: {
-    narrated?:boolean;captions?:boolean;narrationWarning?:string;
-    resumedScenes?:number;renderedScenes?:number;reusedScenes?:number;
-    [key:string]:unknown;
-  };
-  autoStoryboard?: boolean; storyboard?: string[]|null;
-  narrationScript?: string|null; narrationLines?: string[]|null;
-  sceneProgress?: {index?:number|null;total?:number|null;rendered?:number|null;reused?:number|null};
-  renderWorkload?: {
-    frames: number; pixelFrames: number; megapixelFrames: number;
-    estimatedMoneyCost: null; unit: 'pixel_frames_not_currency';
-  };
+ kind:'video'|'youtube_upload';status:JobStatus;
+ archived?:boolean;generationAvailable?:false;
+ title?:string;outputUrl?:string|null;result?:unknown;
 }
 export type CreateJobInput = PromptJobInput | WorkflowJobInput;
 export interface ClientOptions { baseUrl?: string; token?: string; fetch?: typeof globalThis.fetch }
@@ -254,50 +201,23 @@ export class Dominion {
     list: (options?:RequestOptions) => this.request<Approval[]>('GET','/api/approvals',undefined,options),
     resolve: (key:string,allow:boolean,options?:RequestOptions) => this.request<{resolved:boolean;status:string}>('POST','/api/approvals',{id:key,allow},options),
   };
+  /** Historical media access only: no built-in generation, model install or upload. */
   readonly video = {
-    catalog: (options?:RequestOptions) => this.request<{
-      videoModels:Array<{id:string;family:string;familyId:string;task:'text-to-video';name:string;quantization:string;kind:string;weightGB:number;totalDownloadGB:number;recommended:boolean;available:boolean;missingFiles:number;hint:string}>;
-      selectedVideoModel?:string;
-    }>('GET','/api/video/catalog',undefined,options),
-    modelDownloads: (options?:RequestOptions) => this.request<{downloads:Array<{
-      id:string;model:string;status:string;progress:number;bytes:number;total:number;
-      filesTotal?:number;filesCompleted?:number;currentFile?:string|null;error?:string;
-    }>}>( 'GET','/api/video/models/downloads',undefined,options),
-    installModel: (key:string,options?:RequestOptions) => this.request<{model:string;status:string}>('POST','/api/video/models/'+id(key)+'/download',{},options),
-    status: (options?:RequestOptions) => this.request<unknown>('GET','/api/video/status',undefined,options),
-    config: (options?:RequestOptions) => this.request<unknown>('GET','/api/video/config',undefined,options),
-    saveConfig: (input:Record<string,unknown>,options?:RequestOptions) => this.request<unknown>('POST','/api/video/config',input,options),
-    list: (options?:RequestOptions) => this.request<VideoJob[]>('GET','/api/video/jobs',undefined,options),
-    get: (key:string,options?:RequestOptions) => this.request<VideoJob>('GET','/api/video/jobs/'+id(key),undefined,options),
-    create: (input:VideoJobInput,options?:RequestOptions) => this.request<VideoJob>('POST','/api/video/jobs',input,options),
-    cancel: (key:string,options?:RequestOptions) => this.request<VideoCancelOutcome>(
-      'POST','/api/video/jobs/'+id(key)+'/cancel',{},options),
-    upload: (key:string,input:{title:string;description?:string;privacyStatus?:'private'|'unlisted'|'public';tags?:string},options?:RequestOptions) =>
-      this.request<Job>('POST','/api/video/jobs/'+id(key)+'/upload',input,options),
-    outputs: (options?:RequestOptions) => this.request<unknown[]>('GET','/api/video/outputs',undefined,options),
-    download: async (key:string,options?:RequestOptions) => {
-      const response = await this.raw('/api/video/jobs/'+id(key)+'/content',{signal:options?.signal});
-      if (!response.ok) await fail(response);
+    status:(options?:RequestOptions)=>this.request<unknown>('GET','/api/video/status',undefined,options),
+    list:(options?:RequestOptions)=>this.request<VideoJob[]>('GET','/api/video/jobs',undefined,options),
+    get:(key:string,options?:RequestOptions)=>this.request<VideoJob>('GET','/api/video/jobs/'+id(key),undefined,options),
+    outputs:(options?:RequestOptions)=>this.request<VideoJob[]>('GET','/api/video/outputs',undefined,options),
+    download:async(key:string,options?:RequestOptions)=>{
+      const response=await this.raw('/api/video/jobs/'+id(key)+'/content',{signal:options?.signal});
+      if(!response.ok)await fail(response);
       return response.blob();
     },
   };
+  /** Historical RSI records only. New campaigns and auto-adoption are retired. */
   readonly rsi = {
-    /** Overview is an object, not a bare list (matches Rust api::rsi::list). */
-    list: (options?:RequestOptions) => this.request<RsiOverview>('GET','/api/rsi',undefined,options),
-    campaigns: (options?:RequestOptions) => this.request<{campaigns:RecordItem[]}>('GET','/api/rsi/campaigns',undefined,options),
-    campaign: (key:string,options?:RequestOptions) => this.request<RecordItem>('GET','/api/rsi/campaigns/'+id(key),undefined,options),
-    /** Same source verification, frozen worktree and budget gates as the GUI. */
-    start: (input:RsiStartInput,options?:RequestOptions) =>
-      this.request<Job>('POST','/api/rsi/start',input,options),
-    verify: (key:string,options?:RequestOptions) =>
-      this.request<Record<string,unknown>>('GET','/api/rsi/campaigns/'+id(key)+'/verify',undefined,options),
-    /** An explicit owner choice must match a live comparison attempt. */
-    choose: (key:string,attempt:number,choice:'baseline'|'candidate',options?:RequestOptions) =>
-      this.request<RecordItem>('POST','/api/rsi/campaigns/'+id(key)+'/choose',{attempt,choice},options),
-    /** Only for an explicitly selected verified commit on a completed campaign. */
-    applyVerified: (key:string,commit:string,options?:RequestOptions) =>
-      this.request<Job>('POST','/api/rsi/campaigns/'+id(key)+'/apply',
-        {confirmation:'APPLY_VERIFIED_CAMPAIGN_TO_SUB',commit},options),
+    list:(options?:RequestOptions)=>this.request<RsiOverview>('GET','/api/rsi',undefined,options),
+    campaigns:(options?:RequestOptions)=>this.request<{campaigns:RecordItem[]}>('GET','/api/rsi/campaigns',undefined,options),
+    campaign:(key:string,options?:RequestOptions)=>this.request<RecordItem>('GET','/api/rsi/campaigns/'+id(key),undefined,options),
   };
   /** Chat POST is never retried, to avoid duplicate tool/model actions. */
   async streamChat(input:ChatInput,onEvent:(event:StreamEvent)=>void,options:RequestOptions={}):Promise<void> {

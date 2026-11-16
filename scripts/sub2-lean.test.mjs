@@ -44,4 +44,7 @@ test('legacy generation and RSI effects cannot be started by worker or HTTP',()=
   assert.doesNotMatch(jobs,/"video"\s*=>\s*crate::engine::video::run/);
   assert.doesNotMatch(jobs,/start_rsi_install\(state.clone\(\)/);
   assert.match(api,/\/api\/video\/jobs\/:id\/content/);
+  const media=file=>src(file);
+  assert.match(media('src/api/video.rs'),/pub async fn content/);
+  assert.doesNotMatch(media('src/engine/mod.rs'),/pub mod video;/);
 });
