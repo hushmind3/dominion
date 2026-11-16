@@ -1093,7 +1093,7 @@ mod tests {
             id:"native-http-real-file".into(),
             instruction:"Read artifact.txt and report its actual content".into(),
             owner_instructions:String::new(),strategy:Strategy::Balanced,
-            limits:Limits{max_steps:6,max_model_calls:6,max_estimated_tokens:100_000,
+            limits:Limits{max_steps:6,max_model_calls:6,max_tool_calls:24,max_estimated_tokens:100_000,
                 max_parallel_reads:2,max_result_chars:1200},
             allowed_tools:vec!["workspace_read".into()],checks:vec![],
             require_evidence:true,
