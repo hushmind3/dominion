@@ -54,6 +54,82 @@ pub fn models_dir(state: &AppState) -> PathBuf {
 pub fn models_dir_ready(state:&AppState)->bool{
     models_dir(state).is_dir()
 }
+/// Start a local, already-installed ComfyUI runtime without opening a terminal.
+/// Only a recognized Python environment alongside the selected ComfyUI root
+/// may be launched. Never execute a downloaded model or arbitrary shell text.
+pub async fn launch_comfy(state:AppState)->Result<Value,String>{
+    let cfg=config(&state);
+    let url=cfg["comfyUrl"].as_str().filter(|s|!s.is_empty())
+        .unwrap_or("http://127.0.0.1:8188");
+    let endpoint=reqwest::Url::parse(url).map_err(|_|"ComfyUI 주소를 확인하세요.")?;
+    if endpoint.scheme()!="http"||
+        !matches!(endpoint.host_str(),Some("127.0.0.1"|"localhost"|"::1"))||
+        endpoint.username()!=""||endpoint.password().is_some()||
+        endpoint.path()!="/"||endpoint.query().is_some(){
+        return Err("자동 실행은 로컬 ComfyUI 주소(http://127.0.0.1:포트)에서만 지원합니다.".into());
+    }
+    let port=endpoint.port_or_known_default().ok_or("ComfyUI 포트가 없습니다.")?;
+    if reqwest::Client::new().get(format!("{url}/system_stats"))
+        .timeout(Duration::from_secs(2)).send().await
+        .is_ok_and(|r|r.status().is_success()){
+        return Ok(json!({"status":"running","url":url}));
+    }
+    let models=models_dir(&state);
+    let root=models.parent().ok_or("ComfyUI 모델 폴더를 먼저 선택하세요.")?;
+    let script=root.join("main.py");
+    if !script.is_file(){
+        return Err("선택한 models 폴더 옆에 ComfyUI/main.py가 없습니다. ComfyUI를 설치한 경로를 선택하세요.".into());
+    }
+    let portable=root.parent().map(|p|p.join("python_embeded").join("python.exe"));
+    let executables=[
+        portable.unwrap_or_default(),
+        root.join(".venv").join("Scripts").join("python.exe"),
+        root.join("venv").join("Scripts").join("python.exe"),
+        root.join(".venv").join("bin").join("python"),
+        root.join("venv").join("bin").join("python"),
+    ];
+    let python=executables.into_iter().find(|path|path.is_file())
+        .ok_or("ComfyUI Python 실행 환경을 찾지 못했습니다. ComfyUI Portable 또는 가상환경을 설치하세요.")?;
+    let slot="comfy-runtime-launch".to_string();
+    {
+        let mut active=state.active.lock().map_err(|_|"프로세스 실행 상태 오류")?;
+        if !active.insert(slot.clone()){
+            return Ok(json!({"status":"starting","url":url}));
+        }
+    }
+    let launch=||->Result<tokio::process::Child,String>{
+        std::fs::create_dir_all(&state.config.data_dir).map_err(|e|e.to_string())?;
+        let log=state.config.data_dir.join("comfy-launch.log");
+        let out=std::fs::OpenOptions::new().create(true).append(true)
+            .open(&log).map_err(|e|e.to_string())?;
+        let err=out.try_clone().map_err(|e|e.to_string())?;
+        tokio::process::Command::new(&python)
+            .arg("-s").arg(&script)
+            .args(["--listen","127.0.0.1","--port"]).arg(port.to_string())
+            .current_dir(root)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::from(out))
+            .stderr(std::process::Stdio::from(err))
+            .kill_on_drop(false).spawn()
+            .map_err(|e|format!("ComfyUI 실행 실패: {e}"))
+    };
+    let child=match launch(){
+        Ok(child)=>child,
+        Err(error)=>{
+            state.active.lock().unwrap().remove(&slot);
+            return Err(error);
+        }
+    };
+    let pid=child.id();
+    let watched=state.clone();
+    tokio::spawn(async move{
+        let mut child=child;
+        let _=child.wait().await;
+        if let Ok(mut active)=watched.active.lock(){active.remove(&slot);}
+    });
+    Ok(json!({"status":"starting","url":url,"pid":pid,
+        "log":state.config.data_dir.join("comfy-launch.log")}))
+}
 /// Single setup action: choose the real ComfyUI models folder, persist the
 /// model choice, and begin/resume all weight downloads without a shell.
 pub fn setup_model(state:AppState,id:&str,body:&Value)->Result<Value,String>{
