@@ -576,6 +576,38 @@ fn disabled_tools_cannot_be_enabled_by_the_model() {
     assert_eq!(app.get("/api/executions")[0]["status"], "failed");
 }
 
+/// A room exchange is sequential by design: a slow Windows runner must
+/// not fail merely because 9 healthy turns take longer than 1 fixed deadline.
+/// Reset the watchdog only after a new durable speaker receipt; a genuinely
+/// stalled speaker still fails with its last checkpoint and elapsed time.
+fn wait_room_speakers(app:&TestApp, job_id:&str, expected:usize) -> Value {
+    let mut observed=0usize;
+    let mut last_progress=Instant::now();
+    let started=Instant::now();
+    let stall_limit=Duration::from_secs(18);
+    loop {
+        let job=app.get(&format!("/api/jobs/{job_id}"));
+        let completed=job.pointer("/roomState/outputs").and_then(Value::as_array)
+            .map(Vec::len).unwrap_or(0);
+        if completed>observed {
+            observed=completed;
+            last_progress=Instant::now();
+        }
+        let status=job["status"].as_str().unwrap_or("");
+        if status=="completed" {
+            assert_eq!(completed,expected,
+                "room job ended without every participant: {job}");
+            return job;
+        }
+        assert!(!matches!(status,"failed"|"cancelled"|"needs_review"),
+            "room job failed after {observed}/{expected} speakers: {job}");
+        assert!(last_progress.elapsed()<stall_limit,
+            "room speaker stalled after {observed}/{expected} replies; elapsed={:?}; job={job}",
+            started.elapsed());
+        std::thread::sleep(Duration::from_millis(35));
+    }
+}
+
 #[test]
 fn a_room_greeting_reaches_the_whole_discussion_room() {
     let _serial = serial();
@@ -600,17 +632,7 @@ fn a_room_greeting_reaches_the_whole_discussion_room() {
         &json!({"input":"안녕","clientMessageId":"owner-greeting-001"}),
     );
     let job_id = sent["jobId"].as_str().unwrap();
-    let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
-        let job = app.get(&format!("/api/jobs/{job_id}"));
-        let status = job["status"].as_str().unwrap_or("");
-        if matches!(status, "completed" | "failed") {
-            assert_eq!(status, "completed", "{job}");
-            break;
-        }
-        assert!(Instant::now() < deadline, "{job}");
-        std::thread::sleep(Duration::from_millis(25));
-    }
+    wait_room_speakers(&app,job_id,2);
     let messages = app.get(&format!("/api/rooms/{id}/messages"));
     let assistants = messages
         .as_array()
@@ -1396,13 +1418,7 @@ fn a_short_greeting_reaches_all_nine_when_the_turn_cap_covers_the_roster() {
         "toolsEnabled":false,"autoLearning":false
     }));
     let sent = app.post(&format!("/api/rooms/{}/messages",room["id"].as_str().unwrap()), &json!({"input":"다시 인사해봐"}));
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        let job = app.get(&format!("/api/jobs/{}", sent["jobId"].as_str().unwrap()));
-        if job["status"] == "completed" { break; }
-        assert!(Instant::now() < deadline, "{job}");
-        std::thread::sleep(Duration::from_millis(30));
-    }
+    wait_room_speakers(&app,sent["jobId"].as_str().unwrap(),9);
     let messages = app.get("/api/rooms/nine-greeting/messages");
     let rows = messages.as_array().unwrap();
     let speakers = rows
