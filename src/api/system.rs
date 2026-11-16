@@ -23,9 +23,10 @@ pub async fn health() -> Json<Value> {
         "executionKernelOrigin":"dominion-sub3",
         "independentHarness":"dominion-harness",
         "instanceId":std::env::var("DOMINION_ENGINE_INSTANCE").ok(),
-        "commit": option_env!("DOMINION_BUILD_COMMIT").unwrap_or("unknown"),
-        "branch": option_env!("DOMINION_BUILD_BRANCH").unwrap_or("unknown"),
-        "dirty": option_env!("DOMINION_BUILD_DIRTY").map(|value| value == "true"),
+        "commit": crate::build_identity::running().commit,
+        "branch": crate::build_identity::running().branch,
+        "dirty": crate::build_identity::running().dirty,
+        "identitySource": crate::build_identity::running().source,
     }))
 }
 
