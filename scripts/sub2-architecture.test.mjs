@@ -28,3 +28,16 @@ test('pricing, evidence, locks, QA and UI share real native routes',()=>{
  assert.doesNotMatch(file('src/engine/mod.rs'),/pub mod video;/);
  assert.doesNotMatch(file('src/engine/mod.rs'),/pub mod rsi(?:_\w+)?;/);
 });
+
+test('the native owner task loop delegates decisions to a model-free execution kernel',()=>{
+ const autonomy=file('src/engine/autonomy.rs');
+ const kernel=file('src/engine/agent_kernel.rs');
+ assert.match(autonomy,/engine::agent_kernel::/);
+ assert.match(autonomy,/run_quiet_outcome/);
+ assert.doesNotMatch(autonomy,/fn side_effect_unknown\(/);
+ assert.doesNotMatch(autonomy,/fn decide\(/);
+ for(const signature of ['pub(crate) fn decide(', 'pub(crate) fn side_effect_unknown(',
+   'pub(crate) fn owner_intent(', 'pub(crate) fn next_instruction('])
+    assert.ok(kernel.includes(signature),signature);
+ assert.match(kernel,/outcomeUnknown/);
+});

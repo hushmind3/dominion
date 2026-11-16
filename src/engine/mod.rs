@@ -1,5 +1,6 @@
 pub mod autonomy;
 pub mod execution_scope;
+pub mod agent_kernel;
 pub mod workspace_scope;
 pub mod goal_control;
 pub mod adaptation_loop;

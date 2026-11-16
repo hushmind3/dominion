@@ -10,144 +10,13 @@ use crate::engine::{
     decompose,
     TurnStats,
 };
+use crate::engine::agent_kernel::{
+    CycleConfig, Decision, decide, side_effect_unknown,
+    usage_delta, stalled, next_instruction, owner_intent, narrow,
+};
+#[cfg(test)]
+use crate::engine::agent_kernel::{Strategy,read_only_shell_command};
 use serde_json::{json,Value};
-
-#[derive(Clone,Copy,Debug,PartialEq,Eq)]
-pub enum Strategy { Focused, Conservative }
-
-#[derive(Clone,Copy,Debug)]
-pub struct CycleConfig {
-    pub attempts: usize,
-    pub strategy: Strategy,
-}
-
-impl CycleConfig {
-    /// User parameters are bounded by the engine; invalid values never turn
-    /// into unbounded model calls.
-    pub fn from_input(input:&Value)->Self {
-        let attempts=input["maxAutonomousAttempts"].as_u64().unwrap_or(3).clamp(1,6) as usize;
-        let strategy=if input["executionStrategy"]=="conservative" {
-            Strategy::Conservative
-        }else{Strategy::Focused};
-        Self{attempts,strategy}
-    }
-}
-
-#[derive(Debug,PartialEq,Eq)]
-enum Decision { Accept, Repair, Review }
-
-/// A shell command may be replayed only when its subcommand is observational.
-/// Global git options must not hide a mutating action from the replay barrier.
-fn read_only_shell_command(command: &str) -> bool {
-    if command.chars().any(|ch| matches!(ch,
-        ';'|'&'|'|'|'>'|'<'|'\n'|'\r'|'$') || (ch as u32)==96) {
-        return false;
-    }
-    let words=command.split_whitespace().collect::<Vec<_>>();
-    let Some(exe)=words.first().copied() else {return false};
-    match exe {
-        "pwd"|"ls"|"cat"|"grep"=>true,
-        "rg"=>!words.iter().any(|word|word.starts_with("--pre")),
-        "pytest"=>true,
-        "cargo"=>matches!(words.get(1).copied(),
-            Some("check"|"test"|"metadata"|"clippy")),
-        "npm"=>match words.get(1).copied() {
-            Some("test")=>true,
-            Some("run")=>matches!(words.get(2).copied(),
-                Some("build"|"typecheck"|"lint"|"test")),
-            _=>false,
-        },
-        "git"=>{
-            let mut at=1;
-            while let Some(flag)=words.get(at).copied() {
-                if matches!(flag,"-C"|"-c"|"--git-dir"|"--work-tree") {
-                    at+=2;
-                }else{break}
-            }
-            matches!(words.get(at).copied(),
-                Some("status"|"diff"|"show"|"log"|"rev-parse"|
-                    "ls-files"|"cat-file"|"merge-base"))
-        },
-        _=>false,
-    }
-}
-
-fn side_effect_unknown(evidence:&[Value])->bool {
-    // Workspace edits and read-only operations are retryable after a fresh
-    // verifier pass; arbitrary shell/MCP/HTTP writes are not.
-    evidence.iter().any(|item|{
-        // A multi-file patch has no remote provider, but a failed move can
-        // leave a destination committed while source deletion is uncertain.
-        // Do not treat that partial result as a safe replan/replay.
-        if item["outcomeUnknown"]==true || item["result"]["outcomeUnknown"]==true {
-            return true;
-        }
-        let tool=item["tool"].as_str().unwrap_or("");
-        !matches!(tool,
-            "workspace_read"|"workspace_read_range"|"workspace_write"|
-            "workspace_replace"|"workspace_replace_range"|"workspace_apply_patch"|"workspace_list"|
-            "workspace_search"|"code_search"|"file_read"|"file_write"
-        ) && !(matches!(tool,"shell_exec"|"terminal_exec")
-            && read_only_shell_command(item["arguments"]["command"].as_str().unwrap_or("")))
-    })
-}
-fn decide(
-    strategy:Strategy,
-    has_verifiable_checks:bool,
-    gaps:&[String],
-    error:Option<&str>,
-    evidence:&[Value],
-    attempt:usize,
-    max_attempts:usize,
-) -> Decision {
-    if evidence.iter().any(|item|
-        item["outcomeUnknown"]==true || item["result"]["outcomeUnknown"]==true){
-        return Decision::Review;
-    }
-    if gaps.is_empty() && error.is_none(){return Decision::Accept;}
-    // Even if a provider fails after the last successful workspace write,
-    // a frozen independent verifier can demonstrate the artifact exists.
-    if gaps.is_empty() && has_verifiable_checks {return Decision::Accept;}
-    if side_effect_unknown(evidence) {return Decision::Review;}
-    if strategy==Strategy::Conservative && !evidence.is_empty() && error.is_some(){
-        return Decision::Review;
-    }
-    if attempt+1>=max_attempts {return Decision::Review;}
-    Decision::Repair
-}
-fn narrow(text:&str,max:usize)->String {
-    let mut limited=text.chars().take(max).collect::<String>();
-    if text.chars().count()>max {limited.push('…');}
-    limited
-}
-/// Stop paying for the same unsuccessful model turn without fresh evidence.
-fn usage_delta(previous:&Value,current:&Value)->Value {
-    let mut out=json!({});
-    for key in ["calls","promptTokens","completionTokens","totalTokens","estimatedCalls"] {
-        let before=previous[key].as_u64().unwrap_or(0);
-        let after=current[key].as_u64().unwrap_or(0);
-        out[key]=json!(after.saturating_sub(before));
-    }
-    out
-}
-fn stalled(previous:&[String],current:&[String],new_evidence:usize,
-    previous_error:Option<&str>,error:Option<&str>)->bool{
-    !current.is_empty() && previous==current
-        && new_evidence==0 && previous_error==error
-}
-fn next_instruction(goal:&str,gaps:&[String],error:Option<&str>,round:usize)->String {
-    let evidence=gaps.iter().take(6).map(|gap|format!("- {}",narrow(gap,300)))
-        .collect::<Vec<_>>().join("\n");
-    let error=error.map(|text|narrow(text,400)).unwrap_or_default();
-    format!(
-        "원래 사용자 작업:\n{goal}\n\n\
-         Rust 실행 엔진이 {round}번째 시도 이후 확인한 미완료 항목:\n{evidence}\n\
-         이전 실행 오류: {error}\n\n\
-         이미 수행한 변경을 되돌리거나 중복 실행하지 마세요. \
-         현재 파일/테스트 상태를 필요한 범위만 확인한 뒤 실패한 항목만 수정하고 검증하세요. \
-         설명만으로 완료했다고 주장하지 말고 검증 가능한 산출물을 만드세요."
-    )
-}
 
 /// The explicit UI command is a frozen acceptance criterion. Only a real
 /// successful command invocation (captured by the Rust tool runtime) satisfies
@@ -187,33 +56,6 @@ fn verification_after_last_edit(command:&str, evidence:&[Value])->bool {
         (Some(edit),Some(pass))=>pass>edit,
         (None,Some(_))=>true,
     }
-}
-
-#[derive(Debug,PartialEq,Eq)]
-struct OwnerIntent{
-    goal:String,additions:Vec<String>,replacement_revision:u64,
-}
-impl OwnerIntent{
-    fn effective_goal(&self)->String{
-        if self.additions.is_empty(){return self.goal.clone();}
-        format!("{}\n\n사용자가 추가한 작업 조건:\n{}",self.goal,
-            self.additions.iter().map(|s|format!("- {s}")).collect::<Vec<_>>().join("\n"))
-    }
-}
-/// Replay durable owner instructions: replacement invalidates the old task and
-/// prior additions; subsequent additions remain binding.
-fn owner_intent(original:&str,messages:&[Value])->OwnerIntent{
-    let mut active=OwnerIntent{goal:original.into(),additions:Vec::new(),replacement_revision:0};
-    for message in messages{
-        let Some(instruction)=message["instruction"].as_str()
-            .map(str::trim).filter(|s|!s.is_empty()) else{continue;};
-        if message["mode"]=="replace"{
-            active.goal=instruction.into();
-            active.additions.clear();
-            active.replacement_revision=message["revision"].as_u64().unwrap_or(0);
-        }else{active.additions.push(instruction.into());}
-    }
-    active
 }
 
 /// Called by the existing durable prompt worker. The job stays one operation;
