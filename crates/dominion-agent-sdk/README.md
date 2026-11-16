@@ -14,3 +14,7 @@
 기존 `dominion-harness` 호환 실행기도 이 크레이트의 예산을 사용합니다. 호환 실행기의 모델 루프 전체를 제품 채팅과 통합한 것은 아닙니다.
 
 빌드·회귀 검사와 실제 모델의 작업 성능은 별도로 판단합니다.
+
+## Fixed-provider tool-search bridge (2026-11-16)
+
+For a catalogue larger than 18 owner-approved tools the kernel exposes up to 13 native function definitions. `dominion_tool_search({query,limit})` is a zero-provider-call read-only operation against the **allowed** catalogue and returns full tool schemas as durable receipts. The model invokes hidden capabilities through `dominion_tool_call({name,arguments})`; the kernel demands a prior successful same-run discovery receipt, checks allowlist membership again and records the **real** tool in the operation receipt. Native function declarations remain unchanged after discovery. No external host tool is called by searching, and the bridge does not bypass approval, cancellation or crash-recovery paths. For small catalogues the legacy full catalogue remains visible. Large allowlists accept up to 1,024 tools and at most 65,536 bytes of approved names. See [design and tests](../../../docs/SUB3-PROGRESSIVE-TOOLS-2026-11-16.md).
