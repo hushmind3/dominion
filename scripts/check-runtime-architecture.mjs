@@ -35,6 +35,16 @@ for (const file of sources) {
 // or journal while retaining an independent model/tool retry loop.
 const runtime = readFileSync(path.join(root, 'src/engine/chat/runtime.rs'), 'utf8')
 const adapter = readFileSync(path.join(root, 'src/engine/chat/product.rs'), 'utf8')
+const outcome = readFileSync(path.join(root, 'src/engine/chat/outcome.rs'), 'utf8')
+if (!runtime.includes('mod outcome;') ||
+    !runtime.includes('use outcome::{') ||
+    !outcome.includes('pub(super) fn determine_task_outcome(') ||
+    runtime.includes('fn determine_task_outcome(')) {
+  throw new Error('Finalization policy must be isolated and called by runtime')
+}
+if (!sources.includes('src/engine/chat/outcome.rs')) {
+  throw new Error('RSI harness map must inspect the live finalization policy module')
+}
 const driver = readFileSync(path.join(root, 'crates/dominion-core/src/engine.rs'), 'utf8')
 if (!runtime.includes('dominion_core::engine::Engine::drive(')) {
   throw new Error('Product entrypoints must invoke the native driver')
