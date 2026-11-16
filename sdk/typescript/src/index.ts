@@ -47,6 +47,8 @@ export interface VideoJobInput {
   brief: string; title?: string; engine?: 'native'|'comfyui';
   duration?: number; aspectRatio?: '9:16'|'16:9'|'1:1';
   scenes?: string[]; continuity?: string; fps?: number;
+  /** Opt-in autonomous LLM planning before GPU rendering (maximum 4 scenes). */
+  autoStoryboard?: boolean; planningProviderId?: string;
   width?: number; height?: number; seed?: number; negativePrompt?: string;
   reuseVideoJobId?: string; regenerateScenes?: number[];
   /** 0 forbids paid new scenes, while SHA256-verified previous scenes can be reused. */
@@ -56,6 +58,8 @@ export interface VideoJob extends RecordItem {
   kind: 'video'|'youtube_upload'; status: JobStatus;
   engine?: 'native'|'comfyui'; title?: string; outputUrl?: string|null;
   maxNewScenes?: number|null; result?: unknown;
+  autoStoryboard?: boolean; storyboard?: string[]|null;
+  sceneProgress?: {index?:number|null;total?:number|null;rendered?:number|null;reused?:number|null};
   renderWorkload?: {
     frames: number; pixelFrames: number; megapixelFrames: number;
     estimatedMoneyCost: null; unit: 'pixel_frames_not_currency';
@@ -207,6 +211,15 @@ export class Dominion {
     resolve: (key:string,allow:boolean,options?:RequestOptions) => this.request<{resolved:boolean;status:string}>('POST','/api/approvals',{id:key,allow},options),
   };
   readonly video = {
+    catalog: (options?:RequestOptions) => this.request<{
+      videoModels:Array<{id:string;name:string;kind:string;available:boolean;missingFiles:number;hint:string}>;
+      selectedVideoModel?:string;
+    }>('GET','/api/video/catalog',undefined,options),
+    modelDownloads: (options?:RequestOptions) => this.request<{downloads:Array<{
+      id:string;model:string;status:string;progress:number;bytes:number;total:number;
+      filesTotal?:number;filesCompleted?:number;currentFile?:string|null;error?:string;
+    }>}>( 'GET','/api/video/models/downloads',undefined,options),
+    installModel: (key:string,options?:RequestOptions) => this.request<{model:string;status:string}>('POST','/api/video/models/'+id(key)+'/download',{},options),
     status: (options?:RequestOptions) => this.request<unknown>('GET','/api/video/status',undefined,options),
     config: (options?:RequestOptions) => this.request<unknown>('GET','/api/video/config',undefined,options),
     saveConfig: (input:Record<string,unknown>,options?:RequestOptions) => this.request<unknown>('POST','/api/video/config',input,options),
