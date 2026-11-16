@@ -9,10 +9,11 @@ DOMINION is an owner-controlled, model/provider-independent **Rust agent executi
 - `crates/dominion-agent-sdk`: deterministic kernel and job snapshots; budgets, collision-safe discovery of authorized tools, fixed provider schema prefix, bounded JSON argument validation, checkpoints, verification, cancellation, and crash/approval recovery. Old receipt results and arguments are accessible through bounded, read-only pages instead of repeated host calls.
 - `src/engine/native_agent.rs`: product adapter binding real model providers, workspace, host tools, MCP, authorization and stored job receipts to the Rust SDK. Native jobs pin tool-name/schema/read-only contracts and acceptance requirements before the first model/tool call; changed authority on restart requires review.
 - `src/engine/chat/runtime.rs`: existing streaming chat/room history, context selection and native Rust tool dispatcher; user-requested edits remain testable, with acceptance checks. No autonomous RSI policy/campaign branch.
-- `src/engine/jobs.rs` and `src/db.rs`: SQLite job/operation journal, indexed active-queue selection, Tokio Notify worker wakeups, durable CAS and legacy effect recovery. Idle reconciliation runs every 5 seconds; completed historic jobs are retained without being polled on each turn.
+- `src/engine/jobs.rs` and `src/db.rs`: SQLite job/operation journal, indexed active-queue selection, Tokio Notify worker wakeups, durable CAS and legacy effect recovery. Terminal success/failure audit is emitted only after the terminal checkpoint is persisted; concurrent owner cancellation cannot silently become a completed job. Idle reconciliation runs every 5 seconds; completed historic jobs are retained without being polled on each turn.
 - `src/engine/mcp.rs`, `src/engine/skills.rs`, `src/api/extensions.rs`: explicit external MCP server/tool manifests and skill/plugin import; reviewed tools are verified against their pinned manifest at execution.
 - `sdk/typescript`, `sdk/rust`, `packages/sdk-typescript`: API clients for the same native Rust product/harness; no replicated agent planning loop.
 - `web/src`: the existing conversation, workspace, memory, providers, rooms, channels, plugins, developer tools, job state and operator controls.
+- `src/state.rs`, `src/engine/chat/runtime.rs`, `src/engine/rooms.rs`: reusable, timeout-scoped model HTTP clients, durable per-speaker latency observations, and progress-aware room E2E coverage on slow CI platforms.
 
 ## No unattended self-modification
 
@@ -31,6 +32,6 @@ Chat and UI default `autoLearning` to false, and former five-minute background d
 
 Run `npm ci --prefix web && npm run typecheck --prefix web && npm run build --prefix web`, `npm test --prefix sdk/typescript`, `node scripts/check-lean-product.mjs`, and `cargo test --release --locked`. The GitHub Actions CI matrix checks Linux, Windows and macOS. Release and focused agent acceptance must pass on the *same branch HEAD*; a historical green run does not certify new changes.
 
-[Lean product source/behavior contract](docs/SUB3-LEAN-COMPLEXITY-2026-11-16.md) · [Agent/host replay provenance](docs/SUB3-JUDGE-READY-2026-11-16.md).
+[Room latency / recovery regression contract](docs/SUB3-ROOM-LATENCY-2026-11-17.md) · [Lean product source/behavior contract](docs/SUB3-LEAN-COMPLEXITY-2026-11-16.md) · [Agent/host replay provenance](docs/SUB3-JUDGE-READY-2026-11-16.md).
 
 Licensed Apache-2.0.
