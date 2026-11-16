@@ -979,7 +979,7 @@ async fn postprocess_narration(ctx:&JobContext,input:&Value,dir:&Path)->Result<V
     if script.trim().is_empty() {
         return Ok(json!({"narrated":false,"captions":false}));
     }
-    ctx.checkpoint(json!({"phase":"audio","progress":92}))?;
+    ctx.checkpoint(json!({"phase":"audio","progress":96}))?;
     let ffmpeg=ffmpeg_from_config(config)
         .ok_or("내레이션과 자막 합성에는 FFmpeg가 필요합니다.")?;
     let audio=if config["narration"]==false{None}
@@ -990,7 +990,14 @@ async fn postprocess_narration(ctx:&JobContext,input:&Value,dir:&Path)->Result<V
             "narrationWarning":"음성 엔진이 없어 소리를 생성하지 못했습니다."}));
     }
     if add_captions {
-        std::fs::write(dir.join("captions.srt"),captions_from_narration(input,script))
+        // Owner-authored narration always overrides AI narration, including
+        // the words in the timed subtitles, not just synthesized speech.
+        let mut subtitle_input=input.clone();
+        if !explicit.is_empty() {
+            subtitle_input["narrationLines"]=Value::Null;
+        }
+        std::fs::write(dir.join("captions.srt"),
+            captions_from_narration(&subtitle_input,script))
             .map_err(|e|e.to_string())?;
     }
     let mut cmd=tokio::process::Command::new(&ffmpeg);
@@ -2012,6 +2019,11 @@ mod tests {
         assert!(srt.contains("00:00:00,000 --> 00:00:03,000"));
         assert!(srt.contains("00:00:03,000 --> 00:00:06,000"));
         assert!(parse_video_plan(r#"{"scenes":[{"visual":"A","narration":""},{"visual":"B","narration":"B"}]}"#,4).is_err());
+        let mut explicit=json!({"duration":6,"narrationLines":["AI line one","AI line two"]});
+        explicit["narrationLines"]=Value::Null;
+        let user_captions=captions_from_narration(&explicit,"Owner narration.");
+        assert!(user_captions.contains("Owner narration"));
+        assert!(!user_captions.contains("AI line"));
         assert_eq!(parse_video_plan(r#"["A","B"]"#,4).unwrap().1.len(),0);
     }
     #[test]
