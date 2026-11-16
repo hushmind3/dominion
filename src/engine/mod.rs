@@ -31,6 +31,7 @@ pub mod program;
 pub mod verification;
 pub mod reflect;
 pub mod gateway;
+pub mod github_files;
 pub mod cli_model;
 pub mod improve;
 pub mod code_index;
@@ -62,7 +63,6 @@ pub mod skills;
 pub mod telegram;
 pub mod tools;
 pub mod vault_rotation;
-pub mod workflows;
 pub mod wake;
 
 use crate::state::AppState;

@@ -1,6 +1,6 @@
 use crate::engine::chat::TurnRequest;
 use crate::engine::run_quiet;
-use crate::engine::{learning, reflect, rooms, workflows};
+use crate::engine::{learning, reflect, rooms};
 use crate::state::AppState;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
@@ -318,7 +318,6 @@ pub fn start(state: AppState) {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(30)).await;
-            schedule_automations(&state);
             // A process restart removes in-memory approval timers. The persisted
             // deadline still expires automatically during normal operation.
             crate::engine::chat::expire_stale_approvals(&state);
@@ -479,7 +478,6 @@ async fn run_job(state: AppState, job: Value) {
         return;
     }
     let result = match kind.as_str() {
-        "workflow" => workflows::run(&context, &job).await,
         "room" | "meeting" => rooms::run(&context, &job).await,
         "prompt" => run_prompt(&context, &job).await,
         "resume" => run_resume(&context, &job).await,
@@ -590,46 +588,6 @@ async fn run_resume(context: &JobContext, job: &Value) -> Result<Value, String> 
     Ok(result)
 }
 
-fn schedule_automations(state: &AppState) {
-    let now = chrono::Utc::now();
-    for automation in state.store.all("automation") {
-        if automation.get("enabled").and_then(|value| value.as_bool()) != Some(true) {
-            continue;
-        }
-        let Some(next_at) = automation.get("nextAt").and_then(|value| value.as_str()) else {
-            continue;
-        };
-        let Ok(next) = chrono::DateTime::parse_from_rfc3339(next_at) else {
-            continue;
-        };
-        if next.with_timezone(&chrono::Utc) > now {
-            continue;
-        }
-        let kind = automation
-            .get("kind")
-            .and_then(|value| value.as_str())
-            .unwrap_or("prompt");
-        let input = automation
-            .get("input")
-            .cloned()
-            .unwrap_or_else(|| json!({}));
-        let job_kind = if kind == "meeting" { "room" } else { kind };
-        if !matches!(job_kind, "prompt" | "workflow" | "room") {
-            continue;
-        }
-        enqueue(state, job_kind, input);
-        let mut updated = automation.clone();
-        let interval = automation
-            .get("intervalMinutes")
-            .and_then(|value| value.as_i64())
-            .unwrap_or(1440)
-            .max(1);
-        updated["lastAt"] = json!(now.to_rfc3339());
-        updated["nextAt"] = json!((now + chrono::Duration::minutes(interval)).to_rfc3339());
-        state.store.put("automation", &updated);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -656,12 +614,12 @@ mod tests {
         let state = temp_state();
         let job = enqueue(
             &state,
-            "workflow",
-            json!({ "workflowId": "w1", "input": "hi" }),
+            "prompt",
+            json!({ "prompt": "hi" }),
         )
         .expect("job");
         assert_eq!(job["status"], "queued");
-        assert_eq!(job["kind"], "workflow");
+        assert_eq!(job["kind"], "prompt");
         assert_eq!(job["stepTotal"], 0);
 
         let queued = next_queued(&state).expect("worker sees it");
@@ -736,8 +694,8 @@ mod tests {
         let state = temp_state();
         let job = enqueue(
             &state,
-            "workflow",
-            json!({ "workflowId": "w", "input": "" }),
+            "prompt",
+            json!({ "prompt": "w" }),
         )
         .unwrap();
         let mut running = job.clone();
@@ -789,8 +747,8 @@ mod tests {
         let state = temp_state();
         let job = enqueue(
             &state,
-            "workflow",
-            json!({ "workflowId": "w", "input": "", "sessionId": "session-1" }),
+            "prompt",
+            json!({ "prompt": "w", "sessionId": "session-1" }),
         )
         .unwrap();
         let mut running = job.clone();
