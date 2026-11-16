@@ -87,6 +87,9 @@ test('SDK start does not enqueue autonomous policies or experiments after restar
 test('retired RSI UI links and source-generation workflows are absent',()=>{
   const chat=src('web/src/pages/Chat.tsx');
   const nav=src('web/src/components/WorkspaceShell.tsx');
+  const home=src('web/src/pages/Home.tsx');
+  assert.doesNotMatch(home,/dashboard\.shortcut\.rsi|page:'rsi' as const|type Destination=/);
+  assert.match(home,/import type \{PageId\} from '\.\.\/components\/WorkspaceShell'/);
   assert.doesNotMatch(chat,/openImprovementIssue|\/api\/rsi\/issues/);
   assert.doesNotMatch(nav,/'video'\|'models'|\|'developer'\|'rsi'/);
   for(const name of [
