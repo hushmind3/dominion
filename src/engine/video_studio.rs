@@ -167,23 +167,50 @@ pub async fn run_plan(ctx:&JobContext,job:&Value)->Result<Value,String>{
   return Ok(json!({"projectId":id,"reused":true}))
  }
  ctx.checkpoint(json!({"phase":"scriptwriting","progress":15}))?;
- let scenes=if project["useAI"]==true{
+ let ai_planning=project["useAI"]==true;
+ if ai_planning {
+  // Persist the uncertainty BEFORE a paid provider request. After a crash,
+  // workers must not quietly replay a paid model call with unknown outcome.
+  ctx.checkpoint(json!({"videoPlanInFlight":true,"phase":"scriptwriting","progress":15}))?;
+ }
+ let mut scenes=if project["useAI"]==true{
   let prompt=format!("주제:{}\n타깃:{}\n스타일:{}\n영상 {}초\n플랫폼:{}",
    project["brief"],project["audience"],project["style"],
    project["targetSeconds"],project["platform"]);
   let answer=llm::complete(&ctx.state,project["providerId"].as_str().unwrap_or(""),
    project["model"].as_str().unwrap_or(""),
    "영상 연출자입니다. 사실을 지어내지 마세요. JSON 객체만 응답하세요. 형식: {\"scenes\":[{\"script\":\"나레이션\",\"visualPrompt\":\"장면 지시\",\"overlay\":\"화면 자막\",\"seconds\":5}]}. 도입, 본론, 마무리를 포함한 2~8개 장면, 총길이 3~180초.",&prompt).await?;
-  let parsed:Value=serde_json::from_str(answer.trim())
+  let raw=answer.trim().trim_start_matches("```json")
+   .trim_start_matches("```")
+   .trim_end_matches("```").trim();
+  let parsed:Value=serde_json::from_str(raw)
    .map_err(|_|"기획 모델이 유효한 JSON을 반환하지 않았습니다.")?;
   validate_scenes(&parsed["scenes"])?
  }else{validate_scenes(&json!(offline(&project)))?};
- let source=if project["useAI"]==true{"provider"}else{"offline"};
+ // Normalize AI-scored scene lengths to the owner's requested runtime
+ // without dropping a scene or creating zero-second frames.
+ let target=project["targetSeconds"].as_u64().unwrap_or(30);
+ let original:u64=scenes.iter().map(|scene|scene["seconds"].as_u64().unwrap_or(0)).sum();
+ if original!=target {
+  if scenes.len()>target as usize{return Err("장면 수가 요청 영상 길이보다 많습니다.".into())}
+  let mut left=target;
+  for i in 0..scenes.len() {
+   let remaining=(scenes.len()-i-1) as u64;
+   let duration=if i==scenes.len()-1{left}else{
+    ((scenes[i]["seconds"].as_u64().unwrap_or(1)*target)/original)
+     .max(1).min(left-remaining)
+   };
+   scenes[i]["seconds"]=json!(duration);
+   left-=duration;
+  }
+ }
+ let source=if ai_planning{"provider"}else{"offline"};
  let saved=ctx.state.store.patch_if("video_project",id,"revision",&json!(0),
   &json!({"revision":1,"status":"planned","scenes":scenes,
    "planningSource":source,"updatedAt":chrono::Utc::now().to_rfc3339()}))
   .ok_or("기획 저장 충돌")?;
  ctx.state.bus.record("video_project",&saved);
+ if ai_planning {ctx.checkpoint(json!({"videoPlanInFlight":false,"progress":80}))?;}
  if project["autoRender"]==true{render(&ctx.state,id,Some(1))?;}
  Ok(json!({"projectId":id,"sceneCount":scenes.len(),"planningSource":source}))
 }
