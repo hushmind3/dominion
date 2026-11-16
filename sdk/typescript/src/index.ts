@@ -61,6 +61,25 @@ export interface NativeRunRequest {
  instruction:string;providerId?:string;model?:string;verifyCommand?:string;maxRounds?:number;maxToolCalls?:number;
 }
 export interface NativeReconciliation {applied:boolean;details:string}
+export interface NativeReplay {
+ runId:string;mode:string;offlineOnly:boolean;modelOrExternalToolCalls:number;
+ traceConsistent:boolean;replayableTrace:boolean;decisionTapeAvailable:boolean;
+ requiresManualReconciliation:boolean;
+ hostJournal:{operationCount:number;matchedReceipts:number;consistent:boolean;
+   anomalies:string[];sourceEvidence:unknown[]};
+ acceptanceChecks:{satisfied:number;total:number;allSatisfied:boolean};
+ cost:{configuredCostKRW:number|null;currency:'KRW';invoiceVerified:boolean};
+ actions:Array<{turn:number;id:string;plannedTool:string;observedTool?:string|null;
+   status:string;diagnostic?:string|null}>;
+}
+export interface NativePairedComparison {
+ mode:string;externalCalls:0;sameTaskModelLimitsPermissions:boolean;
+ baselineRunId:string;candidateRunId:string;qualityComparable:boolean;
+ candidateEligibleForManualReview:boolean;autoPromotion:false;
+ baseline:Record<string,unknown>;candidate:Record<string,unknown>;
+ differences:{toolCalls:number;modelCalls:number;chargedTokens:number;
+   configuredCostKRW:number|null;latencyMs:number|null};qualification:string;
+}
 export interface Approval extends RecordItem {status:string;sessionId?:string;tool?:string;args?:unknown}
 export interface EngineEvent {seq:number;type:string;kind?:string;record?:RecordItem;removed?:string;approval?:Approval;[key:string]:unknown}
 export interface ChatEvent {type:string;[key:string]:unknown}
@@ -171,6 +190,9 @@ export class Dominion{
     list:()=>this.request<Job[]>('GET','/api/jobs'),
     create:(job:CreateJob)=>this.request<Job>('POST','/api/jobs',job),
     get:(jobId:string)=>this.request<Job>('GET','/api/jobs/'+id(jobId)),
+    replay:(jobId:string)=>this.request<NativeReplay>('GET','/api/jobs/'+id(jobId)+'/replay'),
+    compare:(baselineId:string,candidateId:string)=>this.request<NativePairedComparison>(
+      'POST','/api/jobs/'+id(baselineId)+'/compare',{candidateRunId:candidateId}),
     cancel:(jobId:string)=>this.request<Job>('POST','/api/jobs/'+id(jobId)+'/cancel',{}),
     steer:(jobId:string,instruction:string)=>this.request<{ok:boolean;jobId:string;directive:string}>('POST','/api/jobs/'+id(jobId)+'/directive',{instruction})
   };
@@ -179,6 +201,9 @@ export class Dominion{
     list:()=>this.request<NativeRun[]>('GET','/api/sdk/runs'),
     start:(input:NativeRunRequest)=>this.request<NativeRun>('POST','/api/sdk/runs',input),
     get:(runId:string)=>this.request<NativeRun>('GET','/api/sdk/runs/'+id(runId)),
+    replay:(runId:string)=>this.request<NativeReplay>('GET','/api/sdk/runs/'+id(runId)+'/replay'),
+    compare:(baselineId:string,candidateId:string)=>this.request<NativePairedComparison>(
+      'POST','/api/sdk/runs/'+id(baselineId)+'/compare',{candidateRunId:candidateId}),
     approve:(runId:string,callId:string)=>this.request<NativeRun>('POST','/api/sdk/runs/'+id(runId)+'/approve',{callId}),
     cancel:(runId:string)=>this.request<NativeRun>('POST','/api/sdk/runs/'+id(runId)+'/cancel',{}),
     resume:(runId:string)=>this.request<NativeRun>('POST','/api/sdk/runs/'+id(runId)+'/resume',{}),
