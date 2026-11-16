@@ -56,6 +56,33 @@ export interface VideoJobInput {
   /** 0 forbids paid new scenes, while SHA256-verified previous scenes can be reused. */
   maxNewScenes?: number;
 }
+/** Rust RSI start validates the owner-selected model, source/worktree and budgets. */
+export interface RsiStartInput {
+  providerId:string;
+  model:string;
+  mode?:'manual'|'continuous';
+  request?:string;
+  focusFiles?:string[];
+  issueId?:string;
+  localOnly?:boolean;
+  continueFrom?:string;
+  /** Continuous mode requires this explicit owner confirmation. */
+  confirmation?:'START_RSI_EVOLUTION';
+  evolutionTarget?:'product'|'system';
+  selectionPolicy?:'automatic'|'manual';
+  applyWhenFinished?:boolean;
+  expandAfterGain?:boolean;
+  crossDomainCycle?:boolean;
+  maxAttempts?:number;
+  tokenBudget?:number;
+  timeBudgetSeconds?:number;
+}
+export interface RsiOverview {
+  version:string;
+  candidates:RecordItem[];
+  campaigns:RecordItem[];
+  minPairedCases:number;
+}
 export interface VideoCancelOutcome {
   job: VideoJob;
   remoteCancel: {status:'requested'|'unconfirmed'|'not_active';promptId?:string;reason?:string};
@@ -250,9 +277,22 @@ export class Dominion {
     },
   };
   readonly rsi = {
-    list: (options?:RequestOptions) => this.request<RecordItem[]>('GET','/api/rsi',undefined,options),
-    campaigns: (options?:RequestOptions) => this.request<RecordItem[]>('GET','/api/rsi/campaigns',undefined,options),
+    /** Overview is an object, not a bare list (matches Rust api::rsi::list). */
+    list: (options?:RequestOptions) => this.request<RsiOverview>('GET','/api/rsi',undefined,options),
+    campaigns: (options?:RequestOptions) => this.request<{campaigns:RecordItem[]}>('GET','/api/rsi/campaigns',undefined,options),
     campaign: (key:string,options?:RequestOptions) => this.request<RecordItem>('GET','/api/rsi/campaigns/'+id(key),undefined,options),
+    /** Same source verification, frozen worktree and budget gates as the GUI. */
+    start: (input:RsiStartInput,options?:RequestOptions) =>
+      this.request<Job>('POST','/api/rsi/start',input,options),
+    verify: (key:string,options?:RequestOptions) =>
+      this.request<Record<string,unknown>>('GET','/api/rsi/campaigns/'+id(key)+'/verify',undefined,options),
+    /** An explicit owner choice must match a live comparison attempt. */
+    choose: (key:string,attempt:number,choice:'baseline'|'candidate',options?:RequestOptions) =>
+      this.request<RecordItem>('POST','/api/rsi/campaigns/'+id(key)+'/choose',{attempt,choice},options),
+    /** Only for an explicitly selected verified commit on a completed campaign. */
+    applyVerified: (key:string,commit:string,options?:RequestOptions) =>
+      this.request<Job>('POST','/api/rsi/campaigns/'+id(key)+'/apply',
+        {confirmation:'APPLY_VERIFIED_CAMPAIGN_TO_SUB',commit},options),
   };
   /** Chat POST is never retried, to avoid duplicate tool/model actions. */
   async streamChat(input:ChatInput,onEvent:(event:StreamEvent)=>void,options:RequestOptions={}):Promise<void> {

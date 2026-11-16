@@ -179,6 +179,48 @@ test('video SDK passes narration text through the same Rust video enqueue',async
   assert.equal(created.narrationScript,body.narrationScript);
 });
 
+test('RSI SDK reads actual Rust envelope and never mis-types campaign lists',async()=>{
+  const paths=[];
+  const client=new Dominion({fetch:async(url)=>{
+    paths.push(url);
+    return url.endsWith('/campaigns')
+      ? json({campaigns:[{id:'rsi-1',status:'running'}]})
+      : json({version:'rsi-v2',candidates:[],campaigns:[],minPairedCases:8});
+  }});
+  const overview=await client.rsi.list();
+  const campaigns=await client.rsi.campaigns();
+  assert.equal(overview.minPairedCases,8);
+  assert.equal(campaigns.campaigns[0].id,'rsi-1');
+  assert.deepEqual(paths,[
+    'http://127.0.0.1:4317/api/rsi',
+    'http://127.0.0.1:4317/api/rsi/campaigns'
+  ]);
+});
+
+test('RSI SDK starts, verifies, chooses and applies using the authoritative Rust routes',async()=>{
+  const calls=[];
+  const client=new Dominion({fetch:async(url,init)=>{
+    calls.push({url,method:init.method,body:init.body&&JSON.parse(init.body)});
+    return json({id:'rsi-1',status:'running'});
+  }});
+  await client.rsi.start({providerId:'p',model:'m',mode:'continuous',
+    confirmation:'START_RSI_EVOLUTION',selectionPolicy:'automatic'});
+  await client.rsi.verify('rsi-1');
+  await client.rsi.choose('rsi-1',2,'candidate');
+  await client.rsi.applyVerified('rsi-1','a'.repeat(40));
+  assert.deepEqual(calls.map(c=>c.url),[
+    'http://127.0.0.1:4317/api/rsi/start',
+    'http://127.0.0.1:4317/api/rsi/campaigns/rsi-1/verify',
+    'http://127.0.0.1:4317/api/rsi/campaigns/rsi-1/choose',
+    'http://127.0.0.1:4317/api/rsi/campaigns/rsi-1/apply'
+  ]);
+  assert.equal(calls[0].body.confirmation,'START_RSI_EVOLUTION');
+  assert.deepEqual(calls[2].body,{attempt:2,choice:'candidate'});
+  assert.deepEqual(calls[3].body,{
+    confirmation:'APPLY_VERIFIED_CAMPAIGN_TO_SUB',commit:'a'.repeat(40)
+  });
+});
+
 test('video SDK preserves render budget and returns engine work receipts',async()=>{
   let route,request;
   const client=new Dominion({fetch:async(url,init)=>{
