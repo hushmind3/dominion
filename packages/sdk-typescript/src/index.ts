@@ -25,6 +25,10 @@ export interface RunCheckpoint {
   pendingCall: ToolCall | null;
   events: Array<{ kind: string; detail: unknown }>;
   answer: string | null;
+  taskOutcome?: 'succeeded' | 'failed' | 'cancelled' | 'answered_unverified' | null;
+  verified?: boolean;
+  acceptancePassed?: boolean | null;
+  failureClass?: string | null;
 }
 export interface AgentRun {
   id: string;
@@ -34,6 +38,12 @@ export interface AgentRun {
   model?: string;
   answer?: string;
   error?: string;
+  /** True only after the Rust acceptance evaluator proved task success. */
+  verified?: boolean;
+  taskOutcome?: 'succeeded' | 'failed' | 'cancelled' | 'answered_unverified' | null;
+  acceptancePassed?: boolean | null;
+  failureClass?: string | null;
+  evidenceExecutionId?: string;
   checkpoint?: RunCheckpoint | null;
 }
 export interface StartRun {

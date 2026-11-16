@@ -24,6 +24,11 @@ if (current.status === 'awaiting_approval') {
 }
 ```
 
+A model reply and a verified task are different. Inspect `run.verified === true`
+and `run.taskOutcome === 'succeeded'` before claiming a task was completed
+successfully. A requested `verifyCommand` without successful acceptance
+evidence returns `status: 'failed'` while retaining the model answer for review.
+
 Other methods: `listRuns`, `resumeRun`, `cancelRun`, `reconcileRun`,
 `steerRun(run.id, instruction, "append" | "replace")`. Steering changes the
 active owner goal in the same native execution; usage and effect receipts remain
