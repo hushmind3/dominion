@@ -35,6 +35,7 @@ pub mod oauth;
 pub mod personas;
 pub mod rooms;
 pub mod video;
+pub mod video_studio;
 
 use crate::state::AppState;
 use axum::{
@@ -309,6 +310,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/youtube/uploads", get(compat::youtube_uploads))
         .route("/api/youtube/uploads/:id", get(video::job))
         .route("/api/youtube/:action", post(compat::youtube_action))
+        .route("/api/video/projects",get(video_studio::list).post(video_studio::create))
+        .route("/api/video/projects/:id",get(video_studio::one))
+        .route("/api/video/projects/:id/scenes",post(video_studio::scenes))
+        .route("/api/video/projects/:id/render",post(video_studio::render))
         .route("/api/video/status", get(video::status))
         .route(
             "/api/video/config",
