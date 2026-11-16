@@ -157,6 +157,7 @@ pub fn recover(state: &AppState) {
             "/workflowState/inFlight",
             "/discordState/inFlight",
             "/videoState/inFlight",
+            "/videoPlanInFlight",
         ]
         .iter()
         .any(|path| {
