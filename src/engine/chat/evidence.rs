@@ -26,5 +26,17 @@ pub(super) fn evidence_for_source(state:&AppState,session:&str,source:&str,execu
     // Earlier native room speakers may already have performed this exact
     // owner's request. Their persisted operations prevent duplicate execution.
     for message in state.store.messages(session){if message["metadata"]["replyToMessageId"].as_str()==Some(source){if let Some(run)=message["metadata"]["executionId"].as_str(){runs.insert(run.to_string());}}}
-    state.store.all("execution_operation").into_iter().filter(|operation|operation["status"]=="completed"&&operation["runId"].as_str().is_some_and(|id|runs.contains(id))).collect()
+    // Read only the exact native/room runs linked to this owner message.
+    // A long-running product must not parse its entire historical tool log.
+    // SQL errors preserve the conservative old behavior rather than inventing
+    // successful evidence from an empty result set.
+    let mut operations=Vec::new();
+    for run in runs {
+        match state.store.execution_operations_recent(&run) {
+            Ok(rows)=>operations.extend(rows.into_iter().filter(|operation|
+                operation["status"]=="completed")),
+            Err(_)=>return Vec::new(),
+        }
+    }
+    operations
 }
