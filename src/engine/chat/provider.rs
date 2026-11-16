@@ -54,46 +54,6 @@ fn stream_visible_text(
     }
 }
 
-/// Resolve RSI model policy before opening any HTTP stream. A user's
-/// campaign choice is immutable for this generation; a fallback must not turn
-/// a local overnight session into a paid API call.
-fn enforce_rsi_route_policy(
-    session:&Value, provider_id:&str, model:&str, local:bool,
-)->Result<(),String>{
-    if session["rsiRun"]!=true {return Ok(());}
-    if session["rsiLocalOnly"]==true && !local {
-        return Err("로컬 전용 자기개선에서 원격 API 모델 호출을 차단했습니다.".into());
-    }
-    if session["rsiApprovedProviderId"].as_str()
-        .is_some_and(|approved|!approved.is_empty() && approved!=provider_id) {
-        return Err("자기개선 실행에서 사용자가 선택하지 않은 제공자로 전환할 수 없습니다.".into());
-    }
-    if session["rsiApprovedModel"].as_str()
-        .is_some_and(|approved|!approved.is_empty() && approved!=model) {
-        return Err("자기개선 실행에서 사용자가 선택하지 않은 모델로 전환할 수 없습니다.".into());
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod rsi_route_policy_tests {
-    use super::*;
-    #[test]
-    fn model_route_is_rechecked_before_every_rsi_stream() {
-        let local=json!({"rsiRun":true,"rsiLocalOnly":true,
-            "rsiApprovedProviderId":"ollama","rsiApprovedModel":"qwen-local"});
-        assert!(enforce_rsi_route_policy(&local,"ollama","qwen-local",true).is_ok());
-        assert!(enforce_rsi_route_policy(&local,"ollama","qwen-local",false).is_err());
-        assert!(enforce_rsi_route_policy(&local,"cloud","qwen-local",true).is_err());
-        assert!(enforce_rsi_route_policy(&local,"ollama","other-model",true).is_err());
-        let paid=json!({"rsiRun":true,"rsiLocalOnly":false,
-            "rsiApprovedProviderId":"deepseek","rsiApprovedModel":"flash"});
-        assert!(enforce_rsi_route_policy(&paid,"deepseek","flash",false).is_ok());
-        assert!(enforce_rsi_route_policy(&paid,"premium","flash",false).is_err());
-        assert!(enforce_rsi_route_policy(&json!({}),"any","model",false).is_ok());
-    }
-}
-
 pub(crate) fn select_provider(
     state: &AppState,
     request: &TurnRequest,
@@ -216,7 +176,6 @@ pub(crate) fn select_provider(
         .ok_or("이 API에서 사용할 모델을 선택하거나 모델 ID를 입력하세요.")?;
 
     let route = crate::engine::gateway::route_from_provider(state, &provider, Some(&model))?;
-    enforce_rsi_route_policy(session,&route.id,&route.model,route.local)?;
     Ok(ProviderRef {
         id: route.id,
         name: route.name,
@@ -743,9 +702,7 @@ pub(super) async fn stream_completion(
         };
         // A two-minute answer is not a usable room participant. Remember it
         // so the next round does not pay the same price again.
-        let rsi_run = state.store.get("session",session_id)
-            .is_some_and(|session| session["rsiRun"] == true);
-        if should_mark_slow_provider(candidate_started.elapsed(), rsi_run) {
+        if candidate_started.elapsed() >= std::time::Duration::from_secs(60) {
             crate::engine::gateway::mark_slow(&candidate.base_url, &candidate.model);
         }
         match result {
@@ -805,28 +762,6 @@ fn compat_messages(messages: &[Value]) -> Vec<Value> {
             _ => message.clone(),
         }
     }).collect()
-}
-
-/// Once a focused RSI generation has genuine source evidence and only edit
-/// functions remain, require the native OpenAI-compatible model to choose an
-/// actual tool action instead of another prose explanation. The model still
-/// authors the patch; the independent frozen verifier decides usefulness.
-/// Autonomous RSI runs can already spend up to their explicit time/token
-/// limits. A slow but productive first response must not blacklist the only
-/// selected provider before the model can issue its source-edit action.
-/// Ordinary chats retain the existing slow-route failover heuristic.
-fn should_mark_slow_provider(elapsed: std::time::Duration, rsi_run: bool) -> bool {
-    !rsi_run && elapsed >= std::time::Duration::from_secs(60)
-}
-
-fn rsi_edit_requires_tool(session: &Value, tools: &[Value]) -> bool {
-    session["rsiRun"] == true
-        && (session["rsiExplicitFocus"] == true || session["rsiAutoFocus"] == true)
-        && !tools.is_empty()
-        && tools.iter().all(|tool| matches!(
-            tool["function"]["name"].as_str(),
-            Some("workspace_replace" | "workspace_replace_range" | "workspace_write")
-        ))
 }
 
 async fn stream_completion_once(
@@ -969,10 +904,6 @@ async fn stream_completion_once_body(
     });
     if !compatible && !tools.is_empty() {
         body["tools"] = json!(tools);
-        if state.store.get("session",session_id)
-            .is_some_and(|session| rsi_edit_requires_tool(&session,tools)) {
-            body["tool_choice"] = json!("required");
-        }
     }
     if let Some(limit) = provider.max_output_tokens {
         body["max_tokens"] = json!(limit);
@@ -2132,33 +2063,6 @@ mod tests {
         assert!(messages[0].get("reasoning_content").is_none());
         normalize_assistant_reasoning(&mut messages, false);
         assert!(messages[1].get("reasoning_content").is_none(), "{messages:?}");
-    }
-
-    #[test]
-    fn rsi_time_budget_does_not_blacklist_its_only_model_after_a_slow_read() {
-        assert!(should_mark_slow_provider(std::time::Duration::from_secs(61), false));
-        assert!(!should_mark_slow_provider(std::time::Duration::from_secs(59), false));
-        assert!(!should_mark_slow_provider(std::time::Duration::from_secs(61), true));
-        assert!(!should_mark_slow_provider(std::time::Duration::from_secs(600), true));
-    }
-
-    #[test]
-    fn a_grounded_rsi_edit_only_stage_requires_a_model_action() {
-        let focus = json!({"rsiRun":true,"rsiExplicitFocus":true});
-        let tools = vec![
-            json!({"type":"function","function":{"name":"workspace_replace"}}),
-            json!({"type":"function","function":{"name":"workspace_replace_range"}}),
-            json!({"type":"function","function":{"name":"workspace_write"}}),
-        ];
-        assert!(rsi_edit_requires_tool(&focus,&tools));
-        assert!(rsi_edit_requires_tool(&json!({"rsiRun":true,"rsiAutoFocus":true}),&tools));
-        assert!(!rsi_edit_requires_tool(&json!({"rsiRun":true}),&tools));
-        assert!(!rsi_edit_requires_tool(&json!({}),&tools));
-        let mut reads = tools.clone();
-        reads.push(json!({"type":"function","function":{"name":"workspace_read_range"}}));
-        assert!(!rsi_edit_requires_tool(&focus,&reads),
-            "do not force a write before collecting source evidence");
-        assert!(!rsi_edit_requires_tool(&focus,&[]));
     }
 
     #[test]

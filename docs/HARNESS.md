@@ -1,90 +1,24 @@
-# DOMINION 공통 Rust 실행 체계
+# DOMINION Rust agent harness — current contract (2026-11-16)
 
-메인의 SQLite·React 프론트·제품 API를 유지하면서, 서브4의 자체 Rust 상태머신과 도구 실행 알고리즘을 `crates/dominion-core`에 내장했습니다. 서브4의 별도 서버나 JSON 제품 저장소로 전환하지 않습니다.
+## Execution graph
 
-## 실제 경로
+`Chat / Rooms / Tasks / Workflows / SDK → product adapter → dominion-core → model / MCP / tool drivers → SQLite journal`
 
-`채팅 / 그룹 / 작업 / 워크플로 / RSI / SDK 자동 작업 → 메인 제품 어댑터 → dominion-core → 기존 모델·승인·도구 어댑터 → SQLite`
+- The **Rust core** owns execution stages, tool admission, budgets and replay-safe receipts.
+- Product adapters own provider transport, task context, verification evidence and storage.
+- Tools are gated by approval, read-only delegation, cancellation and remaining budget.
+- Side-effect results that cannot be confirmed after a crash are marked **needs_review**, never silently replayed.
+- User-requested source edits follow ordinary `inspect → edit → test → verify → report`; no RSI campaign or auto-adoption loop.
+- Explicit user corrections, verified procedures, failures and existing chat/file/task records remain persistent.
 
-- `crates/dominion-core/src/engine.rs`의 `Engine::drive`가 계획 → 모델 → 도구 → 검증 → 교정 반복과 종료를 진행합니다. 메인의 이전 `while !finished` 모델 실행 루프는 제거했습니다.
-- `src/engine/chat/runtime.rs`는 제품 진입점·문맥·SQLite를 연결하고, `product.rs`는 모델 전송·RSI·그룹·학습·검증 규칙을 단계별로 제공합니다. 완료 판정·전략 준수 집계·불변 종료 해시는 `src/engine/chat/outcome.rs`가 담당합니다. 제품 어댑터는 검증 결과를 반환하며 다음 실행 단계는 코어가 결정합니다.
-- 계획·독립 리뷰·오류 적응·프로그램 수선 호출도 코어의 모델 실행 전 기록을 사용합니다. 메인 실행과 보조 호출을 중단하면 진행 중 기록이 남고, 저장 실패 시 모델·도구를 시작하지 않습니다.
-- `src/api/sdk.rs`의 기존 별도 모델 반복기와 파일 체크포인트 실행 경로는 제거했습니다. SDK 자동 작업도 일반 채팅과 같은 모델·인증·도구·검증을 사용합니다. Codex·Anthropic 등은 기존 메인 제공자 어댑터를 그대로 사용합니다.
-- 네이티브 상태는 기존 SQLite의 `execution.kernelState`에 저장됩니다. 명시적인 병렬 프로그램 분기는 부모 예산을 공유하는 `native_frame`으로 기록하여 기존 동시 실행 기능을 보존합니다.
-- 기존 `execution_operation`, 도구 승인, 파일 변경 잠금, 효과 재실행 방지, 목표 검증, 사용량·캐시 집계는 유지합니다.
-- 프로그램 도구를 시작하기 전에 `execution.programCheckpoint.pendingOperationIds`를 저장해야 합니다. 실행 기록이 없거나 SQLite 체크포인트 저장이 실패하면 도구 호출 전 오류를 반환하고 실행하지 않습니다. 완료 상태의 체크포인트 저장 실패도 호출자에게 전달합니다.
-- 결과가 불명확한 쓰기는 재시작 후 자동 재실행하지 않습니다. SDK 수동 관찰은 효과 기록·네이티브 상태·작업 상태를 한 SQLite 트랜잭션으로 갱신합니다.
-- 모델의 단순 완료 주장으로 행동 목표를 성공 처리하지 않습니다. 기존 고정 파일 검증·필수 절차·독립 RSI 검증을 유지합니다.
+## Retired subsystems
 
-## SDK 목록 읽기 확장성
+Native FFmpeg/ComfyUI video composition, narration generation, scene regeneration, YouTube auto upload, RSI campaigns, source-mutation generations, autonomous grading, automatic core adoption and associated external runtime orchestration are retired. Existing media files and job records remain available through read-only archive endpoints. New media creation belongs to explicit MCP integrations or external APIs, not a built-in engine.
 
-`GET /api/sdk/runs`는 요청마다 SQLite의 SDK 실행·승인·불확실한 도구 효과를 각각 한 번씩 읽어 세션·실행 ID로 인덱싱합니다. 기존의 SDK 작업 하나당 모든 실행/승인/도구 기록을 다시 순회하는 N×M 탐색을 제거했습니다. 프로세스 재시작 시 SDK 작업 상태 복구도 같은 세션 인덱스를 공유합니다. 단건 응답도 같은 상태 투영 규칙을 사용하며, 기존 SQLite 데이터와 API JSON 키는 유지합니다. 실행 중 갱신은 다음 HTTP 조회에 반영됩니다.
+## Background behavior
 
-TypeScript SDK의 `DominionAgentClient`는 동일한 HTTP 세션·인증 경로로 영상 작업 등록·상태 확인·부분 재제작·명시적 업로드 작업을 지원합니다. 별도 Node 실행기나 Python 영상 루프는 만들지 않습니다. CI에서 TypeScript SDK의 엄격한 타입 검사를 웹 UI와 별도로 실행합니다.
+Ordinary chat and rooms default to `autoLearning: false`. Owner corrections remain independently recordable. One bounded event-driven dispatcher wakes on queued jobs; a ten-second fallback scan protects durable work from missed events. Deterministic experience guidance and distillation run only after changed evidence rather than constantly reevaluating untouched history. No RSI autonomous sweeps run.
 
-## 제품 SDK API
+## Regression contract
 
-| 메서드 | 경로 | 동작 |
-|---|---|---|
-| POST | `/api/sdk/runs` | `instruction`, `providerId?`, `model?`, `verifyCommand?`, `maxRounds?`로 시작 |
-| GET | `/api/sdk/runs` | SQLite 작업 목록 |
-| GET | `/api/sdk/runs/:id` | 공통 실행·승인·사용량·최종 응답 조회 |
-| POST | `/api/sdk/runs/:id/approve` | `callId`에 해당하는 현재 승인만 처리 |
-| POST | `/api/sdk/runs/:id/cancel` | 공통 세션 취소 |
-| POST | `/api/sdk/runs/:id/reconcile` | 불명확한 효과 하나에 대한 사용자의 실제 관찰 기록 |
-| POST | `/api/sdk/runs/:id/resume` | 불명확한 효과가 해소된 중단 작업을 명시적으로 재개 |
-
-`verifyCommand`는 실행 전에 목표 검증 조건에 고정됩니다. 명령 실행에도 기존 승인 정책이 적용됩니다. `maxRounds`는 SDK 재개 이전의 모델 호출까지 누적하여 제한합니다.
-
-사용자의 과거 실행 기록은 보존하며 자동 재실행하지 않습니다. 이전 독립 실행기·CLI 소스와 Cargo 워크스페이스 등록은 삭제했습니다. 제품과 공통 코어가 현재 워크스페이스의 전부입니다.
-
-## 통합한 작업 제어와 예산
-
-`dominion-core::delegation::Tree`의 계층 예산을 기존 SQLite `budget_tree`에 저장합니다. 자식 작업의 예산 예약과 작업·세션 생성은 한 트랜잭션입니다. 모델 전송과 계획·리뷰 보조 호출은 같은 예산 승인을 통과합니다. 실제 사용량은 한 번만 정산하고, 중단되어 청구 여부를 모르는 요청은 예약을 유지합니다. 작업 재개·다음 턴에서도 같은 소유자의 누적 사용량을 차감합니다.
-
-- SDK 시작과 일반 prompt 작업의 `input`에 `workspaceDir` 절대경로, `tokenBudget`(1024~2000000) 또는 `budgetUsd`(0 초과 10000 이하), `shellSandbox`(`required` 또는 `off`)를 지정할 수 있습니다. 토큰과 금액 예산은 동시에 지정할 수 없습니다.
-- 금액 예산은 제공자의 `pricing` 또는 `modelPricing[모델]`에 `inputUsdPerMillion`, `outputUsdPerMillion` 단가가 필요합니다. 무료 로컬 모델은 0으로 계산할 수 있습니다. 알 수 없는 유료 단가를 임의로 가정하지 않습니다.
-- `POST /api/jobs/:id/steer`, `POST /api/sdk/runs/:id/steer`의 `{instruction, mode:"append"|"replace"}`로 실행 중 지시를 변경합니다. 기존 실행의 예산·영수증을 유지하며 같은 코어에서 처리합니다. 이전 목표의 모델 응답과 승인 대기 도구는 새 목표의 효과를 만들 수 없습니다. 이미 적용된 효과는 기록에 남습니다. 완료와 지시 수락은 같은 리비전 게이트를 사용합니다.
-- `GET /api/executions/:id`의 `hierarchicalBudget`으로 예약·정산을 조회합니다. `POST /api/executions/:id/budget/reconcile`에 `{callId, charged, details}`로 중단된 모델 호출의 실제 관측 비용을 정산합니다. `charged` 단위는 해당 트리의 토큰 또는 USD 백만분의 일입니다. 도구 효과 확인 API와 별도이며, 확인되지 않은 비용을 자동 환불하지 않습니다.
-
-`delegate_task`의 `isolatedWorktree:true`는 깨끗한 Git 원본에서 독립 작업공간을 만들고 필수 셸 격리를 적용합니다. `readOnly:true`는 관찰 도구만 허용합니다. 격리 작업의 파일 도구는 자신의 폴더로 제한하고 외부 변경 도구를 차단합니다. 격리 셸은 시스템 실행 파일을 읽고 임시 폴더에 쓸 수 있으며 네트워크와 원본 프로젝트 접근은 차단합니다. `workspace_git_status`, `workspace_git_diff`는 고정된 읽기 명령으로 변경을 검사합니다. 자식 결과는 자동 합치지 않습니다. 부모의 승인 대상인 `task_integrate`가 완료 시 고정한 패치 해시·기준 커밋·충돌 여부를 검사하고 기존 파일 잠금 아래 적용합니다. 수정된 결과나 재적용은 거부합니다.
-
-필수 셸 격리는 macOS Seatbelt, Linux bubblewrap을 사용합니다. 필요한 백엔드가 없거나 지원하지 않는 OS이면 격리 작업의 셸 실행을 거부합니다. 일반 채팅의 기본 셸 정책은 유지합니다.
-
-## 컨텍스트와 RSI 증거
-
-서브3의 컨텍스트 절약은 선언된 입력 한도에 가까우며 절감량이 충분할 때만 오래된 큰 읽기 결과에 적용합니다. 최근 결과 3개·쓰기 영수증·오류는 편집 대상에서 제외합니다. OpenAI 호환 전송과 Anthropic 전송의 복사본만 바꾸며 SQLite 원본은 보존합니다. 감사 기록의 절감 추정 문자는 실제 청구 토큰 절약과 구별합니다. 추가 요약 모델 호출은 없습니다.
-
-챔피온의 RSI 정책 비교는 같은 원본 커밋에 목표 이름을 바꾼 실험을 독립 승리로 세지 않습니다. 작업·후보 재사용을 제외하고 재시도 성적은 보수적으로 집계합니다. 서로 다른 원본 커밋에서 두 번 이상 비교 우위가 있어야 정책 승격할 수 있으며, 소스 채택은 기존 독립 평가를 계속 통과해야 합니다.
-
-출처: 챔피온 `7a07b5c4`, `8caecbb0`의 공유 예산·정책 비교, 서브4 `c2e3c7bd`의 계층 예산·위임 구조, 서브2 `0747131d`의 작업 제어와 `78f2f610`의 MCP 이름 충돌 처리, 서브3 `92b0adb1`의 컨텍스트 편집을 메인의 단일 실행 경로와 SQLite에 맞춰 통합했습니다.
-
-## 취소와 미실행 도구 호출의 복구
-
-모델이 여러 도구를 한 번에 요청한 경우 취소 전 이미 시작한 도구의 실제 결과는 그대로 보존합니다. 아직 디스패치하지 않은 호출에는 `ABORTED_BEFORE_DISPATCH` 결과를 원래 호출 ID에 1개씩 기록합니다. 순차 실행·병렬 읽기·재시작 복구에서 같은 도구 영수증 규칙을 사용하며, 취소가 도구 사이에 도착하면 미실행 도구는 실행하지 않고 실행 상태를 종료합니다. SDK의 `Snapshot.receipts`에도 취소된 미실행 도구를 실패 영수증으로 기록합니다.
-
-외부 쓰기 효과가 이미 시작되었으나 결과가 불확실한 경우에는 취소만으로 완료되었다고 처리하지 않습니다. 기존 `in_flight` 의도 기록과 사용자 확인 경로가 우선합니다.
-
-## 영상 작업의 증분 체크포인트
-
-영상 잡의 `videoState`는 장면 목록·원격 `promptId`·불명확한 외부 실행 여부·검증 증거를 함께 보유합니다. 프로그레스 하트비트가 `videoState` 전체를 덮어쓰지 않도록 잡 체크포인트 경계에서 기존 필드와 들어온 필드를 병합합니다. 새 값은 기존 값을 덮어쓰고, 다른 작업 종류의 패치 정책은 유지합니다.
-
-## 영상 제작 품질 게이트와 장면 재생성
-
-완성된 영상은 MP4 컨테이너 시그니처와 FFprobe의 실제 영상 스트림·길이·해상도를 검증한 뒤 `result.quality`로 제공합니다. FFprobe를 사용할 수 없다면 `container_only` 상태와 누락된 검증 내용을 명시합니다. 빈 파일이나 잘못된 MP4는 완료 처리하지 않습니다. ComfyUI 영상은 FFprobe 확인이 가능할 때 요청 시간과 실제 길이가 크게 다르면 완료 처리를 거부합니다. 작업에는 실제 인코딩/생성 경과 시간(`renderWallSeconds`)을 기록하지만, 모델별 GPU 비용이나 API 단가는 추정하지 않습니다.
-
-`POST /api/video/jobs/:id/regenerate`의 `{sceneIndex, prompt}`는 완료된 원본의 동결된 엔진 설정·장면 구성을 상속한 **새 작업**을 큐에 등록합니다. 원본 영상은 보존하고 원본으로부터 변경되지 않은 네이티브 카드·내레이션 파일만 복사합니다. 수정 장면은 새로 생성하며 렌더링·품질 게이트·명시적 YouTube 업로드는 기존 제품 경로를 사용합니다. ComfyUI 작업도 동결된 스토리보드의 장면별 원격 제출 결과를 각각 MP4로 저장하고, 로컬 FFmpeg가 있으면 최대 24개 장면을 새 영상으로 이어 붙입니다. 장면별 3~9초, 사용자 지정 전체 길이 최대 180초입니다. 이미 완성된 장면 파일이 유효하면 재요청하지 않고 원본을 재사용합니다. 원격 요청 결과가 불명확한 장면은 자동 재제출하지 않습니다.
-
-## 명시적 자동 납품
-
-영상 요청에 `autoUpload: true`를 지정하면 연결된 YouTube 계정을 사전 확인하고 설정에 이를 동결합니다. MP4 생성·품질 검사·완료 저장까지 성공한 경우에만 별도 `youtube_upload` 작업을 생성합니다. 기존 업로드 경로의 결정적 업로드 ID로 재시작 중복 등록을 막으며, 공개 범위는 초기 자동 납품에서 **비공개(private)**로 고정합니다. 부분 재제작은 이전 자동 납품 승인을 상속하지 않습니다. 원본 산출물은 기존 작업에 보존됩니다.
-
-## RSI 독립 평가 편향 방지
-
-동결 평가 계획은 ID뿐 아니라 실제 테스트 `filter`도 유일해야 합니다. 동일한 테스트를 여러 ID로 재라벨링하거나 훈련과 홀드아웃에 동시에 포함해 사례 수·개선율을 부풀리는 것을 등록 단계에서 차단합니다. 유효한 단일 테스트의 반복 실행은 별도 관측으로 기록할 수 있지만 독립 평가 사례 수로 중복 계산하지 않습니다. 개별 후보의 진짜 성과는 원본 테스트와 독립 결과 영수증에서 계산합니다.
-
-참고: 2026-09-21 공개 RRSI(google-research/rrsi)는 동결 평가셋에서의 과적합 문제를 지적하며, 도미니언은 여기에 더해 평가 사례의 실행 정체성 중복 자체를 금지합니다.
-
-## 확인 범위
-
-실제 로컬 파일·SQLite와 모의 제공자 HTTP를 사용하여 실행·승인·복구·캐시 집계를 검사합니다. 이 결과를 유료 모델의 실전 성능 향상이나 RSI 성능 향상으로 환산하지 않습니다.
+CI validates TypeScript UI and SDK types, the native architecture graph, and Rust workspace tests on Windows, macOS and Linux. Core acceptance cases include durable state, cancellation, approvals, tool receipts, delegation isolation, chat, memory and retrieval. Deployment is not declared successful until all matrix jobs pass.

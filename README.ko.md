@@ -28,7 +28,7 @@
 
 ## 공통 Rust 실행 코어
 
-핵심 실행 엔진과 SDK는 [`crates/dominion-core`](crates/dominion-core/README.md)입니다. 서브4의 상태머신·도구 실행 기록·복구·스키마 검증을 기존 SQLite와 제품 어댑터에 연결했습니다. 채팅·그룹·작업·워크플로·RSI·홈 자동 작업이 공통 실행 경로를 사용하며, TypeScript는 선택적 HTTP 클라이언트입니다.
+핵심 실행 엔진과 SDK는 [`crates/dominion-core`](crates/dominion-core/README.md)입니다. 서브4의 상태머신·도구 실행 기록·복구·스키마 검증을 기존 SQLite와 제품 어댑터에 연결했습니다. 채팅·그룹·작업·워크플로·홈 자동 작업이 공통 실행 경로를 사용하며, TypeScript는 선택적 HTTP 클라이언트입니다.
 
 기존 프론트·모델 인증·도구 승인·제품 데이터는 유지합니다. 이전 독립 실행기·CLI·워크스페이스 패키지는 삭제했습니다. 경로와 검증 범위는 [Rust 하네스 문서](docs/HARNESS.md)에 정리했습니다.
 
@@ -69,7 +69,7 @@
 
 **모델은 사용자가 선택하고, 실행 흐름은 DOMINION이 관리합니다.** 특정 모델 판매나 자체 API 크레딧 재판매를 전제로 하지 않습니다.
 
-> **개발자 프리뷰** · 소스코드와 실행 방법을 공개하는 단계입니다. 모든 OS·모델·채널 조합의 실사용 안정성을 보장하지 않으며, 자기개선(RSI)은 별도의 실험 기능입니다. 현재 [GitHub Releases](https://github.com/hushmind3/dominion-rust/releases)에서 사전 빌드된 배포 파일을 제공하지 않으므로 아래의 소스 실행 안내를 먼저 확인해 주세요.
+> **개발자 프리뷰** · 소스코드와 실행 방법을 공개하는 단계입니다. 모든 OS·모델·채널 조합의 실사용 안정성을 보장하지 않으며, 내장 영상 제작과 독립 RSI 자동 연구 기능은 종료됐습니다. 현재 [GitHub Releases](https://github.com/hushmind3/dominion-rust/releases)에서 사전 빌드된 배포 파일을 제공하지 않으므로 아래의 소스 실행 안내를 먼저 확인해 주세요.
 
 ## ✨ 주요 기능
 
@@ -81,9 +81,7 @@
 | **🧠 기억과 경험** | 대화·도구 결과·사용자 정정을 로컬에 기록하고 관련 정보를 다음 작업에 재사용합니다. 모델 가중치를 재훈련하는 기능은 아닙니다. |
 | **🛠️ 실제 도구 실행** | 파일·셸·HTTP·검색·MCP 도구를 호출하며, 승인/취소 및 실행 증거를 관리합니다. |
 | **👥 멀티 에이전트** | 공용 기록을 읽는 그룹 대화, 순번 발언, 멘션, 다단계 워크플로를 구성합니다. |
-| **🎬 영상 제작** | 네이티브 FFmpeg 자막·음성 제작, ComfyUI 장면별 렌더링·최대 24개 장면 결합, 장면만 다시 제작, MP4 기술 검증 및 승인한 경우 YouTube 비공개 업로드 작업을 제공합니다. 로컬 모델·FFmpeg·YouTube 계정 설정이 기능별로 필요합니다. |
 | **💬 외부 채널** | Telegram·Discord용 Rust 연결 드라이버가 있습니다. 현재 봇 토큰·채널 정보 등의 **수동 설정이 필요**합니다. |
-| **🧪 실험적 자기개선** | 소스 변경·평가·채택을 다루는 연구 경로를 제공합니다. 반복적인 지능 향상은 실증된 완성 기능이 아닙니다. |
 
 ### 왜 별도의 에이전트 도구인가요?
 
@@ -138,7 +136,6 @@ DOMINION은 기능 수보다 **실제 작업 성공률과 안정적인 실행 �
 - 그룹 대화의 일부 검증은 모의 모델 기반입니다. 실모델 장시간 동작을 모두 검증했다는 뜻은 아닙니다.
 - Telegram/Discord는 현재 **원클릭 봇 생성이 아닌 수동 연동**입니다.
 - 공급자별 캐시·컨텍스트 최적화 경로가 존재하지만 **일정한 토큰 절감률을 보장하지 않습니다**.
-- RSI는 소스 수정과 검증 절차를 연구하는 기능이며, **범용 재귀적 지능 향상을 입증한 제품은 아닙니다**.
 - 빌드/테스트 결과는 [GitHub Actions](https://github.com/hushmind3/dominion-rust/actions)에서 커밋별로 확인해 주세요.
 
 ## 🤝 참여하기
@@ -149,13 +146,13 @@ DOMINION은 기능 수보다 **실제 작업 성공률과 안정적인 실행 �
 - **[Pull Requests](https://github.com/hushmind3/dominion-rust/pulls)** — Rust 하네스, UI, 모델 연결, 채널 드라이버, 문서 등 개선을 환영합니다.
 - 실제 화면을 보여주는 스크린샷과 재현 가능한 테스트도 프로젝트를 개선하는 데 도움이 됩니다.
 
-더 깊은 구현 자료: [엔진 설명](ENGINE.md) · [문서 목차](docs/INDEX.md) · [RSI 실행 계약](docs/RSI-MAIN-INTEGRATION-2026-11-12.md) · [이전 상세 README 보관본](docs/README-TECHNICAL-SNAPSHOT-2026-11-14.md)
+더 깊은 구현 자료: [엔진 설명](ENGINE.md) · [문서 목차](docs/INDEX.md) · [하네스 계약](docs/HARNESS.md) · [이전 상세 README 보관본](docs/README-TECHNICAL-SNAPSHOT-2026-11-14.md)
 
 ## English
 
 **DOMINION is an open-source, local-first AI agent workspace — not an LLM model or a hosted API resale service.**
 
-Bring your own API credentials or connect a local model, then use a Rust-native execution harness to run tool-using agents with persistent memory, approvals, logs, workflows, and multi-agent rooms. Telegram and Discord adapters are implemented but currently require manual bot configuration. Experimental self-improvement research is available separately; autonomous recursive intelligence gains are **not** claimed.
+Bring your own API credentials or connect a local model, then use a Rust-native execution harness to run tool-using agents with persistent memory, approvals, logs, workflows, and multi-agent rooms. Telegram and Discord adapters are implemented but currently require manual bot configuration. Built-in media generation and autonomous RSI have been retired; external media can be connected through MCP.
 
 **Getting started:** [Installation guide](docs/GETTING-STARTED.md) · [Engine internals](ENGINE.md) · [Issues](https://github.com/hushmind3/dominion-rust/issues) · [Pull requests](https://github.com/hushmind3/dominion-rust/pulls)
 

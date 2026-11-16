@@ -8,7 +8,7 @@
 
 <p align="center">
   <strong>An open-source, local-first AI agent workspace powered by a native Rust execution engine.</strong><br/>
-  Connect your own cloud or local LLMs. Run tool-using agents, collaborate across multiple agents, generate videos, and explore experimental recursive self-improvement.
+  Connect your own cloud or local LLMs. Run tool-using agents, collaborate across multiple agents, connect external media tools through MCP, and complete verified workflows.
 </p>
 
 <p align="center">
@@ -36,15 +36,15 @@
 
 ## Native Rust execution core
 
-The product embeds [`dominion-core`](crates/dominion-core/README.md), adapted from `dominion-sub4`, behind the existing SQLite store, React frontend and provider/tool adapters. Chat, rooms, jobs, workflows, RSI work and the Home autonomous-work panel use the same product execution path. `/api/sdk/runs` uses that same execution path and SQLite journal. See [the execution contract](docs/HARNESS.md).
+The product embeds [`dominion-core`](crates/dominion-core/README.md), adapted from `dominion-sub4`, behind the existing SQLite store, React frontend and provider/tool adapters. Chat, rooms, jobs, workflows and the Home autonomous-work panel use the same product execution path. `/api/sdk/runs` uses that same execution path and SQLite journal. See [the execution contract](docs/HARNESS.md).
 
-Existing product data and authentication remain in SQLite and its credential vault. Tool intent, receipts and uncertain-effect recovery use the native Rust state machine; cancelled sequential tool batches now record aborted-before-dispatch tool receipts rather than silently dropping queued call IDs. Product-specific policies and independent RSI evaluation remain in the main application. This integration does not establish real-model quality gains or general self-improvement.
+Existing product data and authentication remain in SQLite and its credential vault. Tool intent, receipts and uncertain-effect recovery use the native Rust state machine; cancelled sequential tool batches now record aborted-before-dispatch tool receipts rather than silently dropping queued call IDs. Product-specific approval and verification policies remain in the main application. This integration does not establish real-model quality gains or general self-improvement.
 
 ## What is DOMINION?
 
 **DOMINION is an AI agent tool, not another AI model or a token-reselling service.**
 
-Connect a model you already have access to — including supported cloud APIs and locally hosted models — and use it inside an agent workspace. DOMINION's Rust harness handles tool execution, permissions, durable tasks, long-term memory, and multi-agent coordination. The workspace also includes AI video generation workflows and experimental recursive self-improvement (RSI).
+Connect a model you already have access to — including supported cloud APIs and locally hosted models — and use it inside an agent workspace. DOMINION's Rust harness handles tool execution, permissions, durable tasks, long-term memory, and multi-agent coordination. Native media generation and autonomous RSI campaigns have been retired; use external MCP tools for media generation and ordinary verified agent tasks for code changes.
 
 You choose the models. You control the credentials. You run the workspace.
 
@@ -87,17 +87,13 @@ You choose the models. You control the credentials. You run the workspace.
 | **Persistent memory** | Store conversation context, verified experience, corrections, and execution history locally. |
 | **Multi-agent rooms** | Give agents separate roles, run shared discussions, and coordinate workflows with multiple participants. |
 | **Durable jobs** | Track tasks, approvals, execution evidence, cancellation, and recovery in SQLite. |
-| **AI video creation** | A native FFmpeg storyboard/narration pipeline or multi-shot ComfyUI workflows (up to 24 shots), frozen scene inputs, original-preserving scene regeneration, MP4 quality checks, and an opt-in private YouTube delivery queue. ComfyUI models and long-video stitching require configured local backends. |
 | **Messaging channels** | Native Telegram and Discord adapters; currently require bot credentials and manual configuration. |
-| **Recursive self-improvement (RSI) research** | Experiment with source-editing campaigns, independent evaluations, candidate selection, evidence records, and controlled adoption. This does **not** claim proven general recursive intelligence gains. |
 
 ### Why a separate agent workspace?
 
 - **Model flexibility:** use supported cloud models or run locally without locking the entire workflow to one provider.
 - **Execution you can inspect:** tasks have tool calls, outcomes, approvals, and error records, not just chat messages.
 - **Local-first state:** SQLite stores agent data and history locally by default.
-- **Inspectable video delivery:** MP4 metadata is validated when FFprobe is available. This is a technical media check, not an aesthetic video-quality score; scene re-use saves redundant renders, but actual GPU usage and dollar costs depend on your backend.
-- **RSI evidence hygiene:** independent evaluation plans cannot count the same executable test as multiple train/held-out cases. The development system does not claim demonstrated general self-improvement without reproduced descendant evidence.
 - **Open code:** inspect and extend a Rust engine with a React UI under the Apache-2.0 license.
 
 ## ⚡ Quick start
@@ -116,7 +112,7 @@ Open **http://127.0.0.1:4317** in your browser.
 
 1. Add your own API provider, or configure a compatible local-model runtime in **Models**.
 2. Select a model in **Chat** and try a task.
-3. Explore **Agents**, **Multi-Agent Rooms**, **Memory**, **Workflows**, **Video**, **Self-Improvement**, and **MCP / Skills**.
+3. Explore **Agents**, **Multi-Agent Rooms**, **Memory**, **Workflows**, and **MCP / Skills**.
 4. To use Telegram or Discord, configure your bot credentials and destination IDs in **Connections**.
 
 Cloud-model usage is billed by your provider. Local models use your own hardware. **Prebuilt release downloads are not yet available** — follow the source build above.
@@ -136,7 +132,6 @@ Native Rust agent harness
        ├── Chat / streaming / tool calls / approvals
        ├── Memory / experience / workflows / multi-agent rooms
        ├── Skills / MCP / Telegram / Discord
-       ├── Video generation jobs (native / ComfyUI) and YouTube integration
        ├── Experimental self-improvement and evaluation campaigns
        ├── User-configured model APIs
        └── Local inference (GGUF / llama.cpp and other configured runtimes)
@@ -144,7 +139,7 @@ Native Rust agent harness
 
 The agent execution engine is written in **Rust**. Node.js is used to build the React frontend rather than to host the agent runtime. Some local-model integrations and MCP servers may require their own processes.
 
-**Technical docs:** [Engine](ENGINE.md) · [Documentation index](docs/INDEX.md) · [Self-improvement execution contract](docs/RSI-MAIN-INTEGRATION-2026-11-12.md).
+**Technical docs:** [Engine](ENGINE.md) · [Documentation index](docs/INDEX.md) · [Agent harness contract](docs/HARNESS.md).
 
 ## 🚧 Project status
 
@@ -154,15 +149,13 @@ DOMINION is an **active developer preview**, not a managed SaaS or a fully valid
 - Multi-agent behavior includes mocked-model tests; long-running real-model reliability is still an area to validate.
 - Telegram and Discord integration currently require manual bot setup rather than one-click provisioning.
 - Cache and context-management code exists, but no fixed token-saving percentage is guaranteed.
-- Video generation requires a configured native engine or compatible ComfyUI environment; YouTube upload requires account authorization.
-- Recursive source-improvement mechanisms are **experimental**. The project does not claim demonstrated, indefinitely compounding intelligence gains.
 - Check the [CI results](https://github.com/hushmind3/dominion-rust/actions) for the status of a particular commit.
 
 ## 🤝 Contributing
 
 Contributions are welcome — particularly **reproducible bug reports, test cases, model/provider compatibility fixes, Rust harness improvements, UI work, and documentation**.
 
-- [Join Discussions](https://github.com/hushmind3/dominion-rust/discussions) — ask questions, share your setup, and propose ideas for agents, video workflows, and RSI research.
+- [Join Discussions](https://github.com/hushmind3/dominion-rust/discussions) — ask questions, share your setup, and propose ideas for agent workflows and MCP integrations.
 - [Open an issue](https://github.com/hushmind3/dominion-rust/issues) — include your OS, model/provider, reproduction steps, and expected vs. actual behavior.
 - [Submit a pull request](https://github.com/hushmind3/dominion-rust/pulls) — explain the change and include appropriate tests when possible.
 - Never include API keys, bot tokens, private conversations, or other secrets in reports.

@@ -663,7 +663,7 @@ pub fn refresh(state: &AppState, source: &Path) -> Result<Value, String> {
         .put(INDEX_KIND, &meta)
         .ok_or("전수조사 인덱스 저장 실패")?;
     state.store.audit(
-        "rsi.index.refreshed",
+        "code_index.refreshed",
         json!({"indexId":meta["id"],"files":meta["files"],"changed":changed,"reused":reused}),
     );
     Ok(meta)
