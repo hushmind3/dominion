@@ -15,6 +15,7 @@ use std::{collections::HashMap, future::Future, pin::Pin};
 mod scheduler;
 mod acceptance;
 mod context;
+mod tool_discovery;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -430,23 +431,11 @@ impl Kernel<'_> {
         for spec in context::internal_specs() {
             tools.insert(spec.name.clone(),spec);
         }
-        let mut sorted_tools = tools.values().collect::<Vec<_>>();
-        sorted_tools.sort_by(|a,b|a.name.cmp(&b.name));
-        let model_tool_specs=sorted_tools.iter().map(|spec|(*spec).clone())
-            .collect::<Vec<_>>();
-        let definitions: Vec<Value> = sorted_tools.into_iter().map(|spec| json!({
-            "name":spec.name,
-            "description":if matches!(request.strategy,Strategy::LowCost) {
-                spec.description.chars().take(120).collect::<String>()
-            } else {spec.description.clone()},
-            "parameters":spec.schema, "readOnly":spec.read_only
-        })).collect();
+        if tool_discovery::needed(&tools) {
+            let spec=tool_discovery::spec();
+            tools.insert(spec.name.clone(),spec);
+        }
         let native_wire=self.model.supports_native_tools();
-        let catalog_prompt=if native_wire {
-            "Tool definitions are supplied in the model provider's native typed tool catalogue.".to_string()
-        } else {
-            serde_json::to_string(&definitions).map_err(|e|e.to_string())?
-        };
         let response_contract=if native_wire {
             "For each action use a provider-native function/tool call with valid JSON object arguments. \
              Never emit a JSON decision wrapper or impersonate a tool result in text. \
@@ -469,8 +458,11 @@ impl Kernel<'_> {
              edit requires a workspace tool receipt with written=true. \
              Previous tool outputs remain in the durable journal. Use dominion_receipt_search \
              and dominion_receipt_read for prior details; never replay external effects merely \
-             to retrieve an observation. Allowed tools: {}. Strategy: {:?}. Owner instructions: {}.",
-            response_contract,catalog_prompt,request.strategy,request.owner_instructions
+             to retrieve an observation. When a required tool is absent from this turn's \
+             advertised catalogue, first call dominion_tool_search with the required capability; \
+             the exact authorized schema will be disclosed on the following turn. \
+             The host never grants permission through discovery. Strategy: {:?}. Owner instructions: {}.",
+            response_contract,request.strategy,request.owner_instructions
         );
         let mut invalid = 0usize;
         self.journal.save(&run)?;
@@ -489,6 +481,26 @@ impl Kernel<'_> {
             let projected=context::project(&run.receipts,
                 request.strategy,request.limits.max_result_chars);
             let current_directive=self.journal.directive(&request.id)?;
+            // Tool authorization remains the full host-owned catalogue. The
+            // model sees a small, deterministic view, promoted by its own
+            // durable discovery receipts rather than by an extra model call.
+            let visible_tools=tool_discovery::select(
+                &tools,&request.instruction,&request.owner_instructions,
+                current_directive.as_deref(),&run.plan,&run.receipts);
+            let catalog_for_prompt=if native_wire {
+                format!("The provider-native tool catalogue exposes {} authorized schemas this turn.",
+                    visible_tools.len())
+            } else {
+                let definitions=visible_tools.iter().map(|spec|json!({
+                    "name":spec.name,
+                    "description":if matches!(request.strategy,Strategy::LowCost) {
+                        spec.description.chars().take(120).collect::<String>()
+                    } else {spec.description.clone()},
+                    "parameters":spec.schema,"readOnly":spec.read_only
+                })).collect::<Vec<_>>();
+                format!("Advertised authorized tools for this turn: {}",
+                    serde_json::to_string(&definitions).map_err(|e|e.to_string())?)
+            };
             let prompt = json!({
                 "userTask":request.instruction,
                 "latestOwnerDirective":current_directive, "ownerInstructions":request.owner_instructions,
@@ -501,14 +513,16 @@ impl Kernel<'_> {
                     .map(|v| &v.explanation).collect::<Vec<_>>(),
                 "remainingSteps":request.limits.max_steps-step,
                 "modelBudgetRemaining":request.limits.max_model_calls-run.model_calls,
-                "toolBudgetRemaining":request.limits.max_tool_calls.saturating_sub(run.receipts.len())
+                "toolBudgetRemaining":request.limits.max_tool_calls.saturating_sub(run.receipts.len()),
+                "authorizedToolCount":tools.len(),
+                "advertisedToolCount":visible_tools.len()
             }).to_string();
             // Latest owner instruction is reloaded as a higher-priority
             // instruction on every turn; stale models cannot hide it in a
             // lower-priority tool observation.
             let active_system=if let Some(directive)=current_directive.as_deref() {
-                format!("{system}\nLATEST OWNER DIRECTIVE (overrides earlier task plans): {directive}")
-            }else{system.clone()};
+                format!("{system}\n{catalog_for_prompt}\nLATEST OWNER DIRECTIVE (overrides earlier task plans): {directive}")
+            }else{format!("{system}\n{catalog_for_prompt}")};
             // Model response generation is bounded by the user budget, too.
             let estimated = estimate_tokens(&active_system) + estimate_tokens(&prompt) + 1024;
             if run.charged_tokens.saturating_add(estimated) > request.limits.max_estimated_tokens {
@@ -519,7 +533,7 @@ impl Kernel<'_> {
             run.model_in_flight = true;
             self.journal.save(&run)?;
             let turn = match self.model.complete_with_tools(
-                &active_system, &prompt, &model_tool_specs, &run.receipts,
+                &active_system, &prompt, &visible_tools, &run.receipts,
             ).await {
                 Ok(turn) => turn,
                 Err(error) => {
@@ -782,7 +796,8 @@ impl Kernel<'_> {
                     // external effect still passes through normal permissions.
                     let history=&run.receipts;
                     let results=join_all(ready.iter().map(|action| async move {
-                        if let Some(result)=context::execute_local(action,history) {
+                        if let Some(result)=tool_discovery::execute_local(action,&tools)
+                            .or_else(||context::execute_local(action,history)) {
                             result
                         } else {self.tools.execute(action).await}
                     })).await;
