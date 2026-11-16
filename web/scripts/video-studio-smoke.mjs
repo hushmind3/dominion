@@ -48,7 +48,7 @@ try {
   assert.ok(installer.includes(contract),'Lost one-click model setup: '+contract)
  }
  const autopilot=await readFile(join(root,'src/components/VideoAutopilot.tsx'),'utf8')
- assert.ok(autopilot.includes("engine==='comfyui'&&<VideoModelInstall"),
+ assert.ok(autopilot.includes("engine==='comfyui'&&")&&autopilot.includes("<VideoModelInstall onChanged="),
   'Autonomous producer must expose model installation for AI video')
  console.log(JSON.stringify({ok:true,renderedCharacters:html.length,
   workflows:['create','jobs','publish','settings'],
