@@ -68,7 +68,7 @@ fn request(id:&str)->RunRequest{
     RunRequest{id:id.into(),instruction:"Analyze the repository".into(),
         owner_instructions:"Follow the user's instruction".into(),
         strategy:Strategy::Balanced,limits:Limits {
-            max_steps:8,max_model_calls:8,max_estimated_tokens:100_000,
+            max_steps:8,max_model_calls:8,max_tool_calls:96,max_estimated_tokens:100_000,
             max_parallel_reads:4,max_result_chars:1000,
         },allowed_tools:vec!["read".into(),"write".into()],
         checks:vec![],require_evidence:true}
