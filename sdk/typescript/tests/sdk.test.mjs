@@ -135,6 +135,21 @@ test('owner steering uses the same native job and revision contract',async()=>{
   assert.deepEqual(JSON.parse(call.init.body),{instruction:'Check the actual tests'});
 });
 
+test('video SDK cancellation is scoped and reports remote GPU uncertainty separately',async()=>{
+  const calls=[];
+  const client=new Dominion({fetch:async(url,init)=>{
+    calls.push({url,method:init.method});
+    return json({job:{id:'video/one',status:'cancelled',kind:'video'},
+      remoteCancel:{status:'unconfirmed',reason:'renderer offline'}});
+  }});
+  const result=await client.video.cancel('video/one');
+  assert.equal(calls.length,1);
+  assert.equal(calls[0].url,'http://127.0.0.1:4317/api/video/jobs/video%2Fone/cancel');
+  assert.equal(calls[0].method,'POST');
+  assert.equal(result.job.status,'cancelled');
+  assert.equal(result.remoteCancel.status,'unconfirmed');
+});
+
 test('video SDK preserves render budget and returns engine work receipts',async()=>{
   let route,request;
   const client=new Dominion({fetch:async(url,init)=>{
