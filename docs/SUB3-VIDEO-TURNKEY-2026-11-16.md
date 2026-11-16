@@ -6,6 +6,14 @@ The `dominion-sub3` branch (not `main`) routes the **Video → 자율 콘텐츠 
 
 The video-only model catalog in `VideoModelInstall.tsx` is **always shown on the first production screen**. It shows the same Wan2.1 text-to-video family with explicit Q3_K_M, Q4_K_M, Q5_K_M, Q8_0, and FP16 choices and separate base model / complete required download sizes. A single Download button saves weights and shared encoder/VAE files in a detected ComfyUI library or in Dominion's own data directory. Download is **acquisition only**: it never changes the current rendering engine or overwrites an imported custom workflow. Once the files exist, a separate **이 모델 사용** control explicitly activates that variant. No folder picker or server address is required to download. Real progress and interrupted-transfer resume remain visible. ComfyUI configuration and launch controls are collapsed in Advanced, not prerequisites for obtaining model files.
 
+## Open video-model hub: no Wan-only gate
+
+The first video production screen now contains **다른 영상 모델 찾기** above the built-in Wan2.1 quantization chooser. Initial choices include Wan2.2 TI2V 5B, LTX-Video, LTX-2.3, HunyuanVideo, CogVideoX, and Mochi; the query field searches Hugging Face live and filters for video-capable repos. Choosing a repo calls `GET /api/video/hub/files?repo=...` to enumerate the actual GGUF/safetensors checkpoints, **quantization and file sizes**. Choosing a file and clicking Download calls `POST /api/video/hub/download`; Rust downloads to a namespaced Dominion-owned library, resumes partial files where supported, verifies the publisher's expected size and SHA-256 when supplied, and reports progress through `/api/video/models/downloads`. Repo and file names are validated against traversal and executable/code-file imports.
+
+**Acquisition vs execution:** External model artifacts are not silently activated in the built-in Wan2.1 ComfyUI graph. Many models require multiple shards, text encoders, VAEs, specialized nodes and a matching pipeline; downloading a weight file is not a proof of execution. Only the built-in Wan2.1 variants advertise the existing integrated graph. The browser labels external models as requiring a compatible workflow; it never reports arbitrary remote weights as "generation ready." Gated repos link to their Hugging Face license requirements rather than falsely claiming no-login downloads.
+
+2026 source examples: [Wan2.2 5B](https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B), [LTX-2.3](https://huggingface.co/Lightricks/LTX-2.3), [HunyuanVideo](https://huggingface.co/tencent/HunyuanVideo), [CogVideoX](https://huggingface.co/THUDM/CogVideoX-5b), [Mochi](https://huggingface.co/genmo/mochi-1-preview). Model-file metadata and licenses are supplied by the Hugging Face Hub API at browse time; license and hardware compatibility must be reviewed for the exact checkpoint.
+
 ## Run the branch at its actual development port
 
 From a checkout of **`dominion-sub3`**:
