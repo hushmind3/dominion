@@ -304,6 +304,21 @@ impl Store {
         rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
     }
 
+    /// Indexed history for one owner task. Recovery must not load every
+    /// execution JSON merely to find an interrupted checkpoint. The query
+    /// returns newest-first and includes only the requested task's records.
+    pub fn task_executions(&self,task_id:&str)->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|error|error.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='execution' AND json_extract(data,'$.taskId')=?1
+             ORDER BY updated_at DESC,id"
+        ).map_err(|error|error.to_string())?;
+        let rows=stmt.query_map([task_id],record_from_row)
+            .map_err(|error|error.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|error|error.to_string())
+    }
+
     /// Error-preserving variant for the new learning/finalization paths.
     /// `all` remains for React-facing compatibility, but new paths must not
     /// interpret a database error as an empty collection.
