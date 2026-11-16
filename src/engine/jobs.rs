@@ -571,14 +571,14 @@ async fn run_job(state: AppState, job: Value) {
         "workflow" => workflows::run(&context, &job).await,
         "room" | "meeting" => rooms::run(&context, &job).await,
         "prompt" => run_prompt(&context, &job).await,
-        "rsi_compare" => crate::engine::rsi_worktree::compare(&context,&job).await,
-        "rsi_evolve" => crate::engine::rsi_evolve::run(&context,&job).await,
+        "rsi_compare"|"rsi_evolve" => Err(
+            "needs_review: 독립 RSI 캠페인은 종료되었습니다. 기존 작업 기록은 보존했습니다.".into()),
         "resume" => run_resume(&context, &job).await,
         "learn" => learning::run(&context, &job).await,
         "reflect" => reflect::run(&context, &job).await,
         "discord" => crate::engine::discord::run(&context, &job).await,
-        "video" => crate::engine::video::run(&context, &job).await,
-        "youtube_upload" => crate::engine::video::upload(&context, &job).await,
+        "video"|"youtube_upload" => Err(
+            "needs_review: 내장 영상·오디오 제작은 종료되었습니다. 연결 채널에서 외부 생성 도구를 사용하세요.".into()),
         other => Err(format!("지원하지 않는 작업 종류입니다: {other}")),
     };
 
@@ -620,26 +620,8 @@ async fn run_job(state: AppState, job: Value) {
             }));
         }
     }
-    if kind == "rsi_evolve" {
-        if state.store.get("job", &job_id).is_some_and(|j|
-            !matches!(j["status"].as_str(), Some("queued" | "running"))) {
-            cancel_rsi_children(&state, &job_id);
-        }
-        if job["input"]["rsiApplyWhenFinished"] == true
-            && state.store.get("job", &job_id).is_some_and(|j| j["status"] == "completed") {
-            if let Some(campaign) = state.store.get("rsi_campaign", &job_id).filter(|c|
-                c["status"] == "completed" && c["headCommit"].is_string()
-                    && c["headCommit"] != c["baseCommit"]) {
-                match crate::engine::dev::start_rsi_install(state.clone(), &job_id,
-                    campaign["headCommit"].as_str().unwrap_or("")) {
-                    Ok(install) => { state.store.patch_if("rsi_campaign", &job_id,
-                        "headCommit", &campaign["headCommit"], &json!({"installJobId":install["id"]})); }
-                    Err(error) => { state.store.patch_if("rsi_campaign", &job_id,
-                        "headCommit", &campaign["headCommit"], &json!({"applicationError":error})); }
-                }
-            }
-        }
-    }
+    // No automatic source adoption or install on job completion.
+    // Owner-directed code changes use ordinary prompt/workflow jobs instead.
 }
 
 /// Publish a terminal outcome only if the job was still live at commit time.
