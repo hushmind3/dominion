@@ -42,7 +42,8 @@ pub async fn retry_plan(State(state):State<AppState>,Path(id):Path<String>,
 }
 pub async fn render(State(state):State<AppState>,Path(id):Path<String>,
  Json(body):Json<Value>)->Response{
- match video_studio::render(&state,&id,body["revision"].as_u64()){
+ match video_studio::render_with_ack(&state,&id,body["revision"].as_u64(),
+  body["acknowledgeUnknown"]==true){
   Ok(project)=>(StatusCode::ACCEPTED,Json(project)).into_response(),
   Err(message)=>error(message),
  }
