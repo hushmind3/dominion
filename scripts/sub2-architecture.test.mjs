@@ -18,8 +18,7 @@ test('runtime delegates tool projection, terminal decisions and verification onc
 });
 test('pricing, evidence, locks, QA and UI share real native routes',()=>{
  const files=['src/engine/model_cost.rs','src/engine/route_calibration.rs',
-   'src/engine/evaluation.rs','src/engine/resource_lock.rs',
-   'src/engine/video_quality.rs'];
+   'src/engine/evaluation.rs','src/engine/resource_lock.rs'];
  for(const path of files)assert.ok(file(path).length>400,path);
  assert.ok(file('src/api/mod.rs').includes('/api/evaluation/summary'));
  assert.ok(file('src/api/system.rs').includes('engine::evaluation::summary(&state)'));
@@ -27,4 +26,5 @@ test('pricing, evidence, locks, QA and UI share real native routes',()=>{
  assert.ok(file('web/src/pages/Operations.tsx').includes('/api/evaluation/summary'));
  assert.ok(file('src/engine/tools.rs').includes('resource_lock::acquire'));
  assert.doesNotMatch(file('src/engine/mod.rs'),/pub mod video;/);
+ assert.doesNotMatch(file('src/engine/mod.rs'),/pub mod rsi(?:_\w+)?;/);
 });
