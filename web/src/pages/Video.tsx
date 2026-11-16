@@ -3,7 +3,7 @@ import {
  ArrowDown,ArrowRight,ArrowUp,Check,CheckCircle2,Clapperboard,Clock3,
  Download,ExternalLink,Film,FolderOpen,Layers3,LoaderCircle,Plus,
  RefreshCw,RotateCcw,Settings2,ShieldCheck,SlidersHorizontal,
- Sparkles,Trash2,Upload,Video as VideoIcon,WandSparkles
+ Sparkles,Square,Trash2,Upload,Video as VideoIcon,WandSparkles
 } from 'lucide-react'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
 import {FormField,Headline,Notice,Panel,StateTag,useRemote} from '../components/UI'
@@ -18,6 +18,7 @@ type StudioMode='quick'|'scenes'
 type VideoModel={id:string;name:string;family:string;familyId:string;task:'text-to-video';quantization:string;kind:string;weightGB:number;totalDownloadGB:number;recommended:boolean;available:boolean;hint:string;missingFiles?:number}
 type VideoConfig={engine:VideoEngine;comfyUrl:string;voice?:string;narration?:boolean;videoModel?:string;resolution?:string;steps?:number;comfyWorkflow?:unknown;comfyWorkflowName?:string;comfyModelsDir?:string;ffmpegPath?:string}
 type VideoJob=JobState & {
+ remoteCancel?:{status:string;reason?:string;promptId?:string}|null;
  kind:'video'|'youtube_upload';title?:string;brief?:string;engine?:VideoEngine;
  phase?:string;progress?:number;outputUrl?:string|null;createdAt?:string;
  duration?:number;aspectRatio?:Ratio;storyboard?:string[]|null;continuity?:string|null;
@@ -115,6 +116,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  const [preparingModel,setPreparingModel]=useState('')
  const [selectedVideoVariant,setSelectedVideoVariant]=useState('')
  const [generating,setGenerating]=useState(false)
+ const [cancellingId,setCancellingId]=useState('')
  const [uploading,setUploading]=useState(false)
  const [refreshing,setRefreshing]=useState(false)
  const [error,setError]=useState('')
@@ -282,6 +284,18 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
    setSubmitted(newJob);setCurrentId(newJob.id);setTab('create')
    void jobs.reload()
   }catch(e){setError((e as Error).message)}finally{setGenerating(false)}
+ }
+ const cancelVideo=async(job:VideoJob)=>{
+  if(cancellingId||!['queued','running'].includes(job.status))return
+  setCancellingId(job.id);setError('')
+  try{
+   const result=await post<{remoteCancel?:{status:string;reason?:string}}>(
+    '/api/video/jobs/'+encodeURIComponent(job.id)+'/cancel',{})
+   await Promise.all([jobs.reload(),active.reload()])
+   if(result.remoteCancel?.status==='unconfirmed'){
+    setError('로컬 영상 작업은 중단됐습니다. 원격 GPU 중단은 확인되지 않았습니다. '+(result.remoteCancel.reason||'ComfyUI에서 작업 상태를 확인해 주세요.'))
+   }
+  }catch(e){setError((e as Error).message)}finally{setCancellingId('')}
  }
  const editJob=(job:VideoJob)=>{
   const scenes=job.storyboard?.length?job.storyboard:
@@ -578,6 +592,12 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
         <div><span className="block text-[10px] text-[#81776B]">새로 만든 장면</span><strong className="text-[12px] text-[#473A30]">{previewJob.result.renderedScenes??'-'}개</strong></div>
         <div><span className="block text-[10px] text-[#81776B]">동일 작업량 기준</span><strong className="text-[12px] text-[#473A30]">{(previewJob.renderWorkload?.frames??0).toLocaleString('ko-KR')} frames</strong></div>
        </div>}
+       {['queued','running'].includes(previewJob.status)&&<div className="mt-3 flex items-center gap-3">
+        <Button variant="secondary" size="sm" disabled={Boolean(cancellingId)} onClick={()=>void cancelVideo(previewJob)}><Square size={14}/>{cancellingId===previewJob.id?'중단 요청 중':'영상 제작 중단'}</Button>
+        <span className="text-[11px] text-[#807267]">ComfyUI 작업은 해당 영상의 원격 렌더 ID로 개별 중단 요청합니다.</span>
+       </div>}
+       {previewJob.status==='cancelled'&&previewJob.remoteCancel?.status==='requested'&&<p role="status" className="mt-3 text-[11px] text-[#6F655C]">로컬 작업 중단 · ComfyUI에 해당 원격 작업의 취소 요청 전달됨 (실제 GPU 종료는 서버 상태에 따름)</p>}
+       {previewJob.status==='cancelled'&&previewJob.remoteCancel?.status==='unconfirmed'&&<p role="alert" className="mt-3 text-[11px] text-amber-800">로컬 작업 중단 · 원격 GPU 중단 확인 필요: {previewJob.remoteCancel.reason||'ComfyUI 작업 상태를 확인하세요.'}</p>}
        {previewJob.error&&<Notice message={previewJob.error}/>}
        {previewJob.status==='completed'&&previewJob.outputUrl&&<div className="mt-3 grid gap-2 sm:grid-cols-2">
         <Button variant="secondary" onClick={()=>editJob(previewJob)}><RotateCcw size={15}/> 장면 다시 편집</Button>
@@ -605,7 +625,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
       <div className="flex items-center justify-between gap-3"><strong className="min-w-0 truncate text-[14px] text-[#3C322A]">{job.title||job.brief||'이름 없는 영상'}</strong><span className="shrink-0 text-[10px] text-[#8D7764]">{statusText(job.status)}</span></div>
       <span className="text-[11px] text-[#8A7D70]">{shortDate(job.createdAt)} · {job.duration||'-'}초 · {job.engine==='comfyui'?'ComfyUI':'FFmpeg'}</span>
       {job.error&&<p className="line-clamp-2 text-[11px] text-rose-600">{job.error}</p>}
-      <div className="flex flex-wrap gap-2"><Button size="sm" variant="secondary" onClick={()=>{setCurrentId(job.id);setTab('create')}}>상태·미리보기</Button><Button size="sm" variant="secondary" onClick={()=>editJob(job)}><RotateCcw size={13}/> 편집</Button>{job.outputUrl&&<Button size="sm" variant="primary" onClick={()=>chooseForUpload(job)}>게시 준비 <ArrowRight size={13}/></Button>}</div>
+      <div className="flex flex-wrap gap-2"><Button size="sm" variant="secondary" onClick={()=>{setCurrentId(job.id);setTab('create')}}>상태·미리보기</Button><Button size="sm" variant="secondary" onClick={()=>editJob(job)}><RotateCcw size={13}/> 편집</Button>{job.outputUrl&&<Button size="sm" variant="primary" onClick={()=>chooseForUpload(job)}>게시 준비 <ArrowRight size={13}/></Button>}{['queued','running'].includes(job.status)&&<Button size="sm" variant="secondary" disabled={Boolean(cancellingId)} onClick={()=>void cancelVideo(job)}><Square size={13}/> {cancellingId===job.id?'중단 중':'제작 중단'}</Button>}</div>
      </div>
     </Panel>)}</div>}
   </div>}
