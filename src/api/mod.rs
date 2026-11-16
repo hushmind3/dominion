@@ -2,6 +2,7 @@ mod response;
 #[cfg(test)]
 mod tests;
 pub mod translation;
+pub mod algorithms;
 pub mod settings;
 pub mod executions;
 pub mod tasks;
@@ -61,6 +62,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/events", get(system::events))
         .route("/api/model-usage", get(system::model_usage))
         .route("/api/run-wakes", get(system::run_wakes))
+        // Explicit owner-driven algorithm configuration only; no generation,
+        // campaign scheduling, independent experimentation or auto promotion.
+        .route("/api/algorithms",get(algorithms::list).post(algorithms::register))
+        .route("/api/algorithms/:id/activate",post(algorithms::activate))
+        .route("/api/algorithms/:id/disable",post(algorithms::disable))
         .route("/api/policies", get(system::policies))
         .route("/api/system/backup", post(system::create_backup))
         .route("/api/system/backup-keys", get(system::backup_keys))
