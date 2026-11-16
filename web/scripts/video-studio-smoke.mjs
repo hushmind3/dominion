@@ -25,7 +25,7 @@ try {
  for(const text of ['DOMINION VIDEO STUDIO','아이디어에서 완성 영상까지',
   '자율 콘텐츠 제작','수동 제작','작업함','YouTube 게시','환경설정',
   'CONTENT AUTOPILOT','새 콘텐츠 제작','장면별 대본','절약 모드','자율 콘텐츠 제작 시작',
-  'ComfyUI','미리보기 · 작업 현황']) {
+  'ComfyUI','제작 프로젝트']) {
   assert.ok(html.includes(text),'Missing studio entry point: '+text)
  }
  assert.match(html,/제작 프로젝트/)
