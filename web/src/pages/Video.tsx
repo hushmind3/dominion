@@ -7,7 +7,7 @@ import {jobFinished,useJob,type JobState} from '../hooks/useJob'
 import {t,useLocale} from '../i18n'
 
 type Workflow={id:string;name:string;bytes:number}
-type VideoJob=JobState & {progress?:number;kind:'video';title?:string;brief:string;outputUrl?:string;result?:{bytes:number}}
+type VideoJob=JobState & {progress?:number;kind:'video';title?:string;brief:string;engine?:VideoEngine;storyboard?:string[];quality?:{status:string;durationSeconds?:number;width?:number;height?:number;warning?:string};outputUrl?:string;result?:{bytes:number;quality?:{status:string;durationSeconds?:number;width?:number;height?:number;warning?:string}}}
 type VideoEngine='native'|'comfyui'
 type VideoStatus={config:{engine:VideoEngine;comfyUrl:string;voice?:string;narration?:boolean;videoModel?:string;resolution?:string;steps?:number};native?:{available:boolean};comfy:{reachable:boolean;available?:boolean};workflows:Workflow[];jobs:VideoJob[]}
 type VideoModel={id:string;name:string;kind:string;available:boolean;hint:string}
@@ -31,11 +31,13 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
  const [voice,setVoice]=useState('Yuna'),[narration,setNarration]=useState(true)
  const [tab,setTab]=useState<'create'|'settings'>('create'),[refreshing,setRefreshing]=useState(false),[gid,setGid]=useState(''),[gsecret,setGsecret]=useState(''),[gBusy,setGBusy]=useState(false)
  const [videoSubmission,setVideoSubmission]=useState<VideoJob|null>(null),[generating,setGenerating]=useState(false),[error,setError]=useState('')
+ const [sceneIndex,setSceneIndex]=useState(0),[sceneEdit,setSceneEdit]=useState(''),[regenerating,setRegenerating]=useState(false)
  const [uploadFile,setUploadFile]=useState(''),[uploadTitle,setUploadTitle]=useState(''),[uploadDescription,setUploadDescription]=useState(''),[uploadPrivacy,setUploadPrivacy]=useState('private'),[uploadTags,setUploadTags]=useState('')
  const [uploadSubmission,setUploadSubmission]=useState<UploadJob|null>(null),[uploading,setUploading]=useState(false)
  const activeVideo=useJob(videoSubmission?'/api/video/jobs/'+videoSubmission.id:null,videoSubmission)
  const activeUpload=useJob(uploadSubmission?'/api/youtube/uploads/'+uploadSubmission.id:null,uploadSubmission)
  const videoJob=activeVideo.value??outputs.value[0]
+ useEffect(()=>{setSceneIndex(0);setSceneEdit(videoJob?.storyboard?.[0]||'')},[videoJob?.id])
  const uploadJob=activeUpload.value
  const uploadStatus=oauth.value.find(item=>item.id==='youtube')
  const gReady=uploadStatus?.configured
@@ -134,6 +136,14 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
     ...(usingComfy?{negativePrompt:negative,fps,seed:requestedSeed}:{}),
    }));
   }catch(e){setError((e as Error).message)}finally{setGenerating(false)}
+ }
+ const regenerateScene=async()=>{
+  if(!videoJob?.id||!sceneEdit.trim()||regenerating)return
+  setRegenerating(true);setError('')
+  try{
+   setVideoSubmission(await post<VideoJob>('/api/video/jobs/'+encodeURIComponent(videoJob.id)+'/regenerate',{sceneIndex,prompt:sceneEdit.trim()}))
+   setTab('create')
+  }catch(e){setError((e as Error).message)}finally{setRegenerating(false)}
  }
  const useResult=()=>{
   if(!videoJob?.outputUrl)return
@@ -242,7 +252,7 @@ export function VideoPage({navigate}:{navigate:(page:any)=>void}){
     </Panel>}
    </div>
    {tab==='create'&&<div className="grid min-w-0 content-start gap-4">
-    <Panel className="min-w-0 p-5"><Subheading title={t('vid.results')} extra={videoJob?<StateTag online={videoJob.status==='completed'}>{statusLabel(videoJob.status)}</StateTag>:<span className="text-[11px] text-[#8A8176]">{t('vid.waiting')}</span>}/>{!videoJob?<div className="flex w-full flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[#D8CFC2] bg-[#FAF7F1] text-[12px] text-[#8A8176]" style={{aspectRatio:ratios[ratio].width+" / "+ratios[ratio].height,maxHeight:420}}><Clapperboard size={24}/>{t('vid.resultsEmpty')} <small className="text-[10px]">{t(ratios[ratio].label)} · {ratios[ratio].width}×{ratios[ratio].height}</small></div>:<div className="grid gap-3">{!terminal(videoJob.status)&&<><div className="flex justify-between text-[11px] text-[#7C7469]"><span>{videoJob.status==='queued'?t('vid.waitingJob'):videoJob.status==='downloading'?t('vid.savingResult'):t('vid.generating')}</span><span>{(videoJob.progress??0)}%</span></div><div className="h-2 overflow-hidden rounded-full bg-[#F3EEE5]"><div className="h-full bg-[#C96442]" style={{width:Math.max(4,(videoJob.progress??0))+'%'}}/></div></>}{videoJob.outputUrl&&<div className="flex justify-center rounded-xl bg-black p-2"><video className="max-h-[520px] w-auto max-w-full rounded-lg" src={videoJob.outputUrl} controls playsInline/></div>}{videoJob.status==='completed'&&videoJob.outputUrl&&<div className="grid gap-2"><div className="flex min-w-0 items-center gap-2 rounded bg-[#FAF7F1] p-2"><span className="min-w-0 flex-1 truncate text-[11px] text-[#5C544A]" title={videoJob.title}>{videoJob.title||"output.mp4"}</span><Button variant="ghost" className="!px-2 !py-1 !text-[10px]" onClick={()=>void reveal(videoJob.id)}>{t('vid.openFolder')}</Button></div><Action onClick={useResult} className="w-full"><Upload size={14}/> {t('vid.fillForm')}</Action></div>}{(videoJob.status==='failed'||videoJob.status==='needs_review'||videoJob.status==='interrupted')&&<Notice message={videoJob.error||t('vid.generateFailed')}/>}</div>}</Panel>
+    <Panel className="min-w-0 p-5"><Subheading title={t('vid.results')} extra={videoJob?<StateTag online={videoJob.status==='completed'}>{statusLabel(videoJob.status)}</StateTag>:<span className="text-[11px] text-[#8A8176]">{t('vid.waiting')}</span>}/>{!videoJob?<div className="flex w-full flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[#D8CFC2] bg-[#FAF7F1] text-[12px] text-[#8A8176]" style={{aspectRatio:ratios[ratio].width+" / "+ratios[ratio].height,maxHeight:420}}><Clapperboard size={24}/>{t('vid.resultsEmpty')} <small className="text-[10px]">{t(ratios[ratio].label)} · {ratios[ratio].width}×{ratios[ratio].height}</small></div>:<div className="grid gap-3">{!terminal(videoJob.status)&&<><div className="flex justify-between text-[11px] text-[#7C7469]"><span>{videoJob.status==='queued'?t('vid.waitingJob'):videoJob.status==='downloading'?t('vid.savingResult'):t('vid.generating')}</span><span>{(videoJob.progress??0)}%</span></div><div className="h-2 overflow-hidden rounded-full bg-[#F3EEE5]"><div className="h-full bg-[#C96442]" style={{width:Math.max(4,(videoJob.progress??0))+'%'}}/></div></>}{videoJob.quality?.status==='passed'&&<p className="text-[11px] text-[#4E6B45]">영상 검사 완료 · {videoJob.quality.width}×{videoJob.quality.height} · {videoJob.quality.durationSeconds?.toFixed(1)}초</p>}{videoJob.quality?.status==='container_only'&&<p className="text-[11px] text-[#98712A]">{videoJob.quality.warning}</p>}{videoJob.outputUrl&&<div className="flex justify-center rounded-xl bg-black p-2"><video className="max-h-[520px] w-auto max-w-full rounded-lg" src={videoJob.outputUrl} controls playsInline/></div>}{videoJob.status==='completed'&&videoJob.outputUrl&&<div className="grid gap-2"><div className="flex min-w-0 items-center gap-2 rounded bg-[#FAF7F1] p-2"><span className="min-w-0 flex-1 truncate text-[11px] text-[#5C544A]" title={videoJob.title}>{videoJob.title||"output.mp4"}</span><Button variant="ghost" className="!px-2 !py-1 !text-[10px]" onClick={()=>void reveal(videoJob.id)}>{t('vid.openFolder')}</Button></div><Action onClick={useResult} className="w-full"><Upload size={14}/> {t('vid.fillForm')}</Action>{videoJob.engine==='native'&&Boolean(videoJob.storyboard?.length)&&<div className="grid gap-2 rounded-lg border border-[#E7E0D5] bg-[#FAF7F1] p-3"><strong className="text-[12px] text-[#3A342D]">장면별 부분 재제작</strong><SelectInput aria-label="재제작 장면 선택" value={String(sceneIndex)} onChange={e=>{const next=Number(e.target.value);setSceneIndex(next);setSceneEdit(videoJob.storyboard?.[next]||'')}}>{videoJob.storyboard?.map((scene,index)=><option key={index} value={index}>{index+1}장면 · {scene.slice(0,45)}</option>)}</SelectInput><TextArea rows={3} value={sceneEdit} onChange={e=>setSceneEdit(e.target.value)} placeholder="수정할 장면 설명"/><Button variant="secondary" disabled={regenerating||!sceneEdit.trim()||Boolean(videoSubmission&&!terminal(activeVideo.value?.status))} onClick={()=>void regenerateScene()}>{regenerating?'부분 재제작 요청 중':'선택 장면만 재제작'}</Button><p className="text-[11px] text-[#8A8176]">원본은 보존하고 수정하지 않은 장면 자산을 재사용합니다.</p></div>}</div>}{(videoJob.status==='failed'||videoJob.status==='needs_review'||videoJob.status==='interrupted')&&<Notice message={videoJob.error||t('vid.generateFailed')}/>}</div>}</Panel>
     <Panel className="min-w-0 p-5"><Subheading title={t('vid.upload')} extra={<span className="text-[11px] text-[#8A8176]">{selectedOutput?t('vid.fileReady'):t('vid.pickFile')}</span>}/><div className="grid gap-3"><FormField label={t('vid.videoFile')} hint={t('vid.generatedNote')}><div className="flex flex-col gap-2">{outputs.value.length?<SelectInput value={selectedOutput?.id||''} onChange={e=>{
  const picked=outputs.value.find(item=>item.id===e.target.value);
  if(!picked)return;
