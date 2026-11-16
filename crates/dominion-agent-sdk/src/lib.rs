@@ -52,7 +52,7 @@ impl Limits {
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum CriterionKind { FileExists, FileAbsent, FileContains, ToolSucceeded }
+pub enum CriterionKind { FileExists, FileAbsent, FileContains, FileSha256, ToolSucceeded }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Criterion {
@@ -99,6 +99,9 @@ impl RunRequest {
                     return Err("File check requires a path".into()),
                 CriterionKind::FileContains if path.is_empty() || check.contains.as_deref().unwrap_or("").is_empty() =>
                     return Err("File contains check requires a path and text".into()),
+                CriterionKind::FileSha256 if path.is_empty() || !check.contains.as_deref().is_some_and(|hash|
+                    hash.len()==64 && hash.bytes().all(|b|b.is_ascii_hexdigit())) =>
+                    return Err("File SHA-256 check requires a path and hexadecimal digest".into()),
                 CriterionKind::ToolSucceeded if check.tool.as_deref().unwrap_or("").is_empty() =>
                     return Err("Tool check requires a tool name".into()),
                 _ => {}
@@ -848,8 +851,11 @@ impl Kernel<'_> {
 
     async fn verify(&self, request: &RunRequest, run: &Snapshot,
         tools: &HashMap<String, ToolSpec>) -> Vec<CheckResult> {
-        let mut checks = Vec::with_capacity(request.checks.len());
-        for criterion in &request.checks {
+        // Independent final-byte witnesses are derived from trusted write
+        // receipts and verified through the host, never from model prose.
+        let artifact_witnesses=acceptance::artifact_witnesses(&run.receipts);
+        let mut checks = Vec::with_capacity(request.checks.len()+artifact_witnesses.len());
+        for criterion in request.checks.iter().chain(artifact_witnesses.iter()) {
             let observation = if criterion.kind == CriterionKind::ToolSucceeded {
                 let name = criterion.tool.as_deref().unwrap_or("");
                 if let Some(command)=acceptance::required_command(criterion) {
