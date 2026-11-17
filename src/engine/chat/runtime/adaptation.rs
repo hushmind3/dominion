@@ -254,8 +254,12 @@ pub(super) async fn attempt_model_adaptation(
         if spent.saturating_add(1) >= limit || !budget.can_execute_tool() {
             break;
         }
-        let Some(diagnostic) = crate::engine::adaptation::diagnostics::choose(
-            &adaptation, &causal_refuted, &attempted, tool, arguments
+        let remaining_steps = MAX_DIAGNOSTICS_PER_FAILURE
+            .saturating_sub(diagnostic_evidence.len())
+            .min(limit.saturating_sub(spent).saturating_sub(1) as usize);
+        let Some(diagnostic) = crate::engine::adaptation::diagnostics::choose_with_budget(
+            &adaptation, &causal_refuted, &attempted, tool, arguments,
+            remaining_steps
         ) else { break; };
         if state.is_cancelled(session_id) {
             return Err("실행이 중단되었습니다.".into());
