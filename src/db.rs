@@ -569,6 +569,40 @@ impl Store {
         Ok(true)
     }
 
+    /// Atomically compare multiple live JSON fields before committing a
+    /// multi-record transition. Used for program resume, whose source
+    /// approval and destination execution must both still be current.
+    /// No dynamic SQL identifiers are interpolated: fields are looked up
+    /// only after reading stored JSON, and an unreadable row fails closed.
+    pub fn transaction_if_fields(
+        &self,
+        conditions: &[(&str, &str, &str, Value)],
+        records: &[(String, Value)],
+    ) -> Result<bool, String> {
+        let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
+        for (kind, id, field, expected) in conditions {
+            let existing: Option<String> = tx.query_row(
+                "SELECT data FROM records WHERE kind=?1 AND id=?2",
+                params![kind, id], |row| row.get(0),
+            ).optional().map_err(|e| e.to_string())?;
+            let Some(actual) = existing
+                .and_then(|content| serde_json::from_str::<Value>(&content).ok())
+            else {
+                return Ok(false);
+            };
+            if actual.get(*field) != Some(expected) {
+                return Ok(false);
+            }
+        }
+        for (kind, value) in records {
+            upsert_tx(&tx, kind, value)?;
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(true)
+    }
+
     /// Durable idempotency key. Unlike `put`, this never overwrites a record.
     pub fn put_if_absent(&self, kind: &str, value: &Value) -> Option<Value> {
         let id = value.get("id")?.as_str().filter(|id| !id.is_empty())?;
