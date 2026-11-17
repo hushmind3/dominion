@@ -7,12 +7,21 @@ type SdkState = {state: string; detail?: {call_id?: string; tool?: string}}
 type SdkRun = {
  id: string; status: string; instruction: string; answer?: string; error?: string;
  checkpoint?: {
-  state?: SdkState; rounds?: number; toolCalls?: number; answer?: string;
+  state?: SdkState; rounds?: number; toolCalls?: number; toolBudget?:number; answer?: string;
   usage?: {prompt_tokens:number; completion_tokens:number; cached_prompt_tokens:number};
   pendingCall?: {id:string; name:string; arguments:unknown} | null;
   events?: {kind:string; detail:unknown}[];
+  verificationChecks?:{criterion?:{type?:string;path?:string};satisfied:boolean;explanation:string}[];
  } | null
 }
+type ReplaySummary = {runId:string;traceConsistent:boolean;replayableTrace:boolean;
+ modelOrExternalToolCalls:number;requiresManualReconciliation:boolean;
+ hostJournal:{consistent:boolean;anomalies:string[]};
+ cost:{configuredCostKRW:number|null;currency:string};
+ acceptanceChecks:{satisfied:number;total:number;allSatisfied:boolean}}
+type PairedSummary = {qualityComparable:boolean;candidateEligibleForManualReview:boolean;
+ differences:{toolCalls:number;modelCalls:number;chargedTokens:number;
+ configuredCostKRW:number|null;latencyMs:number|null};qualification:string}
 const running = new Set(['queued', 'running'])
 const stopPolling = new Set(['completed','failed','cancelled','exhausted','denied','awaiting_approval','interrupted','in_doubt'])
 const stateNames:Record<string,[string,string]>={
@@ -29,10 +38,14 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const [instruction,setInstruction]=useState('')
  const [providerId,setProviderId]=useState('')
  const [verification,setVerification]=useState('')
+ const [maxToolCalls,setMaxToolCalls]=useState(96)
  const [observation,setObservation]=useState('')
  const [run,setRun]=useState<SdkRun|null>(null)
  const [busy,setBusy]=useState(false)
  const [error,setError]=useState('')
+ const [replay,setReplay]=useState<ReplaySummary|null>(null)
+ const [paired,setPaired]=useState<PairedSummary|null>(null)
+ const [candidateId,setCandidateId]=useState('')
  useEffect(()=>{
   let alive=true
   get<SdkRun[]>('/api/sdk/runs').then(list=>{if(alive&&list.length)setRun(list[0])}).catch(()=>{})
@@ -54,9 +67,10 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   try{
    const created=await post<SdkRun>('/api/sdk/runs',{
     instruction:instruction.trim(),providerId:providerId||undefined,
-    verifyCommand:verification.trim()||undefined
+    verifyCommand:verification.trim()||undefined,
+    maxToolCalls
    })
-   setRun(created)
+   setRun(created);setReplay(null);setPaired(null)
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
@@ -80,6 +94,22 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     {applied,details:observation.trim()})
    setRun(updated);setObservation('')
   }catch(e){setError((e as Error).message)}
+  finally{setBusy(false)}
+ }
+ const inspectReplay=async()=>{
+  if(!run||busy)return
+  setBusy(true);setError('')
+  try{setReplay(await get<ReplaySummary>(`/api/sdk/runs/${encodeURIComponent(run.id)}/replay`))}
+  catch(e){setError((e as Error).message)}
+  finally{setBusy(false)}
+ }
+ const compareReplay=async()=>{
+  if(!run||busy||!candidateId.trim())return
+  setBusy(true);setError('')
+  try{setPaired(await post<PairedSummary>(
+   `/api/sdk/runs/${encodeURIComponent(run.id)}/compare`,
+   {candidateRunId:candidateId.trim()}))}
+  catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
  const status=run?.status||''
@@ -123,16 +153,32 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      maxLength={2048} placeholder="cargo test"
      className="mt-1 h-9 w-full rounded-lg border border-[#E7E0D5] px-3 text-[12px]"/>
    </details>
+   <details className="text-[11px] text-[#746A5F]">
+    <summary className="cursor-pointer select-none">{en?'Tool execution budget':'도구 실행 예산'}</summary>
+    <label htmlFor="sdk-tool-limit" className="mt-2 block">{en?'Maximum tool calls (includes final verification)':'최대 도구 호출 횟수 (최종 검증 포함)'}</label>
+    <input id="sdk-tool-limit" type="number" min={1} max={4096} value={maxToolCalls}
+     onChange={event=>setMaxToolCalls(Math.max(1,Math.min(4096,Number(event.target.value)||1)))}
+     className="mt-1 h-9 w-32 rounded-lg border border-[#E7E0D5] px-3 text-[12px]"/>
+   </details>
    {error&&<p role="alert" className="rounded-lg bg-[#FFF3EE] p-3 text-[11px] text-[#A54027]">{error}</p>}
    {run&&<div className="rounded-xl border border-[#E7E0D5] bg-[#FCFBF9] p-3">
     <div className="flex flex-wrap items-center justify-between gap-2">
      <strong className="text-[12px]">{en?stateNames[status]?.[1]||status:stateNames[status]?.[0]||status}</strong>
-     <span className="text-[11px] text-[#82796D]">{run.checkpoint?.rounds??0} {en?'rounds':'회 판단'} · {run.checkpoint?.toolCalls??0} {en?'actions':'회 도구 실행'}</span>
+     <span className="text-[11px] text-[#82796D]">{run.checkpoint?.rounds??0} {en?'rounds':'회 판단'} · {run.checkpoint?.toolCalls??0}/{run.checkpoint?.toolBudget??96} {en?'actions':'회 도구 실행'}</span>
     {run.checkpoint?.usage&&<p className="mt-2 text-[11px] text-[#82796D]">
      {en?'Provider-reported tokens':'제공자 보고 토큰'}: {run.checkpoint.usage.prompt_tokens.toLocaleString()} {en?'input':'입력'} · {run.checkpoint.usage.completion_tokens.toLocaleString()} {en?'output':'출력'} · {run.checkpoint.usage.cached_prompt_tokens.toLocaleString()} {en?'cached input':'캐시 입력'}
     </p>}
     </div>
     <p className="mt-2 line-clamp-2 text-[11px] text-[#766F67]">{run.instruction}</p>
+    {Boolean(run.checkpoint?.verificationChecks?.length)&&<div className="mt-3 rounded-lg border border-[#E7E0D5] bg-white p-3">
+     <p className="text-[11px] font-semibold">{en?'Independent artifact verification':'Rust 독립 산출물 검증'} · {run.checkpoint?.verificationChecks?.filter(check=>check.satisfied).length??0}/{run.checkpoint?.verificationChecks?.length??0}</p>
+     {(run.checkpoint?.verificationChecks??[]).filter(check=>!check.satisfied).slice(0,4).map((check,i)=>
+      <p key={i} role="status" className="mt-1 break-all text-[11px] text-[#A54027]">
+       {check.criterion?.path?check.criterion.path+' · ':''}{check.explanation}
+      </p>)}
+     {run.checkpoint?.verificationChecks?.every(check=>check.satisfied)&&
+      <p className="mt-1 text-[11px] text-[#607A58]">{en?'All recorded checks passed against the current workspace.':'현재 작업공간의 독립 검증 조건을 모두 통과했습니다.'}</p>}
+    </div>}
     {events.length>0&&<div className="mt-3 space-y-1 border-t border-[#E7E0D5] pt-2">
      {events.map((event,i)=><p key={i} className="text-[11px] text-[#82796D]">
       {event.kind==='tool_started'?(en?'Running tool':'도구 실행'):
@@ -161,6 +207,29 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
       <RefreshCw size={13}/>{en?'Resume':'재개'}
      </button>}
     </div>
+    <details className="mt-3 border-t border-[#E7E0D5] pt-3 text-[11px] text-[#746A5F]">
+     <summary className="cursor-pointer select-none">{en?'Offline replay and paired run comparison':'오프라인 실행 재현·전후 비교'}</summary>
+     <button type="button" disabled={busy} onClick={()=>void inspectReplay()}
+      className="mt-2 rounded-lg border border-[#E7E0D5] px-3 py-2 disabled:opacity-40">
+      {en?'Reconstruct saved execution (no API calls)':'저장된 실행 재현 (모델·도구 재호출 없음)'}
+     </button>
+     {replay&&<div role="status" className="mt-2 rounded-lg bg-white p-2">
+      <p>{en?'Trace integrity':'실행 기록 무결성'}: {replay.hostJournal.consistent&&replay.traceConsistent?'✓':'!'} · {en?'Reproducible trace':'재현 가능한 기록'}: {replay.replayableTrace?'✓':'—'}</p>
+      <p>{en?'Independent checks':'독립 검증'}: {replay.acceptanceChecks.satisfied}/{replay.acceptanceChecks.total} · {en?'Recorded cost':'기록된 원가'}: {replay.cost.configuredCostKRW===null?(en?'Unknown':'미집계'):`${Math.round(replay.cost.configuredCostKRW).toLocaleString()}원`}</p>
+      {replay.hostJournal.anomalies.slice(0,4).map((issue,i)=><p key={i} className="mt-1 text-[#A54027]">{issue}</p>)}
+      {replay.requiresManualReconciliation&&<p className="mt-1 text-[#A54027]">{en?'Uncertain operation requires owner review':'확정되지 않은 작업은 사용자 확인이 필요합니다.'}</p>}
+     </div>}
+     <label className="mt-3 block" htmlFor="sdk-compare-id">{en?'Candidate run ID (same task, model and budget)':'비교할 작업 ID (같은 목표·모델·예산)'}</label>
+     <div className="mt-1 flex flex-wrap gap-2">
+      <input id="sdk-compare-id" value={candidateId} onChange={event=>setCandidateId(event.target.value)}
+       maxLength={128} className="min-w-40 flex-1 rounded-lg border border-[#E7E0D5] px-2 py-2" />
+      <button type="button" disabled={busy||!candidateId.trim()} onClick={()=>void compareReplay()}
+       className="rounded-lg border border-[#E7E0D5] px-3 py-2 disabled:opacity-40">{en?'Compare':'동일 조건 비교'}</button>
+     </div>
+     {paired&&<p role="status" className="mt-2 rounded-lg bg-white p-2">
+      {en?'Comparable quality':'품질 비교 가능'}: {paired.qualityComparable?'✓':'—'} · {en?'Tool calls delta':'도구 호출 증감'}: {paired.differences.toolCalls} · {en?'KRW cost delta':'원가 증감'}: {paired.differences.configuredCostKRW===null?'—':`${Math.round(paired.differences.configuredCostKRW).toLocaleString()}원`}
+     </p>}
+    </details>
     {status==='in_doubt'&&<div className="mt-3 rounded-lg border border-[#E5C4AB] bg-white p-3">
      <p className="text-[11px] text-[#A54027]">
       {en?'The interrupted tool may have changed files. Inspect the workspace before continuing.':'중단 직전 도구가 파일을 변경했을 수 있습니다. 실제 상태를 확인한 뒤 기록하세요.'}
