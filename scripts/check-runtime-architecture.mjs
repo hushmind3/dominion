@@ -14,6 +14,32 @@ if(!product.dependencies.some(dep=>dep.name===core.name&&dep.path===path.dirname
   throw Error('Product must embed the Rust native execution core')
 const runtime=readFileSync(path.join(root,'src/engine/chat/runtime.rs'),'utf8')
 const adapter=readFileSync(path.join(root,'src/engine/chat/product.rs'),'utf8')
+const chatPaths=[
+ ['src/engine/chat/runtime.rs',1600],
+ ['src/engine/chat/product.rs',2200],
+ ['src/engine/chat/provider.rs',2200],
+ ['src/engine/chat/runtime/program.rs',1200],
+ ['src/engine/chat/runtime/tool_dispatch.rs',900],
+ ['src/engine/chat/runtime/finalization.rs',1100],
+ ['src/engine/chat/runtime/tool_catalog.rs',600],
+ ['src/engine/chat/runtime/adaptation.rs',600],
+ ['src/engine/chat/runtime/recovery.rs',350],
+ ['src/engine/chat/runtime/tests.rs',1000],
+ ['src/engine/chat/provider/tests.rs',1000],
+]
+for(const [file,maxLines] of chatPaths){
+ const full=path.join(root,file)
+ if(!existsSync(full))throw Error('Runtime boundary missing: '+file)
+ const content=readFileSync(full,'utf8')
+ const lines=content.split('\n').length
+ if(lines>maxLines)throw Error('Runtime module grew past '+maxLines+' lines: '+file+' ('+lines+')')
+}
+for(const file of ['src/engine/chat/runtime.rs','src/engine/chat/product.rs',
+    'src/engine/chat/runtime/tool_dispatch.rs','src/engine/chat/runtime/finalization.rs']){
+ if(/\.all\("execution_operation"\)/.test(readFileSync(path.join(root,file),'utf8')))
+   throw Error('Hot-path full tool journal scan reintroduced: '+file)
+}
+
 const outcome=readFileSync(path.join(root,'src/engine/chat/outcome.rs'),'utf8')
 const driver=readFileSync(path.join(root,'crates/dominion-core/src/engine.rs'),'utf8')
 const modules=readFileSync(path.join(root,'src/engine/mod.rs'),'utf8')
