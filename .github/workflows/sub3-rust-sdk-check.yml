@@ -36,6 +36,8 @@ on:
       - 'src/engine/google_workspace.rs'
       - 'src/engine/tools.rs'
       - 'src/engine/oauth.rs'
+      - 'src/api/cli_oauth.rs'
+      - 'scripts/account-login-contract.test.mjs'
       - 'web/src/pages/Connections.tsx'
       - 'src/api/collections.rs'
       - 'src/state.rs'
@@ -106,6 +108,10 @@ jobs:
         run: cargo test --bin dominion-rust db::tests::indexed_execution_timeline_pages_without_loading_unrelated_json -- --nocapture
       - name: Verify real MCP stdio and HTTP sessions, pinning and credential rotation
         run: cargo test --bin dominion-rust engine::mcp::tests -- --nocapture
+      - name: Verify browser-based account login has no user API key form
+        run: |
+          node --test scripts/account-login-contract.test.mjs
+          cargo test --bin dominion-rust api::cli_oauth::tests -- --nocapture
       - name: Verify connected GitHub and Google Workspace actions over real local HTTP
         run: |
           cargo test --bin dominion-rust engine::github_workflow::tests -- --nocapture
