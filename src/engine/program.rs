@@ -18,9 +18,11 @@ pub fn validate(program: &Value) -> Result<Value, String> {
         return Err("program.nodes must contain 1..64 nodes".into());
     }
     let mut identifiers = std::collections::HashSet::new();
+    let mut total = 0usize;
     for node in nodes {
         validate_node(node)?;
         validate_identifiers(node, &mut identifiers)?;
+        count_program_nodes(node, 0, &mut total, 128)?;
     }
     Ok(json!({"revision": revision, "nodes": nodes}))
 }
@@ -31,6 +33,8 @@ fn validate_identifiers(
     node: &Value,
     identifiers: &mut std::collections::HashSet<String>,
 ) -> Result<(), String> {
+    // Nested sequence/parallel/loop nodes must pass the same admission as roots.
+    validate_node(node)?;
     let kind = node["type"].as_str().unwrap_or("");
     if let Some(id) = node["id"].as_str().filter(|id| !id.is_empty()) {
         if !identifiers.insert(id.to_string()) {
@@ -328,8 +332,158 @@ pub fn parse_json_object(raw: &str) -> Option<Value> {
     None
 }
 
-/// Validates and applies a model-proposed Program revision. Completed external
-/// actions are preserved; only pending nodes may be replaced plus new nodes.
+/// Bound the *whole* executable tree, not only its root nodes. A nested
+/// sequence with 64 children per level must not bypass the program budget.
+fn count_program_nodes(
+    node: &Value,
+    depth: usize,
+    total: &mut usize,
+    limit: usize,
+) -> Result<(), String> {
+    if depth > 16 {
+        return Err("program nesting is deeper than 16 levels".into());
+    }
+    *total += 1;
+    if *total > limit {
+        return Err(format!(
+            "program has more than {limit} executable nodes (including nested nodes)"
+        ));
+    }
+    for field in ["nodes", "then", "else", "body"] {
+        for child in node[field].as_array().into_iter().flatten() {
+            count_program_nodes(child, depth + 1, total, limit)?;
+        }
+    }
+    Ok(())
+}
+
+/// An operation already completed inside a loop has a scoped durable id:
+/// loop:iteration:child. Editing that child, or any enclosing container, could
+/// silently change the meaning of a recorded effect on replay.
+fn touches_completed(node: &Value, completed: &std::collections::BTreeSet<String>) -> bool {
+    if let Some(id) = node["id"].as_str() {
+        if completed.iter().any(|done| {
+            done == id || done.strip_suffix(id)
+                .is_some_and(|prefix| prefix.ends_with(':'))
+        }) {
+            return true;
+        }
+    }
+    ["nodes", "then", "else", "body"].iter().any(|field| {
+        node[*field].as_array().is_some_and(|children| {
+            children.iter().any(|child| touches_completed(child, completed))
+        })
+    })
+}
+
+/// Walk the original tree so an existing nested node can actually be repaired.
+/// A replacement for a nonexistent ID is rejected, not silently "accepted".
+fn rewrite_pending_node(
+    node: &Value,
+    replacements: &std::collections::BTreeMap<String, Value>,
+    completed: &std::collections::BTreeSet<String>,
+    found: &mut std::collections::BTreeSet<String>,
+) -> Result<Value, String> {
+    let id = node["id"].as_str().unwrap_or("");
+    if let Some(replacement) = replacements.get(id) {
+        if touches_completed(node, completed) {
+            return Err(format!(
+                "cannot replace node {id}: it or a descendant has completed durable effects"
+            ));
+        }
+        found.insert(id.to_owned());
+        return Ok(replacement.clone());
+    }
+    let mut rewritten = node.clone();
+    for field in ["nodes", "then", "else", "body"] {
+        if let Some(children) = node[field].as_array() {
+            rewritten[field] = Value::Array(children.iter()
+                .map(|child| rewrite_pending_node(child, replacements, completed, found))
+                .collect::<Result<Vec<_>, _>>()?);
+        }
+    }
+    Ok(rewritten)
+}
+
+/// Validate tool authority and data dependencies through *every* control-flow
+/// branch. Parallel siblings cannot consume each other's uncommitted outputs;
+/// a value created by only one side of a branch is not guaranteed after it.
+fn verify_revision_flow(
+    nodes: &[Value],
+    known: &mut std::collections::BTreeSet<String>,
+    allowed_tools: &std::collections::HashSet<&str>,
+) -> Result<(), String> {
+    for node in nodes {
+        let kind = node["type"].as_str().unwrap_or("");
+        let id = node["id"].as_str().unwrap_or("");
+        match kind {
+            "call_tool" | "delegate" => {
+                let tool = if kind == "delegate" {
+                    "delegate_task"
+                } else {
+                    node["tool"].as_str().unwrap_or("")
+                };
+                if !allowed_tools.contains(tool) {
+                    return Err(format!("tool {tool} is not authorized in this run"));
+                }
+                for (key, input) in node["inputs"].as_object().into_iter().flat_map(|m| m.iter()) {
+                    if let Some(source) = input.get("from").and_then(Value::as_str) {
+                        if !known.contains(source) {
+                            return Err(format!(
+                                "input {key} references unavailable observation {source}"
+                            ));
+                        }
+                    }
+                }
+                known.insert(node["saveAs"].as_str().filter(|s| !s.is_empty())
+                    .unwrap_or(id).to_owned());
+                known.insert("last".to_string());
+            }
+            "observe" => {
+                known.insert(id.to_owned());
+            }
+            "sequence" => {
+                verify_revision_flow(node["nodes"].as_array().ok_or("sequence nodes missing")?,
+                    known, allowed_tools)?;
+            }
+            "parallel" => {
+                let original = known.clone();
+                let mut generated = std::collections::BTreeSet::new();
+                for child in node["nodes"].as_array().ok_or("parallel nodes missing")? {
+                    let mut isolated = original.clone();
+                    verify_revision_flow(std::slice::from_ref(child), &mut isolated, allowed_tools)?;
+                    generated.extend(isolated.difference(&original).cloned());
+                }
+                known.extend(generated);
+                known.insert("last".to_owned());
+            }
+            "branch" => {
+                let original = known.clone();
+                let mut yes = original.clone();
+                let mut no = original;
+                verify_revision_flow(node["then"].as_array().ok_or("branch.then missing")?,
+                    &mut yes, allowed_tools)?;
+                verify_revision_flow(node["else"].as_array().ok_or("branch.else missing")?,
+                    &mut no, allowed_tools)?;
+                *known = yes.intersection(&no).cloned().collect();
+            }
+            "loop" => {
+                let mut iteration = known.clone();
+                verify_revision_flow(node["body"].as_array().ok_or("loop.body missing")?,
+                    &mut iteration, allowed_tools)?;
+                // A loop can execute zero times: body outputs are not guaranteed.
+            }
+            "verify" => { known.insert("lastVerify".to_owned()); }
+            "model_decision" => {}
+            other => return Err(format!("unsupported program node type: {other}")),
+        }
+    }
+    Ok(())
+}
+
+/// Atomically admit only a measurable, authorized repair. This preserves
+/// completed effects on the exact live Program IR, including nested branches
+/// and loop-scoped operations; rejected repairs never touch the checkpoint.
 pub fn apply_revision_proposal(
     program: &Value,
     checkpoint: &Value,
@@ -338,8 +492,8 @@ pub fn apply_revision_proposal(
     max_nodes: usize,
     repair_mode: &str,
 ) -> Result<Value, String> {
-    let base = proposal["baseRevision"]
-        .as_str()
+    validate(program)?;
+    let base = proposal["baseRevision"].as_str()
         .filter(|value| !value.is_empty())
         .ok_or("proposal.baseRevision is required")?;
     if Some(base) != program["revision"].as_str() {
@@ -351,96 +505,59 @@ pub fn apply_revision_proposal(
     if proposal["reason"].as_str().is_none_or(str::is_empty) {
         return Err("proposal.reason is required".into());
     }
-    let completed = checkpoint["completedOperationIds"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|value| value.as_str().map(str::to_string))
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut replacements = proposal["replacePendingNodes"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    if repair_mode == "append" {
-        // Append-only repair never rewrites pending nodes; it only adds work.
-        replacements.clear();
+    if checkpoint["pendingOperationIds"].as_array()
+        .is_some_and(|pending| !pending.is_empty())
+    {
+        return Err("cannot revise a program while operations are in flight".into());
+    }
+    let completed = checkpoint["completedOperationIds"].as_array()
+        .into_iter().flatten().filter_map(Value::as_str)
+        .map(str::to_owned).collect::<std::collections::BTreeSet<_>>();
+    let mut replacements = std::collections::BTreeMap::new();
+    if repair_mode != "append" {
+        for node in proposal["replacePendingNodes"].as_array().into_iter().flatten() {
+            let id = node["id"].as_str().filter(|value| !value.is_empty())
+                .ok_or("replacement node needs an id")?;
+            validate_node(node)?;
+            if replacements.insert(id.to_owned(), node.clone()).is_some() {
+                return Err(format!("duplicate replacement node {id}"));
+            }
+        }
     }
     let additions = proposal["addNodes"].as_array().cloned().unwrap_or_default();
     if replacements.is_empty() && additions.is_empty() {
-        return Err("proposal changes no nodes".into());
+        return Err("proposal does not alter any pending operation".into());
     }
-    let mut replaced_ids = std::collections::BTreeSet::new();
-    for node in &replacements {
-        let id = node["id"].as_str().filter(|value| !value.is_empty())
-            .ok_or("replacement node needs an id")?;
-        if completed.contains(id) {
-            return Err(format!(
-                "cannot replace completed node {id}; completed effects are preserved"
-            ));
-        }
-        validate_node(node)?;
-        if !replaced_ids.insert(id.to_string()) {
-            return Err(format!("duplicate replacement node id {id}"));
+    let mut found = std::collections::BTreeSet::new();
+    let mut nodes = program["nodes"].as_array().ok_or("program.nodes missing")?
+        .iter().map(|node| rewrite_pending_node(node, &replacements, &completed, &mut found))
+        .collect::<Result<Vec<_>, _>>()?;
+    for id in replacements.keys() {
+        if !found.contains(id) {
+            return Err(format!("replacement node {id} does not exist in the current program"));
         }
     }
-    let mut nodes = Vec::new();
-    for node in program["nodes"].as_array().into_iter().flatten() {
-        let id = node["id"].as_str().unwrap_or("");
-        if let Some(replacement) = replacements.iter().find(|item| item["id"].as_str() == Some(id)) {
-            nodes.push(replacement.clone());
-        } else {
-            nodes.push(node.clone());
-        }
+    for node in additions {
+        validate_node(&node)?;
+        nodes.push(node);
     }
-    for node in &additions {
-        validate_node(node)?;
-        nodes.push(node.clone());
+    let revised = json!({"revision":format!("{base}:rev"),"nodes":nodes});
+    validate(&revised)?;
+    let mut total = 0usize;
+    for node in revised["nodes"].as_array().into_iter().flatten() {
+        count_program_nodes(node, 0, &mut total, max_nodes)?;
     }
+    let allowed: std::collections::HashSet<&str> =
+        available_tools.iter().map(String::as_str).collect();
+    let mut known: std::collections::BTreeSet<String> = checkpoint["resolvedInputs"]
+        .as_object().map(|map| map.keys().cloned().collect()).unwrap_or_default();
+    verify_revision_flow(revised["nodes"].as_array().ok_or("revised nodes missing")?,
+        &mut known, &allowed)?;
 
-    let mut ids = std::collections::BTreeSet::new();
-    let mut known = checkpoint["resolvedInputs"]
-        .as_object()
-        .map(|map| map.keys().cloned().collect::<std::collections::BTreeSet<_>>())
-        .unwrap_or_default();
-    for node in &nodes {
-        let id = node["id"].as_str().filter(|value| !value.is_empty())
-            .ok_or("every program node needs an id")?;
-        if !ids.insert(id.to_string()) {
-            return Err(format!("duplicate program node id {id}"));
-        }
-        if node["type"].as_str() == Some("call_tool") {
-            let tool = node["tool"].as_str().unwrap_or("");
-            if !available_tools.iter().any(|item| item == tool) {
-                return Err(format!("tool {tool} is not available in this run"));
-            }
-        }
-        // Every `{from}` reference must point to a prior node or a resolved observation.
-        if let Some(inputs) = node["inputs"].as_object() {
-            for (key, input) in inputs {
-                if let Some(source) = input.get("from").and_then(Value::as_str) {
-                    if !known.contains(source) && !ids.contains(source) {
-                        return Err(format!(
-                            "input {key} references unknown observation/node {source}"
-                        ));
-                    }
-                }
-            }
-        }
-        known.insert(id.to_string());
-    }
-    if nodes.len() > max_nodes {
-        return Err(format!(
-            "revised program has {} nodes, budget is {max_nodes}",
-            nodes.len()
-        ));
-    }
-    validate(&json!({
-        "revision": format!("{}:rev", base),
-        "nodes": nodes,
-    }))?;
     Ok(json!({
-        "revision": format!("{}:rev:{}", base, crate::engine::memory::stable_id(&[&proposal.to_string()])),
-        "nodes": nodes,
+        "revision": format!("{}:rev:{}", base,
+            crate::engine::memory::stable_id(&[&proposal.to_string()])),
+        "nodes": revised["nodes"],
         "appliedProposal": proposal,
         "parentRevision": base,
     }))
