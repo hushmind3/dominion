@@ -2,6 +2,7 @@
 //! runtime, global memory and the main branch require no new execution engine.
 mod find;
 mod implement;
+mod review;
 use crate::{engine, state::AppState};
 use axum::{extract::{Path,Query,State},http::StatusCode,response::{IntoResponse,Response},Json};
 use serde_json::{json, Value};
@@ -490,47 +491,12 @@ pub async fn candidate(State(state):State<AppState>,Path(id):Path<String>)->Resp
             let campaign_id=v["campaignId"].as_str().unwrap_or("");
             let capital=state.store.get("money_campaign",campaign_id)
                 .and_then(|c|c["capitalWon"].as_f64()).unwrap_or(-1.0);
+            let decisions=state.store.money_candidate_decisions(&id,50)
+                .unwrap_or_default();
             Json(json!({"candidate":decorate(v,&experiments,capital),
-                "experiments":experiments})).into_response()
+                "experiments":experiments,"decisions":decisions})).into_response()
         },
         None=>error(StatusCode::NOT_FOUND,"사업 후보를 찾지 못했습니다.")
-    }
-}
-pub async fn update_candidate(State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>)->Response{
-    let Some(mut prior)=state.store.get("money_candidate",&id)else{return error(StatusCode::NOT_FOUND,"사업 후보를 찾지 못했습니다.");};
-    if let Some(status)=body["status"].as_str(){
-        if !matches!(status,"hypothesis"|"researching"|"testing"|"validated"|"rejected"|"launched"){
-            return fail("지원하지 않는 사업 상태입니다.");
-        }
-        prior["status"]=json!(status);
-    }
-    for key in ["firstTest","killSignal","distribution","defensibility","notes"]{
-        if let Some(value)=body[key].as_str(){prior[key]=json!(value.chars().take(3000).collect::<String>());}
-    }
-    if let Some(patch)=body["economics"].as_object(){
-        let mut economics=prior["economics"].as_object().cloned().unwrap_or_default();
-        for key in ["priceWon","variableCostWon","acquisitionCostWon","monthlyFixedWon",
-            "monthlyUnits","setupCostWon","refundRatePct"]{
-            if let Some(value)=patch.get(key){
-                if value.is_null(){economics.insert(key.into(),Value::Null);}
-                else if let Some(n)=valid_won(value,if key=="refundRatePct"{100.0}else{1e14}){
-                    economics.insert(key.into(),json!(n));
-                }else{return fail("경제성 값은 0 이상의 유효한 숫자 또는 비어 있는 값이어야 합니다.");}
-            }
-        }
-        prior["economics"]=json!(economics);
-    }
-    prior["updatedAt"]=json!(now());
-    match state.store.put("money_candidate",&prior){
-        Some(v)=>{
-            state.bus.record("money_candidate",&v);
-            let experiments=state.store.money_recent_experiments(
-                v["campaignId"].as_str().unwrap_or(""),150).unwrap_or_default();
-            let capital=state.store.get("money_campaign",v["campaignId"].as_str().unwrap_or(""))
-                .and_then(|c|c["capitalWon"].as_f64()).unwrap_or(-1.0);
-            Json(decorate(v,&experiments,capital)).into_response()
-        },
-        None=>error(StatusCode::INTERNAL_SERVER_ERROR,"사업 후보 변경을 저장하지 못했습니다.")
     }
 }
 /// Zero-LLM draft. No publication, payment processing or external outreach.
@@ -738,7 +704,9 @@ pub fn routes()->axum::Router<AppState>{
         .route("/api/money/campaigns/:id/run",post(start))
         .route("/api/money/campaigns/:id/drafts/:tension_id/promote",post(promote_draft))
         .route("/api/money/campaigns/:id/autopilot",get(autopilot_status).post(autopilot_set))
-        .route("/api/money/candidates/:id",get(candidate).post(update_candidate))
+        .route("/api/money/candidates",get(review::archive))
+        .route("/api/money/candidates/:id",get(candidate).post(review::update_candidate))
+        .route("/api/money/candidates/:id/history",get(review::history))
         .route("/api/money/candidates/:id/experiments",post(record_experiment))
         .route("/api/money/candidates/:id/implement",post(implement::launch))
         .route("/api/money/candidates/:id/validation-kit",post(create_validation_kit))

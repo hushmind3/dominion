@@ -63,8 +63,8 @@ pub async fn launch(
     let Some(candidate)=state.store.get("money_candidate",&id)else{
         return fail(StatusCode::NOT_FOUND,"사업 후보를 찾을 수 없습니다.");
     };
-    if candidate["status"]=="rejected"{
-        return fail(StatusCode::CONFLICT,"제외한 사업 후보는 구현할 수 없습니다.");
+    if matches!(candidate["status"].as_str(),Some("rejected"|"on_hold")){
+        return fail(StatusCode::CONFLICT,"보류하거나 제외한 사업 후보는 재검토 후 구현할 수 있습니다.");
     }
     let idempotency_id=job_id(&id);
     if let Some(prior)=candidate["implementationJobId"].as_str(){
@@ -90,7 +90,9 @@ pub async fn launch(
         "attempts":0,"stepIndex":0,"stepTotal":0,"events":[],"input":input});
     let id_for_receipt=idempotency_id.clone();
     let result=state.store.mutate_record("money_candidate",&id,candidate,|row|{
-        if row["status"]=="rejected"{return Err("rejected".into());}
+        if matches!(row["status"].as_str(),Some("rejected"|"on_hold")){
+            return Err("rejected".into());
+        }
         if row["implementationJobId"].as_str().is_some(){return Err("already_claimed".into());}
         row["implementationJobId"]=json!(id_for_receipt);
         row["implementationApprovedAt"]=json!(chrono::Utc::now().to_rfc3339());

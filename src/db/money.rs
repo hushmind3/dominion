@@ -9,6 +9,13 @@ pub(super) const SCHEMA_SQL:&str = r#"CREATE INDEX IF NOT EXISTS idx_records_kin
              CREATE INDEX IF NOT EXISTS idx_money_campaign
                  ON records(json_extract(data, '$.campaignId'), updated_at DESC)
                  WHERE kind='money_candidate';
+             CREATE INDEX IF NOT EXISTS idx_money_review_candidate_revision
+                 ON records(json_extract(data,'$.candidateId'),
+                            CAST(json_extract(data,'$.revision') AS INTEGER) DESC)
+                 WHERE kind='money_decision';
+             CREATE INDEX IF NOT EXISTS idx_money_candidate_status_updated
+                 ON records(json_extract(data,'$.status'),updated_at DESC)
+                 WHERE kind='money_candidate';
              CREATE INDEX IF NOT EXISTS idx_money_experiment_candidate
                  ON records(json_extract(data,'$.candidateId')) WHERE kind='money_experiment';
              CREATE INDEX IF NOT EXISTS idx_money_experiment_campaign
@@ -124,6 +131,42 @@ fn refresh_money_source_fact_tx(tx:&rusqlite::Transaction<'_>,record:&Value)->Re
 }
 
 impl Store {
+    /// Indexed decision history is append-only: candidate and review record
+    /// commit together through mutate_record's SQLite transaction.
+    pub fn money_candidate_decisions(&self,candidate_id:&str,limit:usize)
+        ->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='money_decision' AND json_extract(data,'$.candidateId')=?1
+             ORDER BY CAST(json_extract(data,'$.revision') AS INTEGER) DESC
+             LIMIT ?2").map_err(|e|e.to_string())?;
+        let rows=stmt.query_map(params![candidate_id,limit.clamp(1,200) as i64],
+            record_from_row).map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    /// Source-backed candidates remain searchable after rejection or hold.
+    /// Source evidence is returned verbatim, not reinterpreted as verified sales.
+    pub fn money_candidate_archive(&self,status:&str,query:&str,limit:usize)
+        ->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='money_candidate'
+               AND (?1='all' OR (?1='archived' AND
+                    json_extract(data,'$.status') IN ('on_hold','rejected'))
+                    OR json_extract(data,'$.status')=?1)
+               AND (?2='' OR instr(lower(COALESCE(json_extract(data,'$.title'),'')),lower(?2))>0
+                    OR instr(lower(COALESCE(json_extract(data,'$.customer'),'')),lower(?2))>0
+                    OR instr(lower(COALESCE(json_extract(data,'$.mechanism'),'')),lower(?2))>0)
+             ORDER BY updated_at DESC,id DESC LIMIT ?3"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map(params![status,query,limit.clamp(1,100) as i64],
+            record_from_row).map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
     /// Cheap disabled-state gate: no JSON deserialization of all historical
     /// Money campaigns, no model call and no new index. The shared records PK
     /// already scopes this lookup by kind, and SQLite can stop at first match.
