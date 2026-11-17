@@ -124,17 +124,14 @@ export function ModelHub(){
  }
  const [name,setName]=useState(''),[baseUrl,setBaseUrl]=useState(''),[kind,setKind]=useState('openai'),[apiKey,setApiKey]=useState(''),[local,setLocal]=useState(false),[modelId,setModelId]=useState(''),[defaultModel,setDefaultModel]=useState(''),[reflection,setReflection]=useState(false),[rpm,setRpm]=useState(''),[accountId,setAccountId]=useState(''),[testBusy,setTestBusy]=useState(false),[testResult,setTestResult]=useState<{ok:boolean;message:string}|null>(null)
  const [defaultEffort,setDefaultEffort]=useState('')
- const [inputRate,setInputRate]=useState('')
- const [outputRate,setOutputRate]=useState('')
- const [cacheRate,setCacheRate]=useState('')
  const editModels=useProviderModels(modal&&edit?edit.id:'')
  const probe=async(p:Provider)=>{
   setCounts(old=>({...old,[p.id]:{list:[],busy:true}}))
   try{const list=await get<{id:string;catalogStale?:boolean}[]>('/api/providers/'+p.id+'/models');setCounts(old=>({...old,[p.id]:{list:list.map(m=>m.id),error:list.some(m=>m.catalogStale)?'최근 저장된 목록입니다. 실시간 Codex 조회가 실패했습니다.':undefined}}))}
   catch(e){setCounts(old=>({...old,[p.id]:{list:[],error:(e as Error).message}}))}
  }
- const open=(p?:Provider)=>{setEdit(p||null);setIntegration(p?.integration==='freellmapi'?'freellmapi':p?.integration==='opencode-go'?'opencode-go':undefined);setFreePreset(false);setPresetMode(false);setName(p?.name||'');setBaseUrl(p?.baseUrl||'');setKind(p?.kind||'openai');setApiKey('');setLocal(Boolean(p?.local));setModelId(p?.reflectionModel||(p?.reflection??p?.learning?p?.model:'')||'');setDefaultModel(p?.model||'');setDefaultEffort(String(p?.reasoningEffort||''));setReflection(Boolean(p?.reflection ?? p?.learning));setRpm(p?.requestsPerMinute?String(p.requestsPerMinute):'');setAccountId(p?.accountId||'');setInputRate(p?.pricing?.inputUsdPerMillion?.toString()??'');setOutputRate(p?.pricing?.outputUsdPerMillion?.toString()??'');setCacheRate(p?.pricing?.cachedInputUsdPerMillion?.toString()??'');setTestResult(null);setError('');setModal(true)}
- const openPreset=(preset:ProviderPreset)=>{setEdit(null);setIntegration(preset.integration);setFreePreset(Boolean(preset.free&&preset.auth==='none'));setPresetMode(true);setName(preset.name);setBaseUrl(preset.baseUrl);setKind(preset.kind);setLocal(preset.local);setApiKey('');setModelId('');setDefaultModel('');setDefaultEffort('');setReflection(false);setRpm(preset.requestsPerMinute?String(preset.requestsPerMinute):'');setAccountId('');setInputRate('');setOutputRate('');setCacheRate('');setTestResult(null);setError('');setModal(true)}
+ const open=(p?:Provider)=>{setEdit(p||null);setIntegration(p?.integration==='freellmapi'?'freellmapi':p?.integration==='opencode-go'?'opencode-go':undefined);setFreePreset(false);setPresetMode(false);setName(p?.name||'');setBaseUrl(p?.baseUrl||'');setKind(p?.kind||'openai');setApiKey('');setLocal(Boolean(p?.local));setModelId(p?.reflectionModel||(p?.reflection??p?.learning?p?.model:'')||'');setDefaultModel(p?.model||'');setDefaultEffort(String(p?.reasoningEffort||''));setReflection(Boolean(p?.reflection ?? p?.learning));setRpm(p?.requestsPerMinute?String(p.requestsPerMinute):'');setAccountId(p?.accountId||'');setTestResult(null);setError('');setModal(true)}
+ const openPreset=(preset:ProviderPreset)=>{setEdit(null);setIntegration(preset.integration);setFreePreset(Boolean(preset.free&&preset.auth==='none'));setPresetMode(true);setName(preset.name);setBaseUrl(preset.baseUrl);setKind(preset.kind);setLocal(preset.local);setApiKey('');setModelId('');setDefaultModel('');setDefaultEffort('');setReflection(false);setRpm(preset.requestsPerMinute?String(preset.requestsPerMinute):'');setAccountId('');setTestResult(null);setError('');setModal(true)}
  const goProvider=providers.value.find(p=>p.integration==='opencode-go'||p.baseUrl.includes('opencode.ai/zen/go')||p.baseUrl.includes('opencode.ai/inference/go'))
  const connectOpencodeGo=()=>{if(goProvider)open(goProvider);else openPreset(opencodeGoPreset)}
  const needsNewKey=presetMode&&!freePreset&&(!local||integration==='freellmapi')
@@ -153,22 +150,12 @@ export function ModelHub(){
  const save=async()=>{
   if(saving||!baseUrl.trim()||(needsNewKey&&!apiKey.trim()))return
   if(reflection&&!modelId.trim()){setError(t('models.dlg.needReflectionModel'));return}
-  const rates=[inputRate,outputRate,cacheRate]
-  const validRate=(text:string)=>text.trim()===''||(Number.isFinite(Number(text))&&Number(text)>=0&&Number(text)<=100000)
-  if(!rates.every(validRate)||Boolean(inputRate.trim())!==Boolean(outputRate.trim())||
-     (cacheRate.trim()!==''&&!inputRate.trim())){
-   setError('모델 비용 단가는 입력·출력 함께 설정하고 유효한 숫자를 입력하세요.');return
-  }
   setSaving(true);setError('')
   try{
    const saved=await post<Provider>('/api/providers',{
     ...edit,name:name.trim(),baseUrl:baseUrl.trim(),kind,apiKey:apiKey.trim()||undefined,local,integration,accountId:accountId.trim()||undefined,requestsPerMinute:Number(rpm)||0,
     toolMode:edit?.kind===kind?edit.toolMode:undefined,
     reasoningEffort:defaultEffort,enabled:edit?.enabled??true,model:defaultModel.trim()||edit?.model,reflection,reflectionModel:reflection?modelId.trim():undefined,
-     pricing:inputRate.trim()!==''&&outputRate.trim()!==''?{
-      inputUsdPerMillion:Number(inputRate),outputUsdPerMillion:Number(outputRate),
-      ...(cacheRate.trim()!==''?{cachedInputUsdPerMillion:Number(cacheRate)}:{})
-     }:undefined,
    })
    providers.setValue(rows=>rows.some(p=>p.id===saved.id)?rows.map(p=>p.id===saved.id?saved:p):[...rows,saved])
    setCounts(rows=>{const next={...rows};delete next[saved.id];return next})
@@ -463,15 +450,6 @@ export function ModelHub(){
      </div>
     </FormField>}
     <FormField label={t('models.dlg.rpm')} hint={t('models.dlg.rpmHint')}><TextInput type="number" min={0} max={10000} value={rpm} onChange={e=>setRpm(e.target.value)} placeholder="0"/></FormField>
-     <details className="rounded-xl border border-[#E9E1D6] bg-[#FAF7F1] p-3">
-      <summary className="cursor-pointer text-[12px] font-semibold text-[#3A342D]">모델 비용 계측 단가 · 선택 입력</summary>
-      <p className="mt-2 text-[11px] text-[#827568]">제공자 요금표 기준 USD/100만 토큰 단가를 입력합니다. 청구서 실측이 아닌 계산값이며 GPU·캐시 생성 비용은 제외됩니다.</p>
-      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
-       <FormField label="입력 단가"><TextInput type="number" step="any" min={0} max={100000} value={inputRate} onChange={e=>setInputRate(e.target.value)} placeholder="입력 요율"/></FormField>
-       <FormField label="출력 단가"><TextInput type="number" step="any" min={0} max={100000} value={outputRate} onChange={e=>setOutputRate(e.target.value)} placeholder="출력 요율"/></FormField>
-       <FormField label="캐시 읽기 단가"><TextInput type="number" step="any" min={0} max={100000} value={cacheRate} onChange={e=>setCacheRate(e.target.value)} placeholder="미입력: 미집계"/></FormField>
-      </div>
-     </details>
     {error&&<Notice message={error}/>}
     {testResult&&<div className={'rounded-xl border px-3 py-2 text-[12px] '+(testResult.ok?'border-[#CFE0CF] bg-[#F4FAF3] text-[#4F6F52]':'border-[#EAD3CB] bg-[#FFF4F0] text-[#9A5B48]')}>{testResult.message}</div>}
    </div>

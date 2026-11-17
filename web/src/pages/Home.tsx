@@ -6,8 +6,8 @@ import {useRemote} from '../components/UI'
 import {StatusPill} from '../components/StatusPill'
 import {t,useLocale,formatDateTime,jobKindLabel} from '../i18n'
 import type {Agent,ChatSession,Provider} from '../api'
-import type {PageId} from '../components/WorkspaceShell'
-export function HomePage({navigate}:{navigate:(page:PageId)=>void}){
+type Destination='chat'|'models'|'agents'|'rooms'|'connections'|'memory'|'activity'
+export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
  useLocale()
  const sessions=useRemote<ChatSession[]>('/api/sessions',[])
  const providers=useRemote<Provider[]>('/api/providers',[])
