@@ -467,12 +467,18 @@ pub(super) async fn attempt_model_adaptation(
         None,
     )
     .await?;
+    let intervention_succeeded=ok && tool_succeeded(&result);
     crate::engine::algorithms::mark_signal(
-        state, execution_id, "adaptation.selection", ok,
+        state, execution_id, "adaptation.selection", intervention_succeeded,
     );
-    crate::engine::algorithms::mark_signal(
-        state, execution_id, "learning.applicability", ok,
-    );
+    // Consulting a precedent is not evidence that the selected action came
+    // from that rule. Do not credit the learning selector by association.
+    if !applicable_rules.is_empty() {
+        crate::engine::algorithms::mark_unrated(
+            state, execution_id, "learning.applicability",
+            "consulted precedent but selected intervention has no causal rule attribution",
+        );
+    }
     let hypothesis_results = crate::engine::adaptation_loop::evaluate_hypotheses_phased(
         &adaptation,
         &before_observation,
@@ -482,11 +488,9 @@ pub(super) async fn attempt_model_adaptation(
         .iter()
         .any(|rule| rule["scope"].as_str() == Some("shared"))
     {
-        crate::engine::algorithms::mark_signal(
-            state,
-            execution_id,
-            "multiagent.sharing",
-            tool_succeeded(&result),
+        crate::engine::algorithms::mark_unrated(
+            state, execution_id, "multiagent.sharing",
+            "shared precedent was consulted, but transfer was not independently verified",
         );
     }
     crate::engine::experience::record_rule_counterexamples(
