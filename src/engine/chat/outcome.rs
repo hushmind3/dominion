@@ -157,6 +157,12 @@ pub(super) fn determine_task_outcome(execution: &Value) -> TaskOutcome {
     if standing_violation(execution) {
         return TaskOutcome::Failed;
     }
+    // A model may have produced a final answer after the runner stopped,
+    // but an explicitly unverified program postflight cannot become a
+    // Succeeded task merely because acceptanceText was generated.
+    if execution["programCheckpoint"]["status"]=="needs_review" {
+        return TaskOutcome::Failed;
+    }
     if execution["acceptancePassed"] == true {
         return if crate::engine::verification::has_result_verifier(&execution["acceptanceChecks"]) {
             TaskOutcome::Succeeded
@@ -617,5 +623,23 @@ fn mark_run_signals(state: &AppState, record: &Value) {
                 "retrieval effect is not independently measured; exposure is not success",
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod program_review_outcome_tests {
+    use super::*;
+    #[test]
+    fn unverified_repair_never_becomes_task_success_after_model_final(){
+        let execution=json!({
+            "status":"completed","acceptancePassed":true,
+            "acceptanceChecks":[{"type":"tool_receipt","expected":"success"}],
+            "programCheckpoint":{"status":"needs_review","programFailure":{
+                "nodeId":"postflight","reason":"observed mismatch"}},
+        });
+        assert_eq!(determine_task_outcome(&execution),TaskOutcome::Failed);
+        let mut cancelled=execution.clone();
+        cancelled["status"]=json!("cancelled");
+        assert_eq!(determine_task_outcome(&cancelled),TaskOutcome::Cancelled);
     }
 }
