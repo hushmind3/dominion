@@ -48,7 +48,8 @@ jobs:
           cargo test --bin dominion-rust engine::native_replay::tests
           cargo test --bin dominion-rust api::native_replay::tests
           cargo test --bin dominion-rust engine::program::tests
-          cargo test --bin dominion-rust engine::adaptation_loop::selection_tests
+          cargo test --bin dominion-rust engine::adaptation_loop::tests
           cargo test --bin dominion-rust engine::chat::runtime::program::evidence_join_tests
+          cargo test --bin dominion-rust engine::native_agent::tests
           cargo test --bin dominion-rust api::sdk::tests
           cargo test --test e2e native_job_prompt_runs -- --test-threads=1
