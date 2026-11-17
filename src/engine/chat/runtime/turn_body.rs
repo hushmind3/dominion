@@ -1729,8 +1729,8 @@ pub(super) async fn run_turn_body(
                         messages.push(json!({
                             "role":"system",
                             "content": format!(
-                                "적응 실행: 선택된 개입 `{}` (tool={}) 결과={}. 검사 관측={} 가설 판정={}. 같은 실패 호출을 반복하지 마세요.",
-                                selected["id"], selected["tool"], result, adapted["probeResults"], adapted["hypothesisResults"]
+                                "적응 실행: 선택된 개입 `{}` (tool={}) 결과={}. 근거 제한 계약={} 검사 관측={} 가설 판정={}. 같은 실패 호출을 반복하지 마세요.",
+                                selected["id"], selected["tool"], result, adapted["actionCertificate"], adapted["probeResults"], adapted["hypothesisResults"]
                             )
                         }));
                         if tool_succeeded(result)
