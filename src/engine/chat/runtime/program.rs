@@ -706,6 +706,12 @@ pub(super) async fn execute_program_tool(
     // Other legacy nodes retain their previous terminal completion behavior.
     if program_operation_completed(ok, node["onFailure"].as_str()) {
         mark_program_completed(checkpoint, node_id);
+        if ok {
+            if let Some(failed)=checkpoint["failedOperationIds"].as_array_mut() {
+                failed.retain(|item|item.as_str()!=Some(node_id));
+            }
+            checkpoint["lastFailedCallId"]=Value::Null;
+        }
     } else {
         let mut failed=checkpoint["failedOperationIds"]
             .as_array().cloned().unwrap_or_default();
