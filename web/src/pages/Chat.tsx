@@ -30,16 +30,16 @@ const formatBytes=(bytes:number)=>{
 }
 export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,onSession,openModels,openSettings,switchMode,active=true}:{sessionId?:string;initialAgent?:string;initialProvider?:string;initialModel?:string;onSession:(x:string|undefined)=>void;openModels:()=>void;openSettings:()=>void;switchMode:(mode:'chat'|'rooms')=>void;active?:boolean}){
  const loc=useLocale()
- const sessions=useRemote<ChatSession[]>('/api/sessions',[]);
- const agents=useRemote<Agent[]>('/api/agents',[]);
- const providers=useRemote<Provider[]>('/api/providers',[]);
+ const sessions=useRemote<ChatSession[]>('/api/sessions',[],active);
+ const agents=useRemote<Agent[]>('/api/agents',[],active);
+ const providers=useRemote<Provider[]>('/api/providers',[],active);
  const current=sessionId;
  const selectedSession=sessions.value.find(session=>session.id===current);
- const transcript=useRemote<ChatMessage[]>(current?'/api/sessions/'+encodeURIComponent(current)+'/messages':null,[]);
+ const transcript=useRemote<ChatMessage[]>(current?'/api/sessions/'+encodeURIComponent(current)+'/messages':null,[],active);
  const messages=transcript.value
  const messageUsage=useMemo(()=>messages.reduce((sum,message)=>sum+(Number(message.metadata?.usage?.totalTokens)||0),0),[messages])
  const [serverUsage,setServerUsage]=useState(0);
- const approvals=useRemote<Approval[]>('/api/approvals',[]);
+ const approvals=useRemote<Approval[]>('/api/approvals',[],active);
  const [input,setInput]=useState('');
  const [agentChoice,setAgentChoice]=useState<{scope?:string;id:string}>();
  const [override,setOverride]=useState<ModelOverride>();
