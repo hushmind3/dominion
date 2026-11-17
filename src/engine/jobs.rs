@@ -319,14 +319,19 @@ pub fn start(state: AppState) {
     }
 
     tokio::spawn(async move {
+        let mut heartbeat_ticks=0u64;
         loop {
             tokio::time::sleep(Duration::from_secs(30)).await;
+            heartbeat_ticks=heartbeat_ticks.wrapping_add(1);
             // A process restart removes in-memory approval timers. The persisted
             // deadline still expires automatically during normal operation.
             crate::engine::chat::expire_stale_approvals(&state);
-            // One shared host hook. No Money collector, inference or DB
-            // sweep runs unless the owner enabled the plug-in scheduler.
-            crate::engine::plugins::maintenance_tick(&state);
+            // Keep host approval expiry at 30s; the optional Money plug-in
+            // is checked only every 60s to halve idle SQLite lookups.
+            // An explicit enable triggers the first Money job immediately.
+            if heartbeat_ticks%2==0{
+                crate::engine::plugins::maintenance_tick(&state);
+            }
         }
     });
 
