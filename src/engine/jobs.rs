@@ -859,11 +859,14 @@ mod tests {
         let state = temp_state();
         let job = enqueue(&state, "room", json!({ "roomId": "missing", "goal": "x" })).unwrap();
         let id = job["id"].as_str().unwrap().to_string();
+        // Production workers claim the queued job before executing it.
+        // The test must exercise that same ownership transition.
+        let running=next_queued(&state).expect("worker claims queued job");
         let _ = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap()
-            .block_on(run_job(state.clone(), job));
+            .block_on(run_job(state.clone(), running));
         let stored = state.store.get("job", &id).unwrap();
         assert_eq!(stored["status"], "failed");
         assert!(stored["error"].as_str().unwrap().contains("대화방"));
