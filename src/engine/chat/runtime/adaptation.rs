@@ -7,55 +7,29 @@ pub(super) fn failure_observation(
     arguments: &Value,
     error: &str,
 ) -> Value {
-    let mut path_state = serde_json::Map::new();
-    for key in ["path", "cwd", "command"] {
-        let Some(value) = arguments.get(key).and_then(Value::as_str) else {
-            continue;
-        };
-        let path = if std::path::Path::new(value).is_absolute() {
-            std::path::PathBuf::from(value)
-        } else {
-            state.config.workspace.join(value)
-        };
-        if let Ok(metadata) = std::fs::metadata(&path) {
-            path_state.insert(
-                key.to_string(),
-                json!({
-                    "exists": true,
-                    "isDir": metadata.is_dir(),
-                    "len": metadata.len(),
-                }),
-            );
-        } else {
-            path_state.insert(key.to_string(), json!({"exists": false}));
-        }
-    }
-    json!({
-        "kind": "tool_failure",
-        "tool": tool,
-        "arguments": arguments,
-        "error": error.chars().take(600).collect::<String>(),
-        "pathState": path_state,
-    })
+    // One shared physical workspace observation supports learned-method
+    // applicability AND failure diagnosis. Previously two separate readers
+    // scanned the same paths and directory on each failed action.
+    let mut observation = crate::engine::experience::method_observation(
+        state, tool, arguments, error,
+    );
+    observation["kind"] = json!("tool_failure");
+    observation
 }
 
-pub(super) fn environment_fingerprint(state: &AppState, tool: &str, arguments: &Value) -> String {
-    let observation = failure_observation(state, tool, arguments, "");
-    let mut entries = Vec::new();
-    if let Ok(read_dir) = std::fs::read_dir(&state.config.workspace) {
-        for entry in read_dir.flatten().take(64) {
-            let name = entry.file_name().to_string_lossy().to_string();
-            let len = entry.metadata().map(|meta| meta.len()).unwrap_or(0);
-            entries.push((name, len));
-        }
-    }
-    entries.sort();
+fn fingerprint_of_observation(tool: &str, arguments: &Value, observation: &Value) -> String {
     crate::engine::memory::stable_id(&[
         tool,
         &arguments.to_string(),
-        &observation["pathState"].to_string(),
-        &json!(entries).to_string(),
+        observation["environmentFingerprint"].as_str().unwrap_or(""),
     ])
+}
+
+pub(super) fn environment_fingerprint(
+    state: &AppState, tool: &str, arguments: &Value,
+) -> String {
+    let observation = failure_observation(state, tool, arguments, "");
+    fingerprint_of_observation(tool, arguments, &observation)
 }
 
 pub(super) fn record_adaptation_error(state: &AppState, execution_id: &str, error: &str) {
@@ -105,7 +79,8 @@ pub(super) async fn attempt_model_adaptation(
         .ok_or("adaptation has no model")?
         .to_string();
     let before_observation = failure_observation(state, tool, arguments, error);
-    let environment_fingerprint = environment_fingerprint(state, tool, arguments);
+    let environment_fingerprint =
+        fingerprint_of_observation(tool, arguments, &before_observation);
     let (system, mut prompt) = crate::engine::adaptation_loop::adaptation_prompt(
         tool,
         arguments,

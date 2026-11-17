@@ -33,6 +33,25 @@ mod outcome_tests {
         })
     }
 
+    #[test]
+    fn shared_failure_observation_avoids_duplicate_workspace_and_command_reads() {
+        let (state,dir)=state();
+        std::fs::write(dir.join("target.rs"),"real evidence").unwrap();
+        let args=json!({"path":"target.rs","command":"cargo test --locked"});
+        let observed=failure_observation(&state,"terminal_exec",&args,"tool failed");
+        assert_eq!(observed["kind"],"tool_failure");
+        assert_eq!(observed["pathState"]["path"]["exists"],true);
+        assert!(observed["pathState"].get("command").is_none(),
+            "a terminal command must not be treated as a filesystem path");
+        assert!(observed["environmentFingerprint"].is_string());
+        let first=environment_fingerprint(&state,"terminal_exec",&args);
+        let second=environment_fingerprint(&state,"terminal_exec",&args);
+        assert_eq!(first,second);
+        assert_ne!(first,environment_fingerprint(&state,"workspace_read",&args));
+        drop(state);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
     #[tokio::test]
     async fn causal_diagnostic_uses_real_tool_receipt_and_changes_repair() {
         let (state, dir) = state();

@@ -1167,10 +1167,21 @@ pub fn finalize_execution(state: &AppState, execution: &Value) {
     let Some(execution_id) = execution["id"].as_str() else {
         return;
     };
+    // Scoped indexed receipt lookup avoids O(all previous turns) JSON
+    // deserialization for every completed execution.
+    let usages = match state.store.algorithm_usages_for_execution(execution_id) {
+        Ok(rows) => rows,
+        Err(error) => {
+            state.store.audit("algorithm.finalization_read_failed", json!({
+                "executionId": execution_id, "error": error,
+            }));
+            return;
+        }
+    };
     // A deterministic shortcut made no model decision, so it carries no
     // evidence for which judgment algorithm works better.
     if execution["deterministicShortcut"].is_object() {
-        for mut usage in state.store.all("algorithm_usage") {
+        for mut usage in usages {
             if usage["executionId"].as_str() == Some(execution_id)
                 && usage["status"].as_str() == Some("pending")
             {
@@ -1182,7 +1193,7 @@ pub fn finalize_execution(state: &AppState, execution: &Value) {
         return;
     }
     let task_outcome = execution["taskOutcome"].as_str().unwrap_or("");
-    for mut usage in state.store.all("algorithm_usage") {
+    for mut usage in usages {
         if usage["executionId"].as_str() != Some(execution_id)
             || usage["status"].as_str() != Some("pending")
         {
@@ -2141,6 +2152,37 @@ mod tests {
             assert_eq!(stat["statVersion"], 2, "{stat}");
         }
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn algorithm_finalization_queries_only_current_run_usage() {
+        let (state,dir)=state();
+        seed(&state);
+        let a=choose_for_agent(
+            &state,"tool.selection",Some("agent-a"),Some("run-indexed")
+        ).unwrap();
+        let b=choose_for_agent(
+            &state,"tool.selection",Some("agent-b"),Some("run-untouched")
+        ).unwrap();
+        assert_eq!(state.store.algorithm_usages_for_execution("run-indexed")
+            .unwrap().len(),1);
+        assert_eq!(state.store.algorithm_usages_for_execution("run-untouched")
+            .unwrap().len(),1);
+        assert_eq!(state.store.algorithm_usages_for_execution("run-missing")
+            .unwrap().len(),0);
+        mark_signal(&state,"run-indexed","tool.selection",true);
+        finalize_execution(&state,&json!({
+            "id":"run-indexed","taskOutcome":"succeeded",
+        }));
+        let marked=state.store.algorithm_usages_for_execution("run-indexed")
+            .unwrap();
+        assert_eq!(marked[0]["status"],"completed");
+        assert_eq!(marked[0]["revision"],a["revision"]);
+        let untouched=state.store.algorithm_usages_for_execution("run-untouched")
+            .unwrap();
+        assert_eq!(untouched[0]["status"],"pending");
+        assert_eq!(untouched[0]["revision"],b["revision"]);
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]

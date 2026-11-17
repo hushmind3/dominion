@@ -17,7 +17,7 @@ pub fn run(state: &AppState) -> Result<(), String> {
 /// dead attempt terminal is what lets a later retry prove it is resuming an
 /// interrupted run instead of racing a live one.
 fn interrupted_executions(state: &AppState) -> Result<(), String> {
-    for mut execution in state.store.try_all("execution")? {
+    for mut execution in state.store.running_recovery_records("execution")? {
         if execution["status"].as_str() != Some("running") {
             continue;
         }
@@ -32,7 +32,7 @@ fn interrupted_executions(state: &AppState) -> Result<(), String> {
             .put("execution", &execution)
             .ok_or("Cannot recover an interrupted execution")?;
     }
-    for mut operation in state.store.try_all("execution_operation")? {
+    for mut operation in state.store.running_recovery_records("execution_operation")? {
         if operation["status"].as_str() != Some("running") {
             continue;
         }
@@ -202,7 +202,7 @@ fn collection_names(state: &AppState) -> Result<(), String> {
     Ok(())
 }
 fn interrupted_approvals(state: &AppState) -> Result<(), String> {
-    for mut approval in state.store.all("approval") {
+    for mut approval in state.store.pending_approvals()? {
         if approval["status"] != "pending" {
             continue;
         }
@@ -288,6 +288,34 @@ mod tests {
         );
         drop(state);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn startup_recovery_inspects_only_live_records_and_preserves_all_history() {
+        let (state,dir)=state();
+        for (kind,id,status) in [
+            ("execution","old-run","completed"),
+            ("execution","live-run","running"),
+            ("execution_operation","old-op","completed"),
+            ("execution_operation","live-op","running"),
+            ("approval","old-approval","approved"),
+            ("approval","live-approval","pending"),
+        ] {
+            state.store.put(kind,&json!({"id":id,"status":status}));
+        }
+        interrupted_executions(&state).unwrap();
+        interrupted_approvals(&state).unwrap();
+        assert_eq!(state.store.get("execution","old-run").unwrap()["status"],"completed");
+        assert_eq!(state.store.get("execution_operation","old-op").unwrap()["status"],"completed");
+        assert_eq!(state.store.get("approval","old-approval").unwrap()["status"],"approved");
+        assert_eq!(state.store.get("execution","live-run").unwrap()["status"],"interrupted");
+        assert_eq!(state.store.get("execution_operation","live-op").unwrap()["status"],"interrupted");
+        assert_eq!(state.store.get("execution_operation","live-op").unwrap()["outcomeUnknown"],true);
+        assert_eq!(state.store.get("approval","live-approval").unwrap()["status"],"interrupted");
+        assert_eq!(state.store.count("execution"),2);
+        assert_eq!(state.store.count("execution_operation"),2);
+        drop(state);
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]

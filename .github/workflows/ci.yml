@@ -56,6 +56,12 @@ jobs:
         run: cargo test --locked --bin dominion-rust engine::algorithms::tests
       - name: Policy experiment acceptance regressions (dev profile)
         run: cargo test --locked --bin dominion-rust engine::policy::tests
+      - name: Indexed approval reuse and cancellation (dev profile)
+        run: cargo test --locked --bin dominion-rust engine::chat::approval::tests
+      - name: Indexed startup recovery migrations (dev profile)
+        run: cargo test --locked --bin dominion-rust migrations::tests
+      - name: Shared failure workspace observation (dev profile)
+        run: cargo test --locked --bin dominion-rust shared_failure_observation_avoids_duplicate
       - name: Money domain and API regressions (dev profile)
         run: cargo test --locked --bin dominion-rust money_
       - name: Shared SDK run and retry regressions (dev profile)

@@ -151,15 +151,15 @@ pub fn choose_with_budget(
         experiment.no, &experiments, 1u16 << selected, horizon - 1,
     ));
     let mut result = (*experiment.source).clone();
-    let n = active.len() as f64;
-    result["informationGain"] = json!(
-        2.0 * f64::from(experiment.yes.count_ones())
-            * f64::from(experiment.no.count_ones()) / (n * n)
-    );
+    // Strip stale/model-authored scalar scores. The bounded causal horizon,
+    // not a Gini reward or a one-step success guess, owns the decision.
+    if let Some(object) = result.as_object_mut() {
+        object.remove("informationGain");
+        object.remove("selectionScore");
+    }
     result["selectionPolicy"] = json!("contingent_minimax_v1");
     result["forecastWorstRemaining"] = json!(worst);
     result["forecastHorizon"] = json!(horizon);
-    result["selectionScore"] = json!(1.0 - f64::from(worst) / n);
     Some(result)
 }
 
@@ -214,7 +214,8 @@ pub fn observe(candidate: &Value, result: &Value, ok: bool, operation_id: &str) 
         "verdict": verdict.as_str(),
         "supports": supports, "contradicts": contradicts,
         "basis": "tool_receipt_vs_model_prediction",
-        "informationGainEstimate": candidate["informationGain"],
+        "forecastWorstRemaining": candidate["forecastWorstRemaining"],
+        "forecastHorizon": candidate["forecastHorizon"],
     })
 }
 
@@ -266,7 +267,9 @@ mod tests {
     fn only_a_discriminating_independent_read_is_eligible() {
         let selected = choose(&candidates(), &[], &[], "workspace_write", &json!({})).unwrap();
         assert_eq!(selected["id"], "path_probe");
-        assert!(selected["informationGain"].as_f64().unwrap() > 0.0);
+        assert_eq!(selected["forecastWorstRemaining"], 1);
+        assert!(selected.get("informationGain").is_none());
+        assert!(selected.get("selectionScore").is_none());
     }
 
     #[test]

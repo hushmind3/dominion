@@ -108,6 +108,26 @@ Sources inspected:
 - Airbnb `agent_harness_optimizer/optimizers/prism/loop.py` and
   `framework/acceptance.py`
 
+## Hot-path and restart cleanup
+
+- The failure observer now reuses the existing learned-method workspace
+  observation. A failed shell command is no longer mistaken for a pathname,
+  and one diagnostic attempt does not perform duplicate directory walks.
+- The diagnosis result no longer calculates or records an obsolete Gini
+  information-gain scalar. Its auditable receipt contains contingent
+  lookahead horizon and worst surviving cause count.
+- `algorithm_usage` is indexed by execution ID and fetched only for that run
+  at finalization; all historic ratings remain available in the database.
+- Approval cancellation looks up only pending approvals. Durable reuse looks
+  up only decisions scoped to the same session, task/revision, operation and
+  argument digest, then fetches original runs individually to prove that
+  the old invocation was interrupted. The compare-and-swap consume gate stays.
+- Startup migration fetches only live executions, tool operations and pending
+  approvals using existing indexed queries. Terminal history is untouched.
+- The routine Rust CI includes focused tests for obsolete algorithm
+  rejection, policy experiment gating, indexed approval, migration and
+  shared observation. Structural rules flag full-history scan regressions.
+
 ## Archived algorithms and API compatibility
 
 - The retired `adaptation.selection` and `selfimprove.search` rows remain visible in

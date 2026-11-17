@@ -135,7 +135,16 @@ fn consume_decision(state: &AppState, id: &str, execution_id: &str, operation_id
 }
 
 pub(super) fn close_pending_approvals(state: &AppState, session_id: &str) {
-    for record in state.store.all("approval") {
+    let pending = match state.store.pending_approvals() {
+        Ok(rows) => rows,
+        Err(error) => {
+            state.store.audit("approval.close_read_failed", json!({
+                "sessionId":session_id, "error":error,
+            }));
+            return;
+        }
+    };
+    for record in pending {
         if record["sessionId"].as_str() != Some(session_id) || record["status"] != "pending" {
             continue;
         }
@@ -250,13 +259,23 @@ pub(super) async fn request_approval(
         tool,
         args_digest: &digest,
     };
-    let existing = state.store.all("approval");
-    let executions = state.store.all("execution");
+    let existing = match state.store.reusable_approvals_for_lineage(
+        session_id, &task_id, &task_revision, &operation_key, tool, &digest,
+    ) {
+        Ok(rows) => rows,
+        Err(error) => {
+            state.store.audit("approval.resume_lookup_failed", json!({
+                "executionId":execution_id,"error":error,
+            }));
+            return false;
+        }
+    };
+    let executions = existing.iter().filter_map(|candidate| {
+        candidate["runId"].as_str()
+            .and_then(|run_id| state.store.get("execution",run_id))
+    }).collect::<Vec<_>>();
     if let Some(decision) = reusable_decision(
-        &existing,
-        &executions,
-        &lineage,
-        chrono::Utc::now(),
+        &existing, &executions, &lineage, chrono::Utc::now(),
     ) {
         if let Some(id) = decision["id"].as_str() {
             if consume_decision(state, id, execution_id, operation_id) {
@@ -390,6 +409,64 @@ mod tests {
         assert_eq!(state.store.get("approval","decided").unwrap()["status"], "approved");
         assert_eq!(expire_stale_approvals(&state), 0, "no second expiration");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn indexed_approval_resume_ignores_foreign_tasks_and_completed_origins() {
+        let root=std::env::temp_dir().join(format!(
+            "dominion-approval-index-{}",uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let config=crate::config::Config{
+            port:0,data_dir:root.clone(),web_dir:root.join("web"),workspace:root.clone(),
+        };
+        let state=AppState::new(config.clone(),
+            crate::db::Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()));
+        let now=chrono::Utc::now().to_rfc3339();
+        for (id,task,origin,consumed) in [
+            ("reuse","task-1","dead-run",false),
+            ("foreign","task-2","dead-run",false),
+            ("already-used","task-1","dead-run",true),
+            ("live-effect","task-1","current-run",false),
+        ] {
+            state.store.put("approval",&json!({
+                "id":id,"sessionId":"s1","taskId":task,
+                "taskRevision":"rev-1","operationKey":"tool:digest-1",
+                "tool":"workspace_write","argsDigest":"digest-1",
+                "status":"approved","orphaned":true,"consumed":consumed,
+                "runId":origin,"decidedAt":now,
+            }));
+        }
+        state.store.put("execution",&json!({
+            "id":"dead-run","taskId":"task-1","status":"interrupted",
+        }));
+        state.store.put("execution",&json!({
+            "id":"current-run","taskId":"task-1","status":"running",
+        }));
+        let candidates=state.store.reusable_approvals_for_lineage(
+            "s1","task-1","rev-1","tool:digest-1",
+            "workspace_write","digest-1",
+        ).unwrap();
+        assert_eq!(candidates.len(),2,
+            "query must exclude foreign task and consumed old consent");
+        let executions=candidates.iter().filter_map(|row|row["runId"].as_str()
+            .and_then(|id|state.store.get("execution",id))).collect::<Vec<_>>();
+        let lineage=ApprovalLineage{
+            session_id:"s1",task_id:"task-1",task_revision:"rev-1",
+            operation_key:"tool:digest-1",tool:"workspace_write",
+            args_digest:"digest-1",
+        };
+        let found=reusable_decision(
+            &candidates,&executions,&lineage,chrono::Utc::now()
+        ).unwrap();
+        assert_eq!(found["id"],"reuse");
+        assert!(state.store.reusable_approvals_for_lineage(
+            "s1","task-1","rev-2","tool:digest-1",
+            "workspace_write","digest-1",
+        ).unwrap().is_empty());
+        drop(state);
+        let _=std::fs::remove_dir_all(root);
     }
 
     #[test]

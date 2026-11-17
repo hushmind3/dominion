@@ -176,12 +176,23 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_operation_run
                  ON records(json_extract(data,'$.runId'))
                  WHERE kind='execution_operation';
+             CREATE INDEX IF NOT EXISTS idx_algorithm_usage_execution
+                 ON records(json_extract(data,'$.executionId'))
+                 WHERE kind='algorithm_usage';
              CREATE INDEX IF NOT EXISTS idx_execution_task
                  ON records(json_extract(data,'$.taskId'))
                  WHERE kind='execution';
              CREATE INDEX IF NOT EXISTS idx_approval_pending
                  ON records(kind, json_extract(data,'$.status'))
                  WHERE kind='approval';
+             CREATE INDEX IF NOT EXISTS idx_approval_resume
+                 ON records(json_extract(data,'$.sessionId'),
+                            json_extract(data,'$.taskId'),
+                            json_extract(data,'$.taskRevision'),
+                            json_extract(data,'$.operationKey'))
+                 WHERE kind='approval'
+                   AND json_extract(data,'$.status')='approved'
+                   AND json_extract(data,'$.orphaned')=1;
              CREATE INDEX IF NOT EXISTS idx_automation_enabled_due
                  ON records(kind, json_extract(data,'$.enabled'), json_extract(data,'$.nextAt'))
                  WHERE kind='automation';
@@ -388,6 +399,55 @@ impl Store {
             .map_err(|error| error.to_string())?
             .collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?;
         Ok((executions, operations))
+    }
+
+    /// Fetch only this run's algorithm usage receipts. Finalization must not
+    /// deserialize every historical turn to rate a single execution.
+    pub fn algorithm_usages_for_execution(&self, execution_id: &str)
+        -> Result<Vec<Value>, String> {
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='algorithm_usage'
+               AND json_extract(data,'$.executionId')=?1
+             ORDER BY id"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([execution_id],record_from_row)
+            .map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    /// An approval retry can inspect only *the same owner/task/operation*
+    /// candidate decisions, never all historical approvals or executions.
+    /// The caller still checks the original execution's interrupted state and
+    /// consumes a matching decision exactly once through patch_if.
+    pub fn reusable_approvals_for_lineage(
+        &self, session_id: &str, task_id: &str, revision: &str,
+        operation_key: &str, tool: &str, args_digest: &str,
+    ) -> Result<Vec<Value>, String> {
+        if task_id.is_empty() || revision.is_empty() || operation_key.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='approval'
+               AND json_extract(data,'$.sessionId')=?1
+               AND json_extract(data,'$.taskId')=?2
+               AND json_extract(data,'$.taskRevision')=?3
+               AND json_extract(data,'$.operationKey')=?4
+               AND json_extract(data,'$.tool')=?5
+               AND json_extract(data,'$.argsDigest')=?6
+               AND json_extract(data,'$.status')='approved'
+               AND json_extract(data,'$.orphaned')=1
+               AND COALESCE(json_extract(data,'$.consumed'),0)=0
+             ORDER BY updated_at DESC LIMIT 32"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map(
+            params![session_id,task_id,revision,operation_key,tool,args_digest],
+            record_from_row,
+        ).map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
     }
 
     /// Read only unresolved approvals; old decisions must not be decoded on every idle tick.
