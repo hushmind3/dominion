@@ -835,7 +835,15 @@ pub(super) async fn run_turn_body(
                 .unwrap_or(60_000);
             round_tools = trim_tool_definitions(round_tools, budget);
         }
-        let wire_messages = messages.clone();
+        // Full tool call arguments and results stay in SQLite and the native
+        // in-memory transcript. Only the provider-wire replay is bounded:
+        // large write arguments and repeated tool dumps are not billed on
+        // every subsequent model call. Owner/system text is never rewritten.
+        let tool_trace_budget=provider.context_tokens
+            .map(|tokens|(tokens as usize).saturating_mul(2).clamp(8_000,48_000))
+            .unwrap_or(if session["sdkUiPolicy"].is_object(){24_000}else{40_000});
+        let wire_messages=trace_budget::bounded_tool_trace(
+            &messages,tool_trace_budget);
         // The same immutable prompt/tool bundle enters every budget check.
         // Estimate it once: Korean and large multi-file contexts are expensive
         // to rescan repeatedly on each paid model round.

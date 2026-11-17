@@ -230,3 +230,7 @@ Contributions are welcome — particularly **reproducible bug reports, test case
 - Crash recovery loads active jobs/running executions only and resolves uncertain tool effects with a set-based SQLite join. Unproven external effects remain `needs_review`, not replayed.
 - Database read failures are audited rather than presented as an empty queue. Money stays independently removable and shares this host's existing DB/runner.
 - Analytical idle queue scans at default 4 workers: old 4×12=48/minute, new 1×6=6/minute. This is not an empirical CPU or token measurement.
+
+### Sub2: provider-wire tool-history budgeting (2026-11-17)
+
+The native Rust chat harness now compacts **completed, oversized historical tool-call/result pairs only in the provider-wire copy**, prioritizing newer frames. Huge `workspace_write` arguments and repeated tool output are no longer re-sent verbatim on later model turns; original evidence, tool arguments, receipts, user text, settings and SQLite messages remain unchanged. Normal small tool pairs preserve the exact OpenAI-compatible tool protocol. Incomplete/duplicate tool pairs are left for existing recovery/error handling. The budgeting logic lives in `src/engine/chat/trace_budget.rs`, shared by ordinary chat, SDK jobs and room fallback through the normal Rust model path. The byte limits are deterministic safeguards, not measured tokens. Release builds and frontend validation remain out of scope during development.

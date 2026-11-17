@@ -3,6 +3,7 @@ mod approval;
 mod cancellation;
 mod budget;
 mod tool_schedule;
+mod trace_budget;
 mod codex_ws;
 mod context;
 mod continuity;
