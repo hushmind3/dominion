@@ -32,6 +32,11 @@ on:
       - 'src/engine/chat/mod.rs'
       - 'src/engine/mcp.rs'
       - 'src/engine/github_files.rs'
+      - 'src/engine/github_workflow.rs'
+      - 'src/engine/google_workspace.rs'
+      - 'src/engine/tools.rs'
+      - 'src/engine/oauth.rs'
+      - 'web/src/pages/Connections.tsx'
       - 'src/api/collections.rs'
       - 'src/state.rs'
       - 'scripts/mcp-echo-server.mjs'
@@ -101,6 +106,12 @@ jobs:
         run: cargo test --bin dominion-rust db::tests::indexed_execution_timeline_pages_without_loading_unrelated_json -- --nocapture
       - name: Verify real MCP stdio and HTTP sessions, pinning and credential rotation
         run: cargo test --bin dominion-rust engine::mcp::tests -- --nocapture
+      - name: Verify connected GitHub and Google Workspace actions over real local HTTP
+        run: |
+          cargo test --bin dominion-rust engine::github_workflow::tests -- --nocapture
+          cargo test --bin dominion-rust engine::google_workspace::tests -- --nocapture
+          cargo test --bin dominion-rust engine::tools::tests::connected_account_tool_contracts_separate_reads_from_approved_mutations -- --nocapture
+          cargo test --bin dominion-rust engine::oauth::tests -- --nocapture
       - name: Verify typed GitHub edit, stale SHA rejection and independent read-back
         run: cargo test --bin dominion-rust engine::github_files::tests::github_file_read_commit_and_remote_readback_prove_effect_once -- --nocapture
       - name: Compile full Dominion Rust host and run native adapter contract tests
