@@ -634,11 +634,19 @@ fn scripted_codex_tool_provider() -> (u16, Arc<Mutex<Vec<Value>>>) {
 }
 
 
+#[path = "e2e/conversation_rooms.rs"]
 mod conversation_rooms;
+#[path = "e2e/recovery_scheduler.rs"]
 mod recovery_scheduler;
+#[path = "e2e/backup_adaptation.rs"]
 mod backup_adaptation;
+#[path = "e2e/program_recovery.rs"]
 mod program_recovery;
+#[path = "e2e/tool_preflight.rs"]
 mod tool_preflight;
+#[path = "e2e/api_jobs.rs"]
 mod api_jobs;
+#[path = "e2e/room_context_benchmark.rs"]
 mod room_context_benchmark;
+#[path = "e2e/codex_transports.rs"]
 mod codex_transports;
