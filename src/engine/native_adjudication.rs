@@ -534,7 +534,7 @@ mod tests {
     strategy:Default::default(),limits:Default::default(),allowed_tools:vec![],
     checks:vec![],require_evidence:false};
    let mut snap=Snapshot::from_request(&request);
-   snap.receipts.push(Receipt{id:if id=="a"{"first"}else{"other"}.into(),
+   snap.receipts.push(Receipt{id:(if id=="a"{"first"}else{"other"}).into(),
     tool:"workspace_read".into(),arguments:json!({"path":"a","content":"x"}),
     success:true,result,step:1});
    snap
