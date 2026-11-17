@@ -79,7 +79,10 @@ pub fn adaptation_prompt(
         "Failed action: tool={tool}\nArguments: {}\nObserved error: {}\nEnvironment version: {environment_version}\nEnvironment fingerprint: {environment_fingerprint}\nBefore observation (authoritative): {}\nAvailable tools include workspace_read, workspace_write, workspace_list, shell_exec, terminal_exec.\nReturn JSON only.",
         arguments, error, before_observation
     );
-    (system.to_string(), prompt)
+    // One model turn may propose multiple observational probes; the Rust
+    // gateway, not model prose, supplies their results. No extra planner call.
+    let probe_guidance = r#"Optional probes (0..6) MAY be added alongside interventions when multiple causal hypotheses predict different observable tool results. Example: "probes":[{"id":"probe-1","tool":"workspace_read","inputs":{"path":"src/lib.rs"},"estimatedCost":0.1,"predictions":[{"hypothesisId":"h1","predicate":{"type":"equals","from":"result","path":"/path","value":"src/lib.rs"}},{"hypothesisId":"h2","predicate":{"type":"equals","from":"result","path":"/path","value":"another.rs"}}]}]. Each hypothesis's prediction for a probe must target the SAME actual JSON output field and have a different expected value. Prefer workspace_read_range/code_search/workspace_list for small, discriminating tests. Never propose shell, writes, browser, MCP, or side-effecting tools as probes. Do not invent the tool result; Rust will execute at most 2 read-only probes through the existing policy, judge predicates against actual tool JSON, discard contradicted hypotheses, and only then select an intervention. If you cannot specify meaningful contrasting predictions, omit probes."#;
+    (format!("{system}\\n{probe_guidance}"), prompt)
 }
 
 /// Extracts the first JSON object that actually contains hypotheses and
@@ -209,6 +212,7 @@ pub fn validate_adaptation(adaptation: &Value) -> Result<(), String> {
             ));
         }
     }
+    crate::engine::adaptation::probes::validate(adaptation)?;
     Ok(())
 }
 
@@ -543,6 +547,7 @@ pub fn record_adaptation(
         "hypotheses": adaptation["hypotheses"],
         "interventions": adaptation["interventions"],
         "consultedExperienceRules": adaptation["consultedExperienceRules"],
+        "probeResults": adaptation["probeResults"],
         "selected": selected,
         "result": result,
         "hypothesisResults": hypothesis_results,
