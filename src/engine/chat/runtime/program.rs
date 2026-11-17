@@ -315,13 +315,12 @@ pub(super) async fn attempt_model_adaptation(
     let mut resolved_probes = json!({});
     let mut probe_budget_exhausted = false;
     let mut determinate_observations=0usize;
-    // Probes are fully admitted through the same gateway and ledger as normal
-    // tools. No shadow executor, no extra model call and no external writes.
+    // A single observation dispatcher owns admissibility, cancellation,
+    // per-tool budget and durable native receipts for all repair paths.
+    let probe_ctx=ProgramCtx {
+        state,tx,session,request,session_id,execution_id,metrics,generation,
+    };
     for _ in 0..crate::engine::adaptation::probes::max_executed() {
-        if state.is_cancelled(session_id)
-            || state.cancellation_generation(session_id) != generation {
-            return Err("실행이 중단되었습니다.".into());
-        }
         let candidate = crate::engine::adaptation::probes::rank(
             &adaptation, &refuted, &attempted_ids,
         ).into_iter().find(|probe| {
@@ -336,23 +335,15 @@ pub(super) async fn attempt_model_adaptation(
         let probe_tool = probe["tool"].as_str().unwrap_or("").to_string();
         attempted_ids.insert(probe_id.clone());
         attempted_calls.insert(format!("{probe_tool}:{}",probe["inputs"]));
-        if !budget.charge_tool() {
+        let dispatched=dispatch_observation(
+            &probe_ctx,&probe_tool,probe["inputs"].clone(),
+            "adaptation_probe",round,budget,op_seq,
+        ).await?;
+        let Some((probe_result,ok,call_id))=dispatched else {
             probe_budget_exhausted=true;
             break;
-        }
-        *op_seq += 1;
-        let inputs = probe["inputs"].clone();
-        let call = ToolCall {
-            id: format!("adapt-probe-{probe_id}-{}", uuid::Uuid::new_v4()),
-            name: probe_tool.clone(),
-            arguments: inputs.to_string(),
         };
-        let (probe_result, ok, _) = dispatch_tool_call(
-            state, tx, session, request, session_id, execution_id,
-            &call, inputs, metrics, *op_seq, round, 0, false,
-            "adaptation_probe", None, None, None,
-        ).await?;
-        let observed = if ok && tool_succeeded(&probe_result) {
+        let observed = if ok {
             let observation = crate::engine::adaptation::probes::observe(
                 &probe, &probe_result,
             );
@@ -376,11 +367,11 @@ pub(super) async fn attempt_model_adaptation(
         // Full tool results and arguments already live in execution_operation;
         // keep this decision receipt bounded and link to its real call ID.
         probe_receipts.push(json!({
-            "probeId":probe_id,"tool":probe_tool,"callId":call.id,
+            "probeId":probe_id,"tool":probe_tool,"callId":call_id,
             "expectedInformationBits":probe["expectedInformationBits"],
             "observed":observed["predictions"],
             "refutedIds":observed["refutedIds"],
-            "status":if ok && tool_succeeded(&probe_result) {"observed"} else {"tool_failed"},
+            "status":if ok {"observed"} else {"tool_failed"},
         }));
         let live=adaptation["hypotheses"].as_array().into_iter().flatten()
             .filter(|hypothesis| hypothesis["id"].as_str()
