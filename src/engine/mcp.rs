@@ -9,6 +9,94 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
 const CACHE_TTL: Duration = Duration::from_secs(120);
+const MCP_IDLE_TTL: Duration = Duration::from_secs(180);
+const MAX_IDLE_MCP_SESSIONS: usize = 12;
+
+/// Only healthy, idle sessions are pooled. A leased session is owned by one
+/// request, so concurrent calls never share a live JSON-RPC request stream.
+/// Stdio children retain kill_on_drop, including after TTL eviction.
+enum LiveSession {
+    Stdio(StdioSession),
+    Http(HttpSession),
+}
+impl LiveSession {
+    async fn request(&mut self, method:&str, params:Value)->Result<Value,String> {
+        match self {
+            Self::Stdio(session)=>session.request(method,params).await,
+            Self::Http(session)=>session.request(method,params).await,
+        }
+    }
+}
+struct IdleMcpSession {
+    server_id: String,
+    identity: String,
+    last_used: Instant,
+    session: LiveSession,
+}
+#[derive(Default)]
+pub(crate) struct SessionPool {
+    idle: Mutex<Vec<IdleMcpSession>>,
+}
+impl SessionPool {
+    fn checkout(&self,server_id:&str,identity:&str)->Option<LiveSession> {
+        let mut idle=self.idle.lock().unwrap();
+        // Config changes, token rotation and TTL all invalidate a saved
+        // process/session. No bearer credentials are written to disk.
+        idle.retain(|entry|entry.last_used.elapsed()<MCP_IDLE_TTL &&
+            (entry.server_id!=server_id || entry.identity==identity));
+        let index=idle.iter().rposition(|entry|entry.identity==identity)?;
+        Some(idle.swap_remove(index).session)
+    }
+    fn checkin(&self,server_id:String,identity:String,session:LiveSession) {
+        let mut idle=self.idle.lock().unwrap();
+        idle.retain(|entry|entry.last_used.elapsed()<MCP_IDLE_TTL &&
+            (entry.server_id!=server_id || entry.identity==identity));
+        if idle.len()>=MAX_IDLE_MCP_SESSIONS {
+            idle.remove(0);
+        }
+        idle.push(IdleMcpSession{server_id,identity,
+            last_used:Instant::now(),session});
+    }
+    pub(crate) fn clear(&self) {
+        self.idle.lock().unwrap().clear();
+    }
+}
+
+/// A short-lived, per-engine pool key tied to the current MCP record, local
+/// workspace, and current scoped secret. Only a digest is retained as a key.
+fn connection_identity(state:&AppState,server:&Value)->String {
+    let id=server["id"].as_str().unwrap_or("");
+    let credential=state.read_secret(&format!("mcp:{id}")).unwrap_or_default();
+    let credential_hash=format!("{:x}",Sha256::digest(credential.as_bytes()));
+    let identity=json!({"engine":state.instance_id,"server":server,
+        "workspace":state.config.workspace.to_string_lossy(),
+        "credentialHash":credential_hash});
+    format!("{:x}",Sha256::digest(identity.to_string().as_bytes()))
+}
+async fn checkout_session(state:&AppState,server:&Value)
+    ->Result<(String,LiveSession),String> {
+    let id=server["id"].as_str().unwrap_or("").to_string();
+    let identity=connection_identity(state,server);
+    if let Some(session)=state.mcp_sessions.checkout(&id,&identity){
+        return Ok((identity,session));
+    }
+    let session=if server["transport"].as_str()==Some("http") {
+        LiveSession::Http(HttpSession::open(server,state).await?)
+    }else{
+        LiveSession::Stdio(StdioSession::open(server,&state.config.workspace).await?)
+    };
+    Ok((identity,session))
+}
+fn return_session(state:&AppState,server:&Value,identity:String,session:LiveSession) {
+    // Do not return a session whose endpoint or secret changed during the call.
+    if identity==connection_identity(state,server) &&
+        state.store.get("mcp",server["id"].as_str().unwrap_or(""))
+            .as_ref()==Some(server) {
+        state.mcp_sessions.checkin(server["id"].as_str().unwrap_or("").to_string(),
+            identity,session);
+    }
+}
+
 
 #[derive(Clone)]
 pub struct McpTool {
@@ -33,8 +121,9 @@ fn cache() -> &'static Cache {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-pub fn invalidate() {
+pub fn invalidate(state:&AppState) {
     cache().lock().unwrap().clear();
+    state.mcp_sessions.clear();
 }
 
 fn slug(value: &str) -> String {
@@ -70,7 +159,8 @@ pub async fn tools(state: &AppState) -> Vec<McpTool> {
         if id.is_empty() {
             continue;
         }
-        if let Some((at, tools)) = cache().lock().unwrap().get(&id) {
+        let identity=connection_identity(state,&server);
+        if let Some((at, tools)) = cache().lock().unwrap().get(&identity) {
             if at.elapsed() < CACHE_TTL {
                 collected.extend(tools.clone());
                 continue;
@@ -81,7 +171,7 @@ pub async fn tools(state: &AppState) -> Vec<McpTool> {
                 cache()
                     .lock()
                     .unwrap()
-                    .insert(id.clone(), (Instant::now(), tools.clone()));
+                    .insert(identity, (Instant::now(), tools.clone()));
                 collected.extend(tools);
             }
             Err(error) => {
@@ -101,20 +191,10 @@ async fn list_server(state: &AppState, server: &Value) -> Result<Vec<McpTool>, S
         .unwrap_or("mcp")
         .to_string();
     let server_slug = slug(&server_name);
-    let transport = server
-        .get("transport")
-        .and_then(|value| value.as_str())
-        .unwrap_or("stdio");
-
-    let result = if transport == "http" {
-        let mut session = HttpSession::open(server, state).await?;
-        session.request("tools/list", json!({})).await?
-    } else {
-        let mut session = StdioSession::open(server, &state.config.workspace).await?;
-        let result = session.request("tools/list", json!({})).await;
-        drop(session);
-        result?
-    };
+    let (identity,mut session)=checkout_session(state,server).await?;
+    let outcome=session.request("tools/list",json!({})).await;
+    if outcome.is_ok(){return_session(state,server,identity,session);}
+    let result=outcome?;
 
     let tools = result
         .get("tools")
@@ -218,21 +298,13 @@ pub async fn call(state: &AppState, qualified: &str, args: &Value) -> Result<Val
         })
         .ok_or_else(|| format!("MCP 서버를 찾을 수 없습니다: {server_slug}"))?;
 
-    let transport = server
-        .get("transport")
-        .and_then(|value| value.as_str())
-        .unwrap_or("stdio");
     let params = json!({ "name": tool_name, "arguments": args });
-
-    if transport == "http" {
-        let mut session = HttpSession::open(&server, state).await?;
-        session.request("tools/call", params).await
-    } else {
-        let mut session = StdioSession::open(&server, &state.config.workspace).await?;
-        let result = session.request("tools/call", params).await;
-        drop(session);
-        result
-    }
+    let (identity,mut session)=checkout_session(state,&server).await?;
+    let result=session.request("tools/call",params).await;
+    // A failed call may have applied an effect. Never replay it: discard the
+    // possibly broken session and return its error to the Rust agent journal.
+    if result.is_ok(){return_session(state,&server,identity,session);}
+    result
 }
 
 /// Bind the complete MCP server identity and its approved tool declaration.
@@ -283,18 +355,16 @@ pub(crate) async fn call_pinned(state:&AppState,qualified:&str,args:&Value,
  if servers.len()!=1{return Err("Ambiguous or unavailable MCP server identity".into())}
  let server=&servers[0];
  let params=json!({"name":tool_name,"arguments":args});
- let transport=server["transport"].as_str().unwrap_or("stdio");
- if transport=="http"{
-  let mut session=HttpSession::open(server,state).await?;
+ let (identity,mut session)=checkout_session(state,server).await?;
+ // The latest capability manifest and effect execution stay on the SAME
+ // leased session, even when it originated in the idle pool.
+ let outcome=async {
   let fresh=session.request("tools/list",json!({})).await?;
   verify_pinned_tool(&fresh,tool_name,schema,description)?;
   session.request("tools/call",params).await
- }else{
-  let mut session=StdioSession::open(server,&state.config.workspace).await?;
-  let fresh=session.request("tools/list",json!({})).await?;
-  verify_pinned_tool(&fresh,tool_name,schema,description)?;
-  session.request("tools/call",params).await
- }
+ }.await;
+ if outcome.is_ok(){return_session(state,server,identity,session);}
+ outcome
 }
 #[cfg(test)]
 mod pinned_tests{
@@ -490,18 +560,18 @@ impl HttpSession {
                 }),
             )
             .await?;
-        session.notify("notifications/initialized", json!({})).await;
+        session.notify("notifications/initialized", json!({})).await?;
         Ok(session)
     }
 
-    async fn notify(&mut self, method: &str, params: Value) {
+    async fn notify(&mut self, method: &str, params: Value)->Result<(),String> {
         let payload = json!({
             "jsonrpc": "2.0",
             "method": method,
             "params": params,
         });
-        // A notification may legitimately return 202 with an empty body.
-        let _ = self.post(&payload).await;
+        // 202 + empty body is valid; 401/403/404 must not enter the pool.
+        self.post(&payload).await.map(|_|())
     }
 
     async fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
