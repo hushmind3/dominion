@@ -1472,37 +1472,19 @@ pub(super) async fn propose_program_revision(
     let preflights = crate::engine::adaptation::repair_tournament::probes(&candidates);
     let mut observations = json!({});
     for probe in preflights {
-        if ctx.state.is_cancelled(ctx.session_id)
-            || ctx.state.cancellation_generation(ctx.session_id) != ctx.generation {
-            return Err("program repair was cancelled before speculative probe".into());
-        }
-        if !budget.charge_tool() {
-            break;
-        }
-        let Some(id) = probe["id"].as_str() else {continue};
         let Some(tool) = probe["tool"].as_str() else {continue};
-        *op_seq += 1;
-        let inputs = probe["inputs"].clone();
-        let call = ToolCall {
-            id: format!("program-repair-probe-{id}-{}", uuid::Uuid::new_v4()),
-            name: tool.to_string(),
-            arguments: inputs.to_string(),
-        };
-        let (result, ok, _) = dispatch_tool_call(
-            ctx.state, ctx.tx, ctx.session, ctx.request,
-            ctx.session_id, ctx.execution_id, &call, inputs, ctx.metrics,
-            *op_seq, 0, 0, false, "program_repair_probe",
-            None, None, None,
+        let observed = dispatch_observation(
+            ctx, tool, probe["inputs"].clone(), "program_repair_probe",
+            0, budget, op_seq,
         ).await?;
-        // Distinct repair hypotheses may share the same read. One actual
-        // gateway call supplies *identical observed bytes* to every alias,
-        // preventing both redundant billing and a false Unknown verdict.
-        for alias in probe["aliases"].as_array().into_iter().flatten(){
-            if let Some(candidate_id)=alias.as_str(){
-                observations[candidate_id] = json!({
-                    "status":if ok && tool_succeeded(&result){"completed"}else{"failed"},
-                    "result":result,
-                    "callId":call.id,
+        let Some((result, ok, call_id))=observed else {break};
+        // A shared read generates one actual receipt but can support
+        // contrasting predictions for multiple independent candidates.
+        for alias in probe["aliases"].as_array().into_iter().flatten() {
+            if let Some(candidate_id)=alias.as_str() {
+                observations[candidate_id]=json!({
+                    "status":if ok {"completed"} else {"failed"},
+                    "result":result,"callId":call_id,
                 });
             }
         }
