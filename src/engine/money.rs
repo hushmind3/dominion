@@ -425,18 +425,17 @@ fn parse_output(raw:&str) -> Result<Value,String> {
 pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
     let campaign_id=job["input"]["campaignId"].as_str().ok_or("사업 탐색 캠페인 ID가 없습니다.")?;
     let campaign=context.state.store.get("money_campaign",campaign_id).ok_or("사업 탐색 캠페인을 찾지 못했습니다.")?;
+    // Native sub3 SDK returns an accepted final answer, not legacy messageId.
+    // Tool execution, checkpoint recovery and token accounting stay in the
+    // common Rust kernel; only this domain parses its terminal JSON.
     let response=super::jobs::run_prompt(context,job).await?;
-    if response["status"]=="needs_review"{return Ok(response);}
-    let session=response["sessionId"].as_str().ok_or("완료된 작업 세션이 없습니다.")?;
-    let msg_id=response["messageId"].as_str().ok_or("모델 결과 메시지가 없습니다.")?;
-    let messages=context.state.store.try_messages(session)?;
-    let msg=messages.iter().find(|m|m["id"]==msg_id).ok_or("모델 응답 메시지를 찾지 못했습니다.")?;
-    let raw=msg["content"].as_str().unwrap_or("");
-    // The native execution session contains the actual selected provider/model,
-    // including automatic routing, not merely the requested defaults.
-    let session_record=context.state.store.get("session",session).unwrap_or(Value::Null);
-    let model_used=session_record["model"].clone();
-    let provider_used=session_record["providerId"].clone();
+    if response["status"]!="completed" {return Ok(response);}
+    let session=response["sessionId"].as_str().ok_or("Native session missing")?;
+    let raw=response["answer"].as_str().ok_or("Native model answer missing")?;
+    let msg_id=format!("native-answer-{}",context.job_id);
+    let persisted=context.state.store.get("job",&context.job_id).unwrap_or(Value::Null);
+    let model_used=persisted["nativeRoute"]["model"].clone();
+    let provider_used=persisted["nativeRoute"]["providerId"].clone();
     let parsed=match parse_output(raw){
         Ok(v)=>v,
         Err(error)=>{
@@ -691,12 +690,15 @@ pub fn schedule_autopilot(state:&AppState){
         let history=state.store.money_recent_candidates(&id,200).unwrap_or_default();
         let outcomes=state.store.money_recent_experiments(&id,200).unwrap_or_default();
         let mode=crate::engine::money_rank::next_mode(round,&history,&outcomes);
+        let token_ceiling=auto["tokenBudget"].as_u64().unwrap_or(12000).clamp(4000,120000);
         let mut input=json!({"prompt":prompt(state,&campaign,mode,None),
             "asymmetryBatchIds":state.store.money_pending_asymmetries(8).unwrap_or_default()
                 .iter().filter_map(|v|v["id"].as_str()).collect::<Vec<_>>(),
-            "campaignId":id,"mode":mode,"toolsEnabled":true,
-            "toolsExecutionEnabled":true,
-            "tokenBudget":auto["tokenBudget"].as_u64().unwrap_or(12000),
+            "campaignId":id,"mode":mode,"toolsEnabled":false,
+            "toolsExecutionEnabled":false,"requireEvidence":false,
+            "limits":{"maxSteps":3,"maxModelCalls":3,"maxToolCalls":0,
+              "maxEstimatedTokens":token_ceiling,"maxParallelReads":1,"maxResultChars":3000},
+            "tokenBudget":token_ceiling,
             "moneyAutoRound":round+1,"moneyAutoRunId":run_id});
         for field in ["agentId","providerId","model"]{
             if let Some(v)=auto[field].as_str().filter(|s|!s.is_empty()){
