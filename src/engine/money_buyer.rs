@@ -10,7 +10,7 @@ fn trimmed(value:&Value,max:usize)->String{
     value.as_str().unwrap_or("").trim().chars().take(max).collect()
 }
 fn normalized(s:&str)->String{
-    s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    crate::engine::money_citation::normalized(s)
 }
 fn buyer_language(quote:&str)->bool{
     let q=normalized(quote);
@@ -24,10 +24,7 @@ fn buyer_language(quote:&str)->bool{
     ].iter().any(|term|q.contains(term))
 }
 fn has_quote(source:&Value,quote:&str)->bool{
-    let expected=normalized(quote);
-    !expected.is_empty()&&["title","description","articleExcerpt"].iter().any(|field|{
-        source[*field].as_str().is_some_and(|s|normalized(s).contains(&expected))
-    })
+    crate::engine::money_citation::exact_page_quote(source,quote)
 }
 /// Classification deliberately uses an explicit archived page + exact quote.
 /// Titles, model-written explanations, URL shapes, aggregator snippets and
@@ -40,6 +37,7 @@ pub fn annotate(row:&Value,source:Option<&Value>)->Value{
     let buyer_type=matches!(kind.as_str(),"public_purchase_request"|"official_budget");
     let is_url=url.starts_with("https://")&&!url.contains(char::is_whitespace);
     let fetched=source.is_some_and(|s|s["contentStatus"]=="page_fetched");
+    let source=source.filter(|s|s["url"].as_str()==Some(url.as_str()));
     let matched=source.is_some_and(|s|has_quote(s,&quote));
     let status=if !buyer_type {"not_buying_evidence"}
         else if !is_url {"invalid_source_url"}
@@ -54,6 +52,7 @@ pub fn annotate(row:&Value,source:Option<&Value>)->Value{
         "observationStatus":status,
         "sourceId":source.map(|s|s["id"].clone()).unwrap_or(Value::Null),
         "sourceCapturedAt":source.map(|s|s["capturedAt"].clone()).unwrap_or(Value::Null),
+        "sourceRevisionId":source.map(|s|s["contentRevisionId"].clone()).unwrap_or(Value::Null),
         "reviewNote":"Archived text match only; not a purchase order or confirmed payment"
     })
 }
@@ -236,9 +235,18 @@ mod tests{
         assert_eq!(s["verification"],"direct_document_text_not_confirmed_purchase");
         assert_eq!(s["id"].as_str().unwrap().len(),64);
     }
+    #[test] fn source_title_alone_cannot_prove_a_buyer_quote(){
+        let mut s=source();
+        s["title"]=json!("Procurement notice seeks bids from suppliers");
+        s["articleExcerpt"]=json!("Unrelated public meeting summary without purchase wording");
+        let row=json!({"type":"public_purchase_request","url":"https://example.org/rfp",
+            "quote":"Procurement notice seeks bids from suppliers"});
+        assert_eq!(annotate(&row,Some(&s))["observationStatus"],"source_quote_mismatch");
+    }
     #[test] fn multilingual_procurement_wording_is_supported(){
-        let s=json!({"id":"cn","contentStatus":"page_fetched",
-            "description":"采购意向公告：设备更新计划"});
+        let s=json!({"id":"cn","url":"https://example.cn/rfp",
+            "contentStatus":"page_fetched",
+            "articleExcerpt":"采购意向公告：设备更新计划"});
         let row=json!({"type":"public_purchase_request","url":"https://example.cn/rfp",
             "quote":"采购意向公告：设备更新计划"});
         assert!(buying_signal(&annotate(&row,Some(&s))));

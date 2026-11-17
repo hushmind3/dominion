@@ -463,6 +463,17 @@ pub async fn candidate_archive(State(state):State<AppState>,
     }
 }
 
+/// Revision history fetched only when its source is explicitly inspected.
+pub async fn source_revisions(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    let Some(source)=state.store.get("money_signal",&id)else{
+        return error(StatusCode::NOT_FOUND,"원문 자료를 찾지 못했습니다.");
+    };
+    match state.store.money_source_revisions(&id,20){
+        Ok(rows)=>Json(json!({"sourceId":id,"url":source["url"],
+            "currentRevisionId":source["contentRevisionId"],"revisions":rows})).into_response(),
+        Err(message)=>error(StatusCode::INTERNAL_SERVER_ERROR,&message),
+    }
+}
 pub async fn candidate(State(state):State<AppState>,Path(id):Path<String>)->Response{
     match state.store.get("money_candidate",&id){
         Some(v)=>{

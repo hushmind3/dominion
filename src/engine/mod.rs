@@ -2,6 +2,7 @@ pub mod money_tool;
 pub mod money;
 pub mod money_retrieval;
 pub mod money_buyer;
+pub mod money_citation;
 pub mod money_brief;
 pub mod money_health;
 pub mod money_strategy;

@@ -26,6 +26,7 @@ pub fn router(state:AppState) -> Router<AppState> {
         .route("/api/money/campaigns/:id/run", post(money::start))
         .route("/api/money/campaigns/:id/drafts/:tension_id/promote", post(money::promote_draft))
         .route("/api/money/campaigns/:id/autopilot", get(money::autopilot_status).post(money::autopilot_set))
+        .route("/api/money/sources/:id/revisions",get(money::source_revisions))
         .route("/api/money/candidates/archive",get(money::candidate_archive))
         .route("/api/money/candidates/:id", get(money::candidate).post(money::update_candidate))
         .route("/api/money/candidates/:id/implement", post(money_implement::launch))

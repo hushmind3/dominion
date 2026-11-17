@@ -137,6 +137,8 @@ fn collect_evidence(source:&Value,campaign_id:&str,job_id:&str)->Vec<Value>{
         if claim.chars().count()<12 || !url.starts_with("https://"){continue;}
         evidence.push(json!({"id":fact_id(&url,&claim),"claim":claim,"url":url,
             "kind":bounded(&row["kind"],45),"verification":"model_claim_unverified",
+            "quotationStatus":row["quotationStatus"],
+            "sourceRevisionId":row["sourceRevisionId"],
             "originCampaignId":campaign_id,"originJobId":job_id,
             "createdAt":chrono::Utc::now().to_rfc3339()}));
     }
@@ -253,7 +255,7 @@ pub fn inference_prompt(state:&AppState,campaign:&Value)->String{
             "offer":"납품 가능한 제품·서비스",
             "firstTest":"우선 검증할 미확인 인과 고리",
             "killSignal":"폐기할 조건",
-            "evidence":[{"claim":"직접 관측된 내용","url":"https://기록된-출처-주소"}]
+            "evidence":[{"claim":"직접 관측된 내용","quote":"원문 인용 또는 빈 문자열","url":"https://기록된-출처-주소"}]
         }]});
     format!(r#"DOMINION MONEY: DB 기반 귀추(가설 발견) 경제 추론.
 자료를 다시 검색하거나 기사 요약하지 마라. 아래 기록은 이미 수집한 관측 자료다.
@@ -359,6 +361,7 @@ pub fn prompt(state:&AppState,campaign:&Value,mode:&str,focus:Option<&Value>) ->
 4-2. 경쟁제품의 실제 판매가격 또는 조달 단가를 가능한 한 1차 출처에서 찾아 비교한다. 정보가 없으면 예상가격을 null로 두고 수익을 추정하지 않는다. 고객이 존재한다는 추측을 판매 확약으로 기재하지 않는다.
 4-3. 정보비대칭을 주장하는 후보는 위 페어의 id, axis, sourceA, sourceB를 정확히 따라 적어라. 서로 다른 2개 시장의 자료가 존재한다는 사실만으로 '한국에 없다'가 입증되는 것은 아니다. 임의의 페어·출처를 만들면 후보가 거절된다.
 5. 구매 근거는 링크만으로 점수를 받을 수 없다. 기존 DB에 보관된 원문과 대조할 수 있도록 buyerEvidence.quote에 구매·발주·예산 관련 원문의 정확한 연속 구절을 넣어라. 원문을 못 찾으면 빈 문자열을 쓰고 근거를 만들지 마라.
+5-0. 일반 evidence에도 가능한 경우 원문에서 정확한 연속 구절을 quote에 넣어라. 본문을 못 확인했다면 quote=""로 두어라. 인용 일치가 매출이나 인과관계의 증거라는 뜻은 아니다.
 5-1. 웹으로 확인한 내용은 근거 URL, 확인 못한 것은 assumption으로 엄격히 구분한다. 기사에서 언급된 수요와 실제 구매 의향은 별개다. 실제 구매자 의사표시·견적 요청·예산이 있는 자료가 있으면 buyerEvidence에 근거와 함께 넣는다. URL을 지어내지 마라. 경제 수치가 비어 있으면 null로 두고 임의의 숫자로 채우지 마라.
 6. 시험 부정행위, 소비자 기만, 개인정보 침해 등을 사업 장점으로 설계하지 마라.
 7. 각각의 구현 방법은 implementationPlan에 MVP 구성→원천 데이터→자동화→결과 검증 순서로 구체화한다. 실제 사업 구현·계약·외부 연락은 사용자에게 보고하고 허락받은 뒤 진행한다.
@@ -376,7 +379,7 @@ pub fn prompt(state:&AppState,campaign:&Value,mode:&str,focus:Option<&Value>) ->
 "whyPay":"고객이 돈을 낼 이유","moneyMechanism":"누구의 비용을 줄이고 얼마를 받을 수 있는가", "distribution":"첫 고객 확보 경로","defensibility":"복제 어려운 요인",
 "alternatives":["다른 수익구조 1","다른 수익구조 2"],"whyNow":"촉발 요인","firstTest":"최소비용 실험",
 "killSignal":"폐기할 구체적인 조건","assumptions":["확인 필요 사항"],"risks":["핵심 위험"],
-"evidence":[{{"claim":"관측 사실","url":"https://...","kind":"primary or secondary"}}],
+"evidence":[{{"claim":"관측 사실","quote":"실제 페이지의 정확한 인용문 또는 빈 문자열","url":"https://...","kind":"primary or secondary"}}],
 "economics":{{"priceWon":null,"variableCostWon":null,"acquisitionCostWon":null,
 "monthlyFixedWon":null,"monthlyUnits":null,"setupCostWon":null,"refundRatePct":null}}
 }}]}}
@@ -508,6 +511,16 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
                         .ok().flatten());
                 crate::engine::money_buyer::annotate(entry,source.as_ref())
             }).collect::<Vec<_>>();
+        let evidence=item["evidence"].as_array().into_iter().flatten().take(16)
+            .map(|entry|{
+                let url=bounded(&entry["url"],1800);
+                let source=buyer_source_cache.entry(url.clone())
+                    .or_insert_with(||context.state.store.money_signal_by_url(&url)
+                        .ok().flatten());
+                crate::engine::money_citation::annotate(entry,source.as_ref())
+            }).collect::<Vec<_>>();
+        let matched_quotes=evidence.iter().filter(|row|
+            row["quotationStatus"]=="archived_page_quote_match").count();
         let candidate=json!({
             "id":format!("money:{}:{}",context.job_id,index),"campaignId":campaign_id,
             "jobId":context.job_id,"sessionId":session,"status":"hypothesis",
@@ -528,13 +541,15 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
             "alternatives":item["alternatives"],"whyNow":bounded(&item["whyNow"],1000),
             "firstTest":bounded(&item["firstTest"],1200),"killSignal":bounded(&item["killSignal"],1200),
             "assumptions":item["assumptions"],"risks":item["risks"],
-            "evidence":item["evidence"],"evidenceStatus":"unverified",
+            "evidence":evidence,"evidenceStatus":if matched_quotes>0{
+                "archived_quote_match_claim_unverified"
+            }else{"source_quotes_unverified"},
             "economics":item["economics"],"createdAt":chrono::Utc::now().to_rfc3339(),
             "origin":"model","expectedProfitIsVerified":false,
             "noveltyEstimate":((novelty*1000.0).round()/1000.0),"noveltyMethod":"character_trigram_overlap"
         });
         for id in &ids{evaluated_asymmetry_ids.insert(id.clone());}
-        pending_facts.extend(collect_evidence(item,campaign_id,&context.job_id));
+        pending_facts.extend(collect_evidence(&candidate,campaign_id,&context.job_id));
         pending_edges.extend(crate::engine::money_intelligence::candidate_edges(&candidate));
         known.push(candidate.clone());
         saved_ids.push(candidate["id"].clone());
@@ -548,6 +563,9 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
         "signalCount":pending_facts.len(),"graphEdgeCount":pending_edges.len(),
         "candidateIds":saved_ids,"skippedNearDuplicates":skipped_duplicates,
         "buyerSourceFetch":buyer_source_fetch,
+        "archivedQuoteMatches":pending_candidates.iter().flat_map(|c|
+            c["evidence"].as_array().into_iter().flatten())
+            .filter(|e|e["quotationStatus"]=="archived_page_quote_match").count(),
         "matchedBuyerQuoteCount":pending_candidates.iter().flat_map(|c|
             c["buyerEvidence"].as_array().into_iter().flatten())
             .filter(|e|crate::engine::money_buyer::buying_signal(e)).count(),
