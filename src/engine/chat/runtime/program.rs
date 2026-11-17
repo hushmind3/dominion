@@ -289,29 +289,93 @@ pub(super) async fn attempt_model_adaptation(
     })).collect::<Vec<_>>());
     adaptation["beforeObservation"] = before_observation.clone();
     adaptation["environmentFingerprint"] = json!(environment_fingerprint);
-    let refuted = state
-        .store
-        .get("execution", execution_id)
-        .map(|execution| {
-            execution["adaptations"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .flat_map(|adaptation| {
-                    adaptation["hypothesisResults"]
-                        .as_array()
-                        .cloned()
-                        .unwrap_or_default()
-                })
-                .filter(|result| result["status"] == "refuted")
-                .filter_map(|result| result["id"].as_str().map(str::to_string))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    // Hypothesis IDs belong to THIS generated proposal. Prior revisions may
+    // reuse "h1" for a completely different explanation; never transfer
+    // their refutations based on ID alone.
+    let mut refuted = Vec::<String>::new();
+    let mut attempted_ids = std::collections::HashSet::<String>::new();
+    let mut attempted_calls = std::collections::HashSet::<String>::new();
+    let mut probe_receipts = Vec::<Value>::new();
+    let mut resolved_probes = json!({});
+    let mut probe_budget_exhausted = false;
+    // Probes are fully admitted through the same gateway and ledger as normal
+    // tools. No shadow executor, no extra model call and no external writes.
+    for _ in 0..crate::engine::adaptation::probes::max_executed() {
+        let candidate = crate::engine::adaptation::probes::rank(
+            &adaptation, &refuted, &attempted_ids,
+        ).into_iter().find(|probe| {
+            !attempted_calls.contains(&format!(
+                "{}:{}", probe["tool"].as_str().unwrap_or(""), probe["inputs"]
+            ))
+        });
+        let Some(probe) = candidate else {break};
+        let probe_id = probe["id"].as_str().unwrap_or("").to_string();
+        let probe_tool = probe["tool"].as_str().unwrap_or("").to_string();
+        attempted_ids.insert(probe_id.clone());
+        attempted_calls.insert(format!("{probe_tool}:{}",probe["inputs"]));
+        if !budget.charge_tool() {
+            probe_budget_exhausted=true;
+            break;
+        }
+        *op_seq += 1;
+        let inputs = probe["inputs"].clone();
+        let call = ToolCall {
+            id: format!("adapt-probe-{probe_id}-{}", uuid::Uuid::new_v4()),
+            name: probe_tool.clone(),
+            arguments: inputs.to_string(),
+        };
+        let (probe_result, ok, _) = dispatch_tool_call(
+            state, tx, session, request, session_id, execution_id,
+            &call, inputs, metrics, *op_seq, round, 0, false,
+            "adaptation_probe", None, None, None,
+        ).await?;
+        let observed = if ok && tool_succeeded(&probe_result) {
+            let observation = crate::engine::adaptation::probes::observe(
+                &probe, &probe_result,
+            );
+            for id in observation["refutedIds"].as_array().into_iter().flatten() {
+                if let Some(id) = id.as_str() {
+                    if !refuted.iter().any(|prior|prior==id) {
+                        refuted.push(id.to_string());
+                    }
+                }
+            }
+            resolved_probes[&probe_id] = probe_result.clone();
+            observation
+        } else {
+            // A failed probe is NOT an observation against its hypotheses.
+            json!({"probeId":probe_id,"status":"tool_failed",
+                "predictions":[],"refutedIds":[]})
+        };
+        // Full tool results and arguments already live in execution_operation;
+        // keep this decision receipt bounded and link to its real call ID.
+        probe_receipts.push(json!({
+            "probeId":probe_id,"tool":probe_tool,"callId":call.id,
+            "expectedInformationBits":probe["expectedInformationBits"],
+            "observed":observed["predictions"],
+            "refutedIds":observed["refutedIds"],
+            "status":if ok && tool_succeeded(&probe_result) {"observed"} else {"tool_failed"},
+        }));
+        let live=adaptation["hypotheses"].as_array().into_iter().flatten()
+            .filter(|hypothesis| hypothesis["id"].as_str()
+                .is_some_and(|id|!refuted.iter().any(|prior|prior==id)))
+            .count();
+        if live==0 {
+            // All predictions disagreed with the environment. The model's
+            // hypothesis set is invalid; do not run an unsupported write.
+            adaptation["probeResults"]=json!(probe_receipts);
+            return Err("all causal hypotheses were refuted by observed probes; revise hypotheses before changing state".into());
+        }
+        if live==1 {break;}
+    }
+    adaptation["probeResults"]=json!(probe_receipts);
+    adaptation["probeBudgetExhausted"]=json!(probe_budget_exhausted);
     let selection_context = json!({
         "before": before_observation,
         "result": before_observation,
         "after": Value::Null,
+        // Preconditions may now reference probes using a JSON pointer.
+        "probes": resolved_probes,
     });
     let adaptation_algorithm =
         crate::engine::algorithms::choose_for_agent(
