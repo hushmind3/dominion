@@ -1989,6 +1989,34 @@ mod tests {
     }
 
     #[test]
+    fn bounded_provenance_query_observes_only_requested_run_and_order(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        for (id,run,seq) in [
+            ("r1","run-a",1),("r2","run-a",2),
+            ("noise","run-b",700),("r3","run-a",3)
+        ] {
+            store.put("execution_operation",&json!({
+                "id":id,"runId":run,"opSeq":seq,
+                "status":"completed","tool":"workspace_read"
+            })).unwrap();
+        }
+        let rows=store.recent_execution_operations("run-a",2).unwrap();
+        assert_eq!(rows.len(),2);
+        assert_eq!(rows[0]["id"],"r2");
+        assert_eq!(rows[1]["id"],"r3");
+        assert_eq!(store.recent_execution_operations("run-b",2).unwrap().len(),1);
+        let conn=store.conn.lock().unwrap();
+        let detail:String=conn.query_row(
+            "EXPLAIN QUERY PLAN SELECT data FROM records
+             WHERE kind='execution_operation'
+               AND json_extract(data,'$.runId')='run-a'
+             ORDER BY CAST(json_extract(data,'$.opSeq') AS INTEGER) DESC,id DESC LIMIT 2",
+            [],|row|row.get(3)
+        ).unwrap();
+        assert!(detail.contains("idx_operation_run"),"{detail}");
+    }
+
+    #[test]
     fn recovery_queries_keep_unknown_tool_effects_scoped_to_owning_session(){
         let store=Store::open(std::path::Path::new(":memory:")).unwrap();
         store.put("job",&json!({"id":"live","status":"running","queuedAt":"2026-11-17T00:00:00Z"}));
