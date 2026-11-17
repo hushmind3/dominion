@@ -49,10 +49,27 @@ fn item_id(v:&Value)->&str{v["id"].as_str().unwrap_or("")}
 /// Different RSS feed names do not imply independent reporting: e.g. two
 /// sections of one publisher or a mirrored headline from one aggregator.
 fn source_host(v:&Value)->String{
-    let url=v["url"].as_str().unwrap_or("");
-    let host=url.split_once("://").map(|(_,rest)|rest).unwrap_or("")
-        .split(|ch:char|ch=='/'||ch=='?'||ch=='#').next().unwrap_or("");
-    host.trim_start_matches("www.").to_lowercase()
+    let raw=v["url"].as_str().unwrap_or("");
+    let Ok(url)=reqwest::Url::parse(raw)else{return String::new()};
+    if url.scheme()!="https"{return String::new();}
+    let Some(host)=url.host_str()else{return String::new()};
+    let host=host.trim_start_matches("www.").to_ascii_lowercase();
+    let labels=host.split('.').collect::<Vec<_>>();
+    let suffixes=["co.kr","or.kr","go.kr","com.cn","com.tw","co.jp","co.uk","com.au","co.nz"];
+    let depth=if suffixes.iter().any(|suffix|host.ends_with(&format!(".{suffix}"))){3}else{2};
+    if labels.len()<depth{return host;}
+    labels[labels.len()-depth..].join(".")
+}
+/// Only published dates are recency evidence. Missing dates stay unknown.
+fn age_penalty(v:&Value,now:&chrono::DateTime<chrono::Utc>)->Option<f64>{
+    let raw=v["publishedAt"].as_str().unwrap_or("");
+    if raw.is_empty(){return Some(6.0);}
+    let parsed=chrono::DateTime::parse_from_rfc3339(raw)
+        .or_else(|_|chrono::DateTime::parse_from_rfc2822(raw));
+    let Ok(date)=parsed else{return Some(12.0)};
+    let age=now.signed_duration_since(date.with_timezone(&chrono::Utc)).num_days();
+    if !(-2..=180).contains(&age){return None;}
+    Some(match age {..=14=>0.0,15..=45=>5.0,46..=90=>12.0,_=>20.0})
 }
 fn bounded(v:&Value,key:&str,max:usize)->String{
     v[key].as_str().unwrap_or("").chars().take(max).collect()
@@ -77,11 +94,18 @@ fn pair_score(supply:&Value,buyer:&Value,pattern:Mechanism)->Option<f64>{
         +b.iter().filter(|t|!a.contains(t)).count();
     if differences==0{return None;}
     let common=a.iter().filter(|t|b.contains(t)).count();
-    let direct_page_reads=(supply["contentStatus"]=="page_fetched") as u8
+    let now=chrono::Utc::now();
+    let freshness=age_penalty(supply,&now)?+age_penalty(buyer,&now)?;
+    let pages=(supply["contentStatus"]=="page_fetched") as u8
         +(buyer["contentStatus"]=="page_fetched") as u8;
-    let score=45.0+(differences.min(4) as f64)*7.0
-        +(common.min(2) as f64)*3.0+direct_page_reads as f64*4.0;
-    Some(score.min(90.0))
+    // Cross-sector invention remains possible, but a pair with a real
+    // shared subject outranks an unlinked pair of buzzword headlines.
+    let bridge=if common>0{17.0}else{-8.0};
+    let buyer_intent=if pattern.buyer=="buyer_request"{12.0}else{0.0};
+    let score=40.0+bridge+(differences.min(4) as f64)*5.0
+        +(common.min(2) as f64)*7.0+pages as f64*5.0
+        +buyer_intent-freshness;
+    Some(score.clamp(0.0,90.0))
 }
 fn make_id(kind:&str,supply_id:&str,buyer_id:&str)->String{
     format!("tension:{:x}",Sha256::digest(format!("{kind}:{supply_id}:{buyer_id}").as_bytes()))
@@ -110,6 +134,9 @@ pub fn discover(signals:&[Value],max:usize)->Vec<Value>{
                     "supplyTopics":a_topics,"buyerTopics":b_topics,
                     "supplyChange":pattern.supply,"buyerChange":pattern.buyer,
                     "researchPriority":score.round() as u64,
+                    "topicBridgeStatus":if a_topics.iter().any(|t|b_topics.contains(t)){
+                        "shared_topic_not_verified_causality"
+                    }else{"cross_sector_bridge_unverified"},
                     "evidenceStatus":"two_independent_source_mentions_not_causality",
                     "purchaseEvidence":false,
                     "createdAt":chrono::Utc::now().to_rfc3339()}));
@@ -200,6 +227,36 @@ mod tests{
         assert_eq!(out.len(),1);
         assert_eq!(out[0]["mechanism"],"buyer_supply_spread");
         assert_eq!(out[0]["purchaseEvidence"],false);
+    }
+    #[test] fn subdomains_of_one_publisher_cannot_corrobate_each_other(){
+        let mut a=article("a","News A",&["hardware"],"cost_drop");
+        let mut b=article("b","News B",&["construction"],"cost_rise");
+        a["url"]=json!("https://tech.example.co.kr/a");
+        b["url"]=json!("https://industry.example.co.kr/b");
+        assert_eq!(source_host(&a),"example.co.kr");
+        assert_eq!(source_host(&b),"example.co.kr");
+        assert!(discover(&[a,b],10).is_empty());
+    }
+    #[test] fn shared_topic_bridge_outranks_unlinked_pairs(){
+        let weak=discover(&[
+            article("w1","W1",&["robotics","hardware"],"cost_drop"),
+            article("w2","W2",&["food","tourism"],"buyer_request")
+        ],10);
+        let strong=discover(&[
+            article("s1","S1",&["robotics","hardware"],"cost_drop"),
+            article("s2","S2",&["robotics","manufacturing"],"buyer_request")
+        ],10);
+        assert_eq!(weak[0]["topicBridgeStatus"],"cross_sector_bridge_unverified");
+        assert_eq!(strong[0]["topicBridgeStatus"],"shared_topic_not_verified_causality");
+        assert!(strong[0]["researchPriority"].as_u64()>weak[0]["researchPriority"].as_u64());
+    }
+    #[test] fn stale_market_source_does_not_create_a_new_research_trend(){
+        let mut a=article("a","A",&["hardware"],"cost_drop");
+        let b=article("b","B",&["construction"],"cost_rise");
+        a["publishedAt"]=json!((chrono::Utc::now()-chrono::Duration::days(200)).to_rfc3339());
+        assert!(discover(&[a.clone(),b.clone()],10).is_empty());
+        a["publishedAt"]=json!((chrono::Utc::now()-chrono::Duration::days(2)).to_rfc3339());
+        assert_eq!(discover(&[a,b],10).len(),1);
     }
     #[test] fn there_is_no_candidate_without_economic_complementary_signals(){
         let data=vec![article("a","A",&["hardware"],"launch"),

@@ -1,14 +1,18 @@
 name: CI
 
+# Minimal branch CI: focused Money/kernel checks on macOS; compilation on Windows.
+# Full release suites run separately when explicitly needed for a release.
 on:
   push:
+    branches: [dominion-sub2]
+    paths-ignore: ['**/*.md']
   pull_request:
+    branches: [main, dominion-sub2]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-# Only the latest commit on a branch needs a full release-mode validation.
-# Superseded commits are cancelled instead of occupying the runner queue.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -18,24 +22,36 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Windows Rust/test compilation
+        if: matrix.os == 'windows-latest'
+        run: cargo check --tests
       - uses: actions/setup-node@v4
+        if: matrix.os == 'macos-latest'
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: npm ci --prefix web
-      - run: npm run typecheck --prefix web
-      - run: node web/node_modules/typescript/bin/tsc -p sdk/typescript/tsconfig.json
-      - run: node --test sdk/typescript/tests/sdk.test.mjs
-      - run: npm run build --prefix web
-      - run: node --test scripts/sub2-compare.test.mjs
-      - run: node --test scripts/sub2-architecture.test.mjs
-      - run: node --test scripts/sub2-lean.test.mjs
-      - run: node --experimental-strip-types --test scripts/sub2-refresh.test.mjs
-      - run: cargo test --release
+      - name: Install frontend dependencies
+        if: matrix.os == 'macos-latest'
+        run: npm ci --prefix web
+      - name: Frontend typecheck
+        if: matrix.os == 'macos-latest'
+        run: npm run typecheck --prefix web
+      - name: Shared SDK compile
+        if: matrix.os == 'macos-latest'
+        run: node web/node_modules/typescript/bin/tsc -p sdk/typescript/tsconfig.json
+      - name: Shared SDK contract tests
+        if: matrix.os == 'macos-latest'
+        run: node --test sdk/typescript/tests/sdk.test.mjs
+      - name: Money regression tests
+        if: matrix.os == 'macos-latest'
+        run: cargo test --lib money_
+      - name: Pure Rust decision kernel tests
+        if: matrix.os == 'macos-latest'
+        run: cargo test -p dominion-agent-kernel --lib

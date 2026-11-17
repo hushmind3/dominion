@@ -12,8 +12,10 @@ pub fn experiment_net(v:&Value)->Option<f64>{
     if v["status"]!="finished"{return None;}
     let revenue=nonnegative(&v["reportedRevenueWon"])?;
     let direct=nonnegative(&v["reportedCostWon"])?;
+    // Missing spending data is unknown, never a zero-cost observation.
     let extra=["marketingCostWon","modelCostWon","laborCostWon"].iter()
-        .map(|k|nonnegative(&v[*k]).unwrap_or(0.0)).sum::<f64>();
+        .map(|k|nonnegative(&v[*k]))
+        .collect::<Option<Vec<_>>>()?.iter().sum::<f64>();
     Some(revenue-direct-extra)
 }
 fn candidate_mode(v:&Value)->&str{
@@ -24,16 +26,18 @@ pub fn strategy_stats(candidates:&[Value],experiments:&[Value])->Vec<Value>{
         c["id"].as_str().map(|id|(id.to_string(),candidate_mode(c))))
         .collect::<HashMap<_,_>>();
     MODES.into_iter().map(|mode|{
-        let relevant=experiments.iter().filter(|e|e["candidateId"].as_str()
-            .and_then(|id|by_id.get(id)).is_some_and(|stored|*stored==mode))
-            .filter_map(|e|experiment_net(e)).collect::<Vec<_>>();
+        let finished=experiments.iter().filter(|e|e["candidateId"].as_str()
+            .and_then(|id|by_id.get(id)).is_some_and(|stored|*stored==mode)
+            &&e["status"]=="finished").collect::<Vec<_>>();
+        let relevant=finished.iter().filter_map(|e|experiment_net(e)).collect::<Vec<_>>();
+        let incomplete=finished.len().saturating_sub(relevant.len()) as u64;
         let completed=relevant.len() as u64;
         let positive=relevant.iter().filter(|v|**v>0.0).count() as u64;
         let net=relevant.iter().sum::<f64>();
         // Beta(1,1) prior suppresses overconfidence from single wins.
         let posterior=(positive as f64+1.0)/(completed as f64+2.0);
         json!({"mode":mode,"finishedExperiments":completed,
-            "reportedPositiveNet":positive,"reportedNetWon":net,
+            "excludedIncompleteCostReports":incomplete,"reportedPositiveNet":positive,"reportedNetWon":net,
             "smoothedPositiveRate":(posterior*1000.0).round()/1000.0,
             "source":"user_reported_not_payment_verified"})
     }).collect()
@@ -116,11 +120,17 @@ pub fn rank_candidate(candidate:&Value,experiments:&[Value],capital_won:f64)->Va
     let completed=experiments.iter().filter(|e|e["candidateId"]==candidate["id"])
         .filter_map(experiment_net).collect::<Vec<_>>();
     let observed_net=completed.iter().sum::<f64>();
+    let missing_costs=experiments.iter().filter(|e|
+        e["candidateId"]==candidate["id"]&&e["status"]=="finished"
+        &&experiment_net(e).is_none()).count();
+    if missing_costs>0{reasons.push("비용 명세가 누락된 실험은 수익 학습에서 제외".into());}
     if !completed.is_empty(){
         score+=if observed_net>0.0{14.0}else if observed_net<0.0{-14.0}else{0.0};
         reasons.push(format!("실험 {}건 사용자 보고 순현금흐름",completed.len()));
     }
-    let next=if purchase_requests==0&&completed.is_empty() {
+    let next=if missing_costs>0&&completed.is_empty(){
+        "누락된 마케팅·모델·노동비를 기록하여 실험 순이익 확인"
+    }else if purchase_requests==0&&completed.is_empty() {
         "실제 예산·구매 요청과 결제 담당자 확인"
     }else if completed.is_empty()&&sources==0{
         "공식 가격·고객 문제 등 1차 근거 확보"
@@ -137,6 +147,7 @@ pub fn rank_candidate(candidate:&Value,experiments:&[Value],capital_won:f64)->Va
         "scoreType":"decision_priority_heuristic_not_success_probability",
         "reasons":reasons,"nextBestTest":next,
         "reportedNetWon":observed_net,"finishedExperiments":completed.len(),
+        "excludedIncompleteCostReports":missing_costs,
         "assumedMonthlyNetWon":forecast,
         "forecastStatus":if forecast.is_some(){"assumption_only"}else{"insufficient_inputs"},
         "sourceCount":sources,"publicPurchaseEvidenceLinks":purchase_requests,
@@ -177,13 +188,29 @@ mod tests{
         for i in 0..8{
             outcomes.push(json!({"candidateId":if i<4{"one"}else{"two"},"status":"finished",
                 "reportedRevenueWon":if i<4{100000}else{0},
-                "reportedCostWon":10000}));
+                "reportedCostWon":10000,
+                "marketingCostWon":0,"modelCostWon":0,"laborCostWon":0}));
         }
         let stats=strategy_stats(&candidates,&outcomes);
         assert!(stats[0]["smoothedPositiveRate"].as_f64().unwrap()
             >stats[2]["smoothedPositiveRate"].as_f64().unwrap());
         assert_eq!(next_mode(1,&candidates,&outcomes),"signals");
         assert_eq!(next_mode(5,&candidates,&outcomes),"discover");
+    }
+    #[test] fn missing_costs_are_never_positive_adaptive_feedback(){
+        let incomplete=json!({"candidateId":"one","status":"finished",
+            "reportedRevenueWon":100000,"reportedCostWon":10000});
+        assert_eq!(experiment_net(&incomplete),None);
+        let candidates=vec![json!({"id":"one","discoveryMode":"signals"})];
+        let stats=strategy_stats(&candidates,&[incomplete.clone()]);
+        assert_eq!(stats[0]["finishedExperiments"],0);
+        assert_eq!(stats[0]["excludedIncompleteCostReports"],1);
+        let rank=rank_candidate(&candidates[0],&[incomplete],-1.0);
+        assert_eq!(rank["excludedIncompleteCostReports"],1);
+        let complete=json!({"status":"finished","reportedRevenueWon":100000,
+            "reportedCostWon":10000,"marketingCostWon":1000,
+            "modelCostWon":2000,"laborCostWon":3000});
+        assert_eq!(experiment_net(&complete),Some(84000.0));
     }
     #[test] fn rank_rejects_negative_margin_and_capital_mismatch(){
         let candidate=json!({"id":"x","customer":"factory","whyPay":"saves labor",
@@ -220,10 +247,12 @@ mod tests{
         let c=json!({"id":"x","economics":{"priceWon":100000,"variableCostWon":50000,
             "acquisitionCostWon":0,"refundRatePct":0,"monthlyFixedWon":0,"monthlyUnits":20}});
         let no_period=vec![json!({"candidateId":"x","status":"finished",
-            "reportedRevenueWon":900000,"reportedCostWon":100000})];
+            "reportedRevenueWon":900000,"reportedCostWon":100000,
+            "marketingCostWon":0,"modelCostWon":0,"laborCostWon":0})];
         assert_eq!(forecast_error(&c,&no_period)["comparable"],false);
         let yes=vec![json!({"candidateId":"x","status":"finished","periodDays":30,
-            "reportedRevenueWon":900000,"reportedCostWon":100000})];
+            "reportedRevenueWon":900000,"reportedCostWon":100000,
+            "marketingCostWon":0,"modelCostWon":0,"laborCostWon":0})];
         let out=forecast_error(&c,&yes);
         assert_eq!(out["absoluteErrorWon"],200000.0);
     }

@@ -563,21 +563,28 @@ pub async fn record_experiment(State(state):State<AppState>,Path(id):Path<String
     }
     let status=body["status"].as_str().unwrap_or("planned");
     if !matches!(status,"planned"|"running"|"finished"|"failed"){return fail("실험 상태가 올바르지 않습니다.");}
-    let cost_field=|name:&str|->Result<f64,String>{
+    if status=="finished"&&(body.get("reportedRevenueWon").is_none()
+        ||body.get("reportedCostWon").is_none()){
+        return fail("완료된 실험은 보고 매출과 직접 비용을 명시해야 합니다.");
+    }
+    let cost_field=|name:&str|->Result<Value,String>{
         match body.get(name){
-            Some(value)=>valid_won(value,1e14).ok_or_else(||format!("{name} 값이 올바르지 않습니다.")),
-            None=>Ok(0.0)
+            Some(value)=>valid_won(value,1e14).map(|v|json!(v))
+                .ok_or_else(||format!("{name} 값이 올바르지 않습니다.")),
+            None=>Ok(Value::Null)
         }
     };
     let marketing=match cost_field("marketingCostWon"){Ok(v)=>v,Err(err)=>return fail(&err)};
     let model=match cost_field("modelCostWon"){Ok(v)=>v,Err(err)=>return fail(&err)};
     let labor=match cost_field("laborCostWon"){Ok(v)=>v,Err(err)=>return fail(&err)};
+    let complete_costs=marketing.is_number()&&model.is_number()&&labor.is_number();
     let experiment=json!({"candidateId":id,"campaignId":candidate["campaignId"],"name":name,"status":status,
         "hypothesis":capped(&body["hypothesis"],1500),
         "method":capped(&body["method"],2000),
         "observations":capped(&body["observations"],3000),
         "reportedRevenueWon":revenue,"reportedCostWon":cost,
         "marketingCostWon":marketing,"modelCostWon":model,"laborCostWon":labor,
+        "costReportingComplete":complete_costs,
         "result":capped(&body["result"],1500),
         "evidenceUrl":capped(&body["evidenceUrl"],2000),
         "source":"user_reported","createdAt":now()});
@@ -612,6 +619,38 @@ mod tests{
             Json(json!({"enabled":true}))).await;
         assert_eq!(foreign.status(),StatusCode::NOT_FOUND);
         assert!(state.store.get("money_campaign","arbitrary").is_none());
+        let _=std::fs::remove_dir_all(dir);
+    }
+    #[tokio::test]
+    async fn unspecified_experiment_costs_remain_unknown(){
+        use crate::{config::Config,db::Store,vault::Vault};
+        let dir=std::env::temp_dir().join(format!("money-cost-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=Config{port:0,data_dir:dir.join("data"),web_dir:dir.join("web"),workspace:dir.clone()};
+        std::fs::create_dir_all(&config.data_dir).unwrap();
+        let state=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()));
+        state.store.put("money_candidate",&json!({"id":"c1","campaignId":"camp"})).unwrap();
+        let incomplete=record_experiment(State(state.clone()),Path("c1".into()),Json(json!({
+            "name":"trial","status":"finished","reportedRevenueWon":10000,"reportedCostWon":1000
+        }))).await;
+        assert_eq!(incomplete.status(),StatusCode::CREATED);
+        let row=state.store.all("money_experiment").pop().unwrap();
+        assert_eq!(row["costReportingComplete"],false);
+        assert!(row["marketingCostWon"].is_null());
+        assert_eq!(engine::money_rank::experiment_net(&row),None);
+        let complete=record_experiment(State(state.clone()),Path("c1".into()),Json(json!({
+            "name":"fully costed","status":"finished","reportedRevenueWon":10000,
+            "reportedCostWon":1000,"marketingCostWon":0,"modelCostWon":0,"laborCostWon":0
+        }))).await;
+        assert_eq!(complete.status(),StatusCode::CREATED);
+        assert!(state.store.all("money_experiment").iter().any(|row|
+            row["costReportingComplete"]==true
+            &&engine::money_rank::experiment_net(row)==Some(9000.0)));
+        let missing=record_experiment(State(state.clone()),Path("c1".into()),Json(json!({
+            "name":"missing revenue","status":"finished","reportedCostWon":100
+        }))).await;
+        assert_eq!(missing.status(),StatusCode::BAD_REQUEST);
         let _=std::fs::remove_dir_all(dir);
     }
     #[test] fn hardware_payback_uses_net_after_all_reported_costs(){
