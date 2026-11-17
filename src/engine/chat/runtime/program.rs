@@ -476,6 +476,7 @@ pub(super) async fn attempt_model_adaptation(
         "selected": selected,
         "result": result,
         "hypothesisResults": hypothesis_results,
+        "probeResults": adaptation["probeResults"],
     }))
 }
 
