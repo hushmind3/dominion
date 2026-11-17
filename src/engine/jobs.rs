@@ -79,6 +79,20 @@ impl JobContext {
         self.state.bus.record("job",&saved);
         Ok(())
     }
+
+    /// A cheap, read-only cancellation/attempt fence before potentially slow
+    /// public-data fetches. This avoids unnecessary network calls when the
+    /// owner has stopped work or a recovered worker has replaced this attempt.
+    /// It is not a write transaction: terminal writes still need their own
+    /// atomic ownership check.
+    pub fn ensure_running(&self) -> Result<(), String> {
+        let active=self.state.store.get("job",&self.job_id).is_some_and(|job|
+            job["status"]=="running"
+                && job["cancelRequested"]!=true
+                && job["attempts"].as_u64().unwrap_or(0)==self.attempt);
+        if active {Ok(())}
+        else {Err("cancelled: job is stopped or owned by a newer attempt".into())}
+    }
 }
 
 pub fn enqueue(state: &AppState, kind: &str, input: Value) -> Option<Value> {
@@ -977,6 +991,26 @@ mod tests {
         assert!(latest.save_native_answer(&late).is_ok());
         assert_eq!(state.store.messages("s").len(),2);
     }
+    #[test]
+    fn acquisition_read_fence_rejects_cancellation_and_reclaimed_attempt() {
+        let state=temp_state();
+        state.store.put("job",&json!({"id":"acquisition-fence","kind":"money_ingest",
+            "status":"running","cancelRequested":false,"attempts":2})).unwrap();
+        let old=JobContext::new(state.clone(),"acquisition-fence".into());
+        assert!(old.ensure_running().is_ok());
+        state.store.put("job",&json!({"id":"acquisition-fence","kind":"money_ingest",
+            "status":"running","cancelRequested":true,"attempts":2})).unwrap();
+        assert!(old.ensure_running().is_err());
+        state.store.put("job",&json!({"id":"acquisition-fence","kind":"money_ingest",
+            "status":"running","cancelRequested":false,"attempts":3})).unwrap();
+        assert!(old.ensure_running().is_err());
+        let current=JobContext::new(state.clone(),"acquisition-fence".into());
+        assert!(current.ensure_running().is_ok());
+        state.store.put("job",&json!({"id":"acquisition-fence","kind":"money_ingest",
+            "status":"cancelled","cancelRequested":true,"attempts":3})).unwrap();
+        assert!(current.ensure_running().is_err());
+    }
+
     #[test]
     fn checkpoint_cannot_forge_cancellation_or_job_identity() {
         let state=temp_state();
