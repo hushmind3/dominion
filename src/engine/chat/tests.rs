@@ -114,7 +114,14 @@ async fn real_chat_request_has_bound_image_common_prompt_native_reasoning_and_ti
     let file=crate::engine::attachments::upload(&state,&json!({"sessionId":"s","name":"photo.png","mimeType":"image/png","data":base64::engine::general_purpose::STANDARD.encode(b"\x89PNG\r\n\x1a\nfixture")})).unwrap();
     let request=TurnRequest::from_value(&json!({"sessionId":"s","input":"사진을 확인해","attachmentIds":[file["id"]],"toolsEnabled":false,"thinking":false,"reasoningEffort":"none","reasoningLanguage":"ko","autoLearning":false})).unwrap();
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    let saved = tokio::time::timeout(Duration::from_secs(12), run_turn(&state, &request, &tx))
+    // Windows release CI runs this local HTTP fixture alongside hundreds of
+    // filesystem/SQLite tests. A loaded runner can delay task scheduling,
+    // even though no external provider is involved. Preserve the full response,
+    // image, reasoning and timing assertions below; only relax the harness
+    // deadline on Windows (production request timeouts are unchanged).
+    let fixture_deadline = if cfg!(windows) { 45 } else { 12 };
+    let saved = tokio::time::timeout(
+        Duration::from_secs(fixture_deadline), run_turn(&state, &request, &tx))
         .await
         .unwrap()
         .unwrap()
