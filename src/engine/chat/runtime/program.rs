@@ -1297,6 +1297,51 @@ mod recovery_tests {
             .unwrap_err().contains("in-flight effect"));
     }
     #[test]
+    fn interrupted_run_transfers_checkpoint_and_revision_as_one_transaction() {
+        use crate::{config::Config,db::Store,vault::Vault};
+        let root=std::env::temp_dir().join(format!(
+            "sub3-program-resume-{}",uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let cfg=Config{port:0,data_dir:root.clone(),
+            web_dir:root.join("web"),workspace:root.clone()};
+        let state=AppState::new(cfg.clone(),
+            Store::open(&cfg.db_path()).unwrap(),Vault::open(&cfg.key_path()));
+        let original=json!({"revision":"base","nodes":[
+            {"type":"observe","id":"old"}
+        ]});
+        let revised=json!({"revision":"base:rev:a","nodes":[
+            {"type":"observe","id":"new"}
+        ]});
+        let mut old_cp=crate::engine::program::new_checkpoint(&original);
+        old_cp["programRevision"]=json!("base:rev:a");
+        old_cp["completedOperationIds"]=json!(["old"]);
+        let source=json!({"id":"source","taskId":"task","status":"interrupted",
+            "programResumeApproved":true,"startedAt":"2026-11-17T19:00:00Z",
+            "programCheckpoint":old_cp,"revisedProgram":revised});
+        state.store.put("execution",&source).unwrap();
+        assert!(restore_program_state(&state,"task","target",&original).is_err());
+        assert_eq!(state.store.get("execution","source").unwrap()["programResumeApproved"],true);
+        state.store.put("execution",&json!({
+            "id":"target","taskId":"task","status":"running"
+        })).unwrap();
+        restore_program_state(&state,"task","target",&original).unwrap();
+        let saved=state.store.get("execution","target").unwrap();
+        let spent=state.store.get("execution","source").unwrap();
+        assert_eq!(saved["programCheckpoint"]["programRevision"],"base:rev:a");
+        assert_eq!(saved["revisedProgram"]["nodes"][0]["id"],"new");
+        assert_eq!(spent["programResumeApproved"],false);
+        assert_eq!(spent["resumedByExecutionId"],"target");
+        let (restored_cp,restored_ir)=restore_program(
+            &original,Some(saved["programCheckpoint"].clone()),
+            Some(saved["revisedProgram"].clone())
+        ).unwrap();
+        assert_eq!(restored_ir["nodes"][0]["id"],"new");
+        assert_eq!(restored_cp["completedOperationIds"],json!(["old"]));
+        drop(state);
+        let _=std::fs::remove_dir_all(root);
+    }
+    #[test]
     fn previously_completed_original_checkpoint_starts_fresh_without_stale_revision() {
         let base=json!({"revision":"base","nodes":[
             {"type":"observe","id":"safe"}
