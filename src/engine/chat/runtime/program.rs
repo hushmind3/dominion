@@ -1344,6 +1344,7 @@ pub(super) async fn propose_program_revision(
     checkpoint: &Value,
     failure: &Value,
     budget: &mut super::budget::BudgetLedger,
+    op_seq: &mut u64,
 ) -> Result<Option<Value>, String> {
     let provider_id = ctx
         .request
@@ -1364,7 +1365,7 @@ pub(super) async fn propose_program_revision(
         .iter()
         .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_string))
         .collect::<Vec<_>>();
-    let system = "You are the DOMINION program repair planner. A typed execution program failed. Propose a revision that only changes PENDING nodes. Output JSON only: {\"baseRevision\":\"...\",\"reason\":\"...\",\"evidenceIds\":[],\"replacePendingNodes\":[],\"addNodes\":[],\"dependencyChanges\":[],\"expectedObservations\":[]}. Nodes use the existing types (observe, call_tool, branch, sequence, parallel, loop, verify, delegate, model_decision). Completed node ids must not be replaced. call_tool nodes need id, tool, inputs, saveAs.";
+    let system = "You are the DOMINION program repair planner. A typed execution program failed. Generate up to 3 DISTINCT candidate revisions in one response, not strategy labels. Return JSON: {\"candidateRevisions\":[{\"baseRevision\":\"...\",\"reason\":\"...\",\"evidenceIds\":[\"program-failure\"],\"replacePendingNodes\":[],\"addNodes\":[],\"preflight\":{\"tool\":\"workspace_read\",\"inputs\":{\"path\":\"config.txt\"},\"predicate\":{\"type\":\"equals\",\"from\":\"result\",\"path\":\"/content\",\"value\":\"expected real content\"}}}]}. Each candidate requires a DIFFERENT repair and a read-only preflight with machine-checkable expected observation of current workspace state. The Rust gateway will REALLY execute these tests before choosing. Do not assume tests pass. Cite program-failure, the failed node ID, or an existing checkpoint observationRef as evidence. Preserve completed node IDs and external effects. Available node types are observe, call_tool, branch, sequence, parallel, loop, verify, delegate, model_decision. You MAY return one legacy revision object if meaningful contrasting probes are impossible.";
     let prompt = format!(
         "Current program: {program}\nCheckpoint: {checkpoint}\nFailure observation: {failure}\nAvailable tools: {available:?}\nReturn only the JSON proposal."
     );
@@ -1388,9 +1389,50 @@ pub(super) async fn propose_program_revision(
     )
     .and_then(|algorithm| algorithm["parameters"]["mode"].as_str().map(str::to_string))
     .unwrap_or_else(|| "replace".into());
-    let revised = crate::engine::program::apply_revision_proposal(
-        program, checkpoint, &proposal, &available, 64, &repair_mode,
+    let candidates = crate::engine::adaptation::repair_tournament::prepare(
+        &proposal, program, checkpoint, failure, &available, &repair_mode,
     )?;
+    let preflights = crate::engine::adaptation::repair_tournament::probes(&candidates);
+    let mut observations = json!({});
+    for probe in preflights {
+        if ctx.state.is_cancelled(ctx.session_id)
+            || ctx.state.cancellation_generation(ctx.session_id) != ctx.generation {
+            return Err("program repair was cancelled before speculative probe".into());
+        }
+        if !budget.charge_tool() {
+            break;
+        }
+        let Some(id) = probe["id"].as_str() else {continue};
+        let Some(tool) = probe["tool"].as_str() else {continue};
+        *op_seq += 1;
+        let inputs = probe["inputs"].clone();
+        let call = ToolCall {
+            id: format!("program-repair-probe-{id}-{}", uuid::Uuid::new_v4()),
+            name: tool.to_string(),
+            arguments: inputs.to_string(),
+        };
+        let (result, ok, _) = dispatch_tool_call(
+            ctx.state, ctx.tx, ctx.session, ctx.request,
+            ctx.session_id, ctx.execution_id, &call, inputs, ctx.metrics,
+            *op_seq, 0, 0, false, "program_repair_probe",
+            None, None, None,
+        ).await?;
+        observations[id] = json!({
+            "status":if ok && tool_succeeded(&result){"completed"}else{"failed"},
+            "result":result,
+            "callId":call.id,
+        });
+    }
+    let (mut revised, audit) = crate::engine::adaptation::repair_tournament::select(
+        &candidates, &observations,
+    )?;
+    // Preserve the contrastive decision and native probe call IDs inside the
+    // revised program's existing durable execution record. Raw probe outputs
+    // remain in execution_operation, never in the audit summary.
+    let called=observations.as_object().into_iter().flat_map(|map|map.iter())
+        .map(|(id,value)|json!({"candidateId":id,"callId":value["callId"],
+            "status":value["status"]})).collect::<Vec<_>>();
+    revised["repairTournament"] = json!({"decision":audit,"probeReceipts":called});
     Ok(Some(revised))
 }
 
@@ -1495,6 +1537,7 @@ pub(super) async fn run_program(
             &checkpoint,
             &failure,
             &mut budget_local,
+            &mut op_seq_local,
         )
         .await
         {
