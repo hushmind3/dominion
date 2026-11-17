@@ -1674,7 +1674,7 @@ pub(super) async fn run_program(
             }
             let cache_key=format!("{tool}:{args}");
             let (result,ok,call_id)=if let Some(cached)=read_cache.get(&cache_key){
-                cached.clone()
+                (*cached).clone()
             }else{
                 if !budget_local.charge_tool(){
                     postflight_failure=Some("postflight tool budget exhausted".into());
@@ -1687,7 +1687,7 @@ pub(super) async fn run_program(
                 };
                 let (result,ok,_)=dispatch_tool_call(
                     state,tx,session,request,session_id,execution_id,
-                    &call,args.clone(),metrics,op_seq_local,0,0,false,
+                    &call,(*args).clone(),metrics,op_seq_local,0,0,false,
                     "program_repair_postflight",None,None,None,
                 ).await?;
                 let entry=(result,ok,call.id);
