@@ -2,6 +2,7 @@ import {t} from '../i18n'
 import React,{useCallback,useEffect,useRef,useState} from 'react'
 import {ArrowUpRight,LoaderCircle,Plus} from 'lucide-react'
 import {get} from '../api'
+import {endpointAffected} from '../refreshScope'
 import {Button} from './Primitives'
 export function Panel({children,className='',...rest}:{children:React.ReactNode;className?:string;[key:string]:any}){return <section className={['min-w-0 rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] shadow-[0_1px_2px_rgba(36,33,29,.04),0_10px_30px_rgba(36,33,29,.03)]',className].join(' ')} {...rest}>{children}</section>}
 export function Headline({eyebrow,title,description,actions}:{eyebrow?:string;title:string;description?:string;actions?:React.ReactNode}){return <header className="mb-6 flex flex-wrap items-end justify-between gap-4"><div className="min-w-0">{eyebrow&&<p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[.09em] text-[#A79C8E]">{eyebrow}</p>}<h1 className="m-0 text-[24px] font-bold tracking-[-.03em] text-[#24211D]">{title}</h1>{description&&<p className="mt-2 max-w-2xl text-[13px] leading-6 text-[#7C7469]">{description}</p>}</div>{actions&&<div className="flex flex-wrap gap-2">{actions}</div>}</header>}
@@ -44,12 +45,20 @@ export function useRemote<T>(endpoint: string | null, initial: T, refreshOnEvent
    if (active.current) refreshPending.current = true
    else void reload()
   }
-  if (endpoint && refreshOnEvent) window.addEventListener('dominion-refresh', onRefresh)
+  const onScopedRefresh=(event:Event)=>{
+   const scopes=(event as CustomEvent<readonly string[]>).detail
+   if (!Array.isArray(scopes) || endpointAffected(endpoint||'',scopes))onRefresh()
+  }
+  if (endpoint && refreshOnEvent) {
+   window.addEventListener('dominion-refresh', onRefresh)
+   window.addEventListener('dominion-refresh-scoped',onScopedRefresh)
+  }
   return () => {
    refreshPending.current = false
    active.current?.abort()
    active.current = null
    window.removeEventListener('dominion-refresh', onRefresh)
+   window.removeEventListener('dominion-refresh-scoped',onScopedRefresh)
   }
  }, [endpoint, reload, refreshOnEvent])
  const setValue = useCallback((next: React.SetStateAction<T>) => {

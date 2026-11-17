@@ -37,4 +37,5 @@ jobs:
       - run: node --test scripts/sub2-compare.test.mjs
       - run: node --test scripts/sub2-architecture.test.mjs
       - run: node --test scripts/sub2-lean.test.mjs
+      - run: node --experimental-strip-types --test scripts/sub2-refresh.test.mjs
       - run: cargo test --release
