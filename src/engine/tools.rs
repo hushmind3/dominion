@@ -1,3 +1,5 @@
+#[path = "tools/github_repositories.rs"]
+mod github_repositories;
 use crate::db::Store;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -71,6 +73,11 @@ pub fn definitions() -> Vec<Value> {
             "text": text("Text to type into the indexed element"),
             "key": text("Key to press: Enter, Escape, Tab, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Backspace")
         }), vec!["action"])),
+        tool("github_repositories","Discover connected-account repositories before selecting a file and committing edits",object(json!({
+            "query":text("Optional owner or repository name fragment, max 100 characters"),
+            "page":json!({"type":"integer","minimum":1,"maximum":10}),
+            "writableOnly":json!({"type":"boolean","description":"Only show repositories with push permission"})
+        }),vec![])),
         tool("github_api", "Call the GitHub REST API as the connected account. Write methods require approval (approval required)", object(json!({"method": json!({"type": "string", "enum": ["GET", "POST", "PATCH", "PUT", "DELETE"]}), "path": text("GitHub API path beginning with /"), "body": json!({"type": "object"})}), vec!["method", "path"])),
         tool("github_file_read","Read a GitHub repository file using the connected account; returns its exact content SHA for safe edits",object(json!({
             "owner":text("Repository owner"),"repo":text("Repository name"),
@@ -127,7 +134,7 @@ pub fn requires_approval(name: &str) -> bool {
 }
 
 pub fn observational(name:&str)->bool{
-    matches!(name,"workspace_git_status"|"workspace_git_diff"|"workspace_list"|"workspace_read"|"workspace_read_range"|"code_search"|"file_list"|"file_read"|"memory_search"|"web_search"|"http_fetch"|"task_status"|"task_result"|"account_status"|"github_file_read")
+    matches!(name,"workspace_git_status"|"workspace_git_diff"|"workspace_list"|"workspace_read"|"workspace_read_range"|"code_search"|"file_list"|"file_read"|"memory_search"|"web_search"|"http_fetch"|"task_status"|"task_result"|"account_status"|"github_file_read"|"github_repositories")
 }
 
 pub async fn execute(
@@ -141,7 +148,7 @@ pub async fn execute(
         return Err("읽기 전용 위임 작업에는 이 도구를 실행할 권한이 없습니다.".into());
     }
     let parent_isolated=ctx.store.get("session",ctx.session_id).is_some_and(|s|s["delegationWorkspace"].is_object());
-    if parent_isolated&&(name.starts_with("mcp__")||matches!(name,"browser_control"|"github_api"|"github_file_read"|"github_file_update")){
+    if parent_isolated&&(name.starts_with("mcp__")||matches!(name,"browser_control"|"github_api"|"github_repositories"|"github_file_read"|"github_file_update")){
         return Err("격리 위임 작업에서는 외부 변경 도구를 실행할 수 없습니다.".into());
     }
     if parent_isolated&&name=="delegate_task"&&args["isolatedWorktree"]!=true{
@@ -358,6 +365,7 @@ pub async fn execute(
             "providers": crate::engine::oauth::status(ctx.state),
         })),
         "github_api" => github_api(ctx, args).await,
+        "github_repositories" => github_repositories::list(ctx,args).await,
         "github_file_read" => github_file_read(ctx,args).await,
         "github_file_update" => github_file_update(ctx,args).await,
         other => Err(format!("Unknown tool: {other}")),
