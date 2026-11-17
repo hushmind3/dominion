@@ -77,6 +77,36 @@ pub fn definitions() -> Vec<Value> {
             "createNew":json!({"type":"boolean","description":"Explicitly create a missing file; cannot overwrite existing source"})
         }),vec!["owner","repo","branch","path","content","message"])),
         tool("github_api", "Call the GitHub REST API as the connected account. Write methods require approval (approval required)", object(json!({"method": json!({"type": "string", "enum": ["GET", "POST", "PATCH", "PUT", "DELETE"]}), "path": text("GitHub API path beginning with /"), "body": json!({"type": "object"})}), vec!["method", "path"])),
+
+        tool("github_work_read", "Use the connected GitHub account to list repositories, branches, PRs, issues and CI runs.", object(json!({
+            "operation":{"type":"string","enum":["repositories","branches","pull_requests","issues","ci_runs"]},
+            "owner":text("Repository owner"),"repo":text("Repository name"),"branch":text("Branch for CI runs")
+        }),vec!["operation"])),
+        tool("github_work_write", "Create a GitHub branch, PR or issue and verify it on the connected account. Owner approval required.", object(json!({
+            "operation":{"type":"string","enum":["create_branch","open_pr","create_issue"]},
+            "owner":text("Repository owner"),"repo":text("Repository"),
+            "from":text("Existing branch"),"branch":text("New branch"),
+            "head":text("PR head"),"base":text("PR destination"),
+            "title":text("PR/issue title"),"body":text("PR/issue details")
+        }),vec!["operation","owner","repo"])),
+        tool("google_workspace_read", "Search/read connected Google Gmail, Drive, Docs and Calendar. Specify service and operation.", object(json!({
+            "service":{"type":"string","enum":["gmail","drive","docs","calendar"]},
+            "operation":{"type":"string","enum":["search","get","list"]},
+            "query":text("Gmail search or Drive name fragment"),"id":text("Resource ID"),
+            "calendarId":text("Calendar (default primary)"),"timeMin":text("RFC3339 start"),
+            "maxResults":{"type":"integer","minimum":1,"maximum":50},
+            "pageToken":text("Next page token")
+        }),vec!["service","operation"])),
+        tool("google_workspace_write", "Owner-approved Gmail send, Drive text create/update, Docs append or Calendar create/update/delete.", object(json!({
+            "service":{"type":"string","enum":["gmail","drive","docs","calendar"]},
+            "operation":{"type":"string","enum":["send","create_text","update_text","append","create","update","delete"]},
+            "to":text("Gmail recipient"),"subject":text("Subject"),"body":text("Plain-text email"),
+            "id":text("Resource ID"),"name":text("Drive file name"),
+            "content":text("File or appended text"),"expectedVersion":text("Prior Drive version"),
+            "calendarId":text("Calendar ID (default primary)"),
+            "summary":text("Event title"),"description":text("Event description"),
+            "start":text("RFC3339 start"),"end":text("RFC3339 end")
+        }),vec!["service","operation"])),
     ]
 }
 
@@ -98,6 +128,8 @@ pub fn requires_approval(name: &str) -> bool {
             | "terminal_exec"
             | "github_api"
             | "github_file_commit"
+            | "github_work_write"
+            | "google_workspace_write"
             | "browser_control"
     )
 }
@@ -303,6 +335,10 @@ pub async fn execute(
         "github_file_read" => crate::engine::github_files::read(ctx.state,args).await,
         "github_file_commit" => crate::engine::github_files::commit(ctx.state,args).await,
         "github_api" => github_api(ctx, args).await,
+        "github_work_read" => crate::engine::github_workflow::execute(ctx.state,args,false).await,
+        "github_work_write" => crate::engine::github_workflow::execute(ctx.state,args,true).await,
+        "google_workspace_read" => crate::engine::google_workspace::execute(ctx.state,args,false).await,
+        "google_workspace_write" => crate::engine::google_workspace::execute(ctx.state,args,true).await,
         other => Err(format!("Unknown tool: {other}")),
     }
 }

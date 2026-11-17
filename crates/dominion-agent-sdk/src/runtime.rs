@@ -157,6 +157,7 @@ pub fn builtin_is_read_only(name:&str)->bool {
         "code_search" | "file_list" | "file_read" |
         "web_search" | "http_fetch" | "memory_search" |
         "task_status" | "task_result" | "account_status"
+        | "github_work_read" | "google_workspace_read"
     )
 }
 
@@ -182,13 +183,14 @@ mod tests {
         for name in [
             "workspace_list","workspace_read","workspace_read_range",
             "code_search","file_list","file_read","web_search","http_fetch",
-            "memory_search","task_status","task_result","account_status"
+            "memory_search","task_status","task_result","account_status",
+            "github_work_read","google_workspace_read"
         ] {
             assert!(builtin_is_read_only(name),"expected read-only: {name}");
         }
         for name in [
             "workspace_write","workspace_replace","shell_exec","terminal_exec",
-            "delegate_task","github_api","mcp__server__search",
+            "delegate_task","github_api","github_work_write","google_workspace_write","mcp__server__search",
             "unrecognized_tool",""
         ] {
             assert!(!builtin_is_read_only(name),"unknown/effectful: {name}");

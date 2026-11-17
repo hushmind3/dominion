@@ -32,6 +32,8 @@ pub mod verification;
 pub mod reflect;
 pub mod gateway;
 pub mod github_files;
+pub mod github_workflow;
+pub mod google_workspace;
 pub mod cli_model;
 pub mod improve;
 pub mod code_index;

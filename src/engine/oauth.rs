@@ -28,7 +28,7 @@ const PROVIDERS: &[Provider] = &[
         authorize: "https://accounts.google.com/o/oauth2/v2/auth",
         token: "https://oauth2.googleapis.com/token",
         user: "https://www.googleapis.com/oauth2/v3/userinfo",
-        scopes: "openid email profile",
+        scopes: "openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/calendar.events",
         extra: &[("access_type", "offline"), ("prompt", "consent")],
     },
     Provider {
@@ -80,6 +80,14 @@ pub fn status(state: &AppState) -> Vec<Value> {
                 "scopes": provider.scopes,
                 "scope": provider.scopes,
                 "grantedScopes": record.get("scopes"),
+                "workspaceReady": provider.id!="google" || [
+                    "https://www.googleapis.com/auth/gmail.readonly",
+                    "https://www.googleapis.com/auth/gmail.send",
+                    "https://www.googleapis.com/auth/drive",
+                    "https://www.googleapis.com/auth/documents",
+                    "https://www.googleapis.com/auth/calendar.events",
+                ].iter().all(|scope|record["scopes"].as_str().unwrap_or("")
+                    .split(|c:char|c.is_whitespace()||c==',').any(|s|s==*scope)),
             })
         })
         .collect()

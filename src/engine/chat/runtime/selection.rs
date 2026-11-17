@@ -88,7 +88,8 @@ pub(super) fn room_tool_request(input: &str) -> bool {
         "빌드", "테스트", "설치", "검색", "웹",
         "http", "url", "api", "코드", "버그", "도구", "계속", "이어", "마저",
         "결과", "가져와", "확인해", "진행해",
-        "스킬", "메모리", "브라우저", "깃허브", "github", "shell", "file", "read",
+        "스킬", "메모리", "브라우저", "깃허브", "github", "구글", "google", "지메일", "gmail",
+        "메일", "드라이브", "drive", "캘린더", "calendar", "일정", "docs", "shell", "file", "read",
         "write", "run", "search", "fetch", "install", "build", "test", "tool",
         "browser", "memory", "delegate", "task",
     ]
@@ -167,7 +168,11 @@ pub(super) fn select_room_tools(
             &["브라우저", "browser", "클릭", "click"],
             &["browser_control"],
         ),
-        (&["github", "깃허브"], &["github_api"]),
+        (&["github", "깃허브", "저장소", "브랜치", "PR", "이슈", "issue", "pull request"],
+            &["github_work_read","github_work_write","github_file_read","github_file_commit","github_api"]),
+        (&["구글","google","지메일","gmail","메일","이메일","드라이브","drive",
+            "캘린더","calendar","일정","docs","문서"],
+            &["google_workspace_read","google_workspace_write"]),
         (&["계정", "oauth", "account"], &["account_status"]),
     ];
     // Rank by index rather than cloning every (potentially large) JSON
