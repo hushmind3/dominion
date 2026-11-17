@@ -638,6 +638,21 @@ impl Store {
                 return Ok(FinalizeOutcome::AlreadyApplied);
             }
         }
+        // The owner may cancel while a worker is computing a final report.
+        // Check the durable status UNDER this same transaction/SQLite mutex,
+        // before inserting observations, counters or terminal markers. A
+        // stale finalizer must never resurrect a cancelled/interrupted run.
+        let stored_status: Option<String> = tx.query_row(
+            "SELECT json_extract(data,'$.status') FROM records
+             WHERE kind='execution' AND id=?1",
+            [execution_id], |row|row.get(0)
+        ).optional().map_err(|error|error.to_string())?;
+        if stored_status.as_deref().is_some_and(|current|
+            matches!(current,"cancelled"|"interrupted")
+                && execution["status"].as_str()!=Some(current)
+        ) {
+            return Ok(FinalizeOutcome::Conflict);
+        }
         upsert_tx(&tx, "execution", execution)?;
         for improvement in improvements {
             let id = improvement["id"]
@@ -1648,6 +1663,26 @@ mod tests {
             .is_none());
         assert_eq!(store.get("agent", "a").unwrap()["model"], "old");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn cancelled_or_interrupted_attempt_rejects_stale_finalization_atomically() {
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        for (id,status) in [("cancel-race","cancelled"),("restart-race","interrupted")] {
+            store.put("execution",&json!({"id":id,"status":status,
+                "reason":"owner terminal decision"})).unwrap();
+            let stale=json!({"id":id,"status":"completed","taskOutcome":"succeeded"});
+            let marker=json!({"id":format!("execution:{id}"),"payloadHash":"stale"});
+            let counters=json!({"id":format!("imp:{id}"),"uses":1});
+            assert_eq!(store.finalize_once(&stale,&marker,&[counters],&[]).unwrap(),
+                FinalizeOutcome::Conflict);
+            let current=store.get("execution",id).unwrap();
+            assert_eq!(current["status"],status);
+            assert_eq!(current["reason"],"owner terminal decision");
+            assert!(store.get("execution_finalization",
+                &format!("execution:{id}")).is_none());
+            assert!(store.get("improvement",&format!("imp:{id}")).is_none());
+        }
     }
 
     #[test]
