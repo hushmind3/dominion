@@ -419,8 +419,3 @@ fn measure_room_input_growth_across_three_turns() {
         );
     }
 }
-
-
-/// Minimal Codex Responses websocket: one chain per connection, exactly like
-/// the subscription backend. Records every `response.create` frame it receives
-/// so a test can inspect the incremental payload.

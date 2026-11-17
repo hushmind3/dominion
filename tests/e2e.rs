@@ -475,6 +475,9 @@ fn measure_estimate(text: &str) -> usize {
 /// Research measurement, not a behavioural guarantee: shows exactly what the
 /// harness sends per participant across three owner turns in a nine-person room.
 
+/// Minimal Codex Responses websocket: one chain per connection, exactly like
+/// the subscription backend. Records every `response.create` frame it receives
+/// so a test can inspect the incremental payload.
 fn scripted_websocket_provider() -> (u16, Arc<Mutex<Vec<Value>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
