@@ -157,7 +157,20 @@ fn google_parts(url:&Url,method:&Method)->Result<(Vec<String>,Value),String>{
         .map(percent_decode).collect::<Result<Vec<_>,_>>()?;
     let seg=path.iter().map(String::as_str).collect::<Vec<_>>();
     let mut pairs=serde_json::Map::new();
-    for (k,v) in url.query_pairs(){pairs.insert(k.to_string(),json!(v.as_ref()));}
+    for (k,v) in url.query_pairs(){
+        // Google CLI validates Discovery schemas: numeric and boolean
+        // params must not be sent as strings from the URL query.
+        let typed=match k.as_ref(){
+            "pageSize"=>v.parse::<u32>().map(|n|json!(n))
+                .map_err(|_|"잘못된 Drive pageSize")?,
+            "includeTabsContent"=>match v.as_ref(){
+                "true"=>json!(true),"false"=>json!(false),
+                _=>return Err("잘못된 Docs includeTabsContent".into()),
+            },
+            _=>json!(v.as_ref())
+        };
+        pairs.insert(k.to_string(),typed);
+    }
     let (command,params):(Vec<String>,Vec<(&str,String)>)=match (url.host_str(),seg.as_slice(),method.as_str()){
         (Some("www.googleapis.com"),["drive","v3","files"],"GET")=>
             (vec!["drive","files","list"].into_iter().map(str::to_owned).collect(),vec![]),
@@ -219,5 +232,11 @@ mod tests{
         let (cmd,params)=google_parts(&s,&Method::PUT).unwrap();
         assert_eq!(cmd,vec!["sheets","spreadsheets","values","update"]);
         assert_eq!(params["range"],"Sheet1!A1:B2");
+        let drive=Url::parse("https://www.googleapis.com/drive/v3/files?pageSize=50").unwrap();
+        let (_,params)=google_parts(&drive,&Method::GET).unwrap();
+        assert_eq!(params["pageSize"],50);
+        let docs=Url::parse("https://docs.googleapis.com/v1/documents/abc_123?includeTabsContent=true").unwrap();
+        let (_,params)=google_parts(&docs,&Method::GET).unwrap();
+        assert_eq!(params["includeTabsContent"],true);
     }
 }
