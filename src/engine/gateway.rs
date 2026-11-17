@@ -229,19 +229,27 @@ pub fn route_from_provider(
     })
 }
 
-/// Resolves an explicit provider, or the first enabled provider when the id is
-/// empty. This is the single entry point for non-chat model callers.
+/// Resolve an owner-pinned provider, or a stable enabled default when no
+/// provider was requested. Database updated_at has only second-level precision
+/// and must not silently change the selected model across platforms.
 pub fn resolve(
     state: &AppState,
     provider_id: &str,
     model_override: Option<&str>,
 ) -> Result<Route, String> {
     let provider = if provider_id.is_empty() {
-        state
-            .store
-            .all("provider")
-            .into_iter()
-            .find(provider_eligible)
+        let mut providers = state.store.all("provider").into_iter()
+            .filter(provider_eligible).collect::<Vec<_>>();
+        // Respect explicitly marked defaults, then select deterministically.
+        // Editing a provider or SQLite's tie order must not silently reroute
+        // an unpinned model call to a different (possibly paid) account.
+        let marked = |provider: &Value| {
+            provider["isDefault"].as_bool() == Some(true)
+                || provider["default"].as_bool() == Some(true)
+        };
+        providers.sort_by(|a,b| marked(b).cmp(&marked(a))
+            .then_with(|| a["id"].as_str().cmp(&b["id"].as_str())));
+        providers.into_iter().next()
     } else {
         state.store.get("provider", provider_id)
     }
@@ -640,6 +648,24 @@ mod tests {
         assert!(resolve(&state, "no-text", None).is_err());
     }
 
+    #[test]
+    fn default_selection_is_stable_and_respects_a_declared_default() {
+        let state = state();
+        for id in ["z-last", "a-first", "m-middle"] {
+            state.store.put("provider", &json!({
+                "id":id,"name":id,"baseUrl":format!("http://{id}/v1"),
+                "model":"m","enabled":true
+            })).unwrap();
+        }
+        assert_eq!(resolve(&state, "", None).unwrap().id, "a-first");
+        let mut marked=state.store.get("provider","z-last").unwrap();
+        marked["isDefault"]=json!(true);
+        state.store.put("provider",&marked).unwrap();
+        assert_eq!(resolve(&state, "", None).unwrap().id, "z-last");
+        marked["enabled"]=json!(false);
+        state.store.put("provider",&marked).unwrap();
+        assert_eq!(resolve(&state, "", None).unwrap().id, "a-first");
+    }
     #[test]
     fn capability_order_is_deterministic_and_declared_wins() {
         let state = state();
