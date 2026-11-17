@@ -14,17 +14,20 @@ pub struct JobContext {
     pub state: AppState,
     pub job_id: String,
     attempt: u64,
+    epoch: u64,
     events: Arc<Mutex<Vec<Value>>>,
 }
 
 impl JobContext {
     pub fn new(state: AppState, job_id: String) -> Self {
-        let attempt=state.store.get("job",&job_id)
-            .and_then(|row|row["attempts"].as_u64()).unwrap_or(0);
+        let job=state.store.get("job",&job_id).unwrap_or(Value::Null);
+        let attempt=job["attempts"].as_u64().unwrap_or(0);
+        let epoch=job["runEpoch"].as_u64().unwrap_or(0);
         Self {
             state,
             job_id,
             attempt,
+            epoch,
             events: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -60,7 +63,7 @@ impl JobContext {
     /// response after retry or cancellation cannot overwrite the new owner.
     pub fn checkpoint(&self, patch: Value) -> Result<(), String> {
         let saved=self.state.store.checkpoint_running_job(
-            &self.job_id,self.attempt,&patch,
+            &self.job_id,self.attempt,self.epoch,&patch,
         ).ok_or("작업이 종료·중단되었거나 다른 실행 시도로 교체되어 체크포인트를 거부했습니다.")?;
         self.state.bus.record("job",&saved);
         Ok(())
@@ -464,6 +467,7 @@ fn next_queued(state: &AppState) -> Option<Value> {
             &json!({
                 "status": "running", "startedAt": chrono::Utc::now().to_rfc3339(),
                 "attempts": job["attempts"].as_u64().unwrap_or(0) + 1,
+                "runEpoch": job["runEpoch"].as_u64().unwrap_or(0).saturating_add(1),
             }),
         )
     })
@@ -484,7 +488,9 @@ pub fn start_now(state: AppState, job_id: String) {
             &job_id,
             "status",
             &json!("queued"),
-            &json!({"status":"running","startedAt":chrono::Utc::now().to_rfc3339(),"attempts":job["attempts"].as_u64().unwrap_or(0)+1}),
+            &json!({"status":"running","startedAt":chrono::Utc::now().to_rfc3339(),
+                "attempts":job["attempts"].as_u64().unwrap_or(0)+1,
+                "runEpoch":job["runEpoch"].as_u64().unwrap_or(0).saturating_add(1)}),
         ) else {
             return;
         };
@@ -1062,6 +1068,26 @@ mod tests {
         assert_eq!(saved["progress"],"new");
         assert!(saved["result"].is_null());
         assert_eq!(saved["status"],"running");
+    }
+
+    #[test]
+    fn deferred_attempt_reused_count_still_rejects_stale_job_context(){
+        let state=temp_state();
+        let job=enqueue(&state,"prompt",json!({"prompt":"deferred"})).unwrap();
+        let id=job["id"].as_str().unwrap().to_string();
+        state.store.patch_if("job",&id,"status",&json!("queued"),
+            &json!({"status":"running","attempts":1,"runEpoch":1})).unwrap();
+        let original=JobContext::new(state.clone(),id.clone());
+        original.checkpoint(json!({"status":"queued","attempts":0,
+            "availableAt":"2026-11-17T00:00:00Z"})).unwrap();
+        let current=next_queued(&state).unwrap();
+        assert_eq!(current["attempts"],1);
+        assert_eq!(current["runEpoch"],2);
+        let replacement=JobContext::new(state.clone(),id.clone());
+        assert!(original.checkpoint(json!({"status":"completed","result":"stale"})).is_err());
+        replacement.checkpoint(json!({"status":"completed","result":"latest"})).unwrap();
+        let saved=state.store.get("job",&id).unwrap();
+        assert_eq!(saved["result"],"latest");
     }
 
     #[test]

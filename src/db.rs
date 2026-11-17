@@ -562,11 +562,12 @@ impl Store {
     /// write after cancellation or after the dispatcher requeues an attempt.
     /// Keeps the existing nested videoState merge for legacy record fidelity.
     pub fn checkpoint_running_job(
-        &self,id:&str,expected_attempt:u64,patch:&Value,
+        &self,id:&str,expected_attempt:u64,expected_epoch:u64,patch:&Value,
     )->Option<Value>{
         let changes=patch.as_object()?;
         if changes.contains_key("id")||changes.contains_key("cancelRequested")
-            ||changes.contains_key("kind")||changes.contains_key("input"){
+            ||changes.contains_key("kind")||changes.contains_key("input")
+            ||changes.contains_key("runEpoch"){
             return None;
         }
         // Only the native deferred-job path may release a running attempt
@@ -585,7 +586,8 @@ impl Store {
             [id],record_from_row,
         ).ok()?;
         if record["status"]!="running" || record["cancelRequested"]==true
-            || record["attempts"].as_u64().unwrap_or(0)!=expected_attempt{
+            || record["attempts"].as_u64().unwrap_or(0)!=expected_attempt
+            || record["runEpoch"].as_u64().unwrap_or(0)!=expected_epoch{
             return None;
         }
         for (key,value) in changes {
@@ -1683,23 +1685,23 @@ mod tests {
         let second=Store::open(&dir.join("dominion.sqlite")).unwrap();
         first.put("job",&json!({"id":"attempt-fence","status":"running",
             "attempts":1,"promptState":{"inFlight":true},"result":null})).unwrap();
-        assert!(first.checkpoint_running_job("attempt-fence",1,
+        assert!(first.checkpoint_running_job("attempt-fence",1,0,
             &json!({"promptState":{"inFlight":false},"progress":"old"})).is_some());
         second.patch_if("job","attempt-fence","status",&json!("running"),
             &json!({"status":"queued"})).unwrap();
         second.patch_if("job","attempt-fence","status",&json!("queued"),
             &json!({"status":"running","attempts":2})).unwrap();
-        assert!(first.checkpoint_running_job("attempt-fence",1,
+        assert!(first.checkpoint_running_job("attempt-fence",1,0,
             &json!({"status":"completed","result":"stale response"})).is_none());
-        assert!(first.checkpoint_running_job("attempt-fence",2,
+        assert!(first.checkpoint_running_job("attempt-fence",2,0,
             &json!({"status":"running","cancelRequested":false})).is_none());
-        assert!(first.checkpoint_running_job("attempt-fence",2,
+        assert!(first.checkpoint_running_job("attempt-fence",2,0,
             &json!({"attempts":0,"status":"completed"})).is_none());
-        assert!(second.checkpoint_running_job("attempt-fence",2,
+        assert!(second.checkpoint_running_job("attempt-fence",2,0,
             &json!({"progress":"new"})).is_some());
         first.patch_if("job","attempt-fence","status",&json!("running"),
             &json!({"status":"cancelled","cancelRequested":true})).unwrap();
-        assert!(second.checkpoint_running_job("attempt-fence",2,
+        assert!(second.checkpoint_running_job("attempt-fence",2,0,
             &json!({"status":"completed","result":"late success"})).is_none());
         let saved=first.get("job","attempt-fence").unwrap();
         assert_eq!(saved["status"],"cancelled");
@@ -1709,15 +1711,31 @@ mod tests {
     }
 
     #[test]
+    fn refunded_attempts_do_not_reauthorize_old_workers_from_prior_epochs(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        store.put("job",&json!({"id":"refunded",
+            "status":"running","attempts":1,"runEpoch":1})).unwrap();
+        assert!(store.checkpoint_running_job("refunded",1,1,
+            &json!({"status":"queued","attempts":0,"availableAt":"now"})).is_some());
+        store.patch_if("job","refunded","status",&json!("queued"),
+            &json!({"status":"running","attempts":1,"runEpoch":2})).unwrap();
+        assert!(store.checkpoint_running_job("refunded",1,1,
+            &json!({"status":"completed","result":"old attempt"})).is_none());
+        assert!(store.checkpoint_running_job("refunded",1,2,
+            &json!({"status":"completed","result":"new attempt"})).is_some());
+        assert_eq!(store.get("job","refunded").unwrap()["result"],"new attempt");
+    }
+
+    #[test]
     fn deferred_job_checkpoint_can_requeue_without_replaying_old_owner(){
         let store=Store::open(std::path::Path::new(":memory:")).unwrap();
         store.put("job",&json!({"id":"defer","status":"running","attempts":1})).unwrap();
-        let queued=store.checkpoint_running_job("defer",1,
+        let queued=store.checkpoint_running_job("defer",1,0,
             &json!({"status":"queued","attempts":0,"availableAt":"2026-11-18T00:00:00Z"}))
             .unwrap();
         assert_eq!(queued["status"],"queued");
         assert_eq!(queued["attempts"],0);
-        assert!(store.checkpoint_running_job("defer",1,
+        assert!(store.checkpoint_running_job("defer",1,0,
             &json!({"status":"completed"})).is_none());
         let new=store.patch_if("job","defer","status",&json!("queued"),
             &json!({"status":"running","attempts":1})).unwrap();

@@ -45,6 +45,7 @@ jobs:
           cargo test --lib db::tests::independent_sqlite_connections_cannot_claim_same_queued_job
           cargo test --lib db::tests::stale_attempt_checkpoint_cannot_mutate_new_attempt_or_cancelled_job
           cargo test --lib db::tests::deferred_job_checkpoint_can_requeue_without_replaying_old_owner
+          cargo test --lib db::tests::refunded_attempts_do_not_reauthorize_old_workers_from_prior_epochs
           cargo test --lib db::tests::audit_usage
           cargo test --lib db::tests::recovery
           cargo test --lib api::money::implement::tests

@@ -17,3 +17,8 @@
 - Focused Rust debug-profile regression tests for independent Store instances, stale worker after requeue, cancellation race, and deferred admission; no cargo build/check or frontend build.
 - The full engine can still persist certain chat messages through session-owned paths independently from the job transaction. A later change should fence these as well before claiming atomic job+message terminality.
 - Model time, token/cost, and real-task completion rate are not empirically measured by this source-level correctness patch.
+
+## Deferral/retry epoch correction
+- A deferred job intentionally refunds `attempts`, so an attempt counter can repeat (1→0→1). The latest claim now increments separate `runEpoch` monotonically (both dispatcher `next_queued` and delegated `start_now`).
+- `JobContext` snapshots both values, and SQLite compares both inside the same immediate transaction. Existing job records without `runEpoch` default to 0 for backward compatibility.
+- Focused Rust tests prove an old context cannot finish a newly resumed worker even when `attempts` is identical.
