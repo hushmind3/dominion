@@ -27,6 +27,7 @@ fn witness_identity(a:&Value,b:&Value)->bool{
  // Workspaces may be independently cloned. Their path is not identity;
  // the captured CONTENTS on the declared acceptance surface are.
  a["entries"]==b["entries"] && a["directVerdicts"]==b["directVerdicts"]
+  &&a["criteriaDigest"]==b["criteriaDigest"]
 }
 fn witness_changes(before:&Value,after:&Value)->Vec<String>{
  let Some(entries)=before["entries"].as_object() else{return vec![]};
@@ -38,6 +39,9 @@ fn direct_verdicts_agree(job:&Value,snapshot:&Snapshot)->bool{
  let Some(after)=evidence(job,"nativeEvidenceFinal") else{return false};
  let Some(verdicts)=after["directVerdicts"].as_array() else{return false};
  if verdicts.len()!=snapshot.checks.len(){return false;}
+ let expected_criteria=snapshot.checks.iter()
+  .map(|check|&check.criterion).collect::<Vec<_>>();
+ if after["criteriaDigest"]!=digest(&json!(expected_criteria)){return false;}
  // null denotes a criterion that this file-state witness cannot check.
  // For FileContains, the kernel's own verification is retained, but a
  // post-execution SHA alone cannot prove its string predicate.
@@ -162,8 +166,7 @@ fn chain_from_divergence(
  if prefix["prefixComparable"]!=true {
   return json!({"traceDifference":first,"prefixEvidence":prefix,
    "mechanism":"pre_intervention_observation_drift",
-   "actionToArtifactLinks":[],"prefixEvidence":prefix,
-   "counterfactualExecuted":false});
+   "actionToArtifactLinks":[],"counterfactualExecuted":false});
  }
  let Some(at)=first["ordinal"].as_u64().map(|v|v as usize) else{
   return json!({"traceDifference":first,
@@ -256,7 +259,7 @@ pub fn adjudicate(
  for id in candidate_ids {
   let candidate=state.store.get("job",id)
    .ok_or_else(||format!("Candidate job not found: {id}"))?;
-  native_replay::same_work(&base_job,&candidate)?;
+  let shape_error=native_replay::same_work(&base_job,&candidate).err();
   let snap=native_replay::snapshot(&candidate)?;
   let trace=native_replay::report(state,id)?;
   let run_actions=actions(&snap)?;
@@ -273,7 +276,7 @@ pub fn adjudicate(
   let mechanism=chain_from_divergence(
    &base_actions,&run_actions,&snap,&changed,&prefix,
   );
-  let matched=unmatched.is_empty()&&same_initial
+  let matched=shape_error.is_none()&&unmatched.is_empty()&&same_initial
    &&prefix["prefixComparable"]==true
    &&base_proof["hostLineageConsistent"]==true
    &&candidate_proof["hostLineageConsistent"]==true
@@ -282,7 +285,8 @@ pub fn adjudicate(
   if matched{comparables+=1;}
   candidates.push(json!({
    "runId":id,"matchedExperiment":matched,
-   "unmatchedSettings":unmatched,"initialAcceptanceStateEqual":same_initial,
+   "unmatchedSettings":unmatched,"taskShapeMismatch":shape_error,
+   "initialAcceptanceStateEqual":same_initial,
    "outcome":candidate_proof,"mechanism":mechanism,
    "comparison":if !matched{"confounded_or_unsealed"}
     else if candidate_proof["kernelAcceptancePassed"]==true
@@ -352,10 +356,10 @@ mod tests {
  }
  #[test]
  fn identical_initial_acceptance_state_is_required() {
-  let a=json!({"entries":{"x":{"state":"file","sha256":"aa"}},"directVerdicts":[false]});
-  let b=json!({"entries":{"x":{"state":"file","sha256":"bb"}},"directVerdicts":[false]});
+  let a=json!({"entries":{"x":{"state":"file","sha256":"aa"}},"directVerdicts":[false],"criteriaDigest":"c"});
+  let b=json!({"entries":{"x":{"state":"file","sha256":"bb"}},"directVerdicts":[false],"criteriaDigest":"c"});
   assert!(!witness_identity(&a,&b));
-  let c=json!({"entries":{"x":{"state":"file","sha256":"aa"}},"directVerdicts":[false]});
+  let c=json!({"entries":{"x":{"state":"file","sha256":"aa"}},"directVerdicts":[false],"criteriaDigest":"c"});
   assert!(witness_identity(&a,&c));
  }
  #[test]
@@ -370,8 +374,10 @@ mod tests {
     dominion_sdk::harness::CriterionKind::FileExists,
     path:Some("out".into()),contains:None,tool:None},
    satisfied:true,explanation:"accepted".into()});
+  let expected=vec![&snap.checks[0].criterion];
   let job=json!({"nativeEvidenceFinal":{"complete":true,
-   "entries":{"out":{"state":"missing"}},"directVerdicts":[false]}});
+   "entries":{"out":{"state":"missing"}},"directVerdicts":[false],
+   "criteriaDigest":digest(&json!(expected))}});
   assert!(!direct_verdicts_agree(&job,&snap));
  }
  #[test]
