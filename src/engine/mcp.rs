@@ -4,6 +4,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool,Ordering};
 use tokio::sync::Mutex as AsyncMutex;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -37,7 +38,9 @@ fn cache() -> &'static Cache {
 pub fn invalidate() {
     cache().lock().unwrap().clear();
     // Config or credential changes must never keep a pooled session alive.
-    http_sessions().lock().unwrap().clear();
+    let mut pool=http_sessions().lock().unwrap();
+    for entry in pool.values(){entry.healthy.store(false,Ordering::SeqCst);}
+    pool.clear();
 }
 
 fn slug(value: &str) -> String {
@@ -375,7 +378,7 @@ impl StdioSession {
 const HTTP_IDLE_TTL:Duration=Duration::from_secs(120);
 const MAX_HTTP_SESSIONS:usize=16;
 type HttpHandle=Arc<AsyncMutex<Option<HttpSession>>>;
-struct HttpEntry{last_used:Instant,handle:HttpHandle}
+struct HttpEntry{last_used:Instant,handle:HttpHandle,healthy:Arc<AtomicBool>}
 type HttpPool=Mutex<HashMap<String,HttpEntry>>;
 fn http_sessions()->&'static HttpPool{
     static POOL:OnceLock<HttpPool>=OnceLock::new();
@@ -396,10 +399,13 @@ fn http_identity(state:&AppState,record:&Value)->Result<(String,Option<String>),
 /// If a future is aborted while an external tool is in-flight, do not lend
 /// its session to another call. Unknown external effects are never replayed
 /// automatically: a later request must establish a fresh connection.
-struct HttpLease{key:String,handle:HttpHandle,valid:bool}
+struct HttpLease{key:String,handle:HttpHandle,healthy:Arc<AtomicBool>,valid:bool}
 impl Drop for HttpLease{
     fn drop(&mut self){
         if self.valid{return;}
+        // Poison the Arc as well as evicting its map entry: another already
+        // waiting caller must never reuse a session after a cancelled tool.
+        self.healthy.store(false,Ordering::SeqCst);
         let mut pool=http_sessions().lock().unwrap();
         if pool.get(&self.key).is_some_and(|entry|
             Arc::ptr_eq(&entry.handle,&self.handle)){
@@ -410,31 +416,47 @@ impl Drop for HttpLease{
 async fn http_request(state:&AppState,record:&Value,method:&str,params:Value)
     ->Result<Value,String>{
     let (key,token)=http_identity(state,record)?;
-    let handle={
+    let (handle,healthy)={
         let mut pool=http_sessions().lock().unwrap();
-        pool.retain(|_,entry|entry.last_used.elapsed()<HTTP_IDLE_TTL);
+        pool.retain(|_,entry|{
+            let expired=entry.last_used.elapsed()>=HTTP_IDLE_TTL
+                && Arc::strong_count(&entry.handle)==1;
+            if expired {entry.healthy.store(false,Ordering::SeqCst);}
+            !expired
+        });
         if let Some(entry)=pool.get_mut(&key){
             entry.last_used=Instant::now();
-            entry.handle.clone()
+            (entry.handle.clone(),entry.healthy.clone())
         }else{
+            // Never evict an active session to make space for another.
             if pool.len()>=MAX_HTTP_SESSIONS{
-                if let Some(oldest)=pool.iter()
+                let oldest=pool.iter()
+                    .filter(|(_,entry)|Arc::strong_count(&entry.handle)==1)
                     .min_by_key(|(_,entry)|entry.last_used)
-                    .map(|(key,_)|key.clone()){
-                    pool.remove(&oldest);
+                    .map(|(key,_)|key.clone());
+                let oldest=oldest.ok_or("MCP HTTP 동시 세션 한도(16)에 도달했습니다.")?;
+                if let Some(entry)=pool.remove(&oldest){
+                    entry.healthy.store(false,Ordering::SeqCst);
                 }
             }
             let handle=Arc::new(AsyncMutex::new(None));
+            let healthy=Arc::new(AtomicBool::new(true));
             pool.insert(key.clone(),HttpEntry{
-                last_used:Instant::now(),handle:handle.clone()
+                last_used:Instant::now(),handle:handle.clone(),
+                healthy:healthy.clone()
             });
-            handle
+            (handle,healthy)
         }
     };
     // Inner mutex serializes only requests to this server+credential session;
     // independent servers can work in parallel.
-    let mut lease=HttpLease{key,handle:handle.clone(),valid:false};
+    let mut lease=HttpLease{
+        key,handle:handle.clone(),healthy:healthy.clone(),valid:false
+    };
     let mut slot=handle.lock().await;
+    if !healthy.load(Ordering::SeqCst){
+        return Err("이 MCP 세션은 취소되거나 인증이 변경됐습니다. 새로운 작업으로 다시 조회하세요.".into());
+    }
     if slot.is_none(){
         *slot=Some(HttpSession::open(record,token).await?);
     }
@@ -619,12 +641,17 @@ mod tests {
         // Simulate an abandoned tool call: its pool lease must be evicted.
         let key=changed.clone();
         let handle=Arc::new(AsyncMutex::new(None));
+        let healthy=Arc::new(AtomicBool::new(true));
         http_sessions().lock().unwrap().insert(key.clone(),HttpEntry{
-            last_used:Instant::now(),handle:handle.clone()
+            last_used:Instant::now(),handle:handle.clone(),
+            healthy:healthy.clone(),
         });
         {
-            let _unfinished=HttpLease{key:key.clone(),handle,valid:false};
+            let _unfinished=HttpLease{
+                key:key.clone(),handle,healthy:healthy.clone(),valid:false
+            };
         }
+        assert!(!healthy.load(Ordering::SeqCst));
         assert!(!http_sessions().lock().unwrap().contains_key(&key));
     }
     #[test]
