@@ -19,6 +19,53 @@ New failure path:
 
 Important correctness repair: previous code re-used refuted hypothesis IDs from **unrelated** adaptation proposals in the same execution. A generated `h1` is not a globally stable semantic identity. This change scopes refutations to the actual current proposal, preventing accidental contamination.
 
+## 2026 Causal repair admission: Dominion-specific extension
+
+Compared to the earlier diagnostic probes, the repair runtime now binds
+proposed state-changing interventions to real failure receipts and a bounded
+provenance slice. This is not another model-selected strategy name.
+
+- Indexed per-run trace retrieval (db.rs::recent_execution_operations):
+  select at most 64 operations from the current execution using the existing
+  idx_operation_run partial index; unrelated session operations stay out.
+- Evidence graph (adaptation/trace_ir.rs): reconstruct observed version sources,
+  explicit upstream operation IDs, shared resource transitions and program
+  node history. Produce an at-most-18-node backward slice and up to 36 typed
+  edges, anchored to the exact failed call ID. Never resend historical raw
+  tool content, access tokens or resource names in the compact graph.
+- Evidence-ID contract: a model-proposed hypothesis or intervention may cite
+  only real graph IDs or the direct current failure observation. Invalid
+  citations cause the existing single model repair opportunity. Referencing
+  a receipt is evidence of provenance, not proof of a causal explanation.
+- Repair admission certificate: refuted hypotheses, invented receipt IDs,
+  denied approvals and unresolved external effects cannot justify a new
+  state-changing intervention. A proposed mutation with no matching failure
+  receipt is not admitted. Each accepted action records an explicit causal
+  eligibility certificate, and the existing gateway still owns permission.
+- No new runner: the existing dispatch_tool_call performs approval,
+  cancellation, budget, effect admission and durable execution_operation
+  receipts. The adaptation and experience DB schema remains unchanged.
+- Native outcome trail: record_adaptation persists the bounded graph and
+  certificate into the current execution record/checkpoint, not a shadow log.
+
+Research contrast: 2026 HarnessFix converts heterogeneous traces to an
+intermediate representation for offline harness repair. Dominion uses its
+own live SQLite receipt and effect contract to construct and enforce an
+action-admission boundary inside an already-budgeted repair step. This
+does not import HarnessFix Python, and it does not implement or claim
+PRISM's offline genetic-Pareto / held-out optimization engine.
+
+Sources reviewed:
+- HarnessFix 2026 paper: https://arxiv.org/abs/2606.06324
+- Executable HTIR reference: https://github.com/HarnessFix/HarnessFix/blob/main/failure_analysis/htir.py
+- PRISM proposer: https://github.com/airbnb/agent-harness-optimizer/blob/main/agent_harness_optimizer/optimizers/prism/proposer.py
+
+Additional regression tests cover exact-call attribution, backward
+version/resource and input-provenance edges, fabricated citation rejection,
+unresolved effect denial, missing native receipt denial, sensitive-data
+redaction, and indexed run-scoped bounded queries. The Rust tests were
+written; a passing compile or test run has not been established here.
+
 ## Scope and failure behavior
 
 - If a provider proposes no probes, existing adaptation behavior is preserved.
