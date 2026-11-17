@@ -445,7 +445,20 @@ pub(crate) fn finalize_execution(
     record["contextElapsedMs"] = json!(counters.context_elapsed_ms);
     record["finishedAt"] = json!(chrono::Utc::now().to_rfc3339());
     let final_phase = |status: &str| crate::engine::run_state::phase_for_status(status);
+    // A provider timeout or transport error may arrive after the owner has
+    // cancelled. Cancellation is a durable lifecycle decision, not a string
+    // heuristic on the last error. Never downgrade it to Failed or Completed.
+    let owner_cancelled = record["status"] == "cancelled"
+        || record["phase"] == "cancelled"
+        || record["sessionId"].as_str()
+            .is_some_and(|session| state.is_cancelled(session));
     match result {
+        _ if owner_cancelled => {
+            record["status"] = json!("cancelled");
+            if record["reason"].is_null() {
+                record["reason"] = json!("사용자 요청으로 실행이 중단되었습니다.");
+            }
+        }
         Ok(_) => record["status"] = json!("completed"),
         Err(message) if message.contains("중단") => {
             record["status"] = json!("cancelled");
@@ -549,7 +562,9 @@ pub(crate) fn finalize_execution(
                 "execution.finalization_update_failed",
                 json!({"executionId": execution_id, "error": error}),
             );
-            if let Some(saved) = state.store.put("execution", &record) {
+            if let Some(saved) = state.store.patch_if(
+                "execution", execution_id, "status", &json!("running"), &record
+            ) {
                 state.bus.record("execution", &saved);
             }
             return;
@@ -643,19 +658,28 @@ pub(crate) fn finalize_execution(
                 "execution.finalization_conflict",
                 json!({"executionId": execution_id}),
             );
-            record["finalizationConflict"] = json!(true);
-            if let Some(saved) = state.store.put("execution", &record) {
+            // Do not overwrite a terminal status with the stale snapshot.
+            // No success observation or learning may follow this conflict.
+            if let Some(saved) = state.store.patch_if(
+                "execution", execution_id, "status", &record["status"],
+                &json!({"finalizationConflict":true})
+            ) {
                 state.bus.record("execution", &saved);
             }
+            return;
         }
         Err(error) => {
             state.store.audit(
                 "execution.finalization_failed",
                 json!({"executionId": execution_id, "error": error}),
             );
-            if let Some(saved) = state.store.put("execution", &record) {
+            if let Some(saved) = state.store.patch_if(
+                "execution", execution_id, "status", &record["status"],
+                &json!({"finalizationFailed":true})
+            ) {
                 state.bus.record("execution", &saved);
             }
+            return;
         }
     }
 
