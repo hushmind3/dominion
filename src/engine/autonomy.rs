@@ -274,6 +274,8 @@ pub async fn execute(
             "toolSuccess":stats.tool_success,
             "toolErrors":stats.tool_errors,
             "evidenceCount":stats.evidence.len(),
+            "failureClass":crate::engine::agent_kernel::failure::classify(
+                &gaps,latest_error.as_deref()).label(),
             "usage":measured_usage,
             "tokenUsage":{"used":consumed_tokens,"limit":input["tokenBudget"]},
             "gaps":gaps.iter().take(8).map(|g|narrow(g,400)).collect::<Vec<_>>(),
