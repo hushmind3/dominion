@@ -396,6 +396,7 @@ mod tests {
             ("opaque_vendor_tool", json!({}), "completed"),
             ("github_api", json!({"method":"POST","path":"/repos/o/r/issues"}), "failed"),
         ];
+        let case_count = cases.len();
         for (index, (tool, arguments, status)) in cases.into_iter().enumerate() {
             let id = format!("unsafe-{index}");
             interrupted(&state, &id);
@@ -408,7 +409,7 @@ mod tests {
             }));
         }
         let created = recover(&state);
-        assert_eq!(created.len(), cases.len());
+        assert_eq!(created.len(), case_count);
         assert!(created.iter().all(|item| item["decision"] == "needs_review"), "{created:?}");
         assert!(created.iter().all(|item| item["jobId"].is_null()));
         assert_eq!(state.store.count("job"), 0, "unsafe call was automatically replayed");
@@ -425,6 +426,7 @@ mod tests {
             ("mcp__github__list_issues", json!({})),
             ("github_api", json!({"method":"GET","path":"/repos/o/r"})),
         ];
+        let case_count = cases.len();
         for (index, (tool, arguments)) in cases.into_iter().enumerate() {
             let id = format!("observation-{index}");
             interrupted(&state, &id);
@@ -438,9 +440,9 @@ mod tests {
             }));
         }
         let created = recover(&state);
-        assert_eq!(created.len(), cases.len());
+        assert_eq!(created.len(), case_count);
         assert!(created.iter().all(|item| item["decision"] == "queued"), "{created:?}");
-        assert_eq!(state.store.count("job"), cases.len());
+        assert_eq!(state.store.count("job"), case_count);
         let _ = std::fs::remove_dir_all(dir);
     }
 
