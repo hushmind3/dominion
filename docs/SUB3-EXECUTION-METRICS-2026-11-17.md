@@ -79,3 +79,28 @@ The improvement targets replay evidence integrity, not a new measured benchmark 
 `crates/dominion-agent-sdk/src/failure_guidance.rs` now distinguishes **source mutated after a failed check** from **the same check succeeding**. An edit leaves the original receipt visible as `source_changed_recheck_pending` and points the model to the kernel-owned acceptance pass; an exact successful repeat of the same tool and arguments clears the hint, while unrelated tool successes do not. This preserves error evidence without blindly repeating an unchanged failing check.
 
 Commit: `21616fea` on `dominion-sub3` only. Added deterministic test cases, not executed here (Rust unavailable). Scoped verification: `cargo test -p dominion-agent-sdk failure_guidance::tests::`, followed by relevant SDK acceptance tests. The fix is a source-level lifecycle correction, not evidence of improved real-model completion.
+
+
+## 2026-11-18: evidence-driven Program IR repair and adaptation (branch-only)
+
+This is **not** another SDK optimizer or candidate-armed success counter. It corrects existing production call paths:
+
+- `src/engine/program.rs`: validate every nested program node once with total-tree/depth bounds; apply real nested pending-node replacements; reject unknown/no-op revisions, in-flight effects, completed ancestors/loop-scoped operations, unauthorized nested tools and forward/parallel observation dependencies. `evaluate_verification_checks` reuses the existing three-valued predicate kernel.
+- `src/engine/chat/runtime/program.rs`: a failed `verify` returns a real repair failure instead of being marked completed; an Unknown pauses without executing later nodes. Nested branch/sequence/loop failures propagate; concurrent parallel child failures settle without falsely completing their parent. A mutation increments a durable epoch and invalidates prior verification. Concurrent mutation plus verification is treated as stale until rechecked after the join. Revision admission is no longer credited as repair success; terminal, epoch-fresh predicate evidence is required for positive repair credit.
+- `src/engine/adaptation_loop.rs`: score intervention discrimination only where conflicting live hypotheses predict different values on an *observed* field named by an executable expected check. Read-only diagnosis is preferred when causes are unresolved; a model-supplied historical-effect float without observed citations earns no bonus. Candidate results are independently classified as verified, failed or unrated using the selected action's host-observed before/after state, not only tool return status.
+- `src/engine/chat/runtime/adaptation.rs`: actually capture the selected tool's filesystem before/after metadata through the existing host observation function; store the classification in the existing execution/adaptation checkpoint, and send it to the algorithm evidence path.
+- `.github/workflows/sub3-product-acceptance.yml`: add development-profile Rust regression filters for these modules; no release/CI run was triggered by these `[skip ci]` source commits.
+
+**Regression cases added:** missing/failed/passing predicates; nested branch replacement; completed ancestor and loop-scoped effect fencing; unknown revision targets; in-flight execution fencing; unauthorized nested tools; parallel forward dependency; nested budget evasion; parallel freshness; no positive credit for a bare success echo; and diagnostic prediction agreement/disagreement.
+
+Targeted Rust commands for a Rust-enabled **macOS** developer/CI environment:
+
+```bash
+cargo test --bin dominion-rust engine::program::tests
+cargo test --bin dominion-rust engine::adaptation_loop::selection_tests
+cargo test --bin dominion-rust engine::chat::runtime::program::evidence_join_tests
+```
+
+**Verification provenance:** Source written and read through the connected GitHub repository on `dominion-sub3`. This editor has no `cargo`/`rustc`, so the above Rust tests have **not** been executed here. No real-model improvement, cost reduction, run completion, or pass-rate increase is claimed. The independent grader should check the exact branch HEAD and run the listed filters. The SDK's native job loop and chat's Program IR are still separate orchestration paths; this patch improves the actual chat path without claiming full engine unification.
+
+**2026 implementation references inspected:** Google `google-research/harness2` (`harness2/core/recursion.py`, `selection.py`, and workflow tests), `google-research/veriharness` (isolated evidence-backed verification); Airbnb `agent-harness-optimizer` (`optimizers/prism/loop.py`, `types.py`); DeepSeek `deepseek-harness` (`tool-executor-ptc/src/ptc.ts`, `ptc-calls.ts`). These are architecture comparisons; no claim of their full recursive optimizer, isolated multi-rollout harness or sandbox being replicated.
