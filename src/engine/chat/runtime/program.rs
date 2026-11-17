@@ -712,9 +712,9 @@ pub(super) fn execute_nodes<'a>(
                             paused: true, failure: None,
                         });
                     }
-                    crate::engine::algorithms::mark_signal(
-                        ctx.state, ctx.execution_id, "verification.predicate", true,
-                    );
+                    // An in-loop pass is not a final quality signal: a later
+                    // mutation can invalidate it. Credit is given only at
+                    // terminal settlement with the same mutation epoch.
                     checkpoint["staleVerification"] = json!(false);
                     checkpoint["verificationEpoch"] = checkpoint["mutationEpoch"].clone();
                     mark_program_completed(&mut checkpoint, node_id);
@@ -1138,12 +1138,20 @@ pub(super) async fn run_program(
     }
     checkpoint["nextIndex"] = json!(node_count);
     checkpoint["status"] = json!("completed");
+    let fresh_verification = checkpoint["resolvedInputs"]["lastVerify"]["ok"] == true
+        && checkpoint["verificationEpoch"].as_u64().is_some()
+        && checkpoint["verificationEpoch"].as_u64()
+            == checkpoint["mutationEpoch"].as_u64();
+    if fresh_verification {
+        crate::engine::algorithms::mark_signal(
+            state, execution_id, "verification.predicate", true,
+        );
+    }
     if had_revision {
         // Program completion and owner acceptance are different facts. Only a
         // predicate check that actually ran and passed is positive evidence
         // for the repair algorithm; unchecked repairs remain unrated.
-        let verified = checkpoint["resolvedInputs"]["lastVerify"]["ok"] == true;
-        if verified {
+        if fresh_verification {
             crate::engine::algorithms::mark_signal(
                 state, execution_id, "program.repair", true,
             );
