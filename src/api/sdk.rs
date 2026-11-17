@@ -74,6 +74,14 @@ fn finish_with_evidence(record:&mut Value,message:&Value,run:Option<&Value>){
     }
 }
 
+/// If the native completion evidence cannot be read, never permit a
+/// blind resume that might duplicate already-applied model/tool effects.
+fn require_manual_evidence_review(record:&mut Value){
+    record["status"]=json!("needs_review");
+    record["verified"]=json!(false);
+    record["failureClass"]=json!("completion_evidence_unavailable");
+    record["error"]=json!("완료 증거 조회에 실패했습니다. 실행 기록을 확인하세요.");
+}
 fn execution(state:&AppState,record:&Value)->Result<Option<Value>,String>{
     let Some(session)=record["sessionId"].as_str()else{return Ok(None)};
     state.store.sdk_latest_execution(session)
@@ -368,9 +376,7 @@ pub(crate) fn launch(state:AppState,record:Value,resume:bool){
                     Err(error)=>{
                         state.store.audit("sdk.completion_evidence_read_failed",
                             json!({"sdkRunId":id,"error":error}));
-                        finalized["status"]=json!("interrupted");
-                        finalized["verified"]=json!(false);
-                        finalized["error"]=json!("완료 증거 조회에 실패했습니다. 실행 기록을 확인하세요.");
+                        require_manual_evidence_review(&mut finalized);
                     }
                 }
             },
@@ -591,6 +597,16 @@ mod view_tests{
             id:"1".into()})).is_err());
         assert!(source_metadata(Some(&SourceRef{kind:"money".into(),
             id:"a".repeat(201)})).is_err());
+    }
+    #[test]
+    fn unavailable_completion_evidence_never_grants_success_or_blind_resume(){
+        let mut run=json!({"id":"sdk1","status":"running","verified":true});
+        require_manual_evidence_review(&mut run);
+        assert_eq!(run["status"],"needs_review");
+        assert_eq!(run["verified"],false);
+        assert_eq!(run["failureClass"],"completion_evidence_unavailable");
+        assert!(!matches!(run["status"].as_str(),Some("failed"|"interrupted")),
+            "owner must inspect unknown effects before any replay");
     }
     #[test]
     fn sdk_execution_and_frame_lookups_are_scoped_to_the_requested_run(){
