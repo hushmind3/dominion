@@ -31,6 +31,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: npm ci --prefix web
       - run: npm run typecheck --prefix web
+      - run: npm run test:refresh --prefix web
       - run: node web/node_modules/typescript/bin/tsc -p packages/sdk-typescript/tsconfig.json --noEmit
       - run: npm run build --prefix web
       - run: node scripts/check-runtime-architecture.mjs

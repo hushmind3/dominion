@@ -54,16 +54,7 @@ pub async fn benchmark_identity(State(state): State<AppState>) -> Json<Value> {
 }
 
 pub async fn status(State(state): State<AppState>) -> Json<Value> {
-    let jobs = state.store.all("job");
-    let running = jobs
-        .iter()
-        .filter(|job| {
-            matches!(
-                job.get("status").and_then(|value| value.as_str()),
-                Some("queued") | Some("running")
-            )
-        })
-        .count();
+    let running=state.store.active_job_count().unwrap_or(0);
     Json(json!({
         "version": env!("CARGO_PKG_VERSION"),
         "runtime": "rust",

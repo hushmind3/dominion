@@ -74,7 +74,14 @@ export function useRemote<T>(endpoint: string | null, initial: T, refreshOnEvent
  }
  return {value: visible.value, loading: visible.loading, error: visible.error, setValue, reload}
 }
-export const refresh=()=>window.dispatchEvent(new Event('dominion-refresh'))
+/** Manual refreshes may name the touched API routes; no arguments preserves
+ * the legacy full refresh button behavior. */
+export const refresh=(...targets:string[])=>{
+ if(!targets.length){window.dispatchEvent(new Event('dominion-refresh'));return}
+ window.dispatchEvent(new CustomEvent<RefreshScope>('dominion-data-change',{
+  detail:{targets,sessions:[],rooms:[]}
+ }))
+}
 export function Notice({message}:{message:string}){return message?<div role="alert" className="my-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-700">{message}</div>:null}
 export function InfoRow({label,value}:{label:string;value:React.ReactNode}){return <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#EFE9DF] py-2 text-[12px]"><span className="text-[#7C7469]">{label}</span><strong className="font-semibold">{value}</strong></div>}
 export function Loading(){return <span className="inline-flex items-center gap-2 text-[12px] text-[#7C7469]"><LoaderCircle size={14} className="animate-spin"/> {t('common.processing')}</span>}

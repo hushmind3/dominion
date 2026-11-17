@@ -286,7 +286,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     toolsEnabled,toolsExecutionEnabled:toolsEnabled,autoLearning:autoLearn,
     reasoningLanguage:reasoningKo?'ko':'original',reasoningEffort:reasoningEffort||undefined,thinking:selectedProvider?.kind==='codex'?(reasoningEffort==='none'?false:canDisableThinking?thinkingEnabled:undefined):thinkingEnabled,
    },event=>{
-    if(event.type==='assistant_saved'){saved=true;setSavedMessageId(event.messageId);refresh();}
+    if(event.type==='assistant_saved'){saved=true;setSavedMessageId(event.messageId);refresh('/api/sessions',...(id?['/api/sessions/'+encodeURIComponent(id)+'/messages']:[]));}
     if(event.type==='text')setLive(old=>old+event.text);
     if(event.type==='reasoning')setThought(old=>old+event.text);
     if(event.type==='approval'){setLiveApproval({id:event.id,tool:event.tool,args:event.args,sessionId:id!,status:'pending'});void approvals.reload();}
@@ -301,7 +301,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   }finally{
    stream.current=null;
    if(!controller.signal.aborted){
-    refresh();
+    refresh('/api/sessions',...(id?['/api/sessions/'+encodeURIComponent(id)+'/messages']:[]));
     setBusy(false);setLiveApproval(null);setToolStatus('');
     if(!saved){setLive('');setThought('');}
    }

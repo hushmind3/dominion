@@ -239,6 +239,19 @@ impl Store {
     }
 
     /// Only current work reaches dispatch; historical payloads stay in SQLite.
+    /// UI status polling counts live jobs through the indexed status column,
+    /// without repeatedly parsing years of historical job JSON.
+    pub fn active_job_count(&self) -> Result<usize, String> {
+        let conn=self.conn.lock().map_err(|error|error.to_string())?;
+        let count=conn.query_row(
+            "SELECT COUNT(*) FROM records
+             WHERE kind='job'
+               AND json_extract(data,'$.status') IN ('queued','running')",
+            [],|row|row.get::<_,i64>(0)
+        ).map_err(|error|error.to_string())?;
+        Ok(count.max(0) as usize)
+    }
+
     pub fn active_jobs(&self) -> Result<Vec<Value>, String> {
         let conn=self.conn.lock().map_err(|e|e.to_string())?;
         let mut stmt=conn.prepare("SELECT data,id,created_at,updated_at FROM records
@@ -1398,6 +1411,8 @@ mod tests {
         store.conn.lock().unwrap().execute("INSERT INTO records(kind,id,data) VALUES('legacy','opaque','not json')",[]).unwrap();
         let active=store.active_jobs().unwrap();
         assert_eq!(active.iter().map(|v|v["id"].as_str().unwrap()).collect::<Vec<_>>(),["j010","j020","j030"]);
+        assert_eq!(store.active_job_count().unwrap(),3,
+            "status polling must exclude historical completed jobs");
         let conn=store.conn.lock().unwrap();
         let plan:String=conn.query_row("EXPLAIN QUERY PLAN SELECT data FROM records WHERE kind='job' AND json_extract(data,'$.status') IN ('queued','running')",[],|r|r.get(3)).unwrap();
         assert!(plan.contains("idx_job_active_status"),"{plan}");
