@@ -167,7 +167,7 @@ pub(super) fn record_adaptation_error(state: &AppState, execution_id: &str, erro
 
 pub(super) fn adaptation_repair_prompt(original: &str, raw: &str, error: &str) -> String {
     format!(
-        "{original}\n\nYour previous response was rejected: {error}.\nPrevious response excerpt:\n{}\nReturn ONLY one JSON object with non-empty \"hypotheses\" and \"interventions\" arrays. Do not write prose or markdown. Each intervention needs id, hypothesisIds (array), tool, inputs (object), expectedChecks (array) and estimatedCost (number).",
+        "{original}\n\nYour previous response was rejected: {error}.\nPrevious response excerpt:\n{}\nReturn ONLY one JSON object with non-empty \"hypotheses\" and \"interventions\" arrays. Do not write prose or markdown. Each intervention needs id, hypothesisIds (array), tool, inputs (object), expectedChecks (array), estimatedCost (number). Every mutating/shell intervention MUST contain evidenceIds (array) citing current-failure, before, or a real receipt upstream of the failed operation; do not cite temporal neighbors.",
         raw.chars().take(900).collect::<String>()
     )
 }
