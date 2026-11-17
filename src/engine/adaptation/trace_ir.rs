@@ -310,6 +310,9 @@ pub fn action_certificate(
             cited.push(id);
         }
     }
+    if is_effectful && cited.is_empty() {
+        return Err("state-changing intervention must cite at least one actual failure/provenance observation".into());
+    }
     Ok(json!({
         "schema":"dominion.action-certificate.2026.v1",
         "interventionId":intervention["id"],
