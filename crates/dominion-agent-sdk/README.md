@@ -12,6 +12,8 @@ For large allowed MCP registries, `dominion_tool_search` and fixed `dominion_too
 
 `replay::trace(&snapshot)` reconstructs recorded decisions and effects **offline**; it neither calls a model nor repeats tools or automatically promotes code. The product host `src/engine/native_replay.rs` cross-checks independent operation journals, reported cache usage and configured KRW tariffs.
 
+`src/scheduler.rs` reserves all historical operation IDs but considers only successful receipts valid prerequisites for later actions; failed/skipped receipts force replanning. `replay::trace` detects mismatched regular-tool arguments and claims of success despite failed dependencies. Discovery bridge argument resolution is deliberately exempted from literal model-argument equality. These checks validate journal consistency, not current workspace state.
+
 This SDK does not implement generation-level campaigns, autonomous core mutation, video/audio production, or unattended optimizer policies. User-requested coding/refactoring/testing tasks run through the normal Rust harness and acceptance criteria.
 
 Run `cargo test -p dominion-agent-sdk`. See [lean product architecture](../../../docs/SUB3-LEAN-COMPLEXITY-2026-11-16.md).
