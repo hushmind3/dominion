@@ -34,6 +34,87 @@ mod outcome_tests {
     }
 
     #[tokio::test]
+    async fn causal_diagnostic_uses_real_tool_receipt_and_changes_repair() {
+        let (state, dir) = state();
+        std::fs::write(dir.join("diagnostic-source.txt"), "actual on-disk evidence").unwrap();
+        let session_id = "diagnostic-session";
+        let execution_id = uuid::Uuid::new_v4().to_string();
+        state.store.put("session", &json!({"id":session_id}));
+        state.store.put("execution", &json!({
+            "id":execution_id,"sessionId":session_id,"status":"running",
+            "request":"inspect the source and choose a safe repair"
+        }));
+        let session = json!({"id":session_id});
+        let request = TurnRequest {
+            session_id: Some(session_id.into()),
+            input: "inspect the source and choose a safe repair".into(),
+            attachment_ids: Vec::new(), agent_id: None, provider_id: None,
+            model: None, tools_enabled: true, tools_execution_enabled: true,
+            thinking: None, reasoning_effort: None, reasoning_language: None,
+            auto_learning: false, system_override: None, task_id: None,
+            parent_task_id: None, task_revision: None, verification_owner: None,
+        };
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let metrics = std::sync::Mutex::new(Metrics::default());
+        let input = json!({"path":"diagnostic-source.txt"});
+        let call = ToolCall {
+            id: "diagnostic-proof".into(), name: "workspace_read".into(),
+            arguments: input.to_string(),
+        };
+        let (result, ok, _) = dispatch_tool_call(
+            &state, &tx, &session, &request, session_id, &execution_id,
+            &call, input, &metrics, 1, 0, 0, false,
+            "adaptation_diagnostic", None, None, None,
+        ).await.expect("real read must pass through the native gateway");
+        assert!(ok, "{result}");
+        assert_eq!(result["content"], "actual on-disk evidence");
+        let operations = state.store.execution_operations(&execution_id).unwrap();
+        assert_eq!(operations.len(), 1);
+        assert_eq!(operations[0]["origin"], "adaptation_diagnostic");
+        assert_eq!(operations[0]["status"], "completed");
+        assert_eq!(operations[0]["result"]["content"], result["content"]);
+
+        let adaptation = json!({
+            "hypotheses":[{"id":"missing"},{"id":"stale"}],
+            "diagnostics":[{"id":"probe","tool":"workspace_read",
+                "inputs":{"path":"diagnostic-source.txt"},
+                "predicate":{"type":"equals","from":"result","path":"/content",
+                    "value":"actual on-disk evidence"},
+                "predictions":[
+                    {"hypothesisId":"missing","expected":false},
+                    {"hypothesisId":"stale","expected":true}]
+            }],
+            "interventions":[
+                {"id":"make","tool":"workspace_write",
+                    "inputs":{"path":"rewritten.txt","content":"new"},
+                    "hypothesisIds":["missing"],"expectedProgress":2.0},
+                {"id":"inspect","tool":"workspace_list",
+                    "inputs":{"path":"."},
+                    "hypothesisIds":["stale"],"expectedProgress":1.0}
+            ]
+        });
+        let candidate = crate::engine::adaptation::diagnostics::choose(
+            &adaptation,&[],&[],"shell_exec",&json!({})
+        ).unwrap();
+        let receipt = crate::engine::adaptation::diagnostics::observe(
+            &candidate, &operations[0]["result"], true,
+            operations[0]["id"].as_str().unwrap(),
+        );
+        assert_eq!(receipt["operationId"], operations[0]["id"]);
+        assert_eq!(receipt["verdict"], "true");
+        let refuted = crate::engine::adaptation::diagnostics::contradicted(&[receipt]);
+        assert_eq!(refuted, vec!["missing"]);
+        let repair = crate::engine::adaptation_loop::choose_intervention_with_context(
+            &adaptation, "shell_exec", &json!({"command":"false"}),
+            false, &json!({}), &refuted,
+        ).unwrap();
+        assert_eq!(repair["id"], "inspect");
+        assert!(!dir.join("rewritten.txt").exists(),
+            "diagnostic reads never execute a model-proposed write");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
     async fn missing_program_checkpoint_prevents_any_tool_dispatch(){
         let (state,dir)=state();
         let session=json!({"id":"s1"});

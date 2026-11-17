@@ -44,6 +44,8 @@ jobs:
         run: cargo test --locked --bin dominion-rust engine::adaptation::diagnostics::tests
       - name: Acceptance progress regressions (dev profile)
         run: cargo test --locked --bin dominion-rust engine::recovery::tests::acceptance_feedback
+      - name: Causal diagnostic native tool receipt (dev profile)
+        run: cargo test --locked --bin dominion-rust causal_diagnostic_uses_real_tool_receipt
       - name: Money domain and API regressions (dev profile)
         run: cargo test --locked --bin dominion-rust money_
       - name: Shared SDK run and retry regressions (dev profile)
