@@ -528,9 +528,19 @@ mod tests {
         let _=std::fs::remove_dir_all(dir);
     }
     #[test]
-    fn start_requires_configured_credentials() {
+    fn start_accepts_local_cli_when_no_oauth_app_was_configured() {
         let (state, dir) = temp_state();
-        assert!(start(&state, "github").is_err());
+        // GitHub Actions runners ship 'gh'; installations without it still
+        // need an operator-managed OAuth client. Both states are valid.
+        let started=start(&state,"github");
+        if client_credentials(&state,"github").is_ok(){
+            assert!(started.unwrap()["url"].as_str()
+                .is_some_and(|url|url.starts_with("https://github.com/login/oauth/authorize")));
+        }else if crate::engine::cli_accounts::status("github").installed{
+            assert_eq!(started.unwrap()["mode"],"cli");
+        }else{
+            assert!(started.is_err());
+        }
         let _ = std::fs::remove_dir_all(dir);
     }
 
