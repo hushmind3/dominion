@@ -713,6 +713,7 @@ pub(super) async fn execute_program_tool(
             failed.push(json!(node_id));
         }
         checkpoint["failedOperationIds"]=json!(failed);
+        checkpoint["lastFailedCallId"]=json!(call.id);
     }
     if !checkpoint["observationRefs"].is_object() {
         checkpoint["observationRefs"] = json!({});
@@ -888,6 +889,7 @@ pub(super) fn execute_nodes<'a>(
                     if failed && node["onFailure"].as_str() == Some("revise") {
                         let failure = json!({
                             "nodeId": node_id,
+                            "callId": checkpoint["lastFailedCallId"],
                             "tool": node["tool"],
                             "result": result,
                             "observation": failure_observation(
@@ -1396,8 +1398,16 @@ pub(super) async fn propose_program_revision(
         .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_string))
         .collect::<Vec<_>>();
     let system = "You are the DOMINION program repair planner. A typed execution program failed. Generate up to 3 DISTINCT candidate revisions in one response, not strategy labels. Return JSON: {\"candidateRevisions\":[{\"baseRevision\":\"...\",\"reason\":\"...\",\"evidenceIds\":[\"program-failure\"],\"replacePendingNodes\":[],\"addNodes\":[],\"preflight\":{\"tool\":\"workspace_read\",\"inputs\":{\"path\":\"config.txt\"},\"predicate\":{\"type\":\"equals\",\"from\":\"result\",\"path\":\"/content\",\"value\":\"expected real content\"}}}]}. Each candidate requires a DIFFERENT repair and a read-only preflight with machine-checkable expected observation of current workspace state. The Rust gateway will REALLY execute these tests before choosing. Do not assume tests pass. Cite program-failure, the failed node ID, or an existing checkpoint observationRef as evidence. Preserve completed node IDs and external effects. Available node types are observe, call_tool, branch, sequence, parallel, loop, verify, delegate, model_decision. You MAY return one legacy revision object if meaningful contrasting probes are impossible.";
+    // Same HTIR source as native failed-tool repair. Program candidates see
+    // the actual failed call's dependency slice, never guessed provenance.
+    let trace=crate::engine::adaptation::trace_ir::compile(
+        &ctx.state.store.recent_execution_operations(ctx.execution_id,64)?,
+        failure["callId"].as_str().unwrap_or(""),
+        failure["tool"].as_str().unwrap_or(""),
+        &failure["observation"]["arguments"],
+    );
     let prompt = format!(
-        "Current program: {program}\nCheckpoint: {checkpoint}\nFailure observation: {failure}\nAvailable tools: {available:?}\nReturn only the JSON proposal."
+        "Current program: {program}\nCheckpoint: {checkpoint}\nFailure observation: {failure}\nNative failure provenance: {trace}\nAvailable tools: {available:?}\nReturn only JSON."
     );
     let raw = llm::complete_for_session(
         ctx.state,
@@ -1419,8 +1429,10 @@ pub(super) async fn propose_program_revision(
     )
     .and_then(|algorithm| algorithm["parameters"]["mode"].as_str().map(str::to_string))
     .unwrap_or_else(|| "replace".into());
+    let mut grounded_failure=failure.clone();
+    grounded_failure["trace"]=trace.clone();
     let candidates = crate::engine::adaptation::repair_tournament::prepare(
-        &proposal, program, checkpoint, failure, &available, &repair_mode,
+        &proposal, program, checkpoint, &grounded_failure, &available, &repair_mode,
     )?;
     let preflights = crate::engine::adaptation::repair_tournament::probes(&candidates);
     let mut observations = json!({});
@@ -1469,7 +1481,10 @@ pub(super) async fn propose_program_revision(
     let called=observations.as_object().into_iter().flat_map(|map|map.iter())
         .map(|(id,value)|json!({"candidateId":id,"callId":value["callId"],
             "status":value["status"]})).collect::<Vec<_>>();
-    revised["repairTournament"] = json!({"decision":audit,"probeReceipts":called});
+    revised["repairTournament"] = json!({
+        "decision":audit,"probeReceipts":called,
+        "failureTraceFocus":trace["focus"],
+    });
     Ok(Some(revised))
 }
 
