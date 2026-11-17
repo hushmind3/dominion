@@ -41,16 +41,21 @@ fn clean_text(value:&str,max:usize)->String{
         .replace("&gt;",">").replace("&#39;","'");
     let mut out=String::new();
     let mut in_tag=false;
+    let mut emitted=0usize;
+    if max==0{return out;}
     for ch in value.chars(){
         match ch {
             '<'=>in_tag=true,
             '>'=>in_tag=false,
-            c if !in_tag=>out.push(c),
+            c if !in_tag=>{
+                out.push(c);
+                emitted+=1;
+                if emitted>=max {break;}
+            },
             _=>{},
         }
-        if out.chars().count()>max{break}
     }
-    out.trim().chars().take(max).collect()
+    out.trim().to_string()
 }
 fn element<'a>(text:&'a str,tag:&str)->Option<&'a str>{
     let open=format!("<{tag}");
@@ -189,6 +194,7 @@ fn needs_article_fetch(item:&Value,stored:Option<&Value>)->bool{
         .is_some_and(|text|text.chars().count()>100))
 }
 pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
+    context.ensure_running()?;
     let bucket=job["input"]["bucket"].as_i64().unwrap_or(0);
     let start=((bucket.rem_euclid(SOURCES.len() as i64)) as usize)%SOURCES.len();
     let chosen=(0..3).map(|i|SOURCES[(start+i)%SOURCES.len()]).collect::<Vec<_>>();
@@ -197,18 +203,22 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
     let mut scraped=0;
     let mut scrape_attempts=0;
     for (name,url) in chosen{
+        context.ensure_running()?;
         match crate::engine::tools::http_fetch(url).await{
+
             Ok(body) if body["status"].as_u64()==Some(200)=>{
                 let mut items=parse(body["text"].as_str().unwrap_or(""),name);
                 let count=items.len();
                 for item in items.iter_mut(){
                     if scrape_attempts>=SCRAPES_PER_CYCLE{break;}
+                    context.ensure_running()?;
                     let stored=item["id"].as_str()
                         .and_then(|id|context.state.store.get("money_signal",id));
                     if !needs_article_fetch(item,stored.as_ref()){continue;}
                     let Some(article_url)=item["url"].as_str().map(str::to_owned)else{continue;};
                     scrape_attempts+=1;
                     if let Ok(article)=crate::engine::tools::http_fetch(&article_url).await{
+                        context.ensure_running()?;
                         if article["status"].as_u64()==Some(200){
                             // Persist bounded article text separately from
                             // the smaller search/LLM excerpt. No extra model call.
@@ -232,9 +242,11 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
     }
     // New observations can connect with last month's old signals: perform
     // bounded cross-market matching after ingestion, without model tokens.
+    context.ensure_running()?;
     let history=context.state.store.money_recent_signals(240).unwrap_or_default();
     // Preserve origins filtered from analytic ranking; no extra LLM calls.
     let aliases=source_aliases(&signals,&history);
+    context.ensure_running()?;
     let suppressed=context.state.store.money_record_source_aliases(&aliases)?;
     let signals=dedupe_titles(signals,&history);
     let found=signals.len();
@@ -248,8 +260,10 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
         (0,0)
     }else{
         let window=research_window(&signals,&history);
+        context.ensure_running()?;
         let added=context.state.store.money_ingest_signals(&signals)?;
         let hypotheses=crate::engine::money_mechanism::discover(&window,30);
+        context.ensure_running()?;
         let linked=context.state.store.money_store_tensions(&hypotheses)?;
         (added,linked)
     };
@@ -257,6 +271,7 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
         "jobId":context.job_id,"found":found,"new":added,"newCrossMarketQuestions":linked,
         "scrapedPages":scraped,"relatedHeadlinesPreserved":suppressed,
         "sources":reports,"capturedAt":chrono::Utc::now().to_rfc3339()});
+    context.ensure_running()?;
     context.state.store.put("money_ingest_report",&summary)
         .ok_or("시장 수집 기록을 저장하지 못했습니다.")?;
     context.state.bus.record("money_market",&summary);
@@ -277,6 +292,12 @@ pub fn schedule(state:&AppState){
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test] fn bounded_rss_text_keeps_exact_visible_char_limit(){
+        let long=format!("<p>{}</p>","가격".repeat(1000));
+        assert_eq!(clean_text(&long,20).chars().count(),20);
+        assert_eq!(clean_text(&long,0),"");
+        assert_eq!(clean_text("<b>신규</b> 구매 요청",20),"신규 구매 요청");
+    }
     #[test] fn extracts_rss_and_deduplicates_stable_urls(){
         let rss=r#"<?xml version="1.0"?><rss><channel><item><title>New AI tool &amp; hardware cost</title>
         <link>https://example.com/article?id=4&amp;region=KR</link>
