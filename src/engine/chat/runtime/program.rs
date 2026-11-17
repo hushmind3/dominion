@@ -405,6 +405,17 @@ pub(super) fn execute_nodes<'a>(
                     budget = frame.budget;
                     op_seq = frame.op_seq;
                     messages.extend(frame.messages);
+                    if let Some(failure) = frame.failure {
+                        checkpoint["programFailure"] = failure.clone();
+                        checkpoint["resolvedInputs"] = resolved.clone();
+                        if persist {
+                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                        }
+                        return Ok(ProgramFrame {
+                            resolved, checkpoint, budget, op_seq, messages,
+                            paused: false, failure: Some(failure),
+                        });
+                    }
                     if frame.paused {
                         checkpoint["resolvedInputs"] = resolved.clone();
                         if persist {
@@ -434,6 +445,17 @@ pub(super) fn execute_nodes<'a>(
                     budget = frame.budget;
                     op_seq = frame.op_seq;
                     messages.extend(frame.messages);
+                    if let Some(failure) = frame.failure {
+                        checkpoint["programFailure"] = failure.clone();
+                        checkpoint["resolvedInputs"] = resolved.clone();
+                        if persist {
+                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                        }
+                        return Ok(ProgramFrame {
+                            resolved, checkpoint, budget, op_seq, messages,
+                            paused: false, failure: Some(failure),
+                        });
+                    }
                     if frame.paused {
                         checkpoint["resolvedInputs"] = resolved.clone();
                         if persist {
@@ -788,6 +810,20 @@ pub(super) fn execute_nodes<'a>(
                         budget = frame.budget;
                         op_seq = frame.op_seq;
                         messages.extend(frame.messages);
+                        if let Some(failure) = frame.failure {
+                            // The failed iteration is not complete. Preserve
+                            // each settled child receipt; do not advance the
+                            // loop counter or declare the parent completed.
+                            checkpoint["programFailure"] = failure.clone();
+                            checkpoint["resolvedInputs"] = resolved.clone();
+                            if persist {
+                                save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                            }
+                            return Ok(ProgramFrame {
+                                resolved, checkpoint, budget, op_seq, messages,
+                                paused: false, failure: Some(failure),
+                            });
+                        }
                         iterations += 1;
                         checkpoint["loopIterations"] = json!(iterations);
                         checkpoint["loopProgress"][node_id] = json!(iterations);
