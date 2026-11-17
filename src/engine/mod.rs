@@ -1,3 +1,4 @@
+pub(crate) mod plugins;
 pub mod money;
 pub mod money_asymmetry;
 pub mod money_brief;

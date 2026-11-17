@@ -357,15 +357,17 @@ pub async fn find(State(state):State<AppState>,Json(body):Json<Value>)->Response
             return Json(view(&state)).into_response();
         }
     }
+    // Explicit Money invocation starts domain collection on the shared job
+    // queue. Visiting other product pages never starts these collectors.
+    engine::plugins::refresh_money(&state);
     let pool=match candidates(&state){
         Ok(pool)=>pool,
         Err(err)=>return (StatusCode::INTERNAL_SERVER_ERROR,Json(json!({"error":err}))).into_response()
     };
     if pool.is_empty(){
-        engine::money_sources::schedule(&state);
         return Json(json!({"drafts":[],"sourceCount":state.store.money_recent_signals(120)
             .map(|a|a.len()).unwrap_or(0),"modelCalls":0,
-            "message":"아직 구매·비용 변화 자료가 부족합니다. 수집은 자동으로 계속됩니다.",
+            "message":"구매·비용 변화 자료가 부족해 수집을 요청했습니다. 다시 조사하면 축적된 근거로 후보를 발굴합니다.",
             "activeAutomationIds":active_automations(&state)})).into_response();
     }
     if state.store.get("money_campaign",CAMPAIGN_ID).is_none(){

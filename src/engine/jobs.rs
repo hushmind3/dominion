@@ -288,11 +288,9 @@ pub fn retry_failed_learning(state: &AppState) -> usize {
 
 pub fn start(state: AppState) {
     crate::engine::channel_adapter::start(state.clone());
-    crate::engine::money_health::sample(&state);
-    crate::engine::money_sources::schedule(&state);
-    crate::engine::money_catalog::schedule(&state);
-    crate::engine::money_folding::schedule(&state);
-    crate::engine::money::schedule_autopilot(&state);
+    // Domain plug-ins are dormant unless the owner invoked or explicitly
+    // enabled their background mode. The core owns only job execution.
+    crate::engine::plugins::start(&state);
     let workers = std::env::var("DOMINION_JOB_WORKERS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
@@ -326,12 +324,9 @@ pub fn start(state: AppState) {
             // A process restart removes in-memory approval timers. The persisted
             // deadline still expires automatically during normal operation.
             crate::engine::chat::expire_stale_approvals(&state);
-            // Reuse the existing maintenance heartbeat; no second polling loop.
-            crate::engine::money_health::sample(&state);
-            crate::engine::money_sources::schedule(&state);
-            crate::engine::money_catalog::schedule(&state);
-            crate::engine::money_folding::schedule(&state);
-            crate::engine::money::schedule_autopilot(&state);
+            // One shared host hook. No Money collector, inference or DB
+            // sweep runs unless the owner enabled the plug-in scheduler.
+            crate::engine::plugins::maintenance_tick(&state);
         }
     });
 
@@ -491,10 +486,8 @@ async fn run_job(state: AppState, job: Value) {
     let result = match kind.as_str() {
         "room" | "meeting" => rooms::run(&context, &job).await,
         "prompt" => run_prompt(&context, &job).await,
-        "money_discover" => crate::engine::money::run(&context,&job).await,
-        "money_ingest" => crate::engine::money_sources::run(&context,&job).await,
-        "money_catalog" => crate::engine::money_catalog::run(&context,&job).await,
-        "money_fold" => crate::engine::money_folding::run(&context,&job).await,
+        kind if crate::engine::plugins::supports(kind) =>
+            crate::engine::plugins::run(&context,&job).await,
         "resume" => run_resume(&context, &job).await,
         "learn" => learning::run(&context, &job).await,
         "reflect" => reflect::run(&context, &job).await,

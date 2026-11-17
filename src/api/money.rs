@@ -337,7 +337,10 @@ pub async fn autopilot_set(State(state):State<AppState>,Path(id):Path<String>,Js
             Ok(vec![])
         });
         return match result {
-            Ok(saved)=>Json(saved).into_response(),
+            Ok(saved)=>match engine::plugins::sync_money_schedule(&state) {
+                Ok(())=>Json(saved).into_response(),
+                Err(err)=>error(StatusCode::INTERNAL_SERVER_ERROR,&err),
+            },
             Err(err)=>error(StatusCode::INTERNAL_SERVER_ERROR,&err),
         };
     }
@@ -408,7 +411,10 @@ pub async fn autopilot_set(State(state):State<AppState>,Path(id):Path<String>,Js
     });
     match result {
         Ok(saved)=>{
-            engine::money::schedule_autopilot(&state);
+            if let Err(err)=engine::plugins::sync_money_schedule(&state){
+                return error(StatusCode::INTERNAL_SERVER_ERROR,&err);
+            }
+            engine::plugins::maintenance_tick(&state);
             Json(state.store.get("money_autopilot",&id).unwrap_or(saved)).into_response()
         },
         Err(err) if err=="already_active"=>
