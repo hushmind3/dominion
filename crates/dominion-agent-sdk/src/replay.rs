@@ -39,8 +39,19 @@ pub fn trace(snapshot:&Snapshot)->Value{
    };
    // A bridge target differs from the model's fixed tool-call name.
    if let Some(r)=receipt{
-    if r.tool!=action.tool && action.tool!="dominion_tool_call" {
-     issues.push(format!("Action identity mismatch for {}",action.id));
+    // The discovery bridge intentionally resolves both tool name and args.
+    // Ordinary actions must match their durable model decision exactly.
+    if action.tool!="dominion_tool_call" {
+     if r.tool!=action.tool {
+      issues.push(format!("Action identity mismatch for {}",action.id));
+     }
+     if r.arguments!=action.arguments {
+      issues.push(format!("Action arguments mismatch for {}",action.id));
+     }
+    }
+    if r.success && action.depends_on.iter().any(|dependency|
+     !by_id.get(dependency.as_str()).is_some_and(|prior|prior.success)) {
+     issues.push(format!("Succeeded action has an unsatisfied dependency: {}",action.id));
     }
    }
    actions.push(json!({"turn":turn+1,"id":action.id,
@@ -101,8 +112,34 @@ mod tests{
   assert_eq!(report["traceConsistent"],true);
   let mut tampered=s.clone();tampered.receipts[0].tool="other".into();
   assert_eq!(trace(&tampered)["traceConsistent"],false);
+  let mut changed_args=s.clone();
+  changed_args.receipts[0].arguments=json!({"command":"different"});
+  assert_eq!(trace(&changed_args)["traceConsistent"],false);
   let mut unresolved=s;unresolved.model_in_flight=true;
   assert_eq!(trace(&unresolved)["requiresManualReconciliation"],true);
+ }
+ #[test]
+ fn successful_receipt_cannot_claim_an_unsatisfied_dependency(){
+  let req=RunRequest{id:"dependency-trace".into(),instruction:"test".into(),
+   owner_instructions:String::new(),strategy:Strategy::Balanced,
+   limits:Limits::default(),allowed_tools:vec![],checks:vec![],
+   require_evidence:true};
+  let mut s=Snapshot::from_request(&req);
+  s.step=2;
+  s.decision_tape.push(Decision{plan:vec![],answer:None,
+   actions:vec![Action{id:"inspect".into(),tool:"read".into(),
+    arguments:json!({}),depends_on:vec![]},
+    Action{id:"write".into(),tool:"write".into(),
+    arguments:json!({}),depends_on:vec!["inspect".into()]}]});
+  s.receipts.push(Receipt{id:"inspect".into(),tool:"read".into(),
+   arguments:json!({}),success:false,result:json!({"error":"failed"}),step:2});
+  s.receipts.push(Receipt{id:"write".into(),tool:"write".into(),
+   arguments:json!({}),success:true,result:json!({}),step:2});
+  assert_eq!(trace(&s)["traceConsistent"],false);
+  s.receipts[1].success=false;
+  s.receipts[1].result=json!({"skipped":true});
+  assert_eq!(trace(&s)["traceConsistent"],true,
+   "a skipped dependent action is a consistent failure record");
  }
  #[test]
  fn legacy_snapshots_deserialize_and_report_missing_decision_tape(){
