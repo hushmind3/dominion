@@ -244,13 +244,14 @@ pub(super) async fn attempt_model_adaptation(
     if !inputs.is_object() {
         return Err("selected intervention inputs are not an object".into());
     }
+    let selected_before = failure_observation(state, &selected_tool, &inputs, "");
     if !budget.charge_tool() {
         return Err("adaptation tool budget is exhausted".into());
     }
     *op_seq += 1;
     let call = ToolCall {
         id: format!("adapt-{}-{}", selected["id"].as_str().unwrap_or("i"), uuid::Uuid::new_v4()),
-        name: selected_tool,
+        name: selected_tool.clone(),
         arguments: inputs.to_string(),
     };
     let (result, ok, _content) = dispatch_tool_call(
@@ -273,8 +274,11 @@ pub(super) async fn attempt_model_adaptation(
         None,
     )
     .await?;
+    let selected_after = failure_observation(
+        state, &selected_tool, &selected["inputs"], "",
+    );
     let intervention_outcome = crate::engine::adaptation_loop::evaluate_intervention_outcome(
-        &selected, &before_observation, &result, ok,
+        &selected, &selected_before, &selected_after, &result, ok,
     );
     match intervention_outcome["status"].as_str() {
         Some("verified") => {
