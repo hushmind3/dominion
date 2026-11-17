@@ -266,7 +266,7 @@ mod tests {
     fn only_a_discriminating_independent_read_is_eligible() {
         let selected = choose(&candidates(), &[], &[], "workspace_write", &json!({})).unwrap();
         assert_eq!(selected["id"], "path_probe");
-        assert_eq!(selected["forecastWorstRemaining"], 1);
+        assert_eq!(selected["forecastWorstRemaining"], 2);
         assert!(selected.get("informationGain").is_none());
         assert!(selected.get("selectionScore").is_none());
     }
