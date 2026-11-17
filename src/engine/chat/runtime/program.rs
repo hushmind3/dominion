@@ -1520,6 +1520,25 @@ pub(super) async fn propose_program_revision(
     Ok(Some(revised))
 }
 
+/// A settled program must not re-enter on the next model round.
+/// "needs_review" means execution stopped, not that the task succeeded.
+pub(super) fn program_execution_settled(status:Option<&str>)->bool{
+    matches!(status,Some("completed"|"needs_review"))
+}
+
+#[cfg(test)]
+mod review_settlement_tests {
+    use super::*;
+    #[test]
+    fn needs_review_is_terminal_for_program_execution_not_task_success(){
+        assert!(program_execution_settled(Some("needs_review")));
+        assert!(program_execution_settled(Some("completed")));
+        assert!(!program_execution_settled(Some("paused")));
+        assert!(!program_execution_settled(Some("running")));
+        assert!(!program_execution_settled(None));
+    }
+}
+
 pub(super) async fn run_program(
     state: &AppState,
     tx: &UnboundedSender<Value>,
