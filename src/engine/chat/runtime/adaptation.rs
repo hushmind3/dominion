@@ -188,6 +188,11 @@ pub(super) async fn attempt_model_adaptation(
     })).collect::<Vec<_>>());
     adaptation["beforeObservation"] = before_observation.clone();
     adaptation["environmentFingerprint"] = json!(environment_fingerprint);
+    // Hypothesis ids are local to a failure. Reusing h1 in another task
+    // must never inherit an unrelated refutation.
+    let failure_signature = crate::engine::memory::stable_id(&[
+        tool, &arguments.to_string()
+    ]);
     let refuted = state
         .store
         .get("execution", execution_id)
@@ -196,8 +201,13 @@ pub(super) async fn attempt_model_adaptation(
                 .as_array()
                 .into_iter()
                 .flatten()
-                .flat_map(|adaptation| {
-                    adaptation["hypothesisResults"]
+                .filter(|record| {
+                    record["failureSignature"].as_str() == Some(failure_signature.as_str())
+                        && record["environmentFingerprint"].as_str()
+                            == Some(environment_fingerprint.as_str())
+                })
+                .flat_map(|record| {
+                    record["hypothesisResults"]
                         .as_array()
                         .cloned()
                         .unwrap_or_default()
@@ -220,13 +230,145 @@ pub(super) async fn attempt_model_adaptation(
             Some(execution_id),
         )
         .unwrap_or(Value::Null);
+    // Diagnostic policy: choose only experiments that divide competing
+    // predictions. Every read is charged, cancellable and journaled through
+    // the SAME gateway as other tool calls; diagnostic success is never a
+    // successful task. Stop when observations no longer have discriminating
+    // value, not after an arbitrary number of pre-selected probes.
+    let mut diagnostic_evidence: Vec<Value> = Vec::new();
+    let mut attempted: Vec<String> = Vec::new();
+    let mut causal_refuted = refuted.clone();
+    const MAX_DIAGNOSTICS_PER_FAILURE: usize = 4;
+    while diagnostic_evidence.len() < MAX_DIAGNOSTICS_PER_FAILURE {
+        let snapshot = budget.snapshot();
+        let spent = snapshot["tools"].as_u64().unwrap_or(u64::MAX);
+        let limit = snapshot["maxTools"].as_u64().unwrap_or(0);
+        // Keep one charged call for the actual repair.
+        if spent.saturating_add(1) >= limit || !budget.can_execute_tool() {
+            break;
+        }
+        let Some(diagnostic) = crate::engine::adaptation::diagnostics::choose(
+            &adaptation, &causal_refuted, &attempted, tool, arguments
+        ) else { break; };
+        if state.is_cancelled(session_id) {
+            return Err("실행이 중단되었습니다.".into());
+        }
+        let diagnosis_tool = diagnostic["tool"].as_str().unwrap_or("").to_string();
+        let inputs = diagnostic["inputs"].clone();
+        let signature = crate::engine::adaptation::diagnostics::signature(
+            &diagnosis_tool, &inputs
+        );
+        attempted.push(signature);
+        if !budget.charge_tool() { break; }
+        *op_seq += 1;
+        let call = ToolCall {
+            id: format!("diagnose-{}", uuid::Uuid::new_v4()),
+            name: diagnosis_tool,
+            arguments: inputs.to_string(),
+        };
+        let (observation, ok, _) = dispatch_tool_call(
+            state, tx, session, request, session_id, execution_id,
+            &call, inputs, metrics, *op_seq, round, 0, false,
+            "adaptation_diagnostic", None, None, None
+        ).await?;
+        let operation_id = format!("{execution_id}:{round}:0:{}", call.id);
+        let evidence = crate::engine::adaptation::diagnostics::observe(
+            &diagnostic, &observation, ok, &operation_id
+        );
+        // A crash after the observation must not erase which hypotheses were
+        // actually tested. The complete result remains in execution_operation.
+        let mut stored = state.store.get("execution", execution_id)
+            .ok_or("진단 기록을 저장할 실행이 없습니다.")?;
+        let mut history = stored["adaptationDiagnosticHistory"]
+            .as_array().cloned().unwrap_or_default();
+        history.push(evidence.clone());
+        if history.len() > 24 {
+            history = history.split_off(history.len() - 24);
+        }
+        stored["adaptationDiagnosticHistory"] = json!(history);
+        let saved = state.store.put("execution", &stored)
+            .ok_or("진단 기록을 영속화하지 못했습니다.")?;
+        state.bus.record("execution", &saved);
+        diagnostic_evidence.push(evidence);
+        causal_refuted = refuted.iter().chain(
+            crate::engine::adaptation::diagnostics::contradicted(
+                &diagnostic_evidence
+            ).iter()
+        ).cloned().collect();
+    }
+    adaptation["diagnosticEvidence"] = json!(diagnostic_evidence);
+    let observations = diagnostic_evidence.iter().any(|item| {
+        item["verdict"] == "true" || item["verdict"] == "false"
+    });
+    // Compose AFTER receiving results. A model cannot treat its own proposed
+    // experiment as evidence. If the budget is gone, the existing interventions
+    // remain available and are filtered by actual contradictions.
+    if observations && budget.charge_round() {
+        metrics.lock().unwrap().model_calls += 1;
+        let compose_system = "You are the DOMINION evidence-based repair composer. \
+            Observations are tool receipts, not success claims. Use the observed \
+            diagnostics and surviving causal hypotheses to revise only the proposed \
+            repair actions. Return JSON with hypotheses and interventions. Keep \
+            hypothesis IDs stable and never repeat a diagnostic tool+inputs or \
+            the original failed call. No simulated results, no unverified facts.";
+        let compose_prompt = format!(
+            "Original failed tool: {tool}\nFailure: {error}\nOriginal hypotheses: {}\n\
+             Original interventions: {}\nActual diagnostics: {}\nContradicted IDs: {}\n\
+             Propose new interventions conditioned on these observations. JSON only.",
+            adaptation["hypotheses"], adaptation["interventions"],
+            adaptation["diagnosticEvidence"], json!(causal_refuted),
+        );
+        let mut native = load_native_checkpoint(state, execution_id, &request.input)?;
+        let journal = ChatKernelJournal {
+            state, execution_id, session_id,
+            generation: state.cancellation_generation(session_id),
+        };
+        let proposed = dominion_core::engine::model_call(
+            &mut native, &journal, "adaptation_compose",
+            llm::complete_for_session(
+                state, &provider_id, &model, compose_system,
+                &compose_prompt, session_id,
+            ),
+        ).await??;
+        if let Some(composed) = crate::engine::adaptation_loop::parse_adaptation(&proposed)
+            .filter(|value| crate::engine::adaptation_loop::validate_adaptation(value).is_ok())
+        {
+            let old_ids = adaptation["hypotheses"].as_array().into_iter().flatten()
+                .filter_map(|item| item["id"].as_str()).collect::<Vec<_>>();
+            let new_ids = composed["hypotheses"].as_array().into_iter().flatten()
+                .filter_map(|item| item["id"].as_str()).collect::<Vec<_>>();
+            // If all old explanations were contradicted, genuinely replace the
+            // hypothesis set rather than silently resurrecting the old one.
+            if old_ids.len() == new_ids.len()
+                && old_ids.iter().all(|id| new_ids.contains(id))
+            {
+                adaptation["interventions"] = composed["interventions"].clone();
+                adaptation["composition"] = json!("evidence_conditioned");
+            } else if old_ids.iter().all(|id| causal_refuted.iter().any(|x| x == id)) {
+                adaptation["hypotheses"] = composed["hypotheses"].clone();
+                adaptation["interventions"] = composed["interventions"].clone();
+                causal_refuted.clear();
+                adaptation["composition"] = json!("new_hypotheses_after_contradiction");
+            }
+        }
+    }
+    // Observations are not repairs: do not execute the same read again as
+    // the selected remediation merely because the composer nominated it.
+    if let Some(items) = adaptation["interventions"].as_array_mut() {
+        items.retain(|item| {
+            let key = crate::engine::adaptation::diagnostics::signature(
+                item["tool"].as_str().unwrap_or(""), &item["inputs"]
+            );
+            !attempted.iter().any(|used| used == &key)
+        });
+    }
     let selected = crate::engine::adaptation_loop::choose_intervention_with_policy(
         &adaptation,
         tool,
         arguments,
         false,
         &selection_context,
-        &refuted,
+        &causal_refuted,
         &adaptation_algorithm,
     )
     .ok_or("no distinct intervention survived selection")?;
@@ -268,12 +410,13 @@ pub(super) async fn attempt_model_adaptation(
         None,
     )
     .await?;
-    crate::engine::algorithms::mark_signal(
-        state, execution_id, "adaptation.selection", ok,
-    );
-    crate::engine::algorithms::mark_signal(
-        state, execution_id, "learning.applicability", ok,
-    );
+    // Tool transport success is not task recovery; let terminal acceptance
+    // evidence rate the strategy instead of rewarding a successful read/write.
+    if !ok {
+        crate::engine::algorithms::mark_signal(
+            state, execution_id, "adaptation.selection", false,
+        );
+    }
     let hypothesis_results = crate::engine::adaptation_loop::evaluate_hypotheses_phased(
         &adaptation,
         &before_observation,
@@ -311,6 +454,7 @@ pub(super) async fn attempt_model_adaptation(
         "selected": selected,
         "result": result,
         "hypothesisResults": hypothesis_results,
+        "diagnosticEvidence": adaptation["diagnosticEvidence"],
     }))
 }
 

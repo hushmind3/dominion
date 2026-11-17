@@ -74,7 +74,7 @@ pub fn adaptation_prompt(
     before_observation: &Value,
     environment_fingerprint: &str,
 ) -> (String, String) {
-    let system = "You are the DOMINION adaptation planner. Given one failed action, propose DISTINCT causal hypotheses and DIFFERENT interventions. Output JSON only: {\"hypotheses\":[{\"id\":\"h1\",\"claim\":\"...\",\"evidenceIds\":[\"before\"],\"preconditions\":[],\"predictions\":[{\"observationTarget\":\"before\",\"observationPhase\":\"before_intervention\",\"predicate\":{\"type\":\"equals\",\"from\":\"before\",\"path\":\"/pathState/path/exists\",\"value\":false},\"expectedValue\":false}]}],\"interventions\":[{\"id\":\"i1\",\"hypothesisIds\":[\"h1\"],\"preconditions\":[],\"tool\":\"workspace_write\",\"inputs\":{...},\"expectedChecks\":[\"file_exists\"],\"expectedProgress\":0.7,\"uncertainty\":0.2,\"estimatedCost\":0.2}]}. Predictions about why the failure happened must use observationPhase=before_intervention and target the before observation; predictions about the result of an intervention use after_intervention. Missing fields are Unknown, never false. Each intervention must change the tool, arguments, or approach.";
+    let system = "You are the DOMINION adaptation planner. Given one failed action, propose DISTINCT causal hypotheses and DIFFERENT interventions. Output JSON only: {\"hypotheses\":[{\"id\":\"h1\",\"claim\":\"...\",\"evidenceIds\":[\"before\"],\"preconditions\":[],\"predictions\":[{\"observationTarget\":\"before\",\"observationPhase\":\"before_intervention\",\"predicate\":{\"type\":\"equals\",\"from\":\"before\",\"path\":\"/pathState/path/exists\",\"value\":false},\"expectedValue\":false}]}],\"interventions\":[{\"id\":\"i1\",\"hypothesisIds\":[\"h1\"],\"preconditions\":[],\"tool\":\"workspace_write\",\"inputs\":{...},\"expectedChecks\":[\"file_exists\"],\"expectedProgress\":0.7,\"uncertainty\":0.2,\"estimatedCost\":0.2}]}. Predictions about why the failure happened must use observationPhase=before_intervention and target the before observation; predictions about the result of an intervention use after_intervention. Missing fields are Unknown, never false. Each intervention must change the tool, arguments, or approach. OPTIONAL diagnostics allow evidence-guided repair: diagnostics:[{id:'d1',tool:'workspace_read',inputs:{path:'...'},predicate:{type:'equals',from:'result',path:'/content',value:'...'},predictions:[{hypothesisId:'h1',expected:true},{hypothesisId:'h2',expected:false}],estimatedCost:1}]. Diagnostic predicates describe the RESULT of one local read. Offer only probes whose true/false result distinguishes rival hypotheses. Never include writes, shells, remote calls, or secret-file reads in diagnostics. No probe is proof of task completion.";
     let prompt = format!(
         "Failed action: tool={tool}\nArguments: {}\nObserved error: {}\nEnvironment version: {environment_version}\nEnvironment fingerprint: {environment_fingerprint}\nBefore observation (authoritative): {}\nAvailable tools include workspace_read, workspace_write, workspace_list, shell_exec, terminal_exec.\nReturn JSON only.",
         arguments, error, before_observation
@@ -542,6 +542,9 @@ pub fn record_adaptation(
         "beforeObservation": adaptation["beforeObservation"],
         "hypotheses": adaptation["hypotheses"],
         "interventions": adaptation["interventions"],
+        "diagnostics": adaptation["diagnostics"],
+        "diagnosticEvidence": adaptation["diagnosticEvidence"],
+        "environmentFingerprint": adaptation["environmentFingerprint"],
         "consultedExperienceRules": adaptation["consultedExperienceRules"],
         "selected": selected,
         "result": result,
@@ -568,6 +571,7 @@ pub fn record_adaptation(
             .as_u64().unwrap_or(0) + 1,
         "beforeObservation": adaptation["beforeObservation"],
         "hypothesisResults": hypothesis_results,
+        "diagnosticEvidence": adaptation["diagnosticEvidence"],
     });
     let saved = state.store.put("execution", &execution)?;
     state.bus.record("execution", &saved);
