@@ -6,22 +6,29 @@
 use crate::state::AppState;
 use serde_json::{json, Value};
 
-/// Side-effecting tools whose completion proves the crash happened after a
-/// real external change. Replaying those automatically could duplicate work.
+/// A completed or failed external call may already have changed the world.
+/// Use the shared effect classifier and persisted receipts, rather than a
+/// hard-coded subset of tools. An unrecognized tool is *not* proof of a read.
+/// This guard applies to whole-turn replay; checkpointed programs have their
+/// own operation-by-operation reconciliation below.
 fn has_side_effect(operations: &[Value]) -> bool {
     operations.iter().any(|operation| {
-        operation["status"].as_str() == Some("completed")
-            && matches!(
-                operation["tool"].as_str(),
-                Some(
-                    "workspace_write"
-                        | "file_write"
-                        | "shell_exec"
-                        | "terminal_exec"
-                        | "github_api"
-                        | "delegate_task"
-                )
+        if !matches!(
+            operation["status"].as_str(),
+            Some("completed" | "failed")
+        ) {
+            return false;
+        }
+        let tool = operation["tool"].as_str().unwrap_or("");
+        let arguments = &operation["arguments"];
+        operation["effectId"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty())
+            || matches!(
+                operation["effectState"].as_str(),
+                Some("applied" | "verified" | "effect_unknown" | "needs_review" | "inspected")
             )
+            || !crate::engine::effect::is_observation_only(tool, arguments)
     })
 }
 
@@ -198,7 +205,7 @@ pub fn recover(state: &AppState) -> Vec<Value> {
         } else if has_side_effect(&run_operations) {
             (
                 "needs_review",
-                "완료된 외부 변경이 있어 자동 재실행하지 않습니다.",
+                "외부 변경 호출의 실제 결과를 확인해야 하므로 자동 재실행하지 않습니다.",
                 Value::Null,
             )
         } else if request.trim().is_empty() || session_id.is_empty() {
@@ -375,6 +382,80 @@ mod tests {
         assert_eq!(created.len(), 3);
         assert!(created.iter().all(|item| item["decision"] == "needs_review"));
         assert!(created.iter().all(|item| item["jobId"].is_null()));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn new_mutation_tools_and_failed_external_attempts_require_review() {
+        let (state, dir) = state();
+        let cases = [
+            ("github_file_update", json!({"owner":"o","repo":"r","path":"src/lib.rs"}), "completed"),
+            ("workspace_replace_range", json!({"path":"src/lib.rs"}), "completed"),
+            ("mcp__mail__send_message", json!({"to":"person@example.org"}), "completed"),
+            ("browser_control", json!({"action":"click"}), "completed"),
+            ("opaque_vendor_tool", json!({}), "completed"),
+            ("github_api", json!({"method":"POST","path":"/repos/o/r/issues"}), "failed"),
+        ];
+        for (index, (tool, arguments, status)) in cases.into_iter().enumerate() {
+            let id = format!("unsafe-{index}");
+            interrupted(&state, &id);
+            state.store.put("execution_operation", &json!({
+                "id": format!("op-unsafe-{index}"),
+                "runId": id,
+                "tool": tool,
+                "arguments": arguments,
+                "status": status,
+            }));
+        }
+        let created = recover(&state);
+        assert_eq!(created.len(), cases.len());
+        assert!(created.iter().all(|item| item["decision"] == "needs_review"), "{created:?}");
+        assert!(created.iter().all(|item| item["jobId"].is_null()));
+        assert_eq!(state.store.count("job"), 0, "unsafe call was automatically replayed");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn completed_observations_remain_replayable_without_mutations() {
+        let (state, dir) = state();
+        let cases = [
+            ("workspace_read", json!({"path":"x.txt"})),
+            ("github_file_read", json!({"owner":"o","repo":"r","path":"x"})),
+            ("github_repositories", json!({})),
+            ("mcp__github__list_issues", json!({})),
+            ("github_api", json!({"method":"GET","path":"/repos/o/r"})),
+        ];
+        for (index, (tool, arguments)) in cases.into_iter().enumerate() {
+            let id = format!("observation-{index}");
+            interrupted(&state, &id);
+            state.store.put("execution_operation", &json!({
+                "id": format!("op-observation-{index}"),
+                "runId": id,
+                "tool": tool,
+                "arguments": arguments,
+                "status": "completed",
+                "effectState": "observed",
+            }));
+        }
+        let created = recover(&state);
+        assert_eq!(created.len(), cases.len());
+        assert!(created.iter().all(|item| item["decision"] == "queued"), "{created:?}");
+        assert_eq!(state.store.count("job"), cases.len());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_persisted_effect_receipt_overrides_a_read_like_tool_name() {
+        let (state, dir) = state();
+        interrupted(&state, "suspicious-read");
+        state.store.put("execution_operation", &json!({
+            "id":"op-suspicious-read","runId":"suspicious-read",
+            "tool":"workspace_read","status":"completed",
+            "effectId":"effect-previous","effectState":"applied"
+        }));
+        let decisions = recover(&state);
+        assert_eq!(decisions[0]["decision"], "needs_review");
+        assert_eq!(state.store.count("job"), 0);
         let _ = std::fs::remove_dir_all(dir);
     }
 
