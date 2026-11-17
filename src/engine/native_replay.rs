@@ -7,13 +7,39 @@ use serde_json::{json,Value};
 use sha2::{Digest,Sha256};
 use std::collections::{BTreeMap,BTreeSet};
 
+/// Single canonical path policy for SDK acceptance and forensic witnesses.
+/// The caller supplies a canonical workspace root, which allows a multi-file
+/// witness to reuse one root resolution instead of canonicalizing per file.
+pub(crate) fn resolve_canonical_workspace_path(
+    root: &std::path::Path,
+    raw: &str,
+) -> Result<std::path::PathBuf, String> {
+    use std::path::{Component, Path};
+    if raw.is_empty() || raw.len() > 4096 {
+        return Err("Invalid verification path".into());
+    }
+    let relative = Path::new(raw);
+    if !relative.components().all(|part| matches!(part, Component::Normal(_))) {
+        return Err("Verification cannot escape the workspace".into());
+    }
+    let target = root.join(relative);
+    let mut ancestor = target.as_path();
+    while std::fs::symlink_metadata(ancestor).is_err() {
+        ancestor = ancestor.parent().ok_or("No existing verification parent")?;
+    }
+    let canonical = std::fs::canonicalize(ancestor).map_err(|e| e.to_string())?;
+    if !canonical.starts_with(root) {
+        return Err("Verification path escapes the workspace through a symlink".into());
+    }
+    Ok(target)
+}
+
 /// Host-sealed, bounded file-state witnesses for the exact acceptance paths.
 /// 2026 VeriHarness-style evidence lineage: this records observed bytes, not
 /// the model's claim that it edited a file. Never follow an escaping symlink,
 /// and never persist the file contents in the job record.
 pub fn artifact_witness(workspace:&std::path::Path,checks:&[dominion_sdk::harness::Criterion])->Value{
  use dominion_sdk::harness::CriterionKind;
- use std::path::{Component,Path};
  let root=match std::fs::canonicalize(workspace){
   Ok(root)=>root,
   Err(_)=>return json!({"complete":false,"reason":"workspace_unavailable","entries":{}})
@@ -25,24 +51,14 @@ pub fn artifact_witness(workspace:&std::path::Path,checks:&[dominion_sdk::harnes
   if c.kind==CriterionKind::ToolSucceeded {continue;}
   let Some(name)=c.path.as_deref() else {complete=false;continue;};
   if entries.contains_key(name){continue;}
-  let relative=Path::new(name);
-  if name.is_empty()||name.len()>4096||!relative.components().all(
-   |component|matches!(component,Component::Normal(_))) {
-   complete=false;
-   entries.insert(name.to_string(),json!({"state":"unsafe_path"}));
-   continue
-  }
-  let target=root.join(relative);
-  let mut existing=target.as_path();
-  while std::fs::symlink_metadata(existing).is_err(){
-   let Some(parent)=existing.parent() else{break};
-   existing=parent;
-  }
-  if !std::fs::canonicalize(existing).is_ok_and(|parent|parent.starts_with(&root)){
-   complete=false;
-   entries.insert(name.to_string(),json!({"state":"unsafe_path"}));
-   continue
-  }
+  let target = match resolve_canonical_workspace_path(&root, name) {
+   Ok(path) => path,
+   Err(_) => {
+    complete = false;
+    entries.insert(name.to_string(), json!({"state":"unsafe_path"}));
+    continue;
+   }
+  };
   match std::fs::symlink_metadata(&target){
    Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{
     entries.insert(name.to_string(),json!({"state":"missing"}));
@@ -126,7 +142,7 @@ pub(crate) fn action_witness(
   "exclusiveWriter":false})
 }
 
-fn digest(v:&Value)->String{
+pub(crate) fn digest(v:&Value)->String{
  format!("{:x}",Sha256::digest(v.to_string().as_bytes()))
 }
 fn clip(s:&str)->String{s.chars().take(400).collect()}
