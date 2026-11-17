@@ -53,41 +53,12 @@ fn decorate(mut candidate:Value,experiments:&[Value],capital:f64)->Value{
     candidate
 }
 
-/// Compact research/accumulation counters for the Money screen. Cheap reads
-/// only: no model calls and no full candidate rendering.
-pub async fn stats(State(state):State<AppState>)->Json<Value>{
-    let signals=state.store.count_kind("money_signal");
-    let candidates=state.store.all("money_candidate");
-    let model= candidates.iter().filter(|c|c["origin"]=="model").count();
-    let drafts=candidates.len()-model;
-    let tensions=state.store.count_kind("money_tension");
-    let asymmetries=state.store.count_kind("money_asymmetry");
-    let mut ingest=state.store.all("money_ingest_report");
-    ingest.sort_by(|a,b|b["capturedAt"].as_str().cmp(&a["capturedAt"].as_str()));
-    let last=ingest.first().cloned().unwrap_or(Value::Null);
-    let mut by_model=std::collections::BTreeMap::<String,(u64,u64)>::new();
-    for job in state.store.all("job").into_iter().filter(|j|j["kind"]=="money_discover"){
-        let name=job["result"]["modelUsed"]["model"].as_str()
-            .or_else(||job["input"]["model"].as_str())
-            .unwrap_or("미지정").to_string();
-        let entry=by_model.entry(name).or_insert((0,0));
-        match job["status"].as_str(){
-            Some("completed")=>entry.0+=1,
-            Some("failed"|"needs_review"|"cancelled")=>entry.1+=1,
-            _=>{}
-        }
+/// Compact indexed/aggregated dashboard read: bounded JSON decoding.
+pub async fn stats(State(state):State<AppState>)->Response{
+    match state.store.money_dashboard_stats(){
+        Ok(stats)=>Json(stats).into_response(),
+        Err(message)=>error(StatusCode::INTERNAL_SERVER_ERROR,&message),
     }
-    let models=by_model.into_iter().map(|(name,(ok,fail))|
-        json!({"model":name,"completed":ok,"failed":fail}))
-        .collect::<Vec<_>>();
-    let autopilot=state.store.all("money_autopilot").into_iter().find(|a|a["enabled"]==true)
-        .map(|a|json!({"enabled":true,"rounds":a["completedRounds"],
-            "nextAt":a["nextAt"],"rotation":a["freeModels"].as_array().map(|v|v.len()).unwrap_or(0),
-            "lastFailure":a["lastFailure"]}))
-        .unwrap_or(json!({"enabled":false}));
-    Json(json!({"signals":signals,"candidates":candidates.len(),"modelCandidates":model,
-        "templateDrafts":drafts,"tensions":tensions,"asymmetries":asymmetries,
-        "lastIngest":last,"models":models,"autopilot":autopilot}))
 }
 
 pub async fn overview(State(state):State<AppState>)->Json<Value>{
@@ -583,6 +554,36 @@ mod tests{
         assert_eq!(result["reportedNetWon"],550000.0);
         assert_eq!(result["unrecoveredWon"],450000.0);
         assert_eq!(result["recoveryPct"],55.0);
+    }
+    #[test] fn dashboard_counts_large_history_in_sql_without_loading_all_rows(){
+        let store=crate::db::Store::open(std::path::Path::new(":memory:")).unwrap();
+        store.put("money_signal",&json!({"id":"source-1"})).unwrap();
+        store.put("money_tension",&json!({"id":"t-1"})).unwrap();
+        store.put("money_asymmetry",&json!({"id":"a-1"})).unwrap();
+        store.put("money_candidate",&json!({"id":"c-1","origin":"model"})).unwrap();
+        store.put("money_candidate",&json!({"id":"c-2","origin":"source_pair_draft"})).unwrap();
+        store.put("money_ingest_report",&json!({"id":"r-1","capturedAt":"2026-11-01T00:00:00Z"})).unwrap();
+        store.put("money_ingest_report",&json!({"id":"r-2","capturedAt":"2026-11-17T00:00:00Z"})).unwrap();
+        store.put("job",&json!({"id":"j-1","kind":"money_discover","status":"completed",
+            "result":{"modelUsed":{"model":"free-a"}}})).unwrap();
+        store.put("job",&json!({"id":"j-2","kind":"money_discover","status":"failed",
+            "input":{"model":"free-a"}})).unwrap();
+        store.put("job",&json!({"id":"j-3","kind":"prompt","status":"completed"})).unwrap();
+        store.put("money_autopilot",&json!({"id":"auto","enabled":true,
+            "completedRounds":4,"freeModels":[{"model":"a"},{"model":"b"}]})).unwrap();
+        let stats=store.money_dashboard_stats().unwrap();
+        assert_eq!(stats["signals"],1);
+        assert_eq!(stats["tensions"],1);
+        assert_eq!(stats["asymmetries"],1);
+        assert_eq!(stats["candidates"],2);
+        assert_eq!(stats["modelCandidates"],1);
+        assert_eq!(stats["templateDrafts"],1);
+        assert_eq!(stats["lastIngest"]["id"],"r-2");
+        assert_eq!(stats["autopilot"]["rotation"],2);
+        assert_eq!(stats["autopilot"]["rounds"],4);
+        assert_eq!(stats["models"].as_array().unwrap().len(),1);
+        assert_eq!(stats["models"][0]["completed"],1);
+        assert_eq!(stats["models"][0]["failed"],1);
     }
     #[test] fn invalid_amounts_are_rejected(){
         assert_eq!(valid_won(&json!(-1),1000.0),None);

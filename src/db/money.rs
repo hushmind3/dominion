@@ -47,12 +47,81 @@ pub(super) const SCHEMA: &str = r#"
                  ON records(json_extract(data,'$.capturedAt')) WHERE kind='money_signal';
              CREATE INDEX IF NOT EXISTS idx_money_signal_source_url
                  ON records(json_extract(data,'$.url')) WHERE kind='money_signal';
+             CREATE INDEX IF NOT EXISTS idx_money_last_ingest
+                 ON records(json_extract(data,'$.capturedAt') DESC)
+                 WHERE kind='money_ingest_report';
+             CREATE INDEX IF NOT EXISTS idx_money_active_autopilot
+                 ON records(json_extract(data,'$.enabled'))
+                 WHERE kind='money_autopilot';
              CREATE VIRTUAL TABLE IF NOT EXISTS money_fact_fts
                  USING fts5(id UNINDEXED, claim, tokenize='trigram');
              CREATE TABLE IF NOT EXISTS money_fact_term(
                  term TEXT NOT NULL, fact_id TEXT NOT NULL, PRIMARY KEY(term,fact_id));
              CREATE INDEX IF NOT EXISTS idx_money_term_fact ON money_fact_term(fact_id);
 "#;
+
+/// Low-allocation Money screen summary. SQLite groups by indexed record
+/// kind instead of deserializing every past candidate, job and ingest report
+/// on each screen refresh; only the latest matching rows become JSON Values.
+impl Store {
+    pub fn money_dashboard_stats(&self)->Result<Value,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let count=|kind:&str|->Result<i64,String>{
+            conn.query_row("SELECT COUNT(*) FROM records WHERE kind=?1",[kind],
+                |row|row.get(0)).map_err(|e|e.to_string())
+        };
+        let signals=count("money_signal")?;
+        let tensions=count("money_tension")?;
+        let asymmetries=count("money_asymmetry")?;
+        let (candidates,model):(i64,i64)=conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(
+                CASE WHEN json_extract(data,'$.origin')='model' THEN 1 ELSE 0 END
+             ),0) FROM records WHERE kind='money_candidate'",
+            [],|row|Ok((row.get(0)?,row.get(1)?))
+        ).map_err(|e|e.to_string())?;
+        let ingest:Option<String>=conn.query_row(
+            "SELECT data FROM records WHERE kind='money_ingest_report'
+             ORDER BY json_extract(data,'$.capturedAt') DESC LIMIT 1",
+            [],|row|row.get(0)
+        ).optional().map_err(|e|e.to_string())?;
+        let latest=ingest.map(|raw|serde_json::from_str::<Value>(&raw)
+            .map_err(|e|e.to_string())).transpose()?.unwrap_or(Value::Null);
+        let autopilot:Option<String>=conn.query_row(
+            "SELECT data FROM records WHERE kind='money_autopilot'
+             AND json_extract(data,'$.enabled')=1 LIMIT 1",
+            [],|row|row.get(0)
+        ).optional().map_err(|e|e.to_string())?;
+        let active=autopilot.map(|raw|serde_json::from_str::<Value>(&raw)
+            .map_err(|e|e.to_string())).transpose()?;
+        let auto=active.map(|a|json!({"enabled":true,
+            "rounds":a["completedRounds"],"nextAt":a["nextAt"],
+            "rotation":a["freeModels"].as_array().map(|v|v.len()).unwrap_or(0),
+            "lastFailure":a["lastFailure"]}))
+            .unwrap_or(json!({"enabled":false}));
+        let mut statement=conn.prepare(
+            "SELECT COALESCE(
+                 NULLIF(json_extract(data,'$.result.modelUsed.model'),''),
+                 NULLIF(json_extract(data,'$.input.model'),''),'미지정') AS model,
+              SUM(CASE WHEN json_extract(data,'$.status')='completed' THEN 1 ELSE 0 END),
+              SUM(CASE WHEN json_extract(data,'$.status') IN
+                 ('failed','needs_review','cancelled') THEN 1 ELSE 0 END)
+             FROM records WHERE kind='job'
+               AND json_extract(data,'$.kind')='money_discover'
+             GROUP BY model ORDER BY model"
+        ).map_err(|e|e.to_string())?;
+        let models=statement.query_map([],|row|{
+            let model:String=row.get(0)?;
+            let completed:i64=row.get(1)?;
+            let failed:i64=row.get(2)?;
+            Ok(json!({"model":model,"completed":completed,"failed":failed}))
+        }).map_err(|e|e.to_string())?
+          .collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
+        Ok(json!({"signals":signals,"candidates":candidates,"modelCandidates":model,
+            "templateDrafts":candidates-model,"tensions":tensions,
+            "asymmetries":asymmetries,"lastIngest":latest,
+            "models":models,"autopilot":auto}))
+    }
+}
 
 /// Korean two-character terms and compound market vocabulary need a separate
 /// index because SQLite's trigram FTS cannot match <3-character queries.
