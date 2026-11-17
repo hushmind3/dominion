@@ -72,3 +72,10 @@ cargo test native_replay::tests:: -- --nocapture
 ~~~
 
 The improvement targets replay evidence integrity, not a new measured benchmark point. For comparison, Qwen Code's October 2026 session multi-agent design describes explicit persisted records and replay, while Codex app-server separates lifecycle events and approvals. Neither external system's published design establishes a Dominion pass-rate claim.
+
+
+## 2026-11-18 failure-evidence correction
+
+`crates/dominion-agent-sdk/src/failure_guidance.rs` now distinguishes **source mutated after a failed check** from **the same check succeeding**. An edit leaves the original receipt visible as `source_changed_recheck_pending` and points the model to the kernel-owned acceptance pass; an exact successful repeat of the same tool and arguments clears the hint, while unrelated tool successes do not. This preserves error evidence without blindly repeating an unchanged failing check.
+
+Commit: `21616fea` on `dominion-sub3` only. Added deterministic test cases, not executed here (Rust unavailable). Scoped verification: `cargo test -p dominion-agent-sdk failure_guidance::tests::`, followed by relevant SDK acceptance tests. The fix is a source-level lifecycle correction, not evidence of improved real-model completion.
