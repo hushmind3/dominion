@@ -209,7 +209,8 @@ pub fn report(state:&AppState,id:&str)->Result<Value,String>{
    provenance.push(json!({"operationId":r.id,"tool":r.tool,
     "origin":op["provenance"]["origin"],"sourceTrust":op["provenance"]["trust"],
     "contractSha256":pin,"argumentsSha256":op["provenance"]["argumentsSha256"],
-    "resultSha256":op["resultSha256"],"outcomeUnknown":op["outcomeUnknown"]}));
+    "resultSha256":op["resultSha256"],"outcomeUnknown":op["outcomeUnknown"],
+    "artifactLineage":op["artifactLineage"]}));
   }else if r.success && !r.tool.starts_with("dominion_"){
    anomalies.push(format!("Successful host tool has no operation journal: {}",r.id));
   }
