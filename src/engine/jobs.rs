@@ -133,114 +133,115 @@ pub fn enqueue_once(state: &AppState, id: &str, kind: &str, input: Value) -> Opt
 /// Recovers work left behind by a crash: running jobs are re-queued (unless
 /// they already exhausted retries) and running executions become interrupted.
 pub fn recover(state: &AppState) {
-    for job in state.store.all("job") {
-        // Removed capabilities cannot restart paid generation or experiments.
-        if retired_legacy_kind(job["kind"].as_str().unwrap_or("")) {
-            if matches!(job["status"].as_str(),Some("queued"|"running")) {
-                if let Some(id)=job["id"].as_str() {
-                    let uncertain=job["status"]=="running";
-                    if let Some(saved)=state.store.patch_if("job",id,"status",&job["status"],&json!({
-                        "status":if uncertain {"needs_review"} else {"cancelled"},
-                        "legacyRetired":true,"cancelRequested":true,
-                        "error":"Retired built-in media/RSI task: execution disabled; historical data retained",
-                        "finishedAt":chrono::Utc::now().to_rfc3339()
-                    })) {state.bus.record("job",&saved);}
-                }
-            }
+    // Recovery is a bounded *active-state* transition, not history replay.
+    // A corrupted/unavailable lookup is never treated as a clean empty set.
+    let jobs=match state.store.active_jobs(){
+        Ok(jobs)=>jobs,
+        Err(error)=>{
+            state.store.audit("job.recovery_query_failed",json!({"error":error}));
+            Vec::new()
+        }
+    };
+    let unresolved_sessions=match state.store.unknown_effect_sessions(){
+        Ok(sessions)=>Some(sessions),
+        Err(error)=>{
+            state.store.audit("job.recovery_effect_query_failed",json!({"error":error}));
+            None
+        }
+    };
+    for job in jobs {
+        let Some(id)=job["id"].as_str() else{continue};
+        let old_status=&job["status"];
+        if retired_legacy_kind(job["kind"].as_str().unwrap_or("")){
+            let uncertain=old_status=="running";
+            if let Some(saved)=state.store.patch_if("job",id,"status",old_status,&json!({
+                "status":if uncertain {"needs_review"} else {"cancelled"},
+                "legacyRetired":true,"cancelRequested":true,
+                "error":"Retired built-in media/RSI task: execution disabled; historical data retained",
+                "finishedAt":chrono::Utc::now().to_rfc3339()
+            })){state.bus.record("job",&saved);}
             continue;
         }
-        if job.get("status").and_then(|value| value.as_str()) != Some("running") {
-            continue;
-        }
-        let attempts = job
-            .get("attempts")
-            .and_then(|value| value.as_u64())
-            .unwrap_or(0);
-        let mut updated = job.clone();
-        updated["recovered"] = json!(true);
-        let flagged = [
-            "/inFlight",
-            "/promptState/inFlight",
-            "/nativeInFlight",
-            "/roomState/inFlight",
-            "/workflowState/inFlight",
-            "/discordState/inFlight",
-        ]
-        .iter()
-        .any(|path| {
-            // Stable native child IDs make new workflows replay-safe.
+        if old_status!="running"{continue;}
+        let attempts=job["attempts"].as_u64().unwrap_or(0);
+        let flagged=[
+            "/inFlight","/promptState/inFlight","/nativeInFlight",
+            "/roomState/inFlight","/workflowState/inFlight","/discordState/inFlight"
+        ].iter().any(|path|{
             if *path=="/workflowState/inFlight"
-                && job.pointer(path)==Some(&json!(true))
-            {
+                && job.pointer(path)==Some(&json!(true)){
                 return job.pointer("/workflowState/activeChildJobId")
                     .and_then(Value::as_str)
-                    .is_none_or(|id| state.store.get("job",id).is_none());
+                    .is_none_or(|child_id|state.store.get("job",child_id).is_none());
             }
-            job.pointer(path)
-                .is_some_and(|value| !value.is_null() && value != &json!(false))
+            job.pointer(path).is_some_and(|value|
+                !value.is_null()&&value!=&json!(false))
         });
-        // A tool may have reached an external system before the crash. Its
-        // result is unknown, so replaying the job could repeat a side effect.
-        let job_session = job["sessionId"]
-            .as_str()
-            .or_else(|| job.pointer("/input/sessionId").and_then(Value::as_str));
-        let unknown_external_result = job_session.is_some_and(|session| {
-            state.store.all("execution_operation").iter().any(|operation| {
-                operation["outcomeUnknown"] == true
-                    && operation["runId"]
-                        .as_str()
-                        .and_then(|run_id| state.store.get("execution", run_id))
-                        .is_some_and(|run| run["sessionId"].as_str() == Some(session))
-            })
-        });
-        let uncertain = flagged || unknown_external_result;
-        updated["status"] = json!(if attempts >= 3 || uncertain {
-            "needs_review"
-        } else {
-            "queued"
-        });
-        if uncertain {
-            updated["error"] =
-                json!("재시작 전 작업 결과를 확정할 수 없습니다. 실행 기록을 확인하세요.");
+        let job_session=job["sessionId"].as_str()
+            .or_else(||job.pointer("/input/sessionId").and_then(Value::as_str));
+        // If the uncertain-effect lookup fails, never silently replay a job
+        // with a session; the earlier external effect could have occurred.
+        let unknown=job_session.is_some_and(|session|
+            unresolved_sessions.as_ref().is_none_or(|sessions|sessions.contains(session)));
+        let cancelled=job["cancelRequested"]==true;
+        let uncertain=flagged||unknown;
+        let status=if cancelled{"cancelled"}
+            else if attempts>=3||uncertain{"needs_review"}
+            else{"queued"};
+        let mut patch=json!({"status":status,"recovered":true});
+        if cancelled {
+            patch["finishedAt"]=json!(chrono::Utc::now().to_rfc3339());
+            patch["error"]=json!("Owner cancellation preserved across restart");
+        }else if uncertain{
+            patch["error"]=json!("재시작 전 작업 결과를 확정할 수 없습니다. 실행 기록을 확인하세요.");
         }
-        state.store.put("job", &updated);
-        if matches!(job["kind"].as_str(), Some("room" | "meeting")) {
-            if let Some(id) = job.pointer("/input/roomId").and_then(Value::as_str) {
-                let status = updated["status"].as_str().unwrap_or("needs_review");
-                if let Some(saved)=state.store.patch_if("room",id,"id",&json!(id),&json!({
-                    "status":status,"activeAgentId":null,"pauseReason":if status=="needs_review" {"재시작 전 발언이나 도구 결과를 확인해야 합니다."} else {""}
-                })) { state.bus.record("room",&saved); }
+        // CAS protects a concurrently cancelled or completed job even when
+        // another process is still serving an API during recovery.
+        let Some(updated)=state.store.patch_if("job",id,"status",old_status,&patch)else{continue};
+        state.bus.record("job",&updated);
+        if matches!(job["kind"].as_str(),Some("room"|"meeting")){
+            if let Some(room_id)=job.pointer("/input/roomId").and_then(Value::as_str){
+                if let Some(saved)=state.store.patch_if("room",room_id,"id",&json!(room_id),&json!({
+                    "status":status,"activeAgentId":null,
+                    "pauseReason":if status=="needs_review"{
+                        "재시작 전 발언이나 도구 결과를 확인해야 합니다."
+                    }else{""}
+                })){state.bus.record("room",&saved);}
             }
         }
-        state.store.audit(
-            "job.recovered",
-            json!({ "jobId": job.get("id"), "attempts": attempts }),
-        );
+        state.store.audit("job.recovered",json!({
+            "jobId":id,"attempts":attempts,"status":status,
+            "uncertainExternalEffect":unknown,"cancelRequested":cancelled
+        }));
     }
-    for execution in state.store.all("execution") {
-        if execution.get("status").and_then(|value| value.as_str()) == Some("running") {
-            let mut updated = execution.clone();
-            updated["status"] = json!("interrupted");
-            updated["phase"] = json!("interrupted");
-            updated["phaseUpdatedAt"] = json!(chrono::Utc::now().to_rfc3339());
-            updated["taskOutcome"] = json!("cancelled");
-            updated["reason"] = json!("백엔드가 재시작되어 실행이 중단되었습니다.");
-            updated["finishedAt"] = json!(chrono::Utc::now().to_rfc3339());
-            state.store.put("execution", &updated);
-        }
+    // Keep all older completed/cancelled executions and tool receipts intact.
+    match state.store.active_executions_indexed(){
+        Ok(executions)=>for execution in executions{
+            if let Some(id)=execution["id"].as_str(){
+                let _=state.store.patch_if("execution",id,"status",&json!("running"),&json!({
+                    "status":"interrupted","phase":"interrupted",
+                    "phaseUpdatedAt":chrono::Utc::now().to_rfc3339(),
+                    "taskOutcome":"cancelled",
+                    "reason":"백엔드가 재시작되어 실행이 중단되었습니다.",
+                    "finishedAt":chrono::Utc::now().to_rfc3339()
+                }));
+            }
+        },
+        Err(error)=>state.store.audit("job.recovery_executions_failed",json!({"error":error}))
     }
-    for mut operation in state.store.all("execution_operation") {
-        if operation["status"] == "running" {
-            operation["status"] = json!("interrupted");
-            operation["outcomeUnknown"] = json!(true);
-            operation["phase"] = json!("interrupted");
-            operation["reason"] = json!("백엔드가 재시작되어 도구 결과를 확정할 수 없습니다.");
-            operation["finishedAt"] = json!(chrono::Utc::now().to_rfc3339());
-            state.store.put("execution_operation", &operation);
-        }
+    match state.store.running_execution_operations(){
+        Ok(operations)=>for operation in operations{
+            if let Some(id)=operation["id"].as_str(){
+                let _=state.store.patch_if("execution_operation",id,"status",&json!("running"),&json!({
+                    "status":"interrupted","outcomeUnknown":true,
+                    "phase":"interrupted",
+                    "reason":"백엔드가 재시작되어 도구 결과를 확정할 수 없습니다.",
+                    "finishedAt":chrono::Utc::now().to_rfc3339()
+                }));
+            }
+        },
+        Err(error)=>state.store.audit("job.recovery_operations_failed",json!({"error":error}))
     }
-    // After interrupted executions have been recorded, expire durable approvals
-    // that outlived their live waiter before wake decisions are made.
     crate::engine::chat::expire_stale_approvals(state);
 }
 
@@ -752,6 +753,62 @@ mod tests {
         }));
         recover(&state);
         assert_eq!(state.store.get("job","legacy-workflow").unwrap()["status"],"needs_review");
+    }
+
+    #[test]
+    fn recover_preserves_owner_cancellation_even_if_job_is_still_running(){
+        let state=temp_state();
+        state.store.put("job",&json!({"id":"cancelled-before-restart",
+            "kind":"prompt","status":"running","attempts":1,
+            "cancelRequested":true,"input":{"prompt":"Do not replay"}})).unwrap();
+        recover(&state);
+        let saved=state.store.get("job","cancelled-before-restart").unwrap();
+        assert_eq!(saved["status"],"cancelled");
+        assert_eq!(saved["cancelRequested"],true);
+        assert!(next_queued(&state).is_none());
+    }
+
+    #[test]
+    fn recover_scopes_to_active_records_preserving_past_receipts(){
+        let state=temp_state();
+        for i in 0..200{
+            state.store.put("job",&json!({"id":format!("finished-{i}"),
+                "kind":"prompt","status":"completed","result":"keep"})).unwrap();
+            state.store.put("execution",&json!({"id":format!("done-run-{i}"),
+                "status":"completed","answer":"keep"})).unwrap();
+            state.store.put("execution_operation",&json!({"id":format!("done-op-{i}"),
+                "status":"completed","outcomeUnknown":false,"result":"keep"})).unwrap();
+        }
+        state.store.put("execution",&json!({"id":"live-run","status":"running"})).unwrap();
+        state.store.put("execution_operation",&json!({"id":"live-op",
+            "status":"running","outcomeUnknown":true,"sessionId":"session-2"})).unwrap();
+        state.store.put("job",&json!({"id":"live-job","kind":"prompt",
+            "status":"running","attempts":1,
+            "input":{"sessionId":"session-2"}})).unwrap();
+        recover(&state);
+        assert_eq!(state.store.get("job","live-job").unwrap()["status"],"needs_review");
+        assert_eq!(state.store.get("execution","live-run").unwrap()["status"],"interrupted");
+        assert_eq!(state.store.get("execution_operation","live-op").unwrap()["outcomeUnknown"],true);
+        for i in [0,199]{
+            assert_eq!(state.store.get("job",&format!("finished-{i}")).unwrap()["result"],"keep");
+            assert_eq!(state.store.get("execution",&format!("done-run-{i}")).unwrap()["status"],"completed");
+            assert_eq!(state.store.get("execution_operation",&format!("done-op-{i}")).unwrap()["status"],"completed");
+        }
+    }
+
+    #[test]
+    fn recover_resolves_old_operation_session_through_execution(){
+        let state=temp_state();
+        state.store.put("execution",&json!({"id":"historical-run",
+            "sessionId":"old-session","status":"interrupted"})).unwrap();
+        state.store.put("execution_operation",&json!({"id":"old-unknown",
+            "runId":"historical-run","status":"interrupted",
+            "outcomeUnknown":true})).unwrap();
+        state.store.put("job",&json!({"id":"old-session-job","kind":"prompt",
+            "status":"running","attempts":1,
+            "input":{"sessionId":"old-session"}})).unwrap();
+        recover(&state);
+        assert_eq!(state.store.get("job","old-session-job").unwrap()["status"],"needs_review");
     }
 
     #[test]

@@ -180,6 +180,16 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_operation_session
                  ON records(json_extract(data,'$.sessionId'))
                  WHERE kind='execution_operation';
+             -- Startup recovery touches only unresolved effects and running
+             -- receipts, not an ever-growing historical operation ledger.
+             CREATE INDEX IF NOT EXISTS idx_operation_recovery_unknown
+                 ON records(kind,json_extract(data,'$.sessionId'),json_extract(data,'$.runId'))
+                 WHERE kind='execution_operation'
+                   AND json_extract(data,'$.outcomeUnknown')=1;
+             CREATE INDEX IF NOT EXISTS idx_operation_recovery_running
+                 ON records(kind,json_extract(data,'$.status'))
+                 WHERE kind='execution_operation'
+                   AND json_extract(data,'$.status')='running';
              CREATE INDEX IF NOT EXISTS idx_execution_task
                  ON records(json_extract(data,'$.taskId'))
                  WHERE kind='execution';
@@ -272,6 +282,42 @@ impl Store {
             "SELECT data,id,created_at,updated_at FROM records
              WHERE kind='job' AND json_extract(data,'$.status') IN ('queued','running')
              ORDER BY json_extract(data,'$.queuedAt'),id"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([],record_from_row).map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    /// One indexed startup lookup for unresolved tool effects, with a legacy
+    /// run->session fallback. The prior recovery loop scanned the entire
+    /// operation ledger once per running job and fetched each execution.
+    pub fn unknown_effect_sessions(&self)->Result<std::collections::HashSet<String>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT DISTINCT COALESCE(NULLIF(json_extract(op.data,'$.sessionId'),''),
+                    json_extract(run.data,'$.sessionId'))
+             FROM records op LEFT JOIN records run
+               ON run.kind='execution' AND run.id=json_extract(op.data,'$.runId')
+             WHERE op.kind='execution_operation'
+               AND json_extract(op.data,'$.outcomeUnknown')=1"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([],|row|row.get::<_,Option<String>>(0))
+            .map_err(|e|e.to_string())?;
+        let mut sessions=std::collections::HashSet::new();
+        for row in rows{
+            if let Some(id)=row.map_err(|e|e.to_string())?{
+                if !id.is_empty(){sessions.insert(id);}
+            }
+        }
+        Ok(sessions)
+    }
+    /// Read running receipts only; completed receipts are permanent history,
+    /// never part of reboot reconciliation or its CPU/DB cost.
+    pub fn running_execution_operations(&self)->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='execution_operation'
+               AND json_extract(data,'$.status')='running'"
         ).map_err(|e|e.to_string())?;
         let rows=stmt.query_map([],record_from_row).map_err(|e|e.to_string())?;
         rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
