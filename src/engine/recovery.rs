@@ -102,11 +102,17 @@ pub fn hint(class: &str) -> &'static str {
 
 /// Latest recorded failure hint for a task, used by goal replanning.
 pub fn latest_failure_hint(state: &AppState, task_id: &str) -> Option<String> {
-    let latest = state
-        .store
-        .all("execution")
+    let executions = match state.store.executions_for_task(task_id) {
+        Ok(rows) => rows,
+        Err(error) => {
+            state.store.audit("recovery.task_query_failed", json!({
+                "taskId": task_id, "error": error,
+            }));
+            return None;
+        }
+    };
+    let latest = executions
         .into_iter()
-        .filter(|execution| execution["taskId"].as_str() == Some(task_id))
         .filter(|execution| execution["failureClass"].as_str().is_some())
         .max_by_key(|execution| {
             execution["startedAt"]
@@ -131,6 +137,34 @@ pub fn failure_record(execution: &Value, operations: &[Value]) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn task_failure_hint_uses_only_matching_task_history() {
+        use crate::{config::Config, db::Store, vault::Vault};
+        let dir = std::env::temp_dir().join(format!("dominion-task-recovery-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = Config { port: 0, data_dir: dir.clone(), web_dir: dir.join("web"), workspace: dir.clone() };
+        let store = Store::open(&config.db_path()).unwrap();
+        let state = AppState::new(config.clone(), store, Vault::open(&config.key_path()));
+        state.store.put("execution", &json!({
+            "id":"other", "taskId":"other-task", "failureClass":"permission_denied",
+            "recoveryHint":"foreign hint", "startedAt":"2026-11-18T12:00:00Z"
+        }));
+        state.store.put("execution", &json!({
+            "id":"older", "taskId":"task", "failureClass":"model_error",
+            "recoveryHint":"older hint", "startedAt":"2026-11-17T12:00:00Z"
+        }));
+        state.store.put("execution", &json!({
+            "id":"latest", "taskId":"task", "failureClass":"tool_failed",
+            "recoveryHint":"matching hint", "startedAt":"2026-11-18T11:00:00Z"
+        }));
+        assert_eq!(state.store.executions_for_task("task").unwrap().len(), 2);
+        assert!(latest_failure_hint(&state, "task").unwrap().contains("matching hint"));
+        assert!(latest_failure_hint(&state, "other-task").unwrap().contains("foreign hint"));
+        assert!(latest_failure_hint(&state, "missing").is_none());
+        drop(state);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn unknown_external_effect_is_never_a_retryable_tool_error() {

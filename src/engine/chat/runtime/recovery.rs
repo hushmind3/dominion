@@ -10,7 +10,8 @@ pub(super) fn restore_program_state(
 ) -> Result<(), String> {
     let source = state
         .store
-        .all("execution")
+        .executions_for_task(task_id)
+        .map_err(|error| format!("재개 기록 조회 실패: {error}"))?
         .into_iter()
         .filter(|execution| {
             execution["id"].as_str() != Some(execution_id)

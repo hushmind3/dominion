@@ -420,6 +420,20 @@ impl Store {
         Ok(found!=0)
     }
 
+    /// Task-scoped recovery reads use idx_execution_task rather than
+    /// deserializing every historical execution from unrelated tasks.
+    pub fn executions_for_task(&self, task_id: &str) -> Result<Vec<Value>, String> {
+        let conn = self.conn.lock().map_err(|error| error.to_string())?;
+        let mut stmt = conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='execution' AND json_extract(data,'$.taskId')=?1
+             ORDER BY json_extract(data,'$.startedAt') DESC,id DESC",
+        ).map_err(|error| error.to_string())?;
+        let rows = stmt.query_map([task_id], record_from_row)
+            .map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
+    }
+
     /// Repeated effect checks must not parse the entire historical tool journal.
     /// Sorted newest-first to retain the previous all(kind) + reverse semantics.
     pub fn session_execution_operations(&self, session_id: &str) -> Result<Vec<Value>, String> {
@@ -734,6 +748,13 @@ impl Store {
                 record_from_row,
             )
             .ok()?;
+        // Reject stale lifecycle writes after a concurrent terminal update.
+        // This check and the phase CAS share the same connection lock.
+        if kind == "execution" && field == "phase"
+            && matches!(record["status"].as_str(), Some("completed" | "failed" | "cancelled" | "interrupted"))
+        {
+            return None;
+        }
         if record.get(field).unwrap_or(&Value::Null) != expected {
             return None;
         }

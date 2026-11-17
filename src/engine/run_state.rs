@@ -182,6 +182,29 @@ mod tests {
     }
 
     #[test]
+    fn terminal_status_blocks_stale_phase_cas_even_when_phase_is_old() {
+        use crate::{config::Config, db::Store, vault::Vault};
+        let dir = std::env::temp_dir().join(format!("dominion-terminal-phase-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = Config { port: 0, data_dir: dir.clone(), web_dir: dir.join("web"), workspace: dir.clone() };
+        let store = Store::open(&config.db_path()).unwrap();
+        let state = AppState::new(config.clone(), store, Vault::open(&config.key_path()));
+        state.store.put("execution", &json!({
+            "id":"run", "status":"cancelled", "phase":"running",
+            "evidence":{"receipt":"keep"}
+        }));
+        // Simulate a stale phase writer that read running before cancellation.
+        assert!(state.store.patch_if("execution", "run", "phase", &json!("running"),
+            &json!({"phase":"verifying"})).is_none());
+        let saved = apply(&state, "run", "verify").unwrap();
+        assert_eq!(saved["status"], "cancelled");
+        assert_eq!(saved["phase"], "running");
+        assert_eq!(saved["evidence"]["receipt"], "keep");
+        drop(state);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn final_status_maps_to_one_terminal_phase() {
         assert_eq!(phase_for_status("completed"), SUCCEEDED);
         assert_eq!(phase_for_status("cancelled"), CANCELLED);
