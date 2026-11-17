@@ -832,9 +832,20 @@ pub(super) async fn run_turn_body(
             round_tools = trim_tool_definitions(round_tools, budget);
         }
         let wire_messages = messages.clone();
+        // The same immutable prompt/tool bundle enters every budget check.
+        // Estimate it once: Korean and large multi-file contexts are expensive
+        // to rescan repeatedly on each paid model round.
+        let round_input_tokens =
+            super::room_context::input_estimate(&wire_messages,&round_tools) as u64;
+        // A live Home SDK task consults the same persisted usage snapshot for
+        // both call count and token admission. Ordinary chats pay no query.
+        let sdk_usage = if session["sdkUiPolicy"]["maxTotalTokens"].as_u64().is_some()
+            || session["sdkUiPolicy"]["maxRounds"].as_u64().is_some() {
+            Some(state.store.session_usage(session_id))
+        } else { None };
         if is_room {
             if let Some(mut execution) = state.store.get("execution", execution_id) {
-                execution["inputContext"]["preparedInputTokensEstimate"] = json!(super::room_context::input_estimate(&wire_messages,&round_tools));
+                execution["inputContext"]["preparedInputTokensEstimate"] = json!(round_input_tokens);
                 execution["inputContext"]["preProviderDigest"] = json!(crate::engine::memory::stable_id(&[&json!({"messages":wire_messages,"tools":round_tools}).to_string()]));
                 state.store.put("execution", &execution);
             }
@@ -844,11 +855,9 @@ pub(super) async fn run_turn_body(
             // that already finished. Reserve this call's input estimate and
             // maximum output BEFORE entering a billable provider request.
             let used=crate::engine::execution_scope::usage_since_baseline(
-                &session,&state.store.session_usage(session_id),"totalTokens"
+                &session,sdk_usage.as_ref().expect("usage snapshot for token cap"),"totalTokens"
             ).saturating_add(total_tokens);
-            let estimated_input=super::room_context::input_estimate(
-                &wire_messages,&round_tools) as u64;
-            let remaining=limit.saturating_sub(used).saturating_sub(estimated_input);
+            let remaining=limit.saturating_sub(used).saturating_sub(round_input_tokens);
             if remaining<256{
                 mark_budget_exhausted(state,execution_id);
                 return Err("전체 토큰 한도에 도달했습니다. 새 모델 요청을 중단했습니다.".into());
@@ -861,10 +870,8 @@ pub(super) async fn run_turn_body(
             // in THIS turn and reserve this call's estimated input before
             // paying for an output. The final provider bill may vary; another
             // provider call is never launched after the budget is exhausted.
-            let input_estimate=super::room_context::input_estimate(
-                &wire_messages,&round_tools) as u64;
             let remaining=available_at_turn_start
-                .saturating_sub(total_tokens).saturating_sub(input_estimate);
+                .saturating_sub(total_tokens).saturating_sub(round_input_tokens);
             if remaining<256{
                 mark_budget_exhausted(state,execution_id);
                 return Err("작업 토큰 예산이 부족해 다음 모델 호출을 중단했습니다.".into());
@@ -882,7 +889,7 @@ pub(super) async fn run_turn_body(
         // across model turns and autonomous repair attempts.
         if let Some(limit)=session["sdkUiPolicy"]["maxRounds"].as_u64(){
             if crate::engine::execution_scope::usage_since_baseline(
-                &session,&state.store.session_usage(session_id),"calls"
+                &session,sdk_usage.as_ref().expect("usage snapshot for call cap"),"calls"
             )>=limit {
                 mark_budget_exhausted(state,execution_id);
                 return Err("모델 판단 횟수 한도에 도달했습니다.".into());
@@ -964,7 +971,7 @@ pub(super) async fn run_turn_body(
             usage_estimated = true;
             (
                 metadata["continuity"]["workingView"]["estimatedInputTokens"].as_u64()
-                    .unwrap_or_else(||super::room_context::input_estimate(&wire_messages, &round_tools) as u64),
+                    .unwrap_or(round_input_tokens),
                 super::room_context::estimate(&format!("{}{}", completion.content, completion.reasoning)).max(1) as u64,
             )
         };
