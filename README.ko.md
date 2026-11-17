@@ -148,7 +148,7 @@ DOMINION은 기능 수보다 **실제 작업 성공률과 안정적인 실행 �
 - **[Pull Requests](https://github.com/hushmind3/dominion-rust/pulls)** — Rust 하네스, UI, 모델 연결, 채널 드라이버, 문서 등 개선을 환영합니다.
 - 실제 화면을 보여주는 스크린샷과 재현 가능한 테스트도 프로젝트를 개선하는 데 도움이 됩니다.
 
-더 깊은 구현 자료: [엔진 설명](ENGINE.md) · [문서 목차](docs/INDEX.md) · [하네스 계약](docs/HARNESS.md) · [이전 상세 README 보관본](docs/README-TECHNICAL-SNAPSHOT-2026-11-14.md)
+계정 연동: [Google·GitHub 계정 연결 및 배포 설정](docs/ACCOUNT-CONNECTIONS.md) — 일반 사용자는 **연결 채널 → 계정 연결**에서 로그인 버튼을 사용합니다.\n\n더 깊은 구현 자료: [엔진 설명](ENGINE.md) · [문서 목차](docs/INDEX.md) · [하네스 계약](docs/HARNESS.md) · [이전 상세 README 보관본](docs/README-TECHNICAL-SNAPSHOT-2026-11-14.md)
 
 ## English
 
