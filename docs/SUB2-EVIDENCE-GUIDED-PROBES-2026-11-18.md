@@ -39,7 +39,10 @@ provenance slice. This is not another model-selected strategy name.
   a receipt is evidence of provenance, not proof of a causal explanation.
 - Repair admission certificate: refuted hypotheses, invented receipt IDs,
   denied approvals and unresolved external effects cannot justify a new
-  state-changing intervention. A proposed mutation with no matching failure
+  state-changing intervention. A citation must also have a non-temporal
+  provenance path to the exact failed call; chronological neighbors alone
+  are rejected as causal support. Mutating candidates without any observed
+  evidence citation are rejected before their diagnostic probes execute. A proposed mutation with no matching failure
   receipt is not admitted. Each accepted action records an explicit causal
   eligibility certificate, and the existing gateway still owns permission.
 - No new runner: the existing dispatch_tool_call performs approval,
