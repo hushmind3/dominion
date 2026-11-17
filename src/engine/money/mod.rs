@@ -1,5 +1,20 @@
 //! Money laboratory: domain reasoning, grounded candidate ingestion and economics.
 //! Uses the existing native Rust job runtime. This is not a second agent harness.
+// Single removable Money capability; shared Rust engine executes all effects.
+pub mod asymmetry;
+pub mod brief;
+pub mod buyer;
+pub mod catalog;
+pub mod folding;
+pub mod health;
+pub mod intelligence;
+pub mod kit;
+pub mod mechanism;
+pub mod rank;
+pub mod retrieval;
+pub mod sources;
+pub mod strategy;
+
 use crate::engine::jobs::JobContext;
 use crate::state::AppState;
 use serde_json::{json, Value};
@@ -864,5 +879,30 @@ mod tests{
     #[test] fn parses_json_in_fence(){
         assert!(parse_output("~~~\n{\"opportunities\":[{\"title\":\"a\"}]}\n~~~").is_ok());
         assert!(parse_output("not json").is_err());
+    }
+}
+
+/// Called from the host's existing timer, but does no collection work when
+/// Money has not been explicitly enabled by the user.
+pub fn tick(state:&AppState){
+    if !state.store.all("money_autopilot").iter().any(|v|v["enabled"]==true){
+        return;
+    }
+    health::sample(state);
+    sources::schedule(state);
+    catalog::schedule(state);
+    folding::schedule(state);
+    schedule_autopilot(state);
+}
+
+/// One adapter for every Money job. The host owns its queue, cancellation,
+/// token accounting, permissions and provider/tool execution.
+pub async fn dispatch(context:&JobContext,job:&Value)->Result<Value,String>{
+    match job["kind"].as_str(){
+        Some("money_discover")=>run(context,job).await,
+        Some("money_ingest")=>sources::run(context,job).await,
+        Some("money_catalog")=>catalog::run(context,job).await,
+        Some("money_fold")=>folding::run(context,job).await,
+        _=>Err("unsupported Money job kind".into()),
     }
 }

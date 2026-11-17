@@ -51,7 +51,7 @@ jobs:
         run: node --test sdk/typescript/tests/sdk.test.mjs
       - name: Money regression tests
         if: matrix.os == 'macos-latest'
-        run: cargo test --lib money_
+        run: cargo test --lib money
       - name: Pure Rust decision kernel tests
         if: matrix.os == 'macos-latest'
         run: cargo test -p dominion-agent-kernel --lib

@@ -325,11 +325,7 @@ pub fn recover(state: &AppState) {
 
 pub fn start(state: AppState) {
     crate::engine::channel_adapter::start(state.clone());
-    crate::engine::money_health::sample(&state);
-    crate::engine::money_sources::schedule(&state);
-    crate::engine::money_catalog::schedule(&state);
-    crate::engine::money_folding::schedule(&state);
-    crate::engine::money::schedule_autopilot(&state);
+    crate::engine::money::tick(&state);
     let workers = std::env::var("DOMINION_JOB_WORKERS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
@@ -380,11 +376,7 @@ pub fn start(state: AppState) {
             // deadline still expires automatically during normal operation.
             crate::engine::chat::expire_stale_approvals(&state);
             // Share this timer with approval maintenance, not a parallel daemon.
-            crate::engine::money_health::sample(&state);
-            crate::engine::money_sources::schedule(&state);
-            crate::engine::money_catalog::schedule(&state);
-            crate::engine::money_folding::schedule(&state);
-            crate::engine::money::schedule_autopilot(&state);
+            crate::engine::money::tick(&state);
         }
     });
 
@@ -508,10 +500,8 @@ async fn run_job(state: AppState, job: Value) {
     let result = match kind.as_str() {
         "room" | "meeting" => rooms::run(&context, &job).await,
         "prompt" => run_prompt(&context, &job).await,
-        "money_discover" => crate::engine::money::run(&context,&job).await,
-        "money_ingest" => crate::engine::money_sources::run(&context,&job).await,
-        "money_catalog" => crate::engine::money_catalog::run(&context,&job).await,
-        "money_fold" => crate::engine::money_folding::run(&context,&job).await,
+        "money_discover" | "money_ingest" | "money_catalog" | "money_fold" =>
+            crate::engine::money::dispatch(&context,&job).await,
         "rsi_compare"|"rsi_evolve"|"rsi_generation" => Err(
             "needs_review: 독립 RSI 캠페인은 종료되었습니다. 기존 작업 기록은 보존했습니다.".into()),
         "resume" => run_resume(&context, &job).await,

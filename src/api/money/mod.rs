@@ -1,5 +1,6 @@
 //! Persistent Money Lab API. All writes are domain-scoped; the native agent
 //! runtime, global memory and the main branch require no new execution engine.
+mod find;
 use crate::{engine, state::AppState};
 use axum::{extract::{Path,Query,State},http::StatusCode,response::{IntoResponse,Response},Json};
 use serde_json::{json, Value};
@@ -414,7 +415,7 @@ pub async fn autopilot_set(State(state):State<AppState>,Path(id):Path<String>,Js
     });
     match result {
         Ok(saved)=>{
-            engine::money::schedule_autopilot(&state);
+            engine::money::tick(&state);
             Json(state.store.get("money_autopilot",&id).unwrap_or(saved)).into_response()
         },
         Err(err) if err=="already_active"=>
@@ -719,4 +720,24 @@ mod source_draft_tests{
         assert_eq!(response.status(),StatusCode::NOT_FOUND);
         let _=std::fs::remove_dir_all(dir);
     }
+}
+
+    
+/// All Money HTTP routes are mounted through this optional router.
+pub fn routes()->axum::Router<AppState>{
+    use axum::routing::{get,post};
+    axum::Router::new()
+        .route("/api/money",get(overview))
+        .route("/api/money/find",get(find::latest).post(find::find))
+        .route("/api/money/research",get(research))
+        .route("/api/money/stats",get(stats))
+        .route("/api/money/rotation",get(rotation))
+        .route("/api/money/campaigns",post(create_campaign))
+        .route("/api/money/campaigns/:id",get(campaign).post(update_campaign))
+        .route("/api/money/campaigns/:id/run",post(start))
+        .route("/api/money/campaigns/:id/drafts/:tension_id/promote",post(promote_draft))
+        .route("/api/money/campaigns/:id/autopilot",get(autopilot_status).post(autopilot_set))
+        .route("/api/money/candidates/:id",get(candidate).post(update_candidate))
+        .route("/api/money/candidates/:id/experiments",post(record_experiment))
+        .route("/api/money/candidates/:id/validation-kit",post(create_validation_kit))
 }

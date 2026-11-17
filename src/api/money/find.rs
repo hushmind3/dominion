@@ -410,7 +410,7 @@ pub async fn find(State(state):State<AppState>,Json(body):Json<Value>)->Response
     // explicit second step, so an agent selection alone never spends budget.
     let want_inference=body["infer"].as_bool().unwrap_or(true);
     if selected_agent.is_some()&&want_inference{
-        let response=super::money::start(State(state.clone()),Path(CAMPAIGN_ID.to_owned()),
+        let response=super::start(State(state.clone()),Path(CAMPAIGN_ID.to_owned()),
             Json(json!({"mode":"infer","tokenBudget":inference_budget,"agentId":agent_id}))).await;
         if response.status()==StatusCode::ACCEPTED{
             report["reasoningJobId"]=state.store.get("money_campaign",CAMPAIGN_ID)
