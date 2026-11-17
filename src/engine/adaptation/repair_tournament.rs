@@ -103,6 +103,12 @@ pub fn prepare(
     if raw.is_empty() || raw.len()>MAX_PROPOSALS {
         return Err("candidateRevisions requires 1..3 independent proposals".into());
     }
+    if repair_mode=="append" {
+        // Append-only is an explicit existing policy. It must not be defeated
+        // by candidates that claim to replace the failed node, even if the
+        // underlying validator would silently clear their replacements.
+        return Err("contrastive replacement is incompatible with append-only repair policy; use a legacy append proposal".into());
+    }
     let mut variants=Vec::new();let mut accepted=Vec::new();
     let failed_node=failure["nodeId"].as_str().unwrap_or("");
     for (index, supplied) in raw.iter().enumerate() {
@@ -327,6 +333,12 @@ mod tests {
         assert_eq!(variants[2]["postflights"].as_array().unwrap().len(),2);
         assert_eq!(variants[2]["revision"]["nodes"].as_array().unwrap().len(),4);
         assert_eq!(probes(&variants).len(),2);
+    }
+    #[test]
+    fn append_only_owner_policy_cannot_be_bypassed_by_candidate_composition(){
+        let (program,checkpoint,failure,tools)=fixture();
+        let proposals=json!({"candidateRevisions":[proposal("fix-a","a","old")]});
+        assert!(prepare(&proposals,&program,&checkpoint,&failure,&tools,"append").is_err());
     }
     #[test]
     fn repaired_node_remains_revision_capable_on_another_real_failure(){
