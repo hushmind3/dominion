@@ -175,6 +175,11 @@ mod tests{
         );
         assert!(tested.is_ok(),"{tested:?}");
         let id=pairs[0]["id"].as_str().unwrap().to_string();
+        // A Money discovery commit must belong to a live host-owned job.
+        // The stored job and the domain report are committed under the same
+        // SQLite lock, preventing late writes after user cancellation.
+        store.put("job",&json!({"id":"moneyjob1","kind":"money_discover",
+            "status":"running"})).unwrap();
         let report=json!({"id":"report:1","jobId":"moneyjob1","campaignId":"c1"});
         assert!(store.money_commit_discovery(&report,&[],&[],&[],&[id]).unwrap());
         assert!(store.money_pending_asymmetries(20).unwrap().is_empty());
