@@ -16,3 +16,9 @@
 - Candidate approval is idempotent even for overlapping requests; a missing job receipt blocks replay. All future tool approvals, cancellation, budgets, retries and artifacts remain owned by the shared Rust harness.
 - UI polls the existing `/api/jobs/:id` endpoint, can cancel through the standard route and open the owning chat session.
 - This is a user-authorized implementation handoff, not evidence that paying customers or sales were confirmed.
+
+## Inference accounting
+- `src/api/money/find.rs` resolves the active inference job's persisted `sessionId`, then reads `Store::session_usage`, the existing shared audit ledger. Scheduled/queued is not a billable call.
+- The GET/POST Money-find view exposes `modelCalls` and `inferenceUsage` for live progress; the UI and TypeScript SDK accept the new optional field without breaking old responses.
+- `costWon:null` is deliberate. USD provider pricing without a verified FX conversion cannot be represented as real KRW cost; usage-token measurements and estimation coverage remain visible.
+- A Rust API regression verifies 500 session tokens are reported, an unrelated 101,000-token session is excluded, caching observations survive and an unpriced provider never implies zero-Won billing.

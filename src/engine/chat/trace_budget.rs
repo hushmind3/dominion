@@ -94,7 +94,7 @@ pub(super) fn bounded_tool_trace(messages:&[Value],budget_bytes:usize)->Vec<Valu
             let size=messages[cursor..end].iter()
                 .map(|row|row.to_string().len()).sum::<usize>();
             spans.push(Span{start:cursor,end,frame_bytes:size,
-                note:Some(note(messages,cursor,end)),mode:1});
+                note:None,mode:1});
             cursor=end;
         }else{
             spans.push(Span{start:cursor,end:cursor+1,frame_bytes:0,
@@ -104,14 +104,19 @@ pub(super) fn bounded_tool_trace(messages:&[Value],budget_bytes:usize)->Vec<Valu
     }
     let mut remaining=budget_bytes.max(1024);
     for span in spans.iter_mut().rev(){
-        let Some(ref summary)=span.note else{continue;};
-        let note_size=summary.to_string().len();
+        if span.mode==0{continue;}
         if span.frame_bytes<=MAX_INLINE_FRAME_BYTES
             && span.frame_bytes<=remaining{
-            span.mode=1;
             remaining-=span.frame_bytes;
-        }else if note_size<=remaining{
+            continue;
+        }
+        // Most tool pairs are small. Avoid parsing their JSON arguments
+        // or allocating summaries on every provider round unless required.
+        let summary=note(messages,span.start,span.end);
+        let note_size=summary.to_string().len();
+        if note_size<=remaining{
             span.mode=2;
+            span.note=Some(summary);
             remaining-=note_size;
         }else{
             span.mode=3;

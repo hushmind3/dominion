@@ -34,11 +34,17 @@ export interface MoneyDraft extends RecordItem {
   evidence?:Array<{claim?:string;url?:string;kind?:string}>;
 }
 export interface MoneyImplementInput { approved:true; tokenBudget:number; agentId?:string }
+export interface MoneyInferenceUsage {
+  calls:number;promptTokens:number;completionTokens:number;totalTokens:number;
+  cachedPromptTokens:number;cacheObservedCalls:number;estimatedCalls:number;
+  pricedCalls:number;unpricedCalls:number;costWon:null;costStatus:'not_measured_in_krw';
+}
 export interface MoneyFindInput {
   mode:'db'|'agent';agentId?:string;infer?:boolean;limit?:number;tokenBudget?:number;
 }
 export interface MoneyFindResult {
   drafts:MoneyDraft[];modelCalls:number;sourceCount?:number;
+  inferenceUsage?:MoneyInferenceUsage|null;
   inferenceJobId?:string|null;inferenceStatus?:string;
   inferenceError?:string|null;inferenceTokenBudget?:number|null;
   selectedAgentId?:string;searchedAt?:string|null;

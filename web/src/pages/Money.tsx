@@ -33,9 +33,15 @@ type Stats={
  models?:{model:string;completed:number;failed:number}[]
  autopilot?:{enabled:boolean;rounds?:number;rotation?:number}
 }
+type InferenceUsage={
+ calls:number;promptTokens:number;completionTokens:number;totalTokens:number
+ cachedPromptTokens:number;cacheObservedCalls:number;estimatedCalls:number
+ pricedCalls:number;unpricedCalls:number;costWon:null
+}
 type FindResult={
  drafts:Draft[]
  modelCalls:number
+ inferenceUsage?:InferenceUsage|null
  sourceCount?:number
  searchedAt?:string|null
  message?:string
@@ -243,6 +249,18 @@ export function MoneyPage(_props:{openSession:(id:string)=>void}){
 
   {reasoning&&<div role="status" className="mb-4 rounded-xl border border-[#E5D3BC] bg-[#FFF7E9] px-4 py-3 text-xs leading-6 text-[#765337]">
    자료 수집과 DB 검색을 마쳤습니다. 지금 AI가 <strong>새 수익구조를 추측·추론</strong>하고 있습니다. 1회 실행, 토큰 예산 상한 {result.inferenceTokenBudget?.toLocaleString()||'24,000'}토큰. 아래는 먼저 만든 조사 초안입니다.
+  </div>}
+  {!!result.inferenceJobId&&<div aria-label="AI 추론 실제 사용량"
+    className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-[#E6D9C9] bg-[#FFFDF9] px-4 py-3 text-[11px] text-[#675647]">
+    <strong>모델 실제 사용량</strong>
+    <span className="tabular-nums">호출 {(result.inferenceUsage?.calls??0).toLocaleString()}회</span>
+    <span className="tabular-nums">입력 {(result.inferenceUsage?.promptTokens??0).toLocaleString()}토큰</span>
+    <span className="tabular-nums">출력 {(result.inferenceUsage?.completionTokens??0).toLocaleString()}토큰</span>
+    {(result.inferenceUsage?.cachedPromptTokens??0)>0&&
+      <span className="tabular-nums">캐시 입력 {result.inferenceUsage!.cachedPromptTokens.toLocaleString()}토큰</span>}
+    {(result.inferenceUsage?.estimatedCalls??0)>0&&
+      <span>추정 사용량 {(result.inferenceUsage?.estimatedCalls??0).toLocaleString()}회 포함</span>}
+    <span>원화 비용 미계측</span>
   </div>}
   {(result.inferenceStatus==='failed'||result.inferenceStatus==='needs_review'||result.inferenceError)&&!reasoning&&<div role="alert" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900">
    심층 추론 실패 · {result.inferenceError||'모델 응답을 후보로 변환하지 못했습니다.'} DB 추측 초안은 그대로 확인할 수 있습니다.

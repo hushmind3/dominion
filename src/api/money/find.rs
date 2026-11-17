@@ -299,9 +299,25 @@ fn view(state:&AppState)->Value{
         .and_then(|id|state.store.get("session",id)){
         model_used=json!({"providerId":session["providerId"],"model":session["model"]});
     }
+    // Each Money inference job owns a normal Rust session. The persistent
+    // model.usage ledger is authoritative; scheduled != billed and missing
+    // price/FX telemetry must not become a fabricated zero-cost claim.
+    let usage=job["sessionId"].as_str().or_else(||job["result"]["sessionId"].as_str())
+        .map(|session_id|state.store.session_usage(session_id));
+    let calls=usage.as_ref().and_then(|u|u["calls"].as_u64()).unwrap_or(0);
+    let inference_usage=usage.as_ref().map(|u|json!({
+        "calls":u["calls"],"promptTokens":u["promptTokens"],
+        "completionTokens":u["completionTokens"],"totalTokens":u["totalTokens"],
+        "cachedPromptTokens":u["cachedPromptTokens"],
+        "cacheObservedCalls":u["cacheObservedCalls"],
+        "estimatedCalls":u["estimatedCalls"],
+        "pricedCalls":u["pricedCalls"],"unpricedCalls":u["unpricedCalls"],
+        "costWon":null,"costStatus":"not_measured_in_krw"
+    }));
     let error=job["error"].as_str().or_else(||job["result"]["reason"].as_str());
     json!({"drafts":drafts,"searchedAt":report["searchedAt"],
-        "sourceCount":report["sourceCount"],"modelCalls":0,
+        "sourceCount":report["sourceCount"],"modelCalls":calls,
+        "inferenceUsage":inference_usage,
         "selectedAgentId":report["selectedAgentId"],"selectedAgentName":report["selectedAgentName"],
         "inferenceJobId":job_id,"inferenceStatus":status,
         "inferenceError":error.or_else(||report["inferenceStartError"].as_str()),"inferenceModel":model_used,
@@ -466,6 +482,31 @@ mod tests {
         assert_eq!(job["input"]["mode"],"infer");
         assert_eq!(job["input"]["toolsEnabled"],false);
         assert_eq!(job["input"]["tokenBudget"],24_000);
+        // A queued inference has not spent model tokens.
+        assert_eq!(visible["modelCalls"],0);
+        assert!(visible["inferenceUsage"].is_null());
+        // Progress comes from the actual owning session usage ledger.
+        state.store.put("session",&json!({"id":"money-job-session","providerId":"p1",
+            "model":"user-selected-27b"})).unwrap();
+        state.store.patch_if("job",job_id,"status",&json!("queued"),
+            &json!({"sessionId":"money-job-session"})).unwrap();
+        state.store.audit("model.usage",json!({
+            "sessionId":"money-job-session","providerId":"p1",
+            "model":"user-selected-27b","promptTokens":410,"completionTokens":90,
+            "totalTokens":500,"cachedPromptTokens":120,"estimated":false
+        }));
+        // Unrelated sessions cannot make this one appear more expensive.
+        state.store.audit("model.usage",json!({
+            "sessionId":"another-job","promptTokens":100000,
+            "completionTokens":1000,"totalTokens":101000,"estimated":false
+        }));
+        let active=latest(State(state.clone())).await.0;
+        assert_eq!(active["modelCalls"],1);
+        assert_eq!(active["inferenceUsage"]["totalTokens"],500);
+        assert_eq!(active["inferenceUsage"]["cachedPromptTokens"],120);
+        assert_eq!(active["inferenceUsage"]["unpricedCalls"],1);
+        assert!(active["inferenceUsage"]["costWon"].is_null());
+        assert_eq!(active["inferenceModel"]["model"],"user-selected-27b");
         let invalid=find(State(state.clone()),Json(json!({"mode":"agent","agentId":"nonexistent"}))).await;
         assert_eq!(invalid.status(),StatusCode::BAD_REQUEST);
         drop(state);
