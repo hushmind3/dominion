@@ -1406,6 +1406,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn connected_account_tool_contracts_separate_reads_from_approved_mutations(){
+        let names=definitions().into_iter()
+            .filter_map(|item|item["function"]["name"].as_str().map(str::to_string))
+            .collect::<std::collections::HashSet<_>>();
+        for name in ["github_work_read","github_work_write",
+            "google_workspace_read","google_workspace_write"] {
+            assert!(names.contains(name),"missing tool schema: {name}");
+        }
+        for read in ["github_work_read","google_workspace_read"] {
+            assert!(!requires_approval(read));
+            assert!(dominion_agent_sdk::runtime::builtin_is_read_only(read));
+        }
+        for write in ["github_work_write","google_workspace_write"] {
+            assert!(requires_approval(write));
+            assert!(!dominion_agent_sdk::runtime::builtin_is_read_only(write));
+        }
+    }
+
+    #[test]
     fn workspace_paths_cannot_escape() {
         let dir = std::env::temp_dir().join(format!("dominion-ws-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(dir.join("sub")).unwrap();
