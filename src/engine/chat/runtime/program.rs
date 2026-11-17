@@ -679,7 +679,7 @@ pub(super) async fn execute_program_tool(
     if persist {
         save_program_checkpoint(state, execution_id, checkpoint);
     }
-    let (result, _ok, _content) = dispatch_tool_call(
+    let (result, ok, _content) = dispatch_tool_call(
         state,
         tx,
         session,
@@ -700,7 +700,20 @@ pub(super) async fn execute_program_tool(
     )
     .await?;
     checkpoint["pendingOperationIds"] = json!([]);
-    mark_program_completed(checkpoint, node_id);
+    // A failed operation requested for revision MUST remain pending.
+    // The old code marked it completed even on failure, causing
+    // apply_revision_proposal to reject any replacement of the failed node.
+    // Other legacy nodes retain their previous terminal completion behavior.
+    if program_operation_completed(ok, node["onFailure"].as_str()) {
+        mark_program_completed(checkpoint, node_id);
+    } else {
+        let mut failed=checkpoint["failedOperationIds"]
+            .as_array().cloned().unwrap_or_default();
+        if !failed.iter().any(|item|item.as_str()==Some(node_id)){
+            failed.push(json!(node_id));
+        }
+        checkpoint["failedOperationIds"]=json!(failed);
+    }
     if !checkpoint["observationRefs"].is_object() {
         checkpoint["observationRefs"] = json!({});
     }
@@ -714,6 +727,23 @@ pub(super) async fn execute_program_tool(
         save_program_checkpoint(state, execution_id, checkpoint);
     }
     Ok(result)
+}
+
+/// A failed, revision-requesting node is never a completed external effect.
+pub(super) fn program_operation_completed(ok:bool,on_failure:Option<&str>)->bool{
+    ok || on_failure!=Some("revise")
+}
+
+#[cfg(test)]
+mod repair_completion_tests {
+    use super::*;
+    #[test]
+    fn revision_failure_is_pending_but_success_is_completed(){
+        assert!(!program_operation_completed(false,Some("revise")));
+        assert!(program_operation_completed(true,Some("revise")));
+        assert!(program_operation_completed(false,None));
+        assert!(program_operation_completed(false,Some("continue")));
+    }
 }
 
 pub(super) fn mark_program_completed(checkpoint: &mut Value, node_id: &str) {
