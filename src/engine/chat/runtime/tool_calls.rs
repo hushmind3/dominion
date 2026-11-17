@@ -137,6 +137,7 @@ pub(super) async fn dispatch_tool_call(
             "name": call.name,
             "id": call.id,
             "error": "확인되지 않은 이전 효과가 있어 재실행을 보류했습니다.",
+            "arguments": arguments, "dispatched": false,
             "result": value,
         }));
         (value, false)
@@ -182,13 +183,15 @@ pub(super) async fn dispatch_tool_call(
                     (value, true)
                 } else {
                     let _ = tx.send(json!({ "type": "tool_error", "name": call.name,
-                        "id": call.id, "error": "도구가 실패 결과를 반환했습니다.", "result": value }));
+                        "id": call.id, "arguments": arguments,
+                        "error": "도구가 실패 결과를 반환했습니다.", "result": value }));
                     (value, false)
                 }
             }
             Err(error) if call.name.starts_with("workspace_") && error == tools::WORKSPACE_ESCAPE => {
                 let error = format!("{error}. Use the relative path inside the workspace, for example bench/report.txt.");
-                let _ = tx.send(json!({"type":"tool_error","name":call.name,"id":call.id,"error":error}));
+                let _ = tx.send(json!({"type":"tool_error","name":call.name,"id":call.id,
+                    "arguments":arguments,"dispatched":false,"error":error}));
                 (json!({"error":error,"invalidWorkspacePath":true}), false)
             }
             Err(error) => {
@@ -196,6 +199,7 @@ pub(super) async fn dispatch_tool_call(
                     "type": "tool_error",
                     "name": call.name,
                     "id": call.id,
+                    "arguments": arguments,
                     "error": error,
                 }));
                 (json!({ "error": error }), false)
@@ -205,7 +209,7 @@ pub(super) async fn dispatch_tool_call(
         let _ = tx.send(json!({
             "type": "tool_error",
             "name": call.name,
-            "id": call.id,
+            "id": call.id, "arguments": arguments, "dispatched": false,
             "error": "사용자가 실행을 거부했습니다.",
         }));
         (json!({ "error": "Denied by the user" }), false)
@@ -319,7 +323,8 @@ pub(super) fn record_soft_tool_error(
     error: &str,
     metrics: &std::sync::Mutex<Metrics>,
 ) {
-    let _ = tx.send(json!({"type":"tool_error","name":name,"id":call_id,"error":error}));
+    let _ = tx.send(json!({"type":"tool_error","name":name,"id":call_id,
+        "dispatched":false,"error":error}));
     metrics.lock().unwrap().tool_calls += 1;
     state.store.audit("tool.soft_error", json!({"tool":name,"error":error,"executionId":execution_id}));
     if let Some(saved) = state.store.write_message(&json!({
