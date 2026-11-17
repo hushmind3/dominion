@@ -1417,11 +1417,18 @@ pub(super) async fn propose_program_revision(
             *op_seq, 0, 0, false, "program_repair_probe",
             None, None, None,
         ).await?;
-        observations[id] = json!({
-            "status":if ok && tool_succeeded(&result){"completed"}else{"failed"},
-            "result":result,
-            "callId":call.id,
-        });
+        // Distinct repair hypotheses may share the same read. One actual
+        // gateway call supplies *identical observed bytes* to every alias,
+        // preventing both redundant billing and a false Unknown verdict.
+        for alias in probe["aliases"].as_array().into_iter().flatten(){
+            if let Some(candidate_id)=alias.as_str(){
+                observations[candidate_id] = json!({
+                    "status":if ok && tool_succeeded(&result){"completed"}else{"failed"},
+                    "result":result,
+                    "callId":call.id,
+                });
+            }
+        }
     }
     let (mut revised, audit) = crate::engine::adaptation::repair_tournament::select(
         &candidates, &observations,
