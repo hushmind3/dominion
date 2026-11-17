@@ -696,7 +696,7 @@ pub fn schedule_autopilot(state:&AppState){
                 .iter().filter_map(|v|v["id"].as_str()).collect::<Vec<_>>(),
             "campaignId":id,"mode":mode,"toolsEnabled":false,
             "toolsExecutionEnabled":false,"requireEvidence":false,
-            "limits":{"maxSteps":3,"maxModelCalls":3,"maxToolCalls":0,
+            "limits":{"maxSteps":3,"maxModelCalls":3,"maxToolCalls":1,
               "maxEstimatedTokens":token_ceiling,"maxParallelReads":1,"maxResultChars":3000},
             "tokenBudget":token_ceiling,
             "moneyAutoRound":round+1,"moneyAutoRunId":run_id});

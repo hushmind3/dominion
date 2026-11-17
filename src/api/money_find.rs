@@ -61,24 +61,36 @@ fn signal_score(row:&Value)->i64{
 
 fn next_drafts(pool:&[Value],previous:&Value,limit:usize)->(Vec<Value>,Vec<String>,usize){
     if pool.is_empty(){return (Vec::new(),Vec::new(),0);}
-    // Rank by evidence strength instead of rotating by cursor: the draft set
-    // should reflect what the sources actually contain, and the shown-history
-    // still prevents repeats on the next run.
+    // Drafts have their own evidence/provenance fields; scoring them with a
+    // raw-signal metric silently ranked every draft as zero. Explicitly rank
+    // publication freshness, two-source corroboration and buyer specificity.
+    let now=chrono::Utc::now();
     let mut ordered=pool.iter().collect::<Vec<_>>();
-    ordered.sort_by(|a,b|signal_score(b).cmp(&signal_score(a)));
+    ordered.sort_by(|a,b|discovery_priority(b,&now).cmp(&discovery_priority(a,&now))
+        .then_with(||a["id"].as_str().cmp(&b["id"].as_str())));
     let mut history=previous["shownCandidateIds"].as_array().into_iter()
         .flatten().filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>();
     let seen=history.iter().cloned().collect::<HashSet<_>>();
     let mut selected=Vec::new();
     let mut picked=HashSet::new();
+    let mut buyer_publishers=HashSet::new();
+    // Coverage-aware selection: prefer independent purchasing publishers
+    // before returning a second lead from the same channel. Previously seen
+    // leads are considered only after unseen evidence has been exhausted.
     for unseen_only in [true,false]{
-        for offset in 0..ordered.len(){
-            let draft=ordered[offset];
-            let Some(id)=draft["id"].as_str()else{continue};
-            if draft["status"]=="rejected"||picked.contains(id)
-                ||(unseen_only&&seen.contains(id)){continue;}
-            picked.insert(id.to_owned());
-            selected.push(draft.clone());
+        for diverse_only in [true,false]{
+            for draft in &ordered{
+                let Some(id)=draft["id"].as_str()else{continue};
+                if draft["status"]=="rejected"||picked.contains(id)
+                    ||(unseen_only&&seen.contains(id)){continue;}
+                let host=draft["evidence"].as_array().and_then(|a|a.first())
+                    .and_then(|r|r["url"].as_str()).map(source_host).unwrap_or("");
+                if diverse_only&&!host.is_empty()&&buyer_publishers.contains(host){continue;}
+                picked.insert(id.to_owned());
+                if !host.is_empty(){buyer_publishers.insert(host.to_owned());}
+                selected.push((*draft).clone());
+                if selected.len()>=limit{break;}
+            }
             if selected.len()>=limit{break;}
         }
         if selected.len()>=limit{break;}
@@ -374,7 +386,7 @@ pub async fn find(State(state):State<AppState>,Json(body):Json<Value>)->Response
     }).collect::<Vec<_>>();
     // How many unseen drafts this click surfaces. The previous hard cap of
     // three made a 460-signal archive look empty.
-    let limit=body["limit"].as_u64().unwrap_or(9).clamp(1,24) as usize;
+    let limit=body["limit"].as_u64().unwrap_or(3).clamp(1,24) as usize;
     let (next,shown,next_cursor)=next_drafts(&eligible,&previous,limit);
     let mut chosen=Vec::<Value>::new();
     for draft in &next{
@@ -554,13 +566,29 @@ mod tests {
     fn unseen_leads_first_rejected_excluded_and_history_is_bounded(){
         let pool=(0..5).map(|i|json!({"id":format!("lead-{i}"),
             "status":if i==2{"rejected"}else{"hypothesis"}})).collect::<Vec<_>>();
-        let (first,shown,cursor)=next_drafts(&pool,&Value::Null,9);
+        let (first,shown,cursor)=next_drafts(&pool,&Value::Null,3);
         assert_eq!(first.iter().filter_map(|row|row["id"].as_str()).collect::<Vec<_>>(),
             vec!["lead-0","lead-1","lead-3"]);
-        let (second,history,_)=next_drafts(&pool,&json!({"cursor":cursor,"shownCandidateIds":shown}),9);
+        let (second,history,_)=next_drafts(&pool,&json!({"cursor":cursor,"shownCandidateIds":shown}),3);
         assert_eq!(second[0]["id"],"lead-4");
         assert!(second.iter().all(|row|row["id"]!="lead-2"));
         assert_eq!(history.len(),4);
+    }
+    #[test]
+    fn evidence_rank_and_publisher_coverage_precede_repeat_headlines(){
+        let old=json!({"id":"old","origin":"single_source_research_draft",
+            "evidence":[{"url":"https://one.test/a","publishedAt":"2025-03-01T00:00:00Z"}]});
+        let fresh=json!({"id":"fresh","origin":"source_pair_draft",
+            "buyerSignal":"buyer_request","researchPriority":70,
+            "evidence":[{"url":"https://one.test/b","publishedAt":"2026-11-16T00:00:00Z"}]});
+        let distinct=json!({"id":"distinct","origin":"single_source_research_draft",
+            "evidence":[{"url":"https://two.test/c","publishedAt":"2026-11-16T00:00:00Z"}]});
+        let same=json!({"id":"same","origin":"source_pair_draft",
+            "evidence":[{"url":"https://one.test/d","publishedAt":"2026-11-16T00:00:00Z"}]});
+        let (picked,_,_)=next_drafts(&[old,fresh,distinct,same],&Value::Null,2);
+        assert_eq!(picked[0]["id"],"fresh");
+        assert_eq!(picked[1]["id"],"distinct",
+            "independent buyer publication should outrank duplicate publisher");
     }
     #[test]
     fn source_pair_has_real_urls_no_fake_budget(){
