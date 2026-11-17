@@ -26,6 +26,7 @@ on:
       - 'src/engine/chat/kernel_bridge.rs'
       - 'src/engine/chat/mod.rs'
       - 'src/engine/mcp.rs'
+      - 'src/engine/github_files.rs'
       - 'src/api/collections.rs'
       - 'src/state.rs'
       - 'scripts/mcp-echo-server.mjs'
@@ -77,6 +78,8 @@ jobs:
           cargo test --bin dominion-rust engine::chat::kernel_bridge::tests -- --nocapture
       - name: Verify real MCP stdio and HTTP sessions, pinning and credential rotation
         run: cargo test --bin dominion-rust engine::mcp::tests -- --nocapture
+      - name: Verify typed GitHub edit, stale SHA rejection and independent read-back
+        run: cargo test --bin dominion-rust engine::github_files::tests::github_file_read_commit_and_remote_readback_prove_effect_once -- --nocapture
       - name: Compile full Dominion Rust host and run native adapter contract tests
         run: cargo test --manifest-path Cargo.toml --bin dominion-rust native_ -- --nocapture
       - name: Retired media and RSI jobs cannot restart and existing history survives
