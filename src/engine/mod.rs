@@ -15,6 +15,7 @@ pub mod money_sources;
 pub mod money_strategy;
 pub mod goal_control;
 pub mod native_agent;
+pub(crate) mod native_evidence;
 pub mod native_replay;
 pub mod native_adjudication;
 pub mod native_model;
