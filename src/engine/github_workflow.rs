@@ -183,6 +183,134 @@ pub async fn execute(state:&AppState,args:&Value,write:bool)->Result<Value,Strin
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[derive(Default)]
+    struct Remote {
+        branches:std::collections::HashMap<String,String>,
+        pr_title:Option<String>,issue_title:Option<String>,
+        branch_writes:usize,pr_writes:usize,issue_writes:usize,
+    }
+    type RemoteState=std::sync::Arc<std::sync::Mutex<Remote>>;
+    async fn fake_branch(
+        axum::extract::State(remote):axum::extract::State<RemoteState>,
+        axum::extract::Path(branch):axum::extract::Path<String>,
+        headers:axum::http::HeaderMap,
+    )->(axum::http::StatusCode,axum::Json<Value>){
+        assert_eq!(headers["authorization"],"Bearer connected-gh-token");
+        let state=remote.lock().unwrap();
+        match state.branches.get(&branch){
+            Some(sha)=>(axum::http::StatusCode::OK,
+                axum::Json(json!({"ref":format!("refs/heads/{branch}"),"object":{"sha":sha}}))),
+            None=>(axum::http::StatusCode::NOT_FOUND,
+                axum::Json(json!({"message":"Not Found"})))
+        }
+    }
+    async fn fake_create_branch(
+        axum::extract::State(remote):axum::extract::State<RemoteState>,
+        axum::Json(payload):axum::Json<Value>,
+    )->(axum::http::StatusCode,axum::Json<Value>){
+        let name=payload["ref"].as_str().unwrap().trim_start_matches("refs/heads/");
+        let sha=payload["sha"].as_str().unwrap();
+        let mut data=remote.lock().unwrap();
+        if data.branches.contains_key(name){
+            return (axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                axum::Json(json!({"message":"ref already exists"})));
+        }
+        data.branches.insert(name.to_string(),sha.to_string());
+        data.branch_writes+=1;
+        (axum::http::StatusCode::CREATED,
+            axum::Json(json!({"ref":format!("refs/heads/{name}"),"object":{"sha":sha}})))
+    }
+    async fn fake_create_pr(
+        axum::extract::State(remote):axum::extract::State<RemoteState>,
+        axum::Json(payload):axum::Json<Value>,
+    )->axum::Json<Value>{
+        let mut remote=remote.lock().unwrap();
+        remote.pr_title=payload["title"].as_str().map(str::to_string);
+        remote.pr_writes+=1;
+        axum::Json(json!({"number":1}))
+    }
+    async fn fake_get_pr(
+        axum::extract::State(remote):axum::extract::State<RemoteState>,
+    )->axum::Json<Value>{
+        let remote=remote.lock().unwrap();
+        axum::Json(json!({"number":1,"title":remote.pr_title,
+            "head":{"ref":"feature/new"},"base":{"ref":"main"},
+            "html_url":"https://github.com/octo/work/pull/1"}))
+    }
+    async fn fake_create_issue(
+        axum::extract::State(remote):axum::extract::State<RemoteState>,
+        axum::Json(payload):axum::Json<Value>,
+    )->axum::Json<Value>{
+        let mut remote=remote.lock().unwrap();
+        remote.issue_title=payload["title"].as_str().map(str::to_string);
+        remote.issue_writes+=1;
+        axum::Json(json!({"number":2}))
+    }
+    async fn fake_get_issue(
+        axum::extract::State(remote):axum::extract::State<RemoteState>,
+    )->axum::Json<Value>{
+        let remote=remote.lock().unwrap();
+        axum::Json(json!({"number":2,"title":remote.issue_title,
+            "html_url":"https://github.com/octo/work/issues/2"}))
+    }
+    #[tokio::test]
+    async fn connected_account_creates_real_http_branch_pr_issue_and_reads_ci(){
+        let state:RemoteState=Default::default();
+        state.lock().unwrap().branches.insert("main".into(),"a".repeat(40));
+        let router=axum::Router::new()
+            .route("/user/repos",axum::routing::get(||
+                async{axum::Json(json!([{"full_name":"octo/work"}]))}))
+            .route("/repos/octo/work/git/ref/heads/*branch",
+                axum::routing::get(fake_branch))
+            .route("/repos/octo/work/git/refs",axum::routing::post(fake_create_branch))
+            .route("/repos/octo/work/pulls",axum::routing::post(fake_create_pr))
+            .route("/repos/octo/work/pulls/1",axum::routing::get(fake_get_pr))
+            .route("/repos/octo/work/issues",axum::routing::post(fake_create_issue))
+            .route("/repos/octo/work/issues/2",axum::routing::get(fake_get_issue))
+            .route("/repos/octo/work/actions/runs",axum::routing::get(||
+                async{axum::Json(json!({"total_count":1,"workflow_runs":[{
+                    "id":7,"name":"CI","status":"completed","conclusion":"success",
+                    "head_sha":"x","run_number":1}]}))}))
+            .with_state(state.clone());
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin=format!("http://{}/",listener.local_addr().unwrap());
+        let server=tokio::spawn(async move{axum::serve(listener,router).await.unwrap();});
+        let client=Client::builder().timeout(std::time::Duration::from_secs(5)).build().unwrap();
+        let token="connected-gh-token";
+        let repos=execute_with(&client,token,&origin,
+            &json!({"operation":"repositories"}),false).await.unwrap();
+        assert_eq!(repos[0]["full_name"],"octo/work");
+
+        let created=execute_with(&client,token,&origin,
+            &json!({"operation":"create_branch","owner":"octo","repo":"work",
+                "from":"main","branch":"feature/new"}),true).await.unwrap();
+        assert_eq!(created["verified"],true);
+        assert_eq!(state.lock().unwrap().branch_writes,1);
+        let duplicate=execute_with(&client,token,&origin,
+            &json!({"operation":"create_branch","owner":"octo","repo":"work",
+                "from":"main","branch":"feature/new"}),true).await;
+        assert!(duplicate.is_err());
+        assert_eq!(state.lock().unwrap().branch_writes,1);
+
+        let pr=execute_with(&client,token,&origin,
+            &json!({"operation":"open_pr","owner":"octo","repo":"work",
+                "head":"feature/new","base":"main","title":"Checked code","body":"Implemented"}),true)
+            .await.unwrap();
+        assert_eq!(pr["verified"],true);
+        assert_eq!(pr["number"],1);
+        let issue=execute_with(&client,token,&origin,
+            &json!({"operation":"create_issue","owner":"octo","repo":"work",
+                "title":"Task","body":"Observed"}),true).await.unwrap();
+        assert_eq!(issue["verified"],true);
+        let ci=execute_with(&client,token,&origin,
+            &json!({"operation":"ci_runs","owner":"octo","repo":"work","branch":"feature/new"}),false)
+            .await.unwrap();
+        assert_eq!(ci["workflow_runs"][0]["conclusion"],"success");
+        let record=state.lock().unwrap();
+        assert_eq!((record.branch_writes,record.pr_writes,record.issue_writes),(1,1,1));
+        server.abort();
+    }
+
     #[test]
     fn github_workflow_rejects_path_escape_and_unapproved_operation(){
         assert!(component("..").is_err());
