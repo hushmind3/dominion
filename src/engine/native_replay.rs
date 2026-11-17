@@ -366,4 +366,39 @@ mod tests{
   assert!(compare(&s,"replay-a","replay-b").is_err());
   assert_eq!(s.store.count("job"),2);
  }
+ #[test]
+ fn host_witness_remeasures_real_bytes_and_rejects_unscoped_paths(){
+  use dominion_sdk::harness::{Criterion,CriterionKind,Action};
+  let root=std::env::temp_dir().join(format!("native-witness-{}",uuid::Uuid::new_v4()));
+  std::fs::create_dir_all(&root).unwrap();
+  std::fs::write(root.join("out.txt"),"first").unwrap();
+  let hash=format!("{:x}",Sha256::digest(b"first"));
+  let checks=vec![
+   Criterion{kind:CriterionKind::FileSha256,path:Some("out.txt".into()),
+    contains:Some(hash),tool:None},
+   Criterion{kind:CriterionKind::FileAbsent,path:Some("missing.txt".into()),
+    contains:None,tool:None},
+  ];
+  let a=artifact_witness(&root,&checks);
+  assert_eq!(a["complete"],true);
+  assert_eq!(a["directVerdicts"],json!([true,true]));
+  assert!(a["workspace"].is_null(),"absolute local root is not public evidence");
+  let action=Action{id:"op".into(),tool:"workspace_write".into(),
+   arguments:json!({"path":"out.txt","content":"second"}),depends_on:vec![]};
+  let before=action_witness(&root,&action);
+  std::fs::write(root.join("out.txt"),"second").unwrap();
+  let after=action_witness(&root,&action);
+  assert_eq!(before["complete"],true);
+  assert_eq!(after["complete"],true);
+  assert_ne!(before["state"],after["state"]);
+  assert_ne!(a["entries"]["out.txt"],after["state"]);
+  let b=artifact_witness(&root,&checks);
+  assert_eq!(b["directVerdicts"],json!([false,true]));
+  let escape=artifact_witness(&root,&[Criterion{kind:CriterionKind::FileExists,
+   path:Some("../outside".into()),contains:None,tool:None}]);
+  assert_eq!(escape["complete"],false);
+  assert_eq!(escape["entries"]["../outside"]["state"],"unsafe_path");
+  std::fs::remove_dir_all(root).unwrap();
+ }
+
 }
