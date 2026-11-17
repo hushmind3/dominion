@@ -888,13 +888,24 @@ pub(super) fn execute_nodes<'a>(
     })
 }
 
-pub(super) fn save_revised_program(state: &AppState, execution_id: &str, program: &Value) {
-    if let Some(mut execution) = state.store.get("execution", execution_id) {
-        execution["revisedProgram"] = program.clone();
-        if let Some(saved) = state.store.put("execution", &execution) {
-            state.bus.record("execution", &saved);
-        }
+/// Persist the executable revision together with its checkpoint in one
+/// SQLite record mutation. A crash may not leave a new checkpoint pointing
+/// to the OLD executable, nor an edited executable with a stale cursor.
+pub(super) fn commit_revised_program(
+    state: &AppState, execution_id: &str,
+    program: &Value, checkpoint: &Value,
+) -> Result<(), String> {
+    if program["revision"] != checkpoint["programRevision"] {
+        return Err("revision and checkpoint must be stored together".into());
     }
+    let mut execution = state.store.get("execution", execution_id)
+        .ok_or("execution vanished while persisting program revision")?;
+    execution["revisedProgram"] = program.clone();
+    execution["programCheckpoint"] = checkpoint.clone();
+    let saved = state.store.put("execution", &execution)
+        .ok_or("failed to durably store revised program and cursor")?;
+    state.bus.record("execution", &saved);
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1098,8 +1109,7 @@ pub(super) async fn run_program(
                 checkpoint["programFailure"] = Value::Null;
                 checkpoint["nextIndex"] = json!(0);
                 checkpoint["status"] = json!("running");
-                save_revised_program(state, execution_id, &revised);
-                save_program_checkpoint(state, execution_id, &checkpoint);
+                commit_revised_program(state, execution_id, &revised, &checkpoint)?;
                 // A syntactically admitted revision is NOT evidence of repair.
                 // Credit is assigned only after the revised program settles.
                 messages.push(json!({
