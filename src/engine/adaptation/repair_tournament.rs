@@ -96,8 +96,22 @@ pub fn prepare(
         return Err("candidateRevisions requires 1..3 independent proposals".into());
     }
     let mut variants=Vec::new();let mut accepted=Vec::new();
+    let failed_node=failure["nodeId"].as_str().unwrap_or("");
     for (index, proposal) in raw.iter().enumerate() {
         if evidence_ids(proposal,checkpoint,failure).is_err(){continue;}
+        // A failure-scoped repair cannot rewrite unrelated program nodes.
+        // A complementary candidate may only ADD observation/verification
+        // nodes; composing it with a true repair preserves this boundary.
+        let replacements=proposal["replacePendingNodes"].as_array()
+            .cloned().unwrap_or_default();
+        if replacements.iter().any(|n|n["id"].as_str()!=Some(failed_node)){continue;}
+        let repairs_failed=replacements.iter().any(|n|n["id"].as_str()==Some(failed_node));
+        if !repairs_failed {
+            let addons=proposal["addNodes"].as_array().cloned().unwrap_or_default();
+            if addons.is_empty() || addons.iter().any(|n|
+                !matches!(n["type"].as_str(),Some("verify"|"observe"))
+            ){continue;}
+        }
         let Ok(revision)=crate::engine::program::apply_revision_proposal(
             program,checkpoint,proposal,tools,64,repair_mode
         ) else {continue;};
@@ -111,6 +125,7 @@ pub fn prepare(
         variants.push(json!({
             "id":id,"revision":revision,"probes":[probe],
             "costs":costs,"sourceCandidates":[id],
+            "repairsFailedNode":repairs_failed,
         }));
         accepted.push((id,proposal.clone()));
     }
@@ -131,6 +146,8 @@ pub fn prepare(
             }
             variants.push(json!({"id":format!("compose-{a}-{b}"),
                 "revision":revision,"probes":probes,"sourceCandidates":parts,
+                "repairsFailedNode":merged["replacePendingNodes"].as_array()
+                    .into_iter().flatten().any(|n|n["id"].as_str()==Some(failed_node)),
                 "costs":{"changedNodes":ids(&merged).len(),"effectfulNodes":mutations(&merged)}}));
         }
     }
@@ -180,7 +197,8 @@ pub fn select(variants:&[Value], observations:&Value)->Result<(Value,Value),Stri
                 _=>unknown+=1,
             }
         }
-        let qualified=variant["legacy"]==true || (pass>0 && fail==0 && unknown==0);
+        let qualified=variant["legacy"]==true
+            || (variant["repairsFailedNode"]==true && pass>0 && fail==0 && unknown==0);
         evaluated.push(json!({
             "id":variant["id"],"passed":pass,"failed":fail,"unknown":unknown,
             "qualified":qualified,"changedNodes":variant["costs"]["changedNodes"],
@@ -251,8 +269,13 @@ mod tests {
     #[test]
     fn validates_independent_candidates_and_composes_disjoint_pending_edits(){
         let (program,checkpoint,failure,tools)=fixture();
-        let input=json!({"candidateRevisions":[
-            proposal("fix-a","a","old"), proposal("fix-b","b","present")]});
+        let repair=proposal("fix-a","a","old");
+        let mut verify=proposal("fix-b","b","present");
+        verify["replacePendingNodes"]=json!([]);
+        verify["addNodes"]=json!([{"id":"post-check","type":"verify",
+            "checks":[{"predicate":{"type":"exists",
+                "from":"read","path":"/content"}}]}]);
+        let input=json!({"candidateRevisions":[repair,verify]});
         let variants=prepare(&input,&program,&checkpoint,&failure,&tools,"replace").unwrap();
         assert_eq!(variants.len(),3);
         assert_eq!(variants[2]["sourceCandidates"],json!(["p0","p1"]));
@@ -262,22 +285,23 @@ mod tests {
     #[test]
     fn observed_contrast_eliminates_wrong_candidate_and_does_not_apply_unknown(){
         let (program,checkpoint,failure,tools)=fixture();
+        let mut alternative=proposal("fix-a","b","present");
+        alternative["reason"]=json!("alternative repair of the SAME failed node");
         let variants=prepare(&json!({"candidateRevisions":[
-            proposal("fix-a","a","old"),proposal("fix-b","b","present")]}),
+            proposal("fix-a","a","old"),alternative]}),
             &program,&checkpoint,&failure,&tools,"replace").unwrap();
         let observations=json!({"p0":{"status":"completed","result":{"content":"old"}},
             "p1":{"status":"completed","result":{"content":"missing"}}});
         let (_selected, audit)=select(&variants,&observations).unwrap();
         assert_eq!(audit["chosen"],"p0");
         assert_eq!(audit["evaluated"][1]["qualified"],false);
-        assert_eq!(audit["evaluated"][2]["qualified"],false);
         assert!(select(&variants,&json!({})).is_err());
     }
     #[test]
     fn identical_read_probe_is_dispatched_once_but_evaluated_for_both_candidates(){
         let (program,checkpoint,failure,tools)=fixture();
         let p0=proposal("fix-a","a","old");
-        let mut p1=proposal("fix-b","b","new");
+        let mut p1=proposal("fix-a","b","new");
         p1["preflight"]["inputs"]=json!({"path":"a"});
         let variants=prepare(&json!({"candidateRevisions":[p0,p1]}),
             &program,&checkpoint,&failure,&tools,"replace").unwrap();
@@ -300,6 +324,9 @@ mod tests {
         unsafe_probe["preflight"]["tool"]=json!("shell_exec");
         let input=json!({"candidateRevisions":[wrong,unsafe_probe]});
         assert!(prepare(&input,&program,&checkpoint,&failure,&tools,"replace").is_err());
+        let unrelated=proposal("fix-b","b","present");
+        assert!(prepare(&json!({"candidateRevisions":[unrelated]}),
+            &program,&checkpoint,&failure,&tools,"replace").is_err());
     }
     #[test]
     fn completed_node_mutation_is_invalid_and_legacy_contract_survives(){
