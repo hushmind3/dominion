@@ -65,6 +65,7 @@ pub fn status(state: &AppState) -> Vec<Value> {
                 "id": provider.id,
                 "name": provider.name,
                 "configured": client_credentials(state, provider.id).is_ok(),
+                "credentialSource": credential_source(state, provider.id),
                 "connected": connected,
                 "account": record.get("account").cloned().unwrap_or(Value::Null),
                 "connectedAt": record.get("connectedAt"),
@@ -110,10 +111,37 @@ pub fn save(
     }))
 }
 
+/// A provider application is registered once by the DOMINION distributor,
+/// not once by every person who signs in. Deployment credentials take priority
+/// over a legacy local administrator configuration. Never expose the secret in
+/// /api/oauth/providers or to the browser.
+fn packaged_client_credentials(id: &str) -> Option<(String, String)> {
+    let name=match id {
+        "github"=>"DOMINION_GITHUB",
+        "google"=>"DOMINION_GOOGLE",
+        _=>return None,
+    };
+    let client_id=std::env::var(format!("{name}_CLIENT_ID")).ok()?;
+    let client_id=client_id.trim().to_string();
+    if client_id.is_empty(){return None;}
+    let secret=std::env::var(format!("{name}_CLIENT_SECRET"))
+        .unwrap_or_default().trim().to_string();
+    if id=="github" && secret.is_empty(){return None;}
+    Some((client_id,secret))
+}
+
+fn credential_source(state: &AppState, id: &str) -> &'static str {
+    if packaged_client_credentials(id).is_some() {"application"}
+    else if state.read_secret(&format!("oauth:{id}:secret")).is_some()
+        && client_credentials(state,id).is_ok() {"local"}
+    else {"missing"}
+}
+
 fn client_credentials(state: &AppState, id: &str) -> Result<(String, String), String> {
+    if let Some(bundled)=packaged_client_credentials(id){return Ok(bundled);}
     let sealed = state
         .read_secret(&format!("oauth:{id}:secret"))
-        .ok_or_else(|| "OAuth 앱이 설정되지 않았습니다.".to_string())?;
+        .ok_or_else(|| "도미니언 앱에 OAuth 제공자 설정이 없습니다. 앱 배포 설정을 확인하세요.".to_string())?;
     let value: Value = serde_json::from_str(&sealed).map_err(|error| error.to_string())?;
     let client_id = value
         .get("clientId")
