@@ -109,10 +109,8 @@ pub async fn run_quiet_resume(
     state: &AppState,
     request: &chat::TurnRequest,
 ) -> Result<Option<Value>, String> {
-    let (sender, mut receiver) = mpsc::unbounded_channel::<Value>();
-    let drain = tokio::spawn(async move {
-        while receiver.recv().await.is_some() {}
-    });
+    let (sender, receiver) = mpsc::unbounded_channel::<Value>();
+    let drain = tokio::spawn(drain_quiet_events(receiver));
     let result = chat::run_turn_resume(state, request, &sender).await;
     drop(sender);
     let _ = drain.await;
@@ -129,15 +127,24 @@ pub async fn run_quiet_with_stats(
     result.map(|message| (message, stats))
 }
 
+/// Drain events without materializing transient tool arguments/results in a
+/// second TurnStats vector. Only explicit evidence callers use the collector.
+async fn drain_quiet_events(mut receiver: mpsc::UnboundedReceiver<Value>) {
+    while receiver.recv().await.is_some() {}
+}
+
 /// Runs a turn with nobody listening on the event stream (background jobs).
 /// The channel stays open so tool execution is not treated as cancelled.
 pub async fn run_quiet(
     state: &AppState,
     request: &chat::TurnRequest,
 ) -> Result<Option<Value>, String> {
-    run_quiet_with_stats(state, request)
-        .await
-        .map(|(message, _)| message)
+    let (sender, receiver) = mpsc::unbounded_channel::<Value>();
+    let drain = tokio::spawn(drain_quiet_events(receiver));
+    let result = chat::run_turn_background(state, request, &sender).await;
+    drop(sender);
+    let _ = drain.await;
+    result
 }
 
 /// A room worker owns generation and persistence independently of open tabs.
