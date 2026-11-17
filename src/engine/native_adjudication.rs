@@ -160,8 +160,8 @@ fn common_prefix_drift(
 }
 
 fn chain_from_divergence(
- baseline:&[Action],candidate:&[Action],snapshot:&Snapshot,changed:&[String],
- prefix:&Value
+ baseline:&[Action],candidate:&[Action],snapshot:&Snapshot,trace:&Value,
+ kernel_final:&Value,prefix:&Value
 )->Value{
  let first=first_difference(baseline,candidate);
  if prefix["prefixComparable"]!=true {
@@ -194,30 +194,46 @@ fn chain_from_divergence(
  let mut links=Vec::new();
  for i in descendants {
   let action=&candidate[i];
-  // Tool identity and arguments are immutable decisions checked by the
-  // replay trace. Only path-targeted first-party tools support this link;
-  // shell, browser, MCP and GitHub effects remain opaque.
-  if matches!(action.tool.as_str(),
-    "workspace_write"|"workspace_replace"|"workspace_replace_range"|"file_write")
-  {
-   if let Some(path)=action.arguments["path"].as_str(){
-    if changed.iter().any(|changed|changed==path){
-     let receipt=snapshot.receipts.iter().find(|r|r.id==action.id);
-     links.push(json!({"actionId":action.id,"tool":action.tool,
-      "path":path,"ordinal":i,"successfulReceipt":receipt.is_some_and(|r|r.success),
-      "dependencyDepth":"reachable_from_divergence"}));
-    }
-   }
-  }
+  if !matches!(action.tool.as_str(),
+    "workspace_write"|"workspace_replace"|"workspace_replace_range")
+  {continue;}
+  let Some(path)=action.arguments["path"].as_str() else{continue;};
+  // A path is a task artifact only if the kernel actually checked it,
+  // including checks derived from independent file-write receipts.
+  let terminal=&kernel_final["entries"][path];
+  if !terminal.is_object(){continue;}
+  let source=trace["hostJournal"]["sourceEvidence"].as_array()
+   .and_then(|items|items.iter().find(|item|
+     item["operationId"]==action.id));
+  let lineage=source.map(|item|&item["artifactLineage"]).unwrap_or(&Value::Null);
+  let before=&lineage["before"];
+  let after=&lineage["after"];
+  let preimage_observed=before["complete"]==true;
+  let postimage_observed=after["complete"]==true;
+  let effect_changed=preimage_observed&&postimage_observed
+   &&before["path"]==path&&after["path"]==path
+   &&before["state"]!=after["state"];
+  let postimage_matches_final=postimage_observed&&after["state"]==*terminal;
+  let receipt=snapshot.receipts.iter().find(|receipt|receipt.id==action.id);
+  let settled=receipt.is_some_and(|receipt|receipt.success);
+  links.push(json!({"actionId":action.id,"tool":action.tool,
+   "path":path,"ordinal":i,"successfulReceipt":settled,
+   "observedMutation":effect_changed,
+   "postimageMatchesKernelFinal":postimage_matches_final,
+   "before":before["state"],"after":after["state"],
+   "origin":"durable_host_operation_artifact_lineage",
+   "exclusiveWriterProven":false}));
  }
- let directed=links.iter().any(|link|link["successfulReceipt"]==true);
+ let grounded=links.iter().any(|link|
+  link["successfulReceipt"]==true&&link["observedMutation"]==true
+   &&link["postimageMatchesKernelFinal"]==true);
  json!({"traceDifference":first,
-  "mechanism":if directed{"artifact_linked_candidate_mechanism"}
+  "mechanism":if grounded{"host_witnessed_candidate_mutation_chain"}
     else{"unattributed_difference"},
   "actionToArtifactLinks":links,
   "prefixEvidence":prefix,
   "counterfactualExecuted":false,
-  "claim":"mechanism candidate only; external execution and hidden-state confounders remain",
+  "claim":"candidate mechanism only; intervening writers and hidden-state confounders remain",
   "registeredActionCount":by_id.len()})
 }
 fn same_envelope(a:&Value,b:&Value)->Vec<&'static str>{
@@ -268,14 +284,12 @@ pub fn adjudicate(
   let start=evidence(&candidate,"nativeEvidenceBaseline");
   let same_initial=before.zip(start).is_some_and(|(a,b)|witness_identity(a,b));
   let candidate_proof=artifact_proof(&candidate,&trace,&snap);
-  let changed=candidate_proof["changedAcceptancePaths"].as_array()
-   .cloned().unwrap_or_default().iter()
-   .filter_map(|v|v.as_str().map(str::to_owned)).collect::<Vec<_>>();
   let prefix=common_prefix_drift(
    &base_actions,&run_actions,&base_snapshot,&snap,
   );
   let mechanism=chain_from_divergence(
-   &base_actions,&run_actions,&snap,&changed,&prefix,
+   &base_actions,&run_actions,&snap,&trace,
+   &candidate["nativeEvidenceKernelFinal"],&prefix,
   );
   let matched=shape_error.is_none()&&unmatched.is_empty()&&same_initial
    &&prefix["prefixComparable"]==true
@@ -336,9 +350,16 @@ mod tests {
   snap.receipts.push(Receipt{id:"b".into(),tool:"workspace_write".into(),
    arguments:json!({"path":"file","content":"x"}),
    success:true,result:json!({"ok":true}),step:1});
-  let v=chain_from_divergence(&b,&c,&snap,&["file".into()],
+  let trace=json!({"hostJournal":{"sourceEvidence":[{
+   "operationId":"b","artifactLineage":{
+    "before":{"path":"file","complete":true,"state":{"state":"missing"}},
+    "after":{"path":"file","complete":true,
+     "state":{"state":"file","bytes":1,"sha256":"abc"}}
+   }}]}});
+  let finish=json!({"entries":{"file":{"state":"file","bytes":1,"sha256":"abc"}}});
+  let v=chain_from_divergence(&b,&c,&snap,&trace,&finish,
    &json!({"prefixComparable":true}));
-  assert_eq!(v["mechanism"],"artifact_linked_candidate_mechanism");
+  assert_eq!(v["mechanism"],"host_witnessed_candidate_mutation_chain");
   assert_eq!(v["actionToArtifactLinks"].as_array().unwrap().len(),1);
   assert_eq!(v["actionToArtifactLinks"][0]["actionId"],"b");
   assert_eq!(v["counterfactualExecuted"],false);
@@ -351,7 +372,7 @@ mod tests {
    strategy:Default::default(),limits:Default::default(),allowed_tools:vec![],
    checks:vec![],require_evidence:false};
   let snap=Snapshot::from_request(&request);
-  let v=chain_from_divergence(&actions,&actions,&snap,&["file".into()],
+  let v=chain_from_divergence(&actions,&actions,&snap,&json!({}),&json!({}),
    &json!({"prefixComparable":true}));
   assert_eq!(v["mechanism"],"not_identifiable_from_unchanged_actions");
  }
@@ -402,7 +423,7 @@ mod tests {
   let b=new_snap("b",json!({"file":"after"}));
   let drift=common_prefix_drift(&actions_a,&actions_b,&a,&b);
   assert_eq!(drift["kind"],"environment_or_tool_drift");
-  let graph=chain_from_divergence(&actions_a,&actions_b,&b,&["new".into()],&drift);
+  let graph=chain_from_divergence(&actions_a,&actions_b,&b,&json!({}),&json!({}),&drift);
   assert_eq!(graph["mechanism"],"pre_intervention_observation_drift");
   assert_eq!(graph["counterfactualExecuted"],false);
  }
