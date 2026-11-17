@@ -68,9 +68,6 @@ impl Cycle {
         let mut decision=decide(self.config.strategy,observation.has_checks,
             observation.gaps,observation.error,observation.accumulated_evidence,
             attempt,self.config.attempts);
-        if observation.token_budget_exhausted {
-            decision=Decision::Review;
-        }
         if stalled && !observation.owner_changed {
             decision=Decision::Review;
         }
@@ -80,6 +77,11 @@ impl Cycle {
             decision=if self.can_retry() && !unknown_effect{
                 Decision::Repair
             }else{Decision::Review};
+        }
+        // This terminal budget gate wins even when new owner steering
+        // arrives during the provider call.
+        if observation.token_budget_exhausted {
+            decision=Decision::Review;
         }
         Assessment{decision,stalled,unknown_effect}
     }
@@ -165,6 +167,9 @@ mod tests{
         let gaps=vec!["failed".to_string()];
         let cap=Observation{token_budget_exhausted:true,..observation(&gaps,&[])};
         assert_eq!(cycle.assess(&cap).decision,Decision::Review);
+        let changed_owner=Observation{owner_changed:true,..cap};
+        assert_eq!(cycle.assess(&changed_owner).decision,Decision::Review,
+            "owner steering may not restart a fully spent token budget");
         assert!(!cycle.can_retry());
         assert_eq!(cycle.next_attempt(),None);
     }

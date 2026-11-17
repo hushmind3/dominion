@@ -211,12 +211,14 @@ pub async fn execute(
         let tested=verification::test_after_last_edit(current_evidence);
         // The independent SDK kernel owns retry, stop and no-replay
         // admission. This is the real prompt worker, not a shadow evaluator.
+        let token_budget_exhausted=latest_error.as_deref()
+            .is_some_and(|error|error.contains("작업 토큰 예산"))
+            || input["tokenBudget"].as_u64().filter(|limit|*limit>=1024)
+                .is_some_and(|limit|consumed_tokens>=limit);
         let assessment=cycle.assess(&Observation{
             has_checks,gaps:&gaps,error:latest_error.as_deref(),
             accumulated_evidence:&all_evidence,new_evidence:stats.evidence.len(),
-            owner_changed,
-            token_budget_exhausted:latest_error.as_deref()
-                .is_some_and(|error|error.contains("작업 토큰 예산")),
+            owner_changed,token_budget_exhausted,
         });
         let repeated_without_progress=assessment.stalled;
         let mut decision=assessment.decision;
@@ -253,6 +255,10 @@ pub async fn execute(
         });
         ctx.emit(json!({"type":"autonomous_step","step":receipt}));
         receipts.push(receipt);
+        // Commit kernel feedback before serializing its durable snapshot.
+        if decision==Decision::Repair {
+            cycle.record_retry(&gaps,latest_error.as_deref());
+        }
         // Persist outcomes before an additional model call; a crash after a
         // file write must not automatically replay that write.
         ctx.checkpoint(json!({"autonomousState":{
@@ -280,8 +286,7 @@ pub async fn execute(
                     "status":"needs_review","sessionId":session_id,"messageId":last_message,
                     "reason":if side_effect_unknown(&all_evidence) {
                         "외부 부작용이 발생했을 수 있어 자동 재실행하지 않습니다."
-                    }else if latest_error.as_deref().is_some_and(|error|
-                        error.contains("작업 토큰 예산")){
+                    }else if token_budget_exhausted{
                         "사용자가 설정한 작업 토큰 예산에 도달해 추가 호출을 중단했습니다."
                     }else if repeated_without_progress {
                         "새로운 실행 증거 없이 동일한 검증 실패가 반복되어 재시도를 중단했습니다."
@@ -290,9 +295,7 @@ pub async fn execute(
                     "attempts":attempt+1,"receipts":receipts,
                 }));
             }
-            Decision::Repair => {
-                cycle.record_retry(&gaps,latest_error.as_deref());
-            }
+            Decision::Repair => {}
         }
     }
     Err("autonomous execution ended without a terminal decision".into())

@@ -46,3 +46,9 @@ This is a concrete improvement in SDK ownership, not a claim that every
 chat/room turn now uses a full standalone agent SDK. The existing JSON task
 contract and frontend remain unchanged. Actual model success-rate and
 round-trip latency still need workload measurement.
+
+The terminal budget gate now observes the real session's cumulative
+token usage (not just an error message). The kernel refuses another
+model attempt after the limit is reached even if steering changed during
+the previous turn. Retriable feedback is written into the SDK cycle before
+its checkpoint snapshot is persisted.
