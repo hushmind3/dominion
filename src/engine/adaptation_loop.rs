@@ -216,6 +216,63 @@ fn intervention_key(tool: &str, inputs: &Value) -> String {
     format!("{tool}:{}", inputs)
 }
 
+/// A candidate is diagnostic only if competing live causes predict
+/// *different values for the same observable*. Naming more hypothesis IDs is
+/// not information gain. Only exact-value predictions are contrasted:
+/// ranges and existence claims may overlap and must not be treated as mutually
+/// exclusive without real observations.
+fn predicted_values(hypothesis: &Value) -> std::collections::BTreeMap<String, String> {
+    let mut values = std::collections::BTreeMap::new();
+    for prediction in hypothesis["predictions"].as_array().into_iter().flatten() {
+        if prediction["observationPhase"].as_str().unwrap_or("after_intervention")
+            != "after_intervention"
+        {
+            continue;
+        }
+        let predicate = &prediction["predicate"];
+        let kind = predicate["type"].as_str().unwrap_or("");
+        let expected = match kind {
+            "equals" => predicate.get("value"),
+            "exists" => prediction.get("expectedValue").filter(Value::is_boolean),
+            _ => None,
+        };
+        let Some(expected) = expected else { continue; };
+        let key = format!("{}:{}:{}:{}",
+            prediction["observationTarget"].as_str().unwrap_or("result"),
+            predicate["from"].as_str().unwrap_or("result"),
+            predicate["path"].as_str().unwrap_or(""),
+            kind);
+        values.insert(key, expected.to_string());
+    }
+    values
+}
+
+fn contrastive_gain(
+    hypotheses: &[Value],
+    hypothesis_ids: &[Value],
+    refuted: &[String],
+) -> (f64, usize) {
+    let active = hypotheses.iter().filter(|h| {
+        let Some(id) = h["id"].as_str() else { return false; };
+        !refuted.iter().any(|old|old==id)
+            && (hypothesis_ids.is_empty()
+                || hypothesis_ids.iter().any(|v|v.as_str()==Some(id)))
+    }).map(predicted_values).collect::<Vec<_>>();
+    let mut contradicted = 0usize;
+    let mut all_pairs = 0usize;
+    for (i, a) in active.iter().enumerate() {
+        for b in active.iter().skip(i+1) {
+            all_pairs += 1;
+            if a.iter().any(|(slot,value)| {
+                b.get(slot).is_some_and(|different|different!=value)
+            }) {
+                contradicted += 1;
+            }
+        }
+    }
+    (if all_pairs == 0 {0.0} else {contradicted as f64/all_pairs as f64}, all_pairs)
+}
+
 /// Picks an intervention using observable preconditions, expected progress,
 /// hypothesis discrimination, historical effect, uncertainty and cost.
 pub fn choose_intervention_with_context(
@@ -319,27 +376,33 @@ pub fn choose_intervention_with_policy(
             if precondition_status == "false" {
                 return None;
             }
-            let expected_checks = item["expectedChecks"]
-                .as_array()
-                .map(Vec::len)
-                .unwrap_or(0) as f64;
+            let expected_checks = item["expectedChecks"].as_array().map(|checks|
+                checks.iter().filter(|check| {
+                    check["predicate"].is_object() || check["type"].is_string()
+                }).count()
+            ).unwrap_or(0) as f64;
+            let evidence_coverage = (expected_checks / 3.0).clamp(0.0,1.0);
             let unresolved_requirements = item["unresolvedRequirements"]
-                .as_array()
-                .map(Vec::len)
-                .unwrap_or(0) as f64;
-            let expected_progress = item["expectedProgress"]
-                .as_f64()
-                .unwrap_or(expected_checks / 3.0 + unresolved_requirements);
-            let discrimination = hypothesis_ids
-                .iter()
-                .filter(|id| {
-                    !id.as_str()
-                        .is_some_and(|id| refuted_hypotheses.iter().any(|item| item == id))
-                })
-                .count() as f64;
-            let historical_effect = item["historicalEffect"].as_f64();
-            let uncertainty = item["uncertainty"].as_f64().unwrap_or(0.5);
-            let cost = item["estimatedCost"].as_f64().unwrap_or(0.5).max(0.0);
+                .as_array().map(Vec::len).unwrap_or(0).min(3) as f64;
+            let expected_progress = item["expectedProgress"].as_f64()
+                .unwrap_or(evidence_coverage * 0.5 + unresolved_requirements * 0.15)
+                .clamp(0.0, 1.0);
+            let (discrimination, contrasted_pairs) = contrastive_gain(
+                &hypotheses, &hypothesis_ids, refuted_hypotheses,
+            );
+            // Model-asserted historical success is not a historical outcome.
+            // Give it weight only when the declared evidence is resolvable in
+            // the host's observation context, never from a bare float.
+            let cited_history = item["historicalEvidenceIds"].as_array().is_some_and(|ids|
+                !ids.is_empty() && ids.iter().all(|id|id.as_str()
+                    .is_some_and(|key|resolved.get(key).is_some())));
+            let historical_effect = if cited_history {
+                item["historicalEffect"].as_f64().map(|v|v.clamp(-1.0,1.0))
+            } else {None};
+            let uncertainty = item["uncertainty"].as_f64().unwrap_or(0.5).clamp(0.0,1.0);
+            let cost = item["estimatedCost"].as_f64().unwrap_or(0.5).clamp(0.0,10.0);
+            let diagnostic = dominion_agent_sdk::runtime::builtin_is_read_only(tool);
+            let mutation_risk = if cause_unclear && !diagnostic { 0.65 } else { 0.0 };
             let mut variables = std::collections::BTreeMap::new();
             variables.insert("discrimination".into(), discrimination);
             variables.insert("progress".into(), expected_progress);
@@ -360,15 +423,19 @@ pub fn choose_intervention_with_policy(
             let score = if let Some(expression) = expression {
                 crate::engine::algorithms::eval_expression(expression, &variables).ok()?
             } else if cause_unclear {
-                discrimination * 2.0 * discrimination_weight
+                discrimination * 4.0 * discrimination_weight
                     + expected_progress * 0.5 * progress_weight
+                    + evidence_coverage * 0.5
+                    + if diagnostic { 0.5 } else { 0.0 }
                     + historical_effect.unwrap_or(0.0)
+                    - mutation_risk
                     - cost * cost_weight
                     - uncertainty * uncertainty_weight
                     - if precondition_status == "unknown" { 0.5 } else { 0.0 }
             } else {
                 expected_progress * 2.0 * progress_weight
                     + discrimination * 0.5 * discrimination_weight
+                    + evidence_coverage * 0.5
                     + historical_effect.unwrap_or(0.0)
                     - cost * cost_weight
                     - uncertainty * uncertainty_weight
@@ -378,6 +445,10 @@ pub fn choose_intervention_with_policy(
                 "unresolvedRequirements": unresolved_requirements,
                 "expectedProgress": expected_progress,
                 "hypothesisDiscrimination": discrimination,
+                "contrastedHypothesisPairs": contrasted_pairs,
+                "executableCheckCoverage": evidence_coverage,
+                "diagnosticReadOnly": diagnostic,
+                "mutationRisk": mutation_risk,
                 "historicalEffect": historical_effect,
                 "uncertainty": uncertainty,
                 "estimatedCost": cost,
@@ -715,6 +786,37 @@ mod selection_tests {
             "unverified user-facing condition"
         ]});
         assert_eq!(evaluate_intervention_outcome(&mixed,&old,&after,true)["status"],"unrated");
+    }
+
+    #[test]
+    fn contrastive_diagnostic_selection_requires_disagreeing_predictions() {
+        let adaptations = json!({
+            "hypotheses":[
+                {"id":"h1","predictions":[{"observationPhase":"after_intervention",
+                    "predicate":{"type":"equals","from":"result","path":"/reason","value":"permissions"}}]},
+                {"id":"h2","predictions":[{"observationPhase":"after_intervention",
+                    "predicate":{"type":"equals","from":"result","path":"/reason","value":"missing_file"}}]}
+            ],
+            "interventions":[
+                {"id":"blind_write","hypothesisIds":["h1","h2"],"tool":"workspace_write",
+                    "inputs":{"path":"x","content":"guess"},"expectedProgress":0.8,
+                    "estimatedCost":0.1},
+                {"id":"inspect","hypothesisIds":["h1","h2"],"tool":"workspace_read",
+                    "inputs":{"path":"x"},"expectedProgress":0.3,
+                    "estimatedCost":0.1}
+            ]
+        });
+        let selected = choose_intervention(&adaptations,"shell_exec",&json!({"command":"false"}),false)
+            .expect("read-only disambiguating action");
+        assert_eq!(selected["id"],"inspect");
+        assert_eq!(selected["evaluation"]["contrastedHypothesisPairs"],1);
+        assert_eq!(selected["evaluation"]["hypothesisDiscrimination"],1.0);
+        let inflated = json!({"hypotheses":[
+            {"id":"a","predictions":[]},{"id":"b","predictions":[]}],
+            "interventions":[{"id":"i","hypothesisIds":["a","b"],"tool":"workspace_read",
+                "inputs":{"path":"x"},"expectedProgress":0.3,"estimatedCost":0.1}]});
+        let chosen = choose_intervention(&inflated,"shell_exec",&json!({}),false).unwrap();
+        assert_eq!(chosen["evaluation"]["hypothesisDiscrimination"],0.0);
     }
 
 }
