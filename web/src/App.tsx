@@ -3,6 +3,7 @@ import { ContextMenu } from './components/ContextMenu'
 import {OwnerProfileProvider} from './components/OwnerProfile'
 import {Component,lazy,Suspense,useCallback,useEffect,useLayoutEffect,useState,type ReactNode} from 'react'
 import {get} from './api'
+import {refreshScopeForEvent} from './refreshScope'
 import {WorkspaceSidebar,SettingsHeader,navigation,type PageId} from './components/WorkspaceShell'
 const HomePage=lazy(()=>import('./pages/Home').then(module=>({default:module.HomePage})))
 const CapabilitiesPage=lazy(()=>import('./pages/Capabilities').then(module=>({default:module.CapabilitiesPage})))
@@ -164,14 +165,18 @@ export default function App(){
   const poll=setInterval(()=>{void check()},12000)
   const stream=new EventSource('/api/events')
   let refreshTimer: ReturnType<typeof setTimeout> | undefined
+  const refreshScopes=new Set<string>()
   stream.onmessage=event=>{
    try{
     const item=JSON.parse(event.data)
     if(item.type==='room_event'){window.dispatchEvent(new CustomEvent('dominion-room-event',{detail:item}));return}
     if(['record','message','job_event','audit','approval','channel_status','goal_event','execution_event'].includes(item.type)){
+     refreshScopes.add(refreshScopeForEvent(item))
      refreshTimer ??= setTimeout(()=>{
       refreshTimer=undefined
-      window.dispatchEvent(new Event('dominion-refresh'))
+      const scopes=[...refreshScopes]
+      refreshScopes.clear()
+      window.dispatchEvent(new CustomEvent('dominion-refresh',{detail:{scopes}}))
      },100)
      if(item.type==='approval')void approvals()
      if(item.type==='job_event'||item.type==='goal_event'||item.type==='execution_event')void check()
