@@ -220,54 +220,105 @@ pub(super) async fn attempt_model_adaptation(
             Some(execution_id),
         )
         .unwrap_or(Value::Null);
-    let selected = crate::engine::adaptation_loop::choose_intervention_with_policy(
-        &adaptation,
-        tool,
-        arguments,
-        false,
-        &selection_context,
-        &refuted,
-        &adaptation_algorithm,
-    )
-    .ok_or("no distinct intervention survived selection")?;
+    // Bounded task-level propose/probe/compose: execute only explicitly
+    // local read-only diagnostic candidates before selecting the intervention.
+    // Every probe uses the normal dispatch journal, cancellation and approvals.
+    // Reserve a tool slot for final action; model-authored predictions never
+    // count as observed evidence until the tool result passes a predicate.
+    let mut probe_outcomes = Vec::new();
+    let mut performed_probes: Vec<(String, Value, bool)> = Vec::new();
+    if adaptation["hypotheses"].as_array().is_some_and(|items| items.len() >= 2) {
+        let probes = crate::engine::adaptation_loop::probe_candidates(
+            &adaptation, tool, arguments, &selection_context, &refuted, &adaptation_algorithm
+        );
+        for probe in probes {
+            let snapshot = budget.snapshot();
+            let used = snapshot["tools"].as_u64().unwrap_or(u64::MAX);
+            let max = snapshot["maxTools"].as_u64().unwrap_or(0);
+            if used.saturating_add(1) >= max || !budget.can_execute_tool() {
+                break;
+            }
+            if state.is_cancelled(session_id) {
+                return Err("실행이 중단되었습니다.".into());
+            }
+            if !budget.charge_tool() { break; }
+            let probe_tool = probe["tool"].as_str().unwrap_or("");
+            let inputs = probe["inputs"].clone();
+            *op_seq += 1;
+            let call = ToolCall {
+                id: format!("adapt-probe-{}", uuid::Uuid::new_v4()),
+                name: probe_tool.to_string(),
+                arguments: inputs.to_string(),
+            };
+            let (observation, ok, _text) = dispatch_tool_call(
+                state, tx, session, request, session_id, execution_id, &call,
+                inputs, metrics, *op_seq, round, 0, false,
+                "adaptation_probe", None, None, None
+            ).await?;
+            let verdict = if ok {
+                let observed = json!({
+                    "before": before_observation,
+                    "result": observation,
+                });
+                crate::engine::program::predicate_verdict(&probe["probePredicate"], &observed)
+                    .map(|verdict| verdict.as_str())
+                    .unwrap_or("unknown")
+            } else {
+                "tool_failed"
+            };
+            probe_outcomes.push(json!({
+                "id": probe["id"],
+                "hypothesisIds": probe["hypothesisIds"],
+                "tool": probe_tool,
+                "operationId": call.id,
+                "toolOk": ok,
+                "verdict": verdict,
+                "predicate": probe["probePredicate"],
+                "observationBasis": "durable_tool_result_not_task_completion",
+            }));
+            performed_probes.push((
+                probe["id"].as_str().unwrap_or("").to_string(), observation, ok
+            ));
+        }
+    }
+    adaptation["probeOutcomes"] = json!(probe_outcomes);
+    let selected = crate::engine::adaptation_loop::choose_after_probes(
+        &adaptation, tool, arguments, &selection_context,
+        &refuted, &adaptation_algorithm, &probe_outcomes
+    ).ok_or("no distinct intervention survived probe-aware selection")?;
     let selected_tool = selected["tool"]
         .as_str()
         .filter(|value| !value.is_empty())
         .ok_or("selected intervention has no tool")?
         .to_string();
-    let inputs = selected["inputs"].clone();
-    if !inputs.is_object() {
-        return Err("selected intervention inputs are not an object".into());
-    }
-    if !budget.charge_tool() {
-        return Err("adaptation tool budget is exhausted".into());
-    }
-    *op_seq += 1;
-    let call = ToolCall {
-        id: format!("adapt-{}-{}", selected["id"].as_str().unwrap_or("i"), uuid::Uuid::new_v4()),
-        name: selected_tool,
-        arguments: inputs.to_string(),
+    // A diagnostic already dispatched for this run cannot be dispatched
+    // again merely because compose selected it. Reuse the recorded result.
+    let result_from_probe = performed_probes.iter()
+        .find(|(id, _, _)| selected["id"].as_str() == Some(id.as_str()))
+        .map(|(_, result, ok)| (result.clone(), *ok));
+    let (result, ok) = if let Some(cached) = result_from_probe {
+        cached
+    } else {
+        let inputs = selected["inputs"].clone();
+        if !inputs.is_object() {
+            return Err("selected intervention inputs are not an object".into());
+        }
+        if !budget.charge_tool() {
+            return Err("adaptation tool budget is exhausted".into());
+        }
+        *op_seq += 1;
+        let call = ToolCall {
+            id: format!("adapt-{}-{}", selected["id"].as_str().unwrap_or("i"), uuid::Uuid::new_v4()),
+            name: selected_tool,
+            arguments: inputs.to_string(),
+        };
+        let (result, ok, _content) = dispatch_tool_call(
+            state, tx, session, request, session_id, execution_id,
+            &call, inputs, metrics, *op_seq, round, 0, false,
+            "adaptation", None, None, None
+        ).await?;
+        (result, ok)
     };
-    let (result, ok, _content) = dispatch_tool_call(
-        state,
-        tx,
-        session,
-        request,
-        session_id,
-        execution_id,
-        &call,
-        inputs,
-        metrics,
-        *op_seq,
-        round,
-        0,
-        false,
-        "adaptation",
-        None,
-        None,
-        None,
-    )
-    .await?;
     crate::engine::algorithms::mark_signal(
         state, execution_id, "adaptation.selection", ok,
     );
