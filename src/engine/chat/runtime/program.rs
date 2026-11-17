@@ -1406,6 +1406,9 @@ pub(super) async fn propose_program_revision(
         failure["tool"].as_str().unwrap_or(""),
         &failure["observation"]["arguments"],
     );
+    let system = format!(
+        "{system} Each candidateRevisions entry MUST also include postflight: {{tool, inputs, predicate}} with a READ-ONLY tool and a machine-checkable result predicate for the state AFTER its proposed revision executes. Postflight is executed through the native gateway; Unknown/False/denied cannot mark repair complete. Candidates with unrelated node replacements are rejected. An added observe/verify node may be composed with a revision of the failed node if both independent preflights pass."
+    );
     let prompt = format!(
         "Current program: {program}\nCheckpoint: {checkpoint}\nFailure observation: {failure}\nNative failure provenance: {trace}\nAvailable tools: {available:?}\nReturn only JSON."
     );
