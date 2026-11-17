@@ -179,6 +179,14 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_execution_task
                  ON records(json_extract(data,'$.taskId'))
                  WHERE kind='execution';
+             -- Indexed execution timeline and live-only operator views.
+             CREATE INDEX IF NOT EXISTS idx_execution_page
+                 ON records(COALESCE(json_extract(data,'$.startedAt'),created_at) DESC,
+                     updated_at DESC,id DESC)
+                 WHERE kind='execution';
+             CREATE INDEX IF NOT EXISTS idx_execution_active_status
+                 ON records(json_extract(data,'$.status'),updated_at DESC,id DESC)
+                 WHERE kind='execution';
              CREATE INDEX IF NOT EXISTS idx_native_job_route_completed
                  ON records(json_extract(data,'$.nativeRoute.binding'))
                  WHERE kind='job' AND json_extract(data,'$.status')='completed';",
@@ -316,6 +324,37 @@ impl Store {
         ).map_err(|error|error.to_string())?;
         let rows=stmt.query_map([task_id],record_from_row)
             .map_err(|error|error.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|error|error.to_string())
+    }
+
+    /// Paginate run history inside SQLite. The old API materialized and
+    /// parsed every historical execution before keeping 200 rows.
+    pub fn execution_page(&self,limit:usize,offset:usize)->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|error|error.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='execution'
+             ORDER BY COALESCE(json_extract(data,'$.startedAt'),created_at) DESC,
+                      updated_at DESC,id DESC
+             LIMIT ?1 OFFSET ?2"
+        ).map_err(|error|error.to_string())?;
+        let limit=i64::try_from(limit).unwrap_or(i64::MAX);
+        let offset=i64::try_from(offset).unwrap_or(i64::MAX);
+        let rows=stmt.query_map(rusqlite::params![limit,offset],record_from_row)
+            .map_err(|error|error.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|error|error.to_string())
+    }
+
+    /// A live dashboard should never deserialize terminated runs just to
+    /// locate its handful of active execution records.
+    pub fn active_executions_indexed(&self)->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|error|error.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='execution' AND json_extract(data,'$.status')='running'
+             ORDER BY updated_at DESC,id DESC"
+        ).map_err(|error|error.to_string())?;
+        let rows=stmt.query_map([],record_from_row).map_err(|error|error.to_string())?;
         rows.collect::<Result<Vec<_>,_>>().map_err(|error|error.to_string())
     }
 
@@ -1306,6 +1345,38 @@ mod tests {
         assert!(plan.contains("idx_native_job_route_completed"),"{plan}");
         drop(conn);
         let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn indexed_execution_timeline_pages_without_loading_unrelated_json() {
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        for i in 0..120 {
+            let status=if i%11==0 {"running"} else {"completed"};
+            let started_at=format!("2026-11-17T{:02}:{:02}:00Z",i/60,i%60);
+            store.put("execution",&json!({"id":format!("run-{i:03}"),
+                "startedAt":started_at,"status":status,
+                "evidence":format!("fixture-{i}")})).unwrap();
+        }
+        let page=store.execution_page(7,5).unwrap();
+        assert_eq!(page.len(),7);
+        assert_eq!(page[0]["id"],"run-114");
+        assert_eq!(page[6]["id"],"run-108");
+        assert!(store.execution_page(10,200).unwrap().is_empty());
+        let active=store.active_executions_indexed().unwrap();
+        assert_eq!(active.len(),11);
+        assert!(active.iter().all(|record|record["status"]=="running"));
+        let conn=store.conn.lock().unwrap();
+        let page_plan:String=conn.query_row(
+            "EXPLAIN QUERY PLAN SELECT data FROM records
+             WHERE kind='execution'
+             ORDER BY COALESCE(json_extract(data,'$.startedAt'),created_at) DESC,
+                      updated_at DESC,id DESC LIMIT 7 OFFSET 5",[],|r|r.get(3)).unwrap();
+        assert!(page_plan.contains("idx_execution_page"),"{page_plan}");
+        let active_plan:String=conn.query_row(
+            "EXPLAIN QUERY PLAN SELECT data FROM records
+             WHERE kind='execution' AND json_extract(data,'$.status')='running'
+             ORDER BY updated_at DESC,id DESC",[],|r|r.get(3)).unwrap();
+        assert!(active_plan.contains("idx_execution_active_status"),"{active_plan}");
     }
 
     #[test]

@@ -17,29 +17,18 @@ pub struct Page {
 /// Executions are engine-owned audit records. Clients may read and cancel
 /// them, never create or overwrite status/evidence. The list is bounded by
 /// default because individual execution records include large evidence blobs.
-pub async fn list(State(state): State<AppState>, Query(page): Query<Page>) -> Json<Value> {
-    let mut items = state.store.all("execution");
-    items.sort_by(|a, b| {
-        b["startedAt"]
-            .as_str()
-            .or_else(|| b["createdAt"].as_str())
-            .unwrap_or("")
-            .cmp(
-                a["startedAt"]
-                    .as_str()
-                    .or_else(|| a["createdAt"].as_str())
-                    .unwrap_or(""),
-            )
-    });
-    let limit = page.limit.unwrap_or(200).clamp(1, 1000);
-    let offset = page.offset.unwrap_or(0);
-    Json(json!(
-        items
-            .into_iter()
-            .skip(offset)
-            .take(limit)
-            .collect::<Vec<Value>>()
-    ))
+fn query_result(items:Result<Vec<Value>,String>)->Response{
+    match items {
+        Ok(items)=>Json(json!(items)).into_response(),
+        Err(_)=>(StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error":"실행 기록을 조회할 수 없습니다."}))).into_response(),
+    }
+}
+
+pub async fn list(State(state): State<AppState>, Query(page): Query<Page>) -> Response {
+    let limit=page.limit.unwrap_or(200).clamp(1,1000);
+    let offset=page.offset.unwrap_or(0);
+    query_result(state.store.execution_page(limit,offset))
 }
 
 pub async fn one(State(state): State<AppState>, Path(id): Path<String>) -> Response {
@@ -96,27 +85,15 @@ pub async fn cancel(State(state): State<AppState>, Path(id): Path<String>) -> Re
     }
 }
 
-pub async fn active_executions(State(state): State<AppState>) -> Json<Value> {
-    let items = state
-        .store
-        .all("execution")
-        .into_iter()
-        .filter(|execution| {
-            execution.get("status").and_then(|value| value.as_str()) == Some("running")
-        })
-        .collect::<Vec<_>>();
-    Json(json!(items))
+pub async fn active_executions(State(state): State<AppState>) -> Response {
+    query_result(state.store.active_executions_indexed())
 }
 
 pub async fn execution_operations(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Json<Value> {
-    let items = state
-        .store
-        .all("execution_operation")
-        .into_iter()
-        .filter(|record| record.get("runId").and_then(|value| value.as_str()) == Some(id.as_str()))
-        .collect::<Vec<_>>();
-    Json(json!(items))
+) -> Response {
+    // Keep recent-first client ordering, but scope the SQL projection to
+    // the requested run instead of parsing every operation in the database.
+    query_result(state.store.execution_operations_recent(&id))
 }
