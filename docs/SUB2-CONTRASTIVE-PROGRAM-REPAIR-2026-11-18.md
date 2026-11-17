@@ -51,10 +51,13 @@ Now such a node remains pending; the failure's exact tool `callId` is durably re
 ## Properties and constraints
 
 - At most **one** model request to generate up to **three** ProgramIR alternatives per program repair attempt; existing max repair attempts and shared model-round ledger remain in force.
+- An explicitly selected **append-only** existing repair policy cannot be bypassed by the contrastive replacement path. Legacy append proposals remain available.
+- A replaced failed call_tool retains `onFailure=revise` if the model omitted it, so another real failure follows the existing bounded repair policy instead of being silently marked completed.
 - At most **three distinct preflight tool calls** per tournament; identical inputs are executed once and the *same real observation* is evaluated against each candidate's own prediction.
 - A candidate needs a preflight with a machine-readable predicate and a non-side-effecting native tool. False or Unknown cannot qualify. Candidate replacements are scoped to the actual failed node; a non-failed candidate may only add observation or verification nodes for compatible composition.
 - The selected repair also carries machine-checkable read-only **postflights**. A bare "exists" result is insufficient: observed value or ordered comparison must be True before the program may report completion.
 - When postflight fails / is denied / is inconclusive / runs out of budget, the program records `needs_review`, the actual call IDs and verdicts, **not** a fabricated completed repair. It does not silently replay completed external writes.
+- `turn_body` treats `needs_review` as a settled program execution, **not** a completed task; it does not rerun the same program every model round. `determine_task_outcome` refuses `Succeeded` when the persisted program checkpoint requires review, even if the model emitted a final answer.
 - Legacy single-proposal `apply_revision_proposal` remains supported, preserving previously stored programs and clients.
 - No new long-running worker, private DB, SDK surface or UI; uses the existing shared engine, checkpoint and operation history.
 - Model-provided evidence IDs are checked against checkpoint observations or an actual non-temporal failure-provenance path. Invalid refs and attempts to modify completed operations are rejected.
