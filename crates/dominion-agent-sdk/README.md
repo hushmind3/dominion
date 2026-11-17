@@ -17,35 +17,3 @@ For large allowed MCP registries, `dominion_tool_search` and fixed `dominion_too
 This SDK does not implement generation-level campaigns, autonomous core mutation, video/audio production, or unattended optimizer policies. User-requested coding/refactoring/testing tasks run through the normal Rust harness and acceptance criteria.
 
 Run `cargo test -p dominion-agent-sdk`. See [lean product architecture](../../../docs/SUB3-LEAN-COMPLEXITY-2026-11-16.md).
-
-## Task-local evidence-driven strategy comparison (2026-11-18)
-
-The native execution kernel now accepts an **optional standalone** `candidatePaths` decision with 2–3 distinct hypotheses, each containing 1–3 independent, host-declared read-only tool actions. All candidate actions are admitted as a unit; an unknown or effectful tool in any candidate rejects the entire proposal before dispatch. They execute through the existing scheduler, global tool-call budget, cancellation/directive fence and write-ahead journal — **no nested optimizer or second worker**. Every candidate receipt is attributed by `replay::trace`.
-
-The next model turn receives `candidateProbeComparison` reconstructed solely from the durable decision tape and actual tool receipts. It contains per-path successful/failed/pending counts and, only when observed outcomes differ, a tentative preferred path. Equal observations leave the preference unset. The model can then inspect evidence and replan using the ordinary agent actions. A successful probe is not an owner acceptance check and cannot authorize a deployment, code write, or final completion.
-
-Example text-planner response (also accepted as an explicit native-model probe envelope when no native tool calls are emitted):
-
-~~~json
-{
-  "plan": ["Compare read-only approaches before editing"],
-  "candidatePaths": [
-    {"id": "direct", "hypothesis": "Inspect the entrypoint", "actions": [
-      {"id": "probe-direct-1", "tool": "workspace_read", "arguments": {"path": "src/main.rs"}}
-    ]},
-    {"id": "diagnose", "hypothesis": "Inspect the failing regression", "actions": [
-      {"id": "probe-diagnose-1", "tool": "workspace_read", "arguments": {"path": "tests/e2e.rs"}}
-    ]}
-  ]
-}
-~~~
-
-The two probes are exploratory only. After comparing observations, the normal Rust kernel executes owner-approved effects and independent postconditions. Legacy checkpoint JSON retains its default empty `candidatePaths` and no migration is required.
-
-Technical reference: DeepSeek Harness PTC subcall admission; Google Research Harness² task-level Propose–Probe–Compose; Airbnb's Agent Harness Optimizer/PRISM evidence evaluation. This implementation **does not** claim their full recursive optimization, arbitrary program interpretation, benchmark lift, or paid-model efficacy.
-
-Focused deterministic tests:
-`cargo test -p dominion-agent-sdk probes::tests::`,
-`cargo test -p dominion-agent-sdk --test kernel_replanning contrasting_read_only_probes_are_observed_then_the_kernel_replans`,
-`cargo test -p dominion-agent-sdk replay::tests::contrastive_probe_receipts_have_model_attribution_without_tool_replay`,
-plus `cargo test -p dominion-agent-sdk` for the complete SDK. These tests remain unexecuted in this source-editing environment; full CI is deferred.

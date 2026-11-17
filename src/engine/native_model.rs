@@ -229,22 +229,9 @@ fn finish(content:String,actions:Vec<Action>,input:Option<u64>,output:Option<u64
     if actions.is_empty() && content.trim().is_empty() {
         return Err("Provider returned neither final answer nor native tool calls".into());
     }
-    // Native models ordinarily use typed function calls. For a deliberate
-    // exploratory turn they may instead emit the bounded candidatePaths
-    // decision envelope, then return to native calls after the kernel probes.
-    // Only this explicit envelope is parsed; an ordinary JSON answer stays
-    // an ordinary final answer.
-    let candidate=if actions.is_empty() {
-        match serde_json::from_str::<Value>(&content) {
-            Ok(value) if value.get("candidatePaths").is_some() =>
-                Some(serde_json::from_value::<Decision>(value)
-                    .map_err(|error|format!("Invalid native probe proposal: {error}"))?),
-            _=>None
-        }
-    } else {None};
-    let decision=candidate.unwrap_or_else(||Decision{plan:Vec::new(),
+    let decision=Decision{plan:Vec::new(),
         answer:actions.is_empty().then_some(content.clone()),
-        actions,candidate_paths:vec![]});
+        actions};
     Ok(ModelTurn {reply:ModelReply{content,input_tokens:input,output_tokens:output},
         decision:Some(decision)})
 }
@@ -648,25 +635,6 @@ pub(crate) async fn complete_with_run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn native_provider_preserves_typed_calls_and_accepts_probe_envelope_only_when_explicit(){
-        let proposal=json!({"plan":["compare read-only approaches"],"actions":[],
-            "answer":null,"candidatePaths":[
-                {"id":"direct","hypothesis":"inspect source",
-                    "actions":[{"id":"probe-a","tool":"workspace_read",
-                        "arguments":{"path":"main.rs"}}]},
-                {"id":"diagnose","hypothesis":"inspect tests",
-                    "actions":[{"id":"probe-b","tool":"workspace_read",
-                        "arguments":{"path":"tests.rs"}}]}
-            ]}).to_string();
-        let proposed=finish(proposal,vec![],Some(120),Some(30)).unwrap();
-        assert_eq!(proposed.decision.unwrap().candidate_paths.len(),2);
-        let ordinary=finish(r#"{"data":"ordinary JSON answer"}"#.into(),
-            vec![],Some(20),Some(10)).unwrap();
-        let decision=ordinary.decision.unwrap();
-        assert!(decision.candidate_paths.is_empty());
-        assert!(decision.answer.as_deref().unwrap().contains("ordinary JSON answer"));
-    }
     fn tool()->ToolSpec {
         ToolSpec{name:"workspace_read".into(),description:"Read".into(),
             schema:json!({"type":"object","properties":{"path":{"type":"string"}}}),

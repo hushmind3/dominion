@@ -18,8 +18,6 @@ mod context;
 mod tool_discovery;
 mod failure_guidance;
 mod schema;
-mod probes;
-pub use probes::CandidatePath;
 pub use schema::validate_arguments;
 pub mod replay;
 
@@ -146,9 +144,6 @@ pub struct Decision {
     #[serde(default)] pub plan: Vec<String>,
     #[serde(default)] pub actions: Vec<Action>,
     #[serde(default)] pub answer: Option<String>,
-    /// Task-local read-only alternatives, executed through the same kernel.
-    #[serde(default, skip_serializing_if="Vec::is_empty")]
-    pub candidate_paths: Vec<CandidatePath>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -366,11 +361,6 @@ fn validate_decision_plan(decision: Decision) -> Result<Decision, String> {
     if decision.plan.len() > 32 || decision.plan.iter().any(|item| item.len() > 1000) {
         return Err("Plan exceeds maximum structure size".into());
     }
-    probes::validate(&decision.candidate_paths)?;
-    if !decision.candidate_paths.is_empty() &&
-        (!decision.actions.is_empty() || decision.answer.is_some()) {
-        return Err("Candidate probes must be a standalone decision without effects or final answer".into());
-    }
     Ok(decision)
 }
 
@@ -474,7 +464,7 @@ impl Kernel<'_> {
         let native_wire=self.model.supports_native_tools();
         let response_contract=if native_wire {
             "For each action use a provider-native function/tool call with valid JSON object arguments. \
-             Never emit a JSON decision wrapper except standalone candidatePaths probe proposals; never impersonate tool results. \
+             Never emit a JSON decision wrapper or impersonate a tool result in text. \
              When no more actions are needed, respond with the actual final answer as normal text."
         }else{
             "Reply with exactly one JSON object: \
@@ -490,7 +480,6 @@ impl Kernel<'_> {
         }else{
             "Every currently permitted host tool is directly available."
         };
-        let probe_hint="Only if alternatives need evidence, propose standalone candidatePaths: 2-3 distinct hypotheses, 1-3 independent read-only tool actions each, no actions or answer. Rust compares their real receipts on the next turn. Never probe effects or treat probe success as task completion.";
         let system=format!(
             "You are DOMINION's model planner. The Rust kernel owns action dispatch, \
              limits, permission checks and verification. Respect the owner's instructions \
@@ -504,7 +493,7 @@ impl Kernel<'_> {
              Previous tool outputs remain in the durable journal. Use dominion_receipt_search \
              and dominion_receipt_read for prior details; never replay external effects merely \
              to retrieve an observation. {} Strategy: {:?}. Owner instructions: {}.",
-            response_contract,format!("{discovery_hint} {probe_hint}"),request.strategy,request.owner_instructions
+            response_contract,discovery_hint,request.strategy,request.owner_instructions
         );
         let mut invalid = 0usize;
         self.journal.save(&run)?;
@@ -551,7 +540,6 @@ impl Kernel<'_> {
                 "importantPastFailures":projected.important_failures,
                 "latestFailureDiagnosis":failure_diagnosis.as_ref()
                     .map(failure_guidance::FailureGuidance::model_view),
-                "candidateProbeComparison":probes::comparison(&run.decision_tape,&run.receipts),
                 "historicalReceiptIndex":projected.history_index,
                 "executionDigest":projected.digest,
                 "requiredAcceptanceChecks":request.checks,
@@ -641,32 +629,13 @@ impl Kernel<'_> {
                     continue;
                 }
             };
-            // Authorize the ENTIRE speculative batch before recording it as
-            // an executable decision. Invalid candidate claims never become
-            // replay-authorized historical actions.
-            let probing=!decision.candidate_paths.is_empty();
-            let admitted_probes=if probing {
-                match probes::admit(&decision.candidate_paths,&tools) {
-                    Ok(actions)=>actions,
-                    Err(error)=>{
-                        invalid+=1;
-                        run.checks=vec![CheckResult{
-                            criterion:Criterion{kind:CriterionKind::ToolSucceeded,
-                                path:None,contains:None,tool:Some("candidate_probe".into())},
-                            satisfied:false, explanation:error
-                        }];
-                        self.journal.save(&run)?;
-                        if invalid>=3 {break;}
-                        continue;
-                    }
-                }
-            } else {Vec::new()};
-            // Store the MODEL decision before host actions. This is durable
-            // reconstruction evidence, never permission to replay effects.
+            // Store the MODEL decision, before any host action or acceptance
+            // outcome, so historical failures are reproducible offline.
+            // This is durable evidence, never authority to re-execute effects.
             run.decision_tape.push(decision.clone());
             self.journal.save(&run)?;
             if decision.plan.len() <= 32 {
-                run.plan = decision.plan.iter().map(|s| s.chars().take(400).collect()).collect();
+                run.plan = decision.plan.into_iter().map(|s| s.chars().take(400).collect()).collect();
             }
             // An owner correction arriving during generation invalidates the
             // stale decision before any new tool call or final claim.
@@ -680,10 +649,8 @@ impl Kernel<'_> {
                 self.journal.save(&run)?;
                 continue;
             }
-            // All admitted probes use the normal kernel schedule and journal.
-            let actions=if probing {admitted_probes} else {decision.actions.clone()};
             // A final answer never overrides an independent acceptance failure.
-            if actions.is_empty() {
+            if decision.actions.is_empty() {
                 if let Some(answer) = decision.answer.filter(|s| !s.trim().is_empty()) {
                     // Don't waste user-approved test executions on an edit task
                     // for which the host has not recorded a single real write.
@@ -801,7 +768,7 @@ impl Kernel<'_> {
                 self.journal.save(&run)?;
                 continue;
             }
-            if actions.len() > 12 {
+            if decision.actions.len() > 12 {
                 invalid += 1;
                 run.checks = vec![CheckResult {
                     criterion: Criterion {kind:CriterionKind::ToolSucceeded,path:None,
@@ -816,7 +783,7 @@ impl Kernel<'_> {
             // Reserve the entire proposed batch by checking the persisted
             // operation count first. Over-budget plans dispatch zero tools.
             // This also guards against slow no-progress loops with cheap reads.
-            if actions.len() > request.limits.max_tool_calls.saturating_sub(run.receipts.len()) {
+            if decision.actions.len() > request.limits.max_tool_calls.saturating_sub(run.receipts.len()) {
                 run.stop(Status::NeedsReview,"Tool-call budget exhausted before dispatch");
                 self.journal.save(&run)?;
                 return Ok(run);
@@ -825,7 +792,7 @@ impl Kernel<'_> {
             // read-only concurrency. Invalid batches are sent back for
             // replanning without dispatching partial side effects.
             let groups = match scheduler::arrange(
-                actions, &tools, &run.receipts,
+                decision.actions, &tools, &run.receipts,
                 request.limits.max_parallel_reads,
             ) {
                 Ok(groups) => groups,
@@ -924,7 +891,7 @@ impl Kernel<'_> {
                     run.checks=self.verify(&request,&run,&tools).await;
                     self.journal.save(&run)?;
                 }
-                if skipped_any && !probing {
+                if skipped_any {
                     // Replan against observed failures; never continue with
                     // writes derived from a stale or partially failed plan.
                     run.checks.push(CheckResult {
@@ -1035,16 +1002,16 @@ mod owner_effect_tests {
     #[test]
     fn native_and_text_only_model_decisions_share_bounded_plans() {
         let oversized_plan=Decision{plan:vec!["step".into();33],
-            actions:vec![],answer:None,candidate_paths:vec![]};
+            actions:vec![],answer:None};
         assert!(validate_decision_plan(oversized_plan).is_err());
         let oversized_step=Decision{plan:vec!["x".repeat(1001)],
-            actions:vec![],answer:None,candidate_paths:vec![]};
+            actions:vec![],answer:None};
         assert!(validate_decision_plan(oversized_step).is_err());
         let text=serde_json::json!({"plan":vec!["step";33],
             "actions":[],"answer":null}).to_string();
         assert!(decode(&text).is_err());
         let accepted=Decision{plan:vec!["inspect".into(),"verify".into()],
-            actions:vec![],answer:Some("complete".into()),candidate_paths:vec![]};
+            actions:vec![],answer:Some("complete".into())};
         assert!(validate_decision_plan(accepted).is_ok());
     }
     #[test]
