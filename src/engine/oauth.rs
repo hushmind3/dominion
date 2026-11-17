@@ -59,14 +59,35 @@ fn callback_url(state: &AppState, id: &str) -> String {
 
 /// Inspect actual granted token scopes, never the requested consent template.
 pub fn has_granted_scope(state:&AppState,id:&str,needed:&str)->bool{
-    let Some(raw)=state.read_secret(&format!("oauth:{id}:token")) else {return false;};
-    let Ok(saved)=serde_json::from_str::<Value>(&raw) else {return false;};
-    let Some(scopes)=saved["scopes"].as_str() else {return false;};
     let target=format!("https://www.googleapis.com/auth/{needed}");
-    scopes.split_whitespace().any(|item|
-        item==target || id=="google" &&
-        item=="https://www.googleapis.com/auth/drive" &&
-        matches!(needed,"drive.readonly"|"documents"|"spreadsheets"))
+    let native=state.read_secret(&format!("oauth:{id}:token"))
+        .and_then(|s|serde_json::from_str::<Value>(&s).ok())
+        .and_then(|v|v["scopes"].as_str().map(str::to_owned))
+        .is_some_and(|scopes|scopes.split_whitespace().any(|s|
+            s==target || id=="google" && s=="https://www.googleapis.com/auth/drive" &&
+                matches!(needed,"drive.readonly"|"documents"|"spreadsheets")));
+    if native{return true;}
+    if id!="google" || !cli_enabled(state,id){return false;}
+    let cli=crate::engine::cli_accounts::status("google");
+    cli.connected && cli.scopes.iter().any(|s|s==&target ||
+        s=="https://www.googleapis.com/auth/drive" &&
+            matches!(needed,"drive.readonly"|"documents"|"spreadsheets"))
+}
+
+pub fn cli_enabled(state:&AppState,id:&str)->bool{
+    config(state,id).is_none_or(|v|v["cliEnabled"]!=false)
+}
+pub fn uses_cli(state:&AppState,id:&str)->bool{
+    matches!(id,"github"|"google") && client_credentials(state,id).is_err()
+        && crate::engine::cli_accounts::status(id).installed
+}
+pub fn enable_cli(state:&AppState,id:&str){
+    if !matches!(id,"github"|"google"){return;}
+    let mut record=config(state,id).unwrap_or_else(||json!({"id":id}));
+    record["cliEnabled"]=json!(true);
+    if let Some(updated)=state.store.put("oauth_config",&record){
+        state.bus.record("oauth_config",&updated);
+    }
 }
 
 pub fn status(state: &AppState) -> Vec<Value> {
@@ -74,19 +95,25 @@ pub fn status(state: &AppState) -> Vec<Value> {
         .iter()
         .map(|provider| {
             let record = config(state, provider.id).unwrap_or_else(|| json!({}));
-            let connected = record
-                .get("connected")
-                .and_then(|value| value.as_bool())
-                .unwrap_or(false)
-                && state
-                    .store
-                    .has_secret(&format!("oauth:{}:token", provider.id));
+            let native_connected=record["connected"]==true &&
+                state.store.has_secret(&format!("oauth:{}:token",provider.id));
+            let cli=if matches!(provider.id,"github"|"google") && cli_enabled(state,provider.id){
+                crate::engine::cli_accounts::status(provider.id)
+            }else{
+                crate::engine::cli_accounts::LocalStatus{
+                    installed:false,connected:false,account:None,scopes:vec![]
+                }
+            };
+            let connected=native_connected || cli.connected;
+            let native_configured=client_credentials(state,provider.id).is_ok();
             json!({
                 "id": provider.id,
                 "name": provider.name,
-                "configured": client_credentials(state, provider.id).is_ok(),
+                "configured": native_configured || cli.installed,
+                "loginMode":if native_configured{"oauth"}else if cli.installed{"cli"}else{"setup_required"},
                 "connected": connected,
-                "account": record.get("account").cloned().unwrap_or(Value::Null),
+                "account":if native_connected{record.get("account").cloned().unwrap_or(Value::Null)}
+                    else{cli.account.map(|v|json!(v)).unwrap_or(Value::Null)},
                 "connectedAt": record.get("connectedAt"),
                 "callback": callback_url(state, provider.id),
                 "scopes": provider.scopes,
@@ -173,7 +200,13 @@ fn client_credentials(state: &AppState, id: &str) -> Result<(String, String), St
 
 pub fn start(state: &AppState, id: &str) -> Result<Value, String> {
     let provider = provider(id).ok_or_else(|| format!("지원하지 않는 OAuth 제공자입니다: {id}"))?;
-    let (client_id, _) = client_credentials(state, id)?;
+    let (client_id, _) = match client_credentials(state,id){
+        Ok(config)=>config,
+        Err(_error) if uses_cli(state,id)=>return Ok(json!({
+            "mode":"cli","provider":id,"url":Value::Null
+        })),
+        Err(error)=>return Err(error)
+    };
     use base64::Engine;
     use sha2::Digest;
     let state_token = uuid::Uuid::new_v4().to_string();
@@ -373,6 +406,7 @@ pub fn disconnect(state: &AppState, id: &str) {
     state.store.remove_secret(&format!("oauth:{id}:token"));
     if let Some(mut record) = config(state, id) {
         record["connected"] = json!(false);
+        record["cliEnabled"] = json!(false);
         record["account"] = Value::Null;
         state.store.put("oauth_config", &record);
         state.bus.record("oauth_config", &record);
@@ -392,9 +426,12 @@ pub fn access_token(state: &AppState, id: &str) -> Option<String> {
 /// Refresh long-lived service grants in the vault; Google identity and YouTube
 /// intentionally have independent grants, expiry and disconnect operations.
 pub async fn fresh_access_token(state: &AppState, id: &str) -> Result<String, String> {
-    let raw = state
-        .read_secret(&format!("oauth:{id}:token"))
-        .ok_or("계정을 먼저 연결하세요.")?;
+    let raw=match state.read_secret(&format!("oauth:{id}:token")){
+        Some(raw)=>raw,
+        None if id=="github" && cli_enabled(state,id)=>
+            return crate::engine::cli_accounts::github_token().await,
+        None=>return Err("계정을 먼저 연결하세요.".into())
+    };
     let mut token: Value =
         serde_json::from_str(&raw).map_err(|_| "저장된 OAuth 토큰이 손상되었습니다.")?;
     if token["expiresAt"]

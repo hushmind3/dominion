@@ -12,7 +12,7 @@ import {CapabilitiesPage} from './Capabilities'
 type ChannelField={key:string;label:string;type:'secret'|'text'|'url';required?:boolean;placeholder?:string}
 type ChannelEntry={id:string;name:string;category:string;mode:string;description:string;docs:string;available:boolean;status:string;features:string[];fields:ChannelField[];instructions?:string[];requiresPublicUrl?:boolean;requiresRoom?:boolean;maxRoomParticipants?:number}
 type Channel={id:string;name:string;kind:string;agentId:string;providerId:string;model:string;enabled:boolean;mentionOnly:boolean;roomId?:string;roomPolicy?:string;status:string;runtimeError?:string;configured:boolean;missing?:string[];credentialsPresent:Record<string,boolean>;channelId?:string;chatId?:string;delivery?:{pending?:number;sending?:number;sent?:number;needsReview?:number;lastError?:string};toolsEnabled?:boolean;replyMentionBots?:boolean;webhookPath?:string}
-type OAuthProvider={id:string;configured:boolean;connected?:boolean;scope:string;needsReconnect?:boolean;workspaceReady?:boolean}
+type OAuthProvider={id:string;configured:boolean;connected?:boolean;scope:string;account?:string;loginMode?:'oauth'|'cli'|'setup_required';needsReconnect?:boolean;workspaceReady?:boolean}
 type Connection={id:string;provider:string;displayName:string;scopes:string;hasToken:boolean}
 const groups=[{id:'all',name:'conn.group.all'},{id:'messaging',name:'conn.group.messaging'},{id:'workplace',name:'conn.group.workplace'},{id:'community',name:'conn.group.community'},{id:'decentralized',name:'conn.group.decentralized'}] as const
 const badge=(s:string)=>{const keys:Record<string,LocaleKey>={connected:'conn.status.connected',outbound_ready:'conn.status.outbound_ready',sync_disabled:'conn.status.sync_disabled',webhook_ready:'conn.status.webhook_ready',starting:'conn.status.starting',reconnecting:'conn.status.reconnecting',error:'conn.status.error',disabled:'conn.status.disabled',not_started:'conn.status.not_started',stopped:'conn.status.stopped'};return keys[s]?t(keys[s]):s};
@@ -57,9 +57,13 @@ export function ConnectionsPage(){
    setProbe(x=>({...x,[id]:r.verified?t('conn.dlg.verified'):r.message||t('conn.dlg.checkNeeded')}));
   }catch(e){setProbe(x=>({...x,[id]:(e as Error).message}))}
  };
- const connect=async(id:string)=>{
-  setError('');
-  try{await openOAuth(id)}catch(e){setError((e as Error).message)}
+ const connect=async(item:OAuthProvider)=>{
+  setError('');setInfo('');
+  try{
+   await openOAuth(item.id,item.loginMode||'oauth')
+   if(item.loginMode==='cli')setInfo('시스템 창에서 계정을 승인하세요. 완료 후 새로고침하면 연결 상태가 반영됩니다.')
+   await oauth.reload();await accounts.reload()
+  }catch(e){setError((e as Error).message)}
  };
  const tabs=[{id:'channels',label:t('conn.tab.channels'),icon:RadioTower},{id:'accounts',label:t('conn.tab.accounts'),icon:Link2},{id:'market',label:'MCP 마켓',icon:Blocks},{id:'installed',label:t('ext.tab.installed'),icon:Server},{id:'skills',label:t('ext.tab.skills'),icon:BookOpenText},{id:'plugins',label:t('ext.tab.plugins'),icon:PackagePlus},{id:'capabilities',label:'역량 마켓',icon:Sparkles}] as const
  const sectionTabs=<nav className="connection-tabs" aria-label="연결 및 확장 기능">{tabs.map(({id,label,icon:Icon})=><Button key={id} variant="bare" aria-current={section===id?'page':undefined} onClick={()=>setSection(id)}><Icon size={15}/>{label}</Button>)}</nav>
@@ -94,7 +98,9 @@ export function ConnectionsPage(){
   </>}
   {section==='accounts'&&<>
    <Subheading title={t('conn.accounts')} extra={<span className="text-[10px] font-bold uppercase tracking-widest text-[#9C9388]">{t('ui.label.oauth')}</span>}/>
-   <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">{oauth.value.map(item=>{const account=accounts.value.find(a=>a.provider===item.id);const Icon=item.id==='github'?Github:Globe2;return <Panel className="flex min-w-0 flex-col gap-3 p-5" key={item.id}><div className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]"><Icon size={28}/></div><h3>{item.id==='github'?'GitHub':'Google · YouTube'}</h3><p>{item.id==='github'?t('conn.dlg.githubTitle'):t('conn.dlg.googleTitle')}</p><div className="integration-status"><StateTag online={Boolean(account)}>{account?t('conn.accountReady',{name:account.displayName}):item.configured?t('conn.oauthReady'):t('conn.oauthNeeded')}</StateTag></div><div className="mt-auto flex flex-wrap items-center gap-2"><Action variant="secondary" disabled={!item.configured} onClick={()=>connect(item.id)}><Link2 size={16}/>{account?t('conn.reconnect'):t('conn.connect')}</Action></div>{item.id==='google'&&item.needsReconnect&&<p className="text-xs text-amber-700">Drive · Docs · Sheets 작업을 사용하려면 다시 연결해 권한을 승인하세요.</p>}</Panel>})}</div>
+   <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">{oauth.value.map(item=>{const account=accounts.value.find(a=>a.provider===item.id);const Icon=item.id==='github'?Github:Globe2;return <Panel className="flex min-w-0 flex-col gap-3 p-5" key={item.id}><div className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]"><Icon size={28}/></div><h3>{item.id==='github'?'GitHub':'Google · YouTube'}</h3><p>{item.id==='github'?t('conn.dlg.githubTitle'):t('conn.dlg.googleTitle')}</p><div className="integration-status"><StateTag online={Boolean(account)||Boolean(item.connected)}>{account?t('conn.accountReady',{name:account.displayName}):item.connected?t('conn.accountReady',{name:item.account||item.id}):item.configured?t('conn.oauthReady'):t('conn.oauthNeeded')}</StateTag></div><div className="mt-auto flex flex-wrap items-center gap-2"><Action variant="secondary" disabled={!item.configured} onClick={()=>connect(item)}><Link2 size={16}/>{account?t('conn.reconnect'):t('conn.connect')}</Action></div>{item.id==='google'&&item.needsReconnect&&<p className="text-xs text-amber-700">Drive · Docs · Sheets 작업을 사용하려면 다시 연결해 권한을 승인하세요.</p>}
+    {item.loginMode==='cli'&&<p className="text-xs text-[#7C7469]">로컬 CLI 계정 연동 · API 키 입력 없이 로그인</p>}
+    {item.loginMode==='setup_required'&&<p className="text-xs text-amber-700">{item.id==='github'?'GitHub CLI(gh) 설치 또는 배포 OAuth 구성이 필요합니다.':item.id==='google'?'Google Workspace CLI(gws) 설치 또는 배포 OAuth 구성이 필요합니다.':'배포 OAuth 설정이 필요합니다.'}</p>}</Panel>})}</div>
   </>}
   {editor&&<DialogBackdrop onDismiss={()=>{if(!saving)setEditor(null)}}><DialogPanel size="wide">
    <div className="flex items-center justify-between border-b border-[#EFE9DF] p-5"><div><small>CHANNEL CONFIGURATION · {editor.entry.id.toUpperCase()}</small><h2>{editor.record.id?t('conn.edit'):t('conn.new')}</h2></div><Button size="icon" variant="ghost" onClick={()=>setEditor(null)}><X size={18}/></Button></div>

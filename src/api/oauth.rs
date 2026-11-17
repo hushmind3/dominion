@@ -42,6 +42,14 @@ pub async fn start(State(state): State<AppState>, Path(id): Path<String>) -> Res
 /// OAuth consent belongs in the system browser, including inside WKWebView.
 /// Only URLs generated from the fixed provider registry reach the OS opener.
 pub async fn open(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    if oauth::uses_cli(&state,&id){
+        let launched=crate::engine::cli_accounts::login(&id);
+        if launched.is_ok(){oauth::enable_cli(&state,&id);}
+        return match launched{
+            Ok(value)=>Json(value).into_response(),
+            Err(error)=>(StatusCode::BAD_REQUEST,Json(json!({"error":error}))).into_response()
+        };
+    }
     let result = match oauth::start(&state, &id) {
         Ok(value) => value,
         Err(error) => {
