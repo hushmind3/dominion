@@ -39,4 +39,5 @@ jobs:
           cargo test --bin dominion-rust db::money_implementation
           cargo test --bin dominion-rust engine::plugins
           cargo test --bin dominion-rust engine::jobs::tests
+          cargo test --bin dominion-rust engine::native_evidence::tests
           cargo test --bin dominion-rust local_money_json_is_a_terminal_sdk_answer_without_new_model_calls
