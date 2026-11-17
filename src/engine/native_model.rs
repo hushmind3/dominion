@@ -648,6 +648,25 @@ pub(crate) async fn complete_with_run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_provider_preserves_typed_calls_and_accepts_probe_envelope_only_when_explicit(){
+        let proposal=json!({"plan":["compare read-only approaches"],"actions":[],
+            "answer":null,"candidatePaths":[
+                {"id":"direct","hypothesis":"inspect source",
+                    "actions":[{"id":"probe-a","tool":"workspace_read",
+                        "arguments":{"path":"main.rs"}}]},
+                {"id":"diagnose","hypothesis":"inspect tests",
+                    "actions":[{"id":"probe-b","tool":"workspace_read",
+                        "arguments":{"path":"tests.rs"}}]}
+            ]}).to_string();
+        let proposed=finish(proposal,vec![],Some(120),Some(30)).unwrap();
+        assert_eq!(proposed.decision.unwrap().candidate_paths.len(),2);
+        let ordinary=finish(r#"{"data":"ordinary JSON answer"}"#.into(),
+            vec![],Some(20),Some(10)).unwrap();
+        let decision=ordinary.decision.unwrap();
+        assert!(decision.candidate_paths.is_empty());
+        assert!(decision.answer.as_deref().unwrap().contains("ordinary JSON answer"));
+    }
     fn tool()->ToolSpec {
         ToolSpec{name:"workspace_read".into(),description:"Read".into(),
             schema:json!({"type":"object","properties":{"path":{"type":"string"}}}),
