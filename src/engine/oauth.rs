@@ -448,6 +448,134 @@ pub async fn fresh_access_token(state: &AppState, id: &str) -> Result<String, St
     Ok(access)
 }
 
+/// Browser login through the provider's own installed CLI. The application
+/// never requests or displays an API key / Client ID from an end user.
+async fn cli_output(binary:&str,args:&[&str])->Result<String,String>{
+    let mut command=tokio::process::Command::new(binary);
+    command.args(args).kill_on_drop(true);
+    if binary=="gh"{command.env_remove("GH_TOKEN").env_remove("GITHUB_TOKEN");}
+    let output=tokio::time::timeout(Duration::from_secs(15),command.output())
+        .await.map_err(|_|format!("{binary} credential query timed out"))?
+        .map_err(|e|format!("{binary} CLI unavailable: {e}"))?;
+    if !output.status.success(){
+        return Err(format!("{binary} login is not ready. Complete browser login first."));
+    }
+    if output.stdout.len()>65536{return Err("CLI credential response exceeded limit".into());}
+    String::from_utf8(output.stdout).map_err(|_|"CLI response is not UTF-8".into())
+}
+fn parse_workspace_credentials(text:&str)->Result<(String,String,String),String>{
+    // gws prints notices before a JSON object on some versions. Never return
+    // exported credential contents to a frontend response or the model.
+    let start=text.find('{').ok_or("Google Workspace CLI did not export JSON credentials")?;
+    let value:Value=serde_json::from_str(&text[start..])
+        .map_err(|_|"Google Workspace CLI credential export is not JSON")?;
+    let take=|key|value[key].as_str().unwrap_or("").to_string();
+    let id=take("client_id");let secret=take("client_secret");
+    let refresh=take("refresh_token");
+    if id.is_empty()||refresh.is_empty()||id.contains("...")||
+        refresh.contains("...")||secret.contains("..."){
+        return Err("Google Workspace CLI export is masked/incomplete; reauthorize the official CLI".into());
+    }
+    Ok((id,secret,refresh))
+}
+/// Import a completed official CLI browser session into the existing local
+/// vault so chat, native jobs and Rust SDK tools share one account context.
+pub async fn adopt_cli_grant(state:&AppState,source:&str)->Result<Value,String>{
+    match source {
+        "github"=>{
+            let token=cli_output("gh",&["auth","token","--hostname","github.com"]).await?
+                .trim().to_string();
+            if token.len()<12||token.len()>8192{return Err("GitHub CLI token is invalid".into());}
+            let response=reqwest::Client::new()
+                .get("https://api.github.com/user").bearer_auth(&token)
+                .header("User-Agent","DOMINION").timeout(Duration::from_secs(15))
+                .send().await.map_err(|_|"GitHub account validation failed")?;
+            if !response.status().is_success(){
+                return Err(format!("GitHub CLI grant is not usable: {}",response.status()));
+            }
+            let scopes=response.headers().get("x-oauth-scopes")
+                .and_then(|v|v.to_str().ok()).unwrap_or("").to_string();
+            let info:Value=response.json().await.map_err(|_|"Invalid GitHub account response")?;
+            let name=info["login"].as_str().ok_or("GitHub account identity missing")?;
+            // Do not assume an imported GitHub token has all repo permissions.
+            state.save_secret("oauth:github:token",&json!({
+                "accessToken":token,"scopes":scopes,
+                "obtainedAt":chrono::Utc::now().to_rfc3339()
+            }).to_string());
+            let mut record=config(state,"github").unwrap_or_else(||json!({"id":"github"}));
+            record["connected"]=json!(true);
+            record["authSource"]=json!("github_cli");
+            record["account"]=json!(name);
+            record["scopes"]=json!(scopes);
+            record["connectedAt"]=json!(chrono::Utc::now().to_rfc3339());
+            let saved=state.store.put("oauth_config",&record)
+                .ok_or("GitHub CLI account save failed")?;
+            state.bus.record("oauth_config",&saved);
+            Ok(json!({"provider":"github","account":name,"connected":true}))
+        }
+        "google_workspace"=>{
+            let exported=cli_output("gws",&["auth","export","--unmasked"]).await?;
+            let (id,secret,refresh)=parse_workspace_credentials(&exported)?;
+            // Validate the actual grant by refreshing it. Merely finding a
+            // gws credentials file is not proof of Workspace API permission.
+            let response=reqwest::Client::new()
+                .post("https://oauth2.googleapis.com/token")
+                .form(&[("client_id",id.as_str()),("client_secret",secret.as_str()),
+                         ("refresh_token",refresh.as_str()),("grant_type","refresh_token")])
+                .timeout(Duration::from_secs(20)).send().await
+                .map_err(|_|"Google CLI credential verification failed")?;
+            if !response.status().is_success(){
+                return Err(format!("Google Workspace CLI grant cannot refresh (HTTP {})",response.status()));
+            }
+            let grant:Value=response.json().await.map_err(|_|"Google token response invalid")?;
+            let access=grant["access_token"].as_str().filter(|v|!v.is_empty())
+                .ok_or("Google refreshed access token missing")?.to_string();
+            // Inspect the provider's actual scope report; never infer grants
+            // from the application's requested scope list.
+            let introspection=reqwest::Client::new()
+                .get("https://oauth2.googleapis.com/tokeninfo")
+                .query(&[("access_token",access.as_str())])
+                .timeout(Duration::from_secs(15)).send().await
+                .map_err(|_|"Google OAuth permissions could not be checked")?;
+            if !introspection.status().is_success(){
+                return Err("Google OAuth permission inspection failed".into());
+            }
+            let details:Value=introspection.json().await
+                .map_err(|_|"Google OAuth permission response invalid")?;
+            let scopes=details["scope"].as_str().filter(|s|!s.is_empty())
+                .ok_or("Google did not report granted scopes")?.to_string();
+            let profile=reqwest::Client::new()
+                .get("https://www.googleapis.com/oauth2/v3/userinfo")
+                .bearer_auth(&access).timeout(Duration::from_secs(15))
+                .send().await.map_err(|_|"Google identity lookup failed")?;
+            let identity:Value=profile.json().await.map_err(|_|"Google identity response invalid")?;
+            let email=identity["email"].as_str().unwrap_or("").to_string();
+            // Tokens and application credentials are only retained in the
+            // pre-existing encrypted vault, never the public oauth_config DB.
+            state.save_secret("oauth:google:secret",&json!({
+                "clientId":id,"clientSecret":secret
+            }).to_string());
+            state.save_secret("oauth:google:token",&json!({
+                "accessToken":access,"refreshToken":refresh,"scopes":scopes,
+                "expiresAt":chrono::Utc::now().timestamp()
+                  +grant["expires_in"].as_i64().unwrap_or(3600),
+                "obtainedAt":chrono::Utc::now().to_rfc3339()
+            }).to_string());
+            let mut record=config(state,"google").unwrap_or_else(||json!({"id":"google"}));
+            record["connected"]=json!(true);
+            record["authSource"]=json!("gws_cli");
+            record["account"]=json!(email);
+            record["scopes"]=json!(scopes);
+            record["connectedAt"]=json!(chrono::Utc::now().to_rfc3339());
+            let saved=state.store.put("oauth_config",&record)
+                .ok_or("Google Workspace account save failed")?;
+            state.bus.record("oauth_config",&saved);
+            Ok(json!({"provider":"google","account":email,"connected":true}))
+        }
+        _=>Err("Unsupported desktop account provider".into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -467,6 +595,14 @@ mod tests {
         let store = Store::open(&config.db_path()).unwrap();
         let vault = Vault::open(&config.key_path());
         (AppState::new(config, store, vault), dir)
+    }
+
+    #[test]
+    fn cli_google_export_rejects_masked_or_missing_secrets(){
+        assert!(parse_workspace_credentials(r#"{"client_id":"id","client_secret":"masked...","refresh_token":"real"}"#).is_err());
+        assert!(parse_workspace_credentials(r#"{"client_id":"id","refresh_token":null}"#).is_err());
+        assert!(parse_workspace_credentials("notice\n{\"client_id\":\"id\",\"client_secret\":\"secret\",\"refresh_token\":\"refresh\"}")
+            .is_ok());
     }
 
     #[test]
