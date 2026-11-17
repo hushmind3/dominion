@@ -79,8 +79,10 @@ pub fn definitions() -> Vec<Value> {
         tool("github_api", "Call the GitHub REST API as the connected account. Write methods require approval (approval required)", object(json!({"method": json!({"type": "string", "enum": ["GET", "POST", "PATCH", "PUT", "DELETE"]}), "path": text("GitHub API path beginning with /"), "body": json!({"type": "object"})}), vec!["method", "path"])),
 
         tool("github_work_read", "Use the connected GitHub account to list repositories, branches, PRs, issues and CI runs.", object(json!({
-            "operation":{"type":"string","enum":["repositories","branches","pull_requests","issues","ci_runs"]},
-            "owner":text("Repository owner"),"repo":text("Repository name"),"branch":text("Branch for CI runs")
+            "operation":{"type":"string","enum":["repositories","search_repositories","branches","pull_requests","issues","ci_runs"]},
+            "owner":text("Repository owner"),"repo":text("Repository name"),
+            "query":text("Repository name/description or GitHub search query"),
+            "branch":text("Branch for CI runs")
         }),vec!["operation"])),
         tool("github_work_write", "Create a GitHub branch, PR or issue and verify it on the connected account. Owner approval required.", object(json!({
             "operation":{"type":"string","enum":["create_branch","open_pr","create_issue"]},
