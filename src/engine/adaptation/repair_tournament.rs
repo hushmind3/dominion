@@ -105,8 +105,20 @@ pub fn prepare(
     }
     let mut variants=Vec::new();let mut accepted=Vec::new();
     let failed_node=failure["nodeId"].as_str().unwrap_or("");
-    for (index, proposal) in raw.iter().enumerate() {
-        if evidence_ids(proposal,checkpoint,failure).is_err(){continue;}
+    for (index, supplied) in raw.iter().enumerate() {
+        let mut proposal=supplied.clone();
+        if evidence_ids(&proposal,checkpoint,failure).is_err(){continue;}
+        // Keep the same bounded repair semantics on a replacement if the
+        // model omitted onFailure. A second actual failure must not silently
+        // turn into a successful completed operation before postflight.
+        for replacement in proposal["replacePendingNodes"]
+            .as_array_mut().into_iter().flatten() {
+            if replacement["type"]=="call_tool"
+                && replacement["id"].as_str()==Some(failed_node)
+                && replacement["onFailure"].is_null() {
+                replacement["onFailure"]=json!("revise");
+            }
+        }
         // A failure-scoped repair cannot rewrite unrelated program nodes.
         // A complementary candidate may only ADD observation/verification
         // nodes; composing it with a true repair preserves this boundary.
@@ -121,7 +133,7 @@ pub fn prepare(
             ){continue;}
         }
         let Ok(revision)=crate::engine::program::apply_revision_proposal(
-            program,checkpoint,proposal,tools,64,repair_mode
+            program,checkpoint,&proposal,tools,64,repair_mode
         ) else {continue;};
         let Some(probe)=proposal["preflight"].as_object() else {continue;};
         let id=format!("p{index}");
@@ -315,6 +327,15 @@ mod tests {
         assert_eq!(variants[2]["postflights"].as_array().unwrap().len(),2);
         assert_eq!(variants[2]["revision"]["nodes"].as_array().unwrap().len(),4);
         assert_eq!(probes(&variants).len(),2);
+    }
+    #[test]
+    fn repaired_node_remains_revision_capable_on_another_real_failure(){
+        let (program,checkpoint,failure,tools)=fixture();
+        let variants=prepare(&json!({"candidateRevisions":[proposal("fix-a","a","old")]}),
+            &program,&checkpoint,&failure,&tools,"replace").unwrap();
+        let replacement=&variants[0]["revision"]["nodes"][1];
+        assert_eq!(replacement["onFailure"],"revise");
+        assert_eq!(replacement["id"],"fix-a");
     }
     #[test]
     fn observed_contrast_eliminates_wrong_candidate_and_does_not_apply_unknown(){
