@@ -258,6 +258,17 @@ pub fn select(variants:&[Value], observations:&Value)->Result<(Value,Value),Stri
     Ok((selected_revision,audit))
 }
 
+/// The only admission gate for a post-execution observation. A denied
+/// tool or missing JSON field can never be reinterpreted as a passing test.
+pub fn postflight_verdict(probe:&Value,result:&Value,tool_ok:bool)->&'static str{
+    if !tool_ok{return "unknown";}
+    let scope=json!({"result":result});
+    match crate::engine::program::predicate_verdict(&probe["predicate"],&scope){
+        Ok(verdict)=>verdict.as_str(),
+        Err(_)=>"unknown",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,6 +375,20 @@ mod tests {
         supported["evidenceIds"]=json!(["receipt-failed"]);
         assert!(prepare(&json!({"candidateRevisions":[supported]}),
             &program,&checkpoint,&failure,&tools,"replace").is_ok());
+    }
+    #[test]
+    fn post_execution_verifier_requires_actual_true_observation(){
+        let (program,checkpoint,failure,tools)=fixture();
+        let variants=prepare(&json!({"candidateRevisions":[proposal("fix-a","a","old")]}),
+            &program,&checkpoint,&failure,&tools,"replace").unwrap();
+        let (_revised,_audit)=select(&variants,&json!({
+            "p0":{"status":"completed","result":{"content":"old"}}
+        })).unwrap();
+        let post=&_revised["repairPostflights"][0];
+        assert_eq!(postflight_verdict(post,&json!({"content":"new"}),true),"true");
+        assert_eq!(postflight_verdict(post,&json!({"content":"broken"}),true),"false");
+        assert_eq!(postflight_verdict(post,&json!({"path":"a"}),true),"unknown");
+        assert_eq!(postflight_verdict(post,&json!({"content":"new"}),false),"unknown");
     }
     #[test]
     fn completed_node_mutation_is_invalid_and_legacy_contract_survives(){
