@@ -2,6 +2,9 @@
 // Minimal MCP stdio server used to verify the Rust MCP client.
 // Not part of the runtime: this is a development fixture.
 import readline from 'node:readline'
+import {appendFileSync} from 'node:fs'
+
+// Test-only: the fixture can record process starts without changing tool replies.
 
 const send = (payload) => process.stdout.write(JSON.stringify(payload) + '\n')
 
@@ -11,6 +14,9 @@ rl.on('line', (line) => {
   try { message = JSON.parse(line) } catch { return }
   switch (message.method) {
     case 'initialize':
+      if (process.env.DOMINION_MCP_TEST_INIT_LOG) {
+        appendFileSync(process.env.DOMINION_MCP_TEST_INIT_LOG, String(process.pid) + '\\n')
+      }
       send({
         jsonrpc: '2.0',
         id: message.id,
