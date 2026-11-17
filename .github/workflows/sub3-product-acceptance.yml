@@ -13,6 +13,9 @@ on:
       - 'tests/e2e.rs'
       - 'src/engine/chat/**'
       - 'src/engine/verification.rs'
+      - 'src/engine/native_replay.rs'
+      - 'src/engine/native_adjudication.rs'
+      - 'src/engine/native_agent.rs'
       - 'src/engine/program.rs'
       - 'src/engine/adaptation_loop.rs'
       - 'src/engine/code_index.rs'
@@ -38,6 +41,9 @@ jobs:
           cargo test -p dominion-harness
           cargo test --bin dominion-rust engine::chat::tests
           cargo test --bin dominion-rust engine::verification
+          cargo test --bin dominion-rust engine::native_adjudication::tests
+          cargo test --bin dominion-rust engine::native_replay::tests
+          cargo test --bin dominion-rust api::native_replay::tests
           cargo test --bin dominion-rust engine::program::tests
           cargo test --bin dominion-rust engine::adaptation_loop::selection_tests
           cargo test --bin dominion-rust engine::chat::runtime::program::evidence_join_tests
