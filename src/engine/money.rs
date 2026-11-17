@@ -691,7 +691,9 @@ pub fn schedule_autopilot(state:&AppState){
         let outcomes=state.store.money_recent_experiments(&id,200).unwrap_or_default();
         let mode=crate::engine::money_rank::next_mode(round,&history,&outcomes);
         let token_ceiling=auto["tokenBudget"].as_u64().unwrap_or(12000).clamp(4000,120000);
-        let mut input=json!({"prompt":prompt(state,&campaign,mode,None),
+        let mut input=json!({
+            "prompt":"Analyze archived market evidence and return falsifiable commercial hypotheses as JSON.",
+            "ownerInstructions":prompt(state,&campaign,mode,None),
             "asymmetryBatchIds":state.store.money_pending_asymmetries(8).unwrap_or_default()
                 .iter().filter_map(|v|v["id"].as_str()).collect::<Vec<_>>(),
             "campaignId":id,"mode":mode,"toolsEnabled":false,
