@@ -70,7 +70,7 @@ pub fn validate(adaptation: &Value) -> Result<(), String> {
 pub fn rank(adaptation: &Value, refuted: &[String], attempted: &HashSet<String>) -> Vec<Value> {
     let live = adaptation["hypotheses"].as_array().into_iter().flatten()
         .filter_map(|h|h["id"].as_str())
-        .filter(|id|!refuted.iter().any(|r|r==id))
+        .filter(|id|!refuted.iter().any(|r|r.as_str()==*id))
         .collect::<Vec<_>>();
     if live.len()<2{return Vec::new();}
     let mut ranked=Vec::new();
