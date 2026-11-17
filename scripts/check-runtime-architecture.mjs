@@ -61,6 +61,11 @@ for(const file of ['src/engine/chat/runtime.rs','src/engine/chat/product.rs',
 const outcome=readFileSync(path.join(root,'src/engine/chat/outcome.rs'),'utf8')
 const driver=readFileSync(path.join(root,'crates/dominion-core/src/engine.rs'),'utf8')
 const modules=readFileSync(path.join(root,'src/engine/mod.rs'),'utf8')
+const quietTurn=modules.match(/pub async fn run_quiet\\([\\s\\S]*?\\n\\}/)?.[0]
+if(!quietTurn||quietTurn.includes('run_quiet_with_stats(')||
+   !quietTurn.includes('chat::run_turn_background(')||
+   !quietTurn.includes('drain_quiet_events(receiver)'))
+  throw Error('Quiet background turns must drain events without collecting discarded tool evidence')
 const tools=readFileSync(path.join(root,'src/engine/tools.rs'),'utf8')
 if(!runtime.includes('dominion_core::engine::Engine::drive('))throw Error('Native driver must run product turns')
 if(!outcome.includes('pub(super) fn determine_task_outcome(')||!runtime.includes('mod outcome;'))
