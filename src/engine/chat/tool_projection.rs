@@ -112,7 +112,7 @@ pub(super) fn select_room_tools(
             &["browser_control"],
         ),
         (&["github", "깃허브", "repository", "레포지토리", "리포지토리", "저장소"], &["github_repositories","github_repository_activity","github_file_read","github_file_commit","github_branch_create","github_issue_create","github_pr_create","github_api"]),
-        (&["구글", "google", "드라이브", "drive", "docs", "문서", "시트", "sheets", "스프레드시트"], &["google_drive_search","google_docs_read","google_docs_replace","google_sheets_read","google_sheets_update"]),
+        (&["구글", "google", "드라이브", "drive", "docs", "문서", "시트", "sheets", "스프레드시트"], &["google_drive_search","google_docs_read","google_docs_replace","google_sheets_read","google_sheets_update","browser_control"]),
         (&["계정", "oauth", "account"], &["account_status"]),
     ];
     let mut scored: Vec<(i32, Value)> = definitions
@@ -197,7 +197,8 @@ pub(super) fn select_panel_tool_definitions(definitions:Vec<Value>,query:&str)->
         "remember this","save memory"]);
     let wants_skill=mentions(&["스킬","skill","재사용 절차","reusable procedure"]);
     let wants_browser=mentions(&["브라우저","browser","웹페이지","웹사이트","사이트",
-        "웹 검색","웹에서","네이버","구글","접속","페이지 이동",
+        "웹 검색","웹에서","네이버","구글","드라이브","drive","docs","문서","시트","sheets",
+        "스프레드시트","github","깃허브","접속","페이지 이동",
         "click the page","스크린샷","screenshot","ui test","e2e test",
         "open url","visit url","website","web page"]);
     let wants_github=mentions(&["깃허브","github","git push","git commit",

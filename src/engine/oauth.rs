@@ -81,6 +81,11 @@ pub fn uses_cli(state:&AppState,id:&str)->bool{
     matches!(id,"github"|"google") && client_credentials(state,id).is_err()
         && crate::engine::cli_accounts::status(id).installed
 }
+pub fn uses_browser(state:&AppState,id:&str)->bool{
+    matches!(id,"google"|"github") && client_credentials(state,id).is_err()
+        && !crate::engine::cli_accounts::status(id).installed
+        && crate::engine::browser::account_browser_available()
+}
 pub fn enable_cli(state:&AppState,id:&str){
     if !matches!(id,"github"|"google"){return;}
     let mut record=config(state,id).unwrap_or_else(||json!({"id":id}));
@@ -112,11 +117,14 @@ pub fn status(state: &AppState) -> Vec<Value> {
             }
             let connected=native_connected || cli.connected;
             let native_configured=client_credentials(state,provider.id).is_ok();
+            let browser_ready=matches!(provider.id,"google"|"github")
+                && crate::engine::browser::account_browser_available();
             json!({
                 "id": provider.id,
                 "name": provider.name,
-                "configured": native_configured || cli.installed,
-                "loginMode":if native_configured{"oauth"}else if cli.installed{"cli"}else{"setup_required"},
+                "configured": native_configured || cli.installed || browser_ready,
+                "loginMode":if native_configured{"oauth"}else if cli.installed{"cli"}
+                    else if browser_ready{"browser"}else{"setup_required"},
                 "connected": connected,
                 "account":if native_connected{record.get("account").cloned().unwrap_or(Value::Null)}
                     else{cli.account.map(|v|json!(v)).unwrap_or(Value::Null)},
@@ -210,6 +218,9 @@ pub fn start(state: &AppState, id: &str) -> Result<Value, String> {
         Ok(config)=>config,
         Err(_error) if uses_cli(state,id)=>return Ok(json!({
             "mode":"cli","provider":id,"url":Value::Null
+        })),
+        Err(_error) if uses_browser(state,id)=>return Ok(json!({
+            "mode":"browser","provider":id,"url":Value::Null
         })),
         Err(error)=>return Err(error)
     };
