@@ -370,7 +370,7 @@ pub fn adjudicate(
  }
  let base_job=state.store.get("job",baseline_id).ok_or("Baseline job not found")?;
  let base_snapshot=native_replay::snapshot(&base_job)?;
- let base_trace=native_replay::report(state,baseline_id)?;
+ let base_trace=native_replay::report_loaded(state,baseline_id,&base_job,&base_snapshot)?;
  let base_actions=actions(&base_snapshot)?;
  let base_proof=artifact_proof(&base_job,&base_trace,&base_snapshot);
  let before=evidence(&base_job,"nativeEvidenceBaseline");
@@ -386,7 +386,7 @@ pub fn adjudicate(
    .ok_or_else(||format!("Candidate job not found: {id}"))?;
   let shape_error=native_replay::same_work(&base_job,&candidate).err();
   let snap=native_replay::snapshot(&candidate)?;
-  let trace=native_replay::report(state,id)?;
+  let trace=native_replay::report_loaded(state,id,&candidate,&snap)?;
   let run_actions=actions(&snap)?;
   let unmatched=same_envelope(&base_job,&candidate);
   let start=evidence(&candidate,"nativeEvidenceBaseline");
