@@ -419,10 +419,15 @@ fn rewrite_pending_node(
     replacements: &std::collections::BTreeMap<String, Value>,
     completed: &std::collections::BTreeSet<String>,
     found: &mut std::collections::BTreeSet<String>,
+    completed_ancestor: bool,
 ) -> Result<Value, String> {
     let id = node["id"].as_str().unwrap_or("");
+    let self_completed = completed.iter().any(|done| {
+        done == id || (!id.is_empty() && done.strip_suffix(id)
+            .is_some_and(|prefix| prefix.ends_with(':')))
+    });
     if let Some(replacement) = replacements.get(id) {
-        if touches_completed(node, completed) {
+        if completed_ancestor || touches_completed(node, completed) {
             return Err(format!(
                 "cannot replace node {id}: it or a descendant has completed durable effects"
             ));
@@ -434,7 +439,10 @@ fn rewrite_pending_node(
     for field in ["nodes", "then", "else", "body"] {
         if let Some(children) = node[field].as_array() {
             rewritten[field] = Value::Array(children.iter()
-                .map(|child| rewrite_pending_node(child, replacements, completed, found))
+                .map(|child| rewrite_pending_node(
+                    child, replacements, completed, found,
+                    completed_ancestor || self_completed,
+                ))
                 .collect::<Result<Vec<_>, _>>()?);
         }
     }
@@ -566,7 +574,9 @@ pub fn apply_revision_proposal(
     }
     let mut found = std::collections::BTreeSet::new();
     let mut nodes = program["nodes"].as_array().ok_or("program.nodes missing")?
-        .iter().map(|node| rewrite_pending_node(node, &replacements, &completed, &mut found))
+        .iter().map(|node| rewrite_pending_node(
+            node, &replacements, &completed, &mut found, false,
+        ))
         .collect::<Result<Vec<_>, _>>()?;
     for id in replacements.keys() {
         if !found.contains(id) {
@@ -576,6 +586,9 @@ pub fn apply_revision_proposal(
     for node in additions {
         validate_node(&node)?;
         nodes.push(node);
+    }
+    if program["nodes"] == Value::Array(nodes.clone()) {
+        return Err("revision proposes no executable change".into());
     }
     let revised = json!({"revision":format!("{base}:rev"),"nodes":nodes});
     validate(&revised)?;
@@ -737,6 +750,14 @@ mod tests {
         assert!(apply_revision_proposal(&original, &checkpoint, &unknown,
             &["shell_exec".into(),"workspace_write".into()],64,"replace")
             .unwrap_err().contains("does not exist"));
+
+        checkpoint["completedOperationIds"] = json!(["check"]);
+        let nested_under_completed = json!({"baseRevision":"p1",
+            "reason":"try to change an already committed branch",
+            "replacePendingNodes":[{"type":"observe","id":"fallback"}]});
+        assert!(apply_revision_proposal(&original, &checkpoint, &nested_under_completed,
+            &["shell_exec".into(),"workspace_write".into()],64,"replace")
+            .unwrap_err().contains("completed durable effects"));
 
         checkpoint["completedOperationIds"] = json!(["loop_a:1:fallback"]);
         let scoped = json!({"baseRevision":"p1","reason":"rewrite scoped",
