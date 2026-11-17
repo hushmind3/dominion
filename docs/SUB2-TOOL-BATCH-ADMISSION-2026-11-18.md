@@ -18,3 +18,9 @@ The live `parallel_prefix(calls,capacity)` function checked `capacity <= 1` but 
 - A write barrier/invalid argument cannot be crossed.
 - The native Rust SDK and chat caller use the same decision source.
 - No release builds, frontend tests or multi-platform jobs; run related Rust debug tests only.
+
+## Optional Money dormant-state cost
+- A separate 30-second native maintenance tick previously called `Store::all("money_autopilot")`, deserializing every archived autopilot record to decide whether Money is enabled.
+- `Store::money_enabled_autopilot_exists` uses `SELECT EXISTS` bounded by the existing `records(kind,id)` primary key. If disabled, the single probe returns without source collection, scraping or an LLM request; no new index or per-tick cache invalidation is added.
+- SQLite read failures are audited and stop execution rather than silently starting a Money campaign. A targeted Rust test checks 50 dormant records, active/disabled transitions, and the empty-store case.
+- This is a structural reduction in JSON deserialization, not a measured CPU/time improvement.

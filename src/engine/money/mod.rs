@@ -885,8 +885,13 @@ mod tests{
 /// Called from the host's existing timer, but does no collection work when
 /// Money has not been explicitly enabled by the user.
 pub fn tick(state:&AppState){
-    if !state.store.all("money_autopilot").iter().any(|v|v["enabled"]==true){
-        return;
+    match state.store.money_enabled_autopilot_exists(){
+        Ok(true)=>{},
+        Ok(false)=>return,
+        Err(error)=>{
+            state.store.audit("money.tick_enabled_lookup_failed",json!({"error":error}));
+            return;
+        }
     }
     health::sample(state);
     sources::schedule(state);

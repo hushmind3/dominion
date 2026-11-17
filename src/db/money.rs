@@ -124,6 +124,18 @@ fn refresh_money_source_fact_tx(tx:&rusqlite::Transaction<'_>,record:&Value)->Re
 }
 
 impl Store {
+    /// Cheap disabled-state gate: no JSON deserialization of all historical
+    /// Money campaigns, no model call and no new index. The shared records PK
+    /// already scopes this lookup by kind, and SQLite can stop at first match.
+    pub fn money_enabled_autopilot_exists(&self)->Result<bool,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM records WHERE kind='money_autopilot'
+                AND json_extract(data,'$.enabled')=1 LIMIT 1)",
+            [],|row|row.get::<_,i64>(0))
+            .map(|v|v!=0).map_err(|e|e.to_string())
+    }
+
     pub fn money_fact_put(&self, record: &Value) -> Result<Value, String> {
         let id = record["id"].as_str().filter(|s| !s.is_empty()).ok_or("money fact ID missing")?;
         let claim = record["claim"].as_str().filter(|s| !s.trim().is_empty()).ok_or("money claim missing")?;
@@ -909,4 +921,24 @@ impl Store {
         Ok(value)
     }
 
+}
+
+#[cfg(test)]
+mod idle_autopilot_tests {
+    use super::*;
+    #[test]
+    fn disabled_money_does_not_scan_or_start_a_campaign(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        assert_eq!(store.money_enabled_autopilot_exists().unwrap(),false);
+        for i in 0..50 {
+            store.put("money_autopilot",&json!({
+                "id":format!("disabled-{i}"),"enabled":false
+            })).unwrap();
+        }
+        assert_eq!(store.money_enabled_autopilot_exists().unwrap(),false);
+        store.put("money_autopilot",&json!({"id":"live","enabled":true})).unwrap();
+        assert_eq!(store.money_enabled_autopilot_exists().unwrap(),true);
+        store.put("money_autopilot",&json!({"id":"live","enabled":false})).unwrap();
+        assert_eq!(store.money_enabled_autopilot_exists().unwrap(),false);
+    }
 }
