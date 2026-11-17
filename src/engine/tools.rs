@@ -80,6 +80,25 @@ pub fn definitions() -> Vec<Value> {
             "key": text("Key to press: Enter, Escape, Tab, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Backspace")
         }), vec!["action"])),
 
+        tool("google_drive_search", "Search files in connected Google Drive and return file IDs, names, types, links and canEdit.", object(json!({
+            "query":text("File name search, blank for recent files"),"pageToken":text("Optional pagination cursor")
+        }),vec![])),
+        tool("google_docs_read", "Read a Google Doc's title, text, and revision ID before editing.", object(json!({
+            "documentId":text("Google Docs document ID")
+        }),vec!["documentId"])),
+        tool("google_docs_replace", "Replace case-sensitive text in a Google Doc after owner approval; requires revision ID returned by google_docs_read and verifies remotely.", object(json!({
+            "documentId":text("Google Docs document ID"),
+            "find":text("Exact source text"),"replace":text("Replacement text"),
+            "expectedRevisionId":text("Revision ID returned by google_docs_read")
+        }),vec!["documentId","find","replace","expectedRevisionId"])),
+        tool("google_sheets_read", "Read a Google Sheets A1 range with unformatted values so a write can be checked against the observed cells.", object(json!({
+            "spreadsheetId":text("Google Sheets ID"),"range":text("A1 range, e.g. Sheet1!A1:C10")
+        }),vec!["spreadsheetId","range"])),
+        tool("google_sheets_update", "Update a Google Sheets A1 range after owner approval, only if expectedValues match a fresh read. Verify via remote readback.", object(json!({
+            "spreadsheetId":text("Google Sheets ID"),"range":text("A1 range"),
+            "values":json!({"type":"array","items":{"type":"array","items":{"type":["string","number","boolean"]}}}),
+            "expectedValues":json!({"type":"array","description":"Exact prior values from google_sheets_read","items":{"type":"array"}})
+        }),vec!["spreadsheetId","range","values","expectedValues"])),
         tool("github_repositories", "List repositories available to the connected GitHub account, with owner, repository, default branch and explicit write permission. Choose a repository before reading or editing; supports page and writable-only filtering.", object(json!({
             "query":text("Optional repository name fragment; filtered within this page"),
             "page":json!({"type":"integer","minimum":1,"maximum":10}),
@@ -118,6 +137,8 @@ pub fn requires_approval(name: &str) -> bool {
             | "terminal_exec"
             | "github_api"
             | "github_file_commit"
+            | "google_docs_replace"
+            | "google_sheets_update"
             | "browser_control"
     )
 }
@@ -127,7 +148,8 @@ pub fn requires_approval(name: &str) -> bool {
 pub fn parallel_read_only_tool(name:&str)->bool{
     matches!(name,"workspace_list"|"workspace_read"|"workspace_read_range"|
         "code_search"|"memory_search"|"web_search"|"http_fetch"|
-        "github_file_read"|"github_repositories")
+        "github_file_read"|"github_repositories"|
+        "google_drive_search"|"google_docs_read"|"google_sheets_read")
 }
 
 /// The UI's optional capabilities are a persisted execution policy.
@@ -392,6 +414,11 @@ pub async fn execute(
         "github_repositories" => crate::engine::github_work::repositories(ctx.state,args).await,
         "github_file_read" => crate::engine::github_work::read(ctx.state,args).await,
         "github_file_commit" => crate::engine::github_work::commit(ctx.state,args).await,
+        "google_drive_search" => crate::engine::google_work::drive_search(ctx.state,args).await,
+        "google_docs_read" => crate::engine::google_work::docs_read(ctx.state,args).await,
+        "google_docs_replace" => crate::engine::google_work::docs_replace(ctx.state,args).await,
+        "google_sheets_read" => crate::engine::google_work::sheets_read(ctx.state,args).await,
+        "google_sheets_update" => crate::engine::google_work::sheets_update(ctx.state,args).await,
         other => Err(format!("Unknown tool: {other}")),
     }
 }

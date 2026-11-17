@@ -225,3 +225,18 @@ test('ordinary prompt attempts and retry decisions are owned by standalone Rust 
  assert.match(kernel,/changed_owner_goal_never_replays_unknown_remote_effects/);
  assert.match(kernel,/repeated_failure_stops_until_new_real_evidence/);
 });
+
+test('connected Google Drive Docs Sheets are model-visible and use exact OAuth permission checks',()=>{
+ const oauth=file('src/engine/oauth.rs'),tool=file('src/engine/tools.rs');
+ const work=file('src/engine/google_work.rs'),projection=file('src/engine/chat/tool_projection.rs');
+ assert.match(oauth,/auth\/drive\.readonly/);
+ assert.match(oauth,/auth\/documents/);
+ assert.match(oauth,/auth\/spreadsheets/);
+ assert.match(oauth,/has_granted_scope/);
+ for(const name of ['google_drive_search','google_docs_read','google_docs_replace','google_sheets_read','google_sheets_update']){
+  assert.match(tool,new RegExp(name));
+  assert.match(projection,new RegExp(name));
+ }
+ assert.match(work,/expectedRevisionId/);
+ assert.match(work,/expectedValues/);
+});

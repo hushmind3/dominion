@@ -33,7 +33,7 @@ pub(super) fn room_tool_request(input: &str) -> bool {
         "결과", "가져와", "확인해", "진행해",
         "스킬", "메모리", "브라우저", "깃허브", "github", "shell", "file", "read",
         "write", "run", "search", "fetch", "install", "build", "test", "tool",
-        "browser", "memory", "delegate", "task",
+        "browser", "memory", "delegate", "task", "구글", "드라이브", "시트", "문서", "google", "drive", "docs", "sheets",
     ]
     .iter()
     .any(|term| lower.contains(term))
@@ -112,6 +112,7 @@ pub(super) fn select_room_tools(
             &["browser_control"],
         ),
         (&["github", "깃허브", "repository", "레포지토리", "리포지토리", "저장소"], &["github_repositories","github_file_read","github_file_commit","github_api"]),
+        (&["구글", "google", "드라이브", "drive", "docs", "문서", "시트", "sheets", "스프레드시트"], &["google_drive_search","google_docs_read","google_docs_replace","google_sheets_read","google_sheets_update"]),
         (&["계정", "oauth", "account"], &["account_status"]),
     ];
     let mut scored: Vec<(i32, Value)> = definitions
@@ -193,6 +194,7 @@ pub(super) fn select_panel_tool_definitions(definitions:Vec<Value>,query:&str)->
     let wants_github=mentions(&["깃허브","github","git push","git commit",
         "커밋","푸시","레포지토리","리포지토리","repository",
         "풀 리퀘스트","pull request","이슈 생성","issue 생성"]);
+    let wants_google=mentions(&["구글","google","드라이브","drive","docs","문서","시트","sheets","스프레드시트"]);
     let wants_accounts=mentions(&["연결 계정","로그인 계정","oauth","connected account"]);
     definitions.into_iter().filter(valid_tool_definition).filter(|definition|{
         match tool_name(definition){
@@ -205,7 +207,9 @@ pub(super) fn select_panel_tool_definitions(definitions:Vec<Value>,query:&str)->
             "skill_propose"=>wants_skill,
             "browser_control"=>wants_browser,
             "github_api"|"github_repositories"|"github_file_read"|"github_file_commit"=>wants_github,
-            "account_status"=>wants_accounts,
+            "account_status"=>wants_accounts || wants_google,
+            "google_drive_search"|"google_docs_read"|"google_docs_replace"|
+            "google_sheets_read"|"google_sheets_update"=>wants_google,
             // Tools with user-selectable policy already filtered by
             // ui_tool_allowed; preserve them when the owner opts in.
             _=>true,
