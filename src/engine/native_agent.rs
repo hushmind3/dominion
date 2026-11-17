@@ -654,6 +654,15 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
     let final_witness=crate::engine::native_replay::artifact_witness(
         &context.state.config.workspace,&request.checks);
     context.checkpoint(json!({"nativeEvidenceFinal":final_witness}))?;
+    // Kernel verifier may derive extra file/hash criteria from actual write
+    // receipts. Seal *those* exact observed criteria as well, without
+    // pretending they were part of the initial owner-declared evidence scope.
+    let kernel_criteria=snapshot.checks.iter()
+        .map(|check|check.criterion.clone()).collect::<Vec<_>>();
+    let kernel_witness=crate::engine::native_replay::artifact_witness(
+        &context.state.config.workspace,&kernel_criteria);
+    context.checkpoint(json!({"nativeEvidenceKernelFinal":kernel_witness}))?;
+
     let status=serde_json::to_value(&snapshot.status).unwrap_or(json!("needs_review"));
     if let Some(answer)=snapshot.answer.as_deref() {
         let final_message=json!({
