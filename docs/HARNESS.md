@@ -110,13 +110,24 @@ Sources inspected:
 
 ## Archived algorithms and API compatibility
 
-- The retired `adaptation.selection` rows remain visible in
+- The retired `adaptation.selection` and `selfimprove.search` rows remain visible in
   `GET /api/algorithms` with `retired: true`; new registrations, generated
   candidates and activation are rejected.
 - Explicit owner activation takes precedence; validated alternatives and
   active executable baselines are retained. No UCB1 runtime exploration remains.
 - Archived RSI campaigns and completed media files remain retrievable
   through read-only API routes; retired mutation/production workers stay off.
+
+### Removed unreachable optimizer loops
+
+The old code-only policy search proposer and optimizer meta-improvement loop
+were not called by production API or the running native engine. They have been
+deleted rather than retaining another campaign state machine. The existing
+benchmark-only `policy_search` endpoint is gated by `DOMINION_BENCHMARK=1`,
+and independent powered experiment review still controls policy activation.
+Recorded `optimizer_policy`, `search_episode`, and experiment rows remain
+readable. Legacy `selfimprove.search` algorithm records are likewise archived,
+never seeded/activated/generated. No stored user or experiment rows were deleted.
 
 ## Retired subsystems
 

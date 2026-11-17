@@ -5,7 +5,7 @@
 use crate::state::AppState;
 use serde_json::{json, Value};
 
-pub const ARCHIVED_KINDS: &[&str] = &["adaptation.selection"];
+pub const ARCHIVED_KINDS: &[&str] = &["adaptation.selection", "selfimprove.search"];
 pub const KINDS: &[&str] = &[
     "learning.applicability",
     "strategy.selection",
@@ -31,7 +31,6 @@ pub const KINDS: &[&str] = &[
     "multiagent.conflict",
     "execution.ordering",
     "execution.parallelism",
-    "selfimprove.search",
 ];
 
 /// Concrete kernels the Rust harness can execute. Registering a name that is
@@ -62,7 +61,6 @@ pub fn executable_kernels(kind: &str) -> &'static [&'static str] {
         "multiagent.conflict" => &["evidence-first", "owner-authority", "latest-speaker"],
         "execution.ordering" => &["as-written", "read-first"],
         "execution.parallelism" => &["concurrent", "sequential"],
-        "selfimprove.search" => &["failure-clusters", "counterexample-first", "expression"],
         _ => &[],
     }
 }
@@ -73,51 +71,14 @@ pub fn kernel_exists(kind: &str, implementation: &str) -> bool {
         .any(|kernel| *kernel == implementation)
 }
 
-/// Features available to a model-authored `selfimprove.search` expression.
-/// The search coordinator fills exactly these names before evaluating a domain.
-pub const SELFIMPROVE_FEATURES: &[&str] = &[
-    "attempts",
-    "accepted",
-    "regressions",
-    "inconclusive",
-    "novelty",
-    "successRate",
-    "usefulGenerations",
-    "barrenRate",
-    "verifiedOutcomes",
-    "holdoutGains",
-    "gainPer10kTokens",
-    "tokenCost",
-    "objectiveMatch",
-    "unresolved",
-    "exploration",
-    "forecastError",
-    "forecastBias",
-];
-
-fn expression_sample(kind: &str) -> std::collections::BTreeMap<String, f64> {
-    let names: &[&str] = if kind == "selfimprove.target" {
-        SELFIMPROVE_TARGET_FEATURES
-    } else if kind == "selfimprove.search" {
-        SELFIMPROVE_FEATURES
-    } else {
-        &[
-            "discrimination",
-            "progress",
-            "cost",
-            "uncertainty",
-            "historical",
-            "unresolved",
-            "precondition",
-            "benefit",
-            "similarity",
-            "risk",
-        ]
-    };
-    names
-        .iter()
-        .map(|name| (name.to_string(), 1.0))
-        .collect()
+fn expression_sample(_kind: &str) -> std::collections::BTreeMap<String, f64> {
+    // Keep the safe expression interpreter for active, validated strategy
+    // selection; retired RSI source-targeting expressions cannot be generated.
+    let names = [
+        "discrimination", "progress", "cost", "uncertainty", "historical",
+        "unresolved", "precondition", "benefit", "similarity", "risk",
+    ];
+    names.iter().map(|name| (name.to_string(),1.0)).collect()
 }
 
 pub fn kind_label(kind: &str) -> &str {
@@ -151,14 +112,6 @@ pub fn kind_label(kind: &str) -> &str {
         _ => "기타",
     }
 }
-
-/// Features supplied by the real indexed source selector to an AI-authored
-/// targeting formula. Unlike a hardcoded path table, these are measured from
-/// the current checkout and previous generations.
-pub const SELFIMPROVE_TARGET_FEATURES: &[&str] = &[
-    "pathEvidence", "symbolEvidence", "summaryEvidence", "bodyEvidence", "productiveEvidence",
-    "domainEvidence", "repeatPenalty", "novelty", "sourceCost",
-];
 
 /// Safe arithmetic expression over named candidate features. This lets a new
 /// selection rule be added as an executable algorithm record without a Rust
@@ -690,20 +643,6 @@ pub fn builtins() -> Vec<Value> {
             "sequential",
             "독립 작업도 순차 실행한다.",
             json!({"mode": "sequential"}),
-        ),
-        builtin(
-            "selfimprove.search",
-            "failure-clusters",
-            "failure-clusters",
-            "실패 유형 묶음에서 개선 후보를 생성한다.",
-            json!({"order": "frequency"}),
-        ),
-        builtin(
-            "selfimprove.search",
-            "counterexample-first",
-            "counterexample-first",
-            "회귀·미결 증거가 있는 분야를 먼저 재검토한다.",
-            json!({"order": "regressions"}),
         ),
         builtin(
             "tool.selection",
@@ -1527,11 +1466,8 @@ pub fn register(state: &AppState, body: &Value) -> Result<Value, String> {
             .ok_or("expression kernel requires parameters.expression")?;
         eval_expression(expression, &expression_sample(kind))?;
     }
-    if let Some(target_expression) = body["parameters"]["targetExpression"].as_str() {
-        if kind != "selfimprove.search" || implementation != "expression" {
-            return Err("targetExpression requires selfimprove.search expression kernel".into());
-        }
-        eval_expression(target_expression, &expression_sample("selfimprove.target"))?;
+    if body["parameters"]["targetExpression"].as_str().is_some() {
+        return Err("retired source-targeting improvement kernels are read-only".into());
     }
     let variant = body["variant"].as_str().unwrap_or(implementation);
     let parameters = body["parameters"]
@@ -1988,62 +1924,45 @@ mod tests {
     }
 
     #[test]
-    fn selfimprove_expression_uses_search_features_and_rejects_unknown_names() {
-        let (state, dir) = state();
-        let record = register(
-            &state,
-            &json!({
-                "kind":"selfimprove.search",
-                "name":"search-formula",
-                "implementation":"expression",
-                "parameters":{"expression":"accepted * 2 - tokenCost + novelty - regressions"}
-            }),
-        )
-        .unwrap();
-        assert_eq!(record["implementation"], "expression");
-        assert!(register(
-            &state,
-            &json!({
-                "kind":"selfimprove.search",
-                "name":"wrong-features",
-                "implementation":"expression",
-                "parameters":{"expression":"discrimination * 2"}
-            })
-        )
-        .is_err());
-        let _ = std::fs::remove_dir_all(dir);
+    fn retired_improvement_candidates_remain_archived_not_executable() {
+        let (state,dir)=state();
+        seed(&state);
+        let old=json!({
+            "id":"legacy-rsi-target","kind":"selfimprove.search",
+            "implementation":"expression","name":"old-rsi",
+            "status":"active","source":"generated","revision":"old"
+        });
+        state.store.put("algorithm",&old);
+        assert!(active(&state,"selfimprove.search").is_none());
+        assert!(choose_for_agent(&state,"selfimprove.search",None,None).is_none());
+        assert!(register(&state,&old).is_err());
+        assert!(activate_checked(&state,"legacy-rsi-target",true).is_err());
+        let archived=list(&state);
+        let records=archived["kinds"].as_array().unwrap().iter()
+            .find(|v|v["kind"]=="selfimprove.search").unwrap();
+        assert_eq!(records["retired"],true);
+        assert!(records["algorithms"].as_array().unwrap()
+            .iter().any(|row|row["id"]=="legacy-rsi-target"));
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]
-    fn generated_source_targeting_formula_is_validated_and_versioned() {
+    fn archived_target_expressions_cannot_reenter_a_live_kernel() {
         let (state,dir)=state();
-        let valid=json!({"kind":"selfimprove.search","name":"evolvable-target-v1",
+        let stale=json!({
+            "kind":"selfimprove.search","name":"stale-rsi",
             "implementation":"expression",
-            "parameters":{"expression":"objectiveMatch * 5 + exploration",
-                "targetExpression":"pathEvidence * 3 + symbolEvidence - repeatPenalty - sourceCost"}});
-        let registered=register(&state,&valid).unwrap();
-        assert_eq!(registered["parameters"]["targetExpression"],
-            "pathEvidence * 3 + symbolEvidence - repeatPenalty - sourceCost");
-        assert_eq!(registered["status"],"available");
-        let body_aware = register(&state, &json!({
-            "kind":"selfimprove.search", "name":"body-evidence-target-v1",
-            "implementation":"expression",
-            "parameters":{"expression":"objectiveMatch + exploration",
-                "targetExpression":"bodyEvidence * 2 + pathEvidence - repeatPenalty"}
-        })).unwrap();
-        assert_eq!(body_aware["status"], "available");
-        assert!(register(&state,&json!({"kind":"selfimprove.search","name":"unknown-feature",
-            "implementation":"expression","parameters":{"expression":"novelty",
-                "targetExpression":"unguardedVariable + pathEvidence"}})).is_err());
-        assert!(register(&state,&json!({"kind":"selfimprove.search","name":"invalid-score",
-            "implementation":"expression","parameters":{"expression":"novelty",
-                "targetExpression":"pathEvidence / (novelty - novelty)"}})).is_err());
-        // A model-authored targeting rule cannot be silently attached to a
-        // different algorithm or a display-only kernel.
-        assert!(register(&state,&json!({"kind":"memory.rerank","name":"wrong-kind",
-            "implementation":"bm25","parameters":{"targetExpression":"sourceCost"}})).is_err());
-        assert!(eval_expression(&"(".repeat(36),&expression_sample("selfimprove.target")).is_err());
-        assert!(eval_expression(&"a".repeat(513),&expression_sample("selfimprove.target")).is_err());
+            "parameters":{"expression":"novelty - tokenCost",
+                "targetExpression":"pathEvidence - repeatPenalty"}
+        });
+        assert!(register(&state,&stale).is_err());
+        assert!(register(&state,&json!({
+            "kind":"memory.rerank","name":"foreign-target",
+            "implementation":"bm25",
+            "parameters":{"targetExpression":"pathEvidence"}
+        })).is_err());
+        assert!(eval_expression(&"(".repeat(36),&expression_sample("strategy.selection")).is_err());
+        assert!(eval_expression(&"a".repeat(513),&expression_sample("strategy.selection")).is_err());
         let _=std::fs::remove_dir_all(dir);
     }
 
