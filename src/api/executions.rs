@@ -68,9 +68,9 @@ pub async fn cancel(State(state): State<AppState>, Path(id): Path<String>) -> Re
         )
             .into_response();
     }
-    if let Some(session) = execution["sessionId"].as_str() {
-        state.cancel_session(session);
-    }
+    // Claim cancellation in the same SQLite status transition that the
+    // finalizer checks. A failed claim (already completed) must not cancel
+    // the session or affect unrelated background work.
     let now = chrono::Utc::now().to_rfc3339();
     match state.store.patch_if(
         "execution",
@@ -80,6 +80,11 @@ pub async fn cancel(State(state): State<AppState>, Path(id): Path<String>) -> Re
         &json!({"status":"cancelled","reason":"사용자 요청으로 중단","finishedAt":now}),
     ) {
         Some(saved) => {
+            // The running->cancelled patch is durable before notifying the
+            // worker. Late provider responses cannot revive the execution.
+            if let Some(session) = execution["sessionId"].as_str() {
+                state.cancel_session(session);
+            }
             state.bus.record("execution", &saved);
             Json(saved).into_response()
         }
