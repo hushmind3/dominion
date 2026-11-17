@@ -17,8 +17,37 @@ pub struct LocalStatus {
 fn program(provider:&str)->Option<&'static str>{
     match provider{"github"=>Some("gh"),"google"=>Some("gws"),_=>None}
 }
-fn cli_output(program:&str,args:&[&str])->Option<std::process::Output>{
-    Command::new(program).args(args).stdin(Stdio::null()).output().ok()
+fn executable(provider:&str)->Option<std::path::PathBuf>{
+    let binary=program(provider)?;
+    // Finder-launched macOS apps do not necessarily inherit Homebrew PATH.
+    // Search the current PATH, then standard desktop CLI installation roots.
+    if let Some(path)=std::env::var_os("PATH"){
+        for root in std::env::split_paths(&path){
+            let candidate=root.join(binary);
+            if candidate.is_file(){return Some(candidate);}
+        }
+    }
+    for root in ["/opt/homebrew/bin","/usr/local/bin","/usr/bin"]{
+        let candidate=std::path::Path::new(root).join(binary);
+        if candidate.is_file(){return Some(candidate);}
+    }
+    #[cfg(windows)]
+    {
+        if let Some(appdata)=std::env::var_os("APPDATA"){
+            let candidate=std::path::PathBuf::from(appdata)
+                .join("npm").join(format!("{binary}.cmd"));
+            if candidate.is_file(){return Some(candidate);}
+        }
+        if provider=="github"{
+            let candidate=std::path::Path::new("C:\\Program Files\\GitHub CLI\\gh.exe");
+            if candidate.is_file(){return Some(candidate.to_path_buf());}
+        }
+    }
+    None
+}
+fn cli_output(provider:&str,args:&[&str])->Option<std::process::Output>{
+    Command::new(executable(provider)?).args(args)
+        .stdin(Stdio::null()).output().ok()
 }
 fn status_from_google(data:&Value)->LocalStatus{
     let scopes=match data.get("scopes"){
@@ -33,26 +62,24 @@ fn status_from_google(data:&Value)->LocalStatus{
     LocalStatus{installed:true,connected,account,scopes}
 }
 pub fn status(provider:&str)->LocalStatus{
-    let Some(binary)=program(provider) else{
-        return LocalStatus{installed:false,connected:false,account:None,scopes:vec![]};
-    };
-    if cli_output(binary,&["--version"]).is_none(){
+    if executable(provider).is_none() || cli_output(provider,&["--version"]).is_none(){
         return LocalStatus{installed:false,connected:false,account:None,scopes:vec![]};
     }
     if provider=="github"{
-        let connected=cli_output("gh",&["auth","status","--hostname","github.com"])
+        let connected=cli_output("github",&["auth","status","--hostname","github.com"])
             .is_some_and(|o|o.status.success());
         return LocalStatus{installed:true,connected,account:None,scopes:vec![]};
     }
-    let out=cli_output("gws",&["auth","status","--json"]);
+    let out=cli_output("google",&["auth","status","--json"]);
     out.filter(|o|o.status.success())
         .and_then(|o|serde_json::from_slice::<Value>(&o.stdout).ok())
         .map(|data|status_from_google(&data))
         .unwrap_or(LocalStatus{installed:true,connected:false,account:None,scopes:vec![]})
 }
 pub async fn github_token()->Result<String,String>{
+    let executable=executable("github").ok_or("GitHub CLI가 설치되지 않았습니다.")?;
     let result=tokio::time::timeout(Duration::from_secs(12),
-        tokio::process::Command::new("gh")
+        tokio::process::Command::new(executable)
             .args(["auth","token","--hostname","github.com"])
             .stdin(Stdio::null()).kill_on_drop(true).output()
     ).await.map_err(|_|"GitHub CLI 인증 조회가 지연됩니다.")?
@@ -70,7 +97,7 @@ pub async fn github_token()->Result<String,String>{
 }
 /// Launch the trusted CLI's interactive consent in a real terminal.
 pub fn login(provider:&str)->Result<Value,String>{
-    let binary=program(provider).ok_or("지원하지 않는 로컬 계정입니다.")?;
+    program(provider).ok_or("지원하지 않는 로컬 계정입니다.")?;
     if !status(provider).installed{
         return Err(match provider{
             "github"=>"GitHub CLI(gh)를 먼저 설치하세요: https://cli.github.com/",
@@ -151,7 +178,8 @@ fn google_parts(url:&Url,method:&Method)->Result<(Vec<String>,Value),String>{
 }
 pub async fn google_request(method:Method,url:Url,body:Option<Value>)->Result<Value,String>{
     let (command,params)=google_parts(&url,&method)?;
-    let mut invocation=tokio::process::Command::new("gws");
+    let executable=executable("google").ok_or("Google Workspace CLI(gws)가 설치되지 않았습니다.")?;
+    let mut invocation=tokio::process::Command::new(executable);
     invocation.args(command).args(["--params",&params.to_string()]);
     if let Some(payload)=body{invocation.args(["--json",&payload.to_string()]);}
     invocation.stdin(Stdio::null()).kill_on_drop(true);
