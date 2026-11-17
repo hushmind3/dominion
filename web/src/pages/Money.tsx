@@ -2,7 +2,7 @@ import {useEffect,useState} from 'react'
 import {ArrowUpRight,CheckCircle2,Lightbulb,Loader2,Search,Square,Code2} from 'lucide-react'
 import {get,post,type Agent} from '../api'
 
-type Evidence={claim?:string;url?:string;kind?:string}
+type Evidence={claim?:string;url?:string;kind?:string;publishedAt?:string;contentStatus?:string}
 type Draft={
  id:string
  title:string
@@ -21,6 +21,8 @@ type Draft={
  counterfactual?:string
  origin?:string
  status?:string
+ reviewReason?:string
+ reviewRevision?:number
  implementationJobId?:string
  implementationJob?:{id:string;status:string;error?:string;sessionId?:string|null}
 }
@@ -51,6 +53,8 @@ type FindResult={
  selectedAgentId?:string
 }
 type WorkJob={id:string;status:string;error?:string;sessionId?:string;result?:{sessionId?:string;result?:{sessionId?:string}}}
+type ArchiveResult={candidates:Draft[];modelCalls:number}
+type SourcePreview={source:{title?:string;description?:string;articleExcerpt?:string;publishedAt?:string;capturedAt?:string;sourceName?:string;contentStatus?:string;relationship?:string;canonicalSourceId?:string};revisions?:{id:string;reason?:string;capturedAt?:string;content?:{articleExcerpt?:string;description?:string}}[];sourceStatus?:string}
 const empty:FindResult={drafts:[],modelCalls:0,activeAutomationIds:[]}
 
 export function MoneyPage(props:{openSession:(id:string)=>void}){
@@ -66,6 +70,16 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
  const [agentId,setAgentId]=useState('db')
  const [cancellingInference,setCancellingInference]=useState(false)
  const [implementingId,setImplementingId]=useState<string|null>(null)
+ const [archiveOpen,setArchiveOpen]=useState(false)
+ const [archiveStatus,setArchiveStatus]=useState('deferred')
+ const [archiveInput,setArchiveInput]=useState('')
+ const [archiveQuery,setArchiveQuery]=useState('')
+ const [archiveItems,setArchiveItems]=useState<Draft[]>([])
+ const [archiveLoading,setArchiveLoading]=useState(false)
+ const [archiveError,setArchiveError]=useState('')
+ const [archiveRevision,setArchiveRevision]=useState(0)
+ const [sourceViews,setSourceViews]=useState<Record<string,SourcePreview>>({})
+ const [sourceLoading,setSourceLoading]=useState<string|null>(null)
  const reasoning=['queued','running'].includes(result.inferenceStatus||'')
  const activeImplementation=result.drafts?.some(d=>['queued','running'].includes(d.implementationJob?.status||''))||false
  useEffect(()=>{
@@ -101,12 +115,34 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
   }catch(err){setError((err as Error).message)}
   finally{setCancellingInference(false)}
  }
- async function rejectCandidate(draft:Draft){
+ useEffect(()=>{
+  if(!archiveOpen)return
+  let active=true
+  setArchiveLoading(true);setArchiveError('')
+  const query=new URLSearchParams({status:archiveStatus,q:archiveQuery,limit:'24'})
+  void get<ArchiveResult>('/api/money/archive?'+query.toString())
+   .then(data=>{if(active)setArchiveItems(data.candidates)})
+   .catch(err=>{if(active)setArchiveError((err as Error).message)})
+   .finally(()=>{if(active)setArchiveLoading(false)})
+  return()=>{active=false}
+ },[archiveOpen,archiveStatus,archiveQuery,archiveRevision])
+ async function reviewCandidate(draft:Draft,status:'deferred'|'rejected'|'hypothesis'){
   setError('')
+  const reason=status==='hypothesis'?'새 자료로 재검토':status==='deferred'?'추가 자료 확인 후 재검토':'현재 선택에서 제외'
   try{
-   await post('/api/money/candidates/'+encodeURIComponent(draft.id),{status:'rejected'})
+   await post('/api/money/candidates/'+encodeURIComponent(draft.id)+'/review',{status,reason})
    setResult(await get<FindResult>('/api/money/find'))
+   setArchiveRevision(n=>n+1)
   }catch(err){setError((err as Error).message)}
+ }
+ async function revealStoredSource(url:string){
+  if(sourceViews[url]||sourceLoading)return
+  setSourceLoading(url)
+  try{
+   const data=await get<SourcePreview>('/api/money/source?url='+encodeURIComponent(url))
+   setSourceViews(prev=>({...prev,[url]:data}))
+  }catch(err){setArchiveError((err as Error).message)}
+  finally{setSourceLoading(null)}
  }
  async function approveImplementation(draft:Draft){
   if(agentId==='db'||implementingId||draft.implementationJobId){
@@ -166,7 +202,7 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
   }catch(err){setError((err as Error).message)}
   finally{setStopping(false)}
  }
- const drafts=(result.drafts||[]).filter(d=>d.status!=='rejected')
+ const drafts=(result.drafts||[]).filter(d=>!['rejected','deferred'].includes(d.status||''))
  return <main className="mx-auto w-full max-w-[1040px] px-4 pb-16 pt-8 text-[#33291F] sm:px-7">
   <div className="mb-6 flex flex-wrap items-center justify-between gap-5">
    <div>
@@ -307,8 +343,10 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
         자료 {i+1} <ArrowUpRight size={13}/>
        </a>)}
       <div className="ml-auto flex flex-wrap gap-2">
-       <button type="button" disabled={!!implementingId||!!draft.implementationJobId} onClick={()=>void rejectCandidate(draft)}
-        className="text-[11px] font-semibold text-[#8B8076] hover:text-red-700 disabled:opacity-50">후보 제외</button>
+       <button type="button" disabled={!!implementingId||!!draft.implementationJobId} onClick={()=>void reviewCandidate(draft,'deferred')}
+        className="text-[11px] font-semibold text-[#8B8076] hover:text-[#A46144] disabled:opacity-50">보류</button>
+       <button type="button" disabled={!!implementingId||!!draft.implementationJobId} onClick={()=>void reviewCandidate(draft,'rejected')}
+        className="text-[11px] font-semibold text-[#8B8076] hover:text-red-700 disabled:opacity-50">제외</button>
        {draft.implementationJobId&&<span className="text-[11px] font-semibold text-[#6E7A5A]">
         구현 · {draft.implementationJob?.status||'기록 조회 필요'}
        </span>}
@@ -331,6 +369,75 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
      <strong className="text-sm text-[#584637]">{loading?'기존 발굴 결과 불러오는 중…':result.message||'돈벌이 찾기를 눌러 초안을 만들어 보세요.'}</strong>
      <p className="mt-2 text-xs leading-6 text-[#95877A]">기존 DB에서 돈벌이 후보를 추리고, 선택한 에이전트가 있으면 심층 추론합니다.</p>
     </div>}
+  </section>
+  <section aria-label="보존 후보 및 원문 검토" className="mt-8 rounded-xl border border-[#E6D9C9] bg-[#FFFDF9] p-4 sm:p-5">
+   <div className="flex flex-wrap items-center justify-between gap-2">
+    <div><h2 className="text-lg font-extrabold">보류·과거 후보 다시 보기</h2>
+     <p className="mt-1 text-[11px] leading-5 text-[#847366]">낮은 순위·제외 후보도 삭제하지 않고 남깁니다. 사용자 판단 이력과 수집된 원문을 검토할 수 있습니다.</p>
+    </div>
+    <button type="button" aria-expanded={archiveOpen} onClick={()=>setArchiveOpen(x=>!x)}
+     className="rounded-lg border border-[#D8CAB9] px-3 py-2 text-xs font-bold">{archiveOpen?'목록 닫기':'보존 후보 열기'}</button>
+   </div>
+   {archiveOpen&&<>
+    <form onSubmit={e=>{e.preventDefault();setArchiveQuery(archiveInput.trim())}}
+     className="mt-4 flex flex-wrap items-center gap-2">
+     <select aria-label="보존 후보 상태" value={archiveStatus} onChange={e=>setArchiveStatus(e.target.value)}
+      className="min-h-10 rounded-lg border border-[#DAD0C3] bg-white px-2 text-xs">
+      <option value="">전체 후보</option><option value="deferred">보류</option>
+      <option value="rejected">제외</option><option value="hypothesis">가설</option>
+      <option value="implementation_requested">구현 승인</option>
+     </select>
+     <input aria-label="보존 후보 검색어" value={archiveInput} onChange={e=>setArchiveInput(e.target.value)}
+      placeholder="업종·고객·아이디어 검색" className="min-h-10 min-w-0 flex-1 rounded-lg border border-[#DAD0C3] bg-white px-3 text-xs"/>
+     <button type="submit" className="min-h-10 rounded-lg bg-[#6E7A5A] px-4 text-xs font-bold text-white">검색</button>
+    </form>
+    {archiveError&&<p role="alert" className="mt-3 text-xs text-red-700">{archiveError}</p>}
+    <p className="my-3 text-[11px] text-[#8D7C6D]">{archiveLoading?'보존 후보 조회 중…':`현재 조건 ${archiveItems.length}건 · 모델 호출 0회 · 최근 24건까지 표시`}</p>
+    <div className="space-y-3">
+     {archiveItems.map(item=><article key={item.id} className="rounded-xl border border-[#EAE0D2] bg-[#FFFCF7] p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+       <div className="min-w-0 flex-1"><strong className="text-sm">{item.title||'제목 없는 가설'}</strong>
+        <p className="mt-1 text-[11px] leading-5 text-[#6E6054]">{item.offer||'제안 내용 조사 필요'}</p>
+       </div>
+       <span className="text-[11px] font-semibold text-[#9D593D]">{item.status==='deferred'?'보류':item.status==='rejected'?'제외':item.status==='hypothesis'?'가설':item.status||'미분류'}</span>
+      </div>
+      {!!item.reviewReason&&<p className="mt-2 text-[11px] text-[#8E6F56]">마지막 판단: {item.reviewReason}</p>}
+      <div className="mt-3 flex flex-wrap gap-3">
+       {['deferred','rejected'].includes(item.status||'')&&<button type="button" onClick={()=>void reviewCandidate(item,'hypothesis')}
+        className="text-[11px] font-bold text-[#6E7A5A] underline">다시 검토</button>}
+       {item.status==='hypothesis'&&<button type="button" onClick={()=>void reviewCandidate(item,'deferred')}
+        className="text-[11px] font-bold text-[#8E6F56] underline">보류</button>}
+      </div>
+      <details className="mt-3 text-xs">
+       <summary className="cursor-pointer font-bold text-[#8E6F56]">출처·원문·판단 내역</summary>
+       <div className="mt-3 space-y-2">
+        {(item.evidence||[]).slice(0,6).map((e,i)=>e.url?.startsWith('https://')&&<div key={i}
+         className="rounded-lg border border-[#E9DFD1] bg-white p-3">
+         <p className="text-[11px] leading-5">{e.claim||'제목·출처 연결 자료'} · {e.kind||'자료'} · {e.contentStatus||'원문 보존 상태 조회 필요'}</p>
+         <div className="mt-1 flex flex-wrap gap-3">
+          <a href={e.url} target="_blank" rel="noreferrer" className="text-[11px] font-semibold text-[#9D593D] underline">원본 링크 열기</a>
+          <button type="button" onClick={()=>void revealStoredSource(e.url!)}
+           className="text-[11px] font-semibold text-[#6E7A5A] underline">{sourceLoading===e.url?'조회 중…':'DB 보관 원문 보기'}</button>
+         </div>
+         {sourceViews[e.url]&&<div className="mt-2 rounded-lg bg-[#F6F0E6] p-2 text-[11px] leading-5">
+          <p>보관 출처: {sourceViews[e.url!].source.sourceName||'미상'} · {sourceViews[e.url!].source.publishedAt||'발행일 미상'}</p>
+          <p>저장 상태: {sourceViews[e.url!].sourceStatus}</p>
+          <p className="mt-1 whitespace-pre-wrap">{sourceViews[e.url!].source.articleExcerpt||sourceViews[e.url!].source.description||'기사 본문 미보관 · 제목 또는 메타데이터만 저장됨'}</p>
+          {!!sourceViews[e.url!].revisions?.length&&<details className="mt-2">
+           <summary className="cursor-pointer">원문 리비전 {sourceViews[e.url!].revisions!.length}개</summary>
+           {sourceViews[e.url!].revisions!.map(r=><p key={r.id} className="mt-1 whitespace-pre-wrap border-t border-[#DFD3C3] pt-1">
+            {r.reason||'원문 기록'} · {r.capturedAt||'시각 미상'}: {r.content?.articleExcerpt||r.content?.description||'제목만 보관'}</p>)}
+          </details>}
+         </div>}
+        </div>)}
+        {!(item.evidence||[]).length&&<p className="text-[11px] text-[#8D7C6D]">이 후보에 연결된 원문 근거는 아직 없습니다.</p>}
+        <p className="text-[11px] text-[#8D7C6D]">저장된 원문은 자료의 기록이며, 구매·거래 사실 확인을 의미하지 않습니다.</p>
+       </div>
+      </details>
+     </article>)}
+     {!archiveLoading&&!archiveItems.length&&<p className="py-3 text-center text-xs text-[#8D7C6D]">해당 조건의 보존 후보가 없습니다.</p>}
+    </div>
+   </>}
   </section>
   {!!result.inferenceModel?.model&&<p className="mt-4 text-right text-[11px] font-medium text-[#786755]">
    추론 모델 · {result.inferenceModel.providerId||'기본 제공자'} / {result.inferenceModel.model}
