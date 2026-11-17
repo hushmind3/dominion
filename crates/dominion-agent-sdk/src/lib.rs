@@ -641,9 +641,28 @@ impl Kernel<'_> {
                     continue;
                 }
             };
-            // Store the MODEL decision, before any host action or acceptance
-            // outcome, so historical failures are reproducible offline.
-            // This is durable evidence, never authority to re-execute effects.
+            // Authorize the ENTIRE speculative batch before recording it as
+            // an executable decision. Invalid candidate claims never become
+            // replay-authorized historical actions.
+            let probing=!decision.candidate_paths.is_empty();
+            let admitted_probes=if probing {
+                match probes::admit(&decision.candidate_paths,&tools) {
+                    Ok(actions)=>actions,
+                    Err(error)=>{
+                        invalid+=1;
+                        run.checks=vec![CheckResult{
+                            criterion:Criterion{kind:CriterionKind::ToolSucceeded,
+                                path:None,contains:None,tool:Some("candidate_probe".into())},
+                            satisfied:false, explanation:error
+                        }];
+                        self.journal.save(&run)?;
+                        if invalid>=3 {break;}
+                        continue;
+                    }
+                }
+            } else {Vec::new()};
+            // Store the MODEL decision before host actions. This is durable
+            // reconstruction evidence, never permission to replay effects.
             run.decision_tape.push(decision.clone());
             self.journal.save(&run)?;
             if decision.plan.len() <= 32 {
@@ -661,25 +680,8 @@ impl Kernel<'_> {
                 self.journal.save(&run)?;
                 continue;
             }
-            // Candidate probes pass through the existing scheduler and
-            // durable receipts. Host-owned read-only classification wins.
-            let probing=!decision.candidate_paths.is_empty();
-            let actions=if probing {
-                match probes::admit(&decision.candidate_paths,&tools) {
-                    Ok(actions)=>actions,
-                    Err(error)=>{
-                        invalid+=1;
-                        run.checks=vec![CheckResult{
-                            criterion:Criterion{kind:CriterionKind::ToolSucceeded,
-                                path:None,contains:None,tool:Some("candidate_probe".into())},
-                            satisfied:false, explanation:error
-                        }];
-                        self.journal.save(&run)?;
-                        if invalid>=3 {break;}
-                        continue;
-                    }
-                }
-            } else {decision.actions.clone()};
+            // All admitted probes use the normal kernel schedule and journal.
+            let actions=if probing {admitted_probes} else {decision.actions.clone()};
             // A final answer never overrides an independent acceptance failure.
             if actions.is_empty() {
                 if let Some(answer) = decision.answer.filter(|s| !s.trim().is_empty()) {
