@@ -24,6 +24,38 @@ The Rust product path preserves real task-verification evidence across attempts.
 
 Current scope: evidence-conditioned adaptation on tool failures, adaptive diagnostic lookahead and progress-based replanning for ordinary action goals. This is not yet isolated counterfactual rollouts or benchmark-driven automatic harness promotion. Model predictions are not calibrated likelihoods; cross-task improvements and token/cost lift have not been independently measured. No front-end UX or SDK protocol change was made. Focused dev-profile regression checks are in .github/workflows/ci.yml.
 
+
+## Distinct 2026 evidence-attribution adaptation: obligation lineage
+
+The product runtime does not copy a reference agent's controller stages. Instead,
+it uses native Dominion execution receipts, frozen postcondition verification and
+the existing effect/approval kernel to reconstruct the smallest **attributable
+resource-level repair frontier**.
+
+- New `engine/obligation_repair.rs` links each *actually failing* deterministic
+  postcondition to the ordered native `execution_operation` receipts on the
+  same typed workspace/file resource. The graph contains failed obligations,
+  tool receipts, same-resource temporal links and explicit non-discharge edges.
+- A completed mutation is **counter-evidence** if the original verifier still
+  fails. More nominally successful calls do not imply progress; a later read
+  can show an unresolved contradiction and steer a local replan.
+- Unresolved external effects are distinguished from failed mutations, unverified
+  mutations, read-only observations and missing receipts; unknown side effects
+  require inspection rather than an automatic retry.
+- The stored `acceptanceProgress.obligationLineage` is generated from real
+  verifier gaps and scoped receipts, not proposed causes. A stagnant run
+  receives a resource-specific repair directive; the old acceptance gate
+  retains final authority. This path does not auto-promote code or add loops.
+- Verification fixtures cover conflicting read/write/read trajectories,
+  unknown effects, unrelated targets, shared obligations, and prevention of
+  model-invented failures. The focused CI exercises the Rust module directly.
+
+The research context is 2026 harness trace attribution and behavior-aware
+verification (HarnessFix 2606.06324 and HarnessLens 2608.27311). This is
+a Dominion-specific synthesis over the native effect journal and acceptance
+contracts, not an implementation of either paper's optimizer or a transplanted
+Assess/Propose/Evaluate/Dispatch controller.
+
 ## Retired subsystems
 
 Native FFmpeg/ComfyUI video composition, narration generation, scene regeneration, YouTube auto upload, RSI campaigns, source-mutation generations, autonomous grading, automatic core adoption and associated external runtime orchestration are retired. Existing media files and job records remain available through read-only archive endpoints. New media creation belongs to explicit MCP integrations or external APIs, not a built-in engine.

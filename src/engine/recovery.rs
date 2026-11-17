@@ -206,7 +206,18 @@ pub fn acceptance_progress(
     } else {
         format!("Satisfy the first concrete missing postcondition with real evidence: {focus}")
     };
+    let lineage = crate::engine::obligation_repair::reconstruct(
+        &execution["acceptanceChecks"], &current,
+        &state.store.execution_operations(execution_id)?,
+    );
+    let lineage_directive = lineage["directive"].as_str().unwrap_or("");
+    // A verifier-derived, receipt-scoped directive overrides generic retry
+    // advice only when the current attempt is actually stalled.
+    let action = if mode == "reconsider" && !lineage_directive.is_empty() {
+        format!("Replan ONLY the invalidated proof frontier:\n{lineage_directive}")
+    } else { action };
     let record = json!({
+        "obligationLineage": lineage,
         "round": round,
         "gaps": current,
         "receiptIds": receipts,

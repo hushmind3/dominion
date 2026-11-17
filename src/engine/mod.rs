@@ -45,6 +45,7 @@ pub mod cli_model;
 pub mod improve;
 pub mod code_index;
 pub mod recovery;
+pub mod obligation_repair;
 pub mod reasoning;
 pub mod remote_backup;
 pub mod jobs;
