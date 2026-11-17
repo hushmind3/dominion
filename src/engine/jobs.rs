@@ -13,14 +13,18 @@ const MAX_EVENTS: usize = 200;
 pub struct JobContext {
     pub state: AppState,
     pub job_id: String,
+    attempt: u64,
     events: Arc<Mutex<Vec<Value>>>,
 }
 
 impl JobContext {
     pub fn new(state: AppState, job_id: String) -> Self {
+        let attempt=state.store.get("job",&job_id)
+            .and_then(|row|row["attempts"].as_u64()).unwrap_or(0);
         Self {
             state,
             job_id,
+            attempt,
             events: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -52,29 +56,16 @@ impl JobContext {
         }
     }
 
+    /// Every checkpoint belongs to one dispatcher-claimed attempt. A late
+    /// response after retry or cancellation cannot overwrite the new owner.
     pub fn checkpoint(&self, patch: Value) -> Result<(), String> {
-        let job = self
-            .state
-            .store
-            .get("job", &self.job_id)
-            .ok_or("작업 체크포인트를 찾을 수 없습니다.")?;
-        if job["cancelRequested"] == true
-            || !matches!(job["status"].as_str(),Some("queued"|"running")) {
-            return Err("사용자 요청으로 실행이 중단되었거나 작업이 이미 종료되었습니다.".into());
-        }
-        // Both status and cancellation must still match inside the write lock.
-        // videoState is merged against the *current* record under that lock,
-        // not against the stale snapshot above.
-        let guards=[
-            ("status", &job["status"]),
-            ("cancelRequested",job.get("cancelRequested").unwrap_or(&Value::Null)),
-        ];
-        let saved = self.state.store.patch_if_all_merge(
-            "job",&self.job_id,&guards,&patch,&["videoState"],
-        ).ok_or("작업 체크포인트가 변경되었거나 실행이 중단되었습니다.")?;
-        self.state.bus.record("job", &saved);
+        let saved=self.state.store.checkpoint_running_job(
+            &self.job_id,self.attempt,&patch,
+        ).ok_or("작업이 종료·중단되었거나 다른 실행 시도로 교체되어 체크포인트를 거부했습니다.")?;
+        self.state.bus.record("job",&saved);
         Ok(())
     }
+
 }
 
 pub fn enqueue(state: &AppState, kind: &str, input: Value) -> Option<Value> {
@@ -208,16 +199,18 @@ pub fn cancel_job(state:&AppState,id:&str)->Result<Value,CancelJobError>{
     if !matches!(job["status"].as_str(),Some("queued"|"running")){
         return Err(CancelJobError::Conflict);
     }
-    if let Some(session)=job["sessionId"].as_str(){state.cancel_session(session);}
-    if let Some(saved)=state.store.patch_if("job",id,"status",&job["status"],
+    // Persist cancellation before notifying the live session. Losing a
+    // cross-process race with completion must return a conflict, not a
+    // misleading 200 with a completed/failed job as if it was cancelled.
+    let Some(saved)=state.store.patch_if("job",id,"status",&job["status"],
         &json!({"status":"cancelled","cancelRequested":true,
-            "finishedAt":chrono::Utc::now().to_rfc3339()})){
-        state.bus.record("job",&saved);
-        state.store.audit("job.cancelled",json!({"jobId":id,"kind":job["kind"]}));
-        Ok(saved)
-    }else{
-        state.store.get("job",id).ok_or(CancelJobError::Conflict)
-    }
+            "finishedAt":chrono::Utc::now().to_rfc3339()})) else {
+        return Err(CancelJobError::Conflict);
+    };
+    if let Some(session)=saved["sessionId"].as_str(){state.cancel_session(session);}
+    state.bus.record("job",&saved);
+    state.store.audit("job.cancelled",json!({"jobId":id,"kind":job["kind"]}));
+    Ok(saved)
 }
 
 /// Recovers work left behind by a crash: running jobs are re-queued (unless
@@ -1048,6 +1041,44 @@ mod tests {
     }
 
     #[test]
+    fn stale_worker_context_never_overwrites_requeued_attempt(){
+        let state=temp_state();
+        let job=enqueue(&state,"prompt",json!({"prompt":"fix target"})).unwrap();
+        let id=job["id"].as_str().unwrap().to_string();
+        state.store.patch_if("job",&id,"status",&json!("queued"),
+            &json!({"status":"running","attempts":1})).unwrap();
+        let old=JobContext::new(state.clone(),id.clone());
+        old.checkpoint(json!({"progress":"first"})).unwrap();
+        state.store.patch_if("job",&id,"status",&json!("running"),
+            &json!({"status":"queued"})).unwrap();
+        state.store.patch_if("job",&id,"status",&json!("queued"),
+            &json!({"status":"running","attempts":2})).unwrap();
+        let fresh=JobContext::new(state.clone(),id.clone());
+        assert!(old.checkpoint(json!({"progress":"stale"})).is_err());
+        assert!(!finalize_job(&old,"prompt","completed",
+            json!({"status":"completed","result":{"verified":true}})));
+        fresh.checkpoint(json!({"progress":"new"})).unwrap();
+        let saved=state.store.get("job",&id).unwrap();
+        assert_eq!(saved["progress"],"new");
+        assert!(saved["result"].is_null());
+        assert_eq!(saved["status"],"running");
+    }
+
+    #[test]
+    fn cancelled_attempt_cannot_store_terminal_success(){
+        let state=temp_state();
+        let job=enqueue(&state,"prompt",json!({"prompt":"cancel"})).unwrap();
+        let id=job["id"].as_str().unwrap().to_string();
+        state.store.patch_if("job",&id,"status",&json!("queued"),
+            &json!({"status":"running","attempts":1})).unwrap();
+        let ctx=JobContext::new(state.clone(),id.clone());
+        let cancelled=cancel_job(&state,&id).unwrap();
+        assert_eq!(cancelled["status"],"cancelled");
+        assert!(ctx.checkpoint(json!({"status":"completed","result":"late"})).is_err());
+        assert!(matches!(cancel_job(&state,&id),Err(CancelJobError::Conflict)));
+        assert_eq!(state.store.get("job",&id).unwrap()["status"],"cancelled");
+    }
+    #[test]
     fn cancellation_wins_against_late_terminal_receipt_without_false_success() {
         let state=temp_state();
         let job=enqueue(&state,"prompt",json!({"prompt":"demo"})).unwrap();
@@ -1067,8 +1098,10 @@ mod tests {
     #[test]
     fn job_errors_are_recorded_as_failed() {
         let state = temp_state();
-        let job = enqueue(&state, "room", json!({ "roomId": "missing", "goal": "x" })).unwrap();
-        let id = job["id"].as_str().unwrap().to_string();
+        let queued = enqueue(&state, "room", json!({ "roomId": "missing", "goal": "x" })).unwrap();
+        let id = queued["id"].as_str().unwrap().to_string();
+        let job = state.store.patch_if("job",&id,"status",&json!("queued"),
+            &json!({"status":"running","attempts":1})).unwrap();
         let _ = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

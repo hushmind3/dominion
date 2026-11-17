@@ -526,6 +526,10 @@ impl Store {
     }
 
     /// Compare-and-patch under the connection lock, used to claim queued work.
+    /// SQLite IMMEDIATE transaction makes the compare+write linearizable
+    /// across independently opened database connections, not just threads
+    /// sharing one Store mutex. The same primitive owns claims, cancellation,
+    /// steering and restart reconciliation.
     pub fn patch_if(
         &self,
         kind: &str,
@@ -534,27 +538,75 @@ impl Store {
         expected: &Value,
         patch: &Value,
     ) -> Option<Value> {
-        let conn = self.conn.lock().unwrap();
-        let mut record = conn
-            .query_row(
-                "SELECT data, id, created_at, updated_at FROM records WHERE kind=?1 AND id=?2",
-                params![kind, id],
-                record_from_row,
-            )
-            .ok()?;
-        if record.get(field).unwrap_or(&Value::Null) != expected {
+        let changes=patch.as_object()?;
+        let mut conn=self.conn.lock().ok()?;
+        let tx=conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).ok()?;
+        let mut record=tx.query_row(
+            "SELECT data,id,created_at,updated_at FROM records WHERE kind=?1 AND id=?2",
+            params![kind,id],record_from_row,
+        ).ok()?;
+        if record.get(field).unwrap_or(&Value::Null)!=expected {return None;}
+        for (key,value) in changes{
+            if key!="id"{record[key]=value.clone();}
+        }
+        tx.execute(
+            "UPDATE records SET data=?3,updated_at=datetime('now') WHERE kind=?1 AND id=?2",
+            params![kind,id,record.to_string()],
+        ).ok()?;
+        tx.commit().ok()?;
+        Some(record)
+    }
+
+    /// The running job attempt, not merely the job ID, owns all progress
+    /// and terminal transitions. A stale async provider/tool worker cannot
+    /// write after cancellation or after the dispatcher requeues an attempt.
+    /// Keeps the existing nested videoState merge for legacy record fidelity.
+    pub fn checkpoint_running_job(
+        &self,id:&str,expected_attempt:u64,patch:&Value,
+    )->Option<Value>{
+        let changes=patch.as_object()?;
+        if changes.contains_key("id")||changes.contains_key("cancelRequested")
+            ||changes.contains_key("kind")||changes.contains_key("input"){
             return None;
         }
-        for (key, value) in patch.as_object()? {
-            if key != "id" {
-                record[key] = value.clone();
+        // Only the native deferred-job path may release a running attempt
+        // back to queued and refund its not-yet-executed admission count.
+        // Other patches may not silently rewrite the owner attempt number.
+        if let Some(proposed)=changes.get("attempts"){
+            if changes.get("status").and_then(Value::as_str)!=Some("queued")
+                ||proposed.as_u64()!=Some(expected_attempt.saturating_sub(1)){
+                return None;
             }
         }
-        conn.execute(
-            "UPDATE records SET data=?3, updated_at=datetime('now') WHERE kind=?1 AND id=?2",
-            params![kind, id, record.to_string()],
-        )
-        .ok()?;
+        let mut conn=self.conn.lock().ok()?;
+        let tx=conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).ok()?;
+        let mut record=tx.query_row(
+            "SELECT data,id,created_at,updated_at FROM records WHERE kind='job' AND id=?1",
+            [id],record_from_row,
+        ).ok()?;
+        if record["status"]!="running" || record["cancelRequested"]==true
+            || record["attempts"].as_u64().unwrap_or(0)!=expected_attempt{
+            return None;
+        }
+        for (key,value) in changes {
+            if key=="videoState"{
+                if let (Some(current),Some(update))=(
+                    record.get_mut(key).and_then(Value::as_object_mut),
+                    value.as_object()
+                ){
+                    for (field,next) in update{
+                        current.insert(field.clone(),next.clone());
+                    }
+                    continue;
+                }
+            }
+            record[key]=value.clone();
+        }
+        tx.execute(
+            "UPDATE records SET data=?2,updated_at=datetime('now') WHERE kind='job' AND id=?1",
+            params![id,record.to_string()],
+        ).ok()?;
+        tx.commit().ok()?;
         Some(record)
     }
 
@@ -1601,6 +1653,77 @@ mod tests {
         assert_eq!(strict.len(), 2);
         assert!(store.try_messages("missing").unwrap().is_empty());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn independent_sqlite_connections_cannot_claim_same_queued_job(){
+        let (first,dir)=temp_store();
+        let second=Store::open(&dir.join("dominion.sqlite")).unwrap();
+        first.put("job",&json!({"id":"claimed-once","status":"queued","attempts":0})).unwrap();
+        let a=first.clone();
+        let b=second.clone();
+        let joined=std::thread::spawn(move||{
+            a.patch_if("job","claimed-once","status",&json!("queued"),
+                &json!({"status":"running","attempts":1})).is_some()
+        });
+        let other=std::thread::spawn(move||{
+            b.patch_if("job","claimed-once","status",&json!("queued"),
+                &json!({"status":"running","attempts":1})).is_some()
+        });
+        let winners=usize::from(joined.join().unwrap())
+            +usize::from(other.join().unwrap());
+        assert_eq!(winners,1,"a queued job must have exactly one owner");
+        assert_eq!(second.get("job","claimed-once").unwrap()["attempts"],1);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn stale_attempt_checkpoint_cannot_mutate_new_attempt_or_cancelled_job(){
+        let (first,dir)=temp_store();
+        let second=Store::open(&dir.join("dominion.sqlite")).unwrap();
+        first.put("job",&json!({"id":"attempt-fence","status":"running",
+            "attempts":1,"promptState":{"inFlight":true},"result":null})).unwrap();
+        assert!(first.checkpoint_running_job("attempt-fence",1,
+            &json!({"promptState":{"inFlight":false},"progress":"old"})).is_some());
+        second.patch_if("job","attempt-fence","status",&json!("running"),
+            &json!({"status":"queued"})).unwrap();
+        second.patch_if("job","attempt-fence","status",&json!("queued"),
+            &json!({"status":"running","attempts":2})).unwrap();
+        assert!(first.checkpoint_running_job("attempt-fence",1,
+            &json!({"status":"completed","result":"stale response"})).is_none());
+        assert!(first.checkpoint_running_job("attempt-fence",2,
+            &json!({"status":"running","cancelRequested":false})).is_none());
+        assert!(first.checkpoint_running_job("attempt-fence",2,
+            &json!({"attempts":0,"status":"completed"})).is_none());
+        assert!(second.checkpoint_running_job("attempt-fence",2,
+            &json!({"progress":"new"})).is_some());
+        first.patch_if("job","attempt-fence","status",&json!("running"),
+            &json!({"status":"cancelled","cancelRequested":true})).unwrap();
+        assert!(second.checkpoint_running_job("attempt-fence",2,
+            &json!({"status":"completed","result":"late success"})).is_none());
+        let saved=first.get("job","attempt-fence").unwrap();
+        assert_eq!(saved["status"],"cancelled");
+        assert_eq!(saved["progress"],"new");
+        assert!(saved["result"].is_null());
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn deferred_job_checkpoint_can_requeue_without_replaying_old_owner(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        store.put("job",&json!({"id":"defer","status":"running","attempts":1})).unwrap();
+        let queued=store.checkpoint_running_job("defer",1,
+            &json!({"status":"queued","attempts":0,"availableAt":"2026-11-18T00:00:00Z"}))
+            .unwrap();
+        assert_eq!(queued["status"],"queued");
+        assert_eq!(queued["attempts"],0);
+        assert!(store.checkpoint_running_job("defer",1,
+            &json!({"status":"completed"})).is_none());
+        let new=store.patch_if("job","defer","status",&json!("queued"),
+            &json!({"status":"running","attempts":1})).unwrap();
+        assert_eq!(new["attempts"],1);
+        // The previous worker could otherwise be mistaken for this attempt.
+        // A fresh admission epoch is needed when the counter is refunded.
     }
 
     #[test]
