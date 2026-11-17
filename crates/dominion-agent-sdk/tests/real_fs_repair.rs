@@ -153,6 +153,7 @@ fn done()->Value {
 
 #[tokio::test]
 async fn actual_shell_failure_triggers_real_file_repair_then_green_test() {
+    let started=std::time::Instant::now();
     let root=temp_workspace("repair");
     let model=Planner::new(vec![edit("wrong","WRONG\n"),done(),
         edit("repair","READY\n"),done()]);
@@ -174,6 +175,24 @@ async fn actual_shell_failure_triggers_real_file_repair_then_green_test() {
         &std::fs::read(&journal.file).unwrap()).unwrap();
     assert!(matches!(from_disk.status,Status::Completed));
     assert!(from_disk.in_flight.is_empty());
+    println!("DOMINION_CODING_BENCHMARK {}",json!({
+        "schemaVersion":1,
+        "scenario":"single_file_shell_failure_repair",
+        "provider":"deterministic_scripted_no_paid_api",
+        "evidenceLevel":"real_filesystem_real_shell_scripted_model",
+        "completed":matches!(result.status,Status::Completed),
+        "verified":result.checks.iter().all(|check|check.satisfied),
+        "sourceFiles":1,
+        "modelCalls":result.model_calls,
+        "chargedTokens":result.charged_tokens,
+        "toolReceipts":result.receipts.len(),
+        "failedTests":result.receipts.iter().filter(|receipt|
+            receipt.tool=="shell_exec" && !receipt.success).count(),
+        "successfulTests":result.receipts.iter().filter(|receipt|
+            receipt.tool=="shell_exec" && receipt.success).count(),
+        "replayedEffects":0,
+        "wallMs":started.elapsed().as_millis(),
+    }));
     let _=std::fs::remove_dir_all(&root);
 }
 
