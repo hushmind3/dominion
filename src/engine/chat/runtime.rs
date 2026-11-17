@@ -818,7 +818,7 @@ async fn run_turn_body(
     // native calls or the text-tool manual for whichever local/API model
     // actually handles each round, including after failover.
 
-    if session["delegationWorkspace"].is_object(){tool_definitions.retain(|tool|!tool_name(tool).starts_with("mcp__")&&!matches!(tool_name(tool),"github_api"|"github_file_read"|"github_file_update"|"browser_control"));}
+    if session["delegationWorkspace"].is_object(){tool_definitions.retain(|tool|!tool_name(tool).starts_with("mcp__")&&!matches!(tool_name(tool),"github_api"|"github_repositories"|"github_file_read"|"github_file_update"|"github_file_replace"|"browser_control"));}
     if session["readOnly"]==true {tool_definitions.retain(|tool|tools::observational(tool_name(tool)));}
     let discovered_tool_names = tool_definitions
         .iter()

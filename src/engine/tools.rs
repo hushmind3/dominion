@@ -1903,8 +1903,12 @@ mod tests {
         assert!(github_file_url(&json!({"owner":"a","repo":"b","path":"../secret"})).is_err());
         assert!(github_file_url(&json!({"owner":"a","repo":"b","path":"/etc/passwd"})).is_err());
         assert!(requires_approval("github_file_update"));
+        assert!(requires_approval("github_file_replace"));
         assert!(!requires_approval("github_file_read"));
+        assert!(!requires_approval("github_repositories"));
         assert!(observational("github_file_read"));
+        assert!(observational("github_repositories"));
+        assert!(!observational("github_file_replace"));
     }
 
     #[test]
