@@ -211,11 +211,11 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
                 let count=items.len();
                 for item in items.iter_mut(){
                     if scrape_attempts>=SCRAPES_PER_CYCLE{break;}
-                    context.ensure_running()?;
                     let stored=item["id"].as_str()
                         .and_then(|id|context.state.store.get("money_signal",id));
                     if !needs_article_fetch(item,stored.as_ref()){continue;}
                     let Some(article_url)=item["url"].as_str().map(str::to_owned)else{continue;};
+                    context.ensure_running()?;
                     scrape_attempts+=1;
                     if let Ok(article)=crate::engine::tools::http_fetch(&article_url).await{
                         context.ensure_running()?;
@@ -292,6 +292,22 @@ pub fn schedule(state:&AppState){
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[tokio::test]
+    async fn stopped_source_job_aborts_before_any_network_or_ingestion(){
+        let root=std::env::temp_dir().join(format!("sub3-source-stop-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config=crate::config::Config{port:0,data_dir:root.clone(),
+            web_dir:root.join("web"),workspace:root.clone()};
+        let state=crate::state::AppState::new(config,
+            crate::db::Store::open(&root.join("db.sqlite")).unwrap(),
+            crate::vault::Vault::open(&root.join("vault.key")));
+        state.store.put("job",&json!({"id":"stopped-source","kind":"money_ingest",
+            "status":"cancelled","cancelRequested":true,"attempts":1})).unwrap();
+        let context=JobContext::new(state.clone(),"stopped-source".into());
+        let error=run(&context,&json!({"input":{"bucket":0}})).await.unwrap_err();
+        assert!(error.starts_with("cancelled:"));
+        assert!(state.store.get("money_ingest_report","market:stopped-source").is_none());
+    }
     #[test] fn bounded_rss_text_keeps_exact_visible_char_limit(){
         let long=format!("<p>{}</p>","가격".repeat(1000));
         assert_eq!(clean_text(&long,20).chars().count(),20);
