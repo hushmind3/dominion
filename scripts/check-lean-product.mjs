@@ -55,6 +55,29 @@ for(const name of ['run_turn_body','run_program','dispatch_tool_call','finalize_
  assert.ok(chat.includes('fn '+name+'('),
   'Chat lifecycle function lost during module extraction: '+name);
 }
+// Enforce a maintainable Rust source layout, including integration tests.
+// This is a structural regression gate, not a claim about execution speed.
+function rustFiles(directory){
+ return fs.readdirSync(directory,{withFileTypes:true}).flatMap(entry=>{
+  const path=directory+'/'+entry.name;
+  if(entry.isDirectory())return rustFiles(path);
+  return entry.isFile()&&entry.name.endsWith('.rs')?[path]:[];
+ });
+}
+const allRust=['src','tests','crates','sdk/rust'].flatMap(rustFiles);
+for(const file of allRust){
+ const lines=read(file).split('\n').length;
+ const focused=file.startsWith('src/engine/chat/runtime/')||
+  file==='src/engine/chat/runtime.rs' ||
+  file.startsWith('tests/e2e/') || file==='tests/e2e.rs';
+ const limit=focused?2000:4000;
+ assert.ok(lines<=limit,
+  'Rust source must be decomposed before it grows to '+lines+
+  ' lines (limit '+limit+'): '+file);
+}
+for(const suite of ['rooms','durability','adaptation','web_api','continuity'])
+ assert.ok(exists('tests/e2e/'+suite+'.rs'),
+  'Real integration test suite missing after split: '+suite);
 for(const text of ['dominion_agent_sdk::','dispatch_batch','acceptance'])
  assert.ok(chat.includes(text),'Real chat-to-Rust execution/verification disconnected: '+text);
 assert.ok(!/rsiRun|rsi_evolve|rsi_worktree|rsi_patch_written/.test(chat),'Retired RSI logic remains in chat runtime');
