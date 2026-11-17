@@ -113,7 +113,11 @@ pub fn connected_accounts(state: &AppState) -> Vec<Value> {
         .store
         .all("oauth_config")
         .into_iter()
-        .filter(|record| record.get("connected").and_then(|v| v.as_bool()) == Some(true))
+        .filter(|record| {
+            let id=record["id"].as_str().unwrap_or("");
+            record.get("connected").and_then(|v|v.as_bool()) == Some(true)
+                && state.store.has_secret(&format!("oauth:{id}:token"))
+        })
         .map(|record| {
             let id = record
                 .get("id")
@@ -157,6 +161,20 @@ mod tests {
             );
         }
         (state, dir)
+    }
+
+    #[test]
+    fn oauth_connected_accounts_require_a_real_vault_token(){
+        let (state,dir)=test_state();
+        state.store.put("oauth_config",&json!({"id":"github",
+            "connected":true,"account":"test-owner"}));
+        assert!(connected_accounts(&state).is_empty(),
+            "a stale connected flag without a token must not be shown as live");
+        state.save_secret("oauth:github:token",
+            &json!({"accessToken":"test"}).to_string());
+        assert_eq!(connected_accounts(&state).len(),1);
+        drop(state);
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
