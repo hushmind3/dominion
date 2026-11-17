@@ -54,7 +54,8 @@ type FindResult={
 }
 type WorkJob={id:string;status:string;error?:string;sessionId?:string;result?:{sessionId?:string;result?:{sessionId?:string}}}
 type ArchiveResult={candidates:Draft[];modelCalls:number}
-type SourcePreview={source:{title?:string;description?:string;articleExcerpt?:string;publishedAt?:string;capturedAt?:string;sourceName?:string;contentStatus?:string;relationship?:string;canonicalSourceId?:string};revisions?:{id:string;reason?:string;capturedAt?:string;content?:{articleExcerpt?:string;description?:string}}[];sourceStatus?:string}
+type SourcePreview={source:{title?:string;description?:string;articleExcerpt?:string;articleBody?:string;publishedAt?:string;capturedAt?:string;sourceName?:string;contentStatus?:string;relationship?:string;canonicalSourceId?:string};revisions?:{id:string;reason?:string;capturedAt?:string;content?:{articleExcerpt?:string;articleBody?:string;description?:string}}[];sourceStatus?:string}
+type ReviewHistory={reviews:{id:string;fromStatus?:string;toStatus?:string;reason?:string;reviewedAt?:string}[]}
 const empty:FindResult={drafts:[],modelCalls:0,activeAutomationIds:[]}
 
 export function MoneyPage(props:{openSession:(id:string)=>void}){
@@ -72,6 +73,7 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
  const [implementingId,setImplementingId]=useState<string|null>(null)
  const [archiveOpen,setArchiveOpen]=useState(false)
  const [archiveStatus,setArchiveStatus]=useState('deferred')
+ const [archiveOffset,setArchiveOffset]=useState(0)
  const [archiveInput,setArchiveInput]=useState('')
  const [archiveQuery,setArchiveQuery]=useState('')
  const [archiveItems,setArchiveItems]=useState<Draft[]>([])
@@ -79,6 +81,7 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
  const [archiveError,setArchiveError]=useState('')
  const [archiveRevision,setArchiveRevision]=useState(0)
  const [sourceViews,setSourceViews]=useState<Record<string,SourcePreview>>({})
+ const [reviewHistories,setReviewHistories]=useState<Record<string,ReviewHistory>>({})
  const [sourceLoading,setSourceLoading]=useState<string|null>(null)
  const reasoning=['queued','running'].includes(result.inferenceStatus||'')
  const activeImplementation=result.drafts?.some(d=>['queued','running'].includes(d.implementationJob?.status||''))||false
@@ -119,21 +122,29 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
   if(!archiveOpen)return
   let active=true
   setArchiveLoading(true);setArchiveError('')
-  const query=new URLSearchParams({status:archiveStatus,q:archiveQuery,limit:'24'})
+  const query=new URLSearchParams({status:archiveStatus,q:archiveQuery,limit:'24',offset:String(archiveOffset)})
   void get<ArchiveResult>('/api/money/archive?'+query.toString())
    .then(data=>{if(active)setArchiveItems(data.candidates)})
    .catch(err=>{if(active)setArchiveError((err as Error).message)})
    .finally(()=>{if(active)setArchiveLoading(false)})
   return()=>{active=false}
- },[archiveOpen,archiveStatus,archiveQuery,archiveRevision])
+ },[archiveOpen,archiveStatus,archiveQuery,archiveOffset,archiveRevision])
  async function reviewCandidate(draft:Draft,status:'deferred'|'rejected'|'hypothesis'){
   setError('')
-  const reason=status==='hypothesis'?'새 자료로 재검토':status==='deferred'?'추가 자료 확인 후 재검토':'현재 선택에서 제외'
+  const reason=window.prompt(status==='hypothesis'?'다시 검토하는 이유 (선택)':status==='deferred'?'보류 이유 (선택)':'제외 이유 (선택)','')
+  if(reason===null)return
   try{
    await post('/api/money/candidates/'+encodeURIComponent(draft.id)+'/review',{status,reason})
    setResult(await get<FindResult>('/api/money/find'))
    setArchiveRevision(n=>n+1)
+   setReviewHistories(prev=>{const copy={...prev};delete copy[draft.id];return copy})
   }catch(err){setError((err as Error).message)}
+ }
+ async function loadReviewHistory(id:string){
+  try{
+   const data=await get<ReviewHistory>('/api/money/candidates/'+encodeURIComponent(id)+'/reviews')
+   setReviewHistories(prev=>({...prev,[id]:data}))
+  }catch(err){setArchiveError((err as Error).message)}
  }
  async function revealStoredSource(url:string){
   if(sourceViews[url]||sourceLoading)return
@@ -379,9 +390,9 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
      className="rounded-lg border border-[#D8CAB9] px-3 py-2 text-xs font-bold">{archiveOpen?'목록 닫기':'보존 후보 열기'}</button>
    </div>
    {archiveOpen&&<>
-    <form onSubmit={e=>{e.preventDefault();setArchiveQuery(archiveInput.trim())}}
+    <form onSubmit={e=>{e.preventDefault();setArchiveOffset(0);setArchiveQuery(archiveInput.trim())}}
      className="mt-4 flex flex-wrap items-center gap-2">
-     <select aria-label="보존 후보 상태" value={archiveStatus} onChange={e=>setArchiveStatus(e.target.value)}
+     <select aria-label="보존 후보 상태" value={archiveStatus} onChange={e=>{setArchiveStatus(e.target.value);setArchiveOffset(0)}}
       className="min-h-10 rounded-lg border border-[#DAD0C3] bg-white px-2 text-xs">
       <option value="">전체 후보</option><option value="deferred">보류</option>
       <option value="rejected">제외</option><option value="hypothesis">가설</option>
@@ -392,7 +403,7 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
      <button type="submit" className="min-h-10 rounded-lg bg-[#6E7A5A] px-4 text-xs font-bold text-white">검색</button>
     </form>
     {archiveError&&<p role="alert" className="mt-3 text-xs text-red-700">{archiveError}</p>}
-    <p className="my-3 text-[11px] text-[#8D7C6D]">{archiveLoading?'보존 후보 조회 중…':`현재 조건 ${archiveItems.length}건 · 모델 호출 0회 · 최근 24건까지 표시`}</p>
+    <p className="my-3 text-[11px] text-[#8D7C6D]">{archiveLoading?'보존 후보 조회 중…':`현재 페이지 ${archiveItems.length}건 · ${archiveOffset+1}번째부터 · 모델 호출 0회`}</p>
     <div className="space-y-3">
      {archiveItems.map(item=><article key={item.id} className="rounded-xl border border-[#EAE0D2] bg-[#FFFCF7] p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -403,11 +414,18 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
       </div>
       {!!item.reviewReason&&<p className="mt-2 text-[11px] text-[#8E6F56]">마지막 판단: {item.reviewReason}</p>}
       <div className="mt-3 flex flex-wrap gap-3">
+       <button type="button" onClick={()=>void loadReviewHistory(item.id)}
+        className="text-[11px] font-bold text-[#8E6F56] underline">판단 이력 열기</button>
        {['deferred','rejected'].includes(item.status||'')&&<button type="button" onClick={()=>void reviewCandidate(item,'hypothesis')}
         className="text-[11px] font-bold text-[#6E7A5A] underline">다시 검토</button>}
        {item.status==='hypothesis'&&<button type="button" onClick={()=>void reviewCandidate(item,'deferred')}
         className="text-[11px] font-bold text-[#8E6F56] underline">보류</button>}
       </div>
+      {reviewHistories[item.id]&&<div className="mt-2 rounded-lg bg-white p-2 text-[11px] leading-5">
+       <strong>판단 변경 {reviewHistories[item.id].reviews.length}건 (최근 80건)</strong>
+       {reviewHistories[item.id].reviews.map(r=><p key={r.id} className="mt-1 border-t border-[#E9DFD1] pt-1">
+        {r.fromStatus||'가설'} → {r.toStatus||'가설'} · {r.reviewedAt||'시각 미상'} · {r.reason||'별도 사유 없음'}</p>)}
+      </div>}
       <details className="mt-3 text-xs">
        <summary className="cursor-pointer font-bold text-[#8E6F56]">출처·원문·판단 내역</summary>
        <div className="mt-3 space-y-2">
@@ -422,11 +440,11 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
          {sourceViews[e.url]&&<div className="mt-2 rounded-lg bg-[#F6F0E6] p-2 text-[11px] leading-5">
           <p>보관 출처: {sourceViews[e.url!].source.sourceName||'미상'} · {sourceViews[e.url!].source.publishedAt||'발행일 미상'}</p>
           <p>저장 상태: {sourceViews[e.url!].sourceStatus}</p>
-          <p className="mt-1 whitespace-pre-wrap">{sourceViews[e.url!].source.articleExcerpt||sourceViews[e.url!].source.description||'기사 본문 미보관 · 제목 또는 메타데이터만 저장됨'}</p>
+          <p className="mt-1 whitespace-pre-wrap">{sourceViews[e.url!].source.articleBody||sourceViews[e.url!].source.articleExcerpt||sourceViews[e.url!].source.description||'기사 본문 미보관 · 제목 또는 메타데이터만 저장됨'}</p>
           {!!sourceViews[e.url!].revisions?.length&&<details className="mt-2">
            <summary className="cursor-pointer">원문 리비전 {sourceViews[e.url!].revisions!.length}개</summary>
            {sourceViews[e.url!].revisions!.map(r=><p key={r.id} className="mt-1 whitespace-pre-wrap border-t border-[#DFD3C3] pt-1">
-            {r.reason||'원문 기록'} · {r.capturedAt||'시각 미상'}: {r.content?.articleExcerpt||r.content?.description||'제목만 보관'}</p>)}
+            {r.reason||'원문 기록'} · {r.capturedAt||'시각 미상'}: {r.content?.articleBody||r.content?.articleExcerpt||r.content?.description||'제목만 보관'}</p>)}
           </details>}
          </div>}
         </div>)}
@@ -436,6 +454,12 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
       </details>
      </article>)}
      {!archiveLoading&&!archiveItems.length&&<p className="py-3 text-center text-xs text-[#8D7C6D]">해당 조건의 보존 후보가 없습니다.</p>}
+    </div>
+    <div className="mt-4 flex items-center justify-end gap-3 text-xs">
+     <button type="button" disabled={archiveOffset===0||archiveLoading} onClick={()=>setArchiveOffset(v=>Math.max(0,v-24))}
+      className="rounded-lg border border-[#D8CAB9] px-3 py-2 disabled:opacity-40">이전 24건</button>
+     <button type="button" disabled={archiveItems.length<24||archiveLoading} onClick={()=>setArchiveOffset(v=>v+24)}
+      className="rounded-lg border border-[#D8CAB9] px-3 py-2 disabled:opacity-40">다음 24건</button>
     </div>
    </>}
   </section>
