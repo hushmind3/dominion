@@ -113,14 +113,10 @@ fn mcp_observation_action(tool: &str) -> bool {
     ]
     .iter()
     .any(|verb| action == *verb || action.strip_prefix(verb).is_some_and(|rest| rest.starts_with('_')));
-    let mutating_suffix = [
-        "_create", "_update", "_delete", "_remove", "_write", "_patch",
-        "_send", "_post", "_submit", "_execute", "_commit", "_merge",
-        "_approve", "_transfer", "_publish",
-    ]
-    .iter()
-    .any(|verb| action.contains(verb));
-    read_verb && !mutating_suffix
+    // A composite get_and_delete is not a read, while get_commit,
+    // get_post and list_commits are ordinary observations.
+    let composite_action = action.contains("_and_") || action.contains("_then_");
+    read_verb && !composite_action
 }
 
 /// Reads are observations; writes, shells and non-GET API calls may change the
