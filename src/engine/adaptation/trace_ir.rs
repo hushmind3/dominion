@@ -219,6 +219,12 @@ pub fn validate_evidence_ids(adaptation:&Value, trace:&Value)->Result<(),String>
         .collect::<HashSet<_>>();
     for group in ["hypotheses","interventions"] {
         for item in adaptation[group].as_array().into_iter().flatten() {
+            if group=="interventions"
+                && crate::engine::effect::is_effectful(
+                    item["tool"].as_str().unwrap_or(""),&item["inputs"])
+                && item["evidenceIds"].as_array().is_none_or(Vec::is_empty) {
+                return Err("state-changing repair candidate must cite observed evidenceIds".into());
+            }
             for id in item["evidenceIds"].as_array().into_iter().flatten() {
                 let id=id.as_str().ok_or("evidenceIds must contain strings")?;
                 if id!="before" && id!="current-failure" && !allowed.contains(id) {
@@ -414,6 +420,19 @@ mod tests{
             "hypothesisIds":["h1"],"evidenceIds":["receipt-imaginary"]
         });
         assert!(action_certificate(&trace,&invalid,&hypotheses,&[],true).is_err());
+    }
+    #[test]
+    fn mutation_evidence_requirement_is_checked_before_probe_cost(){
+        let r=op("r1","x",1,"failed","resource");
+        let trace=compile(&[r],"x","workspace_read",&json!({"path":"x.rs"}));
+        let candidate=json!({"hypotheses":[{"id":"h1"}],
+            "interventions":[{"id":"fix","tool":"workspace_write",
+                "inputs":{"path":"x.rs","content":"new"},
+                "hypothesisIds":["h1"]}]});
+        assert!(validate_evidence_ids(&candidate,&trace).is_err());
+        let mut cited=candidate;
+        cited["interventions"][0]["evidenceIds"]=json!(["current-failure"]);
+        assert!(validate_evidence_ids(&cited,&trace).is_ok());
     }
     #[test]
     fn no_matched_receipt_produces_no_fabricated_lineage(){
