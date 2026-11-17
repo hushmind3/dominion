@@ -12,6 +12,7 @@ pub(crate) struct FailureGuidance {
     pub next_probe:&'static str,
     pub probe_tools:&'static [&'static str],
     pub error_excerpt:String,
+    pub verification_pending_after_edit:bool,
 }
 impl FailureGuidance {
     pub fn model_view(&self)->Value {
@@ -19,7 +20,9 @@ impl FailureGuidance {
             "failedTool":self.tool,"observedFailure":self.category,
             "errorExcerpt":self.error_excerpt,
             "suggestedNextInspection":self.next_probe,
-            "diagnosisStatus":"rule_based_observation_not_verified_cause"})
+            "diagnosisStatus":if self.verification_pending_after_edit {
+                "source_changed_recheck_pending"
+            } else { "rule_based_observation_not_verified_cause" }})
     }
 }
 fn diagnostic(receipt:&Receipt)->String {
@@ -90,19 +93,31 @@ fn classify(tool:&str,content:&str)
 pub(crate) fn latest(receipts:&[Receipt])->Option<FailureGuidance>{
     for (index,receipt) in receipts.iter().enumerate().rev(){
         if receipt.success||receipt.result["skipped"]==true{continue;}
-        let raw=diagnostic(receipt);
-        let (category,next_probe,probe_tools)=classify(&receipt.tool,&raw);
-        if matches!(category,
-           "compiler_diagnostic"|"test_assertion_failure"|"missing_path")
-           && receipts[index+1..].iter().any(|later|later.success
-             && matches!(later.tool.as_str(),
-                "workspace_write"|"workspace_replace"|"workspace_replace_range"
-                |"file_write"|"github_file_commit")) {
-            return None;
+        let later=&receipts[index+1..];
+        // Only a successful repeat of this exact invocation proves that the
+        // failed check has since passed. A successful write is a mutation,
+        // not a verification receipt; unrelated successful checks do not
+        // erase this failure either.
+        if later.iter().any(|newer|newer.success
+            && newer.tool==receipt.tool && newer.arguments==receipt.arguments){
+            continue;
         }
+        let raw=diagnostic(receipt);
+        let (category,original_probe,original_tools)=classify(&receipt.tool,&raw);
+        let verification_pending_after_edit=matches!(category,
+            "compiler_diagnostic"|"test_assertion_failure"|"missing_path")
+            && later.iter().any(|newer|newer.success
+                && matches!(newer.tool.as_str(),
+                    "workspace_write"|"workspace_replace"|"workspace_replace_range"
+                    |"file_write"|"github_file_commit"));
+        let (next_probe,probe_tools)=if verification_pending_after_edit {
+            ("Source changed since this failure; propose completion so the Rust kernel reruns required checks. Do not assume the edit fixed it.",
+                &[][..])
+        } else {(original_probe,original_tools)};
         return Some(FailureGuidance{
             receipt_id:receipt.id.clone(),tool:receipt.tool.clone(),
             category,next_probe,probe_tools,error_excerpt:tail(&raw,220),
+            verification_pending_after_edit,
         });
     }
     None
@@ -133,11 +148,49 @@ mod tests{
         }
     }
     #[test]
-    fn repaired_diagnostic_is_not_reintroduced_and_permission_stays_closed(){
+    fn source_edit_is_pending_verification_not_automatically_repaired(){
         let old=failure("compiler","shell_exec","error[E0308]: mismatched types");
         let changed=Receipt{id:"edit".into(),tool:"workspace_replace_range".into(),
-            arguments:json!({}),success:true,result:json!({"written":true}),step:2};
-        assert!(latest(&[old,changed]).is_none());
+            arguments:json!({"path":"src/lib.rs"}),success:true,
+            result:json!({"written":true}),step:2};
+        let hint=latest(&[old,changed]).unwrap();
+        assert_eq!(hint.category,"compiler_diagnostic");
+        assert_eq!(hint.model_view()["diagnosisStatus"],"source_changed_recheck_pending");
+        assert!(hint.probe_tools.is_empty());
+        let verified=Receipt{id:"green".into(),tool:"shell_exec".into(),
+            arguments:json!({}),success:true,result:json!({"exitCode":0}),step:3};
+        assert!(latest(&[
+            failure("compiler","shell_exec","error[E0308]: mismatched types"),
+            Receipt{id:"edit".into(),tool:"workspace_replace_range".into(),
+                arguments:json!({"path":"src/lib.rs"}),success:true,
+                result:json!({"written":true}),step:2},
+            verified,
+        ]).is_none());
+    }
+    #[test]
+    fn unrelated_success_never_silences_open_failure(){
+        let unrelated=Receipt{id:"other".into(),tool:"shell_exec".into(),
+            arguments:json!({"command":"echo ok"}),success:true,
+            result:json!({"exitCode":0}),step:3};
+        let hint=latest(&[
+            failure("compiler","shell_exec","error[E0308]: mismatched types"),
+            unrelated,
+        ]).unwrap();
+        assert_eq!(hint.category,"compiler_diagnostic");
+        assert!(!hint.verification_pending_after_edit);
+        // If the newer check passes, an older unrelated failure is still visible.
+        let cleared=Receipt{id:"green".into(),tool:"shell_exec".into(),
+            arguments:json!({}),success:true,result:json!({"exitCode":0}),step:3};
+        let earlier=failure("missing","workspace_read","No such file or directory");
+        let hint=latest(&[
+            earlier,
+            failure("compiler","shell_exec","error[E0308]: mismatched types"),
+            cleared,
+        ]).unwrap();
+        assert_eq!(hint.category,"missing_path");
+    }
+    #[test]
+    fn permission_denial_stays_closed(){
         let denied=failure("denied","mcp__private",
             &format!("{}permission denied","build log ".repeat(1000)));
         let hint=latest(&[denied]).unwrap();
