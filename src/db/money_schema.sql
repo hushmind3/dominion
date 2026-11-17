@@ -1,4 +1,14 @@
 -- Money Lab knowledge is indexed independently from chat memory.
+-- Human review status and append-only review/source lineage need searchable paths.
+CREATE INDEX IF NOT EXISTS idx_money_candidate_review_status
+    ON records(json_extract(data,'$.status'),updated_at DESC,id DESC)
+    WHERE kind='money_candidate';
+CREATE INDEX IF NOT EXISTS idx_money_review_candidate
+    ON records(json_extract(data,'$.candidateId'),json_extract(data,'$.revision') DESC)
+    WHERE kind='money_review';
+CREATE INDEX IF NOT EXISTS idx_money_source_revision
+    ON records(json_extract(data,'$.sourceId'),created_at DESC)
+    WHERE kind='money_source_revision';
 CREATE INDEX IF NOT EXISTS idx_money_campaign
     ON records(json_extract(data, '$.campaignId'), updated_at DESC)
     WHERE kind='money_candidate';

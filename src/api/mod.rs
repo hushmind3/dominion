@@ -2,6 +2,7 @@ mod response;
 pub mod money;
 mod money_find;
 mod money_implementation;
+mod money_review;
 #[cfg(test)]
 mod tests;
 pub mod translation;
@@ -64,6 +65,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/money/candidates/:id", get(money::candidate).post(money::update_candidate))
         .route("/api/money/candidates/:id/implement", post(money_implementation::launch))
         .route("/api/money/candidates/:id/implementation", get(money_implementation::status))
+        .route("/api/money/archive", get(money_review::archive))
+        .route("/api/money/source", get(money_review::source))
+        .route("/api/money/candidates/:id/review", post(money_review::review))
+        .route("/api/money/candidates/:id/reviews", get(money_review::history))
         .route("/api/money/candidates/:id/experiments", post(money::record_experiment))
         .route("/api/money/candidates/:id/validation-kit", post(money::create_validation_kit))
         .route("/api/status", get(system::status))
