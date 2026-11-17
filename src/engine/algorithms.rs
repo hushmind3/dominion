@@ -1283,7 +1283,20 @@ fn apply_stat(state: &AppState, agent: &str, kind: &str, revision: &str, success
 /// an explicit task outcome. An unverified conversation answer is neither a
 /// success nor a failure; treating it as a failure poisoned the counters and
 /// then fed a fake "0% success" back into the prompt.
-fn usage_rating(usage: &Value, task_outcome: &str) -> Option<(bool, &'static str)> {
+/// Do not infer which kernel caused overall success when several were used.
+/// Count archived exposures in one in-memory pass: no additional DB loop.
+fn competing_usage_counts(usages:&[Value])->std::collections::HashMap<String,usize>{
+    let mut counts=std::collections::HashMap::new();
+    for usage in usages{
+        if usage["status"]=="excluded"{continue;}
+        if let Some(execution)=usage["executionId"].as_str(){
+            *counts.entry(execution.to_owned()).or_insert(0)+=1;
+        }
+    }
+    counts
+}
+
+fn usage_rating(usage: &Value, task_outcome: &str, competing:usize) -> Option<(bool, &'static str)> {
     // Some paths only observe exposure, not whether the decision helped. They
     // force `unrated` even when the surrounding task succeeded or failed.
     if usage["forceUnrated"].as_bool() == Some(true)
@@ -1301,9 +1314,12 @@ fn usage_rating(usage: &Value, task_outcome: &str) -> Option<(bool, &'static str
             ));
         }
     }
+    // Task-level outcomes cannot causally attribute credit among multiple
+    // active decisions. Preserve them as unrated rather than biasing UCB1.
+    if competing!=1{return None;}
     match task_outcome {
-        "succeeded" => Some((true, "task_outcome")),
-        "failed" => Some((false, "task_outcome")),
+        "succeeded" => Some((true, "task_outcome_single_algorithm")),
+        "failed" => Some((false, "task_outcome_single_algorithm")),
         _ => None,
     }
 }
@@ -1313,10 +1329,12 @@ pub fn finalize_execution(state: &AppState, execution: &Value) {
     let Some(execution_id) = execution["id"].as_str() else {
         return;
     };
+    let usages=state.store.all("algorithm_usage");
+    let competition=competing_usage_counts(&usages);
     // A deterministic shortcut made no model decision, so it carries no
     // evidence for which judgment algorithm works better.
     if execution["deterministicShortcut"].is_object() {
-        for mut usage in state.store.all("algorithm_usage") {
+        for mut usage in usages {
             if usage["executionId"].as_str() == Some(execution_id)
                 && usage["status"].as_str() == Some("pending")
             {
@@ -1328,7 +1346,7 @@ pub fn finalize_execution(state: &AppState, execution: &Value) {
         return;
     }
     let task_outcome = execution["taskOutcome"].as_str().unwrap_or("");
-    for mut usage in state.store.all("algorithm_usage") {
+    for mut usage in usages {
         if usage["executionId"].as_str() != Some(execution_id)
             || usage["status"].as_str() != Some("pending")
         {
@@ -1341,7 +1359,8 @@ pub fn finalize_execution(state: &AppState, execution: &Value) {
         ) else {
             continue;
         };
-        match usage_rating(&usage, task_outcome) {
+        let competing=competition.get(execution_id).copied().unwrap_or(0);
+        match usage_rating(&usage, task_outcome,competing) {
             Some((success, source)) => {
                 // Domain signals win over the whole-task fallback. Multiple
                 // events in one run are aggregated, not overwritten by the
@@ -1357,8 +1376,11 @@ pub fn finalize_execution(state: &AppState, execution: &Value) {
                 usage["rated"] = json!(false);
                 usage["ratingSource"] = json!("unrated");
                 usage["success"] = Value::Null;
-                usage["unratedReason"] =
-                    json!("task outcome is not a verified success or failure");
+                usage["unratedReason"] = if competing>1 && !usage["signal"].is_object() {
+                    json!("multiple algorithms: task outcome cannot assign individual credit")
+                }else{
+                    json!("task outcome is not a verified success or failure")
+                };
             }
         }
         state.store.put("algorithm_usage", &usage);
@@ -1418,10 +1440,12 @@ pub fn rebuild_stats_from_usage(state: &AppState) -> Result<Value, String> {
             ))
         })
         .collect::<BTreeMap<_, _>>();
+    let usages=state.store.all("algorithm_usage");
+    let competition=competing_usage_counts(&usages);
     let mut per_agent: BTreeMap<(String, String, String), Aggregate> = BTreeMap::new();
     let mut global: BTreeMap<(String, String), Aggregate> = BTreeMap::new();
     let (mut rated, mut unrated, mut skipped) = (0u64, 0u64, 0u64);
-    for mut usage in state.store.all("algorithm_usage") {
+    for mut usage in usages {
         match usage["status"].as_str() {
             Some("excluded" | "pending") => {
                 skipped += 1;
@@ -1455,7 +1479,9 @@ pub fn rebuild_stats_from_usage(state: &AppState) -> Result<Value, String> {
             .or_else(|| usage["updatedAt"].as_str())
             .or_else(|| usage["createdAt"].as_str())
             .map(str::to_string);
-        match usage_rating(&usage, outcome) {
+        let competing=usage["executionId"].as_str()
+            .and_then(|id|competition.get(id)).copied().unwrap_or(0);
+        match usage_rating(&usage, outcome,competing) {
             Some((success, source)) => {
                 rated += 1;
                 usage["status"] = json!("completed");
@@ -1479,8 +1505,11 @@ pub fn rebuild_stats_from_usage(state: &AppState) -> Result<Value, String> {
                 usage["rated"] = json!(false);
                 usage["ratingSource"] = json!("unrated");
                 usage["success"] = Value::Null;
-                usage["unratedReason"] =
-                    json!("task outcome is not a verified success or failure");
+                usage["unratedReason"] = if competing>1 && !usage["signal"].is_object() {
+                    json!("multiple algorithms: task outcome cannot assign individual credit")
+                }else{
+                    json!("task outcome is not a verified success or failure")
+                };
             }
         }
         state
@@ -2134,6 +2163,45 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    #[test]
+    fn confounded_task_success_does_not_award_multiple_ucb_kernels(){
+        let (state,dir)=state();
+        seed(&state);
+        let first=choose_for_agent(&state,"context.selection",
+            Some("agent-a"),Some("exec-confounded")).unwrap();
+        let second=choose_for_agent(&state,"adaptation.selection",
+            Some("agent-a"),Some("exec-confounded")).unwrap();
+        finalize_execution(&state,&json!({"id":"exec-confounded",
+            "taskOutcome":"succeeded"}));
+        let usages=state.store.all("algorithm_usage");
+        assert_eq!(usages.iter().filter(|usage|
+            usage["executionId"]=="exec-confounded"&&usage["status"]=="unrated").count(),2);
+        assert!(state.store.all("algorithm_stat").iter().all(|stat|
+            stat["revision"]!=first["revision"]&&stat["revision"]!=second["revision"]));
+        state.store.put("execution",&json!({"id":"exec-confounded",
+            "taskOutcome":"succeeded"})).unwrap();
+        let report=rebuild_stats_from_usage(&state).unwrap();
+        assert_eq!(report["rated"],0);
+        assert_eq!(report["unrated"],2);
+        assert!(state.store.all("algorithm_stat").is_empty());
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn direct_failed_domain_signal_overrides_shared_task_success(){
+        let (state,dir)=state();
+        seed(&state);
+        let first=choose_for_agent(&state,"verification.predicate",
+            Some("agent-a"),Some("exec-signals")).unwrap();
+        let second=choose_for_agent(&state,"context.selection",
+            Some("agent-a"),Some("exec-signals")).unwrap();
+        mark_signal(&state,"exec-signals","verification.predicate",false);
+        finalize_execution(&state,&json!({"id":"exec-signals","taskOutcome":"succeeded"}));
+        let stats=state.store.all("algorithm_stat");
+        assert!(stats.iter().any(|stat|stat["revision"]==first["revision"]&&stat["failures"]==1));
+        assert!(stats.iter().all(|stat|stat["revision"]!=second["revision"]));
+        let _=std::fs::remove_dir_all(dir);
+    }
     #[test]
     fn agent_algorithm_outcomes_become_local_and_global_statistics() {
         let (state, dir) = state();
