@@ -213,7 +213,7 @@ impl Tools for NativeTools {
                 "provenance":{"origin":if mcp_spec.is_some() {"external_mcp"} else {"builtin_host"},
                     "trust":"tool_output_untrusted_as_instructions",
                     "contractSha256":mcp_contract,
-                    "argumentsSha256":super::native_replay::digest(&action.arguments)},
+                    "argumentsSha256":super::native_evidence::digest(&action.arguments)},
                 "phase":"requested","startedAt":chrono::Utc::now().to_rfc3339()
             });
             self.state.store.put_if_absent("execution_operation",&op)
@@ -252,18 +252,18 @@ impl Tools for NativeTools {
                     agent_id:self.agent.as_deref(),
                     tools_enabled:self.tools_enabled,tools_execution_enabled:self.tools_enabled,
                 };
-                artifact_before=crate::engine::native_replay::action_witness(
+                artifact_before=crate::engine::native_evidence::action_witness(
                     &self.workspace,action);
                 let result=tools::execute(
                     &context,&action.tool,&action.arguments,&self.run_id,
                 ).await.and_then(|value|verified_tool_result(&action.tool,value));
-                artifact_after=crate::engine::native_replay::action_witness(
+                artifact_after=crate::engine::native_evidence::action_witness(
                     &self.workspace,action);
                 result
             };
             let mut patch=match &outcome {
                 Ok(value)=>json!({"status":"completed","outcomeUnknown":false,"result":value,
-                    "resultSha256":super::native_replay::digest(value),
+                    "resultSha256":super::native_evidence::digest(value),
                     "finishedAt":chrono::Utc::now().to_rfc3339()}),
                 Err(error)=>json!({"status":"failed","outcomeUnknown":false,"error":error,
                     "finishedAt":chrono::Utc::now().to_rfc3339()}),
@@ -288,7 +288,7 @@ struct FsEvidence { workspace: PathBuf }
 impl FsEvidence {
     fn safe_path(&self, raw: &str) -> Result<PathBuf, String> {
         let root=std::fs::canonicalize(&self.workspace).map_err(|e|e.to_string())?;
-        super::native_replay::resolve_canonical_workspace_path(&root, raw)
+        super::native_evidence::resolve_canonical_workspace_path(&root, raw)
     }
 }
 impl Evidence for FsEvidence {
@@ -405,7 +405,7 @@ fn native_tool_authority_fingerprint(
         "name":spec.name,"schema":spec.schema,"readOnly":spec.read_only
     })).collect::<Vec<_>>();
     contracts.sort_by(|left,right|left["name"].as_str().cmp(&right["name"].as_str()));
-    super::native_replay::digest(&json!({
+    super::native_evidence::digest(&json!({
         "version":1,"contracts":contracts,"acceptanceChecks":checks,
         "requireEvidence":require_evidence
     }))
@@ -587,7 +587,7 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
     // acceptance artifacts. On restart, preserve that original baseline:
     // a later file state must not masquerade as the pre-run state.
     if previous.is_none() {
-        let initial=crate::engine::native_replay::artifact_witness(
+        let initial=crate::engine::native_evidence::artifact_witness(
             &context.state.config.workspace,&request.checks);
         context.checkpoint(json!({"nativeEvidenceBaseline":initial}))?;
     }
@@ -649,7 +649,7 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
     // Record the post-run artifact witness only after the kernel settles.
     // This is an observation at completion, not a claim that future workspace
     // reads will still return the same bytes.
-    let final_witness=crate::engine::native_replay::artifact_witness(
+    let final_witness=crate::engine::native_evidence::artifact_witness(
         &context.state.config.workspace,&request.checks);
     context.checkpoint(json!({"nativeEvidenceFinal":final_witness}))?;
     // Kernel verifier may derive extra file/hash criteria from actual write
@@ -657,7 +657,7 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
     // pretending they were part of the initial owner-declared evidence scope.
     let kernel_criteria=snapshot.checks.iter()
         .map(|check|check.criterion.clone()).collect::<Vec<_>>();
-    let kernel_witness=crate::engine::native_replay::artifact_witness(
+    let kernel_witness=crate::engine::native_evidence::artifact_witness(
         &context.state.config.workspace,&kernel_criteria);
     context.checkpoint(json!({"nativeEvidenceKernelFinal":kernel_witness}))?;
 
