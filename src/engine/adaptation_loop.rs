@@ -74,7 +74,7 @@ pub fn adaptation_prompt(
     before_observation: &Value,
     environment_fingerprint: &str,
 ) -> (String, String) {
-    let system = "You are the DOMINION adaptation planner. Given one failed action, propose DISTINCT causal hypotheses and DIFFERENT interventions. Output JSON only: {\"hypotheses\":[{\"id\":\"h1\",\"claim\":\"...\",\"evidenceIds\":[\"before\"],\"preconditions\":[],\"predictions\":[{\"observationTarget\":\"before\",\"observationPhase\":\"before_intervention\",\"predicate\":{\"type\":\"equals\",\"from\":\"before\",\"path\":\"/pathState/path/exists\",\"value\":false},\"expectedValue\":false}]}],\"interventions\":[{\"id\":\"i1\",\"hypothesisIds\":[\"h1\"],\"preconditions\":[],\"tool\":\"workspace_write\",\"inputs\":{...},\"expectedChecks\":[\"file_exists\"],\"expectedProgress\":0.7,\"uncertainty\":0.2,\"estimatedCost\":0.2}]}. Predictions about why the failure happened must use observationPhase=before_intervention and target the before observation; predictions about the result of an intervention use after_intervention. Missing fields are Unknown, never false. Each intervention must change the tool, arguments, or approach.";
+    let system = "You are the DOMINION adaptation planner. Given one failed action, propose DISTINCT causal hypotheses and DIFFERENT interventions. Output JSON only: {\"hypotheses\":[{\"id\":\"h1\",\"claim\":\"...\",\"evidenceIds\":[\"before\"],\"preconditions\":[],\"predictions\":[{\"observationTarget\":\"before\",\"observationPhase\":\"before_intervention\",\"predicate\":{\"type\":\"equals\",\"from\":\"before\",\"path\":\"/pathState/path/exists\",\"value\":false},\"expectedValue\":false}]}],\"interventions\":[{\"id\":\"i1\",\"hypothesisIds\":[\"h1\"],\"preconditions\":[],\"tool\":\"workspace_write\",\"inputs\":{...},\"expectedChecks\":[{\"predicate\":{\"type\":\"equals\",\"from\":\"after\",\"path\":\"/pathState/path/exists\",\"value\":true}}],\"expectedProgress\":0.7,\"uncertainty\":0.2,\"estimatedCost\":0.2}]}. Predictions about why the failure happened must use observationPhase=before_intervention and target the before observation; predictions about the result of an intervention use after_intervention. Missing fields are Unknown, never false. Use typed expectedChecks on host-observed after/pathState fields for writes; plain strings or echoing result.ok do not prove progress. Each intervention must change the tool, arguments, or approach.";
     let prompt = format!(
         "Failed action: tool={tool}\nArguments: {}\nObserved error: {}\nEnvironment version: {environment_version}\nEnvironment fingerprint: {environment_fingerprint}\nBefore observation (authoritative): {}\nAvailable tools include workspace_read, workspace_write, workspace_list, shell_exec, terminal_exec.\nReturn JSON only.",
         arguments, error, before_observation
@@ -589,6 +589,7 @@ pub fn evaluate_intervention_outcome(
     intervention: &Value,
     before: &Value,
     after: &Value,
+    result: &Value,
     tool_succeeded: bool,
 ) -> Value {
     if !tool_succeeded {
@@ -606,12 +607,14 @@ pub fn evaluate_intervention_outcome(
     }
     let mut executable = Vec::new();
     let mut opaque = 0usize;
+    let mut host_state_check = false;
     for check in checks {
         let predicate = check.get("predicate")
             .filter(|value| value.is_object())
             .or_else(|| check.get("type").filter(|value| value.is_string())
                 .map(|_| check));
         if let Some(predicate) = predicate {
+            host_state_check |= predicate["from"] == "after";
             executable.push(json!({"predicate":predicate}));
         } else {
             opaque += 1;
@@ -621,23 +624,34 @@ pub fn evaluate_intervention_outcome(
         return json!({"status":"unrated","reason":"checks_are_not_executable",
             "verifiedChecks":0,"unverifiedChecks":opaque});
     }
-    let scope = json!({"before":before,"after":after,"result":after});
+    // This is independent host-observed state for the *selected* intervention,
+    // not a self-reported field inside the original tool result.
+    let state_changed = before["pathState"].is_object()
+        && after["pathState"].is_object()
+        && before["pathState"] != after["pathState"];
+    let scope = json!({"before":before,"after":after,"result":result});
     match crate::engine::program::evaluate_verification_checks(&executable, &scope) {
         Ok(evaluation) => {
             let status = if evaluation["failed"] == true {
                 "failed"
-            } else if evaluation["ok"] == true && opaque == 0 {
+            } else if evaluation["ok"] == true && opaque == 0
+                && host_state_check && state_changed
+            {
                 "verified"
             } else {
                 "unrated"
             };
             json!({
                 "status":status,
-                "reason":if status=="verified" {"expected_postconditions_passed"}
+                "reason":if status=="verified" {"host_observed_postcondition_passed"}
                     else if status=="failed" {"expected_postcondition_refuted"}
-                    else {"incomplete_or_unknown_evidence"},
+                    else {"missing_independent_state_change_or_complete_checks"},
                 "verifiedChecks":executable.len(),
                 "unverifiedChecks":opaque,
+                "hostStateCheck":host_state_check,
+                "hostStateChanged":state_changed,
+                "beforePathState":before["pathState"],
+                "afterPathState":after["pathState"],
                 "evaluation":evaluation,
             })
         }
@@ -775,25 +789,31 @@ mod selection_tests {
     #[test]
     fn intervention_success_requires_actual_executable_postconditions() {
         let old = json!({"pathState":{"path":{"exists":false}}});
-        let after = json!({"saved":true,"path":"result.txt"});
+        let after = json!({"pathState":{"path":{"exists":true,"len":5}}});
+        let outcome = json!({"saved":true,"path":"result.txt"});
         let observed = json!({"expectedChecks":[{
+            "predicate":{"type":"equals","from":"after",
+                "path":"/pathState/path/exists","value":true}
+        }]});
+        assert_eq!(evaluate_intervention_outcome(
+            &observed,&old,&after,&outcome,true)["status"],"verified");
+        assert_eq!(evaluate_intervention_outcome(
+            &observed,&old,&old,&outcome,true)["status"],"failed");
+        assert_eq!(evaluate_intervention_outcome(
+            &observed,&old,&json!({}),&outcome,true)["status"],"unrated");
+        assert_eq!(evaluate_intervention_outcome(
+            &observed,&old,&after,&outcome,false)["status"],"failed");
+        let prose = json!({"expectedChecks":["file_exists","write succeeded"]});
+        assert_eq!(evaluate_intervention_outcome(
+            &prose,&old,&after,&outcome,true)["status"],"unrated");
+        // A model repeating the tool's own success flag is never rated as
+        // independently verified, even if the host filesystem did change.
+        let echo = json!({"expectedChecks":[{
             "predicate":{"type":"equals","from":"result","path":"/saved","value":true}
         }]});
-        assert_eq!(evaluate_intervention_outcome(&observed,&old,&after,true)["status"],"verified");
-        assert_eq!(evaluate_intervention_outcome(&observed,&old,
-            &json!({"saved":false}),true)["status"],"failed");
-        assert_eq!(evaluate_intervention_outcome(&observed,&old,
-            &json!({}),true)["status"],"unrated");
-        assert_eq!(evaluate_intervention_outcome(&observed,&old,&after,false)["status"],"failed");
-        let prose = json!({"expectedChecks":["file_exists","write succeeded"]});
-        assert_eq!(evaluate_intervention_outcome(&prose,&old,&after,true)["status"],"unrated");
-        let mixed = json!({"expectedChecks":[
-            {"predicate":{"type":"equals","from":"result","path":"/saved","value":true}},
-            "unverified user-facing condition"
-        ]});
-        assert_eq!(evaluate_intervention_outcome(&mixed,&old,&after,true)["status"],"unrated");
+        assert_eq!(evaluate_intervention_outcome(
+            &echo,&old,&after,&outcome,true)["status"],"unrated");
     }
-
     #[test]
     fn contrastive_diagnostic_selection_requires_disagreeing_predictions() {
         let adaptations = json!({
