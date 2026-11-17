@@ -712,6 +712,65 @@ mod tests {
         assert_eq!(tool.qualified(), "mcp__echo_lab__echo");
     }
 
+    #[tokio::test]
+    async fn stdio_reuses_one_live_mcp_process_and_rotates_on_config_change() {
+        // The shipped fixture is a real stdio MCP child, not a fake
+        // transport. Hosted CI installs Node before the full test matrix.
+        if std::process::Command::new("node").arg("--version").output().is_err() {
+            eprintln!("node unavailable; stdio fixture skipped");
+            return;
+        }
+        let state=temp_state();
+        let script=std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("scripts/mcp-echo-server.mjs");
+        assert!(script.is_file(),"missing real MCP stdio fixture");
+        let log=state.config.data_dir.join("mcp-initializations.log");
+        let server=json!({
+            "id":"mcp-pool-echo","name":"Echo Lab","enabled":true,
+            "transport":"stdio","command":"node",
+            "args":[script.to_string_lossy()],
+            "env":{"DOMINION_MCP_TEST_INIT_LOG":log.to_string_lossy()}
+        });
+        state.store.put("mcp",&server).unwrap();
+        let tools=tools(&state).await;
+        assert_eq!(tools.len(),1);
+        let qualified=tools[0].qualified();
+        for text in ["first","second"] {
+            let result=tokio::time::timeout(Duration::from_secs(10),
+                call(&state,&qualified,&json!({"text":text})))
+                .await.expect("MCP response timed out").unwrap();
+            assert!(result.to_string().contains(&format!("MCP_ECHO: {text}")));
+        }
+        // The first discovery and two tool calls all borrowed the same
+        // long-lived child; an idle stdio server must not restart per call.
+        assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(),1);
+        let pinned=tokio::time::timeout(Duration::from_secs(10),call_pinned(
+            &state,&qualified,&json!({"text":"verified"}),
+            &tools[0].schema,&tools[0].description,
+        )).await.expect("pinned MCP response timed out").unwrap();
+        assert!(pinned.to_string().contains("MCP_ECHO: verified"));
+        assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(),1);
+        let cloned=state.clone();
+        call(&cloned,&qualified,&json!({"text":"shared"})).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(),1);
+
+        let mut changed=server.clone();
+        changed["env"]["DOMINION_MCP_TEST_CONFIG"]=json!("reconfigured");
+        state.store.put("mcp",&changed).unwrap();
+        invalidate(&state);
+        call(&state,&qualified,&json!({"text":"after-config"})).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(),2);
+
+        // A rotated secret changes the pool identity even if the public
+        // server record was not edited.
+        state.save_secret("mcp:mcp-pool-echo","rotated");
+        call(&state,&qualified,&json!({"text":"after-rotation"})).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(),3);
+        assert!(state.mcp_sessions.idle.lock().unwrap().len()<=1);
+        drop(cloned);
+        drop(state);
+    }
+
     #[test]
     fn mcp_approval_follows_policy() {
         let state = temp_state();
