@@ -2,6 +2,18 @@
 
 Money originated in the experimental `money` branch and is selectively integrated into `main`. It uses the existing Rust harness and durable jobs without replacing the execution kernel.
 
+## Detachable capability boundary
+
+Money is **one tool in Dominion**, not a second engine, independent backend or long-lived separate database. The core owns the agent runtime, scheduled job workers, approval/cancellation/recovery, HTTP retrieval, providers and shared SQLite connection. Money contributes only:
+
+- `src/api/money_routes.rs` — one optional HTTP route bundle registered by the common API router.
+- `src/engine/money_tool.rs` — one scheduler hook plus one job-kind dispatch adapter registered by the common job worker.
+- `src/db/money.rs` — Money-owned schema/index declarations and reads/writes on the same shared `records` connection. Stored rows retain their `money_*` kind and can remain archived after detaching the tool.
+- `web/src/pages/Money.tsx` and the `money` navigation entry — removable presentation only.
+
+No Money-specific polling loop, database file, custom LLM runner, or parallel durable queue is required. Removing the capability means unregistering its route/worker hooks and optional navigation and disabling its schema extension; core records and all unrelated workflows remain intact. This is a code boundary, **not** a runtime plugin installation/uninstallation API.
+
+
 ## Current user experience — one button, three saved drafts (2026-11-17)
 
 Money has a **single primary action**: `돈벌이 찾기`. Pressing it calls `POST /api/money/find` to select up to three opportunities from the already-collected, source-labelled SQLite corpus, immediately store their business drafts, and show each draft's potential customer, economic mechanism, implementation outline, first paid validation step, and source links. There is no form, model selector, separate draft-approval click, news dashboard or analytics submenu on the Money home. The prior six Money UI-only components have been removed.
