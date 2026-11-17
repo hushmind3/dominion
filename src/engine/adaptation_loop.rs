@@ -221,7 +221,10 @@ fn intervention_key(tool: &str, inputs: &Value) -> String {
 /// not information gain. Only exact-value predictions are contrasted:
 /// ranges and existence claims may overlap and must not be treated as mutually
 /// exclusive without real observations.
-fn predicted_values(hypothesis: &Value) -> std::collections::BTreeMap<String, String> {
+fn predicted_values(
+    hypothesis: &Value,
+    observed_slots: &std::collections::HashSet<(String, String)>,
+) -> std::collections::BTreeMap<String, String> {
     let mut values = std::collections::BTreeMap::new();
     for prediction in hypothesis["predictions"].as_array().into_iter().flatten() {
         if prediction["observationPhase"].as_str().unwrap_or("after_intervention")
@@ -230,6 +233,11 @@ fn predicted_values(hypothesis: &Value) -> std::collections::BTreeMap<String, St
             continue;
         }
         let predicate = &prediction["predicate"];
+        let from = predicate["from"].as_str().unwrap_or("result");
+        let path = predicate["path"].as_str().unwrap_or("");
+        if !observed_slots.contains(&(from.to_owned(), path.to_owned())) {
+            continue;
+        }
         let kind = predicate["type"].as_str().unwrap_or("");
         let expected = match kind {
             "equals" => predicate.get("value"),
@@ -251,13 +259,22 @@ fn contrastive_gain(
     hypotheses: &[Value],
     hypothesis_ids: &[Value],
     refuted: &[String],
+    expected_checks: &[Value],
 ) -> (f64, usize) {
+    let observed_slots = expected_checks.iter().filter_map(|check| {
+        let predicate = check.get("predicate").filter(Value::is_object)
+            .unwrap_or(check);
+        Some((
+            predicate["from"].as_str()?.to_owned(),
+            predicate["path"].as_str().unwrap_or("").to_owned(),
+        ))
+    }).collect::<std::collections::HashSet<_>>();
     let active = hypotheses.iter().filter(|h| {
         let Some(id) = h["id"].as_str() else { return false; };
         !refuted.iter().any(|old|old==id)
             && (hypothesis_ids.is_empty()
                 || hypothesis_ids.iter().any(|v|v.as_str()==Some(id)))
-    }).map(predicted_values).collect::<Vec<_>>();
+    }).map(|h| predicted_values(h, &observed_slots)).collect::<Vec<_>>();
     let mut contradicted = 0usize;
     let mut all_pairs = 0usize;
     for (i, a) in active.iter().enumerate() {
@@ -389,6 +406,7 @@ pub fn choose_intervention_with_policy(
                 .clamp(0.0, 1.0);
             let (discrimination, contrasted_pairs) = contrastive_gain(
                 &hypotheses, &hypothesis_ids, refuted_hypotheses,
+                item["expectedChecks"].as_array().map(Vec::as_slice).unwrap_or(&[]),
             );
             // Model-asserted historical success is not a historical outcome.
             // Give it weight only when the declared evidence is resolvable in
@@ -581,7 +599,6 @@ pub fn evaluate_hypotheses(adaptation: &Value, result: &Value) -> Vec<Value> {
     evaluate_hypotheses_phased(adaptation, result, result)
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Score a proposed intervention against *observed* postconditions. A tool
 /// returning successfully is a transport fact, not proof the repair worked.
 /// Human-readable expectedChecks are retained but are not executable proof.
@@ -663,6 +680,7 @@ pub fn evaluate_intervention_outcome(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn record_adaptation(
     state: &AppState,
     execution_id: &str,
@@ -829,6 +847,8 @@ mod selection_tests {
                     "estimatedCost":0.1},
                 {"id":"inspect","hypothesisIds":["h1","h2"],"tool":"workspace_read",
                     "inputs":{"path":"x"},"expectedProgress":0.3,
+                    "expectedChecks":[{"predicate":{"type":"exists",
+                        "from":"result","path":"/reason"}}],
                     "estimatedCost":0.1}
             ]
         });
@@ -843,6 +863,14 @@ mod selection_tests {
                 "inputs":{"path":"x"},"expectedProgress":0.3,"estimatedCost":0.1}]});
         let chosen = choose_intervention(&inflated,"shell_exec",&json!({}),false).unwrap();
         assert_eq!(chosen["evaluation"]["hypothesisDiscrimination"],0.0);
+        let unrelated = json!({"hypotheses":adaptations["hypotheses"],
+            "interventions":[{"id":"wrong_probe","hypothesisIds":["h1","h2"],
+                "tool":"workspace_read","inputs":{"path":"x"},
+                "expectedChecks":[{"predicate":{"type":"exists",
+                    "from":"result","path":"/unrelated"}}],
+                "estimatedCost":0.1}]});
+        let checked = choose_intervention(&unrelated,"shell_exec",&json!({}),false).unwrap();
+        assert_eq!(checked["evaluation"]["hypothesisDiscrimination"],0.0);
     }
 
 }
