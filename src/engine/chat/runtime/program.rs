@@ -704,9 +704,12 @@ pub(super) async fn execute_program_tool(
     // The old code marked it completed even on failure, causing
     // apply_revision_proposal to reject any replacement of the failed node.
     // Other legacy nodes retain their previous terminal completion behavior.
-    if program_operation_completed(ok, node["onFailure"].as_str()) {
+    // A transport/gateway admission is not proof that a tool succeeded.
+    // Only the real execution result can complete a revisable node.
+    let observed_success = ok && tool_succeeded(&result);
+    if program_operation_completed(observed_success, node["onFailure"].as_str()) {
         mark_program_completed(checkpoint, node_id);
-        if ok {
+        if observed_success {
             if let Some(failed)=checkpoint["failedOperationIds"].as_array_mut() {
                 failed.retain(|item|item.as_str()!=Some(node_id));
             }
@@ -1662,9 +1665,9 @@ pub(super) async fn run_program(
                 checkpoint["status"] = json!("running");
                 save_revised_program(state, execution_id, &revised);
                 save_program_checkpoint(state, execution_id, &checkpoint);
-                crate::engine::algorithms::mark_signal(
-                    state, execution_id, "program.repair", true,
-                );
+                // A selected patch is not a successful repair. Attribute
+                // success only after the revised program and its postflight
+                // complete with observed true results.
                 messages.push(json!({
                     "role":"system",
                     "content": format!(
@@ -1765,6 +1768,9 @@ pub(super) async fn run_program(
             // read-back evidence failed. Existing effects remain recorded;
             // automatic retries cannot replay those already completed.
             checkpoint["status"]=json!("needs_review");
+            crate::engine::algorithms::mark_signal(
+                state, execution_id, "program.repair", false,
+            );
             checkpoint["programFailure"]=json!({
                 "nodeId":"postflight",
                 "reason":reason,
@@ -1795,6 +1801,9 @@ pub(super) async fn run_program(
         return Ok(messages);
     }
     if !checkpoint["programFailure"].is_null() {
+        crate::engine::algorithms::mark_signal(
+            state, execution_id, "program.repair", false,
+        );
         // The program could not be repaired. Do not pretend it completed:
         // preserve the failure and require review/model continuation.
         checkpoint["status"] = json!("needs_review");
@@ -1808,6 +1817,11 @@ pub(super) async fn run_program(
             )
         }));
         return Ok(messages);
+    }
+    if current_program["repairTournament"].is_object() {
+        crate::engine::algorithms::mark_signal(
+            state, execution_id, "program.repair", true,
+        );
     }
     checkpoint["nextIndex"] = json!(node_count);
     checkpoint["status"] = json!("completed");
