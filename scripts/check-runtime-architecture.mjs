@@ -12,6 +12,24 @@ if(!product||!core)throw Error('Missing product/native core workspace member')
 for(const pkg of members)if(!existsSync(pkg.manifest_path))throw Error('Missing manifest: '+pkg.manifest_path)
 if(!product.dependencies.some(dep=>dep.name===core.name&&dep.path===path.dirname(core.manifest_path)))
   throw Error('Product must embed the Rust native execution core')
+// Keep real-process E2E contracts focused while preventing a silent loss
+// of the original cases during test refactors.
+const e2eModules=['room_identity','room_collaboration','run_recovery',
+  'experiments_backup','adaptation_program','preflight_tools','http_execution',
+  'procedure_collaboration','codex_and_sdk']
+const e2eRoot=readFileSync(path.join(root,'tests/e2e.rs'),'utf8')
+if(e2eRoot.split('\n').length>1000)throw Error('E2E shared harness has grown too large')
+let e2eCases=0
+for(const name of e2eModules){
+  const file='tests/e2e/'+name+'.rs'
+  if(!e2eRoot.includes('mod '+name+';'))throw Error('E2E module missing from root: '+name)
+  const body=readFileSync(path.join(root,file),'utf8')
+  const lines=body.split('\n').length
+  if(lines>1500)throw Error('E2E module grew past 1500 lines: '+file+' ('+lines+')')
+  e2eCases+=(body.match(/^#\[test\]/gm)||[]).length
+}
+if(e2eCases!==106)throw Error('E2E regression tests lost or duplicated: '+e2eCases+' (expected 106)')
+
 const runtime=readFileSync(path.join(root,'src/engine/chat/runtime.rs'),'utf8')
 const adapter=readFileSync(path.join(root,'src/engine/chat/product.rs'),'utf8')
 const chatPaths=[
