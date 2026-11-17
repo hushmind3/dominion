@@ -858,6 +858,4 @@ impl Store {
         Ok(value)
     }
 
-    /// Transaction that only commits when the current record still has the
-    /// expected status value. Returns false on a CAS miss.
 }
