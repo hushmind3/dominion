@@ -82,7 +82,13 @@ pub async fn cancel(State(state): State<AppState>, Path(id): Path<String>) -> Re
         &id,
         "status",
         &json!("running"),
-        &json!({"status":"cancelled","reason":"사용자 요청으로 중단","finishedAt":now}),
+        &json!({
+            "status":"cancelled",
+            "phase": crate::engine::run_state::CANCELLED,
+            "phaseUpdatedAt": now,
+            "reason":"사용자 요청으로 중단",
+            "finishedAt": now,
+        }),
     ) {
         Some(saved) => {
             state.bus.record("execution", &saved);
@@ -128,5 +134,46 @@ pub async fn reconcile_budget(State(state):State<AppState>,Path(id):Path<String>
     };
     match crate::engine::execution_budget::reconcile(&state,&execution,call,charged,details){
         Ok(tree)=>Json(tree).into_response(),Err(error)=>(StatusCode::CONFLICT,Json(json!({"error":error}))).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{config::Config, db::Store, vault::Vault};
+
+    #[tokio::test]
+    async fn execution_cancel_commits_status_and_phase_in_the_same_patch() {
+        let dir = std::env::temp_dir().join(format!("dominion-execution-cancel-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = Config {
+            port: 0,
+            data_dir: dir.clone(),
+            web_dir: dir.join("web"),
+            workspace: dir.clone(),
+        };
+        let store = Store::open(&config.db_path()).unwrap();
+        let vault = Vault::open(&config.key_path());
+        let state = AppState::new(config, store, vault);
+        state.store.put("session", &json!({"id":"s"}));
+        state.store.put("execution", &json!({
+            "id":"e","sessionId":"s","status":"running","phase":"running",
+            "kernelState":{"native":{"id":"unchanged"}}
+        }));
+        let response = cancel(State(state.clone()), Path("e".into())).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let record = state.store.get("execution", "e").unwrap();
+        assert_eq!(record["status"], "cancelled");
+        assert_eq!(record["phase"], "cancelled");
+        assert_eq!(record["phaseUpdatedAt"], record["finishedAt"]);
+        assert!(record["finishedAt"].is_string());
+        assert_eq!(record["kernelState"]["native"]["id"], "unchanged");
+        // An in-flight stale phase event must never reopen a cancelled run.
+        crate::engine::run_state::apply(&state, "e", "verify");
+        let after = state.store.get("execution", "e").unwrap();
+        assert_eq!(after["status"], "cancelled");
+        assert_eq!(after["phase"], "cancelled");
+        drop(state);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
