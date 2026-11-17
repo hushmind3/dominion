@@ -187,6 +187,7 @@ pub(crate) fn digest(v:&Value)->String{
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest,Sha256};
     #[test]
     fn kernel_witness_projection_reuses_bytes_and_preserves_owner_verdict_order() {
         let root=std::env::temp_dir().join(format!(
