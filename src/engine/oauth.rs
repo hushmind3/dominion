@@ -400,6 +400,24 @@ pub fn access_token(state: &AppState, id: &str) -> Option<String> {
 /// Refresh long-lived service grants in the vault; Google identity and YouTube
 /// intentionally have independent grants, expiry and disconnect operations.
 pub async fn fresh_access_token(state: &AppState, id: &str) -> Result<String, String> {
+    if id=="github"&&config(state,"github")
+        .is_some_and(|v|v["authSource"]=="github_cli"){
+        // GitHub CLI owns its browser grant and rotates/refreshes credentials
+        // itself. Read the CURRENT token, pinned to the connected username;
+        // do not reuse a stale copied bearer when the CLI is logged out.
+        let record=config(state,"github").ok_or("GitHub account missing")?;
+        let name=record["account"].as_str().unwrap_or("");
+        if name.is_empty()||name.len()>128||
+           !name.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-'){
+            return Err("Connected GitHub username is invalid".into());
+        }
+        let token=cli_output("gh",&["auth","token","--hostname","github.com","--user",name])
+            .await?.trim().to_string();
+        if token.len()<12||token.len()>8192{
+            return Err("GitHub CLI authorization has expired; reconnect GitHub".into());
+        }
+        return Ok(token);
+    }
     let raw = state
         .read_secret(&format!("oauth:{id}:token"))
         .ok_or("계정을 먼저 연결하세요.")?;
