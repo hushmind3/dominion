@@ -25,6 +25,10 @@ on:
       - 'src/engine/chat/budget.rs'
       - 'src/engine/chat/kernel_bridge.rs'
       - 'src/engine/chat/mod.rs'
+      - 'src/engine/mcp.rs'
+      - 'src/api/collections.rs'
+      - 'src/state.rs'
+      - 'scripts/mcp-echo-server.mjs'
       - 'src/engine/workflows.rs'
       - 'src/engine/jobs.rs'
       - 'src/api/mod.rs'
@@ -47,6 +51,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.12.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
       - name: Validate monotonic shared budget and bounded failure/receipt projection
         run: |
           cargo test -p dominion-agent-sdk --lib restore_cannot_refund_parallel_tool_or_proposal_usage
@@ -66,6 +75,8 @@ jobs:
           cargo test -p dominion-agent-sdk --lib builtin_tool_effect_policy_is_consistent_and_fails_closed
           cargo test --bin dominion-rust engine::chat::budget::tests -- --nocapture
           cargo test --bin dominion-rust engine::chat::kernel_bridge::tests -- --nocapture
+      - name: Verify real MCP stdio and HTTP sessions, pinning and credential rotation
+        run: cargo test --bin dominion-rust engine::mcp::tests -- --nocapture
       - name: Compile full Dominion Rust host and run native adapter contract tests
         run: cargo test --manifest-path Cargo.toml --bin dominion-rust native_ -- --nocapture
       - name: Retired media and RSI jobs cannot restart and existing history survives
@@ -76,11 +87,6 @@ jobs:
         run: cargo test --manifest-path Cargo.toml --bin dominion-rust engine::chat::codex_ws::tests -- --nocapture
       - name: Test replay-safe workflow step recovery through host storage
         run: cargo test --manifest-path Cargo.toml --bin dominion-rust recover_new_workflow_reuses_durable_rust_sdk_child -- --nocapture
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24.12.0'
-          cache: npm
-          cache-dependency-path: web/package-lock.json
       - name: Compile the actual main-based GUI against the Rust job API client
         run: |
           npm ci --prefix web
