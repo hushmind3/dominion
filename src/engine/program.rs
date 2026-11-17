@@ -20,9 +20,9 @@ pub fn validate(program: &Value) -> Result<Value, String> {
     let mut identifiers = std::collections::HashSet::new();
     let mut total = 0usize;
     for node in nodes {
-        validate_node(node)?;
-        validate_identifiers(node, &mut identifiers)?;
+        // Bound recursion before walking every descendant's schema.
         count_program_nodes(node, 0, &mut total, 128)?;
+        validate_identifiers(node, &mut identifiers)?;
     }
     Ok(json!({"revision": revision, "nodes": nodes}))
 }
@@ -72,28 +72,17 @@ fn validate_node(node: &Value) -> Result<(), String> {
             if node["then"].as_array().is_none() || node["else"].as_array().is_none() {
                 return Err("branch.then/else must be arrays".into());
             }
-            for child in node["then"].as_array().into_iter().flatten()
-                .chain(node["else"].as_array().into_iter().flatten())
-            {
-                validate_node(child)?;
-            }
             Ok(())
         }
         "loop" => {
             if node["body"].as_array().is_none() {
                 return Err("loop.body must be an array".into());
             }
-            for child in node["body"].as_array().into_iter().flatten() {
-                validate_node(child)?;
-            }
             Ok(())
         }
         "sequence" | "parallel" => {
             if node["nodes"].as_array().is_none() {
                 return Err(format!("{}.nodes must be an array", node["type"]));
-            }
-            for child in node["nodes"].as_array().into_iter().flatten() {
-                validate_node(child)?;
             }
             Ok(())
         }
