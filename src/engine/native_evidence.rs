@@ -117,6 +117,48 @@ pub(crate) fn artifact_witness(workspace:&std::path::Path,checks:&[Criterion])->
   "entries":entries,"directVerdicts":verdicts})
 }
 
+/// Project already-captured kernel witnesses back onto the owner's original
+/// criterion prefix. SDK final verification appends derived artifact checks
+/// after explicit owner checks. Reuse one read/hash per file instead of
+/// reading every owner file again on successful task completion.
+///
+/// Return None on legacy or non-prefix checkpoints; the caller can safely
+/// perform an independent owner-scope scan in those cases.
+pub(crate) fn project_owner_witness(
+    kernel_witness: &Value,
+    owner: &[Criterion],
+    kernel: &[Criterion],
+) -> Option<Value> {
+    let verdicts = kernel_witness["directVerdicts"].as_array()?;
+    let all_entries = kernel_witness["entries"].as_object()?;
+    if kernel.len() != verdicts.len() || owner.len() > kernel.len() {
+        return None;
+    }
+    if !owner.iter().zip(kernel.iter()).all(|(left, right)|
+        json!(left) == json!(right)) {
+        return None;
+    }
+    let mut entries = serde_json::Map::new();
+    for criterion in owner {
+        if criterion.kind == CriterionKind::ToolSucceeded {
+            continue;
+        }
+        let path = criterion.path.as_deref()?;
+        entries.insert(path.to_owned(), all_entries.get(path)?.clone());
+    }
+    let complete = entries.values().all(|entry|
+        matches!(entry["state"].as_str(), Some("file" | "missing")));
+    let direct = verdicts.iter().take(owner.len()).cloned().collect::<Vec<_>>();
+    Some(json!({
+        "complete":complete,
+        "scope":"acceptance_artifact_paths_only",
+        "workspaceRootDigest":kernel_witness["workspaceRootDigest"],
+        "criteriaDigest":digest(&json!(owner)),
+        "entries":entries,
+        "directVerdicts":direct
+    }))
+}
+
 /// Capture one first-party workspace effect's pre/post image without
 /// reading raw content into the journal. Opaque shell/MCP/browser effects
 /// intentionally return null: their affected paths cannot be fabricated.
@@ -140,4 +182,35 @@ pub(crate) fn action_witness(
 
 pub(crate) fn digest(v:&Value)->String{
  format!("{:x}",Sha256::digest(v.to_string().as_bytes()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn kernel_witness_projection_reuses_bytes_and_preserves_owner_verdict_order() {
+        let root=std::env::temp_dir().join(format!(
+            "dominion-evidence-project-{}",uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("proof.txt"),b"data").unwrap();
+        let owner=vec![
+            Criterion{kind:CriterionKind::FileExists,
+                path:Some("proof.txt".into()),contains:None,tool:None},
+            Criterion{kind:CriterionKind::ToolSucceeded,
+                path:None,contains:None,tool:Some("shell_exec".into())}
+        ];
+        let mut kernel=owner.clone();
+        kernel.push(Criterion{kind:CriterionKind::FileSha256,
+            path:Some("proof.txt".into()),
+            contains:Some(format!("{:x}",Sha256::digest(b"data"))),tool:None});
+        let full=artifact_witness(&root,&kernel);
+        let projected=project_owner_witness(&full,&owner,&kernel).unwrap();
+        assert_eq!(projected,artifact_witness(&root,&owner));
+        assert_eq!(projected["directVerdicts"],json!([true,null]));
+        let mut reordered=kernel.clone();
+        reordered.swap(0,1);
+        assert!(project_owner_witness(&full,&owner,&reordered).is_none());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }
