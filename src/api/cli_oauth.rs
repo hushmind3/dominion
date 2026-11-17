@@ -1,6 +1,7 @@
 //! Official CLI OAuth broker: runs the login behind a pseudo terminal, not Terminal.app.
 //! OAuth credentials remain with the CLI; DOMINION never imports subscription tokens.
-use axum::{extract::Path,http::StatusCode,response::{IntoResponse,Response},Json};
+use axum::{extract::{Path,State},http::StatusCode,response::{IntoResponse,Response},Json};
+use crate::state::AppState;
 use serde::Deserialize;
 use serde_json::{json,Value};
 use std::{collections::HashMap,path::{Path as FilePath,PathBuf},process::Stdio,sync::{Arc,OnceLock},time::{Duration,UNIX_EPOCH}};
@@ -22,6 +23,12 @@ fn command(source:&str, provider:Option<&str>)->Result<(&'static str,Vec<String>
     match source {
         "claude"=>Ok(("claude",vec!["auth".into(),"login".into()])),
         "gemini"=>Ok(("gemini",vec![])),
+        "github"=>Ok(("gh",vec!["auth".into(),"login".into(),
+            "--web".into(),"--hostname".into(),"github.com".into(),
+            "--git-protocol".into(),"https".into(),
+            "--scopes".into(),"repo,read:org".into()])),
+        "google_workspace"=>Ok(("gws",vec!["auth".into(),"login".into(),
+            "--scopes".into(),"drive,gmail,calendar,docs".into()])),
         "opencode"=>{
             let id=provider.unwrap_or("openai");
             if id.is_empty()||id.len()>64||!id.bytes().all(|b|b.is_ascii_lowercase()||b.is_ascii_digit()||b==b'-'){
@@ -47,12 +54,20 @@ fn credential_marker(source:&str)->Option<u128>{
         "claude"=>vec![h.join(".claude/.credentials.json")],
         "gemini"=>vec![h.join(".gemini/oauth_creds.json")],
         "opencode"=>vec![h.join(".local/share/opencode/opencode.db"),h.join(".local/share/opencode/auth.json")],
+        "github"=>vec![h.join(".config/gh/hosts.yml")],
+        "google_workspace"=>vec![h.join(".config/gws/credentials.enc"),h.join(".config/gws/credentials.json")],
         _=>return None
     };
     paths.into_iter().filter_map(|path|{
         let m=std::fs::metadata(path).ok()?;
         Some(m.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_nanos() ^ u128::from(m.len()))
     }).max()
+}
+fn github_device_code(text:&str)->Option<String>{
+    text.split_whitespace().map(|s|s.trim_matches(|c:char|!c.is_ascii_alphanumeric()&&c!='-'))
+        .find(|candidate|candidate.len()==9&&candidate.as_bytes()[4]==b'-'
+            &&candidate.bytes().enumerate().all(|(i,b)|i==4||(b.is_ascii_uppercase()||b.is_ascii_digit())))
+        .map(str::to_string)
 }
 fn authorization_url(text:&str)->Option<String>{
     for (pos,_) in text.match_indices("https://"){
@@ -69,6 +84,23 @@ fn authorization_url(text:&str)->Option<String>{
 }
 /// Check CLI-owned authentication without reading or copying OAuth secrets.
 pub(super) async fn credential_verified(source:&str)->bool{
+    if source=="github"{
+        let Some(exe)=binary("gh")else{return false};
+        let output=tokio::time::timeout(Duration::from_secs(8),
+            Command::new(exe).args(["auth","status","--hostname","github.com"])
+                .env_remove("GH_TOKEN").env_remove("GITHUB_TOKEN")
+                .kill_on_drop(true).output()).await;
+        return matches!(output,Ok(Ok(output)) if output.status.success());
+    }
+    if source=="google_workspace"{
+        let Some(exe)=binary("gws")else{return false};
+        let output=tokio::time::timeout(Duration::from_secs(8),
+            Command::new(exe).args(["auth","status"]).kill_on_drop(true).output()).await;
+        let Ok(Ok(output))=output else{return false};
+        if !output.status.success(){return false;}
+        let text=String::from_utf8_lossy(&output.stdout);
+        return text.contains("\"token_valid\": true")||text.contains("\"token_valid\":true");
+    }
     if source=="gemini"{
         return home().and_then(|h|std::fs::read(h.join(".gemini/oauth_creds.json")).ok())
             .and_then(|raw|serde_json::from_slice::<Value>(&raw).ok())
@@ -121,6 +153,13 @@ async fn capture<R:AsyncRead+Unpin>(mut stream:R,login:Arc<Login>){
                 p.message="공식 로그인 창에서 인증을 완료하세요.".into();
             }
         }
+        if p.text.contains("github.com/login/device"){
+            p.url=Some("https://github.com/login/device".into());
+            if let Some(code)=github_device_code(&p.text){
+                p.phase="browser";
+                p.message=format!("GitHub 브라우저에서 일회용 코드 {code}를 입력하세요.");
+            }
+        }
         let lower=p.text.to_ascii_lowercase();
         if lower.contains("paste code")||lower.contains("verification code")||lower.contains("enter code"){
             p.phase="input";p.message="브라우저 인증 코드를 입력하세요.".into();
@@ -152,10 +191,13 @@ fn make_process(exe:&FilePath,args:&[String])->Command{
     if let Some(old)=std::env::var_os("PATH"){paths.extend(std::env::split_paths(&old));}
     if let Ok(joined)=std::env::join_paths(paths){p.env("PATH",joined);}
     p.env("TERM","xterm-256color").env("COLUMNS","240").env("NO_COLOR","1");
+    if exe.file_stem().is_some_and(|stem|stem=="gh"){
+        p.env_remove("GH_TOKEN").env_remove("GITHUB_TOKEN");
+    }
     p.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
     p
 }
-pub async fn start(Path(source):Path<String>,Json(body):Json<StartBody>)->Response{
+pub async fn start(State(app):State<AppState>,Path(source):Path<String>,Json(body):Json<StartBody>)->Response{
     let (bin,args)=match command(&source,body.provider.as_deref()){
         Ok(v)=>v,Err(e)=>return error(StatusCode::BAD_REQUEST,&e)
     };
@@ -166,6 +208,15 @@ pub async fn start(Path(source):Path<String>,Json(body):Json<StartBody>)->Respon
     let Some(exe)=binary(bin)else{
         return error(StatusCode::NOT_FOUND,&format!("{bin} CLI 실행 파일이 없습니다. 먼저 설치하세요."));
     };
+    // Previously authorized official CLI accounts can be connected without
+    // repeating browser consent, developer keys or copying a personal token.
+    if matches!(source.as_str(),"github"|"google_workspace"){
+        if let Ok(connected)=crate::engine::oauth::adopt_cli_grant(&app,&source).await{
+            return Json(json!({"source":source,"status":"completed",
+                "message":"연결된 계정을 사용할 준비가 되었습니다.",
+                "connected":connected})).into_response();
+        }
+    }
     let before=credential_marker(&source);
     let mut child=match make_process(&exe,&args).spawn(){
         Ok(c)=>c,Err(e)=>return error(StatusCode::BAD_GATEWAY,&format!("CLI 실행 실패: {e}"))
@@ -183,6 +234,7 @@ pub async fn start(Path(source):Path<String>,Json(body):Json<StartBody>)->Respon
     if let Some(err)=child.stderr.take(){tokio::spawn(capture(err,login.clone()));}
     let current=login.clone();
     let kind=source.clone();
+    let account_state=app.clone();
     tokio::spawn(async move{
         let mut tick=tokio::time::interval(Duration::from_secs(2));
         let timeout=tokio::time::sleep(Duration::from_secs(600));
@@ -191,6 +243,12 @@ pub async fn start(Path(source):Path<String>,Json(body):Json<StartBody>)->Respon
             tokio::select!{
                 exit=child.wait()=>{
                     match exit{
+                        Ok(exit) if exit.success()&&matches!(kind.as_str(),"github"|"google_workspace")=>{
+                            match crate::engine::oauth::adopt_cli_grant(&account_state,&kind).await{
+                                Ok(_)=>set_phase(&current,"completed","계정 연결이 완료되었습니다. 에이전트 도구를 사용할 수 있습니다.").await,
+                                Err(_)=>set_phase(&current,"failed","공식 로그인은 끝났지만 계정 권한을 가져오지 못했습니다. 연결을 다시 시도하세요.").await,
+                            }
+                        },
                         Ok(exit) if exit.success()&&credential_verified(&kind).await=>set_phase(&current,"completed","CLI 인증이 확인됐습니다. 모델 연결 상태는 별도로 확인하세요.").await,
                         Ok(exit)=>set_phase(&current,"failed",&format!("로그인 완료 정보를 찾지 못했습니다 (종료 상태: {exit}).")).await,
                         Err(e)=>set_phase(&current,"failed",&format!("CLI 인증 오류: {e}")).await
@@ -202,7 +260,14 @@ pub async fn start(Path(source):Path<String>,Json(body):Json<StartBody>)->Respon
                     let after=credential_marker(&kind);
                     if after.is_some()&&after!=before&&credential_verified(&kind).await{
                         let _=child.kill().await;
-                        set_phase(&current,"completed","CLI 인증이 확인됐습니다.").await;
+                        if matches!(kind.as_str(),"github"|"google_workspace"){
+                            match crate::engine::oauth::adopt_cli_grant(&account_state,&kind).await{
+                                Ok(_)=>set_phase(&current,"completed","계정 연결이 완료되었습니다.").await,
+                                Err(_)=>set_phase(&current,"failed","로그인 이후 계정 권한 확인에 실패했습니다.").await,
+                            }
+                        }else{
+                            set_phase(&current,"completed","CLI 인증이 확인됐습니다.").await;
+                        }
                         break;
                     }
                 }
@@ -251,6 +316,9 @@ mod tests{
     #[test]
     fn commands_reject_arbitrary_shell_input(){
         assert!(command("claude",None).is_ok());
+        assert_eq!(command("github",None).unwrap().0,"gh");
+        assert_eq!(command("google_workspace",None).unwrap().0,"gws");
+        assert_eq!(github_device_code("First code ABCD-1234 and continue").as_deref(),Some("ABCD-1234"));
         assert_eq!(command("opencode",Some("anthropic")).unwrap().1.last().unwrap(),"anthropic");
         assert!(command("opencode",Some("openai;rm")).is_err());
         assert!(command("../../bin/bash",None).is_err());
