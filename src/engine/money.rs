@@ -530,7 +530,7 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
                 .or_insert_with(||context.state.store.money_signal_by_url(url).ok().flatten())
                 .clone()
         });
-        let candidate=json!({
+        let mut candidate=json!({
             "id":format!("money:{}:{}",context.job_id,index),"campaignId":campaign_id,
             "jobId":context.job_id,"sessionId":session,"status":"hypothesis",
             "discoveryMode":job["input"]["mode"],"links":item["links"],
@@ -544,8 +544,7 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
             "whyPay":bounded(&item["whyPay"],1200),
             "firstBuyer":bounded(&item["firstBuyer"],350),
             "firstPaymentStep":bounded(&item["firstPaymentStep"],1100),
-            "buyerEvidence":buyer_evidence,"priceComparison":price_comparison,
-            "alternativeSuppliers":item["alternativeSuppliers"],
+            "buyerEvidence":buyer_evidence,"alternativeSuppliers":item["alternativeSuppliers"],
             "distribution":bounded(&item["distribution"],1000),
             "defensibility":bounded(&item["defensibility"],1000),
             "alternatives":item["alternatives"],"whyNow":bounded(&item["whyNow"],1000),
@@ -558,6 +557,9 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
             "origin":"model","expectedProfitIsVerified":false,
             "noveltyEstimate":((novelty*1000.0).round()/1000.0),"noveltyMethod":"character_trigram_overlap"
         });
+        // Keep the candidate JSON macro shallow; the Money-only optional
+        // comparison is attached after the core candidate has been built.
+        candidate["priceComparison"]=price_comparison;
         for id in &ids{evaluated_asymmetry_ids.insert(id.clone());}
         pending_facts.extend(collect_evidence(&candidate,campaign_id,&context.job_id));
         pending_edges.extend(crate::engine::money_intelligence::candidate_edges(&candidate));
