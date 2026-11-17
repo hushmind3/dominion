@@ -81,6 +81,40 @@ pub struct TurnStats {
     pub evidence: Vec<Value>,
 }
 
+/// Keep both success receipts and failed effects for the SAME decision
+/// kernel. Dropping tool_error meant a prior external effect marked unknown
+/// could disappear from autonomous replay admission.
+fn collect_tool_event(stats: &mut TurnStats, event: &Value) {
+    let Some(name) = event.get("name").and_then(Value::as_str)
+        .filter(|name| !name.is_empty()) else {return;};
+    match event.get("type").and_then(Value::as_str) {
+        Some("tool_end") => {
+            stats.tool_success.push(name.to_string());
+            stats.evidence.push(serde_json::json!({
+                "tool": name, "callId": event.get("id"),
+                "arguments": event.get("arguments"), "result": event.get("result"),
+            }));
+        }
+        Some("tool_error") => {
+            stats.tool_errors.push(name.to_string());
+            let result = event.get("result").filter(|result| !result.is_null())
+                .cloned().unwrap_or_else(||serde_json::json!({
+                    "error":event.get("error").and_then(Value::as_str).unwrap_or("tool failed"),
+                }));
+            let uncertain = result["outcomeUnknown"]==true || result["effectUnknown"]==true
+                || event["outcomeUnknown"]==true || event["effectUnknown"]==true;
+            let mut receipt=serde_json::json!({
+                "tool":name,"status":"failed","callId":event.get("id"),
+                "arguments":event.get("arguments"),"result":result,
+            });
+            if uncertain {receipt["outcomeUnknown"]=serde_json::json!(true);}
+            if event["dispatched"]==false {receipt["dispatched"]=serde_json::json!(false);}
+            stats.evidence.push(receipt);
+        }
+        _ => {}
+    }
+}
+
 /// Runs a turn and collects tool evidence for the goal harness.
 pub async fn run_quiet_outcome(
     state: &AppState,
@@ -90,23 +124,7 @@ pub async fn run_quiet_outcome(
     let collector = tokio::spawn(async move {
         let mut stats = TurnStats::default();
         while let Some(event) = receiver.recv().await {
-            let name = event
-                .get("name")
-                .and_then(|value| value.as_str())
-                .unwrap_or("");
-            match event.get("type").and_then(|value| value.as_str()) {
-                Some("tool_end") if !name.is_empty() => {
-                    stats.tool_success.push(name.to_string());
-                    stats.evidence.push(serde_json::json!({
-                        "tool": name,
-                        "callId": event.get("id"),
-                        "arguments": event.get("arguments"),
-                        "result": event.get("result"),
-                    }));
-                }
-                Some("tool_error") if !name.is_empty() => stats.tool_errors.push(name.to_string()),
-                _ => {}
-            }
+            collect_tool_event(&mut stats,&event);
         }
         stats
     });
@@ -203,6 +221,28 @@ pub async fn run_room_quiet(
 mod outcome_tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn error_evidence_survives_into_kernel_replay_gate() {
+        let mut stats=TurnStats::default();
+        collect_tool_event(&mut stats,&json!({
+            "type":"tool_error","name":"github_api","id":"blocked",
+            "arguments":{"method":"POST"},"result":{"effectUnknown":true,
+                "priorOperationId":"old-write","error":"pending effect"},
+        }));
+        assert_eq!(stats.tool_errors,vec!["github_api"]);
+        assert_eq!(stats.evidence.len(),1);
+        assert_eq!(stats.evidence[0]["status"],"failed");
+        assert_eq!(stats.evidence[0]["outcomeUnknown"],true);
+        assert!(!crate::engine::verification::successful_evidence(&stats.evidence[0]));
+        assert!(crate::engine::agent_kernel::side_effect_unknown(&stats.evidence));
+
+        let mut denied=TurnStats::default();
+        collect_tool_event(&mut denied,&json!({"type":"tool_error",
+            "name":"github_api","id":"denied","dispatched":false,
+            "result":{"error":"Denied by the user"}}));
+        assert!(!crate::engine::agent_kernel::side_effect_unknown(&denied.evidence));
+        assert_eq!(denied.tool_success.len(),0);
+    }
     #[tokio::test]
     async fn model_order_tool_barrier_reads_the_file_after_write_with_parallel_reads() {
         use axum::{extract::State, response::IntoResponse, routing::post, Json, Router};
