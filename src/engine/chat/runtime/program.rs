@@ -304,7 +304,9 @@ pub(super) async fn attempt_model_adaptation(
         let candidate = crate::engine::adaptation::probes::rank(
             &adaptation, &refuted, &attempted_ids,
         ).into_iter().find(|probe| {
-            !attempted_calls.contains(&format!(
+            crate::engine::adaptation::probes::admissible_after_failure(
+                probe, tool, arguments,
+            ) && !attempted_calls.contains(&format!(
                 "{}:{}", probe["tool"].as_str().unwrap_or(""), probe["inputs"]
             ))
         });
@@ -335,7 +337,7 @@ pub(super) async fn attempt_model_adaptation(
             );
             for id in observation["refutedIds"].as_array().into_iter().flatten() {
                 if let Some(id) = id.as_str() {
-                    if !refuted.iter().any(|prior|prior==id) {
+                    if !refuted.iter().any(|prior|prior.as_str()==id) {
                         refuted.push(id.to_string());
                     }
                 }
@@ -358,7 +360,7 @@ pub(super) async fn attempt_model_adaptation(
         }));
         let live=adaptation["hypotheses"].as_array().into_iter().flatten()
             .filter(|hypothesis| hypothesis["id"].as_str()
-                .is_some_and(|id|!refuted.iter().any(|prior|prior==id)))
+                .is_some_and(|id|!refuted.iter().any(|prior|prior.as_str()==id)))
             .count();
         if live==0 {
             // All predictions disagreed with the environment. The model's
