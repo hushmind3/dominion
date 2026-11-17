@@ -1482,7 +1482,7 @@ fn append_http_chunk(output:&mut Vec<u8>,chunk:&[u8])->bool {
     chunk.len()>room
 }
 
-async fn http_fetch(url: &str) -> Result<Value, String> {
+pub(crate) async fn http_fetch(url: &str) -> Result<Value, String> {
     let mut current=public_http_url(url)?;
     for redirect in 0..=HTTP_REDIRECT_LIMIT {
         let hostname=current.host_str().ok_or("URL 호스트가 없습니다.")?
