@@ -1364,34 +1364,53 @@ impl Host for MainTurn<'_> {
                         Ok(adapted) => {
                             let selected = &adapted["selected"];
                             let result = &adapted["result"];
+                            let acceptance = &adapted["acceptanceDecision"];
                             self.messages.push(json!({
-                            "role":"system",
-                            "content": format!(
-                                "적응 실행: 선택된 개입 `{}` (tool={}) 결과={}. 가설 판정={}. 같은 실패 호출을 반복하지 마세요.",
-                                selected["id"], selected["tool"], result, adapted["hypothesisResults"]
-                            )
-                        }));
-                            if tool_succeeded(result)
-                                && matches!(
-                                    selected["tool"].as_str(),
-                                    Some(
-                                        "workspace_write"
-                                            | "workspace_replace"
-                                            | "workspace_replace_range"
-                                            | "file_write"
-                                            | "shell_exec"
-                                            | "terminal_exec"
-                                            | "github_api"
-                                            | "github_file_update" | "github_file_replace"
-                                            | "delegate_task"
-                        | "task_integrate"
-                                    )
+                                "role":"system",
+                                "content": format!(
+                                    "실제 복구 실행: 후보 {} (tool={}) 결과={}. \
+                                     진단 증거={}. 동결된 완료조건 재검증={}. \
+                                     완료조건에 진전이 없으면 동일한 변경을 반복하지 말고 \
+                                     해당 자원의 읽기/검증부터 다시 수행하세요.",
+                                    selected["id"],selected["tool"],result,
+                                    adapted["diagnosticEvidence"],acceptance
                                 )
-                            {
+                            }));
+                            let changed_environment = tool_succeeded(result)
+                                && matches!(selected["tool"].as_str(),Some(
+                                    "workspace_write" | "workspace_replace"
+                                    | "workspace_replace_range" | "file_write"
+                                    | "shell_exec" | "terminal_exec"
+                                    | "github_api" | "github_file_update"
+                                    | "github_file_replace" | "delegate_task"
+                                    | "task_integrate"
+                                ));
+                            // A modification changes the world even if the
+                            // verifier rejects it: future preconditions must
+                            // never reuse a stale environment fingerprint.
+                            if changed_environment {
                                 self.environment_version += 1;
+                            }
+                            let decision = acceptance["decision"].as_str()
+                                .unwrap_or("not_applicable");
+                            if decision == "improved" {
                                 self.adaptation_failures = 0;
+                            } else if decision == "not_applicable" {
+                                if changed_environment {
+                                    self.adaptation_failures = 0;
+                                } else {
+                                    self.adaptation_failures += 1;
+                                }
                             } else {
+                                // A tool transport success is not recovery.
                                 self.adaptation_failures += 1;
+                                let _ = self.tx.send(json!({
+                                    "type":"adaptation_acceptance",
+                                    "executionId":self.execution_id,
+                                    "decision":decision,
+                                    "resolved":acceptance["resolved"],
+                                    "regressed":acceptance["regressed"]
+                                }));
                             }
                         }
                         Err(error) => {
