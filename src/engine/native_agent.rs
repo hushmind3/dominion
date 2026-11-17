@@ -585,6 +585,15 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
             "snapshot":previous}));
     }
     context.checkpoint(json!({"nativeToolAuthoritySha256":authority}))?;
+    // Before the FIRST model/tool action, seal exactly the owner-selected
+    // acceptance artifacts. On restart, preserve that original baseline:
+    // a later file state must not masquerade as the pre-run state.
+    if previous.is_none() {
+        let initial=crate::engine::native_replay::artifact_witness(
+            &context.state.config.workspace,&request.checks);
+        context.checkpoint(json!({"nativeEvidenceBaseline":initial}))?;
+    }
+
     let model=ConfiguredModel {
         state:context.state.clone(),provider:route.id.clone(),
         model:route.model.clone(),session:session.clone(),
@@ -639,6 +648,12 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
     } else {
         kernel.run(request).await?
     };
+    // Record the post-run artifact witness only after the kernel settles.
+    // This is an observation at completion, not a claim that future workspace
+    // reads will still return the same bytes.
+    let final_witness=crate::engine::native_replay::artifact_witness(
+        &context.state.config.workspace,&request.checks);
+    context.checkpoint(json!({"nativeEvidenceFinal":final_witness}))?;
     let status=serde_json::to_value(&snapshot.status).unwrap_or(json!("needs_review"));
     if let Some(answer)=snapshot.answer.as_deref() {
         let final_message=json!({
