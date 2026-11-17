@@ -27,6 +27,24 @@ export interface NativeRouteSelection {
   estimatedPerTurnKRW?:number;selectedQuality?:number;qualifiedCandidates?:number};
 }
 export type RoutingMode='default'|'quality_cost';
+/** Research candidates are hypotheses, not verified sales. Currency fields use KRW. */
+export interface MoneyEvidence {claim?:string;url?:string;publishedAt?:string;kind?:string}
+export interface MoneyDraft extends RecordItem {
+ title:string;status?:string;origin?:string;customer?:string;offer?:string;
+ moneyMechanism?:string;firstPaymentStep?:string;firstTest?:string;
+ killSignal?:string;inferenceSteps?:string[];evidence?:MoneyEvidence[];
+ evidenceStatus?:string;counterfactual?:string;
+}
+export interface MoneyFindResult {
+ drafts:MoneyDraft[];modelCalls:number;sourceCount?:number;searchedAt?:string|null;
+ inferenceJobId?:string|null;inferenceStatus?:string;inferenceError?:string|null;
+ inferenceTokenBudget?:number|null;selectedAgentId?:string;message?:string;
+}
+export interface MoneyStats {signals:number;candidates:number;tensions:number;
+ modelCandidates:number;templateDrafts:number;autopilot?:{enabled:boolean;rounds?:number}}
+export type MoneyFindOptions = {mode:'db';limit?:number}
+ | {mode:'agent';agentId:string;infer?:boolean;limit?:number;tokenBudget?:number};
+
 export interface Job extends RecordItem {kind:string;status:string;input?:unknown;result?:unknown;error?:string;sessionId?:string;stepIndex?:number;stepTotal?:number;
  nativeRoute?:NativeRouteSelection;nativeModelUsage?:NativeModelUsage;nativeState?:{chargedTokens?:number;modelCalls?:number;modelInFlight?:boolean}}
 /** Persisted Rust native job state shared with the autonomous UI. */
@@ -168,6 +186,21 @@ export class Dominion{
     compact:(sessionId:string)=>this.request<unknown>('POST','/api/sessions/'+id(sessionId)+'/compact',{}),
     cancel:(sessionId:string)=>this.request<unknown>('POST','/api/sessions/'+id(sessionId)+'/cancel',{}),
     remove:(sessionId:string)=>this.request<unknown>('DELETE','/api/sessions/'+id(sessionId))
+  };
+  /** Uses the existing Money-backed Rust worker, SQLite corpus and SDK.
+   * No second agent runtime; DB mode never makes a paid model call. */
+  readonly money={
+    latest:()=>this.request<MoneyFindResult>('GET','/api/money/find'),
+    stats:()=>this.request<MoneyStats>('GET','/api/money/stats'),
+    find:(options:MoneyFindOptions={mode:'db'})=>this.request<MoneyFindResult>('POST','/api/money/find',options),
+    candidate:(candidateId:string)=>this.request<MoneyDraft>('GET','/api/money/candidates/'+id(candidateId)),
+    campaign:(campaignId:string)=>this.request<unknown>('GET','/api/money/campaigns/'+id(campaignId)),
+    start:(campaignId:string,body:{mode:string;agentId?:string;tokenBudget?:number})=>
+      this.request<unknown>('POST','/api/money/campaigns/'+id(campaignId)+'/run',body),
+    recordExperiment:(candidateId:string,body:Record<string,unknown>)=>
+      this.request<unknown>('POST','/api/money/candidates/'+id(candidateId)+'/experiments',body),
+    validationKit:(candidateId:string,body:{contactUrl?:string}={})=>
+      this.request<unknown>('POST','/api/money/candidates/'+id(candidateId)+'/validation-kit',body)
   };
   readonly jobs={
     list:()=>this.request<Job[]>('GET','/api/jobs'),

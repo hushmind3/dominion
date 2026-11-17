@@ -172,3 +172,21 @@ test('SSE accepts mixed CRLF + LF, LF + CRLF, and CR + CRLF separators',async()=
   for await(const event of sdk.events()){found.push(event.type);}
   assert.deepEqual(found,['mixed-one','mixed-two','mixed-three']);
 });
+
+
+test('Money SDK calls durable source-backed Rust routes without creating a second runtime',async()=>{
+  const calls=[];
+  const sdk=new Dominion({fetch:async(url,init)=>{calls.push({url,init});return reply({drafts:[],modelCalls:0,sourceCount:0});}});
+  await sdk.money.latest();
+  await sdk.money.stats();
+  await sdk.money.find({mode:'db',limit:3});
+  await sdk.money.find({mode:'agent',agentId:'agent/27b',infer:true,tokenBudget:8000});
+  await sdk.money.candidate('lead/1');
+  await sdk.money.validationKit('lead/1');
+  assert.deepEqual(calls.map(x=>new URL(x.url).pathname),[
+    '/api/money/find','/api/money/stats','/api/money/find','/api/money/find',
+    '/api/money/candidates/lead%2F1','/api/money/candidates/lead%2F1/validation-kit']);
+  assert.deepEqual(JSON.parse(calls[2].init.body),{mode:'db',limit:3});
+  assert.deepEqual(JSON.parse(calls[3].init.body),{
+    mode:'agent',agentId:'agent/27b',infer:true,tokenBudget:8000});
+});

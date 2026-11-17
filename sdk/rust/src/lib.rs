@@ -130,6 +130,24 @@ impl Dominion {
     pub async fn delete<T: DeserializeOwned>(&self, path: &[&str]) -> Result<T, Error> {
         self.json(Method::DELETE, path, None).await
     }
+    /// Source-backed market research; does not create another agent runtime.
+    pub async fn money_latest(&self) -> Result<Value, Error> {
+        self.get(&["api", "money", "find"]).await
+    }
+    pub async fn money_stats(&self) -> Result<Value, Error> {
+        self.get(&["api", "money", "stats"]).await
+    }
+    /// Set {"mode":"db"} for zero-model-token research, or
+    /// {"mode":"agent","agentId":"...","infer":true} for bounded inference.
+    pub async fn money_find(&self, options: Value) -> Result<Value, Error> {
+        self.post(&["api", "money", "find"], options).await
+    }
+    pub async fn money_candidate(&self, id:&str) -> Result<Value, Error> {
+        self.get(&["api", "money", "candidates", id]).await
+    }
+    pub async fn money_record_experiment(&self, id:&str, body:Value) -> Result<Value, Error> {
+        self.post(&["api", "money", "candidates", id, "experiments"],body).await
+    }
     pub async fn health(&self) -> Result<Value, Error> { self.get(&["api", "health"]).await }
     pub async fn status(&self) -> Result<Value, Error> { self.get(&["api", "status"]).await }
     pub async fn agents(&self) -> Result<Vec<Value>, Error> { self.get(&["api", "agents"]).await }
