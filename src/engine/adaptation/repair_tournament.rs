@@ -279,7 +279,7 @@ mod tests {
         let variants=prepare(&input,&program,&checkpoint,&failure,&tools,"replace").unwrap();
         assert_eq!(variants.len(),3);
         assert_eq!(variants[2]["sourceCandidates"],json!(["p0","p1"]));
-        assert_eq!(variants[2]["revision"]["nodes"].as_array().unwrap().len(),3);
+        assert_eq!(variants[2]["revision"]["nodes"].as_array().unwrap().len(),4);
         assert_eq!(probes(&variants).len(),2);
     }
     #[test]
