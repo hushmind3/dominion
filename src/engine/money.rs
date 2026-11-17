@@ -359,6 +359,7 @@ pub fn prompt(state:&AppState,campaign:&Value,mode:&str,focus:Option<&Value>) ->
 4. 개별 가설을 최소 2개의 다른 사업모델(직판/라이선스/중개/OEM/B2B 등)로 변형하고, 가장 자본효율적인 모델을 제시하라.
 4-1. 가장 중요한 목표는 실제 돈을 받는 것이다. 고객은 추상적 산업이 아니라 결제 권한이 있는 조직/구매자 역할이어야 한다. 현재 비용 지출, 공개 발주/구매 요청/판매가격, 구매자 접근 경로를 조사하고 FIRST PAID CUSTOMER까지 가장 짧은 경로를 찾는다.
 4-2. 경쟁제품의 실제 판매가격 또는 조달 단가를 가능한 한 1차 출처에서 찾아 비교한다. 정보가 없으면 예상가격을 null로 두고 수익을 추정하지 않는다. 고객이 존재한다는 추측을 판매 확약으로 기재하지 않는다.
+4-2-1. 서로 다른 구매·공급 원문에 가격이 명시된 경우에만 priceComparison을 작성한다. buyer/supplier 각각 url, quote(원문 정확한 인용), amount, currency(KRW/USD/JPY/CNY/EUR/GBP/THB/TWD), priceType(asking/wanted/listing/executed/indicative), quantity, unit, spec, observedAt(YYYY-MM-DD)를 적는다. 외화는 같은 시점의 환율 원문 fxWonPerUnit, fxSourceUrl, fxQuote, fxObservedAt이 있으면 추가한다. costsPerUnitWon은 shippingWon,dutyWon,platformFeeWon,returnsWon,laborWon이 모두 확인될 때만 숫자로 적고 모르겠으면 null로 둔다. 내용이 부족하면 priceComparison:null로 둔다. 차익은 모델이 계산하지 않는다.
 4-3. 정보비대칭을 주장하는 후보는 위 페어의 id, axis, sourceA, sourceB를 정확히 따라 적어라. 서로 다른 2개 시장의 자료가 존재한다는 사실만으로 '한국에 없다'가 입증되는 것은 아니다. 임의의 페어·출처를 만들면 후보가 거절된다.
 5. 구매 근거는 링크만으로 점수를 받을 수 없다. 기존 DB에 보관된 원문과 대조할 수 있도록 buyerEvidence.quote에 구매·발주·예산 관련 원문의 정확한 연속 구절을 넣어라. 원문을 못 찾으면 빈 문자열을 쓰고 근거를 만들지 마라.
 5-0. 일반 evidence에도 가능한 경우 원문에서 정확한 연속 구절을 quote에 넣어라. 본문을 못 확인했다면 quote=""로 두어라. 인용 일치가 매출이나 인과관계의 증거라는 뜻은 아니다.
@@ -380,6 +381,7 @@ pub fn prompt(state:&AppState,campaign:&Value,mode:&str,focus:Option<&Value>) ->
 "alternatives":["다른 수익구조 1","다른 수익구조 2"],"whyNow":"촉발 요인","firstTest":"최소비용 실험",
 "killSignal":"폐기할 구체적인 조건","assumptions":["확인 필요 사항"],"risks":["핵심 위험"],
 "evidence":[{{"claim":"관측 사실","quote":"실제 페이지의 정확한 인용문 또는 빈 문자열","url":"https://...","kind":"primary or secondary"}}],
+"priceComparison":null,
 "economics":{{"priceWon":null,"variableCostWon":null,"acquisitionCostWon":null,
 "monthlyFixedWon":null,"monthlyUnits":null,"setupCostWon":null,"refundRatePct":null}}
 }}]}}
@@ -521,6 +523,11 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
             }).collect::<Vec<_>>();
         let matched_quotes=evidence.iter().filter(|row|
             row["quotationStatus"]=="archived_page_quote_match").count();
+        let price_comparison=crate::engine::money_price::compare(&item["priceComparison"],|url|{
+            buyer_source_cache.entry(url.to_owned())
+                .or_insert_with(||context.state.store.money_signal_by_url(url).ok().flatten())
+                .clone()
+        });
         let candidate=json!({
             "id":format!("money:{}:{}",context.job_id,index),"campaignId":campaign_id,
             "jobId":context.job_id,"sessionId":session,"status":"hypothesis",
@@ -535,7 +542,8 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
             "whyPay":bounded(&item["whyPay"],1200),
             "firstBuyer":bounded(&item["firstBuyer"],350),
             "firstPaymentStep":bounded(&item["firstPaymentStep"],1100),
-            "buyerEvidence":buyer_evidence,"alternativeSuppliers":item["alternativeSuppliers"],
+            "buyerEvidence":buyer_evidence,"priceComparison":price_comparison,
+            "alternativeSuppliers":item["alternativeSuppliers"],
             "distribution":bounded(&item["distribution"],1000),
             "defensibility":bounded(&item["defensibility"],1000),
             "alternatives":item["alternatives"],"whyNow":bounded(&item["whyNow"],1000),
