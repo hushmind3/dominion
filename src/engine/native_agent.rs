@@ -650,16 +650,18 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
     // Record the post-run artifact witness only after the kernel settles.
     // This is an observation at completion, not a claim that future workspace
     // reads will still return the same bytes.
-    let final_witness=crate::engine::native_evidence::artifact_witness(
-        &context.state.config.workspace,&owner_checks);
-
-    // Kernel verifier may derive extra file/hash criteria from actual write
-    // receipts. Seal *those* exact observed criteria as well, without
-    // pretending they were part of the initial owner-declared evidence scope.
+    // Kernel verification returns explicit owner criteria followed by
+    // kernel-derived file/hash witnesses. Capture the union once, then
+    // project its owner prefix without a redundant second filesystem scan.
     let kernel_criteria=snapshot.checks.iter()
         .map(|check|check.criterion.clone()).collect::<Vec<_>>();
     let kernel_witness=crate::engine::native_evidence::artifact_witness(
         &context.state.config.workspace,&kernel_criteria);
+    let final_witness=crate::engine::native_evidence::project_owner_witness(
+        &kernel_witness,&owner_checks,&kernel_criteria,
+    ).unwrap_or_else(||crate::engine::native_evidence::artifact_witness(
+        &context.state.config.workspace,&owner_checks,
+    ));
     // Seal the two evidence scopes in one ownership-fenced SQLite update.
     // Previously these caused two writes and two event projections per run.
     context.checkpoint(json!({
