@@ -7,6 +7,71 @@ use serde_json::{json,Value};
 use sha2::{Digest,Sha256};
 use std::collections::{BTreeMap,BTreeSet};
 
+/// Host-sealed, bounded file-state witnesses for the exact acceptance paths.
+/// 2026 VeriHarness-style evidence lineage: this records observed bytes, not
+/// the model's claim that it edited a file. Never follow an escaping symlink,
+/// and never persist the file contents in the job record.
+pub fn artifact_witness(workspace:&std::path::Path,checks:&[dominion_sdk::harness::Criterion])->Value{
+ use dominion_sdk::harness::CriterionKind;
+ use std::path::{Component,Path};
+ let root=match std::fs::canonicalize(workspace){
+  Ok(root)=>root,
+  Err(_)=>return json!({"complete":false,"reason":"workspace_unavailable","entries":{}})
+ };
+ let mut entries=BTreeMap::<String,Value>::new();
+ let mut complete=true;
+ for c in checks {
+  if c.kind==CriterionKind::ToolSucceeded {continue;}
+  let Some(name)=c.path.as_deref() else {complete=false;continue;};
+  if entries.contains_key(name){continue;}
+  let relative=Path::new(name);
+  if name.is_empty()||name.len()>4096||!relative.components().all(
+   |component|matches!(component,Component::Normal(_))) {
+   complete=false;
+   entries.insert(name.to_string(),json!({"state":"unsafe_path"}));
+   continue
+  }
+  let target=root.join(relative);
+  let mut existing=target.as_path();
+  while std::fs::symlink_metadata(existing).is_err(){
+   let Some(parent)=existing.parent() else{break};
+   existing=parent;
+  }
+  if !std::fs::canonicalize(existing).is_ok_and(|parent|parent.starts_with(&root)){
+   complete=false;
+   entries.insert(name.to_string(),json!({"state":"unsafe_path"}));
+   continue
+  }
+  match std::fs::symlink_metadata(&target){
+   Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{
+    entries.insert(name.to_string(),json!({"state":"missing"}));
+   },
+   Err(_)=>{
+    complete=false;
+    entries.insert(name.to_string(),json!({"state":"unavailable"}));
+   },
+   Ok(metadata) if !metadata.is_file() || metadata.len()>16*1024*1024=>{
+    complete=false;
+    entries.insert(name.to_string(),json!({"state":"unsupported_artifact"}));
+   },
+   Ok(metadata)=>{
+    match std::fs::read(&target){
+     Ok(data) if data.len()<=16*1024*1024=>{
+      entries.insert(name.to_string(),json!({"state":"file",
+       "bytes":data.len(),"sha256":format!("{:x}",Sha256::digest(&data))}));
+     },
+     _=>{
+      complete=false;
+      entries.insert(name.to_string(),json!({"state":"unavailable"}));
+     }
+    }
+   }
+  }
+ }
+ json!({"complete":complete,"scope":"acceptance_artifact_paths_only",
+  "workspace":root.to_string_lossy(),"entries":entries})
+}
+
 fn digest(v:&Value)->String{
  format!("{:x}",Sha256::digest(v.to_string().as_bytes()))
 }
