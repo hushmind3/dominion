@@ -141,23 +141,28 @@ fn tool(name: &str, description: &str, parameters: Value) -> Value {
     })
 }
 
-/// Do not advertise native REST tools if only browser cookies are connected.
-//// The browser_control tool remains a separate, approved UI workflow.
-pub fn connected_account_tool_allowed(state:&crate::state::AppState,name:&str)->bool{
-    match name{
-        "google_drive_search"=>crate::engine::oauth::has_granted_scope(state,"google","drive.readonly"),
-        "google_docs_read"|"google_docs_replace"=>
-            crate::engine::oauth::has_granted_scope(state,"google","documents"),
-        "google_sheets_read"|"google_sheets_update"=>
-            crate::engine::oauth::has_granted_scope(state,"google","spreadsheets"),
-        "github_api"|"github_repositories"|"github_repository_activity"|
-        "github_file_read"|"github_file_commit"|"github_issue_create"|
-        "github_branch_create"|"github_pr_create"=>
-            state.read_secret("oauth:github:token").is_some() ||
-                crate::engine::oauth::cli_enabled(state,"github") &&
-                crate::engine::cli_accounts::status("github").connected,
-        _=>true
-    }
+/// Only advertise REST tools if a corresponding account grant exists.
+/// Compute CLI status once per turn, not once for every model tool schema.
+/// Browser cookies never become implied API permission.
+pub fn retain_connected_account_tools(state:&crate::state::AppState,defs:&mut Vec<Value>){
+    let github_ready=state.read_secret("oauth:github:token").is_some() ||
+        crate::engine::oauth::cli_enabled(state,"github") &&
+        crate::engine::cli_accounts::status("github").connected;
+    let drive=crate::engine::oauth::has_granted_scope(state,"google","drive.readonly");
+    let docs=crate::engine::oauth::has_granted_scope(state,"google","documents");
+    let sheets=crate::engine::oauth::has_granted_scope(state,"google","spreadsheets");
+    defs.retain(|definition|{
+        let name=definition["function"]["name"].as_str().unwrap_or("");
+        match name{
+            "google_drive_search"=>drive,
+            "google_docs_read"|"google_docs_replace"=>docs,
+            "google_sheets_read"|"google_sheets_update"=>sheets,
+            "github_api"|"github_repositories"|"github_repository_activity"|
+            "github_file_read"|"github_file_commit"|"github_issue_create"|
+            "github_branch_create"|"github_pr_create"=>github_ready,
+            _=>true
+        }
+    });
 }
 pub fn requires_approval(name: &str) -> bool {
     matches!(

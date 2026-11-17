@@ -290,8 +290,8 @@ test('browser-only sign-in fallback has real visible Chrome session, without cla
 test('native API tool schemas cannot crowd out connected browser/MCP when OAuth is absent',()=>{
  const tools=file('src/engine/tools.rs');
  const chat=file('src/engine/chat/runtime/turn_body.rs');
- assert.match(tools,/pub fn connected_account_tool_allowed/);
- assert.match(chat,/connected_account_tool_allowed\(state,tool_name\(definition\)\)/);
+ assert.match(tools,/pub fn retain_connected_account_tools/);
+ assert.match(chat,/retain_connected_account_tools\(state,&mut tool_definitions\)/);
  assert.match(tools,/google_docs_read/);
  assert.match(tools,/github_repository_activity/);
 });
