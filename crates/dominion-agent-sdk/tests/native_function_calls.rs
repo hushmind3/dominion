@@ -74,8 +74,8 @@ async fn provider_native_function_call_executes_and_completes_without_json_decod
     let provider=NativeProvider{
         queue:Mutex::new(VecDeque::from(vec![
             Decision{plan:vec!["Write source".into()],
-                actions:vec![act("call_native_1","workspace_write")],answer:None},
-            Decision{plan:vec![],actions:vec![],answer:Some("Completed source".into())},
+                actions:vec![act("call_native_1","workspace_write")],answer:None,candidate_paths:vec![]},
+            Decision{plan:vec![],actions:vec![],answer:Some("Completed source".into()),candidate_paths:vec![]},
         ])),calls:Mutex::new(0)};
     let writer=Writer{called:Mutex::new(vec![])};
     let journal=JournalMem::default();
@@ -92,10 +92,10 @@ async fn provider_native_function_call_executes_and_completes_without_json_decod
 async fn provider_native_unauthorized_calls_are_rejected_before_host_effect() {
     let provider=NativeProvider{queue:Mutex::new(VecDeque::from(vec![
         Decision{plan:vec![],actions:vec![act("bad_call","secret_host_tool")],
-            answer:None},
+            answer:None,candidate_paths:vec![]},
         Decision{plan:vec![],actions:vec![act("valid_call","workspace_write")],
-            answer:None},
-        Decision{plan:vec![],actions:vec![],answer:Some("Completed".into())},
+            answer:None,candidate_paths:vec![]},
+        Decision{plan:vec![],actions:vec![],answer:Some("Completed".into()),candidate_paths:vec![]},
     ])),calls:Mutex::new(0)};
     let writer=Writer{called:Mutex::new(vec![])};
     let journal=JournalMem::default();
