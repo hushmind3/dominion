@@ -82,7 +82,8 @@ pub(crate) fn comparison(decisions:&[Decision],receipts:&[Receipt])->Value {
     };
     let mut evidence=Vec::new();
     let mut all_settled=true;
-    let mut best:Option<(String,usize,usize,usize)>=None;
+    let mut best:Option<(String,usize,usize)>=None;
+    let mut tied_for_best=false;
     for path in &decision.candidate_paths {
         let observed=path.actions.iter().filter_map(|action|receipts.iter()
             .rev().find(|receipt|receipt.id==action.id)).collect::<Vec<_>>();
@@ -97,20 +98,29 @@ pub(crate) fn comparison(decisions:&[Decision],receipts:&[Receipt])->Value {
             "receiptIds":observed.iter().map(|r|r.id.as_str()).collect::<Vec<_>>()
         }));
         if pending==0 && successful>0 {
-            // Compare observed fractions first, then require fewer operations
-            // on ties. This is a bounded *probe preference*, not a success-rate
-            // estimate or a replacement for owner acceptance checks.
-            let better=best.as_ref().is_none_or(|(_,bs,bn,_)|
-                successful * *bn > *bs * path.actions.len()
-                || (successful * *bn == *bs * path.actions.len()
-                    && path.actions.len() < *bn));
-            if better {
-                best=Some((path.id.clone(),successful,path.actions.len(),failed));
+            // Only a strictly better observed fraction yields a preference.
+            // Equal tool success rates are NOT evidence that either approach
+            // is better; tool success alone never proves task completion.
+            match best.as_ref() {
+                None=>{
+                    best=Some((path.id.clone(),successful,path.actions.len()));
+                    tied_for_best=false;
+                },
+                Some((_,bs,bn))=>{
+                    let ours=successful * *bn;
+                    let leader=*bs * path.actions.len();
+                    if ours>leader {
+                        best=Some((path.id.clone(),successful,path.actions.len()));
+                        tied_for_best=false;
+                    } else if ours==leader {
+                        tied_for_best=true;
+                    }
+                }
             }
         }
     }
-    let recommended=if all_settled {
-        best.map(|(id,_,_,_)|id)
+    let recommended=if all_settled && !tied_for_best {
+        best.map(|(id,_,_)|id)
     } else {None};
     json!({
         "status":if all_settled{"observed"}else{"partial"},
@@ -153,6 +163,19 @@ mod tests {
         let mut b=path("b","read another file","workspace_read");
         b.actions[0].id="a-read".into();
         assert!(validate(&[path("a","inspect","workspace_read"),b]).is_err());
+    }
+    #[test]
+    fn equal_tool_success_does_not_manufacture_a_strategy_winner(){
+        let decision=Decision{plan:vec![],actions:vec![],answer:None,
+            candidate_paths:vec![path("a","inspect A","workspace_read"),
+                path("b","inspect B","workspace_read")]};
+        let receipts=["a-read","b-read"].into_iter().map(|id|Receipt{
+            id:id.into(),tool:"workspace_read".into(),arguments:json!({}),
+            success:true,result:json!({"content":id}),step:1
+        }).collect::<Vec<_>>();
+        let result=comparison(&[decision],&receipts);
+        assert_eq!(result["status"],"observed");
+        assert!(result["tentativePreferredPath"].is_null());
     }
     #[test]
     fn comparison_uses_actual_receipts_and_never_claims_completion(){
