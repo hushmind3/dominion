@@ -789,6 +789,43 @@ mod tests {
     }
 
     #[test]
+    fn independent_sqlite_connections_cannot_both_claim_one_job() {
+        let state=temp_state();
+        let second=crate::db::Store::open(&state.config.db_path()).unwrap();
+        state.store.put("job",&json!({"id":"one-owner","kind":"prompt",
+            "status":"queued","attempts":0})).unwrap();
+        let barrier=Arc::new(std::sync::Barrier::new(3));
+        let handles=[state.store.clone(),second].into_iter().map(|store|{
+            let ready=barrier.clone();
+            std::thread::spawn(move||{
+                ready.wait();
+                store.patch_if("job","one-owner","status",&json!("queued"),
+                    &json!({"status":"running","attempts":1})).is_some()
+            })
+        }).collect::<Vec<_>>();
+        barrier.wait();
+        let wins=handles.into_iter().map(|h|h.join().unwrap())
+            .filter(|won|*won).count();
+        assert_eq!(wins,1);
+        assert_eq!(state.store.get("job","one-owner").unwrap()["status"],"running");
+    }
+    #[test]
+    fn second_sqlite_connection_cancellation_blocks_old_answer() {
+        let state=temp_state();
+        state.store.put("job",&json!({"id":"two-connections",
+            "kind":"prompt","status":"running","attempts":1})).unwrap();
+        let claimed=JobContext::new(state.clone(),"two-connections".into());
+        let second=crate::db::Store::open(&state.config.db_path()).unwrap();
+        second.patch_if("job","two-connections","status",&json!("running"),
+            &json!({"status":"cancelled","cancelRequested":true})).unwrap();
+        let message=json!({"id":"late-native-answer","session_id":"s",
+            "role":"assistant","content":"late",
+            "metadata":{"jobId":"two-connections"}});
+        assert!(claimed.save_native_answer(&message).is_err());
+        assert!(state.store.message("late-native-answer").is_none());
+        assert!(claimed.checkpoint(json!({"status":"completed"})).is_err());
+    }
+    #[test]
     fn checkpoint_rejects_late_stale_attempt_after_requeue() {
         let state=temp_state();
         state.store.put("job",&json!({"id":"attempt-fence",
