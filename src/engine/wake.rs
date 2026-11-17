@@ -91,6 +91,28 @@ fn resumable_program(state: &AppState, execution: &Value) -> Option<Value> {
             }
         }
     }
+    // A failed mutation can have taken effect before its error was returned.
+    // Also reject successful effects that cannot be associated with a node
+    // already reconciled in this checkpoint: advancing the program from an
+    // unrelated write would silently lose or repeat side effects.
+    for operation in &operations {
+        if !has_side_effect(std::slice::from_ref(operation)) {
+            continue;
+        }
+        if operation["status"] == "failed" {
+            return None;
+        }
+        let accounted_for = completed.iter().filter_map(Value::as_str).any(|node_id| {
+            let prefix = format!("program-{node_id}-");
+            operation["callId"]
+                .as_str()
+                .is_some_and(|call_id| call_id.starts_with(&prefix))
+                || operation["procedureNodeId"].as_str() == Some(node_id)
+        });
+        if !accounted_for {
+            return None;
+        }
+    }
     checkpoint["completedOperationIds"] = json!(completed);
     // Any actual in-flight operation returned None above. Nodes without an
     // operation were only planned: leave them uncompleted so the program will
@@ -529,6 +551,37 @@ mod tests {
             .unwrap()
             .iter()
             .any(|value| value == "step2"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_failed_pending_external_change_cannot_be_replayed_from_checkpoint() {
+        let (state, dir) = state();
+        interrupted_program(&state, "program-failed", json!(["write"]), json!(["read"]));
+        state.store.put("execution_operation", &json!({
+            "id":"op-failed","runId":"program-failed","callId":"program-write-retry",
+            "tool":"mcp__mail__send_message","status":"failed",
+            "arguments":{"to":"person@example.org"}
+        }));
+        let created = recover(&state);
+        assert_eq!(created[0]["decision"], "needs_review", "{created:?}");
+        assert_eq!(state.store.count("job"), 0);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn an_untracked_completed_external_change_blocks_program_replay() {
+        let (state, dir) = state();
+        interrupted_program(&state, "program-untracked", json!(["next"]), json!(["read"]));
+        state.store.put("execution_operation", &json!({
+            "id":"op-untracked","runId":"program-untracked",
+            "callId":"program-untracked-write-123",
+            "tool":"github_file_update","status":"completed",
+            "arguments":{"owner":"o","repo":"r","path":"README.md"}
+        }));
+        let created = recover(&state);
+        assert_eq!(created[0]["decision"], "needs_review", "{created:?}");
+        assert_eq!(state.store.count("job"), 0);
         let _ = std::fs::remove_dir_all(dir);
     }
 
