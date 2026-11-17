@@ -256,7 +256,12 @@ pub async fn start(State(state):State<AppState>,Path(id):Path<String>,Json(body)
     // Pure domain reasoning. Source gathering happens in separate no-model
     // collectors, so this invocation cannot acquire shell/MCP/browser powers.
     let token_ceiling=body["tokenBudget"].as_u64().unwrap_or(24_000).clamp(4_000,120_000);
-    let mut input=json!({"prompt":prompt,"campaignId":id,"mode":mode,
+    let mut input=json!({
+        // The SDK treats this as a pure non-mutating research task.
+        // All domain observations and source URLs remain in ownerInstructions,
+        // keeping the replay identity stable without introducing a new engine.
+        "prompt":"Analyze archived market evidence and return falsifiable commercial hypotheses as JSON.",
+        "ownerInstructions":prompt,"campaignId":id,"mode":mode,
         "toolsEnabled":false,"toolsExecutionEnabled":false,"requireEvidence":false,
         "tokenBudget":token_ceiling,
         "limits":{"maxSteps":3,"maxModelCalls":3,"maxToolCalls":1,
