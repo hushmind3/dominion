@@ -1,7 +1,7 @@
 //! Bounded model adaptation and failure observation as explicit work.
 use super::*;
 
-fn failure_observation(
+pub(super) fn failure_observation(
     state: &AppState,
     tool: &str,
     arguments: &Value,

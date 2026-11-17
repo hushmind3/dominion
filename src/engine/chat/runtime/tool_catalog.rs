@@ -40,7 +40,7 @@ pub(super) fn mark_tool_argument_signal(
     crate::engine::algorithms::mark_signal(state, execution_id, "tool.arguments", ok);
 }
 
-fn normalize_tool_arguments(mut arguments: Value, strategy: &str) -> Value {
+pub(super) fn normalize_tool_arguments(mut arguments: Value, strategy: &str) -> Value {
     if strategy != "normalize-paths" {
         return arguments;
     }

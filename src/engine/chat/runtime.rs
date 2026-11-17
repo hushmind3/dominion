@@ -13,16 +13,16 @@ mod finalization;
 mod tool_catalog;
 #[path = "runtime/adaptation.rs"]
 mod adaptation;
-use adaptation::{environment_fingerprint, record_adaptation_error, attempt_model_adaptation};
+use adaptation::{failure_observation, environment_fingerprint, record_adaptation_error, attempt_model_adaptation};
 #[path = "runtime/recovery.rs"]
 mod recovery;
 use recovery::{restore_program_state,load_native_checkpoint};
-use tool_catalog::{parallel_read_admitted, tool_is_read_only, mark_tool_argument_signal,
+use tool_catalog::{parallel_read_admitted, tool_is_read_only, normalize_tool_arguments, mark_tool_argument_signal,
     tool_name, recent_room_tools, select_room_tools, select_tool_definitions, trim_tool_definitions};
 pub(super) use finalization::{finalize_execution, tool_succeeded};
 use finalization::{simple_file_creation, needs_plan, action_plan, review_action,
     record_success_experience, record_selection_snapshot,
-    finish_attempt, mark_budget_exhausted, retitle_if_placeholder, ensure_session};
+    finish_attempt, mark_budget_exhausted, retitle_if_placeholder, ensure_session, record_tool_stat};
 use tool_dispatch::{frozen_replacements, run_frozen_replacements, dispatch_tool_call, record_soft_tool_error};
 use program::{execute_program_tool, run_program};
 use outcome::{compliance_detail, compliance_summary, determine_task_outcome, finalization_payload_hash};

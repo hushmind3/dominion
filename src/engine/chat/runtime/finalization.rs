@@ -798,7 +798,7 @@ pub(super) fn ensure_session(state: &AppState, request: &TurnRequest) -> Result<
     session.ok_or_else(|| "세션을 만들 수 없습니다.".to_string())
 }
 
-fn record_tool_stat(state: &AppState, session_id: &str, agent_id: Option<&str>, name: &str, ok: bool) {
+pub(super) fn record_tool_stat(state: &AppState, session_id: &str, agent_id: Option<&str>, name: &str, ok: bool) {
     let Some(stat) = state.store.increment_counters(
         "tool_stat",
         name,
