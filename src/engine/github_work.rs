@@ -53,8 +53,14 @@ impl<'a> Target<'a>{
 }
 
 fn client()->Result<reqwest::Client,String>{
-    reqwest::Client::builder().timeout(Duration::from_secs(30))
-        .build().map_err(|e|e.to_string())
+    // A cloned reqwest Client shares its connection pool: repeated repository
+    // discovery / read / verification does not re-create TCP/TLS handshakes.
+    static CLIENT:std::sync::OnceLock<Result<reqwest::Client,String>>=
+        std::sync::OnceLock::new();
+    CLIENT.get_or_init(||
+        reqwest::Client::builder().timeout(Duration::from_secs(30))
+            .build().map_err(|e|e.to_string())
+    ).clone()
 }
 fn request(client:&reqwest::Client,url:reqwest::Url,token:&str)
     ->reqwest::RequestBuilder {
@@ -89,6 +95,70 @@ fn decoded_file(body:&Value)->Result<String,String>{
     let stripped=encoded.chars().filter(|c|!c.is_ascii_whitespace()).collect::<String>();
     let bytes=STANDARD.decode(stripped).map_err(|_|"GitHub 파일 base64 오류")?;
     String::from_utf8(bytes).map_err(|_|"UTF-8 텍스트 파일만 지원합니다.".into())
+}
+
+/// The GitHub OAuth grant is the only credential used here. A repo result
+/// is descriptive, never a write authorization by itself: the commit path
+/// rechecks permissions, branch state and content SHA immediately before PUT.
+fn repo_summaries(body:&Value,query:&str,writable_only:bool)->Result<Vec<Value>,String>{
+    let rows=body.as_array().ok_or("GitHub 저장소 목록 형식이 올바르지 않습니다.")?;
+    let search=query.to_lowercase();
+    Ok(rows.iter().filter_map(|item|{
+        let owner=item["owner"]["login"].as_str()?;
+        let repo=item["name"].as_str()?;
+        let fullname=item["full_name"].as_str()?;
+        let can_write=item["permissions"]["push"].as_bool()==Some(true);
+        let can_read=item["permissions"]["pull"].as_bool()==Some(true)
+            || can_write || item["permissions"]["admin"].as_bool()==Some(true);
+        if !can_read || writable_only && !can_write ||
+            !fullname.to_lowercase().contains(&search){return None;}
+        Some(json!({
+            "owner":owner,"repo":repo,"fullName":fullname,
+            "defaultBranch":item["default_branch"],"private":item["private"],
+            "canRead":can_read,"canWrite":can_write,
+            "archived":item["archived"],"disabled":item["disabled"],
+            "url":item["html_url"],
+        }))
+    }).collect())
+}
+
+/// List only repositories visible to the *connected user*. The model chooses
+/// an explicit owner/repo after this read, then calls github_file_read before
+/// any github_file_commit (the latter still requires owner approval).
+pub async fn repositories(state:&AppState,args:&Value)->Result<Value,String>{
+    let page=match args.get("page"){
+        None=>1,
+        Some(value)=>value.as_u64().filter(|page|(1..=10).contains(page))
+            .ok_or("GitHub 저장소 페이지는 1~10 사이 정수여야 합니다.")?,
+    };
+    let query=match args.get("query"){
+        None=>"",
+        Some(value)=>value.as_str().ok_or("GitHub 저장소 검색어는 문자열이어야 합니다.")?,
+    };
+    if query.chars().count()>100{
+        return Err("저장소 검색어는 최대 100자입니다.".into());
+    }
+    let writable_only=match args.get("writableOnly"){
+        None=>false,
+        Some(value)=>value.as_bool().ok_or("writableOnly는 참/거짓이어야 합니다.")?,
+    };
+    let token=crate::engine::oauth::fresh_access_token(state,"github").await
+        .map_err(|error|format!("{error} GitHub 계정을 연결하거나 권한을 확인하세요."))?;
+    let mut url=reqwest::Url::parse("https://api.github.com/user/repos")
+        .map_err(|e|e.to_string())?;
+    url.query_pairs_mut().append_pair("sort","updated")
+        .append_pair("direction","desc").append_pair("per_page","50")
+        .append_pair("page",&page.to_string());
+    let (status,body)=get_json(&client()?,url,&token).await?;
+    if status>=400{return Err(http_error(status));}
+    let received=body.as_array().map(Vec::len)
+        .ok_or("GitHub 저장소 목록 형식이 올바르지 않습니다.")?;
+    let repos=repo_summaries(&body,query,writable_only)?;
+    Ok(json!({
+        "repositories":repos,"page":page,"hasMore":received==50,
+        "filteredOnPage":true,
+        "nextStep":"Choose owner/repo and defaultBranch. Call github_file_read before any existing-file commit.",
+    }))
 }
 
 pub async fn read(state:&AppState,args:&Value)->Result<Value,String>{
@@ -203,6 +273,28 @@ pub async fn commit(state:&AppState,args:&Value)->Result<Value,String>{
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn repository_discovery_uses_only_explicit_git_permissions_and_no_secrets(){
+        let items=json!([
+            {"owner":{"login":"dev"},"name":"private-project",
+              "full_name":"dev/private-project","default_branch":"dev",
+              "private":true,"permissions":{"pull":true,"push":false}},
+            {"owner":{"login":"org"},"name":"write-project",
+              "full_name":"org/write-project","default_branch":"main",
+              "private":false,"permissions":{"pull":true,"push":true},
+              "html_url":"https://github.com/org/write-project"},
+            {"owner":{"login":"org"},"name":"hidden-project",
+              "full_name":"org/hidden-project",
+              "permissions":{"pull":false,"push":false}},
+        ]);
+        let list=repo_summaries(&items,"project",false).unwrap();
+        assert_eq!(list.len(),2);
+        assert_eq!(list[0]["canWrite"],false);
+        assert_eq!(list[1]["defaultBranch"],"main");
+        assert!(list[0].get("accessToken").is_none());
+        assert_eq!(repo_summaries(&items,"",true).unwrap().len(),1);
+        assert!(repo_summaries(&json!({"error":"invalid"}),"",false).is_err());
+    }
     #[test]
     fn target_rejects_traversal_and_keeps_branch_as_query_not_path(){
         for p in ["../secrets","/abs.txt","src/../x","src//x","./x"]{

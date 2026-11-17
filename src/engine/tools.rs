@@ -80,6 +80,11 @@ pub fn definitions() -> Vec<Value> {
             "key": text("Key to press: Enter, Escape, Tab, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Backspace")
         }), vec!["action"])),
 
+        tool("github_repositories", "List repositories available to the connected GitHub account, with owner, repository, default branch and explicit write permission. Choose a repository before reading or editing; supports page and writable-only filtering.", object(json!({
+            "query":text("Optional repository name fragment; filtered within this page"),
+            "page":json!({"type":"integer","minimum":1,"maximum":10}),
+            "writableOnly":json!({"type":"boolean","description":"Only repositories with confirmed push permission"}
+        }),vec![])),
         tool("github_file_read", "Read a UTF-8 text file from an explicitly selected GitHub owner/repository/branch through the connected account; returns SHA for safe updates.", object(json!({
             "owner":text("Repository owner"),"repo":text("Repository name"),
             "path":text("Repository-relative file path"),"branch":text("Optional ref, defaults to repository default branch")
@@ -122,7 +127,7 @@ pub fn requires_approval(name: &str) -> bool {
 pub fn parallel_read_only_tool(name:&str)->bool{
     matches!(name,"workspace_list"|"workspace_read"|"workspace_read_range"|
         "code_search"|"memory_search"|"web_search"|"http_fetch"|
-        "github_file_read")
+        "github_file_read"|"github_repositories")
 }
 
 /// The UI's optional capabilities are a persisted execution policy.
@@ -384,6 +389,7 @@ pub async fn execute(
             "providers": crate::engine::oauth::status(ctx.state),
         })),
         "github_api" => github_api(ctx, args).await,
+        "github_repositories" => crate::engine::github_work::repositories(ctx.state,args).await,
         "github_file_read" => crate::engine::github_work::read(ctx.state,args).await,
         "github_file_commit" => crate::engine::github_work::commit(ctx.state,args).await,
         other => Err(format!("Unknown tool: {other}")),

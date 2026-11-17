@@ -138,3 +138,18 @@ test('runtime scoped receipt lookups avoid global history scans',()=>{
  assert.match(live,/task_executions\(task_id\)/);
  assert.match(db,/idx_operation_session/);
 });
+
+test('GitHub discovery resolves selected repository and access before file changes',()=>{
+ const work=file('src/engine/github_work.rs');
+ const tools=file('src/engine/tools.rs');
+ const projection=file('src/engine/chat/tool_projection.rs');
+ assert.match(work,/pub async fn repositories\(/);
+ assert.match(work,/repo_summaries\(/);
+ assert.match(work,/fresh_access_token\(state,"github"\)/);
+ assert.match(work,/client\(\)\?/);
+ assert.match(work,/std::sync::OnceLock/);
+ assert.match(work,/\["permissions"\]\["push"\]/);
+ assert.match(tools,/github_repositories/);
+ assert.match(projection,/github_repositories/);
+ assert.match(work,/repository_discovery_uses_only_explicit_git_permissions/);
+});

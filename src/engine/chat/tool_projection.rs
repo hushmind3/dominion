@@ -111,7 +111,7 @@ pub(super) fn select_room_tools(
             &["브라우저", "browser", "클릭", "click"],
             &["browser_control"],
         ),
-        (&["github", "깃허브"], &["github_file_read","github_file_commit","github_api"]),
+        (&["github", "깃허브", "repository", "레포지토리", "리포지토리", "저장소"], &["github_repositories","github_file_read","github_file_commit","github_api"]),
         (&["계정", "oauth", "account"], &["account_status"]),
     ];
     let mut scored: Vec<(i32, Value)> = definitions
@@ -204,7 +204,7 @@ pub(super) fn select_panel_tool_definitions(definitions:Vec<Value>,query:&str)->
             "memory_search"=>wants_memory,
             "skill_propose"=>wants_skill,
             "browser_control"=>wants_browser,
-            "github_api"|"github_file_read"|"github_file_commit"=>wants_github,
+            "github_api"|"github_repositories"|"github_file_read"|"github_file_commit"=>wants_github,
             "account_status"=>wants_accounts,
             // Tools with user-selectable policy already filtered by
             // ui_tool_allowed; preserve them when the owner opts in.
