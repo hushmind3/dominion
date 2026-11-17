@@ -91,12 +91,17 @@ fn resumable_program(state: &AppState, execution: &Value) -> Option<Value> {
             }
         }
     }
-    // A failed mutation can have taken effect before its error was returned.
-    // Also reject successful effects that cannot be associated with a node
-    // already reconciled in this checkpoint: advancing the program from an
-    // unrelated write would silently lose or repeat side effects.
+    // Only program-origin calls can be replayed by restoring this program
+    // cursor. Model and adaptation operations already have durable evidence,
+    // but are outside this interpreter and must not block its independent
+    // checkpoint (nor be dispatched again by the program).
+    // An untracked or failed program mutation, however, requires review.
     for operation in &operations {
-        if !has_side_effect(std::slice::from_ref(operation)) {
+        let program_origin = operation["origin"].as_str() == Some("program")
+            || operation["callId"]
+                .as_str()
+                .is_some_and(|call_id| call_id.starts_with("program-"));
+        if !program_origin || !has_side_effect(std::slice::from_ref(operation)) {
             continue;
         }
         if operation["status"] == "failed" {
@@ -582,6 +587,36 @@ mod tests {
         let created = recover(&state);
         assert_eq!(created[0]["decision"], "needs_review", "{created:?}");
         assert_eq!(state.store.count("job"), 0);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn completed_model_and_adaptation_evidence_does_not_block_program_checkpoint() {
+        let (state, dir) = state();
+        interrupted_program(&state, "checkpoint-adapt", json!(["step2"]), json!(["step1"]));
+        state.store.put("execution_operation", &json!({
+            "id":"op-model","runId":"checkpoint-adapt",
+            "callId":"failed-model-shell","origin":"model",
+            "tool":"shell_exec","arguments":{"command":"exit 7"},
+            "status":"failed","effectState":"failed",
+        }));
+        state.store.put("execution_operation", &json!({
+            "id":"op-adaptation","runId":"checkpoint-adapt",
+            "callId":"adapt-i1-uuid","origin":"adaptation",
+            "tool":"workspace_write","arguments":{"path":"adapt.txt","content":"ADAPT"},
+            "status":"completed","effectState":"verified",
+        }));
+        state.store.put("execution_operation", &json!({
+            "id":"op-step1","runId":"checkpoint-adapt",
+            "callId":"program-step1-uuid","origin":"program",
+            "tool":"workspace_write","arguments":{"path":"step1.txt","content":"ONE"},
+            "status":"completed","effectState":"verified",
+        }));
+        let created = recover(&state);
+        assert_eq!(created.len(), 1);
+        assert_eq!(created[0]["decision"], "queued", "{created:?}");
+        let checkpoint = state.store.get("execution", "checkpoint-adapt").unwrap();
+        assert_eq!(checkpoint["programCheckpoint"]["completedOperationIds"], json!(["step1"]));
         let _ = std::fs::remove_dir_all(dir);
     }
 
