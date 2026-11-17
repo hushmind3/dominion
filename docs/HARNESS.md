@@ -73,7 +73,8 @@ optimizer. It combines three 2026 open-source strengths at the existing
    re-evaluate the **same** checks. A candidate is accepted only when at least
    one previously failed condition is resolved, no previously satisfied
    condition regresses, and the matching native receipt is complete and not
-   uncertain. Only this observed acceptance feeds an algorithm-success signal.
+   uncertain. Only observed acceptance influences the live repair/retry path; historical
+   algorithm success counters cannot overrule the owner.
    For a non-action conversational turn, the decision is `not_applicable`,
    never a fabricated success.
 
@@ -83,15 +84,19 @@ weighted-sum / expression strategy selector, which relied on unverified
 constrained non-dominated proposal selector now compares surviving causal
 explanations, observed predicate status and projected tool cost. The existing
 native dispatch and frozen postcondition/no-regression acceptance gate remain
-the only proof of a successful intervention. Historical algorithm registry
-records remain readable for compatibility; they do not control this path.
+the only proof of a successful intervention. The archived `adaptation.selection` registry remains readable, but
+registration, generation and activation are disabled for the retired kind.
+UCB1 automatic exploration has also been removed from other algorithm
+execution slots. Owner-activated kernels take precedence over
+benchmark-validated alternatives and executable built-in baselines;
+old statistics remain audit data, not a live exploration reward.
 Redundant `diagnosticEvidence` and `acceptanceDecision` payloads were
 removed from the lightweight adaptation checkpoint; full evidence remains
 available through native operation receipts and the bounded adaptation log.
 
-The compact acceptance record is stored at
-`execution.lastAdaptation.acceptanceDecision` and
-`execution.adaptationCheckpoint.acceptanceDecision`. It contains the native
+The compact acceptance record is stored once at
+`execution.lastAdaptation.acceptanceDecision`. The bounded checkpoint retains
+only its selection cursor and revision. It contains the native
 operation ID, resolved and regressed obligations, and the decision. The ordinary
 verifier remains the authority for *final* completion; in-task acceptance is
 not a substitute for held-out benchmark evaluation or isolated counterfactual
@@ -102,6 +107,16 @@ Sources inspected:
 - Google `harness2/core/recursion.py` and `selection.py`
 - Airbnb `agent_harness_optimizer/optimizers/prism/loop.py` and
   `framework/acceptance.py`
+
+## Archived algorithms and API compatibility
+
+- The retired `adaptation.selection` rows remain visible in
+  `GET /api/algorithms` with `retired: true`; new registrations, generated
+  candidates and activation are rejected.
+- Explicit owner activation takes precedence; validated alternatives and
+  active executable baselines are retained. No UCB1 runtime exploration remains.
+- Archived RSI campaigns and completed media files remain retrievable
+  through read-only API routes; retired mutation/production workers stay off.
 
 ## Retired subsystems
 

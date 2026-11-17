@@ -36,6 +36,12 @@
 
 ## Native Rust execution core
 
+Old UCB1 exploration and weighted tool-failure repair selection have been
+retired. The 2026 repair path combines bounded diagnostic observations, native
+permission/cancellation/effect receipts and frozen postcondition no-regression
+acceptance. User-activated kernels retain priority; historical algorithm
+records remain available through the read-only API.
+
 The product embeds [`dominion-core`](crates/dominion-core/README.md), adapted from `dominion-sub4`, behind the existing SQLite store, React frontend and provider/tool adapters. Chat, rooms, jobs, workflows and the Home autonomous-work panel use the same product execution path. `/api/sdk/runs` uses that same execution path and SQLite journal. See [the execution contract](docs/HARNESS.md).
 
 Background SDK, job, and Discord turns drain transient events without retaining an additional in-memory copy of tool arguments and results. Durable tool receipts and opt-in evidence collection are unchanged.

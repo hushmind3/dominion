@@ -5,8 +5,8 @@
 use crate::state::AppState;
 use serde_json::{json, Value};
 
+pub const ARCHIVED_KINDS: &[&str] = &["adaptation.selection"];
 pub const KINDS: &[&str] = &[
-    "adaptation.selection",
     "learning.applicability",
     "strategy.selection",
     "program.repair",
@@ -38,7 +38,6 @@ pub const KINDS: &[&str] = &[
 /// not here is rejected: an algorithm record must point at real behavior.
 pub fn executable_kernels(kind: &str) -> &'static [&'static str] {
     match kind {
-        "adaptation.selection" => &["balanced", "discrimination-first", "progress-first", "probe-first", "expression"],
         "learning.applicability" => &["conservative", "probe-unknown"],
         "strategy.selection" => &["estimated-softmax", "exploit-only", "expression"],
         "program.repair" => &["completed-preserving", "append-only"],
@@ -321,34 +320,6 @@ fn builtin(
 
 pub fn builtins() -> Vec<Value> {
     vec![
-        builtin(
-            "adaptation.selection",
-            "balanced",
-            "balanced",
-            "진전·구별·비용·불확실성을 함께 고려한다.",
-            json!({"discriminationWeight": 1.0, "progressWeight": 1.0, "costWeight": 1.0, "uncertaintyWeight": 0.5}),
-        ),
-        builtin(
-            "adaptation.selection",
-            "discrimination-first",
-            "discrimination-first",
-            "원인이 불명확할 때 가설을 구별하는 probe를 우선한다.",
-            json!({"discriminationWeight": 3.0, "progressWeight": 0.3, "costWeight": 1.0, "uncertaintyWeight": 0.2}),
-        ),
-        builtin(
-            "adaptation.selection",
-            "progress-first",
-            "progress-first",
-            "원인이 좁혀졌을 때 실제 문제 해결 가능성이 큰 개입을 우선한다.",
-            json!({"discriminationWeight": 0.3, "progressWeight": 3.0, "costWeight": 0.8, "uncertaintyWeight": 0.5}),
-        ),
-        builtin(
-            "adaptation.selection",
-            "probe-first",
-            "probe-first",
-            "낮은 비용의 관측으로 원인을 먼저 구별한다.",
-            json!({"discriminationWeight": 2.5, "progressWeight": 0.4, "costWeight": 1.5, "uncertaintyWeight": 0.2}),
-        ),
         builtin(
             "learning.applicability",
             "conservative",
@@ -870,6 +841,7 @@ pub fn list(state: &AppState) -> Value {
     }
     let kinds = KINDS
         .iter()
+        .chain(ARCHIVED_KINDS.iter())
         .map(|kind| {
             let rows = items
                 .iter()
@@ -885,6 +857,7 @@ pub fn list(state: &AppState) -> Value {
                 .collect::<Vec<_>>();
             json!({
                 "kind": kind,
+                "retired": ARCHIVED_KINDS.contains(kind),
                 "label": kind_label(kind),
                 "kernels": executable_kernels(kind),
                 "active": rows.iter().find(|item| item["status"].as_str() == Some("active")).cloned(),
@@ -906,11 +879,13 @@ pub fn list(state: &AppState) -> Value {
 }
 
 pub fn active(state: &AppState, kind: &str) -> Option<Value> {
-    seed(state);
-    state
-        .store
-        .all("algorithm")
-        .into_iter()
+    if ARCHIVED_KINDS.contains(&kind) { return None; }
+    let mut rows = state.store.all("algorithm");
+    if !rows.iter().any(|row| row["kind"].as_str() == Some(kind)) {
+        seed(state);
+        rows = state.store.all("algorithm");
+    }
+    rows.into_iter()
         .find(|item| {
             item["kind"].as_str() == Some(kind)
                 && item["status"].as_str() == Some("active")
@@ -955,99 +930,39 @@ fn stat_id(agent: &str, kind: &str, revision: &str) -> String {
     )
 }
 
-/// UCB1 over the agent's own outcomes. The model is irrelevant; what improves
-/// is which judgment kernel this bot has actually had success with.
+/// Algorithm selection is evidence-gated, not UCB1 exploration.
+///
+/// The explicit owner-selected kernel has priority over aggregate success
+/// counters. Validated alternatives remain available for controlled promotion,
+/// but model-proposed candidate statistics cannot silently change live policy.
+/// Historical algorithm statistics remain readable, not a runtime reward.
 pub fn choose_for_agent(
     state: &AppState,
     kind: &str,
     agent_id: Option<&str>,
     execution_id: Option<&str>,
 ) -> Option<Value> {
-    seed(state);
+    if ARCHIVED_KINDS.contains(&kind) { return None; }
+    let mut records = state.store.all("algorithm");
+    if !records.iter().any(|row| row["kind"].as_str() == Some(kind)) {
+        seed(state);
+        records = state.store.all("algorithm");
+    }
     let agent = agent_of(state, agent_id)?;
-    let candidates = state
-        .store
-        .all("algorithm")
-        .into_iter()
+    let chosen = records.into_iter()
         .filter(|algorithm| {
             algorithm["kind"].as_str() == Some(kind)
-                // Builtins are trusted executable baselines. Generated/user
-                // candidates cannot enter live UCB exploration merely by
-                // being registered as "available": they require validation
-                // or explicit activation by the owner.
                 && (matches!(algorithm["status"].as_str(),
-                        Some("active" | "validated"))
-                    || (algorithm["status"].as_str() == Some("available")
-                        && algorithm["source"].as_str() == Some("builtin")))
-                && algorithm["implementation"]
-                    .as_str()
+                    Some("active" | "validated"))
+                    || (algorithm["status"] == "available"
+                        && algorithm["source"] == "builtin"))
+                && algorithm["implementation"].as_str()
                     .is_some_and(|implementation| kernel_exists(kind, implementation))
         })
-        .collect::<Vec<_>>();
-    if candidates.is_empty() {
-        return None;
-    }
-    let all_stats = state.store.all("algorithm_stat");
-    let stats = all_stats
-        .iter()
-        .filter(|stat| {
-            stat["agentId"].as_str() == Some(agent.as_str())
-                && stat["kind"].as_str() == Some(kind)
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    let global_stats = all_stats
-        .iter()
-        .filter(|stat| {
-            stat["agentId"].as_str() == Some("global")
-                && stat["kind"].as_str() == Some(kind)
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    let total = stats
-        .iter()
-        .map(|stat| stat["uses"].as_u64().unwrap_or(0))
-        .sum::<u64>() as f64;
-    let active_revision = active(state, kind)
-        .and_then(|algorithm| algorithm["revision"].as_str().map(str::to_string));
-    let chosen = candidates
-        .into_iter()
-        .max_by(|a, b| {
-            let score = |algorithm: &Value| {
-                let revision = algorithm["revision"].as_str().unwrap_or("");
-                let stat = stats
-                    .iter()
-                    .find(|stat| stat["revision"].as_str() == Some(revision))
-                    .or_else(|| {
-                        global_stats
-                            .iter()
-                            .find(|stat| stat["revision"].as_str() == Some(revision))
-                    });
-                let uses = stat
-                    .and_then(|stat| stat["uses"].as_u64())
-                    .unwrap_or(0) as f64;
-                let successes = stat
-                    .and_then(|stat| stat["successes"].as_u64())
-                    .unwrap_or(0) as f64;
-                let rate = if uses > 0.0 { successes / uses } else { 0.0 };
-                let exploration = if uses > 0.0 {
-                    (2.0 * (total + 1.0).ln() / uses).sqrt()
-                } else {
-                    1.5
-                };
-                let active_bonus = if active_revision
-                    .as_deref()
-                    == algorithm["revision"].as_str()
-                {
-                    0.05
-                } else {
-                    0.0
-                };
-                rate + exploration + active_bonus
-            };
-            score(a)
-                .partial_cmp(&score(b))
-                .unwrap_or(std::cmp::Ordering::Equal)
+        .max_by_key(|algorithm| match algorithm["status"].as_str() {
+            Some("active") => 3_u8,
+            Some("validated") => 2,
+            _ => 1,
         })?;
     if let Some(execution_id) = execution_id {
         let usage_id = format!(
@@ -1077,7 +992,7 @@ pub fn choose_for_agent(
 /// Route genuinely multi-step goals to an executable decomposition kernel
 /// instead of leaving the active "single-step" default in charge of every new
 /// agent. Grade the *same owner request* with each eligible kernel first, while
-/// keeping the learned UCB decision for ties and simple requests. The selected
+/// keeping the explicitly activated kernel for ties and simple requests. The selected
 /// kernel, not the ignored UCB suggestion, receives execution feedback.
 pub fn choose_decomposition_for_agent(
     state: &AppState,
@@ -1103,7 +1018,7 @@ pub fn choose_decomposition_for_agent(
         let score = decomposition["qualityScore"].as_f64().unwrap_or(0.0);
         let ordered = decomposition["quality"]["orderPreserved"] == true;
         let step_count = decomposition["subtasks"].as_array().map(Vec::len).unwrap_or(0);
-        // Only override UCB when the alternative demonstrably extracts
+        // Only override the active baseline when the alternative demonstrably extracts
         // multiple ordered actions. A vague increase in heuristic score alone
         // must not replace a user's learned selection.
         if ordered && step_count > 1 && score > best_score + 0.05 {
@@ -1664,6 +1579,9 @@ pub fn activate(state: &AppState, id: &str) -> Result<Value, String> {
         return Err("algorithm not found".into());
     };
     let kind = algorithm["kind"].as_str().unwrap_or("").to_string();
+    if ARCHIVED_KINDS.contains(&kind.as_str()) {
+        return Err("retired algorithm kind is read-only".into());
+    }
     let mut records = Vec::new();
     for mut other in state.store.all("algorithm") {
         if other["kind"].as_str() == Some(kind.as_str())
@@ -1708,6 +1626,9 @@ pub fn activate_checked(state: &AppState, id: &str, force: bool) -> Result<Value
     let Some(algorithm) = state.store.get("algorithm", id) else {
         return Err("algorithm not found".into());
     };
+    if algorithm["kind"].as_str().is_some_and(|kind| ARCHIVED_KINDS.contains(&kind)) {
+        return Err("retired algorithm kind is read-only".into());
+    }
     if !force && algorithm["status"].as_str() != Some("active") {
         let kind = algorithm["kind"].as_str().unwrap_or("");
         let implementation = algorithm["implementation"].as_str().unwrap_or("");
@@ -1752,7 +1673,10 @@ pub fn disable(state: &AppState, id: &str) -> Option<Value> {
 /// are real parameterizations of existing harness interfaces; anything that
 /// would require a new engine primitive stays a typed proposal.
 pub fn generate(state: &AppState, body: &Value) -> Value {
-    let kind = body["kind"].as_str().unwrap_or("adaptation.selection");
+    let kind = body["kind"].as_str().unwrap_or("strategy.selection");
+    if !KINDS.contains(&kind) {
+        return json!({"kind":kind,"created":[],"error":"retired or unknown algorithm kind"});
+    }
     let evidence = body["evidence"].as_array().cloned().unwrap_or_default();
     let evidence_text = evidence
         .iter()
@@ -1763,44 +1687,7 @@ pub fn generate(state: &AppState, body: &Value) -> Value {
         "generated-{}",
         crate::engine::memory::stable_id(&[kind, &evidence_text])
     );
-    let lower = evidence_text.to_lowercase();
-    let timeout_heavy = lower.matches("timeout").count() + lower.matches("시간").count();
-    let permission_heavy =
-        lower.matches("permission").count() + lower.matches("권한").count();
-    let not_found_heavy = lower.matches("not_found").count() + lower.matches("not found").count();
     let templates: Vec<Value> = match kind {
-        "adaptation.selection" => {
-            // Evidence changes the starting kernel: repeated timeouts/unknown
-            // causes favour a cheap probe; permission failures favour a
-            // discrimination-focused search; otherwise progress wins.
-            let (kernel, description, discrimination, progress) = if timeout_heavy
-                > permission_heavy.max(not_found_heavy)
-            {
-                ("probe-first", "시간 초과/불명확 원인 증거가 많아 저비용 probe를 먼저 둔다.", 2.8, 0.4)
-            } else if permission_heavy > not_found_heavy {
-                (
-                    "discrimination-first",
-                    "권한 실패 증거가 많아 원인을 구별하는 개입을 우선한다.",
-                    3.0,
-                    0.5,
-                )
-            } else {
-                (
-                    "progress-first",
-                    "파일/경로 실패 증거가 많아 실제 해결 개입을 우선한다.",
-                    0.4,
-                    2.5,
-                )
-            };
-            vec![
-                json!({"name": format!("{base}-{kernel}"), "variant": kernel, "implementation": kernel,
-                    "description": description,
-                    "parameters": {"discriminationWeight": discrimination, "progressWeight": progress, "costWeight": 1.2}}),
-                json!({"name": format!("{base}-{kernel}-explore"), "variant": kernel, "implementation": kernel,
-                    "description": "증거 기반 후보의 탐색 비중을 높인 변형",
-                    "parameters": {"discriminationWeight": discrimination, "progressWeight": progress, "costWeight": 1.8}}),
-            ]
-        }
         "strategy.selection" => vec![
             json!({"name": format!("{base}-exploit-only"), "variant": "exploit-only", "implementation": "exploit-only",
                 "description": "관측 표본이 충분한 전략만 선택한다.",
@@ -1934,31 +1821,31 @@ mod tests {
     fn only_executable_kernels_register_and_activation_is_kind_isolated() {
         let (state, dir) = state();
         seed(&state);
-        let adaptation_before = active(&state, "adaptation.selection").unwrap();
+        let tool_before = active(&state, "tool.selection").unwrap();
         let strategy_before = active(&state, "strategy.selection").unwrap();
         assert!(register(
             &state,
-            &json!({"kind":"adaptation.selection","name":"fake","implementation":"does-not-exist"})
+            &json!({"kind":"tool.selection","name":"fake","implementation":"does-not-exist"})
         )
         .is_err());
         let record = register(
             &state,
             &json!({
-                "kind":"adaptation.selection",
-                "name":"cheap-probe",
-                "implementation":"probe-first",
-                "parameters":{"discriminationWeight":2.0}
+                "kind":"tool.selection",
+                "name":"strict-write",
+                "implementation":"block-write-without-read",
+                "parameters":{}
             }),
         )
         .unwrap();
         activate(&state, record["id"].as_str().unwrap()).unwrap();
         assert_eq!(
-            active(&state, "adaptation.selection").unwrap()["id"],
+            active(&state, "tool.selection").unwrap()["id"],
             record["id"]
         );
         assert_ne!(
-            active(&state, "adaptation.selection").unwrap()["id"],
-            adaptation_before["id"]
+            active(&state, "tool.selection").unwrap()["id"],
+            tool_before["id"]
         );
         assert_eq!(
             active(&state, "strategy.selection").unwrap()["id"],
@@ -1969,7 +1856,7 @@ mod tests {
     }
 
     #[test]
-    fn unverified_generated_algorithms_never_enter_live_ucb_until_promoted() {
+    fn unverified_generated_algorithms_never_enter_live_selection_until_promoted() {
         let (state, dir) = state();
         seed(&state);
         let candidate = register(&state, &json!({
@@ -1997,12 +1884,59 @@ mod tests {
     }
 
     #[test]
+    fn retired_repair_algorithms_are_read_only_and_not_executable() {
+        let (state,dir)=state();
+        seed(&state);
+        let legacy=json!({
+            "id":"legacy-adaptation","kind":"adaptation.selection",
+            "implementation":"balanced","source":"builtin",
+            "name":"balanced","status":"active","revision":"legacy-v1"
+        });
+        state.store.put("algorithm",&legacy);
+        assert!(active(&state,"adaptation.selection").is_none());
+        assert!(choose_for_agent(&state,"adaptation.selection",None,None).is_none());
+        assert!(register(&state,&legacy).is_err());
+        assert!(activate(&state,"legacy-adaptation").is_err());
+        assert!(activate_checked(&state,"legacy-adaptation",true).is_err());
+        let generated=generate(&state,&json!({"kind":"adaptation.selection"}));
+        assert!(generated["created"].as_array().unwrap().is_empty());
+        let listed=list(&state);
+        let archived=listed["kinds"].as_array().unwrap().iter()
+            .find(|row|row["kind"]=="adaptation.selection").unwrap();
+        assert_eq!(archived["retired"],true);
+        assert!(archived["algorithms"].as_array().unwrap().iter()
+            .any(|row|row["id"]=="legacy-adaptation"));
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn owner_activation_is_not_displaced_by_unverified_usage_statistics() {
+        let (state,dir)=state();
+        seed(&state);
+        let owner=active(&state,"tool.selection").unwrap();
+        let alternative=state.store.all("algorithm").into_iter()
+            .find(|row|row["kind"]=="tool.selection"
+                && row["id"]!=owner["id"]).unwrap();
+        state.store.put("algorithm_stat",&json!({
+            "id":"pretend-success","agentId":"global","kind":"tool.selection",
+            "revision":alternative["revision"],"uses":10000,
+            "successes":10000,"failures":0,
+        }));
+        let chosen=choose_for_agent(&state,"tool.selection",None,Some("owner-run")).unwrap();
+        assert_eq!(chosen["id"],owner["id"]);
+        let usage=state.store.all("algorithm_usage").into_iter()
+            .find(|row|row["executionId"]=="owner-run").unwrap();
+        assert_eq!(usage["revision"],owner["revision"]);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn generation_uses_evidence_and_returns_executable_kernels() {
         let (state, dir) = state();
         let generated = generate(
             &state,
             &json!({
-                "kind":"adaptation.selection",
+                "kind":"strategy.selection",
                 "evidence":["timeout timeout permission denied"]
             }),
         );
@@ -2015,7 +1949,7 @@ mod tests {
         }
         assert!(created
             .iter()
-            .any(|algorithm| algorithm["implementation"] == "probe-first"));
+            .any(|algorithm| algorithm["implementation"] == "exploit-only"));
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -2032,7 +1966,7 @@ mod tests {
         let record = register(
             &state,
             &json!({
-                "kind":"adaptation.selection",
+                "kind":"strategy.selection",
                 "name":"custom-formula",
                 "implementation":"expression",
                 "parameters":{"expression":"discrimination * 2 - cost"}
@@ -2043,7 +1977,7 @@ mod tests {
         assert!(register(
             &state,
             &json!({
-                "kind":"adaptation.selection",
+                "kind":"strategy.selection",
                 "name":"broken-formula",
                 "implementation":"expression",
                 "parameters":{"expression":"discrimination +"}
@@ -2139,7 +2073,7 @@ mod tests {
         let (state, dir) = state();
         seed(&state);
         let chosen = choose_for_agent(
-            &state, "adaptation.selection", Some("agent-a"), Some("exec-1"),
+            &state, "verification.predicate", Some("agent-a"), Some("exec-1"),
         )
         .expect("algorithm");
         assert!(state.store.all("algorithm_usage").iter().any(|usage| {
@@ -2295,12 +2229,12 @@ mod tests {
         let (state, dir) = state();
         seed(&state);
         let chosen = choose_for_agent(
-            &state, "adaptation.selection", None, Some("exec-global"),
+            &state, "verification.predicate", None, Some("exec-global"),
         )
         .expect("algorithm");
-        mark_signal(&state, "exec-global", "adaptation.selection", false);
-        mark_signal(&state, "exec-global", "adaptation.selection", false);
-        mark_signal(&state, "exec-global", "adaptation.selection", true);
+        mark_signal(&state, "exec-global", "verification.predicate", false);
+        mark_signal(&state, "exec-global", "verification.predicate", false);
+        mark_signal(&state, "exec-global", "verification.predicate", true);
         finalize_execution(
             &state,
             &json!({"id":"exec-global","taskOutcome":"succeeded"}),

@@ -481,17 +481,6 @@ pub(super) async fn attempt_model_adaptation(
             "basis":"no_frozen_owner_acceptance_contract"})
     };
     adaptation["acceptanceDecision"] = acceptance_decision.clone();
-    if acceptance_decision["decision"] != "not_applicable" {
-        crate::engine::algorithms::mark_signal(
-            state, execution_id, "adaptation.selection",
-            acceptance_decision["accepted"] == true,
-        );
-    } else if !ok {
-        crate::engine::algorithms::mark_signal(
-            state, execution_id, "adaptation.selection", false,
-        );
-    }
-
     let hypothesis_results = crate::engine::adaptation_loop::evaluate_hypotheses_phased(
         &adaptation,
         &before_observation,
