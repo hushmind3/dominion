@@ -57,11 +57,24 @@ export function ConnectionsPage(){
    setProbe(x=>({...x,[id]:r.verified?t('conn.dlg.verified'):r.message||t('conn.dlg.checkNeeded')}));
   }catch(e){setProbe(x=>({...x,[id]:(e as Error).message}))}
  };
+ // A CLI or browser consent completes outside React. Refresh the connected
+ // account cards when the user returns instead of asking for a page reload.
+ useEffect(()=>{
+  if(section!=='accounts')return;
+  const sync=()=>{void oauth.reload();void accounts.reload()};
+  const visible=()=>{if(document.visibilityState==='visible')sync()};
+  window.addEventListener('focus',sync);
+  document.addEventListener('visibilitychange',visible);
+  return ()=>{
+   window.removeEventListener('focus',sync);
+   document.removeEventListener('visibilitychange',visible);
+  };
+ },[section,oauth.reload,accounts.reload]);
  const connect=async(item:OAuthProvider)=>{
   setError('');setInfo('');
   try{
    await openOAuth(item.id,item.loginMode||'oauth')
-   if(item.loginMode==='cli')setInfo('시스템 창에서 계정을 승인하세요. 완료 후 새로고침하면 연결 상태가 반영됩니다.')
+   if(item.loginMode==='cli')setInfo('시스템 창에서 계정을 승인하세요. 완료 후 도미니온으로 돌아오면 연결 상태가 자동 갱신됩니다.')
    await oauth.reload();await accounts.reload()
   }catch(e){setError((e as Error).message)}
  };
