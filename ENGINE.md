@@ -25,6 +25,9 @@
 
 ## Money 근거 기반 발굴
 
+머니 화면의 사용자 승인 버튼은 기존 `POST /api/sdk/runs`를 호출하며, 선택한 `agentId`와 모델을 공통 실행기에 전달합니다. SDK 실행 기록에는 제품 중립적인 `source.kind/id`가 보존됩니다. 재접속 시 `GET /api/sdk/runs/source/money_candidate`가 SQLite 인덱스를 사용해 최근 연결 작업을 읽고, 진행·도구 승인·중단·재개는 SDK API를 그대로 이용합니다. 비즈니스 아이디어와 실제 유료 거래의 성립 여부는 별도로 검증해야 합니다.
+
+
 기존 Rust 실행기·SQLite·작업 큐에 공개 자료 수집·시장 사건 인덱싱·수익 가설 생성 기능을 연결합니다. `src/db/money.rs`에 별도 시장 도메인 저장 코드를 유지하고, `/api/money/find`에서 DB 초안을 제공하며 사용자 선택 시 기존 `money_discover` 작업으로 추론합니다. [설계 및 한계](docs/MONEY.md).
 
 ## 기억과 학습

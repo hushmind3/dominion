@@ -46,9 +46,21 @@ type FindResult={
  inferenceModel?:{providerId?:string;model?:string}|null
  selectedAgentId?:string
 }
+type SdkRun={
+ id:string
+ status:string
+ source?:{kind:string;id:string}
+ sessionId?:string
+ verified?:boolean
+ taskOutcome?:string
+ answer?:string
+ error?:string
+ pendingApprovalId?:string
+ checkpoint?:{pendingCall?:{name?:string;arguments?:unknown}}
+}
 const empty:FindResult={drafts:[],modelCalls:0,activeAutomationIds:[]}
 
-export function MoneyPage(_props:{openSession:(id:string)=>void}){
+export function MoneyPage(props:{openSession:(id:string)=>void}){
  const [result,setResult]=useState<FindResult>(empty)
  const [loading,setLoading]=useState(true)
  const [searching,setSearching]=useState(false)
@@ -59,6 +71,8 @@ export function MoneyPage(_props:{openSession:(id:string)=>void}){
  const [stats,setStats]=useState<Stats|null>(null)
  const [toggling,setToggling]=useState(false)
  const [agentId,setAgentId]=useState('db')
+ const [implementations,setImplementations]=useState<Record<string,SdkRun>>({})
+ const [implementationBusy,setImplementationBusy]=useState('')
  const reasoning=['queued','running'].includes(result.inferenceStatus||'')
  useEffect(()=>{
   let mounted=true
@@ -83,6 +97,82 @@ export function MoneyPage(_props:{openSession:(id:string)=>void}){
   return()=>{live=false;window.clearInterval(interval)}
  },[reasoning])
  const selectedAgent=agents.find(a=>a.id===agentId)
+ useEffect(()=>{
+  let mounted=true
+  void get<SdkRun[]>('/api/sdk/runs/source/money_candidate')
+   .then(runs=>{
+    if(!mounted)return
+    const mapped:Record<string,SdkRun>={}
+    for(const run of runs){
+     const candidateId=run.source?.id
+     if(candidateId&&!mapped[candidateId])mapped[candidateId]=run
+    }
+    setImplementations(mapped)
+   }).catch(()=>{})
+  return()=>{mounted=false}
+ },[])
+ const activeImplementationIds=Object.values(implementations)
+  .filter(run=>['queued','running','awaiting_approval'].includes(run.status))
+  .map(run=>run.id).sort().join('|')
+ useEffect(()=>{
+  if(!activeImplementationIds)return
+  let mounted=true
+  const ids=activeImplementationIds.split('|')
+  const refresh=()=>{void Promise.all(ids.map(id=>get<SdkRun>('/api/sdk/runs/'+encodeURIComponent(id))))
+   .then(runs=>{
+    if(!mounted)return
+    setImplementations(previous=>{
+     const next={...previous}
+     for(const run of runs){if(run.source?.id)next[run.source.id]=run}
+     return next
+    })
+   }).catch(()=>{})}
+  refresh()
+  const timer=window.setInterval(refresh,4000)
+  return()=>{mounted=false;window.clearInterval(timer)}
+ },[activeImplementationIds])
+ async function implementDraft(draft:Draft){
+  const agent=agents.find(item=>item.id===agentId)
+  if(!agent?.providerId||!agent.model||implementationBusy)return
+  setImplementationBusy(draft.id)
+  setError('')
+  try{
+   const instruction=[
+    'DOMINION Money: 사용자가 이 후보의 검증용 MVP 구현을 승인했습니다.',
+    '후보 ID: '+draft.id,
+    '사업 가설: '+draft.title,
+    '구매자: '+(draft.customer||'미확인'),
+    '제공 결과물: '+(draft.offer||'미확인'),
+    '경제적 메커니즘: '+(draft.moneyMechanism||draft.whyPay||'추가 조사 필요'),
+    '구현 계획: '+(draft.implementationPlan||'작은 작동 시제품부터 설계'),
+    '1차 검증: '+(draft.firstTest||'실제 파일과 작동 증거 제시'),
+    '소스의 관측 내용과 추론·가정을 구분하십시오.',
+    '기존 도미니언 공통 Rust SDK/하네스를 이용하여 현재 작업 공간에 검증 가능한 MVP 파일을 만드십시오.',
+    '테스트·검증을 실행하고 실제 산출물·확인된 결과·남은 문제를 보고하십시오.',
+    '이 승인은 작업 공간 내부의 MVP 코드 작성에만 적용됩니다.',
+    '외부 고객 연락, 계약, 결제, 광고 지출, 실제 상품 판매, 공개 배포는 수행하지 마십시오.'
+   ].join('\n')
+   const run=await post<SdkRun>('/api/sdk/runs',{
+    instruction,agentId:agent.id,providerId:agent.providerId,model:agent.model,
+    tokenBudget:24000,maxRounds:12,source:{kind:'money_candidate',id:draft.id}
+   })
+   setImplementations(previous=>({...previous,[draft.id]:run}))
+  }catch(err){setError((err as Error).message)}
+  finally{setImplementationBusy('')}
+ }
+ async function implementationAction(draftId:string,run:SdkRun,action:'cancel'|'resume'|'approve'){
+  if(implementationBusy)return
+  setImplementationBusy(draftId)
+  setError('')
+  try{
+   const id=encodeURIComponent(run.id)
+   await post('/api/sdk/runs/'+id+'/'+action,action==='approve'
+    ?{callId:run.pendingApprovalId}:{})
+   const saved=await get<SdkRun>('/api/sdk/runs/'+id)
+   setImplementations(previous=>({...previous,[draftId]:saved}))
+  }catch(err){setError((err as Error).message)}
+  finally{setImplementationBusy('')}
+ }
  async function toggleAutopilot(){
   if(toggling||!stats)return
   setToggling(true)
@@ -240,6 +330,50 @@ export function MoneyPage(_props:{openSession:(id:string)=>void}){
       {!!draft.inferenceSteps?.length&&<ol className="mt-3 space-y-1.5">{draft.inferenceSteps.slice(0,5).map((step,i)=><li key={i} className="text-xs leading-5 text-[#665548]">{i+1}. {step}</li>)}</ol>}
       {draft.counterfactual&&<p className="mt-2 text-[11px] leading-5 text-[#8B6D51]"><strong>가설이 틀리는 경우:</strong> {draft.counterfactual}</p>}
      </details>
+     <div className="border-t border-[#EEE5D9] px-5 py-3 sm:px-6">
+      {(()=>{
+       const run=implementations[draft.id]
+       const active=run&&['queued','running','awaiting_approval'].includes(run.status)
+       return <div className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+         {!run&&<button type="button" onClick={()=>void implementDraft(draft)}
+          disabled={!!implementationBusy||agentsLoading||!selectedAgent?.providerId||!selectedAgent?.model}
+          className="min-h-9 rounded-lg border border-[#A96743] px-3 text-xs font-bold text-[#9D593D] disabled:opacity-50">
+          {implementationBusy===draft.id?'작업 생성 중…':'이 후보 MVP 구현 승인'}
+         </button>}
+         {run&&<span className="text-xs font-semibold text-[#81512F]">
+          SDK 구현 작업 · {run.status==='completed'?(run.verified?'검증 완료':'완료 · 검증 필요'):
+           run.status==='awaiting_approval'?'도구 승인 대기':
+           run.status==='in_doubt'?'외부 작업 결과 확인 필요':
+           run.status==='running'?'실행 중':run.status==='queued'?'대기 중':
+           run.status==='cancelled'?'중단됨':run.status==='failed'?'실패':run.status}
+         </span>}
+         {run?.sessionId&&<button type="button" onClick={()=>props.openSession(run.sessionId!)}
+          className="text-xs font-semibold text-[#9D593D] underline underline-offset-2">작업 세션 보기</button>}
+         {run&&active&&<button type="button" onClick={()=>void implementationAction(draft.id,run,'cancel')}
+          disabled={!!implementationBusy} className="text-xs font-bold text-[#9D593D] underline disabled:opacity-50">작업 중단</button>}
+         {run&&['failed','interrupted'].includes(run.status)&&<button type="button"
+          onClick={()=>void implementationAction(draft.id,run,'resume')}
+          disabled={!!implementationBusy} className="text-xs font-bold text-[#9D593D] underline disabled:opacity-50">기존 작업 재개</button>}
+        </div>
+        {run?.status==='awaiting_approval'&&run.pendingApprovalId&&<details className="rounded-lg border border-[#E5D3BC] bg-[#FFF8EB] px-3 py-2">
+         <summary className="cursor-pointer text-xs font-bold text-[#765337]">승인 요청된 도구와 실행 인수 확인</summary>
+         <p className="mt-2 text-xs text-[#765337]">{run.checkpoint?.pendingCall?.name||'도구 이름 확인 필요'}</p>
+         <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all text-[11px] text-[#665548]">{JSON.stringify(run.checkpoint?.pendingCall?.arguments??{},null,2).slice(0,4000)}</pre>
+         <button type="button" onClick={()=>void implementationAction(draft.id,run,'approve')}
+          disabled={!!implementationBusy} className="mt-2 rounded-lg bg-[#9B6A3F] px-3 py-2 text-xs font-bold text-white disabled:opacity-50">
+          표시된 도구 실행 승인
+         </button>
+        </details>}
+        {run?.error&&<p className="text-xs text-amber-800">{run.error}</p>}
+        {run?.answer&&<details className="rounded-lg border border-[#E5D3BC] px-3 py-2">
+         <summary className="cursor-pointer text-xs font-bold text-[#765337]">구현 결과 보고</summary>
+         <p className="mt-2 whitespace-pre-wrap text-xs leading-5 text-[#665548]">{run.answer.slice(0,6000)}</p>
+        </details>}
+        {!run&&<p className="text-[11px] text-[#8D7B6C]">선택한 에이전트로 검증용 MVP만 구현합니다. 외부 판매·계약·지출·배포는 승인 범위에 포함되지 않습니다.</p>}
+       </div>
+      })()}
+     </div>
      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-[#EEE5D9] bg-[#FCF9F4] px-5 py-3 sm:px-6">
       <span className="text-[10px] text-[#9A8B7E]">
        {draft.origin==='model'?'AI 추론 · 검증 전':draft.evidenceStatus==='two_source_research_question_only'?'독립 출처 2건 기반':

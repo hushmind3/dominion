@@ -46,3 +46,13 @@ silently repeats a potentially applied filesystem or shell operation.
 
 Build separately with `npm install && npm run build` inside this package.
 Publication is not implied. See [Rust SDK architecture](../../docs/HARNESS.md).
+
+## Optional origin metadata for tool-initiated runs
+
+`POST /api/sdk/runs` may include `agentId` and `source: {"kind":"money_candidate","id":"..."}`.
+The agent ID is validated and retained in the shared model turn; provider/model overrides remain explicit.
+The source pair is **untrusted display provenance only**, not authorization, evidence, or a tool permission.
+`GET /api/sdk/runs/source/:kind` returns at most 40 recent indexed run links;
+use `GET /api/sdk/runs/:id` for execution/approval status and existing cancel/resume endpoints.
+No second SDK, executor, or SQLite database is created.
+

@@ -52,6 +52,9 @@ Normal Rust source pushes run only scoped, default-profile kernel/job/Money regr
 
 ## 💰 Money intelligence
 
+Money cards also allow the owner to explicitly authorize a prototype implementation through the **same native SDK run endpoint** used elsewhere in the product. This binds the selected agent persona, preserves a generic source link across reloads, and exposes native approvals/cancellation/recovery without introducing a separate Money runner. Public sales, purchases, outreach and deployment are outside that MVP authorization.
+
+
 Money discovery collects public RSS, GitHub and Hugging Face signals with the existing Rust worker queue and stores the evidence in indexed SQLite. It produces source-backed business hypotheses without model tokens and offers opt-in AI inference through the existing durable job kernel. Research never authorizes outreach, spending or implementing a business.
 
 [Money architecture and limitations](docs/MONEY.md). No separate execution kernel or autonomous source-code modification system is introduced.
