@@ -154,6 +154,46 @@ async fn provider_reported_token_overrun_cannot_dispatch_any_tool_effect(){
 }
 
 #[tokio::test]
+async fn failed_receipt_guides_next_turn_without_new_dispatch_authority(){
+    struct MissingPathTools;
+    impl Tools for MissingPathTools{
+        fn definitions(&self)->Vec<ToolSpec>{
+            ["workspace_read","workspace_list"].iter().map(|name|ToolSpec{
+                name:(*name).into(),description:(*name).into(),
+                schema:json!({}),read_only:true,
+            }).collect()
+        }
+        fn execute<'a>(&'a self,action:&'a Action)->BoxFuture<'a,Result<Value,String>>{
+            Box::pin(async move{
+                if action.id=="missing"{
+                    Err("No such file or directory: missing.rs".into())
+                }else{Ok(json!({"path":"src/lib.rs"}))}
+            })
+        }
+    }
+    let model=ScriptedModel::new(vec![
+        decide(json!([op("missing","workspace_read",&[])]),None),
+        decide(json!([op("locate","workspace_list",&[])]),None),
+        decide(json!([]),Some("Located src/lib.rs")),
+    ]);
+    let tools=MissingPathTools;
+    let journal=RecordingJournal::default();
+    let kernel=Kernel{model:&model,tools:&tools,
+        evidence:&AlwaysTrueEvidence,journal:&journal};
+    let mut req=request("failure-probe");
+    req.allowed_tools=vec!["workspace_read".into(),"workspace_list".into()];
+    let result=kernel.run(req).await.unwrap();
+    assert!(matches!(result.status,Status::Completed));
+    assert_eq!(result.model_calls,3);
+    assert_eq!(result.receipts.len(),2);
+    let prompts=model.prompts.lock().unwrap();
+    let after:Value=serde_json::from_str(&prompts[1]).unwrap();
+    assert_eq!(after["latestFailureDiagnosis"]["observedFailure"],"missing_path");
+    assert_eq!(after["latestFailureDiagnosis"]["evidenceReceiptId"],"missing");
+    assert!(after["latestFailureDiagnosis"]["suggestedNextInspection"]
+        .as_str().unwrap().contains("workspace"));
+}
+#[tokio::test]
 async fn failed_read_replans_and_never_dispatches_dependent_write(){
     let model=ScriptedModel::new(vec![
         decide(json!([op("inspect","read",&[]),op("modify","write",&["inspect"])]),None),

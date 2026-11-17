@@ -3,7 +3,7 @@
 //! Provider tool schemas are a *view* over the owner-approved host catalog.
 //! The full catalog remains private to Rust dispatch and never becomes a
 //! second permission table. Discovery only returns names from that catalog.
-use crate::{Action,Receipt,ToolSpec};
+use crate::{failure_guidance,Action,Receipt,ToolSpec};
 use serde_json::{json,Value};
 use std::collections::{BTreeSet,HashMap};
 
@@ -101,7 +101,7 @@ fn ranked(catalog:&HashMap<String,ToolSpec>,query:&str)->Vec<String>{
 /// Deterministic stable shortlist. Internal discovery receives no permissions
 /// beyond the already-authorized catalog, and the original host owns dispatch.
 pub(crate) fn select(catalog:&HashMap<String,ToolSpec>,task:&str,owner:&str,
- directive:Option<&str>,_plan:&[String],_receipts:&[Receipt])->Vec<ToolSpec>{
+ directive:Option<&str>,_plan:&[String],receipts:&[Receipt])->Vec<ToolSpec>{
  if !needed(catalog){
   let mut all=catalog.values().cloned().collect::<Vec<_>>();
   all.sort_by(|a,b|a.name.cmp(&b.name));
@@ -115,6 +115,16 @@ pub(crate) fn select(catalog:&HashMap<String,ToolSpec>,task:&str,owner:&str,
  // Durable receipts give the bridge authority to call exactly discovered tools.
  for name in ["dominion_receipt_search","dominion_receipt_read"]{
   if displayed.len()<VISIBLE&&catalog.contains_key(name){displayed.insert(name.into());}
+ }
+ // Prioritize at most two read-only probes already in the owner's catalog.
+ // This is a diagnostic preference, not a new permission or tool execution.
+ if let Some(hint)=failure_guidance::latest(receipts){
+  for name in hint.probe_tools.iter().take(2){
+   if displayed.len()>=VISIBLE{break;}
+   if catalog.get(*name).is_some_and(|spec|spec.read_only){
+    displayed.insert((*name).into());
+   }
+  }
  }
  let query=format!("{task} {owner} {}",directive.unwrap_or(""));
  for name in ranked(catalog,&query) {
@@ -233,6 +243,26 @@ mod tests{
   assert!(resolve_bridge(&unknown,&c,&[]).is_err());
   assert!(search(&json!({"query":"","limit":99}),&c).is_err());
   assert!(visible.iter().all(|s|c.contains_key(&s.name)));
+ }
+ #[test]
+ fn missing_path_promotes_only_authorized_read_only_inspection(){
+  let mut c=catalog();
+  c.insert("workspace_list".into(),ToolSpec{name:"workspace_list".into(),
+   description:"Workspace inventory".into(),schema:json!({}),read_only:true});
+  c.insert("code_search".into(),ToolSpec{name:"code_search".into(),
+   description:"Symbol lookup".into(),schema:json!({}),read_only:true});
+  let before=select(&c,"Analyze market risk","",None,&[],&[]);
+  assert!(!before.iter().any(|s|s.name=="workspace_list"));
+  let receipt=Receipt{id:"missing".into(),tool:"workspace_read".into(),
+   arguments:json!({"path":"src/none.rs"}),success:false,
+   result:json!({"error":"No such file or directory"}),step:1};
+  let after=select(&c,"Analyze market risk","",None,&[],&[receipt.clone()]);
+  assert!(after.iter().any(|s|s.name=="workspace_list"));
+  assert!(after.iter().any(|s|s.name=="code_search"));
+  assert!(after.len()<=VISIBLE);
+  c.get_mut("workspace_list").unwrap().read_only=false;
+  let forbidden=select(&c,"Analyze market risk","",None,&[],&[receipt]);
+  assert!(!forbidden.iter().any(|s|s.name=="workspace_list"));
  }
  #[test]
  fn small_catalog_stays_fully_visible_without_new_discovery_rounds(){

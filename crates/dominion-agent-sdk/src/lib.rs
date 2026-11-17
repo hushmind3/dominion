@@ -16,6 +16,7 @@ mod scheduler;
 mod acceptance;
 mod context;
 mod tool_discovery;
+mod failure_guidance;
 mod schema;
 pub use schema::validate_arguments;
 pub mod replay;
@@ -514,6 +515,7 @@ impl Kernel<'_> {
             // Tool authorization remains the full host-owned catalogue. The
             // model sees a small, deterministic view, promoted by its own
             // durable discovery receipts rather than by an extra model call.
+            let failure_diagnosis=failure_guidance::latest(&run.receipts);
             let visible_tools=tool_discovery::select(
                 &tools,&request.instruction,&request.owner_instructions,
                 current_directive.as_deref(),&run.plan,&run.receipts);
@@ -536,6 +538,8 @@ impl Kernel<'_> {
                 "latestOwnerDirective":current_directive, "ownerInstructions":request.owner_instructions,
                 "currentPlan":run.plan, "recentObservations":projected.recent,
                 "importantPastFailures":projected.important_failures,
+                "latestFailureDiagnosis":failure_diagnosis.as_ref()
+                    .map(failure_guidance::FailureGuidance::model_view),
                 "historicalReceiptIndex":projected.history_index,
                 "executionDigest":projected.digest,
                 "requiredAcceptanceChecks":request.checks,
