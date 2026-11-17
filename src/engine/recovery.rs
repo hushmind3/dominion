@@ -244,6 +244,79 @@ mod tests {
     use super::*;
 
     #[test]
+    fn acceptance_feedback_repair_frontier_uses_real_verifier_and_sqlite_receipts() {
+        use crate::{config::Config, db::Store, vault::Vault};
+        let dir = std::env::temp_dir().join(format!(
+            "dominion-obligation-runtime-{}", uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        // The actual artifact contradicts the model/tool success claim.
+        std::fs::write(dir.join("report.md"), "stale bytes").unwrap();
+        let config = Config {
+            port: 0, data_dir: dir.clone(), web_dir: dir.join("web"),
+            workspace: dir.clone(),
+        };
+        let state = AppState::new(
+            config.clone(),
+            Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()),
+        );
+        let check = json!({
+            "type":"file_contains", "path":"report.md", "contains":"fresh bytes",
+        });
+        let checks = json!([check]);
+        state.store.put("execution", &json!({
+            "id":"obligation-run","sessionId":"obligation-session",
+            "status":"running","acceptanceChecks":checks,
+            "request":"update report.md to fresh bytes"
+        }));
+        for (id,tool,seq,args,result) in [
+            ("read-old","workspace_read",1,json!({"path":"report.md"}),
+                json!({"content":"stale bytes"})),
+            ("write-claimed","workspace_write",2,json!({
+                "path":"report.md","content":"fresh bytes"
+            }),json!({"success":true})),
+            ("read-again","workspace_read",3,json!({"path":"report.md"}),
+                json!({"content":"stale bytes"})),
+        ] {
+            state.store.put("execution_operation",&json!({
+                "id":id, "runId":"obligation-run",
+                "sessionId":"obligation-session","tool":tool,
+                "opSeq":seq,"status":"completed",
+                "arguments":args,"result":result,
+            }));
+        }
+        let evidence=state.store.execution_operations("obligation-run").unwrap();
+        let gaps=crate::engine::verification::check_acceptance(
+            &state,"update report.md to fresh bytes",&checks,&evidence,
+        );
+        assert!(!gaps.is_empty(), "real file must fail the frozen verifier");
+        assert!(gaps.iter().any(|gap|gap.contains("file_contains")));
+        let first=acceptance_progress(&state,"obligation-run",0,&gaps,&evidence).unwrap();
+        assert_eq!(first["obligationLineage"]["frontiers"][0]["kind"],
+            "postcondition_contradicts_mutation");
+        assert_eq!(first["obligationLineage"]["frontiers"][0]["receiptIds"],
+            json!(["read-old","write-claimed","read-again"]));
+        let stalled=acceptance_progress(&state,"obligation-run",1,&gaps,&evidence).unwrap();
+        assert_eq!(stalled["mode"],"reconsider");
+        assert!(stalled["nextAction"].as_str().unwrap()
+            .contains("CONTRADICTORY RECEIPTS"));
+        assert_eq!(stalled["verified"],false);
+        let persisted=state.store.get("execution","obligation-run").unwrap();
+        assert_eq!(persisted["acceptanceProgress"]["obligationLineage"]["frontiers"][0]
+            ["resource"],"workspace:report.md");
+        // Real postcondition must succeed only when physical bytes change.
+        std::fs::write(dir.join("report.md"), "fresh bytes").unwrap();
+        let corrected=crate::engine::verification::check_acceptance(
+            &state,"update report.md to fresh bytes",&checks,&evidence,
+        );
+        assert!(!corrected.iter().any(|gap|gap.contains("file_contains")),
+            "the deterministic file verifier must observe corrected bytes");
+        drop(state);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn acceptance_feedback_uses_verifier_delta_not_extra_tool_success() {
         use crate::{config::Config, db::Store, vault::Vault};
         let dir = std::env::temp_dir().join(format!("dominion-progress-{}", uuid::Uuid::new_v4()));
