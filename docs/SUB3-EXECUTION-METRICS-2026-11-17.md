@@ -104,3 +104,20 @@ cargo test --bin dominion-rust engine::chat::runtime::program::evidence_join_tes
 **Verification provenance:** Source written and read through the connected GitHub repository on `dominion-sub3`. This editor has no `cargo`/`rustc`, so the above Rust tests have **not** been executed here. No real-model improvement, cost reduction, run completion, or pass-rate increase is claimed. The independent grader should check the exact branch HEAD and run the listed filters. The SDK's native job loop and chat's Program IR are still separate orchestration paths; this patch improves the actual chat path without claiming full engine unification.
 
 **2026 implementation references inspected:** Google `google-research/harness2` (`harness2/core/recursion.py`, `selection.py`, and workflow tests), `google-research/veriharness` (isolated evidence-backed verification); Airbnb `agent-harness-optimizer` (`optimizers/prism/loop.py`, `types.py`); DeepSeek `deepseek-harness` (`tool-executor-ptc/src/ptc.ts`, `ptc-calls.ts`). These are architecture comparisons; no claim of their full recursive optimizer, isolated multi-rollout harness or sandbox being replicated.
+
+
+## 2026-11-18: Dominion-specific evidence-lineage adjudication
+
+**Research audited (2026):** arXiv 2611.05650 on executed counterfactuals and replay certificates; arXiv 2610.32285 on native harness trace and failure attribution; Google VeriHarness code; Harness² execution loops; Airbnb PRISM implementation. These are evaluation references, not directly transplanted source or scoring formulas.
+
+**Actual production path:** native_agent.rs pins original acceptance artifacts before the first model/tool operation, captures per-action before/after workspace-write file hashes in its existing durable operation journal, and seals the final owner and kernel-derived acceptance artifacts. native_replay.rs reconstructs the precise host lineage. native_adjudication.rs aligns decision dependencies by observed topological positions (rather than ephemeral tool IDs), rejects candidate comparisons with divergent initial accepted artifact states or common-prefix host tool results, and traces only explicit descendants of a candidate's divergent decision to actual recorded mutation pre/postimages and final kernel-checked file bytes.
+
+**Public read-only API:** POST /api/sdk/runs/:id/adjudicate with candidateRunIds (1..8) plus /api/jobs/:id/adjudicate. It reads historical jobs only: no model calls, tool replays, promotion, new project state or unapproved experiments. A successful candidate is reported as an observed outcome gain, with a possible artifact-linked mechanism; neither is called a causal effect without controlled executed intervention on a complete restored world.
+
+**Regression tests added but not run here:** actual filesystem witness and unsafe path; mismatched kernel/file verdict; initial witness mismatch; dependency graph topology; pre-intervention host result drift; connected job/host-operation replay and candidate outcome comparison. Cargo/rustc are absent from the current editing container. Run focused tests:
+
+    cargo test --bin dominion-rust engine::native_adjudication::tests
+    cargo test --bin dominion-rust engine::native_replay::tests
+    cargo test --bin dominion-rust api::native_replay::tests
+
+**Missing:** true isolated causal fork with identical full-world state and replay agreement measurement; quantified pass-rate or token gains. The algorithm refuses causalWinner instead of fabricating certainty. This is evidence-specific code integrated with Dominion's own SDK and host journal, not a generic PRISM/Harness² clone.
