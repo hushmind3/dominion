@@ -585,6 +585,38 @@ impl Store {
         Some(record)
     }
 
+    /// Single-owner job checkpoint. Validate running status, cancellation and
+    /// worker attempt under the SAME SQLite mutex as the record update.
+    /// A late tool/model reply from an earlier attempt cannot overwrite a
+    /// requeued, completed or owner-cancelled job. This is the shared host
+    /// contract used by every domain plugin and the native Rust SDK.
+    pub fn checkpoint_running_job(
+        &self, id: &str, expected_attempt: u64, patch: &Value,
+    ) -> Option<Value> {
+        let changes=patch.as_object()?;
+        if changes.contains_key("id") || changes.contains_key("cancelRequested") {
+            return None;
+        }
+        let conn=self.conn.lock().ok()?;
+        let mut record=conn.query_row(
+            "SELECT data,id,created_at,updated_at FROM records WHERE kind='job' AND id=?1",
+            [id],record_from_row,
+        ).ok()?;
+        if record["status"]!="running"
+            || record["cancelRequested"]==true
+            || record["attempts"].as_u64().unwrap_or(0)!=expected_attempt {
+            return None;
+        }
+        for (key,value) in changes {
+            record[key]=value.clone();
+        }
+        conn.execute(
+            "UPDATE records SET data=?2,updated_at=datetime('now') WHERE kind='job' AND id=?1",
+            params![id,record.to_string()],
+        ).ok()?;
+        Some(record)
+    }
+
     pub fn patch_records(&self, kind: &str, ids: &[String], patch: &Value) -> Option<Vec<Value>> {
         let patch = patch.as_object()?;
         let mut conn = self.conn.lock().unwrap();

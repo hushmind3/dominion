@@ -18,14 +18,20 @@ fn retired_legacy_kind(kind: &str) -> bool {
 pub struct JobContext {
     pub state: AppState,
     pub job_id: String,
+    /// Captured when the host worker claims this job; checkpoint validity is
+    /// tied to this attempt even if another worker requeues it later.
+    attempt: u64,
     events: Arc<Mutex<Vec<Value>>>,
 }
 
 impl JobContext {
     pub fn new(state: AppState, job_id: String) -> Self {
+        let attempt=state.store.get("job",&job_id)
+            .and_then(|j|j["attempts"].as_u64()).unwrap_or(0);
         Self {
             state,
             job_id,
+            attempt,
             events: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -58,26 +64,12 @@ impl JobContext {
     }
 
     pub fn checkpoint(&self, patch: Value) -> Result<(), String> {
-        let job = self
-            .state
-            .store
-            .get("job", &self.job_id)
-            .ok_or("작업 체크포인트를 찾을 수 없습니다.")?;
-        if job["cancelRequested"].as_bool() == Some(true) {
-            return Err("사용자 요청으로 실행이 중단되었습니다.".into());
-        }
-        let saved = self
-            .state
-            .store
-            .patch_if(
-                "job",
-                &self.job_id,
-                "cancelRequested",
-                job.get("cancelRequested").unwrap_or(&Value::Null),
-                &patch,
-            )
-            .ok_or("작업 체크포인트가 변경되었거나 실행이 중단되었습니다.")?;
-        self.state.bus.record("job", &saved);
+        // Do not perform a separate read/check/write: owner cancellation,
+        // terminal completion and retry may race the in-flight model call.
+        let saved=self.state.store.checkpoint_running_job(
+            &self.job_id,self.attempt,&patch)
+            .ok_or("작업이 종료·중단되었거나 다른 실행 시도로 교체되어 체크포인트를 거부했습니다.")?;
+        self.state.bus.record("job",&saved);
         Ok(())
     }
 }
@@ -787,6 +779,58 @@ mod tests {
             "an unknown external result must not be replayed: {stored}"
         );
         assert!(stored["error"].as_str().is_some_and(|text| text.contains("확정")));
+    }
+
+    #[test]
+    fn checkpoint_rejects_late_stale_attempt_after_requeue() {
+        let state=temp_state();
+        state.store.put("job",&json!({"id":"attempt-fence",
+            "kind":"prompt","status":"running","attempts":1})).unwrap();
+        let old=JobContext::new(state.clone(),"attempt-fence".into());
+        old.checkpoint(json!({"stepIndex":1})).unwrap();
+        let _=state.store.patch_if("job","attempt-fence","status",&json!("running"),
+            &json!({"status":"queued"})).unwrap();
+        let _=state.store.patch_if("job","attempt-fence","status",&json!("queued"),
+            &json!({"status":"running","attempts":2})).unwrap();
+        assert!(old.checkpoint(json!({"stepIndex":999,"status":"completed"})).is_err());
+        let saved=state.store.get("job","attempt-fence").unwrap();
+        assert_eq!(saved["status"],"running");
+        assert_eq!(saved["attempts"],2);
+        assert_eq!(saved["stepIndex"],1);
+        let fresh=JobContext::new(state.clone(),"attempt-fence".into());
+        fresh.checkpoint(json!({"stepIndex":2})).unwrap();
+        assert_eq!(state.store.get("job","attempt-fence").unwrap()["stepIndex"],2);
+    }
+    #[test]
+    fn checkpoint_refuses_late_write_after_owner_cancel_or_terminal_state() {
+        let state=temp_state();
+        state.store.put("job",&json!({"id":"cancel-fence",
+            "kind":"prompt","status":"running","attempts":1})).unwrap();
+        let owner=JobContext::new(state.clone(),"cancel-fence".into());
+        state.store.patch_if("job","cancel-fence","status",&json!("running"),
+            &json!({"status":"cancelled","cancelRequested":true})).unwrap();
+        assert!(owner.checkpoint(json!({"status":"completed","result":"late"})).is_err());
+        let cancelled=state.store.get("job","cancel-fence").unwrap();
+        assert_eq!(cancelled["status"],"cancelled");
+        assert!(cancelled["result"].is_null());
+        state.store.put("job",&json!({"id":"terminal-fence",
+            "kind":"prompt","status":"running","attempts":1})).unwrap();
+        let previous=JobContext::new(state.clone(),"terminal-fence".into());
+        previous.checkpoint(json!({"status":"completed","result":"finished"})).unwrap();
+        assert!(previous.checkpoint(json!({"result":"overwritten"})).is_err());
+        assert_eq!(state.store.get("job","terminal-fence").unwrap()["result"],"finished");
+    }
+    #[test]
+    fn checkpoint_cannot_forge_cancellation_or_job_identity() {
+        let state=temp_state();
+        state.store.put("job",&json!({"id":"job-identity","status":"running",
+            "kind":"prompt","attempts":1})).unwrap();
+        let context=JobContext::new(state.clone(),"job-identity".into());
+        assert!(context.checkpoint(json!({"cancelRequested":false})).is_err());
+        assert!(context.checkpoint(json!({"id":"other"})).is_err());
+        let stored=state.store.get("job","job-identity").unwrap();
+        assert_eq!(stored["id"],"job-identity");
+        assert!(stored["cancelRequested"].is_null());
     }
 
     #[test]
