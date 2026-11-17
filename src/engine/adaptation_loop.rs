@@ -403,6 +403,10 @@ pub fn choose_intervention_with_policy(
             let cost = item["estimatedCost"].as_f64().unwrap_or(0.5).clamp(0.0,10.0);
             let diagnostic = dominion_agent_sdk::runtime::builtin_is_read_only(tool);
             let mutation_risk = if cause_unclear && !diagnostic { 0.65 } else { 0.0 };
+            // A changed environment permits a former failed call, but it
+            // should not displace a genuinely changed action for a tiny cost
+            // saving unless the evidence warrants another attempt.
+            let retry_penalty = if key == failed_key { 0.75 } else { 0.0 };
             let mut variables = std::collections::BTreeMap::new();
             variables.insert("discrimination".into(), discrimination);
             variables.insert("progress".into(), expected_progress);
@@ -420,7 +424,7 @@ pub fn choose_intervention_with_policy(
                     0.0
                 },
             );
-            let score = if let Some(expression) = expression {
+            let base_score = if let Some(expression) = expression {
                 crate::engine::algorithms::eval_expression(expression, &variables).ok()?
             } else if cause_unclear {
                 discrimination * 4.0 * discrimination_weight
@@ -441,6 +445,7 @@ pub fn choose_intervention_with_policy(
                     - uncertainty * uncertainty_weight
                     - if precondition_status == "unknown" { 0.5 } else { 0.0 }
             };
+            let score = base_score - retry_penalty;
             let evaluation = json!({
                 "unresolvedRequirements": unresolved_requirements,
                 "expectedProgress": expected_progress,
@@ -449,6 +454,7 @@ pub fn choose_intervention_with_policy(
                 "executableCheckCoverage": evidence_coverage,
                 "diagnosticReadOnly": diagnostic,
                 "mutationRisk": mutation_risk,
+                "retryPenalty": retry_penalty,
                 "historicalEffect": historical_effect,
                 "uncertainty": uncertainty,
                 "estimatedCost": cost,
