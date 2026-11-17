@@ -139,7 +139,7 @@ impl Cycle {
                 +(new_evidence.min(4) as i64)*4
                 -(opened.min(20) as i64)*12
                 -(tokens/2_000).min(12) as i64
-                -if error.is_some(){8}else{0}
+                -(if error.is_some(){8}else{0})
         };
         let trial=json!({"approach":plan["selected"],"closed":closed,
             "opened":opened,"gapsBefore":before.len(),"gapsAfter":after.len(),
