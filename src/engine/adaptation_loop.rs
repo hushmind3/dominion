@@ -544,6 +544,7 @@ pub fn record_adaptation(
         "interventions": adaptation["interventions"],
         "diagnostics": adaptation["diagnostics"],
         "diagnosticEvidence": adaptation["diagnosticEvidence"],
+        "acceptanceDecision": adaptation["acceptanceDecision"],
         "environmentFingerprint": adaptation["environmentFingerprint"],
         "consultedExperienceRules": adaptation["consultedExperienceRules"],
         "selected": selected,
@@ -572,6 +573,7 @@ pub fn record_adaptation(
         "beforeObservation": adaptation["beforeObservation"],
         "hypothesisResults": hypothesis_results,
         "diagnosticEvidence": adaptation["diagnosticEvidence"],
+        "acceptanceDecision": adaptation["acceptanceDecision"],
     });
     let saved = state.store.put("execution", &execution)?;
     state.bus.record("execution", &saved);

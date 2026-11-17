@@ -389,6 +389,33 @@ pub(super) async fn attempt_model_adaptation(
             !attempted.iter().any(|used| used == &key)
         });
     }
+    // Freeze the existing owner acceptance contract BEFORE the candidate
+    // repair runs. The very same checks are used AFTER dispatch; a model may
+    // suggest strategies, but cannot silently rewrite what counts as success.
+    let contract = state.store.get("execution", execution_id).and_then(|record| {
+        let checks = record["acceptanceChecks"].clone();
+        let intent = record["acceptanceText"].as_str()?.to_string();
+        let source = record["acceptanceSourceMessageId"].as_str()
+            .map(str::to_string);
+        checks.as_array().filter(|items| !items.is_empty())
+            .map(|_| (intent, checks, source))
+    });
+    let acceptance_evidence = |source: &Option<String>| -> Result<Vec<Value>, String> {
+        match source {
+            Some(owner_source) => Ok(evidence_for_source(
+                state, session_id, owner_source, execution_id
+            )),
+            None => Ok(state.store.execution_operations(execution_id)?
+                .into_iter().filter(|entry| entry["status"] == "completed")
+                .collect()),
+        }
+    };
+    let before_gaps = if let Some((intent, checks, source)) = &contract {
+        Some(verification::check_acceptance(
+            state, intent, checks, &acceptance_evidence(source)?
+        ))
+    } else { None };
+
     let selected = crate::engine::adaptation_loop::choose_intervention_with_policy(
         &adaptation,
         tool,
@@ -417,6 +444,9 @@ pub(super) async fn attempt_model_adaptation(
         name: selected_tool,
         arguments: inputs.to_string(),
     };
+    let selected_inputs = inputs.clone();
+    let selected_tool_name = call.name.clone();
+    let selected_call_id = call.id.clone();
     let (result, ok, _content) = dispatch_tool_call(
         state,
         tx,
@@ -437,13 +467,41 @@ pub(super) async fn attempt_model_adaptation(
         None,
     )
     .await?;
-    // Tool transport success is not task recovery; let terminal acceptance
-    // evidence rate the strategy instead of rewarding a successful read/write.
-    if !ok {
+    // Contrasting a model-proposed repair against the frozen owner contract:
+    // Harness²-style real probe evidence, dispatched under DeepSeek-style
+    // native tool admission, is subjected to PRISM-style no-regression gating.
+    // This is an in-task gate, not a claim of an independent holdout benchmark.
+    let acceptance_decision = if let (Some((intent, checks, source)), Some(before)) =
+        (&contract, &before_gaps)
+    {
+        let receipt_id = format!("{execution_id}:{round}:0:{selected_call_id}");
+        let receipt = state.store.get("execution_operation", &receipt_id);
+        let verified_receipt = crate::engine::adaptation::acceptance_gate::matching_receipt(
+            receipt.as_ref(), execution_id, &selected_call_id, &selected_tool_name,
+            &selected_inputs,
+        );
+        let after = verification::check_acceptance(
+            state, intent, checks, &acceptance_evidence(source)?
+        );
+        crate::engine::adaptation::acceptance_gate::assess(
+            before, &after, verified_receipt,
+        )
+    } else {
+        json!({"decision":"not_applicable","accepted":false,
+            "basis":"no_frozen_owner_acceptance_contract"})
+    };
+    adaptation["acceptanceDecision"] = acceptance_decision.clone();
+    if acceptance_decision["decision"] != "not_applicable" {
+        crate::engine::algorithms::mark_signal(
+            state, execution_id, "adaptation.selection",
+            acceptance_decision["accepted"] == true,
+        );
+    } else if !ok {
         crate::engine::algorithms::mark_signal(
             state, execution_id, "adaptation.selection", false,
         );
     }
+
     let hypothesis_results = crate::engine::adaptation_loop::evaluate_hypotheses_phased(
         &adaptation,
         &before_observation,
@@ -482,6 +540,7 @@ pub(super) async fn attempt_model_adaptation(
         "result": result,
         "hypothesisResults": hypothesis_results,
         "diagnosticEvidence": adaptation["diagnosticEvidence"],
+        "acceptanceDecision": acceptance_decision,
     }))
 }
 

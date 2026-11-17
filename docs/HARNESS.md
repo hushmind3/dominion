@@ -56,6 +56,41 @@ a Dominion-specific synthesis over the native effect journal and acceptance
 contracts, not an implementation of either paper's optimizer or a transplanted
 Assess/Propose/Evaluate/Dispatch controller.
 
+## Combined 2026 harness mechanics — one native adaptation path
+
+This does **not** add another campaign, agent loop, language runtime, or independent
+optimizer. It combines three 2026 open-source strengths at the existing
+`attempt_model_adaptation` call site:
+
+1. **Harness² (Google Research, 2026)** — use the existing alternative
+   intervention proposals, actual discriminating probes, and evidence-conditioned
+   revision. The hypotheses and diagnostics are explicitly proposals, not proofs.
+2. **DeepSeek Harness PTC (2026)** — every intervention and diagnostic remains
+   under the **existing** Rust tool-dispatch journal, approval, cancellation,
+   budget and uncertain-effect barrier; a model-selected tool cannot bypass it.
+3. **PRISM / Agent Harness Optimizer (Airbnb, 2026)** — before intervention,
+   preserve the owner's frozen acceptance checks; after the real tool receipt,
+   re-evaluate the **same** checks. A candidate is accepted only when at least
+   one previously failed condition is resolved, no previously satisfied
+   condition regresses, and the matching native receipt is complete and not
+   uncertain. Only this observed acceptance feeds an algorithm-success signal.
+   For a non-action conversational turn, the decision is `not_applicable`,
+   never a fabricated success.
+
+The compact acceptance record is stored at
+`execution.lastAdaptation.acceptanceDecision` and
+`execution.adaptationCheckpoint.acceptanceDecision`. It contains the native
+operation ID, resolved and regressed obligations, and the decision. The ordinary
+verifier remains the authority for *final* completion; in-task acceptance is
+not a substitute for held-out benchmark evaluation or isolated counterfactual
+rollouts.
+
+Sources inspected:
+- DeepSeek `packages/core/tool-executor-ptc/src/ptc.ts` and `ptc-calls.ts`
+- Google `harness2/core/recursion.py` and `selection.py`
+- Airbnb `agent_harness_optimizer/optimizers/prism/loop.py` and
+  `framework/acceptance.py`
+
 ## Retired subsystems
 
 Native FFmpeg/ComfyUI video composition, narration generation, scene regeneration, YouTube auto upload, RSI campaigns, source-mutation generations, autonomous grading, automatic core adoption and associated external runtime orchestration are retired. Existing media files and job records remain available through read-only archive endpoints. New media creation belongs to explicit MCP integrations or external APIs, not a built-in engine.
