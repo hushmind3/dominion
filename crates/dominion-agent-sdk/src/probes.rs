@@ -47,6 +47,9 @@ pub(crate) fn validate(paths:&[CandidatePath])->Result<(),String> {
             if !action.depends_on.is_empty(){
                 return Err("Probe actions must be independent; use the normal execution plan for dependencies".into());
             }
+            if serde_json::to_vec(&action.arguments).map_or(true,|body|body.len()>8_192){
+                return Err("Probe arguments exceed the 8 KiB bounded inspection limit".into());
+            }
         }
     }
     Ok(())
