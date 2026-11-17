@@ -4,9 +4,23 @@
 //! It does not execute old tools, tests, approvals, browser actions, or model
 //! generations. It is for incident reconstruction and paired comparisons,
 //! never for claiming the workspace still satisfies historical checks.
-use crate::{Snapshot,Status};
+use crate::{Receipt,Snapshot,Status};
 use serde_json::{json,Value};
 use std::collections::{BTreeMap,BTreeSet};
+
+/// Kernel-issued acceptance checks are the only legitimate receipts without
+/// model actions. The host journal independently verifies external effects.
+fn kernel_verification_receipt(receipt:&Receipt)->bool{
+ let Some(suffix)=receipt.id.strip_prefix(crate::acceptance::KERNEL_VERIFICATION_PREFIX)
+  else{return false};
+ let Some((step,index))=suffix.split_once('-') else{return false};
+ receipt.tool=="shell_exec"
+  &&step.parse::<usize>().ok()==Some(receipt.step)
+  &&index.trim_end_matches('x').parse::<usize>().is_ok()
+  &&receipt.arguments["command"].as_str()
+   .is_some_and(|command|!command.trim().is_empty())
+  &&receipt.result["skipped"]!=true
+}
 
 pub fn trace(snapshot:&Snapshot)->Value{
  let mut issues=Vec::<String>::new();
@@ -62,7 +76,24 @@ pub fn trace(snapshot:&Snapshot)->Value{
      .and_then(|r|r.result["error"].as_str()).map(|s|s.chars().take(500).collect::<String>())}));
   }
  }
+ // Historical checkpoints without a decision tape still deserialize, but
+ // cannot certify model-to-effect attribution.
  let legacy=snapshot.decision_tape.is_empty();
+ let mut kernel_checks=Vec::new();
+ for receipt in &snapshot.receipts {
+  if planned.contains(receipt.id.as_str()) {
+   if receipt.id.starts_with(crate::acceptance::KERNEL_VERIFICATION_PREFIX) {
+    issues.push(format!("Model action reused a kernel verification id: {}",receipt.id));
+   }
+   continue;
+  }
+  if kernel_verification_receipt(receipt) {
+   kernel_checks.push(json!({"id":receipt.id,"tool":receipt.tool,
+    "step":receipt.step,"status":if receipt.success{"observed_success"}else{"observed_failure"}}));
+  }else if !legacy {
+   issues.push(format!("Receipt lacks a model decision or kernel verification origin: {}",receipt.id));
+  }
+ }
  let no_pending=snapshot.in_flight.is_empty()&&!snapshot.model_in_flight;
  let satisfied=snapshot.checks.iter().filter(|c|c.satisfied).count();
  let checked=snapshot.checks.len();
@@ -84,6 +115,7 @@ pub fn trace(snapshot:&Snapshot)->Value{
     "allSatisfied":checked>0&&satisfied==checked},
   "replayableTrace":replayable,
   "issues":issues,"actions":actions,
+  "kernelVerificationReceipts":kernel_checks,
   "accuracyLimit":"Recorded observations are reproducible; model behavior and physical side effects are NOT rerun. Historical acceptance is not current-world proof."
  })
 }
@@ -140,6 +172,39 @@ mod tests{
   s.receipts[1].result=json!({"skipped":true});
   assert_eq!(trace(&s)["traceConsistent"],true,
    "a skipped dependent action is a consistent failure record");
+ }
+ #[test]
+ fn only_kernel_verification_receipts_may_be_unplanned(){
+  let req=RunRequest{id:"kernel-origin".into(),instruction:"test".into(),
+   owner_instructions:String::new(),strategy:Strategy::Balanced,
+   limits:Limits::default(),allowed_tools:vec![],checks:vec![],
+   require_evidence:true};
+  let mut s=Snapshot::from_request(&req);
+  s.step=3;
+  s.decision_tape.push(Decision{plan:vec![],answer:None,actions:vec![
+   Action{id:"inspect".into(),tool:"read".into(),
+    arguments:json!({"path":"a.rs"}),depends_on:vec![]}]});
+  s.receipts.push(Receipt{id:"inspect".into(),tool:"read".into(),
+   arguments:json!({"path":"a.rs"}),success:true,result:json!({}),step:2});
+  s.receipts.push(Receipt{id:"kernel-verify-3-0".into(),tool:"shell_exec".into(),
+   arguments:json!({"command":"cargo test"}),success:true,result:json!({}),step:3});
+  let clean=trace(&s);
+  assert_eq!(clean["traceConsistent"],true);
+  assert_eq!(clean["kernelVerificationReceipts"][0]["id"],"kernel-verify-3-0");
+  assert_eq!(clean["actions"].as_array().unwrap().len(),1);
+  let mut orphan=s.clone();
+  orphan.receipts[1].id="unplanned-tool".into();
+  assert_eq!(trace(&orphan)["traceConsistent"],false);
+  let mut forged=s.clone();
+  forged.receipts[1].tool="workspace_write".into();
+  assert_eq!(trace(&forged)["traceConsistent"],false);
+  let mut mismatch=s.clone();
+  mismatch.receipts[1].id="kernel-verify-2-0".into();
+  assert_eq!(trace(&mismatch)["traceConsistent"],false);
+  let mut skipped=s;
+  skipped.receipts[1].success=false;
+  skipped.receipts[1].result=json!({"skipped":true});
+  assert_eq!(trace(&skipped)["traceConsistent"],false);
  }
  #[test]
  fn legacy_snapshots_deserialize_and_report_missing_decision_tape(){
