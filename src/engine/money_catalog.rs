@@ -69,6 +69,7 @@ fn huggingface(input:&Value,time:&str)->(Vec<Value>,Vec<Value>){
     (signal,metrics)
 }
 pub async fn run(context:&JobContext,_job:&Value)->Result<Value,String>{
+    crate::engine::money_tool::ensure_live(context)?;
     let at=chrono::Utc::now();
     let start=(at-chrono::Duration::days(10)).format("%Y-%m-%d").to_string();
     let urls=[

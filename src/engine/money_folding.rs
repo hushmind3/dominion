@@ -97,6 +97,7 @@ pub fn extract(source:&Value)->Vec<Value>{
     output
 }
 pub async fn run(context:&JobContext,_job:&Value)->Result<Value,String>{
+    crate::engine::money_tool::ensure_live(context)?;
     let source_batch=context.state.store.money_unprocessed_sources(96)?;
     let mut events=Vec::new();let mut processed=Vec::new();
     for source in &source_batch{

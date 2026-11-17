@@ -423,6 +423,7 @@ fn parse_output(raw:&str) -> Result<Value,String> {
 }
 
 pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
+    crate::engine::money_tool::ensure_live(context)?;
     let campaign_id=job["input"]["campaignId"].as_str().ok_or("사업 탐색 캠페인 ID가 없습니다.")?;
     let campaign=context.state.store.get("money_campaign",campaign_id).ok_or("사업 탐색 캠페인을 찾지 못했습니다.")?;
     let response=super::jobs::run_prompt(context,job).await?;
@@ -553,6 +554,7 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
         "rejectedFabricatedAsymmetryClaims":rejected_asymmetry,
         "evaluatedAsymmetryIds":evaluated_asymmetry_ids.iter().cloned().collect::<Vec<_>>(),
         "createdAt":chrono::Utc::now().to_rfc3339()});
+    crate::engine::money_tool::ensure_live(context)?;
     context.state.store.money_commit_discovery(&report,&pending_candidates,&pending_facts,&pending_edges,
         &evaluated_asymmetry_ids.into_iter().collect::<Vec<_>>())
         .map_err(|e|format!("Money 결과 원자적 저장 실패: {e}"))?;

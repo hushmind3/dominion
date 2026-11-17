@@ -18,6 +18,7 @@ pub mod agents;
 pub mod money;
 mod money_find;
 mod money_implement;
+mod money_module;
 mod money_routes;
 pub mod sdk;
 pub mod providers;
@@ -54,7 +55,7 @@ use tower_http::{cors::CorsLayer, services::ServeDir};
 pub fn router(state: AppState) -> Router {
     let mut router = Router::new()
         // core
-        .merge(money_routes::router())
+        .merge(money_routes::router(state.clone()))
         .route("/api/health", get(system::health))
         .route("/api/benchmark/strategies", post(benchmark::seed_strategy))
         .route("/api/benchmark/experiments", post(benchmark::record_experiment))

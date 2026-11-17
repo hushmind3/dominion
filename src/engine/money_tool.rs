@@ -4,7 +4,22 @@ use crate::{engine::jobs::JobContext, state::AppState};
 use serde_json::Value;
 
 /// The shared job lifecycle needs one callback, not Money-specific timers.
+pub fn enabled(state:&AppState)->bool{
+    state.store.get("money_module","global")
+        .is_some_and(|row|row["enabled"]==true)
+}
+pub fn ensure_live(context:&JobContext)->Result<(),String>{
+    if !enabled(&context.state){return Err("머니 기능 중단: 비활성화됨".into());}
+    let Some(job)=context.state.store.get("job",&context.job_id)else{
+        return Err("머니 작업이 사라졌습니다.".into());
+    };
+    if job["cancelRequested"]==true || job["status"]=="cancelled"{
+        return Err("머니 기능 중단: 취소된 작업".into());
+    }
+    Ok(())
+}
 pub fn schedule(state: &AppState) {
+    if !enabled(state){return;}
     super::money_health::sample(state);
     super::money_sources::schedule(state);
     super::money_catalog::schedule(state);
@@ -19,6 +34,7 @@ pub fn handles(kind: &str) -> bool {
 /// Delegate the tool's work to domain code; execution, budgets, checkpoints,
 /// cancellation and recovery remain owned by the shared job harness.
 pub async fn run(context: &JobContext, job: &Value) -> Result<Value, String> {
+    ensure_live(context)?;
     match job["kind"].as_str().unwrap_or("") {
         "money_discover" => super::money::run(context, job).await,
         "money_ingest" => super::money_sources::run(context, job).await,

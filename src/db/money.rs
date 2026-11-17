@@ -53,6 +53,17 @@ pub(super) const SCHEMA: &str = r#"
              CREATE INDEX IF NOT EXISTS idx_money_active_autopilot
                  ON records(json_extract(data,'$.enabled'))
                  WHERE kind='money_autopilot';
+             -- Fresh installations are opt-in, existing Money users retain
+             -- their prior enabled behavior and all their archived research.
+             INSERT OR IGNORE INTO records(kind,id,data)
+             SELECT 'money_module','global',json_object(
+                 'id','global','enabled',json(CASE WHEN EXISTS(
+                     SELECT 1 FROM records WHERE kind IN
+                      ('money_signal','money_ingest_report','money_candidate',
+                       'money_autopilot','money_campaign') LIMIT 1
+                 ) THEN 'true' ELSE 'false' END),'source','legacy_migration')
+             WHERE NOT EXISTS(SELECT 1 FROM records
+                 WHERE kind='money_module' AND id='global');
              CREATE VIRTUAL TABLE IF NOT EXISTS money_fact_fts
                  USING fts5(id UNINDEXED, claim, tokenize='trigram');
              CREATE TABLE IF NOT EXISTS money_fact_term(

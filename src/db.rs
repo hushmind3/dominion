@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 mod money;
+mod money_toggle;
 mod sdk_sources;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

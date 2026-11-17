@@ -143,6 +143,7 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
     let mut scraped=0;
     let mut scrape_attempts=0;
     for (name,url) in chosen{
+        crate::engine::money_tool::ensure_live(context)?;
         match crate::engine::tools::http_fetch(url).await{
             Ok(body) if body["status"].as_u64()==Some(200)=>{
                 let mut items=parse(body["text"].as_str().unwrap_or(""),name);
@@ -178,8 +179,11 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
     let signals=dedupe_titles(signals,&history);
     let found=signals.len();
     if found==0{return Err(format!("수집된 시장 자료가 없습니다: {}",json!(reports)));}
+    crate::engine::money_tool::ensure_live(context)?;
     let added=context.state.store.money_ingest_signals(&signals)?;
-    let hypotheses=crate::engine::money_mechanism::discover(&history,30);
+    // Match after ingestion so new evidence joins the current reasoning cycle.
+    let updated=context.state.store.money_recent_signals(240)?;
+    let hypotheses=crate::engine::money_mechanism::discover(&updated,30);
     let linked=context.state.store.money_store_tensions(&hypotheses)?;
     let summary=json!({"id":format!("market:{}",context.job_id),
         "jobId":context.job_id,"found":found,"new":added,"newCrossMarketQuestions":linked,
