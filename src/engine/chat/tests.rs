@@ -64,7 +64,10 @@ fn deepseek_controls_use_its_actual_protocol_and_never_send_none_effort() {
     assert_eq!(body["reasoning_effort"], "high");
 }
 
-#[tokio::test]
+// The local mock HTTP server must remain schedulable even while the chat
+// runtime performs synchronous SQLite/file work. A single-thread Tokio
+// fixture could starve its own server on macOS/Windows release CI.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_chat_request_has_bound_image_common_prompt_native_reasoning_and_timing() {
     use axum::{extract::State, routing::post, Json, Router};
     use base64::Engine;
@@ -104,12 +107,16 @@ async fn real_chat_request_has_bound_image_common_prompt_native_reasoning_and_ti
     let file=crate::engine::attachments::upload(&state,&json!({"sessionId":"s","name":"photo.png","mimeType":"image/png","data":base64::engine::general_purpose::STANDARD.encode(b"\x89PNG\r\n\x1a\nfixture")})).unwrap();
     let request=TurnRequest::from_value(&json!({"sessionId":"s","input":"사진을 확인해","attachmentIds":[file["id"]],"toolsEnabled":false,"thinking":false,"reasoningEffort":"none","reasoningLanguage":"ko","autoLearning":false})).unwrap();
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    // Windows CI can be scheduled behind the concurrent release-mode
-    // build; keep a bounded but realistic end-to-end network deadline.
-    let deadline=if cfg!(windows){Duration::from_secs(15)}else{Duration::from_secs(3)};
+    // Localhost network fixtures can stall behind parallel release-mode
+    // filesystem/SQLite tests on hosted runners. Keep a firm per-test bound,
+    // but do not turn temporary runner contention into a false product defect.
+    let deadline=Duration::from_secs(60);
     let saved = tokio::time::timeout(deadline, run_turn(&state, &request, &tx))
         .await
-        .unwrap()
+        .unwrap_or_else(|_| panic!(
+            "chat fixture timed out: requestsReceived={}, provider={addr}",
+            captured.lock().unwrap().len()
+        ))
         .unwrap()
         .unwrap();
     assert!(saved["reasoning"]
