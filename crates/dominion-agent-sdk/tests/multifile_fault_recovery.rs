@@ -243,5 +243,21 @@ async fn two_file_crash_restore_failed_test_repair_and_verified_completion(){
         "reportedScriptedTokens":result.charged_tokens,
         "wallMs":started.elapsed().as_millis(),
     }));
+    println!("DOMINION_CODING_BENCHMARK {}",json!({
+        "schemaVersion":1,
+        "scenario":"two_real_rust_files_crash_recover_repair",
+        "provider":"deterministic_scripted_no_paid_api",
+        "evidenceLevel":"real_rustc_real_filesystem_scripted_model",
+        "completed":matches!(result.status,Status::Completed),
+        "verified":result.checks.iter().all(|check|check.satisfied),
+        "sourceFiles":2,
+        "modelCalls":result.model_calls,
+        "chargedTokens":result.charged_tokens,
+        "toolReceipts":result.receipts.len(),
+        "failedTests":failed_tests,
+        "successfulTests":successful_tests,
+        "replayedEffects":0,
+        "wallMs":started.elapsed().as_millis()
+    }));
     let _=fs::remove_dir_all(&root);
 }
