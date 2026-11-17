@@ -340,7 +340,7 @@ pub(super) async fn attempt_model_adaptation(
                     }
                 }
             }
-            resolved_probes[&probe_id] = probe_result.clone();
+            resolved_probes[probe_id.as_str()] = probe_result.clone();
             observation
         } else {
             // A failed probe is NOT an observation against its hypotheses.
