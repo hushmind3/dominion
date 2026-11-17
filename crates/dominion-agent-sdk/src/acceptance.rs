@@ -5,6 +5,9 @@ use crate::{Criterion, CriterionKind, Receipt, ToolSpec};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Component, Path};
 
+/// IDs reserved for host-owned acceptance checks, never model operations.
+pub(crate) const KERNEL_VERIFICATION_PREFIX: &str = "kernel-verify-";
+
 /// The *latest* successful workspace write for each path defines the expected
 /// final bytes. Reads, shell tests and agent self-reports are not witnesses.
 /// Host evidence rehashes the file during completion; changed bytes block it.
