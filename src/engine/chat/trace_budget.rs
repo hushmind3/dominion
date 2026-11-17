@@ -186,7 +186,7 @@ mod tests{
         assert!(wire.iter().any(|row|row["role"]=="tool"
             && row["content"]=="NEW_CURRENT_RESULT"));
         assert!(wire.iter().any(|row|row["content"]=="new owner instruction"));
-        assert!(wire.to_string().len()<messages.to_string().len()/2);
+        assert!(serde_json::to_string(&wire).unwrap().len()<serde_json::to_string(&messages).unwrap().len()/2);
     }
     #[test]
     fn incomplete_or_duplicated_tool_frames_are_never_rewritten(){
@@ -211,7 +211,7 @@ mod tests{
         let tool_content=wire.iter().filter(|row|row["role"]=="tool")
             .map(|row|row["content"].as_str().unwrap_or("").len()).sum::<usize>();
         assert!(tool_content<=12_000);
-        assert!(wire.to_string().len()<35_000);
+        assert!(serde_json::to_string(&wire).unwrap().len()<35_000);
         assert_eq!(messages,original);
     }
 }
