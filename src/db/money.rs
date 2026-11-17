@@ -7,7 +7,7 @@ use sha2::{Digest,Sha256};
 /// hash determines version identity. A repeated RSS scrape creates no revision.
 fn preserve_source_revision_tx(
     tx:&rusqlite::Transaction<'_>,signal:&Value,reason:&str,
-)->Result<(),String>{
+)->Result<String,String>{
     let source_id=signal["id"].as_str().filter(|s|!s.is_empty())
         .ok_or("source revision ID missing")?;
     let content=json!({
@@ -18,8 +18,9 @@ fn preserve_source_revision_tx(
         "contentStatus":signal["contentStatus"]
     });
     let checksum=format!("{:x}",Sha256::digest(content.to_string().as_bytes()));
+    let revision_id=format!("{source_id}:{checksum}");
     let revision=json!({
-        "id":format!("{source_id}:{checksum}"),"sourceId":source_id,
+        "id":revision_id,"sourceId":source_id,
         "sourceUrl":signal["url"],"contentHash":checksum,
         "originalPublishedAt":signal["publishedAt"],
         "capturedAt":signal["capturedAt"],"reason":reason,
@@ -29,7 +30,7 @@ fn preserve_source_revision_tx(
         "INSERT OR IGNORE INTO records(kind,id,data) VALUES('money_source_revision',?1,?2)",
         params![revision["id"].as_str().unwrap_or(""),revision.to_string()],
     ).map_err(|e|e.to_string())?;
-    Ok(())
+    Ok(revision_id)
 }
 fn money_index_terms(text:&str)->Vec<String>{
     let mut seen=std::collections::HashSet::new();
@@ -335,7 +336,8 @@ impl Store {
                 let new_len=signal["articleExcerpt"].as_str().unwrap_or("").chars().count();
                 // Preserve original capture time; never overwrite an existing body.
                 if old_len<=100 && new_len>100 {
-                    preserve_source_revision_tx(&tx,&stored,"legacy_or_initial_headline")?;
+                    let _previous=preserve_source_revision_tx(
+                        &tx,&stored,"legacy_or_initial_headline")?;
                     stored["articleExcerpt"]=signal["articleExcerpt"].clone();
                     if signal["articleBody"].is_string(){
                         stored["articleBody"]=signal["articleBody"].clone();
@@ -343,16 +345,19 @@ impl Store {
                     stored["contentStatus"]=json!("page_fetched");
                     stored["lastFetchedAt"]=signal["capturedAt"].clone();
                     stored["foldStatus"]=json!("new");
+                    let revision=preserve_source_revision_tx(
+                        &tx,&stored,"page_text_enrichment")?;
+                    stored["sourceRevisionId"]=json!(revision);
                     upsert_tx(&tx,"money_signal",&stored)?;
-                    preserve_source_revision_tx(&tx,&stored,"page_text_enrichment")?;
                     refresh_money_source_fact_tx(&tx,&money_signal_fact(&stored))?;
                 }
                 continue;
             }
             let mut signal=signal.clone();
             signal["foldStatus"]=json!("new");
+            let revision=preserve_source_revision_tx(&tx,&signal,"initial_capture")?;
+            signal["sourceRevisionId"]=json!(revision);
             upsert_tx(&tx,"money_signal",&signal)?;
-            preserve_source_revision_tx(&tx,&signal,"initial_capture")?;
             persist_money_fact_tx(&tx,&money_signal_fact(&signal))?;
             for edge in crate::engine::money_intelligence::signal_edges(&signal){
                 let edge_id=edge["id"].as_str().ok_or("market graph id missing")?;

@@ -25,9 +25,12 @@ fn buyer_language(quote:&str)->bool{
 }
 fn has_quote(source:&Value,quote:&str)->bool{
     let expected=normalized(quote);
-    !expected.is_empty()&&["title","description","articleExcerpt"].iter().any(|field|{
-        source[*field].as_str().is_some_and(|s|normalized(s).contains(&expected))
-    })
+    if expected.is_empty(){return false;}
+    // RSS headline/description are not proof of text in the fetched document.
+    // Prefer the full archived body; fall back only for old excerpt-only rows.
+    source["articleBody"].as_str().filter(|s|!s.is_empty())
+        .or_else(||source["articleExcerpt"].as_str().filter(|s|!s.is_empty()))
+        .is_some_and(|body|normalized(body).contains(&expected))
 }
 /// Classification deliberately uses an explicit archived page + exact quote.
 /// Titles, model-written explanations, URL shapes, aggregator snippets and
@@ -53,6 +56,9 @@ pub fn annotate(row:&Value,source:Option<&Value>)->Value{
         "type":kind,"url":url,"claim":claim,"quote":quote,
         "observationStatus":status,
         "sourceId":source.map(|s|s["id"].clone()).unwrap_or(Value::Null),
+        // An evidence annotation refers to one immutable stored revision.
+        // Legacy rows without snapshots leave this field explicitly null.
+        "sourceRevisionId":source.map(|s|s["sourceRevisionId"].clone()).unwrap_or(Value::Null),
         "sourceCapturedAt":source.map(|s|s["capturedAt"].clone()).unwrap_or(Value::Null),
         "reviewNote":"Archived text match only; not a purchase order or confirmed payment"
     })
@@ -93,7 +99,8 @@ fn captured_source(url:&str,text:&str,at:&str)->Value{
     let id=format!("{:x}",sha2::Sha256::digest(url.as_bytes()));
     json!({"id":id,"url":url,"title":format!("Buyer-cited page: {host}"),
         "description":"Buyer-referenced public page; no demand verified by collection alone",
-        "articleExcerpt":text.chars().take(7000).collect::<String>(),
+        "articleExcerpt":text.chars().take(2000).collect::<String>(),
+        "articleBody":text.chars().take(16_000).collect::<String>(),
         "sourceName":"Buyer-cited public document",
         "contentStatus":"page_fetched",
         "verification":"direct_document_text_not_confirmed_purchase",
@@ -188,8 +195,37 @@ mod tests{
         s["contentStatus"]=json!("headline_observed");
         assert_eq!(annotate(&row,Some(&s))["observationStatus"],"source_not_fetched");
         let no_purchase=json!({"type":"official_budget","url":"https://example.org/rfp",
-            "quote":"Requests and notices"});
+            "quote":"digital invoice matching"});
         assert_eq!(annotate(&no_purchase,Some(&source()))["observationStatus"],"no_buyer_wording_in_quote");
+    }
+    #[test] fn title_or_feed_description_is_not_cited_article_content(){
+        let mut s=source();
+        s["title"]=json!("Official procurement notice requests proposals");
+        s["description"]=json!("Official procurement notice requests proposals");
+        s["articleExcerpt"]=json!("Other text from the actual saved source document.");
+        let row=json!({"type":"public_purchase_request",
+            "url":"https://example.org/rfp",
+            "quote":"procurement notice requests proposals"});
+        assert_eq!(annotate(&row,Some(&s))["observationStatus"],"source_quote_mismatch");
+    }
+    #[test] fn full_body_quote_beyond_excerpt_is_verified_with_revision_id(){
+        let store=crate::db::Store::open(std::path::Path::new(":memory:")).unwrap();
+        let url="https://example.org/long-rfp";
+        let body=format!("{}The procurement notice requests proposals for long-term maintenance.",
+            "Unrelated background sentences. ".repeat(100));
+        let item=captured_source(url,&body,"2026-11-18T00:00:00Z");
+        store.money_ingest_signals(&[item]).unwrap();
+        let saved=store.money_signal_by_url(url).unwrap().unwrap();
+        assert!(saved["articleExcerpt"].as_str().unwrap().chars().count()<=2000);
+        assert!(saved["articleBody"].as_str().unwrap().chars().count()>2000);
+        let row=json!({"type":"public_purchase_request","url":url,
+            "quote":"procurement notice requests proposals for long-term maintenance"});
+        let result=annotate(&row,Some(&saved));
+        assert_eq!(result["observationStatus"],"source_excerpt_buyer_intent");
+        let revision_id=result["sourceRevisionId"].as_str().expect("bound source revision");
+        assert_eq!(revision_id,saved["sourceRevisionId"]);
+        assert_eq!(store.money_source_revisions(saved["id"].as_str().unwrap(),10)
+            .unwrap()[0]["id"],revision_id);
     }
     #[test] fn model_assumption_cannot_change_evidence_class(){
         let row=json!({"type":"assumption","url":"https://example.org/rfp",
@@ -238,7 +274,8 @@ mod tests{
     }
     #[test] fn multilingual_procurement_wording_is_supported(){
         let s=json!({"id":"cn","contentStatus":"page_fetched",
-            "description":"采购意向公告：设备更新计划"});
+            "description":"采购意向公告：设备更新计划",
+            "articleExcerpt":"采购意向公告：设备更新计划"});
         let row=json!({"type":"public_purchase_request","url":"https://example.cn/rfp",
             "quote":"采购意向公告：设备更新计划"});
         assert!(buying_signal(&annotate(&row,Some(&s))));
