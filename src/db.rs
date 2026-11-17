@@ -3,6 +3,8 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+mod money;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FinalizeOutcome {
     Applied,
@@ -191,6 +193,8 @@ impl Store {
                  ON records(json_extract(data,'$.nativeRoute.binding'))
                  WHERE kind='job' AND json_extract(data,'$.status')='completed';",
         )?;
+        // Additive Money indexes and FTS, without replacing sub3's schema.
+        conn.execute_batch(include_str!("db/money_schema.sql"))?;
         // Older databases predate reasoning/tool columns.
         for (column, decl) in [
             ("reasoning", "TEXT NOT NULL DEFAULT ''"),
