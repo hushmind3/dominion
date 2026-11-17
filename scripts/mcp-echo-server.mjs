@@ -15,7 +15,7 @@ rl.on('line', (line) => {
   switch (message.method) {
     case 'initialize':
       if (process.env.DOMINION_MCP_TEST_INIT_LOG) {
-        appendFileSync(process.env.DOMINION_MCP_TEST_INIT_LOG, String(process.pid) + '\\n')
+        appendFileSync(process.env.DOMINION_MCP_TEST_INIT_LOG, String(process.pid) + '\n')
       }
       send({
         jsonrpc: '2.0',
