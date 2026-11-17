@@ -695,7 +695,9 @@ pub fn schedule_autopilot(state:&AppState){
             "asymmetryBatchIds":state.store.money_pending_asymmetries(8).unwrap_or_default()
                 .iter().filter_map(|v|v["id"].as_str()).collect::<Vec<_>>(),
             "campaignId":id,"mode":mode,"toolsEnabled":true,
-            "toolsExecutionEnabled":true,
+            // Money is the bounded research controller. Do not nest the generic
+            // three-attempt autonomous repair loop around each Money round.
+            "autonomous":false,"toolsExecutionEnabled":true,
             "tokenBudget":auto["tokenBudget"].as_u64().unwrap_or(12000),
             "moneyAutoRound":round+1,"moneyAutoRunId":run_id});
         for field in ["agentId","providerId","model"]{

@@ -184,3 +184,39 @@ test('evaluation summary SDK accesses the same Rust persisted scorecard as GUI',
   assert.equal(result.verified.successRate,0.5);
 });
 
+
+
+test('Money SDK reads source-backed drafts and uses only the native Rust API without implicit model calls',async()=>{
+  const calls=[];
+  const sdk=new Dominion({token:'local-admin',fetch:async(url,init)=>{
+    calls.push({url,init});
+    return json({drafts:[{id:'lead-1',title:'Local buyer need',evidence:[{url:'https://example.org/source'}]}],modelCalls:0});
+  }});
+  const found=await sdk.money.find({mode:'db',infer:false,limit:9});
+  const last=await sdk.money.latest();
+  assert.equal(found.modelCalls,0);
+  assert.equal(last.drafts[0].id,'lead-1');
+  assert.equal(calls.length,2);
+  assert.equal(calls[0].url,'http://127.0.0.1:4317/api/money/find');
+  assert.equal(calls[0].init.method,'POST');
+  assert.deepEqual(JSON.parse(calls[0].init.body),{mode:'db',infer:false,limit:9});
+  assert.equal(calls[1].init.method,'GET');
+  assert.equal(calls[0].init.headers.get('X-Dominion-Token'),'local-admin');
+});
+
+test('Money SDK percent-encodes campaign and candidate IDs, and never replays revenue writes',async()=>{
+  const calls=[];
+  const sdk=new Dominion({fetch:async(url,init)=>{
+    calls.push({url,method:init.method,body:init.body&&JSON.parse(init.body)});
+    return json({id:'ok',status:'completed',kind:'money_discover'});
+  }});
+  await sdk.money.setAutopilot('money:auto',{enabled:false});
+  await sdk.money.start('money:auto',{mode:'infer',tokenBudget:24000});
+  await sdk.money.recordExperiment('buyer/lead',{status:'finished',reportedRevenueWon:40000});
+  assert.equal(calls.length,3);
+  assert.equal(calls[0].url,'http://127.0.0.1:4317/api/money/campaigns/money%3Aauto/autopilot');
+  assert.equal(calls[1].url,'http://127.0.0.1:4317/api/money/campaigns/money%3Aauto/run');
+  assert.equal(calls[2].url,'http://127.0.0.1:4317/api/money/candidates/buyer%2Flead/experiments');
+  assert.equal(calls[2].body.reportedRevenueWon,40000);
+  assert.equal(calls[2].method,'POST');
+});

@@ -26,6 +26,21 @@ export interface ChatInput {
   toolsExecutionEnabled?: boolean; autoLearning?: boolean;
   reasoningLanguage?: string; reasoningEffort?: string; thinking?: boolean;
 }
+export interface MoneyDraft extends RecordItem {
+  title:string; customer?:string; offer?:string; whyPay?:string;
+  moneyMechanism?:string; firstTest?:string; firstPaymentStep?:string;
+  implementationPlan?:string; evidenceStatus?:string;
+  evidence?:Array<{claim?:string;url?:string;kind?:string}>;
+}
+export interface MoneyFindInput {
+  mode:'db'|'agent';agentId?:string;infer?:boolean;limit?:number;tokenBudget?:number;
+}
+export interface MoneyFindResult {
+  drafts:MoneyDraft[];modelCalls:number;sourceCount?:number;
+  inferenceJobId?:string|null;inferenceStatus?:string;
+  inferenceError?:string|null;inferenceTokenBudget?:number|null;
+  selectedAgentId?:string;searchedAt?:string|null;
+}
 export interface RoomMessageInput {
   input: string; clientMessageId?: string; agentIds?: string[]; attachmentIds?: string[];
   reasoningLanguage?: 'ko' | 'default'; reasoningEffort?: string;
@@ -157,6 +172,22 @@ export class Dominion {
     /** Root-task outcomes from real Rust finalizers, not self-scoring. */
     summary:(options?:RequestOptions)=>this.request<Record<string,unknown>>(
       'GET','/api/evaluation/summary',undefined,options),
+  };
+  /** Public Money Lab: same Rust server, persisted evidence and native jobs. */
+  readonly money = {
+    overview:(options?:RequestOptions)=>this.request<Record<string,unknown>>('GET','/api/money',undefined,options),
+    stats:(options?:RequestOptions)=>this.request<Record<string,unknown>>('GET','/api/money/stats',undefined,options),
+    latest:(options?:RequestOptions)=>this.request<MoneyFindResult>('GET','/api/money/find',undefined,options),
+    /** A single explicit POST; never retried automatically (model/DB effects). */
+    find:(input:MoneyFindInput,options?:RequestOptions)=>this.request<MoneyFindResult>('POST','/api/money/find',input,options),
+    research:(options?:RequestOptions)=>this.request<Record<string,unknown>>('GET','/api/money/research',undefined,options),
+    createCampaign:(input:Record<string,unknown>,options?:RequestOptions)=>this.request<RecordItem>('POST','/api/money/campaigns',input,options),
+    campaign:(key:string,options?:RequestOptions)=>this.request<RecordItem>('GET','/api/money/campaigns/'+id(key),undefined,options),
+    start:(key:string,input:Record<string,unknown>,options?:RequestOptions)=>this.request<Job>('POST','/api/money/campaigns/'+id(key)+'/run',input,options),
+    autopilot:(key:string,options?:RequestOptions)=>this.request<RecordItem>('GET','/api/money/campaigns/'+id(key)+'/autopilot',undefined,options),
+    setAutopilot:(key:string,input:Record<string,unknown>,options?:RequestOptions)=>this.request<RecordItem>('POST','/api/money/campaigns/'+id(key)+'/autopilot',input,options),
+    candidate:(key:string,options?:RequestOptions)=>this.request<MoneyDraft>('GET','/api/money/candidates/'+id(key),undefined,options),
+    recordExperiment:(key:string,input:Record<string,unknown>,options?:RequestOptions)=>this.request<RecordItem>('POST','/api/money/candidates/'+id(key)+'/experiments',input,options),
   };
   readonly jobs = {
     list: (options?: RequestOptions) => this.request<Job[]>('GET','/api/jobs',undefined,options),

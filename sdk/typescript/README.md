@@ -54,3 +54,9 @@ This TypeScript package is auxiliary; the embedded native Rust SDK in `src/sdk.r
 The initial SDK surface is explicit and versioned rather than pretending to cover every experimental backend endpoint; new operations should be mapped to their Rust handler and tested before publication.
 
 2026 reference patterns reviewed: [Hermes architecture](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/developer-guide/architecture.md), [OpenAI Agents streaming lifecycle](https://openai.github.io/openai-agents-js/guides/streaming/), [MCP transport cancellation/reconnection](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/packages/client/src/client/streamableHttp.ts). Implementation uses Dominion's own contract.
+
+## Money Lab (source-backed commercial research)
+
+`money.latest()` reads the latest stored opportunity shortlist without a new model call.
+`money.find({mode:'db',infer:false})` explicitly selects database-only drafts;
+`money.find({mode:'agent',agentId:'...',infer:true})` schedules one bounded model inference job through the existing Rust worker. The SDK does **not** auto-repeat any POST. `money.campaign(id)`, `money.start(id,{mode:'discover'})`, `money.autopilot(id)`, `money.setAutopilot(id,{enabled:false})`, `money.candidate(id)`, and `money.recordExperiment(id,entry)` use the identical native API endpoints as the Money UI. Buyers, prices, and reported revenue are not automatically verified by the SDK.

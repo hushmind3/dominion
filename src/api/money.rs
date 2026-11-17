@@ -313,6 +313,18 @@ fn free_rotation(state:&AppState)->Vec<Value>{
 }
 
 pub async fn autopilot_set(State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>)->Response{
+    // The one-click Money home can enable a bounded collection/autopilot
+    // before its first evidence query. Create only the well-known default
+    // workspace, never silently invent arbitrary campaign identifiers.
+    if id=="money:auto" && body["enabled"]==true && state.store.get("money_campaign",&id).is_none(){
+        let initial=json!({"id":"money:auto","name":"자동 돈벌이 발굴",
+            "brief":"서로 다른 산업과 시장에서 실제 지불 수요를 연구",
+            "capitalWon":null,"hardwareInvestmentWon":null,
+            "targetMonthlyProfitWon":null,"hoursPerWeek":null,
+            "skills":"","markets":"","preferences":"","distribution":"","exclusions":"",
+            "createdAt":chrono::Utc::now().to_rfc3339()});
+        let _=state.store.put_if_absent("money_campaign",&initial);
+    }
     let Some(campaign)=state.store.get("money_campaign",&id) else{
         return error(StatusCode::NOT_FOUND,"사업 탐색이 없습니다.");
     };
@@ -578,6 +590,30 @@ pub async fn record_experiment(State(state):State<AppState>,Path(id):Path<String
 #[cfg(test)]
 mod tests{
     use super::*;
+
+    #[tokio::test]
+    async fn money_home_can_enable_autopilot_before_any_research_draft_exists(){
+        use crate::{config::Config,db::Store,vault::Vault};
+        let dir=std::env::temp_dir().join(format!("dominion-money-start-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=Config{port:0,data_dir:dir.join("data"),web_dir:dir.join("web"),workspace:dir.clone()};
+        std::fs::create_dir_all(&config.data_dir).unwrap();
+        let state=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()));
+        let response=autopilot_set(State(state.clone()),Path("money:auto".into()),
+            Json(json!({"enabled":true,"continuous":true,"intervalMinutes":30,
+                "maxRounds":2,"tokenBudget":1024}))).await;
+        assert_eq!(response.status(),StatusCode::OK);
+        assert!(state.store.get("money_campaign","money:auto").is_some());
+        let auto=state.store.get("money_autopilot","money:auto").unwrap();
+        assert_eq!(auto["enabled"],true);
+        // Other IDs still require explicit creation by the user.
+        let foreign=autopilot_set(State(state.clone()),Path("arbitrary".into()),
+            Json(json!({"enabled":true}))).await;
+        assert_eq!(foreign.status(),StatusCode::NOT_FOUND);
+        assert!(state.store.get("money_campaign","arbitrary").is_none());
+        let _=std::fs::remove_dir_all(dir);
+    }
     #[test] fn hardware_payback_uses_net_after_all_reported_costs(){
         let campaign=json!({"id":"c1","hardwareInvestmentWon":1_000_000});
         let ledger=json!({"revenue":750000,"direct":100000,"marketing":50000,
