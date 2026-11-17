@@ -20,6 +20,7 @@ pub fn artifact_witness(workspace:&std::path::Path,checks:&[dominion_sdk::harnes
  };
  let mut entries=BTreeMap::<String,Value>::new();
  let mut complete=true;
+ let mut remaining_bytes=32usize*1024*1024;
  for c in checks {
   if c.kind==CriterionKind::ToolSucceeded {continue;}
   let Some(name)=c.path.as_deref() else {complete=false;continue;};
@@ -50,13 +51,14 @@ pub fn artifact_witness(workspace:&std::path::Path,checks:&[dominion_sdk::harnes
     complete=false;
     entries.insert(name.to_string(),json!({"state":"unavailable"}));
    },
-   Ok(metadata) if !metadata.is_file() || metadata.len()>16*1024*1024=>{
+   Ok(metadata) if !metadata.is_file() || metadata.len()>16*1024*1024 || metadata.len()>remaining_bytes as u64=>{
     complete=false;
     entries.insert(name.to_string(),json!({"state":"unsupported_artifact"}));
    },
    Ok(metadata)=>{
     match std::fs::read(&target){
      Ok(data) if data.len()<=16*1024*1024=>{
+      remaining_bytes=remaining_bytes.saturating_sub(data.len());
       entries.insert(name.to_string(),json!({"state":"file",
        "bytes":data.len(),"sha256":format!("{:x}",Sha256::digest(&data))}));
      },
@@ -68,15 +70,45 @@ pub fn artifact_witness(workspace:&std::path::Path,checks:&[dominion_sdk::harnes
    }
   }
  }
+ let verdicts=checks.iter().map(|check|{
+  use dominion_sdk::harness::CriterionKind;
+  let verdict=match check.kind {
+   CriterionKind::ToolSucceeded=>Value::Null,
+   CriterionKind::FileExists|CriterionKind::FileAbsent|
+   CriterionKind::FileContains|CriterionKind::FileSha256=>{
+    let entry=check.path.as_deref().and_then(|p|entries.get(p));
+    match entry.and_then(|v|v["state"].as_str()){
+     Some("missing")=>json!(check.kind==CriterionKind::FileAbsent),
+     Some("file")=>{
+      let yes=match check.kind{
+       CriterionKind::FileExists=>Some(true),
+       CriterionKind::FileAbsent=>Some(false),
+       CriterionKind::FileSha256=>check.contains.as_deref().map(|v|
+        entry.is_some_and(|e|e["sha256"].as_str()
+         .is_some_and(|actual|actual.eq_ignore_ascii_case(v)))),
+       // Content is not persisted. The kernel's independent FileContains
+       // acceptance check is still required; don't invent its verdict.
+       CriterionKind::FileContains=>None,
+       CriterionKind::ToolSucceeded=>None
+      };
+      yes.map(Value::Bool).unwrap_or(Value::Null)
+     },
+     _=>Value::Null,
+    }
+   }
+  };
+  verdict
+ }).collect::<Vec<_>>();
  json!({"complete":complete,"scope":"acceptance_artifact_paths_only",
-  "workspace":root.to_string_lossy(),"entries":entries})
+  "workspace":root.to_string_lossy(),"entries":entries,
+  "directVerdicts":verdicts})
 }
 
 fn digest(v:&Value)->String{
  format!("{:x}",Sha256::digest(v.to_string().as_bytes()))
 }
 fn clip(s:&str)->String{s.chars().take(400).collect()}
-fn snapshot(job:&Value)->Result<Snapshot,String>{
+pub(crate) fn snapshot(job:&Value)->Result<Snapshot,String>{
  if job["kind"]!="prompt"{return Err("Only native prompt jobs can be replayed".into())}
  let snap=serde_json::from_value::<Snapshot>(job["nativeState"].clone())
   .map_err(|e|format!("No durable native Rust checkpoint: {e}"))?;
@@ -187,7 +219,7 @@ pub fn report(state:&AppState,id:&str)->Result<Value,String>{
  tape["offlineOnly"]=json!(true);
  Ok(tape)
 }
-fn same_work(a:&Value,b:&Value)->Result<(),String>{
+pub(crate) fn same_work(a:&Value,b:&Value)->Result<(),String>{
  for (name,left,right) in [
   ("task",&a["input"]["prompt"],&b["input"]["prompt"]),
   ("checks",&a["input"]["checks"],&b["input"]["checks"]),
