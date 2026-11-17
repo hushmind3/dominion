@@ -552,7 +552,9 @@ impl Store {
         self.get("execution", &execution_id)
     }
 
-    /// Compare-and-patch under the connection lock, used to claim queued work.
+    /// Compare-and-patch inside an IMMEDIATE SQLite transaction. Competing
+    /// processes cannot simultaneously read an old status and both claim it.
+    /// The same operation is used for cancellation, job claims and recovery.
     pub fn patch_if(
         &self,
         kind: &str,
@@ -561,27 +563,22 @@ impl Store {
         expected: &Value,
         patch: &Value,
     ) -> Option<Value> {
-        let conn = self.conn.lock().unwrap();
-        let mut record = conn
-            .query_row(
-                "SELECT data, id, created_at, updated_at FROM records WHERE kind=?1 AND id=?2",
-                params![kind, id],
-                record_from_row,
-            )
-            .ok()?;
-        if record.get(field).unwrap_or(&Value::Null) != expected {
-            return None;
+        let changes=patch.as_object()?;
+        let mut conn=self.conn.lock().ok()?;
+        let tx=conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).ok()?;
+        let mut record=tx.query_row(
+            "SELECT data,id,created_at,updated_at FROM records WHERE kind=?1 AND id=?2",
+            params![kind,id],record_from_row,
+        ).ok()?;
+        if record.get(field).unwrap_or(&Value::Null)!=expected{return None;}
+        for (key,value) in changes {
+            if key!="id"{record[key]=value.clone();}
         }
-        for (key, value) in patch.as_object()? {
-            if key != "id" {
-                record[key] = value.clone();
-            }
-        }
-        conn.execute(
-            "UPDATE records SET data=?3, updated_at=datetime('now') WHERE kind=?1 AND id=?2",
-            params![kind, id, record.to_string()],
-        )
-        .ok()?;
+        tx.execute(
+            "UPDATE records SET data=?3,updated_at=datetime('now') WHERE kind=?1 AND id=?2",
+            params![kind,id,record.to_string()],
+        ).ok()?;
+        tx.commit().ok()?;
         Some(record)
     }
 
@@ -597,8 +594,9 @@ impl Store {
         if changes.contains_key("id") || changes.contains_key("cancelRequested") {
             return None;
         }
-        let conn=self.conn.lock().ok()?;
-        let mut record=conn.query_row(
+        let mut conn=self.conn.lock().ok()?;
+        let tx=conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).ok()?;
+        let mut record=tx.query_row(
             "SELECT data,id,created_at,updated_at FROM records WHERE kind='job' AND id=?1",
             [id],record_from_row,
         ).ok()?;
@@ -610,10 +608,11 @@ impl Store {
         for (key,value) in changes {
             record[key]=value.clone();
         }
-        conn.execute(
+        tx.execute(
             "UPDATE records SET data=?2,updated_at=datetime('now') WHERE kind='job' AND id=?1",
             params![id,record.to_string()],
         ).ok()?;
+        tx.commit().ok()?;
         Some(record)
     }
 
@@ -797,8 +796,10 @@ impl Store {
             || message["role"]!="assistant"{
             return Err("native answer does not belong to this job".into());
         }
-        let conn=self.conn.lock().map_err(|e|e.to_string())?;
-        let raw:Option<String>=conn.query_row(
+        let mut conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let tx=conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e|e.to_string())?;
+        let raw:Option<String>=tx.query_row(
             "SELECT data FROM records WHERE kind='job' AND id=?1",
             [job_id],|r|r.get(0),
         ).optional().map_err(|e|e.to_string())?;
@@ -808,11 +809,13 @@ impl Store {
             || current["attempts"].as_u64().unwrap_or(0)!=expected_attempt{
             return Err("native answer rejected: cancelled, finished or stale attempt".into());
         }
-        if let Some(existing)=query_message(&conn,id){
+        if let Some(existing)=query_message(&tx,id){
             return Ok(existing);
         }
-        insert_message(&conn,message).ok_or("could not write native answer")?;
-        query_message(&conn,id).ok_or("saved native answer not found".into())
+        insert_message(&tx,message).ok_or("could not write native answer")?;
+        let stored=query_message(&tx,id).ok_or("saved native answer not found")?;
+        tx.commit().map_err(|e|e.to_string())?;
+        Ok(stored)
     }
 
     pub fn write_message(&self, message: &Value) -> Option<Value> {
