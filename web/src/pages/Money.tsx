@@ -89,7 +89,8 @@ export function MoneyPage(_props:{openSession:(id:string)=>void}){
   setError('')
   try{
    const body=stats.autopilot?.enabled?{enabled:false}
-    :{enabled:true,continuous:true,intervalMinutes:10,maxRounds:12,tokenBudget:24000,freeRotation:true}
+    :{enabled:true,continuous:true,intervalMinutes:10,maxRounds:12,tokenBudget:24000,
+      freeRotation:true,agentId:agentId==='db'?undefined:agentId}
    await post('/api/money/campaigns/money%3Aauto/autopilot',body)
    setStats(await get<Stats>('/api/money/stats'))
   }catch(err){setError((err as Error).message)}
@@ -173,13 +174,13 @@ export function MoneyPage(_props:{openSession:(id:string)=>void}){
      className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-[#9B6A3F] px-4 text-xs font-extrabold text-white disabled:opacity-50">
      AI 선별 · 1회
     </button>
-    <button type="button" onClick={()=>void toggleAutopilot()} disabled={toggling||!stats}
+    <button type="button" onClick={()=>void toggleAutopilot()} disabled={toggling||!stats||agentsLoading}
      className={'inline-flex min-h-10 items-center rounded-lg px-4 text-xs font-extrabold text-white disabled:opacity-50 '+(stats?.autopilot?.enabled?'bg-[#8B6A4B]':'bg-[#6E7A5A]')}>
      {toggling?'처리 중…':stats?.autopilot?.enabled?'자동 순환 끄기':'자동 순환 켜기'}
     </button>
    </div>
    <p className="mt-2 text-[11px] leading-5 text-[#8D7B6C]">
-    조사 = 쌓인 자료에서 초안 추출(0토큰) · AI 선별 = 선택한 모델로 1회 추론 · 자동 순환 = 10분마다 무료 모델을 바꿔 계속 쌓기
+    조사 = 쌓인 자료에서 초안 추출(0토큰) · AI 선별 = 선택한 모델로 1회 추론 · 자동 순환 = 선택한 에이전트 역할을 유지하며 10분마다 연결된 무료 모델을 순환
    </p>
   </section>
 

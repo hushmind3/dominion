@@ -72,7 +72,7 @@ All Money job claims update campaign and job together in a SQLite transaction, w
 
 ## Validation
 
-Rust regression tests cover RSS and Atom parsing; stable source keys and deduplication; missing-cost safe unit economics; generation-aware queuing under two requests; failed ingestion and idempotent replay; immutable candidate updates. GitHub Actions covers Linux, macOS, Windows: web typecheck/build and Rust release workspace tests.
+Rust regression tests cover RSS and Atom parsing; stable source keys and deduplication; missing-cost safe unit economics; generation-aware queuing under two requests; failed ingestion and idempotent replay; immutable candidate updates. GitHub Actions covers macOS and Windows: web typecheck/build and Rust release workspace tests.
 
 Not yet measured in real-world use: 27B 24-hour throughput, actual first customers/revenue conversion, causal improvement versus prompt-only research, superiority to Google Deep Research, 100% RSS source availability, or actual payment-platform reconciliation. API provider spending remains subject to its billing policy.
 
@@ -171,3 +171,5 @@ A process-scoped async lock serializes the report/selection/inference-enqueue se
 ## Shared-kernel checkpoint and provider continuity (2026-11-17)
 
 The native worker rejects late checkpoints on terminal/cancelled jobs within the same SQLite transaction, removing a status race without a second DB read. Money's background free-model rotation retains `agentId`; explicit provider/model values override the agent's original model selection in the shared provider router while retaining its persona. No secondary agent runner, storage backend, or scheduler was introduced. Windows/macOS release CI and source-level regression tests check these changes; actual external provider uptime, token throughput, paid conversion and 24-hour reliability need deployment measurements.
+
+The Money page now passes the selected `agentId` when enabling the existing autopilot endpoint. This binds the Money persona in the actual GUI-to-API-to-job path; the backend retains the same agent while switching only provider/model. Without a selected agent, the existing Money research prompt remains available. The page does not create or install an agent, scheduler or separate database.
