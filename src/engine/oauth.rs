@@ -104,6 +104,12 @@ pub fn save(
         return Err("Client ID가 필요합니다. GitHub 앱은 Client Secret도 입력하세요.".into());
     }
     let mut record = config(state, id).unwrap_or_else(|| json!({ "id": id }));
+    // A new OAuth app registration cannot inherit an earlier app's access
+    // grant or previously reported scopes. Explicit reconnect is required.
+    state.store.remove_secret(&format!("oauth:{id}:token"));
+    record["connected"] = json!(false);
+    record["account"] = Value::Null;
+    record["scopes"] = Value::Null;
     record["id"] = json!(id);
     record["clientId"] = json!(client_id.trim());
     record["configuredAt"] = json!(chrono::Utc::now().to_rfc3339());
@@ -498,6 +504,25 @@ mod tests {
         // The client id is public; the client secret must never appear.
         assert!(!record.contains("super-secret"));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn changing_oauth_app_never_inherits_previous_account_token_or_scopes(){
+        let (state,dir)=temp_state();
+        save(&state,"github","client-1","secret-1").unwrap();
+        state.save_secret("oauth:github:token",
+            &json!({"accessToken":"previous-grant","scopes":"repo"}).to_string());
+        state.store.put("oauth_config",&json!({
+            "id":"github","connected":true,"account":"previous-account",
+            "scopes":"repo","clientId":"client-1"
+        })).unwrap();
+        save(&state,"github","client-2","secret-2").unwrap();
+        assert!(access_token(&state,"github").is_none());
+        let record=state.store.get("oauth_config","github").unwrap();
+        assert_eq!(record["connected"],false);
+        assert!(record["scopes"].is_null());
+        assert!(record["account"].is_null());
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
