@@ -42,14 +42,12 @@ fn prompt_job(state:&AppState,id:&str)->Option<Value>{
             && j["input"]["clientSurface"]=="native_agent_panel")
 }
 fn pending(state:&AppState,job:&Value)->Option<Value>{
+    if job["status"]!="running"{return None;}
     let session=job["sessionId"].as_str()?;
-    if job["status"]!="running" {return None;}
-    state.store.all("approval").into_iter().find(|a|
-        a["sessionId"].as_str()==Some(session)
-        && a["status"]=="pending"
-        && a["runId"]==job["id"]
-        && a["id"].as_str().is_some_and(|id|
-            state.approvals.lock().unwrap().contains_key(id)))
+    let id=job["id"].as_str()?;
+    state.store.pending_run_approvals(id,session).ok()?.into_iter().find(|a|
+        a["id"].as_str().is_some_and(|approval|
+            state.approvals.lock().unwrap().contains_key(approval)))
 }
 /// Only offer the two manual-observation buttons for a *single* uncertain
 /// tool. A paid model outcome or generic verification failure is not a tool
@@ -72,8 +70,8 @@ fn safe_native_resume(state:&AppState,job:&Value)->bool{
         && job["nativeInFlight"]!=true && job["cancelRequested"]!=true
         // Do not trust only the snapshot: a separately journaled host effect
         // may still have an unknown outcome after a torn write/checkpoint.
-        && !state.store.all("execution_operation").iter().any(|operation|
-            operation["runId"]==job["id"] && operation["outcomeUnknown"]==true)
+        && job["id"].as_str().is_some_and(|id|
+            state.store.run_has_uncertain_operation(id).is_ok_and(|unknown|!unknown))
 }
 fn project(state:&AppState,job:&Value)->Value{
     let snapshot=&job["nativeState"];
@@ -555,6 +553,41 @@ mod tests{
             "unresolved operation journal must outrank a clean-looking SDK snapshot");
         let _=std::fs::remove_dir_all(root);
     }
+    #[test]
+    fn sdk_status_uses_scoped_approval_and_uncertain_receipt_queries(){
+        let (state,root)=temporary_state();
+        for i in 0..150{
+            state.store.put("approval",&json!({"id":format!("history-{i}"),
+                "runId":"other","sessionId":"other-session",
+                "status":"approved"})).unwrap();
+            state.store.put("execution_operation",&json!({"id":format!("receipt-{i}"),
+                "runId":"other","status":"completed","outcomeUnknown":false})).unwrap();
+        }
+        let job=json!({"id":"my-job","kind":"prompt","status":"running",
+            "sessionId":"my-session","input":{"clientSurface":"native_agent_panel"}});
+        assert_eq!(state.store.pending_run_approvals("my-job","my-session")
+            .unwrap().len(),0);
+        assert_eq!(state.store.run_has_uncertain_operation("my-job").unwrap(),false);
+        let mut interrupted=job.clone();
+        interrupted["status"]=json!("failed");
+        interrupted["nativeState"]=json!({"status":"running",
+            "modelInFlight":false,"inFlight":[]});
+        assert_eq!(project(&state,&interrupted)["status"],"interrupted");
+        state.store.put("execution_operation",&json!({"id":"other-unknown",
+            "runId":"other","status":"interrupted","outcomeUnknown":true})).unwrap();
+        assert_eq!(project(&state,&interrupted)["status"],"interrupted",
+            "unrelated tool uncertainty must not block this SDK run");
+        state.store.put("execution_operation",&json!({"id":"my-unknown",
+            "runId":"my-job","status":"interrupted","outcomeUnknown":true})).unwrap();
+        assert_eq!(project(&state,&interrupted)["status"],"denied");
+        state.store.put("approval",&json!({"id":"my-approval","runId":"my-job",
+            "sessionId":"my-session","status":"pending"})).unwrap();
+        let (sender,_receiver)=tokio::sync::oneshot::channel();
+        state.approvals.lock().unwrap().insert("my-approval".into(),sender);
+        assert_eq!(pending(&state,&job).unwrap()["id"],"my-approval");
+        let _=std::fs::remove_dir_all(root);
+    }
+
     #[tokio::test]
     async fn main_ui_does_not_offer_dead_orphaned_tool_approval(){
         let (state,root)=temporary_state();

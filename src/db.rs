@@ -190,6 +190,9 @@ impl Store {
                  ON records(kind,json_extract(data,'$.status'))
                  WHERE kind='execution_operation'
                    AND json_extract(data,'$.status')='running';
+             CREATE INDEX IF NOT EXISTS idx_native_approval_pending_run
+                 ON records(json_extract(data,'$.runId'),json_extract(data,'$.sessionId'))
+                 WHERE kind='approval' AND json_extract(data,'$.status')='pending';
              CREATE INDEX IF NOT EXISTS idx_execution_task
                  ON records(json_extract(data,'$.taskId'))
                  WHERE kind='execution';
@@ -310,6 +313,36 @@ impl Store {
         }
         Ok(sessions)
     }
+    /// Public SDK status checks only the current job's uncertain tool effects,
+    /// not the complete historical operation ledger for each visible run.
+    pub fn run_has_uncertain_operation(&self,run_id:&str)->Result<bool,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM records
+             WHERE kind='execution_operation'
+               AND json_extract(data,'$.runId')=?1
+               AND json_extract(data,'$.outcomeUnknown')=1)",
+            [run_id],|row|row.get::<_,bool>(0)
+        ).map_err(|e|e.to_string())
+    }
+    /// A single pending native approval for this run/session is at most
+    /// a bounded subset. Historical or other-user approvals stay untouched.
+    pub fn pending_run_approvals(
+        &self,run_id:&str,session_id:&str,
+    )->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='approval' AND json_extract(data,'$.status')='pending'
+               AND json_extract(data,'$.runId')=?1
+               AND json_extract(data,'$.sessionId')=?2
+             ORDER BY updated_at DESC LIMIT 128"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map(params![run_id,session_id],record_from_row)
+            .map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
     /// Read running receipts only; completed receipts are permanent history,
     /// never part of reboot reconciliation or its CPU/DB cost.
     pub fn running_execution_operations(&self)->Result<Vec<Value>,String>{
