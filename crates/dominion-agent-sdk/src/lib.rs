@@ -931,7 +931,7 @@ impl Kernel<'_> {
             if self.journal.directive(&request.id)?.as_deref() != directive {
                 return Ok(AcceptanceRun::OwnerChanged);
             }
-            let mut id = format!("kernel-verify-{}-{index}",run.step);
+            let mut id = format!("{}{}-{index}",acceptance::KERNEL_VERIFICATION_PREFIX,run.step);
             while run.receipts.iter().any(|receipt|receipt.id==id) {
                 id.push('x');
             }
