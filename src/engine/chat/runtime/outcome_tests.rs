@@ -509,6 +509,30 @@
     }
 
     #[test]
+    fn late_provider_error_cannot_change_durable_owner_cancellation_to_failed() {
+        let (state,dir)=state();
+        let id="owner-cancel-late-transport-error";
+        state.store.put("execution",&json!({
+            "id":id,"sessionId":"s-cancel","taskId":id,
+            "status":"running","phase":"running","request":"long task",
+            "acceptancePassed":false,"acceptanceText":null,
+            "strategyCandidates":[],"appliedImprovementIds":[]
+        })).unwrap();
+        let cancelled=state.store.patch_if("execution",id,"status",
+            &json!("running"),&json!({"status":"cancelled",
+                "reason":"사용자 요청으로 중단"})).unwrap();
+        assert_eq!(cancelled["status"],"cancelled");
+        state.cancel_session("s-cancel");
+        let metrics=std::sync::Mutex::new(Metrics::default());
+        finalize_execution(&state,id,&Err("provider connection reset".into()),&metrics);
+        let recorded=state.store.get("execution",id).unwrap();
+        assert_eq!(recorded["status"],"cancelled","{recorded}");
+        assert_ne!(recorded["taskOutcome"],"succeeded","{recorded}");
+        assert_eq!(recorded["reason"],"사용자 요청으로 중단");
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn cancelled_and_failed_are_not_success() {
         assert_eq!(
             determine_task_outcome(&execution("cancelled", true, json!("check"))),
