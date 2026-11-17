@@ -5,6 +5,7 @@
 mod budget;
 mod cycle;
 pub mod verification;
+pub mod scheduling;
 pub use budget::BudgetLedger;
 pub use cycle::{Cycle, Observation, Assessment};
 
