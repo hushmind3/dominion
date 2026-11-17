@@ -47,23 +47,13 @@ fn evidence_ids(proposal:&Value,checkpoint:&Value,failure:&Value)->Result<(),Str
 }
 /// A preflight is a specific observation required to distinguish candidate
 /// repairs, not a model-reported expected success or a synthetic rollout.
-fn checked_probe(candidate_id:&str,probe:&Value)->Result<Value,String>{
-    let tool=probe["tool"].as_str().ok_or("preflight.tool required")?;
-    if !crate::engine::adaptation::probes::read_only_tool(tool) {
-        return Err("preflight must be a native observational tool".into());
-    }
-    if !probe["inputs"].is_object() || probe["inputs"].to_string().len()>8192{
-        return Err("preflight inputs must be a bounded object".into());
-    }
-    let predicate=&probe["predicate"];
-    if !predicate.is_object()
-        || predicate["from"]!="result"
-        || !matches!(predicate["type"].as_str(),Some("equals"|"compare"|"exists"))
-        || predicate["path"].as_str().is_none_or(|p|!p.starts_with('/')){
-        return Err("preflight must verify an observable result JSON pointer".into());
-    }
+fn checked_probe(candidate_id:&str,probe:&Value,postflight:bool)->Result<Value,String>{
+    let tool=probe["tool"].as_str().ok_or("probe.tool required")?;
+    crate::engine::adaptation::probes::validate_observation_plan(
+        tool,&probe["inputs"],&probe["predicate"],postflight,
+    )?;
     Ok(json!({"id":candidate_id,"tool":tool,"inputs":probe["inputs"],
-        "predicate":predicate}))
+        "predicate":probe["predicate"]}))
 }
 fn compose(a:&Value,b:&Value)->Option<Value>{
     let a_ids=ids(a);let b_ids=ids(b);
@@ -143,13 +133,9 @@ pub fn prepare(
         ) else {continue;};
         let Some(probe)=proposal["preflight"].as_object() else {continue;};
         let id=format!("p{index}");
-        let Ok(probe)=checked_probe(&id,&json!(probe)) else{continue;};
+        let Ok(probe)=checked_probe(&id,&json!(probe),false) else{continue;};
         let Some(after)=proposal["postflight"].as_object() else{continue;};
-        let Ok(postflight)=checked_probe(&format!("post-{id}"),&json!(after)) else{continue;};
-        // 'exists /path' proves only that a tool returned something, not
-        // that a repair achieved the owner-requested state.
-        if !matches!(postflight["predicate"]["type"].as_str(),
-            Some("equals"|"compare")) {continue;}
+        let Ok(postflight)=checked_probe(&format!("post-{id}"),&json!(after),true) else{continue;};
         let costs=json!({
             "changedNodes": ids(&proposal).len(),
             "effectfulNodes":mutations(&proposal),
