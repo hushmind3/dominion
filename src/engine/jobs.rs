@@ -32,6 +32,25 @@ impl JobContext {
         }
     }
 
+    /// Bind to the dispatcher claim, not a possibly newer persisted row
+    /// obtained while an old async worker is getting scheduled.
+    fn from_claim(state:AppState,job:&Value)->Self{
+        Self{
+            state,
+            job_id:job["id"].as_str().unwrap_or("").to_string(),
+            attempt:job["attempts"].as_u64().unwrap_or(0),
+            epoch:job["runEpoch"].as_u64().unwrap_or(0),
+            events:Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    fn claim_is_live(&self)->bool{
+        self.state.store.get("job",&self.job_id).is_some_and(|current|
+            current["status"]=="running" && current["cancelRequested"]!=true
+            && current["attempts"].as_u64().unwrap_or(0)==self.attempt
+            && current["runEpoch"].as_u64().unwrap_or(0)==self.epoch)
+    }
+
     pub fn emit(&self, event: Value) {
         let mut payload = event.clone();
         payload["jobId"] = json!(self.job_id);
@@ -279,10 +298,30 @@ pub fn recover(state: &AppState) {
             updated["error"] =
                 json!("재시작 전 작업 결과를 확정할 수 없습니다. 실행 기록을 확인하세요.");
         }
-        state.store.put("job", &updated);
+        let Some(id)=job["id"].as_str() else{continue;};
+        let mut patch=json!({"status":updated["status"],"recovered":true});
+        if uncertain {patch["error"]=updated["error"].clone();}
+        let absent=Value::Null;
+        let guards=[
+            ("status",&job["status"]),
+            ("attempts",job.get("attempts").unwrap_or(&absent)),
+            ("runEpoch",job.get("runEpoch").unwrap_or(&absent)),
+            ("cancelRequested",job.get("cancelRequested").unwrap_or(&absent)),
+        ];
+        let Some(saved)=state.store.patch_if_all_merge(
+            "job",id,&guards,&patch,&[],
+        ) else {
+            // A different process, owner or worker advanced this claim.
+            // Startup recovery cannot take ownership from that live process.
+            state.store.audit("recovery.stale_job_skipped",json!({
+                "jobId":id,"attempt":job["attempts"],"runEpoch":job["runEpoch"],
+            }));
+            continue;
+        };
+        state.bus.record("job",&saved);
         if matches!(job["kind"].as_str(), Some("room" | "meeting")) {
             if let Some(id) = job.pointer("/input/roomId").and_then(Value::as_str) {
-                let status = updated["status"].as_str().unwrap_or("needs_review");
+                let status = saved["status"].as_str().unwrap_or("needs_review");
                 if let Some(saved)=state.store.patch_if("room",id,"id",&json!(id),&json!({
                     "status":status,"activeAgentId":null,"pauseReason":if status=="needs_review" {"재시작 전 발언이나 도구 결과를 확인해야 합니다."} else {""}
                 })) { state.bus.record("room",&saved); }
@@ -507,7 +546,14 @@ async fn run_job(state: AppState, job: Value) {
     if job_id.is_empty() {
         return;
     }
-    let context = JobContext::new(state.clone(), job_id.clone());
+    let context = JobContext::from_claim(state.clone(),&job);
+    if !context.claim_is_live(){
+        state.store.audit("job.stale_claim_discarded",json!({
+            "jobId":job_id,"claimedAttempt":context.attempt,
+            "claimedRunEpoch":context.epoch
+        }));
+        return;
+    }
 
     state.bus.record("job", &job);
 
@@ -1068,6 +1114,27 @@ mod tests {
         assert_eq!(saved["progress"],"new");
         assert!(saved["result"].is_null());
         assert_eq!(saved["status"],"running");
+    }
+
+    #[test]
+    fn outdated_dispatch_snapshot_cannot_execute_after_another_worker_claims(){
+        let state=temp_state();
+        let original=enqueue(&state,"room",
+            json!({"roomId":"unrelated","goal":"not execute stale"})).unwrap();
+        let id=original["id"].as_str().unwrap().to_string();
+        let claimed=state.store.patch_if("job",&id,"status",&json!("queued"),
+            &json!({"status":"running","attempts":1,"runEpoch":1})).unwrap();
+        state.store.patch_if("job",&id,"status",&json!("running"),
+            &json!({"status":"queued"})).unwrap();
+        state.store.patch_if("job",&id,"status",&json!("queued"),
+            &json!({"status":"running","attempts":2,"runEpoch":2})).unwrap();
+        let runtime=tokio::runtime::Builder::new_current_thread()
+            .enable_all().build().unwrap();
+        runtime.block_on(run_job(state.clone(),claimed));
+        let fresh=state.store.get("job",&id).unwrap();
+        assert_eq!(fresh["status"],"running");
+        assert_eq!(fresh["runEpoch"],2);
+        assert!(fresh["error"].is_null());
     }
 
     #[test]

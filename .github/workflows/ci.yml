@@ -42,6 +42,7 @@ jobs:
           cargo test --lib engine::verification::verified_patch_tests
           cargo test --lib engine::autonomy::tests::verifier_
           cargo test --lib engine::jobs::tests
+          cargo test --lib db::tests::recovery_merge_guards_reject_stale_running_claim_across_connections
           cargo test --lib db::tests::independent_sqlite_connections_cannot_claim_same_queued_job
           cargo test --lib db::tests::stale_attempt_checkpoint_cannot_mutate_new_attempt_or_cancelled_job
           cargo test --lib db::tests::deferred_job_checkpoint_can_requeue_without_replaying_old_owner

@@ -625,35 +625,37 @@ impl Store {
         patch: &Value,
         nested_objects: &[&str],
     ) -> Option<Value> {
-        let conn = self.conn.lock().ok()?;
-        let mut record = conn
-            .query_row(
-                "SELECT data,id,created_at,updated_at FROM records WHERE kind=?1 AND id=?2",
-                params![kind, id], record_from_row,
-            ).ok()?;
-        if guards.iter().any(|(key, expected)|
-            record.get(*key).unwrap_or(&Value::Null) != *expected) {
+        let changes=patch.as_object()?;
+        let mut conn=self.conn.lock().ok()?;
+        // A process-local mutex cannot serialize a separate application
+        // process running recovery/cancellation against this connection.
+        let tx=conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).ok()?;
+        let mut record=tx.query_row(
+            "SELECT data,id,created_at,updated_at FROM records WHERE kind=?1 AND id=?2",
+            params![kind,id],record_from_row,
+        ).ok()?;
+        if guards.iter().any(|(key,expected)|
+            record.get(*key).unwrap_or(&Value::Null)!=*expected){
             return None;
         }
-        for (key, value) in patch.as_object()? {
-            if key == "id" { continue; }
-            if nested_objects.iter().any(|nested| *nested == key.as_str()) {
-                if let (Some(current), Some(update)) = (
-                    record.get_mut(key).and_then(Value::as_object_mut),
-                    value.as_object(),
-                ) {
-                    for (field, new_value) in update {
-                        current.insert(field.clone(), new_value.clone());
+        for (key,value) in changes{
+            if key=="id"{continue;}
+            if nested_objects.iter().any(|nested|*nested==key.as_str()){
+                if let (Some(current),Some(update))=(
+                    record.get_mut(key).and_then(Value::as_object_mut),value.as_object()){
+                    for (field,next) in update {
+                        current.insert(field.clone(),next.clone());
                     }
                     continue;
                 }
             }
-            record[key] = value.clone();
+            record[key]=value.clone();
         }
-        conn.execute(
-            "UPDATE records SET data=?3, updated_at=datetime('now') WHERE kind=?1 AND id=?2",
-            params![kind, id, record.to_string()],
+        tx.execute(
+            "UPDATE records SET data=?3,updated_at=datetime('now') WHERE kind=?1 AND id=?2",
+            params![kind,id,record.to_string()],
         ).ok()?;
+        tx.commit().ok()?;
         Some(record)
     }
 
@@ -1657,6 +1659,30 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    #[test]
+    fn recovery_merge_guards_reject_stale_running_claim_across_connections(){
+        let (first,dir)=temp_store();
+        let second=Store::open(&dir.join("dominion.sqlite")).unwrap();
+        first.put("job",&json!({"id":"recovery-gate","status":"running",
+            "attempts":1,"runEpoch":1,"cancelRequested":false})).unwrap();
+        second.patch_if("job","recovery-gate","status",&json!("running"),
+            &json!({"status":"queued"})).unwrap();
+        second.patch_if("job","recovery-gate","status",&json!("queued"),
+            &json!({"status":"running","attempts":2,"runEpoch":2})).unwrap();
+        let status=json!("running");
+        let attempts=json!(1);
+        let epoch=json!(1);
+        let cancelled=json!(false);
+        let guards=[("status",&status),("attempts",&attempts),
+            ("runEpoch",&epoch),("cancelRequested",&cancelled)];
+        assert!(first.patch_if_all_merge("job","recovery-gate",&guards,
+            &json!({"status":"needs_review","recovered":true}),&[]).is_none());
+        let saved=second.get("job","recovery-gate").unwrap();
+        assert_eq!(saved["status"],"running");
+        assert_eq!(saved["runEpoch"],2);
+        assert!(saved["recovered"].is_null());
+        let _=std::fs::remove_dir_all(dir);
+    }
     #[test]
     fn independent_sqlite_connections_cannot_claim_same_queued_job(){
         let (first,dir)=temp_store();

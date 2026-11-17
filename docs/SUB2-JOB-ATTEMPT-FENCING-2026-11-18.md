@@ -22,3 +22,9 @@
 - A deferred job intentionally refunds `attempts`, so an attempt counter can repeat (1→0→1). The latest claim now increments separate `runEpoch` monotonically (both dispatcher `next_queued` and delegated `start_now`).
 - `JobContext` snapshots both values, and SQLite compares both inside the same immediate transaction. Existing job records without `runEpoch` default to 0 for backward compatibility.
 - Focused Rust tests prove an old context cannot finish a newly resumed worker even when `attempts` is identical.
+
+## Race closure: dispatch snapshot + recovery
+- The async worker must bind context to the *claimed job argument*. Reading the latest DB row in `JobContext::new` after scheduling could otherwise accidentally adopt the replacement owner's epoch. `JobContext::from_claim` snapshots the original claim and rejects stale claims before entering the dispatcher.
+- Startup `recover` no longer unconditionally `Store::put`s an entire stale running job. It merges only status/recovery information if status, attempts, runEpoch and cancel flag still match, under SQLite IMMEDIATE transaction.
+- Shared `patch_if_all_merge` now uses the same SQLite cross-process transaction discipline, preserving the existing nested-object merge and API.
+- Focused tests assert stale dispatch does not execute a room, and recovery does not reset a newer attempt on another SQLite connection.
