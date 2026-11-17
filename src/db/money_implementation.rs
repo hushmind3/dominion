@@ -81,7 +81,7 @@ mod tests{
             let cloned=s.clone();std::thread::spawn(move||
                 cloned.money_approve_implementation("c1",&job(),"a",24000).unwrap().2)
         }).collect::<Vec<_>>();
-        assert_eq!(handles.into_iter().filter(|h|h.join().unwrap()).count(),1);
+        assert_eq!(handles.into_iter().map(|h|h.join().unwrap()).filter(|ok|*ok).count(),1);
         assert_eq!(s.count_kind("job"),1);
     }
 }
