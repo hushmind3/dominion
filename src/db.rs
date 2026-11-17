@@ -192,6 +192,12 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_sdk_run_session
                  ON records(json_extract(data,'$.sessionId'))
                  WHERE kind='sdk_run';
+             CREATE INDEX IF NOT EXISTS idx_operation_session
+                 ON records(json_extract(data,'$.sessionId'), updated_at DESC)
+                 WHERE kind='execution_operation';
+             CREATE INDEX IF NOT EXISTS idx_operation_resource
+                 ON records(json_extract(data,'$.resourceKey'))
+                 WHERE kind='execution_operation';
              CREATE INDEX IF NOT EXISTS idx_sdk_unknown_operations
                  ON records(json_extract(data,'$.runId'))
                  WHERE kind='execution_operation'
@@ -396,6 +402,47 @@ impl Store {
             [run_id],|row|row.get::<_,i64>(0)
         ).map_err(|error|error.to_string())?;
         Ok(found!=0)
+    }
+
+    /// Repeated effect checks must not parse the entire historical tool journal.
+    /// Sorted newest-first to retain the previous all(kind) + reverse semantics.
+    pub fn session_execution_operations(&self, session_id: &str) -> Result<Vec<Value>, String> {
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='execution_operation'
+               AND json_extract(data,'$.sessionId')=?1
+             ORDER BY updated_at DESC"
+        ).map_err(|e|e.to_string())?;
+        stmt.query_map([session_id],record_from_row).map_err(|e|e.to_string())?
+            .collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    pub fn resource_execution_operations(&self, resource: &str) -> Result<Vec<Value>, String> {
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='execution_operation'
+               AND json_extract(data,'$.resourceKey')=?1"
+        ).map_err(|e|e.to_string())?;
+        stmt.query_map([resource],record_from_row).map_err(|e|e.to_string())?
+            .collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    /// SDK cumulative model-call budgets count only this session's prior runs.
+    pub fn sdk_used_model_calls(&self, session: &str, excluded_run: &str) -> Result<u64, String> {
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let used=conn.query_row(
+            "SELECT COALESCE(SUM(
+                CASE WHEN json_type(data,'$.modelCalls')='integer'
+                THEN MAX(CAST(json_extract(data,'$.modelCalls') AS INTEGER),0)
+                ELSE 0 END),0)
+             FROM records WHERE kind='execution'
+               AND json_extract(data,'$.sessionId')=?1 AND id<>?2",
+            rusqlite::params![session,excluded_run],
+            |row|row.get::<_,i64>(0)
+        ).map_err(|e|e.to_string())?;
+        Ok(used.max(0) as u64)
     }
 
     pub fn execution_operations(&self, run_id: &str) -> Result<Vec<Value>, String> {
@@ -1809,6 +1856,26 @@ mod tests {
         assert_eq!(store.get("execution_operation","op").unwrap()["effectState"],"applied");
         assert!(!store.reconcile_sdk_effect_once("sdk","interrupted",
             "op","wrong-run",&records).unwrap());
+    }
+
+    #[test]
+    fn indexed_effect_reads_and_sdk_budget_are_isolated(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        for (id,session,resource) in [("op-a","s-a","file:a"),("op-b","s-b","file:b"),
+            ("op-c","s-a","file:b")] {
+            store.put("execution_operation",&json!({"id":id,
+                "sessionId":session,"resourceKey":resource,"runId":id}));
+        }
+        assert_eq!(store.session_execution_operations("s-a").unwrap().len(),2);
+        assert_eq!(store.session_execution_operations("s-b").unwrap().len(),1);
+        assert_eq!(store.resource_execution_operations("file:b").unwrap().len(),2);
+        assert!(store.resource_execution_operations("file:x").unwrap().is_empty());
+        for (id,session,calls) in [("e1","s-a",3),("e2","s-a",5),("e3","s-b",90)] {
+            store.put("execution",&json!({"id":id,"sessionId":session,"modelCalls":calls}));
+        }
+        assert_eq!(store.sdk_used_model_calls("s-a","e2").unwrap(),3);
+        assert_eq!(store.sdk_used_model_calls("s-a","missing").unwrap(),8);
+        assert_eq!(store.sdk_used_model_calls("s-b","missing").unwrap(),90);
     }
 
     #[test]

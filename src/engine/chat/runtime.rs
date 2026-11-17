@@ -541,8 +541,7 @@ async fn run_turn_body(
         .unwrap_or(MAX_ROUNDS as u64)
         .clamp(2, 24) as usize;
     if let Some(limit)=session["nativeSdkMaxRounds"].as_u64(){
-        let used=state.store.all("execution").iter().filter(|run|run["sessionId"]==session_id&&run["id"]!=execution_id)
-            .map(|run|run["modelCalls"].as_u64().unwrap_or(0)).sum::<u64>();
+        let used=state.store.sdk_used_model_calls(session_id,execution_id)?;
         let remaining=limit.clamp(1,80).saturating_sub(used);
         if remaining==0{return Err("SDK의 누적 모델 호출 한도에 도달했습니다.".into());}
         max_rounds=remaining as usize;
@@ -1061,12 +1060,7 @@ async fn run_harness_nodes(
             {
                 return Err("실행이 중단되었습니다.".into());
             }
-            let operations = state
-                .store
-                .all("execution_operation")
-                .into_iter()
-                .filter(|operation| operation["runId"].as_str() == Some(execution_id))
-                .collect::<Vec<_>>();
+            let operations=state.store.execution_operations(execution_id)?;
             for operation in &operations {
                 if operation["origin"].as_str() == Some("procedure")
                     && operation["procedureStrategyId"].as_str() == strategy["id"].as_str()

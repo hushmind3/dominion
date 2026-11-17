@@ -416,7 +416,15 @@ pub(in crate::engine::chat) fn finalize_execution(
     }
     record["phase"] = json!(final_phase(&status));
     record["phaseUpdatedAt"] = json!(chrono::Utc::now().to_rfc3339());
-    for mut operation in state.store.all("execution_operation") {
+    let running_operations=match state.store.execution_operations(execution_id){
+        Ok(operations)=>operations,
+        Err(error)=>{
+            state.store.audit("execution.finalization_read_failed",
+                json!({"executionId":execution_id,"error":error}));
+            return;
+        }
+    };
+    for mut operation in running_operations {
         if operation["runId"] == execution_id && operation["status"] == "running" {
             operation["status"] = json!("interrupted");
             operation["outcomeUnknown"] = json!(true);
@@ -433,12 +441,14 @@ pub(in crate::engine::chat) fn finalize_execution(
             }
         }
     }
-    let mut operations = state
-        .store
-        .all("execution_operation")
-        .into_iter()
-        .filter(|operation| operation["runId"].as_str() == Some(execution_id))
-        .collect::<Vec<_>>();
+    let mut operations=match state.store.execution_operations(execution_id){
+        Ok(operations)=>operations,
+        Err(error)=>{
+            state.store.audit("execution.finalization_read_failed",
+                json!({"executionId":execution_id,"error":error}));
+            return;
+        }
+    };
     crate::engine::procedure::sort_operations(&mut operations);
     record["effectSummary"] = crate::engine::effect::summary(&operations);
     let request_text = record["request"].as_str().unwrap_or("");
@@ -709,11 +719,8 @@ fn mark_run_signals(state: &AppState, record: &Value) {
             );
         }
         if let Some(available) = execution["discoveredTools"].as_array() {
-            let used = state
-                .store
-                .all("execution_operation")
-                .into_iter()
-                .filter(|operation| operation["runId"].as_str() == Some(execution_id))
+            let used=state.store.execution_operations(execution_id)
+                .unwrap_or_default().into_iter()
                 .filter_map(|operation| operation["tool"].as_str().map(str::to_string))
                 .collect::<Vec<_>>();
             if !used.is_empty() && !available.is_empty() {

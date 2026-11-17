@@ -571,12 +571,9 @@ impl Host for MainTurn<'_> {
                 let mut operations = self
                     .state
                     .store
-                    .all("execution_operation")
+                    .execution_operations(self.execution_id)?
                     .into_iter()
-                    .filter(|operation| {
-                        operation["runId"].as_str() == Some(self.execution_id)
-                            && operation["status"].as_str() == Some("completed")
-                    })
+                    .filter(|operation| operation["status"].as_str() == Some("completed"))
                     .collect::<Vec<_>>();
                 crate::engine::procedure::sort_operations(&mut operations);
                 let violations = self
@@ -932,12 +929,9 @@ impl Host for MainTurn<'_> {
             let completed_operations = self
                 .state
                 .store
-                .all("execution_operation")
+                .execution_operations(self.execution_id)?
                 .into_iter()
-                .filter(|operation| {
-                    operation["runId"].as_str() == Some(self.execution_id)
-                        && operation["status"].as_str() == Some("completed")
-                })
+                .filter(|operation| operation["status"].as_str() == Some("completed"))
                 .collect::<Vec<_>>();
             let procedure_violation = self.strategy_candidates.iter().find_map(|strategy| {
                 if !crate::engine::procedure::applies(
@@ -1643,9 +1637,8 @@ impl MainTurn<'_> {
         let epoch = if replaced {
             self.state
                 .store
-                .all("execution_operation")
+                .execution_operations(self.execution_id)?
                 .into_iter()
-                .filter(|op| op["runId"] == self.execution_id)
                 .filter_map(|op| op["opSeq"].as_u64())
                 .max()
                 .unwrap_or(0)
