@@ -451,9 +451,57 @@ pub async fn cancel(State(state):State<AppState>,Path(id):Path<String>)->Respons
     state.bus.record("sdk_run",&saved);
     Json(public_view(&state,saved)).into_response()
 }
+/// A model reply already exists, but the post-run evidence query failed.
+/// Revalidate persisted native evidence without invoking the model or tools.
+fn recheck_completion(state:&AppState,record:Value)->Response{
+    let Some(id)=record["id"].as_str()else{
+        return error(StatusCode::CONFLICT,"SDK 실행 ID가 없습니다.");
+    };
+    let run=match execution(state,&record){
+        Ok(Some(run)) if run["status"]=="completed"=>run,
+        Ok(_)=>return error(StatusCode::CONFLICT,
+            "완료된 네이티브 실행 증거가 없어 재생을 금지했습니다."),
+        Err(message)=>return error(StatusCode::INTERNAL_SERVER_ERROR,&message),
+    };
+    let Some(run_id)=run["id"].as_str()else{
+        return error(StatusCode::CONFLICT,"검증할 실행 ID가 없습니다.");
+    };
+    match state.store.has_unknown_execution_effect(run_id){
+        Ok(true)=>return error(StatusCode::CONFLICT,
+            "결과 불명확 도구가 있어 먼저 확인해야 합니다."),
+        Ok(false)=>{},
+        Err(message)=>return error(StatusCode::INTERNAL_SERVER_ERROR,&message),
+    }
+    let Some(message)=run["finalMessageId"].as_str()
+        .and_then(|mid|state.store.message(mid))else{
+        return error(StatusCode::CONFLICT,
+            "저장된 모델 최종 응답이 없어 재실행하지 않습니다.");
+    };
+    let mut finished=record.clone();
+    finish_with_evidence(&mut finished,&message,Some(&run));
+    finished["finishedAt"]=json!(chrono::Utc::now().to_rfc3339());
+    let mut patch=json!({});
+    for key in ["status","answer","finalMessageId","taskOutcome","verified",
+        "acceptancePassed","failureClass","evidenceExecutionId","error","finishedAt"]{
+        if let Some(value)=finished.get(key){patch[key]=value.clone();}
+    }
+    let Some(saved)=state.store.patch_if("sdk_run",id,"status",
+        &json!("needs_review"),&patch)else{
+        return error(StatusCode::CONFLICT,"SDK 상태가 변경되어 재확인하지 않았습니다.");
+    };
+    state.bus.record("sdk_run",&saved);
+    state.store.audit("sdk.completion_evidence_rechecked",
+        json!({"sdkRunId":id,"nativeExecutionId":run_id,"verified":saved["verified"]}));
+    Json(public_view(state,saved)).into_response()
+}
+
 pub async fn resume(State(state):State<AppState>,Path(id):Path<String>)->Response{
     let Some(record)=state.store.get("sdk_run",&id)else{return error(StatusCode::NOT_FOUND,"작업이 없습니다.");};
     if record["sessionId"].as_str().is_none(){return error(StatusCode::CONFLICT,"구형 하네스 기록은 읽기 전용입니다. 새 공통 코어 작업으로 시작하세요.");}
+    if record["status"]=="needs_review"
+        && record["failureClass"]=="completion_evidence_unavailable"{
+        return recheck_completion(&state,record);
+    }
     if !matches!(record["status"].as_str(),Some("failed"|"interrupted")){return error(StatusCode::CONFLICT,"재개 가능한 중단 상태가 아닙니다.");}
     if public_view(&state,record.clone())["status"]=="in_doubt"{return error(StatusCode::CONFLICT,"불명확한 도구 효과를 먼저 확인하세요.");}
     launch(state.clone(),record.clone(),true);(StatusCode::ACCEPTED,Json(public_view(&state,record))).into_response()
@@ -597,6 +645,39 @@ mod view_tests{
             id:"1".into()})).is_err());
         assert!(source_metadata(Some(&SourceRef{kind:"money".into(),
             id:"a".repeat(201)})).is_err());
+    }
+    #[tokio::test]
+    async fn evidence_recheck_recovers_persisted_success_without_replaying_model_or_tools(){
+        let state=fixture();
+        state.store.put("sdk_run",&json!({"id":"sdk-recheck","sessionId":"s1",
+            "status":"needs_review","failureClass":"completion_evidence_unavailable"})).unwrap();
+        let message=state.store.write_message(&json!({"id":"final-m","session_id":"s1",
+            "role":"assistant","content":"Actual verified result"})).unwrap();
+        state.store.put("execution",&json!({"id":"execution-1","sessionId":"s1",
+            "startedAt":"2026-11-18T00:00:00Z","status":"completed",
+            "taskOutcome":"succeeded","acceptancePassed":true,
+            "finalMessageId":message["id"]})).unwrap();
+        let response=resume(State(state.clone()),Path("sdk-recheck".into())).await;
+        assert_eq!(response.status(),StatusCode::OK);
+        let saved=state.store.get("sdk_run","sdk-recheck").unwrap();
+        assert_eq!(saved["status"],"completed");
+        assert_eq!(saved["verified"],true);
+        assert_eq!(saved["answer"],"Actual verified result");
+        assert_eq!(saved["evidenceExecutionId"],"execution-1");
+        let repeated=resume(State(state.clone()),Path("sdk-recheck".into())).await;
+        assert_eq!(repeated.status(),StatusCode::CONFLICT);
+        assert_eq!(state.store.count_kind("execution"),1);
+        let _=std::fs::remove_dir_all(&state.config.data_dir);
+    }
+    #[tokio::test]
+    async fn evidence_recheck_cannot_replay_without_confirmed_native_result(){
+        let state=fixture();
+        state.store.put("sdk_run",&json!({"id":"sdk-unknown","sessionId":"missing",
+            "status":"needs_review","failureClass":"completion_evidence_unavailable"})).unwrap();
+        let response=resume(State(state.clone()),Path("sdk-unknown".into())).await;
+        assert_eq!(response.status(),StatusCode::CONFLICT);
+        assert_eq!(state.store.get("sdk_run","sdk-unknown").unwrap()["status"],"needs_review");
+        let _=std::fs::remove_dir_all(&state.config.data_dir);
     }
     #[test]
     fn unavailable_completion_evidence_never_grants_success_or_blind_resume(){

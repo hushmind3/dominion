@@ -196,3 +196,5 @@ The shared `POST /api/sdk/runs` accepts an optional `idempotencyKey` (up to 128 
 ### Indexed SDK completion and reconciliation evidence
 
 A native SDK run now reads its last execution by session ID using the existing SQLite session index instead of deserializing all prior executions. Operator reconciliation selects only the native frames for the exact execution ID; a dedicated partial SQLite index backs that lookup. Evidence read failures remain explicit and cannot be silently treated as verified completion. Session records, API fields, approval boundaries and model selection are unchanged.
+
+If post-completion SQLite evidence retrieval fails, the SDK marks the run `needs_review` instead of allowing blind model/tool replay. The existing resume endpoint can then **recheck only already-persisted completed execution evidence**; it never runs an extra model round in that state. If evidence is still missing or an effect is uncertain, the run remains paused for inspection.

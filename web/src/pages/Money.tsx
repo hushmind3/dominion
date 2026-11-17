@@ -54,6 +54,7 @@ type SdkRun={
  source?:{kind:string;id:string}
  sessionId?:string
  verified?:boolean
+ failureClass?:string
  taskOutcome?:string
  answer?:string
  error?:string
@@ -373,15 +374,18 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
            run.status==='awaiting_approval'?'도구 승인 대기':
            run.status==='in_doubt'?'외부 작업 결과 확인 필요':
            run.status==='running'?'실행 중':run.status==='queued'?'대기 중':
-           run.status==='cancelled'?'중단됨':run.status==='failed'?'실패':run.status}
+           run.status==='cancelled'?'중단됨':run.status==='failed'?'실패':
+           run.status==='needs_review'?'완료 증거 재확인 필요':run.status}
          </span>}
          {run?.sessionId&&<button type="button" onClick={()=>props.openSession(run.sessionId!)}
           className="text-xs font-semibold text-[#9D593D] underline underline-offset-2">작업 세션 보기</button>}
          {run&&active&&<button type="button" onClick={()=>void implementationAction(draft.id,run,'cancel')}
           disabled={!!implementationBusy} className="text-xs font-bold text-[#9D593D] underline disabled:opacity-50">작업 중단</button>}
-         {run&&['failed','interrupted'].includes(run.status)&&<button type="button"
+         {run&&(['failed','interrupted'].includes(run.status)
+          ||(run.status==='needs_review'&&run.failureClass==='completion_evidence_unavailable'))&&<button type="button"
           onClick={()=>void implementationAction(draft.id,run,'resume')}
-          disabled={!!implementationBusy} className="text-xs font-bold text-[#9D593D] underline disabled:opacity-50">기존 작업 재개</button>}
+          disabled={!!implementationBusy} className="text-xs font-bold text-[#9D593D] underline disabled:opacity-50">
+          {run.status==='needs_review'?'저장된 완료 증거 재확인':'기존 작업 재개'}</button>}
         </div>
         {run?.status==='awaiting_approval'&&run.pendingApprovalId&&<details className="rounded-lg border border-[#E5D3BC] bg-[#FFF8EB] px-3 py-2">
          <summary className="cursor-pointer text-xs font-bold text-[#765337]">승인 요청된 도구와 실행 인수 확인</summary>

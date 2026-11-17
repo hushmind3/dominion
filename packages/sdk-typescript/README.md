@@ -64,3 +64,5 @@ The optional Money capability is controlled by `GET/POST /api/settings/money` wi
 Pass an optional `idempotencyKey` when creating a native SDK run through `POST /api/sdk/runs` to make retries safe. An identical retry returns the same persisted run; a changed request with the same key is rejected with HTTP 409. No new API endpoint, model runner or database is required.
 
 SDK completion status and manual effect reconciliation now read only the matching session's latest native execution and exact child frames. API request/response contracts remain unchanged; evidence lookup errors surface instead of silently accepting an unverified result.
+
+If a native run reports `status: "needs_review"` and `failureClass: "completion_evidence_unavailable"`, `POST /api/sdk/runs/:id/resume` rechecks only persisted completion evidence without replaying LLM or tools. It returns HTTP 409 when the completed execution is missing or has unresolved side effects.
