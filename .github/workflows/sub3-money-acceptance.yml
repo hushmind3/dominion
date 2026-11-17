@@ -13,7 +13,7 @@ on:
       - 'src/engine/mod.rs'
       - 'src/engine/plugins.rs'
       - 'src/db.rs'
-      - 'src/db/money.rs'
+      - 'src/db/money*.rs'
       - 'src/db/money_schema.sql'
   workflow_dispatch:
 
