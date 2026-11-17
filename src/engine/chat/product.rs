@@ -649,7 +649,11 @@ impl Host for MainTurn<'_> {
                     .unwrap_or_default();
                 let mut gaps =
                     verification::check_acceptance(self.state, acceptance_text, checks, &evidence);
-                let mut next_action = String::new();
+                let progress = crate::engine::recovery::acceptance_progress(
+                    self.state, self.execution_id, round, &gaps, &evidence,
+                )?;
+                let mut next_action = progress["nextAction"]
+                    .as_str().unwrap_or("").to_string();
                 if !gaps.is_empty() {
                     // Independent reviewer: deterministic checks still win, but
                     // the reviewer supplies a concrete repair strategy.
@@ -684,7 +688,11 @@ impl Host for MainTurn<'_> {
                         gaps.extend(review.gaps);
                         gaps.sort();
                         gaps.dedup();
-                        next_action = review.next_action.unwrap_or_default();
+                        if let Some(review_action) = review.next_action
+                            .filter(|text| !text.trim().is_empty()) {
+                            next_action = format!("{}\nReviewer proposal: {}",
+                                next_action, review_action);
+                        }
                         if !next_action.trim().is_empty() {
                             let scope = crate::engine::memory::MemoryScope::for_session(
                                 &self.state.store,
@@ -737,6 +745,7 @@ impl Host for MainTurn<'_> {
                             "type": "acceptance_retry",
                             "attempt": self.acceptance_retries,
                             "gaps": gaps,
+                            "progress": progress,
                         }));
                         self.state.store.audit(
                             "acceptance.retry",
@@ -1446,15 +1455,26 @@ impl Host for MainTurn<'_> {
                             )
                         })
                         .unwrap_or_default();
-                    if !evidence.is_empty()
-                        && verification::check_acceptance(
-                            self.state,
-                            acceptance_text,
-                            checks,
-                            &evidence,
-                        )
-                        .is_empty()
-                    {
+                    let current_gaps = verification::check_acceptance(
+                        self.state, acceptance_text, checks, &evidence,
+                    );
+                    let progress = crate::engine::recovery::acceptance_progress(
+                        self.state, self.execution_id, round, &current_gaps, &evidence,
+                    )?;
+                    if progress["mode"] == "reconsider" && !self.force_final {
+                        let _ = self.tx.send(json!({
+                            "type":"acceptance_replan",
+                            "progress": progress,
+                        }));
+                        self.messages.push(json!({
+                            "role":"system",
+                            "content": format!(
+                                "Execution verifier detected stalled progress. {}",
+                                progress["nextAction"].as_str().unwrap_or("")
+                            )
+                        }));
+                    }
+                    if current_gaps.is_empty() && !evidence.is_empty() {
                         self.acceptance_passed = true;
                         self.force_final = true;
                         self.state.store.audit(

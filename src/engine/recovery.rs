@@ -134,9 +134,132 @@ pub fn failure_record(execution: &Value, operations: &[Value]) -> Value {
     json!({"failureClass": class, "recoveryHint": hint(class)})
 }
 
+/// Records actual acceptance progress across tool rounds and model reviews.
+/// Only verifier gaps and durable operation receipts can move the goal state.
+/// This never converts a model claim or a successful read into task completion.
+pub fn acceptance_progress(
+    state: &AppState,
+    execution_id: &str,
+    round: usize,
+    gaps: &[String],
+    evidence: &[Value],
+) -> Result<Value, String> {
+    let mut execution = state.store.get("execution", execution_id)
+        .ok_or("acceptance progress has no execution record")?;
+    let mut history = execution["acceptanceTrajectory"]
+        .as_array().cloned().unwrap_or_default();
+    let previous = history.last();
+    let mut current = gaps.to_vec();
+    current.sort();
+    current.dedup();
+    // Stored operation ids are receipts, not claims that the goal is done.
+    let mut receipts = evidence.iter().filter_map(|item| {
+        item["id"].as_str().map(str::to_string)
+    }).collect::<Vec<_>>();
+    receipts.sort();
+    receipts.dedup();
+    if let Some(last) = previous {
+        if last["round"].as_u64() == Some(round as u64)
+            && last["gaps"] == json!(current)
+            && last["receiptIds"] == json!(receipts) {
+            return Ok(last.clone());
+        }
+    }
+    let prior = previous.map(|last| last["gaps"].as_array()
+        .into_iter().flatten().filter_map(Value::as_str)
+        .map(str::to_string).collect::<Vec<_>>()).unwrap_or_default();
+    let old_receipts = previous.map(|last| last["receiptIds"].as_array()
+        .into_iter().flatten().filter_map(Value::as_str)
+        .map(str::to_string).collect::<Vec<_>>()).unwrap_or_default();
+    let resolved = prior.iter().filter(|item| !current.contains(item))
+        .cloned().collect::<Vec<_>>();
+    let introduced = current.iter().filter(|item| !prior.contains(item))
+        .cloned().collect::<Vec<_>>();
+    let fresh = receipts.iter().filter(|id| !old_receipts.contains(id))
+        .cloned().collect::<Vec<_>>();
+    let unchanged = !history.is_empty() && current == prior;
+    let stagnant = if current.is_empty() { 0 } else if unchanged {
+        previous.and_then(|item| item["stagnantRounds"].as_u64())
+            .unwrap_or(0).saturating_add(1)
+    } else { 0 };
+    let mode = if current.is_empty() { "verified" }
+        else if stagnant >= 1 { "reconsider" }
+        else if !resolved.is_empty() { "advance" }
+        else { "execute" };
+    let focus = current.first().map(String::as_str).unwrap_or("");
+    let action = if current.is_empty() {
+        "All deterministic acceptance checks passed. Stop tool use.".to_string()
+    } else if mode == "reconsider" {
+        format!("The same unmet condition survived another execution round: {focus}. \
+            Examine actual state/receipts and change the causal approach; \
+            do not replay the same call just because it returned success.")
+    } else if focus.contains("변경 또는 실행을 입증하는 성공한 도구 결과") {
+        "Read-only observations cannot complete an action goal. Perform and verify \
+         the requested effect through an authorized tool.".to_string()
+    } else if focus.contains("file_replace_exact") {
+        format!("Inspect the frozen input/output fingerprint and verify the exact replacement: {focus}")
+    } else if focus.contains("file_exists") || focus.contains("file_changed")
+        || focus.contains("file_equals") || focus.contains("file_contains") {
+        format!("Read the named artifact and satisfy its missing filesystem postcondition: {focus}")
+    } else if focus.contains("command_succeeded") {
+        format!("Inspect the actual command receipt, exit code and stderr, then fix the cause: {focus}")
+    } else {
+        format!("Satisfy the first concrete missing postcondition with real evidence: {focus}")
+    };
+    let record = json!({
+        "round": round,
+        "gaps": current,
+        "receiptIds": receipts,
+        "resolved": resolved,
+        "introduced": introduced,
+        "newReceiptIds": fresh,
+        "stagnantRounds": stagnant,
+        "mode": mode,
+        "nextAction": action.chars().take(1300).collect::<String>(),
+        "verified": current.is_empty(),
+    });
+    history.push(record.clone());
+    if history.len() > 12 { history = history.split_off(history.len() - 12); }
+    execution["acceptanceTrajectory"] = json!(history);
+    execution["acceptanceProgress"] = record.clone();
+    let saved = state.store.put("execution", &execution)
+        .ok_or("acceptance progress could not be stored")?;
+    state.bus.record("execution", &saved);
+    Ok(record)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn acceptance_feedback_uses_verifier_delta_not_extra_tool_success() {
+        use crate::{config::Config, db::Store, vault::Vault};
+        let dir = std::env::temp_dir().join(format!("dominion-progress-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = Config { port: 0, data_dir: dir.clone(), web_dir: dir.join("web"), workspace: dir.clone() };
+        let state = AppState::new(config.clone(), Store::open(&config.db_path()).unwrap(), Vault::open(&config.key_path()));
+        state.store.put("execution", &json!({"id":"run"}));
+        let evidence = vec![json!({"id":"op-a","tool":"workspace_read","result":{"ok":true}})];
+        let first = acceptance_progress(&state,"run",0,&["file_exists A".into(),"file_exists B".into()],&evidence).unwrap();
+        assert_eq!(first["mode"], "execute");
+        let second = acceptance_progress(&state,"run",1,&["file_exists A".into(),"file_exists B".into()],&[evidence[0].clone(),json!({"id":"op-b"})]).unwrap();
+        assert_eq!(second["mode"], "reconsider");
+        assert_eq!(second["newReceiptIds"], json!(["op-b"]));
+        assert_eq!(second["stagnantRounds"], 1);
+        let third = acceptance_progress(&state,"run",2,&["file_exists B".into()],&evidence).unwrap();
+        assert_eq!(third["mode"], "advance");
+        assert_eq!(third["resolved"], json!(["file_exists A"]));
+        assert_eq!(third["stagnantRounds"], 0);
+        let fourth = acceptance_progress(&state,"run",3,&[],&evidence).unwrap();
+        assert_eq!(fourth["verified"], true);
+        let replay = acceptance_progress(&state,"run",3,&[],&evidence).unwrap();
+        assert_eq!(replay, fourth);
+        assert_eq!(state.store.get("execution","run").unwrap()["acceptanceTrajectory"].as_array().unwrap().len(),4);
+        drop(state);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
 
     #[test]
     fn task_failure_hint_uses_only_matching_task_history() {
