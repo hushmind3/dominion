@@ -1329,6 +1329,8 @@ mod recovery_tests {
         let mut old_cp=crate::engine::program::new_checkpoint(&original);
         old_cp["programRevision"]=json!("base:rev:a");
         old_cp["completedOperationIds"]=json!(["old"]);
+        assert!(save_program_checkpoint(&state,"missing",&old_cp).is_err(),
+            "missing execution cannot authorize unjournaled tool effects");
         let source=json!({"id":"source","taskId":"task","status":"interrupted",
             "programResumeApproved":true,"startedAt":"2026-11-17T19:00:00Z",
             "programCheckpoint":old_cp,"revisedProgram":revised});
