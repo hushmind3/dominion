@@ -18,6 +18,35 @@ pub fn read_only_tool(name: &str) -> bool {
 }
 pub fn max_executed() -> usize { MAX_EXECUTED }
 
+/// Shared admission contract for all speculative observations. ProgramIR
+/// preflights, postflights and failure-adaptation probes must obey the same
+/// native-tool allowlist and deterministic JSON predicate rules.
+pub fn validate_observation_plan(
+    tool: &str,
+    inputs: &Value,
+    predicate: &Value,
+    postflight: bool,
+) -> Result<(), String> {
+    if !read_only_tool(tool) {
+        return Err(format!("non-observational probe tool: {tool}"));
+    }
+    if !inputs.is_object() || inputs.to_string().len() > 8192 {
+        return Err("probe inputs must be an object of at most 8KiB".into());
+    }
+    if predicate["from"] != "result"
+        || predicate["path"].as_str().is_none_or(|p| !p.starts_with('/'))
+    {
+        return Err("probe predicate must address a result JSON pointer".into());
+    }
+    match predicate["type"].as_str() {
+        Some("equals") if predicate.get("value").is_some() => Ok(()),
+        Some("compare") if predicate["value"].is_number()
+            && matches!(predicate["op"].as_str(), Some("gt" | "gte" | "lt" | "lte")) => Ok(()),
+        Some("exists") if !postflight => Ok(()),
+        _ => Err("probe requires a supported deterministic predicate; postflight must check a value".into()),
+    }
+}
+
 /// A speculative observation cannot repeat the exact already-failed read
 /// while the environment is unchanged.
 pub fn admissible_after_failure(probe:&Value,failed_tool:&str,failed_args:&Value)->bool{
@@ -42,10 +71,6 @@ pub fn validate(adaptation: &Value) -> Result<(), String> {
         if !ids.insert(id) {return Err(format!("duplicate probe id {id}"));}
         let tool = probe["tool"].as_str().unwrap_or("");
         if !read_only_tool(tool) {return Err(format!("probe {id} has a non-observational tool"));}
-        if !probe["inputs"].is_object(){return Err(format!("probe {id} needs object inputs"));}
-        if probe["inputs"].to_string().len() > 8192 {
-            return Err(format!("probe {id} inputs exceed 8KiB"));
-        }
         let predictions = probe["predictions"].as_array()
             .filter(|p| p.len() >= 2 && p.len() <= 12)
             .ok_or_else(||format!("probe {id} needs 2..12 predictions"))?;
@@ -60,10 +85,10 @@ pub fn validate(adaptation: &Value) -> Result<(), String> {
                 return Err(format!("probe {id} repeats hypothesis {hypothesis_id}"));
             }
             let predicate=&item["predicate"];
-            if predicate["type"]!="equals" || predicate["from"]!="result"
-                || !predicate["path"].as_str().is_some_and(|p|p.starts_with('/'))
-                || predicate.get("value").is_none(){
-                return Err(format!("probe {id} requires equals(result, /pointer, value) predictions"));
+            validate_observation_plan(tool, &probe["inputs"], predicate, false)
+                .map_err(|error|format!("probe {id}: {error}"))?;
+            if predicate["type"]!="equals" {
+                return Err(format!("probe {id} must predict a concrete output value"));
             }
         }
         if !probe["estimatedCost"].is_null() && !probe["estimatedCost"]
@@ -195,6 +220,18 @@ mod tests {
         assert!(determinate(&observation));
         assert!(!determinate(&missing));
         assert!(rank(&p,&["h1".into(),"h3".into()],&HashSet::new()).is_empty());
+    }
+    #[test]
+    fn common_probe_contract_rejects_side_effects_and_fake_postflight(){
+        let input=json!({"path":"a.txt"});
+        let equals=json!({"type":"equals","from":"result","path":"/content","value":"good"});
+        assert!(validate_observation_plan("workspace_read",&input,&equals,true).is_ok());
+        assert!(validate_observation_plan("shell_exec",&input,&equals,false).is_err());
+        let exists=json!({"type":"exists","from":"result","path":"/content"});
+        assert!(validate_observation_plan("workspace_read",&input,&exists,false).is_ok());
+        assert!(validate_observation_plan("workspace_read",&input,&exists,true).is_err());
+        let invalid=json!({"type":"compare","from":"result","path":"/count","value":3,"op":"exec"});
+        assert!(validate_observation_plan("workspace_read",&input,&invalid,true).is_err());
     }
     #[test]
     fn rejects_mutating_and_unverifiable_probes(){
