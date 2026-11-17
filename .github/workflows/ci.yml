@@ -51,4 +51,5 @@ jobs:
           cargo test --lib engine::money::provenance::tests
           cargo test --lib money
           cargo test --lib db::money::idle_autopilot_tests
+          cargo test --lib db::money::dashboard_stats_tests
           cargo test -p dominion-agent-kernel --lib

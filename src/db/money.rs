@@ -1,5 +1,11 @@
 //! Shared Store extension for the detachable Money tool.
 pub(super) const SCHEMA_SQL:&str = r#"CREATE INDEX IF NOT EXISTS idx_records_kind_created ON records(kind,created_at DESC);
+             CREATE INDEX IF NOT EXISTS idx_money_latest_ingest
+                 ON records(json_extract(data,'$.capturedAt') DESC)
+                 WHERE kind='money_ingest_report';
+             CREATE INDEX IF NOT EXISTS idx_money_enabled_autopilot_updated
+                 ON records(updated_at DESC)
+                 WHERE kind='money_autopilot' AND json_extract(data,'$.enabled')=1;
              CREATE INDEX IF NOT EXISTS idx_money_signal_created
                  ON records(kind,created_at DESC) WHERE kind='money_signal';
              CREATE INDEX IF NOT EXISTS idx_money_source_unfolded
@@ -131,6 +137,76 @@ fn refresh_money_source_fact_tx(tx:&rusqlite::Transaction<'_>,record:&Value)->Re
 }
 
 impl Store {
+    /// Same JSON contract as the old Money stats endpoint, without bringing
+    /// every historical candidate, job and automation into process memory.
+    /// Reads share one SQLite connection; a SQL error is not a fake zero.
+    pub fn money_dashboard_stats(&self)->Result<Value,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let count=|kind:&str|->Result<u64,String>{
+            conn.query_row("SELECT COUNT(*) FROM records WHERE kind=?1",
+                [kind],|row|row.get::<_,i64>(0))
+                .map(|n|n.max(0) as u64).map_err(|e|e.to_string())
+        };
+        let signals=count("money_signal")?;
+        let tensions=count("money_tension")?;
+        let asymmetries=count("money_asymmetry")?;
+        let (candidates,model_candidates):(i64,i64)=conn.query_row(
+            "SELECT COUNT(*),
+                COALESCE(SUM(CASE WHEN json_extract(data,'$.origin')='model'
+                    THEN 1 ELSE 0 END),0)
+             FROM records WHERE kind='money_candidate'",[],
+            |row|Ok((row.get(0)?,row.get(1)?))
+        ).map_err(|e|e.to_string())?;
+        let last_ingest=conn.query_row(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='money_ingest_report'
+             ORDER BY json_extract(data,'$.capturedAt') DESC LIMIT 1",
+            [],record_from_row
+        ).optional().map_err(|e|e.to_string())?
+            .unwrap_or(Value::Null);
+        let mut models=Vec::new();
+        {
+            let mut stmt=conn.prepare(
+                "SELECT COALESCE(
+                    NULLIF(json_extract(data,'$.result.modelUsed.model'),''),
+                    NULLIF(json_extract(data,'$.input.model'),''),
+                    '미지정') AS model,
+                    SUM(CASE WHEN json_extract(data,'$.status')='completed' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN json_extract(data,'$.status')
+                        IN ('failed','needs_review','cancelled') THEN 1 ELSE 0 END)
+                 FROM records WHERE kind='job'
+                     AND json_extract(data,'$.kind')='money_discover'
+                 GROUP BY model ORDER BY model"
+            ).map_err(|e|e.to_string())?;
+            let rows=stmt.query_map([],|row|{
+                let model:String=row.get(0)?;
+                let completed:i64=row.get(1)?;
+                let failed:i64=row.get(2)?;
+                Ok(json!({"model":model,"completed":completed,"failed":failed}))
+            }).map_err(|e|e.to_string())?;
+            for row in rows{models.push(row.map_err(|e|e.to_string())?);}
+        }
+        let autopilot=conn.query_row(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='money_autopilot'
+                 AND json_extract(data,'$.enabled')=1
+             ORDER BY updated_at DESC LIMIT 1",[],record_from_row
+        ).optional().map_err(|e|e.to_string())?;
+        let autopilot=autopilot.map(|a|json!({
+            "enabled":true,"rounds":a["completedRounds"],
+            "nextAt":a["nextAt"],
+            "rotation":a["freeModels"].as_array().map(|v|v.len()).unwrap_or(0),
+            "lastFailure":a["lastFailure"]
+        })).unwrap_or(json!({"enabled":false}));
+        Ok(json!({
+            "signals":signals,"candidates":candidates.max(0),
+            "modelCandidates":model_candidates.max(0),
+            "templateDrafts":(candidates-model_candidates).max(0),
+            "tensions":tensions,"asymmetries":asymmetries,
+            "lastIngest":last_ingest,"models":models,"autopilot":autopilot
+        }))
+    }
+
     /// Indexed decision history is append-only: candidate and review record
     /// commit together through mutate_record's SQLite transaction.
     pub fn money_candidate_decisions(&self,candidate_id:&str,limit:usize)
@@ -983,5 +1059,63 @@ mod idle_autopilot_tests {
         assert_eq!(store.money_enabled_autopilot_exists().unwrap(),true);
         store.put("money_autopilot",&json!({"id":"live","enabled":false})).unwrap();
         assert_eq!(store.money_enabled_autopilot_exists().unwrap(),false);
+    }
+}
+
+#[cfg(test)]
+mod dashboard_stats_tests {
+    use super::*;
+    #[test]
+    fn sql_projection_preserves_money_counts_model_breakdown_and_latest_ingest(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        let empty=store.money_dashboard_stats().unwrap();
+        assert_eq!(empty["signals"],0);
+        assert_eq!(empty["candidates"],0);
+        assert_eq!(empty["autopilot"]["enabled"],false);
+        assert_eq!(empty["models"].as_array().unwrap().len(),0);
+        store.put("money_signal",&json!({"id":"s1"})).unwrap();
+        store.put("money_tension",&json!({"id":"t1"})).unwrap();
+        store.put("money_candidate",&json!({"id":"c1","origin":"model"})).unwrap();
+        store.put("money_candidate",&json!({"id":"c2","origin":"source_pair_draft"})).unwrap();
+        store.put("job",&json!({"id":"j1","kind":"money_discover",
+            "status":"completed","result":{"modelUsed":{"model":"qwen-local"}}})).unwrap();
+        store.put("job",&json!({"id":"j2","kind":"money_discover",
+            "status":"failed","input":{"model":"qwen-local"}})).unwrap();
+        store.put("job",&json!({"id":"j3","kind":"prompt","status":"completed",
+            "input":{"model":"other"}})).unwrap();
+        store.put("money_ingest_report",&json!({"id":"i1",
+            "capturedAt":"2026-11-15T00:00:00Z","found":5})).unwrap();
+        store.put("money_ingest_report",&json!({"id":"i2",
+            "capturedAt":"2026-11-17T00:00:00Z","found":7})).unwrap();
+        store.put("money_autopilot",&json!({"id":"m1","enabled":false})).unwrap();
+        let view=store.money_dashboard_stats().unwrap();
+        assert_eq!(view["signals"],1);
+        assert_eq!(view["tensions"],1);
+        assert_eq!(view["candidates"],2);
+        assert_eq!(view["modelCandidates"],1);
+        assert_eq!(view["templateDrafts"],1);
+        assert_eq!(view["lastIngest"]["id"],"i2");
+        assert_eq!(view["models"][0]["model"],"qwen-local");
+        assert_eq!(view["models"][0]["completed"],1);
+        assert_eq!(view["models"][0]["failed"],1);
+        assert_eq!(view["autopilot"]["enabled"],false);
+        store.put("money_autopilot",&json!({"id":"m1","enabled":true,
+            "completedRounds":3,"freeModels":["a","b"]})).unwrap();
+        let enabled=store.money_dashboard_stats().unwrap();
+        assert_eq!(enabled["autopilot"]["enabled"],true);
+        assert_eq!(enabled["autopilot"]["rounds"],3);
+        assert_eq!(enabled["autopilot"]["rotation"],2);
+    }
+
+    #[test]
+    fn enabled_autopilot_has_partial_query_index_without_json_scan(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        let conn=store.conn.lock().unwrap();
+        let plan:String=conn.query_row(
+            "EXPLAIN QUERY PLAN SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='money_autopilot' AND json_extract(data,'$.enabled')=1
+             ORDER BY updated_at DESC LIMIT 1",[],
+            |row|row.get(3)).unwrap();
+        assert!(plan.contains("idx_money_enabled_autopilot_updated"),"{plan}");
     }
 }

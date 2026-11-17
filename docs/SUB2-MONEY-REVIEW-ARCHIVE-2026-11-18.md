@@ -29,3 +29,8 @@
 - Source-linked candidates now persist the original source ID and revision, with explicit local title match status and source content coverage; the buyer payment state remains unverified.
 - Promoted source pairs and automatic single/two-source drafts share the same lineage builder. New source enrichment produces a different digest, but a historical candidate is unchanged until the owner reviews it.
 - `src/api/money/find.rs` removes both rejected and on-hold candidates from its active selection pool, preventing archived high-score hypotheses from consuming the limited daily shortlist. The dedicated archive endpoint still returns them.
+
+## Dashboard DB cost cleanup
+- Previous `api/money/mod.rs::stats` deserialized all historical `job`, `money_candidate`, `money_ingest_report`, and `money_autopilot` records for each UI refresh. A large corpus made a simple dashboard read proportional to all JSON payloads.
+- The Money Store now returns the same dashboard JSON schema through COUNT / GROUP BY / indexed latest-ingest and active-autopilot lookups, keeping raw history and per-model counts intact.
+- SQL failure propagates HTTP 500 rather than masquerading as zero usage. The index/fixture Rust tests are development-only; release builds are deferred.

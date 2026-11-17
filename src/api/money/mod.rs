@@ -58,39 +58,11 @@ fn decorate(mut candidate:Value,experiments:&[Value],capital:f64)->Value{
 
 /// Compact research/accumulation counters for the Money screen. Cheap reads
 /// only: no model calls and no full candidate rendering.
-pub async fn stats(State(state):State<AppState>)->Json<Value>{
-    let signals=state.store.count_kind("money_signal");
-    let candidates=state.store.all("money_candidate");
-    let model= candidates.iter().filter(|c|c["origin"]=="model").count();
-    let drafts=candidates.len()-model;
-    let tensions=state.store.count_kind("money_tension");
-    let asymmetries=state.store.count_kind("money_asymmetry");
-    let mut ingest=state.store.all("money_ingest_report");
-    ingest.sort_by(|a,b|b["capturedAt"].as_str().cmp(&a["capturedAt"].as_str()));
-    let last=ingest.first().cloned().unwrap_or(Value::Null);
-    let mut by_model=std::collections::BTreeMap::<String,(u64,u64)>::new();
-    for job in state.store.all("job").into_iter().filter(|j|j["kind"]=="money_discover"){
-        let name=job["result"]["modelUsed"]["model"].as_str()
-            .or_else(||job["input"]["model"].as_str())
-            .unwrap_or("미지정").to_string();
-        let entry=by_model.entry(name).or_insert((0,0));
-        match job["status"].as_str(){
-            Some("completed")=>entry.0+=1,
-            Some("failed"|"needs_review"|"cancelled")=>entry.1+=1,
-            _=>{}
-        }
+pub async fn stats(State(state):State<AppState>)->Response{
+    match state.store.money_dashboard_stats(){
+        Ok(result)=>Json(result).into_response(),
+        Err(err)=>error(StatusCode::INTERNAL_SERVER_ERROR,&err),
     }
-    let models=by_model.into_iter().map(|(name,(ok,fail))|
-        json!({"model":name,"completed":ok,"failed":fail}))
-        .collect::<Vec<_>>();
-    let autopilot=state.store.all("money_autopilot").into_iter().find(|a|a["enabled"]==true)
-        .map(|a|json!({"enabled":true,"rounds":a["completedRounds"],
-            "nextAt":a["nextAt"],"rotation":a["freeModels"].as_array().map(|v|v.len()).unwrap_or(0),
-            "lastFailure":a["lastFailure"]}))
-        .unwrap_or(json!({"enabled":false}));
-    Json(json!({"signals":signals,"candidates":candidates.len(),"modelCandidates":model,
-        "templateDrafts":drafts,"tensions":tensions,"asymmetries":asymmetries,
-        "lastIngest":last,"models":models,"autopilot":autopilot}))
 }
 
 pub async fn overview(State(state):State<AppState>)->Json<Value>{
