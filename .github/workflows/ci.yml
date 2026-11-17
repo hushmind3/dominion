@@ -1,21 +1,23 @@
-name: CI
+name: Release validation
 
+# Full platform builds and release-mode tests run only for a release or an explicit manual request.
+# Normal development pushes must not start a build/test matrix.
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
+  release:
+    types: [published]
 
 permissions:
   contents: read
 
-# Only the latest commit on a branch needs a full release-mode validation.
-# Superseded commits are cancelled instead of occupying the runner queue.
+# Keep one manually triggered release validation per ref.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 # Supported product targets: Windows and macOS. Linux release tests are intentionally excluded.
 jobs:
-  test:
+  release-test:
     strategy:
       fail-fast: false
       matrix:
