@@ -222,14 +222,6 @@ pub(super) async fn attempt_model_adaptation(
         "result": before_observation,
         "after": Value::Null,
     });
-    let adaptation_algorithm =
-        crate::engine::algorithms::choose_for_agent(
-            state,
-            "adaptation.selection",
-            request.agent_id.as_deref(),
-            Some(execution_id),
-        )
-        .unwrap_or(Value::Null);
     // Diagnostic policy: choose only experiments that divide competing
     // predictions. Every read is charged, cancellable and journaled through
     // the SAME gateway as other tool calls; diagnostic success is never a
@@ -419,14 +411,9 @@ pub(super) async fn attempt_model_adaptation(
         ))
     } else { None };
 
-    let selected = crate::engine::adaptation_loop::choose_intervention_with_policy(
-        &adaptation,
-        tool,
-        arguments,
-        false,
-        &selection_context,
-        &causal_refuted,
-        &adaptation_algorithm,
+    let selected = crate::engine::adaptation_loop::choose_intervention_with_context(
+        &adaptation, tool, arguments, false,
+        &selection_context, &causal_refuted,
     )
     .ok_or("no distinct intervention survived selection")?;
     let selected_tool = selected["tool"]

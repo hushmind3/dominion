@@ -216,8 +216,9 @@ fn intervention_key(tool: &str, inputs: &Value) -> String {
     format!("{tool}:{}", inputs)
 }
 
-/// Picks an intervention using observable preconditions, expected progress,
-/// hypothesis discrimination, historical effect, uncertainty and cost.
+/// Choose a non-dominated remediation proposal; the actual acceptance gate
+/// still decides whether the action made task progress. Model-authored
+/// progress/historical scores never count as observed evidence.
 pub fn choose_intervention_with_context(
     adaptation: &Value,
     failed_tool: &str,
@@ -226,196 +227,81 @@ pub fn choose_intervention_with_context(
     resolved: &Value,
     refuted_hypotheses: &[String],
 ) -> Option<Value> {
-    choose_intervention_with_policy(
-        adaptation,
-        failed_tool,
-        failed_arguments,
-        environment_changed,
-        resolved,
-        refuted_hypotheses,
-        &json!({}),
-    )
-}
-
-/// Same selection, with weights supplied by the algorithm space. The harness
-/// owns execution; the selected algorithm owns only this scoring choice.
-#[allow(clippy::too_many_arguments)]
-pub fn choose_intervention_with_policy(
-    adaptation: &Value,
-    failed_tool: &str,
-    failed_arguments: &Value,
-    environment_changed: bool,
-    resolved: &Value,
-    refuted_hypotheses: &[String],
-    algorithm: &Value,
-) -> Option<Value> {
     use crate::engine::program::{predicate_verdict, PredicateVerdict};
-
-    let weight = |name: &str, fallback: f64| {
-        algorithm["parameters"][name].as_f64().unwrap_or(fallback)
-    };
-    let discrimination_weight = weight("discriminationWeight", 1.0);
-    let progress_weight = weight("progressWeight", 1.0);
-    let cost_weight = weight("costWeight", 1.0);
-    let uncertainty_weight = weight("uncertaintyWeight", 0.5);
-    let expression = (algorithm["implementation"].as_str() == Some("expression"))
-        .then(|| algorithm["parameters"]["expression"].as_str())
-        .flatten();
+    struct Candidate {
+        value: Value, surviving: usize, unknown: usize, cost: f64,
+    }
     let failed_key = intervention_key(failed_tool, failed_arguments);
-    let hypotheses = adaptation["hypotheses"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    let live_hypotheses = hypotheses
-        .iter()
-        .filter(|hypothesis| {
-            !hypothesis["id"]
-                .as_str()
-                .is_some_and(|id| refuted_hypotheses.iter().any(|item| item == id))
-        })
-        .count();
-    let cause_unclear = live_hypotheses >= 2;
-
-    adaptation["interventions"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|item| {
-            let tool = item["tool"].as_str()?;
-            let inputs = &item["inputs"];
-            let key = intervention_key(tool, inputs);
-            if key == failed_key && !environment_changed {
-                return None;
-            }
-            let hypothesis_ids = item["hypothesisIds"].as_array().cloned().unwrap_or_default();
-            let only_refuted = !hypothesis_ids.is_empty()
-                && hypothesis_ids.iter().all(|id| {
-                    id.as_str()
-                        .is_some_and(|id| refuted_hypotheses.iter().any(|item| item == id))
-                });
-            if only_refuted {
-                return None;
-            }
-            let mut precondition_status = "true";
-            let mut preconditions = Vec::new();
-            for precondition in item["preconditions"].as_array().into_iter().flatten() {
-                let verdict = predicate_verdict(precondition, resolved).ok()?;
-                preconditions.push(json!({
-                    "predicate": precondition,
-                    "verdict": verdict.as_str(),
-                }));
-                match verdict {
-                    PredicateVerdict::False => {
-                        precondition_status = "false";
-                    }
-                    PredicateVerdict::Unknown => {
-                        if precondition_status != "false" {
-                            precondition_status = "unknown";
-                        }
-                    }
-                    PredicateVerdict::True => {}
-                }
-            }
-            if precondition_status == "false" {
-                return None;
-            }
-            let expected_checks = item["expectedChecks"]
-                .as_array()
-                .map(Vec::len)
-                .unwrap_or(0) as f64;
-            let unresolved_requirements = item["unresolvedRequirements"]
-                .as_array()
-                .map(Vec::len)
-                .unwrap_or(0) as f64;
-            let expected_progress = item["expectedProgress"]
-                .as_f64()
-                .unwrap_or(expected_checks / 3.0 + unresolved_requirements);
-            let discrimination = hypothesis_ids
-                .iter()
-                .filter(|id| {
-                    !id.as_str()
-                        .is_some_and(|id| refuted_hypotheses.iter().any(|item| item == id))
-                })
-                .count() as f64;
-            let historical_effect = item["historicalEffect"].as_f64();
-            let uncertainty = item["uncertainty"].as_f64().unwrap_or(0.5);
-            let cost = item["estimatedCost"].as_f64().unwrap_or(0.5).max(0.0);
-            let mut variables = std::collections::BTreeMap::new();
-            variables.insert("discrimination".into(), discrimination);
-            variables.insert("progress".into(), expected_progress);
-            variables.insert("cost".into(), cost);
-            variables.insert("uncertainty".into(), uncertainty);
-            variables.insert("historical".into(), historical_effect.unwrap_or(0.0));
-            variables.insert("unresolved".into(), unresolved_requirements);
-            variables.insert(
-                "precondition".into(),
-                if precondition_status == "true" {
-                    1.0
-                } else if precondition_status == "unknown" {
-                    0.5
-                } else {
-                    0.0
-                },
-            );
-            let score = if let Some(expression) = expression {
-                crate::engine::algorithms::eval_expression(expression, &variables).ok()?
-            } else if cause_unclear {
-                discrimination * 2.0 * discrimination_weight
-                    + expected_progress * 0.5 * progress_weight
-                    + historical_effect.unwrap_or(0.0)
-                    - cost * cost_weight
-                    - uncertainty * uncertainty_weight
-                    - if precondition_status == "unknown" { 0.5 } else { 0.0 }
-            } else {
-                expected_progress * 2.0 * progress_weight
-                    + discrimination * 0.5 * discrimination_weight
-                    + historical_effect.unwrap_or(0.0)
-                    - cost * cost_weight
-                    - uncertainty * uncertainty_weight
-                    - if precondition_status == "unknown" { 0.5 } else { 0.0 }
+    let mut candidates = Vec::new();
+    for proposal in adaptation["interventions"].as_array().into_iter().flatten() {
+        let Some(tool) = proposal["tool"].as_str() else { continue };
+        let inputs = &proposal["inputs"];
+        if !inputs.is_object()
+            || (!environment_changed && intervention_key(tool, inputs) == failed_key) {
+            continue;
+        }
+        let ids = proposal["hypothesisIds"].as_array();
+        let surviving = ids.into_iter().flatten()
+            .filter_map(Value::as_str)
+            .filter(|id| !refuted_hypotheses.iter().any(|x| x.as_str() == *id))
+            .count();
+        if ids.is_some_and(|ids| !ids.is_empty()) && surviving == 0 {
+            continue;
+        }
+        let mut unknown = 0usize;
+        let mut preconditions = Vec::new();
+        let mut contradicted = false;
+        for precondition in proposal["preconditions"].as_array().into_iter().flatten() {
+            let Ok(verdict) = predicate_verdict(precondition, resolved) else {
+                contradicted = true; break;
             };
-            let evaluation = json!({
-                "unresolvedRequirements": unresolved_requirements,
-                "expectedProgress": expected_progress,
-                "hypothesisDiscrimination": discrimination,
-                "historicalEffect": historical_effect,
-                "uncertainty": uncertainty,
-                "estimatedCost": cost,
-                "preconditionStatus": precondition_status,
-                "preconditions": preconditions,
-                "causeUnclear": cause_unclear,
-                "algorithmRevision": algorithm["revision"],
-                "algorithmKernel": algorithm["implementation"],
-                "score": score,
-            });
-            let mut item = item.clone();
-            item["score"] = json!(score);
-            item["evaluation"] = evaluation;
-            Some((score, item))
-        })
-        .max_by(|a, b| {
-            a.0.partial_cmp(&b.0)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .map(|(_, item)| item)
-}
-
-/// Backwards-compatible wrapper for callers without an observation context.
-#[allow(dead_code)]
-pub fn choose_intervention(
-    adaptation: &Value,
-    failed_tool: &str,
-    failed_arguments: &Value,
-    environment_changed: bool,
-) -> Option<Value> {
-    choose_intervention_with_context(
-        adaptation,
-        failed_tool,
-        failed_arguments,
-        environment_changed,
-        &json!({}),
-        &[],
-    )
+            preconditions.push(json!({
+                "predicate":precondition,"verdict":verdict.as_str(),
+            }));
+            match verdict {
+                PredicateVerdict::True => {}
+                PredicateVerdict::False => {contradicted = true; break;}
+                PredicateVerdict::Unknown => unknown += 1,
+            }
+        }
+        if contradicted { continue; }
+        let cost = proposal["estimatedCost"].as_f64()
+            .filter(|v| v.is_finite() && *v >= 0.0)
+            .unwrap_or(1.0);
+        let mut value=proposal.clone();
+        value["evaluation"]=json!({
+            "selectionPolicy":"constrained_pareto_2026",
+            "survivingCausalExplanations":surviving,
+            "unknownPreconditions":unknown,
+            "estimatedCost":cost,
+            "preconditions":preconditions,
+            "finalAcceptance":"frozen_postcondition_no_regression",
+        });
+        candidates.push(Candidate{value,surviving,unknown,cost});
+    }
+    let dominates = |a: &Candidate, b: &Candidate| {
+        // b is strictly no worse than a on every independent constraint.
+        b.surviving >= a.surviving && b.unknown <= a.unknown && b.cost <= a.cost
+            && (b.surviving > a.surviving
+                || b.unknown < a.unknown || b.cost < a.cost)
+    };
+    let frontier = (0..candidates.len()).filter(|&i| {
+        !candidates.iter().enumerate().any(|(j,other)|
+            i != j && dominates(&candidates[i],other)
+        )
+    }).collect::<Vec<_>>();
+    // Stable resolution of incomparable survivors, no synthetic reward scalar.
+    let chosen = frontier.iter().copied().max_by(|&i,&j| {
+        let a=&candidates[i]; let b=&candidates[j];
+        a.surviving.cmp(&b.surviving)
+            .then_with(|| b.unknown.cmp(&a.unknown))
+            .then_with(|| b.cost.total_cmp(&a.cost))
+            .then_with(|| j.cmp(&i))
+    })?;
+    let mut selected=candidates[chosen].value.clone();
+    selected["evaluation"]["candidateCount"]=json!(candidates.len());
+    selected["evaluation"]["paretoFrontierCount"]=json!(frontier.len());
+    Some(selected)
 }
 
 /// Compares hypotheses against the correct observation phase. A prediction
@@ -572,8 +458,8 @@ pub fn record_adaptation(
             .as_u64().unwrap_or(0) + 1,
         "beforeObservation": adaptation["beforeObservation"],
         "hypothesisResults": hypothesis_results,
-        "diagnosticEvidence": adaptation["diagnosticEvidence"],
-        "acceptanceDecision": adaptation["acceptanceDecision"],
+        // Full evidence remains in the bounded adaptation history and tool
+        // receipts; the checkpoint needs only the selection cursor.
     });
     let saved = state.store.put("execution", &execution)?;
     state.bus.record("execution", &saved);
@@ -600,13 +486,54 @@ mod selection_tests {
     #[test]
     fn identical_failed_call_is_filtered_until_the_environment_changes() {
         let failed = json!({"command":"exit 7"});
-        let chosen = choose_intervention(&adaptation(), "shell_exec", &failed, false).unwrap();
+        let chosen = choose_intervention_with_context(&adaptation(), "shell_exec", &failed, false, &json!({}), &[]).unwrap();
         assert_eq!(chosen["id"], "change");
-        let retry = choose_intervention(&adaptation(), "shell_exec", &failed, true).unwrap();
+        let retry = choose_intervention_with_context(&adaptation(), "shell_exec", &failed, true, &json!({}), &[]).unwrap();
         assert_eq!(retry["id"], "change"); // still higher score than identical retry
         let only_same = json!({"hypotheses":[],"interventions":[adaptation()["interventions"][0].clone()]});
-        assert!(choose_intervention(&only_same, "shell_exec", &failed, false).is_none());
-        assert!(choose_intervention(&only_same, "shell_exec", &failed, true).is_some());
+        assert!(choose_intervention_with_context(&only_same, "shell_exec", &failed, false, &json!({}), &[]).is_none());
+        assert!(choose_intervention_with_context(&only_same, "shell_exec", &failed, true, &json!({}), &[]).is_some());
+    }
+
+    #[test]
+    fn nondominated_repair_selection_does_not_trust_model_progress_claims() {
+        let mut scenario=adaptation();
+        scenario["interventions"]=json!([
+            {"id":"hype","tool":"workspace_write",
+             "inputs":{"path":"hype.txt","content":"x"},
+             "hypothesisIds":["h1"],"expectedProgress":999999,
+             "estimatedCost":3.0},
+            {"id":"grounded","tool":"workspace_write",
+             "inputs":{"path":"real.txt","content":"x"},
+             "hypothesisIds":["h1","h2"],"expectedProgress":0,
+             "estimatedCost":0.5}
+        ]);
+        let result=choose_intervention_with_context(
+            &scenario,"shell_exec",&json!({"command":"failed"}),false,
+            &json!({}),&[]
+        ).unwrap();
+        assert_eq!(result["id"],"grounded");
+        assert_eq!(result["evaluation"]["selectionPolicy"],"constrained_pareto_2026");
+        assert_eq!(result["evaluation"]["paretoFrontierCount"],1);
+        assert!(result.get("score").is_none());
+    }
+
+    #[test]
+    fn false_precondition_excludes_a_mutating_candidate() {
+        let mut scenario=adaptation();
+        scenario["interventions"]=json!([
+            {"id":"bad","tool":"workspace_write","inputs":{"path":"bad"},
+             "hypothesisIds":["h1","h2"],"estimatedCost":0,
+             "preconditions":[{"type":"equals","from":"result",
+                 "path":"/ready","value":true}]},
+            {"id":"good","tool":"workspace_list","inputs":{"path":"."},
+             "hypothesisIds":["h1"],"estimatedCost":1}
+        ]);
+        let result=choose_intervention_with_context(
+            &scenario,"shell_exec",&json!({}),false,
+            &json!({"result":{"ready":false}}),&[],
+        ).unwrap();
+        assert_eq!(result["id"],"good");
     }
 
     #[test]

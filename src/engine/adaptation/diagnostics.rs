@@ -163,7 +163,8 @@ pub fn choose_with_budget(
     Some(result)
 }
 
-/// For callers without a remaining diagnostic budget.
+/// Test-only compatibility: production always uses remaining live budget.
+#[cfg(test)]
 pub fn choose(
     adaptation: &Value,
     refuted: &[String],

@@ -77,6 +77,18 @@ optimizer. It combines three 2026 open-source strengths at the existing
    For a non-action conversational turn, the decision is `not_applicable`,
    never a fabricated success.
 
+**Cleanup (2026-11-18):** The live adaptation path no longer calls the old
+weighted-sum / expression strategy selector, which relied on unverified
+`expectedProgress` and model-authored success assumptions. A single
+constrained non-dominated proposal selector now compares surviving causal
+explanations, observed predicate status and projected tool cost. The existing
+native dispatch and frozen postcondition/no-regression acceptance gate remain
+the only proof of a successful intervention. Historical algorithm registry
+records remain readable for compatibility; they do not control this path.
+Redundant `diagnosticEvidence` and `acceptanceDecision` payloads were
+removed from the lightweight adaptation checkpoint; full evidence remains
+available through native operation receipts and the bounded adaptation log.
+
 The compact acceptance record is stored at
 `execution.lastAdaptation.acceptanceDecision` and
 `execution.adaptationCheckpoint.acceptanceDecision`. It contains the native

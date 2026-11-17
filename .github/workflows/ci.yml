@@ -50,6 +50,8 @@ jobs:
         run: cargo test --locked --bin dominion-rust engine::obligation_repair::tests
       - name: 2026 composite repair acceptance gate (dev profile)
         run: cargo test --locked --bin dominion-rust engine::adaptation::acceptance_gate::tests
+      - name: Pareto repair selection and schema regression (dev profile)
+        run: cargo test --locked --bin dominion-rust engine::adaptation_loop::selection_tests
       - name: Money domain and API regressions (dev profile)
         run: cargo test --locked --bin dominion-rust money_
       - name: Shared SDK run and retry regressions (dev profile)
