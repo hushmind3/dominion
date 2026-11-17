@@ -397,8 +397,11 @@ pub(super) async fn attempt_model_adaptation(
         let intent = record["acceptanceText"].as_str()?.to_string();
         let source = record["acceptanceSourceMessageId"].as_str()
             .map(str::to_string);
-        checks.as_array().filter(|items| !items.is_empty())
-            .map(|_| (intent, checks, source))
+        if checks.as_array().is_some_and(|items| !items.is_empty()) {
+            Some((intent, checks, source))
+        } else {
+            None
+        }
     });
     let acceptance_evidence = |source: &Option<String>| -> Result<Vec<Value>, String> {
         match source {
