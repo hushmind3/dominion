@@ -127,6 +127,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/sdk/runs/:id",get(sdk_runs::one))
         .route("/api/sdk/runs/:id/replay",get(native_replay::replay))
         .route("/api/sdk/runs/:id/compare",post(native_replay::compare))
+        .route("/api/sdk/runs/:id/adjudicate",post(native_replay::adjudicate))
+        .route("/api/jobs/:id/adjudicate",post(native_replay::adjudicate))
         .route("/api/jobs/:id/replay",get(native_replay::replay))
         .route("/api/jobs/:id/compare",post(native_replay::compare))
         .route("/api/sdk/runs/:id/approve",post(sdk_runs::approve))
