@@ -79,3 +79,26 @@ The improvement targets replay evidence integrity, not a new measured benchmark 
 `crates/dominion-agent-sdk/src/failure_guidance.rs` now distinguishes **source mutated after a failed check** from **the same check succeeding**. An edit leaves the original receipt visible as `source_changed_recheck_pending` and points the model to the kernel-owned acceptance pass; an exact successful repeat of the same tool and arguments clears the hint, while unrelated tool successes do not. This preserves error evidence without blindly repeating an unchanged failing check.
 
 Commit: `21616fea` on `dominion-sub3` only. Added deterministic test cases, not executed here (Rust unavailable). Scoped verification: `cargo test -p dominion-agent-sdk failure_guidance::tests::`, followed by relevant SDK acceptance tests. The fix is a source-level lifecycle correction, not evidence of improved real-model completion.
+
+## 2026-11-18 task-local competing strategy probes (source-only implementation)
+
+**Goal:** Move beyond selecting a historically successful fixed strategy (such as UCB1) by permitting the current task to present 2–3 explicit competing hypotheses with real bounded observations before applying effects.
+
+**Implementation:** `crates/dominion-agent-sdk/src/probes.rs` models bounded candidate paths, rejects disallowed/effectful probes before dispatch, and compares success/failure evidence from real receipts. `src/lib.rs` incorporates the alternatives into the **existing** Rust scheduler, token/tool budgets, cancellation, owner directives, write-ahead snapshots and step loop. `replay.rs` attributes candidate-path receipts to the model's original decision rather than treating them as unplanned effects. `src/engine/native_model.rs` recognizes a standalone candidate proposal from native models while retaining native function calls for normal actions. The next planning turn sees a compact `candidateProbeComparison` with an optional tentative best path. Ties remain unresolved. Unchanged front-end, persisted user data, host approval policies and SDK request parameters.
+
+**Safety and limitations:** All exploratory actions are host-declared read-only; speculative writes and external effects never run in the comparison. The preference is based on observed probe outcomes, **not** a guaranteed quality judgment or the ability to run several full candidate workspaces. This is not Harness²'s complete nested harness optimization, PRISM's multi-generation Pareto search, or DeepSeek's full TypeScript PTC sandbox. No new SDK, persistent optimizer, autonomous core modification or second job worker was added. The unchanged normal Rust agent handles remaining actions and mandatory owner acceptance.
+
+**Public code consulted (2026 releases):**
+- DeepSeek Harness: https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/core/tool-executor-ptc/README.md
+- Google Research Harness²: https://github.com/google-research/harness2/blob/main/harness2/core/recursion.py
+- Airbnb Agent Harness Optimizer: https://github.com/airbnb/agent-harness-optimizer
+
+**Tests added but NOT executed in this editing environment:**
+- `cargo test -p dominion-agent-sdk probes::tests::`
+- `cargo test -p dominion-agent-sdk replay::tests::contrastive_probe_receipts_have_model_attribution_without_tool_replay`
+- `cargo test -p dominion-agent-sdk --test kernel_replanning contrasting_read_only_probes_are_observed_then_the_kernel_replans`
+- `cargo test -p dominion-agent-sdk --test kernel_replanning speculative_effectful_probes_are_rejected_before_any_tool_effect`
+- `cargo test -p dominion-agent-sdk --test kernel_replanning probes_cannot_reserve_more_than_the_shared_tool_budget`
+- `cargo test native_provider_preserves_typed_calls_and_accepts_probe_envelope_only_when_explicit`
+
+No claimed runtime lift, token savings, real model completion increase or passing CI at this HEAD. A useful follow-up benchmark must compare identical frozen code tasks/model/tools/budget with and without candidate probes, including completion quality, wall-clock time, receipts, model calls and actual priced tokens.
