@@ -2,7 +2,6 @@
 //! another execution loop: tools still pass through the native journal/gateway.
 //! Model predictions are hypotheses; only a recorded tool result is evidence.
 use serde_json::{json, Value};
-use std::collections::HashSet;
 use crate::engine::program::{predicate_verdict, PredicateVerdict};
 
 /// Stable identity for one observation request. A repeated tool name with

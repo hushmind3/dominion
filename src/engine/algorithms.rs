@@ -1054,9 +1054,16 @@ pub fn record_domain_outcome(
 ) {
     seed(state);
     let agent = agent_of(state, agent_id).unwrap_or_else(|| "global".into());
-    let Some(revision) = state
-        .store
-        .algorithms_for_kind(kind).ok()?
+    let candidates = match state.store.algorithms_for_kind(kind) {
+        Ok(rows) => rows,
+        Err(error) => {
+            state.store.audit("algorithm.domain_outcome_lookup_failed", json!({
+                "kind": kind, "error": error,
+            }));
+            return;
+        }
+    };
+    let Some(revision) = candidates
         .into_iter()
         .find(|algorithm| {
             algorithm["kind"].as_str() == Some(kind)

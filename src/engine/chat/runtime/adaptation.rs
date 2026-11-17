@@ -412,7 +412,7 @@ pub(super) async fn attempt_model_adaptation(
     let selected_inputs = inputs.clone();
     let selected_tool_name = call.name.clone();
     let selected_call_id = call.id.clone();
-    let (result, ok, _content) = dispatch_tool_call(
+    let (result, _ok, _content) = dispatch_tool_call(
         state,
         tx,
         session,
