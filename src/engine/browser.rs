@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool,Ordering};
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -24,6 +25,8 @@ struct Session {
 }
 
 static SESSION: OnceLock<Mutex<Option<Session>>> = OnceLock::new();
+// Visible browser consent shares only DOMINION's dedicated persistent profile.
+static VISIBLE_ACCOUNT_BROWSER:AtomicBool=AtomicBool::new(false);
 /// Serializes Chrome startup, tab ownership and actions so concurrent agents
 /// cannot interleave two operations against the same UI snapshot.
 static BROWSER_ACTION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -50,6 +53,21 @@ fn chrome_bin() -> Option<PathBuf> {
             return Some(path);
         }
     }
+    #[cfg(windows)]
+    {
+        let mut locations=vec![
+            PathBuf::from(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+            PathBuf::from(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
+        ];
+        if let Some(local)=std::env::var_os("LOCALAPPDATA"){
+            let root=PathBuf::from(local);
+            locations.push(root.join(r"Google\Chrome\Application\chrome.exe"));
+            locations.push(root.join(r"Microsoft\Edge\Application\msedge.exe"));
+        }
+        if let Some(candidate)=locations.into_iter().find(|p|p.is_file()){
+            return Some(candidate);
+        }
+    }
     let names = [
         "google-chrome",
         "google-chrome-stable",
@@ -65,6 +83,45 @@ fn chrome_bin() -> Option<PathBuf> {
 
 fn chrome_available() -> bool {
     chrome_bin().is_some()
+}
+pub fn account_browser_available()->bool{chrome_available()}
+fn login_url(provider:&str)->Option<&'static str>{
+    match provider{
+        "github"=>Some("https://github.com/login"),
+        "google"=>Some("https://drive.google.com/drive/u/0/my-drive"),
+        _=>None
+    }
+}
+/// Use visible Chrome only for account consent. The same profile is used by
+/// later browser_control calls; no OAuth cookies become REST API tokens.
+pub async fn open_account_login(state:&crate::state::AppState,provider:&str)
+    ->Result<Value,String>{
+    let url=login_url(provider).ok_or("지원하지 않는 브라우저 계정입니다.")?;
+    if !chrome_available(){
+        return Err("Chrome 또는 Chromium이 없습니다. 브라우저 설치를 확인하세요.".into());
+    }
+    {
+        let _action=BROWSER_ACTION_LOCK.lock().await;
+        if !VISIBLE_ACCOUNT_BROWSER.load(Ordering::SeqCst){
+            let mut guard=session().lock().map_err(|_|"브라우저 세션 잠금 오류")?;
+            if guard.as_ref().is_some_and(|active|!active.owned_tabs.is_empty()){
+                return Err("다른 브라우저 작업을 종료한 후 계정을 연결하세요.".into());
+            }
+            if let Some(mut active)=guard.take(){
+                let _=active.child.kill();
+                let _=active.child.wait();
+            }
+            VISIBLE_ACCOUNT_BROWSER.store(true,Ordering::SeqCst);
+        }
+    }
+    let outcome=execute_for_owner(
+        "open",&json!({"url":url}),
+        &state.config.data_dir,&state.config.workspace,
+        &format!("dominion-account-{provider}")
+    ).await?;
+    Ok(json!({"opened":true,"mode":"browser","provider":provider,
+        "url":outcome["url"],
+        "message":"이 브라우저에서 계정을 로그인하세요. 이후 같은 프로필로 웹 작업을 수행합니다."}))
 }
 
 fn devtools_port(profile: &Path) -> Option<u16> {
@@ -111,9 +168,12 @@ async fn ensure_session(data_dir: &Path) -> Result<u16, String> {
     let profile = data_dir.join("browser-profile");
     std::fs::create_dir_all(&profile).map_err(|error| error.to_string())?;
     let _ = std::fs::remove_file(profile.join("DevToolsActivePort"));
-    let mut child = Command::new(&bin)
+    let mut command=Command::new(&bin);
+    if !VISIBLE_ACCOUNT_BROWSER.load(Ordering::SeqCst){
+        command.arg("--headless=new");
+    }
+    let mut child = command
         .args([
-            "--headless=new",
             "--remote-debugging-port=0",
             "--remote-debugging-address=127.0.0.1",
             "--no-first-run",
