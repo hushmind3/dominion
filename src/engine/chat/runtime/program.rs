@@ -51,11 +51,21 @@ pub(super) fn restore_program_state(
     old["resumedByExecutionId"] = json!(execution_id);
     // These two execution records form one resumption. Persisting only one
     // could let two workers consume the same old checkpoint or lose its IR.
-    let saved = state.store.transaction(&[
+    let records = [
         ("execution".to_string(), target),
         ("execution".to_string(), old),
-    ])?;
-    for record in saved {
+    ];
+    if !state.store.transaction_if_fields(
+        &[
+            ("execution", source_id, "status", json!("interrupted")),
+            ("execution", source_id, "programResumeApproved", json!(true)),
+            ("execution", execution_id, "status", json!("running")),
+        ],
+        &records,
+    )? {
+        return Err("program recovery cancelled: source approval or target ownership changed".into());
+    }
+    for (_, record) in records {
         state.bus.record("execution", &record);
     }
     state.store.audit(
@@ -1326,6 +1336,8 @@ mod recovery_tests {
             "id":"target","taskId":"task","status":"running"
         })).unwrap();
         restore_program_state(&state,"task","target",&original).unwrap();
+        assert!(restore_program_state(&state,"task","another_target",&original).is_ok(),
+            "already consumed source cannot be claimed twice");
         let saved=state.store.get("execution","target").unwrap();
         let spent=state.store.get("execution","source").unwrap();
         assert_eq!(saved["programCheckpoint"]["programRevision"],"base:rev:a");
