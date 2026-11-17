@@ -69,6 +69,7 @@ fn huggingface(input:&Value,time:&str)->(Vec<Value>,Vec<Value>){
     (signal,metrics)
 }
 pub async fn run(context:&JobContext,_job:&Value)->Result<Value,String>{
+    context.ensure_running()?;
     let at=chrono::Utc::now();
     let start=(at-chrono::Duration::days(10)).format("%Y-%m-%d").to_string();
     let urls=[
@@ -79,11 +80,13 @@ pub async fn run(context:&JobContext,_job:&Value)->Result<Value,String>{
     let mut metrics=Vec::new();
     let mut errors=Vec::new();
     for (kind,url) in urls {
+        context.ensure_running()?;
         let body=match crate::engine::tools::http_fetch(&url).await{
             Ok(value) if value["status"].as_u64()==Some(200)=>value,
             Ok(value)=>{errors.push(format!("{kind}: HTTP {}",value["status"]));continue;},
             Err(error)=>{errors.push(format!("{kind}: {}",error.chars().take(140).collect::<String>()));continue;}
         };
+        context.ensure_running()?;
         let parsed=match serde_json::from_str::<Value>(body["text"].as_str().unwrap_or("")){
             Ok(parsed)=>parsed,
             Err(err)=>{errors.push(format!("{kind}: non-JSON response: {err}"));continue;}
@@ -93,9 +96,12 @@ pub async fn run(context:&JobContext,_job:&Value)->Result<Value,String>{
         signals.append(&mut items);
         metrics.append(&mut counters);
     }
+    context.ensure_running()?;
     let imported=context.state.store.money_ingest_signals(&signals)?;
+    context.ensure_running()?;
     let new_metrics=context.state.store.money_store_market_metrics(&metrics)?;
     let recent=context.state.store.money_recent_signals(120)?;
+    context.ensure_running()?;
     let new_tensions=context.state.store.money_store_tensions(
         &crate::engine::money_mechanism::discover(&recent,30))?;
     let result=json!({"id":format!("catalog:{}",context.job_id),
@@ -103,6 +109,7 @@ pub async fn run(context:&JobContext,_job:&Value)->Result<Value,String>{
         "newMetricSnapshots":new_metrics,"crossMarketHypotheses":new_tensions,
         "catalogItemCount":signals.len(),"counters":metrics.len(),
         "errors":errors,"capturedAt":at.to_rfc3339()});
+    context.ensure_running()?;
     context.state.store.put("money_catalog_report",&result)
         .ok_or("tech catalog report save failed")?;
     Ok(result)
