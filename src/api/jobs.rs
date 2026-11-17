@@ -115,9 +115,19 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
 pub async fn cancel(State(state):State<AppState>,Path(id):Path<String>)->Response{
     let Some(job)=state.store.get("job",&id)else{return error(StatusCode::NOT_FOUND,"작업이 없습니다.")};
     if !matches!(job["status"].as_str(),Some("queued"|"running")){return error(StatusCode::CONFLICT,"진행 중인 작업만 중단할 수 있습니다.");}
-    if let Some(session)=job["sessionId"].as_str(){state.cancel_session(session);}
-    match state.store.patch_if("job",&id,"status",&job["status"],&json!({"status":"cancelled","cancelRequested":true,"finishedAt":chrono::Utc::now().to_rfc3339()})){
-        Some(saved)=>{state.bus.record("job",&saved);Json(saved).into_response()},None=>state.store.get("job",&id).map(|j|Json(j).into_response()).unwrap_or_else(||error(StatusCode::CONFLICT,"작업 상태가 변경되었습니다."))
+    // Claim cancellation durably first. Do not cancel a shared session if
+    // another worker already finished this job between lookup and CAS.
+    match state.store.patch_if("job",&id,"status",&job["status"],&json!({
+        "status":"cancelled","cancelRequested":true,
+        "finishedAt":chrono::Utc::now().to_rfc3339()
+    })){
+        Some(saved)=>{
+            if let Some(session)=saved["sessionId"].as_str(){state.cancel_session(session);}
+            state.bus.record("job",&saved);
+            Json(saved).into_response()
+        },
+        None=>error(StatusCode::CONFLICT,
+            "작업 상태가 변경되어 취소하지 않았습니다. 최신 상태를 다시 확인하세요.")
     }
 }
 

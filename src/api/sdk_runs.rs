@@ -275,6 +275,9 @@ pub async fn resume(State(state):State<AppState>,Path(id):Path<String>)->Respons
     };
     state.store.audit("sdk.main_ui_safe_resume",json!({"jobId":id}));
     state.bus.record("job",&updated);
+    // Resume is an explicit user action. Wake the existing Rust worker
+    // immediately, rather than waiting for the five-second idle poll.
+    state.job_wakeup.notify_one();
     Json(project(&state,&updated)).into_response()
 }
 pub async fn reconcile(

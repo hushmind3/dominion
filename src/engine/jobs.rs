@@ -181,8 +181,8 @@ pub fn recover(state: &AppState) {
             .or_else(||job.pointer("/input/sessionId").and_then(Value::as_str));
         // If the uncertain-effect lookup fails, never silently replay a job
         // with a session; the earlier external effect could have occurred.
-        let unknown=job_session.is_some_and(|session|
-            unresolved_sessions.as_ref().is_none_or(|sessions|sessions.contains(session)));
+        let unknown=unresolved_sessions.as_ref().is_none_or(|sessions|
+            job_session.is_some_and(|session|sessions.contains(session)));
         let cancelled=job["cancelRequested"]==true;
         let uncertain=flagged||unknown;
         let status=if cancelled{"cancelled"}
@@ -197,7 +197,8 @@ pub fn recover(state: &AppState) {
         }
         // CAS protects a concurrently cancelled or completed job even when
         // another process is still serving an API during recovery.
-        let Some(updated)=state.store.patch_if("job",id,"status",old_status,&patch)else{continue};
+        let Some(updated)=state.store.recover_running_job(
+            id,attempts,cancelled,&patch)else{continue};
         state.bus.record("job",&updated);
         if matches!(job["kind"].as_str(),Some("room"|"meeting")){
             if let Some(room_id)=job.pointer("/input/roomId").and_then(Value::as_str){
@@ -753,6 +754,29 @@ mod tests {
         }));
         recover(&state);
         assert_eq!(state.store.get("job","legacy-workflow").unwrap()["status"],"needs_review");
+    }
+
+    #[test]
+    fn recovery_lease_rejects_a_new_worker_claim_or_owner_cancellation(){
+        let state=temp_state();
+        state.store.put("job",&json!({"id":"lease-1","kind":"prompt",
+            "status":"running","attempts":1,"cancelRequested":false})).unwrap();
+        state.store.patch_if("job","lease-1","status",&json!("running"),
+            &json!({"status":"queued"})).unwrap();
+        state.store.patch_if("job","lease-1","status",&json!("queued"),
+            &json!({"status":"running","attempts":2})).unwrap();
+        let stale=json!({"status":"needs_review","recovered":true});
+        assert!(state.store.recover_running_job("lease-1",1,false,&stale).is_none());
+        let fresh=state.store.get("job","lease-1").unwrap();
+        assert_eq!(fresh["status"],"running");
+        assert_eq!(fresh["attempts"],2);
+        state.store.patch_if("job","lease-1","status",&json!("running"),
+            &json!({"cancelRequested":true})).unwrap();
+        assert!(state.store.recover_running_job("lease-1",2,false,&stale).is_none());
+        assert_eq!(state.store.get("job","lease-1").unwrap()["cancelRequested"],true);
+        assert!(state.store.recover_running_job("lease-1",2,true,
+            &json!({"status":"cancelled","recovered":true})).is_some());
+        assert_eq!(state.store.get("job","lease-1").unwrap()["status"],"cancelled");
     }
 
     #[test]

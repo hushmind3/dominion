@@ -629,6 +629,35 @@ impl Store {
         Some(record)
     }
 
+    /// Crash recovery must compare more than status. A new worker may have
+    /// re-claimed the same job between the initial snapshot and this write,
+    /// moving queued->running again. Attempts and owner cancellation are
+    /// checked under the same IMMEDIATE transaction as the status transition.
+    pub fn recover_running_job(
+        &self,id:&str,expected_attempt:u64,expected_cancelled:bool,patch:&Value,
+    )->Option<Value>{
+        let changes=patch.as_object()?;
+        if changes.contains_key("id") || changes.contains_key("attempts")
+            || changes.contains_key("cancelRequested"){return None;}
+        let mut conn=self.conn.lock().ok()?;
+        let tx=conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).ok()?;
+        let mut record=tx.query_row(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='job' AND id=?1",[id],record_from_row).ok()?;
+        if record["status"]!="running"
+            || record["attempts"].as_u64().unwrap_or(0)!=expected_attempt
+            ||(record["cancelRequested"]==true)!=expected_cancelled {
+            return None;
+        }
+        for (key,value) in changes{record[key]=value.clone();}
+        tx.execute(
+            "UPDATE records SET data=?2,updated_at=datetime('now')
+             WHERE kind='job' AND id=?1",params![id,record.to_string()]
+        ).ok()?;
+        tx.commit().ok()?;
+        Some(record)
+    }
+
     /// Single-owner job checkpoint. Validate running status, cancellation and
     /// worker attempt under the SAME SQLite mutex as the record update.
     /// A late tool/model reply from an earlier attempt cannot overwrite a
