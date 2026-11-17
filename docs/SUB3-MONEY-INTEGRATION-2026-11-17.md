@@ -34,3 +34,12 @@ The `dominion-sub3` branch now includes the Money research UI and its entire sou
 `Sub3 Money domain acceptance` GitHub Actions verifies the Rust domain algorithms, SQLite/API unit tests, native JSON envelope, TypeScript page build, and lean-product checks. Ordinary Money CI runs only scoped Rust `cargo test` commands in the development profile, using one macOS runner; no frontend build, Node checks, `cargo check`, release build, or platform-wide matrix runs on push. The Windows/macOS full gate, GUI/SDK builds, packaging and platform verification are reserved for the manually triggered release stage.
 
 This implementation does **not** claim real revenue, 27B long-running performance, external customer confirmation or model success rates without measured jobs. It never runs unapproved purchases, outreach or deployment.
+
+
+## 2026-11-18 source ingestion cancellation and cost pass
+
+- `JobContext::ensure_running` is a read-only attempt/status/cancel fence used before public network requests in `money_sources` and `money_catalog`, and at bounded points before observation writes. A cancelled or reclaimed attempt stops initiating further fetches. Existing SQLite terminal checkpoints remain the atomic result fence; the read-only check **does not** make the multi-table collection writes atomic.
+- RSS text cleaning no longer counts the entire growing output on each character. Its bounded visible-text extraction is linear in scanned input instead of quadratic, without a new model call or library.
+- Added deterministic Rust tests for cancelled worker state, failed source collection before I/O, and bounded RSS text behavior. Source commits: `eb2ad98`, `79573db`, `06566be`, `c9f7359`. **These tests were written, not executed in this environment** (Rust toolchain absent); full CI/release verification is deferred.
+
+Suggested scoped commands on a Rust-enabled runner: `cargo test acquisition_read_fence_rejects_cancellation_and_reclaimed_attempt`, `cargo test stopped_source_job_aborts_before_any_network_or_ingestion`, `cargo test bounded_rss_text_keeps_exact_visible_char_limit`, `cargo test money_catalog::tests`. No real-world RSS latency, token saving or billed KRW change is claimed without measurement.
