@@ -338,8 +338,13 @@ fn temp_root() -> PathBuf {
 
 // Domain-specific E2E suites run in the SAME test executable and share
 // the original binary, API, mock provider and global serialization guard.
+#[path = "e2e/rooms.rs"]
 mod rooms;
+#[path = "e2e/durability.rs"]
 mod durability;
+#[path = "e2e/adaptation.rs"]
 mod adaptation;
+#[path = "e2e/web_api.rs"]
 mod web_api;
+#[path = "e2e/continuity.rs"]
 mod continuity;
