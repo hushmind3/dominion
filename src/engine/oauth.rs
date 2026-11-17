@@ -126,6 +126,24 @@ pub fn save(
     }))
 }
 
+/// Packaged deployments can configure a single registered OAuth app once,
+/// enabling account owners to click Connect without entering developer
+/// credentials individually. Secrets remain in the host environment.
+fn deployed_client_credentials(id:&str)->Option<(String,String)> {
+    let service=match id{
+        "github"=>"GITHUB","google"=>"GOOGLE","youtube"=>"YOUTUBE",
+        _=>return None
+    };
+    let read=|key:&str|std::env::var(format!("DOMINION_{service}_OAUTH_{key}"))
+        .ok().filter(|v|!v.trim().is_empty());
+    let client=read("CLIENT_ID").or_else(||
+        (id=="youtube").then(||std::env::var("DOMINION_GOOGLE_OAUTH_CLIENT_ID").ok()).flatten())?;
+    let secret=read("CLIENT_SECRET")
+        .or_else(||(id=="youtube").then(||std::env::var("DOMINION_GOOGLE_OAUTH_CLIENT_SECRET").ok()).flatten())
+        .unwrap_or_default();
+    if id=="github"&&secret.is_empty(){return None;}
+    Some((client,secret))
+}
 fn client_credentials(state: &AppState, id: &str) -> Result<(String, String), String> {
     let sealed = state
         .read_secret(&format!("oauth:{id}:secret"))
@@ -134,7 +152,10 @@ fn client_credentials(state: &AppState, id: &str) -> Result<(String, String), St
                 .then(|| state.read_secret("oauth:google:secret"))
                 .flatten()
         })
-        .ok_or_else(|| "OAuth 앱이 설정되지 않았습니다.".to_string())?;
+        .or_else(||deployed_client_credentials(id).map(|(client,secret)|json!({
+            "clientId":client,"clientSecret":secret
+        }).to_string()))
+        .ok_or_else(|| "OAuth 앱이 설정되지 않았습니다. 설치 시 OAuth Client ID를 등록하거나 개발자 설정에 입력하세요.".to_string())?;
     let value: Value = serde_json::from_str(&sealed).map_err(|error| error.to_string())?;
     let client_id = value
         .get("clientId")
