@@ -36,10 +36,25 @@ for(const route of ['/api/chat','/api/jobs','/api/sdk/runs','/api/harness/runs',
 }
 const native=read('src/engine/native_agent.rs'),
  kernel=read('crates/dominion-agent-sdk/src/lib.rs'),
- chat=read('src/engine/chat/runtime.rs'),
+ chatRoot=read('src/engine/chat/runtime.rs'),
+ chatModuleFiles=fs.readdirSync('src/engine/chat/runtime')
+  .filter(file=>file.endsWith('.rs')).map(file=>'src/engine/chat/runtime/'+file),
+ chat=chatRoot+'\n'+chatModuleFiles.map(read).join('\n'),
  jobs=read('src/engine/jobs.rs'),
  approval=read('src/engine/chat/approval.rs'),
  tools=read('src/engine/tools.rs');
+for(const required of ['turn.rs','program.rs','dispatch.rs','finalization.rs','selection.rs']){
+ assert.ok(chatModuleFiles.some(file=>file.endsWith('/'+required)),
+  'Missing extracted Rust chat responsibility: '+required);
+}
+for(const file of ['src/engine/chat/runtime.rs',...chatModuleFiles]){
+ const lines=read(file).split('\n').length;
+ assert.ok(lines<=2000,'Oversized chat file ('+lines+' lines): '+file);
+}
+for(const name of ['run_turn_body','run_program','dispatch_tool_call','finalize_execution']){
+ assert.ok(chat.includes('fn '+name+'('),
+  'Chat lifecycle function lost during module extraction: '+name);
+}
 for(const text of ['dominion_agent_sdk::','dispatch_batch','acceptance'])
  assert.ok(chat.includes(text),'Real chat-to-Rust execution/verification disconnected: '+text);
 assert.ok(!/rsiRun|rsi_evolve|rsi_worktree|rsi_patch_written/.test(chat),'Retired RSI logic remains in chat runtime');
