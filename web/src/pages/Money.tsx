@@ -3,6 +3,7 @@ import {ArrowUpRight,CheckCircle2,Lightbulb,Loader2,Search} from 'lucide-react'
 import {get,post,type Agent} from '../api'
 import {MoneyArchive} from './money/Archive'
 import {MoneyEvidence} from './money/Evidence'
+import {PriceSpread,type MoneyPriceComparison} from './money/PriceSpread'
 
 type Evidence={claim?:string;url?:string;kind?:string}
 type Draft={
@@ -17,6 +18,7 @@ type Draft={
  whyPay?:string
  implementationPlan?:string
  implementationRunId?:string
+ priceComparison?:MoneyPriceComparison|null
  firstPaymentStep?:string
  evidenceStatus?:string
  evidence?:Evidence[]
@@ -356,6 +358,7 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
       {!!draft.inferenceSteps?.length&&<ol className="mt-3 space-y-1.5">{draft.inferenceSteps.slice(0,5).map((step,i)=><li key={i} className="text-xs leading-5 text-[#665548]">{i+1}. {step}</li>)}</ol>}
       {draft.counterfactual&&<p className="mt-2 text-[11px] leading-5 text-[#8B6D51]"><strong>가설이 틀리는 경우:</strong> {draft.counterfactual}</p>}
       <MoneyEvidence items={draft.evidence||[]} limit={4}/>
+      {draft.priceComparison&&<PriceSpread value={draft.priceComparison}/>}
      </details>
      <div className="border-t border-[#EEE5D9] px-5 py-3 sm:px-6">
       {(()=>{

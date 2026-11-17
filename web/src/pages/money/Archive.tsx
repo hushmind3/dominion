@@ -1,12 +1,14 @@
 import {useEffect,useRef,useState} from 'react'
 import {ChevronDown,RefreshCw,Search} from 'lucide-react'
 import {MoneyEvidence,type MoneyEvidenceRow} from './Evidence'
+import {PriceSpread,type MoneyPriceComparison} from './PriceSpread'
 import {get,post} from '../../api'
 
 type Candidate={
  id:string;title:string;status?:string;origin?:string;customer?:string
  offer?:string;whyPay?:string;firstTest?:string;createdAt?:string
  evidence?:MoneyEvidenceRow[];implementationRunId?:string
+ priceComparison?:MoneyPriceComparison|null
 }
 type Archive={candidates:Candidate[];hasMore:boolean;offset:number;limit:number}
 const labels:Record<string,string>={
@@ -91,6 +93,7 @@ export function MoneyArchive({enabled}:{enabled:boolean}){
       <p className="mt-2 whitespace-pre-wrap">{item.whyPay||'추가 조사 필요'}</p>
       {item.firstTest&&<p className="mt-1">다음 확인: {item.firstTest}</p>}
       <MoneyEvidence items={item.evidence||[]} limit={4}/>
+      {item.priceComparison&&<PriceSpread value={item.priceComparison}/>}
      </details>
      {enabled&&<div className="mt-2 flex flex-wrap gap-2">
       {item.status!=='deferred'&&item.status!=='rejected'&&
