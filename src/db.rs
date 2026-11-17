@@ -784,6 +784,37 @@ impl Store {
         .unwrap_or(false)
     }
 
+    /// Persist a native SDK answer only while the SAME job attempt still
+    /// owns execution. The status read and INSERT happen under one SQLite
+    /// mutex, so a concurrent owner cancellation cannot race the answer
+    /// into conversation history after marking the job cancelled.
+    pub fn write_native_answer_if_running(
+        &self,job_id:&str,expected_attempt:u64,message:&Value,
+    )->Result<Value,String>{
+        let id=message["id"].as_str()
+            .filter(|s|!s.is_empty()).ok_or("native answer id missing")?;
+        if message["metadata"]["jobId"].as_str()!=Some(job_id)
+            || message["role"]!="assistant"{
+            return Err("native answer does not belong to this job".into());
+        }
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let raw:Option<String>=conn.query_row(
+            "SELECT data FROM records WHERE kind='job' AND id=?1",
+            [job_id],|r|r.get(0),
+        ).optional().map_err(|e|e.to_string())?;
+        let Some(raw)=raw else{return Err("native answer job missing".into());};
+        let current:Value=serde_json::from_str(&raw).map_err(|e|e.to_string())?;
+        if current["status"]!="running" || current["cancelRequested"]==true
+            || current["attempts"].as_u64().unwrap_or(0)!=expected_attempt{
+            return Err("native answer rejected: cancelled, finished or stale attempt".into());
+        }
+        if let Some(existing)=query_message(&conn,id){
+            return Ok(existing);
+        }
+        insert_message(&conn,message).ok_or("could not write native answer")?;
+        query_message(&conn,id).ok_or("saved native answer not found".into())
+    }
+
     pub fn write_message(&self, message: &Value) -> Option<Value> {
         let conn = self.conn.lock().unwrap();
         let id = insert_message(&conn, message)?;

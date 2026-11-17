@@ -63,6 +63,13 @@ impl JobContext {
         }
     }
 
+    /// Bind native assistant output to the same claimed attempt as job
+    /// checkpoints; a post-cancel response must not appear as a final answer.
+    pub(crate) fn save_native_answer(&self,message:&Value)->Result<Value,String>{
+        self.state.store.write_native_answer_if_running(
+            &self.job_id,self.attempt,message)
+    }
+
     pub fn checkpoint(&self, patch: Value) -> Result<(), String> {
         // Do not perform a separate read/check/write: owner cancellation,
         // terminal completion and retry may race the in-flight model call.
@@ -819,6 +826,38 @@ mod tests {
         previous.checkpoint(json!({"status":"completed","result":"finished"})).unwrap();
         assert!(previous.checkpoint(json!({"result":"overwritten"})).is_err());
         assert_eq!(state.store.get("job","terminal-fence").unwrap()["result"],"finished");
+    }
+    #[test]
+    fn native_answer_writes_are_fenced_by_job_ownership() {
+        let state=temp_state();
+        state.store.put("job",&json!({"id":"answer-owner","kind":"prompt",
+            "status":"running","attempts":1})).unwrap();
+        let original=JobContext::new(state.clone(),"answer-owner".into());
+        let answer=json!({"id":"native-answer-answer-owner",
+            "session_id":"s","role":"assistant","content":"Verified output",
+            "metadata":{"jobId":"answer-owner"}});
+        assert_eq!(original.save_native_answer(&answer).unwrap()["content"],"Verified output");
+        assert_eq!(original.save_native_answer(&answer).unwrap()["content"],"Verified output");
+        assert_eq!(state.store.messages("s").len(),1);
+        state.store.patch_if("job","answer-owner","status",&json!("running"),
+            &json!({"status":"cancelled","cancelRequested":true})).unwrap();
+        assert!(original.save_native_answer(&answer).is_err());
+        assert_eq!(state.store.messages("s").len(),1);
+        state.store.put("job",&json!({"id":"new-owner","kind":"prompt",
+            "status":"running","attempts":1})).unwrap();
+        let stale=JobContext::new(state.clone(),"new-owner".into());
+        state.store.patch_if("job","new-owner","status",&json!("running"),
+            &json!({"status":"queued"})).unwrap();
+        state.store.patch_if("job","new-owner","status",&json!("queued"),
+            &json!({"status":"running","attempts":2})).unwrap();
+        let late=json!({"id":"native-answer-new-owner","session_id":"s",
+            "role":"assistant","content":"stale",
+            "metadata":{"jobId":"new-owner"}});
+        assert!(stale.save_native_answer(&late).is_err());
+        assert!(state.store.message("native-answer-new-owner").is_none());
+        let latest=JobContext::new(state.clone(),"new-owner".into());
+        assert!(latest.save_native_answer(&late).is_ok());
+        assert_eq!(state.store.messages("s").len(),2);
     }
     #[test]
     fn checkpoint_cannot_forge_cancellation_or_job_identity() {

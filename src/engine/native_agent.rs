@@ -646,10 +646,7 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
             "session_id":session,"role":"assistant","content":answer,
             "metadata":{"authorKind":"agent","source":"rust-sdk","jobId":context.job_id}
         });
-        if context.state.store.message(final_message["id"].as_str().unwrap_or("")).is_none() {
-            context.state.store.write_message(&final_message)
-                .ok_or("Could not persist final native agent answer")?;
-        }
+        context.save_native_answer(&final_message)?;
     }
     let persisted=context.state.store.patch_if("execution",&context.job_id,
         "status",&json!("running"),&json!({
