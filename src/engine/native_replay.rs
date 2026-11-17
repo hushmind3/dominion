@@ -100,8 +100,9 @@ pub fn artifact_witness(workspace:&std::path::Path,checks:&[dominion_sdk::harnes
   verdict
  }).collect::<Vec<_>>();
  json!({"complete":complete,"scope":"acceptance_artifact_paths_only",
-  "workspace":root.to_string_lossy(),"entries":entries,
-  "directVerdicts":verdicts})
+  "workspaceRootDigest":digest(&json!(root.to_string_lossy().to_string())),
+  "criteriaDigest":digest(&json!(checks)),
+  "entries":entries,"directVerdicts":verdicts})
 }
 
 fn digest(v:&Value)->String{
