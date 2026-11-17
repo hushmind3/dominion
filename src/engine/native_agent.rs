@@ -10,7 +10,7 @@ use dominion_sdk::harness::{
 };
 use serde_json::{json, Value};
 use std::{path::PathBuf, collections::HashSet};
-use sha2::{Digest,Sha256};
+use sha2::Sha256;
 
 // The generic SDK uses an action envelope for text-only/compat models.
 // Domain JSON from small local models is wrapped as a terminal answer only
