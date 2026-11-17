@@ -18,7 +18,7 @@ const MAX_ACTIONS:usize=512;
 fn digest(value:&Value)->String{
  format!("{:x}",Sha256::digest(value.to_string().as_bytes()))
 }
-fn evidence(job:&Value,key:&str)->Option<&Value>{
+fn evidence<'a>(job:&'a Value,key:&str)->Option<&'a Value>{
  let witness=&job[key];
  (witness["complete"]==true && witness["entries"].is_object()
   &&witness["directVerdicts"].is_array()).then_some(witness)
