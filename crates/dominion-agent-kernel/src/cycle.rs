@@ -11,6 +11,8 @@ pub struct Cycle {
     next: usize,
     previous_gaps: Vec<String>,
     previous_error: Option<String>,
+    // Bounded evidence from actual attempts; not a second execution loop.
+    trials: Vec<Value>,
 }
 
 #[derive(Debug)]
@@ -33,7 +35,7 @@ pub struct Assessment {
 
 impl Cycle {
     pub fn new(config:CycleConfig)->Self {
-        Self{config,next:0,previous_gaps:Vec::new(),previous_error:None}
+        Self{config,next:0,previous_gaps:Vec::new(),previous_error:None,trials:Vec::new()}
     }
 
     /// Only this kernel can admit another model attempt.
@@ -53,6 +55,8 @@ impl Cycle {
     pub fn replaced_goal(&mut self){
         self.previous_gaps.clear();
         self.previous_error=None;
+        // Evidence from a superseded goal cannot rank strategies for a new one.
+        self.trials.clear();
     }
 
     pub fn retry_instruction(&self,goal:&str,attempt:usize)->String{
@@ -62,7 +66,89 @@ impl Cycle {
             &self.previous_gaps,self.previous_error.as_deref());
         prompt.push_str("\n\nRust 하네스의 실패 분류별 복구 지시: ");
         prompt.push_str(class.next_step());
+        let approach=self.approach_plan();
+        let instruction=match approach["selected"].as_str().unwrap_or("direct"){
+            "diagnose"=>"먼저 필요한 읽기·테스트 증거만 모아 원인을 구분하세요. 확인한 원인에 맞는 최소 수정만 실행하고 검증하세요.",
+            "decompose"=>"실패한 요구를 독립적으로 확인 가능한 작은 단계로 분해하세요. 새 부작용 없이 한 단계씩 실행·검증하고 완료된 단계는 반복하지 마세요.",
+            _=>"실패한 검증 조건만 겨냥해 직접 수정·검증하세요. 기존의 성공한 단계와 외부 효과를 중복 실행하지 마세요.",
+        };
+        prompt.push_str("\n\n실제 검증 결과를 비교한 이번 실행 접근: ");
+        prompt.push_str(approach["selected"].as_str().unwrap_or("direct"));
+        prompt.push_str(". ");
+        prompt.push_str(instruction);
         prompt
+    }
+
+
+    /// Compare bounded alternatives using receipts from THIS owner task.
+    /// Candidate ratings are deterministic heuristics, not model judgments or
+    /// proof that different approaches were tried under identical conditions.
+    /// These attempts use the already-authorized turn/tool budget.
+    pub fn approach_plan(&self)->Value{
+        use crate::failure::{classify,FailureClass};
+        let failure=classify(&self.previous_gaps,self.previous_error.as_deref());
+        let mut candidates=Vec::new();
+        for approach in ["direct","diagnose","decompose"] {
+            let mut score:i64=match (failure,approach) {
+                (FailureClass::Test|FailureClass::Compile|FailureClass::MissingEvidence,"diagnose")=>6,
+                (FailureClass::Permission|FailureClass::Provider|FailureClass::Other,"diagnose")=>4,
+                (FailureClass::Verify,"direct")=>6,
+                (_,"direct")=>2,
+                _=>0,
+            };
+            if self.previous_gaps.len()>=3 && approach=="decompose" {score+=5;}
+            let mut used=false;
+            for trial in &self.trials {
+                if trial["approach"].as_str()!=Some(approach){continue;}
+                used=true;
+                score+=trial["score"].as_i64().unwrap_or(0).clamp(-18,18)/3;
+                score-=2;
+            }
+            if !used {score+=2;}
+            if let Some(last)=self.trials.last(){
+                if last["approach"].as_str()==Some(approach){
+                    let closed=last["closed"].as_u64().unwrap_or(0);
+                    let fresh=last["newEvidence"].as_u64().unwrap_or(0);
+                    if closed>0 {score+=6;}
+                    else if fresh>0 {score+=3;}
+                    else {score-=8;}
+                    if last["error"].as_bool()==Some(true){score-=3;}
+                }
+            }
+            candidates.push(json!({"approach":approach,"score":score,"tried":used}));
+        }
+        let selected=if self.trials.is_empty() {"direct"}else{
+            candidates.iter().max_by_key(|c|c["score"].as_i64().unwrap_or(i64::MIN))
+                .and_then(|c|c["approach"].as_str()).unwrap_or("direct")
+        };
+        json!({"selected":selected,"candidates":candidates,
+            "failureClass":failure.label(),"observedTrials":self.trials.len()})
+    }
+
+    /// One observed provider turn is one trial; it never schedules extra turns.
+    /// The verifier's before/after gaps and genuinely novel successful tool
+    /// evidence outrank model prose. Tokens are the measured delta, not an
+    /// estimate. A negative result remains visible for later comparison.
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_trial(&mut self,plan:&Value,before:&[String],after:&[String],
+        new_evidence:usize,tokens:u64,error:Option<&str>,accepted:bool)->Value{
+        let closed=before.iter().filter(|gap|!after.contains(gap)).count();
+        let opened=after.iter().filter(|gap|!before.contains(gap)).count();
+        let score=if accepted {100_i64}else{
+            (closed.min(20) as i64)*16
+                +(new_evidence.min(4) as i64)*4
+                -(opened.min(20) as i64)*12
+                -(tokens/2_000).min(12) as i64
+                -if error.is_some(){8}else{0}
+        };
+        let trial=json!({"approach":plan["selected"],"closed":closed,
+            "opened":opened,"gapsBefore":before.len(),"gapsAfter":after.len(),
+            "newEvidence":new_evidence,"tokens":tokens,"error":error.is_some(),
+            "accepted":accepted,"score":score,
+            "candidateScores":plan["candidates"]});
+        self.trials.push(trial.clone());
+        if self.trials.len()>6{self.trials.remove(0);}
+        trial
     }
 
     pub fn assess(&self, observation:&Observation<'_>)->Assessment{
@@ -108,6 +194,7 @@ impl Cycle {
             "remaining":self.config.attempts.saturating_sub(self.next),
             "pendingGapCount":self.previous_gaps.len(),
             "hasPreviousError":self.previous_error.is_some(),
+            "strategyTrials":self.trials,
         })
     }
 }
@@ -175,6 +262,56 @@ mod tests{
         assert!(prompt.contains("실패한 테스트"));
         assert!(prompt.contains("Repair src/lib.rs"));
         assert!(!prompt.contains("컴파일 오류입니다"));
+    }
+
+    #[test]
+    fn real_trial_evidence_changes_approach_without_another_execution_loop(){
+        let mut c=policy(4);
+        assert_eq!(c.approach_plan()["selected"],"direct");
+        c.next_attempt();
+        let failed=vec!["test failed: expected 4".to_string()];
+        let initial=c.approach_plan();
+        let first=c.record_trial(&initial,&failed,&failed,0,3000,None,false);
+        assert_eq!(first["score"],-1);
+        c.record_retry(&failed,None);
+        let diagnostic=c.approach_plan();
+        assert_eq!(diagnostic["selected"],"diagnose");
+        assert_eq!(diagnostic["observedTrials"],1);
+        let fixed:Vec<String>=Vec::new();
+        let better=c.record_trial(&diagnostic,&failed,&fixed,2,1200,None,false);
+        assert_eq!(better["closed"],1);
+        assert_eq!(c.approach_plan()["selected"],"diagnose",
+            "use observed progress rather than a fixed rotating strategy");
+        assert_eq!(c.snapshot()["strategyTrials"].as_array().unwrap().len(),2);
+        assert_eq!(c.snapshot()["remaining"],3,
+            "strategy ranking cannot consume additional attempts");
+    }
+    #[test]
+    fn superseded_goal_clears_strategy_credit_but_not_attempt_budget(){
+        let mut c=policy(2);
+        c.next_attempt();
+        let missing=vec!["missing file".into()];
+        let plan=c.approach_plan();
+        c.record_trial(&plan,&missing,&missing,0,1000,Some("not found"),false);
+        c.record_retry(&missing,Some("not found"));
+        assert_eq!(c.approach_plan()["selected"],"diagnose");
+        c.replaced_goal();
+        assert_eq!(c.approach_plan()["selected"],"direct");
+        assert_eq!(c.snapshot()["attempted"],1);
+        assert_eq!(c.snapshot()["strategyTrials"].as_array().unwrap().len(),0);
+    }
+    #[test]
+    fn fresh_verification_gaps_and_measured_cost_determine_trial_score(){
+        let mut c=policy(2);
+        let before=vec!["missing file".into(),"test failed".into()];
+        let after=vec!["test failed".into(),"new regression".into()];
+        let plan=c.approach_plan();
+        let t=c.record_trial(&plan,&before,&after,1,4000,Some("failed"),false);
+        assert_eq!(t["closed"],1);
+        assert_eq!(t["opened"],1);
+        assert_eq!(t["score"],-2);
+        assert_eq!(t["tokens"],4000);
+        assert!(t["candidateScores"].is_array());
     }
     #[test]
     fn token_cap_and_exhausted_retries_cannot_start_more_work(){
