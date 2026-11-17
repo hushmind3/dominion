@@ -177,6 +177,9 @@ mod tests{
             "quote":"procurement notice requests proposals for digital invoice matching"});
         assert_eq!(annotate(&row,None)["observationStatus"],"source_not_archived");
         let mut wrong=row.clone();
+        // A mismatched URL is first rejected as unarchived; only an
+        // otherwise matching URL can be graded as a quote mismatch.
+        wrong["url"]=json!("https://example.org/rfp");
         wrong["quote"]=json!("Procurement notice with entirely fabricated claims");
         assert_eq!(annotate(&wrong,Some(&source()))["observationStatus"],"source_quote_mismatch");
     }
@@ -187,7 +190,7 @@ mod tests{
         s["contentStatus"]=json!("headline_observed");
         assert_eq!(annotate(&row,Some(&s))["observationStatus"],"source_not_fetched");
         let no_purchase=json!({"type":"official_budget","url":"https://example.org/rfp",
-            "quote":"Requests and notices"});
+            "quote":"for digital invoice matching"});
         assert_eq!(annotate(&no_purchase,Some(&source()))["observationStatus"],"no_buyer_wording_in_quote");
     }
     #[test] fn model_assumption_cannot_change_evidence_class(){
