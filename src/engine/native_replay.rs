@@ -145,7 +145,6 @@ pub(crate) fn action_witness(
 pub(crate) fn digest(v:&Value)->String{
  format!("{:x}",Sha256::digest(v.to_string().as_bytes()))
 }
-fn clip(s:&str)->String{s.chars().take(400).collect()}
 pub(crate) fn snapshot(job:&Value)->Result<Snapshot,String>{
  if job["kind"]!="prompt"{return Err("Only native prompt jobs can be replayed".into())}
  let snap=serde_json::from_value::<Snapshot>(job["nativeState"].clone())
