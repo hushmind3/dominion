@@ -11,6 +11,7 @@ pub mod intelligence;
 pub mod kit;
 pub mod mechanism;
 pub mod rank;
+pub mod provenance;
 pub mod retrieval;
 pub mod sources;
 pub mod strategy;

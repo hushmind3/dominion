@@ -468,8 +468,9 @@ pub async fn promote_draft(
         "firstTest":proof,"killSignal":"가격·규격·결제권자 조사에서 유료 수요가 발견되지 않으면 폐기",
         "distribution":"","defensibility":"","operators":["source_pair"],"links":[],
         "buyerEvidence":[],"assumptions":["원문 간 인과관계 및 실제 유료 수요 미검증"],
-        "evidence":[{"claim":buyer_title,"url":buyer_url,"kind":"source_observation"},
-                    {"claim":supply_title,"url":supply_url,"kind":"source_observation"}],
+        "evidence":[
+            engine::money::provenance::evidence(&buyer,&buyer_title,"buyer_side_observation"),
+            engine::money::provenance::evidence(&supply,&supply_title,"supply_side_observation")],
         "economics":{"priceWon":null,"variableCostWon":null,"acquisitionCostWon":null,
                      "monthlyFixedWon":null,"monthlyUnits":null,"setupCostWon":null,"refundRatePct":null},
         "createdAt":now()
@@ -666,6 +667,9 @@ mod source_draft_tests{
         let candidate=state.store.get("money_candidate","money:draft:c:t").unwrap();
         assert_eq!(candidate["origin"],"source_pair_draft");
         assert_eq!(candidate["evidence"].as_array().unwrap().len(),2);
+        assert_eq!(candidate["evidence"][0]["sourceId"],"b");
+        assert_eq!(candidate["evidence"][1]["sourceId"],"s");
+        assert_eq!(candidate["evidence"][0]["quoteMatchStatus"],"stored_title_exact");
         assert!(candidate["economics"]["priceWon"].is_null());
         assert_eq!(candidate["status"],"hypothesis");
         let duplicate=promote_draft(State(state.clone()),Path(("c".into(),"t".into()))).await;

@@ -75,7 +75,8 @@ fn next_drafts(pool:&[Value],previous:&Value,limit:usize)->(Vec<Value>,Vec<Strin
         for offset in 0..ordered.len(){
             let draft=ordered[offset];
             let Some(id)=draft["id"].as_str()else{continue};
-            if draft["status"]=="rejected"||picked.contains(id)
+            if matches!(draft["status"].as_str(),Some("rejected"|"on_hold"))
+                ||picked.contains(id)
                 ||(unseen_only&&seen.contains(id)){continue;}
             picked.insert(id.to_owned());
             selected.push(draft.clone());
@@ -162,12 +163,9 @@ fn candidate_from_pair(state:&AppState,pair:&Value)->Option<Value>{
         "firstTest":first,
         "killSignal":"규격·단가·결제권자 조사에서 유료 수요가 없으면 제외",
         "distribution":"","defensibility":"","buyerEvidence":[],
-        "evidence":[{"claim":buyer_title,"url":b,"kind":"buyer_side_observation",
-                       "publishedAt":buyer["publishedAt"],"capturedAt":buyer["capturedAt"],
-                       "contentStatus":buyer["contentStatus"]},
-                    {"claim":source_title,"url":a,"kind":"supply_side_observation",
-                       "publishedAt":source["publishedAt"],"capturedAt":source["capturedAt"],
-                       "contentStatus":source["contentStatus"]}],
+        "evidence":[
+            engine::money::provenance::evidence(&buyer,&buyer_title,"buyer_side_observation"),
+            engine::money::provenance::evidence(&source,&source_title,"supply_side_observation")],
         "assumptions":["서로 다른 출처의 연결은 추론이며 실제 발주·구매 증거가 아님"],
         "researchPriority":pair["researchPriority"],
         "economics":{"priceWon":null,"variableCostWon":null,"acquisitionCostWon":null,
@@ -210,9 +208,8 @@ fn candidate_from_signal(source:&Value)->Option<Value>{
         "firstPaymentStep":"원문 검증 → 지출 항목 조사 → 유료 시범 제안",
         "firstTest":"고객과 기존 지출·구매 가능 금액 확인",
         "killSignal":"실제 구매 문제 또는 지출 증거가 없으면 제외",
-        "buyerEvidence":[],"evidence":[{"claim":title,"url":url,"kind":"source_observation",
-            "publishedAt":source["publishedAt"],"capturedAt":source["capturedAt"],
-            "contentStatus":source["contentStatus"]}],
+        "buyerEvidence":[],"evidence":[
+            engine::money::provenance::evidence(source,&title,"source_observation")],
         "assumptions":["단일 기사에서 만든 초기 조사 초안, 고객 구매 의사 미확인"],
         "economics":{"priceWon":null,"variableCostWon":null,"acquisitionCostWon":null,
             "monthlyFixedWon":null,"monthlyUnits":null,"setupCostWon":null,"refundRatePct":null},
@@ -386,7 +383,8 @@ pub async fn find(State(state):State<AppState>,Json(body):Json<Value>)->Response
     let eligible=pool.into_iter().filter(|draft|{
         draft["id"].as_str().is_some_and(|id|
             state.store.get("money_candidate",id)
-                .is_none_or(|saved|saved["status"]!="rejected"))
+                .is_none_or(|saved|!matches!(saved["status"].as_str(),
+                    Some("rejected"|"on_hold"))))
     }).collect::<Vec<_>>();
     // How many unseen drafts this click surfaces. The previous hard cap of
     // three made a 460-signal archive look empty.
@@ -571,6 +569,10 @@ mod tests {
         assert!(hypothesis["counterfactual"].as_str().unwrap().contains("규격"));
         assert!(hypothesis["economics"]["priceWon"].is_null());
         assert_eq!(hypothesis["evidence"].as_array().unwrap().len(),2);
+        assert_eq!(hypothesis["evidence"][0]["sourceId"],"customer");
+        assert_eq!(hypothesis["evidence"][1]["sourceId"],"supplier");
+        assert_eq!(hypothesis["evidence"][0]["quoteMatchStatus"],"stored_title_exact");
+        assert_eq!(hypothesis["evidence"][0]["sourceRevision"].as_str().unwrap().len(),64);
         assert!(hypothesis["buyerEvidence"].as_array().unwrap().is_empty());
         drop(state);
         let _=std::fs::remove_dir_all(dir);
@@ -602,6 +604,13 @@ mod tests {
         assert_eq!(second[0]["id"],"lead-4");
         assert!(second.iter().all(|row|row["id"]!="lead-2"));
         assert_eq!(history.len(),4);
+        let held=vec![
+            json!({"id":"archived","status":"on_hold","researchPriority":90}),
+            json!({"id":"live","status":"hypothesis","researchPriority":20})
+        ];
+        let (selected,_,_)=next_drafts(&held,&Value::Null,2);
+        assert_eq!(selected.len(),1);
+        assert_eq!(selected[0]["id"],"live");
     }
     #[test]
     fn source_pair_has_real_urls_no_fake_budget(){

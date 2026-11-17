@@ -23,3 +23,9 @@
 - Owner approval to implement remains a distinct operation; holding a candidate never auto-starts tools or spends tokens.
 - `sdk/typescript/src/index.ts` adds typed `MoneyReviewEvent` and methods `money.archive`, `money.review`, `money.history`, `money.candidateDetails` while retaining legacy calls.
 - Frontend and TypeScript compilation/testing remain deferred under the project's development policy.
+
+## Source lineage and new-discovery exclusion
+- `src/engine/money/provenance.rs` computes deterministic content revisions for archived Money signals from URL, title, description, saved page excerpt and publication date.
+- Source-linked candidates now persist the original source ID and revision, with explicit local title match status and source content coverage; the buyer payment state remains unverified.
+- Promoted source pairs and automatic single/two-source drafts share the same lineage builder. New source enrichment produces a different digest, but a historical candidate is unchanged until the owner reviews it.
+- `src/api/money/find.rs` removes both rejected and on-hold candidates from its active selection pool, preventing archived high-score hypotheses from consuming the limited daily shortlist. The dedicated archive endpoint still returns them.
