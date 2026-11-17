@@ -39,6 +39,7 @@ jobs:
         run: |
           cargo test --lib engine::chat::trace_budget::tests
           cargo test --lib engine::jobs::tests
+          cargo test --lib db::tests::audit_usage
           cargo test --lib db::tests::recovery
           cargo test --lib api::money::implement::tests
           cargo test --lib money

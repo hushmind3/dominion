@@ -139,6 +139,13 @@ impl Store {
                  detail TEXT NOT NULL,
                  created_at TEXT NOT NULL DEFAULT (datetime('now'))
              );
+             -- Session usage is read repeatedly during active jobs and the
+             -- Money panel. A filtered expression index avoids scanning the
+             -- entire lifetime audit log on every progress poll. Corrupt
+             -- legacy entries stay untouched and are excluded safely.
+             CREATE INDEX IF NOT EXISTS idx_audit_usage_session
+                 ON audit(json_extract(detail,'$.sessionId'))
+                 WHERE event='model.usage' AND json_valid(detail);
              CREATE TABLE IF NOT EXISTS secrets(
                  name TEXT PRIMARY KEY,
                  value TEXT NOT NULL,
@@ -1207,7 +1214,8 @@ impl Store {
                         THEN 1 ELSE 0 END),0),
                     COALESCE(SUM(CAST(json_extract(detail,'$.configuredCost.amountUsd') AS REAL)),0)
              FROM audit
-             WHERE event='model.usage' AND json_extract(detail,'$.sessionId')=?1",
+             WHERE event='model.usage' AND json_valid(detail)
+                 AND json_extract(detail,'$.sessionId')=?1",
             [session_id],
             |row| {
                 Ok((
@@ -1764,6 +1772,30 @@ mod tests {
         store.put("memory", &json!({"id":"m2","text":"b"}));
         let records = store.try_all("memory").unwrap();
         assert_eq!(records.len(), 2);
+    }
+
+    #[test]
+    fn audit_usage_session_index_is_scoped_and_ignores_unrelated_records(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        store.audit("model.usage",json!({"sessionId":"money-s","promptTokens":350,
+            "completionTokens":150,"totalTokens":500,"cachedPromptTokens":100,
+            "estimated":false}));
+        store.audit("model.usage",json!({"sessionId":"other","promptTokens":10_000,
+            "completionTokens":1000,"totalTokens":11_000,"estimated":false}));
+        store.audit("irrelevant",json!({"sessionId":"money-s","totalTokens":90_000}));
+        let usage=store.session_usage("money-s");
+        assert_eq!(usage["calls"],1);
+        assert_eq!(usage["totalTokens"],500);
+        assert_eq!(usage["cachedPromptTokens"],100);
+        assert_eq!(usage["unpricedCalls"],1);
+        assert!(usage["configuredCostUsd"].is_null());
+        let conn=store.conn.lock().unwrap();
+        let plan:String=conn.query_row(
+            "EXPLAIN QUERY PLAN SELECT COUNT(*) FROM audit
+                WHERE event='model.usage' AND json_valid(detail)
+                  AND json_extract(detail,'$.sessionId')='money-s'",
+            [],|row|row.get(3)).unwrap();
+        assert!(plan.contains("idx_audit_usage_session"),"{plan}");
     }
 
     #[test]

@@ -238,3 +238,5 @@ The native Rust chat harness now compacts **completed, oversized historical tool
 ### Sub2: truthful Money inference usage (2026-11-17)
 
 The Money `/api/money/find` response now obtains completed/active model call counts, input/output tokens, cached input and estimated-call coverage from the **same per-session Rust audit ledger** as other job clients, not the research draft's hard-coded `modelCalls:0`. The UI shows those observed token totals while inference runs. Provider pricing/FX cannot be inferred from token counts, so the Money panel explicitly reports *KRW cost not measured* instead of inventing a charge. DB-only research remains 0 model calls. Rust regression tests confirm per-job isolation.
+
+The shared SQLite usage counter now uses `idx_audit_usage_session`, a filtered session expression index, so Money's active usage polling and ordinary SDK budget admission no longer require a full historical audit scan. Malformed legacy entries are not deleted or rewritten. The changed Rust DB test verifies session isolation and the query plan; no runtime benchmark is implied.

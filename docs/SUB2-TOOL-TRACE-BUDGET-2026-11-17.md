@@ -17,3 +17,8 @@
 - Focused Rust tests assert byte-for-byte short-frame preservation, huge file-write argument removal, newest evidence priority, no corruption of incomplete frames and storage immutability.
 - All limits are bytes, not tokenizer-accurate token counts; no claim of benchmarked speed or cost reduction.
 - Live provider latency, real completion rate, total tokens, and platform builds are outside this patch's verified scope.
+
+## Live Money usage DB scan reduction
+- Adding live per-session `/api/money/find` usage accounting introduces an indexed audit lookup rather than scanning every historical `model.usage` event.
+- `Store::open` adds `idx_audit_usage_session`, restricted to `event='model.usage' AND json_valid(detail)`; the corresponding `Store::session_usage` SQL uses that same predicate. Other event kinds cannot pollute the count; invalid old rows are untouched.
+- Test asserts isolated session totals and that `EXPLAIN QUERY PLAN` selects the session index. This is a structural query-plan test, not an empirical CPU or wall-time benchmark.
