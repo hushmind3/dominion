@@ -118,6 +118,12 @@ if(/\.all\("approval"\)/.test(approvalSource))
   throw Error('Tool approval rescans historical decisions')
 if(/try_all\("(?:execution|execution_operation)"\)/.test(startup))
   throw Error('Restart migration rescans all completed execution payloads')
+if(!store.includes('pub fn algorithms_for_kind(')||
+   !algorithms.includes('state.store.algorithms_for_kind(kind)'))
+  throw Error('Hot-path kernel selection must use indexed per-domain candidates')
+if(!store.includes('pub fn legacy_improvements_to_migrate(')||
+   !startup.includes('store.legacy_improvements_to_migrate()'))
+  throw Error('Legacy improvement migration must not rewrite all records at every startup')
 if(!store.includes('pub fn algorithm_usages_for_execution(')||
    !readFileSync(path.join(root,'src/engine/algorithms.rs'),'utf8')
      .includes('state.store.algorithm_usages_for_execution(execution_id)'))

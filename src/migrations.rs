@@ -93,7 +93,7 @@ fn algorithm_statistics(state: &AppState) -> Result<(), String> {
 
 /// Preserve old counters for display, but keep them out of the new score.
 fn legacy_improvements(state: &AppState) -> Result<(), String> {
-    for mut record in state.store.try_all("improvement")? {
+    for mut record in state.store.legacy_improvements_to_migrate()? {
         if record["scoreVersion"].as_u64().unwrap_or(0) >= 2 {
             continue;
         }
@@ -334,6 +334,8 @@ mod tests {
         assert_eq!(stored["scoreVersion"], 1);
         assert_eq!(stored["legacyCounters"]["uses"], 7);
         assert_eq!(stored["evidenceGrade"], "legacy_observed");
+        assert!(state.store.legacy_improvements_to_migrate().unwrap().is_empty(),
+            "a second startup cannot reread or rewrite already migrated records");
         drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }

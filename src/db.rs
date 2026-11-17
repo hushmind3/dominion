@@ -179,6 +179,9 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_algorithm_usage_execution
                  ON records(json_extract(data,'$.executionId'))
                  WHERE kind='algorithm_usage';
+             CREATE INDEX IF NOT EXISTS idx_algorithm_kind
+                 ON records(json_extract(data,'$.kind'))
+                 WHERE kind='algorithm';
              CREATE INDEX IF NOT EXISTS idx_execution_task
                  ON records(json_extract(data,'$.taskId'))
                  WHERE kind='execution';
@@ -399,6 +402,41 @@ impl Store {
             .map_err(|error| error.to_string())?
             .collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?;
         Ok((executions, operations))
+    }
+
+    /// Algorithm dispatch is a hot path (every tool, plan, memory call).
+    /// Fetch only the requested domain's records rather than decoding every
+    /// registered or historical algorithm on every decision.
+    pub fn algorithms_for_kind(&self, kind: &str) -> Result<Vec<Value>, String> {
+        let conn=self.conn.lock().map_err(|error|error.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='algorithm' AND json_extract(data,'$.kind')=?1
+             ORDER BY id"
+        ).map_err(|error|error.to_string())?;
+        let rows=stmt.query_map([kind],record_from_row)
+            .map_err(|error|error.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|error|error.to_string())
+    }
+
+    /// Legacy improvement migration processes only rows that still need
+    /// compatibility fields. Repeated launches must not decode/rewrite the
+    /// entire historical improvement archive.
+    pub fn legacy_improvements_to_migrate(&self) -> Result<Vec<Value>, String> {
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='improvement'
+               AND (
+                   COALESCE(json_extract(data,'$.scoreVersion'),0)<1
+                   OR (json_extract(data,'$.scoreVersion')=1
+                       AND (COALESCE(json_type(data,'$.legacyCounters'),'')!='object'
+                            OR json_type(data,'$.evidenceGrade') IS NULL))
+               )
+             ORDER BY id"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([],record_from_row).map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
     }
 
     /// Fetch only this run's algorithm usage receipts. Finalization must not

@@ -62,6 +62,8 @@ jobs:
         run: cargo test --locked --bin dominion-rust migrations::tests
       - name: Shared failure workspace observation (dev profile)
         run: cargo test --locked --bin dominion-rust shared_failure_observation_avoids_duplicate
+      - name: Runtime structural boundaries and retired-loop guard
+        run: node scripts/check-runtime-architecture.mjs
       - name: Money domain and API regressions (dev profile)
         run: cargo test --locked --bin dominion-rust money_
       - name: Shared SDK run and retry regressions (dev profile)

@@ -819,10 +819,10 @@ pub fn list(state: &AppState) -> Value {
 
 pub fn active(state: &AppState, kind: &str) -> Option<Value> {
     if ARCHIVED_KINDS.contains(&kind) { return None; }
-    let mut rows = state.store.all("algorithm");
-    if !rows.iter().any(|row| row["kind"].as_str() == Some(kind)) {
+    let mut rows = state.store.algorithms_for_kind(kind).ok()?;
+    if rows.is_empty() {
         seed(state);
-        rows = state.store.all("algorithm");
+        rows = state.store.algorithms_for_kind(kind).ok()?;
     }
     rows.into_iter()
         .find(|item| {
@@ -882,10 +882,10 @@ pub fn choose_for_agent(
     execution_id: Option<&str>,
 ) -> Option<Value> {
     if ARCHIVED_KINDS.contains(&kind) { return None; }
-    let mut records = state.store.all("algorithm");
-    if !records.iter().any(|row| row["kind"].as_str() == Some(kind)) {
+    let mut records = state.store.algorithms_for_kind(kind).ok()?;
+    if records.is_empty() {
         seed(state);
-        records = state.store.all("algorithm");
+        records = state.store.algorithms_for_kind(kind).ok()?;
     }
     let agent = agent_of(state, agent_id)?;
     let chosen = records.into_iter()
@@ -943,7 +943,7 @@ pub fn choose_decomposition_for_agent(
     let baseline = crate::engine::decompose::decompose(request, &selected);
     let mut best_score = baseline["qualityScore"].as_f64().unwrap_or(0.0);
     let mut chosen = selected;
-    let candidates = state.store.all("algorithm");
+    let candidates = state.store.algorithms_for_kind("task.decomposition").ok()?;
     for candidate in candidates {
         if candidate["kind"] != "task.decomposition"
             || !(matches!(candidate["status"].as_str(), Some("active" | "validated"))
@@ -1056,7 +1056,7 @@ pub fn record_domain_outcome(
     let agent = agent_of(state, agent_id).unwrap_or_else(|| "global".into());
     let Some(revision) = state
         .store
-        .all("algorithm")
+        .algorithms_for_kind(kind).ok()?
         .into_iter()
         .find(|algorithm| {
             algorithm["kind"].as_str() == Some(kind)
@@ -2152,6 +2152,22 @@ mod tests {
             assert_eq!(stat["statVersion"], 2, "{stat}");
         }
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn indexed_algorithm_domain_lookup_excludes_unrelated_legacy_kernels() {
+        let (state,dir)=state();
+        seed(&state);
+        let expected=active(&state,"tool.selection").unwrap();
+        let all=state.store.all("algorithm");
+        let scoped=state.store.algorithms_for_kind("tool.selection").unwrap();
+        assert!(!scoped.is_empty());
+        assert!(scoped.len()<all.len());
+        assert!(scoped.iter().all(|v| v["kind"]=="tool.selection"));
+        assert_eq!(choose_for_agent(&state,"tool.selection",None,None).unwrap()["id"],
+            expected["id"]);
+        assert!(state.store.algorithms_for_kind("not-existing").unwrap().is_empty());
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]

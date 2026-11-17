@@ -116,6 +116,11 @@ Sources inspected:
 - The diagnosis result no longer calculates or records an obsolete Gini
   information-gain scalar. Its auditable receipt contains contingent
   lookahead horizon and worst surviving cause count.
+- Algorithm candidates are indexed by kind: selecting a kernel for one tool
+  or model step no longer reads every historical algorithm record. The
+  user's active choice remains authoritative.
+- One-time improvement migrations query only records missing compatibility
+  fields and do not rewrite completed legacy upgrades on every restart.
 - `algorithm_usage` is indexed by execution ID and fetched only for that run
   at finalization; all historic ratings remain available in the database.
 - Approval cancellation looks up only pending approvals. Durable reuse looks
