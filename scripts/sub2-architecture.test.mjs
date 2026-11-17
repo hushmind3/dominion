@@ -255,3 +255,20 @@ test('typed GitHub issue branch and PR workflows stay on the approved connected-
  assert.match(work,/writable_repo/);
  assert.match(work,/outcomeUnknown/);
 });
+
+test('connected CLI account adapters avoid end-user OAuth app and API key fields',()=>{
+ const oauth=file('src/engine/oauth.rs');
+ const api=file('src/api/oauth.rs');
+ const ui=file('web/src/pages/Connections.tsx');
+ const bridge=file('src/engine/cli_accounts.rs');
+ const google=file('src/engine/google_work.rs');
+ assert.match(oauth,/pub fn uses_cli/);
+ assert.match(oauth,/pub fn cli_enabled/);
+ assert.match(oauth,/cli_accounts::github_token\(\)/);
+ assert.match(api,/cli_accounts::login/);
+ assert.match(ui,/item\.loginMode/);
+ assert.match(bridge,/gh auth login/);
+ assert.match(bridge,/gws auth setup/);
+ assert.match(bridge,/fn google_parts/);
+ assert.match(google,/cli_accounts::google_request/);
+});

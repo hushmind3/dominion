@@ -102,8 +102,30 @@ pub fn login(provider:&str)->Result<Value,String>{
     Ok(json!({"opened":true,"mode":"cli","provider":provider,
         "message":"시스템 로그인 창에서 계정을 승인한 후 이 화면으로 돌아오세요."}))
 }
+fn percent_decode(input:&str)->Result<String,String>{
+    let bytes=input.as_bytes();
+    let mut decoded=Vec::with_capacity(bytes.len());
+    let mut i=0;
+    while i<bytes.len(){
+        if bytes[i]==b'%'{
+            if i+2>=bytes.len(){return Err("잘못된 Google API 인코딩".into());}
+            let hex=|v:u8|->Option<u8>{
+                match v{b'0'..=b'9'=>Some(v-b'0'),
+                    b'a'..=b'f'=>Some(v-b'a'+10),
+                    b'A'..=b'F'=>Some(v-b'A'+10),_=>None}
+            };
+            let hi=hex(bytes[i+1]).ok_or("잘못된 Google API 인코딩")?;
+            let lo=hex(bytes[i+2]).ok_or("잘못된 Google API 인코딩")?;
+            decoded.push(hi*16+lo);
+            i+=3;
+        }else{decoded.push(bytes[i]);i+=1;}
+    }
+    String::from_utf8(decoded).map_err(|_|"Google API 경로 UTF-8 오류".into())
+}
 fn google_parts(url:&Url,method:&Method)->Result<(Vec<String>,Value),String>{
-    let seg=url.path_segments().ok_or("Google API 경로 오류")?.collect::<Vec<_>>();
+    let path=url.path_segments().ok_or("Google API 경로 오류")?
+        .map(percent_decode).collect::<Result<Vec<_>,_>>()?;
+    let seg=path.iter().map(String::as_str).collect::<Vec<_>>();
     let mut pairs=serde_json::Map::new();
     for (k,v) in url.query_pairs(){pairs.insert(k.to_string(),json!(v.as_ref()));}
     let (command,params):(Vec<String>,Vec<(&str,String)>)=match (url.host_str(),seg.as_slice(),method.as_str()){

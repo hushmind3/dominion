@@ -39,6 +39,13 @@ fn sheet_url(spreadsheet:&str,range:&str)->Result<Url,String>{
 }
 async fn request(state:&AppState,scope:&str,method:Method,url:Url,body:Option<Value>)
     ->Result<Value,String>{
+    if crate::engine::oauth::uses_cli(state,"google")
+        && crate::engine::oauth::cli_enabled(state,"google"){
+        if !crate::engine::oauth::has_granted_scope(state,"google",scope){
+            return Err(format!("Google {scope} 권한이 없습니다. 연결 메뉴에서 Google 계정을 승인하세요."));
+        }
+        return crate::engine::cli_accounts::google_request(method,url,body).await;
+    }
     if !crate::engine::oauth::has_granted_scope(state,"google",scope){
         return Err(format!("Google {scope} 권한이 없습니다. 연결 메뉴에서 Google을 재연결해 승인하세요."));
     }
