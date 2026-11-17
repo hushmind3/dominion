@@ -3,7 +3,9 @@
 //! this module owns bounded repair/review, effect replay safety, goal steering
 //! and usage deltas. No mutation or autonomous campaign can start here.
 mod budget;
+mod cycle;
 pub use budget::BudgetLedger;
+pub use cycle::{Cycle, Observation, Assessment};
 
 use serde_json::{json,Value};
 

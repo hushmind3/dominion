@@ -208,3 +208,20 @@ test('the real-binary e2e suite is partitioned without dropping scenarios',()=>{
  assert.match(file('tests/e2e/program_recovery.rs'),/a_mid_adaptation_restart_restores/);
  assert.match(file('tests/e2e/codex_transports.rs'),/codex_websocket_executes/);
 });
+
+test('ordinary prompt attempts and retry decisions are owned by standalone Rust kernel',()=>{
+ const kernel=file('crates/dominion-agent-kernel/src/cycle.rs');
+ const lib=file('crates/dominion-agent-kernel/src/lib.rs');
+ const product=file('src/engine/autonomy.rs');
+ const jobs=file('src/engine/jobs.rs');
+ assert.match(lib,/pub use cycle::\{Cycle, Observation, Assessment\}/);
+ assert.match(product,/while let Some\(attempt\)=cycle\.next_attempt\(\)/);
+ assert.match(product,/let assessment=cycle\.assess\(&Observation\{/);
+ assert.match(product,/cycle\.record_retry\(/);
+ assert.match(product,/cycle\.snapshot\(\)/);
+ assert.doesNotMatch(product,/let mut decision=decide\(/);
+ assert.doesNotMatch(product,/for attempt in 0\.\.config\.attempts/);
+ assert.match(jobs,/crate::engine::autonomy::execute\(/);
+ assert.match(kernel,/changed_owner_goal_never_replays_unknown_remote_effects/);
+ assert.match(kernel,/repeated_failure_stops_until_new_real_evidence/);
+});

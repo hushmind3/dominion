@@ -28,3 +28,21 @@ The independent `BudgetLedger` now refuses to admit new rounds, proposals or too
 ## Bounded main UI polling
 
 The Home `/api/sdk/runs` adapter now looks up pending approvals only from the engine's live waiter IDs rather than reading all historical approval records for every poll. Final answers are fetched directly by the persisted message ID and checked against the session; running jobs no longer show an unrelated prior assistant response. Legacy terminal jobs without an explicit message ID keep a fallback lookup. The persisted JSON API contract is unchanged; this is a query-path optimization, not a new scheduler or cache.
+
+## SDK-controlled ordinary prompt attempts (2026-11-17 re-judgment)
+
+The standalone `dominion-agent-kernel::Cycle` now admits the real
+`jobs::run_prompt -> autonomy::execute -> chat::run_quiet_outcome` attempt
+loop. It owns bounded attempt advancement, retry feedback, stalled evidence,
+token-limit termination, and the replay-safe response to concurrent owner
+steering. Previous ad hoc copies of that logic were removed from the product
+adapter. The product is still responsible for model I/O, the real verifier,
+durable receipts, atomic steering gate closure and tool approval; these are
+not spoofed by the SDK. Every persisted autonomous receipt also carries a
+kernel attempt-budget snapshot. Kernel unit tests exercise multi-attempt
+termination, stalls, unknown remote writes and owner changes.
+
+This is a concrete improvement in SDK ownership, not a claim that every
+chat/room turn now uses a full standalone agent SDK. The existing JSON task
+contract and frontend remain unchanged. Actual model success-rate and
+round-trip latency still need workload measurement.

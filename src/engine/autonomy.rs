@@ -11,8 +11,8 @@ use crate::engine::{
     TurnStats,
 };
 use crate::engine::agent_kernel::{
-    CycleConfig, Decision, decide, side_effect_unknown,
-    usage_delta, stalled, next_instruction, owner_intent, narrow,
+    CycleConfig, Cycle, Observation, Decision, side_effect_unknown,
+    usage_delta, owner_intent, narrow,
 };
 #[cfg(test)]
 use crate::engine::agent_kernel::{Strategy,read_only_shell_command};
@@ -82,14 +82,13 @@ pub async fn execute(
         .as_u64().unwrap_or(0);
     let mut all_evidence=Vec::<Value>::new();
     let mut receipts=Vec::<Value>::new();
-    let mut last_gaps=Vec::<String>::new();
-    let mut last_error:Option<String>=None;
+    let mut cycle=Cycle::new(config);
     let mut last_message=Value::Null;
     ctx.checkpoint(json!({"autonomousState":{
         "status":"running","phase":"planning",
         "plan":plan,"verification":checks,"attempt":0,
     }}))?;
-    for attempt in 0..config.attempts {
+    while let Some(attempt)=cycle.next_attempt() {
         // A cancelled or stale job loses authority before the next model call.
         ctx.checkpoint(json!({"autonomousState":{
             "status":"running","phase":"executing","attempt":attempt+1,
@@ -113,8 +112,7 @@ pub async fn execute(
             steering_checked_revision=intent.replacement_revision;
             latest_replacement_revision=intent.replacement_revision;
             evidence_epoch=all_evidence.len();
-            last_gaps.clear();
-            last_error=None;
+            cycle.replaced_goal();
         }
         if steering_before>steering_checked_revision{
             for message in messages.iter().filter(|m|
@@ -155,7 +153,7 @@ pub async fn execute(
                 turn.input.push_str(&request.input);
             }
         }else if attempt>0{
-            turn.input=next_instruction(&active_goal,&last_gaps,last_error.as_deref(),attempt);
+            turn.input=cycle.retry_instruction(&active_goal,attempt);
         }else if steering_before>0{
             // A resumed turn has a new owner confirmation in request.input.
             // Do not erase that instruction just because previous steering
@@ -211,26 +209,17 @@ pub async fn execute(
             && current_evidence.iter().any(|item|
                 verification::proven_workspace_edit(&ctx.state,item));
         let tested=verification::test_after_last_edit(current_evidence);
-        let mut decision=decide(config.strategy,has_checks,&gaps,
-            latest_error.as_deref(),&all_evidence,attempt,config.attempts);
-        if latest_error.as_deref().is_some_and(|error|
-            error.contains("작업 토큰 예산")){
-            decision=Decision::Review;
-        }
-        let repeated_without_progress=attempt>0
-            && stalled(&last_gaps,&gaps,stats.evidence.len(),
-                last_error.as_deref(),latest_error.as_deref());
-        if repeated_without_progress && !owner_changed {
-            decision=Decision::Review;
-        }
-        if owner_changed {
-            // A new owner instruction never overrides the no-replay boundary
-            // for a possibly non-idempotent external action.
-            decision=if attempt+1<config.attempts
-                && !side_effect_unknown(&all_evidence) {
-                Decision::Repair
-            }else{Decision::Review};
-        }
+        // The independent SDK kernel owns retry, stop and no-replay
+        // admission. This is the real prompt worker, not a shadow evaluator.
+        let assessment=cycle.assess(&Observation{
+            has_checks,gaps:&gaps,error:latest_error.as_deref(),
+            accumulated_evidence:&all_evidence,new_evidence:stats.evidence.len(),
+            owner_changed,
+            token_budget_exhausted:latest_error.as_deref()
+                .is_some_and(|error|error.contains("작업 토큰 예산")),
+        });
+        let repeated_without_progress=assessment.stalled;
+        let mut decision=assessment.decision;
         if decision!=Decision::Repair {
             // Atomically close the exact version observed before this model turn.
             // A concurrent owner steer invalidates this decision even when the
@@ -241,7 +230,7 @@ pub async fn execute(
                 Some(saved)=>ctx.state.bus.record("job",&saved),
                 None=>{
                     gaps.push("최종 검증 중 새 사용자 지시가 들어와 완료 판정을 보류했습니다.".into());
-                    decision=if attempt+1<config.attempts && !side_effect_unknown(&all_evidence){
+                    decision=if cycle.can_retry() && !assessment.unknown_effect{
                         Decision::Repair
                     }else{Decision::Review};
                 }
@@ -271,6 +260,7 @@ pub async fn execute(
             "attempt":attempt+1,"plan":plan,"verification":checks,
             "activeGoal":active_goal,"steeringRevision":steering_before,
             "tokenUsage":{"used":consumed_tokens,"limit":input["tokenBudget"]},
+            "kernelCycle":cycle.snapshot(),
             "receipts":receipts,
         }}))?;
         match decision {
@@ -301,8 +291,7 @@ pub async fn execute(
                 }));
             }
             Decision::Repair => {
-                last_gaps=gaps;
-                last_error=latest_error;
+                cycle.record_retry(&gaps,latest_error.as_deref());
             }
         }
     }
