@@ -604,8 +604,8 @@ async fn contrasting_read_only_probes_are_observed_then_the_kernel_replans(){
     assert!(result.receipts.iter().any(|r|r.id=="probe-diagnose"&&!r.success));
     assert!(result.receipts.iter().any(|r|r.id=="real-fix"&&r.success));
     let prompts=model.prompts.lock().unwrap();
-    let comparison=&serde_json::from_str::<Value>(&prompts[1]).unwrap()
-        ["candidateProbeComparison"];
+    let second_prompt:Value=serde_json::from_str(&prompts[1]).unwrap();
+    let comparison=&second_prompt["candidateProbeComparison"];
     assert_eq!(comparison["status"],"observed");
     assert_eq!(comparison["tentativePreferredPath"],"direct");
     assert_eq!(comparison["interpretation"],"read_only_tool_observations_not_task_success");
