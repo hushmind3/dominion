@@ -197,6 +197,126 @@ pub async fn commit(state:&AppState,args:&Value)->Result<Value,String>{
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[derive(Clone)]
+    struct MockRemote(std::sync::Arc<std::sync::Mutex<RemoteFile>>);
+    struct RemoteFile {
+        content:String,
+        sha:String,
+        reads:usize,
+        writes:usize,
+        mismatch_after_second_write:bool,
+    }
+    async fn mock_read(
+        axum::extract::State(state):axum::extract::State<MockRemote>,
+        axum::extract::Query(query):axum::extract::Query<std::collections::HashMap<String,String>>,
+    )->(axum::http::StatusCode,axum::Json<Value>){
+        use base64::Engine as _;
+        if query.get("ref").map(String::as_str)!=Some("feature/test"){
+            return (axum::http::StatusCode::BAD_REQUEST,
+                axum::Json(json!({"error":"branch must be explicit"})));
+        }
+        let mut remote=state.0.lock().unwrap();
+        remote.reads+=1;
+        let (sha,content)=if remote.mismatch_after_second_write && remote.writes>=2 {
+            ("z".repeat(40),"unexpected bytes".to_string())
+        }else{(remote.sha.clone(),remote.content.clone())};
+        (axum::http::StatusCode::OK,axum::Json(json!({
+            "type":"file","encoding":"base64","sha":sha,
+            "content":base64::engine::general_purpose::STANDARD.encode(content)
+        })))
+    }
+    async fn mock_put(
+        axum::extract::State(state):axum::extract::State<MockRemote>,
+        axum::Json(input):axum::Json<Value>,
+    )->(axum::http::StatusCode,axum::Json<Value>){
+        use base64::Engine as _;
+        let mut remote=state.0.lock().unwrap();
+        if input["branch"]!="feature/test"
+            || input["sha"].as_str()!=Some(remote.sha.as_str()){
+            return (axum::http::StatusCode::CONFLICT,
+                axum::Json(json!({"message":"stale blob SHA or branch"})));
+        }
+        let Some(encoded)=input["content"].as_str() else {
+            return (axum::http::StatusCode::BAD_REQUEST,
+                axum::Json(json!({"message":"content required"})));
+        };
+        let Ok(decoded)=base64::engine::general_purpose::STANDARD.decode(encoded) else{
+            return (axum::http::StatusCode::BAD_REQUEST,
+                axum::Json(json!({"message":"invalid base64"})));
+        };
+        remote.content=String::from_utf8(decoded).unwrap();
+        remote.writes+=1;
+        remote.sha=if remote.writes==1 {"b".repeat(40)}else{"c".repeat(40)};
+        (axum::http::StatusCode::OK,
+            axum::Json(json!({"content":{"sha":remote.sha},
+                "commit":{"sha":"d".repeat(40)}})))
+    }
+
+    #[tokio::test]
+    async fn github_file_read_commit_and_remote_readback_prove_effect_once(){
+        // Real HTTP exchanges against a GitHub Contents-shaped local server:
+        // no external credentials, paid API or real repository is touched.
+        let remote=MockRemote(std::sync::Arc::new(std::sync::Mutex::new(
+            RemoteFile{content:"before\n".into(),sha:"a".repeat(40),
+                reads:0,writes:0,mismatch_after_second_write:false}
+        )));
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port=listener.local_addr().unwrap().port();
+        let router=axum::Router::new()
+            .route("/repos/:owner/:repo/contents/*path",
+                axum::routing::get(mock_read).put(mock_put))
+            .with_state(remote.clone());
+        let server=tokio::spawn(async move {
+            let _=axum::serve(listener,router).await;
+        });
+        let api=format!("http://127.0.0.1:{port}/");
+        let client=reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(6)).build().unwrap();
+        let target=json!({"owner":"example","repo":"project",
+            "branch":"feature/test","path":"src/lib.rs"});
+        let original=read_with(&client,"fixture-token",&api,&target).await.unwrap();
+        assert_eq!(original["content"],"before\n");
+        assert_eq!(original["blobSha"],"a".repeat(40));
+
+        let mut edit=target.clone();
+        edit["expectedSha"]=original["blobSha"].clone();
+        edit["content"]=json!("after\n");
+        edit["message"]=json!("test: update source");
+        let committed=commit_with(&client,"fixture-token",&api,&edit).await.unwrap();
+        assert_eq!(committed["verified"],true);
+        assert_eq!(committed["written"],true);
+        assert_eq!(committed["blobSha"],"b".repeat(40));
+        assert_eq!(committed["contentSha256"],sha256(b"after\n"));
+        {
+            let remote=remote.0.lock().unwrap();
+            assert_eq!(remote.content,"after\n");
+            assert_eq!(remote.writes,1,"exactly one accepted GitHub PUT");
+            assert_eq!(remote.reads,3,"initial read, SHA check and remote readback");
+        }
+        let stale=commit_with(&client,"fixture-token",&api,&edit).await
+            .err().expect("stale blob SHA must refuse an unsafe second PUT");
+        assert!(stale.contains("changed since read"),"{stale}");
+        assert_eq!(remote.0.lock().unwrap().writes,1);
+
+        // A successful PUT is not completion proof when the independent GET
+        // reports different remote bytes. The tool must return an uncertainty
+        // error, not claim a verified commit or retry the effect.
+        remote.0.lock().unwrap().mismatch_after_second_write=true;
+        let mut second=target.clone();
+        second["expectedSha"]=json!("b".repeat(40));
+        second["content"]=json!("third\n");
+        second["message"]=json!("test: second update");
+        let mismatch=commit_with(&client,"fixture-token",&api,&second)
+            .await.err().expect("incorrect remote readback must fail");
+        assert!(mismatch.contains("verification disagrees"),"{mismatch}");
+        {
+            let remote=remote.0.lock().unwrap();
+            assert_eq!(remote.writes,2,"uncertain results must not cause duplicate PUT");
+            assert_eq!(remote.reads,6);
+        }
+        server.abort();
+    }
+
     #[test]
     fn branch_scoped_path_prevents_default_branch_edits_or_url_injection(){
         let input=json!({"owner":"sample","repo":"project","branch":"feature/one",
