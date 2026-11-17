@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 mod money;
+mod sdk_sources;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FinalizeOutcome {
@@ -193,6 +194,9 @@ impl Store {
                  WHERE kind='execution';
              CREATE INDEX IF NOT EXISTS idx_sdk_run_session
                  ON records(json_extract(data,'$.sessionId'))
+                 WHERE kind='sdk_run';
+             CREATE INDEX IF NOT EXISTS idx_sdk_run_source
+                 ON records(json_extract(data,'$.source.kind'),created_at DESC)
                  WHERE kind='sdk_run';
              CREATE INDEX IF NOT EXISTS idx_operation_session
                  ON records(json_extract(data,'$.sessionId'), updated_at DESC)

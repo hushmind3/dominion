@@ -140,6 +140,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/system/restore", post(system::restore_backup))
         .route("/api/chat", post(chat::chat))
         .route("/api/sdk/runs", get(sdk::list).post(sdk::start))
+        .route("/api/sdk/runs/source/:kind", get(sdk::by_source))
         .route("/api/sdk/runs/:id", get(sdk::one))
         .route("/api/sdk/runs/:id/resume", post(sdk::resume))
         .route("/api/sdk/runs/:id/approve", post(sdk::approve))

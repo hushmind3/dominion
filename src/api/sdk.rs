@@ -9,7 +9,32 @@ use std::collections::{HashMap,HashSet};
 
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase")]
-pub struct Start{instruction:String,provider_id:Option<String>,model:Option<String>,verify_command:Option<String>,max_rounds:Option<usize>,#[serde(flatten)] options:Value}
+pub struct SourceRef { kind: String, id: String }
+
+/// Provenance is a display/linking hint, never an authorization or proof.
+/// The caller must still pass normal model/tool permissions and owner approval.
+fn source_metadata(source: Option<&SourceRef>) -> Result<Value, String> {
+    let Some(source) = source else { return Ok(Value::Null); };
+    let valid = |s: &str, max: usize| !s.is_empty() && s.len() <= max
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ':'));
+    if !valid(&source.kind, 64) || !valid(&source.id, 200) {
+        return Err("작업 출처(kind/id) 형식이 올바르지 않습니다.".into());
+    }
+    Ok(json!({"kind":source.kind,"id":source.id,"verified":false}))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all="camelCase")]
+pub struct Start {
+    instruction: String,
+    provider_id: Option<String>,
+    model: Option<String>,
+    agent_id: Option<String>,
+    source: Option<SourceRef>,
+    verify_command: Option<String>,
+    max_rounds: Option<usize>,
+    #[serde(flatten)] options: Value,
+}
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase")]
 pub struct Approve{call_id:String}
@@ -170,12 +195,37 @@ pub async fn list(State(state):State<AppState>)->Json<Value>{
     Json(json!(state.store.all("sdk_run").into_iter()
         .map(|record|public_view_indexed(&state,record,&index)).collect::<Vec<_>>()))
 }
+/// Bounded indexed lookup used by optional tool UIs to recover prior SDK runs.
+/// No tool-specific execution or approval behavior enters the SDK.
+pub async fn by_source(State(state):State<AppState>,Path(kind):Path<String>)->Response{
+    if kind.is_empty()||kind.len()>64||!kind.chars()
+        .all(|c|c.is_ascii_alphanumeric()||matches!(c,'_'|'-'|'.'|':')){
+        return error(StatusCode::BAD_REQUEST,"작업 출처 형식이 올바르지 않습니다.");
+    }
+    match state.store.sdk_runs_by_source(&kind,40){
+        Ok(records)=>Json(json!(records.into_iter().map(|r|json!({
+            "id":r["id"],"source":r["source"],"status":r["status"],
+            "sessionId":r["sessionId"],"taskOutcome":r["taskOutcome"],
+            "verified":r["verified"],"createdAt":r["createdAt"]
+        })).collect::<Vec<_>>())).into_response(),
+        Err(message)=>error(StatusCode::INTERNAL_SERVER_ERROR,&message),
+    }
+}
+
 pub async fn one(State(state):State<AppState>,Path(id):Path<String>)->Response{
     state.store.get("sdk_run",&id).map(|r|Json(public_view(&state,r)).into_response()).unwrap_or_else(||error(StatusCode::NOT_FOUND,"작업이 없습니다."))
 }
 pub async fn start(State(state):State<AppState>,Json(input):Json<Start>)->Response{
     if input.instruction.trim().is_empty()||input.instruction.len()>64000{return error(StatusCode::BAD_REQUEST,"작업 지시는 1~64000자로 입력하세요.");}
     if input.verify_command.as_ref().is_some_and(|c|c.trim().is_empty()||c.len()>2048){return error(StatusCode::BAD_REQUEST,"검증 명령의 길이를 확인하세요.");}
+    if input.agent_id.as_ref().is_some_and(|id|id.is_empty()||id.len()>200
+        ||state.store.get("agent",id).is_none()) {
+        return error(StatusCode::BAD_REQUEST,"SDK 작업에 지정한 에이전트가 없습니다.");
+    }
+    let source=match source_metadata(input.source.as_ref()){
+        Ok(value)=>value,
+        Err(message)=>return error(StatusCode::BAD_REQUEST,&message),
+    };
     let route=match gateway::resolve(&state,input.provider_id.as_deref().unwrap_or(""),input.model.as_deref()){Ok(r)=>r,Err(e)=>return error(StatusCode::BAD_REQUEST,&e)};
     let options=match engine::job_control::options(&state,&input.options){Ok(value)=>value,Err(e)=>return error(StatusCode::BAD_REQUEST,&e)};
     let id=uuid::Uuid::new_v4().to_string();
@@ -185,6 +235,7 @@ pub async fn start(State(state):State<AppState>,Json(input):Json<Start>)->Respon
         "title":input.instruction.chars().take(40).collect::<String>(),
         "providerId":route.id,"model":route.model,
         "nativeSdkRunId":id,
+        "agentId":input.agent_id,
         "nativeSdkMaxRounds":input.max_rounds.unwrap_or(24).clamp(1,80),
         "nativeSdkVerifyCommand":input.verify_command,
     });
@@ -196,6 +247,7 @@ pub async fn start(State(state):State<AppState>,Json(input):Json<Start>)->Respon
         "id":id,"sessionId":session,"status":"queued",
         "instruction":input.instruction,"providerId":route.id,"model":route.model,
         "runtime":"dominion-core","verifyCommand":input.verify_command,
+        "agentId":input.agent_id,"source":source,
         "maxRounds":input.max_rounds.unwrap_or(24).clamp(1,80)
     });
     // User limits, workspace scope and the run are committed together.
@@ -220,7 +272,7 @@ fn launch(state:AppState,record:Value,resume:bool){
         let control=state.store.get("sdk_run",id).unwrap_or_else(||record.clone());
         let goal=engine::job_control::intent(record["instruction"].as_str().unwrap_or(""),&control);
         if let Some(session)=record["sessionId"].as_str(){state.store.patch_if("session",session,"id",&json!(session),&json!({"ownerAppliedRevision":control["steeringRevision"]}));}
-        let request=TurnRequest::from_value(&json!({"sessionId":record["sessionId"],"input":goal,"providerId":record["providerId"],"model":record["model"],"autoLearning":false}));
+        let request=TurnRequest::from_value(&json!({"sessionId":record["sessionId"],"input":goal,"agentId":record["agentId"],"providerId":record["providerId"],"model":record["model"],"autoLearning":false}));
         let outcome=match request{Ok(request)=>if resume{engine::run_quiet_resume(&state,&request).await}else{engine::run_quiet(&state,&request).await},Err(e)=>Err(e)};
         let Some(current)=state.store.get("sdk_run",id)else{return;};
         if current["status"]!="running"{return;}
@@ -396,6 +448,34 @@ mod view_tests{
             web_dir:root.join("web"),workspace:root.clone()};
         AppState::new(cfg.clone(),crate::db::Store::open(&cfg.db_path()).unwrap(),
             crate::vault::Vault::open(&cfg.key_path()))
+    }
+    #[test]
+    fn sdk_source_is_generic_metadata_and_cannot_encode_permissions() {
+        assert!(source_metadata(None).unwrap().is_null());
+        let source=SourceRef{kind:"money_candidate".into(),id:"money:draft:123".into()};
+        let meta=source_metadata(Some(&source)).unwrap();
+        assert_eq!(meta["kind"],"money_candidate");
+        assert_eq!(meta["id"],"money:draft:123");
+        assert_eq!(meta["verified"],false);
+        assert!(source_metadata(Some(&SourceRef{kind:"../../admin".into(),
+            id:"1".into()})).is_err());
+        assert!(source_metadata(Some(&SourceRef{kind:"money".into(),
+            id:"a".repeat(201)})).is_err());
+    }
+    #[test]
+    fn sdk_source_query_is_indexed_and_does_not_mix_tools() {
+        let state=fixture();
+        state.store.put("sdk_run",&json!({"id":"a","source":{"kind":"money_candidate",
+            "id":"m1"},"status":"completed"})).unwrap();
+        state.store.put("sdk_run",&json!({"id":"b","source":{"kind":"money_candidate",
+            "id":"m2"},"status":"running"})).unwrap();
+        state.store.put("sdk_run",&json!({"id":"c","source":{"kind":"other_tool",
+            "id":"m1"},"status":"running"})).unwrap();
+        let rows=state.store.sdk_runs_by_source("money_candidate",20).unwrap();
+        assert_eq!(rows.len(),2);
+        assert!(rows.iter().all(|r|r["source"]["kind"]=="money_candidate"));
+        assert_eq!(state.store.sdk_runs_by_source("other_tool",20).unwrap().len(),1);
+        let _=std::fs::remove_dir_all(&state.config.data_dir);
     }
     #[tokio::test]
     async fn cancel_claims_live_status_without_overwriting_terminal_history(){
