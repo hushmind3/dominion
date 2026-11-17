@@ -73,7 +73,7 @@ export function MoneyEvidence({items,limit=4}:{items:MoneyEvidenceRow[];limit?:n
   <strong className="block text-[11px] text-[#8F604A]">
    저장된 근거·인용 상태 (거래 검증과 별개)
   </strong>
-  {items.slice(0,limit).map((row,i)=><EvidenceEntry key={row.sourceRevisionId||row.url||String(i)}
+  {items.slice(0,limit).map((row,i)=><EvidenceEntry key={(row.sourceRevisionId||row.url||'source')+'-'+i}
    row={row} index={i}/>)}
  </div>
 }

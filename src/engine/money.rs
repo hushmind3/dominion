@@ -255,7 +255,8 @@ pub fn inference_prompt(state:&AppState,campaign:&Value)->String{
             "offer":"납품 가능한 제품·서비스",
             "firstTest":"우선 검증할 미확인 인과 고리",
             "killSignal":"폐기할 조건",
-            "evidence":[{"claim":"직접 관측된 내용","quote":"원문 인용 또는 빈 문자열","url":"https://기록된-출처-주소"}]
+            "evidence":[{"claim":"직접 관측된 내용","quote":"원문 인용 또는 빈 문자열","url":"https://기록된-출처-주소"}],
+            "priceComparison":null
         }]});
     format!(r#"DOMINION MONEY: DB 기반 귀추(가설 발견) 경제 추론.
 자료를 다시 검색하거나 기사 요약하지 마라. 아래 기록은 이미 수집한 관측 자료다.
@@ -273,6 +274,7 @@ pub fn inference_prompt(state:&AppState,campaign:&Value)->String{
 6. 사용자가 명시하지 않은 자본·기간·업종 제약을 만들지 않는다.
 7. 가격·이익·구매 계약·빈 시장을 증거 없이 사실로 쓰지 않는다. 수치는 없으면 null.
 8. 제공된 URL만 근거로 사용한다. 원문에서 본 적 없는 직접인용은 만들지 않는다.
+8-1. 서로 다른 원문에 구매측·공급측 가격과 수량·사양·날짜가 있으면 priceComparison에 buyer, supplier, costsPerUnitWon을 기입할 수 있다. buyer/supplier는 각각 url,quote,amount,currency,priceType,quantity,unit,spec,observedAt을 포함한다. 외화 환산은 같은 시점의 원문 환율 fxWonPerUnit,fxSourceUrl,fxQuote,fxObservedAt이 있을 때만 한다. 운송·관세·수수료·반품·노동 비용은 모르면 null로 둔다. 가격 비교 근거 자체가 부족하면 priceComparison=null.
 9. 실제 사업 실행은 하지 않는다. 검증 가능한 아이디어 초안만 작성한다.
 10. 살아남은 가설만 최대 3개 쓴다. 버린 후보는 rejected에 제목과 이유 한 줄만 적고 상세 필드를 쓰지 않는다.
 11. 스키마에 없는 필드는 만들지 않는다. 비어 있는 값은 빈 문자열 또는 null로 둔다.

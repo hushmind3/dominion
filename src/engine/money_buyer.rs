@@ -82,9 +82,18 @@ fn reference_urls(parsed:&Value,max:usize)->Vec<String>{
     urls
 }
 fn already_fetched(source:&Value)->bool{
-    source["contentStatus"]=="page_fetched"
-        &&source["articleExcerpt"].as_str()
-            .is_some_and(|body|body.chars().count()>100)
+    if source["contentStatus"]!="page_fetched" ||
+        source["articleExcerpt"].as_str().is_none_or(|body|body.chars().count()<=100){
+        return false;
+    }
+    // Re-capture stale documents, so a changed purchase notice cannot keep
+    // appearing as a current quote forever. No extra model round is required.
+    let last=source["lastCheckedAt"].as_str()
+        .or_else(||source["lastFetchedAt"].as_str())
+        .or_else(||source["capturedAt"].as_str())
+        .and_then(|s|chrono::DateTime::parse_from_rfc3339(s).ok());
+    last.is_none_or(|t|chrono::Utc::now().signed_duration_since(
+        t.with_timezone(&chrono::Utc))<chrono::Duration::days(7))
 }
 fn captured_source(url:&str,text:&str,at:&str)->Value{
     let host=url.split_once("://").map(|(_,host)|host).unwrap_or("")
