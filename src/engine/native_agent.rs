@@ -652,7 +652,7 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
     // reads will still return the same bytes.
     let final_witness=crate::engine::native_evidence::artifact_witness(
         &context.state.config.workspace,&owner_checks);
-    context.checkpoint(json!({"nativeEvidenceFinal":final_witness}))?;
+
     // Kernel verifier may derive extra file/hash criteria from actual write
     // receipts. Seal *those* exact observed criteria as well, without
     // pretending they were part of the initial owner-declared evidence scope.
@@ -660,7 +660,12 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
         .map(|check|check.criterion.clone()).collect::<Vec<_>>();
     let kernel_witness=crate::engine::native_evidence::artifact_witness(
         &context.state.config.workspace,&kernel_criteria);
-    context.checkpoint(json!({"nativeEvidenceKernelFinal":kernel_witness}))?;
+    // Seal the two evidence scopes in one ownership-fenced SQLite update.
+    // Previously these caused two writes and two event projections per run.
+    context.checkpoint(json!({
+        "nativeEvidenceFinal":final_witness,
+        "nativeEvidenceKernelFinal":kernel_witness
+    }))?;
 
     let status=serde_json::to_value(&snapshot.status).unwrap_or(json!("needs_review"));
     if let Some(answer)=snapshot.answer.as_deref() {
