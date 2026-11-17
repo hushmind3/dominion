@@ -164,7 +164,7 @@ pub(super) fn select_room_tools(
             &["브라우저", "browser", "클릭", "click"],
             &["browser_control"],
         ),
-        (&["github", "깃허브"], &["github_repositories","github_file_read","github_file_update","github_api"]),
+        (&["github", "깃허브"], &["github_repositories","github_file_read","github_file_replace","github_file_update","github_api"]),
         (&["계정", "oauth", "account"], &["account_status"]),
     ];
     let mut scored: Vec<(i32, Value)> = definitions

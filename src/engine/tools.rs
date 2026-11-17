@@ -1,5 +1,7 @@
 #[path = "tools/github_repositories.rs"]
 mod github_repositories;
+#[path = "tools/github_replace.rs"]
+mod github_replace;
 use crate::db::Store;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -84,6 +86,13 @@ pub fn definitions() -> Vec<Value> {
             "path":text("Repository-relative file path"),
             "branch":text("Branch or commit ref, default branch when omitted")
         }),vec!["owner","repo","path"])),
+        tool("github_file_replace","Replace exactly one GitHub text block using a previously observed SHA. Commits and remotely verifies the change without resending the whole file (approval required)",object(json!({
+            "owner":text("Repository owner"),"repo":text("Repository name"),
+            "path":text("Repository-relative file path"),"branch":text("Explicit branch name"),
+            "expectedSha":text("40-character SHA from github_file_read"),
+            "oldText":text("Exact non-empty text that appears once in the file"),
+            "newText":text("Replacement text, can be empty"),"message":text("Git commit message")
+        }),vec!["owner","repo","path","branch","expectedSha","oldText","newText","message"])),
         tool("github_file_update","Update one GitHub repository file using an observed SHA, create a commit and re-read the remote file (approval required)",object(json!({
             "owner":text("Repository owner"),"repo":text("Repository name"),
             "path":text("Repository-relative file path"),
@@ -129,6 +138,7 @@ pub fn requires_approval(name: &str) -> bool {
             | "task_integrate"
             | "github_api"
             | "github_file_update"
+            | "github_file_replace"
             | "browser_control"
     )
 }
@@ -148,7 +158,7 @@ pub async fn execute(
         return Err("읽기 전용 위임 작업에는 이 도구를 실행할 권한이 없습니다.".into());
     }
     let parent_isolated=ctx.store.get("session",ctx.session_id).is_some_and(|s|s["delegationWorkspace"].is_object());
-    if parent_isolated&&(name.starts_with("mcp__")||matches!(name,"browser_control"|"github_api"|"github_repositories"|"github_file_read"|"github_file_update")){
+    if parent_isolated&&(name.starts_with("mcp__")||matches!(name,"browser_control"|"github_api"|"github_repositories"|"github_file_read"|"github_file_update"|"github_file_replace")){
         return Err("격리 위임 작업에서는 외부 변경 도구를 실행할 수 없습니다.".into());
     }
     if parent_isolated&&name=="delegate_task"&&args["isolatedWorktree"]!=true{
@@ -368,6 +378,7 @@ pub async fn execute(
         "github_repositories" => github_repositories::list(ctx,args).await,
         "github_file_read" => github_file_read(ctx,args).await,
         "github_file_update" => github_file_update(ctx,args).await,
+        "github_file_replace" => github_replace::replace(ctx,args).await,
         other => Err(format!("Unknown tool: {other}")),
     }
 }
