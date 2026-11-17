@@ -74,7 +74,7 @@ pub fn adaptation_prompt(
     before_observation: &Value,
     environment_fingerprint: &str,
 ) -> (String, String) {
-    let system = "You are the DOMINION adaptation planner. Given one failed action, propose DISTINCT causal hypotheses and DIFFERENT interventions. Output JSON only: {\"hypotheses\":[{\"id\":\"h1\",\"claim\":\"...\",\"evidenceIds\":[\"before\"],\"preconditions\":[],\"predictions\":[{\"observationTarget\":\"before\",\"observationPhase\":\"before_intervention\",\"predicate\":{\"type\":\"equals\",\"from\":\"before\",\"path\":\"/pathState/path/exists\",\"value\":false},\"expectedValue\":false}]}],\"interventions\":[{\"id\":\"i1\",\"hypothesisIds\":[\"h1\"],\"preconditions\":[],\"tool\":\"workspace_write\",\"inputs\":{...},\"expectedChecks\":[\"file_exists\"],\"expectedProgress\":0.7,\"uncertainty\":0.2,\"estimatedCost\":0.2}]}. Predictions about why the failure happened must use observationPhase=before_intervention and target the before observation; predictions about the result of an intervention use after_intervention. Missing fields are Unknown, never false. For uncertain causes optionally include up to two LOCAL READ-ONLY diagnostic interventions (workspace_read, workspace_list, workspace_read_range, file_read, file_list), each with probePredicate of type equals, compare or exists, from=result and an exact JSON pointer path. Probes measure an observation, not task completion. Never use shell, network, write or remote tools as probes. Each intervention must change the tool, arguments, or approach.";
+    let system = "You are the DOMINION adaptation planner. Given one failed action, propose DISTINCT causal hypotheses and DIFFERENT interventions. Output JSON only: {\"hypotheses\":[{\"id\":\"h1\",\"claim\":\"...\",\"evidenceIds\":[\"before\"],\"preconditions\":[],\"predictions\":[{\"observationTarget\":\"before\",\"observationPhase\":\"before_intervention\",\"predicate\":{\"type\":\"equals\",\"from\":\"before\",\"path\":\"/pathState/path/exists\",\"value\":false},\"expectedValue\":false}]}],\"interventions\":[{\"id\":\"i1\",\"hypothesisIds\":[\"h1\"],\"preconditions\":[],\"tool\":\"workspace_write\",\"inputs\":{...},\"expectedChecks\":[\"file_exists\"],\"expectedProgress\":0.7,\"uncertainty\":0.2,\"estimatedCost\":0.2}]}. Predictions about why the failure happened must use observationPhase=before_intervention and target the before observation; predictions about the result of an intervention use after_intervention. Missing fields are Unknown, never false. Each intervention must change the tool, arguments, or approach.";
     let prompt = format!(
         "Failed action: tool={tool}\nArguments: {}\nObserved error: {}\nEnvironment version: {environment_version}\nEnvironment fingerprint: {environment_fingerprint}\nBefore observation (authoritative): {}\nAvailable tools include workspace_read, workspace_write, workspace_list, shell_exec, terminal_exec.\nReturn JSON only.",
         arguments, error, before_observation
@@ -400,129 +400,6 @@ pub fn choose_intervention_with_policy(
         .map(|(_, item)| item)
 }
 
-
-/** Only explicitly named local file observations may be probed. Generic
- * effect heuristics are insufficient for speculative runtime execution:
- * shell/HTTP/MCP/unknown operations can mutate the outside world. */
-fn eligible_probe(item: &Value) -> bool {
-    let Some(tool) = item["tool"].as_str() else { return false };
-    if !matches!(tool, "workspace_read" | "workspace_read_range" | "workspace_list"
-        | "file_read" | "file_list") {
-        return false;
-    }
-    if !crate::engine::effect::is_observation_only(tool, &item["inputs"]) {
-        return false;
-    }
-    let predicate = &item["probePredicate"];
-    matches!(predicate["type"].as_str(), Some("equals" | "compare" | "exists"))
-        && predicate["from"] == "result"
-        && predicate["path"].as_str()
-            .is_some_and(|path| path.starts_with('/') && path.len() > 1)
-        && item["hypothesisIds"].as_array().is_some_and(|ids| !ids.is_empty())
-}
-
-/// Contrastively probe up to two independently executable, observation-only
-/// candidates. This reuses the existing intervention policy for preconditions,
-/// unchanged failed-call suppression and predicted cost/progress scoring.
-/// A probe predicate is a model hypothesis: only its post-dispatch observation
-/// may supply a verdict. No candidate is executed by this pure function.
-#[allow(clippy::too_many_arguments)]
-pub fn probe_candidates(
-    adaptation: &Value,
-    failed_tool: &str,
-    failed_arguments: &Value,
-    resolved: &Value,
-    refuted: &[String],
-    algorithm: &Value,
-) -> Vec<Value> {
-    let mut candidates = Vec::new();
-    for item in adaptation["interventions"].as_array().into_iter().flatten() {
-        if !eligible_probe(item) { continue; }
-        let single = json!({
-            "hypotheses": adaptation["hypotheses"],
-            "interventions": [item],
-        });
-        if let Some(graded) = choose_intervention_with_policy(
-            &single, failed_tool, failed_arguments, false, resolved, refuted, algorithm
-        ) {
-            candidates.push(graded);
-        }
-    }
-    candidates.sort_by(|a,b| {
-        b["score"].as_f64().unwrap_or(f64::NEG_INFINITY)
-            .total_cmp(&a["score"].as_f64().unwrap_or(f64::NEG_INFINITY))
-            .then_with(|| a["id"].as_str().unwrap_or("")
-                .cmp(b["id"].as_str().unwrap_or("")))
-    });
-    // A model can assign several ids to one identical file read. Probe the
-    // physical operation once, retaining the highest-ranked hypothesis.
-    let mut seen = std::collections::HashSet::new();
-    candidates.retain(|candidate| {
-        let key = format!("{}:{}", candidate["tool"], candidate["inputs"]);
-        seen.insert(key)
-    });
-    candidates.truncate(2);
-    candidates
-}
-
-/// Compose a new decision from actual probe verdicts, not the model's
-/// predicted scores alone. Refuted single-hypothesis probes eliminate their
-/// claimed explanation; supported observations favor interventions targeting
-/// that hypothesis. Failed probes cannot be silently replayed.
-#[allow(clippy::too_many_arguments)]
-pub fn choose_after_probes(
-    adaptation: &Value,
-    failed_tool: &str,
-    failed_arguments: &Value,
-    resolved: &Value,
-    prior_refuted: &[String],
-    algorithm: &Value,
-    observations: &[Value],
-) -> Option<Value> {
-    let refuted = prior_refuted.to_vec();
-    let mut excluded = std::collections::HashSet::new();
-    let mut supported = std::collections::HashSet::new();
-    for observation in observations {
-        let Some(id) = observation["id"].as_str() else { continue };
-        let verdict = observation["verdict"].as_str().unwrap_or("unknown");
-        if matches!(verdict, "false" | "tool_failed") {
-            excluded.insert(id.to_string());
-        }
-        let ids = observation["hypothesisIds"].as_array();
-        // A false model-authored probe predicate refutes that proposed
-        // observation, not the entire causal hypothesis. Other independent
-        // interventions for the hypothesis must remain eligible.
-        if verdict == "true" && observation["toolOk"] == true {
-            for id in ids.into_iter().flatten().filter_map(Value::as_str) {
-                supported.insert(id.to_string());
-            }
-        }
-    }
-    supported.retain(|id| !refuted.iter().any(|refuted| refuted == id));
-    let alternatives = adaptation["interventions"].as_array()?.iter()
-        .filter(|item| item["id"].as_str().is_some_and(|id| !excluded.contains(id)))
-        .cloned().collect::<Vec<_>>();
-    // Prefer an observed, compatible hypothesis over an unprobed high
-    // expectation; fall back to the ordinary selector when probes are Unknown.
-    if !supported.is_empty() {
-        let consistent = alternatives.iter().filter(|item|
-            item["hypothesisIds"].as_array().is_some_and(|ids|
-                ids.iter().filter_map(Value::as_str).any(|id| supported.contains(id))
-            )
-        ).cloned().collect::<Vec<_>>();
-        if !consistent.is_empty() {
-            let scoped = json!({"hypotheses":adaptation["hypotheses"], "interventions":consistent});
-            if let Some(selected) = choose_intervention_with_policy(
-                &scoped, failed_tool, failed_arguments, false, resolved, &refuted, algorithm
-            ) { return Some(selected); }
-        }
-    }
-    let scoped = json!({"hypotheses":adaptation["hypotheses"], "interventions":alternatives});
-    choose_intervention_with_policy(
-        &scoped, failed_tool, failed_arguments, false, resolved, &refuted, algorithm
-    )
-}
-
 /// Backwards-compatible wrapper for callers without an observation context.
 #[allow(dead_code)]
 pub fn choose_intervention(
@@ -666,7 +543,6 @@ pub fn record_adaptation(
         "hypotheses": adaptation["hypotheses"],
         "interventions": adaptation["interventions"],
         "consultedExperienceRules": adaptation["consultedExperienceRules"],
-        "probeOutcomes": adaptation["probeOutcomes"],
         "selected": selected,
         "result": result,
         "hypothesisResults": hypothesis_results,
@@ -713,81 +589,6 @@ mod selection_tests {
                 {"id":"change","hypothesisIds":["h1","h2"],"tool":"workspace_write","inputs":{"path":"a.txt","content":"ok"},"expectedChecks":["a","b"],"estimatedCost":0.2}
             ]
         })
-    }
-
-
-    #[test]
-    fn candidate_probes_are_bounded_and_exclude_mutating_or_remote_calls() {
-        let predicate = json!({"type":"equals","from":"result","path":"/exists","value":true});
-        let candidate = |id: &str, tool: &str| json!({
-            "id":id,"tool":tool,"inputs":{"path":"src/lib.rs"},
-            "hypothesisIds":["h1"],"probePredicate":predicate,
-            "estimatedCost":0.1,"expectedProgress":0.5
-        });
-        let row = json!({"hypotheses":[{"id":"h1","claim":"path issue","predictions":[]}],
-            "interventions":[
-                candidate("safe-read","workspace_read"),
-                candidate("safe-list","workspace_list"),
-                candidate("safe-range","workspace_read_range"),
-                candidate("unsafe-shell","shell_exec"),
-                candidate("unsafe-write","workspace_write"),
-                candidate("unsafe-remote","http_fetch"),
-                candidate("unsafe-mcp","mcp__external__get"),
-            ]});
-        let got = probe_candidates(&row, "workspace_write", &json!({"path":"broken"}),
-            &json!({}), &[], &json!({}));
-        assert_eq!(got.len(),2);
-        let mut distinct = std::collections::HashSet::new();
-        for probe in &got {
-            assert!(distinct.insert(format!("{}:{}",probe["tool"],probe["inputs"])));
-        }
-        assert!(got.iter().all(|v| matches!(v["tool"].as_str(),
-            Some("workspace_read" | "workspace_list" | "workspace_read_range"))));
-    }
-
-    #[test]
-    fn real_false_probe_disqualifies_the_highest_expected_candidate() {
-        let row = json!({"hypotheses":[
-            {"id":"h1","claim":"path exists","predictions":[]},
-            {"id":"h2","claim":"permissions","predictions":[]}
-        ],"interventions":[
-            {"id":"probe","tool":"workspace_read","inputs":{"path":"absent"},
-                "hypothesisIds":["h1"],"probePredicate":{"type":"equals",
-                    "from":"result","path":"/exists","value":true},
-                "expectedProgress":9.0,"estimatedCost":0.0},
-            {"id":"repair","tool":"workspace_write","inputs":{"path":"safe","content":"ok"},
-                "hypothesisIds":["h2"],"expectedProgress":1.0,"estimatedCost":0.2}
-        ]});
-        let context=json!({"before":{},"result":{}});
-        let prior=choose_intervention_with_policy(&row,"shell_exec",&json!({}),
-            false,&context,&[],&json!({})).unwrap();
-        assert_eq!(prior["id"],"probe");
-        let evidence=[json!({"id":"probe","hypothesisIds":["h1"],
-            "verdict":"false","toolOk":true,"operationId":"op1"})];
-        let after=choose_after_probes(&row,"shell_exec",&json!({}),
-            &context,&[],&json!({}),&evidence).unwrap();
-        assert_eq!(after["id"],"repair");
-        assert!(choose_after_probes(&json!({
-            "hypotheses":row["hypotheses"],"interventions":[row["interventions"][0].clone()]
-        }),"shell_exec",&json!({}),&context,&[],&json!({}),&evidence).is_none());
-    }
-
-    #[test]
-    fn observed_support_beats_an_unprobed_high_estimate() {
-        let row = json!({"hypotheses":[
-            {"id":"h1","claim":"missing file","predictions":[]},
-            {"id":"h2","claim":"permissions","predictions":[]}
-        ],"interventions":[
-            {"id":"read","tool":"workspace_read","inputs":{"path":"target"},
-                "hypothesisIds":["h1"],"expectedProgress":0.1,"estimatedCost":0.1},
-            {"id":"guess","tool":"workspace_write","inputs":{"path":"fix","content":"ok"},
-                "hypothesisIds":["h2"],"expectedProgress":7.0,"estimatedCost":0.1}
-        ]});
-        let observed=[json!({"id":"read","hypothesisIds":["h1"],
-            "verdict":"true","toolOk":true,"operationId":"op2"})];
-        let selected=choose_after_probes(&row,"shell_exec",&json!({}),
-            &json!({}),&[],&json!({}),&observed).unwrap();
-        assert_eq!(selected["id"],"read");
     }
 
     #[test]

@@ -112,6 +112,21 @@ fn validate_node(node: &Value) -> Result<(), String> {
     }
 }
 
+/// Concurrent execution is permitted only for independent local reads.
+/// Effectful commands and data-dependent branches are ordering barriers.
+pub fn parallel_read_safe(children: &[Value]) -> bool {
+    !children.is_empty() && children.len() <= 8 && children.iter().all(|node| {
+        if node["type"] != "call_tool" || node["id"].as_str().is_none_or(str::is_empty) {
+            return false;
+        }
+        let Some(tool) = node["tool"].as_str() else { return false; };
+        if !matches!(tool, "workspace_read" | "workspace_read_range" | "workspace_list"
+            | "file_read" | "file_list") { return false; }
+        node["inputs"].as_object().is_some_and(|inputs|
+            inputs.values().all(|value| value.get("from").is_none()))
+    })
+}
+
 pub fn new_checkpoint(program: &Value) -> Value {
     json!({
         "schemaVersion": SUPPORTED_REVISION,
@@ -469,6 +484,29 @@ mod tests {
                  "else":[{"type":"call_tool","id":"fallback","tool":"workspace_write","inputs":{"path":"fallback.txt","content":"FALLBACK"}}]}
             ]
         })
+    }
+
+    #[test]
+    fn parallel_safety_rejects_mutations_and_dependencies() {
+        let read = json!({"type":"call_tool","id":"a","tool":"workspace_read",
+            "inputs":{"path":"a.rs"}});
+        let list = json!({"type":"call_tool","id":"b","tool":"workspace_list",
+            "inputs":{"path":"."}});
+        assert!(parallel_read_safe(&[read.clone(), list]));
+        assert!(!parallel_read_safe(&[read.clone(), json!({
+            "type":"call_tool","id":"write","tool":"workspace_write",
+            "inputs":{"path":"b.rs","content":"new"}
+        })]));
+        assert!(!parallel_read_safe(&[read.clone(), json!({
+            "type":"call_tool","id":"shell","tool":"shell_exec",
+            "inputs":{"command":"cat Cargo.toml"}
+        })]));
+        assert!(!parallel_read_safe(&[read.clone(), json!({
+            "type":"call_tool","id":"dependent","tool":"workspace_read",
+            "inputs":{"path":{"from":"a","path":"/path"}}
+        })]));
+        assert!(!parallel_read_safe(&[]));
+        assert!(!parallel_read_safe(&vec![read;9]));
     }
 
     #[test]
