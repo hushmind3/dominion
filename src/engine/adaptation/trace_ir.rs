@@ -230,6 +230,64 @@ pub fn validate_evidence_ids(adaptation:&Value, trace:&Value)->Result<(),String>
     Ok(())
 }
 
+/// A machine-verifiable, bounded repair admission certificate. This is a
+/// Dominion-specific action boundary: trajectory evidence constrains which
+/// of the model's interventions may run, but never grants tool permission.
+/// The existing dispatcher still owns approvals and effect reconciliation.
+pub fn action_certificate(
+    trace:&Value,
+    intervention:&Value,
+    hypotheses:&[Value],
+    refuted:&[String],
+    is_effectful:bool,
+)->Result<Value,String>{
+    let ids=intervention["hypothesisIds"].as_array()
+        .filter(|items|!items.is_empty())
+        .ok_or("repair intervention must identify non-empty causal hypotheses")?;
+    let mut live=Vec::new();
+    for id in ids {
+        let id=id.as_str().ok_or("repair hypothesis ID is not a string")?;
+        if !hypotheses.iter().any(|h|h["id"].as_str()==Some(id)) {
+            return Err(format!("intervention uses an unknown causal hypothesis {id}"));
+        }
+        if !refuted.iter().any(|r|r==id) && !live.iter().any(|v|v==id) {
+            live.push(id);
+        }
+    }
+    if live.is_empty() {
+        return Err("all hypotheses supporting the selected intervention were refuted".into());
+    }
+    let failure=trace["focus"]["failureSurface"].as_str().unwrap_or("unobserved");
+    if is_effectful && matches!(failure,"effect_reconciliation"|"governance"){
+        return Err(format!(
+            "an unresolved/denied native effect ({failure}) cannot authorize a speculative write; inspect or request owner review"
+        ));
+    }
+    let available=trace["nodes"].as_array().into_iter().flatten()
+        .filter_map(|row|row["id"].as_str()).collect::<HashSet<_>>();
+    let mut cited=Vec::new();
+    for id in intervention["evidenceIds"].as_array().into_iter().flatten() {
+        let id=id.as_str().ok_or("non-string intervention evidence ID")?;
+        if id=="before" || id=="current-failure" || available.contains(id) {
+            cited.push(id);
+        } else {
+            return Err(format!("candidate intervention references nonexistent receipt {id}"));
+        }
+    }
+    Ok(json!({
+        "schema":"dominion.action-certificate.2026.v1",
+        "interventionId":intervention["id"],
+        "tool":intervention["tool"],
+        "liveHypothesisIds":live,
+        "observedFailureSurface":failure,
+        "evidenceIds":cited,
+        "causalAttribution":"candidate-only",
+        "effectful":is_effectful,
+        "gatewayRequired":true,
+        "status":"admitted_by_causal_constraints",
+    }))
+}
+
 #[cfg(test)]
 mod tests{
     use super::*;
@@ -271,6 +329,43 @@ mod tests{
         validate_evidence_ids(&good,&trace).unwrap();
         let bad=json!({"hypotheses":[{"evidenceIds":["receipt-invented"]}]});
         assert!(validate_evidence_ids(&bad,&trace).is_err());
+    }
+    #[test]
+    fn causal_certificate_blocks_refuted_mutation_and_unknown_effect(){
+        let trace=compile(&[op("r1","x",1,"failed","r")],
+            "x","workspace_read",&json!({"path":"x.rs"}));
+        let hypotheses=vec![json!({"id":"h1"}),json!({"id":"h2"})];
+        let intervention=json!({
+            "id":"fix","tool":"workspace_write","hypothesisIds":["h1"],
+            "evidenceIds":[trace["focus"]["evidenceId"]]
+        });
+        assert!(action_certificate(&trace,&intervention,&hypotheses,&[],true).is_err());
+        let read=json!({
+            "id":"inspect","tool":"workspace_read","hypothesisIds":["h1","h2"],
+            "evidenceIds":[trace["focus"]["evidenceId"]]
+        });
+        assert!(action_certificate(&trace,&read,&hypotheses,&[],false).is_ok());
+        assert!(action_certificate(&trace,&read,&hypotheses,&[
+            "h1".to_string(),"h2".to_string()
+        ],false).is_err());
+    }
+    #[test]
+    fn evidence_bound_certificate_rejects_phantom_source(){
+        let mut row=op("r1","x",1,"failed","r");
+        row["effectState"]=json!("committed");
+        let trace=compile(&[row],"x","workspace_read",&json!({"path":"x.rs"}));
+        let hypotheses=vec![json!({"id":"h1"})];
+        let valid=json!({
+            "id":"fix","tool":"workspace_write","hypothesisIds":["h1"],
+            "evidenceIds":[trace["focus"]["evidenceId"]]
+        });
+        let cert=action_certificate(&trace,&valid,&hypotheses,&[],true).unwrap();
+        assert_eq!(cert["status"],"admitted_by_causal_constraints");
+        let invalid=json!({
+            "id":"hallucinated","tool":"workspace_write",
+            "hypothesisIds":["h1"],"evidenceIds":["receipt-imaginary"]
+        });
+        assert!(action_certificate(&trace,&invalid,&hypotheses,&[],true).is_err());
     }
     #[test]
     fn no_matched_receipt_produces_no_fabricated_lineage(){
