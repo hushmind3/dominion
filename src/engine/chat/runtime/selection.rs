@@ -170,9 +170,11 @@ pub(super) fn select_room_tools(
         (&["github", "깃허브"], &["github_api"]),
         (&["계정", "oauth", "account"], &["account_status"]),
     ];
-    let mut scored: Vec<(i32, Value)> = definitions
-        .iter()
-        .filter_map(|definition| {
+    // Rank by index rather than cloning every (potentially large) JSON
+    // tool schema, including candidates we will drop after top-k selection.
+    let mut scored: Vec<(i32, usize)> = definitions
+        .iter().enumerate()
+        .filter_map(|(index, definition)| {
             let name = tool_name(definition);
             let name_lower = name.to_lowercase();
             let haystack = serde_json::to_string(definition)
@@ -200,7 +202,7 @@ pub(super) fn select_room_tools(
             if recent.contains(&name_lower) {
                 score += 8;
             }
-            (score > 0).then(|| (score, definition.clone()))
+            (score > 0).then_some((score, index))
         })
         .collect();
     scored.sort_by(|a, b| b.0.cmp(&a.0));
@@ -219,7 +221,8 @@ pub(super) fn select_room_tools(
             .collect();
     }
     scored.truncate(8);
-    scored.into_iter().map(|(_, definition)| definition).collect()
+    let mut available=definitions.into_iter().map(Some).collect::<Vec<_>>();
+    scored.into_iter().filter_map(|(_,index)|available[index].take()).collect()
 }
 
 pub(super) fn select_tool_definitions(
@@ -269,9 +272,9 @@ pub(super) fn select_tool_definitions(
         .collect::<Vec<_>>();
     let extra = algorithm["parameters"]["extra"].as_u64().unwrap_or(8) as usize;
     let mut matched = definitions
-        .iter()
-        .filter(|definition| !core.contains(tool_name(definition)))
-        .map(|definition| {
+        .iter().enumerate()
+        .filter(|(_,definition)| !core.contains(tool_name(definition)))
+        .map(|(index,definition)| {
             let haystack = serde_json::to_string(definition)
                 .unwrap_or_default()
                 .to_lowercase();
@@ -279,24 +282,19 @@ pub(super) fn select_tool_definitions(
                 .iter()
                 .filter(|token| haystack.contains(token.as_str()))
                 .count();
-            (score, definition.clone())
+            (score, index)
         })
         .filter(|(score, _)| *score > 0)
         .collect::<Vec<_>>();
     matched.sort_by(|a, b| b.0.cmp(&a.0));
-    let keep_extra = matched
-        .into_iter()
-        .take(extra)
-        .map(|(_, definition)| definition)
-        .collect::<Vec<_>>();
-    definitions
-        .into_iter()
-        .filter(|definition| {
-            core.contains(tool_name(definition))
-                || keep_extra
-                    .iter()
-                    .any(|extra| tool_name(extra) == tool_name(definition))
-        })
+    let keep_extra=matched.into_iter().take(extra)
+        .map(|(_,index)|index).collect::<std::collections::HashSet<_>>();
+    // Retain original catalog ordering with O(1) membership checks rather
+    // than comparing and cloning nested schema objects at each selection.
+    definitions.into_iter().enumerate()
+        .filter_map(|(index,definition)|
+            (core.contains(tool_name(&definition))||keep_extra.contains(&index))
+                .then_some(definition))
         .collect()
 }
 
