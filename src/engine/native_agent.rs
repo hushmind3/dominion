@@ -231,6 +231,8 @@ impl Tools for NativeTools {
             let approval_needed=if action.tool.starts_with("mcp__") {
                 mcp::requires_approval(&self.state,&action.tool)
             } else { tools::requires_approval(&action.tool) };
+            let mut artifact_before=Value::Null;
+            let mut artifact_after=Value::Null;
             let outcome = if approval_needed && !chat::approve_native_tool(
                 &self.state,&self.session,&action.tool,
                 &action.arguments,&self.run_id,&operation_id
@@ -253,16 +255,31 @@ impl Tools for NativeTools {
                     agent_id:self.agent.as_deref(),
                     tools_enabled:self.tools_enabled,tools_execution_enabled:self.tools_enabled,
                 };
-                tools::execute(&context,&action.tool,&action.arguments,&self.run_id).await
-                    .and_then(|value|verified_tool_result(&action.tool,value))
+                artifact_before=crate::engine::native_replay::action_witness(
+                    &self.workspace,action);
+                let result=tools::execute(
+                    &context,&action.tool,&action.arguments,&self.run_id,
+                ).await.and_then(|value|verified_tool_result(&action.tool,value));
+                artifact_after=crate::engine::native_replay::action_witness(
+                    &self.workspace,action);
+                result
             };
-            let patch=match &outcome {
+            let mut patch=match &outcome {
                 Ok(value)=>json!({"status":"completed","outcomeUnknown":false,"result":value,
                     "resultSha256":evidence_sha(value),
                     "finishedAt":chrono::Utc::now().to_rfc3339()}),
                 Err(error)=>json!({"status":"failed","outcomeUnknown":false,"error":error,
                     "finishedAt":chrono::Utc::now().to_rfc3339()}),
             };
+            if artifact_before["hostObservation"]==true
+                &&artifact_after["hostObservation"]==true
+            {
+                patch["artifactLineage"]=json!({
+                    "before":artifact_before,"after":artifact_after,
+                    "observedWithToolReceipt":true,
+                    "exclusiveWorkspaceOwnership":false
+                });
+            }
             self.state.store.patch_if(
                 "execution_operation",&operation_id,"status",&json!("running"),&patch
             ).ok_or("Operation result could not be persisted; outcome uncertain")?;
