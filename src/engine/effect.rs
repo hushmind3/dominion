@@ -72,6 +72,13 @@ pub fn resource_key(tool: &str, arguments: &Value) -> Option<String> {
         }
         "task_integrate"=>arguments["jobId"].as_str().map(|id|format!("delegated_patch:{id}")),
         "github_api" => path.map(|path| format!("github:{}", normalize_path(path))),
+        "github_file_read" | "github_file_update" | "github_file_replace" => {
+            let owner=arguments["owner"].as_str()?;
+            let repo=arguments["repo"].as_str()?;
+            let file=arguments["path"].as_str()?;
+            let branch=arguments["branch"].as_str().unwrap_or("default");
+            Some(format!("github:{owner}/{repo}@{branch}:{}",normalize_path(file)))
+        },
         "http_fetch" => arguments["url"].as_str().map(|url| format!("http:{url}")),
         "shell_exec" | "terminal_exec" => Some(format!(
             "process:{}",
@@ -153,6 +160,7 @@ fn replay_is_safe(tool: &str) -> bool {
 fn gated(tool: &str, arguments: &Value) -> bool {
     is_effectful(tool, arguments)
         && (tool == "task_integrate" || tool == "github_api"
+            || matches!(tool,"github_file_update"|"github_file_replace")
             || tool.starts_with("mcp__")
             || tool.contains("http_request"))
 }
@@ -358,7 +366,22 @@ pub async fn seal(
         "observed"
     };
 
-    if ok && matches!(tool, "workspace_write" | "workspace_replace" | "workspace_replace_range" | "file_write") {
+    if ok && matches!(tool,"github_file_update"|"github_file_replace")
+        && result["verified"]==true && result["remoteReadBack"]==true {
+        if let Some(sha)=result["fileSha"].as_str() {
+            observed_version=Some(format!("github-sha:{sha}"));
+            verifier="github_contents_readback";
+            verified=true;
+            effect_state="verified";
+        }
+    } else if ok && tool=="github_file_read" && result["verified"]==true {
+        if let Some(sha)=result["sha"].as_str(){
+            observed_version=Some(format!("github-sha:{sha}"));
+            verifier="github_contents_read";
+            verified=true;
+            effect_state="observed";
+        }
+    } else if ok && matches!(tool, "workspace_write" | "workspace_replace" | "workspace_replace_range" | "file_write") {
         if let Some(expected) = expected_version(tool, arguments, result) {
             match read_back(workspace, tool, arguments).await {
                 Some((actual, len)) => {
@@ -508,6 +531,29 @@ mod tests {
             "effectState": state,
             "finishedAt": "2026-11-07T00:00:00Z",
         })
+    }
+
+    #[tokio::test]
+    async fn typed_github_commit_requires_observed_resource_and_remote_readback(){
+        let input=json!({"owner":"team","repo":"repo","path":"src/main.rs",
+            "branch":"main","expectedSha":"old","oldText":"old","newText":"new"});
+        let effect=prepare("session","github_file_replace",&input,&[]);
+        assert_eq!(effect["resourceKey"],"github:team/repo@main:src/main.rs");
+        assert_eq!(effect["gated"],true);
+        let prior=op("first","github_file_replace",input.clone(),"effect_unknown",&effect);
+        assert!(unresolved(&effect,&[prior]).is_some());
+        let sealed=seal(std::path::Path::new("."),
+            "github_file_replace",&input,
+            &json!({"verified":true,"remoteReadBack":true,"fileSha":"blob-sha"}),
+            true,false,false,&effect).await;
+        assert_eq!(sealed["effectState"],"verified");
+        assert_eq!(sealed["observedVersion"],"github-sha:blob-sha");
+        let observed=seal(std::path::Path::new("."),
+            "github_file_read",&input,
+            &json!({"verified":true,"sha":"blob-sha","content":"sample"}),
+            true,false,false,&effect).await;
+        assert_eq!(observed["effectState"],"observed");
+        assert_eq!(observed["observedVersion"],"github-sha:blob-sha");
     }
 
     #[test]
