@@ -72,8 +72,12 @@ pub fn report(state:&AppState,id:&str)->Result<Value,String>{
     }else if op["result"]!=r.result{
      anomalies.push(format!("Legacy operation output differs at {}",r.id))
     }
-   }else if op["status"]=="failed" && r.success{
-    anomalies.push(format!("Host failure disagrees with receipt {}",r.id))
+   }else if op["status"]=="failed" {
+    if r.success {anomalies.push(format!("Host failure disagrees with receipt {}",r.id))}
+   }else{
+    // A pending/running or unknown host operation is not settled evidence,
+    // even if a stale checkpoint advertises success and outcomeUnknown=false.
+    anomalies.push(format!("Operation lacks a terminal host status at {}",r.id));
    }
    let pin=op["provenance"]["contractSha256"].as_str();
    if r.tool.starts_with("mcp__"){
@@ -227,6 +231,13 @@ mod tests{
   assert_eq!(report["externalCalls"],Value::Null);
   assert_eq!(report["modelOrExternalToolCalls"],0);
   assert_eq!(s.store.count("execution_operation"),1);
+  let mut unsettled=s.store.get("execution_operation","native-op-replay-a-test1").unwrap();
+  unsettled["status"]=json!("running");
+  unsettled["outcomeUnknown"]=json!(false);
+  s.store.put("execution_operation",&unsettled).unwrap();
+  let pending_report=report(&s,"replay-a").unwrap();
+  assert_eq!(pending_report["hostJournal"]["consistent"],false,
+   "a nonterminal operation is never accepted as settled historical evidence");
   let mut other=base.clone();other["id"]=json!("replay-b");
   other["nativeState"]["id"]=json!("replay-b");
   other["input"]["prompt"]=json!("different task");
