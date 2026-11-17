@@ -336,6 +336,29 @@ impl Store {
         rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
     }
 
+    /// Bounded native trace read for 2026 HarnessFix-style failure provenance.
+    /// Uses the existing partial index idx_operation_run rather than scanning
+    /// all session operations or materializing every execution record.
+    pub fn recent_execution_operations(
+        &self,
+        run_id: &str,
+        limit: usize,
+    ) -> Result<Vec<Value>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let mut statement = conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='execution_operation' AND json_extract(data,'$.runId')=?1
+             ORDER BY CAST(json_extract(data,'$.opSeq') AS INTEGER) DESC, id DESC
+             LIMIT ?2",
+        ).map_err(|error| error.to_string())?;
+        let rows = statement.query_map(params![run_id, limit.clamp(1, 96) as i64], record_from_row)
+            .map_err(|error| error.to_string())?;
+        let mut operations = rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        operations.reverse();
+        Ok(operations)
+    }
+
     /// Error-preserving variant for the new learning/finalization paths.
     /// `all` remains for React-facing compatibility, but new paths must not
     /// interpret a database error as an empty collection.
