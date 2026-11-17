@@ -83,12 +83,25 @@ pub fn side_effect_unknown(evidence:&[Value])->bool {
         // Rejected proposals and pre-dispatch failures never started an effect.
         if item["dispatched"]==false {return false;}
         let tool=item["tool"].as_str().unwrap_or("");
-        !matches!(tool,
-            "workspace_read"|"workspace_read_range"|"workspace_write"|
-            "workspace_replace"|"workspace_replace_range"|"workspace_apply_patch"|"workspace_list"|
-            "workspace_search"|"code_search"|"file_read"|"file_write"
-        ) && !(matches!(tool,"shell_exec"|"terminal_exec")
-            && read_only_shell_command(item["arguments"]["command"].as_str().unwrap_or("")))
+        // The previous barrier treated even ordinary web/file lookups as
+        // unresolved writes. That prevented a search→edit task from repairing
+        // a failed acceptance check. Only explicit native observational tools
+        // and GET requests are replayable; unknown MCP tools remain gated.
+        let known_read=matches!(tool,
+            "web_search"|"http_fetch"|"memory_search"|"code_search"|
+            "workspace_read"|"workspace_read_range"|"workspace_list"|
+            "workspace_search"|"file_read"|"file_list"|
+            "task_status"|"task_result"|"account_status"|
+            "google_drive_search"|"google_docs_read"|"google_sheets_read"|
+            "github_repository_activity"|"github_file_read"
+        ) || (tool=="github_api" && item["arguments"]["method"]
+            .as_str().is_some_and(|method|method.eq_ignore_ascii_case("GET")));
+        let local_replay=matches!(tool,
+            "workspace_write"|"workspace_replace"|"workspace_replace_range"|
+            "workspace_apply_patch"|"file_write"
+        );
+        !(known_read || local_replay || (matches!(tool,"shell_exec"|"terminal_exec")
+            && read_only_shell_command(item["arguments"]["command"].as_str().unwrap_or(""))))
     })
 }
 pub fn decide(
@@ -201,6 +214,27 @@ mod tests {
             "dispatched":false,"result":{"error":"permission denied"}})];
         assert!(!side_effect_unknown(&denied),
             "a rejected proposal must not be mistaken for an executed remote write");
+    }
+    #[test]
+    fn read_only_discovery_can_precede_a_safe_repair(){
+        for tool in ["web_search","http_fetch","memory_search",
+            "google_drive_search","google_docs_read","google_sheets_read",
+            "github_repository_activity","file_list","task_result"] {
+            let evidence=vec![json!({"tool":tool,"arguments":{"query":"source"},
+                "result":{"ok":true}})];
+            assert!(!side_effect_unknown(&evidence),"{tool} must not block repair");
+            assert_eq!(decide(Strategy::Focused,true,&["output missing".into()],
+                None,&evidence,0,3),Decision::Repair);
+        }
+        let get=vec![json!({"tool":"github_api",
+            "arguments":{"method":"get"},"result":{"status":200}})];
+        assert!(!side_effect_unknown(&get));
+        let post=vec![json!({"tool":"github_api",
+            "arguments":{"method":"POST"},"result":{"status":200}})];
+        assert!(side_effect_unknown(&post));
+        let unknown_mcp=vec![json!({"tool":"mcp__payments__lookup",
+            "result":{"ok":true}})];
+        assert!(side_effect_unknown(&unknown_mcp));
     }
     #[test]
     fn owner_goal_revisions_do_not_reapply_superseded_additions() {
