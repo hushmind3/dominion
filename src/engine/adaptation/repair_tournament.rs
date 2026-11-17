@@ -151,8 +151,8 @@ pub fn prepare(
         if !matches!(postflight["predicate"]["type"].as_str(),
             Some("equals"|"compare")) {continue;}
         let costs=json!({
-            "changedNodes": ids(proposal).len(),
-            "effectfulNodes":mutations(proposal),
+            "changedNodes": ids(&proposal).len(),
+            "effectfulNodes":mutations(&proposal),
         });
         variants.push(json!({
             "id":id,"revision":revision,"probes":[probe],
