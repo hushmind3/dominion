@@ -36,7 +36,7 @@ fn witness_changes(before:&Value,after:&Value)->Vec<String>{
  }).collect()
 }
 fn direct_verdicts_agree(job:&Value,snapshot:&Snapshot)->bool{
- let Some(after)=evidence(job,"nativeEvidenceFinal") else{return false};
+ let Some(after)=evidence(job,"nativeEvidenceKernelFinal") else{return false};
  let Some(verdicts)=after["directVerdicts"].as_array() else{return false};
  if verdicts.len()!=snapshot.checks.len(){return false;}
  let expected_criteria=snapshot.checks.iter()
@@ -66,7 +66,8 @@ fn artifact_proof(job:&Value,trace:&Value,snapshot:&Snapshot)->Value{
  let agrees=direct_verdicts_agree(job,snapshot);
  let changed=before.zip(after)
   .map(|(b,a)|witness_changes(b,a)).unwrap_or_default();
- let direct=after.and_then(|w|w["directVerdicts"].as_array());
+ let direct=evidence(job,"nativeEvidenceKernelFinal")
+  .and_then(|w|w["directVerdicts"].as_array());
  let directly_observed=direct.map(|v|v.iter().filter(|v|v.is_boolean()).count())
   .unwrap_or(0);
  let all_direct=direct.is_some_and(|v|!v.is_empty()&&v.iter().all(Value::is_boolean));
@@ -375,7 +376,7 @@ mod tests {
     path:Some("out".into()),contains:None,tool:None},
    satisfied:true,explanation:"accepted".into()});
   let expected=vec![&snap.checks[0].criterion];
-  let job=json!({"nativeEvidenceFinal":{"complete":true,
+  let job=json!({"nativeEvidenceKernelFinal":{"complete":true,
    "entries":{"out":{"state":"missing"}},"directVerdicts":[false],
    "criteriaDigest":digest(&json!(expected))}});
   assert!(!direct_verdicts_agree(&job,&snap));
