@@ -240,3 +240,18 @@ test('connected Google Drive Docs Sheets are model-visible and use exact OAuth p
  assert.match(work,/expectedRevisionId/);
  assert.match(work,/expectedValues/);
 });
+
+test('typed GitHub issue branch and PR workflows stay on the approved connected-account route',()=>{
+ const work=file('src/engine/github_work.rs');
+ const catalog=file('src/engine/tools.rs');
+ const projection=file('src/engine/chat/tool_projection.rs');
+ for(const name of ['github_repository_activity','github_issue_create','github_branch_create','github_pr_create']){
+  assert.match(catalog,new RegExp(name));
+  assert.match(projection,new RegExp(name));
+ }
+ for(const name of ['activity','issue_create','branch_create','pr_create']){
+  assert.match(work,new RegExp('pub async fn '+name));
+ }
+ assert.match(work,/writable_repo/);
+ assert.match(work,/outcomeUnknown/);
+});

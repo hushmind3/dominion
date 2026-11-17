@@ -99,6 +99,22 @@ pub fn definitions() -> Vec<Value> {
             "values":json!({"type":"array","items":{"type":"array","items":{"type":["string","number","boolean"]}}}),
             "expectedValues":json!({"type":"array","description":"Exact prior values from google_sheets_read","items":{"type":"array"}})
         }),vec!["spreadsheetId","range","values","expectedValues"])),
+        tool("github_repository_activity", "List open GitHub issues and pull requests for the selected repository using the connected account.", object(json!({
+            "owner":text("Repository owner"),"repo":text("Repository name")
+        }),vec!["owner","repo"])),
+        tool("github_issue_create", "Create a GitHub issue after owner approval and verify it by fetching the remote issue.", object(json!({
+            "owner":text("Repository owner"),"repo":text("Repository name"),
+            "title":text("Issue title"),"body":text("Issue description")
+        }),vec!["owner","repo","title"])),
+        tool("github_branch_create", "Create a feature branch from the repository base SHA after approval; verify remote branch before code edits.", object(json!({
+            "owner":text("Repository owner"),"repo":text("Repository name"),
+            "newBranch":text("New branch name"),"baseBranch":text("Optional source branch")
+        }),vec!["owner","repo","newBranch"])),
+        tool("github_pr_create", "Create a pull request from a feature branch into the default or chosen base branch after owner approval, then verify it remotely.", object(json!({
+            "owner":text("Repository owner"),"repo":text("Repository name"),
+            "head":text("Feature branch"),"base":text("Optional base branch"),
+            "title":text("PR title"),"body":text("Description of changes and tests")
+        }),vec!["owner","repo","head","title"])),
         tool("github_repositories", "List repositories available to the connected GitHub account, with owner, repository, default branch and explicit write permission. Choose a repository before reading or editing; supports page and writable-only filtering.", object(json!({
             "query":text("Optional repository name fragment; filtered within this page"),
             "page":json!({"type":"integer","minimum":1,"maximum":10}),
@@ -137,6 +153,9 @@ pub fn requires_approval(name: &str) -> bool {
             | "terminal_exec"
             | "github_api"
             | "github_file_commit"
+            | "github_issue_create"
+            | "github_branch_create"
+            | "github_pr_create"
             | "google_docs_replace"
             | "google_sheets_update"
             | "browser_control"
@@ -148,7 +167,7 @@ pub fn requires_approval(name: &str) -> bool {
 pub fn parallel_read_only_tool(name:&str)->bool{
     matches!(name,"workspace_list"|"workspace_read"|"workspace_read_range"|
         "code_search"|"memory_search"|"web_search"|"http_fetch"|
-        "github_file_read"|"github_repositories"|
+        "github_file_read"|"github_repositories"|"github_repository_activity"|
         "google_drive_search"|"google_docs_read"|"google_sheets_read")
 }
 
@@ -414,6 +433,10 @@ pub async fn execute(
         "github_repositories" => crate::engine::github_work::repositories(ctx.state,args).await,
         "github_file_read" => crate::engine::github_work::read(ctx.state,args).await,
         "github_file_commit" => crate::engine::github_work::commit(ctx.state,args).await,
+        "github_repository_activity" => crate::engine::github_work::activity(ctx.state,args).await,
+        "github_issue_create" => crate::engine::github_work::issue_create(ctx.state,args).await,
+        "github_branch_create" => crate::engine::github_work::branch_create(ctx.state,args).await,
+        "github_pr_create" => crate::engine::github_work::pr_create(ctx.state,args).await,
         "google_drive_search" => crate::engine::google_work::drive_search(ctx.state,args).await,
         "google_docs_read" => crate::engine::google_work::docs_read(ctx.state,args).await,
         "google_docs_replace" => crate::engine::google_work::docs_replace(ctx.state,args).await,

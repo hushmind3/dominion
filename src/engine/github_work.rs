@@ -270,9 +270,177 @@ pub async fn commit(state:&AppState,args:&Value)->Result<Value,String>{
         "branch":target.branch,"path":target.path}))
 }
 
+// Typed GitHub actions keep repository selection, permissions, and API
+// receipts in Rust instead of making the model invent REST request bodies.
+fn repo_arg<'a>(args:&'a Value,key:&str)->Result<&'a str,String>{
+    let value=args[key].as_str().filter(|s|!s.is_empty()&&s.len()<=100)
+        .ok_or_else(||format!("GitHub {key} 값이 필요합니다."))?;
+    if !value.bytes().all(|c|c.is_ascii_alphanumeric()||matches!(c,b'_'|b'-'|b'.')){
+        return Err(format!("GitHub {key} 형식이 올바르지 않습니다."));
+    }
+    Ok(value)
+}
+fn branch_arg<'a>(args:&'a Value,key:&str)->Result<&'a str,String>{
+    let value=args[key].as_str().filter(|s|!s.is_empty()&&s.len()<=160)
+        .ok_or_else(||format!("GitHub {key} 브랜치가 필요합니다."))?;
+    if value.starts_with('/') || value.ends_with('/') || value.contains("..") ||
+        value.split('/').any(|p|p.is_empty() || p.starts_with('.') || p.ends_with('.')) ||
+        !value.bytes().all(|c|c.is_ascii_alphanumeric()||matches!(c,b'-'|b'_'|b'.'|b'/')){
+        return Err("GitHub 브랜치 이름이 올바르지 않습니다.".into());
+    }
+    Ok(value)
+}
+fn repo_endpoint(owner:&str,repo:&str,more:&[&str])->Result<reqwest::Url,String>{
+    let mut uri=reqwest::Url::parse("https://api.github.com/repos/")
+        .map_err(|e|e.to_string())?;
+    uri.path_segments_mut().map_err(|_|"GitHub 경로 오류")?
+        .push(owner).push(repo).extend(more.iter().copied());
+    Ok(uri)
+}
+async fn writable_repo(client:&reqwest::Client,token:&str,owner:&str,repo:&str)
+    ->Result<Value,String>{
+    let (code,data)=get_json(client,repo_endpoint(owner,repo,&[])?,token).await?;
+    if code>=400{return Err(http_error(code));}
+    if data["permissions"]["push"]!=true{
+        return Err("연결한 GitHub 계정에 이 저장소의 쓰기 권한이 없습니다.".into());
+    }
+    if data["archived"]==true || data["disabled"]==true{
+        return Err("보관 또는 비활성화된 저장소는 변경하지 않습니다.".into());
+    }
+    Ok(data)
+}
+fn list_url(owner:&str,repo:&str,resource:&str)->Result<reqwest::Url,String>{
+    let mut url=repo_endpoint(owner,repo,&[resource])?;
+    url.query_pairs_mut().append_pair("per_page","30").append_pair("state","open");
+    Ok(url)
+}
+pub async fn activity(state:&AppState,args:&Value)->Result<Value,String>{
+    let owner=repo_arg(args,"owner")?;
+    let repo=repo_arg(args,"repo")?;
+    let token=crate::engine::oauth::fresh_access_token(state,"github").await?;
+    let client=client()?;
+    let (issue_status,issue_data)=get_json(&client,list_url(owner,repo,"issues")?,&token).await?;
+    if issue_status>=400{return Err(http_error(issue_status));}
+    let (pr_status,pr_data)=get_json(&client,list_url(owner,repo,"pulls")?,&token).await?;
+    if pr_status>=400{return Err(http_error(pr_status));}
+    let issues=issue_data.as_array().ok_or("GitHub 이슈 응답 형식 오류")?
+        .iter().filter(|v|v.get("pull_request").is_none())
+        .map(|v|json!({"number":v["number"],"title":v["title"],
+            "state":v["state"],"url":v["html_url"]})).collect::<Vec<_>>();
+    let prs=pr_data.as_array().ok_or("GitHub PR 응답 형식 오류")?
+        .iter().map(|v|json!({"number":v["number"],"title":v["title"],
+            "head":v["head"]["ref"],"base":v["base"]["ref"],
+            "url":v["html_url"]})).collect::<Vec<_>>();
+    Ok(json!({"repository":format!("{owner}/{repo}"),
+        "issues":issues,"pullRequests":prs,"pageSize":30}))
+}
+async fn write_json(client:&reqwest::Client,token:&str,url:reqwest::Url,body:Value)
+    ->Result<Value,String>{
+    let response=client.post(url).bearer_auth(token)
+        .header("Accept","application/vnd.github+json")
+        .header("User-Agent","DOMINION")
+        .json(&body).send().await;
+    let response=match response{
+        Ok(r)=>r,
+        Err(e)=>return Ok(json!({"outcomeUnknown":true,"requiresReview":true,
+            "error":format!("원격 GitHub 쓰기 응답이 없습니다: {e}")}))
+    };
+    let code=response.status().as_u16();
+    if code>=500{
+        return Ok(json!({"outcomeUnknown":true,"requiresReview":true,
+            "status":code,"error":"GitHub 서버 오류. 원격 상태를 직접 다시 조회하세요."}));
+    }
+    if code>=400{return Err(http_error(code));}
+    response.json::<Value>().await.map_err(|_|"GitHub 쓰기 응답 해석 실패. 원격 결과를 재조회하세요.".into())
+}
+pub async fn issue_create(state:&AppState,args:&Value)->Result<Value,String>{
+    let owner=repo_arg(args,"owner")?;
+    let repo=repo_arg(args,"repo")?;
+    let title=args["title"].as_str().filter(|s|!s.trim().is_empty()&&s.len()<=240)
+        .ok_or("GitHub 이슈 제목은 240자 이내여야 합니다.")?;
+    let body=args["body"].as_str().unwrap_or("");
+    if body.len()>30_000{return Err("이슈 본문은 30000자 이내여야 합니다.".into());}
+    let token=crate::engine::oauth::fresh_access_token(state,"github").await?;
+    let client=client()?;
+    writable_repo(&client,&token,owner,repo).await?;
+    let result=write_json(&client,&token,repo_endpoint(owner,repo,&["issues"])?,
+        json!({"title":title,"body":body})).await?;
+    if result["outcomeUnknown"]==true{return Ok(result);}
+    let number=result["number"].as_u64().ok_or("이슈 번호가 없는 응답입니다.")?;
+    let (code,seen)=get_json(&client,repo_endpoint(owner,repo,&["issues",&number.to_string()])?,&token).await?;
+    let verified=code==200 && seen["title"]==title && seen["body"]==body;
+    Ok(json!({"repository":format!("{owner}/{repo}"),"number":number,
+        "url":result["html_url"],"verified":verified,
+        "outcomeUnknown":!verified,"requiresReview":!verified}))
+}
+pub async fn branch_create(state:&AppState,args:&Value)->Result<Value,String>{
+    let owner=repo_arg(args,"owner")?;
+    let repo=repo_arg(args,"repo")?;
+    let name=branch_arg(args,"newBranch")?;
+    let token=crate::engine::oauth::fresh_access_token(state,"github").await?;
+    let client=client()?;
+    let repo_info=writable_repo(&client,&token,owner,repo).await?;
+    let source=match args["baseBranch"].as_str(){
+        Some(_) => branch_arg(args,"baseBranch")?,
+        None=>repo_info["default_branch"].as_str().ok_or("저장소 기본 브랜치를 찾을 수 없습니다.")?
+    };
+    let mut base_ref=vec!["git","ref","heads"];
+    base_ref.extend(source.split('/'));
+    let (code,base)=get_json(&client,repo_endpoint(owner,repo,&base_ref)?,&token).await?;
+    if code>=400{return Err(http_error(code));}
+    let sha=base["object"]["sha"].as_str().ok_or("기준 브랜치 SHA가 없습니다.")?;
+    let payload=json!({"ref":format!("refs/heads/{name}"),"sha":sha});
+    let response=write_json(&client,&token,repo_endpoint(owner,repo,&["git","refs"])?,payload).await?;
+    if response["outcomeUnknown"]==true{return Ok(response);}
+    let mut branch_path=vec!["git","ref","heads"];
+    branch_path.extend(name.split('/'));
+    let observed=get_json(&client,repo_endpoint(owner,repo,&branch_path)?,&token).await;
+    let verified=observed.is_ok_and(|(code,data)|code==200 && data["object"]["sha"]==sha);
+    Ok(json!({"repository":format!("{owner}/{repo}"),"branch":name,
+        "baseBranch":source,"sha":sha,"verified":verified,
+        "outcomeUnknown":!verified,"requiresReview":!verified}))
+}
+pub async fn pr_create(state:&AppState,args:&Value)->Result<Value,String>{
+    let owner=repo_arg(args,"owner")?;
+    let repo=repo_arg(args,"repo")?;
+    let head=branch_arg(args,"head")?;
+    let title=args["title"].as_str().filter(|s|!s.trim().is_empty()&&s.len()<=240)
+        .ok_or("PR 제목은 240자 이내여야 합니다.")?;
+    let body=args["body"].as_str().unwrap_or("");
+    if body.len()>30_000{return Err("PR 본문은 30000자 이내여야 합니다.".into());}
+    let token=crate::engine::oauth::fresh_access_token(state,"github").await?;
+    let client=client()?;
+    let info=writable_repo(&client,&token,owner,repo).await?;
+    let base=match args["base"].as_str(){
+        Some(_)=>branch_arg(args,"base")?,
+        None=>info["default_branch"].as_str().ok_or("기본 브랜치를 찾지 못했습니다.")?
+    };
+    if head==base{return Err("같은 브랜치끼리 PR을 만들 수 없습니다.".into());}
+    let result=write_json(&client,&token,repo_endpoint(owner,repo,&["pulls"])?,
+        json!({"title":title,"body":body,"head":head,"base":base})).await?;
+    if result["outcomeUnknown"]==true{return Ok(result);}
+    let number=result["number"].as_u64().ok_or("PR 번호가 없는 응답입니다.")?;
+    let (code,seen)=get_json(&client,repo_endpoint(owner,repo,&["pulls",&number.to_string()])?,&token).await?;
+    let verified=code==200 && seen["title"]==title &&
+        seen["head"]["ref"]==head && seen["base"]["ref"]==base;
+    Ok(json!({"repository":format!("{owner}/{repo}"),"number":number,
+        "url":result["html_url"],"verified":verified,
+        "outcomeUnknown":!verified,"requiresReview":!verified}))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn typed_branch_and_repository_routing_rejects_host_or_path_injection(){
+        let params=json!({"owner":"team","repo":"project","head":"feature/test","newBranch":"topic/changes"});
+        assert_eq!(repo_arg(&params,"owner").unwrap(),"team");
+        assert_eq!(branch_arg(&params,"newBranch").unwrap(),"topic/changes");
+        let uri=repo_endpoint("team","project",&["pulls"]).unwrap();
+        assert_eq!(uri.host_str(),Some("api.github.com"));
+        assert!(branch_arg(&json!({"newBranch":"../main"}),"newBranch").is_err());
+        assert!(repo_arg(&json!({"owner":"bad/path"}),"owner").is_err());
+    }
     #[test]
     fn repository_discovery_uses_only_explicit_git_permissions_and_no_secrets(){
         let items=json!([

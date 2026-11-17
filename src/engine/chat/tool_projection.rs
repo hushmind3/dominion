@@ -111,7 +111,7 @@ pub(super) fn select_room_tools(
             &["브라우저", "browser", "클릭", "click"],
             &["browser_control"],
         ),
-        (&["github", "깃허브", "repository", "레포지토리", "리포지토리", "저장소"], &["github_repositories","github_file_read","github_file_commit","github_api"]),
+        (&["github", "깃허브", "repository", "레포지토리", "리포지토리", "저장소"], &["github_repositories","github_repository_activity","github_file_read","github_file_commit","github_branch_create","github_issue_create","github_pr_create","github_api"]),
         (&["구글", "google", "드라이브", "drive", "docs", "문서", "시트", "sheets", "스프레드시트"], &["google_drive_search","google_docs_read","google_docs_replace","google_sheets_read","google_sheets_update"]),
         (&["계정", "oauth", "account"], &["account_status"]),
     ];
@@ -206,7 +206,9 @@ pub(super) fn select_panel_tool_definitions(definitions:Vec<Value>,query:&str)->
             "memory_search"=>wants_memory,
             "skill_propose"=>wants_skill,
             "browser_control"=>wants_browser,
-            "github_api"|"github_repositories"|"github_file_read"|"github_file_commit"=>wants_github,
+            "github_api"|"github_repositories"|"github_repository_activity"|"github_file_read"|
+            "github_file_commit"|"github_issue_create"|"github_branch_create"|
+            "github_pr_create"=>wants_github,
             "account_status"=>wants_accounts || wants_google,
             "google_drive_search"|"google_docs_read"|"google_docs_replace"|
             "google_sheets_read"|"google_sheets_update"=>wants_google,
