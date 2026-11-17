@@ -81,7 +81,8 @@ fn next_drafts(pool:&[Value],previous:&Value,limit:usize)->(Vec<Value>,Vec<Strin
         for diverse_only in [true,false]{
             for draft in &ordered{
                 let Some(id)=draft["id"].as_str()else{continue};
-                if draft["status"]=="rejected"||picked.contains(id)
+                if matches!(draft["status"].as_str(),Some("rejected"|"deferred"))
+                    ||picked.contains(id)
                     ||(unseen_only&&seen.contains(id)){continue;}
                 let host=draft["evidence"].as_array().and_then(|a|a.first())
                     .and_then(|r|r["url"].as_str()).map(source_host).unwrap_or("");
@@ -262,7 +263,8 @@ fn candidates(state:&AppState)->Result<Vec<Value>,String>{
             .map(str::to_string).collect::<HashSet<_>>();
         for item in state.store.money_recent_records("money_candidate",100)?{
             let Some(id)=item["id"].as_str()else{continue};
-            if item["status"]=="rejected"||known.contains(id)
+            if matches!(item["status"].as_str(),Some("rejected"|"deferred"))
+                ||known.contains(id)
                 ||short(&item,"title",160).is_empty()
                 ||short(&item,"offer",300).is_empty(){continue}
             known.insert(id.to_string());
@@ -413,7 +415,7 @@ pub async fn find(State(state):State<AppState>,Json(body):Json<Value>)->Response
     let eligible=pool.into_iter().filter(|draft|{
         draft["id"].as_str().is_some_and(|id|
             state.store.get("money_candidate",id)
-                .is_none_or(|saved|saved["status"]!="rejected"))
+                .is_none_or(|saved|!matches!(saved["status"].as_str(),Some("rejected"|"deferred"))))
     }).collect::<Vec<_>>();
     // How many unseen drafts this click surfaces. The previous hard cap of
     // three made a 460-signal archive look empty.
@@ -427,7 +429,7 @@ pub async fn find(State(state):State<AppState>,Json(body):Json<Value>)->Response
             state.bus.record("money_candidate",&saved);
         }
         if let Some(saved)=state.store.get("money_candidate",id){
-            if saved["status"]!="rejected"{chosen.push(saved);}
+            if !matches!(saved["status"].as_str(),Some("rejected"|"deferred")){chosen.push(saved);}
         }
     }
     let ids=chosen.iter().filter_map(|x|x["id"].as_str()).map(str::to_string)

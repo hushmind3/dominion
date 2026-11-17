@@ -141,6 +141,37 @@ fn dedupe_titles(signals:Vec<Value>,history:&[Value])->Vec<Value>{
     }).collect()
 }
 
+/// Retain the metadata of stories filtered out by headline deduplication.
+/// A matching title is an observed *similarity*, not proof of one publisher.
+fn source_aliases(signals:&[Value],history:&[Value])->Vec<Value>{
+    let mut titles=std::collections::HashMap::<String,String>::new();
+    for old in history {
+        if let (Some(title),Some(id))=(old["title"].as_str(),old["id"].as_str()){
+            titles.entry(normalized_title(title)).or_insert_with(||id.to_string());
+        }
+    }
+    let mut aliases=Vec::new();
+    for signal in signals {
+        let (Some(title),Some(id),Some(url))=(
+            signal["title"].as_str(),signal["id"].as_str(),signal["url"].as_str()
+        )else{continue;};
+        let normalized=normalized_title(title);
+        if let Some(canonical)=titles.get(&normalized){
+            if canonical==id{continue;}
+            aliases.push(json!({
+                "id":id,"url":url,"sourceName":signal["sourceName"],
+                "publishedAt":signal["publishedAt"],"capturedAt":signal["capturedAt"],
+                "title":signal["title"],"canonicalSourceId":canonical,
+                "relationship":"similar_headline_unverified_syndication",
+                "verification":"not_independent_source_evidence"
+            }));
+        }else{
+            titles.insert(normalized,id.to_string());
+        }
+    }
+    aliases
+}
+
 /// Include freshly captured records first; matching must happen in this
 /// acquisition cycle rather than waiting for the next 30-minute RSS slot.
 fn research_window(new_signals:&[Value],history:&[Value])->Vec<Value>{
@@ -198,6 +229,9 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
     // New observations can connect with last month's old signals: perform
     // bounded cross-market matching after ingestion, without model tokens.
     let history=context.state.store.money_recent_signals(240).unwrap_or_default();
+    // Preserve origins filtered from analytic ranking; no extra LLM calls.
+    let aliases=source_aliases(&signals,&history);
+    let suppressed=context.state.store.money_record_source_aliases(&aliases)?;
     let signals=dedupe_titles(signals,&history);
     let found=signals.len();
     // All providers failing is a real acquisition failure. Successfully
@@ -217,7 +251,8 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
     };
     let summary=json!({"id":format!("market:{}",context.job_id),
         "jobId":context.job_id,"found":found,"new":added,"newCrossMarketQuestions":linked,
-        "scrapedPages":scraped,"sources":reports,"capturedAt":chrono::Utc::now().to_rfc3339()});
+        "scrapedPages":scraped,"relatedHeadlinesPreserved":suppressed,
+        "sources":reports,"capturedAt":chrono::Utc::now().to_rfc3339()});
     context.state.store.put("money_ingest_report",&summary)
         .ok_or("시장 수집 기록을 저장하지 못했습니다.")?;
     context.state.bus.record("money_market",&summary);
@@ -259,6 +294,22 @@ mod tests{
         assert_eq!(kept.len(),1);
         assert_eq!(kept[0]["title"],"New public buyer tender");
     }
+    #[test] fn suppressed_headline_retains_independent_url_and_source_history(){
+        let original=json!({"id":"s1","title":"Factory procurement update",
+            "url":"https://a.example/story","sourceName":"A"});
+        let mirrored=json!({"id":"s2","title":"Factory procurement update",
+            "url":"https://b.example/story","sourceName":"B",
+            "publishedAt":"2026-11-17T00:00:00Z"});
+        let links=source_aliases(&[mirrored],&[original]);
+        assert_eq!(links.len(),1);
+        assert_eq!(links[0]["canonicalSourceId"],"s1");
+        let store=crate::db::Store::open(std::path::Path::new(":memory:")).unwrap();
+        assert_eq!(store.money_record_source_aliases(&links).unwrap(),1);
+        assert_eq!(store.money_record_source_aliases(&links).unwrap(),0);
+        let saved=store.money_source_alias_by_url("https://b.example/story")
+            .unwrap().unwrap();
+        assert_eq!(saved["verification"],"not_independent_source_evidence");
+    }
     #[test] fn existing_headline_is_enriched_without_accepting_syndicated_duplicate(){
         let headline=json!({"id":"source-1","title":"Factory procurement price drop",
             "articleExcerpt":"","contentStatus":"headline_observed"});
@@ -284,6 +335,14 @@ mod tests{
         refreshed["capturedAt"]=json!("2026-11-17T00:10:00Z");
         assert_eq!(store.money_ingest_signals(&[refreshed]).unwrap(),0);
         assert_eq!(store.get("money_signal","source-1").unwrap()["contentStatus"],"page_fetched");
+        let revisions=store.money_source_revisions("source-1",10).unwrap();
+        assert_eq!(revisions.len(),2);
+        assert!(revisions.iter().any(|r|r["content"]["articleExcerpt"]==""));
+        assert!(revisions.iter().any(|r|r["reason"]=="page_text_enrichment"));
+        // Repeated full-body crawl creates no new version.
+        let current=store.get("money_signal","source-1").unwrap();
+        store.money_ingest_signals(&[current]).unwrap();
+        assert_eq!(store.money_source_revisions("source-1",10).unwrap().len(),2);
     }
     #[test] fn new_buyer_document_joins_existing_supply_in_same_cycle(){
         let supplier=json!({"id":"s","sourceName":"hardware source",

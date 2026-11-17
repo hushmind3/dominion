@@ -46,6 +46,12 @@ CREATE INDEX IF NOT EXISTS idx_money_signal_captured
     ON records(json_extract(data,'$.capturedAt')) WHERE kind='money_signal';
 CREATE INDEX IF NOT EXISTS idx_money_signal_source_url
     ON records(json_extract(data,'$.url')) WHERE kind='money_signal';
+CREATE INDEX IF NOT EXISTS idx_money_source_alias_url
+    ON records(json_extract(data,'$.url'))
+    WHERE kind='money_source_alias';
+CREATE INDEX IF NOT EXISTS idx_money_source_alias_canonical
+    ON records(json_extract(data,'$.canonicalSourceId'))
+    WHERE kind='money_source_alias';
 CREATE VIRTUAL TABLE IF NOT EXISTS money_fact_fts
     USING fts5(id UNINDEXED, claim, tokenize='trigram');
 CREATE TABLE IF NOT EXISTS money_fact_term(

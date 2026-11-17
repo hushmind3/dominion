@@ -1,6 +1,35 @@
 //! Money SQLite extension. Operates on sub3's existing WAL-backed Store,
 //! preserving durable checkpoints, audit and shared transaction lock.
 use super::*;
+use sha2::{Digest,Sha256};
+
+/// Snapshot all captured source content exactly as archived; only its content
+/// hash determines version identity. A repeated RSS scrape creates no revision.
+fn preserve_source_revision_tx(
+    tx:&rusqlite::Transaction<'_>,signal:&Value,reason:&str,
+)->Result<(),String>{
+    let source_id=signal["id"].as_str().filter(|s|!s.is_empty())
+        .ok_or("source revision ID missing")?;
+    let content=json!({
+        "title":signal["title"],"description":signal["description"],
+        "articleExcerpt":signal["articleExcerpt"],"url":signal["url"],
+        "sourceName":signal["sourceName"],"publishedAt":signal["publishedAt"],
+        "contentStatus":signal["contentStatus"]
+    });
+    let checksum=format!("{:x}",Sha256::digest(content.to_string().as_bytes()));
+    let revision=json!({
+        "id":format!("{source_id}:{checksum}"),"sourceId":source_id,
+        "sourceUrl":signal["url"],"contentHash":checksum,
+        "originalPublishedAt":signal["publishedAt"],
+        "capturedAt":signal["capturedAt"],"reason":reason,
+        "content":content,"verification":"archived_source_not_independent_confirmation"
+    });
+    tx.execute(
+        "INSERT OR IGNORE INTO records(kind,id,data) VALUES('money_source_revision',?1,?2)",
+        params![revision["id"].as_str().unwrap_or(""),revision.to_string()],
+    ).map_err(|e|e.to_string())?;
+    Ok(())
+}
 fn money_index_terms(text:&str)->Vec<String>{
     let mut seen=std::collections::HashSet::new();
     let mut output=Vec::new();
@@ -305,11 +334,13 @@ impl Store {
                 let new_len=signal["articleExcerpt"].as_str().unwrap_or("").chars().count();
                 // Preserve original capture time; never overwrite an existing body.
                 if old_len<=100 && new_len>100 {
+                    preserve_source_revision_tx(&tx,&stored,"legacy_or_initial_headline")?;
                     stored["articleExcerpt"]=signal["articleExcerpt"].clone();
                     stored["contentStatus"]=json!("page_fetched");
                     stored["lastFetchedAt"]=signal["capturedAt"].clone();
                     stored["foldStatus"]=json!("new");
                     upsert_tx(&tx,"money_signal",&stored)?;
+                    preserve_source_revision_tx(&tx,&stored,"page_text_enrichment")?;
                     refresh_money_source_fact_tx(&tx,&money_signal_fact(&stored))?;
                 }
                 continue;
@@ -317,6 +348,7 @@ impl Store {
             let mut signal=signal.clone();
             signal["foldStatus"]=json!("new");
             upsert_tx(&tx,"money_signal",&signal)?;
+            preserve_source_revision_tx(&tx,&signal,"initial_capture")?;
             persist_money_fact_tx(&tx,&money_signal_fact(&signal))?;
             for edge in crate::engine::money_intelligence::signal_edges(&signal){
                 let edge_id=edge["id"].as_str().ok_or("market graph id missing")?;
@@ -327,6 +359,31 @@ impl Store {
         }
         tx.commit().map_err(|e|e.to_string())?;
         Ok(added)
+    }
+
+    /// Suppressed headline twins retain source URL, publication date, label and
+    /// canonical reference. Never interpret this as verified syndication.
+    pub fn money_record_source_aliases(&self,aliases:&[Value])->Result<usize,String>{
+        let mut conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let tx=conn.transaction().map_err(|e|e.to_string())?;
+        let mut inserted=0;
+        for alias in aliases{
+            let id=alias["id"].as_str().ok_or("source alias ID missing")?;
+            inserted+=tx.execute(
+                "INSERT OR IGNORE INTO records(kind,id,data)
+                 VALUES('money_source_alias',?1,?2)",
+                params![id,alias.to_string()],
+            ).map_err(|e|e.to_string())?;
+        }
+        tx.commit().map_err(|e|e.to_string())?;
+        Ok(inserted)
+    }
+    pub fn money_source_alias_by_url(&self,url:&str)->Result<Option<Value>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        conn.query_row(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='money_source_alias' AND json_extract(data,'$.url')=?1 LIMIT 1",
+            [url],record_from_row).optional().map_err(|e|e.to_string())
     }
 
     /// Complete commercial ledger from SQLite, independent of dashboard

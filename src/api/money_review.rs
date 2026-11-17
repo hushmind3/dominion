@@ -64,7 +64,16 @@ pub async fn source(
     }
     let stored=match state.store.money_signal_by_url(url){
         Ok(Some(v))=>v,
-        Ok(None)=>return fail(StatusCode::NOT_FOUND,"해당 URL의 원문은 아직 저장되지 않았습니다."),
+        Ok(None)=>{
+            let alias=match state.store.money_source_alias_by_url(url){
+                Ok(Some(v))=>v,
+                Ok(None)=>return fail(StatusCode::NOT_FOUND,"해당 URL의 원문은 아직 저장되지 않았습니다."),
+                Err(e)=>return fail(StatusCode::INTERNAL_SERVER_ERROR,&e)
+            };
+            return Json(json!({"source":alias,"revisions":[],
+                "sourceStatus":"similar_headline_archived_metadata_only",
+                "modelCalls":0})).into_response()
+        },
         Err(e)=>return fail(StatusCode::INTERNAL_SERVER_ERROR,&e)
     };
     let revisions=match state.store.money_source_revisions(
