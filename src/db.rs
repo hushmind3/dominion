@@ -222,16 +222,58 @@ impl Store {
 
     /// Queue worker read: the indexed active subset, not every historical
     /// completed/cancelled/failed job. Old SQLite data remains untouched.
-    pub fn active_jobs(&self)->Vec<Value>{
-        let conn=self.conn.lock().unwrap();
-        let mut stmt=match conn.prepare(
+    pub fn active_jobs(&self)->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
             "SELECT data,id,created_at,updated_at FROM records
-             WHERE kind='job' AND json_extract(data,'$.status') IN ('queued','running')"
-        ){Ok(s)=>s,Err(_)=>return Vec::new()};
-        let rows=match stmt.query_map([],record_from_row){
-            Ok(r)=>r,Err(_)=>return Vec::new(),
+             WHERE kind='job' AND json_extract(data,'$.status') IN ('queued','running')
+             ORDER BY json_extract(data,'$.queuedAt'),id"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([],record_from_row).map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    /// Query running checkpoints only; historical records remain untouched.
+    pub fn running_recovery_records(&self,kind:&str)->Result<Vec<Value>,String>{
+        let sql=match kind{
+            "execution"=>"SELECT data,id,created_at,updated_at FROM records
+                WHERE kind='execution' AND json_extract(data,'$.status')='running'",
+            "execution_operation"=>"SELECT data,id,created_at,updated_at FROM records
+                WHERE kind='execution_operation' AND json_extract(data,'$.status')='running'",
+            _=>return Err(format!("unsupported recovery kind: {kind}")),
         };
-        rows.filter_map(Result::ok).collect()
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(sql).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([],record_from_row).map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    /// A tool's sessionId can be absent: inherit it from the owning execution.
+    /// Uncertain external effects must block unsafe replay after restart.
+    pub fn uncertain_effect_sessions(&self)
+        ->Result<std::collections::HashSet<String>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "WITH uncertain AS (
+                SELECT data FROM records WHERE kind='execution_operation'
+                  AND (json_extract(data,'$.outcomeUnknown')=1
+                    OR json_extract(data,'$.status')='running'
+                    OR json_extract(data,'$.effectState') IN
+                        ('prepared','started','effect_unknown','needs_review'))
+             )
+             SELECT session FROM (
+                SELECT json_extract(data,'$.sessionId') AS session FROM uncertain
+                UNION
+                SELECT json_extract(ex.data,'$.sessionId') AS session
+                FROM uncertain AS op
+                JOIN records AS ex ON ex.kind='execution'
+                    AND ex.id=json_extract(op.data,'$.runId')
+             ) WHERE session IS NOT NULL AND session!=''"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([],|row|row.get::<_,String>(0))
+            .map_err(|e|e.to_string())?;
+        rows.collect::<Result<std::collections::HashSet<_>,_>>()
+            .map_err(|e|e.to_string())
     }
 
     /// Main Home UI polls per-job progress frequently. Read only executions
@@ -1722,6 +1764,38 @@ mod tests {
         store.put("memory", &json!({"id":"m2","text":"b"}));
         let records = store.try_all("memory").unwrap();
         assert_eq!(records.len(), 2);
+    }
+
+    #[test]
+    fn recovery_queries_keep_unknown_tool_effects_scoped_to_owning_session(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        store.put("job",&json!({"id":"live","status":"running","queuedAt":"2026-11-17T00:00:00Z"}));
+        store.put("job",&json!({"id":"done","status":"completed"}));
+        assert_eq!(store.active_jobs().unwrap().len(),1);
+        store.put("execution",&json!({"id":"run-a","sessionId":"s-a","status":"interrupted"}));
+        store.put("execution",&json!({"id":"run-b","sessionId":"s-b","status":"running"}));
+        store.put("execution_operation",&json!({"id":"tool-a","runId":"run-a",
+            "status":"interrupted","outcomeUnknown":true}));
+        store.put("execution_operation",&json!({"id":"tool-b","sessionId":"s-b",
+            "status":"running","effectState":"started"}));
+        store.put("execution_operation",&json!({"id":"safe","sessionId":"s-safe",
+            "status":"completed","effectState":"committed","outcomeUnknown":false}));
+        let sessions=store.uncertain_effect_sessions().unwrap();
+        assert!(sessions.contains("s-a"));
+        assert!(sessions.contains("s-b"));
+        assert!(!sessions.contains("s-safe"));
+        assert_eq!(store.running_recovery_records("execution").unwrap().len(),1);
+        assert_eq!(store.running_recovery_records("execution_operation").unwrap().len(),1);
+        assert!(store.running_recovery_records("job").is_err());
+    }
+
+    #[test]
+    fn recovery_queue_read_does_not_treat_corrupt_json_as_idle(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        store.conn.lock().unwrap().execute(
+            "INSERT INTO records(kind,id,data) VALUES('job','damaged','{bad')",[]
+        ).unwrap();
+        assert!(store.active_jobs().is_err());
     }
 
     #[test]

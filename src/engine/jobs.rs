@@ -223,7 +223,22 @@ pub fn cancel_job(state:&AppState,id:&str)->Result<Value,CancelJobError>{
 /// Recovers work left behind by a crash: running jobs are re-queued (unless
 /// they already exhausted retries) and running executions become interrupted.
 pub fn recover(state: &AppState) {
-    for job in state.store.all("job") {
+    let jobs=match state.store.active_jobs(){
+        Ok(jobs)=>jobs,
+        Err(error)=>{
+            state.store.audit("recovery.jobs_read_failed",json!({"error":error}));
+            return;
+        }
+    };
+    let uncertain_sessions=match state.store.uncertain_effect_sessions(){
+        Ok(sessions)=>Some(sessions),
+        Err(error)=>{
+            state.store.audit("recovery.uncertain_effects_read_failed",
+                json!({"error":error}));
+            None
+        }
+    };
+    for job in jobs {
         if job.get("status").and_then(|value| value.as_str()) != Some("running") {
             continue;
         }
@@ -255,23 +270,9 @@ pub fn recover(state: &AppState) {
         let job_session = job["sessionId"]
             .as_str()
             .or_else(|| job.pointer("/input/sessionId").and_then(Value::as_str));
-        let unknown_external_result = job_session.is_some_and(|session| {
-            state.store.all("execution_operation").iter().any(|operation| {
-                // Crash recovery previously inspected outcomeUnknown BEFORE
-                // marking unfinished operations unknown. This could requeue
-                // a job even while its pre-crash tool was still "running".
-                let unsettled=operation["outcomeUnknown"]==true
-                    || operation["status"]=="running"
-                    || matches!(operation["effectState"].as_str(),
-                        Some("prepared"|"started"|"effect_unknown"|"needs_review"));
-                unsettled && (
-                    operation["sessionId"].as_str()==Some(session)
-                    || operation["runId"].as_str()
-                        .and_then(|run_id|state.store.get("execution",run_id))
-                        .is_some_and(|run|run["sessionId"].as_str()==Some(session))
-                )
-            })
-        });
+        let unknown_external_result=uncertain_sessions.as_ref().is_none_or(
+            |sessions|job_session.is_some_and(|session|sessions.contains(session))
+        );
         let uncertain = flagged || unknown_external_result;
         updated["status"] = json!(if attempts >= 3 || uncertain {
             "needs_review"
@@ -296,8 +297,14 @@ pub fn recover(state: &AppState) {
             json!({ "jobId": job.get("id"), "attempts": attempts }),
         );
     }
-    for execution in state.store.all("execution") {
-        if execution.get("status").and_then(|value| value.as_str()) == Some("running") {
+    let running_executions=match state.store.running_recovery_records("execution"){
+        Ok(rows)=>rows,
+        Err(error)=>{
+            state.store.audit("recovery.executions_read_failed",json!({"error":error}));
+            Vec::new()
+        }
+    };
+    for execution in running_executions {
             let mut updated = execution.clone();
             updated["status"] = json!("interrupted");
             updated["phase"] = json!("interrupted");
@@ -306,87 +313,101 @@ pub fn recover(state: &AppState) {
             updated["reason"] = json!("백엔드가 재시작되어 실행이 중단되었습니다.");
             updated["finishedAt"] = json!(chrono::Utc::now().to_rfc3339());
             state.store.put("execution", &updated);
-        }
     }
-    for mut operation in state.store.all("execution_operation") {
-        if operation["status"] == "running" {
+    let running_operations=match state.store.running_recovery_records("execution_operation"){
+        Ok(rows)=>rows,
+        Err(error)=>{
+            state.store.audit("recovery.operations_read_failed",json!({"error":error}));
+            Vec::new()
+        }
+    };
+    for mut operation in running_operations {
             operation["status"] = json!("interrupted");
             operation["outcomeUnknown"] = json!(true);
             operation["phase"] = json!("interrupted");
             operation["reason"] = json!("백엔드가 재시작되어 도구 결과를 확정할 수 없습니다.");
             operation["finishedAt"] = json!(chrono::Utc::now().to_rfc3339());
             state.store.put("execution_operation", &operation);
-        }
     }
     // After interrupted executions have been recorded, expire durable approvals
     // that outlived their live waiter before wake decisions are made.
     crate::engine::chat::expire_stale_approvals(state);
 }
 
-pub fn start(state: AppState) {
+fn queued_job_event(event:&Value)->bool{
+    event["type"]=="record" && event["kind"]=="job"
+        && event["record"]["status"]=="queued"
+}
+
+async fn wait_dispatch_event(
+    events:&mut tokio::sync::broadcast::Receiver<Value>,
+    finished:&tokio::sync::Notify,
+    fallback:&mut tokio::time::Interval,
+)->bool{
+    loop{
+        tokio::select!{
+            _=finished.notified()=>return true,
+            _=fallback.tick()=>return true,
+            event=events.recv()=>match event{
+                Ok(value) if queued_job_event(&value)=>return true,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>return true,
+                Err(tokio::sync::broadcast::error::RecvError::Closed)=>return false,
+                _=>{}
+            }
+        }
+    }
+}
+
+/// One event-driven durable dispatcher with an existing worker-count bound.
+pub fn start(state:AppState){
     crate::engine::channel_adapter::start(state.clone());
     crate::engine::money::tick(&state);
-    let workers = std::env::var("DOMINION_JOB_WORKERS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(4)
-        .clamp(1, 16);
-    for _ in 0..workers {
-        let worker_state = state.clone();
-        tokio::spawn(async move {
-            let mut receiver=worker_state.bus.subscribe();
-            loop {
-                match next_queued(&worker_state) {
-                    Some(job)=>run_job(worker_state.clone(),job).await,
-                    None=>{
-                        // Subscribe before first scan (below), so an enqueue
-                        // committed between scan and sleep cannot be missed.
-                        // Backstop catches delayed durable jobs and external
-                        // writers without continuous full-record polling.
-                        let timeout=tokio::time::sleep(Duration::from_secs(5));
-                        tokio::pin!(timeout);
-                        loop {
-                            tokio::select!{
-                                _=&mut timeout=>break,
-                                event=receiver.recv()=>{
-                                    match event {
-                                        Ok(event) if event["type"]=="record"
-                                            && event["kind"]=="job"
-                                            && event["record"]["status"]=="queued"=>break,
-                                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>break,
-                                        Err(tokio::sync::broadcast::error::RecvError::Closed)=>{
-                                            timeout.await;
-                                            break;
-                                        },
-                                        _=>{}
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+    let workers=std::env::var("DOMINION_JOB_WORKERS").ok()
+        .and_then(|v|v.parse::<usize>().ok()).unwrap_or(4).clamp(1,16);
+    let capacity=Arc::new(tokio::sync::Semaphore::new(workers));
+    let finished=Arc::new(tokio::sync::Notify::new());
+    let mut events=state.bus.subscribe();
+    let mut fallback=tokio::time::interval(Duration::from_secs(10));
+    fallback.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let dispatch_state=state.clone();
+    tokio::spawn(async move{
+        loop{
+            while let Ok(permit)=capacity.clone().try_acquire_owned(){
+                let Some(job)=next_queued(&dispatch_state)else{
+                    drop(permit);
+                    break;
+                };
+                let worker_state=dispatch_state.clone();
+                let wake=finished.clone();
+                tokio::spawn(async move{
+                    run_job(worker_state,job).await;
+                    drop(permit);
+                    wake.notify_one();
+                });
             }
-        });
-    }
-
-    tokio::spawn(async move {
-        loop {
+            if !wait_dispatch_event(&mut events,&finished,&mut fallback).await{
+                break;
+            }
+        }
+    });
+    tokio::spawn(async move{
+        loop{
             tokio::time::sleep(Duration::from_secs(30)).await;
-            // A process restart removes in-memory approval timers. The persisted
-            // deadline still expires automatically during normal operation.
             crate::engine::chat::expire_stale_approvals(&state);
-            // Share this timer with approval maintenance, not a parallel daemon.
             crate::engine::money::tick(&state);
         }
     });
-
-    // No background learning/RSI/distillation sweeps. User-directed code
-    // improvement and explicit corrective memory remain available through
-    // their request-driven paths; never consume idle resources by default.
+    // No background model learning/RSI sweeps outside user-initiated work.
 }
 
 fn next_queued(state: &AppState) -> Option<Value> {
-    let jobs = state.store.active_jobs();
+    let jobs=match state.store.active_jobs(){
+        Ok(jobs)=>jobs,
+        Err(error)=>{
+            state.store.audit("job.queue_read_failed",json!({"error":error}));
+            return None;
+        }
+    };
     let learning_running = jobs
         .iter()
         .any(|job| job["status"] == "running" && job["kind"] == "learn");
@@ -847,6 +868,31 @@ mod tests {
             Err(SteeringError::Conflict(_))));
         assert_eq!(state.store.get("job",id).unwrap()["steering"].as_array().unwrap().len(),1);
     }
+    #[test]
+    fn dispatcher_wakes_only_for_queued_job_record(){
+        assert!(queued_job_event(&json!({"type":"record","kind":"job",
+            "record":{"status":"queued"}})));
+        assert!(!queued_job_event(&json!({"type":"record","kind":"job",
+            "record":{"status":"running"}})));
+        assert!(!queued_job_event(&json!({"type":"record","kind":"money_signal",
+            "record":{"status":"queued"}})));
+    }
+
+    #[test]
+    fn recovery_reconciles_operation_without_explicit_session_id(){
+        let state=temp_state();
+        state.store.put("job",&json!({"id":"recovery-owner","kind":"prompt",
+            "status":"running","attempts":1,
+            "input":{"sessionId":"s-owner","prompt":"external action"}}));
+        state.store.put("execution",&json!({"id":"owner-run",
+            "status":"interrupted","sessionId":"s-owner"}));
+        state.store.put("execution_operation",&json!({"id":"owner-tool","runId":"owner-run",
+            "status":"interrupted","outcomeUnknown":true}));
+        recover(&state);
+        assert_eq!(state.store.get("job","recovery-owner").unwrap()["status"],
+            "needs_review");
+    }
+
     #[test]
     fn enqueue_creates_a_queued_job() {
         let state = temp_state();

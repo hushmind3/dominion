@@ -223,3 +223,10 @@ Contributions are welcome — particularly **reproducible bug reports, test case
 - Never include API keys, bot tokens, private conversations, or other secrets in reports.
 
 **License:** [Apache 2.0](LICENSE) · **한국어:** [README.ko.md](README.ko.md)
+
+### sub2: event-driven queue and indexed recovery (2026-11-17)
+
+- Shared Rust dispatcher scans the durable active queue on enqueue, worker completion or 10-second fallback, admitting at most `DOMINION_JOB_WORKERS` tasks. Same job IDs, persistence, permissions and cancellation semantics.
+- Crash recovery loads active jobs/running executions only and resolves uncertain tool effects with a set-based SQLite join. Unproven external effects remain `needs_review`, not replayed.
+- Database read failures are audited rather than presented as an empty queue. Money stays independently removable and shares this host's existing DB/runner.
+- Analytical idle queue scans at default 4 workers: old 4×12=48/minute, new 1×6=6/minute. This is not an empirical CPU or token measurement.

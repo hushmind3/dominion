@@ -49,6 +49,11 @@ jobs:
       - name: Shared SDK contract tests
         if: matrix.os == 'macos-latest'
         run: node --test sdk/typescript/tests/sdk.test.mjs
+      - name: Job scheduler / restart recovery regressions
+        if: matrix.os == 'macos-latest'
+        run: |
+          cargo test --lib jobs::tests
+          cargo test --lib db::tests::recovery
       - name: Money regression tests
         if: matrix.os == 'macos-latest'
         run: cargo test --lib money
