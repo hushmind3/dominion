@@ -217,7 +217,7 @@ pub(super) async fn attempt_model_adaptation(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let selection_context = json!({
+    let mut selection_context = json!({
         "before": before_observation,
         "result": before_observation,
         "after": Value::Null,
@@ -236,7 +236,14 @@ pub(super) async fn attempt_model_adaptation(
     // successful task. Stop when observations no longer have discriminating
     // value, not after an arbitrary number of pre-selected probes.
     let mut diagnostic_evidence: Vec<Value> = Vec::new();
-    let mut attempted: Vec<String> = Vec::new();
+    let mut attempted: Vec<String> = state.store.get("execution", execution_id)
+        .and_then(|execution| execution["adaptationDiagnosticHistory"].as_array().cloned())
+        .unwrap_or_default().iter().filter(|entry| {
+            entry["failureSignature"].as_str() == Some(failure_signature.as_str())
+                && entry["environmentFingerprint"].as_str()
+                    == Some(environment_fingerprint.as_str())
+        }).filter_map(|entry| entry["signature"].as_str().map(str::to_string))
+        .collect();
     let mut causal_refuted = refuted.clone();
     const MAX_DIAGNOSTICS_PER_FAILURE: usize = 4;
     while diagnostic_evidence.len() < MAX_DIAGNOSTICS_PER_FAILURE {
@@ -272,9 +279,15 @@ pub(super) async fn attempt_model_adaptation(
             "adaptation_diagnostic", None, None, None
         ).await?;
         let operation_id = format!("{execution_id}:{round}:0:{}", call.id);
-        let evidence = crate::engine::adaptation::diagnostics::observe(
+        let mut evidence = crate::engine::adaptation::diagnostics::observe(
             &diagnostic, &observation, ok, &operation_id
         );
+        evidence["failureSignature"] = json!(failure_signature);
+        evidence["environmentFingerprint"] = json!(environment_fingerprint);
+        if evidence["verdict"] != "unknown" {
+            selection_context["result"] = observation.clone();
+            selection_context["after"] = observation.clone();
+        }
         // A crash after the observation must not erase which hypotheses were
         // actually tested. The complete result remains in execution_operation.
         let mut stored = state.store.get("execution", execution_id)
@@ -290,11 +303,10 @@ pub(super) async fn attempt_model_adaptation(
             .ok_or("진단 기록을 영속화하지 못했습니다.")?;
         state.bus.record("execution", &saved);
         diagnostic_evidence.push(evidence);
-        causal_refuted = refuted.iter().chain(
-            crate::engine::adaptation::diagnostics::contradicted(
-                &diagnostic_evidence
-            ).iter()
-        ).cloned().collect();
+        let newly_contradicted =
+            crate::engine::adaptation::diagnostics::contradicted(&diagnostic_evidence);
+        causal_refuted = refuted.iter().chain(newly_contradicted.iter())
+            .cloned().collect();
     }
     adaptation["diagnosticEvidence"] = json!(diagnostic_evidence);
     let observations = diagnostic_evidence.iter().any(|item| {
@@ -329,8 +341,19 @@ pub(super) async fn attempt_model_adaptation(
                 state, &provider_id, &model, compose_system,
                 &compose_prompt, session_id,
             ),
-        ).await??;
-        if let Some(composed) = crate::engine::adaptation_loop::parse_adaptation(&proposed)
+        ).await;
+        let proposed = match proposed {
+            Ok(Ok(text)) => Some(text),
+            Ok(Err(error)) | Err(error) => {
+                if state.is_cancelled(session_id) {
+                    return Err("실행이 중단되었습니다.".into());
+                }
+                adaptation["compositionError"] = json!(error.to_string());
+                None
+            }
+        };
+        if let Some(composed) = proposed.as_deref()
+            .and_then(crate::engine::adaptation_loop::parse_adaptation)
             .filter(|value| crate::engine::adaptation_loop::validate_adaptation(value).is_ok())
         {
             let old_ids = adaptation["hypotheses"].as_array().into_iter().flatten()

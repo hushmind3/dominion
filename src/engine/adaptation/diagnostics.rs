@@ -13,14 +13,23 @@ pub fn signature(tool: &str, inputs: &Value) -> String {
 
 fn independent_read(candidate: &Value) -> bool {
     let Some(tool) = candidate["tool"].as_str() else { return false; };
-    if !matches!(tool, "workspace_read" | "workspace_read_range" | "workspace_list"
-        | "file_read" | "file_list") {
+    if !matches!(tool, "workspace_read" | "workspace_read_range" | "workspace_list") {
         return false;
     }
     let Some(inputs) = candidate["inputs"].as_object() else { return false; };
     if inputs.values().any(|value| value.get("from").is_some()) {
         return false;
     }
+    // Autonomous diagnostics must not wander into arbitrary files or
+    // credentials. Workspace tools already enforce their sandbox boundary.
+    if !inputs.get("path").and_then(Value::as_str).is_some_and(|path| {
+        !path.is_empty()
+            && !path.starts_with('/')
+            && !path.contains("..")
+            && !path.split(['/', '\\']).any(|part| matches!(part,
+                ".env" | ".ssh" | ".git" | "secrets" | "credentials"
+                | "id_rsa" | "id_ed25519"))
+    }) { return false; }
     if !crate::engine::effect::is_observation_only(tool, &candidate["inputs"]) {
         return false;
     }
@@ -43,7 +52,7 @@ pub fn choose(
 ) -> Option<Value> {
     let active: HashSet<String> = adaptation["hypotheses"].as_array()?
         .iter().filter_map(|item| item["id"].as_str())
-        .filter(|id| !refuted.iter().any(|r| r == id))
+        .filter(|id| !refuted.iter().any(|r| r.as_str() == *id))
         .map(str::to_string).collect();
     if active.len() < 2 { return None; }
     let failed = signature(failed_tool, failed_inputs);
@@ -74,6 +83,7 @@ pub fn choose(
                 .filter(|value| value.is_finite())
                 .unwrap_or(1.0).clamp(0.0, 4.0);
             let score = gain / (1.0 + cost * 0.20);
+            if score < 0.10 { return None; }
             let mut chosen = candidate.clone();
             chosen["informationGain"] = json!(gain);
             chosen["selectionScore"] = json!(score);
@@ -87,7 +97,9 @@ pub fn choose(
 /// An unknown predicate or failed tool never refutes a hypothesis. Contradicted
 /// predictions are evidence AGAINST a proposal, not proof of a physical cause.
 pub fn observe(candidate: &Value, result: &Value, ok: bool, operation_id: &str) -> Value {
-    let verdict = if ok {
+    let has_observable_path = candidate["predicate"]["path"].as_str()
+        .is_some_and(|path| result.pointer(path).is_some());
+    let verdict = if ok && has_observable_path {
         predicate_verdict(&candidate["predicate"], &json!({"result": result}))
             .unwrap_or(PredicateVerdict::Unknown)
     } else {
@@ -111,6 +123,8 @@ pub fn observe(candidate: &Value, result: &Value, ok: bool, operation_id: &str) 
     let summary = result.to_string().chars().take(1400).collect::<String>();
     json!({
         "diagnosticId": candidate["id"], "tool": candidate["tool"],
+        "predicate": candidate["predicate"],
+        "predictions": candidate["predictions"],
         "signature": signature(candidate["tool"].as_str().unwrap_or(""), &candidate["inputs"]),
         "operationId": operation_id,
         "resultDigest": crate::engine::memory::stable_id(&[&result.to_string()]),
@@ -209,6 +223,10 @@ mod tests {
         assert!(choose(&data,&[],&[],"a",&json!({})).is_none());
         data["diagnostics"][1]["tool"] = json!("workspace_read");
         data["diagnostics"][1]["inputs"] = json!({"path":{"from":"unverified"}});
+        assert!(choose(&data,&[],&[],"a",&json!({})).is_none());
+        data["diagnostics"][1]["inputs"] = json!({"path":"../.ssh/id_rsa"});
+        assert!(choose(&data,&[],&[],"a",&json!({})).is_none());
+        data["diagnostics"][1]["inputs"] = json!({"path":"/etc/passwd"});
         assert!(choose(&data,&[],&[],"a",&json!({})).is_none());
     }
 }
