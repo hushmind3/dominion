@@ -25,6 +25,9 @@ pub(crate) fn arrange(
         if action.id.trim().is_empty() || action.id.len() > 128 {
             return Err("Invalid tool operation id".into());
         }
+        if action.id.starts_with(crate::acceptance::KERNEL_VERIFICATION_PREFIX) {
+            return Err("Operation id belongs to the kernel verification namespace".into());
+        }
         if !known.insert(action.id.clone()) {
             return Err(format!("Repeated tool operation id: {}", action.id));
         }
@@ -124,6 +127,13 @@ mod tests {
                 &catalog(),&prior,2).is_ok(),
                 "a new validated predecessor can be scheduled");
         }
+    }
+    #[test]
+    fn model_cannot_impersonate_a_kernel_verification_receipt() {
+        assert!(arrange(vec![action("kernel-verify-2-0","read",&[])],
+            &catalog(),&[],2).is_err());
+        assert!(arrange(vec![action("kernel-verify-3-1x","write",&[])],
+            &catalog(),&[],2).is_err());
     }
     #[test]
     fn no_undeclared_tool_and_no_unbounded_parallelism() {
