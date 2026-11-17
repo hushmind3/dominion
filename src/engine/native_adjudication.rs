@@ -17,7 +17,10 @@ const MAX_ACTIONS:usize=512;
 fn evidence<'a>(job:&'a Value,key:&str)->Option<&'a Value>{
  let witness=&job[key];
  (witness["complete"]==true && witness["entries"].is_object()
-  &&witness["directVerdicts"].is_array()).then_some(witness)
+  &&witness["directVerdicts"].is_array()
+  &&witness["criteriaDigest"].as_str().is_some_and(|digest|
+    digest.len()==64 && digest.bytes().all(|byte|byte.is_ascii_hexdigit())))
+  .then_some(witness)
 }
 fn witness_identity(a:&Value,b:&Value)->bool{
  // Workspaces may be independently cloned. Their path is not identity;
@@ -237,7 +240,7 @@ fn same_envelope(a:&Value,b:&Value)->Vec<&'static str>{
   ("ownerInstructions",&a["input"]["ownerInstructions"],&b["input"]["ownerInstructions"]),
   ("strategy",&a["input"]["strategy"],&b["input"]["strategy"]),
   ("agentId",&a["input"]["agentId"],&b["input"]["agentId"]),
-  ("routeBinding",&a["nativeRouteBinding"],&b["nativeRouteBinding"]),
+  ("routeBinding",&a["nativeRoute"]["binding"],&b["nativeRoute"]["binding"]),
   ("toolAuthority",&a["nativeToolAuthoritySha256"],&b["nativeToolAuthoritySha256"]),
   ("requireEvidence",&a["input"]["requireEvidence"],&b["input"]["requireEvidence"]),
  ];
@@ -494,10 +497,11 @@ mod tests {
  }
  #[test]
  fn identical_initial_acceptance_state_is_required() {
-  let a=json!({"entries":{"x":{"state":"file","sha256":"aa"}},"directVerdicts":[false],"criteriaDigest":"c"});
-  let b=json!({"entries":{"x":{"state":"file","sha256":"bb"}},"directVerdicts":[false],"criteriaDigest":"c"});
+  let hash="a".repeat(64);
+  let a=json!({"entries":{"x":{"state":"file","sha256":"aa"}},"directVerdicts":[false],"criteriaDigest":hash});
+  let b=json!({"entries":{"x":{"state":"file","sha256":"bb"}},"directVerdicts":[false],"criteriaDigest":hash});
   assert!(!witness_identity(&a,&b));
-  let c=json!({"entries":{"x":{"state":"file","sha256":"aa"}},"directVerdicts":[false],"criteriaDigest":"c"});
+  let c=json!({"entries":{"x":{"state":"file","sha256":"aa"}},"directVerdicts":[false],"criteriaDigest":hash});
   assert!(witness_identity(&a,&c));
  }
  #[test]
