@@ -496,8 +496,20 @@ pub async fn candidate(State(state):State<AppState>,Path(id):Path<String>)->Resp
 }
 pub async fn update_candidate(State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>)->Response{
     let Some(mut prior)=state.store.get("money_candidate",&id)else{return error(StatusCode::NOT_FOUND,"사업 후보를 찾지 못했습니다.");};
+    // Preserve the legacy {status} endpoint while recording user review.
+    if body.as_object().is_some_and(|map|
+        map.len()==1&&map.contains_key("status"))
+        && matches!(body["status"].as_str(),Some("hypothesis"|"deferred"|"rejected")){
+        let status=body["status"].as_str().unwrap_or("");
+        return match state.store.money_review_candidate(&id,status,""){
+            Ok(saved)=>{state.bus.record("money_candidate",&saved);Json(saved).into_response()},
+            Err(e) if e=="implementation_already_requested"=>
+                error(StatusCode::CONFLICT,"이미 구현 승인된 후보의 상태는 변경할 수 없습니다."),
+            Err(e)=>error(StatusCode::BAD_REQUEST,&e)
+        };
+    }
     if let Some(status)=body["status"].as_str(){
-        if !matches!(status,"hypothesis"|"researching"|"testing"|"validated"|"rejected"|"launched"){
+        if !matches!(status,"hypothesis"|"researching"|"testing"|"validated"|"deferred"|"rejected"|"launched"){
             return fail("지원하지 않는 사업 상태입니다.");
         }
         prior["status"]=json!(status);
@@ -523,7 +535,9 @@ pub async fn update_candidate(State(state):State<AppState>,Path(id):Path<String>
     // whole-record write from a candidate status/notes edit.
     let patch=prior.clone();
     match state.store.mutate_record("money_candidate",&id,prior,|current|{
-        if body["status"]=="rejected" && current["implementationJobId"].is_string(){
+        if body["status"].is_string()
+            && body["status"]!=current["status"]
+            && current["implementationJobId"].is_string(){
             return Err("implementation_already_requested".into());
         }
         if body["status"].is_string(){current["status"]=patch["status"].clone();}

@@ -210,9 +210,13 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
                     scrape_attempts+=1;
                     if let Ok(article)=crate::engine::tools::http_fetch(&article_url).await{
                         if article["status"].as_u64()==Some(200){
-                            let text=article["text"].as_str().unwrap_or("").chars().take(2000).collect::<String>();
-                            if text.chars().count()>100{
-                                item["articleExcerpt"]=json!(text);
+                            // Persist bounded article text separately from
+                            // the smaller search/LLM excerpt. No extra model call.
+                            let body=article["text"].as_str().unwrap_or("")
+                                .chars().take(16_000).collect::<String>();
+                            if body.chars().count()>100{
+                                item["articleExcerpt"]=json!(body.chars().take(2000).collect::<String>());
+                                item["articleBody"]=json!(body);
                                 item["contentStatus"]=json!("page_fetched");
                                 scraped+=1;
                             }

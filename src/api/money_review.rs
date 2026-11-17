@@ -84,3 +84,53 @@ pub async fn source(
         "sourceStatus":"archived_observation_not_purchase_confirmation",
         "modelCalls":0})).into_response()
 }
+
+#[cfg(test)]
+mod tests{
+    use super::*;
+    use crate::{config::Config,db::Store,vault::Vault};
+    fn fixture()->AppState{
+        let root=std::env::temp_dir().join(format!("money-review-api-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let cfg=Config{port:0,data_dir:root.join("data"),
+            web_dir:root.join("web"),workspace:root.clone()};
+        std::fs::create_dir_all(&cfg.data_dir).unwrap();
+        let state=AppState::new(cfg.clone(),Store::open(&cfg.db_path()).unwrap(),
+            Vault::open(&cfg.key_path()));
+        state.store.put("money_candidate",&json!({"id":"c1",
+            "status":"hypothesis","title":"A buyer signal","offer":"Possible tool"})).unwrap();
+        state
+    }
+    #[tokio::test] async fn review_api_persists_journal_without_model_jobs(){
+        let state=fixture();
+        let response=review(State(state.clone()),Path("c1".into()),
+            Json(json!({"status":"deferred","reason":"Await source comparison"}))).await;
+        assert_eq!(response.status(),StatusCode::OK);
+        let q=HashMap::from([("status".to_string(),"deferred".to_string())]);
+        let response=archive(State(state.clone()),Query(q)).await;
+        assert_eq!(response.status(),StatusCode::OK);
+        assert_eq!(state.store.money_candidate_archive("deferred","",24,0).unwrap().len(),1);
+        assert_eq!(state.store.money_review_history("c1",10).unwrap().len(),1);
+        assert_eq!(state.store.count_kind("job"),0);
+        let old=crate::api::money::update_candidate(State(state.clone()),Path("c1".into()),
+            Json(json!({"status":"hypothesis"}))).await;
+        assert_eq!(old.status(),StatusCode::OK);
+        assert_eq!(state.store.money_review_history("c1",10).unwrap().len(),2);
+    }
+    #[tokio::test] async fn stored_original_is_read_only_and_revisions_are_returned(){
+        let state=fixture();
+        state.store.money_ingest_signals(&[json!({"id":"story1",
+            "title":"Factory equipment market change",
+            "description":"Existing description",
+            "url":"https://test.example/story",
+            "capturedAt":"2026-11-17T00:00:00Z",
+            "sourceName":"Feed A","articleExcerpt":"",
+            "contentStatus":"headline_observed"})]).unwrap();
+        let response=source(State(state.clone()),Query(HashMap::from([
+            ("url".into(),"https://test.example/story".into())
+        ]))).await;
+        assert_eq!(response.status(),StatusCode::OK);
+        assert_eq!(state.store.money_source_revisions("story1",10).unwrap().len(),1);
+        assert_eq!(state.store.count_kind("job"),0);
+    }
+}

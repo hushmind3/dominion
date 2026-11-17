@@ -18,8 +18,7 @@ impl Store {
             [id],|row|row.get(0)).optional().map_err(|e|e.to_string())?;
         let Some(raw)=raw else{return Err("candidate_not_found".into());};
         let mut candidate:Value=serde_json::from_str(&raw).map_err(|e|e.to_string())?;
-        if candidate["implementationJobId"].is_string()
-            && matches!(new_status,"deferred"|"rejected"){
+        if candidate["implementationJobId"].is_string(){
             return Err("implementation_already_requested".into());
         }
         let before=candidate["status"].as_str().unwrap_or("hypothesis");

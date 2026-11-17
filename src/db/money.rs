@@ -12,7 +12,8 @@ fn preserve_source_revision_tx(
         .ok_or("source revision ID missing")?;
     let content=json!({
         "title":signal["title"],"description":signal["description"],
-        "articleExcerpt":signal["articleExcerpt"],"url":signal["url"],
+        "articleExcerpt":signal["articleExcerpt"],"articleBody":signal["articleBody"],
+        "url":signal["url"],
         "sourceName":signal["sourceName"],"publishedAt":signal["publishedAt"],
         "contentStatus":signal["contentStatus"]
     });
@@ -336,6 +337,9 @@ impl Store {
                 if old_len<=100 && new_len>100 {
                     preserve_source_revision_tx(&tx,&stored,"legacy_or_initial_headline")?;
                     stored["articleExcerpt"]=signal["articleExcerpt"].clone();
+                    if signal["articleBody"].is_string(){
+                        stored["articleBody"]=signal["articleBody"].clone();
+                    }
                     stored["contentStatus"]=json!("page_fetched");
                     stored["lastFetchedAt"]=signal["capturedAt"].clone();
                     stored["foldStatus"]=json!("new");
