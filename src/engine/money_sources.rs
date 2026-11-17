@@ -153,6 +153,7 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
                     let stored=item["id"].as_str()
                         .and_then(|id|context.state.store.get("money_signal",id));
                     if !needs_article_fetch(item,stored.as_ref()){continue;}
+                    crate::engine::money_tool::ensure_live(context)?;
                     let Some(article_url)=item["url"].as_str().map(str::to_owned)else{continue;};
                     scrape_attempts+=1;
                     if let Ok(article)=crate::engine::tools::http_fetch(&article_url).await{

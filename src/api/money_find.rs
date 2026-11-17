@@ -75,7 +75,7 @@ fn next_drafts(pool:&[Value],previous:&Value,limit:usize)->(Vec<Value>,Vec<Strin
         for offset in 0..ordered.len(){
             let draft=ordered[offset];
             let Some(id)=draft["id"].as_str()else{continue};
-            if draft["status"]=="rejected"||picked.contains(id)
+            if matches!(draft["status"].as_str(),Some("rejected"|"deferred"))||picked.contains(id)
                 ||(unseen_only&&seen.contains(id)){continue;}
             picked.insert(id.to_owned());
             selected.push(draft.clone());
@@ -250,7 +250,7 @@ fn candidates(state:&AppState)->Result<Vec<Value>,String>{
             .map(str::to_string).collect::<HashSet<_>>();
         for item in state.store.money_recent_records("money_candidate",100)?{
             let Some(id)=item["id"].as_str()else{continue};
-            if item["status"]=="rejected"||known.contains(id)
+            if matches!(item["status"].as_str(),Some("rejected"|"deferred"))||known.contains(id)
                 ||short(&item,"title",160).is_empty()
                 ||short(&item,"offer",300).is_empty(){continue}
             known.insert(id.to_string());
@@ -370,7 +370,7 @@ pub async fn find(State(state):State<AppState>,Json(body):Json<Value>)->Response
     let eligible=pool.into_iter().filter(|draft|{
         draft["id"].as_str().is_some_and(|id|
             state.store.get("money_candidate",id)
-                .is_none_or(|saved|saved["status"]!="rejected"))
+                .is_none_or(|saved|saved["status"]!="rejected"&&saved["status"]!="deferred"))
     }).collect::<Vec<_>>();
     // Three concise candidates per click; repeated clicks prioritize unseen
     // items while optional clients can explicitly request a larger batch.
@@ -384,7 +384,7 @@ pub async fn find(State(state):State<AppState>,Json(body):Json<Value>)->Response
             state.bus.record("money_candidate",&saved);
         }
         if let Some(saved)=state.store.get("money_candidate",id){
-            if saved["status"]!="rejected"{chosen.push(saved);}
+            if saved["status"]!="rejected"&&saved["status"]!="deferred"{chosen.push(saved);}
         }
     }
     let ids=chosen.iter().filter_map(|x|x["id"].as_str()).map(str::to_string)
@@ -553,16 +553,16 @@ mod tests {
     #[test]
     fn unseen_leads_first_rejected_excluded_and_history_is_bounded(){
         let pool=(0..5).map(|i|json!({"id":format!("lead-{i}"),
-            "status":if i==2{"rejected"}else{"hypothesis"}})).collect::<Vec<_>>();
+            "status":if i==2{"rejected"}else if i==4{"deferred"}else{"hypothesis"}})).collect::<Vec<_>>();
         let (first,shown,cursor)=next_drafts(&pool,&Value::Null,3);
         assert_eq!(first.iter().filter_map(|row|row["id"].as_str()).collect::<Vec<_>>(),
             vec!["lead-0","lead-1","lead-3"]);
         let (second,history,_)=next_drafts(&pool,&json!({"cursor":cursor,"shownCandidateIds":shown}),3);
-        assert_eq!(second[0]["id"],"lead-4");
+        assert!(second.iter().all(|row|row["id"]!="lead-2"&&row["id"]!="lead-4"));
         assert!(second.iter().all(|row|row["id"]!="lead-2"));
-        assert_eq!(history.len(),4);
+        assert_eq!(history.len(),3);
         let (expanded,_,_)=next_drafts(&pool,&Value::Null,9);
-        assert_eq!(expanded.len(),4,"an explicit larger request may return every eligible lead");
+        assert_eq!(expanded.len(),3,"deferred and rejected ideas stay archived, not re-proposed");
     }
     #[test]
     fn source_pair_has_real_urls_no_fake_budget(){

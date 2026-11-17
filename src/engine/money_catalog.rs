@@ -80,6 +80,7 @@ pub async fn run(context:&JobContext,_job:&Value)->Result<Value,String>{
     let mut metrics=Vec::new();
     let mut errors=Vec::new();
     for (kind,url) in urls {
+        crate::engine::money_tool::ensure_live(context)?;
         let body=match crate::engine::tools::http_fetch(&url).await{
             Ok(value) if value["status"].as_u64()==Some(200)=>value,
             Ok(value)=>{errors.push(format!("{kind}: HTTP {}",value["status"]));continue;},
@@ -94,6 +95,8 @@ pub async fn run(context:&JobContext,_job:&Value)->Result<Value,String>{
         signals.append(&mut items);
         metrics.append(&mut counters);
     }
+    // Settings may have disabled the module during the last HTTP request.
+    crate::engine::money_tool::ensure_live(context)?;
     let imported=context.state.store.money_ingest_signals(&signals)?;
     let new_metrics=context.state.store.money_store_market_metrics(&metrics)?;
     let recent=context.state.store.money_recent_signals(120)?;

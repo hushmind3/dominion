@@ -105,6 +105,7 @@ pub async fn run(context:&JobContext,_job:&Value)->Result<Value,String>{
         processed.push(id.to_string());
         events.extend(extract(source));
     }
+    crate::engine::money_tool::ensure_live(context)?;
     let inserted=context.state.store.money_fold_sources(&processed,&events)?;
     // Indexed SQL joins on the small event working set: no corpus text read.
     let pairs=context.state.store.money_pair_events(24)?;

@@ -72,6 +72,25 @@ mod tests {
         assert_eq!(db.money_set_module_enabled(true).unwrap().0["enabled"],true);
     }
     #[test]
+    fn upgrade_reenables_existing_money_corpus_without_losing_research(){
+        let root=std::env::temp_dir().join(format!("money-upgrade-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let db_file=root.join("test.sqlite");
+        {
+            let store=Store::open(&db_file).unwrap();
+            store.put("money_signal",&json!({"id":"old","title":"historical"})).unwrap();
+        }
+        {
+            let conn=rusqlite::Connection::open(&db_file).unwrap();
+            conn.execute("DELETE FROM records WHERE kind='money_module'",[]).unwrap();
+        }
+        let upgraded=Store::open(&db_file).unwrap();
+        assert_eq!(upgraded.get("money_module","global").unwrap()["enabled"],true);
+        assert_eq!(upgraded.get("money_signal","old").unwrap()["title"],"historical");
+        drop(upgraded);
+        let _=std::fs::remove_dir_all(root);
+    }
+    #[test]
     fn disable_cancels_owned_work_without_touching_sdk_or_evidence(){
         let db=Store::open(std::path::Path::new(":memory:")).unwrap();
         db.money_set_module_enabled(true).unwrap();
