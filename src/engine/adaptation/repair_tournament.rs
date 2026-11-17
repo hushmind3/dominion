@@ -126,12 +126,15 @@ pub fn prepare(
         let Some(probe)=proposal["preflight"].as_object() else {continue;};
         let id=format!("p{index}");
         let Ok(probe)=checked_probe(&id,&json!(probe)) else{continue;};
+        let Some(after)=proposal["postflight"].as_object() else{continue;};
+        let Ok(postflight)=checked_probe(&format!("post-{id}"),&json!(after)) else{continue;};
         let costs=json!({
             "changedNodes": ids(proposal).len(),
             "effectfulNodes":mutations(proposal),
         });
         variants.push(json!({
             "id":id,"revision":revision,"probes":[probe],
+            "postflights":[postflight],
             "costs":costs,"sourceCandidates":[id],
             "repairsFailedNode":repairs_failed,
         }));
@@ -148,12 +151,15 @@ pub fn prepare(
                 program,checkpoint,&merged,tools,64,repair_mode) else{continue;};
             let parts=[accepted[a].0.clone(),accepted[b].0.clone()];
             let mut probes=Vec::new();
+            let mut postflights=Vec::new();
             for p in &parts {
                 let Some(original)=variants.iter().find(|v|v["id"].as_str()==Some(p.as_str())) else{continue;};
                 probes.extend(original["probes"].as_array().into_iter().flatten().cloned());
+                postflights.extend(original["postflights"].as_array().into_iter().flatten().cloned());
             }
             variants.push(json!({"id":format!("compose-{a}-{b}"),
-                "revision":revision,"probes":probes,"sourceCandidates":parts,
+                "revision":revision,"probes":probes,"postflights":postflights,
+                "sourceCandidates":parts,
                 "repairsFailedNode":merged["replacePendingNodes"].as_array()
                     .into_iter().flatten().any(|n|n["id"].as_str()==Some(failed_node)),
                 "costs":{"changedNodes":ids(&merged).len(),"effectfulNodes":mutations(&merged)}}));
@@ -247,7 +253,9 @@ pub fn select(variants:&[Value], observations:&Value)->Result<(Value,Value),Stri
         "frontier":frontier.iter().map(|&i|evaluated[i]["id"].clone()).collect::<Vec<_>>(),
         "chosen":variants[selected]["id"],"observedProbeCount":observations.as_object().map(|o|o.len()).unwrap_or(0),
     });
-    Ok((variants[selected]["revision"].clone(),audit))
+    let mut selected_revision=variants[selected]["revision"].clone();
+    selected_revision["repairPostflights"]=variants[selected]["postflights"].clone();
+    Ok((selected_revision,audit))
 }
 
 #[cfg(test)]
@@ -272,7 +280,9 @@ mod tests {
             "evidenceIds":["fix-a"],"replacePendingNodes":[{"id":id,"type":"call_tool",
                 "tool":"workspace_write","inputs":{"path":path,"content":"new"}}],
             "preflight":{"tool":"workspace_read","inputs":{"path":path},
-                "predicate":{"type":"equals","from":"result","path":"/content","value":expect}}})
+                "predicate":{"type":"equals","from":"result","path":"/content","value":expect}},
+            "postflight":{"tool":"workspace_read","inputs":{"path":path},
+                "predicate":{"type":"equals","from":"result","path":"/content","value":"new"}}})
     }
     #[test]
     fn validates_independent_candidates_and_composes_disjoint_pending_edits(){
@@ -287,6 +297,7 @@ mod tests {
         let variants=prepare(&input,&program,&checkpoint,&failure,&tools,"replace").unwrap();
         assert_eq!(variants.len(),3);
         assert_eq!(variants[2]["sourceCandidates"],json!(["p0","p1"]));
+        assert_eq!(variants[2]["postflights"].as_array().unwrap().len(),2);
         assert_eq!(variants[2]["revision"]["nodes"].as_array().unwrap().len(),4);
         assert_eq!(probes(&variants).len(),2);
     }
@@ -302,6 +313,7 @@ mod tests {
             "p1":{"status":"completed","result":{"content":"missing"}}});
         let (_selected, audit)=select(&variants,&observations).unwrap();
         assert_eq!(audit["chosen"],"p0");
+        assert_eq!(_selected["repairPostflights"].as_array().unwrap().len(),1);
         assert_eq!(audit["evaluated"][1]["qualified"],false);
         assert!(select(&variants,&json!({})).is_err());
     }
