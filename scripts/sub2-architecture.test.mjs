@@ -153,3 +153,14 @@ test('GitHub discovery resolves selected repository and access before file chang
  assert.match(projection,/github_repositories/);
  assert.match(work,/repository_discovery_uses_only_explicit_git_permissions/);
 });
+
+test('MCP HTTP sessions are reused per server and vault credential without blind retries',()=>{
+ const mcp=file('src/engine/mcp.rs');
+ assert.match(mcp,/MAX_HTTP_SESSIONS:usize=16/);
+ assert.match(mcp,/http_request\(state,server,"tools\/list"/);
+ assert.match(mcp,/http_request\(state,server,"tools\/call"/);
+ assert.match(mcp,/http_identity\(state,record\)/);
+ assert.match(mcp,/Arc::ptr_eq/);
+ assert.match(mcp,/lease\.valid=result\.is_ok\(\)/);
+ assert.doesNotMatch(mcp,/let mut session = HttpSession::open\(server, state\)/);
+});

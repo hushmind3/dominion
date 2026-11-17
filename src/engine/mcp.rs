@@ -3,7 +3,8 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
+use tokio::sync::Mutex as AsyncMutex;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
@@ -35,6 +36,8 @@ fn cache() -> &'static Cache {
 
 pub fn invalidate() {
     cache().lock().unwrap().clear();
+    // Config or credential changes must never keep a pooled session alive.
+    http_sessions().lock().unwrap().clear();
 }
 
 fn slug(value: &str) -> String {
@@ -128,8 +131,7 @@ async fn list_server(state: &AppState, server: &Value, server_slug:&str) -> Resu
         .unwrap_or("stdio");
 
     let result = if transport == "http" {
-        let mut session = HttpSession::open(server, state).await?;
-        session.request("tools/list", json!({})).await?
+        http_request(state,server,"tools/list",json!({})).await?
     } else {
         let mut session = StdioSession::open(server, &state.config.workspace).await?;
         let result = session.request("tools/list", json!({})).await;
@@ -232,8 +234,7 @@ pub async fn call(state: &AppState, qualified: &str, args: &Value) -> Result<Val
     let params = json!({ "name": tool_name, "arguments": args });
 
     if transport == "http" {
-        let mut session = HttpSession::open(server, state).await?;
-        session.request("tools/call", params).await
+        http_request(state,server,"tools/call",params).await
     } else {
         let mut session = StdioSession::open(server, &state.config.workspace).await?;
         let result = session.request("tools/call", params).await;
@@ -368,6 +369,81 @@ impl StdioSession {
 
 // ------------------------------------------------------------------- http
 
+// HTTP sessions are scoped by the complete server config, vault credential,
+// and workspace. Never share a token across URLs or accounts. The pool is
+// demand-driven (no resident network work) and bounded by idle expiry and size.
+const HTTP_IDLE_TTL:Duration=Duration::from_secs(120);
+const MAX_HTTP_SESSIONS:usize=16;
+type HttpHandle=Arc<AsyncMutex<Option<HttpSession>>>;
+struct HttpEntry{last_used:Instant,handle:HttpHandle}
+type HttpPool=Mutex<HashMap<String,HttpEntry>>;
+fn http_sessions()->&'static HttpPool{
+    static POOL:OnceLock<HttpPool>=OnceLock::new();
+    POOL.get_or_init(||Mutex::new(HashMap::new()))
+}
+fn http_identity(state:&AppState,record:&Value)->Result<(String,Option<String>),String>{
+    let id=record["id"].as_str().filter(|s|!s.is_empty())
+        .ok_or("MCP 서버 ID가 없습니다.")?;
+    let token=state.read_secret(&format!("mcp:{id}"));
+    let mut digest=Sha256::new();
+    digest.update(record.to_string().as_bytes());
+    digest.update([0]);
+    digest.update(state.config.workspace.to_string_lossy().as_bytes());
+    digest.update([0]);
+    if let Some(secret)=&token{digest.update(secret.as_bytes());}
+    Ok((format!("{:x}",digest.finalize()),token))
+}
+/// If a future is aborted while an external tool is in-flight, do not lend
+/// its session to another call. Unknown external effects are never replayed
+/// automatically: a later request must establish a fresh connection.
+struct HttpLease{key:String,handle:HttpHandle,valid:bool}
+impl Drop for HttpLease{
+    fn drop(&mut self){
+        if self.valid{return;}
+        let mut pool=http_sessions().lock().unwrap();
+        if pool.get(&self.key).is_some_and(|entry|
+            Arc::ptr_eq(&entry.handle,&self.handle)){
+            pool.remove(&self.key);
+        }
+    }
+}
+async fn http_request(state:&AppState,record:&Value,method:&str,params:Value)
+    ->Result<Value,String>{
+    let (key,token)=http_identity(state,record)?;
+    let handle={
+        let mut pool=http_sessions().lock().unwrap();
+        pool.retain(|_,entry|entry.last_used.elapsed()<HTTP_IDLE_TTL);
+        if let Some(entry)=pool.get_mut(&key){
+            entry.last_used=Instant::now();
+            entry.handle.clone()
+        }else{
+            if pool.len()>=MAX_HTTP_SESSIONS{
+                if let Some(oldest)=pool.iter()
+                    .min_by_key(|(_,entry)|entry.last_used)
+                    .map(|(key,_)|key.clone()){
+                    pool.remove(&oldest);
+                }
+            }
+            let handle=Arc::new(AsyncMutex::new(None));
+            pool.insert(key.clone(),HttpEntry{
+                last_used:Instant::now(),handle:handle.clone()
+            });
+            handle
+        }
+    };
+    // Inner mutex serializes only requests to this server+credential session;
+    // independent servers can work in parallel.
+    let mut lease=HttpLease{key,handle:handle.clone(),valid:false};
+    let mut slot=handle.lock().await;
+    if slot.is_none(){
+        *slot=Some(HttpSession::open(record,token).await?);
+    }
+    let result=slot.as_mut().ok_or("MCP HTTP 세션 초기화 실패")?
+        .request(method,params).await;
+    lease.valid=result.is_ok();
+    result
+}
+
 struct HttpSession {
     client: reqwest::Client,
     url: String,
@@ -380,7 +456,7 @@ impl HttpSession {
     /// Full MCP handshake: initialize, capture Mcp-Session-Id, then
     /// notifications/initialized. Stateless one-shot requests fail against
     /// spec-compliant Streamable HTTP servers.
-    async fn open(record: &Value, state: &AppState) -> Result<Self, String> {
+    async fn open(record: &Value, token: Option<String>) -> Result<Self, String> {
         let url = record
             .get("url")
             .and_then(|value| value.as_str())
@@ -391,11 +467,6 @@ impl HttpSession {
         if !matches!(parsed.scheme(), "http" | "https") {
             return Err("MCP URL 은 HTTP(S)여야 합니다.".into());
         }
-        let id = record
-            .get("id")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default();
-        let token = state.read_secret(&format!("mcp:{id}"));
         let mut session = Self {
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(60))
@@ -531,6 +602,31 @@ mod tests {
         AppState::new(config, store, vault)
     }
 
+    #[test]
+    fn authenticated_http_pool_isolated_by_server_url_and_credentials(){
+        let state=temp_state();
+        let first=json!({"id":"mcp-a","transport":"http","url":"https://a.example/mcp"});
+        let second=json!({"id":"mcp-b","transport":"http","url":"https://b.example/mcp"});
+        let (initial,_) = http_identity(&state,&first).unwrap();
+        let (different,_) = http_identity(&state,&second).unwrap();
+        assert_ne!(initial,different);
+        state.save_secret("mcp:mcp-a","token-one");
+        let (changed,token) = http_identity(&state,&first).unwrap();
+        assert_eq!(token.as_deref(),Some("token-one"));
+        assert_ne!(initial,changed);
+        state.save_secret("mcp:mcp-a","token-two");
+        assert_ne!(changed,http_identity(&state,&first).unwrap().0);
+        // Simulate an abandoned tool call: its pool lease must be evicted.
+        let key=changed.clone();
+        let handle=Arc::new(AsyncMutex::new(None));
+        http_sessions().lock().unwrap().insert(key.clone(),HttpEntry{
+            last_used:Instant::now(),handle:handle.clone()
+        });
+        {
+            let _unfinished=HttpLease{key:key.clone(),handle,valid:false};
+        }
+        assert!(!http_sessions().lock().unwrap().contains_key(&key));
+    }
     #[test]
     fn qualified_names_are_namespaced() {
         let tool = McpTool {
