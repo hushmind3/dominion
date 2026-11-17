@@ -352,7 +352,7 @@ async fn allowed_tools(state:&AppState, input:&Value)->Vec<ToolSpec> {
     if input["toolsEnabled"]==false || input["toolsExecutionEnabled"]==false {return vec![];}
     let requested: Option<HashSet<&str>>=input["allowedTools"].as_array().map(|values|
         values.iter().filter_map(Value::as_str).collect());
-    let builtin = tools::definitions().into_iter().filter_map(|item| {
+    let builtin = tools::definitions_for(state).into_iter().filter_map(|item| {
         let function=&item["function"];
         let name=function["name"].as_str()?;
         if requested.as_ref().is_some_and(|allowed| !allowed.contains(name)) {return None;}

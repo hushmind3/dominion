@@ -196,7 +196,7 @@ pub(super) async fn run_turn_body(
         simple_file_creation(state, &request.input, &acceptance)
     } else { None };
     let mut tool_definitions = if request.tools_enabled && request.tools_execution_enabled {
-        tools::definitions()
+        tools::definitions_for(state)
     } else {
         Vec::new()
     };
@@ -226,7 +226,7 @@ pub(super) async fn run_turn_body(
             .unwrap_or_else(|_|state.config.workspace.clone());
         let inside_workspace = simple_creation_target.as_ref().is_some_and(|path|
             path.starts_with(&workspace_root));
-        tool_definitions = tools::definitions().into_iter().filter(|definition| {
+        tool_definitions = tools::definitions_for(state).into_iter().filter(|definition| {
             let name = tool_name(definition);
             matches!(name, "shell_exec" | "terminal_exec") || if inside_workspace {
                 matches!(name, "workspace_list" | "workspace_read" | "workspace_write")

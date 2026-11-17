@@ -112,6 +112,23 @@ pub fn definitions() -> Vec<Value> {
     ]
 }
 
+/// Show connected service tools only when the owner granted that account.
+pub fn definitions_for(state:&crate::state::AppState)->Vec<Value>{
+    let providers=crate::engine::oauth::status(state);
+    let active=|id:&str,workspace:bool|providers.iter().any(|provider|
+        provider["id"]==id && provider["connected"]==true &&
+        (!workspace || provider["workspaceReady"]==true));
+    let github=active("github",false);
+    let google=active("google",true);
+    definitions().into_iter().filter(|tool|{
+        match tool["function"]["name"].as_str().unwrap_or("") {
+            "github_work_read"|"github_work_write"=>github,
+            "google_workspace_read"|"google_workspace_write"=>google,
+            _=>true
+        }
+    }).collect()
+}
+
 fn tool(name: &str, description: &str, parameters: Value) -> Value {
     json!({
         "type": "function",
@@ -1406,6 +1423,36 @@ fn strip_html(html: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oauth_account_connection_controls_tool_discovery_without_leaking_tokens(){
+        use crate::{config::Config,db::Store,vault::Vault};
+        let root=std::env::temp_dir().join(format!("dominion-connected-tools-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config=Config{port:0,data_dir:root.clone(),web_dir:root.clone(),
+            workspace:root.clone()};
+        let state=crate::state::AppState::new(config,
+            Store::open(&root.join("db.sqlite")).unwrap(),Vault::open(&root.join("key")));
+        let visible=|state:&crate::state::AppState|definitions_for(state).into_iter()
+            .filter_map(|tool|tool["function"]["name"].as_str().map(str::to_string))
+            .collect::<std::collections::HashSet<_>>();
+        assert!(!visible(&state).contains("github_work_read"));
+        assert!(!visible(&state).contains("google_workspace_read"));
+        state.store.put("oauth_config",&json!({"id":"github","connected":true})).unwrap();
+        state.save_secret("oauth:github:token",&json!({"accessToken":"internal-only"}).to_string());
+        assert!(visible(&state).contains("github_work_read"));
+        state.store.put("oauth_config",&json!({"id":"google","connected":true,
+            "scopes":"openid email profile"})).unwrap();
+        state.save_secret("oauth:google:token",&json!({"accessToken":"internal-only"}).to_string());
+        assert!(!visible(&state).contains("google_workspace_read"));
+        state.store.put("oauth_config",&json!({"id":"google","connected":true,
+            "scopes":"openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/calendar.events"})).unwrap();
+        assert!(visible(&state).contains("google_workspace_read"));
+        assert!(!definitions_for(&state).iter().any(|tool|tool.to_string().contains("internal-only")));
+        state.store.remove_secret("oauth:github:token");
+        assert!(!visible(&state).contains("github_work_read"));
+        let _=std::fs::remove_dir_all(root);
+    }
 
     #[test]
     fn connected_account_tool_contracts_separate_reads_from_approved_mutations(){
