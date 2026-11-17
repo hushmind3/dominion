@@ -97,6 +97,8 @@ jobs:
           cargo test --bin dominion-rust db::tests::cancelled_or_interrupted_attempt_rejects_stale_finalization_atomically -- --nocapture
           cargo test --bin dominion-rust engine::chat::runtime::outcome_tests::late_provider_error_cannot_change_durable_owner_cancellation_to_failed -- --nocapture
           cargo test --test e2e web_api::cancelling_a_running_execution_marks_it_cancelled -- --nocapture
+      - name: Verify SQL-paged execution timeline and active-only run index
+        run: cargo test --bin dominion-rust db::tests::indexed_execution_timeline_pages_without_loading_unrelated_json -- --nocapture
       - name: Verify real MCP stdio and HTTP sessions, pinning and credential rotation
         run: cargo test --bin dominion-rust engine::mcp::tests -- --nocapture
       - name: Verify typed GitHub edit, stale SHA rejection and independent read-back

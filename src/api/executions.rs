@@ -19,7 +19,7 @@ pub struct Page {
 /// default because individual execution records include large evidence blobs.
 fn query_result(items:Result<Vec<Value>,String>)->Response{
     match items {
-        Ok(items)=>Json(json!(items)).into_response(),
+        Ok(items)=>Json(items).into_response(),
         Err(_)=>(StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error":"실행 기록을 조회할 수 없습니다."}))).into_response(),
     }
