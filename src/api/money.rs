@@ -262,8 +262,11 @@ pub async fn start(State(state):State<AppState>,Path(id):Path<String>,Json(body)
             input[key]=json!(value);
         }
     }
-    let options=match engine::job_control::options(&state,&input){Ok(v)=>v,Err(err)=>return fail(&err)};
-    for (key,value) in options.as_object().into_iter().flatten(){input[key]=value.clone();}
+    // Money owns its bounded research cycle and structured result parser.
+    // Do not route a single discovery round through the generic multi-attempt
+    // repair loop; the ordinary job runtime still enforces user cancellation,
+    // model usage and the existing tool approval policy.
+    input["autonomous"]=json!(false);
     let queued=json!({"id":uuid::Uuid::new_v4().to_string(),"kind":"money_discover",
         "status":"queued","queuedAt":now(),"input":input,
         "attempts":0,"stepIndex":0,"stepTotal":0,"events":[]});
