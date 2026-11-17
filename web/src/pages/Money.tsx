@@ -72,9 +72,17 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
  const [stats,setStats]=useState<Stats|null>(null)
  const [toggling,setToggling]=useState(false)
  const [agentId,setAgentId]=useState('db')
+ const [moneyEnabled,setMoneyEnabled]=useState<boolean|null>(null)
  const [implementations,setImplementations]=useState<Record<string,SdkRun>>({})
  const [implementationBusy,setImplementationBusy]=useState('')
  const reasoning=['queued','running'].includes(result.inferenceStatus||'')
+ useEffect(()=>{
+  let alive=true
+  void get<{enabled:boolean}>('/api/settings/money')
+   .then(data=>{if(alive)setMoneyEnabled(data.enabled)})
+   .catch(err=>{if(alive){setMoneyEnabled(false);setError((err as Error).message)}})
+  return()=>{alive=false}
+ },[])
  useEffect(()=>{
   let mounted=true
   void get<Stats>('/api/money/stats').then(data=>{if(mounted)setStats(data)}).catch(()=>{})
@@ -155,7 +163,7 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
  },[activeImplementationIds])
  async function implementDraft(draft:Draft){
   const agent=agents.find(item=>item.id===agentId)
-  if(!agent?.providerId||!agent.model||implementationBusy||draft.implementationRunId)return
+  if(moneyEnabled!==true||!agent?.providerId||!agent.model||implementationBusy||draft.implementationRunId)return
   setImplementationBusy(draft.id)
   setError('')
   try{
@@ -185,7 +193,7 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
   finally{setImplementationBusy('')}
  }
  async function toggleAutopilot(){
-  if(toggling||!stats)return
+  if(toggling||!stats||moneyEnabled!==true)return
   setToggling(true)
   setError('')
   try{
@@ -198,6 +206,7 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
   finally{setToggling(false)}
  }
  async function findMoney(infer=false){
+  if(moneyEnabled!==true)return
   setSearching(true)
   setError('')
   try{
@@ -261,9 +270,12 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
    </details>}
   </section>
 
+  {moneyEnabled===false&&<div role="status" className="mb-5 rounded-xl border border-[#E4D4C2] bg-[#FFF8EB] px-4 py-3 text-xs leading-6 text-[#765337]">
+   머니 도구가 비활성 상태입니다. <strong>설정 → 머니 도구</strong>에서 활성화하면 조사와 AI 순환을 시작할 수 있습니다. 이전 수집 자료와 구현 기록은 그대로 확인할 수 있습니다.
+  </div>}
   <section aria-label="실행" className="mb-6 rounded-xl border border-[#E6D9C9] bg-[#FFFDF9] p-3 sm:p-4">
    <div className="flex flex-wrap items-center gap-2">
-    <button type="button" onClick={()=>void findMoney(false)} disabled={searching||loading||reasoning}
+    <button type="button" onClick={()=>void findMoney(false)} disabled={moneyEnabled!==true||searching||loading||reasoning}
      className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-[#C96442] px-4 text-xs font-extrabold text-white disabled:opacity-60">
      {searching?<Loader2 size={15} className="animate-spin"/>:<Search size={15}/>} 조사 · 0토큰
     </button>
@@ -271,11 +283,11 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
      className="min-h-10 min-w-0 flex-1 rounded-lg border border-[#DAD0C3] bg-white px-3 text-xs font-semibold text-[#392F26] disabled:opacity-60">
      {agents.map(agent=><option value={agent.id} key={agent.id}>{agent.name}{agent.model?' · '+agent.model:''}</option>)}
     </select>
-    <button type="button" onClick={()=>void findMoney(true)} disabled={searching||loading||reasoning||agentsLoading||agentId==='db'}
+    <button type="button" onClick={()=>void findMoney(true)} disabled={moneyEnabled!==true||searching||loading||reasoning||agentsLoading||agentId==='db'}
      className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-[#9B6A3F] px-4 text-xs font-extrabold text-white disabled:opacity-50">
      AI 선별 · 1회
     </button>
-    <button type="button" onClick={()=>void toggleAutopilot()} disabled={toggling||!stats||agentsLoading}
+    <button type="button" onClick={()=>void toggleAutopilot()} disabled={moneyEnabled!==true||toggling||!stats||agentsLoading}
      className={'inline-flex min-h-10 items-center rounded-lg px-4 text-xs font-extrabold text-white disabled:opacity-50 '+(stats?.autopilot?.enabled?'bg-[#8B6A4B]':'bg-[#6E7A5A]')}>
      {toggling?'처리 중…':stats?.autopilot?.enabled?'자동 순환 끄기':'자동 순환 켜기'}
     </button>
@@ -348,7 +360,7 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
        return <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
          {!run&&!draft.implementationRunId&&<button type="button" onClick={()=>void implementDraft(draft)}
-          disabled={!!implementationBusy||agentsLoading||!selectedAgent?.providerId||!selectedAgent?.model}
+          disabled={moneyEnabled!==true||!!implementationBusy||agentsLoading||!selectedAgent?.providerId||!selectedAgent?.model}
           className="min-h-9 rounded-lg border border-[#A96743] px-3 text-xs font-bold text-[#9D593D] disabled:opacity-50">
           {implementationBusy===draft.id?'작업 생성 중…':'이 후보 MVP 구현 승인'}
          </button>}

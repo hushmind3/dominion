@@ -58,3 +58,5 @@ No second SDK, executor, or SQLite database is created.
 
 
 Money owners may use `POST /api/money/candidates/:id/implement` with explicit `approved: true`, `agentId`, `providerId`, `model` and a `tokenBudget`. The Money adapter atomically claims the candidate and prepares an ordinary SDK run; it returns the same SDK run on repeated approval. Its run ID supports all existing SDK status, approve, cancel, and resume operations. No separate SDK client surface is required.
+
+The optional Money capability is controlled by `GET/POST /api/settings/money` with `{"enabled":true|false}`. Disabled Money routes retain read-only archive access and reject new domain actions. Ordinary SDK jobs remain independent of the Money module switch.

@@ -233,3 +233,9 @@ DM·음성·파일 첨부·슬래시 명령·Gateway 실시간 이벤트는 이�
 - [Hermes 스킬](https://hermes-agent.nousresearch.com/docs/user-guide/features/skills)
 - [Discord 메시지 API](https://docs.discord.com/developers/resources/message)
 - [Discord 요청 제한](https://docs.discord.com/developers/topics/rate-limits)
+
+## 독립 머니 도구 활성화와 작업 소유권 (2026-11-18)
+
+`설정 → 머니 도구`의 on/off는 `/api/settings/money`에서 기존 SQLite `money_module` 기록으로 관리합니다. 신규 DB는 기본 off이며 기존 Money 실사용 DB는 활성 상태를 승계합니다. Off 전환과 머니 자동 순환·대기/실행 작업의 취소는 한 SQLite 트랜잭션으로 적용합니다. 공통 SDK로 명시 승인한 작업, 기존 원문·후보·실험 기록은 보존합니다. 모듈은 공통 작업 큐·모델·도구·메모리를 재사용하고 별도 실행 루프와 DB 파일을 만들지 않습니다. HTTP 쓰기 요청과 워커 실행·후속 작업 저장을 각각 차단해 중단 상태를 적용합니다.
+
+정보 연결 알고리즘은 신규 RSS 수집 자료가 같은 회차의 경제적 가설 생성에 포함되도록 저장 후 최근 표본을 읽습니다. 추가 모델 호출은 발생하지 않습니다. 릴리즈 빌드·프론트 빌드는 개발 단계에서 수행하지 않습니다.

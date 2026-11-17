@@ -182,3 +182,7 @@ Contributions are welcome — particularly **reproducible bug reports, test case
 - Never include API keys, bot tokens, private conversations, or other secrets in reports.
 
 **License:** [Apache 2.0](LICENSE) · **한국어:** [README.ko.md](README.ko.md)
+
+## Optional Money tool
+
+The Money research capability can be enabled or paused in **Settings → Money tool**. New installations start with the tool disabled; existing installs with Money data keep their prior on state. Pausing stops its background RSS, catalog and AI jobs and keeps archives and separately approved SDK work. It uses the normal Rust harness and the same SQLite DB; no dedicated Money model runner or DB service is created. Existing source collection now links evidence found in the current ingestion cycle rather than waiting for the next scheduler turn.
