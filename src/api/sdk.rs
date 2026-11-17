@@ -283,7 +283,8 @@ pub async fn start(State(state):State<AppState>,Json(input):Json<Start>)->Respon
     }
     // Preserve existing API metadata (createdAt/updatedAt) returned by Store
     // while the session and SDK run remain transactionally durable.
-    let saved=state.store.get("sdk_run",&id).unwrap_or(record);
+    let run_id=record["id"].as_str().unwrap_or_default();
+    let saved=state.store.get("sdk_run",run_id).unwrap_or(record);
     launch(state.clone(),saved.clone(),false);
     (StatusCode::ACCEPTED,Json(public_view(&state,saved))).into_response()
 }
