@@ -120,19 +120,34 @@ fn normalized_title(title:&str)->String{
 /// The same story arrives from several feeds with different URLs. Drop the
 /// repeats before they reach the corpus so tokens are never spent on them.
 fn dedupe_titles(signals:Vec<Value>,history:&[Value])->Vec<Value>{
-    let mut seen=history.iter().filter_map(|s|s["title"].as_str())
-        .map(normalized_title).collect::<std::collections::HashSet<_>>();
-    signals.into_iter().filter(|s|s["title"].as_str()
-        .map(|title|seen.insert(normalized_title(title))).unwrap_or(false)).collect()
+    let mut seen=history.iter().filter_map(|s|s["title"].as_str()
+        .map(|title|(normalized_title(title),s["url"].as_str().unwrap_or("").to_owned())))
+        .collect::<std::collections::HashMap<_,_>>();
+    signals.into_iter().filter(|s|{
+        let Some(title)=s["title"].as_str()else{return false};
+        let title=normalized_title(title);
+        match seen.get(&title){
+            None=>{seen.insert(title,s["url"].as_str().unwrap_or("").to_owned());true},
+            Some(url)=>!url.is_empty() && s["url"].as_str()==Some(url.as_str())
+                && s["contentStatus"]=="page_fetched"
+                && s["articleExcerpt"].as_str().is_some_and(|body|body.chars().count()>100)
+        }
+    }).collect()
 }
 
 fn needs_article_fetch(item:&Value,stored:Option<&Value>)->bool{
     if item["url"].as_str().is_none_or(|url|!url.starts_with("https://")&&!url.starts_with("http://")){
         return false;
     }
-    // Headline-only records still need a real source page.
-    !stored.is_some_and(|row|row["articleExcerpt"].as_str()
-        .is_some_and(|text|text.chars().count()>100))
+    let Some(row)=stored else{return true};
+    if row["articleExcerpt"].as_str().is_none_or(|s|s.chars().count()<=100){return true;}
+    // A page may be revised; revisit only after a 7-day cooldown.
+    row["lastCheckedAt"].as_str()
+        .or_else(||row["lastFetchedAt"].as_str())
+        .or_else(||row["capturedAt"].as_str())
+        .and_then(|s|chrono::DateTime::parse_from_rfc3339(s).ok())
+        .is_some_and(|t|chrono::Utc::now().signed_duration_since(
+            t.with_timezone(&chrono::Utc))>=chrono::Duration::days(7))
 }
 pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
     let bucket=job["input"]["bucket"].as_i64().unwrap_or(0);
@@ -237,7 +252,20 @@ mod tests{
         assert!(needs_article_fetch(&item,Some(&headline)));
         let fetched=json!({"articleExcerpt":"article ".repeat(30),"contentStatus":"page_fetched"});
         assert!(!needs_article_fetch(&item,Some(&fetched)));
+        let stale=json!({"articleExcerpt":"article ".repeat(30),
+            "contentStatus":"page_fetched","lastCheckedAt":"2026-10-01T00:00:00Z"});
+        assert!(needs_article_fetch(&item,Some(&stale)));
         assert!(!needs_article_fetch(&json!({"url":"javascript:alert(1)"}),None));
+    }
+    #[test] fn refreshed_same_url_survives_dedupe_but_a_mirror_does_not(){
+        let old=vec![json!({"title":"Factory cost update","url":"https://a.example/story"})];
+        let updated=json!({"title":"Factory cost update","url":"https://a.example/story",
+            "contentStatus":"page_fetched","articleExcerpt":"changed ".repeat(30)});
+        let mirror=json!({"title":"Factory cost update","url":"https://b.example/story",
+            "contentStatus":"page_fetched","articleExcerpt":"mirror ".repeat(30)});
+        let retained=dedupe_titles(vec![updated,mirror],&old);
+        assert_eq!(retained.len(),1);
+        assert_eq!(retained[0]["url"],"https://a.example/story");
     }
     #[test] fn rotating_sources_span_multiple_markets_and_buyers(){
         assert!(SOURCES.len()>=20);

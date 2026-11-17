@@ -1,5 +1,6 @@
 //! Money-specific SQLite records and indexed market research.
 use super::*;
+use sha2::{Digest,Sha256};
 
 /// Money-owned schema extensions on the existing shared SQLite connection.
 /// No separate DB file, migration service, or domain-specific storage engine.
@@ -47,6 +48,9 @@ pub(super) const SCHEMA: &str = r#"
                  ON records(json_extract(data,'$.capturedAt')) WHERE kind='money_signal';
              CREATE INDEX IF NOT EXISTS idx_money_signal_source_url
                  ON records(json_extract(data,'$.url')) WHERE kind='money_signal';
+             CREATE INDEX IF NOT EXISTS idx_money_revision_source
+                 ON records(json_extract(data,'$.sourceId'),created_at DESC)
+                 WHERE kind='money_source_revision';
              CREATE INDEX IF NOT EXISTS idx_money_last_ingest
                  ON records(json_extract(data,'$.capturedAt') DESC)
                  WHERE kind='money_ingest_report';
@@ -204,6 +208,34 @@ fn refresh_money_source_fact_tx(tx:&rusqlite::Transaction<'_>,record:&Value)->Re
 }
 
 
+/// Content-addressed archived versions; never overwrite a past page capture.
+fn save_source_revision(tx:&rusqlite::Transaction<'_>,source_id:&str,
+    source:&Value,body:&str,seen:&str)->Result<String,String>{
+    let content=body.chars().take(7000).collect::<String>();
+    let hash=format!("{:x}",Sha256::digest(content.as_bytes()));
+    let id=format!("{source_id}:{hash}");
+    let revision=json!({"id":id,"sourceId":source_id,"url":source["url"],
+        "observedAt":seen,"contentHash":hash,"articleExcerpt":content,
+        "verification":"archived_text_not_confirmed_market_claim"});
+    tx.execute("INSERT OR IGNORE INTO records(kind,id,data)
+        VALUES('money_source_revision',?1,?2)",
+        params![id,revision.to_string()]).map_err(|e|e.to_string())?;
+    Ok(id)
+}
+impl Store {
+    pub fn money_source_revisions(&self,source_id:&str,limit:usize)->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='money_source_revision'
+               AND json_extract(data,'$.sourceId')=?1
+             ORDER BY created_at DESC,id DESC LIMIT ?2"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map(params![source_id,limit.clamp(1,30) as i64],record_from_row)
+            .map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+}
 impl Store {
     pub fn money_fact_put(&self, record: &Value) -> Result<Value, String> {
         let id = record["id"].as_str().filter(|s| !s.is_empty()).ok_or("money fact ID missing")?;
@@ -416,19 +448,43 @@ impl Store {
                 let mut stored:Value=serde_json::from_str(&existing).map_err(|e|e.to_string())?;
                 let old_len=stored["articleExcerpt"].as_str().unwrap_or("").chars().count();
                 let new_len=signal["articleExcerpt"].as_str().unwrap_or("").chars().count();
-                // Preserve original capture time; never overwrite an existing body.
-                if old_len<=100 && new_len>100 {
-                    stored["articleExcerpt"]=signal["articleExcerpt"].clone();
-                    stored["contentStatus"]=json!("page_fetched");
-                    stored["lastFetchedAt"]=signal["capturedAt"].clone();
-                    stored["foldStatus"]=json!("new");
+                // Preserve initial capture time, but make every fetched
+                // page version addressable and immutable.
+                if new_len>100 && signal["contentStatus"]=="page_fetched" {
+                    let checked=signal["capturedAt"].as_str().unwrap_or("");
+                    if old_len>100 && stored["contentRevisionId"].is_null(){
+                        let previous=stored["lastFetchedAt"].as_str()
+                            .or_else(||stored["capturedAt"].as_str()).unwrap_or("");
+                        let old_rev=save_source_revision(&tx,id,&stored,
+                            stored["articleExcerpt"].as_str().unwrap_or(""),previous)?;
+                        stored["contentRevisionId"]=json!(old_rev);
+                    }
+                    if old_len<=100 || stored["articleExcerpt"]!=signal["articleExcerpt"] {
+                        let rev=save_source_revision(&tx,id,&stored,
+                            signal["articleExcerpt"].as_str().unwrap_or(""),checked)?;
+                        stored["articleExcerpt"]=signal["articleExcerpt"].clone();
+                        stored["contentStatus"]=json!("page_fetched");
+                        stored["contentRevisionId"]=json!(rev);
+                        stored["lastFetchedAt"]=signal["capturedAt"].clone();
+                        stored["foldStatus"]=json!("new");
+                        refresh_money_source_fact_tx(&tx,&money_signal_fact(&stored))?;
+                    }
+                    stored["lastCheckedAt"]=signal["capturedAt"].clone();
                     upsert_tx(&tx,"money_signal",&stored)?;
-                    refresh_money_source_fact_tx(&tx,&money_signal_fact(&stored))?;
                 }
                 continue;
             }
             let mut signal=signal.clone();
             signal["foldStatus"]=json!("new");
+            if signal["contentStatus"]=="page_fetched" &&
+                signal["articleExcerpt"].as_str().is_some_and(|s|s.chars().count()>100){
+                let rev=save_source_revision(&tx,id,&signal,
+                    signal["articleExcerpt"].as_str().unwrap_or(""),
+                    signal["capturedAt"].as_str().unwrap_or(""))?;
+                signal["contentRevisionId"]=json!(rev);
+                signal["lastFetchedAt"]=signal["capturedAt"].clone();
+                signal["lastCheckedAt"]=signal["capturedAt"].clone();
+            }
             upsert_tx(&tx,"money_signal",&signal)?;
             persist_money_fact_tx(&tx,&money_signal_fact(&signal))?;
             for edge in crate::engine::money_intelligence::signal_edges(&signal){
