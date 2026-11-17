@@ -27,6 +27,24 @@ pub async fn compare(State(state):State<AppState>,Path(id):Path<String>,
   Err(message)=>error(StatusCode::CONFLICT,&message)
  }
 }
+/// Evidence-only multi-run forensic comparison. No creation, restart,
+/// execution, acceptance override or automatic strategy promotion.
+pub async fn adjudicate(State(state):State<AppState>,Path(id):Path<String>,
+ Json(body):Json<Value>)->Response{
+ let Some(candidates)=body["candidateRunIds"].as_array()
+  .filter(|values|!values.is_empty() && values.len()<=8) else{
+  return error(StatusCode::BAD_REQUEST,"Provide 1..8 candidateRunIds")
+ };
+ let Some(ids)=candidates.iter().map(|v|v.as_str().filter(|s|
+  !s.is_empty()&&s.len()<=128).map(str::to_owned)).collect::<Option<Vec<_>>>()
+ else {
+  return error(StatusCode::BAD_REQUEST,"Invalid candidateRunIds");
+ };
+ match crate::engine::native_adjudication::adjudicate(&state,&id,&ids){
+  Ok(report)=>Json(report).into_response(),
+  Err(message)=>error(StatusCode::CONFLICT,&message)
+ }
+}
 #[cfg(test)]
 mod tests{
  use super::*;
