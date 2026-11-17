@@ -29,7 +29,7 @@ Chat and UI default `autoLearning` to false, and former five-minute background d
 - `GET /api/sdk/runs/:id/replay` and `POST /api/sdk/runs/:id/compare` reconstruct already recorded decisions, receipts and cost records **read-only**, never invoking paid tools or promoting a revision.
 - `/api/mcp/catalog`, `/api/mcp/discover`, `/api/tools`, `/api/skill-catalog` and `/api/channels` expose owner-configured integrations. A connected MCP may later handle third-party media generation.
 - `/api/sessions`, `/api/memory/overview`, `/api/providers`, `/api/rooms` retain existing conversation and collaboration surfaces.
-- `GET/POST /api/money/find`, `GET /api/money/stats`, `POST /api/money/candidates/:id` and `/api/money/campaigns/:id/*` are optional domain operations. The host job API (`/api/jobs/:id/cancel`) owns cancellation and approval-gated implementation; there is no second Money scheduler or database.
+- `GET/POST /api/money/find`, `GET /api/money/stats`, `POST /api/money/candidates/:id` and `/api/money/campaigns/:id/*` are optional domain operations. Explicit implementation uses `POST /api/money/candidates/:id/implement` (`approved=true`, selected agent and bounded token budget) and `GET /api/money/candidates/:id/implementation` for persisted status. Approval and its ordinary Rust SDK prompt job commit atomically to the **same SQLite transaction**, so retries, concurrency, editing and process restart cannot detach the job. `/api/jobs/:id/cancel` handles cancellation; there is no second Money scheduler or database.
 
 ### Browser account login without user API keys
 

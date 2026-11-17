@@ -155,6 +155,38 @@ mod tests{
         assert_eq!(saved["implementationJobId"],job["id"]);
         assert_eq!(status(State(state),Path("c1".into())).await.status(),StatusCode::OK);
     }
+    #[tokio::test] async fn persisted_approval_restores_from_a_new_process_state(){
+        let state=fixture();
+        assert_eq!(launch(State(state.clone()),Path("c1".into()),Json(request())).await.status(),
+            StatusCode::ACCEPTED);
+        let config=state.config.clone();
+        let job_id=state.store.get("money_candidate","c1").unwrap()
+            ["implementationJobId"].as_str().unwrap().to_string();
+        drop(state);
+        let restarted=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()));
+        assert_eq!(restarted.store.get("money_candidate","c1").unwrap()
+            ["implementationJobId"],job_id);
+        assert_eq!(restarted.store.get("job",&job_id).unwrap()["status"],"queued");
+        assert_eq!(status(State(restarted),Path("c1".into())).await.status(),StatusCode::OK);
+    }
+    #[tokio::test] async fn candidate_note_edits_preserve_approval_link_and_reject_is_blocked(){
+        let state=fixture();
+        assert_eq!(launch(State(state.clone()),Path("c1".into()),Json(request())).await.status(),
+            StatusCode::ACCEPTED);
+        let response=crate::api::money::update_candidate(State(state.clone()),Path("c1".into()),
+            Json(json!({"notes":"new observation"}))).await;
+        assert_eq!(response.status(),StatusCode::OK);
+        let saved=state.store.get("money_candidate","c1").unwrap();
+        assert_eq!(saved["notes"],"new observation");
+        assert!(saved["implementationJobId"].as_str().is_some());
+        let response=crate::api::money::update_candidate(State(state.clone()),Path("c1".into()),
+            Json(json!({"status":"rejected"}))).await;
+        assert_eq!(response.status(),StatusCode::CONFLICT);
+        assert_eq!(state.store.get("money_candidate","c1").unwrap()
+            ["status"],"implementation_requested");
+        assert_eq!(state.store.count_kind("job"),1);
+    }
     #[tokio::test] async fn concurrent_approvals_remain_one_job(){
         let state=fixture();
         let (a,b)=tokio::join!(
