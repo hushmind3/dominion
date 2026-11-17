@@ -79,8 +79,17 @@ pub fn phase_for_status(status: &str) -> &'static str {
 /// Applies one event to the durable execution record. An illegal transition is
 /// audited and leaves the phase unchanged instead of corrupting recovery.
 pub fn apply(state: &AppState, execution_id: &str, event: &str) -> Option<Value> {
-    let mut execution = state.store.get("execution", execution_id)?;
-    let current = execution["phase"].as_str().unwrap_or(QUEUED).to_string();
+    let execution = state.store.get("execution", execution_id)?;
+    let stored_phase = execution.get("phase").cloned().unwrap_or(Value::Null);
+    let current = stored_phase.as_str().unwrap_or(QUEUED).to_string();
+    // A legacy/mid-flight record can have a terminal durable status but a
+    // stale phase. Never let a phase update revive its execution payload.
+    if matches!(
+        execution["status"].as_str(),
+        Some("completed" | "failed" | "cancelled" | "interrupted")
+    ) {
+        return Some(execution);
+    }
     let Some(next) = transition(&current, event) else {
         state.store.audit(
             "run.phase_rejected",
@@ -91,11 +100,25 @@ pub fn apply(state: &AppState, execution_id: &str, event: &str) -> Option<Value>
     if next == current {
         return Some(execution);
     }
-    execution["phase"] = json!(next);
-    execution["phaseUpdatedAt"] = json!(chrono::Utc::now().to_rfc3339());
-    let saved = state.store.put("execution", &execution)?;
-    state.bus.record("execution", &saved);
-    Some(saved)
+    // Patch under the SQLite record lock. A stale get/put would overwrite
+    // cancellation, finalization evidence, or unrelated concurrent updates.
+    let patch = json!({
+        "phase": next,
+        "phaseUpdatedAt": chrono::Utc::now().to_rfc3339(),
+    });
+    match state.store.patch_if("execution", execution_id, "phase", &stored_phase, &patch) {
+        Some(saved) => {
+            state.bus.record("execution", &saved);
+            Some(saved)
+        }
+        None => {
+            state.store.audit(
+                "run.phase_conflict",
+                json!({"executionId": execution_id, "phase": current, "event": event}),
+            );
+            state.store.get("execution", execution_id)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -123,6 +146,39 @@ mod tests {
         );
         assert_eq!(transition(FINALIZING, "interrupt"), Some(INTERRUPTED));
         assert!(transition(INTERRUPTED, "start").is_none());
+    }
+
+    #[test]
+    fn phase_reducer_preserves_unrelated_record_fields_and_terminal_status() {
+        use crate::{config::Config, db::Store, vault::Vault};
+        let dir = std::env::temp_dir().join(format!("dominion-phase-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = Config {
+            port: 0,
+            data_dir: dir.clone(),
+            web_dir: dir.join("web"),
+            workspace: dir.clone(),
+        };
+        let store = Store::open(&config.db_path()).unwrap();
+        let vault = Vault::open(&config.key_path());
+        let state = AppState::new(config, store, vault);
+        state.store.put("execution", &json!({
+            "id":"run","phase":"queued","status":"running",
+            "evidence":{"receipt":"keep-this"},
+        }));
+        let started = apply(&state, "run", "start").unwrap();
+        assert_eq!(started["phase"], RUNNING);
+        assert_eq!(started["evidence"]["receipt"], "keep-this");
+        state.store.patch_if(
+            "execution", "run", "status", &json!("running"),
+            &json!({"status":"cancelled","phase":"cancelled"}),
+        );
+        let terminal = apply(&state, "run", "verify").unwrap();
+        assert_eq!(terminal["status"], "cancelled");
+        assert_eq!(terminal["phase"], "cancelled");
+        assert_eq!(terminal["evidence"]["receipt"], "keep-this");
+        drop(state);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
