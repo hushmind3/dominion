@@ -76,13 +76,16 @@ pub(super) fn restore_program_state(
 }
 
 
-pub(super) fn save_program_checkpoint(state: &AppState, execution_id: &str, checkpoint: &Value) {
-    if let Some(mut execution) = state.store.get("execution", execution_id) {
-        execution["programCheckpoint"] = checkpoint.clone();
-        if let Some(saved) = state.store.put("execution", &execution) {
-            state.bus.record("execution", &saved);
-        }
-    }
+pub(super) fn save_program_checkpoint(
+    state: &AppState, execution_id: &str, checkpoint: &Value,
+) -> Result<(), String> {
+    let mut execution = state.store.get("execution", execution_id)
+        .ok_or("program checkpoint has no durable execution record")?;
+    execution["programCheckpoint"] = checkpoint.clone();
+    let saved = state.store.put("execution", &execution)
+        .ok_or("program checkpoint write failed; refusing tool dispatch")?;
+    state.bus.record("execution", &saved);
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -125,7 +128,7 @@ pub(super) async fn execute_program_tool(
     checkpoint["pendingOperationIds"] = json!([node_id]);
     checkpoint["resolvedInputs"] = resolved.clone();
     if persist {
-        save_program_checkpoint(state, execution_id, checkpoint);
+        save_program_checkpoint(state, execution_id, checkpoint)?;
     }
     let (result, _ok, _content) = dispatch_tool_call(
         state,
@@ -172,7 +175,7 @@ pub(super) async fn execute_program_tool(
     resolved[key] = result.clone();
     checkpoint["resolvedInputs"] = resolved.clone();
     if persist {
-        save_program_checkpoint(state, execution_id, checkpoint);
+        save_program_checkpoint(state, execution_id, checkpoint)?;
     }
     Ok(result)
 }
@@ -309,7 +312,7 @@ pub(super) fn execute_nodes<'a>(
                     "index": index,
                 }]);
                 checkpoint["resolvedInputs"] = resolved.clone();
-                save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
             }
             match node["type"].as_str().unwrap_or("") {
                 "observe" => {
@@ -356,7 +359,7 @@ pub(super) fn execute_nodes<'a>(
                         if persist {
                             save_program_checkpoint(
                                 ctx.state, ctx.execution_id, &checkpoint,
-                            );
+                            )?;
                         }
                         return Ok(ProgramFrame {
                             resolved, checkpoint, budget, op_seq, messages,
@@ -390,7 +393,7 @@ pub(super) fn execute_nodes<'a>(
                             if persist {
                                 save_program_checkpoint(
                                     ctx.state, ctx.execution_id, &checkpoint,
-                                );
+                                )?;
                             }
                             messages.push(json!({
                                 "role":"system",
@@ -420,7 +423,7 @@ pub(super) fn execute_nodes<'a>(
                         checkpoint["programFailure"] = failure.clone();
                         checkpoint["resolvedInputs"] = resolved.clone();
                         if persist {
-                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
                         }
                         return Ok(ProgramFrame {
                             resolved, checkpoint, budget, op_seq, messages,
@@ -430,7 +433,7 @@ pub(super) fn execute_nodes<'a>(
                     if frame.paused {
                         checkpoint["resolvedInputs"] = resolved.clone();
                         if persist {
-                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
                         }
                         return Ok(ProgramFrame {
                             resolved,
@@ -460,7 +463,7 @@ pub(super) fn execute_nodes<'a>(
                         checkpoint["programFailure"] = failure.clone();
                         checkpoint["resolvedInputs"] = resolved.clone();
                         if persist {
-                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
                         }
                         return Ok(ProgramFrame {
                             resolved, checkpoint, budget, op_seq, messages,
@@ -470,7 +473,7 @@ pub(super) fn execute_nodes<'a>(
                     if frame.paused {
                         checkpoint["resolvedInputs"] = resolved.clone();
                         if persist {
-                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
                         }
                         return Ok(ProgramFrame {
                             resolved,
@@ -494,7 +497,7 @@ pub(super) fn execute_nodes<'a>(
                     checkpoint["parallelMode"] = json!("concurrent");
                     checkpoint["resolvedInputs"] = resolved.clone();
                     if persist {
-                        save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                        save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
                     }
                     let parallel_mode = crate::engine::algorithms::choose_for_agent(
                         ctx.state,
@@ -534,7 +537,7 @@ pub(super) fn execute_nodes<'a>(
                                 checkpoint["programFailure"] = failure.clone();
                                 checkpoint["resolvedInputs"] = resolved.clone();
                                 if persist {
-                                    save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                                    save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
                                 }
                                 return Ok(ProgramFrame {
                                     resolved, checkpoint, budget, op_seq, messages,
@@ -554,7 +557,7 @@ pub(super) fn execute_nodes<'a>(
                             if persist {
                                 save_program_checkpoint(
                                     ctx.state, ctx.execution_id, &checkpoint,
-                                );
+                                )?;
                             }
                             return Ok(ProgramFrame {
                                 resolved, checkpoint, budget, op_seq, messages,
@@ -571,7 +574,7 @@ pub(super) fn execute_nodes<'a>(
                         if persist {
                             save_program_checkpoint(
                                 ctx.state, ctx.execution_id, &checkpoint,
-                            );
+                            )?;
                         }
                         continue;
                     }
@@ -647,7 +650,7 @@ pub(super) fn execute_nodes<'a>(
                     if let Some(failure) = first_failure {
                         checkpoint["programFailure"] = failure.clone();
                         if persist {
-                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
                         }
                         return Ok(ProgramFrame {
                             resolved, checkpoint, budget, op_seq, messages,
@@ -657,7 +660,7 @@ pub(super) fn execute_nodes<'a>(
                     if paused {
                         checkpoint["status"] = json!("paused");
                         if persist {
-                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
                         }
                         return Ok(ProgramFrame {
                             resolved,
@@ -705,7 +708,7 @@ pub(super) fn execute_nodes<'a>(
                         checkpoint["programFailure"] = failure.clone();
                         checkpoint["resolvedInputs"] = resolved.clone();
                         if persist {
-                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
                         }
                         messages.push(json!({
                             "role": "system",
@@ -731,7 +734,7 @@ pub(super) fn execute_nodes<'a>(
                         checkpoint["pausedNodeId"] = json!(node_id);
                         checkpoint["resolvedInputs"] = resolved.clone();
                         if persist {
-                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
                         }
                         messages.push(json!({
                             "role": "system",
@@ -828,7 +831,7 @@ pub(super) fn execute_nodes<'a>(
                             checkpoint["programFailure"] = failure.clone();
                             checkpoint["resolvedInputs"] = resolved.clone();
                             if persist {
-                                save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                                save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
                             }
                             return Ok(ProgramFrame {
                                 resolved, checkpoint, budget, op_seq, messages,
@@ -840,7 +843,7 @@ pub(super) fn execute_nodes<'a>(
                         checkpoint["loopProgress"][node_id] = json!(iterations);
                         checkpoint["resolvedInputs"] = resolved.clone();
                         if persist {
-                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
                         }
                         if frame.paused {
                             checkpoint["status"] = json!("paused");
@@ -864,7 +867,7 @@ pub(super) fn execute_nodes<'a>(
                     checkpoint["nextIndex"] = json!(index + 1);
                     checkpoint["resolvedInputs"] = resolved.clone();
                     if persist {
-                        save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                        save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
                     }
                     messages.push(json!({
                         "role":"system",
@@ -884,7 +887,7 @@ pub(super) fn execute_nodes<'a>(
             }
             checkpoint["resolvedInputs"] = resolved.clone();
             if persist {
-                save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
             }
         }
         Ok(ProgramFrame {
@@ -1175,7 +1178,7 @@ pub(super) async fn run_program(
                 "revised program paused: no verified repair outcome",
             );
         }
-        save_program_checkpoint(state, execution_id, &checkpoint);
+        save_program_checkpoint(state, execution_id, &checkpoint)?;
         return Ok(messages);
     }
     if !checkpoint["programFailure"].is_null() {
@@ -1187,7 +1190,7 @@ pub(super) async fn run_program(
                 state, execution_id, "program.repair", false,
             );
         }
-        save_program_checkpoint(state, execution_id, &checkpoint);
+        save_program_checkpoint(state, execution_id, &checkpoint)?;
         messages.push(json!({
             "role":"system",
             "content": format!(
@@ -1210,7 +1213,7 @@ pub(super) async fn run_program(
                 "revision ended with verification invalidated by a later mutation",
             );
         }
-        save_program_checkpoint(state, execution_id, &checkpoint);
+        save_program_checkpoint(state, execution_id, &checkpoint)?;
         messages.push(json!({
             "role":"system",
             "content":"program cannot complete: a later mutation invalidated the previous verification. Add an observation and verify again."
@@ -1243,7 +1246,7 @@ pub(super) async fn run_program(
             );
         }
     }
-    save_program_checkpoint(state, execution_id, &checkpoint);
+    save_program_checkpoint(state, execution_id, &checkpoint)?;
     messages.push(json!({
         "role": "system",
         "content": format!(
