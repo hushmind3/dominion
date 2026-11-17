@@ -9,15 +9,11 @@
 use crate::{engine::native_replay,state::AppState};
 use dominion_sdk::harness::{Action,Snapshot};
 use serde_json::{json,Value};
-use sha2::{Digest,Sha256};
 use std::collections::{BTreeMap,BTreeSet,VecDeque};
 
 const MAX_CANDIDATES:usize=8;
 const MAX_ACTIONS:usize=512;
 
-fn digest(value:&Value)->String{
- format!("{:x}",Sha256::digest(value.to_string().as_bytes()))
-}
 fn evidence<'a>(job:&'a Value,key:&str)->Option<&'a Value>{
  let witness=&job[key];
  (witness["complete"]==true && witness["entries"].is_object()
@@ -41,7 +37,7 @@ fn direct_verdicts_agree(job:&Value,snapshot:&Snapshot)->bool{
  if verdicts.len()!=snapshot.checks.len(){return false;}
  let expected_criteria=snapshot.checks.iter()
   .map(|check|&check.criterion).collect::<Vec<_>>();
- if after["criteriaDigest"]!=digest(&json!(expected_criteria)){return false;}
+ if after["criteriaDigest"]!=native_replay::digest(&json!(expected_criteria)){return false;}
  // null denotes a criterion that this file-state witness cannot check.
  // For FileContains, the kernel's own verification is retained, but a
  // post-execution SHA alone cannot prove its string predicate.
@@ -91,8 +87,8 @@ fn artifact_proof(job:&Value,trace:&Value,snapshot:&Snapshot)->Value{
   "directWitnessCount":directly_observed,
   "totalCriteria":snapshot.checks.len(),
   "changedAcceptancePaths":changed,
-  "baselineArtifactDigest":before.map(|w|digest(&w["entries"])),
-  "finalArtifactDigest":after.map(|w|digest(&w["entries"])),
+  "baselineArtifactDigest":before.map(|w|native_replay::digest(&w["entries"])),
+  "finalArtifactDigest":after.map(|w|native_replay::digest(&w["entries"])),
   "witnessScope":"declared_acceptance_paths_only",
   "worldStateFrozen":false,
  })
@@ -121,8 +117,8 @@ fn first_difference(a:&[Action],b:&[Action])->Value{
   if left.tool!=right.tool||left.arguments!=right.arguments
    ||dependency_shape(a,index)!=dependency_shape(b,index){
    return json!({"kind":"decision_change","ordinal":index,
-    "baseline":{"id":left.id,"tool":left.tool,"argsDigest":digest(&left.arguments)},
-    "candidate":{"id":right.id,"tool":right.tool,"argsDigest":digest(&right.arguments)}});
+    "baseline":{"id":left.id,"tool":left.tool,"argsDigest":native_replay::digest(&left.arguments)},
+    "candidate":{"id":right.id,"tool":right.tool,"argsDigest":native_replay::digest(&right.arguments)}});
   }
  }
  if a.len()!=b.len(){
@@ -152,8 +148,8 @@ fn common_prefix_drift(
   if l.tool!=r.tool||l.arguments!=r.arguments
    ||l.success!=r.success||l.result!=r.result {
    return json!({"kind":"environment_or_tool_drift","ordinal":ordinal,
-    "prefixComparable":false,"baselineResultDigest":digest(&l.result),
-    "candidateResultDigest":digest(&r.result)});
+    "prefixComparable":false,"baselineResultDigest":native_replay::digest(&l.result),
+    "candidateResultDigest":native_replay::digest(&r.result)});
   }
  }
  json!({"kind":"matching_observed_prefix","ordinal":null,"prefixComparable":true})
@@ -519,7 +515,7 @@ mod tests {
   let expected=vec![&snap.checks[0].criterion];
   let job=json!({"nativeEvidenceKernelFinal":{"complete":true,
    "entries":{"out":{"state":"missing"}},"directVerdicts":[false],
-   "criteriaDigest":digest(&json!(expected))}});
+   "criteriaDigest":native_replay::digest(&json!(expected))}});
   assert!(!direct_verdicts_agree(&job,&snap));
  }
  #[test]
@@ -580,7 +576,7 @@ mod tests {
   let c=Criterion{kind:CriterionKind::FileExists,path:Some("out.txt".into()),
    contains:None,tool:None};
   let criteria=vec![c.clone()];
-  let criteria_hash=digest(&json!(criteria));
+  let criteria_hash=native_replay::digest(&json!(criteria));
   let absent=json!({"complete":true,"entries":{"out.txt":{"state":"missing"}},
    "directVerdicts":[false],"criteriaDigest":criteria_hash});
   let present=json!({"complete":true,"entries":{"out.txt":{
