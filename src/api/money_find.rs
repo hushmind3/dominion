@@ -289,10 +289,13 @@ fn view(state:&AppState)->Value{
     let mut drafts=saved_list(state,&ids);
     let job_id=report["reasoningJobId"].as_str();
     let job=job_id.and_then(|id|state.store.get("job",id)).unwrap_or(Value::Null);
+    let execution=job_id.and_then(|id|state.store.get("execution",id)).unwrap_or(Value::Null);
     let status=job["status"].as_str().unwrap_or("not_requested");
+    // Rust jobs persist the domain result under result.result.
+    let outcome=job.pointer("/result/result").unwrap_or(&job["result"]);
     let mut model_used=Value::Null;
     if matches!(status,"completed"|"needs_review"){
-        let generated=job["result"]["candidateIds"].as_array().into_iter().flatten()
+        let generated=outcome["candidateIds"].as_array().into_iter().flatten()
             .filter_map(Value::as_str).filter_map(|id|state.store.get("money_candidate",id))
             .collect::<Vec<_>>();
         if !generated.is_empty(){
@@ -307,13 +310,26 @@ fn view(state:&AppState)->Value{
             drafts=selected;
         }
     }
-    if let Some(session)=job["sessionId"].as_str().or_else(||job["result"]["sessionId"].as_str())
+    if let Some(session)=job["sessionId"].as_str()
+        .or_else(||outcome["sessionId"].as_str())
+        .or_else(||execution["sessionId"].as_str())
         .and_then(|id|state.store.get("session",id)){
         model_used=json!({"providerId":session["providerId"],"model":session["model"]});
+    }else if job["nativeRoute"]["model"].is_string(){
+        model_used=json!({"providerId":job["nativeRoute"]["providerId"],
+            "model":job["nativeRoute"]["model"]});
     }
-    let error=job["error"].as_str().or_else(||job["result"]["reason"].as_str());
+    let error=job["error"].as_str().or_else(||outcome["reason"].as_str())
+        .or_else(||job["result"]["error"].as_str());
+    let calls=execution["modelCalls"].as_u64()
+        .or_else(||outcome["modelCalls"].as_u64()).unwrap_or(0);
+    let estimated_tokens=execution["estimatedTokens"].as_u64();
+    let configured_cost=job.pointer("/nativeModelUsage/configuredCostKRW")
+        .and_then(Value::as_f64);
     json!({"drafts":drafts,"searchedAt":report["searchedAt"],
-        "sourceCount":report["sourceCount"],"modelCalls":0,
+        "sourceCount":report["sourceCount"],"modelCalls":calls,
+        "inferenceEstimatedTokens":estimated_tokens,
+        "inferenceConfiguredCostKRW":configured_cost,
         "selectedAgentId":report["selectedAgentId"],"selectedAgentName":report["selectedAgentName"],
         "inferenceJobId":job_id,"inferenceStatus":status,
         "inferenceError":error.or_else(||report["inferenceStartError"].as_str()),"inferenceModel":model_used,
@@ -441,6 +457,37 @@ pub async fn find(State(state):State<AppState>,Json(body):Json<Value>)->Response
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn completed_native_money_result_is_visible_and_reports_recorded_usage(){
+        use crate::{config::Config,db::Store,vault::Vault};
+        let root=std::env::temp_dir().join(format!("money-visibility-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config=Config{port:0,data_dir:root.join("data"),web_dir:root.join("web"),
+            workspace:root.clone()};
+        std::fs::create_dir_all(&config.data_dir).unwrap();
+        let state=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()));
+        state.store.put("money_candidate",&json!({"id":"candidate-from-27b",
+            "title":"New market hypothesis","status":"hypothesis"})).unwrap();
+        state.store.put("money_find_report",&json!({"id":REPORT_ID,
+            "candidateIds":[],"reasoningJobId":"job-27b","sourceCount":4})).unwrap();
+        state.store.put("session",&json!({"id":"money-session","title":"Money",
+            "providerId":"p","model":"local-27b"})).unwrap();
+        state.store.put("job",&json!({"id":"job-27b","kind":"money_discover",
+            "status":"completed","result":{"status":"completed",
+                "result":{"candidateIds":["candidate-from-27b"],"sessionId":"money-session"}},
+            "nativeModelUsage":{"configuredCostKRW":12.0}})).unwrap();
+        state.store.put("execution",&json!({"id":"job-27b","status":"completed",
+            "sessionId":"money-session","modelCalls":2,"estimatedTokens":1800})).unwrap();
+        let visible=view(&state);
+        assert_eq!(visible["drafts"][0]["id"],"candidate-from-27b");
+        assert_eq!(visible["modelCalls"],2);
+        assert_eq!(visible["inferenceEstimatedTokens"],1800);
+        assert_eq!(visible["inferenceConfiguredCostKRW"],12.0);
+        assert_eq!(visible["inferenceModel"]["model"],"local-27b");
+        drop(state);
+        let _=std::fs::remove_dir_all(root);
+    }
     #[tokio::test]
     async fn selected_existing_agent_reaches_native_job_input_and_survives_refresh(){
         use crate::{config::Config,db::Store,vault::Vault};
