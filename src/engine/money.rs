@@ -823,6 +823,31 @@ mod tests{
         assert_eq!(store.money_corpus_stats().unwrap()["money_fact"],1);
         assert_eq!(store.money_recent_signals(10).unwrap().len(),1);
     }
+    #[test] fn page_revisions_preserve_previous_quotes_and_latest_index(){
+        let store=crate::db::Store::open(std::path::Path::new(":memory:")).unwrap();
+        let url="https://example.org/notice";
+        let mut source=json!({"id":"rev-src","url":url,"title":"Budget notice",
+            "sourceName":"Government journal","contentStatus":"page_fetched",
+            "articleExcerpt":"Public buyer requests sealed bids for twenty medical devices. ".repeat(3),
+            "capturedAt":"2026-11-09T10:00:00Z"});
+        assert_eq!(store.money_ingest_signals(&[source.clone()]).unwrap(),1);
+        let first=store.get("money_signal","rev-src").unwrap();
+        let original=first["contentRevisionId"].as_str().unwrap().to_owned();
+        source["articleExcerpt"]=json!("Public buyer cancels the earlier tender request. ".repeat(4));
+        source["capturedAt"]=json!("2026-11-18T10:00:00Z");
+        assert_eq!(store.money_ingest_signals(&[source.clone()]).unwrap(),0);
+        assert_eq!(store.money_ingest_signals(&[source]).unwrap(),0);
+        let versions=store.money_source_revisions("rev-src",20).unwrap();
+        assert_eq!(versions.len(),2);
+        assert!(versions.iter().any(|v|v["id"]==original));
+        let latest=store.get("money_signal","rev-src").unwrap();
+        assert_eq!(latest["capturedAt"],"2026-11-09T10:00:00Z");
+        assert_ne!(latest["contentRevisionId"],original);
+        let quote=json!({"url":url,"quote":"buyer requests sealed bids for twenty medical"});
+        assert_eq!(crate::engine::money_citation::annotate(&quote,Some(&latest))
+            ["quotationStatus"],"source_quote_mismatch");
+        assert_eq!(store.money_corpus_stats().unwrap()["money_signal"],1);
+    }
     #[test] fn later_scrape_enriches_source_and_search_index_without_duplication(){
         let store=crate::db::Store::open(std::path::Path::new(":memory:")).unwrap();
         let headline=json!({"id":"signal:enrich","title":"한국 부품 가격 변화",

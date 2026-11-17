@@ -1,12 +1,12 @@
 import {useEffect,useRef,useState} from 'react'
-import {ArrowUpRight,ChevronDown,RefreshCw,Search} from 'lucide-react'
+import {ChevronDown,RefreshCw,Search} from 'lucide-react'
+import {MoneyEvidence,type MoneyEvidenceRow} from './Evidence'
 import {get,post} from '../../api'
 
-type Evidence={url?:string;claim?:string}
 type Candidate={
  id:string;title:string;status?:string;origin?:string;customer?:string
  offer?:string;whyPay?:string;firstTest?:string;createdAt?:string
- evidence?:Evidence[];implementationRunId?:string
+ evidence?:MoneyEvidenceRow[];implementationRunId?:string
 }
 type Archive={candidates:Candidate[];hasMore:boolean;offset:number;limit:number}
 const labels:Record<string,string>={
@@ -90,11 +90,7 @@ export function MoneyArchive({enabled}:{enabled:boolean}){
       <summary className="cursor-pointer font-semibold">수익 이유·원문 확인</summary>
       <p className="mt-2 whitespace-pre-wrap">{item.whyPay||'추가 조사 필요'}</p>
       {item.firstTest&&<p className="mt-1">다음 확인: {item.firstTest}</p>}
-      {(item.evidence||[]).filter(e=>e.url?.startsWith('https://')).slice(0,4).map((e,i)=>
-       <a key={i} href={e.url} rel="noreferrer" target="_blank"
-        className="mt-1 mr-3 inline-flex items-center gap-1 text-[#9D593D] underline">
-        원문 {i+1} <ArrowUpRight size={12}/>
-       </a>)}
+      <MoneyEvidence items={item.evidence||[]} limit={4}/>
      </details>
      {enabled&&<div className="mt-2 flex flex-wrap gap-2">
       {item.status!=='deferred'&&item.status!=='rejected'&&
