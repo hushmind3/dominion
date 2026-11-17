@@ -35,28 +35,29 @@ pub(super) fn restore_program_state(
     {
         return Err("중단된 program 연산의 결과를 확인해야 합니다.".into());
     }
-    let source_id = source["id"].as_str().unwrap_or("");
-    if let Some(mut target) = state.store.get("execution", execution_id) {
-        target["programCheckpoint"] = checkpoint.clone();
-        if let Some(adaptations) = source.get("adaptations") {
-            target["adaptations"] = adaptations.clone();
+    let source_id = source["id"].as_str()
+        .ok_or("interrupted source execution has no identity")?;
+    let mut target = state.store.get("execution", execution_id)
+        .ok_or("target execution was deleted before resumption")?;
+    target["programCheckpoint"] = checkpoint.clone();
+    for field in ["adaptations", "adaptationCheckpoint", "lastAdaptation", "revisedProgram"] {
+        if let Some(value) = source.get(field) {
+            target[field] = value.clone();
         }
-        if let Some(adaptation_checkpoint) = source.get("adaptationCheckpoint") {
-            target["adaptationCheckpoint"] = adaptation_checkpoint.clone();
-        }
-        if let Some(last_adaptation) = source.get("lastAdaptation") {
-            target["lastAdaptation"] = last_adaptation.clone();
-        }
-        if let Some(revised) = source.get("revisedProgram") {
-            target["revisedProgram"] = revised.clone();
-        }
-        target["resumedFromExecutionId"] = json!(source_id);
-        state.store.put("execution", &target);
     }
+    target["resumedFromExecutionId"] = json!(source_id);
     let mut old = source.clone();
     old["programResumeApproved"] = json!(false);
     old["resumedByExecutionId"] = json!(execution_id);
-    state.store.put("execution", &old);
+    // These two execution records form one resumption. Persisting only one
+    // could let two workers consume the same old checkpoint or lose its IR.
+    let saved = state.store.transaction(&[
+        ("execution".to_string(), target),
+        ("execution".to_string(), old),
+    ])?;
+    for record in saved {
+        state.bus.record("execution", &record);
+    }
     state.store.audit(
         "program.resumed",
         json!({"from": source_id, "to": execution_id, "revision": program["revision"]}),
