@@ -98,8 +98,11 @@ fn validate_node(node: &Value) -> Result<(), String> {
             Ok(())
         }
         "verify" => {
-            if node["checks"].as_array().is_none() {
-                return Err("verify.checks must be an array".into());
+            let checks = node["checks"].as_array()
+                .filter(|checks| !checks.is_empty() && checks.len() <= 32)
+                .ok_or("verify.checks requires 1..32 predicates")?;
+            if checks.iter().any(|check| !check["predicate"].is_object()) {
+                return Err("verify checks require an explicit predicate object".into());
             }
             Ok(())
         }
@@ -284,6 +287,36 @@ pub fn predicate_verdict(
         }
         other => Err(format!("unsupported predicate type: {other}")),
     }
+}
+
+/// One execution-backed verdict for a set of checks. The three-valued
+/// predicate kernel is shared by Program branching, hypothesis adaptation and
+/// the verification gate. Unknown is never counted as passing or refuted.
+pub fn evaluate_verification_checks(
+    checks: &[Value],
+    resolved: &Value,
+) -> Result<Value, String> {
+    if checks.is_empty() || checks.len() > 32 {
+        return Err("verification needs 1..32 explicit checks".into());
+    }
+    let mut results = Vec::with_capacity(checks.len());
+    let mut failed = false;
+    let mut unknown = false;
+    for check in checks {
+        let predicate = check.get("predicate").filter(|p| p.is_object())
+            .ok_or("verification check needs a predicate object")?;
+        let verdict = predicate_verdict(predicate, resolved)?;
+        failed |= verdict == PredicateVerdict::False;
+        unknown |= verdict == PredicateVerdict::Unknown;
+        results.push(json!({"predicate":predicate,"verdict":verdict.as_str()}));
+    }
+    Ok(json!({
+        "ok": !failed && !unknown,
+        "failed": failed,
+        "unknown": unknown,
+        "status": if failed { "failed" } else if unknown { "unknown" } else { "passed" },
+        "checks": results,
+    }))
 }
 
 /// Boolean convenience for callers that can treat Unknown as non-satisfied.
@@ -650,4 +683,109 @@ mod tests {
         assert_eq!(round_trip["nextIndex"], 1);
         assert_eq!(round_trip["pendingOperationIds"], json!(["fallback"]));
     }
+    #[test]
+    fn verification_is_three_valued_and_never_passes_without_evidence() {
+        let checks = [json!({"predicate":{"type":"equals","from":"build",
+            "path":"/exitCode","value":0}})];
+        assert_eq!(evaluate_verification_checks(&checks,
+            &json!({"build":{"exitCode":0}})).unwrap()["status"], "passed");
+        assert_eq!(evaluate_verification_checks(&checks,
+            &json!({"build":{"exitCode":7}})).unwrap()["status"], "failed");
+        assert_eq!(evaluate_verification_checks(&checks,
+            &json!({})).unwrap()["status"], "unknown");
+        assert!(evaluate_verification_checks(&[], &json!({})).is_err());
+    }
+
+    #[test]
+    fn nested_repair_changes_the_real_pending_branch_not_a_phantom_root() {
+        let original = program();
+        let mut checkpoint = new_checkpoint(&original);
+        checkpoint["completedOperationIds"] = json!(["try"]);
+        checkpoint["resolvedInputs"] = json!({"try":{"exitCode":7}});
+        let proposal = json!({
+            "baseRevision":"p1","reason":"fix the failed fallback",
+            "replacePendingNodes":[{"type":"call_tool","id":"fallback",
+                "tool":"workspace_write","inputs":{"path":"fixed.txt","content":"FIXED"}}],
+            "addNodes":[]
+        });
+        let fixed = apply_revision_proposal(&original, &checkpoint, &proposal,
+            &["shell_exec".into(),"workspace_write".into()], 64, "replace").unwrap();
+        assert_eq!(fixed["nodes"][1]["else"][0]["inputs"]["path"], "fixed.txt");
+        assert_eq!(fixed["nodes"][0], original["nodes"][0]);
+        assert_eq!(fixed["nodes"][1]["then"], original["nodes"][1]["then"]);
+    }
+
+    #[test]
+    fn repair_refuses_completed_ancestors_scoped_effects_and_forged_targets() {
+        let original = program();
+        let mut checkpoint = new_checkpoint(&original);
+        checkpoint["completedOperationIds"] = json!(["fallback"]);
+        let replace_parent = json!({"baseRevision":"p1","reason":"replace branch",
+            "replacePendingNodes":[{"type":"branch","id":"check",
+                "predicate":{"type":"exists","from":"try"},"then":[],"else":[]}],
+            "addNodes":[]});
+        assert!(apply_revision_proposal(&original, &checkpoint, &replace_parent,
+            &["shell_exec".into(),"workspace_write".into()],64,"replace")
+            .unwrap_err().contains("completed durable effects"));
+
+        checkpoint["completedOperationIds"] = json!([]);
+        let unknown = json!({"baseRevision":"p1","reason":"phantom",
+            "replacePendingNodes":[{"type":"observe","id":"not_present"}]});
+        assert!(apply_revision_proposal(&original, &checkpoint, &unknown,
+            &["shell_exec".into(),"workspace_write".into()],64,"replace")
+            .unwrap_err().contains("does not exist"));
+
+        checkpoint["completedOperationIds"] = json!(["loop_a:1:fallback"]);
+        let scoped = json!({"baseRevision":"p1","reason":"rewrite scoped",
+            "replacePendingNodes":[{"type":"observe","id":"fallback"}]});
+        assert!(apply_revision_proposal(&original, &checkpoint, &scoped,
+            &["shell_exec".into(),"workspace_write".into()],64,"replace")
+            .unwrap_err().contains("completed durable effects"));
+    }
+
+    #[test]
+    fn repair_rejects_inflight_effects_and_hidden_tools_in_nested_nodes() {
+        let original = program();
+        let mut checkpoint = new_checkpoint(&original);
+        let malicious = json!({"baseRevision":"p1","reason":"try an unauthorized tool",
+            "replacePendingNodes":[],"addNodes":[
+                {"type":"sequence","id":"new","nodes":[
+                    {"type":"call_tool","id":"danger","tool":"github_api",
+                     "inputs":{"method":"DELETE","path":"/repos"}}
+                ]}
+            ]});
+        assert!(apply_revision_proposal(&original, &checkpoint, &malicious,
+            &["shell_exec".into(),"workspace_write".into()],64,"replace")
+            .unwrap_err().contains("not authorized"));
+        checkpoint["pendingOperationIds"] = json!(["try"]);
+        assert!(apply_revision_proposal(&original, &checkpoint, &malicious,
+            &["shell_exec".into(),"workspace_write".into()],64,"replace")
+            .unwrap_err().contains("in flight"));
+    }
+
+    #[test]
+    fn repair_rejects_parallel_dependency_and_nested_node_budget_evasion() {
+        let original = program();
+        let checkpoint = new_checkpoint(&original);
+        let dependent = json!({"baseRevision":"p1","reason":"invalid parallel dependency",
+            "addNodes":[{"type":"parallel","id":"many","nodes":[
+                {"type":"call_tool","id":"a","tool":"workspace_read","inputs":{"path":"a.txt"}},
+                {"type":"call_tool","id":"b","tool":"workspace_read",
+                    "inputs":{"path":{"from":"a","path":"/path"}}}
+            ]}]});
+        let allowed = ["shell_exec".into(),"workspace_write".into(),"workspace_read".into()];
+        assert!(apply_revision_proposal(&original, &checkpoint, &dependent,
+            &allowed,64,"replace").unwrap_err().contains("unavailable observation"));
+
+        let many = (0..65).map(|i|json!({"type":"observe","id":format!("obs{i}")}))
+            .collect::<Vec<_>>();
+        let large = json!({"baseRevision":"p1","reason":"over budget",
+            "addNodes":[{"type":"sequence","id":"many","nodes":many}]});
+        assert!(apply_revision_proposal(&original, &checkpoint, &large,
+            &allowed,64,"replace").unwrap_err().contains("executable nodes"));
+        let nested_unknown = json!({"revision":"p2","nodes":[
+            {"type":"sequence","nodes":[{"id":"z","type":"unknown"}]}]});
+        assert!(validate(&nested_unknown).is_err());
+    }
+
 }
