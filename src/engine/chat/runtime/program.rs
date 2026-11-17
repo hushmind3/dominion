@@ -298,6 +298,7 @@ pub(super) async fn attempt_model_adaptation(
     let mut probe_receipts = Vec::<Value>::new();
     let mut resolved_probes = json!({});
     let mut probe_budget_exhausted = false;
+    let mut determinate_observations=0usize;
     // Probes are fully admitted through the same gateway and ledger as normal
     // tools. No shadow executor, no extra model call and no external writes.
     for _ in 0..crate::engine::adaptation::probes::max_executed() {
@@ -342,6 +343,9 @@ pub(super) async fn attempt_model_adaptation(
                     }
                 }
             }
+            if crate::engine::adaptation::probes::determinate(&observation) {
+                determinate_observations+=1;
+            }
             resolved_probes[probe_id.as_str()] = probe_result.clone();
             observation
         } else {
@@ -369,6 +373,11 @@ pub(super) async fn attempt_model_adaptation(
             return Err("all causal hypotheses were refuted by observed probes; revise hypotheses before changing state".into());
         }
         if live==1 {break;}
+    }
+    // If the model asked for tests and all actual results were missing,
+    // denied or uninterpretable, it has not gained a reason to mutate.
+    if !probe_receipts.is_empty() && determinate_observations==0 {
+        return Err("diagnostic probes yielded no determinate evidence; do not execute an unsupported intervention".into());
     }
     adaptation["probeResults"]=json!(probe_receipts);
     adaptation["probeBudgetExhausted"]=json!(probe_budget_exhausted);
