@@ -126,6 +126,14 @@ fn dedupe_titles(signals:Vec<Value>,history:&[Value])->Vec<Value>{
         .map(|title|seen.insert(normalized_title(title))).unwrap_or(false)).collect()
 }
 
+/// Include freshly captured records first; matching must happen in this
+/// acquisition cycle rather than waiting for the next 30-minute RSS slot.
+fn research_window(new_signals:&[Value],history:&[Value])->Vec<Value>{
+    let mut seen=std::collections::HashSet::new();
+    new_signals.iter().chain(history.iter()).filter(|row|{
+        row["id"].as_str().is_some_and(|id|seen.insert(id.to_owned()))
+    }).take(120).cloned().collect()
+}
 fn needs_article_fetch(item:&Value,stored:Option<&Value>)->bool{
     if item["url"].as_str().is_none_or(|url|!url.starts_with("https://")&&!url.starts_with("http://")){
         return false;
@@ -177,10 +185,21 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
     let history=context.state.store.money_recent_signals(240).unwrap_or_default();
     let signals=dedupe_titles(signals,&history);
     let found=signals.len();
-    if found==0{return Err(format!("수집된 시장 자료가 없습니다: {}",json!(reports)));}
-    let added=context.state.store.money_ingest_signals(&signals)?;
-    let hypotheses=crate::engine::money_mechanism::discover(&history,30);
-    let linked=context.state.store.money_store_tensions(&hypotheses)?;
+    // All providers failing is a real acquisition failure. Successfully
+    // visited feeds with no *new* articles are healthy, not failed jobs;
+    // repeatedly treating this as an error would exhaust autopilot retries.
+    if !reports.iter().any(|r|r["found"].as_u64().is_some()){
+        return Err(format!("시장 출처 응답을 가져오지 못했습니다: {}",json!(reports)));
+    }
+    let (added,linked)=if found==0{
+        (0,0)
+    }else{
+        let window=research_window(&signals,&history);
+        let added=context.state.store.money_ingest_signals(&signals)?;
+        let hypotheses=crate::engine::money_mechanism::discover(&window,30);
+        let linked=context.state.store.money_store_tensions(&hypotheses)?;
+        (added,linked)
+    };
     let summary=json!({"id":format!("market:{}",context.job_id),
         "jobId":context.job_id,"found":found,"new":added,"newCrossMarketQuestions":linked,
         "scrapedPages":scraped,"sources":reports,"capturedAt":chrono::Utc::now().to_rfc3339()});
@@ -224,6 +243,33 @@ mod tests{
         let kept=dedupe_titles(batch,&history);
         assert_eq!(kept.len(),1);
         assert_eq!(kept[0]["title"],"New public buyer tender");
+    }
+    #[test] fn new_buyer_document_joins_existing_supply_in_same_cycle(){
+        let supplier=json!({"id":"s","sourceName":"hardware source",
+            "url":"https://supply.example/s","title":"New hardware cost falls",
+            "topics":["hardware"],"changeTags":["cost_drop"],"contentStatus":"page_fetched"});
+        let buyer=json!({"id":"b","sourceName":"construction buyer",
+            "url":"https://buyer.example/b","title":"New construction purchase request",
+            "topics":["construction"],"changeTags":["buyer_request"],"contentStatus":"page_fetched"});
+        // The old pipeline analyzed history only, silently dropping new
+        // demand until the next scheduled crawl.
+        assert!(crate::engine::money_mechanism::discover(&[supplier.clone()],5).is_empty());
+        let joined=research_window(&[buyer],&[supplier]);
+        assert_eq!(joined.len(),2);
+        let matches=crate::engine::money_mechanism::discover(&joined,5);
+        assert_eq!(matches.len(),1);
+        assert_eq!(matches[0]["buyerSignalId"],"b");
+        assert_eq!(matches[0]["purchaseEvidence"],false);
+    }
+    #[test] fn research_window_deduplicates_ids_and_remains_bounded(){
+        let new=json!({"id":"a","sourceName":"fresh"});
+        let old=json!({"id":"a","sourceName":"old"});
+        let history=(0..150).map(|i|json!({"id":format!("history-{i}")})).collect::<Vec<_>>();
+        let mut records=vec![old];records.extend(history);
+        let window=research_window(&[new],&records);
+        assert_eq!(window.len(),120);
+        assert_eq!(window[0]["sourceName"],"fresh");
+        assert_eq!(window.iter().filter(|x|x["id"]=="a").count(),1);
     }
     #[test] fn fetched_sources_are_skipped_but_headlines_can_be_enriched(){
         let item=json!({"url":"https://example.org/story"});

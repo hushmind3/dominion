@@ -237,6 +237,20 @@ impl Store {
             "SELECT id FROM records WHERE kind='money_report' AND id=?1",
             [report_id],|row|row.get(0)).optional().map_err(|e|e.to_string())?;
         if present.is_some(){return Ok(false);}
+        // Cancellation and Money's candidate/report commit share this SQLite
+        // transaction lock. A late model response cannot commit discoveries
+        // after /api/jobs/:id/cancel, even when cancellation races the write.
+        let job_id=report["jobId"].as_str().ok_or("Money report jobId missing")?;
+        let running:Option<String>=tx.query_row(
+            "SELECT data FROM records WHERE kind='job' AND id=?1",
+            [job_id],|row|row.get(0)).optional().map_err(|e|e.to_string())?;
+        let Some(running)=running else{
+            return Err("cancelled: Money discovery job no longer exists".into());
+        };
+        let running:Value=serde_json::from_str(&running).map_err(|e|e.to_string())?;
+        if running["status"]!="running"||running["cancelRequested"]==true {
+            return Err("cancelled: Money discovery job is no longer running".into());
+        }
         for candidate in candidates{
             let id=candidate["id"].as_str().ok_or("Money candidate id missing")?;
             tx.execute(

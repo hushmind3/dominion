@@ -22,8 +22,20 @@ pub fn start(state:&AppState){
 pub fn maintenance_tick(state:&AppState){
     if !state.store.get("money_plugin",MONEY_SCHEDULE_ID)
         .is_some_and(|row|row["enabled"]==true){return;}
-    refresh_money(state);
+    // The stored plug-in marker is a hint, not independent authority.
+    // A stopped/expired campaign must not leave a perpetual collector alive.
+    if !state.store.all("money_autopilot").iter().any(|row|row["enabled"]==true){
+        let _=sync_money_schedule(state);
+        return;
+    }
+    // The scheduler may stop the last active campaign on a deadline, job
+    // failure or round quota. Check again before requesting any new sources.
     crate::engine::money::schedule_autopilot(state);
+    if state.store.all("money_autopilot").iter().any(|row|row["enabled"]==true){
+        refresh_money(state);
+    }else{
+        let _=sync_money_schedule(state);
+    }
 }
 
 /// Explicit, read-only research acquisition on a user's Money button click.
@@ -100,6 +112,32 @@ mod tests{
         let jobs=state.store.all("job");
         assert_eq!(jobs.iter().filter(|j|j["kind"]=="money_ingest").count(),1);
         assert_eq!(jobs.iter().filter(|j|j["kind"]=="money_catalog").count(),1);
+    }
+    #[test]
+    fn stale_scheduler_marker_self_disables_without_launching_collectors(){
+        let state=fixture();
+        state.store.put("money_plugin",&json!({"id":MONEY_SCHEDULE_ID,
+            "enabled":true})).unwrap();
+        state.store.put("money_autopilot",&json!({"id":"c1",
+            "enabled":false,"runId":"stopped"})).unwrap();
+        maintenance_tick(&state);
+        assert_eq!(state.store.get("money_plugin",MONEY_SCHEDULE_ID).unwrap()["enabled"],false);
+        assert!(state.store.all("job").iter().all(|j|
+            !j["kind"].as_str().unwrap_or("").starts_with("money_")));
+    }
+    #[test]
+    fn expired_campaign_stops_without_rearming_money_collection(){
+        let state=fixture();
+        state.store.put("money_campaign",&json!({"id":"c1","name":"expired"})).unwrap();
+        state.store.put("money_autopilot",&json!({"id":"c1","enabled":true,
+            "continuous":false,"runId":"run-1",
+            "endsAt":(chrono::Utc::now()-chrono::Duration::minutes(1)).to_rfc3339()})).unwrap();
+        sync_money_schedule(&state).unwrap();
+        maintenance_tick(&state);
+        assert_eq!(state.store.get("money_autopilot","c1").unwrap()["stopReason"],"deadline");
+        assert_eq!(state.store.get("money_plugin",MONEY_SCHEDULE_ID).unwrap()["enabled"],false);
+        assert!(state.store.all("job").iter().all(|j|
+            !j["kind"].as_str().unwrap_or("").starts_with("money_")));
     }
     #[test]
     fn only_explicitly_enabled_autopilot_activates_money_scheduler(){

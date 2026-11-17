@@ -430,6 +430,12 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
     // common Rust kernel; only this domain parses its terminal JSON.
     let response=super::jobs::run_prompt(context,job).await?;
     if response["status"]!="completed" {return Ok(response);}
+    // Do not perform buyer-document fetches or parse/write speculative
+    // results after the owner has cancelled the shared Rust job.
+    if context.state.store.get("job",&context.job_id)
+        .is_none_or(|live|live["status"]!="running"||live["cancelRequested"]==true){
+        return Err("cancelled: Money inference no longer owns an active job".into());
+    }
     let session=response["sessionId"].as_str().ok_or("Native session missing")?;
     let raw=response["answer"].as_str().ok_or("Native model answer missing")?;
     let msg_id=format!("native-answer-{}",context.job_id);
@@ -783,7 +789,9 @@ mod tests{
     }
     #[test] fn discovery_commit_is_atomic_and_never_overwrites_manual_decisions(){
         let store=crate::db::Store::open(std::path::Path::new(":memory:")).unwrap();
-        let report=json!({"id":"report-1","campaignId":"c1","candidateIds":["c-1"]});
+        let report=json!({"id":"report-1","jobId":"job-1","campaignId":"c1","candidateIds":["c-1"]});
+        store.put("job",&json!({"id":"job-1","kind":"money_discover",
+            "status":"running"})).unwrap();
         let first=json!({"id":"c-1","title":"시장간 거래","status":"hypothesis"});
         let evidence=json!({"id":"fact-1","claim":"신규 기술 공급 가격이 크게 하락함","url":"https://example.org/source"});
         assert!(store.money_commit_discovery(&report,&[first.clone()],&[evidence],&[],&[]).unwrap());
@@ -793,6 +801,20 @@ mod tests{
         assert!(!store.money_commit_discovery(&report,&[first],&[],&[],&[]).unwrap());
         assert_eq!(store.get("money_candidate","c-1").unwrap()["status"],"validated");
         assert_eq!(store.money_corpus_stats().unwrap()["money_fact"],1);
+    }
+    #[test] fn cancelled_discovery_cannot_write_candidates_facts_or_report(){
+        let store=crate::db::Store::open(std::path::Path::new(":memory:")).unwrap();
+        store.put("job",&json!({"id":"cancelled-job","kind":"money_discover",
+            "status":"cancelled","cancelRequested":true})).unwrap();
+        let report=json!({"id":"report-cancelled","jobId":"cancelled-job",
+            "campaignId":"c1","candidateIds":["must-not-exist"]});
+        let item=json!({"id":"must-not-exist","title":"late model reply"});
+        let fact=json!({"id":"late-fact","claim":"should not be stored","url":"https://example.org"});
+        assert!(store.money_commit_discovery(&report,&[item],&[fact],&[],&[])
+            .unwrap_err().starts_with("cancelled:"));
+        assert!(store.get("money_candidate","must-not-exist").is_none());
+        assert!(store.get("money_report","report-cancelled").is_none());
+        assert!(store.get("money_fact","late-fact").is_none());
     }
     #[test] fn public_market_ingestion_deduplicates_sources_and_indexes_content(){
         let store=crate::db::Store::open(std::path::Path::new(":memory:")).unwrap();
