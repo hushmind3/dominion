@@ -144,3 +144,12 @@ Regression cases added: evidence-first admission, conflicting cost/latency dimen
 - Preserved the old `GET /api/sdk/runs/:id/replay` and paired `/compare` response shapes, and the new `/adjudicate` response shape; no data migrations or UI changes. Added `engine::native_evidence::tests` to the scoped macOS developer Rust workflow filter. No release or full CI executed.
 
 **Unverified:** Rust cargo tests cannot run in this editor (no Rust toolchain). All source-level paths and imports must be checked in a Rust environment, especially `engine::native_evidence::tests`, `engine::native_replay::tests`, `engine::native_adjudication::tests`, `engine::native_agent::tests`. The whole repository remains broader than this focused cleanup and should not be represented as globally free of legacy/duplicated code.
+
+
+## 2026-11-18: completion integrity / CI handoff
+
+**Production defect repaired:** `run_program` previously filtered durable checkpoints to those with the original revision, making its subsequently written `revisedProgram` recovery branch unreachable. An interrupted repaired task could resume the original executable despite saved completion receipts. A new `restore_program()` selects exact matching persisted revised IR, rejects missing/mismatched persisted revisions and in-flight effects without replay, and validates cursor/input state. Revision + checkpoint now persist in one execution record. `restore_program_state` transfers interrupted source checkpoint and target state together through `Store::transaction_if_fields` with source approval/status and target running status under one immediate SQLite transaction.
+
+**Read/IO efficiency:** forensic replay and adjudication reuse one fetched, immutable run snapshot via `native_replay::report_loaded`; previous code independently fetched mutable jobs twice per comparison. `native_evidence` is the sole shared file path/witness/JSON digest implementation used by both SDK execution and offline comparison. Idle RSI scheduler code was removed without deleting user history. Regression fixtures cover exact restored IR, unknown external effect refusal, missing target, single-use approval transfer and final artifact witness projection.
+
+**CI status:** final code is pending macOS Rust development-profile checks under `Sub3 product Rust tests`, `Sub3 Rust SDK tests` and `Sub3 Money Rust tests`; release Windows/macOS full CI remains separate/manual. Evidence comes from actual linked GitHub Actions runs, not repository source inspection alone. No pass claim before actual run completion.
