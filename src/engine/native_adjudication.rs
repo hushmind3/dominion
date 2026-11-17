@@ -659,7 +659,7 @@ mod tests {
   let b=good("slow",2,json!(150.0),json!(1200),json!(500),1);
   let c=good("cheap",2,json!(60.0),json!(1400),json!(200),0);
   let d=good("missing",2,Value::Null,json!(900),json!(100),0);
-  let runs=vec![a.clone(),b,c.clone(),d];
+  let runs=vec![a.clone(),b,c.clone(),d.clone()];
   assert!(dominates(&a,&runs[1]));
   assert!(!dominates(&a,&c),"cost and speed tradeoffs are incomparable");
   assert!(!dominates(&d,&a),"unpriced calls cannot win on a fake zero");
