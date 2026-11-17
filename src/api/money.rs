@@ -253,8 +253,14 @@ pub async fn start(State(state):State<AppState>,Path(id):Path<String>,Json(body)
     let prompt=engine::money::prompt(&state,&campaign,mode,focus.as_ref());
     let agent=body["agentId"].as_str().filter(|v|!v.trim().is_empty());
     if agent.is_some_and(|agent|state.store.get("agent",agent).is_none()){return fail("선택한 에이전트가 존재하지 않습니다.");}
+    // Pure domain reasoning. Source gathering happens in separate no-model
+    // collectors, so this invocation cannot acquire shell/MCP/browser powers.
+    let token_ceiling=body["tokenBudget"].as_u64().unwrap_or(24_000).clamp(4_000,120_000);
     let mut input=json!({"prompt":prompt,"campaignId":id,"mode":mode,
-        "toolsEnabled":mode!="infer","toolsExecutionEnabled":mode!="infer","tokenBudget":body["tokenBudget"].as_u64().unwrap_or(12000),
+        "toolsEnabled":false,"toolsExecutionEnabled":false,"requireEvidence":false,
+        "tokenBudget":token_ceiling,
+        "limits":{"maxSteps":3,"maxModelCalls":3,"maxToolCalls":1,
+            "maxEstimatedTokens":token_ceiling,"maxParallelReads":1,"maxResultChars":3000},
         "asymmetryBatchIds":state.store.money_pending_asymmetries(8).unwrap_or_default()
             .iter().filter_map(|v|v["id"].as_str()).collect::<Vec<_>>()});
     for key in ["agentId","providerId","model","reasoningEffort"]{
@@ -262,8 +268,6 @@ pub async fn start(State(state):State<AppState>,Path(id):Path<String>,Json(body)
             input[key]=json!(value);
         }
     }
-    let options=match engine::job_control::options(&state,&input){Ok(v)=>v,Err(err)=>return fail(&err)};
-    for (key,value) in options.as_object().into_iter().flatten(){input[key]=value.clone();}
     let queued=json!({"id":uuid::Uuid::new_v4().to_string(),"kind":"money_discover",
         "status":"queued","queuedAt":now(),"input":input,
         "attempts":0,"stepIndex":0,"stepTotal":0,"events":[]});
