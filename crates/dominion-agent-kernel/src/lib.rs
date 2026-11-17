@@ -76,9 +76,12 @@ pub fn side_effect_unknown(evidence:&[Value])->bool {
         // A multi-file patch has no remote provider, but a failed move can
         // leave a destination committed while source deletion is uncertain.
         // Do not treat that partial result as a safe replan/replay.
-        if item["outcomeUnknown"]==true || item["result"]["outcomeUnknown"]==true {
+        if item["outcomeUnknown"]==true || item["result"]["outcomeUnknown"]==true
+            || item["effectUnknown"]==true || item["result"]["effectUnknown"]==true {
             return true;
         }
+        // Rejected proposals and pre-dispatch failures never started an effect.
+        if item["dispatched"]==false {return false;}
         let tool=item["tool"].as_str().unwrap_or("");
         !matches!(tool,
             "workspace_read"|"workspace_read_range"|"workspace_write"|
@@ -98,7 +101,8 @@ pub fn decide(
     max_attempts:usize,
 ) -> Decision {
     if evidence.iter().any(|item|
-        item["outcomeUnknown"]==true || item["result"]["outcomeUnknown"]==true){
+        item["outcomeUnknown"]==true || item["result"]["outcomeUnknown"]==true
+        || item["effectUnknown"]==true || item["result"]["effectUnknown"]==true){
         return Decision::Review;
     }
     if gaps.is_empty() && error.is_none(){return Decision::Accept;}
@@ -185,6 +189,18 @@ mod tests {
         assert!(side_effect_unknown(&observations));
         assert_eq!(decide(Strategy::Focused,true,&[],None,&observations,0,6),
             Decision::Review);
+    }
+    #[test]
+    fn failed_tool_effect_uncertainty_is_not_lost_before_retry() {
+        let blocked=vec![json!({"tool":"github_api","status":"failed",
+            "result":{"effectUnknown":true,"error":"unsettled prior write"}})];
+        assert!(side_effect_unknown(&blocked));
+        assert_eq!(decide(Strategy::Focused,false,&["remote result unknown".into()],
+            Some("tool failed"),&blocked,0,6),Decision::Review);
+        let denied=vec![json!({"tool":"github_api","status":"failed",
+            "dispatched":false,"result":{"error":"permission denied"}})];
+        assert!(!side_effect_unknown(&denied),
+            "a rejected proposal must not be mistaken for an executed remote write");
     }
     #[test]
     fn owner_goal_revisions_do_not_reapply_superseded_additions() {
