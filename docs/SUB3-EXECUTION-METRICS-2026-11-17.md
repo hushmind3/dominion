@@ -121,3 +121,15 @@ cargo test --bin dominion-rust engine::chat::runtime::program::evidence_join_tes
     cargo test --bin dominion-rust api::native_replay::tests
 
 **Missing:** true isolated causal fork with identical full-world state and replay agreement measurement; quantified pass-rate or token gains. The algorithm refuses causalWinner instead of fabricating certainty. This is evidence-specific code integrated with Dominion's own SDK and host journal, not a generic PRISM/Harness² clone.
+
+
+## 2026-11-18: complementary research combination, not a new optimizer loop
+
+- **Google Harness²**: reuse execution contrast and its distinction between a model suggestion and an observed task result; no new rollout calls are created.
+- **Airbnb PRISM**: reuse 2026's multi-objective candidate-evaluation pattern instead of a scalar invented success score. The local portfolio compares observed evidence grade, failed receipts, recorded tokens, elapsed time and owner-configured KRW cost.
+- **Google VeriHarness**: use kernel acceptance, hashed artifact lineage and evidence provenance to qualify candidate observations before any tradeoff selection.
+- **DeepSeek Harness**: respect the existing pinned Rust SDK tool-authority and budget/execution contracts. The historical adjudicator never bypasses those boundaries or dispatches external effects.
+
+`src/engine/native_adjudication.rs` now returns `evidenceQualifiedPortfolio` and `portfolioMetrics` through the already wired `POST /api/sdk/runs/:id/adjudicate` endpoint. The frontier excludes unverified runs, missing price/latency/token measurements and dominated tradeoffs, preserving incomparable cost-vs-speed alternatives for owner review. An unmatched baseline/candidate pair cannot generate a recommendation. No holdout reliability, repeated-trial success probability, causal claim or automatic promotion is inferred from one task.
+
+Regression cases added: evidence-first admission, conflicting cost/latency dimensions, missing price, missing independently corroborated lineage, absent matched candidate, and existing persisted native job evidence. Scoped development Rust tests remain to be run on a Rust-enabled macOS runner; this editing environment has no `cargo`/`rustc`. Do not count this patch as measured superiority before compilation, test pass and same-task comparisons.
