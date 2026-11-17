@@ -3,7 +3,7 @@ import {StatusPill} from '../components/StatusPill'
 import {Button,TextInput,SelectInput} from '../components/Primitives'
 import {useEffect,useMemo,useState} from 'react'
 import {Activity,Blocks,BookOpenText,PackagePlus,Sparkles,Server,ArrowRight,Check,ChevronRight,Cloud,ExternalLink,Filter,Globe2,Github,KeyRound,Link2,LockKeyhole,MessageCircle,Plus,RadioTower,Search,Send,Settings2,ShieldCheck,Trash2,UsersRound,X} from 'lucide-react'
-import {del,openOAuth,post} from '../api'
+import {del,get,openOAuth,post} from '../api'
 import {Action,FormField,Headline,Notice,Panel,StateTag,Subheading,useRemote} from '../components/UI'
 import {t,useLocale,type LocaleKey} from '../i18n'
 import {ExtensionsPage,type ExtensionTab} from './Extensions'
@@ -31,7 +31,8 @@ export function ConnectionsPage(){
  const [section,setSection]=useState<'channels'|'accounts'|'capabilities'|ExtensionTab>('channels');
  const [editor,setEditor]=useState<{entry:ChannelEntry;record:any}|null>(null);
  const [error,setError]=useState(''),[info,setInfo]=useState(''),[probe,setProbe]=useState<Record<string,string>>({}),[saving,setSaving]=useState(false);
- const [oauthEditor,setOauthEditor]=useState<{id:string;clientId:string;clientSecret:string}|null>(null);
+ type CliAccountFlow={source:string;status:string;message?:string;url?:string|null;connected?:unknown}
+ const [cliAccount,setCliAccount]=useState<CliAccountFlow|null>(null);
  const installed=useMemo(()=>new Set(channels.value.map(x=>x.kind)),[channels.value]);
  const filtered=useMemo(()=>registry.value.filter(x=>(category==='all'||x.category===category)&&[x.name,x.id,x.description].join(' ').toLowerCase().includes(query.toLowerCase())),[registry.value,category,query]);
  const online=channels.value.filter(c=>active(c.status)).length;
@@ -58,24 +59,35 @@ export function ConnectionsPage(){
    setProbe(x=>({...x,[id]:r.verified?t('conn.dlg.verified'):r.message||t('conn.dlg.checkNeeded')}));
   }catch(e){setProbe(x=>({...x,[id]:(e as Error).message}))}
  };
- const connect=async(id:string)=>{
+ const connect=async(item:OAuthProvider)=>{
   setError('');
-  try{await openOAuth(id)}catch(e){setError((e as Error).message)}
- };
- const configureOAuth=async()=>{
-  if(!oauthEditor||saving)return;
-  setSaving(true);setError('');
   try{
-   await post('/api/oauth/providers/'+oauthEditor.id,{
-    clientId:oauthEditor.clientId.trim(),clientSecret:oauthEditor.clientSecret.trim()
-   });
-   const id=oauthEditor.id;
-   setOauthEditor(null);
-   await oauth.reload();
-   await connect(id);
+   if(item.configured){await openOAuth(item.id);return}
+   const source=item.id==='github'?'github':item.id==='google'?'google_workspace':null;
+   if(!source){setError('이 서비스는 배포자의 OAuth 앱 등록 후 사용할 수 있습니다.');return}
+   const progress=await post<CliAccountFlow>('/api/providers/cli/'+source+'/login',{});
+   setCliAccount({...progress,source});
+   if(progress.status==='completed'){void oauth.reload();void accounts.reload()}
   }catch(e){setError((e as Error).message)}
-  finally{setSaving(false)}
  };
+ useEffect(()=>{
+  if(!cliAccount||['completed','failed','cancelled'].includes(cliAccount.status))return;
+  let alive=true;
+  const timer=window.setInterval(()=>{
+   void get<CliAccountFlow>('/api/providers/cli/'+cliAccount.source+'/login/status')
+    .then(progress=>{
+     if(!alive)return;
+     setCliAccount(progress);
+     if(progress.status==='completed'){void oauth.reload();void accounts.reload()}
+    }).catch(error=>{if(alive)setError(String(error))});
+  },1500);
+  return()=>{alive=false;window.clearInterval(timer)};
+ },[cliAccount?.source,cliAccount?.status]);
+ useEffect(()=>{
+  const update=()=>{void oauth.reload();void accounts.reload()};
+  window.addEventListener('focus',update);
+  return()=>window.removeEventListener('focus',update);
+ },[]);
  const tabs=[{id:'channels',label:t('conn.tab.channels'),icon:RadioTower},{id:'accounts',label:t('conn.tab.accounts'),icon:Link2},{id:'market',label:'MCP 마켓',icon:Blocks},{id:'installed',label:t('ext.tab.installed'),icon:Server},{id:'skills',label:t('ext.tab.skills'),icon:BookOpenText},{id:'plugins',label:t('ext.tab.plugins'),icon:PackagePlus},{id:'capabilities',label:'역량 마켓',icon:Sparkles}] as const
  const sectionTabs=<nav className="connection-tabs" aria-label="연결 및 확장 기능">{tabs.map(({id,label,icon:Icon})=><Button key={id} variant="bare" aria-current={section===id?'page':undefined} onClick={()=>setSection(id)}><Icon size={15}/>{label}</Button>)}</nav>
  if(section!=='channels'&&section!=='accounts')return <div className="mx-auto w-full max-w-[1320px] px-4 py-3 sm:px-6">{sectionTabs}{section==='capabilities'?<CapabilitiesPage navigate={page=>setSection(page==='extensions'?'market':'channels')}/>:<ExtensionsPage section={section} embedded/>}</div>
@@ -109,16 +121,28 @@ export function ConnectionsPage(){
   </>}
   {section==='accounts'&&<>
    <Subheading title={t('conn.accounts')} extra={<span className="text-[10px] font-bold uppercase tracking-widest text-[#9C9388]">{t('ui.label.oauth')}</span>}/>
-   <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">{oauth.value.map(item=>{const account=accounts.value.find(a=>a.provider===item.id);const Icon=item.id==='github'?Github:Globe2;return <Panel className="flex min-w-0 flex-col gap-3 p-5" key={item.id}><div className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]"><Icon size={28}/></div><h3>{item.id==='github'?'GitHub':'Google · YouTube'}</h3><p>{item.id==='github'?t('conn.dlg.githubTitle'):t('conn.dlg.googleTitle')}</p><div className="integration-status"><StateTag online={Boolean(account)}>{account?t('conn.accountReady',{name:account.displayName}):item.configured?t('conn.oauthReady'):t('conn.oauthNeeded')}</StateTag></div>{item.id==='google'&&account&&!item.workspaceReady&&<p className="text-xs text-amber-700">Gmail · Drive · Docs · Calendar 작업 권한을 사용하려면 Google 계정을 다시 연결해 주세요.</p>}{item.id==='google'&&account&&item.workspaceReady&&<p className="text-xs text-emerald-700">Gmail · Drive · Docs · Calendar 에이전트 작업 연결됨</p>}{item.id==='github'&&account&&<p className="text-xs text-emerald-700">저장소 · 브랜치 · PR · 이슈 · CI 에이전트 작업 연결됨</p>}<div className="mt-auto flex flex-wrap items-center gap-2"><Action variant="secondary" disabled={!item.configured} onClick={()=>connect(item.id)}><Link2 size={16}/>{account?t('conn.reconnect'):t('conn.connect')}</Action>{!item.configured&&<Action variant="secondary" onClick={()=>setOauthEditor({id:item.id,clientId:'',clientSecret:''})}><KeyRound size={16}/> OAuth 앱 설정</Action>}</div></Panel>})}</div>
+   <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">{oauth.value.map(item=>{const account=accounts.value.find(a=>a.provider===item.id);const Icon=item.id==='github'?Github:Globe2;return <Panel className="flex min-w-0 flex-col gap-3 p-5" key={item.id}><div className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]"><Icon size={28}/></div><h3>{item.id==='github'?'GitHub':'Google · YouTube'}</h3><p>{item.id==='github'?t('conn.dlg.githubTitle'):t('conn.dlg.googleTitle')}</p><div className="integration-status"><StateTag online={Boolean(account)}>{account?t('conn.accountReady',{name:account.displayName}):item.configured?t('conn.oauthReady'):t('conn.oauthNeeded')}</StateTag></div>{item.id==='google'&&account&&!item.workspaceReady&&<p className="text-xs text-amber-700">Gmail · Drive · Docs · Calendar 작업 권한을 사용하려면 Google 계정을 다시 연결해 주세요.</p>}{item.id==='google'&&account&&item.workspaceReady&&<p className="text-xs text-emerald-700">Gmail · Drive · Docs · Calendar 에이전트 작업 연결됨</p>}{item.id==='github'&&account&&<p className="text-xs text-emerald-700">저장소 · 브랜치 · PR · 이슈 · CI 에이전트 작업 연결됨</p>}<div className="mt-auto flex flex-wrap items-center gap-2"><Action variant="secondary" onClick={()=>{void connect(item)}}><Link2 size={16}/>{account?t('conn.reconnect'):t('conn.connect')}</Action></div></Panel>})}</div>
   </>}
-  {oauthEditor&&<DialogBackdrop onDismiss={()=>{if(!saving)setOauthEditor(null)}}><DialogPanel size="wide">
-   <div className="flex items-center justify-between border-b border-[#EFE9DF] p-5"><h2>{oauthEditor.id==='github'?'GitHub':'Google'} OAuth 앱 연결 설정</h2><Button variant="ghost" size="icon" onClick={()=>setOauthEditor(null)}><X size={18}/></Button></div>
-   <div className="grid gap-4 p-5">
-    <p className="text-xs text-[#7C7469]">배포자가 OAuth 앱을 등록했다면 별도 설정 없이 계정 연결을 이용할 수 있습니다. 직접 운영하는 경우 앱의 Client ID와 Secret을 입력하면 서버 암호화 저장소에 보관됩니다.</p>
-    <FormField label="Client ID"><TextInput value={oauthEditor.clientId} onChange={e=>setOauthEditor({...oauthEditor,clientId:e.target.value})} placeholder="OAuth Client ID"/></FormField>
-    <FormField label="Client Secret"><TextInput type="password" value={oauthEditor.clientSecret} onChange={e=>setOauthEditor({...oauthEditor,clientSecret:e.target.value})} placeholder={oauthEditor.id==='github'?'필수':'PKCE 공개 클라이언트는 선택'}/></FormField>
+  {cliAccount&&<DialogBackdrop onDismiss={()=>{if(!['starting','browser','input'].includes(cliAccount.status))setCliAccount(null)}}><DialogPanel size="wide">
+   <div className="flex items-center justify-between border-b border-[#EFE9DF] p-5">
+    <h2>{cliAccount.source==='github'?'GitHub':'Google'} 계정 연결</h2>
+    <Button variant="ghost" size="icon" onClick={()=>setCliAccount(null)}><X size={18}/></Button>
    </div>
-   <div className="flex flex-wrap justify-end gap-2 border-t border-[#EFE9DF] p-5"><Action variant="secondary" onClick={()=>setOauthEditor(null)}>취소</Action><Action disabled={saving||!oauthEditor.clientId.trim()||(oauthEditor.id==='github'&&!oauthEditor.clientSecret.trim())} onClick={()=>{void configureOAuth()}}><Link2 size={16}/>저장 후 연결</Action></div>
+   <div className="grid gap-4 p-5">
+    <p role="status" className="text-sm text-[#4A443C]">{cliAccount.message||'공식 브라우저 로그인을 진행해 주세요.'}</p>
+    {cliAccount.url&&<a className="inline-flex items-center gap-2 break-all text-blue-700 underline" target="_blank" rel="noopener noreferrer" href={cliAccount.url}><ExternalLink size={16}/>공식 로그인 페이지 열기</a>}
+    {cliAccount.status==='completed'&&<p className="text-sm text-emerald-700">연결 성공 · 이제 에이전트가 이 계정으로 작업할 수 있습니다.</p>}
+    {cliAccount.status==='failed'&&<p className="text-sm text-red-700">계정 연결 실패 · 공식 로그인을 다시 실행하세요.</p>}
+    {['starting','browser','input'].includes(cliAccount.status)&&<p className="text-xs text-[#7C7469]">API 키나 개발자 Client ID는 입력하지 않습니다. 공식 서비스의 로그인·권한 동의만 진행합니다.</p>}
+   </div>
+   <div className="flex justify-end gap-2 border-t border-[#EFE9DF] p-5">
+    <Action variant="secondary" onClick={async()=>{
+      if(!['completed','failed','cancelled'].includes(cliAccount.status)){
+       await post('/api/providers/cli/'+cliAccount.source+'/login/cancel',{}).catch(()=>{});
+      }
+      setCliAccount(null);
+    }}>{cliAccount.status==='completed'?'닫기':'취소'}</Action>
+   </div>
   </DialogPanel></DialogBackdrop>}
   {editor&&<DialogBackdrop onDismiss={()=>{if(!saving)setEditor(null)}}><DialogPanel size="wide">
    <div className="flex items-center justify-between border-b border-[#EFE9DF] p-5"><div><small>CHANNEL CONFIGURATION · {editor.entry.id.toUpperCase()}</small><h2>{editor.record.id?t('conn.edit'):t('conn.new')}</h2></div><Button size="icon" variant="ghost" onClick={()=>setEditor(null)}><X size={18}/></Button></div>
