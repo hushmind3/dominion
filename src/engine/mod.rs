@@ -16,6 +16,7 @@ pub mod money_strategy;
 pub mod goal_control;
 pub mod native_agent;
 pub mod native_replay;
+pub mod native_adjudication;
 pub mod native_model;
 pub mod native_codex_ws;
 pub mod native_cache;
