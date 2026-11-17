@@ -273,12 +273,43 @@ pub(super) async fn attempt_model_adaptation(
         None,
     )
     .await?;
-    crate::engine::algorithms::mark_signal(
-        state, execution_id, "adaptation.selection", ok,
+    let intervention_outcome = crate::engine::adaptation_loop::evaluate_intervention_outcome(
+        &selected, &before_observation, &result, ok,
     );
-    crate::engine::algorithms::mark_signal(
-        state, execution_id, "learning.applicability", ok,
-    );
+    match intervention_outcome["status"].as_str() {
+        Some("verified") => {
+            crate::engine::algorithms::mark_signal(
+                state, execution_id, "adaptation.selection", true,
+            );
+            if !applicable_rules.is_empty() {
+                crate::engine::algorithms::mark_signal(
+                    state, execution_id, "learning.applicability", true,
+                );
+            }
+        }
+        Some("failed") => {
+            crate::engine::algorithms::mark_signal(
+                state, execution_id, "adaptation.selection", false,
+            );
+            if !applicable_rules.is_empty() {
+                crate::engine::algorithms::mark_signal(
+                    state, execution_id, "learning.applicability", false,
+                );
+            }
+        }
+        _ => {
+            crate::engine::algorithms::mark_unrated(
+                state, execution_id, "adaptation.selection",
+                "tool success without independently executable postconditions",
+            );
+            if !applicable_rules.is_empty() {
+                crate::engine::algorithms::mark_unrated(
+                    state, execution_id, "learning.applicability",
+                    "repair outcome has no verified postconditions",
+                );
+            }
+        }
+    }
     let hypothesis_results = crate::engine::adaptation_loop::evaluate_hypotheses_phased(
         &adaptation,
         &before_observation,
@@ -292,7 +323,7 @@ pub(super) async fn attempt_model_adaptation(
             state,
             execution_id,
             "multiagent.sharing",
-            tool_succeeded(&result),
+            intervention_outcome["status"] == "verified",
         );
     }
     crate::engine::experience::record_rule_counterexamples(
@@ -310,12 +341,14 @@ pub(super) async fn attempt_model_adaptation(
         environment_version,
         Some(&result),
         &hypothesis_results,
+        &intervention_outcome,
     );
     Ok(json!({
         "record": record,
         "selected": selected,
         "result": result,
         "hypothesisResults": hypothesis_results,
+        "interventionOutcome": intervention_outcome,
     }))
 }
 
