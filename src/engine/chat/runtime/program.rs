@@ -977,6 +977,11 @@ pub(super) async fn run_program(
                 && checkpoint["status"].as_str() != Some("completed")
         })
         .unwrap_or_else(|| crate::engine::program::new_checkpoint(program));
+    // Checkpoints written before mutation epochs were introduced remain
+    // resumable; a newly observed passing verify will establish freshness.
+    if !checkpoint["mutationEpoch"].is_u64() {
+        checkpoint["mutationEpoch"] = json!(0u64);
+    }
     let mut current_program = program.clone();
     if checkpoint["programRevision"].as_str() != program["revision"].as_str() {
         match state
