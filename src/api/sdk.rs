@@ -15,9 +15,13 @@ pub struct SourceRef { kind: String, id: String }
 /// The caller must still pass normal model/tool permissions and owner approval.
 fn source_metadata(source: Option<&SourceRef>) -> Result<Value, String> {
     let Some(source) = source else { return Ok(Value::Null); };
-    let valid = |s: &str, max: usize| !s.is_empty() && s.len() <= max
+    let valid_kind = |s: &str| !s.is_empty() && s.len() <= 64
         && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ':'));
-    if !valid(&source.kind, 64) || !valid(&source.id, 200) {
+    // Source IDs are opaque record identifiers, never filesystem paths.
+    // Permit existing slash/Unicode IDs while rejecting controls and oversized inputs.
+    let valid_id = !source.id.trim().is_empty() && source.id.len() <= 200
+        && !source.id.chars().any(char::is_control);
+    if !valid_kind(&source.kind) || !valid_id {
         return Err("작업 출처(kind/id) 형식이 올바르지 않습니다.".into());
     }
     Ok(json!({"kind":source.kind,"id":source.id,"verified":false}))
@@ -173,7 +177,7 @@ fn public_view_indexed(state:&AppState,mut record:Value,index:&ViewIndex)->Value
     }
     record
 }
-fn public_view(state:&AppState,record:Value)->Value{
+pub(crate) fn public_view(state:&AppState,record:Value)->Value{
     let Some(session)=record["sessionId"].as_str() else{
         let mut record=record;
         record["readOnly"]=json!(true);
@@ -215,19 +219,24 @@ pub async fn by_source(State(state):State<AppState>,Path(kind):Path<String>)->Re
 pub async fn one(State(state):State<AppState>,Path(id):Path<String>)->Response{
     state.store.get("sdk_run",&id).map(|r|Json(public_view(&state,r)).into_response()).unwrap_or_else(||error(StatusCode::NOT_FOUND,"작업이 없습니다."))
 }
-pub async fn start(State(state):State<AppState>,Json(input):Json<Start>)->Response{
-    if input.instruction.trim().is_empty()||input.instruction.len()>64000{return error(StatusCode::BAD_REQUEST,"작업 지시는 1~64000자로 입력하세요.");}
-    if input.verify_command.as_ref().is_some_and(|c|c.trim().is_empty()||c.len()>2048){return error(StatusCode::BAD_REQUEST,"검증 명령의 길이를 확인하세요.");}
-    if input.agent_id.as_ref().is_some_and(|id|id.is_empty()||id.len()>200
-        ||state.store.get("agent",id).is_none()) {
-        return error(StatusCode::BAD_REQUEST,"SDK 작업에 지정한 에이전트가 없습니다.");
+/// Prepare a native SDK task without persistent side effects. This is also
+/// used by optional tools that must atomically link their own approval receipt
+/// with the ordinary SDK session and execution record.
+fn prepare_start(state:&AppState,input:&Start)->Result<(Value,Value),String>{
+    if input.instruction.trim().is_empty()||input.instruction.len()>64000{
+        return Err("작업 지시는 1~64000자로 입력하세요.".into());
     }
-    let source=match source_metadata(input.source.as_ref()){
-        Ok(value)=>value,
-        Err(message)=>return error(StatusCode::BAD_REQUEST,&message),
-    };
-    let route=match gateway::resolve(&state,input.provider_id.as_deref().unwrap_or(""),input.model.as_deref()){Ok(r)=>r,Err(e)=>return error(StatusCode::BAD_REQUEST,&e)};
-    let options=match engine::job_control::options(&state,&input.options){Ok(value)=>value,Err(e)=>return error(StatusCode::BAD_REQUEST,&e)};
+    if input.verify_command.as_ref().is_some_and(|c|c.trim().is_empty()||c.len()>2048){
+        return Err("검증 명령의 길이를 확인하세요.".into());
+    }
+    if input.agent_id.as_ref().is_some_and(|id|id.is_empty()||id.len()>200
+        ||state.store.get("agent",id).is_none()){
+        return Err("SDK 작업에 지정한 에이전트가 없습니다.".into());
+    }
+    let source=source_metadata(input.source.as_ref())?;
+    let route=gateway::resolve(state,input.provider_id.as_deref().unwrap_or(""),
+        input.model.as_deref())?;
+    let options=engine::job_control::options(state,&input.options)?;
     let id=uuid::Uuid::new_v4().to_string();
     let session=uuid::Uuid::new_v4().to_string();
     let mut session_row=json!({
@@ -250,6 +259,19 @@ pub async fn start(State(state):State<AppState>,Json(input):Json<Start>)->Respon
         "agentId":input.agent_id,"source":source,
         "maxRounds":input.max_rounds.unwrap_or(24).clamp(1,80)
     });
+    Ok((session_row,record))
+}
+
+pub(crate) fn prepare_from_value(state:&AppState,body:Value)->Result<(Value,Value),String>{
+    let input:Start=serde_json::from_value(body).map_err(|e|e.to_string())?;
+    prepare_start(state,&input)
+}
+
+pub async fn start(State(state):State<AppState>,Json(input):Json<Start>)->Response{
+    let (session_row,record)=match prepare_start(&state,&input){
+        Ok(prepared)=>prepared,
+        Err(message)=>return error(StatusCode::BAD_REQUEST,&message),
+    };
     // User limits, workspace scope and the run are committed together.
     // A failed session write must never launch a model without its budget.
     if let Err(message)=state.store.transaction(&[
@@ -265,7 +287,7 @@ pub async fn start(State(state):State<AppState>,Json(input):Json<Start>)->Respon
     launch(state.clone(),saved.clone(),false);
     (StatusCode::ACCEPTED,Json(public_view(&state,saved))).into_response()
 }
-fn launch(state:AppState,record:Value,resume:bool){
+pub(crate) fn launch(state:AppState,record:Value,resume:bool){
     tokio::spawn(async move{
         let id=record["id"].as_str().unwrap_or("");
         if let Some(saved)=state.store.patch_if("sdk_run",id,"status",&record["status"],&json!({"status":"running"})){state.bus.record("sdk_run",&saved);}else{return;}
@@ -457,6 +479,8 @@ mod view_tests{
         assert_eq!(meta["kind"],"money_candidate");
         assert_eq!(meta["id"],"money:draft:123");
         assert_eq!(meta["verified"],false);
+        assert_eq!(source_metadata(Some(&SourceRef{kind:"money_candidate".into(),
+            id:"lead/한글".into()})).unwrap()["id"],"lead/한글");
         assert!(source_metadata(Some(&SourceRef{kind:"../../admin".into(),
             id:"1".into()})).is_err());
         assert!(source_metadata(Some(&SourceRef{kind:"money".into(),
