@@ -46,6 +46,10 @@ Existing product data and authentication remain in SQLite and its credential vau
 
 Queued and running job checkpoints now commit under one SQLite transaction that checks both the live job status and cancellation intent. A worker finishing after cancellation or an earlier terminal result cannot rewrite that record. This does not add a second execution engine or extra DB lookup. The regression test covers completed, failed, cancelled, review-required, and cancellation-requested jobs. CI runs release workspace tests on Windows and macOS only, per current product targets.
 
+## Development vs release validation
+
+Normal Rust source pushes run only scoped, default-profile kernel/job/Money regression tests on macOS via `.github/workflows/ci.yml`. They do **not** trigger frontend builds, `cargo build/check`, release-profile builds, installer packaging, or the Windows/macOS release matrix. The separate `.github/workflows/release.yml` performs those full checks only for version tags or an explicit manual release request. Passing scoped tests does not imply that a distributable desktop release has been validated.
+
 ## 💰 Money intelligence
 
 Money discovery collects public RSS, GitHub and Hugging Face signals with the existing Rust worker queue and stores the evidence in indexed SQLite. It produces source-backed business hypotheses without model tokens and offers opt-in AI inference through the existing durable job kernel. Research never authorizes outreach, spending or implementing a business.

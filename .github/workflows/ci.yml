@@ -1,41 +1,43 @@
-name: Release validation
+name: Development Rust regressions
 
-# Full platform builds and release-mode tests run only for a release or an explicit manual request.
-# Normal development pushes must not start a build/test matrix.
+# Routine pushes run only focused Rust unit tests in the default dev profile.
+# Desktop packaging, release-mode and frontend builds belong to release.yml.
 on:
-  workflow_dispatch:
-  release:
-    types: [published]
+  push:
+    branches: [main, dominion-sub2, dominion-sub3, dominion-sub4, money]
+    paths:
+      - 'src/**'
+      - 'crates/dominion-core/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'crates/dominion-core/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/ci.yml'
 
 permissions:
   contents: read
 
-# Keep one manually triggered release validation per ref.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Supported product targets: Windows and macOS. Linux release tests are intentionally excluded.
 jobs:
-  release-test:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+  focused-rust-tests:
+    # Linux is not a supported test target; one dev-profile runner is enough.
+    runs-on: macos-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: web/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: npm ci --prefix web
-      - run: npm run typecheck --prefix web
-      - run: npm run test:refresh --prefix web
-      - run: node web/node_modules/typescript/bin/tsc -p packages/sdk-typescript/tsconfig.json --noEmit
-      - run: npm run build --prefix web
-      - run: node scripts/check-runtime-architecture.mjs
-      - run: cargo test --workspace --release
+      - name: Shared kernel regressions (dev profile)
+        run: cargo test --locked -p dominion-core --lib
+      - name: Durable job and cancellation regressions (dev profile)
+        run: cargo test --locked --bin dominion-rust engine::jobs::tests
+      - name: Money domain and API regressions (dev profile)
+        run: cargo test --locked --bin dominion-rust money_
