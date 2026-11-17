@@ -58,9 +58,8 @@ pub(super) const SCHEMA: &str = r#"
              INSERT OR IGNORE INTO records(kind,id,data)
              SELECT 'money_module','global',json_object(
                  'id','global','enabled',json(CASE WHEN EXISTS(
-                     SELECT 1 FROM records WHERE kind IN
-                      ('money_signal','money_ingest_report','money_candidate',
-                       'money_autopilot','money_campaign') LIMIT 1
+                     SELECT 1 FROM records WHERE kind GLOB 'money_*'
+                       AND kind!='money_module' LIMIT 1
                  ) THEN 'true' ELSE 'false' END),'source','legacy_migration')
              WHERE NOT EXISTS(SELECT 1 FROM records
                  WHERE kind='money_module' AND id='global');

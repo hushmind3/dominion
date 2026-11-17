@@ -48,6 +48,30 @@ pub async fn run(context: &JobContext, job: &Value) -> Result<Value, String> {
 mod tests {
     use super::*;
     #[test]
+    fn disabled_money_does_not_queue_background_collection_or_model_work(){
+        use crate::{config::Config,db::Store,vault::Vault};
+        let root=std::env::temp_dir().join(format!("money-idle-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config=Config{port:0,data_dir:root.join("data"),web_dir:root.join("web"),
+            workspace:root.clone()};
+        std::fs::create_dir_all(&config.data_dir).unwrap();
+        let state=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()));
+        assert!(!enabled(&state));
+        schedule(&state);
+        assert_eq!(state.store.count_kind("job"),0);
+        state.store.money_set_module_enabled(true).unwrap();
+        schedule(&state);
+        assert!(state.store.count_kind("job")>=2);
+        let (settings,_,stopped)=state.store.money_set_module_enabled(false).unwrap();
+        assert_eq!(settings["enabled"],false);
+        assert!(stopped.len()>=2);
+        schedule(&state);
+        assert_eq!(state.store.count_kind("job"),stopped.len());
+        drop(state);
+        let _=std::fs::remove_dir_all(root);
+    }
+    #[test]
     fn handles_only_money_owned_job_kinds() {
         for kind in ["money_discover", "money_ingest", "money_catalog", "money_fold"] {
             assert!(handles(kind));
