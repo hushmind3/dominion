@@ -51,3 +51,24 @@ cargo test native_replay::tests:: -- --nocapture
 ~~~
 
 Also rerun the full SDK/kernel suite and a real persisted native job with a known failed prerequisite, a rejected uncertain host operation, and a clean success path before declaring the new HEAD release-ready. These are provenance and safety checks, not current-world acceptance proofs.
+
+## Kernel verification namespace and replay attribution hardening (2026-11-17, follow-up)
+
+Source-only change on `dominion-sub3`, based on the judged 69/100 baseline. No changes to `main`, UI, credential paths, or serialized Snapshot fields.
+
+- `crates/dominion-agent-sdk/src/acceptance.rs` declares the single host-only `kernel-verify-` namespace.
+- `src/lib.rs` creates mandatory test operation IDs from that constant. `scheduler.rs` rejects any model-proposed action using the reserved prefix before tool admission.
+- `replay.rs` now distinguishes model-planned tool receipts from host-generated acceptance receipts. A receipt with no model action and no valid host-check shape marks the trace inconsistent. Valid host checks appear as `kernelVerificationReceipts`. The report remains read-only: identifying a receipt is **not** proof of its external side effects; `native_replay::report` independently checks the host operation journal.
+- New deterministic regression cases exercise model ID spoofing; legitimate host check receipts; unattributed receipts; tool-name substitution; mismatched step; and a forged skipped check.
+- Old checkpoints with no decision tape still deserialize; they remain ineligible for confident decision-to-effect replay. No schema migration was introduced.
+
+**Verification state:** Source changes committed with `[skip ci]`. GitHub source was read back after writing. Rust compilation and tests have **not** run in this editor, and neither real-model success rate nor runtime cost can be inferred. A Rust-enabled runner should execute:
+
+~~~bash
+cargo test -p dominion-agent-sdk scheduler::tests:: -- --nocapture
+cargo test -p dominion-agent-sdk replay::tests:: -- --nocapture
+cargo test -p dominion-agent-sdk --test multifile_fault_recovery -- --nocapture
+cargo test native_replay::tests:: -- --nocapture
+~~~
+
+The improvement targets replay evidence integrity, not a new measured benchmark point. For comparison, Qwen Code's October 2026 session multi-agent design describes explicit persisted records and replay, while Codex app-server separates lifecycle events and approvals. Neither external system's published design establishes a Dominion pass-rate claim.
