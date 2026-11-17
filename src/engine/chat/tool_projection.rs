@@ -142,6 +142,15 @@ pub(super) fn select_room_tools(
                     score += 12;
                 }
             }
+            // An installed MCP search tool is a more specific match than
+            // GitHub's generic create/edit schema when the owner asks to
+            // search issues. Do not let new native tools evict MCP search.
+            let issue_search=lower.contains("이슈") || lower.contains("issue");
+            let searching=lower.contains("검색") || lower.contains("search");
+            if name_lower.starts_with("mcp__") && issue_search && searching
+                && (name_lower.contains("issue") || name_lower.contains("search")){
+                score += 32;
+            }
             if recent.contains(&name_lower) {
                 score += 8;
             }
