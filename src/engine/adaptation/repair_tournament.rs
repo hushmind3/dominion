@@ -29,10 +29,18 @@ fn evidence_ids(proposal:&Value,checkpoint:&Value,failure:&Value)->Result<(),Str
         .filter(|v|!v.is_empty())
         .ok_or("candidate repair needs non-empty evidenceIds")?;
     let node=failure["nodeId"].as_str().unwrap_or("");
+    let ancestors=crate::engine::adaptation::trace_ir::provenance_ancestors(
+        &failure["trace"],
+    );
     for id in ids {
         let id=id.as_str().ok_or("candidate evidence ID must be a string")?;
-        if id!="program-failure" && id!=node && checkpoint["observationRefs"].get(id).is_none(){
-            return Err(format!("candidate cites unknown checkpoint evidence {id}"));
+        // Source operation IDs must be in the dependency ancestry, never
+        // merely nearby in chronological history. A real checkpoint node
+        // observation is also admissible, with its persisted content hash.
+        if id!="program-failure" && id!=node
+            && checkpoint["observationRefs"].get(id).is_none()
+            && !ancestors.contains(id) {
+            return Err(format!("candidate cites unsupported failure provenance {id}"));
         }
     }
     Ok(())
@@ -327,6 +335,23 @@ mod tests {
         let unrelated=proposal("fix-b","b","present");
         assert!(prepare(&json!({"candidateRevisions":[unrelated]}),
             &program,&checkpoint,&failure,&tools,"replace").is_err());
+    }
+    #[test]
+    fn causal_provenance_rejects_temporal_neighbor_evidence(){
+        let (program,checkpoint,mut failure,tools)=fixture();
+        failure["trace"]=json!({
+            "focus":{"evidenceId":"receipt-failed"},
+            "nodes":[{"id":"receipt-neighbor"},{"id":"receipt-failed"}],
+            "edges":[{"from":"receipt-neighbor","to":"receipt-failed","relation":"temporal"}]
+        });
+        let mut unsupported=proposal("fix-a","a","old");
+        unsupported["evidenceIds"]=json!(["receipt-neighbor"]);
+        assert!(prepare(&json!({"candidateRevisions":[unsupported]}),
+            &program,&checkpoint,&failure,&tools,"replace").is_err());
+        let mut supported=proposal("fix-a","a","old");
+        supported["evidenceIds"]=json!(["receipt-failed"]);
+        assert!(prepare(&json!({"candidateRevisions":[supported]}),
+            &program,&checkpoint,&failure,&tools,"replace").is_ok());
     }
     #[test]
     fn completed_node_mutation_is_invalid_and_legacy_contract_survives(){
