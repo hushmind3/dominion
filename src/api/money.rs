@@ -519,7 +519,21 @@ pub async fn update_candidate(State(state):State<AppState>,Path(id):Path<String>
         prior["economics"]=json!(economics);
     }
     prior["updatedAt"]=json!(now());
-    match state.store.put("money_candidate",&prior){
+    // A concurrent implementation approval must never be erased by a stale
+    // whole-record write from a candidate status/notes edit.
+    let patch=prior.clone();
+    match state.store.mutate_record("money_candidate",&id,prior,|current|{
+        if body["status"]=="rejected" && current["implementationJobId"].is_string(){
+            return Err("implementation_already_requested".into());
+        }
+        if body["status"].is_string(){current["status"]=patch["status"].clone();}
+        for key in ["firstTest","killSignal","distribution","defensibility","notes"]{
+            if body[key].is_string(){current[key]=patch[key].clone();}
+        }
+        if body["economics"].is_object(){current["economics"]=patch["economics"].clone();}
+        current["updatedAt"]=patch["updatedAt"].clone();
+        Ok(vec![])
+    }){
         Some(v)=>{
             state.bus.record("money_candidate",&v);
             let experiments=state.store.money_recent_experiments(
@@ -528,7 +542,9 @@ pub async fn update_candidate(State(state):State<AppState>,Path(id):Path<String>
                 .and_then(|c|c["capitalWon"].as_f64()).unwrap_or(-1.0);
             Json(decorate(v,&experiments,capital)).into_response()
         },
-        None=>error(StatusCode::INTERNAL_SERVER_ERROR,"사업 후보 변경을 저장하지 못했습니다.")
+        Err(err) if err=="implementation_already_requested"=>
+            error(StatusCode::CONFLICT,"구현 요청이 있는 후보는 먼저 작업을 확인하세요."),
+        Err(err)=>error(StatusCode::INTERNAL_SERVER_ERROR,&err)
     }
 }
 /// Zero-LLM draft. No publication, payment processing or external outreach.

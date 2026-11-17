@@ -310,6 +310,19 @@ fn view(state:&AppState)->Value{
             drafts=selected;
         }
     }
+    // Resumable owner approval: each displayed candidate carries a compact
+    // current host-job receipt. Refreshing the page restores its exact job ID,
+    // cancellation state and result session; no local-only UI job state.
+    for draft in &mut drafts {
+        if let Some(id)=draft["implementationJobId"].as_str(){
+            draft["implementationJob"]=state.store.get("job",id).map(|run|{
+                json!({"id":id,"status":run["status"],"error":run["error"],
+                    "sessionId":run["sessionId"].as_str()
+                        .or_else(||run.pointer("/result/sessionId").and_then(Value::as_str))
+                        .or_else(||run.pointer("/result/result/sessionId").and_then(Value::as_str))})
+            }).unwrap_or(json!({"id":id,"status":"missing"}));
+        }
+    }
     if let Some(session)=job["sessionId"].as_str()
         .or_else(||outcome["sessionId"].as_str())
         .or_else(||execution["sessionId"].as_str())
@@ -468,7 +481,10 @@ mod tests {
         let state=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),
             Vault::open(&config.key_path()));
         state.store.put("money_candidate",&json!({"id":"candidate-from-27b",
-            "title":"New market hypothesis","status":"hypothesis"})).unwrap();
+            "title":"New market hypothesis","status":"implementation_requested",
+            "implementationJobId":"money:implement:proof","implementationApprovedAt":"2026-11-17T00:00:00Z"})).unwrap();
+        state.store.put("job",&json!({"id":"money:implement:proof","kind":"prompt",
+            "status":"running","input":{"moneyCandidateId":"candidate-from-27b"}})).unwrap();
         state.store.put("money_find_report",&json!({"id":REPORT_ID,
             "candidateIds":[],"reasoningJobId":"job-27b","sourceCount":4})).unwrap();
         state.store.put("session",&json!({"id":"money-session","title":"Money",
@@ -481,6 +497,8 @@ mod tests {
             "sessionId":"money-session","modelCalls":2,"estimatedTokens":1800})).unwrap();
         let visible=view(&state);
         assert_eq!(visible["drafts"][0]["id"],"candidate-from-27b");
+        assert_eq!(visible["drafts"][0]["implementationJob"]["id"],"money:implement:proof");
+        assert_eq!(visible["drafts"][0]["implementationJob"]["status"],"running");
         assert_eq!(visible["modelCalls"],2);
         assert_eq!(visible["inferenceEstimatedTokens"],1800);
         assert_eq!(visible["inferenceConfiguredCostKRW"],12.0);
