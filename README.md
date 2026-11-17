@@ -28,6 +28,13 @@ Chat and UI default `autoLearning` to false, and former five-minute background d
 - `/api/mcp/catalog`, `/api/mcp/discover`, `/api/tools`, `/api/skill-catalog` and `/api/channels` expose owner-configured integrations. A connected MCP may later handle third-party media generation.
 - `/api/sessions`, `/api/memory/overview`, `/api/providers`, `/api/rooms` retain existing conversation and collaboration surfaces.
 
+### Browser account login without user API keys
+
+In **Connections → Accounts**, select GitHub or Google. The product uses a deployment-registered OAuth app when configured. Otherwise it can use the already installed **official GitHub CLI** or **Google Workspace CLI** to open a browser login and adopt the provider's authorized grant into the encrypted vault. End users are not asked to input Client ID, Client Secret, access token or API key. Connected actions reuse the same approved Rust SDK/chat execution path.
+
+A real provider-registered OAuth client must exist either in the product deployment or the official CLI. Google Workspace CLI may require one-time Google Cloud project setup; no program can bypass provider consent or fabricate a Google app identity. See docs/CONNECTED-ACCOUNTS-2026-11-17.md.
+
+
 ### Build and verification
 
 Run `npm ci --prefix web && npm run typecheck --prefix web && npm run build --prefix web`, `npm test --prefix sdk/typescript`, `node scripts/check-lean-product.mjs`, and `cargo test --release --locked`. The GitHub Actions CI matrix checks Linux, Windows and macOS. Release and focused agent acceptance must pass on the *same branch HEAD*; a historical green run does not certify new changes.

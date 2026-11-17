@@ -7,6 +7,8 @@ on:
     branches: [dominion-sub3]
     paths:
       - '.github/workflows/sub3-rust-sdk-check.yml'
+      - 'README.md'
+      - 'docs/CONNECTED-ACCOUNTS-2026-11-17.md'
       - 'crates/dominion-agent-sdk/**'
       - 'src/api/jobs.rs'
       - 'src/engine/native_agent.rs'

@@ -1,51 +1,30 @@
-# Connected Google and GitHub accounts — Dominion Sub3 (2026-11-17)
+# Dominion Sub3 — Browser account sign-in (2026-11-17)
 
-## Connect
+## End-user experience
 
-Open **Connections → Accounts**. Select **GitHub** or **Google** and sign in through the system browser. If the deployment did not register an OAuth app, choose **OAuth 앱 설정**, enter its Client ID / Secret, then **저장 후 연결**. This is a normal OAuth consent flow, not a password scraper.
+Open Connections → Accounts. Click GitHub or Google Connect, then complete the official browser login and provider permission consent. Dominion displays a live status, GitHub device code and the official login URL when supplied by the CLI. There is no end-user OAuth Client ID, Client Secret, PAT or API-key form.
 
-A deployment can set registered application credentials once:
+## Credential sources in priority order
 
-| Account | OAuth configuration environment variables |
-| --- | --- |
-| GitHub | DOMINION_GITHUB_OAUTH_CLIENT_ID, DOMINION_GITHUB_OAUTH_CLIENT_SECRET |
-| Google | DOMINION_GOOGLE_OAUTH_CLIENT_ID, DOMINION_GOOGLE_OAUTH_CLIENT_SECRET |
-| YouTube, if separate | DOMINION_YOUTUBE_OAUTH_CLIENT_ID, DOMINION_YOUTUBE_OAUTH_CLIENT_SECRET; falls back to Google |
+1. **Distributor-managed OAuth registration:** When the product operator provisions the registered GitHub/Google OAuth app credentials once through the existing encrypted vault or deployment environment, the standard system-browser login works directly. The user only approves the official provider consent page.
+2. **GitHub CLI fallback:** Without that app configuration, Dominion calls the installed official gh binary's browser login (gh auth login --web), then verifies the consented account against the GitHub User API. Existing gh credentials can be adopted without asking the user for a developer key. Token rotation is delegated to gh and pinned to the connected identity.
+3. **Google Workspace CLI fallback:** Without a deployment app, Dominion can run the installed gws CLI's browser login with the Gmail, Drive, Docs and Calendar services selected. It securely imports the already authorized grant using gws auth export --unmasked, checks refresh and the provider-reported scopes, then stores only encrypted local credentials.
 
-The developer must register a local callback URI with each provider. Example GitHub callback: http://127.0.0.1:PORT/api/oauth/github/callback and Google callback: http://127.0.0.1:PORT/api/oauth/google/callback, where PORT is the actual DOMINION server port. Nothing is preconfigured with a shared public client secret.
+These CLI fallbacks require the corresponding **official CLI to be installed**. The Google Workspace CLI must have a legitimate working OAuth client; it may require a Google Cloud project and its own first-time setup. The program does not create a cloud/billing project silently or invent an OAuth client ID. Distributors wanting seamless sign-in on arbitrary end-user computers should register and provision their own OAuth app. Google requires sensitive/restricted-scope validation for wider distribution.
 
-Google requires consent to Gmail read/send, Drive, Docs and Calendar access. A previous Google identity-only connection must reconnect before the agent can use these tools. For production distribution, Google may require sensitive/restricted-scope app verification or a user allowlist. Enable the Workspace APIs in the Google Cloud project.
+GitHub CLI: https://cli.github.com
+Google Workspace CLI: https://github.com/googleworkspace/cli
 
-## Agent operations
+## Execution contracts
 
-**GitHub**: github_work_read can list or search repositories and list branches, pull requests, issues and CI runs. github_work_write creates a branch, PR or issue, and reads the remote object back. Existing github_file_read/github_file_commit perform SHA-checked source reads and branch-specific commits with remote verification. Mutations require owner approval. No automatic merge occurs.
+- src/api/cli_oauth.rs runs fixed official CLI commands through a bounded login broker, forwards safe login progress, supports cancellation and terminates stuck sessions within ten minutes.
+- src/engine/oauth.rs imports and validates CLI credentials and keeps grants in the existing local encrypted vault; token material is never delivered to browser UI or model prompts.
+- src/engine/tools.rs supplies account-specific tools to the Rust SDK and chat only after the account is connected and the needed Google scopes are actually granted.
+- Disconnect revokes Dominion's authority without logging the owner out of gh or gws. Switching from CLI to normal OAuth removes stale source state.
+- External writes (GitHub branch/PR/issue/commit; Gmail send, Drive/Docs changes, Calendar writes) still use owner approvals and existing durable tool receipts.
 
-**Google**: google_workspace_read exposes Gmail message search and read, Drive file search and bounded text retrieval, Google Docs document text and Calendar event reads. google_workspace_write sends text Gmail messages; creates and updates Drive plain text files; appends Docs text; and creates, updates or deletes Calendar events. Mutations require owner approval. Dates must use RFC3339 time zones.
+## Tests and limits
 
-Illustrative GitHub tool arguments:
+Focused CI includes the no-key frontend contract, official CLI command/authorization-code parser tests, OAuth disconnect regression, GitHub/Google HTTP fixtures, SDK tool selection and frontend typecheck/build. Fixtures are not a substitute for an actual owner's browser consent or Google Workspace production OAuth verification.
 
-~~~json
-{"operation":"search_repositories","query":"dominion"}
-{"operation":"create_branch","owner":"owner","repo":"repo","from":"main","branch":"feature/fix"}
-{"operation":"open_pr","owner":"owner","repo":"repo","head":"feature/fix","base":"main","title":"Verified fix","body":"Tests passed"}
-~~~
-
-Illustrative Google tool arguments:
-
-~~~json
-{"service":"gmail","operation":"search","query":"from:team@example.com"}
-{"service":"gmail","operation":"send","to":"team@example.com","subject":"Update","body":"Done."}
-{"service":"calendar","operation":"create","summary":"Planning","start":"2026-11-18T09:00:00+09:00","end":"2026-11-18T10:00:00+09:00"}
-~~~
-
-## Integrity and boundaries
-
-Credentials remain in the encrypted local vault, and access tokens are not copied to model prompts. Account tools are offered only when the matching OAuth connection and required permissions are present; disconnecting hides them from subsequent sessions. All external writes require existing owner approval and produce tool receipts.
-
-GitHub branches, PRs and issues are verified through independent GET requests; conflict responses are reported instead of forced writes. Drive text edits require a previously observed version and subsequent byte verification (the version precheck is not an atomic remote CAS). Docs currently supports append, not arbitrary document replacement. Gmail sends return a provider-acknowledged message ID. External effects are never silently retried when the result is uncertain.
-
-## Validation
-
-The focused Rust SDK workflow uses real localhost HTTP fixtures to check GitHub repo discovery/search, branch/PR/issue creates, duplicate branch rejection, CI reads, Gmail search/read/send, Drive search/create, Docs read/append, Calendar list/create, OAuth scope boundaries and write-approval policy.
-
-Those tests do not use the owner's live tokens. Actual external account access depends on provider permissions, OAuth app registration, user consent and successful provider calls. The tests are not evidence of real GitHub/Google user-account actions.
+The product does not bundle third-party CLI binaries. If neither a distributor-managed OAuth app nor an official CLI with valid OAuth credentials is available, sign-in is not possible until one is provided.
