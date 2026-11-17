@@ -181,7 +181,7 @@ pub(super) async fn attempt_model_adaptation(
     session_id: &str,
     execution_id: &str,
     round: usize,
-    _call_id: &str,
+    failed_call_id: &str,
     tool: &str,
     arguments: &Value,
     error: &str,
@@ -213,6 +213,16 @@ pub(super) async fn attempt_model_adaptation(
         &before_observation,
         &environment_fingerprint,
     );
+    // Backward evidence slice from native receipts, not a fabricated model
+    // analysis. Historical file contents and access tokens never enter here.
+    let failure_trace = crate::engine::adaptation::trace_ir::compile(
+        &state.store.recent_execution_operations(execution_id, 64)?,
+        failed_call_id, tool, arguments,
+    );
+    prompt.push_str("\n\nNative execution provenance (evidence, not a causal conclusion):\n");
+    prompt.push_str(&failure_trace.to_string());
+    prompt.push_str("\nUse only the trace evidence IDs above or before/current-failure. ");
+    prompt.push_str("Distinguish observation from hypothesis; never invent tool receipts.");
     // Design 2.4 §6: reuse a verified precedent only when its observable
     // failure predicate matches. The old inputs are an example, not an action
     // to replay. The model must instantiate new inputs for this task.
@@ -265,7 +275,11 @@ pub(super) async fn attempt_model_adaptation(
         let candidate = crate::engine::adaptation_loop::parse_adaptation(&raw);
         match candidate {
             Some(candidate) => {
-                match crate::engine::adaptation_loop::validate_adaptation(&candidate) {
+                let validity = crate::engine::adaptation_loop::validate_adaptation(&candidate)
+                    .and_then(|()|crate::engine::adaptation::trace_ir::validate_evidence_ids(
+                        &candidate,&failure_trace,
+                    ));
+                match validity {
                     Ok(()) => {
                         adaptation = Some(candidate);
                         break;
@@ -290,6 +304,7 @@ pub(super) async fn attempt_model_adaptation(
     })).collect::<Vec<_>>());
     adaptation["beforeObservation"] = before_observation.clone();
     adaptation["environmentFingerprint"] = json!(environment_fingerprint);
+    adaptation["failureTrace"] = failure_trace.clone();
     // Hypothesis IDs belong to THIS generated proposal. Prior revisions may
     // reuse "h1" for a completely different explanation; never transfer
     // their refutations based on ID alone.
@@ -420,6 +435,14 @@ pub(super) async fn attempt_model_adaptation(
     if !inputs.is_object() {
         return Err("selected intervention inputs are not an object".into());
     }
+    // A native provenance graph plus current-proposal probe refutations
+    // constrain mutation admission, without replacing gateway permission.
+    let action_certificate = crate::engine::adaptation::trace_ir::action_certificate(
+        &failure_trace, &selected,
+        adaptation["hypotheses"].as_array().map(Vec::as_slice).unwrap_or(&[]),
+        &refuted, crate::engine::effect::is_effectful(&selected_tool, &inputs),
+    )?;
+    adaptation["actionCertificate"] = action_certificate.clone();
     if state.is_cancelled(session_id)
         || state.cancellation_generation(session_id) != generation {
         return Err("실행이 중단되었습니다.".into());
@@ -497,6 +520,7 @@ pub(super) async fn attempt_model_adaptation(
         "result": result,
         "hypothesisResults": hypothesis_results,
         "probeResults": adaptation["probeResults"],
+        "actionCertificate": action_certificate,
     }))
 }
 
