@@ -1658,9 +1658,8 @@ pub(super) async fn run_program(
             }
             Ok(None) => break,
             Err(error) => {
-                crate::engine::algorithms::mark_signal(
-                    state, execution_id, "program.repair", false,
-                );
+                // Record only one failed repair signal at the terminal
+                // unresolved checkpoint, not once here and again at exit.
                 record_adaptation_error(
                     state,
                     execution_id,
@@ -1776,9 +1775,18 @@ pub(super) async fn run_program(
         return Ok(messages);
     }
     if current_program["repairTournament"].is_object() {
-        crate::engine::algorithms::mark_signal(
-            state, execution_id, "program.repair", true,
-        );
+        if current_program["repairTournament"]["decision"]["chosen"]=="legacy" {
+            // A legacy single proposal is preserved for compatibility but
+            // has no independent read-back proof: never grade it a success.
+            crate::engine::algorithms::mark_unrated(
+                state, execution_id, "program.repair",
+                "legacy program revision has no independent postflight",
+            );
+        } else {
+            crate::engine::algorithms::mark_signal(
+                state, execution_id, "program.repair", true,
+            );
+        }
     }
     checkpoint["nextIndex"] = json!(node_count);
     checkpoint["status"] = json!("completed");
