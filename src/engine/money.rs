@@ -714,7 +714,9 @@ pub fn schedule_autopilot(state:&AppState){
                         input[key]=json!(v);
                     }
                 }
-                if let Some(map)=input.as_object_mut(){map.remove("agentId");}
+                // Provider/model are explicit turn overrides in the common
+                // router, so retain agentId: its persona and task instructions
+                // must survive each free-model rotation.
                 input["rotationIndex"]=json!(index);
             }
         }
@@ -838,6 +840,41 @@ mod tests{
             "input":{"mode":"cross"}});
         assert!(store.money_claim_job("c1",&stale,Some(("r1",0,&next))).unwrap().is_none());
         assert_eq!(store.get("money_campaign","c1").unwrap()["lastJobId"],"job:r1:1");
+    }
+    #[test]
+    fn free_provider_rotation_keeps_one_money_agent_identity_across_rounds() {
+        use crate::{config::Config, db::Store, vault::Vault};
+        let dir=std::env::temp_dir().join(format!("money-persona-{}",uuid::Uuid::new_v4()));
+        let config=Config{port:0,data_dir:dir.join("data"),web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()));
+        state.store.put("agent",&json!({"id":"researcher","name":"머니 조사원",
+            "instructions":"누가 돈을 내는지 검토","providerId":"default-provider"})).unwrap();
+        state.store.put("money_campaign",&json!({"id":"money:test","brief":"시장 수요를 찾아라"})).unwrap();
+        state.store.put("money_autopilot",&json!({"id":"money:test","runId":"gen-one",
+            "enabled":true,"continuous":true,"scheduledRounds":0,"dailyScheduledRounds":0,
+            "maxRounds":3,"agentId":"researcher","tokenBudget":4096,"nextAt":"2026-01-01T00:00:00Z",
+            "freeModels":[{"providerId":"free-a","model":"model-a"},
+                {"providerId":"free-b","model":"model-b"}]})).unwrap();
+        schedule_autopilot(&state);
+        let first_id="money:auto:money:test:gen-one:1";
+        let first=state.store.get("job",first_id).expect("first round persisted");
+        assert_eq!(first["input"]["agentId"],"researcher");
+        assert_eq!(first["input"]["providerId"],"free-a");
+        assert_eq!(first["input"]["model"],"model-a");
+        state.store.patch_if("job",first_id,"status",&json!("queued"),
+            &json!({"status":"completed","result":{"candidateIds":[]}})).unwrap();
+        state.store.patch_if("money_autopilot","money:test","id",&json!("money:test"),
+            &json!({"nextAt":"2026-01-01T00:00:00Z"})).unwrap();
+        schedule_autopilot(&state);
+        let second=state.store.get("job","money:auto:money:test:gen-one:2")
+            .expect("second round persisted");
+        assert_eq!(second["input"]["agentId"],"researcher");
+        assert_eq!(second["input"]["providerId"],"free-b");
+        assert_eq!(second["input"]["model"],"model-b");
+        assert_eq!(second["input"]["rotationIndex"],1);
+        assert_eq!(state.store.get("money_autopilot","money:test").unwrap()["scheduledRounds"],2);
+        let _=std::fs::remove_dir_all(dir);
     }
     #[test] fn schedule_modes_are_diverse(){
         assert_eq!((0..6).map(exploration_mode).collect::<Vec<_>>(),vec!["signals","discover","cross","signals","cross","challenge"]);

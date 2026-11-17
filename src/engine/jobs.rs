@@ -74,26 +74,27 @@ impl JobContext {
         Ok(saved)
     }
 
-    pub fn checkpoint(&self, mut patch: Value) -> Result<(), String> {
-        let job = self
-            .state
-            .store
-            .get("job", &self.job_id)
-            .ok_or("작업 체크포인트를 찾을 수 없습니다.")?;
-        if job["cancelRequested"].as_bool() == Some(true) {
-            return Err("사용자 요청으로 실행이 중단되었습니다.".into());
-        }
-        let saved = self
-            .state
-            .store
-            .patch_if(
-                "job",
-                &self.job_id,
-                "cancelRequested",
-                job.get("cancelRequested").unwrap_or(&Value::Null),
-                &patch,
-            )
-            .ok_or("작업 체크포인트가 변경되었거나 실행이 중단되었습니다.")?;
+    /// Atomically check liveness and persist progress. Checking only the
+    /// cancelRequested flag permitted a late worker to patch a terminal job,
+    /// or overwrite a cancellation that raced with the earlier read.
+    pub fn checkpoint(&self, patch: Value) -> Result<(), String> {
+        let fields = patch.as_object()
+            .ok_or("작업 체크포인트는 JSON 객체여야 합니다.")?;
+        let saved = self.state.store.mutate_record(
+            "job", &self.job_id, json!({"id":self.job_id}),
+            |current| {
+                if current["cancelRequested"] == true
+                    || !matches!(current["status"].as_str(), Some("queued" | "running")) {
+                    return Err("완료·중단된 작업의 체크포인트는 변경할 수 없습니다.".into());
+                }
+                for (key, value) in fields {
+                    if key != "id" {
+                        current[key] = value.clone();
+                    }
+                }
+                Ok(vec![])
+            },
+        )?;
         self.state.bus.record("job", &saved);
         Ok(())
     }
@@ -728,6 +729,33 @@ mod tests {
         assert!(ctx.finish_terminal(json!({"status":"failed","error":"late"})).is_err());
         assert_eq!(state.store.get("job",&completed_id).unwrap()["status"],"completed");
         let _=std::fs::remove_dir_all(&state.config.data_dir);
+    }
+
+    #[test]
+    fn checkpoint_cannot_resurrect_terminal_jobs_or_bypass_cancelled_flag() {
+        let state = temp_state();
+        for terminal in ["completed", "failed", "cancelled", "needs_review"] {
+            let job = enqueue(&state, "prompt", json!({"prompt":"test"})).unwrap();
+            let id = job["id"].as_str().unwrap().to_string();
+            let ctx = JobContext::new(state.clone(), id.clone());
+            ctx.checkpoint(json!({"stepIndex":1})).unwrap();
+            state.store.patch_if("job",&id,"status",&json!("queued"),
+                &json!({"status":terminal,"result":{"saved":true}})).unwrap();
+            assert!(ctx.checkpoint(json!({"status":"running","result":{"saved":false}})).is_err());
+            let current = state.store.get("job",&id).unwrap();
+            assert_eq!(current["status"],terminal);
+            assert_eq!(current["result"]["saved"],true);
+            assert_eq!(current["stepIndex"],1);
+        }
+        let job = enqueue(&state, "prompt", json!({"prompt":"cancel"})).unwrap();
+        let id = job["id"].as_str().unwrap().to_string();
+        let ctx = JobContext::new(state.clone(), id.clone());
+        state.store.patch_if("job",&id,"status",&json!("queued"),
+            &json!({"status":"running","cancelRequested":true})).unwrap();
+        assert!(ctx.checkpoint(json!({"stepIndex":99})).is_err());
+        assert!(state.store.get("job",&id).unwrap()["stepIndex"] != 99);
+        assert!(ctx.checkpoint(json!([])).is_err());
+        let _ = std::fs::remove_dir_all(&state.config.data_dir);
     }
 
     #[test]
