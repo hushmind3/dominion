@@ -22,6 +22,11 @@ on:
       - 'src/engine/chat/codex_ws.rs'
       - 'src/engine/chat/provider.rs'
       - 'src/engine/chat/runtime.rs'
+      - 'src/engine/chat/runtime/**'
+      - 'src/api/executions.rs'
+      - 'src/db.rs'
+      - 'scripts/coding-scorecard.mjs'
+      - 'scripts/coding-scorecard.test.mjs'
       - 'src/engine/chat/budget.rs'
       - 'src/engine/chat/kernel_bridge.rs'
       - 'src/engine/chat/mod.rs'
@@ -64,10 +69,21 @@ jobs:
           cargo test -p dominion-agent-sdk --lib escaped_oversized_failure_keeps_the_actionable_diagnostic
           cargo test -p dominion-agent-sdk --lib one_unrepresentable_error_does_not_hide_smaller_old_failure
           cargo test -p dominion-agent-sdk --lib empty_query_lists_a_bounded_recent_page_without_full_log_projection
-      - name: Verify budget settlement and crash/recovery of two real Rust files
+      - name: Verify token overrun cannot trigger unauthorized tool effects
+        run: cargo test -p dominion-agent-sdk --test kernel_replanning provider_reported_token_overrun_cannot_dispatch_any_tool_effect
+      - name: Measure two real local coding repairs, failed tests, replay and token cost
+        shell: bash
         run: |
-          cargo test -p dominion-agent-sdk --test kernel_replanning provider_reported_token_overrun_cannot_dispatch_any_tool_effect
-          cargo test -p dominion-agent-sdk --test multifile_fault_recovery -- --nocapture
+          set -euo pipefail
+          node --test scripts/coding-scorecard.test.mjs
+          cargo test -p dominion-agent-sdk --test multifile_fault_recovery -- --nocapture 2>&1 | tee "$RUNNER_TEMP/multifile.log"
+          cargo test -p dominion-agent-sdk --test real_fs_repair actual_shell_failure_triggers_real_file_repair_then_green_test -- --nocapture 2>&1 | tee "$RUNNER_TEMP/repair.log"
+          node scripts/coding-scorecard.mjs "$RUNNER_TEMP/multifile.log" "$RUNNER_TEMP/repair.log" > "$RUNNER_TEMP/coding-scorecard.json"
+          cat "$RUNNER_TEMP/coding-scorecard.json"
+          if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+            printf '### Scripted agent harness: real shell coding repair metrics\\n\\n' >> "$GITHUB_STEP_SUMMARY"
+            cat "$RUNNER_TEMP/coding-scorecard.json" >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Compile and execute Rust SDK tests, including real file and shell repair
         run: cargo test --manifest-path crates/dominion-agent-sdk/Cargo.toml -- --nocapture
       - name: Chat and native SDK share budget, effect classification and durable journal
@@ -76,6 +92,11 @@ jobs:
           cargo test -p dominion-agent-sdk --lib builtin_tool_effect_policy_is_consistent_and_fails_closed
           cargo test --bin dominion-rust engine::chat::budget::tests -- --nocapture
           cargo test --bin dominion-rust engine::chat::kernel_bridge::tests -- --nocapture
+      - name: Verify owner cancellation cannot be overwritten by late provider failures
+        run: |
+          cargo test --bin dominion-rust db::tests::cancelled_or_interrupted_attempt_rejects_stale_finalization_atomically -- --nocapture
+          cargo test --bin dominion-rust engine::chat::runtime::outcome_tests::late_provider_error_cannot_change_durable_owner_cancellation_to_failed -- --nocapture
+          cargo test --test e2e web_api::cancelling_a_running_execution_marks_it_cancelled -- --nocapture
       - name: Verify real MCP stdio and HTTP sessions, pinning and credential rotation
         run: cargo test --bin dominion-rust engine::mcp::tests -- --nocapture
       - name: Verify typed GitHub edit, stale SHA rejection and independent read-back
