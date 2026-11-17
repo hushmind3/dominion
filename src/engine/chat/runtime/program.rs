@@ -140,11 +140,15 @@ pub(super) async fn execute_program_tool(
     // Any operation that can mutate the workspace or external world makes a
     // previously passing verification stale, including an attempted effect
     // whose outcome needs inspection. Read-only observations do not.
-    if !dominion_agent_sdk::runtime::builtin_is_read_only(tool)
-        && resolved["lastVerify"]["ok"] == true
-    {
-        resolved["lastVerify"] = Value::Null;
-        checkpoint["staleVerification"] = json!(true);
+    if !dominion_agent_sdk::runtime::builtin_is_read_only(tool) {
+        checkpoint["mutationEpoch"] = json!(
+            checkpoint["mutationEpoch"].as_u64().unwrap_or(0).saturating_add(1)
+        );
+        if resolved["lastVerify"]["ok"] == true {
+            resolved["lastVerify"] = Value::Null;
+            checkpoint["staleVerification"] = json!(true);
+            checkpoint["verificationEpoch"] = Value::Null;
+        }
     }
     mark_program_completed(checkpoint, node_id);
     if !checkpoint["observationRefs"].is_object() {
@@ -219,6 +223,29 @@ pub(super) fn scope_program_node_ids(node: &Value, prefix: &str) -> Value {
         }
     }
     copy
+}
+
+/// Conservative join of parallel evidence. A verifier running concurrently
+/// with an effect cannot prove a post-effect state: only a subsequent,
+/// ordered verification may clear the stale flag. All writes from child
+/// branches contribute to the parent's mutation epoch.
+pub(super) fn settle_parallel_verification(
+    checkpoint: &mut Value,
+    resolved: &mut Value,
+    baseline_epoch: u64,
+    observed_mutations: u64,
+    branch_stale: bool,
+) {
+    let epoch = baseline_epoch.saturating_add(observed_mutations);
+    checkpoint["mutationEpoch"] = json!(epoch);
+    if branch_stale || (observed_mutations > 0 && resolved["lastVerify"]["ok"] == true) {
+        checkpoint["staleVerification"] = json!(true);
+        checkpoint["verificationEpoch"] = Value::Null;
+        resolved["lastVerify"] = Value::Null;
+    } else if resolved["lastVerify"]["ok"] == true {
+        checkpoint["staleVerification"] = json!(false);
+        checkpoint["verificationEpoch"] = json!(epoch);
+    }
 }
 
 /// Executes nodes recursively so Sequence/Branch/Parallel/Loop can contain any
@@ -466,6 +493,21 @@ pub(super) fn execute_nodes<'a>(
                             budget = frame.budget;
                             op_seq = frame.op_seq;
                             messages.extend(frame.messages);
+                            // A failed verifier inside a sequence/parallel
+                            // branch must propagate to the parent. Previously
+                            // the parent marked the whole parallel step done.
+                            if let Some(failure) = frame.failure {
+                                checkpoint["pendingOperationIds"] = json!([]);
+                                checkpoint["programFailure"] = failure.clone();
+                                checkpoint["resolvedInputs"] = resolved.clone();
+                                if persist {
+                                    save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                                }
+                                return Ok(ProgramFrame {
+                                    resolved, checkpoint, budget, op_seq, messages,
+                                    paused: false, failure: Some(failure),
+                                });
+                            }
                             if frame.paused {
                                 paused = true;
                                 break;
@@ -500,6 +542,7 @@ pub(super) fn execute_nodes<'a>(
                         }
                         continue;
                     }
+                    let baseline_mutation_epoch = checkpoint["mutationEpoch"].as_u64().unwrap_or(0);
                     let base = budget.branch();
                     let mut futures = Vec::new();
                     for child in children.clone() {
@@ -517,9 +560,20 @@ pub(super) fn execute_nodes<'a>(
                     }
                     let results = futures_util::future::join_all(futures).await;
                     let mut paused = false;
+                    let mut first_failure: Option<Value> = None;
+                    let mut total_mutations = 0u64;
+                    let mut branch_stale = false;
                     let mut parallel_last = serde_json::Map::new();
                     for (child, result) in children.iter().zip(results.into_iter()) {
                         let frame = result?;
+                        total_mutations = total_mutations.saturating_add(
+                            frame.checkpoint["mutationEpoch"].as_u64().unwrap_or(baseline_mutation_epoch)
+                                .saturating_sub(baseline_mutation_epoch)
+                        );
+                        branch_stale |= frame.checkpoint["staleVerification"] == true;
+                        if first_failure.is_none() {
+                            first_failure = frame.failure.clone();
+                        }
                         let child_id = child["id"].as_str().unwrap_or("");
                         if let Some(map) = frame.resolved.as_object() {
                             for (key, value) in map {
@@ -542,7 +596,9 @@ pub(super) fn execute_nodes<'a>(
                                 );
                             }
                         }
-                        mark_program_completed(&mut checkpoint, child_id);
+                        if frame.failure.is_none() && !frame.paused {
+                            mark_program_completed(&mut checkpoint, child_id);
+                        }
                         budget.merge_usage(&frame.budget);
                         op_seq = op_seq.max(frame.op_seq);
                         messages.extend(frame.messages);
@@ -550,7 +606,21 @@ pub(super) fn execute_nodes<'a>(
                     }
                     resolved["last"] = Value::Object(parallel_last);
                     checkpoint["pendingOperationIds"] = json!([]);
+                    settle_parallel_verification(
+                        &mut checkpoint, &mut resolved, baseline_mutation_epoch,
+                        total_mutations, branch_stale,
+                    );
                     checkpoint["resolvedInputs"] = resolved.clone();
+                    if let Some(failure) = first_failure {
+                        checkpoint["programFailure"] = failure.clone();
+                        if persist {
+                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                        }
+                        return Ok(ProgramFrame {
+                            resolved, checkpoint, budget, op_seq, messages,
+                            paused: false, failure: Some(failure),
+                        });
+                    }
                     if paused {
                         checkpoint["status"] = json!("paused");
                         if persist {
@@ -646,6 +716,7 @@ pub(super) fn execute_nodes<'a>(
                         ctx.state, ctx.execution_id, "verification.predicate", true,
                     );
                     checkpoint["staleVerification"] = json!(false);
+                    checkpoint["verificationEpoch"] = checkpoint["mutationEpoch"].clone();
                     mark_program_completed(&mut checkpoint, node_id);
                 }
                 "delegate" => {
@@ -1094,3 +1165,33 @@ pub(super) async fn run_program(
     Ok(messages)
 }
 
+
+
+#[cfg(test)]
+mod evidence_join_tests {
+    use super::*;
+
+    #[test]
+    fn concurrent_write_invalidates_parallel_verifier() {
+        let mut checkpoint = json!({"mutationEpoch":4,"verificationEpoch":4,
+            "staleVerification":false});
+        let mut resolved = json!({"lastVerify":{"ok":true,"checks":[{"verdict":"true"}]}});
+        settle_parallel_verification(&mut checkpoint,&mut resolved,4,1,false);
+        assert_eq!(checkpoint["mutationEpoch"], 5);
+        assert_eq!(checkpoint["staleVerification"], true);
+        assert!(checkpoint["verificationEpoch"].is_null());
+        assert!(resolved["lastVerify"].is_null());
+    }
+
+    #[test]
+    fn read_only_join_preserves_valid_evidence_and_stale_branch_blocks_it() {
+        let mut checkpoint = json!({"mutationEpoch":3});
+        let mut resolved = json!({"lastVerify":{"ok":true}});
+        settle_parallel_verification(&mut checkpoint,&mut resolved,3,0,false);
+        assert_eq!(checkpoint["staleVerification"], false);
+        assert_eq!(checkpoint["verificationEpoch"], 3);
+        settle_parallel_verification(&mut checkpoint,&mut resolved,3,0,true);
+        assert_eq!(checkpoint["staleVerification"], true);
+        assert!(resolved["lastVerify"].is_null());
+    }
+}
