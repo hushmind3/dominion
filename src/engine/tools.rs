@@ -83,7 +83,7 @@ pub fn definitions() -> Vec<Value> {
         tool("github_repositories", "List repositories available to the connected GitHub account, with owner, repository, default branch and explicit write permission. Choose a repository before reading or editing; supports page and writable-only filtering.", object(json!({
             "query":text("Optional repository name fragment; filtered within this page"),
             "page":json!({"type":"integer","minimum":1,"maximum":10}),
-            "writableOnly":json!({"type":"boolean","description":"Only repositories with confirmed push permission"}
+            "writableOnly":json!({"type":"boolean","description":"Only repositories with confirmed push permission"})
         }),vec![])),
         tool("github_file_read", "Read a UTF-8 text file from an explicitly selected GitHub owner/repository/branch through the connected account; returns SHA for safe updates.", object(json!({
             "owner":text("Repository owner"),"repo":text("Repository name"),
