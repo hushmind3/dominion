@@ -49,8 +49,8 @@ pub(super) const SCHEMA_SQL:&str = r#"CREATE INDEX IF NOT EXISTS idx_records_kin
                  term TEXT NOT NULL, fact_id TEXT NOT NULL, PRIMARY KEY(term,fact_id));
              CREATE INDEX IF NOT EXISTS idx_money_term_fact ON money_fact_term(fact_id);"#;
 
-//! Durable indexed Money queries, event folding and atomic research receipts.
-//! Methods reuse the existing shared Store transaction boundary.
+// Durable indexed Money queries, event folding and atomic research receipts.
+// Methods reuse the existing shared Store transaction boundary.
 use super::*;
 
 /// Korean two-character terms and compound market vocabulary need a separate
