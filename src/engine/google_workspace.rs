@@ -131,6 +131,22 @@ fn decode_part(value:&Value,depth:usize)->Option<String>{
         .chain(parts.iter().filter(|part|part["mimeType"]=="text/html"))
         .find_map(|part|decode_part(part,depth+1)))
 }
+fn document_text(value:&Value,output:&mut String,depth:usize){
+    if depth>18||output.len()>=MAX_TEXT{return;}
+    if let Some(content)=value.pointer("/textRun/content").and_then(Value::as_str){
+        if output.len()+content.len()>MAX_TEXT{
+            let remaining=MAX_TEXT.saturating_sub(output.len());
+            output.push_str(&bounded(content,remaining));
+        }else {output.push_str(content);}
+    }
+    if let Some(map)=value.as_object(){
+        for (key,child) in map {
+            if key!="textRun"{document_text(child,output,depth+1);}
+        }
+    }else if let Some(items)=value.as_array(){
+        for child in items {document_text(child,output,depth+1);}
+    }
+}
 fn gmail_message(value:&Value)->Value{
     let headers=value["payload"]["headers"].as_array().map(|items|items.iter()
         .filter_map(|x|{
@@ -154,9 +170,6 @@ async fn execute_with(client:&Client,token:&str,bases:&[&str;5],
     let operation=arg(args,"operation")?;
     scope_for(service,operation,write)?;
     let max=args["maxResults"].as_u64().unwrap_or(20).clamp(1,50);
-    let page=query(args,"pageToken",1024)?;
-    let mut paging=vec![("pageSize",max.to_string())];
-    if let Some(page)=page{paging.push(("pageToken",page));}
     match (service,operation,write){
         ("gmail","search",false)=>{
             let mut params=vec![("maxResults",max.to_string())];
@@ -210,7 +223,7 @@ async fn execute_with(client:&Client,token:&str,bases:&[&str;5],
         ("drive","create_text",true)=>{
             let name=text(args,"name",180)?;
             let body=text(args,"content",100_000)?;
-            let boundary="dominion-google-text-upload-v1";
+            let boundary=format!("dominion-{}",uuid::Uuid::new_v4().simple());
             let metadata=json!({"name":name,"mimeType":"text/plain"});
             let upload=format!("--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{}\r\n--{boundary}\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n{body}\r\n--{boundary}--\r\n",
                 metadata);
@@ -258,8 +271,10 @@ async fn execute_with(client:&Client,token:&str,bases:&[&str;5],
             let document=call(client,token,Method::GET,
                 url(bases[4],&["v1","documents",id],&[
                     ("fields","documentId,title,body(content)".into())])?,None).await?;
+            let mut content=String::new();
+            document_text(&document["body"],&mut content,0);
             Ok(json!({"id":document["documentId"],"title":document["title"],
-                "body":document["body"]}))
+                "content":content,"truncated":content.len()>=MAX_TEXT}))
         }
         ("docs","append",true)=>{
             let id=identifier(arg(args,"id")?)?;
@@ -271,8 +286,10 @@ async fn execute_with(client:&Client,token:&str,bases:&[&str;5],
             let after=call(client,token,Method::GET,
                 url(bases[4],&["v1","documents",id],&[
                     ("fields","documentId,title,body(content)".into())])?,None).await?;
-            if !after["body"].to_string().contains(&content){
-                return Err("Docs update response succeeded but appended text not found in readback; do not retry automatically".into());
+            let mut after_text=String::new();
+            document_text(&after["body"],&mut after_text,0);
+            if !after_text.contains(&content){
+                return Err("Docs accepted update but appended text not found in independent readback; do not retry automatically".into());
             }
             Ok(json!({"updated":true,"id":id,"verified":true}))
         }
@@ -335,7 +352,12 @@ async fn execute_with(client:&Client,token:&str,bases:&[&str;5],
             let verified=call(client,token,Method::GET,url(bases[3],
                 &["calendar","v3","calendars",cal,"events",id],&[])?,None).await?;
             for (key,value) in patch.as_object().unwrap() {
-                if verified[key]!=*value{
+                let matches=if key=="start"||key=="end" {
+                    let expected=value["dateTime"].as_str().and_then(|t|DateTime::parse_from_rfc3339(t).ok());
+                    let actual=verified[key]["dateTime"].as_str().and_then(|t|DateTime::parse_from_rfc3339(t).ok());
+                    expected.is_some()&&expected==actual
+                }else{verified[key]==*value};
+                if !matches{
                     return Err("Calendar update accepted but remote readback disagrees; do not retry automatically".into());
                 }
             }
@@ -353,8 +375,15 @@ async fn execute_with(client:&Client,token:&str,bases:&[&str;5],
             if !res.status().is_success(){
                 return Err(format!("Calendar delete denied: HTTP {}",res.status()));
             }
-            Ok(json!({"deleted":true,"id":id,"verified":false,
-                "note":"Provider acknowledged delete; re-read if independent proof is required"}))
+            // A read-only GET after DELETE establishes absence without
+            // reissuing a potentially non-idempotent mutation.
+            let check=client.get(url(bases[3],
+                &["calendar","v3","calendars",cal,"events",id],&[])?)
+                .bearer_auth(token).send().await.map_err(|e|e.to_string())?;
+            if check.status()!=reqwest::StatusCode::NOT_FOUND{
+                return Err("Calendar acknowledged deletion but absence was not verified; do not retry automatically".into());
+            }
+            Ok(json!({"deleted":true,"id":id,"verified":true}))
         }
         _=>Err("Unsupported Google operation".into()),
     }
@@ -388,6 +417,18 @@ mod tests{
             "name contains 'sample'".to_string())]).unwrap();
         assert_eq!(url.host_str(),Some("www.googleapis.com"));
     }
+    #[test]
+    fn google_docs_returns_and_verifies_plain_document_text(){
+        let document=json!({"body":{"content":[
+            {"paragraph":{"elements":[{"textRun":{"content":"Line 1\\n"}}]}},
+            {"paragraph":{"elements":[{"textRun":{"content":"Line 2"}}]}}
+        ]}});
+        let mut output=String::new();
+        document_text(&document["body"],&mut output,0);
+        assert_eq!(output,"Line 1\\nLine 2");
+        assert!(output.contains("Line 2"));
+    }
+
     #[test]
     fn google_grants_do_not_inherit_later_requested_scopes(){
         use crate::{config::Config,db::Store,vault::Vault};
