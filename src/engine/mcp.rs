@@ -713,6 +713,112 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn http_reuses_mcp_session_and_reconnects_after_credential_rotation() {
+        use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
+        use tokio::io::{AsyncReadExt,AsyncWriteExt,AsyncBufReadExt};
+        let state=temp_state();
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port=listener.local_addr().unwrap().port();
+        let starts=Arc::new(AtomicUsize::new(0));
+        let calls=Arc::new(AtomicUsize::new(0));
+        let starts_task=starts.clone();
+        let calls_task=calls.clone();
+        let server_task=tokio::spawn(async move {
+            loop {
+                let Ok((stream,_))=listener.accept().await else {break;};
+                let starts=starts_task.clone();
+                let calls=calls_task.clone();
+                tokio::spawn(async move {
+                    let (reader,mut writer)=stream.into_split();
+                    let mut reader=tokio::io::BufReader::new(reader);
+                    loop {
+                        let mut line=String::new();
+                        if reader.read_line(&mut line).await.unwrap_or(0)==0 {break;}
+                        if !line.starts_with("POST ") {break;}
+                        let mut body_len=0usize;
+                        let mut session_header=false;
+                        loop {
+                            let mut header=String::new();
+                            if reader.read_line(&mut header).await.unwrap_or(0)==0 {return;}
+                            if header.trim().is_empty(){break;}
+                            let low=header.to_ascii_lowercase();
+                            if let Some(value)=low.strip_prefix("content-length:"){
+                                body_len=value.trim().parse().unwrap_or(0);
+                            }
+                            if low.starts_with("mcp-session-id: test-session") {
+                                session_header=true;
+                            }
+                        }
+                        if body_len==0 || body_len>65536 {return;}
+                        let mut body=vec![0;body_len];
+                        if reader.read_exact(&mut body).await.is_err(){return;}
+                        let request:Value=serde_json::from_slice(&body).unwrap();
+                        let method=request["method"].as_str().unwrap_or("");
+                        let valid=method=="initialize" || session_header;
+                        let response=match method {
+                            "initialize"=>{
+                                starts.fetch_add(1,Ordering::SeqCst);
+                                json!({"jsonrpc":"2.0","id":request["id"],"result":{
+                                    "protocolVersion":"2024-11-05",
+                                    "capabilities":{"tools":{}},
+                                    "serverInfo":{"name":"mock-mcp","version":"1"}
+                                }})
+                            }
+                            "notifications/initialized"=>json!({}),
+                            "tools/list"=>json!({"jsonrpc":"2.0","id":request["id"],
+                                "result":{"tools":[{"name":"echo","description":"HTTP Echo",
+                                    "inputSchema":{"type":"object"}}]}}),
+                            "tools/call"=>{
+                                calls.fetch_add(1,Ordering::SeqCst);
+                                json!({"jsonrpc":"2.0","id":request["id"],
+                                    "result":{"content":[{"type":"text",
+                                        "text":request["params"]["arguments"]["text"]}]}})
+                            }
+                            _=>json!({"jsonrpc":"2.0","id":request["id"],
+                                "error":{"code":-32601,"message":"unknown"}}),
+                        };
+                        let payload=if valid {response.to_string()}
+                            else {r#"{"error":"missing MCP session id"}"#.to_string()};
+                        let status=if valid {"200 OK"}else{"400 Bad Request"};
+                        let raw=format!(
+                            "HTTP/1.1 {status}\r\ncontent-type: application/json\r\nmcp-session-id: test-session\r\ncontent-length: {}\r\nconnection: keep-alive\r\n\r\n{}",
+                            payload.len(),payload);
+                        if writer.write_all(raw.as_bytes()).await.is_err(){return;}
+                    }
+                });
+            }
+        });
+        let server=json!({"id":"mcp-http-pool","name":"HTTP Lab","transport":"http",
+            "url":format!("http://127.0.0.1:{port}/mcp"),"enabled":true});
+        state.store.put("mcp",&server).unwrap();
+        state.save_secret("mcp:mcp-http-pool","first-secret");
+        let specs=tools(&state).await;
+        assert_eq!(specs.len(),1);
+        let qualified=specs[0].qualified();
+        for text in ["one","two"] {
+            let value=tokio::time::timeout(Duration::from_secs(10),
+                call_pinned(&state,&qualified,&json!({"text":text}),
+                    &specs[0].schema,&specs[0].description))
+                .await.expect("HTTP MCP call stalled").unwrap();
+            assert!(value.to_string().contains(text));
+        }
+        assert_eq!(starts.load(Ordering::SeqCst),1,
+            "MCP HTTP initialization should be amortized across discovery and calls");
+        assert_eq!(calls.load(Ordering::SeqCst),2);
+
+        // Changing the scoped credential must not reuse a stale bearer session.
+        state.save_secret("mcp:mcp-http-pool","second-secret");
+        call(&state,&qualified,&json!({"text":"rotated"})).await.unwrap();
+        assert_eq!(starts.load(Ordering::SeqCst),2);
+        assert_eq!(calls.load(Ordering::SeqCst),3);
+        invalidate(&state);
+        call(&state,&qualified,&json!({"text":"reconnected"})).await.unwrap();
+        assert_eq!(starts.load(Ordering::SeqCst),3);
+        assert_eq!(calls.load(Ordering::SeqCst),4);
+        server_task.abort();
+    }
+
+    #[tokio::test]
     async fn stdio_reuses_one_live_mcp_process_and_rotates_on_config_change() {
         // The shipped fixture is a real stdio MCP child, not a fake
         // transport. Hosted CI installs Node before the full test matrix.
