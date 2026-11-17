@@ -139,12 +139,23 @@ pub fn prepare(
 /// Preflight calls deduplicated by concrete tool+arguments. The gateway owns
 /// the operations; this function only produces an action request shortlist.
 pub fn probes(variants:&[Value])->Vec<Value>{
-    let mut seen=HashSet::new();let mut out=Vec::new();
+    let mut out=Vec::<Value>::new();
     for variant in variants{
         for probe in variant["probes"].as_array().into_iter().flatten(){
-            let key=format!("{}:{}",probe["tool"],probe["inputs"]);
-            if seen.insert(key){out.push(probe.clone());}
-            if out.len()>=MAX_PREFLIGHTS{return out;}
+            let Some(probe_id)=probe["id"].as_str() else {continue};
+            if let Some(existing)=out.iter_mut().find(|existing|
+                existing["tool"]==probe["tool"]
+                && existing["inputs"]==probe["inputs"]
+            ){
+                let aliases=existing["aliases"].as_array_mut().expect("probe aliases");
+                if !aliases.iter().any(|item|item.as_str()==Some(probe_id)){
+                    aliases.push(json!(probe_id));
+                }
+            } else if out.len()<MAX_PREFLIGHTS {
+                let mut copy=probe.clone();
+                copy["aliases"]=json!([probe_id]);
+                out.push(copy);
+            }
         }
     }
     out
@@ -261,6 +272,24 @@ mod tests {
         assert_eq!(audit["evaluated"][1]["qualified"],false);
         assert_eq!(audit["evaluated"][2]["qualified"],false);
         assert!(select(&variants,&json!({})).is_err());
+    }
+    #[test]
+    fn identical_read_probe_is_dispatched_once_but_evaluated_for_both_candidates(){
+        let (program,checkpoint,failure,tools)=fixture();
+        let p0=proposal("fix-a","a","old");
+        let mut p1=proposal("fix-b","b","new");
+        p1["preflight"]["inputs"]=json!({"path":"a"});
+        let variants=prepare(&json!({"candidateRevisions":[p0,p1]}),
+            &program,&checkpoint,&failure,&tools,"replace").unwrap();
+        let requests=probes(&variants);
+        assert_eq!(requests.len(),1);
+        assert_eq!(requests[0]["aliases"],json!(["p0","p1"]));
+        let observed=json!({
+            "p0":{"status":"completed","result":{"content":"old"}},
+            "p1":{"status":"completed","result":{"content":"old"}}
+        });
+        let (_chosen, audit)=select(&variants,&observed).unwrap();
+        assert_eq!(audit["chosen"],"p0");
     }
     #[test]
     fn multi_candidate_with_unsafe_probe_or_fake_evidence_cannot_win(){
