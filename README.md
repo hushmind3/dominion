@@ -47,7 +47,7 @@ The built-in media renderer and independent generational RSI engine have been re
 
 **DOMINION is an AI agent tool, not another AI model or a token-reselling service.**
 
-Connect a model you already have access to — including supported cloud APIs and locally hosted models — and use it inside an agent workspace. DOMINION's Rust harness handles tool execution, permissions, durable tasks, long-term memory, and multi-agent coordination. The workspace also includes AI video generation workflows and experimental recursive self-improvement (RSI).
+Connect a model you already have access to — including supported cloud APIs and locally hosted models — and use it inside an agent workspace. DOMINION's Rust harness handles tool execution, permissions, durable tasks, long-term memory, and multi-agent coordination. Media-generation tools remain optional integrations; independent RSI generation campaigns and the built-in video rendering engine have been retired on this branch.
 
 You choose the models. You control the credentials. You run the workspace.
 
