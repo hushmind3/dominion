@@ -57,7 +57,19 @@ fn source_host(v:&Value)->String{
 fn bounded(v:&Value,key:&str,max:usize)->String{
     v[key].as_str().unwrap_or("").chars().take(max).collect()
 }
-fn pair_score(supply:&Value,buyer:&Value,pattern:Mechanism)->Option<f64>{
+fn normalized_headline(row:&Value)->String{
+    row["title"].as_str().unwrap_or("").to_lowercase().chars()
+        .filter(|ch|ch.is_alphanumeric()).take(180).collect()
+}
+fn published_age_days(row:&Value,now:&chrono::DateTime<chrono::Utc>)->Option<i64>{
+    let raw=row["publishedAt"].as_str()?;
+    let published=chrono::DateTime::parse_from_rfc3339(raw)
+        .or_else(|_|chrono::DateTime::parse_from_rfc2822(raw)).ok()?;
+    let days=now.signed_duration_since(published.with_timezone(&chrono::Utc)).num_days();
+    (days>=-1).then_some(days.max(0))
+}
+fn pair_score(supply:&Value,buyer:&Value,pattern:Mechanism,
+    now:&chrono::DateTime<chrono::Utc>)->Option<f64>{
     let a=tags(supply,"topics");
     let b=tags(buyer,"topics");
     if item_id(supply).is_empty()||item_id(buyer).is_empty()
@@ -76,12 +88,23 @@ fn pair_score(supply:&Value,buyer:&Value,pattern:Mechanism)->Option<f64>{
     let differences=a.iter().filter(|t|!b.contains(t)).count()
         +b.iter().filter(|t|!a.contains(t)).count();
     if differences==0{return None;}
+    // Different publishers may syndicate the same article. A copied headline
+    // is not independent demand/supply evidence.
+    let left=normalized_headline(supply);
+    let right=normalized_headline(buyer);
+    if left.len()>=12&&left==right{return None;}
     let common=a.iter().filter(|t|b.contains(t)).count();
     let direct_page_reads=(supply["contentStatus"]=="page_fetched") as u8
         +(buyer["contentStatus"]=="page_fetched") as u8;
-    let score=45.0+(differences.min(4) as f64)*7.0
-        +(common.min(2) as f64)*3.0+direct_page_reads as f64*4.0;
-    Some(score.min(90.0))
+    // Publication dates are relevant. Capture dates are NOT proof of recency.
+    let ages=[published_age_days(supply,now),published_age_days(buyer,now)];
+    let stale_penalty=ages.into_iter().flatten().max().map_or(0.0,|age|
+        if age>365{25.0}else if age>90{14.0}else if age>30{7.0}else{0.0});
+    let buyer_bonus=if pattern.buyer=="buyer_request"{10.0}else{0.0};
+    let score=42.0+(differences.min(4) as f64)*7.0
+        +(common.min(2) as f64)*3.0+direct_page_reads as f64*5.0
+        +buyer_bonus-stale_penalty;
+    Some(score.clamp(0.0,95.0))
 }
 fn make_id(kind:&str,supply_id:&str,buyer_id:&str)->String{
     format!("tension:{:x}",Sha256::digest(format!("{kind}:{supply_id}:{buyer_id}").as_bytes()))
@@ -91,11 +114,12 @@ pub fn discover(signals:&[Value],max:usize)->Vec<Value>{
     let mut seen=HashSet::new();
     // At most 120 independent records = at most 86k comparisons, no corpus scan.
     let window=signals.iter().take(120).collect::<Vec<_>>();
+    let now=chrono::Utc::now();
     for pattern in PATTERNS.iter().copied(){
         for (si,a) in window.iter().enumerate(){
             for (bi,b) in window.iter().enumerate(){
                 if si==bi{continue;}
-                let Some(score)=pair_score(a,b,pattern)else{continue;};
+                let Some(score)=pair_score(a,b,pattern,&now)else{continue;};
                 let id=make_id(pattern.kind,item_id(a),item_id(b));
                 if !seen.insert(id.clone()){continue;}
                 let a_topics=tags(a,"topics");
@@ -192,6 +216,27 @@ mod tests{
         assert_eq!(found.len(),2);
         assert!(found.iter().all(|item|item["evidenceStatus"]
             =="two_independent_source_mentions_not_causality"));
+    }
+    #[test] fn mirrored_headline_across_publishers_is_not_independent_evidence(){
+        let mut a=article("a","supplier",&["hardware"],"cost_drop");
+        let mut b=article("b","buyer",&["construction"],"buyer_request");
+        a["title"]=json!("Identical syndicated market headline");
+        b["title"]=a["title"].clone();
+        assert!(discover(&[a,b],10).is_empty());
+    }
+    #[test] fn publication_age_deprioritizes_old_buyer_research(){
+        let now=chrono::Utc::now();
+        let mut supply=article("a","supplier",&["hardware"],"launch");
+        let mut buyer=article("b","buyer",&["construction"],"buyer_request");
+        supply["publishedAt"]=json!(now.to_rfc3339());
+        buyer["publishedAt"]=json!(now.to_rfc3339());
+        let fresh=discover(&[supply.clone(),buyer.clone()],10);
+        buyer["publishedAt"]=json!((now-chrono::Duration::days(400)).to_rfc3339());
+        let old=discover(&[supply,buyer],10);
+        assert_eq!(fresh.len(),1);
+        assert_eq!(old.len(),1);
+        assert!(fresh[0]["researchPriority"].as_u64()>old[0]["researchPriority"].as_u64());
+        assert_eq!(old[0]["purchaseEvidence"],false);
     }
     #[test] fn buyer_signal_joins_supplier_change_but_is_not_a_paid_order(){
         let data=vec![article("s","tech source",&["hardware"],"cost_drop"),
