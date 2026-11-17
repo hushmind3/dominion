@@ -214,6 +214,11 @@ pub(super) async fn run_turn_body(
         && (session["sdkUiPolicy"].is_null() || session["sdkUiPolicy"]["mcpEnabled"]==true){
         tool_definitions.extend(mcp::definitions(state).await);
     }
+    // Account-specific API tools require a real OAuth/CLI grant. A Google
+    // login in our visible browser profile only grants browser_control UI
+    // access; it must not be mistaken for a REST API bearer grant.
+    tool_definitions.retain(|definition|
+        tools::connected_account_tool_allowed(state,tool_name(definition)));
     let is_room = session["roomId"].is_string();
     if is_room && request.tools_enabled && request.tools_execution_enabled {
         let recent = recent_room_tools(state, session_id);

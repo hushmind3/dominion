@@ -141,6 +141,24 @@ fn tool(name: &str, description: &str, parameters: Value) -> Value {
     })
 }
 
+/// Do not advertise native REST tools if only browser cookies are connected.
+//// The browser_control tool remains a separate, approved UI workflow.
+pub fn connected_account_tool_allowed(state:&crate::state::AppState,name:&str)->bool{
+    match name{
+        "google_drive_search"=>crate::engine::oauth::has_granted_scope(state,"google","drive.readonly"),
+        "google_docs_read"|"google_docs_replace"=>
+            crate::engine::oauth::has_granted_scope(state,"google","documents"),
+        "google_sheets_read"|"google_sheets_update"=>
+            crate::engine::oauth::has_granted_scope(state,"google","spreadsheets"),
+        "github_api"|"github_repositories"|"github_repository_activity"|
+        "github_file_read"|"github_file_commit"|"github_issue_create"|
+        "github_branch_create"|"github_pr_create"=>
+            state.read_secret("oauth:github:token").is_some() ||
+                crate::engine::oauth::cli_enabled(state,"github") &&
+                crate::engine::cli_accounts::status("github").connected,
+        _=>true
+    }
+}
 pub fn requires_approval(name: &str) -> bool {
     matches!(
         name,
