@@ -161,7 +161,11 @@ async fn capture<R:AsyncRead+Unpin>(mut stream:R,login:Arc<Login>){
             }
         }
         let lower=p.text.to_ascii_lowercase();
-        if lower.contains("paste code")||lower.contains("verification code")||lower.contains("enter code"){
+        if p.url.as_deref()==Some("https://github.com/login/device")
+            && github_device_code(&p.text).is_some(){
+            // Keep the one-time device code visible: a generic "enter code"
+            // diagnostic must not overwrite the actual code the user needs.
+        }else if lower.contains("paste code")||lower.contains("verification code")||lower.contains("enter code"){
             p.phase="input";p.message="브라우저 인증 코드를 입력하세요.".into();
         }else if p.url.is_none()&&(lower.contains("select")||lower.contains("choose")||lower.contains("press enter")){
             p.phase="input";p.message="CLI 인증 방식 선택이 필요합니다. 목록의 인증 방식을 선택하세요.".into();
@@ -230,6 +234,17 @@ pub async fn start(State(app):State<AppState>,Path(source):Path<String>,Json(bod
         input:Mutex::new(Some(input)),cancel:Mutex::new(Some(tx))
     });
     logins().lock().await.insert(source.clone(),login.clone());
+    if source=="github"{
+        // gh's web device login pauses for Enter after displaying the device
+        // code. Continue automatically so clicking Connect is sufficient.
+        let session=login.clone();
+        tokio::spawn(async move{
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            if let Some(input)=session.input.lock().await.as_mut(){
+                let _=input.write_all(b"\r").await;
+            }
+        });
+    }
     if let Some(out)=child.stdout.take(){tokio::spawn(capture(out,login.clone()));}
     if let Some(err)=child.stderr.take(){tokio::spawn(capture(err,login.clone()));}
     let current=login.clone();
