@@ -1,35 +1,20 @@
-name: Sub3 Rust SDK focused verification
+name: Sub3 Rust SDK tests
 
-# Focused cross-runtime acceptance for sub3. Full cross-platform release CI
-# remains a separate gate, with the same branch HEAD when explicitly triggered.
 on:
   push:
     branches: [dominion-sub3]
     paths:
       - '.github/workflows/sub3-rust-sdk-check.yml'
-      - 'docs/CONNECTED-ACCOUNTS-2026-11-17.md'
       - 'crates/dominion-agent-sdk/**'
       - 'src/api/jobs.rs'
+      - 'src/api/sdk_runs.rs'
       - 'src/engine/native_agent.rs'
       - 'src/engine/native_model.rs'
       - 'src/engine/native_cache.rs'
       - 'src/engine/native_routing.rs'
-      - 'src/api/providers.rs'
-      - 'web/src/pages/Models.tsx'
-      - 'src/engine/gateway.rs'
       - 'src/engine/native_stream.rs'
       - 'src/engine/native_codex_ws.rs'
-      - 'sdk/typescript/**'
-      - 'src/engine/chat/codex_ws.rs'
-      - 'src/engine/chat/provider.rs'
-      - 'src/engine/chat/runtime.rs'
-      - 'src/engine/chat/runtime/**'
-      - 'src/api/executions.rs'
-      - 'scripts/coding-scorecard.mjs'
-      - 'scripts/coding-scorecard.test.mjs'
-      - 'src/engine/chat/budget.rs'
-      - 'src/engine/chat/kernel_bridge.rs'
-      - 'src/engine/chat/mod.rs'
+      - 'src/engine/chat/**'
       - 'src/engine/mcp.rs'
       - 'src/engine/github_files.rs'
       - 'src/engine/github_workflow.rs'
@@ -37,14 +22,9 @@ on:
       - 'src/engine/tools.rs'
       - 'src/engine/oauth.rs'
       - 'src/api/cli_oauth.rs'
-      - 'scripts/account-login-contract.test.mjs'
-      - 'web/src/pages/Connections.tsx'
       - 'src/api/collections.rs'
       - 'src/state.rs'
-      - 'scripts/mcp-echo-server.mjs'
       - 'src/engine/workflows.rs'
-      - 'src/api/sdk_runs.rs'
-      - 'web/src/components/NativeAgentPanel.tsx'
   workflow_dispatch:
 
 permissions:
@@ -55,85 +35,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  sdk:
+  rust:
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24.12.0'
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - name: Validate monotonic shared budget and bounded failure/receipt projection
+      - name: SDK kernel and replay Rust tests (dev profile only)
         run: |
-          cargo test -p dominion-agent-sdk --lib restore_cannot_refund_parallel_tool_or_proposal_usage
-          cargo test -p dominion-agent-sdk --lib restore_advances_but_does_not_regress_durable_admission
-          cargo test -p dominion-agent-sdk --lib escaped_oversized_failure_keeps_the_actionable_diagnostic
-          cargo test -p dominion-agent-sdk --lib one_unrepresentable_error_does_not_hide_smaller_old_failure
-          cargo test -p dominion-agent-sdk --lib empty_query_lists_a_bounded_recent_page_without_full_log_projection
-      - name: Verify token overrun cannot trigger unauthorized tool effects
-        run: cargo test -p dominion-agent-sdk --test kernel_replanning provider_reported_token_overrun_cannot_dispatch_any_tool_effect
-      - name: Measure two real local coding repairs, failed tests, replay and token cost
-        shell: bash
-        run: |
-          set -euo pipefail
-          node --test scripts/coding-scorecard.test.mjs
-          cargo test -p dominion-agent-sdk --test multifile_fault_recovery -- --nocapture 2>&1 | tee "$RUNNER_TEMP/multifile.log"
-          cargo test -p dominion-agent-sdk --test real_fs_repair actual_shell_failure_triggers_real_file_repair_then_green_test -- --nocapture 2>&1 | tee "$RUNNER_TEMP/repair.log"
-          node scripts/coding-scorecard.mjs "$RUNNER_TEMP/multifile.log" "$RUNNER_TEMP/repair.log" > "$RUNNER_TEMP/coding-scorecard.json"
-          cat "$RUNNER_TEMP/coding-scorecard.json"
-          if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
-            printf '### Scripted agent harness: real shell coding repair metrics\\n\\n' >> "$GITHUB_STEP_SUMMARY"
-            cat "$RUNNER_TEMP/coding-scorecard.json" >> "$GITHUB_STEP_SUMMARY"
-          fi
-      - name: Compile and execute Rust SDK tests, including real file and shell repair
-        run: cargo test --manifest-path crates/dominion-agent-sdk/Cargo.toml -- --nocapture
-      - name: Chat and native SDK share budget, effect classification and durable journal
-        run: |
-          cargo test -p dominion-agent-sdk --lib shared_model_token_budget_reconciles_estimated_and_actual_usage
-          cargo test -p dominion-agent-sdk --lib builtin_tool_effect_policy_is_consistent_and_fails_closed
-          cargo test --bin dominion-rust engine::chat::budget::tests -- --nocapture
-          cargo test --bin dominion-rust engine::chat::kernel_bridge::tests -- --nocapture
-      - name: Verify owner cancellation cannot be overwritten by late provider failures
-        run: |
-          cargo test --bin dominion-rust db::tests::cancelled_or_interrupted_attempt_rejects_stale_finalization_atomically -- --nocapture
-          cargo test --bin dominion-rust engine::chat::runtime::outcome_tests::late_provider_error_cannot_change_durable_owner_cancellation_to_failed -- --nocapture
-          cargo test --test e2e web_api::cancelling_a_running_execution_marks_it_cancelled -- --nocapture
-      - name: Verify SQL-paged execution timeline and active-only run index
-        run: cargo test --bin dominion-rust db::tests::indexed_execution_timeline_pages_without_loading_unrelated_json -- --nocapture
-      - name: Verify real MCP stdio and HTTP sessions, pinning and credential rotation
-        run: cargo test --bin dominion-rust engine::mcp::tests -- --nocapture
-      - name: Verify browser-based account login has no user API key form
-        run: |
-          node --test scripts/account-login-contract.test.mjs
-          cargo test --bin dominion-rust api::cli_oauth::tests -- --nocapture
-      - name: Verify connected GitHub and Google Workspace actions over real local HTTP
-        run: |
-          cargo test --bin dominion-rust engine::github_workflow::tests -- --nocapture
-          cargo test --bin dominion-rust engine::google_workspace::tests -- --nocapture
-          cargo test --bin dominion-rust engine::tools::tests::connected_account_tool_contracts_separate_reads_from_approved_mutations -- --nocapture
-          cargo test --bin dominion-rust engine::oauth::tests -- --nocapture
-      - name: Verify typed GitHub edit, stale SHA rejection and independent read-back
-        run: cargo test --bin dominion-rust engine::github_files::tests::github_file_read_commit_and_remote_readback_prove_effect_once -- --nocapture
-      - name: Compile full Dominion Rust host and run native adapter contract tests
-        run: cargo test --manifest-path Cargo.toml --bin dominion-rust native_ -- --nocapture
-      - name: Retired media and RSI jobs cannot restart and existing history survives
-        run: cargo test --manifest-path Cargo.toml --bin dominion-rust retired_media_and_rsi_work_is_never_requeued_and_history_survives -- --nocapture
-      - name: Real native job API and recovery
-        run: cargo test --manifest-path Cargo.toml --bin dominion-rust api::sdk_runs::tests -- --nocapture
-      - name: Verify interactive Codex WebSocket continuity separately (native job fixtures above)
-        run: cargo test --manifest-path Cargo.toml --bin dominion-rust engine::chat::codex_ws::tests -- --nocapture
-      - name: Test replay-safe workflow step recovery through host storage
-        run: cargo test --manifest-path Cargo.toml --bin dominion-rust recover_new_workflow_reuses_durable_rust_sdk_child -- --nocapture
-      - name: Compile the actual main-based GUI against the Rust job API client
-        run: |
-          npm ci --prefix web
-          npm run typecheck --prefix web
-          npm run build --prefix web
-      - name: Build and test the published-surface TypeScript SDK independently
-        run: |
-          npm install --prefix sdk/typescript --no-package-lock --ignore-scripts --no-audit
-          npm test --prefix sdk/typescript
+          cargo test -p dominion-agent-sdk --lib
+          cargo test -p dominion-agent-sdk --test kernel_replanning
+          cargo test --bin dominion-rust engine::chat::kernel_bridge::tests
+          cargo test --bin dominion-rust api::sdk_runs::tests

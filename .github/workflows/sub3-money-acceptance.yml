@@ -1,4 +1,4 @@
-name: Sub3 Money domain acceptance
+name: Sub3 Money Rust tests
 
 on:
   push:
@@ -15,10 +15,6 @@ on:
       - 'src/db.rs'
       - 'src/db/money.rs'
       - 'src/db/money_schema.sql'
-      - 'web/src/pages/Money.tsx'
-      - 'web/src/App.tsx'
-      - 'web/src/components/WorkspaceShell.tsx'
-      - 'web/src/i18n/**'
   workflow_dispatch:
 
 permissions:
@@ -29,35 +25,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  money:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+  rust:
+    runs-on: macos-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - name: Money discovery, deduplication, source provenance and full API contracts
+      - name: Money domain Rust tests (dev profile only)
         run: |
-          cargo test --bin dominion-rust engine::money -- --nocapture
-          cargo test --bin dominion-rust api::money -- --nocapture
-          cargo test --bin dominion-rust engine::plugins -- --nocapture
-      - name: Native inference JSON and model budget contracts
-        run: |
+          cargo test --bin dominion-rust engine::money
+          cargo test --bin dominion-rust api::money
+          cargo test --bin dominion-rust engine::plugins
           cargo test --bin dominion-rust local_money_json_is_a_terminal_sdk_answer_without_new_model_calls
-          cargo test --bin dominion-rust engine::native_routing -- --nocapture
-      - name: Shipping Money GUI and lean product compatibility
-        if: matrix.os == 'macos-latest'
-        run: |
-          npm ci --prefix web
-          npm run typecheck --prefix web
-          npm run build --prefix web
-          node scripts/check-lean-product.mjs

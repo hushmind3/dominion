@@ -38,9 +38,11 @@ In **Connections → Accounts**, select GitHub or Google. The product uses a dep
 A real provider-registered OAuth client must exist either in the product deployment or the official CLI. Google Workspace CLI may require one-time Google Cloud project setup; no program can bypass provider consent or fabricate a Google app identity. See docs/CONNECTED-ACCOUNTS-2026-11-17.md.
 
 
-### Build and verification
+### Development tests and release verification
 
-Run `npm ci --prefix web && npm run typecheck --prefix web && npm run build --prefix web`, `npm test --prefix sdk/typescript`, `node scripts/check-lean-product.mjs`, and `cargo test --release --locked`. The optional full release matrix checks Windows and macOS on pull requests or manual dispatch, not every push. Targeted Money CI runs on Windows/macOS on relevant source changes; SDK-specific CI runs on macOS when its files change. Linux CI has been removed to avoid unrelated repeated builds. For changes to the kernel or production release, run the relevant full gate at that branch HEAD.
+Normal development runs only **relevant Rust tests in the dev profile**, such as `cargo test --bin dominion-rust engine::money`, `cargo test --bin dominion-rust api::money`, and `cargo test -p dominion-agent-sdk --lib`. Branch-push workflows contain only scoped `cargo test` commands; they do not call `cargo build`, `cargo check`, `--release`, `npm`, Node scripts, frontend builds, or platform-wide test matrices. Each development workflow has a single macOS Rust runner; Linux is not used.
+
+Full Windows/macOS verification, frontend/TypeScript checks, release compilation, packaging, and installer checks are **release-stage only**. The full `.github/workflows/ci.yml` gate is manual (`workflow_dispatch`), and `.github/workflows/release.yml` is restricted to manual releases or version tags. A green Rust development test is not represented as a release build.
 
 [Room latency / recovery regression contract](docs/SUB3-ROOM-LATENCY-2026-11-17.md) · [Lean product source/behavior contract](docs/SUB3-LEAN-COMPLEXITY-2026-11-16.md) · [Agent/host replay provenance](docs/SUB3-JUDGE-READY-2026-11-16.md).
 

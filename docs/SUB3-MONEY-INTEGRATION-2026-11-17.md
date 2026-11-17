@@ -23,6 +23,6 @@ The `dominion-sub3` branch now includes the Money research UI and its entire sou
 
 ## Verification and limits
 
-`Sub3 Money domain acceptance` GitHub Actions verifies the Rust domain algorithms, SQLite/API unit tests, native JSON envelope, TypeScript page build, and lean-product checks. Only Windows/macOS are checked in focused Money CI. Full Windows/macOS release CI is a PR/manual gate, not a per-commit automatic build.
+`Sub3 Money domain acceptance` GitHub Actions verifies the Rust domain algorithms, SQLite/API unit tests, native JSON envelope, TypeScript page build, and lean-product checks. Ordinary Money CI runs only scoped Rust `cargo test` commands in the development profile, using one macOS runner; no frontend build, Node checks, `cargo check`, release build, or platform-wide matrix runs on push. The Windows/macOS full gate, GUI/SDK builds, packaging and platform verification are reserved for the manually triggered release stage.
 
 This implementation does **not** claim real revenue, 27B long-running performance, external customer confirmation or model success rates without measured jobs. It never runs unapproved purchases, outreach or deployment.

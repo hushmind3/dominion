@@ -1,25 +1,19 @@
-name: Sub3 product acceptance (focused)
+name: Sub3 product Rust tests
 
 on:
   push:
     branches: [dominion-sub3]
     paths:
+      - '.github/workflows/sub3-product-acceptance.yml'
       - 'Cargo.toml'
       - 'crates/dominion-agent-sdk/**'
       - 'crates/harness/**'
       - 'src/api/sdk.rs'
       - 'src/api/mod.rs'
       - 'tests/e2e.rs'
-      - 'scripts/check-lean-product.mjs'
-      - 'packages/sdk-typescript/**'
       - 'src/engine/chat/**'
       - 'src/engine/verification.rs'
       - 'src/engine/code_index.rs'
-      - 'web/src/pages/Chat.tsx'
-      - 'web/src/App.tsx'
-      - 'web/src/components/UI.tsx'
-      - 'web/src/refreshScope.ts'
-      - 'scripts/refresh-scope.test.mjs'
   workflow_dispatch:
 
 permissions:
@@ -30,71 +24,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  verify:
+  rust:
     runs-on: macos-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - name: Verify scoped SSE invalidation without breaking manual refresh
-        run: node --test scripts/refresh-scope.test.mjs
-      - name: Verify lean product source/API/GUI contracts
-        run: node scripts/check-lean-product.mjs
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Validate monotonic shared budget and bounded failure/receipt projection
+      - name: Harness and product contract tests (dev profile only)
         run: |
-          cargo test -p dominion-agent-sdk --lib restore_cannot_refund_parallel_tool_or_proposal_usage
-          cargo test -p dominion-agent-sdk --lib restore_advances_but_does_not_regress_durable_admission
-          cargo test -p dominion-agent-sdk --lib escaped_oversized_failure_keeps_the_actionable_diagnostic
-          cargo test -p dominion-agent-sdk --lib one_unrepresentable_error_does_not_hide_smaller_old_failure
-          cargo test -p dominion-agent-sdk --lib empty_query_lists_a_bounded_recent_page_without_full_log_projection
-      - name: Compile actual backend
-        run: cargo check --bin dominion-rust
-      - name: Chat and durable tool-order regressions
-        run: cargo test --bin dominion-rust engine::chat::tests -- --nocapture
-      - name: Cache-aware context editing and Anthropic request integration
-        run: |
-          cargo test --bin dominion-rust engine::chat::provider::tests::cache_aware_context_editing_saves_old_reads_but_retains_effects_and_recent_results -- --nocapture
-          cargo test --bin dominion-rust engine::chat::provider::tests::old_tool_error_and_write_receipt_are_never_context_edited -- --nocapture
-          cargo test --bin dominion-rust engine::chat::provider::tests::reused_tool_ids_never_reclassify_an_earlier_write_as_a_read -- --nocapture
-          cargo test --bin dominion-rust engine::chat::provider::tests::anthropic_native_stream_translates_messages_tools_and_usage -- --nocapture
-      - name: Artifact verification contracts
-        run: cargo test --bin dominion-rust engine::verification -- --nocapture
-      - name: Retired jobs, immutable historical metadata and strict no-replay
-        run: cargo test --bin dominion-rust retired_media_and_rsi_work_is_never_requeued_and_history_survives -- --nocapture
-      - name: Rust native agent adapter and replay paths
-        run: |
-          cargo test --bin dominion-rust engine::native_agent -- --nocapture
-          cargo test --bin dominion-rust engine::native_replay -- --nocapture
-          cargo test --bin dominion-rust api::native_replay -- --nocapture
-      - name: Run real HTTP/LLM fixture integration paths (no paid API)
-        run: |
-          for contract in parallel_reads_ ordinary_chat_ room_selected_tools_ native_job_prompt_runs token_budget_is_enforced_ chat_fails_over_ delegate_task_runs_; do
-            cargo test --test e2e "$contract" -- --test-threads=1
-          done
-      - name: Main's single-file creation contracts (real HTTP fixture)
-        run: |
-          cargo test --test e2e compound_shell_file_creation_finishes_without_false_repair_or_reviewer -- --test-threads=1
-          cargo test --test e2e existing_file_creation_preserves_contents_without_model_calls -- --test-threads=1
-          cargo test --test e2e empty_file_creation_uses_one_model_call_and_no_paid_final_summary -- --test-threads=1
-      - name: Main's independent Rust harness unit and integration contracts
-        run: |
-          cargo test -p dominion-harness -- --nocapture
-          cargo test --bin dominion-rust api::sdk::tests -- --nocapture
-          cargo test --bin dominion-rust api::sdk::parity_tests -- --nocapture
-      - name: Verify shipping GUI
-        run: |
-          npm ci --prefix web
-          npm run typecheck --prefix web
-          npm run build --prefix web
-      - name: Typecheck and build main's independent TypeScript client
-        run: |
-          npm install --prefix packages/sdk-typescript --no-package-lock --ignore-scripts --no-audit
-          npm run typecheck --prefix packages/sdk-typescript
-          npm run build --prefix packages/sdk-typescript
-
+          cargo test -p dominion-harness
+          cargo test --bin dominion-rust engine::chat::tests
+          cargo test --bin dominion-rust engine::verification
+          cargo test --bin dominion-rust api::sdk::tests
+          cargo test --test e2e native_job_prompt_runs -- --test-threads=1
