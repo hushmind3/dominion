@@ -1652,6 +1652,89 @@ pub(super) async fn run_program(
             }
         }
     }
+    // Execute the winning repair's independent *post-condition* against the
+    // changed world before emitting a completed program status. A true preflight
+    // only selected a candidate; it never verified that the mutation succeeded.
+    if checkpoint["programFailure"].is_null()
+        && checkpoint["status"].as_str()!=Some("paused") {
+        let mut verification_receipts=Vec::<Value>::new();
+        let mut read_cache=std::collections::HashMap::<String,(Value,bool,String)>::new();
+        let mut postflight_failure=None::<String>;
+        for post in current_program["repairPostflights"].as_array().into_iter().flatten() {
+            if state.is_cancelled(session_id)
+                || state.cancellation_generation(session_id)!=generation {
+                return Err("program repair postflight cancelled".into());
+            }
+            let tool=post["tool"].as_str().unwrap_or("");
+            let args=&post["inputs"];
+            if !crate::engine::adaptation::probes::read_only_tool(tool)
+                || !args.is_object() {
+                postflight_failure=Some("invalid non-observational repair postflight".into());
+                break;
+            }
+            let cache_key=format!("{tool}:{args}");
+            let (result,ok,call_id)=if let Some(cached)=read_cache.get(&cache_key){
+                cached.clone()
+            }else{
+                if !budget_local.charge_tool(){
+                    postflight_failure=Some("postflight tool budget exhausted".into());
+                    break;
+                }
+                op_seq_local+=1;
+                let call=ToolCall{
+                    id:format!("program-postflight-{}",uuid::Uuid::new_v4()),
+                    name:tool.to_string(),arguments:args.to_string(),
+                };
+                let (result,ok,_)=dispatch_tool_call(
+                    state,tx,session,request,session_id,execution_id,
+                    &call,args.clone(),metrics,op_seq_local,0,0,false,
+                    "program_repair_postflight",None,None,None,
+                ).await?;
+                let entry=(result,ok,call.id);
+                read_cache.insert(cache_key,entry.clone());
+                entry
+            };
+            let verdict=crate::engine::adaptation::repair_tournament::postflight_verdict(
+                post,&result,ok && tool_succeeded(&result),
+            );
+            verification_receipts.push(json!({
+                "postflightId":post["id"],"callId":call_id,
+                "tool":tool,"verdict":verdict,
+            }));
+            if verdict!="true" {
+                postflight_failure=Some(format!(
+                    "post-execution repair verification was {verdict} at {}",
+                    post["id"],
+                ));
+                break;
+            }
+        }
+        if !verification_receipts.is_empty() || postflight_failure.is_some(){
+            checkpoint["repairPostflightReceipts"]=json!(verification_receipts);
+        }
+        if let Some(reason)=postflight_failure {
+            // Never label a repaired program complete when independent
+            // read-back evidence failed. Existing effects remain recorded;
+            // automatic retries cannot replay those already completed.
+            checkpoint["status"]=json!("needs_review");
+            checkpoint["programFailure"]=json!({
+                "nodeId":"postflight",
+                "reason":reason,
+                "receipts":checkpoint["repairPostflightReceipts"],
+            });
+            checkpoint["resolvedInputs"]=resolved.clone();
+            save_program_checkpoint(state,execution_id,&checkpoint);
+            *budget=budget_local;
+            *op_seq=op_seq_local;
+            messages.push(json!({
+                "role":"system",
+                "content":format!(
+                    "program repair has actual post-execution evidence but is NOT verified: {reason}. External effects are preserved; owner/model review is required."
+                )
+            }));
+            return Ok(messages);
+        }
+    }
     *budget = budget_local;
     *op_seq = op_seq_local;
     let node_count = current_program["nodes"]
