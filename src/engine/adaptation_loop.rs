@@ -454,6 +454,13 @@ pub fn probe_candidates(
             .then_with(|| a["id"].as_str().unwrap_or("")
                 .cmp(b["id"].as_str().unwrap_or("")))
     });
+    // A model can assign several ids to one identical file read. Probe the
+    // physical operation once, retaining the highest-ranked hypothesis.
+    let mut seen = std::collections::HashSet::new();
+    candidates.retain(|candidate| {
+        let key = format!("{}:{}", candidate["tool"], candidate["inputs"]);
+        seen.insert(key)
+    });
     candidates.truncate(2);
     candidates
 }
@@ -472,7 +479,7 @@ pub fn choose_after_probes(
     algorithm: &Value,
     observations: &[Value],
 ) -> Option<Value> {
-    let mut refuted = prior_refuted.to_vec();
+    let refuted = prior_refuted.to_vec();
     let mut excluded = std::collections::HashSet::new();
     let mut supported = std::collections::HashSet::new();
     for observation in observations {
@@ -482,13 +489,9 @@ pub fn choose_after_probes(
             excluded.insert(id.to_string());
         }
         let ids = observation["hypothesisIds"].as_array();
-        if verdict == "false" && ids.is_some_and(|ids| ids.len() == 1) {
-            if let Some(hypothesis) = ids.and_then(|ids| ids.first()).and_then(Value::as_str) {
-                if !refuted.iter().any(|id| id == hypothesis) {
-                    refuted.push(hypothesis.to_string());
-                }
-            }
-        }
+        // A false model-authored probe predicate refutes that proposed
+        // observation, not the entire causal hypothesis. Other independent
+        // interventions for the hypothesis must remain eligible.
         if verdict == "true" && observation["toolOk"] == true {
             for id in ids.into_iter().flatten().filter_map(Value::as_str) {
                 supported.insert(id.to_string());
@@ -734,6 +737,10 @@ mod selection_tests {
         let got = probe_candidates(&row, "workspace_write", &json!({"path":"broken"}),
             &json!({}), &[], &json!({}));
         assert_eq!(got.len(),2);
+        let mut distinct = std::collections::HashSet::new();
+        for probe in &got {
+            assert!(distinct.insert(format!("{}:{}",probe["tool"],probe["inputs"])));
+        }
         assert!(got.iter().all(|v| matches!(v["tool"].as_str(),
             Some("workspace_read" | "workspace_list" | "workspace_read_range"))));
     }
