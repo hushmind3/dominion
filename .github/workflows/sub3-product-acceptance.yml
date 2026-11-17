@@ -14,6 +14,8 @@ on:
       - 'src/engine/chat/**'
       - 'src/engine/verification.rs'
       - 'src/engine/native_replay.rs'
+      - 'src/engine/native_evidence.rs'
+      - 'src/engine/improve.rs'
       - 'src/engine/native_adjudication.rs'
       - 'src/engine/native_agent.rs'
       - 'src/engine/program.rs'
