@@ -954,6 +954,48 @@ pub(super) async fn propose_program_revision(
     Ok(Some(revised))
 }
 
+/// Restore the exact durable executable revision before touching any tool.
+/// A revision that exists only in the checkpoint but not the persisted
+/// executable IR is an ambiguous crash state; never replay the base program.
+fn restore_program(
+    original: &Value,
+    prior_checkpoint: Option<Value>,
+    saved_revision: Option<Value>,
+) -> Result<(Value, Value), String> {
+    let mut checkpoint = prior_checkpoint
+        .filter(|prior| prior["status"] != "completed")
+        .unwrap_or_else(|| crate::engine::program::new_checkpoint(original));
+    if checkpoint["pendingOperationIds"].as_array()
+        .is_some_and(|ids| !ids.is_empty())
+    {
+        return Err("program recovery stopped: an in-flight effect has no confirmed result".into());
+    }
+    let revision = checkpoint["programRevision"].as_str()
+        .ok_or("program recovery stopped: checkpoint revision missing")?;
+    let current = if original["revision"].as_str() == Some(revision) {
+        original.clone()
+    } else {
+        let revised = saved_revision
+            .ok_or("program recovery stopped: missing persisted revised program")?;
+        if revised["revision"].as_str() != Some(revision) {
+            return Err("program recovery stopped: persisted revision does not match checkpoint".into());
+        }
+        crate::engine::program::validate(&revised)?;
+        revised
+    };
+    if !checkpoint["resolvedInputs"].is_object() {
+        return Err("program recovery stopped: resolved inputs are invalid".into());
+    }
+    let total = current["nodes"].as_array().ok_or("program nodes missing")?.len();
+    if checkpoint["nextIndex"].as_u64().is_none_or(|idx| idx > total as u64) {
+        return Err("program recovery stopped: checkpoint position exceeds program".into());
+    }
+    if !checkpoint["mutationEpoch"].is_u64() {
+        checkpoint["mutationEpoch"] = json!(0u64);
+    }
+    Ok((checkpoint, current))
+}
+
 pub(super) async fn run_program(
     state: &AppState,
     tx: &UnboundedSender<Value>,
@@ -967,37 +1009,14 @@ pub(super) async fn run_program(
     op_seq: &mut u64,
     generation: u64,
 ) -> Result<Vec<Value>, String> {
-    let existing = state
-        .store
-        .get("execution", execution_id)
+    let saved_execution = state.store.get("execution", execution_id);
+    let previous_checkpoint = saved_execution.as_ref()
         .and_then(|execution| execution.get("programCheckpoint").cloned());
-    let mut checkpoint = existing
-        .filter(|checkpoint| {
-            checkpoint["programRevision"].as_str() == program["revision"].as_str()
-                && checkpoint["status"].as_str() != Some("completed")
-        })
-        .unwrap_or_else(|| crate::engine::program::new_checkpoint(program));
-    // Checkpoints written before mutation epochs were introduced remain
-    // resumable; a newly observed passing verify will establish freshness.
-    if !checkpoint["mutationEpoch"].is_u64() {
-        checkpoint["mutationEpoch"] = json!(0u64);
-    }
-    let mut current_program = program.clone();
-    if checkpoint["programRevision"].as_str() != program["revision"].as_str() {
-        match state
-            .store
-            .get("execution", execution_id)
-            .and_then(|execution| execution.get("revisedProgram").cloned())
-            .filter(|revised| {
-                revised["revision"].as_str()
-                    == checkpoint["programRevision"].as_str()
-            }) {
-            Some(revised) => current_program = revised,
-            None => {
-                checkpoint = crate::engine::program::new_checkpoint(program);
-            }
-        }
-    }
+    let persisted_revision = saved_execution.as_ref()
+        .and_then(|execution| execution.get("revisedProgram").cloned());
+    let (mut checkpoint, mut current_program) = restore_program(
+        program, previous_checkpoint, persisted_revision,
+    )?;
     let mut resolved = checkpoint["resolvedInputs"].clone();
     let start = checkpoint["nextIndex"].as_u64().unwrap_or(0) as usize;
     let mut remaining = current_program["nodes"]
@@ -1215,6 +1234,70 @@ pub(super) async fn run_program(
 }
 
 
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+    #[test]
+    fn durable_revised_program_resumes_its_own_ir_and_skips_committed_effects() {
+        let base = json!({"revision":"base","nodes":[
+            {"type":"observe","id":"done"},
+            {"type":"observe","id":"pending"}
+        ]});
+        let revised = json!({"revision":"base:rev:a","nodes":[
+            {"type":"observe","id":"done"},
+            {"type":"observe","id":"replacement"}
+        ]});
+        let mut checkpoint = crate::engine::program::new_checkpoint(&base);
+        checkpoint["programRevision"] = json!("base:rev:a");
+        checkpoint["completedOperationIds"] = json!(["done"]);
+        checkpoint["nextIndex"] = json!(1);
+        let (saved, executable) = restore_program(&base,Some(checkpoint),Some(revised)).unwrap();
+        assert_eq!(executable["nodes"][1]["id"],"replacement");
+        assert_eq!(saved["completedOperationIds"],json!(["done"]));
+        assert_eq!(saved["nextIndex"],1);
+    }
+    #[test]
+    fn missing_or_conflicting_revision_cannot_replay_original_completed_tool() {
+        let base=json!({"revision":"base","nodes":[
+            {"type":"call_tool","id":"write","tool":"workspace_write",
+                "inputs":{"path":"file","content":"x"}}
+        ]});
+        let mut cp=crate::engine::program::new_checkpoint(&base);
+        cp["programRevision"]=json!("base:rev:committed");
+        cp["completedOperationIds"]=json!(["write"]);
+        assert!(restore_program(&base,Some(cp.clone()),None)
+            .unwrap_err().contains("missing persisted revised"));
+        let mismatched=json!({"revision":"different","nodes":[
+            {"type":"observe","id":"replaced"}
+        ]});
+        assert!(restore_program(&base,Some(cp),Some(mismatched))
+            .unwrap_err().contains("does not match checkpoint"));
+    }
+    #[test]
+    fn unfinished_effect_checkpoint_fails_closed_without_duplicate_dispatch() {
+        let base=json!({"revision":"base","nodes":[
+            {"type":"call_tool","id":"write","tool":"workspace_write",
+             "inputs":{"path":"output","content":"once"}}
+        ]});
+        let mut cp=crate::engine::program::new_checkpoint(&base);
+        cp["pendingOperationIds"]=json!(["write"]);
+        assert!(restore_program(&base,Some(cp),None)
+            .unwrap_err().contains("in-flight effect"));
+    }
+    #[test]
+    fn previously_completed_original_checkpoint_starts_fresh_without_stale_revision() {
+        let base=json!({"revision":"base","nodes":[
+            {"type":"observe","id":"safe"}
+        ]});
+        let mut previous=crate::engine::program::new_checkpoint(&base);
+        previous["status"]=json!("completed");
+        previous["programRevision"]=json!("obsolete");
+        let (checkpoint,restored)=restore_program(&base,Some(previous),None).unwrap();
+        assert_eq!(checkpoint["programRevision"],"base");
+        assert_eq!(restored["revision"],"base");
+    }
+}
 
 #[cfg(test)]
 mod evidence_join_tests {
