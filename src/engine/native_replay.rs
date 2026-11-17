@@ -40,7 +40,15 @@ fn elapsed_ms(job:&Value)->Option<i64>{
 pub fn report(state:&AppState,id:&str)->Result<Value,String>{
  let job=state.store.get("job",id).ok_or("Native job not found")?;
  let snap=snapshot(&job)?;
- let mut tape=dominion_agent_sdk::replay::trace(&snap);
+ report_loaded(state,id,&job,&snap)
+}
+
+/// Work from the SAME immutable job snapshot used for admission rather than
+/// re-fetching mutable state during a multi-run forensic comparison.
+pub(crate) fn report_loaded(
+ state:&AppState,id:&str,job:&Value,snap:&Snapshot,
+)->Result<Value,String>{
+ let mut tape=dominion_agent_sdk::replay::trace(snap);
  let operations=state.store.execution_operations(id)?;
  let mut indexed=BTreeMap::new();
  let mut anomalies=Vec::new();
@@ -141,8 +149,10 @@ pub fn compare(state:&AppState,baseline_id:&str,candidate_id:&str)->Result<Value
  let a=state.store.get("job",baseline_id).ok_or("Baseline job not found")?;
  let b=state.store.get("job",candidate_id).ok_or("Candidate job not found")?;
  same_work(&a,&b)?;
- let left=report(state,baseline_id)?;
- let right=report(state,candidate_id)?;
+ let a_snapshot=snapshot(&a)?;
+ let b_snapshot=snapshot(&b)?;
+ let left=report_loaded(state,baseline_id,&a,&a_snapshot)?;
+ let right=report_loaded(state,candidate_id,&b,&b_snapshot)?;
  if left["requiresManualReconciliation"]==true ||right["requiresManualReconciliation"]==true {
   return Err("Uncertain external effects cannot be used in a paired score".into())
  }
