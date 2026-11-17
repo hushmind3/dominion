@@ -3,6 +3,7 @@ const en: Record<LocaleKey, string> = {
   'nav.group.workspace': 'Workspace',
   'nav.group.extensions': 'Extensions',
   'nav.group.operations': 'Operations',
+  'nav.money': 'Money',
   'nav.home': 'Dashboard',
   'shell.conversationSwitch': 'Conversation mode',
   'shell.groupShort': 'Group',

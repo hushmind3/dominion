@@ -9,6 +9,7 @@ const HomePage=lazy(()=>import('./pages/Home').then(module=>({default:module.Hom
 const CapabilitiesPage=lazy(()=>import('./pages/Capabilities').then(module=>({default:module.CapabilitiesPage})))
 const MemoryPage=lazy(()=>import('./pages/Memory').then(module=>({default:module.MemoryPage})))
 const ChatPage=lazy(()=>import('./pages/Chat').then(module=>({default:module.ChatPage})))
+const MoneyPage=lazy(()=>import('./pages/Money').then(module=>({default:module.MoneyPage})))
 const ModelHub=lazy(()=>import('./pages/Models').then(module=>({default:module.ModelHub})))
 const AgentsPage=lazy(()=>import('./pages/Agents').then(module=>({default:module.AgentsPage})))
 const RoomsPage=lazy(()=>import('./pages/Rooms').then(module=>({default:module.RoomsPage})))
@@ -203,13 +204,14 @@ export default function App(){
    {visited.rooms&&<div hidden={mode!=='rooms'} className="h-full page-rooms"><PageLoadBoundary><Suspense fallback={<div role="status" className="p-8 text-sm text-[#7C7469]">대화 불러오는 중…</div>}><RoomsPage active={mode==='rooms'&&!settingsOpen} openSession={id=>navigate('chat',id)} openSettings={()=>navigate('settings')} switchMode={switchMode}/></Suspense></PageLoadBoundary></div>}
 
   </main>
-  {settingsOpen&&<DialogBackdrop onDismiss={closeSettings}><div role="dialog" aria-modal="true" aria-label="설정" className="workspace-settings relative h-[calc(100dvh-40px)] w-full max-w-[1440px] overflow-hidden rounded-2xl border border-[#E7E0D5] bg-[#F6F3EC] shadow-2xl">
+  {settingsOpen&&<DialogBackdrop onDismiss={closeSettings}><div role="dialog" aria-modal="true" aria-label="설정" className={"workspace-settings relative h-[calc(100dvh-40px)] w-full overflow-hidden rounded-2xl border border-[#E7E0D5] bg-[#F6F3EC] shadow-2xl "+(page==='money'?"max-w-[1760px]":"max-w-[1440px]")}>
    <WorkspaceSidebar settingsOnly page={page} open collapsed={false} online={online} running={running} pending={pending} onNavigate={navigate} onNewChat={()=>navigate('chat')} onClose={closeSettings} navOpen={settingsNav} onToggleNav={toggleSettingsNav}/>
    <div className={'workspace-settings-main flex h-full min-w-0 flex-col '+(settingsNav?'ml-[216px]':'ml-14')}>
     <SettingsHeader page={page} online={online} build={engineBuild} onClose={closeSettings}/>
     <div className="workspace-settings-content min-h-0 flex-1 overflow-y-auto">
      <PageLoadBoundary key={page}><Suspense fallback={<div role="status" className="p-8 text-sm text-[#7C7469]">화면 불러오는 중…</div>}>
       {page==='home'&&<HomePage navigate={navigate}/>}
+      {page==='money'&&<MoneyPage openSession={id=>navigate('chat',id)}/>}
       {page==='capabilities'&&<CapabilitiesPage navigate={navigate}/>}
       {page==='memory'&&<MemoryPage/>}
       {page==='models'&&<ModelHub/>}

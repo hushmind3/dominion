@@ -2,6 +2,7 @@ const ko = {
   'nav.group.workspace': '작업 공간',
   'nav.group.extensions': '확장',
   'nav.group.operations': '운영',
+  'nav.money': '돈벌이 찾기',
   'nav.home': '대시보드',
   'shell.conversationSwitch': '대화 전환',
   'shell.groupShort': '그룹',

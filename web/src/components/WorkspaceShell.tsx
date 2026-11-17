@@ -1,13 +1,13 @@
 import {useEffect,useState} from 'react'
 import {OwnerProfileEditor} from './OwnerProfile'
-import {Activity,BookOpenText,Bot,ChevronDown,Cpu,House,MessageSquare,RadioTower,Settings2,UsersRound,Plus,X,Settings,Menu} from 'lucide-react'
+import {Activity,BookOpenText,Bot,ChevronDown,Cpu,House,MessageSquare,RadioTower,Settings2,UsersRound,Plus,X,Settings,Wallet,Menu} from 'lucide-react'
 import {Button} from './Primitives'
 import {t,type LocaleKey,useLocale} from '../i18n'
 
-export type PageId='home'|'chat'|'models'|'agents'|'rooms'|'memory'|'capabilities'|'extensions'|'connections'|'activity'|'settings'
+export type PageId='home'|'chat'|'money'|'models'|'agents'|'rooms'|'memory'|'capabilities'|'extensions'|'connections'|'activity'|'settings'
 type NavItem={id:PageId;label:LocaleKey;icon:typeof House}
 export const navigation:{title:LocaleKey;items:NavItem[];collapsible?:boolean}[]=[
- {title:'nav.group.workspace',items:[{id:'home',label:'nav.home',icon:House},{id:'chat',label:'nav.chat',icon:MessageSquare},{id:'rooms',label:'nav.rooms',icon:UsersRound},{id:'models',label:'nav.models',icon:Cpu},{id:'agents',label:'nav.agents',icon:Bot}]},
+ {title:'nav.group.workspace',items:[{id:'home',label:'nav.home',icon:House},{id:'chat',label:'nav.chat',icon:MessageSquare},{id:'rooms',label:'nav.rooms',icon:UsersRound},{id:'money',label:'nav.money',icon:Wallet},{id:'models',label:'nav.models',icon:Cpu},{id:'agents',label:'nav.agents',icon:Bot}]},
  {title:'nav.group.extensions',items:[{id:'connections',label:'nav.connections',icon:RadioTower},{id:'memory',label:'nav.memory',icon:BookOpenText}]},
  {title:'nav.group.operations',items:[{id:'activity',label:'nav.activity',icon:Activity},{id:'settings',label:'nav.settings',icon:Settings2}]}
 ]
@@ -58,5 +58,5 @@ export function SettingsHeader({page,online,build,onClose}:{page:PageId;online:b
 /** Persistent toolbar navigation; independent of either session list. */
 export function ConversationSwitch({mode,onChange}:{mode:'chat'|'rooms';onChange:(mode:'chat'|'rooms')=>void}){
  useLocale()
- return <nav className="conversation-switch" aria-label={t('shell.conversationSwitch')}><Button variant="ghost" aria-current={mode==='chat'?'page':undefined} onClick={()=>onChange('chat')}><MessageSquare size={16}/><span>{t('nav.chat')}</span></Button><Button variant="ghost" aria-current={mode==='rooms'?'page':undefined} onClick={()=>onChange('rooms')}><UsersRound size={16}/><span>{t('rooms.listTitle')}</span></Button></nav>
+ return <nav className="conversation-switch" aria-label={t('shell.conversationSwitch')}><Button variant="ghost" aria-current={mode==='chat'?'page':undefined} onClick={()=>onChange('chat')}><MessageSquare size={16}/><span>{t('nav.chat')}</span></Button><Button variant="ghost" aria-current={mode==='rooms'?'page':undefined} onClick={()=>onChange('rooms')}><UsersRound size={16}/><span>{t('rooms.listTitle')}</span></Button><Button variant="ghost" onClick={()=>{window.location.hash='#/money'}} title={t('nav.money')}><Wallet size={16}/><span>{t('nav.money')}</span></Button></nav>
 }
