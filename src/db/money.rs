@@ -159,6 +159,7 @@ impl Store {
         ).map_err(|e|e.to_string())?;
         let last_ingest=conn.query_row(
             "SELECT data,id,created_at,updated_at FROM records
+             INDEXED BY idx_money_latest_ingest
              WHERE kind='money_ingest_report'
              ORDER BY json_extract(data,'$.capturedAt') DESC LIMIT 1",
             [],record_from_row
@@ -188,6 +189,7 @@ impl Store {
         }
         let autopilot=conn.query_row(
             "SELECT data,id,created_at,updated_at FROM records
+             INDEXED BY idx_money_enabled_autopilot_updated
              WHERE kind='money_autopilot'
                  AND json_extract(data,'$.enabled')=1
              ORDER BY updated_at DESC LIMIT 1",[],record_from_row
@@ -249,7 +251,7 @@ impl Store {
     pub fn money_enabled_autopilot_exists(&self)->Result<bool,String>{
         let conn=self.conn.lock().map_err(|e|e.to_string())?;
         conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM records WHERE kind='money_autopilot'
+            "SELECT EXISTS(SELECT 1 FROM records INDEXED BY idx_money_enabled_autopilot_updated WHERE kind='money_autopilot'
                 AND json_extract(data,'$.enabled')=1 LIMIT 1)",
             [],|row|row.get::<_,i64>(0))
             .map(|v|v!=0).map_err(|e|e.to_string())
@@ -1113,6 +1115,7 @@ mod dashboard_stats_tests {
         let conn=store.conn.lock().unwrap();
         let plan:String=conn.query_row(
             "EXPLAIN QUERY PLAN SELECT data,id,created_at,updated_at FROM records
+             INDEXED BY idx_money_enabled_autopilot_updated
              WHERE kind='money_autopilot' AND json_extract(data,'$.enabled')=1
              ORDER BY updated_at DESC LIMIT 1",[],
             |row|row.get(3)).unwrap();
