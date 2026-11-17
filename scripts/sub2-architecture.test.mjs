@@ -16,14 +16,15 @@ test('runtime delegates tool projection, terminal decisions and verification onc
  assert.ok(outcomes.includes('fn determine_task_outcome('));
  assert.ok(module.includes('mod tool_projection;') && module.includes('mod outcome;'));
 });
-test('pricing, evidence, locks, QA and UI share real native routes',()=>{
+test('pricing, evidence, locks, and QA remain available with the imported main UI',()=>{
  const files=['src/engine/model_cost.rs','src/engine/route_calibration.rs',
    'src/engine/evaluation.rs','src/engine/resource_lock.rs'];
  for(const path of files)assert.ok(file(path).length>400,path);
  assert.ok(file('src/api/mod.rs').includes('/api/evaluation/summary'));
  assert.ok(file('src/api/system.rs').includes('engine::evaluation::summary(&state)'));
  assert.ok(file('sdk/typescript/src/index.ts').includes('evaluation = {'));
- assert.ok(file('web/src/pages/Operations.tsx').includes('/api/evaluation/summary'));
+ assert.ok(file('web/src/App.tsx').includes('SettingsHeader'));
+ assert.ok(file('web/src/pages/Operations.tsx').includes('export function OperationsPage'));
  assert.ok(file('src/engine/tools.rs').includes('resource_lock::acquire'));
  assert.doesNotMatch(file('src/engine/mod.rs'),/pub mod video;/);
  assert.doesNotMatch(file('src/engine/mod.rs'),/pub mod rsi(?:_\w+)?;/);

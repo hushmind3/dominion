@@ -19,3 +19,5 @@ translation strings and the two new shared React components.
   `roster.map(...)` in its header, preserving visibility of all participants.
 
 The pinned commit is recorded to make future UI-only updates reproducible.
+
+The imported main Operations UI does not display Sub2's previous evaluation summary panel. The Rust `/api/evaluation/summary` endpoint and the TypeScript SDK `evaluation` API remain available. The architectural test checks those preserved backend/SDK contracts while validating that the new Settings UI is mounted; it does not require retired Sub2-only screen elements.
