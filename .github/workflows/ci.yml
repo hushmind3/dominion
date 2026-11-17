@@ -4,7 +4,7 @@ name: Development Rust regressions
 # Desktop packaging, release-mode and frontend builds belong to release.yml.
 on:
   push:
-    branches: [main, dominion-sub2, dominion-sub3, dominion-sub4, money]
+    branches: [main]
     paths:
       - 'src/**'
       - 'crates/dominion-core/**'
@@ -12,6 +12,7 @@ on:
       - 'Cargo.lock'
       - '.github/workflows/ci.yml'
   pull_request:
+    branches: [main]
     paths:
       - 'src/**'
       - 'crates/dominion-core/**'
