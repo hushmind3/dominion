@@ -235,7 +235,7 @@ mod tests{
   unsettled["status"]=json!("running");
   unsettled["outcomeUnknown"]=json!(false);
   s.store.put("execution_operation",&unsettled).unwrap();
-  let pending_report=report(&s,"replay-a").unwrap();
+  let pending_report=super::report(&s,"replay-a").unwrap();
   assert_eq!(pending_report["hostJournal"]["consistent"],false,
    "a nonterminal operation is never accepted as settled historical evidence");
   let mut other=base.clone();other["id"]=json!("replay-b");
