@@ -40,7 +40,13 @@ pub fn trace(snapshot:&Snapshot)->Value{
  let mut actions=Vec::new();
  let mut planned=BTreeSet::new();
  for (turn,decision) in snapshot.decision_tape.iter().enumerate(){
-  for action in &decision.actions{
+  // A model-proposed candidate path is part of the original decision, not
+  // an unplanned kernel effect. Flatten it solely for attribution; every
+  // probe must still match a real durable tool receipt.
+  let proposed=decision.actions.iter().map(|action|(action,None))
+   .chain(decision.candidate_paths.iter().flat_map(|path|
+    path.actions.iter().map(move |action|(action,Some(path.id.as_str())))));
+  for (action,probe_path) in proposed{
    if !planned.insert(action.id.as_str()){
     issues.push(format!("Repeated planned action id: {}",action.id));
    }
@@ -69,7 +75,7 @@ pub fn trace(snapshot:&Snapshot)->Value{
     }
    }
    actions.push(json!({"turn":turn+1,"id":action.id,
-    "plannedTool":action.tool,"observedTool":receipt.map(|r|r.tool.as_str()),
+    "probePath":probe_path,"plannedTool":action.tool,"observedTool":receipt.map(|r|r.tool.as_str()),
     "step":receipt.map(|r|r.step),"status":status,
     "dependsOn":action.depends_on,
     "diagnostic":receipt.filter(|r|!r.success)
@@ -131,7 +137,7 @@ mod tests{
    require_evidence:true};
   let mut s=Snapshot::from_request(&req);
   s.step=2;s.model_calls=2;s.status=Status::NeedsReview;
-  s.decision_tape.push(Decision{plan:vec![],answer:None,
+  s.decision_tape.push(Decision{plan:vec![],answer:None,candidate_paths:vec![],
    actions:vec![Action{id:"x".into(),tool:"shell_exec".into(),
     arguments:json!({"command":"fail"}),depends_on:vec![]}]});
   s.receipts.push(Receipt{id:"x".into(),tool:"shell_exec".into(),
@@ -158,7 +164,7 @@ mod tests{
    require_evidence:true};
   let mut s=Snapshot::from_request(&req);
   s.step=2;
-  s.decision_tape.push(Decision{plan:vec![],answer:None,
+  s.decision_tape.push(Decision{plan:vec![],answer:None,candidate_paths:vec![],
    actions:vec![Action{id:"inspect".into(),tool:"read".into(),
     arguments:json!({}),depends_on:vec![]},
     Action{id:"write".into(),tool:"write".into(),
@@ -181,7 +187,7 @@ mod tests{
    require_evidence:true};
   let mut s=Snapshot::from_request(&req);
   s.step=3;
-  s.decision_tape.push(Decision{plan:vec![],answer:None,actions:vec![
+  s.decision_tape.push(Decision{plan:vec![],answer:None,candidate_paths:vec![],actions:vec![
    Action{id:"inspect".into(),tool:"read".into(),
     arguments:json!({"path":"a.rs"}),depends_on:vec![]}]});
   s.receipts.push(Receipt{id:"inspect".into(),tool:"read".into(),
@@ -217,5 +223,37 @@ mod tests{
   encoded.as_object_mut().unwrap().remove("decisionTape");
   let legacy:Snapshot=serde_json::from_value(encoded).unwrap();
   assert_eq!(trace(&legacy)["replayableTrace"],false);
+ }
+ 
+ #[test]
+ fn contrastive_probe_receipts_have_model_attribution_without_tool_replay(){
+  let req=RunRequest{id:"probe-trace".into(),instruction:"inspect".into(),
+   owner_instructions:String::new(),strategy:Strategy::Balanced,
+   limits:Limits::default(),allowed_tools:vec![],checks:vec![],
+   require_evidence:true};
+  let mut s=Snapshot::from_request(&req);
+  s.step=1;
+  let make=|id:&str|Action{id:id.into(),tool:"read".into(),
+   arguments:json!({"path":"main.rs"}),depends_on:vec![]};
+  s.decision_tape.push(Decision{plan:vec![],actions:vec![],
+   answer:None,candidate_paths:vec![
+    crate::CandidatePath{id:"direct".into(),hypothesis:"inspect direct".into(),
+     actions:vec![make("probe-a")]},
+    crate::CandidatePath{id:"diagnose".into(),hypothesis:"inspect diagnostics".into(),
+     actions:vec![make("probe-b")]},
+   ]});
+  for id in ["probe-a","probe-b"]{
+   s.receipts.push(Receipt{id:id.into(),tool:"read".into(),
+    arguments:json!({"path":"main.rs"}),success:true,
+    result:json!({"content":"observed"}),step:1});
+  }
+  let report=trace(&s);
+  assert_eq!(report["traceConsistent"],true);
+  assert_eq!(report["actions"].as_array().unwrap().len(),2);
+  assert_eq!(report["actions"][0]["probePath"],"direct");
+  assert_eq!(report["actions"][1]["probePath"],"diagnose");
+  let mut swapped=s.clone();
+  swapped.receipts[0].arguments=json!({"path":"tampered.rs"});
+  assert_eq!(trace(&swapped)["traceConsistent"],false);
  }
 }
