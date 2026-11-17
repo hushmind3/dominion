@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde_json::{json,Value};
 use super::response::error;
 use std::collections::{HashMap,HashSet};
+use sha2::{Digest,Sha256};
 
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase")]
@@ -35,6 +36,7 @@ pub struct Start {
     model: Option<String>,
     agent_id: Option<String>,
     source: Option<SourceRef>,
+    idempotency_key: Option<String>,
     verify_command: Option<String>,
     max_rounds: Option<usize>,
     #[serde(flatten)] options: Value,
@@ -267,24 +269,82 @@ pub(crate) fn prepare_from_value(state:&AppState,body:Value)->Result<(Value,Valu
     prepare_start(state,&input)
 }
 
+/// Opt-in retry protection. Receipt, session and SDK run share one transaction.
+fn retry_identity(input:&Start)->Result<Option<(String,String)>,String>{
+    let Some(key)=input.idempotency_key.as_deref()else{return Ok(None)};
+    if key.is_empty()||key.len()>128
+        ||!key.chars().all(|c|c.is_ascii_alphanumeric()||matches!(c,'_'|'-'|'.'|':')){
+        return Err("idempotencyKey는 1~128자의 영문·숫자·_-.:만 허용합니다.".into());
+    }
+    let body=json!({"instruction":input.instruction,"providerId":input.provider_id,
+        "agentId":input.agent_id,"model":input.model,"maxRounds":input.max_rounds,
+        "verifyCommand":input.verify_command,"source":input.source.as_ref().map(|s|
+            json!({"kind":s.kind,"id":s.id})),"options":input.options});
+    Ok(Some((key.to_owned(),format!("{:x}",Sha256::digest(body.to_string().as_bytes())))))
+}
+fn earlier_run(state:&AppState,key:&str,fingerprint:&str)->Option<Response>{
+    let claim=state.store.get("sdk_start_claim",key)?;
+    if claim["fingerprint"]!=fingerprint{
+        return Some(error(StatusCode::CONFLICT,"다른 요청에 사용한 idempotencyKey입니다."));
+    }
+    let Some(run_id)=claim["runId"].as_str()else{
+        return Some(error(StatusCode::CONFLICT,"기존 요청 기록이 불완전합니다."));
+    };
+    Some(match state.store.get("sdk_run",run_id){
+        Some(run)=>Json(public_view(state,run)).into_response(),
+        None=>error(StatusCode::CONFLICT,"기존 SDK 작업이 누락됐습니다. 중복 실행하지 않습니다.")
+    })
+}
+fn claim_run(state:&AppState,key:&str,fingerprint:&str,
+    session:&Value,run:&Value)->Result<(),String>{
+    state.store.mutate_record("sdk_start_claim",key,json!({"id":key}),|claim|{
+        if claim["runId"].is_string(){return Err("already_claimed".into());}
+        claim["runId"]=run["id"].clone();
+        claim["fingerprint"]=json!(fingerprint);
+        claim["createdAt"]=json!(chrono::Utc::now().to_rfc3339());
+        Ok(vec![("session".into(),session.clone()),("sdk_run".into(),run.clone())])
+    }).map(|_|())
+}
+
 pub async fn start(State(state):State<AppState>,Json(input):Json<Start>)->Response{
+    let retry=match retry_identity(&input){
+        Ok(value)=>value,Err(message)=>return error(StatusCode::BAD_REQUEST,&message),
+    };
+    if let Some((key,fingerprint))=&retry{
+        if let Some(response)=earlier_run(&state,key,fingerprint){return response;}
+    }
     let (session_row,record)=match prepare_start(&state,&input){
         Ok(prepared)=>prepared,
         Err(message)=>return error(StatusCode::BAD_REQUEST,&message),
     };
-    // User limits, workspace scope and the run are committed together.
-    // A failed session write must never launch a model without its budget.
-    if let Err(message)=state.store.transaction(&[
-        ("session".to_string(),session_row),
-        ("sdk_run".to_string(),record.clone()),
-    ]) {
-        state.store.audit("sdk.start_failed",json!({"error":message}));
-        return error(StatusCode::INTERNAL_SERVER_ERROR,"SDK 작업과 설정을 함께 저장하지 못했습니다.");
-    }
+    // The owner limits and SDK run commit atomically with an optional
+    // retry receipt. No second engine or standalone storage is introduced.
+    let persisted=if let Some((key,fingerprint))=&retry{
+        match claim_run(&state,key,fingerprint,&session_row,&record){
+            Ok(())=>record.clone(),
+            Err(message) if message=="already_claimed"=>{
+                return earlier_run(&state,key,fingerprint).unwrap_or_else(||
+                    error(StatusCode::CONFLICT,"기존 SDK 요청 기록을 찾을 수 없습니다."));
+            },
+            Err(message)=>{
+                state.store.audit("sdk.start_failed",json!({"error":message}));
+                return error(StatusCode::INTERNAL_SERVER_ERROR,"SDK 작업 저장에 실패했습니다.");
+            }
+        }
+    }else{
+        if let Err(message)=state.store.transaction(&[
+            ("session".to_string(),session_row),
+            ("sdk_run".to_string(),record.clone()),
+        ]){
+            state.store.audit("sdk.start_failed",json!({"error":message}));
+            return error(StatusCode::INTERNAL_SERVER_ERROR,"SDK 작업 저장에 실패했습니다.");
+        }
+        record.clone()
+    };
     // Preserve existing API metadata (createdAt/updatedAt) returned by Store
     // while the session and SDK run remain transactionally durable.
-    let run_id=record["id"].as_str().unwrap_or_default();
-    let saved=state.store.get("sdk_run",run_id).unwrap_or(record);
+    let run_id=persisted["id"].as_str().unwrap_or_default();
+    let saved=state.store.get("sdk_run",run_id).unwrap_or(persisted);
     launch(state.clone(),saved.clone(),false);
     (StatusCode::ACCEPTED,Json(public_view(&state,saved))).into_response()
 }
@@ -471,6 +531,34 @@ mod view_tests{
             web_dir:root.join("web"),workspace:root.clone()};
         AppState::new(cfg.clone(),crate::db::Store::open(&cfg.db_path()).unwrap(),
             crate::vault::Vault::open(&cfg.key_path()))
+    }
+    #[test]
+    fn retry_receipt_atomically_prevents_duplicate_sdk_jobs(){
+        let state=fixture();
+        let s1=json!({"id":"session-one"});let s2=json!({"id":"session-two"});
+        let r1=json!({"id":"run-one","sessionId":"session-one"});
+        let r2=json!({"id":"run-two","sessionId":"session-two"});
+        let results=std::thread::scope(|scope|{
+            let a=scope.spawn(||claim_run(&state,"key1","digest",&s1,&r1));
+            let b=scope.spawn(||claim_run(&state,"key1","digest",&s2,&r2));
+            (a.join().unwrap(),b.join().unwrap())
+        });
+        assert_eq!(usize::from(results.0.is_ok())+usize::from(results.1.is_ok()),1);
+        assert_eq!(state.store.count_kind("sdk_run"),1);
+        assert_eq!(state.store.count_kind("session"),1);
+        assert_eq!(earlier_run(&state,"key1","different").unwrap().status(),StatusCode::CONFLICT);
+        let _=std::fs::remove_dir_all(&state.config.data_dir);
+    }
+    #[test]
+    fn retry_key_has_stable_digest_and_rejects_invalid_characters(){
+        let req:Start=serde_json::from_value(json!({
+            "instruction":"test","idempotencyKey":"stable-1","tokenBudget":5000
+        })).unwrap();
+        assert_eq!(retry_identity(&req).unwrap().unwrap().1.len(),64);
+        let bad:Start=serde_json::from_value(json!({
+            "instruction":"test","idempotencyKey":"../path"
+        })).unwrap();
+        assert!(retry_identity(&bad).is_err());
     }
     #[test]
     fn sdk_source_is_generic_metadata_and_cannot_encode_permissions() {
