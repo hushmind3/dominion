@@ -692,8 +692,8 @@ impl Host for MainTurn<'_> {
                             .filter(|text| !text.trim().is_empty()) {
                             next_action = format!("{}\nReviewer proposal: {}",
                                 next_action, review_action);
-                        }
-                        if !next_action.trim().is_empty() {
+                            // Only independent reviewer suggestions are
+                            // candidates for reusable learning.
                             let scope = crate::engine::memory::MemoryScope::for_session(
                                 &self.state.store,
                                 self.session_id,

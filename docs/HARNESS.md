@@ -11,6 +11,19 @@
 - User-requested source edits follow ordinary `inspect → edit → test → verify → report`; no RSI campaign or auto-adoption loop.
 - Explicit user corrections, verified procedures, failures and existing chat/file/task records remain persistent.
 
+
+## Evidence-conditioned agent execution (2026-11-18)
+
+The Rust product path preserves real task-verification evidence across attempts.
+
+- On failed tool actions, the existing adaptation planner may propose competing causal hypotheses and diagnostic predictions. The separate pure decision logic in src/engine/adaptation/diagnostics.rs admits only workspace-local reads with differing hypothesis predictions. It selects a cost-aware informative read, not the historically most successful candidate.
+- Each read passes through the normal budget, approval, cancellation, journal and tool-dispatch pipeline. A receipt ID, result digest, compact observation, prediction and actual three-valued verdict are retained as execution.adaptationDiagnosticHistory. Missing observations never refute hypotheses. Four diagnostics is the per-failure ceiling, and one tool slot is reserved for remediation.
+- Actual read results can remove contradicted explanations and trigger one additional budgeted model call to recompose remediation actions. Diagnostics and repairs remain distinct; merely reading a file cannot satisfy a mutating goal.
+- For ordinary tasks, verification records exactly which acceptance postconditions remain or were resolved after each tool round. execution.acceptanceTrajectory stores up to 12 snapshots. Unchanged gaps mark a stalled task even if tools continue returning successful receipts; the subsequent model step receives the concrete missing condition and evidence-based instruction to change its approach. Identical round snapshots do not duplicate progress.
+- The original acceptance verifier continues to own completion. Model predictions, tool transport success, and self-reported progress are never sufficient alone.
+
+Current scope: evidence-conditioned adaptation on tool failures plus progress-based replanning for ordinary action goals. This is not yet isolated counterfactual rollouts or benchmark-driven automatic harness promotion. Model predictions are not calibrated likelihoods; cross-task improvements and token/cost lift have not been independently measured. No front-end UX or SDK protocol change was made. Focused dev-profile regression checks are in .github/workflows/ci.yml.
+
 ## Retired subsystems
 
 Native FFmpeg/ComfyUI video composition, narration generation, scene regeneration, YouTube auto upload, RSI campaigns, source-mutation generations, autonomous grading, automatic core adoption and associated external runtime orchestration are retired. Existing media files and job records remain available through read-only archive endpoints. New media creation belongs to explicit MCP integrations or external APIs, not a built-in engine.
@@ -59,7 +72,7 @@ The SDK retains the model reply for inspection but exposes the terminal `taskOut
 
 ## Regression contract
 
-CI validates TypeScript UI and SDK types, the native architecture graph, and Rust workspace tests on Windows, macOS and Linux. Core acceptance cases include durable state, cancellation, approvals, tool receipts, delegation isolation, chat, memory and retrieval. Deployment is not declared successful until all matrix jobs pass.
+Routine main pushes run focused Rust tests in the development profile on macOS. The release workflow runs full tests and desktop builds on Windows and macOS. Linux is not a product test target. A commit is verified only after its relevant focused tests pass; release packaging is checked separately.
 
 ## Git metadata and scoped acceptance evidence
 

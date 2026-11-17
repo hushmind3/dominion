@@ -40,6 +40,10 @@ jobs:
         run: cargo test --locked -p dominion-core --lib
       - name: Durable job and cancellation regressions (dev profile)
         run: cargo test --locked --bin dominion-rust engine::jobs::tests
+      - name: Causal diagnosis regressions (dev profile)
+        run: cargo test --locked --bin dominion-rust engine::adaptation::diagnostics::tests
+      - name: Acceptance progress regressions (dev profile)
+        run: cargo test --locked --bin dominion-rust engine::recovery::tests::acceptance_feedback
       - name: Money domain and API regressions (dev profile)
         run: cargo test --locked --bin dominion-rust money_
       - name: Shared SDK run and retry regressions (dev profile)
