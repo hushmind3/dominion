@@ -445,4 +445,79 @@ mod tests {
   assert_eq!(first_difference(&base,&renumbered)["kind"],"same_declared_actions");
  }
 
+ #[test]
+ fn matched_runs_attribute_real_candidate_path_but_abstain_from_causality(){
+  use crate::{config::Config,db::Store,vault::Vault};
+  use dominion_sdk::harness::{
+   CheckResult,Criterion,CriterionKind,Decision,RunRequest,Status,
+  };
+  let root=std::env::temp_dir().join(format!("adjudication-{}",uuid::Uuid::new_v4()));
+  std::fs::create_dir_all(&root).unwrap();
+  let cfg=Config{port:0,data_dir:root.clone(),web_dir:root.join("web"),
+   workspace:root.clone()};
+  let state=AppState::new(cfg.clone(),
+   Store::open(&cfg.db_path()).unwrap(),Vault::open(&cfg.key_path()));
+  let c=Criterion{kind:CriterionKind::FileExists,path:Some("out.txt".into()),
+   contains:None,tool:None};
+  let criteria=vec![c.clone()];
+  let criteria_hash=digest(&json!(criteria));
+  let absent=json!({"complete":true,"entries":{"out.txt":{"state":"missing"}},
+   "directVerdicts":[false],"criteriaDigest":criteria_hash});
+  let present=json!({"complete":true,"entries":{"out.txt":{
+   "state":"file","bytes":2,"sha256":"f00d"}},
+   "directVerdicts":[true],"criteriaDigest":criteria_hash});
+  for (id,tool,accepted) in [
+   ("baseline","workspace_read",false),("candidate","workspace_write",true)
+  ] {
+   let action=Action{id:"a".into(),tool:tool.to_owned(),
+    arguments:json!({"path":"out.txt","content":"ok"}),depends_on:vec![]};
+   let request=RunRequest{id:id.into(),instruction:"create out.txt".into(),
+    owner_instructions:String::new(),strategy:Default::default(),
+    limits:Default::default(),allowed_tools:vec![tool.into()],
+    checks:vec![c.clone()],require_evidence:true};
+   let mut snap=Snapshot::from_request(&request);
+   snap.status=if accepted{Status::Completed}else{Status::NeedsReview};
+   snap.step=1;
+   snap.decision_tape=vec![Decision{plan:vec![],actions:vec![action.clone()],answer:None}];
+   let result=if accepted{json!({"written":true})}else{json!({"error":"missing"})};
+   snap.receipts.push(Receipt{id:"a".into(),tool:tool.into(),
+    arguments:action.arguments.clone(),success:accepted,
+    result:result.clone(),step:1});
+   snap.checks.push(CheckResult{criterion:c.clone(),
+    satisfied:accepted,explanation:"observed".into()});
+   let input=json!({"prompt":"create out.txt","checks":[{"type":"file_exists",
+    "path":"out.txt"}],"limits":{"maxSteps":1},
+    "allowedTools":["workspace_read","workspace_write"]});
+   let final_evidence=if accepted{present.clone()}else{absent.clone()};
+   state.store.put("job",&json!({"id":id,"kind":"prompt",
+    "status":if accepted{"completed"}else{"needs_review"},
+    "input":input,"nativeState":snap,
+    "nativeRoute":{"providerId":"p","model":"m"},
+    "nativeToolAuthoritySha256":"frozen",
+    "nativeEvidenceBaseline":absent,"nativeEvidenceFinal":final_evidence,
+    "nativeEvidenceKernelFinal":final_evidence})).unwrap();
+   let mutation=if accepted {
+    json!({"before":{"path":"out.txt","complete":true,"state":{"state":"missing"}},
+     "after":{"path":"out.txt","complete":true,
+      "state":{"state":"file","bytes":2,"sha256":"f00d"}}})
+   }else{Value::Null};
+   state.store.put("execution_operation",&json!({
+    "id":format!("native-op-{id}-a"),"runId":id,"tool":tool,
+    "args":action.arguments,"status":if accepted{"completed"}else{"failed"},
+    "outcomeUnknown":false,"result":result,
+    "artifactLineage":mutation})).unwrap();
+  }
+  let result=adjudicate(&state,"baseline",&["candidate".to_string()]).unwrap();
+  assert_eq!(result["comparableRuns"],1);
+  assert_eq!(result["candidates"][0]["comparison"],"observed_task_outcome_gain");
+  assert_eq!(result["candidates"][0]["mechanism"]["mechanism"],
+   "host_witnessed_candidate_mutation_chain");
+  assert!(result["causalWinner"].is_null());
+  assert_eq!(result["newExternalEffects"],false);
+  let after_jobs=state.store.count("job");
+  assert_eq!(after_jobs,2,"forensic adjudication must not create work");
+  drop(state);
+  let _=std::fs::remove_dir_all(root);
+ }
+
 }
