@@ -101,9 +101,31 @@ pub fn resource_key(tool: &str, arguments: &Value) -> Option<String> {
     }
 }
 
+/// MCP actions are opaque unless the last method segment clearly describes
+/// an observation. An unknown method is not assumed to be a read: sending,
+/// scheduling, charging, or granting access are mutations even without a
+/// traditional create/update/delete verb in their names.
+fn mcp_observation_action(tool: &str) -> bool {
+    let action = tool.rsplit("__").next().unwrap_or("").to_ascii_lowercase();
+    let read_verb = [
+        "read", "get", "list", "search", "inspect", "fetch", "status",
+        "check", "query", "describe", "show",
+    ]
+    .iter()
+    .any(|verb| action == *verb || action.strip_prefix(verb).is_some_and(|rest| rest.starts_with('_')));
+    let mutating_suffix = [
+        "_create", "_update", "_delete", "_remove", "_write", "_patch",
+        "_send", "_post", "_submit", "_execute", "_commit", "_merge",
+        "_approve", "_transfer", "_publish",
+    ]
+    .iter()
+    .any(|verb| action.contains(verb));
+    read_verb && !mutating_suffix
+}
+
 /// Reads are observations; writes, shells and non-GET API calls may change the
-/// world. A read can still have side effects (locks, billing reservations), so
-/// callers must not treat this classification as a safety proof.
+/// world. An unrecognized MCP method is considered effectful until its action
+/// contract establishes that it only observes.
 pub fn is_effectful(tool: &str, arguments: &Value) -> bool {
     if matches!(tool, "shell_exec" | "terminal_exec" | "task_integrate") {
         return true;
@@ -116,6 +138,9 @@ pub fn is_effectful(tool: &str, arguments: &Value) -> bool {
     }
     if tool == "http_fetch" {
         return false;
+    }
+    if tool.starts_with("mcp__") {
+        return !mcp_observation_action(tool);
     }
     [
         "write", "update", "delete", "remove", "patch", "put", "post", "create", "move",
@@ -133,10 +158,7 @@ fn is_read(tool: &str, arguments: &Value) -> bool {
         return !is_effectful(tool, arguments);
     }
     if tool.starts_with("mcp__") {
-        let lower = tool.to_ascii_lowercase();
-        return ["read", "get", "list", "search", "inspect"]
-            .iter()
-            .any(|word| lower.contains(word));
+        return mcp_observation_action(tool);
     }
     [
         "read", "list", "get", "status", "head", "search", "inspect", "show", "diff",
@@ -144,6 +166,13 @@ fn is_read(tool: &str, arguments: &Value) -> bool {
     ]
     .iter()
     .any(|word| tool.to_ascii_lowercase().contains(word))
+}
+
+/// Recovery requires positive evidence that a completed/failed call was merely
+/// observational. Unknown tools are not silently replayed after a crash.
+pub fn is_observation_only(tool: &str, arguments: &Value) -> bool {
+    !is_effectful(tool, arguments)
+        && (is_read(tool, arguments) || matches!(tool, "github_repositories" | "task_result"))
 }
 
 /// Content-addressed file writes are safe to repeat: the effect id already
@@ -604,6 +633,33 @@ mod tests {
             resource_key("mcp__db__read", &json!({"id":"row-1"})).as_deref(),
             Some("mcp__db:row-1")
         );
+    }
+
+    #[test]
+    fn opaque_mcp_actions_are_effectful_and_read_actions_stay_observational() {
+        let args = json!({"id": "item-1"});
+        for name in [
+            "mcp__mail__send_message",
+            "mcp__calendar__schedule",
+            "mcp__finance__transfer_funds",
+            "mcp__github__add_comment_to_issue",
+            "mcp__storage__get_and_delete_item",
+        ] {
+            assert!(is_effectful(name, &args), "{name}");
+            assert!(!is_observation_only(name, &args), "{name}");
+            assert!(effect_id("session", name, &args).is_some(), "{name}");
+        }
+        for name in [
+            "mcp__github__get_commit",
+            "mcp__github__list_commits",
+            "mcp__mail__search_messages",
+            "mcp__db__read",
+        ] {
+            assert!(!is_effectful(name, &args), "{name}");
+            assert!(is_observation_only(name, &args), "{name}");
+            assert!(effect_id("session", name, &args).is_none(), "{name}");
+        }
+        assert!(!is_observation_only("opaque_vendor_tool", &args));
     }
 
     #[test]
