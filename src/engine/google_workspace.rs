@@ -402,6 +402,127 @@ pub async fn execute(state:&AppState,args:&Value,write:bool)->Result<Value,Strin
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[derive(Default)]
+    struct FakeGoogle {
+        mail_sent:usize,
+        drive_uploads:usize,
+        doc_updates:usize,
+        events_created:usize,
+    }
+    type FakeState=std::sync::Arc<std::sync::Mutex<FakeGoogle>>;
+    async fn fake_mail_send(
+        axum::extract::State(state):axum::extract::State<FakeState>,
+        axum::Json(body):axum::Json<Value>,
+    )->axum::Json<Value>{
+        let raw=body["raw"].as_str().unwrap();
+        let decoded=URL_SAFE_NO_PAD.decode(raw).unwrap();
+        let message=String::from_utf8(decoded).unwrap();
+        assert!(message.contains("To: dev@example.com\r\n"));
+        assert!(message.contains("Content-Type: text/plain"));
+        state.lock().unwrap().mail_sent+=1;
+        axum::Json(json!({"id":"mail123","threadId":"thread123"}))
+    }
+    async fn fake_drive_upload(
+        axum::extract::State(state):axum::extract::State<FakeState>,
+        body:String,
+    )->axum::Json<Value>{
+        assert!(body.contains("notes.txt"));
+        assert!(body.contains("persisted content"));
+        state.lock().unwrap().drive_uploads+=1;
+        axum::Json(json!({"id":"drive123","version":"1"}))
+    }
+    async fn fake_docs_update(
+        axum::extract::State(state):axum::extract::State<FakeState>,
+        axum::Json(body):axum::Json<Value>,
+    )->axum::Json<Value>{
+        assert_eq!(body["requests"][0]["insertText"]["text"],"Hello inserted");
+        state.lock().unwrap().doc_updates+=1;
+        axum::Json(json!({"replies":[{}],"writeControl":{}}))
+    }
+    async fn fake_calendar_create(
+        axum::extract::State(state):axum::extract::State<FakeState>,
+        axum::Json(body):axum::Json<Value>,
+    )->axum::Json<Value>{
+        assert_eq!(body["summary"],"Meeting");
+        state.lock().unwrap().events_created+=1;
+        axum::Json(json!({"id":"event123"}))
+    }
+    #[tokio::test]
+    async fn connected_google_account_sends_mail_writes_drive_docs_and_calendar_over_http(){
+        let state:FakeState=Default::default();
+        let router=axum::Router::new()
+            .route("/gmail/v1/users/me/messages",axum::routing::get(||
+                async{axum::Json(json!({"messages":[{"id":"mail123"}],"resultSizeEstimate":1}))}))
+            .route("/gmail/v1/users/me/messages/mail123",axum::routing::get(||
+                async{axum::Json(json!({"id":"mail123","threadId":"thread123",
+                    "snippet":"hello",
+                    "payload":{"headers":[{"name":"From","value":"dev@example.com"},
+                        {"name":"Subject","value":"hi"}],
+                        "body":{"data":URL_SAFE_NO_PAD.encode("Message body")}}}))}))
+            .route("/gmail/v1/users/me/messages/send",axum::routing::post(fake_mail_send))
+            .route("/drive/v3/files",axum::routing::get(||
+                async{axum::Json(json!({"files":[{"id":"drive123","name":"notes.txt"}]}))}))
+            .route("/drive/v3/files/drive123",axum::routing::get(||
+                async{axum::Json(json!({"id":"drive123","name":"notes.txt",
+                    "mimeType":"text/plain","version":"1"}))}))
+            .route("/upload/drive/v3/files",axum::routing::post(fake_drive_upload))
+            .route("/v1/documents/doc123",axum::routing::get(||
+                async{axum::Json(json!({"documentId":"doc123","title":"Shared document",
+                    "body":{"content":[{"paragraph":{"elements":[{"textRun":{
+                        "content":"Hello inserted"}}]}}]}}))}))
+            .route("/v1/documents/doc123:batchUpdate",axum::routing::post(fake_docs_update))
+            .route("/calendar/v3/calendars/primary/events",axum::routing::get(||
+                async{axum::Json(json!({"items":[{"id":"event123","summary":"Meeting"}]}))})
+                .post(fake_calendar_create))
+            .route("/calendar/v3/calendars/primary/events/event123",axum::routing::get(||
+                async{axum::Json(json!({"id":"event123","summary":"Meeting",
+                    "start":{"dateTime":"2026-11-18T09:00:00+09:00"},
+                    "end":{"dateTime":"2026-11-18T10:00:00+09:00"}}))}))
+            .with_state(state.clone());
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base=format!("http://{}/",listener.local_addr().unwrap());
+        let server=tokio::spawn(async move{axum::serve(listener,router).await.unwrap();});
+        let origins=[base.as_str();5];
+        let client=Client::builder().timeout(std::time::Duration::from_secs(5)).build().unwrap();
+        let token="google-test-access-token";
+        let search=execute_with(&client,token,&origins,
+            &json!({"service":"gmail","operation":"search","query":"subject:hi"}),false).await.unwrap();
+        assert_eq!(search["messages"][0]["id"],"mail123");
+        let message=execute_with(&client,token,&origins,
+            &json!({"service":"gmail","operation":"get","id":"mail123"}),false).await.unwrap();
+        assert_eq!(message["bodyText"],"Message body");
+        let sent=execute_with(&client,token,&origins,
+            &json!({"service":"gmail","operation":"send",
+                "to":"dev@example.com","subject":"Report","body":"Checked"}),true).await.unwrap();
+        assert_eq!(sent["sent"],true);
+        let drive=execute_with(&client,token,&origins,
+            &json!({"service":"drive","operation":"search","query":"notes"}),false).await.unwrap();
+        assert_eq!(drive["files"][0]["name"],"notes.txt");
+        let upload=execute_with(&client,token,&origins,
+            &json!({"service":"drive","operation":"create_text",
+                "name":"notes.txt","content":"persisted content"}),true).await.unwrap();
+        assert_eq!(upload["verified"],true);
+        let doc=execute_with(&client,token,&origins,
+            &json!({"service":"docs","operation":"get","id":"doc123"}),false).await.unwrap();
+        assert_eq!(doc["content"],"Hello inserted");
+        let appended=execute_with(&client,token,&origins,
+            &json!({"service":"docs","operation":"append",
+                "id":"doc123","content":"Hello inserted"}),true).await.unwrap();
+        assert_eq!(appended["verified"],true);
+        let events=execute_with(&client,token,&origins,
+            &json!({"service":"calendar","operation":"list"}),false).await.unwrap();
+        assert_eq!(events["items"][0]["summary"],"Meeting");
+        let created=execute_with(&client,token,&origins,
+            &json!({"service":"calendar","operation":"create","summary":"Meeting",
+                "start":"2026-11-18T09:00:00+09:00",
+                "end":"2026-11-18T10:00:00+09:00"}),true).await.unwrap();
+        assert_eq!(created["verified"],true);
+        let counters=state.lock().unwrap();
+        assert_eq!((counters.mail_sent,counters.drive_uploads,
+            counters.doc_updates,counters.events_created),(1,1,1,1));
+        server.abort();
+    }
+
     #[test]
     fn workspace_actions_have_explicit_read_write_and_scope_authority(){
         assert_eq!(scope_for("gmail","search",false).unwrap(),
