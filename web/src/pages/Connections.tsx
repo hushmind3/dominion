@@ -33,6 +33,7 @@ export function ConnectionsPage(){
  const [error,setError]=useState(''),[info,setInfo]=useState(''),[probe,setProbe]=useState<Record<string,string>>({}),[saving,setSaving]=useState(false);
  type CliAccountFlow={source:string;status:string;message?:string;url?:string|null;connected?:unknown}
  const [cliAccount,setCliAccount]=useState<CliAccountFlow|null>(null);
+ const [cliAuthInput,setCliAuthInput]=useState('');
  const installed=useMemo(()=>new Set(channels.value.map(x=>x.kind)),[channels.value]);
  const filtered=useMemo(()=>registry.value.filter(x=>(category==='all'||x.category===category)&&[x.name,x.id,x.description].join(' ').toLowerCase().includes(query.toLowerCase())),[registry.value,category,query]);
  const online=channels.value.filter(c=>active(c.status)).length;
@@ -121,7 +122,7 @@ export function ConnectionsPage(){
   </>}
   {section==='accounts'&&<>
    <Subheading title={t('conn.accounts')} extra={<span className="text-[10px] font-bold uppercase tracking-widest text-[#9C9388]">{t('ui.label.oauth')}</span>}/>
-   <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">{oauth.value.map(item=>{const account=accounts.value.find(a=>a.provider===item.id);const Icon=item.id==='github'?Github:Globe2;return <Panel className="flex min-w-0 flex-col gap-3 p-5" key={item.id}><div className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]"><Icon size={28}/></div><h3>{item.id==='github'?'GitHub':'Google · YouTube'}</h3><p>{item.id==='github'?t('conn.dlg.githubTitle'):t('conn.dlg.googleTitle')}</p><div className="integration-status"><StateTag online={Boolean(account)}>{account?t('conn.accountReady',{name:account.displayName}):item.configured?t('conn.oauthReady'):t('conn.oauthNeeded')}</StateTag></div>{item.id==='google'&&account&&!item.workspaceReady&&<p className="text-xs text-amber-700">Gmail · Drive · Docs · Calendar 작업 권한을 사용하려면 Google 계정을 다시 연결해 주세요.</p>}{item.id==='google'&&account&&item.workspaceReady&&<p className="text-xs text-emerald-700">Gmail · Drive · Docs · Calendar 에이전트 작업 연결됨</p>}{item.id==='github'&&account&&<p className="text-xs text-emerald-700">저장소 · 브랜치 · PR · 이슈 · CI 에이전트 작업 연결됨</p>}<div className="mt-auto flex flex-wrap items-center gap-2"><Action variant="secondary" onClick={()=>{void connect(item)}}><Link2 size={16}/>{account?t('conn.reconnect'):t('conn.connect')}</Action></div></Panel>})}</div>
+   <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">{oauth.value.map(item=>{const account=accounts.value.find(a=>a.provider===item.id);const Icon=item.id==='github'?Github:Globe2;return <Panel className="flex min-w-0 flex-col gap-3 p-5" key={item.id}><div className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]"><Icon size={28}/></div><h3>{item.id==='github'?'GitHub':'Google · YouTube'}</h3><p>{item.id==='github'?t('conn.dlg.githubTitle'):t('conn.dlg.googleTitle')}</p><div className="integration-status"><StateTag online={Boolean(account)}>{account?t('conn.accountReady',{name:account.displayName}):item.configured?t('conn.oauthReady'):item.id==='github'||item.id==='google'?'브라우저로 로그인':t('conn.oauthNeeded')}</StateTag></div>{item.id==='google'&&account&&!item.workspaceReady&&<p className="text-xs text-amber-700">Gmail · Drive · Docs · Calendar 작업 권한을 사용하려면 Google 계정을 다시 연결해 주세요.</p>}{item.id==='google'&&account&&item.workspaceReady&&<p className="text-xs text-emerald-700">Gmail · Drive · Docs · Calendar 에이전트 작업 연결됨</p>}{item.id==='github'&&account&&<p className="text-xs text-emerald-700">저장소 · 브랜치 · PR · 이슈 · CI 에이전트 작업 연결됨</p>}<div className="mt-auto flex flex-wrap items-center gap-2"><Action variant="secondary" onClick={()=>{void connect(item)}}><Link2 size={16}/>{account?t('conn.reconnect'):t('conn.connect')}</Action></div></Panel>})}</div>
   </>}
   {cliAccount&&<DialogBackdrop onDismiss={()=>{if(!['starting','browser','input'].includes(cliAccount.status))setCliAccount(null)}}><DialogPanel size="wide">
    <div className="flex items-center justify-between border-b border-[#EFE9DF] p-5">
@@ -133,6 +134,14 @@ export function ConnectionsPage(){
     {cliAccount.url&&<a className="inline-flex items-center gap-2 break-all text-blue-700 underline" target="_blank" rel="noopener noreferrer" href={cliAccount.url}><ExternalLink size={16}/>공식 로그인 페이지 열기</a>}
     {cliAccount.status==='completed'&&<p className="text-sm text-emerald-700">연결 성공 · 이제 에이전트가 이 계정으로 작업할 수 있습니다.</p>}
     {cliAccount.status==='failed'&&<p className="text-sm text-red-700">계정 연결 실패 · 공식 로그인을 다시 실행하세요.</p>}
+    {cliAccount.status==='input'&&<div className="flex flex-wrap items-center gap-2">
+      <TextInput value={cliAuthInput} onChange={e=>setCliAuthInput(e.target.value)} placeholder="CLI가 요청한 선택값 또는 인증 코드"/>
+      <Action variant="secondary" onClick={async()=>{
+        await post('/api/providers/cli/'+cliAccount.source+'/login/input',{input:cliAuthInput||'enter'});
+        setCliAuthInput('');
+      }}>입력 전달</Action>
+      <Action variant="secondary" onClick={()=>{void post('/api/providers/cli/'+cliAccount.source+'/login/input',{input:'enter'})}}>계속</Action>
+    </div>}
     {['starting','browser','input'].includes(cliAccount.status)&&<p className="text-xs text-[#7C7469]">API 키나 개발자 Client ID는 입력하지 않습니다. 공식 서비스의 로그인·권한 동의만 진행합니다.</p>}
    </div>
    <div className="flex justify-end gap-2 border-t border-[#EFE9DF] p-5">
