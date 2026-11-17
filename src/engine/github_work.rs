@@ -247,7 +247,12 @@ pub async fn commit(state:&AppState,args:&Value)->Result<Value,String>{
             "error":"서버 오류로 커밋 적용 여부가 불확실합니다. 파일을 다시 조회하세요."}));
     }
     if put_status>=400{return Err(http_error(put_status));}
-    let receipt=response.json::<Value>().await.map_err(|_|"커밋 성공 응답을 파싱하지 못했습니다. 원격 파일을 확인하세요.")?;
+    let receipt=match response.json::<Value>().await{
+        Ok(receipt)=>receipt,
+        Err(_)=>return Ok(json!({"success":false,"outcomeUnknown":true,
+            "requiresInspection":true,
+            "error":"GitHub 파일 커밋 후 응답 해석 실패. 원격 파일을 확인하세요."})),
+    };
     let commit_sha=receipt["commit"]["sha"].clone();
     // Re-read what GitHub actually stores rather than trusting an HTTP 201
     // or a model's success text. If this final request fails, never retry PUT.
@@ -351,7 +356,11 @@ async fn write_json(client:&reqwest::Client,token:&str,url:reqwest::Url,body:Val
             "status":code,"error":"GitHub 서버 오류. 원격 상태를 직접 다시 조회하세요."}));
     }
     if code>=400{return Err(http_error(code));}
-    response.json::<Value>().await.map_err(|_|"GitHub 쓰기 응답 해석 실패. 원격 결과를 재조회하세요.".into())
+    match response.json::<Value>().await {
+        Ok(body)=>Ok(body),
+        Err(_)=>Ok(json!({"outcomeUnknown":true,"requiresReview":true,
+            "error":"GitHub 쓰기 후 성공 응답 해석 실패. 원격 결과를 확인하고 중복 생성하지 마세요."}))
+    }
 }
 pub async fn issue_create(state:&AppState,args:&Value)->Result<Value,String>{
     let owner=repo_arg(args,"owner")?;
@@ -367,8 +376,10 @@ pub async fn issue_create(state:&AppState,args:&Value)->Result<Value,String>{
         json!({"title":title,"body":body})).await?;
     if result["outcomeUnknown"]==true{return Ok(result);}
     let number=result["number"].as_u64().ok_or("이슈 번호가 없는 응답입니다.")?;
-    let (code,seen)=get_json(&client,repo_endpoint(owner,repo,&["issues",&number.to_string()])?,&token).await?;
-    let verified=code==200 && seen["title"]==title && seen["body"]==body;
+    let observed=get_json(&client,
+        repo_endpoint(owner,repo,&["issues",&number.to_string()])?,&token).await;
+    let verified=observed.is_ok_and(|(code,seen)|
+        code==200 && seen["title"]==title && seen["body"]==body);
     Ok(json!({"repository":format!("{owner}/{repo}"),"number":number,
         "url":result["html_url"],"verified":verified,
         "outcomeUnknown":!verified,"requiresReview":!verified}))
@@ -420,9 +431,11 @@ pub async fn pr_create(state:&AppState,args:&Value)->Result<Value,String>{
         json!({"title":title,"body":body,"head":head,"base":base})).await?;
     if result["outcomeUnknown"]==true{return Ok(result);}
     let number=result["number"].as_u64().ok_or("PR 번호가 없는 응답입니다.")?;
-    let (code,seen)=get_json(&client,repo_endpoint(owner,repo,&["pulls",&number.to_string()])?,&token).await?;
-    let verified=code==200 && seen["title"]==title &&
-        seen["head"]["ref"]==head && seen["base"]["ref"]==base;
+    let observed=get_json(&client,
+        repo_endpoint(owner,repo,&["pulls",&number.to_string()])?,&token).await;
+    let verified=observed.is_ok_and(|(code,seen)|
+        code==200 && seen["title"]==title &&
+        seen["head"]["ref"]==head && seen["base"]["ref"]==base);
     Ok(json!({"repository":format!("{owner}/{repo}"),"number":number,
         "url":result["html_url"],"verified":verified,
         "outcomeUnknown":!verified,"requiresReview":!verified}))
