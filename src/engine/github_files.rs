@@ -218,7 +218,7 @@ mod tests{
         let mut remote=state.0.lock().unwrap();
         remote.reads+=1;
         let (sha,content)=if remote.mismatch_after_second_write && remote.writes>=2 {
-            ("z".repeat(40),"unexpected bytes".to_string())
+            ("e".repeat(40),"unexpected bytes".to_string())
         }else{(remote.sha.clone(),remote.content.clone())};
         (axum::http::StatusCode::OK,axum::Json(json!({
             "type":"file","encoding":"base64","sha":sha,
