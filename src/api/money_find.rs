@@ -372,9 +372,9 @@ pub async fn find(State(state):State<AppState>,Json(body):Json<Value>)->Response
             state.store.get("money_candidate",id)
                 .is_none_or(|saved|saved["status"]!="rejected"))
     }).collect::<Vec<_>>();
-    // How many unseen drafts this click surfaces. The previous hard cap of
-    // three made a 460-signal archive look empty.
-    let limit=body["limit"].as_u64().unwrap_or(9).clamp(1,24) as usize;
+    // Three concise candidates per click; repeated clicks prioritize unseen
+    // items while optional clients can explicitly request a larger batch.
+    let limit=body["limit"].as_u64().unwrap_or(3).clamp(1,24) as usize;
     let (next,shown,next_cursor)=next_drafts(&eligible,&previous,limit);
     let mut chosen=Vec::<Value>::new();
     for draft in &next{
@@ -554,13 +554,15 @@ mod tests {
     fn unseen_leads_first_rejected_excluded_and_history_is_bounded(){
         let pool=(0..5).map(|i|json!({"id":format!("lead-{i}"),
             "status":if i==2{"rejected"}else{"hypothesis"}})).collect::<Vec<_>>();
-        let (first,shown,cursor)=next_drafts(&pool,&Value::Null,9);
+        let (first,shown,cursor)=next_drafts(&pool,&Value::Null,3);
         assert_eq!(first.iter().filter_map(|row|row["id"].as_str()).collect::<Vec<_>>(),
             vec!["lead-0","lead-1","lead-3"]);
-        let (second,history,_)=next_drafts(&pool,&json!({"cursor":cursor,"shownCandidateIds":shown}),9);
+        let (second,history,_)=next_drafts(&pool,&json!({"cursor":cursor,"shownCandidateIds":shown}),3);
         assert_eq!(second[0]["id"],"lead-4");
         assert!(second.iter().all(|row|row["id"]!="lead-2"));
         assert_eq!(history.len(),4);
+        let (expanded,_,_)=next_drafts(&pool,&Value::Null,9);
+        assert_eq!(expanded.len(),4,"an explicit larger request may return every eligible lead");
     }
     #[test]
     fn source_pair_has_real_urls_no_fake_budget(){

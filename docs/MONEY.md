@@ -1,6 +1,6 @@
 # DOMINION Money — continuously collected market intelligence
 
-Money is an experimental **money-branch-only** subsystem. It uses the existing Rust harness and jobs; it does not replace the agent kernel or modify main.
+Money originated in the experimental `money` branch and is selectively integrated into `main`. It uses the existing Rust harness and durable jobs without replacing the execution kernel.
 
 ## Current user experience — one button, three saved drafts (2026-11-17)
 
@@ -74,7 +74,7 @@ The implementation adapts general design principles, not claimed benchmark resul
 
 ## Core retirement and dispatcher sync (2026-11-17)
 
-Money retains its independent source-to-evidence-to-paid-buyer hypothesis engine, while importing the post-retirement main runtime, cached SDK run views, native journal improvements, and event-driven durable job dispatcher. The Money collectors and opt-in autopilot are now scheduled every 30 seconds, with UTC slot IDs and job-state gating to avoid duplicate collection or simultaneous model runs. Old RSI/media job records are preserved but never auto-replayed; obsolete source, scripts, visual render dependency and historical experiment artifacts are removed. The main branch is untouched. Full Rust CI and real-money-model throughput remain unverified.
+Money retains its independent source-to-evidence-to-paid-buyer hypothesis engine, while importing the post-retirement main runtime, cached SDK run views, native journal improvements, and event-driven durable job dispatcher. The Money collectors and opt-in autopilot are now scheduled every 30 seconds, with UTC slot IDs and job-state gating to avoid duplicate collection or simultaneous model runs. Old RSI/media job records are preserved but never auto-replayed; obsolete source, scripts, visual render dependency and historical experiment artifacts are removed. The main execution engine is unchanged. End-to-end source ingestion and 27B inference throughput remain subject to real deployment measurements.
 
 ## Buyer-document evidence matching (2026-11-17)
 
