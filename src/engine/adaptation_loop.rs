@@ -136,9 +136,13 @@ pub fn validate_adaptation(adaptation: &Value) -> Result<(), String> {
         .as_array()
         .filter(|items| !items.is_empty())
         .ok_or("hypotheses must be a non-empty array")?;
+    let mut hypothesis_ids = std::collections::HashSet::new();
     for hypothesis in hypotheses {
         if hypothesis["id"].as_str().is_none_or(str::is_empty) {
             return Err("each hypothesis needs an id".into());
+        }
+        if !hypothesis_ids.insert(hypothesis["id"].as_str().unwrap_or("")) {
+            return Err(format!("duplicate hypothesis id {}", hypothesis["id"]));
         }
         if hypothesis["claim"].as_str().is_none_or(str::is_empty) {
             return Err(format!(
@@ -548,6 +552,7 @@ pub fn record_adaptation(
         "interventions": adaptation["interventions"],
         "consultedExperienceRules": adaptation["consultedExperienceRules"],
         "probeResults": adaptation["probeResults"],
+        "probeBudgetExhausted": adaptation["probeBudgetExhausted"],
         "selected": selected,
         "result": result,
         "hypothesisResults": hypothesis_results,
