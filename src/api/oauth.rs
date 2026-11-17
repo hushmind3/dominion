@@ -41,6 +41,15 @@ pub async fn start(State(state): State<AppState>, Path(id): Path<String>) -> Res
 
 /// OAuth consent belongs in the system browser, including inside WKWebView.
 /// Only URLs generated from the fixed provider registry reach the OS opener.
+/// Explicit browser-only login is always available when Chrome is installed,
+/// even if gh/gws or an operator OAuth client is also configured.
+pub async fn browser_open(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    match crate::engine::browser::open_account_login(&state,&id).await{
+        Ok(value)=>Json(value).into_response(),
+        Err(error)=>(StatusCode::BAD_REQUEST,Json(json!({"error":error}))).into_response()
+    }
+}
+
 pub async fn open(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     if oauth::uses_browser(&state,&id){
         return match crate::engine::browser::open_account_login(&state,&id).await {

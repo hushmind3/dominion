@@ -292,6 +292,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/oauth/providers/:id", post(oauth::save))
         .route("/api/oauth/:id/start", get(oauth::start))
         .route("/api/oauth/:id/open", post(oauth::open))
+        .route("/api/oauth/:id/browser-open", post(oauth::browser_open))
         .route("/api/oauth/:id/callback", get(oauth::callback))
         .route("/api/oauth/:id", axum::routing::delete(oauth::disconnect))
         .route("/api/youtube/status", get(compat::youtube_status))

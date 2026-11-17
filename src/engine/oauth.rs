@@ -123,6 +123,7 @@ pub fn status(state: &AppState) -> Vec<Value> {
                 "id": provider.id,
                 "name": provider.name,
                 "configured": native_configured || cli.installed || browser_ready,
+                "browserAvailable":browser_ready,
                 "loginMode":if native_configured{"oauth"}else if cli.installed{"cli"}
                     else if browser_ready{"browser"}else{"setup_required"},
                 "connected": connected,

@@ -295,3 +295,15 @@ test('native API tool schemas cannot crowd out connected browser/MCP when OAuth 
  assert.match(tools,/google_docs_read/);
  assert.match(tools,/github_repository_activity/);
 });
+
+test('explicit browser sign-in remains available even alongside gh/gws without an OAuth app form',()=>{
+ const status=file('src/engine/oauth.rs');
+ const api=file('src/api/oauth.rs');
+ const routes=file('src/api/mod.rs');
+ const ui=file('web/src/pages/Connections.tsx');
+ assert.match(status,/"browserAvailable":browser_ready/);
+ assert.match(api,/pub async fn browser_open/);
+ assert.match(routes,/\/api\/oauth\/:id\/browser-open/);
+ assert.match(ui,/item\.browserAvailable/);
+ assert.match(ui,/브라우저 로그인/);
+});
