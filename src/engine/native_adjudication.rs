@@ -271,6 +271,8 @@ pub fn adjudicate(
  let base_actions=actions(&base_snapshot)?;
  let base_proof=artifact_proof(&base_job,&base_trace,&base_snapshot);
  let before=evidence(&base_job,"nativeEvidenceBaseline");
+ let scoped_initial=before.and_then(|w|w["entries"].as_object())
+  .is_some_and(|entries|!entries.is_empty());
  let mut candidates=Vec::new();
  let mut comparables=0usize;
  for id in candidate_ids {
@@ -291,7 +293,8 @@ pub fn adjudicate(
    &base_actions,&run_actions,&snap,&trace,
    &candidate["nativeEvidenceKernelFinal"],&prefix,
   );
-  let matched=shape_error.is_none()&&unmatched.is_empty()&&same_initial
+  let matched=shape_error.is_none()&&unmatched.is_empty()
+   &&scoped_initial&&same_initial
    &&prefix["prefixComparable"]==true
    &&base_proof["hostLineageConsistent"]==true
    &&candidate_proof["hostLineageConsistent"]==true
@@ -302,6 +305,7 @@ pub fn adjudicate(
    "runId":id,"matchedExperiment":matched,
    "unmatchedSettings":unmatched,"taskShapeMismatch":shape_error,
    "initialAcceptanceStateEqual":same_initial,
+   "initialArtifactScopeNonempty":scoped_initial,
    "outcome":candidate_proof,"mechanism":mechanism,
    "comparison":if !matched{"confounded_or_unsealed"}
     else if candidate_proof["kernelAcceptancePassed"]==true
