@@ -18,6 +18,13 @@ pub fn read_only_tool(name: &str) -> bool {
 }
 pub fn max_executed() -> usize { MAX_EXECUTED }
 
+/// A speculative observation cannot repeat the exact already-failed read
+/// while the environment is unchanged.
+pub fn admissible_after_failure(probe:&Value,failed_tool:&str,failed_args:&Value)->bool{
+    probe["tool"].as_str().is_some_and(read_only_tool)
+        && !(probe["tool"]==failed_tool && &probe["inputs"]==failed_args)
+}
+
 /// Optional extension; old adaptation documents still validate unchanged.
 pub fn validate(adaptation: &Value) -> Result<(), String> {
     let Some(raw) = adaptation.get("probes") else { return Ok(()); };
@@ -187,6 +194,9 @@ mod tests {
         assert!(validate(&p).is_err());
         assert!(!read_only_tool("github_api"));
         assert!(!read_only_tool("workspace_write"));
+        let probe=json!({"tool":"workspace_read","inputs":{"path":"config.txt"}});
+        assert!(!admissible_after_failure(&probe,"workspace_read",&json!({"path":"config.txt"})));
+        assert!(admissible_after_failure(&probe,"workspace_read",&json!({"path":"other.txt"})));
     }
     #[test]
     fn duplicate_probe_inputs_keep_only_best_information_per_cost(){
