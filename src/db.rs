@@ -332,7 +332,7 @@ impl Store {
     pub fn execution_page(&self,limit:usize,offset:usize)->Result<Vec<Value>,String>{
         let conn=self.conn.lock().map_err(|error|error.to_string())?;
         let mut stmt=conn.prepare(
-            "SELECT data,id,created_at,updated_at FROM records
+            "SELECT data,id,created_at,updated_at FROM records INDEXED BY idx_execution_page
              WHERE kind='execution'
              ORDER BY COALESCE(json_extract(data,'$.startedAt'),created_at) DESC,
                       updated_at DESC,id DESC
@@ -1367,7 +1367,7 @@ mod tests {
         assert!(active.iter().all(|record|record["status"]=="running"));
         let conn=store.conn.lock().unwrap();
         let page_plan:String=conn.query_row(
-            "EXPLAIN QUERY PLAN SELECT data FROM records
+            "EXPLAIN QUERY PLAN SELECT data FROM records INDEXED BY idx_execution_page
              WHERE kind='execution'
              ORDER BY COALESCE(json_extract(data,'$.startedAt'),created_at) DESC,
                       updated_at DESC,id DESC LIMIT 7 OFFSET 5",[],|r|r.get(3)).unwrap();
