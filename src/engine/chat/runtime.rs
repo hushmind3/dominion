@@ -9,8 +9,9 @@ mod program;
 mod tool_dispatch;
 #[path = "runtime/finalization.rs"]
 mod finalization;
+pub(super) use finalization::{finalize_execution, tool_succeeded};
 use finalization::{simple_file_creation, needs_plan, action_plan, review_action,
-    tool_succeeded, record_success_experience, record_selection_snapshot,
+    record_success_experience, record_selection_snapshot,
     finish_attempt, mark_budget_exhausted, retitle_if_placeholder, ensure_session};
 use tool_dispatch::{frozen_replacements, run_frozen_replacements, dispatch_tool_call, record_soft_tool_error};
 use program::{execute_program_tool, run_program};

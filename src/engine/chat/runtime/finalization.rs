@@ -98,7 +98,7 @@ pub(super) async fn review_action(
     Some(ActionReview { gaps, next_action })
 }
 
-pub(super) fn tool_succeeded(value: &Value) -> bool {
+pub(in crate::engine::chat) fn tool_succeeded(value: &Value) -> bool {
     value.get("isError").and_then(Value::as_bool) != Some(true)
         && value.get("success").and_then(Value::as_bool) != Some(false)
         && value.get("error").is_none_or(Value::is_null)
@@ -365,7 +365,7 @@ pub(super) fn finish_attempt(
     finalize_execution(state, execution_id, result, metrics);
 }
 
-pub(super) fn finalize_execution(
+pub(in crate::engine::chat) fn finalize_execution(
     state: &AppState,
     execution_id: &str,
     result: &Result<Option<Value>, String>,
