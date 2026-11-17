@@ -57,5 +57,5 @@ export function SettingsHeader({page,online,build,onClose}:{page:PageId;online:b
 /** Persistent toolbar navigation; independent of either session list. */
 export function ConversationSwitch({mode,onChange}:{mode:'chat'|'rooms';onChange:(mode:'chat'|'rooms')=>void}){
  useLocale()
- return <nav className="conversation-switch" aria-label={t('shell.conversationSwitch')}><Button variant="ghost" aria-current={mode==='chat'?'page':undefined} onClick={()=>onChange('chat')}><MessageSquare size={16}/><span>{t('nav.chat')}</span></Button><Button variant="ghost" aria-current={mode==='rooms'?'page':undefined} onClick={()=>onChange('rooms')}><UsersRound size={16}/><span className="conversation-switch-full">{t('rooms.listTitle')}</span><span className="conversation-switch-short">{t('shell.groupShort')}</span></Button></nav>
+ return <nav className="conversation-switch" aria-label={t('shell.conversationSwitch')}><Button variant="ghost" aria-current={mode==='chat'?'page':undefined} onClick={()=>onChange('chat')}><MessageSquare size={16}/><span>{t('nav.chat')}</span></Button><Button variant="ghost" aria-current={mode==='rooms'?'page':undefined} onClick={()=>onChange('rooms')}><UsersRound size={16}/><span>{t('rooms.listTitle')}</span></Button></nav>
 }
