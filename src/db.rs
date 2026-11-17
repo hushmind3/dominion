@@ -231,8 +231,7 @@ impl Store {
                  USING fts5(id UNINDEXED, claim, tokenize='trigram');
              CREATE TABLE IF NOT EXISTS money_fact_term(
                  term TEXT NOT NULL, fact_id TEXT NOT NULL, PRIMARY KEY(term,fact_id));
-             CREATE INDEX IF NOT EXISTS idx_money_term_fact ON money_fact_term(fact_id);",
-            "
+             CREATE INDEX IF NOT EXISTS idx_money_term_fact ON money_fact_term(fact_id);"
         )?;
         // Older databases predate reasoning/tool columns.
         for (column, decl) in [
