@@ -274,6 +274,11 @@ fn native_job_prompt_runs_and_client_cannot_forge_status() {
         std::thread::sleep(Duration::from_millis(150));
     }
     assert_eq!(job["status"], "completed", "{job}");
+    // Real HTTP -> durable job -> autonomous Rust worker -> independent
+    // SDK Cycle. This is not just a test that imports the library.
+    assert_eq!(job["autonomousState"]["kernelCycle"]["version"],1,"{job}");
+    assert_eq!(job["autonomousState"]["kernelCycle"]["attempted"],1,"{job}");
+    assert_eq!(job["autonomousState"]["kernelCycle"]["maxAttempts"],3,"{job}");
     let session_id = job["result"]["sessionId"]
         .as_str()
         .expect("job result session")
