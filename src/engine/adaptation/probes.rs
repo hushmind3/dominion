@@ -74,13 +74,11 @@ pub fn rank(adaptation: &Value, refuted: &[String], attempted: &HashSet<String>)
         .collect::<Vec<_>>();
     if live.len()<2{return Vec::new();}
     let mut ranked=Vec::new();
-    let mut seen_calls=HashSet::new();
     for probe in adaptation["probes"].as_array().into_iter().flatten() {
         let Some(id)=probe["id"].as_str() else {continue};
         if attempted.contains(id) {continue;}
         let Some(tool)=probe["tool"].as_str() else {continue};
         if !read_only_tool(tool) {continue;}
-        if !seen_calls.insert(format!("{tool}:{}",probe["inputs"])) {continue;}
         let Some(predictions)=probe["predictions"].as_array() else {continue};
         let mut buckets = BTreeMap::<String,usize>::new();
         let mut common_path=None;
@@ -115,6 +113,12 @@ pub fn rank(adaptation: &Value, refuted: &[String], attempted: &HashSet<String>)
             .total_cmp(&a["informationPerCost"].as_f64().unwrap_or(0.0))
             .then_with(||a["id"].as_str().cmp(&b["id"].as_str()))
     });
+    // Same tool/inputs cannot buy extra information, even when the model
+    // attaches different claims. Keep the *best* ranked proposal after sort.
+    let mut seen_calls=HashSet::new();
+    ranked.retain(|probe|seen_calls.insert(format!(
+        "{}:{}",probe["tool"].as_str().unwrap_or(""),probe["inputs"]
+    )));
     ranked
 }
 
@@ -183,6 +187,17 @@ mod tests {
         assert!(validate(&p).is_err());
         assert!(!read_only_tool("github_api"));
         assert!(!read_only_tool("workspace_write"));
+    }
+    #[test]
+    fn duplicate_probe_inputs_keep_only_best_information_per_cost(){
+        let mut p=plan();
+        let mut weaker=p["probes"][1].clone();
+        weaker["id"]=json!("duplicate");
+        weaker["estimatedCost"]=json!(9.0);
+        p["probes"].as_array_mut().unwrap().insert(0,weaker);
+        let ranked=rank(&p,&[],&HashSet::new());
+        assert_eq!(ranked.len(),1);
+        assert_eq!(ranked[0]["id"],"discriminate");
     }
     #[test]
     fn incomplete_predictions_cannot_earn_information_gain(){
