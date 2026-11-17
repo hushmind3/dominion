@@ -14,6 +14,8 @@ test('connected-account UI offers one-click browser login and never developer cr
   assert.match(ui,/\/api\/providers\/cli\//);
   assert.match(ui,/\/login\/status/);
   assert.match(ui,/공식 로그인 페이지 열기/);
+  assert.match(ui,/연결 해제/);
+  assert.match(ui,/closeCliFlow/);
   assert.doesNotMatch(ui,/OAuth 앱 설정/);
   assert.doesNotMatch(ui,/<FormField label="Client ID">/);
   assert.doesNotMatch(ui,/Client Secret/);
