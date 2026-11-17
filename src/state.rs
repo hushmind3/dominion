@@ -21,6 +21,9 @@ pub struct AppState {
     /// Reusable provider HTTP transports keyed by per-request timeout in seconds.
     /// Shared by all speakers and jobs in this process to retain connection pooling.
     provider_http_clients: Arc<Mutex<HashMap<u64, reqwest::Client>>>,
+    /// Idle MCP sessions are shared by AppState clones but isolated by engine
+    /// instance, server configuration, credential and workspace identity.
+    pub(crate) mcp_sessions: Arc<crate::engine::mcp::SessionPool>,
     pub vault: Arc<Vault>,
     /// Pending tool approvals: approval id -> waiter.
     pub approvals: Arc<Mutex<HashMap<String, oneshot::Sender<bool>>>>,
@@ -53,6 +56,7 @@ impl AppState {
             job_wakeup: Arc::new(Notify::new()),
             cancel_wakeup: Arc::new(Notify::new()),
             provider_http_clients: Arc::new(Mutex::new(HashMap::new())),
+            mcp_sessions: Arc::new(crate::engine::mcp::SessionPool::default()),
             vault: Arc::new(vault),
             approvals: Arc::new(Mutex::new(HashMap::new())),
             cancelled: Arc::new(Mutex::new(HashSet::new())),
