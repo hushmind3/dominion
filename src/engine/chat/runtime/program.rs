@@ -189,6 +189,7 @@ pub(super) async fn attempt_model_adaptation(
     budget: &mut super::budget::BudgetLedger,
     op_seq: &mut u64,
     environment_version: u64,
+    generation: u64,
 ) -> Result<Value, String> {
     let provider_id = request
         .provider_id
@@ -302,6 +303,10 @@ pub(super) async fn attempt_model_adaptation(
     // Probes are fully admitted through the same gateway and ledger as normal
     // tools. No shadow executor, no extra model call and no external writes.
     for _ in 0..crate::engine::adaptation::probes::max_executed() {
+        if state.is_cancelled(session_id)
+            || state.cancellation_generation(session_id) != generation {
+            return Err("실행이 중단되었습니다.".into());
+        }
         let candidate = crate::engine::adaptation::probes::rank(
             &adaptation, &refuted, &attempted_ids,
         ).into_iter().find(|probe| {
@@ -414,6 +419,10 @@ pub(super) async fn attempt_model_adaptation(
     let inputs = selected["inputs"].clone();
     if !inputs.is_object() {
         return Err("selected intervention inputs are not an object".into());
+    }
+    if state.is_cancelled(session_id)
+        || state.cancellation_generation(session_id) != generation {
+        return Err("실행이 중단되었습니다.".into());
     }
     if !budget.charge_tool() {
         return Err("adaptation tool budget is exhausted".into());
