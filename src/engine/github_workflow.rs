@@ -73,8 +73,22 @@ async fn execute_with(client:&Client,token:&str,origin:&str,args:&Value,write:bo
     if write && !matches!(operation,"create_branch"|"open_pr"|"create_issue"){
         return Err("Unsupported GitHub write operation".into());
     }
-    if !write && !matches!(operation,"repositories"|"branches"|"pull_requests"|"issues"|"ci_runs"){
+    if !write && !matches!(operation,"repositories"|"search_repositories"|"branches"|"pull_requests"|"issues"|"ci_runs"){
         return Err("Unsupported GitHub read operation".into());
+    }
+    if operation=="search_repositories" {
+        let query=arg(args,"query")?;
+        if query.len()>250{return Err("GitHub repository search query too long".into());}
+        let data=request(client,token,Method::GET,
+            uri(origin,&["search","repositories"],&[
+                ("q",query.into()),("per_page","20".into())])?,None).await?;
+        return Ok(json!({"total_count":data["total_count"],
+            "repositories":data["items"].as_array()
+                .map(|rows|rows.iter().take(20).map(|item|json!({
+                    "name":item["name"],"full_name":item["full_name"],
+                    "description":item["description"],"private":item["private"],
+                    "html_url":item["html_url"],"default_branch":item["default_branch"]
+                })).collect::<Vec<_>>()).unwrap_or_default()}));
     }
     if operation=="repositories" {
         let url=uri(origin,&["user","repos"],&[
@@ -260,6 +274,11 @@ mod tests{
         let router=axum::Router::new()
             .route("/user/repos",axum::routing::get(||
                 async{axum::Json(json!([{"full_name":"octo/work"}]))}))
+            .route("/search/repositories",axum::routing::get(||
+                async{axum::Json(json!({"total_count":1,"items":[{
+                    "name":"work","full_name":"octo/work",
+                    "description":"coding","private":false,
+                    "default_branch":"main"}]}))}))
             .route("/repos/octo/work/git/ref/heads/*branch",
                 axum::routing::get(fake_branch))
             .route("/repos/octo/work/git/refs",axum::routing::post(fake_create_branch))
@@ -280,6 +299,9 @@ mod tests{
         let repos=execute_with(&client,token,&origin,
             &json!({"operation":"repositories"}),false).await.unwrap();
         assert_eq!(repos[0]["full_name"],"octo/work");
+        let search=execute_with(&client,token,&origin,
+            &json!({"operation":"search_repositories","query":"work"}),false).await.unwrap();
+        assert_eq!(search["repositories"][0]["full_name"],"octo/work");
 
         let created=execute_with(&client,token,&origin,
             &json!({"operation":"create_branch","owner":"octo","repo":"work",
