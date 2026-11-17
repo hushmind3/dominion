@@ -567,9 +567,9 @@ pub(super) fn execute_nodes<'a>(
                 }
                 "verify" => {
                     use crate::engine::program::PredicateVerdict;
-                    let checks = node["checks"].as_array().cloned().unwrap_or_default();
+                    let checks = node["checks"].as_array().ok_or("verify.checks missing")?;
                     let mut results = Vec::new();
-                    let mut ok = true;
+                    let mut failed = false;
                     let mut unknown = false;
                     for check in checks {
                         let verdict = crate::engine::program::predicate_verdict(
@@ -578,14 +578,8 @@ pub(super) fn execute_nodes<'a>(
                         )?;
                         match verdict {
                             PredicateVerdict::True => {}
-                            PredicateVerdict::False => ok = false,
-                            PredicateVerdict::Unknown => {
-                                if verification_strict {
-                                    ok = false;
-                                } else {
-                                    unknown = true;
-                                }
-                            }
+                            PredicateVerdict::False => failed = true,
+                            PredicateVerdict::Unknown => unknown = true,
                         }
                         results.push(json!({
                             "predicate": check["predicate"],
@@ -593,33 +587,73 @@ pub(super) fn execute_nodes<'a>(
                         }));
                     }
                     resolved["lastVerify"] = json!({
-                        "ok": ok && !unknown,
+                        "ok": !failed && !unknown,
                         "unknown": unknown,
                         "checks": results,
                     });
-                    crate::engine::algorithms::mark_signal(
-                        ctx.state,
-                        ctx.execution_id,
-                        "verification.predicate",
-                        ok && !unknown,
-                    );
-                    if !ok {
+                    // A failed or unknown verification is NOT a completed
+                    // operation. Earlier code marked it complete, allowing an
+                    // unverified program to reach a successful terminal state.
+                    if failed {
+                        crate::engine::algorithms::mark_signal(
+                            ctx.state, ctx.execution_id, "verification.predicate", false,
+                        );
+                        let failure = json!({
+                            "nodeId": node_id,
+                            "kind": "verification_failed",
+                            "tool": "verify",
+                            "result": resolved["lastVerify"],
+                            "observation": {
+                                "kind": "predicate_refuted",
+                                "verdicts": resolved["lastVerify"]["checks"],
+                            },
+                        });
+                        checkpoint["programFailure"] = failure.clone();
+                        checkpoint["resolvedInputs"] = resolved.clone();
+                        if persist {
+                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                        }
                         messages.push(json!({
-                            "role":"system",
+                            "role": "system",
                             "content": format!(
-                                "program verify failed: {}",
+                                "program verification refuted at node {node_id}: {}. Repair pending work or stop.",
                                 resolved["lastVerify"]
                             )
                         }));
-                    } else if unknown {
-                        messages.push(json!({
-                            "role":"system",
-                            "content": format!(
-                                "program verify is Unknown (not failed): {}. Add the missing observation before concluding.",
-                                resolved["lastVerify"]
-                            )
-                        }));
+                        return Ok(ProgramFrame {
+                            resolved, checkpoint, budget, op_seq, messages,
+                            paused: false, failure: Some(failure),
+                        });
                     }
+                    if unknown {
+                        checkpoint["status"] = json!("paused");
+                        checkpoint["pausedReason"] = json!(
+                            if verification_strict {
+                                "verification_unknown_strict"
+                            } else {
+                                "verification_unknown"
+                            }
+                        );
+                        checkpoint["pausedNodeId"] = json!(node_id);
+                        checkpoint["resolvedInputs"] = resolved.clone();
+                        if persist {
+                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                        }
+                        messages.push(json!({
+                            "role": "system",
+                            "content": format!(
+                                "program verification has missing evidence at node {node_id}: {}. No downstream tool was admitted.",
+                                resolved["lastVerify"]
+                            )
+                        }));
+                        return Ok(ProgramFrame {
+                            resolved, checkpoint, budget, op_seq, messages,
+                            paused: true, failure: None,
+                        });
+                    }
+                    crate::engine::algorithms::mark_signal(
+                        ctx.state, ctx.execution_id, "verification.predicate", true,
+                    );
                     mark_program_completed(&mut checkpoint, node_id);
                 }
                 "delegate" => {
@@ -943,9 +977,8 @@ pub(super) async fn run_program(
                 checkpoint["status"] = json!("running");
                 save_revised_program(state, execution_id, &revised);
                 save_program_checkpoint(state, execution_id, &checkpoint);
-                crate::engine::algorithms::mark_signal(
-                    state, execution_id, "program.repair", true,
-                );
+                // A syntactically admitted revision is NOT evidence of repair.
+                // Credit is assigned only after the revised program settles.
                 messages.push(json!({
                     "role":"system",
                     "content": format!(
@@ -988,7 +1021,16 @@ pub(super) async fn run_program(
         .map(Vec::len)
         .unwrap_or(0);
     checkpoint["resolvedInputs"] = resolved;
+    let had_revision = checkpoint["revisionHistory"].as_array()
+        .is_some_and(|history| !history.is_empty());
     if checkpoint["status"].as_str() == Some("paused") {
+        // An inconclusive verification must not increase the success rate.
+        if had_revision {
+            crate::engine::algorithms::mark_unrated(
+                state, execution_id, "program.repair",
+                "revised program paused: no verified repair outcome",
+            );
+        }
         save_program_checkpoint(state, execution_id, &checkpoint);
         return Ok(messages);
     }
@@ -996,6 +1038,11 @@ pub(super) async fn run_program(
         // The program could not be repaired. Do not pretend it completed:
         // preserve the failure and require review/model continuation.
         checkpoint["status"] = json!("needs_review");
+        if had_revision {
+            crate::engine::algorithms::mark_signal(
+                state, execution_id, "program.repair", false,
+            );
+        }
         save_program_checkpoint(state, execution_id, &checkpoint);
         messages.push(json!({
             "role":"system",
@@ -1009,6 +1056,22 @@ pub(super) async fn run_program(
     }
     checkpoint["nextIndex"] = json!(node_count);
     checkpoint["status"] = json!("completed");
+    if had_revision {
+        // Program completion and owner acceptance are different facts. Only a
+        // predicate check that actually ran and passed is positive evidence
+        // for the repair algorithm; unchecked repairs remain unrated.
+        let verified = checkpoint["resolvedInputs"]["lastVerify"]["ok"] == true;
+        if verified {
+            crate::engine::algorithms::mark_signal(
+                state, execution_id, "program.repair", true,
+            );
+        } else {
+            crate::engine::algorithms::mark_unrated(
+                state, execution_id, "program.repair",
+                "revised program completed without a passing verification predicate",
+            );
+        }
+    }
     save_program_checkpoint(state, execution_id, &checkpoint);
     messages.push(json!({
         "role": "system",
