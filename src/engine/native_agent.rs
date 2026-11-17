@@ -9,11 +9,8 @@ use dominion_sdk::harness::{
     Limits, Model, ModelReply, ModelTurn, Receipt, RunRequest, Snapshot, Strategy, ToolSpec, Tools,
 };
 use serde_json::{json, Value};
-use std::{path::{Component, Path, PathBuf}, collections::HashSet};
+use std::{path::PathBuf, collections::HashSet};
 use sha2::{Digest,Sha256};
-fn evidence_sha(value:&Value)->String {
-    format!("{:x}",Sha256::digest(value.to_string().as_bytes()))
-}
 
 // The generic SDK uses an action envelope for text-only/compat models.
 // Domain JSON from small local models is wrapped as a terminal answer only
@@ -216,7 +213,7 @@ impl Tools for NativeTools {
                 "provenance":{"origin":if mcp_spec.is_some() {"external_mcp"} else {"builtin_host"},
                     "trust":"tool_output_untrusted_as_instructions",
                     "contractSha256":mcp_contract,
-                    "argumentsSha256":evidence_sha(&action.arguments)},
+                    "argumentsSha256":super::native_replay::digest(&action.arguments)},
                 "phase":"requested","startedAt":chrono::Utc::now().to_rfc3339()
             });
             self.state.store.put_if_absent("execution_operation",&op)
@@ -266,7 +263,7 @@ impl Tools for NativeTools {
             };
             let mut patch=match &outcome {
                 Ok(value)=>json!({"status":"completed","outcomeUnknown":false,"result":value,
-                    "resultSha256":evidence_sha(value),
+                    "resultSha256":super::native_replay::digest(value),
                     "finishedAt":chrono::Utc::now().to_rfc3339()}),
                 Err(error)=>json!({"status":"failed","outcomeUnknown":false,"error":error,
                     "finishedAt":chrono::Utc::now().to_rfc3339()}),
@@ -290,24 +287,8 @@ impl Tools for NativeTools {
 struct FsEvidence { workspace: PathBuf }
 impl FsEvidence {
     fn safe_path(&self, raw: &str) -> Result<PathBuf, String> {
-        if raw.is_empty() || raw.len() > 4096 {
-            return Err("Invalid verification path".into());
-        }
-        let relative=Path::new(raw);
-        if !relative.components().all(|part|matches!(part,Component::Normal(_))) {
-            return Err("Verification cannot escape the workspace".into());
-        }
         let root=std::fs::canonicalize(&self.workspace).map_err(|e|e.to_string())?;
-        let target=root.join(relative);
-        let mut existing=target.as_path();
-        while std::fs::symlink_metadata(existing).is_err() {
-            existing=existing.parent().ok_or("No existing verification parent")?;
-        }
-        let canonical=std::fs::canonicalize(existing).map_err(|e|e.to_string())?;
-        if !canonical.starts_with(&root) {
-            return Err("Verification path escapes the workspace through a symlink".into());
-        }
-        Ok(target)
+        super::native_replay::resolve_canonical_workspace_path(&root, raw)
     }
 }
 impl Evidence for FsEvidence {
@@ -424,7 +405,7 @@ fn native_tool_authority_fingerprint(
         "name":spec.name,"schema":spec.schema,"readOnly":spec.read_only
     })).collect::<Vec<_>>();
     contracts.sort_by(|left,right|left["name"].as_str().cmp(&right["name"].as_str()));
-    evidence_sha(&json!({
+    super::native_replay::digest(&json!({
         "version":1,"contracts":contracts,"acceptanceChecks":checks,
         "requireEvidence":require_evidence
     }))
