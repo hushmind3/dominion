@@ -640,6 +640,7 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
         fn drop(&mut self) {crate::engine::native_codex_ws::forget_job(self.0);}
     }
     let _socket_cleanup=NativeSocketCleanup(&context.job_id);
+    let owner_checks=request.checks.clone();
     let kernel=Kernel{model:&model,tools:&host_tools,evidence:&evidence,journal:&journal};
     let snapshot=if let Some(saved)=resume_snapshot {
         kernel.resume(request,saved).await?
@@ -650,7 +651,7 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
     // This is an observation at completion, not a claim that future workspace
     // reads will still return the same bytes.
     let final_witness=crate::engine::native_evidence::artifact_witness(
-        &context.state.config.workspace,&request.checks);
+        &context.state.config.workspace,&owner_checks);
     context.checkpoint(json!({"nativeEvidenceFinal":final_witness}))?;
     // Kernel verifier may derive extra file/hash criteria from actual write
     // receipts. Seal *those* exact observed criteria as well, without
