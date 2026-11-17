@@ -505,6 +505,73 @@ pub fn evaluate_hypotheses(adaptation: &Value, result: &Value) -> Vec<Value> {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Score a proposed intervention against *observed* postconditions. A tool
+/// returning successfully is a transport fact, not proof the repair worked.
+/// Human-readable expectedChecks are retained but are not executable proof.
+pub fn evaluate_intervention_outcome(
+    intervention: &Value,
+    before: &Value,
+    after: &Value,
+    tool_succeeded: bool,
+) -> Value {
+    if !tool_succeeded {
+        return json!({"status":"failed","reason":"tool_dispatch_failed",
+            "verifiedChecks":0,"unverifiedChecks":0});
+    }
+    let checks = intervention["expectedChecks"].as_array();
+    let Some(checks) = checks else {
+        return json!({"status":"unrated","reason":"no_expected_checks",
+            "verifiedChecks":0,"unverifiedChecks":0});
+    };
+    if checks.is_empty() || checks.len() > 32 {
+        return json!({"status":"unrated","reason":"missing_or_excessive_checks",
+            "verifiedChecks":0,"unverifiedChecks":checks.len()});
+    }
+    let mut executable = Vec::new();
+    let mut opaque = 0usize;
+    for check in checks {
+        let predicate = check.get("predicate")
+            .filter(|value| value.is_object())
+            .or_else(|| check.get("type").filter(|value| value.is_string())
+                .map(|_| check));
+        if let Some(predicate) = predicate {
+            executable.push(json!({"predicate":predicate}));
+        } else {
+            opaque += 1;
+        }
+    }
+    if executable.is_empty() {
+        return json!({"status":"unrated","reason":"checks_are_not_executable",
+            "verifiedChecks":0,"unverifiedChecks":opaque});
+    }
+    let scope = json!({"before":before,"after":after,"result":after});
+    match crate::engine::program::evaluate_verification_checks(&executable, &scope) {
+        Ok(evaluation) => {
+            let status = if evaluation["failed"] == true {
+                "failed"
+            } else if evaluation["ok"] == true && opaque == 0 {
+                "verified"
+            } else {
+                "unrated"
+            };
+            json!({
+                "status":status,
+                "reason":if status=="verified" {"expected_postconditions_passed"}
+                    else if status=="failed" {"expected_postcondition_refuted"}
+                    else {"incomplete_or_unknown_evidence"},
+                "verifiedChecks":executable.len(),
+                "unverifiedChecks":opaque,
+                "evaluation":evaluation,
+            })
+        }
+        Err(error) => json!({
+            "status":"unrated","reason":"invalid_check",
+            "verifiedChecks":0,"unverifiedChecks":checks.len(),
+            "diagnostic":error.chars().take(240).collect::<String>(),
+        }),
+    }
+}
+
 pub fn record_adaptation(
     state: &AppState,
     execution_id: &str,
@@ -517,6 +584,7 @@ pub fn record_adaptation(
     environment_version: u64,
     result: Option<&Value>,
     hypothesis_results: &[Value],
+    intervention_outcome: &Value,
 ) -> Option<Value> {
     let mut execution = state.store.get("execution", execution_id)?;
     let failure_signature = crate::engine::memory::stable_id(&[
@@ -546,6 +614,7 @@ pub fn record_adaptation(
         "selected": selected,
         "result": result,
         "hypothesisResults": hypothesis_results,
+        "interventionOutcome": intervention_outcome,
         "createdAt": chrono::Utc::now().to_rfc3339(),
     });
     let mut adaptations = execution["adaptations"]
@@ -568,6 +637,7 @@ pub fn record_adaptation(
             .as_u64().unwrap_or(0) + 1,
         "beforeObservation": adaptation["beforeObservation"],
         "hypothesisResults": hypothesis_results,
+        "interventionOutcome": intervention_outcome,
     });
     let saved = state.store.put("execution", &execution)?;
     state.bus.record("execution", &saved);
@@ -625,4 +695,26 @@ mod selection_tests {
         assert_eq!(success[0]["status"], "supported");
         assert_eq!(success[1]["status"], "supported");
     }
+    #[test]
+    fn intervention_success_requires_actual_executable_postconditions() {
+        let old = json!({"pathState":{"path":{"exists":false}}});
+        let after = json!({"saved":true,"path":"result.txt"});
+        let observed = json!({"expectedChecks":[{
+            "predicate":{"type":"equals","from":"result","path":"/saved","value":true}
+        }]});
+        assert_eq!(evaluate_intervention_outcome(&observed,&old,&after,true)["status"],"verified");
+        assert_eq!(evaluate_intervention_outcome(&observed,&old,
+            &json!({"saved":false}),true)["status"],"failed");
+        assert_eq!(evaluate_intervention_outcome(&observed,&old,
+            &json!({}),true)["status"],"unrated");
+        assert_eq!(evaluate_intervention_outcome(&observed,&old,&after,false)["status"],"failed");
+        let prose = json!({"expectedChecks":["file_exists","write succeeded"]});
+        assert_eq!(evaluate_intervention_outcome(&prose,&old,&after,true)["status"],"unrated");
+        let mixed = json!({"expectedChecks":[
+            {"predicate":{"type":"equals","from":"result","path":"/saved","value":true}},
+            "unverified user-facing condition"
+        ]});
+        assert_eq!(evaluate_intervention_outcome(&mixed,&old,&after,true)["status"],"unrated");
+    }
+
 }
