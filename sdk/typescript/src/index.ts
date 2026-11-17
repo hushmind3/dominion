@@ -31,7 +31,24 @@ export interface MoneyDraft extends RecordItem {
   moneyMechanism?:string; firstTest?:string; firstPaymentStep?:string;
   implementationPlan?:string; evidenceStatus?:string;
   implementationJobId?:string;
+  reviewRevision?:number;lastReviewReason?:string;lastReviewAt?:string;
   evidence?:Array<{claim?:string;url?:string;kind?:string}>;
+}
+export interface MoneyReviewEvent extends RecordItem {
+  candidateId:string;revision:number;previousRevision:number;
+  at:string;reason:string;statusAfter?:string;
+  changes:Record<string,{before?:unknown;after?:unknown}>;
+  origin:'owner_review';
+}
+export interface MoneyCandidateDetails {
+  candidate:MoneyDraft;experiments:RecordItem[];decisions:MoneyReviewEvent[];
+}
+export type MoneyReviewStatus='hypothesis'|'researching'|'testing'|'validated'|'rejected'|'launched'|'on_hold';
+export interface MoneyReviewInput {
+  status?:MoneyReviewStatus;expectedRevision?:number;decisionReason?:string;
+  firstTest?:string;killSignal?:string;distribution?:string;
+  defensibility?:string;notes?:string;
+  economics?:Record<string,number|null>;
 }
 export interface MoneyImplementInput { approved:true; tokenBudget:number; agentId?:string }
 export interface MoneyInferenceUsage {
@@ -195,6 +212,17 @@ export class Dominion {
     autopilot:(key:string,options?:RequestOptions)=>this.request<RecordItem>('GET','/api/money/campaigns/'+id(key)+'/autopilot',undefined,options),
     setAutopilot:(key:string,input:Record<string,unknown>,options?:RequestOptions)=>this.request<RecordItem>('POST','/api/money/campaigns/'+id(key)+'/autopilot',input,options),
     candidate:(key:string,options?:RequestOptions)=>this.request<MoneyDraft>('GET','/api/money/candidates/'+id(key),undefined,options),
+    /** Accurate candidate details shape; legacy candidate() signature remains for older consumers. */
+    candidateDetails:(key:string,options?:RequestOptions)=>this.request<MoneyCandidateDetails>('GET','/api/money/candidates/'+id(key),undefined,options),
+    /** Read original hypotheses after hold/rejection; search never calls a model. */
+    archive:(status='archived',q='',limit=50,options?:RequestOptions)=>this.request<MoneyDraft[]>(
+      'GET','/api/money/candidates?status='+encodeURIComponent(status)
+      +'&q='+encodeURIComponent(q)+'&limit='+encodeURIComponent(String(limit)),undefined,options),
+    /** Append one versioned review in the same DB transaction as the candidate update. */
+    review:(key:string,input:MoneyReviewInput,options?:RequestOptions)=>this.request<MoneyDraft>(
+      'POST','/api/money/candidates/'+id(key),input,options),
+    history:(key:string,limit=50,options?:RequestOptions)=>this.request<MoneyReviewEvent[]>(
+      'GET','/api/money/candidates/'+id(key)+'/history?limit='+encodeURIComponent(String(limit)),undefined,options),
     recordExperiment:(key:string,input:Record<string,unknown>,options?:RequestOptions)=>this.request<RecordItem>('POST','/api/money/candidates/'+id(key)+'/experiments',input,options),
     /** Explicit user-approved candidate handoff to the same durable Rust prompt job; no SDK auto-retry. */
     implement:(key:string,input:MoneyImplementInput,options?:RequestOptions)=>this.request<Job>('POST','/api/money/candidates/'+id(key)+'/implement',input,options),

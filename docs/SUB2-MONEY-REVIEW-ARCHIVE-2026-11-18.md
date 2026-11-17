@@ -17,3 +17,9 @@
 ## Verification
 - Related Rust development-profile unit tests added: hold/resume, indexed archive, history order, source preservation, concurrent stale update rejection, economics validation and approved job guard.
 - No release builds/cargo check/frontend build, no synthetic model calls, no performance benchmark. Historical candidates remain queryable without schema backfill.
+
+## GUI and SDK wiring
+- Existing `web/src/pages/Money.tsx` offers a Hold action on unimplemented drafts, loads the archived candidate list with a capped query, shows immutable decision events and source URLs, and returns a held/rejected candidate to `researching` via the original candidate POST API.
+- Owner approval to implement remains a distinct operation; holding a candidate never auto-starts tools or spends tokens.
+- `sdk/typescript/src/index.ts` adds typed `MoneyReviewEvent` and methods `money.archive`, `money.review`, `money.history`, `money.candidateDetails` while retaining legacy calls.
+- Frontend and TypeScript compilation/testing remain deferred under the project's development policy.

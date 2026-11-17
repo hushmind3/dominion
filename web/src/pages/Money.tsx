@@ -22,6 +22,13 @@ type Draft={
  origin?:string
  status?:string
  implementationJobId?:string
+ reviewRevision?:number
+ lastReviewAt?:string
+ lastReviewReason?:string
+}
+type ReviewEvent={
+ id:string;revision:number;at:string;reason?:string
+ changes?:Record<string,{before?:unknown;after?:unknown}>
 }
 type Stats={
  signals:number
@@ -70,6 +77,13 @@ export function MoneyPage(_props:{openSession:(id:string)=>void}){
  const [implementationBudget,setImplementationBudget]=useState(24000)
  const [implementing,setImplementing]=useState<string|null>(null)
  const [implementationJobs,setImplementationJobs]=useState<Record<string,ImplementationJob>>({})
+ const [archiveOpen,setArchiveOpen]=useState(false)
+ const [archiveBusy,setArchiveBusy]=useState(false)
+ const [archiveSearch,setArchiveSearch]=useState('')
+ const [archiveItems,setArchiveItems]=useState<Draft[]>([])
+ const [reviewBusy,setReviewBusy]=useState<string|null>(null)
+ const [reviewHistory,setReviewHistory]=useState<Record<string,ReviewEvent[]>>({})
+ const [historyOpen,setHistoryOpen]=useState<string|null>(null)
  const reasoning=['queued','running'].includes(result.inferenceStatus||'')
  useEffect(()=>{
   let mounted=true
@@ -152,6 +166,60 @@ export function MoneyPage(_props:{openSession:(id:string)=>void}){
   }catch(err){setError((err as Error).message)}
   finally{setSearching(false)}
  }
+ async function fetchArchive(){
+  setArchiveBusy(true)
+  setError('')
+  try{
+   const qs='?status=archived&limit=50&q='+encodeURIComponent(archiveSearch.trim())
+   const rows=await get<Draft[]>('/api/money/candidates'+qs)
+   setArchiveItems(rows)
+  }catch(err){setError((err as Error).message)}
+  finally{setArchiveBusy(false)}
+ }
+ async function toggleArchive(){
+  if(archiveOpen){setArchiveOpen(false);return}
+  setArchiveOpen(true)
+  await fetchArchive()
+ }
+ async function holdCandidate(draft:Draft){
+  if(reviewBusy||draft.implementationJobId)return
+  const reason=window.prompt('보류 이유를 입력하세요. 원문과 후보는 저장되어 나중에 다시 검토할 수 있습니다.','추가 근거 확인 필요')
+  if(reason===null)return
+  setReviewBusy(draft.id)
+  setError('')
+  try{
+   const updated=await post<Draft>('/api/money/candidates/'+encodeURIComponent(draft.id),{
+    status:'on_hold',decisionReason:reason,
+    ...(draft.reviewRevision!==undefined?{expectedRevision:draft.reviewRevision}:{})
+   })
+   setResult(prev=>({...prev,drafts:prev.drafts.filter(item=>item.id!==draft.id)}))
+   if(archiveOpen)setArchiveItems(prev=>[updated,...prev.filter(item=>item.id!==updated.id)])
+  }catch(err){setError((err as Error).message)}
+  finally{setReviewBusy(null)}
+ }
+ async function restoreCandidate(draft:Draft){
+  if(reviewBusy)return
+  setReviewBusy(draft.id)
+  setError('')
+  try{
+   const updated=await post<Draft>('/api/money/candidates/'+encodeURIComponent(draft.id),{
+    status:'researching',decisionReason:'사용자가 보류·제외 후보를 다시 검토하기로 결정',
+    ...(draft.reviewRevision!==undefined?{expectedRevision:draft.reviewRevision}:{})
+   })
+   setArchiveItems(prev=>prev.filter(item=>item.id!==draft.id))
+   setResult(prev=>({...prev,drafts:[updated,...prev.drafts.filter(item=>item.id!==draft.id)]}))
+  }catch(err){setError((err as Error).message)}
+  finally{setReviewBusy(null)}
+ }
+ async function toggleReviewHistory(draft:Draft){
+  if(historyOpen===draft.id){setHistoryOpen(null);return}
+  setError('')
+  try{
+   const events=await get<ReviewEvent[]>('/api/money/candidates/'+encodeURIComponent(draft.id)+'/history?limit=30')
+   setReviewHistory(prev=>({...prev,[draft.id]:events}))
+   setHistoryOpen(draft.id)
+  }catch(err){setError((err as Error).message)}
+ }
  async function stopPreviousAI(){
   const ids=result.activeAutomationIds||[]
   if(!ids.length)return
@@ -163,7 +231,7 @@ export function MoneyPage(_props:{openSession:(id:string)=>void}){
   }catch(err){setError((err as Error).message)}
   finally{setStopping(false)}
  }
- const drafts=(result.drafts||[]).filter(d=>d.status!=='rejected')
+ const drafts=(result.drafts||[]).filter(d=>d.status!=='rejected'&&d.status!=='on_hold')
  return <main className="mx-auto w-full max-w-[1040px] px-4 pb-16 pt-8 text-[#33291F] sm:px-7">
   <div className="mb-6 flex flex-wrap items-center justify-between gap-5">
    <div>
@@ -265,6 +333,60 @@ export function MoneyPage(_props:{openSession:(id:string)=>void}){
   {(result.inferenceStatus==='failed'||result.inferenceStatus==='needs_review'||result.inferenceError)&&!reasoning&&<div role="alert" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900">
    심층 추론 실패 · {result.inferenceError||'모델 응답을 후보로 변환하지 못했습니다.'} DB 추측 초안은 그대로 확인할 수 있습니다.
   </div>}
+  <section aria-label="보류·기각 후보 기록" className="mb-6 rounded-xl border border-[#E6D9C9] bg-[#FFFDF9] p-3 sm:p-4">
+   <div className="flex flex-wrap items-center justify-between gap-3">
+    <div>
+     <strong className="text-xs">보류·기각 후보 다시 검토</strong>
+     <p className="mt-1 text-[11px] text-[#8A7868]">버린 아이디어도 원문·이전 판단을 보존합니다. 조회는 AI 호출 없이 진행합니다.</p>
+    </div>
+    <button type="button" onClick={()=>void toggleArchive()}
+     className="min-h-9 rounded-md border border-[#DAD0C3] bg-white px-3 text-[11px] font-bold text-[#715343]">
+     {archiveOpen?'접기':'보류 기록 열기'}
+    </button>
+   </div>
+   {archiveOpen&&<div className="mt-3 space-y-3">
+    <div className="flex flex-wrap items-center gap-2">
+     <input aria-label="보류 후보 검색" value={archiveSearch} onChange={event=>setArchiveSearch(event.target.value)}
+      onKeyDown={event=>{if(event.key==='Enter')void fetchArchive()}}
+      placeholder="후보 이름·구매자·수익 구조 검색"
+      className="min-h-9 min-w-40 flex-1 rounded-md border border-[#DAD0C3] bg-white px-3 text-xs" />
+     <button type="button" disabled={archiveBusy} onClick={()=>void fetchArchive()}
+      className="min-h-9 rounded-md bg-[#9B6A3F] px-3 text-[11px] font-bold text-white disabled:opacity-50">
+      {archiveBusy?'검색 중…':'기록 검색'}
+     </button>
+    </div>
+    <p className="text-[10px] text-[#8C7A6C]">최근 기록 최대 50건 · 저장된 원문 링크와 결정 사유 보존</p>
+    {!archiveBusy&&archiveItems.length===0&&<p className="py-3 text-xs text-[#897D70]">조회한 범위에서 보류·기각 후보가 없습니다.</p>}
+    {archiveItems.map(item=><article key={item.id} className="rounded-lg border border-[#EBDFD2] bg-[#FFFBF6] p-3">
+     <div className="flex flex-wrap items-center justify-between gap-2">
+      <strong className="text-xs leading-5">{item.title}</strong>
+      <span className="text-[10px] text-[#986B55]">{item.status==='on_hold'?'보류':'기각'} · 이력 {item.reviewRevision??0}회</span>
+     </div>
+     <p className="mt-1 text-[11px] leading-5 text-[#67584D]">{item.offer||item.customer||'근거 재검토 대기'}</p>
+     {!!item.lastReviewReason&&<p className="mt-1 text-[11px] text-[#806A57]">최근 판단: {item.lastReviewReason}</p>}
+     <div className="mt-3 flex flex-wrap items-center gap-3">
+      <button type="button" disabled={reviewBusy!==null} onClick={()=>void restoreCandidate(item)}
+       className="min-h-8 rounded-md bg-[#6E7A5A] px-3 text-[11px] font-bold text-white disabled:opacity-50">
+       {reviewBusy===item.id?'변경 중…':'다시 검토'}
+      </button>
+      <button type="button" onClick={()=>void toggleReviewHistory(item)}
+       className="text-[11px] font-semibold text-[#9D593D] underline">
+       {historyOpen===item.id?'이력 접기':'판단 이력'}
+      </button>
+      {(item.evidence||[]).filter(e=>e.url?.startsWith('https://')).slice(0,3).map((ev,index)=>
+       <a key={index} href={ev.url} target="_blank" rel="noreferrer"
+        className="text-[11px] font-semibold text-[#9D593D] underline">원문 {index+1}</a>)}
+     </div>
+     {historyOpen===item.id&&<ol className="mt-3 space-y-1 border-t border-[#EBDFD2] pt-3">
+      {(reviewHistory[item.id]||[]).map(event=><li key={event.id} className="text-[11px] leading-5 text-[#67584D]">
+       {event.revision}차 · {new Date(event.at).toLocaleString('ko-KR')} · {event.reason||'사유 미입력'}
+       {event.changes?.status?.after!==undefined?' · 상태 '+String(event.changes.status.after):''}
+      </li>)}
+      {!(reviewHistory[item.id]||[]).length&&<li className="text-[11px] text-[#8C7A6C]">이전 판단 이력이 없는 기존 기록입니다.</li>}
+     </ol>}
+    </article>)}
+   </div>}
+  </section>
   <section aria-label="자동 발굴 결과">
    <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
     <h2 className="text-lg font-extrabold">발굴한 돈벌이 초안</h2>
@@ -310,6 +432,11 @@ export function MoneyPage(_props:{openSession:(id:string)=>void}){
        className="inline-flex min-h-9 items-center gap-1.5 rounded-md bg-[#6E7A5A] px-3 py-2 text-[11px] font-bold text-white disabled:opacity-50">
        <Play size={13}/>{draft.implementationJobId?'구현 요청됨':implementing===draft.id?'작업 생성 중…':'승인 후 구현'}
       </button>
+      {!draft.implementationJobId&&
+       <button type="button" disabled={reviewBusy!==null} onClick={()=>void holdCandidate(draft)}
+        className="min-h-9 rounded-md border border-[#DAD0C3] px-3 py-2 text-[11px] font-semibold text-[#715343] disabled:opacity-50">
+        {reviewBusy===draft.id?'보류 중…':'보류'}
+       </button>}
       {!!draft.implementationJobId&&<>
        <span role="status" className="text-[11px] text-[#5D6D4B]">
         구현 작업 · {implementationJobs[draft.implementationJobId]?.status||'기록 확인 중'}
