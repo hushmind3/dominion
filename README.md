@@ -192,3 +192,7 @@ Money retains even rejected and deferred opportunities. The collapsed **전체 �
 ### Retry-safe native SDK jobs
 
 The shared `POST /api/sdk/runs` accepts an optional `idempotencyKey` (up to 128 ASCII letters, digits, hyphens, underscores, dots or colons). A repeated identical request with that key returns the original persisted SDK run rather than starting a second model/tool execution. Using a key with changed arguments returns HTTP 409. The claim, session and run share one SQLite transaction. Older clients without this option retain their behavior.
+
+### Indexed SDK completion and reconciliation evidence
+
+A native SDK run now reads its last execution by session ID using the existing SQLite session index instead of deserializing all prior executions. Operator reconciliation selects only the native frames for the exact execution ID; a dedicated partial SQLite index backs that lookup. Evidence read failures remain explicit and cannot be silently treated as verified completion. Session records, API fields, approval boundaries and model selection are unchanged.

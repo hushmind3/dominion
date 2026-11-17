@@ -200,6 +200,9 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_sdk_run_source
                  ON records(json_extract(data,'$.source.kind'),created_at DESC)
                  WHERE kind='sdk_run';
+             CREATE INDEX IF NOT EXISTS idx_sdk_native_frame_execution
+                 ON records(json_extract(data,'$.parentExecutionId'))
+                 WHERE kind='native_frame';
              CREATE INDEX IF NOT EXISTS idx_operation_session
                  ON records(json_extract(data,'$.sessionId'), updated_at DESC)
                  WHERE kind='execution_operation';

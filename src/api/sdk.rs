@@ -74,10 +74,9 @@ fn finish_with_evidence(record:&mut Value,message:&Value,run:Option<&Value>){
     }
 }
 
-fn execution(state:&AppState,record:&Value)->Option<Value>{
-    let session=record["sessionId"].as_str()?;
-    state.store.all("execution").into_iter().filter(|e|e["sessionId"].as_str()==Some(session))
-        .max_by_key(|e|e["startedAt"].as_str().unwrap_or("").to_owned())
+fn execution(state:&AppState,record:&Value)->Result<Option<Value>,String>{
+    let Some(session)=record["sessionId"].as_str()else{return Ok(None)};
+    state.store.sdk_latest_execution(session)
 }
 /// A consistent read snapshot for SDK listings: collect executions,
 /// approvals and uncertain effects once rather than scanning them per run.
@@ -362,8 +361,18 @@ pub(crate) fn launch(state:AppState,record:Value,resume:bool){
         let mut finalized=current.clone();
         match outcome {
             Ok(Some(message))=>{
-                let run=execution(&state,&record);
-                finish_with_evidence(&mut finalized,&message,run.as_ref());
+                // An evidence read failure cannot be reported as verified
+                // completion. Preserve the run for explicit investigation.
+                match execution(&state,&record){
+                    Ok(run)=>finish_with_evidence(&mut finalized,&message,run.as_ref()),
+                    Err(error)=>{
+                        state.store.audit("sdk.completion_evidence_read_failed",
+                            json!({"sdkRunId":id,"error":error}));
+                        finalized["status"]=json!("interrupted");
+                        finalized["verified"]=json!(false);
+                        finalized["error"]=json!("완료 증거 조회에 실패했습니다. 실행 기록을 확인하세요.");
+                    }
+                }
             },
             Ok(None)=>{
                 finalized["status"]=json!("failed");
@@ -452,7 +461,11 @@ pub async fn reconcile(State(state):State<AppState>,Path(id):Path<String>,Json(i
     }
     let Some(session)=record["sessionId"].as_str()else{return error(StatusCode::CONFLICT,"구형 하네스 기록은 읽기 전용입니다.");};
     if state.active.lock().unwrap().contains(session){return error(StatusCode::CONFLICT,"실행 중에는 복구 결과를 변경할 수 없습니다.");}
-    let Some(run)=execution(&state,&record)else{return error(StatusCode::CONFLICT,"복구할 실행 기록이 없습니다.");};
+    let run=match execution(&state,&record){
+        Ok(Some(run))=>run,
+        Ok(None)=>return error(StatusCode::CONFLICT,"복구할 실행 기록이 없습니다."),
+        Err(message)=>return error(StatusCode::INTERNAL_SERVER_ERROR,&message),
+    };
     let run_id=run["id"].as_str().unwrap_or("");
     let pending=match state.store.execution_operations(run_id) {
         Ok(rows)=>rows.into_iter().filter(|op|op["outcomeUnknown"]==true).collect::<Vec<_>>(),
@@ -465,7 +478,11 @@ pub async fn reconcile(State(state):State<AppState>,Path(id):Path<String>,Json(i
     observations.push(json!({"kind":"operator_observation","detail":op["operatorObservation"]}));record["observations"]=json!(observations);
     let mut updates=vec![("execution_operation".to_string(),op.clone()),("sdk_run".to_string(),record.clone())];
     let mut checkpoints=vec![("execution".to_string(),run.clone())];
-    checkpoints.extend(state.store.all("native_frame").into_iter().filter(|frame|frame["parentExecutionId"]==run["id"]).map(|frame|("native_frame".to_string(),frame)));
+    let frames=match state.store.sdk_frames_for_execution(run_id){
+        Ok(frames)=>frames,
+        Err(message)=>return error(StatusCode::INTERNAL_SERVER_ERROR,&message),
+    };
+    checkpoints.extend(frames.into_iter().map(|frame|("native_frame".to_string(),frame)));
     for (kind,mut saved) in checkpoints{
         let Ok(mut snapshot)=serde_json::from_value::<dominion_core::hosted::Snapshot>(saved["kernelState"].clone())else{continue;};
         if let Some(call)=snapshot.native.in_flight.clone().filter(|call|call.name==op["tool"]&&call.arguments==op["arguments"]){
@@ -574,6 +591,31 @@ mod view_tests{
             id:"1".into()})).is_err());
         assert!(source_metadata(Some(&SourceRef{kind:"money".into(),
             id:"a".repeat(201)})).is_err());
+    }
+    #[test]
+    fn sdk_execution_and_frame_lookups_are_scoped_to_the_requested_run(){
+        let state=fixture();
+        for row in [
+            json!({"id":"old","sessionId":"s1","startedAt":"2026-11-01T00:00:00Z"}),
+            json!({"id":"new","sessionId":"s1","startedAt":"2026-11-18T00:00:00Z"}),
+            json!({"id":"other","sessionId":"s2","startedAt":"2026-11-18T00:00:00Z"})
+        ]{
+            state.store.put("execution",&row).unwrap();
+        }
+        for frame in [
+            json!({"id":"f1","parentExecutionId":"new"}),
+            json!({"id":"f2","parentExecutionId":"other"}),
+            json!({"id":"f3","parentExecutionId":"new"})
+        ]{
+            state.store.put("native_frame",&frame).unwrap();
+        }
+        assert_eq!(execution(&state,&json!({"sessionId":"s1"})).unwrap().unwrap()["id"],"new");
+        assert_eq!(execution(&state,&json!({"sessionId":"s2"})).unwrap().unwrap()["id"],"other");
+        assert!(execution(&state,&json!({"sessionId":"missing"})).unwrap().is_none());
+        let frames=state.store.sdk_frames_for_execution("new").unwrap();
+        assert_eq!(frames.len(),2);
+        assert!(frames.iter().all(|frame|frame["parentExecutionId"]=="new"));
+        let _=std::fs::remove_dir_all(&state.config.data_dir);
     }
     #[test]
     fn sdk_source_query_is_indexed_and_does_not_mix_tools() {

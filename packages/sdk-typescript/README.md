@@ -62,3 +62,5 @@ Money owners may use `POST /api/money/candidates/:id/implement` with explicit `a
 The optional Money capability is controlled by `GET/POST /api/settings/money` with `{"enabled":true|false}`. Disabled Money routes retain read-only archive access and reject new domain actions. Ordinary SDK jobs remain independent of the Money module switch.
 
 Pass an optional `idempotencyKey` when creating a native SDK run through `POST /api/sdk/runs` to make retries safe. An identical retry returns the same persisted run; a changed request with the same key is rejected with HTTP 409. No new API endpoint, model runner or database is required.
+
+SDK completion status and manual effect reconciliation now read only the matching session's latest native execution and exact child frames. API request/response contracts remain unchanged; evidence lookup errors surface instead of silently accepting an unverified result.
