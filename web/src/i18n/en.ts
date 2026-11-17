@@ -4,6 +4,8 @@ const en: Record<LocaleKey, string> = {
   'nav.group.extensions': 'Extensions',
   'nav.group.operations': 'Operations',
   'nav.home': 'Dashboard',
+  'shell.conversationSwitch': 'Conversation mode',
+  'shell.groupShort': 'Group',
   'nav.chat': 'Chat',
   'nav.rooms': 'Group rooms',
   'nav.models': 'Models',

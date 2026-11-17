@@ -1,4 +1,4 @@
-.rooms-app{position:relative;display:flex;height:calc(100dvh - 64px);min-height:0;background:#FAF8F3;overflow:hidden}
+.rooms-app{position:relative;display:flex;height:100dvh;min-height:0;background:#FAF8F3;overflow:hidden}
 .room-eyebrow{display:block;font-size:9px;font-weight:700;letter-spacing:.16em;color:#A2998C;margin-bottom:6px}
 .room-list{width:228px;flex:0 0 228px;display:flex;flex-direction:column;background:#F3EFE7;border-right:1px solid #E7E0D5;z-index:20;min-height:0}
 .room-list-closed{display:none}
@@ -62,9 +62,31 @@
 
 .room-message-usage{font-size:9px;color:#AC9D86;border:1px solid #E7DDCC;border-radius:5px;padding:1px 5px;white-space:nowrap}
 .room-header-usage{font-size:10px;color:#8A775F;background:#F7F1E6;border:1px solid #E7DDCC;border-radius:7px;padding:4px 8px;white-space:nowrap}
-@media (max-width:640px){.room-header-usage{display:none}}
+
 .room-message-review .room-message-text{color:#5E7059}
 .room-message-review{background:#F5FAF3;border-radius:12px;padding:4px 6px;margin-left:-6px;margin-right:-6px}
 .room-reset{display:flex;align-items:center;gap:5px;color:#7E8C78;font-size:9px;background:none;border:0;margin-top:14px;padding:0}.room-reset:hover{color:#5F7358}.room-reset:disabled{opacity:.5}
 .room-system-prompt{white-space:pre-wrap;word-break:break-word;max-height:55vh;overflow:auto;background:#FFFCF6;border:1px solid #E7DDCC;border-radius:8px;padding:12px;font-size:11px;line-height:1.65;color:#5F5444;margin:8px 0 0}
 .room-prompt-part{margin:10px 0 0}.room-prompt-part>summary{cursor:pointer;font-size:11px;color:#77664E;font-weight:600;padding:4px 0}
+
+/* Reuse the original identity, presence and room actions in one toolbar. */
+.room-main{container-type:inline-size;container-name:room}
+.room-header{height:56px;min-height:56px;flex-shrink:0;gap:6px;padding:0 12px;border-bottom:1px solid #EFE9DF;overflow-x:auto;scrollbar-width:thin}
+.room-header>.conversation-switch{position:sticky;left:0;z-index:2;background:#FFFDF9}
+.room-header-icon{width:32px;height:36px;flex-basis:32px;border-radius:11px}
+.room-header-copy{flex:1 1 150px;min-width:70px;max-width:180px}
+#root .room-header h1{font-size:15px!important}.room-header p{font-size:10px}
+.room-header .room-presence{flex:1 0 auto;padding:0;border:0;gap:7px;flex-wrap:nowrap;white-space:nowrap}
+.room-header .room-presence>span{flex-shrink:0}.room-header .room-avatar-stack{flex:0 0 auto}.room-header .room-avatar{flex-shrink:0}
+.room-header-usage{display:inline-flex;flex-shrink:0;margin-left:auto}
+.room-roster-toggle{min-height:30px!important;padding:5px 7px!important}
+.room-list-footer{padding:6px 10px;flex-shrink:0}
+.room-empty-header{position:absolute;inset:0 0 auto;display:flex;height:56px;align-items:center;justify-content:space-between;gap:8px;padding:0 12px;border-bottom:1px solid #EFE9DF}
+.room-composer-foot .room-work-status{display:flex;align-items:center;gap:7px;margin:0 auto 0 0;padding:0;background:none;border:0;font-size:9px;flex-wrap:nowrap;min-width:0}
+.room-composer-foot .room-work-status>span{white-space:nowrap}.room-composer-foot .room-work-status button{max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.room-composer-foot .room-work-status+span{display:none}
+@container room (max-width:1300px){.room-roster-toggle>span{display:none}}
+@container room (max-width:1100px){.room-header .room-presence>span:not(.room-status){display:none}.room-header-copy{max-width:130px}.room-header-icon{display:grid}}
+@container room (max-width:800px){.room-header{gap:3px;padding:0 8px}.room-header .conversation-switch button{padding:4px 5px;font-size:10px;gap:3px}.room-header .conversation-switch-full{display:none}.room-header .conversation-switch-short{display:inline}.room-header-copy{min-width:28px;max-width:48px}.room-header p{display:none}.room-header .room-presence{gap:0;flex:1 0 auto}.room-header .room-status{display:none}.room-header-icon{display:none}.room-header .room-avatar-small{width:24px;height:24px;flex-basis:24px;border-radius:8px}.room-header .room-avatar-stack .room-avatar+.room-avatar{margin-left:-6px}.room-header-usage{padding:4px;font-size:9px}.room-roster-toggle{padding:4px!important;min-width:24px}.room-roster-toggle>b{display:none}.room-header .conversation-switch{gap:0}.room-header .conversation-switch svg{width:14px;height:14px}}
+@media(max-width:767px){.room-composer-foot .room-work-status>span{display:none}.room-composer-foot .room-work-status button{max-width:150px}}
+
+.room-header>.conversation-settings{width:28px;height:32px;flex-shrink:0;color:#5C544A}.room-empty-header>.conversation-settings{margin-left:auto}.room-list-toggle{flex-shrink:0;padding:5px}

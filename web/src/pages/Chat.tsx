@@ -4,7 +4,7 @@ import {OwnerAvatar,useOwnerProfile} from '../components/OwnerProfile'
 import {createPortal} from 'react-dom'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
 import {FormEvent,useEffect,useMemo,useRef,useState,type KeyboardEvent} from 'react'
-import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,Cpu,CornerDownLeft,HardDrive,PanelLeft,Settings,List,LoaderCircle,MessageCircle,MoreHorizontal,Plus,Power,RefreshCw,ShieldAlert,ShieldCheck,SlidersHorizontal,Sparkles,TerminalSquare,Trash2,X} from 'lucide-react'
+import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,Cpu,CornerDownLeft,HardDrive,Menu,Settings,List,LoaderCircle,MessageCircle,MoreHorizontal,Plus,Power,RefreshCw,ShieldAlert,ShieldCheck,SlidersHorizontal,Sparkles,TerminalSquare,Trash2,X} from 'lucide-react'
 import {Agent,Approval,ChatMessage,ChatSession,Provider,get,post,resolveApproval,streamChat,koreanReasoningEnabled,koreanReasoningKey} from '../api'
 import {Action,Empty,Notice,StateTag,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommandLabel,slashCommands,type SlashChoice} from '../components/SlashMenu'
@@ -352,7 +352,6 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  return <div className={'relative grid h-dvh min-h-0 grid-cols-1 grid-rows-[minmax(0,1fr)] bg-[#F6F3EC] '+(showHistory?'md:grid-cols-[232px_minmax(0,1fr)]':'')}>
   {showHistory&&<Button type="button" aria-label={t('chat.listCollapse')} className="absolute inset-0 z-20 !h-auto !w-auto cursor-default !rounded-none !border-0 !bg-slate-900/30 md:hidden" onClick={()=>setShowHistory(false)}/>}
   <aside className={'flex min-h-0 flex-col overflow-hidden border-r border-[#E7E0D5] bg-[#FAF7F1] '+(showHistory?'max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-30 max-md:w-[232px] max-md:shadow-2xl':'hidden')}>
-   <ConversationSwitch mode="chat" onChange={switchMode}/>
    <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-2"><div className="min-w-0"><span className="block text-[10px] font-extrabold uppercase tracking-widest text-[#C96442]">{t('ui.label.conversations')}</span><strong className="mt-1 block text-sm text-[#3A342D]">{t('chat.recent')}</strong></div><Button size="icon" variant="ghost" onClick={resetLocal} title={t('chat.newChat')}><Plus size={19}/></Button></div>
    <Button className="mx-3 mb-4 inline-flex items-center justify-center gap-2 rounded-xl border border-[#EED9CC] bg-[#F7E8E1] px-4 py-2.5 text-xs font-bold text-[#A94E30] hover:bg-[#F1DCCF]" onClick={resetLocal}><Plus size={17}/> {t('chat.newChat')}</Button>
    <div className="min-h-0 flex-1 overflow-y-auto px-2">{sessions.value.filter(s=>!s.roomId).map(s=><Button variant="bare" onClick={()=>pickSession(s)} key={s.id} title={s.title} className={'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-xs text-[#7C7469] hover:bg-[#F7E8E1] '+(current===s.id?'bg-[#F7E8E1] font-bold text-[#A94E30]':'')}><MessageCircle size={15} className="shrink-0"/><span className="truncate">{s.title}</span></Button>)}{!sessions.value.length&&<div className="p-5 text-center text-xs text-[#9C9388]">{t('chat.first')}</div>}</div>
@@ -360,8 +359,9 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   </aside>
   <div className="flex min-h-0 min-w-0 flex-col">
    <header className="chat-header relative flex h-13 shrink-0 items-center justify-between gap-2 border-b border-[#E7E0D5] bg-[#FFFDF9] px-4">
+    <Button size="icon" variant="ghost" onClick={()=>setShowHistory(x=>!x)} title={showHistory?t('chat.listCollapse'):t('chat.listExpand')} aria-label={showHistory?t('chat.listCollapse'):t('chat.listExpand')}><Menu size={18}/></Button>
+    <ConversationSwitch mode="chat" onChange={switchMode}/>
     <div className="flex min-w-0 flex-1 items-center gap-1.5">
-      <Button size="icon" variant="ghost" onClick={()=>setShowHistory(x=>!x)} title={showHistory?t('chat.listCollapse'):t('chat.listExpand')} aria-label={showHistory?t('chat.listCollapse'):t('chat.listExpand')}><PanelLeft size={18}/></Button>
      <div className="chat-model-controls relative flex min-w-0 items-center gap-1">
       <SelectInput aria-label={t('chat.selectProvider')} title={selectedProvider?.name||t('chat.autoProvider')} value={manual?.providerId??''} onChange={e=>{if(e.target.value)setRoute(e.target.value,'');else{setOverride(undefined);if(initialProvider)onSession(undefined)}}} className="!w-[124px] !pl-1.5 !border-0 !bg-transparent !py-1 !pr-6 !text-[12px]"><option value="">{t('chat.autoProvider')}</option>{providers.value.filter(p=>p.enabled).map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</SelectInput>
       <span className="text-[#B8AFA2]">/</span>
@@ -386,8 +386,8 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
      {(serverUsage||messageUsage)>0&&<span className="hidden rounded-lg border border-[#E7DDCC] bg-[#F7F1E6] px-2 py-1 text-[10px] font-semibold text-[#8A775F] sm:inline-flex">{t('usage.sessionTotal',{count:(serverUsage||messageUsage).toLocaleString()})}</span>}
 
      
-     <ConversationSwitch mode="chat" onChange={switchMode} compact/>
      <Button size="icon" variant="ghost" title={t('chat.modelManage')} aria-label={t('chat.modelManage')} onClick={openModels}><Cpu size={18}/></Button>
+     <Button size="icon" variant="ghost" className="conversation-settings" title={t('nav.settings')} aria-label={t('nav.settings')} onClick={openSettings}><Settings size={18}/></Button>
     </div>
    </header>
    <div ref={scrollRef} onScroll={onScroll} data-chat-scroll className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{!messages.length&&!(busy&&viewingTurn)?<div className="mx-auto flex min-h-full max-w-xl flex-col justify-center px-5 py-8">

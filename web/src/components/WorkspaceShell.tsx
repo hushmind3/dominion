@@ -1,7 +1,7 @@
-import {useEffect,useMemo,useState} from 'react'
+import {useEffect,useState} from 'react'
 import {OwnerProfileEditor} from './OwnerProfile'
-import {Activity,Blocks,BookOpenText,Bot,ChevronDown,ChevronRight,Command,CommandIcon,Cpu,House,Layers3,Menu,MessageSquare,PanelLeftClose,RadioTower,Search,Settings2,UsersRound,Plus,X,Settings} from 'lucide-react'
-import {Button,TextInput} from './Primitives'
+import {Activity,BookOpenText,Bot,ChevronDown,Cpu,House,MessageSquare,RadioTower,Settings2,UsersRound,Plus,X,Settings} from 'lucide-react'
+import {Button} from './Primitives'
 import {t,type LocaleKey,useLocale} from '../i18n'
 
 export type PageId='home'|'chat'|'models'|'agents'|'rooms'|'memory'|'capabilities'|'extensions'|'connections'|'activity'|'settings'
@@ -54,42 +54,8 @@ export function SettingsHeader({page,online,build,onClose}:{page:PageId;online:b
   <Button variant="ghost" size="icon" aria-label={t('rooms.close')} onClick={onClose}><X size={18}/></Button>
  </header>
 }
-/** The same two destinations appear in either session list; no settings detour. */
-export function ConversationSwitch({mode,onChange,compact=false}:{mode:'chat'|'rooms';onChange:(mode:'chat'|'rooms')=>void;compact?:boolean}){
+/** Persistent toolbar navigation; independent of either session list. */
+export function ConversationSwitch({mode,onChange}:{mode:'chat'|'rooms';onChange:(mode:'chat'|'rooms')=>void}){
  useLocale()
- if(compact){const group=mode==='chat';return <Button variant="ghost" size="icon" onClick={()=>onChange(group?'rooms':'chat')} aria-label={group?'그룹 대화로 전환':'채팅으로 전환'} title={group?'그룹 대화로 전환':'채팅으로 전환'}>{group?<UsersRound size={18}/>:<MessageSquare size={18}/>}</Button>}
- return <nav className="flex shrink-0 gap-1 px-3 pb-2 pt-3" aria-label="대화 전환"><Button variant="ghost" className="!min-h-8 flex-1 !gap-1.5 !rounded-lg !px-2 !py-1 !text-[11px]" aria-current={mode==='chat'?'page':undefined} onClick={()=>onChange('chat')}><MessageSquare size={15}/>{t('nav.chat')}</Button><Button variant="ghost" className="!min-h-8 flex-1 !gap-1.5 !rounded-lg !px-2 !py-1 !text-[11px]" aria-current={mode==='rooms'?'page':undefined} onClick={()=>onChange('rooms')}><UsersRound size={15}/>{t('rooms.listTitle')}</Button></nav>
-}
-
-export function WorkspaceHeader({page,online,collapsed,build,onMenu,onSearch}:{page:PageId;online:boolean;collapsed:boolean;build?:{branch:string;commit:string}|null;onMenu:()=>void;onSearch:()=>void}){
- useLocale()
- const selected=items.find(x=>x.id===page)
- return <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-3 border-b border-[#E7E0D5] bg-[#FFFDF9]/90 px-6 backdrop-blur-md">
-  <div className="flex min-w-0 items-center gap-2">
-   <Button variant="bare" type="button" className="mr-2 rounded-md p-1.5 text-[#5C544A] transition-colors hover:bg-[#F3EEE5]" aria-label={collapsed?t('shell.menuExpand'):t('shell.menuCollapse')} title={collapsed?t('shell.menuExpand'):t('shell.menuCollapse')} onClick={onMenu}>{collapsed?<Menu size={18}/>:<PanelLeftClose size={18}/>}</Button>
-   <span className="hidden text-[12px] text-[#9C9388] sm:block">{t('shell.workspace')}</span><ChevronRight size={13} className="hidden text-[#B8AFA2] sm:block"/>
-   <h1 className="truncate text-[15px] font-bold tracking-[-.01em] text-[#24211D]">{selected?t(selected.label):t('nav.home')}</h1>
-  </div>
-  <div className="flex items-center gap-3">
-   <Button variant="bare" type="button" onClick={onSearch} className="flex h-9 items-center gap-2 rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] px-3.5 text-[12px] text-[#7C7469] transition-colors hover:border-[#D8CFC2] hover:bg-[#F3EEE5]"><Search size={14}/><span className="hidden sm:inline">{t('shell.quickNav')}</span><kbd className="hidden text-[10px] md:inline">⌘K</kbd></Button>
-   <span className={'hidden items-center gap-1.5 text-[11px] sm:inline-flex '+(online?'text-emerald-700':'text-rose-600')}><i className={'size-1.5 rounded-full '+(online?'bg-emerald-500':'bg-rose-500')}/>{online?t('shell.connected'):t('shell.disconnected')}</span>
-    {build?.branch&&build.branch!=='unknown'&&<span className="hidden max-w-[185px] truncate rounded-md border border-[#E7E0D5] bg-[#F7F3EC] px-2 py-1 text-[10px] font-mono text-[#8A8176] lg:block" title={build.branch+' · '+build.commit}>{build.branch.replace(/^dominion-/,'')} · {build.commit.slice(0,7)}</span>}
-    <OwnerProfileEditor compact/>
-  </div>
- </header>
-}
-export function CommandPalette({onNavigate,onClose}:{onNavigate:(id:PageId)=>void;onClose:()=>void}){
- useLocale()
- const [query,setQuery]=useState('')
- const [active,setActive]=useState(0)
- const filtered=useMemo(()=>items.filter(item=>t(item.label).toLowerCase().includes(query.trim().toLowerCase())),[query])
- useEffect(()=>{setActive(0)},[query])
- useEffect(()=>{const h=(e:KeyboardEvent)=>{if(e.key==='Escape')onClose()};window.addEventListener('keydown',h);return()=>window.removeEventListener('keydown',h)},[onClose])
- return <div className="fixed inset-0 z-[90] flex justify-center bg-black/40 px-3 pt-[12vh]" onMouseDown={onClose} role="presentation">
-  <div className="h-fit w-full max-w-[480px] overflow-hidden rounded-xl border border-[#E7E0D5] bg-white shadow-2xl" role="dialog" aria-modal="true" aria-label={t('shell.paletteAria')} onMouseDown={e=>e.stopPropagation()}>
-   <div className="flex items-center gap-2 border-b border-[#EFE9DF] px-4 py-3"><Search size={16} className="text-[#9C9388]"/><TextInput autoFocus aria-label={t('shell.searchAria')} value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>{if(e.key==='ArrowDown'){e.preventDefault();setActive(value=>Math.min(filtered.length-1,value+1))}else if(e.key==='ArrowUp'){e.preventDefault();setActive(value=>Math.max(0,value-1))}else if(e.key==='Enter'&&filtered[active])onNavigate(filtered[active].id)}} placeholder={t('palette.placeholder')} className="!border-0 !shadow-none !ring-0"/></div>
-   <div className="max-h-[55vh] overflow-auto p-2">{filtered.map((item,index)=>{const Icon=item.icon;return <Button variant="bare" type="button" key={item.id} onMouseEnter={()=>setActive(index)} onClick={()=>onNavigate(item.id)} aria-selected={active===index} className={'flex h-10 w-full items-center gap-3 rounded-md px-3 text-left text-xs '+(active===index?'bg-[#F3EEE5]':'hover:bg-[#F3EEE5]')}><Icon size={16}/><span className="flex-1">{t(item.label)}</span><ChevronRight size={13} className="text-[#B8AFA2]"/></Button>})}{!filtered.length&&<p className="p-5 text-center text-xs text-[#7C7469]">{t('palette.empty')}</p>}</div>
-   <div className="border-t border-[#EFE9DF] px-4 py-2 text-[10px] text-[#9C9388]">{t('palette.hint')}</div>
-  </div>
- </div>
+ return <nav className="conversation-switch" aria-label={t('shell.conversationSwitch')}><Button variant="ghost" aria-current={mode==='chat'?'page':undefined} onClick={()=>onChange('chat')}><MessageSquare size={16}/><span>{t('nav.chat')}</span></Button><Button variant="ghost" aria-current={mode==='rooms'?'page':undefined} onClick={()=>onChange('rooms')}><UsersRound size={16}/><span className="conversation-switch-full">{t('rooms.listTitle')}</span><span className="conversation-switch-short">{t('shell.groupShort')}</span></Button></nav>
 }

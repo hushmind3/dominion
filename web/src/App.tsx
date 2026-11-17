@@ -3,7 +3,7 @@ import { ContextMenu } from './components/ContextMenu'
 import {OwnerProfileProvider} from './components/OwnerProfile'
 import {Component,lazy,Suspense,useCallback,useEffect,useLayoutEffect,useState,type ReactNode} from 'react'
 import {get} from './api'
-import {WorkspaceSidebar,WorkspaceHeader,SettingsHeader,CommandPalette,navigation,type PageId} from './components/WorkspaceShell'
+import {WorkspaceSidebar,SettingsHeader,navigation,type PageId} from './components/WorkspaceShell'
 const HomePage=lazy(()=>import('./pages/Home').then(module=>({default:module.HomePage})))
 const CapabilitiesPage=lazy(()=>import('./pages/Capabilities').then(module=>({default:module.CapabilitiesPage})))
 const MemoryPage=lazy(()=>import('./pages/Memory').then(module=>({default:module.MemoryPage})))
@@ -99,9 +99,6 @@ export default function App(){
  const [chatRoute,setChatRoute]=useState(()=>{const route=locationState();return route.page==='chat'?route:{page:'chat' as PageId,session:undefined,agent:undefined,provider:undefined,model:undefined}})
  const [mode,setMode]=useState<'chat'|'rooms'>(()=>locationState().page==='rooms'?'rooms':'chat')
  const [visited,setVisited]=useState(()=>({chat:locationState().page!=='rooms',rooms:locationState().page==='rooms'}))
- const [sidebar,setSidebar]=useState(false)
- const [collapsed,setCollapsed]=useState(()=>{try{const saved=localStorage.getItem('dominion.nav.collapsed');return saved===null?window.innerWidth<1200:saved==='1'}catch{return false}})
- const [palette,setPalette]=useState(false)
  const [chatDraft,setChatDraft]=useState(0)
  const settingsOpen=page!=='chat'&&page!=='rooms'
  const [online,setOnline]=useState(false)
@@ -121,7 +118,6 @@ export default function App(){
   const next='#/'+target+(sessionId?'?session='+encodeURIComponent(sessionId):'')
   if(window.location.hash!==next)window.history.pushState(null,'',next)
   setRoute(locationState())
-  setSidebar(false);setPalette(false)
   // Hash navigation stays immediate. Reload only when the server's built
   // entry changed; never block menu clicks on a network request.
   void checkForUpdatedUi()
@@ -136,11 +132,6 @@ export default function App(){
   if(page==='chat'){setChatRoute({page,session,agent,provider,model});setMode('chat');setVisited(previous=>previous.chat?previous:{...previous,chat:true})}
   if(page==='rooms'){setMode('rooms');setVisited(previous=>previous.rooms?previous:{...previous,rooms:true})}
  },[page,session,agent,provider,model])
- const toggleNav=useCallback(()=>{
-  if(window.innerWidth<520){setSidebar(open=>!open);return}
-  const next=!collapsed;setCollapsed(next)
-  try{localStorage.setItem('dominion.nav.collapsed',next?'1':'0')}catch{}
- },[collapsed])
  const returnToChat=useCallback(()=>{
   const params=new URLSearchParams()
   for(const key of ['session','agent','provider','model'] as const)if(chatRoute[key])params.set(key,chatRoute[key]!)
@@ -202,14 +193,7 @@ export default function App(){
      if(locationState().page==='chat')navigate('chat',id)
     }} openModels={()=>navigate('models')} openSettings={()=>navigate('settings')} switchMode={switchMode}/>
    </Suspense></PageLoadBoundary></div>}
-   {visited.rooms&&<div hidden={mode!=='rooms'} className="h-full">
-    <WorkspaceSidebar page="rooms" open={sidebar} collapsed={collapsed} online={online} running={running} pending={pending} onNavigate={navigate} onNewChat={()=>{setChatDraft(value=>value+1);navigate('chat')}} onClose={()=>setSidebar(false)}/>
-    <div className={'min-h-dvh min-w-0 transition-[margin] duration-200 '+(collapsed?'ml-0':'ml-[216px] max-[519px]:ml-0')}>
-     <WorkspaceHeader page="rooms" online={online} collapsed={collapsed} build={engineBuild} onMenu={toggleNav} onSearch={()=>setPalette(true)}/>
-     <PageLoadBoundary><Suspense fallback={<div role="status" className="p-8 text-sm text-[#7C7469]">대화 불러오는 중…</div>}><RoomsPage openSession={id=>navigate('chat',id)}/></Suspense></PageLoadBoundary>
-    </div>
-    {palette&&<CommandPalette onNavigate={navigate} onClose={()=>setPalette(false)}/>}
-   </div>}
+   {visited.rooms&&<div hidden={mode!=='rooms'} className="h-full page-rooms"><PageLoadBoundary><Suspense fallback={<div role="status" className="p-8 text-sm text-[#7C7469]">대화 불러오는 중…</div>}><RoomsPage active={mode==='rooms'&&!settingsOpen} openSession={id=>navigate('chat',id)} openSettings={()=>navigate('settings')} switchMode={switchMode}/></Suspense></PageLoadBoundary></div>}
 
   </main>
   {settingsOpen&&<DialogBackdrop onDismiss={closeSettings}><div role="dialog" aria-modal="true" aria-label="설정" className="workspace-settings relative h-[calc(100dvh-40px)] w-full max-w-[1440px] overflow-hidden rounded-2xl border border-[#E7E0D5] bg-[#F6F3EC] shadow-2xl">

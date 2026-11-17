@@ -51,3 +51,11 @@
 
 .connection-tabs{display:flex;gap:4px;overflow-x:auto;white-space:nowrap;padding:0 0 10px;margin-bottom:18px;border-bottom:1px solid #E7E0D5}
 .connection-tabs button{display:flex;align-items:center;gap:6px;flex-shrink:0;padding:8px 10px;border-radius:8px;font-size:12px;color:#82786B}.connection-tabs button:hover{background:#F0EAE1}.connection-tabs [aria-current]{background:#F7E8E1;color:#A94E30;font-weight:650}
+
+/* Both modes use the same always-visible toolbar switch, outside session lists. */
+.conversation-switch{display:flex;align-items:center;gap:3px;flex:0 0 auto;white-space:nowrap}
+.conversation-switch button{min-height:32px;padding:5px 9px;font-size:11px;gap:6px;border-radius:9px}
+.conversation-switch [aria-current]{background:#F7E8E1;color:#A94E30}
+.conversation-switch-short{display:none}
+.chat-header{height:56px;min-height:56px}
+@media(max-width:767px){.conversation-switch button{padding:4px 5px;font-size:10px;gap:3px}.conversation-switch button svg{width:14px;height:14px}.conversation-switch-full{display:none}.conversation-switch-short{display:inline}.chat-header .chat-model-controls>select{width:64px!important;font-size:10px!important}.chat-header .chat-model-controls>button[aria-haspopup="dialog"]{min-width:40px!important}.chat-header>div:last-child>button{width:26px}.chat-header>div:first-of-type>button{width:26px}.chat-header{gap:3px}}
