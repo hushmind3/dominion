@@ -36,6 +36,9 @@ pub fn validate(adaptation: &Value) -> Result<(), String> {
     for probe in probes {
         let id = probe["id"].as_str().filter(|s|!s.is_empty())
             .ok_or("probe.id must be non-empty")?;
+        if id.len()>64 || !id.chars().all(|ch|ch.is_ascii_alphanumeric() || matches!(ch,'-'|'_')) {
+            return Err("probe.id must be <=64 ASCII identifier characters".into());
+        }
         if !ids.insert(id) {return Err(format!("duplicate probe id {id}"));}
         let tool = probe["tool"].as_str().unwrap_or("");
         if !read_only_tool(tool) {return Err(format!("probe {id} has a non-observational tool"));}
