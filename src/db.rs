@@ -414,8 +414,9 @@ impl Store {
                AND json_extract(data,'$.sessionId')=?1
              ORDER BY updated_at DESC"
         ).map_err(|e|e.to_string())?;
-        stmt.query_map([session_id],record_from_row).map_err(|e|e.to_string())?
-            .collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+        let rows=stmt.query_map([session_id],record_from_row)
+            .map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
     }
 
     pub fn resource_execution_operations(&self, resource: &str) -> Result<Vec<Value>, String> {
@@ -425,8 +426,9 @@ impl Store {
              WHERE kind='execution_operation'
                AND json_extract(data,'$.resourceKey')=?1"
         ).map_err(|e|e.to_string())?;
-        stmt.query_map([resource],record_from_row).map_err(|e|e.to_string())?
-            .collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+        let rows=stmt.query_map([resource],record_from_row)
+            .map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
     }
 
     /// SDK cumulative model-call budgets count only this session's prior runs.
