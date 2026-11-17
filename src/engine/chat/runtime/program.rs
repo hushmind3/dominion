@@ -198,7 +198,12 @@ fn execute_nodes<'a>(
                 continue;
             }
             if persist {
-                checkpoint["nextIndex"] = json!(index);
+                if let Some(root) = crate::engine::program::root_cursor(
+                    checkpoint["topLevelOffset"].as_u64().unwrap_or(0) as usize,
+                    index, depth
+                ) {
+                    checkpoint["nextIndex"] = json!(root);
+                }
                 checkpoint["frameStack"] = json!([{
                     "nodeId": node_id,
                     "index": index,
@@ -744,7 +749,12 @@ fn execute_nodes<'a>(
                     mark_program_completed(&mut checkpoint, node_id);
                     checkpoint["status"] = json!("paused");
                     checkpoint["pausedNodeId"] = json!(node_id);
-                    checkpoint["nextIndex"] = json!(index + 1);
+                    if let Some(root) = crate::engine::program::root_cursor(
+                        checkpoint["topLevelOffset"].as_u64().unwrap_or(0) as usize,
+                        index, depth
+                    ) {
+                        checkpoint["nextIndex"] = json!(root.saturating_add(1));
+                    }
                     checkpoint["resolvedInputs"] = resolved.clone();
                     if persist {
                         save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
@@ -892,6 +902,7 @@ pub(super) async fn run_program(
         .into_iter()
         .skip(start)
         .collect::<Vec<_>>();
+    checkpoint["topLevelOffset"] = json!(start);
     checkpoint["status"] = json!("running");
     let ctx = ProgramCtx {
         state,
@@ -963,6 +974,7 @@ pub(super) async fn run_program(
                 checkpoint["programRevision"] = revised["revision"].clone();
                 checkpoint["programFailure"] = Value::Null;
                 checkpoint["nextIndex"] = json!(0);
+                checkpoint["topLevelOffset"] = json!(0);
                 checkpoint["status"] = json!("running");
                 save_revised_program(state, execution_id, &revised);
                 save_program_checkpoint(state, execution_id, &checkpoint)?;

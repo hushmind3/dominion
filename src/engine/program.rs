@@ -127,6 +127,13 @@ pub fn parallel_read_safe(children: &[Value]) -> bool {
     })
 }
 
+/// A nested node must never rewrite the root program cursor. Restored
+/// programs enumerate only the remaining suffix, so its local indices require
+/// the original top-level offset.
+pub fn root_cursor(offset: usize, index: usize, depth: usize) -> Option<usize> {
+    (depth == 0).then(|| offset.saturating_add(index))
+}
+
 pub fn new_checkpoint(program: &Value) -> Value {
     json!({
         "schemaVersion": SUPPORTED_REVISION,
@@ -484,6 +491,14 @@ mod tests {
                  "else":[{"type":"call_tool","id":"fallback","tool":"workspace_write","inputs":{"path":"fallback.txt","content":"FALLBACK"}}]}
             ]
         })
+    }
+
+    #[test]
+    fn resumed_root_cursor_does_not_regress_inside_nested_nodes() {
+        assert_eq!(root_cursor(5, 0, 0), Some(5));
+        assert_eq!(root_cursor(5, 2, 0), Some(7));
+        assert_eq!(root_cursor(5, 0, 1), None);
+        assert_eq!(root_cursor(5, 2, 3), None);
     }
 
     #[test]
