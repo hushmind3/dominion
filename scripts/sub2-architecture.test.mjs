@@ -131,7 +131,9 @@ test('GitHub repo file workflow uses connected OAuth, optimistic SHA and owner a
 test('runtime scoped receipt lookups avoid global history scans',()=>{
  const runtime=file('src/engine/chat/runtime.rs');
  const db=file('src/db.rs');
- const live=runtime.split(/#\[cfg\(test\)\]\s*mod /)[0];
+ const parts=['turn_body','program','deterministic','tool_calls','action_review',
+   'selection','session_state'].map(name=>file('src/engine/chat/runtime/'+name+'.rs'));
+ const live=[runtime,...parts].join('\n');
  assert.doesNotMatch(live,/\.all\("execution_operation"\)/);
  assert.doesNotMatch(live,/\.all\("execution"\)/);
  assert.match(live,/session_operations\(session_id\)/);
@@ -163,4 +165,28 @@ test('MCP HTTP sessions are reused per server and vault credential without blind
  assert.match(mcp,/Arc::ptr_eq/);
  assert.match(mcp,/lease\.valid=result\.is_ok\(\)/);
  assert.doesNotMatch(mcp,/let mut session = HttpSession::open\(server, state\)/);
+});
+
+test('turn coordinator delegates substantial single-responsibility modules',()=>{
+ const runtime=file('src/engine/chat/runtime.rs');
+ const modules=['turn_body','program','deterministic','tool_calls',
+    'action_review','selection','session_state'];
+ assert.ok(runtime.split('\n').length<600,'coordinator must remain under 600 lines');
+ assert.doesNotMatch(runtime,/fn run_turn_body\(/);
+ assert.doesNotMatch(runtime,/fn execute_nodes</);
+ assert.match(runtime,/pub async fn run_turn\(/);
+ for(const name of modules){
+    assert.match(runtime,new RegExp('mod '+name+';'));
+    const source=file('src/engine/chat/runtime/'+name+'.rs');
+    assert.ok(source.split('\n').length<2000,name+' oversized');
+    assert.match(source,/use super::\*/);
+ }
+ const tests=['outcome_tests','cancellation_drain_tests','harness_tool_selection_tests'];
+ for(const name of tests)assert.ok(file('src/engine/chat/runtime/'+name+'.rs').length>100);
+ const body=file('src/engine/chat/runtime/turn_body.rs');
+ const program=file('src/engine/chat/runtime/program.rs');
+ const dispatch=file('src/engine/chat/runtime/tool_calls.rs');
+ assert.match(body,/pub\(super\) async fn run_turn_body\(/);
+ assert.match(program,/pub\(super\) fn restore_program_state\(/);
+ assert.match(dispatch,/pub\(super\) async fn dispatch_tool_call\(/);
 });

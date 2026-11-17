@@ -108,7 +108,7 @@ test('retired RSI UI links and source-generation workflows are absent',()=>{
 test('Home SDK policy is owned by a live Rust job, not a sticky chat session',()=>{
  const kernel=src('src/engine/execution_scope.rs');
  const jobs=src('src/engine/jobs.rs');
- const chat=src('src/engine/chat/runtime.rs');
+ const chat=src('src/engine/chat/runtime/turn_body.rs');
  const tools=src('src/engine/tools.rs');
  assert.match(jobs,/sdkUiPolicyOwnerId/);
  assert.match(jobs,/sdkUiPolicyBaseline/);
