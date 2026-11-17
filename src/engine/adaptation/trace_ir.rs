@@ -230,6 +230,34 @@ pub fn validate_evidence_ids(adaptation:&Value, trace:&Value)->Result<(),String>
     Ok(())
 }
 
+/// A receipt merely preceding a failure is not causal evidence.
+/// Follow only explicit input/version/resource/program relations backwards
+/// from the failed operation. Temporal neighbors remain usable as context
+/// but cannot authorize a model's causal explanation for a mutation.
+pub fn provenance_ancestors(trace:&Value)->HashSet<String>{
+    let mut ancestors=HashSet::new();
+    let Some(focus)=trace["focus"]["evidenceId"].as_str() else{
+        return ancestors;
+    };
+    let mut queue=VecDeque::from([focus.to_string()]);
+    while let Some(target)=queue.pop_front(){
+        if !ancestors.insert(target.clone()){continue;}
+        if ancestors.len()>=MAX_NODES{break;}
+        for relation in trace["edges"].as_array().into_iter().flatten(){
+            if relation["to"].as_str()!=Some(target.as_str())
+                || relation["relation"]=="temporal" {
+                continue;
+            }
+            if let Some(source)=relation["from"].as_str(){
+                if !ancestors.contains(source){
+                    queue.push_back(source.to_string());
+                }
+            }
+        }
+    }
+    ancestors
+}
+
 /// A machine-verifiable, bounded repair admission certificate. This is a
 /// Dominion-specific action boundary: trajectory evidence constrains which
 /// of the model's interventions may run, but never grants tool permission.
@@ -268,13 +296,18 @@ pub fn action_certificate(
     }
     let available=trace["nodes"].as_array().into_iter().flatten()
         .filter_map(|row|row["id"].as_str()).collect::<HashSet<_>>();
+    let ancestors=provenance_ancestors(trace);
     let mut cited=Vec::new();
     for id in intervention["evidenceIds"].as_array().into_iter().flatten() {
         let id=id.as_str().ok_or("non-string intervention evidence ID")?;
-        if id=="before" || id=="current-failure" || available.contains(id) {
+        if id=="before" || id=="current-failure" {
             cited.push(id);
-        } else {
+        } else if !available.contains(id) {
             return Err(format!("candidate intervention references nonexistent receipt {id}"));
+        } else if !ancestors.contains(id) {
+            return Err(format!("receipt {id} is a temporal neighbor, not an observed dependency of the failure"));
+        } else {
+            cited.push(id);
         }
     }
     Ok(json!({
@@ -395,6 +428,26 @@ mod tests{
         assert!(!text.contains("SECRET_TOKEN_ABC"));
         assert!(!text.contains("private"));
     }
+    #[test]
+    fn chronological_neighbor_cannot_masquerade_as_dependency(){
+        let unrelated=op("unrelated","u",1,"completed","different-resource");
+        let related=op("upstream","a",2,"completed","same-resource");
+        let failed=op("failure","f",3,"failed","same-resource");
+        let trace=compile(&[unrelated,related,failed],"f","workspace_read",&json!({"path":"x.rs"}));
+        let unrelated_id=evidence_id(&op("unrelated","u",1,"completed","different-resource"));
+        let related_id=evidence_id(&op("upstream","a",2,"completed","same-resource"));
+        let ancestors=provenance_ancestors(&trace);
+        assert!(!ancestors.contains(&unrelated_id));
+        assert!(ancestors.contains(&related_id));
+        let hypotheses=vec![json!({"id":"h1"})];
+        let false_cause=json!({"id":"fix","tool":"workspace_read",
+            "hypothesisIds":["h1"],"evidenceIds":[unrelated_id]});
+        assert!(action_certificate(&trace,&false_cause,&hypotheses,&[],false).is_err());
+        let related_cause=json!({"id":"fix","tool":"workspace_read",
+            "hypothesisIds":["h1"],"evidenceIds":[related_id]});
+        assert!(action_certificate(&trace,&related_cause,&hypotheses,&[],false).is_ok());
+    }
+
     #[test]
     fn previous_provenance_uses_explicit_reference_not_name_similarity(){
         let a=op("source-1","a",1,"completed","one");
