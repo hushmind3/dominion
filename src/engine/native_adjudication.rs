@@ -248,6 +248,110 @@ fn same_envelope(a:&Value,b:&Value)->Vec<&'static str>{
  fields.iter().filter_map(|(name,x,y)|(x!=y).then_some(*name)).collect()
 }
 
+/// Reuse PRISM's *multi-objective* premise without pretending a single run
+/// estimates pass@k, reliability, or generalization. Harness² supplies
+/// execution contrast, VeriHarness supplies evidence qualification, and
+/// Dominion's SDK already supplies budget/permission enforcement.
+///
+/// Only independently accepted, host-consistent, same-task observations enter
+/// this read-only portfolio. Missing money/time measurements cannot be treated
+/// as a free or fast run. Tradeoffs remain visible instead of being compressed
+/// into a fictional weighted quality score.
+fn portfolio_entry(run_id:&str,matched:bool,proof:&Value,trace:&Value)->Value{
+ let grade=proof["grade"].as_str().unwrap_or("");
+ let proof_tier=match grade{
+  "directly_corroborated"=>2,
+  "partially_corroborated"=>1,
+  _=>0,
+ };
+ let accepted=matched&&proof_tier>0
+  &&proof["terminalCompleted"]==true
+  &&proof["kernelAcceptancePassed"]==true
+  &&proof["criterionWitnessAgreement"]==true
+  &&proof["hostLineageConsistent"]==true;
+ // A failure receipt followed by a real successful repair is not necessarily
+ // a bad outcome, but it is *observed execution friction* for a time/cost
+ // comparison. It is not a generalizable reliability estimate.
+ let failed_receipts=trace["actions"].as_array().map(|actions|
+  actions.iter().filter(|a|
+   a["status"]=="observed_failure"||a["status"]=="skipped").count()
+ ).unwrap_or(0);
+ let cost=trace["cost"]["configuredCostKRW"].as_f64()
+  .filter(|value|value.is_finite()&&*value>=0.0);
+ let latency=trace["latencyMs"].as_i64().filter(|v|*v>=0);
+ let tokens=trace["estimatedTokensRecorded"].as_u64();
+ let complete_metrics=cost.is_some()&&latency.is_some()&&tokens.is_some();
+ json!({
+  "runId":run_id,"admissible":accepted,
+  "evidenceGrade":grade,"proofTier":proof_tier,
+  "observedFailedReceipts":failed_receipts,
+  "costKRW":cost,"latencyMs":latency,"recordedTokens":tokens,
+  "completeComparableMetrics":complete_metrics,
+  "priceBasis":"owner_configured_not_invoice_verified",
+  "reliabilityEstimate":null,"holdoutQuality":null,
+ })
+}
+
+/// A PRISM-style non-dominated set *after* task and provenance matching,
+/// with additional local cost/latency/tool-failure constraints. This is not a
+/// model choice or an optimizer; it only ranks historical observations that
+/// are sufficiently comparable. Unknown metrics exclude a run from the
+/// complete-cost frontier instead of counting as zero.
+fn dominates(a:&Value,b:&Value)->bool{
+ if a["admissible"]!=true||b["admissible"]!=true
+  ||a["completeComparableMetrics"]!=true
+  ||b["completeComparableMetrics"]!=true{return false;}
+ let aq=a["proofTier"].as_u64().unwrap_or(0);
+ let bq=b["proofTier"].as_u64().unwrap_or(0);
+ let ac=a["costKRW"].as_f64().unwrap_or(f64::INFINITY);
+ let bc=b["costKRW"].as_f64().unwrap_or(f64::INFINITY);
+ let al=a["latencyMs"].as_i64().unwrap_or(i64::MAX);
+ let bl=b["latencyMs"].as_i64().unwrap_or(i64::MAX);
+ let at=a["recordedTokens"].as_u64().unwrap_or(u64::MAX);
+ let bt=b["recordedTokens"].as_u64().unwrap_or(u64::MAX);
+ let af=a["observedFailedReceipts"].as_u64().unwrap_or(u64::MAX);
+ let bf=b["observedFailedReceipts"].as_u64().unwrap_or(u64::MAX);
+ (aq>=bq&&ac<=bc&&al<=bl&&at<=bt&&af<=bf)
+  &&(aq>bq||ac<bc||al<bl||at<bt||af<bf)
+}
+
+fn compose_portfolio(entries:&[Value])->Value{
+ let mut frontier=Vec::<String>::new();
+ let mut excluded=Vec::<Value>::new();
+ for candidate in entries{
+  let id=candidate["runId"].as_str().unwrap_or("");
+  if candidate["admissible"]!=true{
+   excluded.push(json!({"runId":id,"reason":"unmatched_or_unverified_execution"}));
+   continue
+  }
+  if candidate["completeComparableMetrics"]!=true{
+   excluded.push(json!({"runId":id,"reason":"unknown_price_or_latency_or_tokens"}));
+   continue
+  }
+  if entries.iter().any(|other|other["runId"]!=candidate["runId"]
+    &&dominates(other,candidate)){
+   excluded.push(json!({"runId":id,"reason":"evidence_cost_latency_frontier_dominated"}));
+   continue
+  }
+  frontier.push(id.to_string());
+ }
+ json!({
+  "status":if frontier.is_empty(){"insufficient_comparable_evidence"}
+    else{"observational_pareto_frontier"},
+  "nondominatedRunIds":frontier,
+  "excluded":excluded,
+  "reviewSuggestion":if frontier.len()==1{Some(frontier[0].as_str())}
+    else{None},
+  "recommendationType":"manual_review_only",
+  "promotionAuthorized":false,
+  "holdoutValidated":false,
+  "repeatedTrialReliabilityMeasured":false,
+  "bounds":"No causal ranking or cross-task reliability inference from isolated historical rollouts",
+  "dimensions":["kernel_evidence_grade","configured_cost_KRW",
+    "wall_latency_ms","recorded_tokens","observed_failure_receipts"],
+ })
+}
+
 /// Adjudicate existing, independently executed runs without doing new work.
 /// Unlike a score aggregator this emits an evidence graph and abstains on
 /// uncontrolled starting states. It never designates a causal winner.
@@ -270,6 +374,7 @@ pub fn adjudicate(
  let base_trace=native_replay::report(state,baseline_id)?;
  let base_actions=actions(&base_snapshot)?;
  let base_proof=artifact_proof(&base_job,&base_trace,&base_snapshot);
+ let mut portfolio=vec![portfolio_entry(baseline_id,true,&base_proof,&base_trace)];
  let before=evidence(&base_job,"nativeEvidenceBaseline");
  let scoped_initial=before.and_then(|w|w["entries"].as_object())
   .is_some_and(|entries|!entries.is_empty());
@@ -301,6 +406,7 @@ pub fn adjudicate(
    &&base_proof["grade"]!="unsealed_or_conflicting_artifacts"
    &&candidate_proof["grade"]!="unsealed_or_conflicting_artifacts";
   if matched{comparables+=1;}
+  portfolio.push(portfolio_entry(id,matched,&candidate_proof,&trace));
   candidates.push(json!({
    "runId":id,"matchedExperiment":matched,
    "unmatchedSettings":unmatched,"taskShapeMismatch":shape_error,
@@ -321,6 +427,8 @@ pub fn adjudicate(
   "mode":"matched_native_rollout_evidence_adjudication_2026",
   "baseline":{"runId":baseline_id,"outcome":base_proof},
   "candidates":candidates,
+  "evidenceQualifiedPortfolio":compose_portfolio(&portfolio),
+  "portfolioMetrics":portfolio,
   "comparableRuns":comparables,
   "totalRuns":candidate_ids.len()+1,
   "newModelCalls":0,"newToolCalls":0,"newExternalEffects":false,
@@ -522,6 +630,50 @@ mod tests {
   assert_eq!(after_jobs,2,"forensic adjudication must not create work");
   drop(state);
   let _=std::fs::remove_dir_all(root);
+ }
+
+ #[test]
+ fn complementary_quality_cost_recovery_dimensions_preserve_tradeoffs() {
+  let good=|id:&str,tier:u64,cost:Value,latency:Value,tokens:Value,failures:u64|{
+   json!({"runId":id,"admissible":true,"proofTier":tier,
+    "costKRW":cost,"latencyMs":latency,"recordedTokens":tokens,
+    "observedFailedReceipts":failures,
+    "completeComparableMetrics":!cost.is_null()&&!latency.is_null()&&!tokens.is_null()})
+  };
+  let a=good("fast",2,json!(120.0),json!(1000),json!(300),0);
+  let b=good("slow",2,json!(150.0),json!(1200),json!(500),1);
+  let c=good("cheap",2,json!(60.0),json!(1400),json!(200),0);
+  let d=good("missing",2,Value::Null,json!(900),json!(100),0);
+  let runs=vec![a.clone(),b,c.clone(),d];
+  assert!(dominates(&a,&runs[1]));
+  assert!(!dominates(&a,&c),"cost and speed tradeoffs are incomparable");
+  assert!(!dominates(&d,&a),"unpriced calls cannot win on a fake zero");
+  let p=compose_portfolio(&runs);
+  assert_eq!(p["nondominatedRunIds"],json!(["fast","cheap"]));
+  assert_eq!(p["reviewSuggestion"],Value::Null);
+  assert_eq!(p["promotionAuthorized"],false);
+  assert_eq!(p["repeatedTrialReliabilityMeasured"],false);
+ }
+
+ #[test]
+ fn unverified_candidate_never_enters_frontier_even_when_cheap() {
+  let invalid=json!({"runId":"phantom","admissible":false,"proofTier":2,
+   "costKRW":0.0,"latencyMs":1,"recordedTokens":1,
+   "observedFailedReceipts":0,"completeComparableMetrics":true});
+  let p=compose_portfolio(&[invalid]);
+  assert_eq!(p["status"],"insufficient_comparable_evidence");
+  assert!(p["nondominatedRunIds"].as_array().unwrap().is_empty());
+ }
+
+ #[test]
+ fn portfolio_admission_rejects_success_text_without_trusted_trace(){
+  let proof=json!({"grade":"directly_corroborated",
+   "terminalCompleted":true,"kernelAcceptancePassed":true,
+   "criterionWitnessAgreement":true,"hostLineageConsistent":false});
+  let trace=json!({"cost":{"configuredCostKRW":150.0},
+   "latencyMs":1200,"estimatedTokensRecorded":140,"actions":[]});
+  let row=portfolio_entry("unproven",true,&proof,&trace);
+  assert_eq!(row["admissible"],false);
  }
 
 }
