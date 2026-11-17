@@ -108,6 +108,7 @@ pub fn save(
     // grant or previously reported scopes. Explicit reconnect is required.
     state.store.remove_secret(&format!("oauth:{id}:token"));
     record["connected"] = json!(false);
+    record["authSource"] = Value::Null;
     record["account"] = Value::Null;
     record["scopes"] = Value::Null;
     record["id"] = json!(id);
@@ -355,6 +356,7 @@ pub async fn callback(
     let mut record = config(state, id).unwrap_or_else(|| json!({ "id": id }));
     record["id"] = json!(id);
     record["connected"] = json!(true);
+    record["authSource"] = json!("oauth");
     record["scopes"] = token_value
         .get("scope")
         .cloned()
@@ -381,6 +383,7 @@ pub fn disconnect(state: &AppState, id: &str) {
     state.store.remove_secret(&format!("oauth:{id}:token"));
     if let Some(mut record) = config(state, id) {
         record["connected"] = json!(false);
+        record["authSource"] = Value::Null;
         record["account"] = Value::Null;
         state.store.put("oauth_config", &record);
         state.bus.record("oauth_config", &record);
@@ -402,6 +405,12 @@ pub fn access_token(state: &AppState, id: &str) -> Option<String> {
 pub async fn fresh_access_token(state: &AppState, id: &str) -> Result<String, String> {
     if id=="github"&&config(state,"github")
         .is_some_and(|v|v["authSource"]=="github_cli"){
+        // Disconnect revokes Dominion's authority even if the user stays
+        // signed in to the separate official GitHub CLI installation.
+        if config(state,"github").is_none_or(|r|r["connected"]!=true)
+            ||!state.store.has_secret("oauth:github:token"){
+            return Err("GitHub account is disconnected in Dominion".into());
+        }
         // GitHub CLI owns its browser grant and rotates/refreshes credentials
         // itself. Read the CURRENT token, pinned to the connected username;
         // do not reuse a stale copied bearer when the CLI is logged out.
@@ -566,8 +575,12 @@ pub async fn adopt_cli_grant(state:&AppState,source:&str)->Result<Value,String>{
                 .get("https://www.googleapis.com/oauth2/v3/userinfo")
                 .bearer_auth(&access).timeout(Duration::from_secs(15))
                 .send().await.map_err(|_|"Google identity lookup failed")?;
+            if !profile.status().is_success(){
+                return Err("Google account identity permission was not granted".into());
+            }
             let identity:Value=profile.json().await.map_err(|_|"Google identity response invalid")?;
-            let email=identity["email"].as_str().unwrap_or("").to_string();
+            let email=identity["email"].as_str().filter(|s|!s.is_empty())
+                .ok_or("Google account email missing from granted identity scope")?.to_string();
             // Tokens and application credentials are only retained in the
             // pre-existing encrypted vault, never the public oauth_config DB.
             state.save_secret("oauth:google:secret",&json!({
@@ -658,6 +671,21 @@ mod tests {
         // The client id is public; the client secret must never appear.
         assert!(!record.contains("super-secret"));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn disconnected_github_cli_grant_must_not_be_reused_from_host_cli(){
+        let (state,dir)=temp_state();
+        state.store.put("oauth_config",&json!({
+            "id":"github","connected":true,"authSource":"github_cli",
+            "account":"example-user","scopes":"repo"
+        })).unwrap();
+        state.save_secret("oauth:github:token",
+            &json!({"accessToken":"fake-host-token"}).to_string());
+        disconnect(&state,"github");
+        let err=fresh_access_token(&state,"github").await.unwrap_err();
+        assert!(err.contains("계정을 먼저 연결")||err.contains("disconnected"),"{err}");
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]
