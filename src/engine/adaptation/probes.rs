@@ -129,6 +129,13 @@ pub fn rank(adaptation: &Value, refuted: &[String], attempted: &HashSet<String>)
     ranked
 }
 
+/// Unknown outcomes supply no discriminating evidence and must not
+/// silently license an unverified state-changing intervention.
+pub fn determinate(observation:&Value)->bool{
+    observation["predictions"].as_array().into_iter().flatten()
+        .any(|item|matches!(item["verdict"].as_str(),Some("true"|"false")))
+}
+
 /// Update hypotheses from actual successful tool output via the existing
 /// three-valued predicate evaluator. Unknown never refutes a hypothesis.
 pub fn observe(probe: &Value, result: &Value) -> Value {
@@ -182,6 +189,8 @@ mod tests {
         let missing=observe(probe,&json!({"other":3}));
         assert_eq!(missing["refutedIds"],json!([]));
         assert_eq!(missing["predictions"][0]["verdict"],"unknown");
+        assert!(determinate(&observation));
+        assert!(!determinate(&missing));
         assert!(rank(&p,&["h1".into(),"h3".into()],&HashSet::new()).is_empty());
     }
     #[test]
