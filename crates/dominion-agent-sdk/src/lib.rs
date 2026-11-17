@@ -490,7 +490,7 @@ impl Kernel<'_> {
         }else{
             "Every currently permitted host tool is directly available."
         };
-        let probe_hint="For ambiguous multi-step work, optionally propose 2-3 distinct read-only candidatePaths with id, hypothesis and 1-3 normal tool actions per path; never mix probes with writes, other actions or a final answer. The Rust kernel validates every candidate, executes probes in the existing scheduler, compares receipt evidence, and supplies a tentative preferred path on the next turn. Probe success is not task completion. Only propose alternatives when their evidence will change the next action.";
+        let probe_hint="Only if alternatives need evidence, propose standalone candidatePaths: 2-3 distinct hypotheses, 1-3 independent read-only tool actions each, no actions or answer. Rust compares their real receipts on the next turn. Never probe effects or treat probe success as task completion.";
         let system=format!(
             "You are DOMINION's model planner. The Rust kernel owns action dispatch, \
              limits, permission checks and verification. Respect the owner's instructions \
