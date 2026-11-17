@@ -578,3 +578,77 @@ async fn owner_verification_uses_same_tool_budget_as_model_actions(){
     assert_eq!(*tools.called.lock().unwrap(),vec!["read_1"]);
     assert!(!result.receipts.iter().any(|receipt|receipt.tool=="shell_exec"));
 }
+
+#[tokio::test]
+async fn contrasting_read_only_probes_are_observed_then_the_kernel_replans(){
+    let model=ScriptedModel::new(vec![
+        json!({"plan":["compare approaches"],"actions":[],"answer":null,
+            "candidatePaths":[
+                {"id":"direct","hypothesis":"inspect current output",
+                    "actions":[op("probe-direct","read",&[])]},
+                {"id":"diagnose","hypothesis":"inspect alternative cause",
+                    "actions":[op("probe-diagnose","read",&[])]}
+            ]}),
+        decide(json!([op("real-fix","write",&[])]),None),
+        decide(json!([]),Some("Applied and observed")),
+    ]);
+    let tools=RecordingTools::new(&["probe-diagnose"]);
+    let journal=RecordingJournal::default();
+    let kernel=Kernel{model:&model,tools:&tools,evidence:&AlwaysTrueEvidence,journal:&journal};
+    let mut req=request("contrastive-fix");
+    req.instruction="Inspect and repair the workspace".into();
+    let result=kernel.run(req).await.unwrap();
+    assert!(matches!(result.status,Status::Completed),"{result:?}");
+    assert_eq!(result.receipts.len(),3);
+    assert!(result.receipts.iter().any(|r|r.id=="probe-direct"&&r.success));
+    assert!(result.receipts.iter().any(|r|r.id=="probe-diagnose"&&!r.success));
+    assert!(result.receipts.iter().any(|r|r.id=="real-fix"&&r.success));
+    let prompts=model.prompts.lock().unwrap();
+    let comparison=&serde_json::from_str::<Value>(&prompts[1]).unwrap()
+        ["candidateProbeComparison"];
+    assert_eq!(comparison["status"],"observed");
+    assert_eq!(comparison["tentativePreferredPath"],"direct");
+    assert_eq!(comparison["interpretation"],"read_only_tool_observations_not_task_success");
+    assert_eq!(result.decision_tape[0].candidate_paths.len(),2);
+}
+
+#[tokio::test]
+async fn speculative_effectful_probes_are_rejected_before_any_tool_effect(){
+    let bad=json!({"plan":["probe"],"actions":[],"answer":null,
+        "candidatePaths":[
+            {"id":"direct","hypothesis":"read directly",
+                "actions":[op("safe-read","read",&[])]},
+            {"id":"unsafe","hypothesis":"write speculatively",
+                "actions":[op("bad-write","write",&[])]}
+        ]});
+    let model=ScriptedModel::new(vec![bad.clone(),bad.clone(),bad]);
+    let tools=RecordingTools::new(&[]);
+    let journal=RecordingJournal::default();
+    let kernel=Kernel{model:&model,tools:&tools,evidence:&AlwaysTrueEvidence,journal:&journal};
+    let result=kernel.run(request("unsafe-probe")).await.unwrap();
+    assert!(matches!(result.status,Status::NeedsReview));
+    assert!(result.receipts.is_empty());
+    assert!(tools.called.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn probes_cannot_reserve_more_than_the_shared_tool_budget(){
+    let model=ScriptedModel::new(vec![json!({
+        "plan":["contrast"],"actions":[],"answer":null,
+        "candidatePaths":[
+            {"id":"a","hypothesis":"direct inspection",
+                "actions":[op("probe-a","read",&[])]},
+            {"id":"b","hypothesis":"different inspection",
+                "actions":[op("probe-b","read",&[])]}
+        ]
+    })]);
+    let tools=RecordingTools::new(&[]);
+    let journal=RecordingJournal::default();
+    let kernel=Kernel{model:&model,tools:&tools,evidence:&AlwaysTrueEvidence,journal:&journal};
+    let mut req=request("over-budget-probes");
+    req.limits.max_tool_calls=1;
+    let result=kernel.run(req).await.unwrap();
+    assert!(matches!(result.status,Status::NeedsReview));
+    assert!(result.receipts.is_empty());
+    assert!(tools.called.lock().unwrap().is_empty());
+}
