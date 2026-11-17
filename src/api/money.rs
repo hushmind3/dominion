@@ -436,6 +436,33 @@ pub async fn promote_draft(
     }
 }
 
+#[derive(serde::Deserialize)]
+pub struct MoneyArchiveQuery {
+    q:Option<String>,
+    status:Option<String>,
+    limit:Option<usize>,
+    offset:Option<usize>,
+}
+/// A bounded archive, not just the best three generated suggestions.
+pub async fn candidate_archive(State(state):State<AppState>,
+    Query(query):Query<MoneyArchiveQuery>)->Response{
+    let q=query.q.unwrap_or_default().trim().chars().take(120).collect::<String>();
+    let status=query.status.unwrap_or_default();
+    if !status.is_empty() && !matches!(status.as_str(),
+        "hypothesis"|"researching"|"testing"|"validated"|"rejected"|
+        "deferred"|"launched"|"implementation_requested"){
+        return fail("지원하지 않는 후보 상태입니다.");
+    }
+    let limit=query.limit.unwrap_or(20).clamp(1,50);
+    let offset=query.offset.unwrap_or(0).min(100_000);
+    match state.store.money_candidate_archive(&q,&status,limit,offset){
+        Ok((candidates,has_more))=>Json(json!({
+            "candidates":candidates,"hasMore":has_more,"offset":offset,"limit":limit
+        })).into_response(),
+        Err(message)=>error(StatusCode::INTERNAL_SERVER_ERROR,&message),
+    }
+}
+
 pub async fn candidate(State(state):State<AppState>,Path(id):Path<String>)->Response{
     match state.store.get("money_candidate",&id){
         Some(v)=>{
@@ -453,7 +480,7 @@ pub async fn candidate(State(state):State<AppState>,Path(id):Path<String>)->Resp
 pub async fn update_candidate(State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>)->Response{
     let Some(mut prior)=state.store.get("money_candidate",&id)else{return error(StatusCode::NOT_FOUND,"사업 후보를 찾지 못했습니다.");};
     if let Some(status)=body["status"].as_str(){
-        if !matches!(status,"hypothesis"|"researching"|"testing"|"validated"|"rejected"|"launched"){
+        if !matches!(status,"hypothesis"|"researching"|"testing"|"validated"|"rejected"|"deferred"|"launched"){
             return fail("지원하지 않는 사업 상태입니다.");
         }
         prior["status"]=json!(status);

@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 
 mod money;
 mod money_toggle;
+mod money_archive;
 mod sdk_sources;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

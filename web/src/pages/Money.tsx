@@ -1,6 +1,7 @@
 import {useEffect,useState} from 'react'
 import {ArrowUpRight,CheckCircle2,Lightbulb,Loader2,Search} from 'lucide-react'
 import {get,post,type Agent} from '../api'
+import {MoneyArchive} from './money/Archive'
 
 type Evidence={claim?:string;url?:string;kind?:string}
 type Draft={
@@ -419,6 +420,7 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
      <p className="mt-2 text-xs leading-6 text-[#95877A]">기존 DB에서 돈벌이 후보를 추리고, 선택한 에이전트가 있으면 심층 추론합니다.</p>
     </div>}
   </section>
+  <MoneyArchive enabled={moneyEnabled===true}/>
   {!!result.inferenceModel?.model&&<p className="mt-4 text-right text-[11px] font-medium text-[#786755]">
    추론 모델 · {result.inferenceModel.providerId||'기본 제공자'} / {result.inferenceModel.model}
   </p>}
