@@ -46,6 +46,7 @@ jobs:
       - name: SDK kernel and replay Rust tests (dev profile only)
         run: |
           cargo test -p dominion-agent-sdk --lib
+          cargo test --bin dominion-rust engine::native_evidence::tests
           cargo test -p dominion-agent-sdk --test kernel_replanning
           cargo test --bin dominion-rust engine::chat::kernel_bridge::tests
           cargo test --bin dominion-rust api::sdk_runs::tests
