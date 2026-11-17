@@ -28,7 +28,7 @@ const PROVIDERS: &[Provider] = &[
         authorize: "https://accounts.google.com/o/oauth2/v2/auth",
         token: "https://oauth2.googleapis.com/token",
         user: "https://www.googleapis.com/oauth2/v3/userinfo",
-        scopes: "openid email profile",
+        scopes: "openid email profile https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/spreadsheets",
         extra: &[("access_type", "offline"), ("prompt", "consent")],
     },
     Provider {
@@ -57,6 +57,18 @@ fn callback_url(state: &AppState, id: &str) -> String {
     )
 }
 
+/// Inspect actual granted token scopes, never the requested consent template.
+pub fn has_granted_scope(state:&AppState,id:&str,needed:&str)->bool{
+    let Some(raw)=state.read_secret(&format!("oauth:{id}:token")) else {return false;};
+    let Ok(saved)=serde_json::from_str::<Value>(&raw) else {return false;};
+    let Some(scopes)=saved["scopes"].as_str() else {return false;};
+    let target=format!("https://www.googleapis.com/auth/{needed}");
+    scopes.split_whitespace().any(|item|
+        item==target || id=="google" &&
+        item=="https://www.googleapis.com/auth/drive" &&
+        matches!(needed,"drive.readonly"|"documents"|"spreadsheets"))
+}
+
 pub fn status(state: &AppState) -> Vec<Value> {
     PROVIDERS
         .iter()
@@ -80,6 +92,12 @@ pub fn status(state: &AppState) -> Vec<Value> {
                 "scopes": provider.scopes,
                 "scope": provider.scopes,
                 "grantedScopes": record.get("scopes"),
+                "workspaceReady": provider.id != "google" ||
+                    ["drive.readonly","documents","spreadsheets"].iter()
+                        .all(|scope|has_granted_scope(state,"google",scope)),
+                "needsReconnect": provider.id == "google" && connected &&
+                    !["drive.readonly","documents","spreadsheets"].iter()
+                        .all(|scope|has_granted_scope(state,"google",scope)),
             })
         })
         .collect()
@@ -119,14 +137,23 @@ pub fn save(
 }
 
 fn client_credentials(state: &AppState, id: &str) -> Result<(String, String), String> {
-    let sealed = state
-        .read_secret(&format!("oauth:{id}:secret"))
-        .or_else(|| {
-            (id == "youtube")
-                .then(|| state.read_secret("oauth:google:secret"))
-                .flatten()
-        })
-        .ok_or_else(|| "OAuth 앱이 설정되지 않았습니다.".to_string())?;
+    let sealed = state.read_secret(&format!("oauth:{id}:secret"))
+        .or_else(||(id=="youtube").then(||state.read_secret("oauth:google:secret")).flatten());
+    // Packaged deployments can supply operator-managed OAuth clients; end
+    // users then click Connect instead of configuring a separate OAuth app.
+    let sealed=match sealed{
+        Some(value)=>value,
+        None=>{
+            let label=match id{"github"=>"GITHUB","google"|"youtube"=>"GOOGLE",
+                _=>return Err("지원하지 않는 OAuth 제공자입니다.".into())};
+            let client_id=std::env::var(format!("DOMINION_{label}_CLIENT_ID")).unwrap_or_default();
+            let client_secret=std::env::var(format!("DOMINION_{label}_CLIENT_SECRET")).unwrap_or_default();
+            if client_id.is_empty() || (id=="github" && client_secret.is_empty()){
+                return Err("OAuth 앱이 설정되지 않았습니다.".into());
+            }
+            json!({"clientId":client_id,"clientSecret":client_secret}).to_string()
+        }
+    };
     let value: Value = serde_json::from_str(&sealed).map_err(|error| error.to_string())?;
     let client_id = value
         .get("clientId")
@@ -439,6 +466,24 @@ mod tests {
         (AppState::new(config, store, vault), dir)
     }
 
+    #[test]
+    fn identity_only_google_grants_cannot_use_workspace_tools() {
+        let (state,dir)=temp_state();
+        state.save_secret("oauth:google:token",&json!({
+            "accessToken":"test","scopes":"openid email profile"
+        }).to_string());
+        for scope in ["drive.readonly","documents","spreadsheets"]{
+            assert!(!has_granted_scope(&state,"google",scope));
+        }
+        state.save_secret("oauth:google:token",&json!({
+            "accessToken":"test",
+            "scopes":"openid https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/spreadsheets"
+        }).to_string());
+        for scope in ["drive.readonly","documents","spreadsheets"]{
+            assert!(has_granted_scope(&state,"google",scope));
+        }
+        let _=std::fs::remove_dir_all(dir);
+    }
     #[test]
     fn start_requires_configured_credentials() {
         let (state, dir) = temp_state();
