@@ -45,7 +45,7 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/package-lock.json
-       - name: Money discovery, deduplication, source provenance and full API contracts
+      - name: Money discovery, deduplication, source provenance and full API contracts
         run: |
           cargo test --bin dominion-rust engine::money -- --nocapture
           cargo test --bin dominion-rust api::money -- --nocapture
