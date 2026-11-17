@@ -97,13 +97,19 @@ pub fn status(state: &AppState) -> Vec<Value> {
             let record = config(state, provider.id).unwrap_or_else(|| json!({}));
             let native_connected=record["connected"]==true &&
                 state.store.has_secret(&format!("oauth:{}:token",provider.id));
-            let cli=if matches!(provider.id,"github"|"google") && cli_enabled(state,provider.id){
+            let mut cli=if matches!(provider.id,"github"|"google"){
                 crate::engine::cli_accounts::status(provider.id)
             }else{
                 crate::engine::cli_accounts::LocalStatus{
                     installed:false,connected:false,account:None,scopes:vec![]
                 }
             };
+            // Disabling DOMINION's CLI grant leaves the OS account untouched,
+            // but must not hide the Connect button used to re-enable it.
+            if !cli_enabled(state,provider.id){
+                cli.connected=false;
+                cli.account=None;
+            }
             let connected=native_connected || cli.connected;
             let native_configured=client_credentials(state,provider.id).is_ok();
             json!({

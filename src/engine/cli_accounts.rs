@@ -79,9 +79,10 @@ pub fn login(provider:&str)->Result<Value,String>{
     }
     let command=match provider{
         "github"=>"gh auth login --hostname github.com --web --scopes repo,read:user,user:email",
-        // gws setup initializes a Cloud project and OAuth app via gcloud when
-        // missing; this is Google's real consent flow, not an API key form.
-        _=>"gws auth setup",
+        // Try existing gws OAuth configuration first. If it is unconfigured,
+        // the setup wizard can create a Cloud project via gcloud. The final
+        // explicit login requests only the three capabilities this UI uses.
+        _=>"gws auth login --scopes https://www.googleapis.com/auth/drive.readonly,https://www.googleapis.com/auth/documents,https://www.googleapis.com/auth/spreadsheets || (gws auth setup && gws auth login --scopes https://www.googleapis.com/auth/drive.readonly,https://www.googleapis.com/auth/documents,https://www.googleapis.com/auth/spreadsheets)",
     };
     #[cfg(target_os="macos")]
     let launched={
