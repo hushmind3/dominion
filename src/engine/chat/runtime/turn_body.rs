@@ -792,7 +792,7 @@ pub(super) async fn run_turn_body(
                                 .as_str()
                                 .map(str::to_string)
                         });
-                    program_finished = status.as_deref() == Some("completed");
+                    program_finished = program_execution_settled(status.as_deref());
                 }
             }
         }
