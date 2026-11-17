@@ -553,6 +553,8 @@ pub fn record_adaptation(
         "consultedExperienceRules": adaptation["consultedExperienceRules"],
         "probeResults": adaptation["probeResults"],
         "probeBudgetExhausted": adaptation["probeBudgetExhausted"],
+        "failureTrace": adaptation["failureTrace"],
+        "actionCertificate": adaptation["actionCertificate"],
         "selected": selected,
         "result": result,
         "hypothesisResults": hypothesis_results,
@@ -578,6 +580,7 @@ pub fn record_adaptation(
             .as_u64().unwrap_or(0) + 1,
         "beforeObservation": adaptation["beforeObservation"],
         "hypothesisResults": hypothesis_results,
+        "actionCertificate": adaptation["actionCertificate"],
     });
     let saved = state.store.put("execution", &execution)?;
     state.bus.record("execution", &saved);
