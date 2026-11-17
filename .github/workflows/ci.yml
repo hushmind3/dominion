@@ -38,6 +38,8 @@ jobs:
       - name: Changed Rust execution and Money contract regressions (debug profile)
         run: |
           cargo test --lib engine::chat::trace_budget::tests
+          cargo test --lib engine::verification::verified_patch_tests
+          cargo test --lib engine::autonomy::tests::verifier_
           cargo test --lib engine::jobs::tests
           cargo test --lib db::tests::audit_usage
           cargo test --lib db::tests::recovery

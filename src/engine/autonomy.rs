@@ -42,20 +42,9 @@ fn add_explicit_verifier(checks: &mut Value, command: Option<&str>) -> Result<()
 
 /// A passing build/test from before the most recent workspace edit is stale.
 /// The verifier must be run again on the final bytes, not on an earlier draft.
-fn verification_after_last_edit(command:&str, evidence:&[Value])->bool {
-    let last_edit=evidence.iter().enumerate().filter_map(|(index,item)|{
-        (verification::successful_evidence(item) && matches!(
-            verification::tool_name(item),
-            "workspace_write"|"workspace_replace"|"workspace_replace_range"|"workspace_apply_patch"|"file_write"
-        )).then_some(index)
-    }).last();
-    let last_pass=evidence.iter().enumerate().filter_map(|(index,item)|
-        verification::command_matches(item,command).then_some(index)).last();
-    match (last_edit,last_pass){
-        (_,None)=>false,
-        (Some(edit),Some(pass))=>pass>edit,
-        (None,Some(_))=>true,
-    }
+fn verification_after_last_edit(command:&str,evidence:&[Value])->bool{
+    crate::engine::agent_kernel::verification::command_is_fresh(
+        &verification::verification_events(evidence),command)
 }
 
 /// Count new, successful observations instead of counting tool invocations.

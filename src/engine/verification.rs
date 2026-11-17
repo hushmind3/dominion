@@ -550,31 +550,54 @@ pub(crate) fn local_edit_intent(goal:&str)->bool{
 
 /// Recognized, actually executed commands able to independently check a code
 /// change. Every edit after the last pass invalidates that pass.
-pub(crate) fn test_after_last_edit(evidence:&[Value])->bool{
-    let last_edit=evidence.iter().enumerate().filter_map(|(i,item)|
-        (is_action_evidence(item) && matches!(tool_name(item),
-            "workspace_write"|"file_write"|"workspace_replace"|"workspace_replace_range"|"workspace_apply_patch")
-        ).then_some(i)).last();
-    let Some(edit)=last_edit else{return false;};
-    evidence.iter().enumerate().skip(edit+1).any(|(_,item)|{
-        if !successful_evidence(item) || !matches!(tool_name(item),
-            "shell_exec"|"terminal_exec"){return false;}
-        let args=item.get("arguments").or_else(||item.get("args")).unwrap_or(&Value::Null);
-        let command=if tool_name(item)=="terminal_exec" {
-            let mut cmd=string(args,"command");
-            if let Some(argv)=args["args"].as_array(){
-                for arg in argv.iter().filter_map(Value::as_str){cmd.push(' ');cmd.push_str(arg);}
+fn command_invocation(item:&Value)->Option<String>{
+    let tool=tool_name(item);
+    if !matches!(tool,"shell_exec"|"terminal_exec"){return None;}
+    let args=item.get("arguments").or_else(||item.get("args"))
+        .unwrap_or(&Value::Null);
+    let mut command=args["command"].as_str().unwrap_or("").to_string();
+    if tool=="terminal_exec" {
+        if let Some(argv)=args["args"].as_array(){
+            for arg in argv.iter().filter_map(Value::as_str){
+                if !command.is_empty(){command.push(' ');}
+                command.push_str(arg);
             }
-            cmd
-        }else{string(args,"command")};
-        if command.chars().any(|c|matches!(c,';'|'&'|'|'|'>'|'<'|'\n')){return false;}
-        let words=command.split_whitespace().collect::<Vec<_>>();
-        matches!(words.as_slice(),
-            ["cargo", "test", ..]|["cargo","check",..]|["cargo","clippy",..]|
-            ["npm","test",..]|["npm","run","test",..]|["npm","run","typecheck",..]|
-            ["pnpm","test",..]|["pytest",..]|["python","-m","pytest",..]|
-            ["go","test",..]|["vitest",..]|["tsc","--noEmit",..])
-    })
+        }
+    }
+    (!command.trim().is_empty()).then_some(command)
+}
+fn independent_test_command(command:&str)->bool{
+    if command.chars().any(|c| matches!(c,';'|'&'|'|'|'>'|'<'|'\n'|'\r'|'$') || (c as u32)==96){
+        return false;
+    }
+    let words=command.split_whitespace().collect::<Vec<_>>();
+    matches!(words.as_slice(),
+        ["cargo","test",..]|["cargo","check",..]|["cargo","clippy",..]|
+        ["npm","test",..]|["npm","run","test",..]|["npm","run","typecheck",..]|
+        ["pnpm","test",..]|["pytest",..]|["python","-m","pytest",..]|
+        ["go","test",..]|["vitest",..]|["tsc","--noEmit",..])
+}
+/// Host receipts -> model-independent SDK events, in persisted order.
+pub(crate) fn verification_events(evidence:&[Value])
+    ->Vec<crate::engine::agent_kernel::verification::EvidenceEvent>{
+    use crate::engine::agent_kernel::verification::EvidenceEvent;
+    evidence.iter().filter_map(|row|{
+        if row["dispatched"]==false{return None;}
+        if matches!(tool_name(row),
+            "workspace_write"|"file_write"|"workspace_replace"|
+            "workspace_replace_range"|"workspace_apply_patch"){
+            return Some(EvidenceEvent::FileMutation{observed:is_action_evidence(row)});
+        }
+        let command=command_invocation(row)?;
+        let independent_test=independent_test_command(&command);
+        let can_mutate=!independent_test &&
+            !crate::engine::agent_kernel::read_only_shell_command(&command);
+        Some(EvidenceEvent::Command{command,success:successful_evidence(row),
+            independent_test,can_mutate})
+    }).collect()
+}
+pub(crate) fn test_after_last_edit(evidence:&[Value])->bool{
+    crate::engine::agent_kernel::verification::has_post_edit_test(&verification_events(evidence))
 }
 
 pub(crate) fn command_matches(item: &Value, command: &str) -> bool {
@@ -687,9 +710,10 @@ pub(crate) fn acceptance_gaps(
             "tool_succeeded" => evidence.iter().any(|item| {
                 successful_evidence(item) && tool_name(item) == check["tool"].as_str().unwrap_or("")
             }),
-            "command_succeeded" => evidence
-                .iter()
-                .any(|item| command_matches(item, check["command"].as_str().unwrap_or(""))),
+            "command_succeeded" =>
+                crate::engine::agent_kernel::verification::command_is_fresh(
+                    &verification_events(evidence),
+                    check["command"].as_str().unwrap_or("")),
             _ => false,
         };
         if !passed {
@@ -883,6 +907,30 @@ mod verified_patch_tests {
         let _=std::fs::remove_dir_all(dir);
     }
 
+    #[test]
+    fn rejected_historical_pass_after_failed_patch_or_retest(){
+        let dir=std::env::temp_dir().join(format!("sdk-verifier-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=crate::config::Config{port:0,data_dir:dir.join("data"),
+            web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=AppState::new(config.clone(),crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        let checks=json!([{"type":"command_succeeded","command":"cargo test"}]);
+        let pass=json!({"tool":"shell_exec","arguments":{"command":"cargo test"},
+            "result":{"exitCode":0}});
+        let fail=json!({"tool":"shell_exec","arguments":{"command":"cargo test"},
+            "status":"failed","result":{"exitCode":1}});
+        let partial=json!({"tool":"workspace_apply_patch","status":"failed",
+            "result":{"error":"partial move","partialApplied":true}});
+        assert!(check_acceptance(&state,"test",&checks,&[pass.clone()]).is_empty());
+        assert!(!check_acceptance(&state,"test",&checks,&[pass.clone(),fail]).is_empty());
+        assert!(!check_acceptance(&state,"test",&checks,&[pass.clone(),partial.clone()]).is_empty());
+        assert!(check_acceptance(&state,"test",&checks,&[partial.clone(),pass.clone()]).is_empty());
+        assert!(!test_after_last_edit(&[pass.clone(),partial]));
+        assert!(test_after_last_edit(&[json!({"tool":"workspace_write",
+            "result":{"written":true,"changed":true}}),pass]));
+        let _=std::fs::remove_dir_all(dir);
+    }
     #[test]
     fn test_must_follow_latest_edit_and_read_only_is_unchanged(){
         let edit=json!({"tool":"workspace_write","result":{"written":true,"changed":true}});

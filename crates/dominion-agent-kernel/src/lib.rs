@@ -4,6 +4,7 @@
 //! and usage deltas. No mutation or autonomous campaign can start here.
 mod budget;
 mod cycle;
+pub mod verification;
 pub use budget::BudgetLedger;
 pub use cycle::{Cycle, Observation, Assessment};
 
