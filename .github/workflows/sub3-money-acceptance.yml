@@ -1,0 +1,58 @@
+name: Sub3 Money domain acceptance
+
+on:
+  push:
+    branches: [dominion-sub3]
+    paths:
+      - '.github/workflows/sub3-money-acceptance.yml'
+      - 'src/api/money*.rs'
+      - 'src/engine/money*.rs'
+      - 'src/engine/native_agent.rs'
+      - 'src/engine/jobs.rs'
+      - 'src/engine/tools.rs'
+      - 'src/engine/mod.rs'
+      - 'src/db.rs'
+      - 'src/db/money.rs'
+      - 'src/db/money_schema.sql'
+      - 'web/src/pages/Money.tsx'
+      - 'web/src/App.tsx'
+      - 'web/src/components/WorkspaceShell.tsx'
+      - 'web/src/i18n/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sub3-money-acceptance
+  cancel-in-progress: true
+
+jobs:
+  money:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Compile money and native agent integration
+        run: cargo check --bin dominion-rust
+      - name: Money discovery, deduplication, source provenance and full API contracts
+        run: |
+          cargo test --bin dominion-rust engine::money -- --nocapture
+          cargo test --bin dominion-rust api::money -- --nocapture
+      - name: Native inference JSON and model budget contracts
+        run: |
+          cargo test --bin dominion-rust local_money_json_is_a_terminal_sdk_answer_without_new_model_calls
+          cargo test --bin dominion-rust engine::native_routing -- --nocapture
+      - name: Shipping Money GUI and lean product compatibility
+        run: |
+          npm ci --prefix web
+          npm run typecheck --prefix web
+          npm run build --prefix web
+          node scripts/check-lean-product.mjs
