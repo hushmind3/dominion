@@ -9,6 +9,7 @@ on:
       - 'src/api/jobs.rs'
       - 'src/api/sdk_runs.rs'
       - 'src/engine/native_agent.rs'
+      - 'src/engine/algorithms.rs'
       - 'src/engine/native_model.rs'
       - 'src/engine/native_cache.rs'
       - 'src/engine/native_routing.rs'
@@ -48,3 +49,4 @@ jobs:
           cargo test -p dominion-agent-sdk --test kernel_replanning
           cargo test --bin dominion-rust engine::chat::kernel_bridge::tests
           cargo test --bin dominion-rust api::sdk_runs::tests
+          cargo test --bin dominion-rust engine::algorithms::tests
