@@ -335,13 +335,13 @@ fn compose_portfolio(entries:&[Value])->Value{
   }
   frontier.push(id.to_string());
  }
+ let suggestion=if frontier.len()==1{Some(frontier[0].clone())}else{None};
  json!({
   "status":if frontier.is_empty(){"insufficient_comparable_evidence"}
     else{"observational_pareto_frontier"},
   "nondominatedRunIds":frontier,
   "excluded":excluded,
-  "reviewSuggestion":if frontier.len()==1{Some(frontier[0].as_str())}
-    else{None},
+  "reviewSuggestion":suggestion,
   "recommendationType":"manual_review_only",
   "promotionAuthorized":false,
   "holdoutValidated":false,
@@ -603,6 +603,10 @@ mod tests {
    let final_evidence=if accepted{present.clone()}else{absent.clone()};
    state.store.put("job",&json!({"id":id,"kind":"prompt",
     "status":if accepted{"completed"}else{"needs_review"},
+    "startedAt":"2026-11-18T00:00:00Z",
+    "finishedAt":"2026-11-18T00:00:02Z",
+    "nativeModelUsage":{"reportedCalls":1,"unreportedCalls":0,
+      "unpricedCalls":0,"configuredCostKRW":if accepted{25.0}else{20.0}},
     "input":input,"nativeState":snap,
     "nativeRoute":{"providerId":"p","model":"m"},
     "nativeToolAuthoritySha256":"frozen",
@@ -621,6 +625,9 @@ mod tests {
   }
   let result=adjudicate(&state,"baseline",&["candidate".to_string()]).unwrap();
   assert_eq!(result["comparableRuns"],1);
+  assert_eq!(result["evidenceQualifiedPortfolio"]["nondominatedRunIds"],
+    json!(["candidate"]));
+  assert_eq!(result["evidenceQualifiedPortfolio"]["reviewSuggestion"],"candidate");
   assert_eq!(result["candidates"][0]["comparison"],"observed_task_outcome_gain");
   assert_eq!(result["candidates"][0]["mechanism"]["mechanism"],
    "host_witnessed_candidate_mutation_chain");
