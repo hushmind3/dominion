@@ -199,6 +199,11 @@ pub async fn execute(
                 "plan":plan,"verification":checks,"receipts":receipts,
             }}))?;
         }
+        // Evaluate the same owner goal against the actual current evidence
+        // before this already-budgeted turn; no speculative tool execution.
+        let trial_plan=cycle.approach_plan();
+        let before_trial_gaps=verification::check_acceptance(
+            &ctx.state,&active_goal,&checks,&all_evidence[evidence_epoch..]);
         let usage_before=ctx.state.store.session_usage(session_id);
         let (outcome, stats):(Result<Option<Value>,String>,TurnStats)=
             run_quiet_outcome(&ctx.state,&turn).await;
@@ -264,6 +269,14 @@ pub async fn execute(
                 }
             }
         }
+        // Record a per-task strategy trial only against an unchanged goal.
+        // A steering race invalidates comparability, and owner replacement
+        // clears prior task credit in the native kernel.
+        let strategy_trial=if owner_changed {Value::Null}else{
+            cycle.record_trial(&trial_plan,&before_trial_gaps,&gaps,new_evidence,
+                measured_usage["totalTokens"].as_u64().unwrap_or(0),
+                latest_error.as_deref(),decision==Decision::Accept)
+        };
         let receipt=json!({
             "attempt":attempt+1,
             "steeringRevision":steering_before,"activeGoal":active_goal,
@@ -274,6 +287,7 @@ pub async fn execute(
             "toolSuccess":stats.tool_success,
             "toolErrors":stats.tool_errors,
             "evidenceCount":stats.evidence.len(),
+            "strategyTrial":strategy_trial,
             "failureClass":crate::engine::agent_kernel::failure::classify(
                 &gaps,latest_error.as_deref()).label(),
             "usage":measured_usage,
