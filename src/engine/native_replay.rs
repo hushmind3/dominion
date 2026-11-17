@@ -105,6 +105,27 @@ pub fn artifact_witness(workspace:&std::path::Path,checks:&[dominion_sdk::harnes
   "entries":entries,"directVerdicts":verdicts})
 }
 
+/// Capture one first-party workspace effect's pre/post image without
+/// reading raw content into the journal. Opaque shell/MCP/browser effects
+/// intentionally return null: their affected paths cannot be fabricated.
+pub(crate) fn action_witness(
+ workspace:&std::path::Path,action:&dominion_sdk::harness::Action,
+)->Value {
+ if !matches!(action.tool.as_str(),
+  "workspace_write"|"workspace_replace"|"workspace_replace_range") {
+  return Value::Null
+ }
+ let Some(path)=action.arguments["path"].as_str() else{return Value::Null};
+ let witness=artifact_witness(workspace,&[dominion_sdk::harness::Criterion{
+  kind:dominion_sdk::harness::CriterionKind::FileExists,
+  path:Some(path.to_owned()),contains:None,tool:None,
+ }]);
+ json!({"path":path,"complete":witness["complete"],
+  "state":witness["entries"][path],
+  "hostObservation":true,
+  "exclusiveWriter":false})
+}
+
 fn digest(v:&Value)->String{
  format!("{:x}",Sha256::digest(v.to_string().as_bytes()))
 }
