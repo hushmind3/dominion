@@ -1694,41 +1694,25 @@ pub(super) async fn run_program(
         let mut read_cache=std::collections::HashMap::<String,(Value,bool,String)>::new();
         let mut postflight_failure=None::<String>;
         for post in current_program["repairPostflights"].as_array().into_iter().flatten() {
-            if state.is_cancelled(session_id)
-                || state.cancellation_generation(session_id)!=generation {
-                return Err("program repair postflight cancelled".into());
-            }
             let tool=post["tool"].as_str().unwrap_or("");
             let args=&post["inputs"];
-            if !crate::engine::adaptation::probes::read_only_tool(tool)
-                || !args.is_object() {
-                postflight_failure=Some("invalid non-observational repair postflight".into());
-                break;
-            }
             let cache_key=format!("{tool}:{args}");
             let (result,ok,call_id)=if let Some(cached)=read_cache.get(&cache_key){
                 (*cached).clone()
-            }else{
-                if !budget_local.charge_tool(){
+            } else {
+                let observed=dispatch_observation(
+                    &ctx,tool,(*args).clone(),"program_repair_postflight",
+                    0,&mut budget_local,&mut op_seq_local,
+                ).await?;
+                let Some(entry)=observed else {
                     postflight_failure=Some("postflight tool budget exhausted".into());
                     break;
-                }
-                op_seq_local+=1;
-                let call=ToolCall{
-                    id:format!("program-postflight-{}",uuid::Uuid::new_v4()),
-                    name:tool.to_string(),arguments:args.to_string(),
                 };
-                let (result,ok,_)=dispatch_tool_call(
-                    state,tx,session,request,session_id,execution_id,
-                    &call,(*args).clone(),metrics,op_seq_local,0,0,false,
-                    "program_repair_postflight",None,None,None,
-                ).await?;
-                let entry=(result,ok,call.id);
                 read_cache.insert(cache_key,entry.clone());
                 entry
             };
             let verdict=crate::engine::adaptation::repair_tournament::postflight_verdict(
-                post,&result,ok && tool_succeeded(&result),
+                post,&result,ok,
             );
             verification_receipts.push(json!({
                 "postflightId":post["id"],"callId":call_id,
