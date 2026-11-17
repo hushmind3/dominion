@@ -73,9 +73,9 @@ fn artifact_proof(job:&Value,trace:&Value,snapshot:&Snapshot)->Value{
  }else if !terminal||!accepted {
   "not_accepted"
  }else if all_direct {
-  "directly_corrobated"
+  "directly_corroborated"
  }else{
-  "partially_corrobated"
+  "partially_corroborated"
  };
  json!({
   "grade":grade,
@@ -113,10 +113,45 @@ fn first_difference(a:&[Action],b:&[Action])->Value{
  }
  json!({"kind":"same_declared_actions","ordinal":null})
 }
+/// Find the earliest *pre-intervention* mismatch in externally observed
+/// receipts. A shared decision prefix with different outputs is an exposed
+/// confounder: later outcomes cannot be attributed to strategy divergence.
+fn common_prefix_drift(
+ baseline_actions:&[Action],candidate_actions:&[Action],
+ baseline:&Snapshot,candidate:&Snapshot,
+)->Value{
+ for (ordinal,(left,right)) in baseline_actions.iter()
+  .zip(candidate_actions).take(MAX_ACTIONS).enumerate()
+ {
+  if left.tool!=right.tool||left.arguments!=right.arguments
+   ||left.depends_on.len()!=right.depends_on.len(){break;}
+  let l=baseline.receipts.iter().find(|receipt|receipt.id==left.id);
+  let r=candidate.receipts.iter().find(|receipt|receipt.id==right.id);
+  let (Some(l),Some(r))=(l,r) else{
+   return json!({"kind":"unobserved_common_prefix","ordinal":ordinal,
+    "prefixComparable":false});
+  };
+  if l.tool!=r.tool||l.arguments!=r.arguments
+   ||l.success!=r.success||l.result!=r.result {
+   return json!({"kind":"environment_or_tool_drift","ordinal":ordinal,
+    "prefixComparable":false,"baselineResultDigest":digest(&l.result),
+    "candidateResultDigest":digest(&r.result)});
+  }
+ }
+ json!({"kind":"matching_observed_prefix","ordinal":null,"prefixComparable":true})
+}
+
 fn chain_from_divergence(
- baseline:&[Action],candidate:&[Action],snapshot:&Snapshot,changed:&[String]
+ baseline:&[Action],candidate:&[Action],snapshot:&Snapshot,changed:&[String],
+ prefix:&Value
 )->Value{
  let first=first_difference(baseline,candidate);
+ if prefix["prefixComparable"]!=true {
+  return json!({"traceDifference":first,"prefixEvidence":prefix,
+   "mechanism":"pre_intervention_observation_drift",
+   "actionToArtifactLinks":[],"prefixEvidence":prefix,
+   "counterfactualExecuted":false});
+ }
  let Some(at)=first["ordinal"].as_u64().map(|v|v as usize) else{
   return json!({"traceDifference":first,
    "mechanism":"not_identifiable_from_unchanged_actions",
@@ -163,6 +198,7 @@ fn chain_from_divergence(
   "mechanism":if directed{"artifact_linked_candidate_mechanism"}
     else{"unattributed_difference"},
   "actionToArtifactLinks":links,
+  "prefixEvidence":prefix,
   "counterfactualExecuted":false,
   "claim":"mechanism candidate only; external execution and hidden-state confounders remain",
   "registeredActionCount":by_id.len()})
@@ -190,7 +226,8 @@ pub fn adjudicate(
   return Err("Adjudication requires 1..8 candidate runs".into())
  }
  let mut all=BTreeSet::new();
- for id in std::iter::once(&baseline_id.to_owned()).chain(candidate_ids.iter()){
+ if !all.insert(baseline_id.to_string()){return Err("Duplicate baseline".into())}
+ for id in candidate_ids {
   if id.is_empty()||id.len()>128||!all.insert(id.clone()){
    return Err("Run IDs must be distinct, nonempty and bounded".into())
   }
@@ -217,8 +254,14 @@ pub fn adjudicate(
   let changed=candidate_proof["changedAcceptancePaths"].as_array()
    .cloned().unwrap_or_default().iter()
    .filter_map(|v|v.as_str().map(str::to_owned)).collect::<Vec<_>>();
-  let mechanism=chain_from_divergence(&base_actions,&run_actions,&snap,&changed);
+  let prefix=common_prefix_drift(
+   &base_actions,&run_actions,&base_snapshot,&snap,
+  );
+  let mechanism=chain_from_divergence(
+   &base_actions,&run_actions,&snap,&changed,&prefix,
+  );
   let matched=unmatched.is_empty()&&same_initial
+   &&prefix["prefixComparable"]==true
    &&base_proof["hostLineageConsistent"]==true
    &&candidate_proof["hostLineageConsistent"]==true
    &&base_proof["grade"]!="unsealed_or_conflicting_artifacts"
@@ -255,7 +298,7 @@ pub fn adjudicate(
 #[cfg(test)]
 mod tests {
  use super::*;
- use dominion_sdk::harness::{Decision,Receipt};
+ use dominion_sdk::harness::Receipt;
 
  fn action(id:&str,tool:&str,path:&str,depends:&[&str])->Action{
   Action{id:id.into(),tool:tool.into(),
@@ -275,7 +318,8 @@ mod tests {
   snap.receipts.push(Receipt{id:"b".into(),tool:"workspace_write".into(),
    arguments:json!({"path":"file","content":"x"}),
    success:true,result:json!({"ok":true}),step:1});
-  let v=chain_from_divergence(&b,&c,&snap,&["file".into()]);
+  let v=chain_from_divergence(&b,&c,&snap,&["file".into()],
+   &json!({"prefixComparable":true}));
   assert_eq!(v["mechanism"],"artifact_linked_candidate_mechanism");
   assert_eq!(v["actionToArtifactLinks"].as_array().unwrap().len(),1);
   assert_eq!(v["actionToArtifactLinks"][0]["actionId"],"b");
@@ -289,7 +333,8 @@ mod tests {
    strategy:Default::default(),limits:Default::default(),allowed_tools:vec![],
    checks:vec![],require_evidence:false};
   let snap=Snapshot::from_request(&request);
-  let v=chain_from_divergence(&actions,&actions,&snap,&["file".into()]);
+  let v=chain_from_divergence(&actions,&actions,&snap,&["file".into()],
+   &json!({"prefixComparable":true}));
   assert_eq!(v["mechanism"],"not_identifiable_from_unchanged_actions");
  }
  #[test]
@@ -316,4 +361,30 @@ mod tests {
    "entries":{"out":{"state":"missing"}},"directVerdicts":[false]}});
   assert!(!direct_verdicts_agree(&job,&snap));
  }
+ #[test]
+ fn identical_model_actions_with_divergent_host_results_are_exposed_confounders(){
+  let actions_a=vec![action("first","workspace_read","a",&[]),
+   action("last","workspace_write","out",&["first"])];
+  let actions_b=vec![action("other","workspace_read","a",&[]),
+   action("finish","workspace_write","new",&["other"])];
+  let new_snap=|id:&str,result:Value|{
+   let request=dominion_sdk::harness::RunRequest{id:id.to_string(),
+    instruction:"task".into(),owner_instructions:String::new(),
+    strategy:Default::default(),limits:Default::default(),allowed_tools:vec![],
+    checks:vec![],require_evidence:false};
+   let mut snap=Snapshot::from_request(&request);
+   snap.receipts.push(Receipt{id:if id=="a"{"first"}else{"other"}.into(),
+    tool:"workspace_read".into(),arguments:json!({"path":"a","content":"x"}),
+    success:true,result,step:1});
+   snap
+  };
+  let a=new_snap("a",json!({"file":"before"}));
+  let b=new_snap("b",json!({"file":"after"}));
+  let drift=common_prefix_drift(&actions_a,&actions_b,&a,&b);
+  assert_eq!(drift["kind"],"environment_or_tool_drift");
+  let graph=chain_from_divergence(&actions_a,&actions_b,&b,&["new".into()],&drift);
+  assert_eq!(graph["mechanism"],"pre_intervention_observation_drift");
+  assert_eq!(graph["counterfactualExecuted"],false);
+ }
+
 }
