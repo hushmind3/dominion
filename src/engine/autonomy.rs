@@ -58,6 +58,38 @@ fn verification_after_last_edit(command:&str, evidence:&[Value])->bool {
     }
 }
 
+/// Count new, successful observations instead of counting tool invocations.
+/// Re-reading the same file or repeating the same shell output is not progress,
+/// and failed receipts are safety evidence, never a reason to buy another round.
+fn evidence_signature(item:&Value)->u64{
+    use std::hash::{Hash,Hasher};
+    let mut result=item["result"].clone();
+    if let Some(fields)=result.as_object_mut(){
+        for key in ["id","callId","operationId","timestamp","at","startedAt",
+            "finishedAt","elapsedMs","durationMs","latencyMs"]{
+            fields.remove(key);
+        }
+    }
+    let payload=json!({"tool":verification::tool_name(item),
+        "arguments":item["arguments"],"result":result});
+    let mut hasher=std::collections::hash_map::DefaultHasher::new();
+    payload.to_string().hash(&mut hasher);
+    hasher.finish()
+}
+fn novel_successful_evidence(previous:&[Value],latest:&[Value])->usize{
+    let mut seen:std::collections::HashSet<_>=previous.iter()
+        .filter(|item|verification::successful_evidence(item))
+        .map(evidence_signature).collect();
+    latest.iter().filter(|item|{
+        if !verification::successful_evidence(item){return false;}
+        if matches!(verification::tool_name(item),
+            "workspace_write"|"workspace_replace"|"workspace_replace_range"|
+            "workspace_apply_patch"|"file_write"
+        ) && !verification::is_action_evidence(item){return false;}
+        seen.insert(evidence_signature(item))
+    }).count()
+}
+
 /// Called by the existing durable prompt worker. The job stays one operation;
 /// all intermediate rounds share its session, cancellation and audit records.
 pub async fn execute(
@@ -188,6 +220,11 @@ pub async fn execute(
         let latest_error=outcome.as_ref().err().cloned();
         last_message=outcome.as_ref().ok().and_then(|msg|msg.as_ref())
             .map(|msg|msg["id"].clone()).unwrap_or(Value::Null);
+        // Tool failures are retained for no-replay decisions, but must not
+        // make an unchanged failed attempt appear to have advanced the task.
+        let before_evidence=all_evidence.len();
+        let new_evidence=novel_successful_evidence(
+            &all_evidence[evidence_epoch..before_evidence],&stats.evidence);
         all_evidence.extend(stats.evidence.iter().cloned());
         let current_evidence=&all_evidence[evidence_epoch..];
         let mut gaps=verification::check_acceptance(
@@ -217,7 +254,7 @@ pub async fn execute(
                 .is_some_and(|limit|consumed_tokens>=limit);
         let assessment=cycle.assess(&Observation{
             has_checks,gaps:&gaps,error:latest_error.as_deref(),
-            accumulated_evidence:&all_evidence,new_evidence:stats.evidence.len(),
+            accumulated_evidence:&all_evidence,new_evidence,
             owner_changed,token_budget_exhausted,
         });
         let repeated_without_progress=assessment.stalled;
@@ -359,6 +396,27 @@ mod tests{
         assert!(text.contains("수정해"));
         assert!(text.len()<4000);
         assert_eq!(CycleConfig::from_input(&json!({"maxAutonomousAttempts":100})).attempts,6);
+    }
+    #[test]
+    fn repeated_tool_reads_and_errors_are_not_false_progress(){
+        let read=json!({"tool":"shell_exec","callId":"first",
+            "arguments":{"command":"git status"},
+            "result":{"exitCode":0,"stdout":"clean","elapsedMs":14}});
+        let repeated=json!({"tool":"shell_exec","callId":"second",
+            "arguments":{"command":"git status"},
+            "result":{"exitCode":0,"stdout":"clean","elapsedMs":99}});
+        let changed=json!({"tool":"shell_exec","callId":"third",
+            "arguments":{"command":"git status"},
+            "result":{"exitCode":0,"stdout":"modified","elapsedMs":22}});
+        let failed=json!({"tool":"shell_exec","status":"failed",
+            "arguments":{"command":"git status"},"result":{"error":"timeout"}});
+        assert_eq!(novel_successful_evidence(&[],&[read.clone()]),1);
+        assert_eq!(novel_successful_evidence(&[read.clone()],
+            &[repeated,failed]),0);
+        assert_eq!(novel_successful_evidence(&[read],&[changed]),1);
+        let noop=json!({"tool":"workspace_write","result":{
+            "written":true,"changed":false,"success":true}});
+        assert_eq!(novel_successful_evidence(&[],&[noop]),0);
     }
     #[test]
     fn model_usage_is_measured_from_engine_audit_not_estimated_by_length(){
