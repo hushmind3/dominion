@@ -27,3 +27,25 @@ disables CLI access only for this app, without logging the OS account out.
 
 Docs: https://cli.github.com/manual/gh_auth_login
 Docs: https://github.com/googleworkspace/cli
+
+## Key-free browser fallback (when no registered OAuth app or CLI)
+
+If Chrome/Chromium is present, the Connect button now opens a **visible**
+browser window with DOMINION's dedicated persistent Chrome profile at the
+fixed Google Drive or GitHub sign-in URL. The user signs in once through the
+actual provider website. DOMINION's browser_control agent uses the **same
+isolated Chrome profile**, so it can navigate that signed-in website and
+interact through the graphical browser workflow after explicit approval.
+No API key, CLI install, client ID, client secret, token export, or scraping
+of the user's existing browser cookies is required for this browser mode.
+
+Browser mode is distinct from typed API mode: a web login does **not**
+grant the REST tools Google Drive/Docs/Sheets access tokens or the native
+GitHub API token. Account cards therefore advertise *browser login
+available*, never a fabricated OAuth connected status. The user can
+install gh/gws or use a packaged OAuth app for typed API actions later.
+
+Opening the visible Chrome profile does not inspect or modify normal Chrome
+user profiles. Browser CDP is bound to localhost and existing tab ownership,
+tool approval and user policy gates remain in effect. An active headless
+browser task is never silently terminated to switch login modes.

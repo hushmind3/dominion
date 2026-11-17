@@ -604,6 +604,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn account_login_is_fixed_to_trusted_web_hosts(){
+        assert_eq!(login_url("github"),Some("https://github.com/login"));
+        assert_eq!(login_url("google"),Some("https://drive.google.com/drive/u/0/my-drive"));
+        assert!(login_url("https://evil.example").is_none());
+        assert!(login_url("youtube").is_none());
+    }
+    #[test]
     fn element_script_quotes_the_index() {
         let script = element_script(3, "return { ok: true };");
         assert!(script.contains("data-dominion-idx=\"3\""));

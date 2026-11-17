@@ -272,3 +272,17 @@ test('connected CLI account adapters avoid end-user OAuth app and API key fields
  assert.match(bridge,/fn google_parts/);
  assert.match(google,/cli_accounts::google_request/);
 });
+
+test('browser-only sign-in fallback has real visible Chrome session, without claiming REST OAuth',()=>{
+ const oauth=file('src/engine/oauth.rs'),api=file('src/api/oauth.rs');
+ const browser=file('src/engine/browser.rs');
+ const proj=file('src/engine/chat/tool_projection.rs');
+ const ui=file('web/src/pages/Connections.tsx');
+ assert.match(oauth,/pub fn uses_browser/);
+ assert.match(api,/browser::open_account_login/);
+ assert.match(browser,/pub async fn open_account_login/);
+ assert.match(browser,/VISIBLE_ACCOUNT_BROWSER/);
+ assert.match(browser,/fn login_url/);
+ assert.match(proj,/let wants_browser/);
+ assert.match(ui,/item.loginMode==='browser'/);
+});
