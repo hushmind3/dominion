@@ -241,7 +241,7 @@ fn predicted_values(
         let kind = predicate["type"].as_str().unwrap_or("");
         let expected = match kind {
             "equals" => predicate.get("value"),
-            "exists" => prediction.get("expectedValue").filter(Value::is_boolean),
+            "exists" => prediction.get("expectedValue").filter(|value| value.is_boolean()),
             _ => None,
         };
         let Some(expected) = expected else { continue; };
@@ -262,7 +262,7 @@ fn contrastive_gain(
     expected_checks: &[Value],
 ) -> (f64, usize) {
     let observed_slots = expected_checks.iter().filter_map(|check| {
-        let predicate = check.get("predicate").filter(Value::is_object)
+        let predicate = check.get("predicate").filter(|value| value.is_object())
             .unwrap_or(check);
         Some((
             predicate["from"].as_str()?.to_owned(),
