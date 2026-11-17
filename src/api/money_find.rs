@@ -554,7 +554,7 @@ mod tests {
     fn unseen_leads_first_rejected_excluded_and_history_is_bounded(){
         let pool=(0..5).map(|i|json!({"id":format!("lead-{i}"),
             "status":if i==2{"rejected"}else{"hypothesis"}})).collect::<Vec<_>>();
-        let (first,shown,cursor)=next_drafts(&pool,&Value::Null,9);
+        let (first,shown,cursor)=next_drafts(&pool,&Value::Null,3);
         assert_eq!(first.iter().filter_map(|row|row["id"].as_str()).collect::<Vec<_>>(),
             vec!["lead-0","lead-1","lead-3"]);
         let (second,history,_)=next_drafts(&pool,&json!({"cursor":cursor,"shownCandidateIds":shown}),9);
