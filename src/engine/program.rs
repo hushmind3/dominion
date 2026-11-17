@@ -131,6 +131,9 @@ pub fn new_checkpoint(program: &Value) -> Value {
         "pendingOperationIds": [],
         "loopProgress": {},
         "observationRefs": {},
+        "mutationEpoch": 0,
+        "verificationEpoch": null,
+        "staleVerification": false,
         "adaptationRevision": 0,
     })
 }
