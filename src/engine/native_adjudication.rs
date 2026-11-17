@@ -98,10 +98,23 @@ fn actions(snapshot:&Snapshot)->Result<Vec<Action>,String>{
  if list.len()>MAX_ACTIONS{return Err("Trajectory action cap exceeded".into())}
  Ok(list)
 }
+/// Convert action IDs into topological indices, so separately executed runs
+/// can share a true dependency shape despite independently generated IDs.
+fn dependency_shape(actions:&[Action],index:usize)->Vec<usize>{
+ let mut by_id=BTreeMap::new();
+ for (ordinal,action) in actions.iter().take(index).enumerate(){
+  by_id.insert(action.id.as_str(),ordinal);
+ }
+ let mut out=actions[index].depends_on.iter()
+  .map(|id|by_id.get(id.as_str()).copied().unwrap_or(usize::MAX))
+  .collect::<Vec<_>>();
+ out.sort_unstable();
+ out
+}
 fn first_difference(a:&[Action],b:&[Action])->Value{
  for (index,(left,right)) in a.iter().zip(b).enumerate(){
   if left.tool!=right.tool||left.arguments!=right.arguments
-   ||left.depends_on.len()!=right.depends_on.len(){
+   ||dependency_shape(a,index)!=dependency_shape(b,index){
    return json!({"kind":"decision_change","ordinal":index,
     "baseline":{"id":left.id,"tool":left.tool,"argsDigest":digest(&left.arguments)},
     "candidate":{"id":right.id,"tool":right.tool,"argsDigest":digest(&right.arguments)}});
@@ -124,7 +137,7 @@ fn common_prefix_drift(
   .zip(candidate_actions).take(MAX_ACTIONS).enumerate()
  {
   if left.tool!=right.tool||left.arguments!=right.arguments
-   ||left.depends_on.len()!=right.depends_on.len(){break;}
+   ||dependency_shape(baseline_actions,ordinal)!=dependency_shape(candidate_actions,ordinal){break;}
   let l=baseline.receipts.iter().find(|receipt|receipt.id==left.id);
   let r=candidate.receipts.iter().find(|receipt|receipt.id==right.id);
   let (Some(l),Some(r))=(l,r) else{
@@ -385,6 +398,23 @@ mod tests {
   let graph=chain_from_divergence(&actions_a,&actions_b,&b,&["new".into()],&drift);
   assert_eq!(graph["mechanism"],"pre_intervention_observation_drift");
   assert_eq!(graph["counterfactualExecuted"],false);
+ }
+
+ #[test]
+ fn different_dependency_topology_is_not_mistaken_for_identical_strategy() {
+  let base=vec![action("a","workspace_read","first",&[]),
+   action("b","workspace_read","second",&[]),
+   action("c","workspace_write","out",&["a"])];
+  let candidate=vec![action("x","workspace_read","first",&[]),
+   action("y","workspace_read","second",&[]),
+   action("z","workspace_write","out",&["y"])];
+  let change=first_difference(&base,&candidate);
+  assert_eq!(change["kind"],"decision_change");
+  assert_eq!(change["ordinal"],2);
+  let renumbered=vec![action("x","workspace_read","first",&[]),
+   action("y","workspace_read","second",&[]),
+   action("z","workspace_write","out",&["x"])];
+  assert_eq!(first_difference(&base,&renumbered)["kind"],"same_declared_actions");
  }
 
 }
