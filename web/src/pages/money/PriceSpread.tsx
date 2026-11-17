@@ -1,3 +1,5 @@
+import {MoneyEvidence,type MoneyEvidenceRow} from './Evidence'
+
 export type MoneyPriceComparison={
  status?:string
  buyerCurrency?:string;supplierCurrency?:string
@@ -7,8 +9,8 @@ export type MoneyPriceComparison={
  grossSpreadWonPerUnit?:number|null
  netSpreadWonPerUnit?:number|null
  tradeConfirmed?:boolean
- buyer?:{quotationStatus?:string}
- supplier?:{quotationStatus?:string}
+ buyer?:MoneyEvidenceRow
+ supplier?:MoneyEvidenceRow
 }
 const labels:Record<string,string>={
  independent_sources_required:'가격 출처의 독립성 확인 필요',
@@ -40,6 +42,7 @@ export function PriceSpread({value}:{value:MoneyPriceComparison}){
    <strong className="mt-1 block text-xs text-[#805335]">
     배송·관세·수수료·반품·노동 비용 반영 후 단위 차액: {won(value.netSpreadWonPerUnit)}
    </strong>}
+  <MoneyEvidence items={[value.buyer||{},value.supplier||{}]} limit={2}/>
   <p className="mt-1 text-[#987C62]">원문 인용이 일치하더라도 실제 구매·매출·수익이 발생했다는 뜻은 아닙니다.</p>
  </div>
 }
