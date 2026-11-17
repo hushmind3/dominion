@@ -1721,7 +1721,7 @@ pub(super) async fn run_turn_body(
                     match attempt_model_adaptation(
                         state, tx, &session, request, session_id, execution_id, round,
                         &call.id, &call.name, &arguments, &error_text, metrics,
-                        &mut budget, &mut op_seq, environment_version,
+                        &mut budget, &mut op_seq, environment_version, generation,
                     ).await {
                         Ok(adapted) => {
                         let selected = &adapted["selected"];
