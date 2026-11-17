@@ -34,3 +34,11 @@ terminal receipt production with focused tests rather than moving unrelated
 behavior into new public SDKs. Actual model/runtime performance changes
 must be measured separately; file-size reduction by itself is not a
 CPU benchmark.
+
+## End-to-end suite layout
+
+The former 7,142-line `tests/e2e.rs` is now a shared live-server/mock-provider
+fixture and eight private test modules. Every original `#[test]` scenario
+remains present; the fixture lock, port allocation and mock Codex transport
+servers are defined once in the parent module. No tests were disabled, skipped,
+or replaced with source-matching mocks.

@@ -190,3 +190,21 @@ test('turn coordinator delegates substantial single-responsibility modules',()=>
  assert.match(program,/pub\(super\) fn restore_program_state\(/);
  assert.match(dispatch,/pub\(super\) async fn dispatch_tool_call\(/);
 });
+
+test('the real-binary e2e suite is partitioned without dropping scenarios',()=>{
+ const root=file('tests/e2e.rs');
+ const modules=['conversation_rooms','recovery_scheduler','backup_adaptation',
+    'program_recovery','tool_preflight','api_jobs','room_context_benchmark',
+    'codex_transports'];
+ assert.ok(root.split('\n').length<1000);
+ for(const name of modules){
+   assert.match(root,new RegExp('mod '+name+';'));
+   const source=file('tests/e2e/'+name+'.rs');
+   assert.ok(source.split('\n').length<2000,name+' huge test suite');
+   assert.match(source,/use super::\*/);
+ }
+ assert.match(root,/fn scripted_provider\(/);
+ assert.match(root,/fn start_mock_provider\(/);
+ assert.match(file('tests/e2e/program_recovery.rs'),/a_mid_adaptation_restart_restores/);
+ assert.match(file('tests/e2e/codex_transports.rs'),/codex_websocket_executes/);
+});
