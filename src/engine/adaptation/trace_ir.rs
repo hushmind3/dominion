@@ -250,7 +250,7 @@ pub fn action_certificate(
         if !hypotheses.iter().any(|h|h["id"].as_str()==Some(id)) {
             return Err(format!("intervention uses an unknown causal hypothesis {id}"));
         }
-        if !refuted.iter().any(|r|r==id) && !live.iter().any(|v|v==id) {
+        if !refuted.iter().any(|r|r.as_str()==id) && !live.contains(&id) {
             live.push(id);
         }
     }
@@ -258,6 +258,9 @@ pub fn action_certificate(
         return Err("all hypotheses supporting the selected intervention were refuted".into());
     }
     let failure=trace["focus"]["failureSurface"].as_str().unwrap_or("unobserved");
+    if is_effectful && trace["focus"].is_null() {
+        return Err("no committed failure receipt: state-changing repair lacks observable provenance".into());
+    }
     if is_effectful && matches!(failure,"effect_reconciliation"|"governance"){
         return Err(format!(
             "an unresolved/denied native effect ({failure}) cannot authorize a speculative write; inspect or request owner review"
@@ -348,6 +351,15 @@ mod tests{
         assert!(action_certificate(&trace,&read,&hypotheses,&[
             "h1".to_string(),"h2".to_string()
         ],false).is_err());
+    }
+    #[test]
+    fn missing_native_receipt_never_promotes_write_action(){
+        let trace=json!({"focus":null,"nodes":[]});
+        let mutation=json!({"id":"fix","tool":"workspace_write",
+            "hypothesisIds":["h1"]});
+        let hypotheses=vec![json!({"id":"h1"})];
+        assert!(action_certificate(&trace,&mutation,&hypotheses,&[],true).is_err());
+        assert!(action_certificate(&trace,&mutation,&hypotheses,&[],false).is_ok());
     }
     #[test]
     fn evidence_bound_certificate_rejects_phantom_source(){
