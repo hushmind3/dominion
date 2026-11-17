@@ -37,7 +37,6 @@ pub(crate) fn resolve_canonical_workspace_path(
 /// the model's claim that it edited a file. Never follow an escaping symlink,
 /// and never persist the file contents in the job record.
 pub(crate) fn artifact_witness(workspace:&std::path::Path,checks:&[Criterion])->Value{
- use CriterionKind;
  let root=match std::fs::canonicalize(workspace){
   Ok(root)=>root,
   Err(_)=>return json!({"complete":false,"reason":"workspace_unavailable","entries":{}})
@@ -85,7 +84,6 @@ pub(crate) fn artifact_witness(workspace:&std::path::Path,checks:&[Criterion])->
   }
  }
  let verdicts=checks.iter().map(|check|{
-  use CriterionKind;
   let verdict=match check.kind {
    CriterionKind::ToolSucceeded=>Value::Null,
    CriterionKind::FileExists|CriterionKind::FileAbsent|
