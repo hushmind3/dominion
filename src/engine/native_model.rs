@@ -229,9 +229,22 @@ fn finish(content:String,actions:Vec<Action>,input:Option<u64>,output:Option<u64
     if actions.is_empty() && content.trim().is_empty() {
         return Err("Provider returned neither final answer nor native tool calls".into());
     }
-    let decision=Decision{plan:Vec::new(),
+    // Native models ordinarily use typed function calls. For a deliberate
+    // exploratory turn they may instead emit the bounded candidatePaths
+    // decision envelope, then return to native calls after the kernel probes.
+    // Only this explicit envelope is parsed; an ordinary JSON answer stays
+    // an ordinary final answer.
+    let candidate=if actions.is_empty() {
+        match serde_json::from_str::<Value>(&content) {
+            Ok(value) if value.get("candidatePaths").is_some() =>
+                Some(serde_json::from_value::<Decision>(value)
+                    .map_err(|error|format!("Invalid native probe proposal: {error}"))?),
+            _=>None
+        }
+    } else {None};
+    let decision=candidate.unwrap_or_else(||Decision{plan:Vec::new(),
         answer:actions.is_empty().then_some(content.clone()),
-        actions};
+        actions,candidate_paths:vec![]});
     Ok(ModelTurn {reply:ModelReply{content,input_tokens:input,output_tokens:output},
         decision:Some(decision)})
 }
