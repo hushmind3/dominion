@@ -58,5 +58,14 @@ jobs:
           cargo test --lib db::money::idle_autopilot_tests
           cargo test --lib db::money::dashboard_stats_tests
           cargo test -p dominion-agent-kernel --lib
+          # Sub2 native evidence, contrastive repair and completed-effect recovery.
+          cargo test --lib engine::adaptation::probes::tests
+          cargo test --lib engine::adaptation::trace_ir::tests
+          cargo test --lib engine::adaptation::repair_tournament::tests
+          cargo test --lib engine::adaptation_loop::selection_tests
+          cargo test --lib engine::chat::runtime::program::repair_completion_tests
+          cargo test --lib engine::chat::runtime::program::review_settlement_tests
+          cargo test --lib engine::chat::outcome::program_review_outcome_tests
+          cargo test --lib db::tests::bounded_provenance_query_observes_only_requested_run_and_order
           cargo test --lib engine::algorithms::tests::confounded_task_success_does_not_award_multiple_ucb_kernels
           cargo test --lib engine::algorithms::tests::direct_failed_domain_signal_overrides_shared_task_success
