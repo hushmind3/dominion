@@ -44,6 +44,7 @@ jobs:
           cargo test --bin dominion-rust engine::chat::tests
           cargo test --bin dominion-rust engine::verification
           cargo test --bin dominion-rust engine::native_adjudication::tests
+          cargo test --bin dominion-rust engine::native_evidence::tests
           cargo test --bin dominion-rust engine::native_replay::tests
           cargo test --bin dominion-rust api::native_replay::tests
           cargo test --bin dominion-rust engine::program::tests
