@@ -25,6 +25,11 @@ fn executable(provider:&str)->Option<std::path::PathBuf>{
         for root in std::env::split_paths(&path){
             let candidate=root.join(binary);
             if candidate.is_file(){return Some(candidate);}
+            #[cfg(windows)]
+            {
+                let exe=root.join(format!("{binary}.exe"));
+                if exe.is_file(){return Some(exe);}
+            }
         }
     }
     for root in ["/opt/homebrew/bin","/usr/local/bin","/usr/bin"]{
@@ -33,11 +38,8 @@ fn executable(provider:&str)->Option<std::path::PathBuf>{
     }
     #[cfg(windows)]
     {
-        if let Some(appdata)=std::env::var_os("APPDATA"){
-            let candidate=std::path::PathBuf::from(appdata)
-                .join("npm").join(format!("{binary}.cmd"));
-            if candidate.is_file(){return Some(candidate);}
-        }
+        // Never invoke a .cmd shim with model-supplied --json: shell
+        // metacharacters in sheet cells would become command injection.
         if provider=="github"{
             let candidate=std::path::Path::new("C:\\Program Files\\GitHub CLI\\gh.exe");
             if candidate.is_file(){return Some(candidate.to_path_buf());}
