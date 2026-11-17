@@ -351,7 +351,8 @@ use planning::*;
 use finalization::*;
 
 // The chat host bridge and external tests keep their original API paths.
-pub(super) use dispatch::{dispatch_tool_call,tool_succeeded};
+pub(super) use dispatch::dispatch_tool_call;
+pub(super) use planning::tool_succeeded;
 pub(super) use finalization::{finish_attempt,finalize_execution};
 pub(super) use selection::adjacent_read_batch_end;
 
