@@ -751,6 +751,29 @@ mod repair_completion_tests {
         assert!(program_operation_completed(false,None));
         assert!(program_operation_completed(false,Some("continue")));
     }
+    #[test]
+    fn failed_revisable_node_can_be_replaced_but_confirmed_effect_cannot(){
+        let base=json!({"revision":"base","nodes":[
+            {"id":"change","type":"call_tool","tool":"workspace_write",
+                "inputs":{"path":"a.txt","content":"old"},"onFailure":"revise"}
+        ]});
+        let proposal=json!({
+            "baseRevision":"base","reason":"change failed input",
+            "replacePendingNodes":[{"id":"change","type":"call_tool",
+                "tool":"workspace_write","inputs":{"path":"a.txt","content":"new"},
+                "onFailure":"revise"}]
+        });
+        let mut checkpoint=crate::engine::program::new_checkpoint(&base);
+        if program_operation_completed(false,Some("revise")){
+            mark_program_completed(&mut checkpoint,"change");
+        }
+        let tools=vec!["workspace_write".to_string()];
+        assert!(crate::engine::program::apply_revision_proposal(
+            &base,&checkpoint,&proposal,&tools,64,"replace").is_ok());
+        mark_program_completed(&mut checkpoint,"change");
+        assert!(crate::engine::program::apply_revision_proposal(
+            &base,&checkpoint,&proposal,&tools,64,"replace").is_err());
+    }
 }
 
 pub(super) fn mark_program_completed(checkpoint: &mut Value, node_id: &str) {
