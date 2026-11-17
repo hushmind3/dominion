@@ -6,6 +6,7 @@ const en: Record<LocaleKey, string> = {
   'nav.home': 'Dashboard',
   'shell.conversationSwitch': 'Conversation mode',
   'shell.groupShort': 'Group',
+  'nav.money': 'Money',
   'nav.chat': 'Chat',
   'nav.rooms': 'Group rooms',
   'nav.models': 'Models',

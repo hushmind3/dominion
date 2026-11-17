@@ -9,6 +9,7 @@ const HomePage=lazy(()=>import('./pages/Home').then(module=>({default:module.Hom
 const CapabilitiesPage=lazy(()=>import('./pages/Capabilities').then(module=>({default:module.CapabilitiesPage})))
 const MemoryPage=lazy(()=>import('./pages/Memory').then(module=>({default:module.MemoryPage})))
 const ChatPage=lazy(()=>import('./pages/Chat').then(module=>({default:module.ChatPage})))
+const MoneyPage=lazy(()=>import('./pages/Money').then(module=>({default:module.MoneyPage})))
 const ModelHub=lazy(()=>import('./pages/Models').then(module=>({default:module.ModelHub})))
 const AgentsPage=lazy(()=>import('./pages/Agents').then(module=>({default:module.AgentsPage})))
 const RoomsPage=lazy(()=>import('./pages/Rooms').then(module=>({default:module.RoomsPage})))
@@ -213,7 +214,8 @@ export default function App(){
     <SettingsHeader page={page} online={online} build={engineBuild} onClose={closeSettings}/>
     <div className="workspace-settings-content min-h-0 flex-1 overflow-y-auto">
      <PageLoadBoundary key={page}><Suspense fallback={<div role="status" className="p-8 text-sm text-[#7C7469]">화면 불러오는 중…</div>}>
-      {page==='home'&&<HomePage navigate={navigate}/>}
+      {page==='home'&&<HomePage navigate={navigate}/>} 
+      {page==='money'&&<MoneyPage openSession={id=>navigate('chat',id)}/>}
       {page==='capabilities'&&<CapabilitiesPage navigate={navigate}/>}
       {page==='memory'&&<MemoryPage/>}
       {page==='models'&&<ModelHub/>}

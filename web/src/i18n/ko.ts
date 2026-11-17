@@ -5,6 +5,7 @@ const ko = {
   'nav.home': '대시보드',
   'shell.conversationSwitch': '대화 전환',
   'shell.groupShort': '그룹',
+  'nav.money': '돈벌이',
   'nav.chat': '채팅',
   'nav.rooms': '그룹 대화 · 회의',
   'nav.models': '모델 관리',
