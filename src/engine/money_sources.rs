@@ -120,10 +120,25 @@ fn normalized_title(title:&str)->String{
 /// The same story arrives from several feeds with different URLs. Drop the
 /// repeats before they reach the corpus so tokens are never spent on them.
 fn dedupe_titles(signals:Vec<Value>,history:&[Value])->Vec<Value>{
-    let mut seen=history.iter().filter_map(|s|s["title"].as_str())
-        .map(normalized_title).collect::<std::collections::HashSet<_>>();
-    signals.into_iter().filter(|s|s["title"].as_str()
-        .map(|title|seen.insert(normalized_title(title))).unwrap_or(false)).collect()
+    // A repeated headline from another publisher is redundant. A re-fetch
+    // of the SAME URL that finally contains the article body is not: it must
+    // reach money_ingest_signals, which upgrades the existing row/FTS fact.
+    let old_titles=history.iter().filter_map(|old|
+        old["title"].as_str().map(|title|(normalized_title(title),old)))
+        .collect::<std::collections::HashMap<_,_>>();
+    let mut seen=std::collections::HashSet::new();
+    signals.into_iter().filter(|item|{
+        let Some(title)=item["title"].as_str()else{return false;};
+        let title=normalized_title(title);
+        if !seen.insert(title.clone()){return false;}
+        match old_titles.get(&title) {
+            None=>true,
+            Some(old)=>old["id"].as_str().is_some()
+                &&old["id"]==item["id"]
+                &&old["articleExcerpt"].as_str().unwrap_or("").chars().count()<=100
+                &&item["articleExcerpt"].as_str().unwrap_or("").chars().count()>100,
+        }
+    }).collect()
 }
 
 /// Include freshly captured records first; matching must happen in this
@@ -243,6 +258,32 @@ mod tests{
         let kept=dedupe_titles(batch,&history);
         assert_eq!(kept.len(),1);
         assert_eq!(kept[0]["title"],"New public buyer tender");
+    }
+    #[test] fn existing_headline_is_enriched_without_accepting_syndicated_duplicate(){
+        let headline=json!({"id":"source-1","title":"Factory procurement price drop",
+            "articleExcerpt":"","contentStatus":"headline_observed"});
+        let fetched=json!({"id":"source-1","title":"Factory procurement price drop",
+            "articleExcerpt":"Verified source body ".repeat(15),
+            "contentStatus":"page_fetched"});
+        let syndicated=json!({"id":"source-2","title":"Factory procurement price drop",
+            "articleExcerpt":"Mirrored copy ".repeat(15)});
+        let upgraded=dedupe_titles(vec![fetched.clone(),syndicated.clone()],&[headline.clone()]);
+        assert_eq!(upgraded.len(),1);
+        assert_eq!(upgraded[0]["id"],"source-1");
+        assert!(dedupe_titles(vec![syndicated],&[headline]).is_empty());
+        let store=crate::db::Store::open(std::path::Path::new(":memory:")).unwrap();
+        store.money_ingest_signals(&[json!({
+            "id":"source-1","title":"Factory procurement price drop",
+            "url":"https://example.com/source-1","sourceName":"test",
+            "capturedAt":"2026-11-17T00:00:00Z",
+            "articleExcerpt":"","contentStatus":"headline_observed"
+        })]).unwrap();
+        let mut refreshed=fetched;
+        refreshed["url"]=json!("https://example.com/source-1");
+        refreshed["sourceName"]=json!("test");
+        refreshed["capturedAt"]=json!("2026-11-17T00:10:00Z");
+        assert_eq!(store.money_ingest_signals(&[refreshed]).unwrap(),0);
+        assert_eq!(store.get("money_signal","source-1").unwrap()["contentStatus"],"page_fetched");
     }
     #[test] fn new_buyer_document_joins_existing_supply_in_same_cycle(){
         let supplier=json!({"id":"s","sourceName":"hardware source",
