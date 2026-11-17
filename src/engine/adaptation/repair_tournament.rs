@@ -128,6 +128,10 @@ pub fn prepare(
         let Ok(probe)=checked_probe(&id,&json!(probe)) else{continue;};
         let Some(after)=proposal["postflight"].as_object() else{continue;};
         let Ok(postflight)=checked_probe(&format!("post-{id}"),&json!(after)) else{continue;};
+        // 'exists /path' proves only that a tool returned something, not
+        // that a repair achieved the owner-requested state.
+        if !matches!(postflight["predicate"]["type"].as_str(),
+            Some("equals"|"compare")) {continue;}
         let costs=json!({
             "changedNodes": ids(proposal).len(),
             "effectfulNodes":mutations(proposal),
@@ -357,6 +361,11 @@ mod tests {
         assert!(prepare(&input,&program,&checkpoint,&failure,&tools,"replace").is_err());
         let unrelated=proposal("fix-b","b","present");
         assert!(prepare(&json!({"candidateRevisions":[unrelated]}),
+            &program,&checkpoint,&failure,&tools,"replace").is_err());
+        let mut weak=proposal("fix-a","a","old");
+        weak["postflight"]["predicate"]=json!({
+            "type":"exists","from":"result","path":"/content"});
+        assert!(prepare(&json!({"candidateRevisions":[weak]}),
             &program,&checkpoint,&failure,&tools,"replace").is_err());
     }
     #[test]
