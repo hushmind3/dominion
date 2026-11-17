@@ -54,6 +54,9 @@ jobs:
         run: |
           cargo test --lib jobs::tests
           cargo test --lib db::tests::recovery
+      - name: Money implementation approval and idempotency regressions
+        if: matrix.os == 'macos-latest'
+        run: cargo test --lib api::money::implement::tests
       - name: Money regression tests
         if: matrix.os == 'macos-latest'
         run: cargo test --lib money

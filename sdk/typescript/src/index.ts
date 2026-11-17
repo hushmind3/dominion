@@ -30,8 +30,10 @@ export interface MoneyDraft extends RecordItem {
   title:string; customer?:string; offer?:string; whyPay?:string;
   moneyMechanism?:string; firstTest?:string; firstPaymentStep?:string;
   implementationPlan?:string; evidenceStatus?:string;
+  implementationJobId?:string;
   evidence?:Array<{claim?:string;url?:string;kind?:string}>;
 }
+export interface MoneyImplementInput { approved:true; tokenBudget:number; agentId?:string }
 export interface MoneyFindInput {
   mode:'db'|'agent';agentId?:string;infer?:boolean;limit?:number;tokenBudget?:number;
 }
@@ -188,6 +190,8 @@ export class Dominion {
     setAutopilot:(key:string,input:Record<string,unknown>,options?:RequestOptions)=>this.request<RecordItem>('POST','/api/money/campaigns/'+id(key)+'/autopilot',input,options),
     candidate:(key:string,options?:RequestOptions)=>this.request<MoneyDraft>('GET','/api/money/candidates/'+id(key),undefined,options),
     recordExperiment:(key:string,input:Record<string,unknown>,options?:RequestOptions)=>this.request<RecordItem>('POST','/api/money/candidates/'+id(key)+'/experiments',input,options),
+    /** Explicit user-approved candidate handoff to the same durable Rust prompt job; no SDK auto-retry. */
+    implement:(key:string,input:MoneyImplementInput,options?:RequestOptions)=>this.request<Job>('POST','/api/money/candidates/'+id(key)+'/implement',input,options),
   };
   readonly jobs = {
     list: (options?: RequestOptions) => this.request<Job[]>('GET','/api/jobs',undefined,options),

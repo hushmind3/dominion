@@ -1,6 +1,7 @@
 //! Persistent Money Lab API. All writes are domain-scoped; the native agent
 //! runtime, global memory and the main branch require no new execution engine.
 mod find;
+mod implement;
 use crate::{engine, state::AppState};
 use axum::{extract::{Path,Query,State},http::StatusCode,response::{IntoResponse,Response},Json};
 use serde_json::{json, Value};
@@ -739,5 +740,6 @@ pub fn routes()->axum::Router<AppState>{
         .route("/api/money/campaigns/:id/autopilot",get(autopilot_status).post(autopilot_set))
         .route("/api/money/candidates/:id",get(candidate).post(update_candidate))
         .route("/api/money/candidates/:id/experiments",post(record_experiment))
+        .route("/api/money/candidates/:id/implement",post(implement::launch))
         .route("/api/money/candidates/:id/validation-kit",post(create_validation_kit))
 }

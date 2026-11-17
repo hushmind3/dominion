@@ -220,3 +220,16 @@ test('Money SDK percent-encodes campaign and candidate IDs, and never replays re
   assert.equal(calls[2].body.reportedRevenueWon,40000);
   assert.equal(calls[2].method,'POST');
 });
+
+test('Money implement requires explicit approval payload and uses one native POST',async()=>{
+ const calls=[];
+ const sdk=new Dominion({fetch:async(url,init)=>{
+  calls.push({url,method:init.method,body:JSON.parse(init.body)});
+  return json({id:'money:implement:x',kind:'prompt',status:'queued'});
+ }});
+ const job=await sdk.money.implement('buyer/lead',{approved:true,tokenBudget:24000,agentId:'agent-1'});
+ assert.equal(job.kind,'prompt');
+ assert.equal(calls.length,1);
+ assert.equal(calls[0].url,'http://127.0.0.1:4317/api/money/candidates/buyer%2Flead/implement');
+ assert.deepEqual(calls[0].body,{approved:true,tokenBudget:24000,agentId:'agent-1'});
+});

@@ -1792,9 +1792,14 @@ mod tests {
     #[test]
     fn recovery_queue_read_does_not_treat_corrupt_json_as_idle(){
         let store=Store::open(std::path::Path::new(":memory:")).unwrap();
-        store.conn.lock().unwrap().execute(
-            "INSERT INTO records(kind,id,data) VALUES('job','damaged','{bad')",[]
-        ).unwrap();
+        {
+            let conn=store.conn.lock().unwrap();
+            // This partial index validates JSON during INSERT. Disable it
+            // only in this corruption fixture so the read path sees damage.
+            conn.execute_batch("DROP INDEX idx_job_status").unwrap();
+            conn.execute("INSERT INTO records(kind,id,data) VALUES('job','damaged','{bad')",[])
+                .unwrap();
+        }
         assert!(store.active_jobs().is_err());
     }
 

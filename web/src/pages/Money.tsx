@@ -1,5 +1,5 @@
 import {useEffect,useState} from 'react'
-import {ArrowUpRight,CheckCircle2,Lightbulb,Loader2,Search} from 'lucide-react'
+import {ArrowUpRight,CheckCircle2,Lightbulb,Loader2,Search,Play,Square} from 'lucide-react'
 import {get,post,type Agent} from '../api'
 
 type Evidence={claim?:string;url?:string;kind?:string}
@@ -21,6 +21,7 @@ type Draft={
  counterfactual?:string
  origin?:string
  status?:string
+ implementationJobId?:string
 }
 type Stats={
  signals:number
@@ -46,6 +47,7 @@ type FindResult={
  inferenceModel?:{providerId?:string;model?:string}|null
  selectedAgentId?:string
 }
+type ImplementationJob={id:string;status:string;sessionId?:string;error?:string}
 const empty:FindResult={drafts:[],modelCalls:0,activeAutomationIds:[]}
 
 export function MoneyPage(_props:{openSession:(id:string)=>void}){
@@ -59,6 +61,9 @@ export function MoneyPage(_props:{openSession:(id:string)=>void}){
  const [stats,setStats]=useState<Stats|null>(null)
  const [toggling,setToggling]=useState(false)
  const [agentId,setAgentId]=useState('db')
+ const [implementationBudget,setImplementationBudget]=useState(24000)
+ const [implementing,setImplementing]=useState<string|null>(null)
+ const [implementationJobs,setImplementationJobs]=useState<Record<string,ImplementationJob>>({})
  const reasoning=['queued','running'].includes(result.inferenceStatus||'')
  useEffect(()=>{
   let mounted=true
@@ -82,7 +87,42 @@ export function MoneyPage(_props:{openSession:(id:string)=>void}){
   },3500)
   return()=>{live=false;window.clearInterval(interval)}
  },[reasoning])
+ useEffect(()=>{
+  const ids=Array.from(new Set((result.drafts||[]).map(d=>d.implementationJobId).filter((id):id is string=>!!id)))
+  if(!ids.length)return
+  let live=true
+  const refresh=()=>{void Promise.all(ids.map(id=>get<ImplementationJob>('/api/jobs/'+encodeURIComponent(id))))
+   .then(jobs=>{if(live)setImplementationJobs(prev=>({...prev,...Object.fromEntries(jobs.map(job=>[job.id,job]))}))})
+   .catch(()=>{})}
+  refresh()
+  const interval=window.setInterval(refresh,4000)
+  return()=>{live=false;window.clearInterval(interval)}
+ },[result.drafts])
  const selectedAgent=agents.find(a=>a.id===agentId)
+ async function implementCandidate(draft:Draft){
+  if(implementing||!Number.isSafeInteger(implementationBudget)||implementationBudget<1024||implementationBudget>120000){
+   setError('구현 작업의 토큰 한도는 1024~120000 사이여야 합니다.')
+   return
+  }
+  if(!window.confirm('이 돈벌이 후보를 실제 구현 작업으로 시작하시겠습니까? 파일·외부 도구 실행은 도미니언의 기존 승인 정책을 따릅니다.'))return
+  setImplementing(draft.id)
+  setError('')
+  try{
+   const job=await post<ImplementationJob>('/api/money/candidates/'+encodeURIComponent(draft.id)+'/implement',
+    {approved:true,tokenBudget:implementationBudget,...(agentId!=='db'?{agentId}:{})})
+   setImplementationJobs(prev=>({...prev,[job.id]:job}))
+   setResult(prev=>({...prev,drafts:prev.drafts.map(item=>
+    item.id===draft.id?{...item,implementationJobId:job.id}:item)}))
+  }catch(err){setError((err as Error).message)}
+  finally{setImplementing(null)}
+ }
+ async function stopImplementation(jobId:string){
+  setError('')
+  try{
+   const job=await post<ImplementationJob>('/api/jobs/'+encodeURIComponent(jobId)+'/cancel',{})
+   setImplementationJobs(prev=>({...prev,[job.id]:job}))
+  }catch(err){setError((err as Error).message)}
+ }
  async function toggleAutopilot(){
   if(toggling||!stats)return
   setToggling(true)
@@ -178,6 +218,13 @@ export function MoneyPage(_props:{openSession:(id:string)=>void}){
      {toggling?'처리 중…':stats?.autopilot?.enabled?'자동 순환 끄기':'자동 순환 켜기'}
     </button>
    </div>
+   <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-[#665548]">
+    <label htmlFor="money-implementation-budget" className="font-semibold">선택 후보 구현 한도</label>
+    <input id="money-implementation-budget" type="number" min={1024} max={120000} step={1024}
+     value={implementationBudget} onChange={event=>setImplementationBudget(Number(event.target.value))}
+     className="w-28 rounded-md border border-[#DAD0C3] bg-white px-2 py-1.5 tabular-nums" />
+    <span>토큰 · 실행은 후보별 사용자 승인 후 시작</span>
+   </div>
    <p className="mt-2 text-[11px] leading-5 text-[#8D7B6C]">
     조사 = 쌓인 자료에서 초안 추출(0토큰) · AI 선별 = 선택한 모델로 1회 추론 · 자동 순환 = 10분마다 무료 모델을 바꿔 계속 쌓기
    </p>
@@ -240,6 +287,22 @@ export function MoneyPage(_props:{openSession:(id:string)=>void}){
       {draft.counterfactual&&<p className="mt-2 text-[11px] leading-5 text-[#8B6D51]"><strong>가설이 틀리는 경우:</strong> {draft.counterfactual}</p>}
      </details>
      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-[#EEE5D9] bg-[#FCF9F4] px-5 py-3 sm:px-6">
+      <button type="button" onClick={()=>void implementCandidate(draft)}
+       disabled={!!draft.implementationJobId||implementing!==null||draft.status==='rejected'}
+       className="inline-flex min-h-9 items-center gap-1.5 rounded-md bg-[#6E7A5A] px-3 py-2 text-[11px] font-bold text-white disabled:opacity-50">
+       <Play size={13}/>{draft.implementationJobId?'구현 요청됨':implementing===draft.id?'작업 생성 중…':'승인 후 구현'}
+      </button>
+      {!!draft.implementationJobId&&<>
+       <span role="status" className="text-[11px] text-[#5D6D4B]">
+        구현 작업 · {implementationJobs[draft.implementationJobId]?.status||'기록 확인 중'}
+       </span>
+       {implementationJobs[draft.implementationJobId]?.sessionId&&
+        <button type="button" onClick={()=>_props.openSession(implementationJobs[draft.implementationJobId!].sessionId!)}
+         className="text-[11px] font-bold text-[#8F583F] underline">대화에서 보기</button>}
+       {['queued','running'].includes(implementationJobs[draft.implementationJobId]?.status||'')&&
+        <button type="button" onClick={()=>void stopImplementation(draft.implementationJobId!)}
+         className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#AA6042] underline"><Square size={12}/> 중단</button>}
+      </>}
       <span className="text-[10px] text-[#9A8B7E]">
        {draft.origin==='model'?'AI 추론 · 검증 전':draft.evidenceStatus==='two_source_research_question_only'?'독립 출처 2건 기반':
         draft.evidenceStatus==='single_source_only_not_validated'?'원문 1건 기반':
