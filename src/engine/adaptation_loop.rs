@@ -597,6 +597,51 @@ mod selection_tests {
     }
 
     #[test]
+    fn actual_probe_receipt_changes_the_selected_intervention(){
+        let scenario=json!({
+            "hypotheses":[
+                {"id":"stale","claim":"stale config","predictions":[]},
+                {"id":"current","claim":"new config","predictions":[]}
+            ],
+            "interventions":[
+                {"id":"wrong","hypothesisIds":["stale"],"tool":"workspace_write",
+                    "inputs":{"path":"wrong.txt","content":"old"},
+                    "expectedProgress":0.95,"estimatedCost":0.1},
+                {"id":"right","hypothesisIds":["current"],"tool":"workspace_write",
+                    "inputs":{"path":"right.txt","content":"new"},
+                    "expectedProgress":0.1,"estimatedCost":0.1}
+            ],
+            "probes":[{"id":"read-config","tool":"workspace_read",
+                "inputs":{"path":"config.txt"},"estimatedCost":0.1,
+                "predictions":[
+                    {"hypothesisId":"stale","predicate":{"type":"equals",
+                        "from":"result","path":"/content","value":"old"}},
+                    {"hypothesisId":"current","predicate":{"type":"equals",
+                        "from":"result","path":"/content","value":"new"}}
+                ]}]
+        });
+        validate_adaptation(&scenario).unwrap();
+        let policy=json!({"implementation":"balanced"});
+        let before=choose_intervention_with_policy(
+            &scenario,"shell_exec",&json!({"command":"failed"}),false,
+            &json!({}),&[],&policy).unwrap();
+        assert_eq!(before["id"],"wrong");
+        let ranked=crate::engine::adaptation::probes::rank(
+            &scenario,&[],&std::collections::HashSet::new());
+        assert_eq!(ranked.len(),1);
+        let proof=crate::engine::adaptation::probes::observe(
+            &ranked[0],&json!({"content":"new"}));
+        let refuted=proof["refutedIds"].as_array().unwrap().iter()
+            .filter_map(|v|v.as_str().map(str::to_string))
+            .collect::<Vec<_>>();
+        assert_eq!(refuted,vec!["stale".to_string()]);
+        let after=choose_intervention_with_policy(
+            &scenario,"shell_exec",&json!({"command":"failed"}),false,
+            &json!({"probes":{"read-config":{"content":"new"}}}),
+            &refuted,&policy).unwrap();
+        assert_eq!(after["id"],"right");
+    }
+    #[test]
     fn identical_failed_call_is_filtered_until_the_environment_changes() {
         let failed = json!({"command":"exit 7"});
         let chosen = choose_intervention(&adaptation(), "shell_exec", &failed, false).unwrap();
