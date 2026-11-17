@@ -162,7 +162,11 @@ pub fn acceptance_progress(
         if last["round"].as_u64() == Some(round as u64)
             && last["gaps"] == json!(current)
             && last["receiptIds"] == json!(receipts) {
-            return Ok(last.clone());
+            // History is deliberately lightweight; the complete latest
+            // proof graph lives once in acceptanceProgress.
+            return Ok(execution["acceptanceProgress"].as_object()
+                .map(|_| execution["acceptanceProgress"].clone())
+                .unwrap_or_else(|| last.clone()));
         }
     }
     let prior = previous.map(|last| last["gaps"].as_array()
@@ -206,10 +210,25 @@ pub fn acceptance_progress(
     } else {
         format!("Satisfy the first concrete missing postcondition with real evidence: {focus}")
     };
-    let lineage = crate::engine::obligation_repair::reconstruct(
-        &execution["acceptanceChecks"], &current,
-        &state.store.execution_operations(execution_id)?,
-    );
+    // A large operation history must not be reread and reserialized into
+    // every acceptance snapshot. Reuse the previous graph when neither the
+    // evidence receipts nor failed obligations changed; a fully verified
+    // snapshot has no open repair frontier at all.
+    let lineage = if current.is_empty() {
+        crate::engine::obligation_repair::reconstruct(
+            &execution["acceptanceChecks"], &current, &[],
+        )
+    } else if previous.is_some()
+        && current == prior && receipts == old_receipts
+        && execution["acceptanceProgress"]["obligationLineage"].is_object()
+    {
+        execution["acceptanceProgress"]["obligationLineage"].clone()
+    } else {
+        crate::engine::obligation_repair::reconstruct(
+            &execution["acceptanceChecks"], &current,
+            &state.store.execution_operations(execution_id)?,
+        )
+    };
     let lineage_directive = lineage["directive"].as_str().unwrap_or("");
     // A verifier-derived, receipt-scoped directive overrides generic retry
     // advice only when the current attempt is actually stalled.
@@ -229,7 +248,13 @@ pub fn acceptance_progress(
         "nextAction": action.chars().take(1300).collect::<String>(),
         "verified": current.is_empty(),
     });
-    history.push(record.clone());
+    // Keep one full graph for the current UI/replan; older trajectory
+    // entries contain only deltas. The native operation journal is still the
+    // authoritative archive and can reconstruct any prior frontier.
+    let mut compact = record.clone();
+    compact.as_object_mut().expect("progress is an object")
+        .remove("obligationLineage");
+    history.push(compact);
     if history.len() > 12 { history = history.split_off(history.len() - 12); }
     execution["acceptanceTrajectory"] = json!(history);
     execution["acceptanceProgress"] = record.clone();
@@ -305,6 +330,8 @@ mod tests {
         let persisted=state.store.get("execution","obligation-run").unwrap();
         assert_eq!(persisted["acceptanceProgress"]["obligationLineage"]["frontiers"][0]
             ["resource"],"workspace:report.md");
+        assert!(persisted["acceptanceTrajectory"].as_array().unwrap().iter()
+            .all(|item| item.get("obligationLineage").is_none()));
         // Real postcondition must succeed only when physical bytes change.
         std::fs::write(dir.join("report.md"), "fresh bytes").unwrap();
         let corrected=crate::engine::verification::check_acceptance(
@@ -339,7 +366,12 @@ mod tests {
         assert_eq!(fourth["verified"], true);
         let replay = acceptance_progress(&state,"run",3,&[],&evidence).unwrap();
         assert_eq!(replay, fourth);
-        assert_eq!(state.store.get("execution","run").unwrap()["acceptanceTrajectory"].as_array().unwrap().len(),4);
+        let snapshot=state.store.get("execution","run").unwrap();
+        assert_eq!(snapshot["acceptanceTrajectory"].as_array().unwrap().len(),4);
+        assert!(snapshot["acceptanceProgress"]["obligationLineage"].is_object());
+        assert!(snapshot["acceptanceTrajectory"].as_array().unwrap().iter()
+            .all(|item| item.get("obligationLineage").is_none()),
+            "persistent graph belongs to latest snapshot, not every history row");
         drop(state);
         let _ = std::fs::remove_dir_all(dir);
     }
