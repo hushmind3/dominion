@@ -374,10 +374,12 @@ pub fn adjudicate(
  let base_trace=native_replay::report(state,baseline_id)?;
  let base_actions=actions(&base_snapshot)?;
  let base_proof=artifact_proof(&base_job,&base_trace,&base_snapshot);
- let mut portfolio=vec![portfolio_entry(baseline_id,true,&base_proof,&base_trace)];
  let before=evidence(&base_job,"nativeEvidenceBaseline");
  let scoped_initial=before.and_then(|w|w["entries"].as_object())
   .is_some_and(|entries|!entries.is_empty());
+ let mut portfolio=vec![portfolio_entry(
+  baseline_id,scoped_initial,&base_proof,&base_trace,
+ )];
  let mut candidates=Vec::new();
  let mut comparables=0usize;
  for id in candidate_ids {
@@ -427,7 +429,13 @@ pub fn adjudicate(
   "mode":"matched_native_rollout_evidence_adjudication_2026",
   "baseline":{"runId":baseline_id,"outcome":base_proof},
   "candidates":candidates,
-  "evidenceQualifiedPortfolio":compose_portfolio(&portfolio),
+  // No shared reference environment means there is no portfolio
+  // experiment, even if the baseline itself was a valid historical task.
+  "evidenceQualifiedPortfolio":if comparables>0 {
+    compose_portfolio(&portfolio)
+   }else{
+    compose_portfolio(&[])
+   },
   "portfolioMetrics":portfolio,
   "comparableRuns":comparables,
   "totalRuns":candidate_ids.len()+1,
@@ -681,6 +689,16 @@ mod tests {
    "latencyMs":1200,"estimatedTokensRecorded":140,"actions":[]});
   let row=portfolio_entry("unproven",true,&proof,&trace);
   assert_eq!(row["admissible"],false);
+ }
+
+ #[test]
+ fn zero_matched_experiments_cannot_elect_an_unrelated_baseline(){
+  let baseline=json!({"runId":"only_base","admissible":true,
+   "proofTier":2,"costKRW":15.0,"latencyMs":50,"recordedTokens":20,
+   "observedFailedReceipts":0,"completeComparableMetrics":true});
+  assert_eq!(compose_portfolio(&[])["status"],"insufficient_comparable_evidence");
+  assert_eq!(compose_portfolio(&[])["reviewSuggestion"],Value::Null);
+  assert_eq!(compose_portfolio(&[baseline])["reviewSuggestion"],"only_base");
  }
 
 }
