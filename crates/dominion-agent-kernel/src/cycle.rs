@@ -56,7 +56,13 @@ impl Cycle {
     }
 
     pub fn retry_instruction(&self,goal:&str,attempt:usize)->String{
-        next_instruction(goal,&self.previous_gaps,self.previous_error.as_deref(),attempt)
+        let mut prompt=next_instruction(goal,&self.previous_gaps,
+            self.previous_error.as_deref(),attempt);
+        let class=crate::failure::classify(
+            &self.previous_gaps,self.previous_error.as_deref());
+        prompt.push_str("\n\nRust 하네스의 실패 분류별 복구 지시: ");
+        prompt.push_str(class.next_step());
+        prompt
     }
 
     pub fn assess(&self, observation:&Observation<'_>)->Assessment{
@@ -159,6 +165,16 @@ mod tests{
         cycle.replaced_goal();
         assert_eq!(cycle.snapshot()["pendingGapCount"],0);
         assert_eq!(cycle.snapshot()["attempted"],1);
+    }
+    #[test]
+    fn retry_prompt_targets_failed_test_instead_of_repeating_generic_actions(){
+        let mut c=policy(3);
+        c.next_attempt();
+        c.record_retry(&["test failed: expected value".into()],None);
+        let prompt=c.retry_instruction("Repair src/lib.rs",1);
+        assert!(prompt.contains("실패한 테스트"));
+        assert!(prompt.contains("Repair src/lib.rs"));
+        assert!(!prompt.contains("컴파일 오류입니다"));
     }
     #[test]
     fn token_cap_and_exhausted_retries_cannot_start_more_work(){
