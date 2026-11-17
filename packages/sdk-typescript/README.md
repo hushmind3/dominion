@@ -56,3 +56,5 @@ The source pair is **untrusted display provenance only**, not authorization, evi
 use `GET /api/sdk/runs/:id` for execution/approval status and existing cancel/resume endpoints.
 No second SDK, executor, or SQLite database is created.
 
+
+Money owners may use `POST /api/money/candidates/:id/implement` with explicit `approved: true`, `agentId`, `providerId`, `model` and a `tokenBudget`. The Money adapter atomically claims the candidate and prepares an ordinary SDK run; it returns the same SDK run on repeated approval. Its run ID supports all existing SDK status, approve, cancel, and resume operations. No separate SDK client surface is required.

@@ -14,6 +14,7 @@ type Draft={
  offer?:string
  whyPay?:string
  implementationPlan?:string
+ implementationRunId?:string
  firstPaymentStep?:string
  evidenceStatus?:string
  evidence?:Evidence[]
@@ -107,10 +108,31 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
      const candidateId=run.source?.id
      if(candidateId&&!mapped[candidateId])mapped[candidateId]=run
     }
-    setImplementations(mapped)
+    setImplementations(previous=>({...mapped,...previous}))
    }).catch(()=>{})
   return()=>{mounted=false}
  },[])
+ // The candidate owns the durable link, even when more than 40 historical
+ // SDK runs have accumulated and the generic recent-run fallback omits it.
+ const missingRunLinks=JSON.stringify((result.drafts||[])
+  .filter(d=>d.implementationRunId&&!implementations[d.id])
+  .map(d=>[d.id,d.implementationRunId]))
+ useEffect(()=>{
+  const links=JSON.parse(missingRunLinks) as [string,string][]
+  if(!links.length)return
+  let live=true
+  void Promise.all(links.map(async([draftId,runId])=>({
+   draftId,run:await get<SdkRun>('/api/sdk/runs/'+encodeURIComponent(runId))
+  }))).then(rows=>{
+   if(!live)return
+   setImplementations(previous=>{
+    const next={...previous}
+    for(const {draftId,run} of rows)next[draftId]=run
+    return next
+   })
+  }).catch(()=>{})
+  return()=>{live=false}
+ },[missingRunLinks])
  const activeImplementationIds=Object.values(implementations)
   .filter(run=>['queued','running','awaiting_approval'].includes(run.status))
   .map(run=>run.id).sort().join('|')
@@ -133,30 +155,19 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
  },[activeImplementationIds])
  async function implementDraft(draft:Draft){
   const agent=agents.find(item=>item.id===agentId)
-  if(!agent?.providerId||!agent.model||implementationBusy)return
+  if(!agent?.providerId||!agent.model||implementationBusy||draft.implementationRunId)return
   setImplementationBusy(draft.id)
   setError('')
   try{
-   const instruction=[
-    'DOMINION Money: 사용자가 이 후보의 검증용 MVP 구현을 승인했습니다.',
-    '후보 ID: '+draft.id,
-    '사업 가설: '+draft.title,
-    '구매자: '+(draft.customer||'미확인'),
-    '제공 결과물: '+(draft.offer||'미확인'),
-    '경제적 메커니즘: '+(draft.moneyMechanism||draft.whyPay||'추가 조사 필요'),
-    '구현 계획: '+(draft.implementationPlan||'작은 작동 시제품부터 설계'),
-    '1차 검증: '+(draft.firstTest||'실제 파일과 작동 증거 제시'),
-    '소스의 관측 내용과 추론·가정을 구분하십시오.',
-    '기존 도미니언 공통 Rust SDK/하네스를 이용하여 현재 작업 공간에 검증 가능한 MVP 파일을 만드십시오.',
-    '테스트·검증을 실행하고 실제 산출물·확인된 결과·남은 문제를 보고하십시오.',
-    '이 승인은 작업 공간 내부의 MVP 코드 작성에만 적용됩니다.',
-    '외부 고객 연락, 계약, 결제, 광고 지출, 실제 상품 판매, 공개 배포는 수행하지 마십시오.'
-   ].join('\n')
-   const run=await post<SdkRun>('/api/sdk/runs',{
-    instruction,agentId:agent.id,providerId:agent.providerId,model:agent.model,
-    tokenBudget:24000,maxRounds:12,source:{kind:'money_candidate',id:draft.id}
+   // The server builds instructions from its saved candidate; client-side
+   // research text is never an authorization or execution plan.
+   const run=await post<SdkRun>('/api/money/candidates/'+encodeURIComponent(draft.id)+'/implement',{
+    approved:true,agentId:agent.id,providerId:agent.providerId,model:agent.model,
+    tokenBudget:24000,maxRounds:12
    })
    setImplementations(previous=>({...previous,[draft.id]:run}))
+   setResult(previous=>({...previous,drafts:previous.drafts.map(item=>
+    item.id===draft.id?{...item,implementationRunId:run.id}:item)}))
   }catch(err){setError((err as Error).message)}
   finally{setImplementationBusy('')}
  }
@@ -336,11 +347,14 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
        const active=run&&['queued','running','awaiting_approval'].includes(run.status)
        return <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
-         {!run&&<button type="button" onClick={()=>void implementDraft(draft)}
+         {!run&&!draft.implementationRunId&&<button type="button" onClick={()=>void implementDraft(draft)}
           disabled={!!implementationBusy||agentsLoading||!selectedAgent?.providerId||!selectedAgent?.model}
           className="min-h-9 rounded-lg border border-[#A96743] px-3 text-xs font-bold text-[#9D593D] disabled:opacity-50">
           {implementationBusy===draft.id?'작업 생성 중…':'이 후보 MVP 구현 승인'}
          </button>}
+         {draft.implementationRunId&&!run&&<span className="text-xs font-semibold text-[#81512F]">
+          승인된 SDK 작업 기록 불러오는 중…
+         </span>}
          {run&&<span className="text-xs font-semibold text-[#81512F]">
           SDK 구현 작업 · {run.status==='completed'?(run.verified?'검증 완료':'완료 · 검증 필요'):
            run.status==='awaiting_approval'?'도구 승인 대기':
@@ -370,7 +384,7 @@ export function MoneyPage(props:{openSession:(id:string)=>void}){
          <summary className="cursor-pointer text-xs font-bold text-[#765337]">구현 결과 보고</summary>
          <p className="mt-2 whitespace-pre-wrap text-xs leading-5 text-[#665548]">{run.answer.slice(0,6000)}</p>
         </details>}
-        {!run&&<p className="text-[11px] text-[#8D7B6C]">선택한 에이전트로 검증용 MVP만 구현합니다. 외부 판매·계약·지출·배포는 승인 범위에 포함되지 않습니다.</p>}
+        {!run&&!draft.implementationRunId&&<p className="text-[11px] text-[#8D7B6C]">선택한 에이전트로 검증용 MVP만 구현합니다. 외부 판매·계약·지출·배포는 승인 범위에 포함되지 않습니다.</p>}
        </div>
       })()}
      </div>
