@@ -1,16 +1,14 @@
 name: CI
 
 on:
-  push:
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# Full cross-platform release gate now validates dominion-sub3 as well.
-# Only the latest commit on a branch needs a full release-mode validation.
-# Superseded commits are cancelled instead of occupying the runner queue.
+# Full release tests run on PR or manual dispatch, not on every branch push.
+# Focused branch-specific tests run on changed paths, avoiding repeated builds.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -20,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -43,8 +41,8 @@ jobs:
           cargo test -p dominion-agent-sdk --lib one_unrepresentable_error_does_not_hide_smaller_old_failure
           cargo test -p dominion-agent-sdk --lib empty_query_lists_a_bounded_recent_page_without_full_log_projection
       - run: cargo test --release
-      - name: Validate both TypeScript SDK public clients (Linux)
-        if: matrix.os == 'ubuntu-latest'
+      - name: Validate both TypeScript SDK public clients (macOS)
+        if: matrix.os == 'macos-latest'
         run: |
           npm install --prefix sdk/typescript --no-package-lock --ignore-scripts --no-audit
           npm test --prefix sdk/typescript

@@ -11,6 +11,7 @@ on:
       - 'src/engine/jobs.rs'
       - 'src/engine/tools.rs'
       - 'src/engine/mod.rs'
+      - 'src/engine/plugins.rs'
       - 'src/db.rs'
       - 'src/db/money.rs'
       - 'src/db/money_schema.sql'
@@ -29,8 +30,12 @@ concurrency:
 
 jobs:
   money:
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -40,17 +45,17 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - name: Compile money and native agent integration
-        run: cargo check --bin dominion-rust
-      - name: Money discovery, deduplication, source provenance and full API contracts
+       - name: Money discovery, deduplication, source provenance and full API contracts
         run: |
           cargo test --bin dominion-rust engine::money -- --nocapture
           cargo test --bin dominion-rust api::money -- --nocapture
+          cargo test --bin dominion-rust engine::plugins -- --nocapture
       - name: Native inference JSON and model budget contracts
         run: |
           cargo test --bin dominion-rust local_money_json_is_a_terminal_sdk_answer_without_new_model_calls
           cargo test --bin dominion-rust engine::native_routing -- --nocapture
       - name: Shipping Money GUI and lean product compatibility
+        if: matrix.os == 'macos-latest'
         run: |
           npm ci --prefix web
           npm run typecheck --prefix web

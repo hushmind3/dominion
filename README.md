@@ -10,6 +10,7 @@ DOMINION is an owner-controlled, model/provider-independent **Rust agent executi
   - The dependency scheduler rejects failed/skipped historical receipts as prerequisites before dispatch. Offline decision replay checks ordinary tool names, arguments, and successful prerequisite receipts; replay never re-executes a model or side effect.
 - `src/engine/native_agent.rs`: product adapter binding real model providers, workspace, host tools, MCP, authorization and stored job receipts to the Rust SDK. Native jobs pin tool-name/schema/read-only contracts and acceptance requirements before the first model/tool call; changed authority on restart requires review.
 - `src/engine/chat/runtime.rs`: existing streaming chat/room history, context selection and native Rust tool dispatcher; user-requested edits remain testable, with acceptance checks. No autonomous RSI policy/campaign branch.
+- `src/engine/plugins.rs`, `src/engine/money*.rs` and `src/db/money.rs`: optional Money research toolset. It uses the existing Rust job worker, native SDK and a namespaced schema in the **same** SQLite database; opening DOMINION never starts a second Money runtime.
 - `src/engine/jobs.rs` and `src/db.rs`: SQLite job/operation journal, indexed active-queue selection, Tokio Notify worker wakeups, durable CAS and legacy effect recovery. Terminal success/failure audit is emitted only after the terminal checkpoint is persisted; concurrent owner cancellation cannot silently become a completed job. Idle reconciliation runs every 5 seconds; completed historic jobs are retained without being polled on each turn.
 - `src/engine/mcp.rs`, `src/engine/skills.rs`, `src/api/extensions.rs`: explicit external MCP server/tool manifests and skill/plugin import; reviewed tools are verified against their pinned manifest at execution.
 - `sdk/typescript`, `sdk/rust`, `packages/sdk-typescript`: API clients for the same native Rust product/harness; no replicated agent planning loop.
@@ -28,6 +29,7 @@ Chat and UI default `autoLearning` to false, and former five-minute background d
 - `GET /api/sdk/runs/:id/replay` and `POST /api/sdk/runs/:id/compare` reconstruct already recorded decisions, receipts and cost records **read-only**, never invoking paid tools or promoting a revision.
 - `/api/mcp/catalog`, `/api/mcp/discover`, `/api/tools`, `/api/skill-catalog` and `/api/channels` expose owner-configured integrations. A connected MCP may later handle third-party media generation.
 - `/api/sessions`, `/api/memory/overview`, `/api/providers`, `/api/rooms` retain existing conversation and collaboration surfaces.
+- `GET/POST /api/money/find`, `GET /api/money/stats`, `POST /api/money/candidates/:id` and `/api/money/campaigns/:id/*` are optional domain operations. The host job API (`/api/jobs/:id/cancel`) owns cancellation and approval-gated implementation; there is no second Money scheduler or database.
 
 ### Browser account login without user API keys
 
@@ -38,7 +40,7 @@ A real provider-registered OAuth client must exist either in the product deploym
 
 ### Build and verification
 
-Run `npm ci --prefix web && npm run typecheck --prefix web && npm run build --prefix web`, `npm test --prefix sdk/typescript`, `node scripts/check-lean-product.mjs`, and `cargo test --release --locked`. The GitHub Actions CI matrix checks Linux, Windows and macOS. Release and focused agent acceptance must pass on the *same branch HEAD*; a historical green run does not certify new changes.
+Run `npm ci --prefix web && npm run typecheck --prefix web && npm run build --prefix web`, `npm test --prefix sdk/typescript`, `node scripts/check-lean-product.mjs`, and `cargo test --release --locked`. The optional full release matrix checks Windows and macOS on pull requests or manual dispatch, not every push. Targeted Money CI runs on Windows/macOS on relevant source changes; SDK-specific CI runs on macOS when its files change. Linux CI has been removed to avoid unrelated repeated builds. For changes to the kernel or production release, run the relevant full gate at that branch HEAD.
 
 [Room latency / recovery regression contract](docs/SUB3-ROOM-LATENCY-2026-11-17.md) · [Lean product source/behavior contract](docs/SUB3-LEAN-COMPLEXITY-2026-11-16.md) · [Agent/host replay provenance](docs/SUB3-JUDGE-READY-2026-11-16.md).
 
