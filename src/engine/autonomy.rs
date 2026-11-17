@@ -15,7 +15,7 @@ use crate::engine::agent_kernel::{
     usage_delta, owner_intent, narrow,
 };
 #[cfg(test)]
-use crate::engine::agent_kernel::{Strategy,read_only_shell_command};
+use crate::engine::agent_kernel::{Strategy,read_only_shell_command,decide,stalled,next_instruction};
 use serde_json::{json,Value};
 
 /// The explicit UI command is a frozen acceptance criterion. Only a real
