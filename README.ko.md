@@ -30,6 +30,8 @@
 
 핵심 실행 엔진과 SDK는 [`crates/dominion-core`](crates/dominion-core/README.md)입니다. 서브4의 상태머신·도구 실행 기록·복구·스키마 검증을 기존 SQLite와 제품 어댑터에 연결했습니다. 채팅·그룹·작업·워크플로·홈 자동 작업이 공통 실행 경로를 사용하며, TypeScript는 선택적 HTTP 클라이언트입니다.
 
+백그라운드 SDK·작업·Discord 실행은 일시적인 도구 이벤트를 소비만 하며, 사용하지 않는 인수·결과를 메모리에 추가 축적하지 않습니다. 영속 실행 증거와 명시적 증거 수집 경로는 유지됩니다.
+
 기존 프론트·모델 인증·도구 승인·제품 데이터는 유지합니다. 이전 독립 실행기·CLI·워크스페이스 패키지는 삭제했습니다. 경로와 검증 범위는 [Rust 하네스 문서](docs/HARNESS.md)에 정리했습니다.
 
 [TypeScript SDK](packages/sdk-typescript/README.md)의 `waitForRun`은 완료·승인·수동 복구 상태를 구별하고, `waitForVerifiedRun`은 실제 검증 증거가 있는 `taskOutcome: "succeeded"`만 성공으로 처리합니다. 모델이 답변을 생성했다는 사실과 작업 산출물 검증은 구별됩니다. SDK 작업과 사용자 지정 예산·작업공간 설정은 하나의 SQLite 트랜잭션에 기록됩니다.
