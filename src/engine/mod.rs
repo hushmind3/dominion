@@ -30,6 +30,7 @@ pub mod reflect;
 pub mod gateway;
 pub mod github_work;
 pub mod google_work;
+pub mod cli_accounts;
 pub mod model_cost;
 pub mod resource_lock;
 pub mod evaluation;
