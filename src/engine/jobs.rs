@@ -298,6 +298,11 @@ async fn wait_dispatch_event(
 
 pub fn start(state: AppState) {
     crate::engine::channel_adapter::start(state.clone());
+    crate::engine::money_health::sample(&state);
+    crate::engine::money_sources::schedule(&state);
+    crate::engine::money_catalog::schedule(&state);
+    crate::engine::money_folding::schedule(&state);
+    crate::engine::money::schedule_autopilot(&state);
     let workers = std::env::var("DOMINION_JOB_WORKERS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
@@ -334,6 +339,12 @@ pub fn start(state: AppState) {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(30)).await;
+            // Bound Money scheduling to existing job workers; no separate inference daemon.
+            crate::engine::money_health::sample(&state);
+            crate::engine::money_sources::schedule(&state);
+            crate::engine::money_catalog::schedule(&state);
+            crate::engine::money_folding::schedule(&state);
+            crate::engine::money::schedule_autopilot(&state);
             // Approval expiration must run whether the UI is connected or not.
             crate::engine::chat::expire_stale_approvals(&state);
         }
@@ -501,6 +512,10 @@ async fn run_job(state: AppState, job: Value) {
     }
 
     let result = match kind.as_str() {
+        "money_discover" => crate::engine::money::run(&context, &job).await,
+        "money_ingest" => crate::engine::money_sources::run(&context, &job).await,
+        "money_catalog" => crate::engine::money_catalog::run(&context, &job).await,
+        "money_fold" => crate::engine::money_folding::run(&context, &job).await,
         "room" | "meeting" => rooms::run(&context, &job).await,
         "prompt" => run_prompt(&context, &job).await,
         "resume" => run_resume(&context, &job).await,

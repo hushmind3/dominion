@@ -42,6 +42,12 @@ Background SDK, job, and Discord turns drain transient events without retaining 
 
 Existing product data and authentication remain in SQLite and its credential vault. Tool intent, receipts and uncertain-effect recovery use the native Rust state machine; cancelled sequential tool batches now record aborted-before-dispatch tool receipts rather than silently dropping queued call IDs. Recovery treats opaque MCP actions and completed or failed external mutations conservatively: whole-turn replay is withheld pending review, while recognized read-only operations remain replayable. Execution cancellation persists both the terminal status and phase, and phase updates use conditional SQLite patches instead of overwriting concurrent evidence. Product-specific approval and verification policies remain in the main application. These source-level changes do not establish real-model quality gains or general self-improvement.
 
+## 💰 Money intelligence
+
+Money discovery collects public RSS, GitHub and Hugging Face signals with the existing Rust worker queue and stores the evidence in indexed SQLite. It produces source-backed business hypotheses without model tokens and offers opt-in AI inference through the existing durable job kernel. Research never authorizes outreach, spending or implementing a business.
+
+[Money architecture and limitations](docs/MONEY.md). No separate execution kernel or autonomous source-code modification system is introduced.
+
 ## What is DOMINION?
 
 **DOMINION is an AI agent tool, not another AI model or a token-reselling service.**
