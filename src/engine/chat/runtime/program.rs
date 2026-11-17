@@ -137,6 +137,15 @@ pub(super) async fn execute_program_tool(
     )
     .await?;
     checkpoint["pendingOperationIds"] = json!([]);
+    // Any operation that can mutate the workspace or external world makes a
+    // previously passing verification stale, including an attempted effect
+    // whose outcome needs inspection. Read-only observations do not.
+    if !dominion_agent_sdk::runtime::builtin_is_read_only(tool)
+        && resolved["lastVerify"]["ok"] == true
+    {
+        resolved["lastVerify"] = Value::Null;
+        checkpoint["staleVerification"] = json!(true);
+    }
     mark_program_completed(checkpoint, node_id);
     if !checkpoint["observationRefs"].is_object() {
         checkpoint["observationRefs"] = json!({});
@@ -566,31 +575,13 @@ pub(super) fn execute_nodes<'a>(
                     );
                 }
                 "verify" => {
-                    use crate::engine::program::PredicateVerdict;
                     let checks = node["checks"].as_array().ok_or("verify.checks missing")?;
-                    let mut results = Vec::new();
-                    let mut failed = false;
-                    let mut unknown = false;
-                    for check in checks {
-                        let verdict = crate::engine::program::predicate_verdict(
-                            &check["predicate"],
-                            &resolved,
-                        )?;
-                        match verdict {
-                            PredicateVerdict::True => {}
-                            PredicateVerdict::False => failed = true,
-                            PredicateVerdict::Unknown => unknown = true,
-                        }
-                        results.push(json!({
-                            "predicate": check["predicate"],
-                            "verdict": verdict.as_str(),
-                        }));
-                    }
-                    resolved["lastVerify"] = json!({
-                        "ok": !failed && !unknown,
-                        "unknown": unknown,
-                        "checks": results,
-                    });
+                    let outcome = crate::engine::program::evaluate_verification_checks(
+                        checks, &resolved,
+                    )?;
+                    let failed = outcome["failed"] == true;
+                    let unknown = outcome["unknown"] == true;
+                    resolved["lastVerify"] = outcome;
                     // A failed or unknown verification is NOT a completed
                     // operation. Earlier code marked it complete, allowing an
                     // unverified program to reach a successful terminal state.
@@ -654,6 +645,7 @@ pub(super) fn execute_nodes<'a>(
                     crate::engine::algorithms::mark_signal(
                         ctx.state, ctx.execution_id, "verification.predicate", true,
                     );
+                    checkpoint["staleVerification"] = json!(false);
                     mark_program_completed(&mut checkpoint, node_id);
                 }
                 "delegate" => {
@@ -1051,6 +1043,25 @@ pub(super) async fn run_program(
                 checkpoint["programFailure"]["nodeId"],
                 checkpoint["programFailure"]["result"]
             )
+        }));
+        return Ok(messages);
+    }
+    // A verification before a later mutation is not current evidence.
+    // Require a NEW passing check, rather than reusing a completed verify
+    // node whose observation predated the latest side effect.
+    if checkpoint["staleVerification"] == true {
+        checkpoint["status"] = json!("needs_review");
+        checkpoint["pausedReason"] = json!("verification_stale_after_mutation");
+        if had_revision {
+            crate::engine::algorithms::mark_unrated(
+                state, execution_id, "program.repair",
+                "revision ended with verification invalidated by a later mutation",
+            );
+        }
+        save_program_checkpoint(state, execution_id, &checkpoint);
+        messages.push(json!({
+            "role":"system",
+            "content":"program cannot complete: a later mutation invalidated the previous verification. Add an observation and verify again."
         }));
         return Ok(messages);
     }
