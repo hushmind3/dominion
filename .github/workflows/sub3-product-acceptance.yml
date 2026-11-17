@@ -17,6 +17,10 @@ on:
       - 'src/engine/verification.rs'
       - 'src/engine/code_index.rs'
       - 'web/src/pages/Chat.tsx'
+      - 'web/src/App.tsx'
+      - 'web/src/components/UI.tsx'
+      - 'web/src/refreshScope.ts'
+      - 'scripts/refresh-scope.test.mjs'
   workflow_dispatch:
 
 permissions:
@@ -32,6 +36,13 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Verify scoped SSE invalidation without breaking manual refresh
+        run: node --test scripts/refresh-scope.test.mjs
       - name: Verify lean product source/API/GUI contracts
         run: node scripts/check-lean-product.mjs
       - uses: dtolnay/rust-toolchain@stable
@@ -77,11 +88,6 @@ jobs:
           cargo test -p dominion-harness -- --nocapture
           cargo test --bin dominion-rust api::sdk::tests -- --nocapture
           cargo test --bin dominion-rust api::sdk::parity_tests -- --nocapture
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: web/package-lock.json
       - name: Verify shipping GUI
         run: |
           npm ci --prefix web
