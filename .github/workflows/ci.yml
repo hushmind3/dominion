@@ -42,3 +42,5 @@ jobs:
         run: cargo test --locked --bin dominion-rust engine::jobs::tests
       - name: Money domain and API regressions (dev profile)
         run: cargo test --locked --bin dominion-rust money_
+      - name: Shared SDK run and retry regressions (dev profile)
+        run: cargo test --locked --bin dominion-rust api::sdk::view_tests

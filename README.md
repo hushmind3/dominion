@@ -188,3 +188,7 @@ Contributions are welcome — particularly **reproducible bug reports, test case
 The Money research capability can be enabled or paused in **Settings → Money tool**. New installations start with the tool disabled; existing installs with Money data keep their prior on state. Pausing stops its background RSS, catalog and AI jobs and keeps archives and separately approved SDK work. It uses the normal Rust harness and the same SQLite DB; no dedicated Money model runner or DB service is created. Existing source collection now links evidence found in the current ingestion cycle rather than waiting for the next scheduler turn.
 
 Money retains even rejected and deferred opportunities. The collapsed **전체 후보·보류 기록** panel searches all historical candidates with bounded SQLite pages, displays saved source URLs and allows owners to defer or reopen ideas for research without model tokens.
+
+### Retry-safe native SDK jobs
+
+The shared `POST /api/sdk/runs` accepts an optional `idempotencyKey` (up to 128 ASCII letters, digits, hyphens, underscores, dots or colons). A repeated identical request with that key returns the original persisted SDK run rather than starting a second model/tool execution. Using a key with changed arguments returns HTTP 409. The claim, session and run share one SQLite transaction. Older clients without this option retain their behavior.
