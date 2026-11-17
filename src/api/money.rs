@@ -534,7 +534,7 @@ pub async fn update_candidate(State(state):State<AppState>,Path(id):Path<String>
         current["updatedAt"]=patch["updatedAt"].clone();
         Ok(vec![])
     }){
-        Some(v)=>{
+        Ok(v)=>{
             state.bus.record("money_candidate",&v);
             let experiments=state.store.money_recent_experiments(
                 v["campaignId"].as_str().unwrap_or(""),150).unwrap_or_default();
