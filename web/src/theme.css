@@ -59,3 +59,18 @@
 .conversation-switch-short{display:none}
 .chat-header{height:56px;min-height:56px}
 @media(max-width:767px){.conversation-switch button{padding:4px 5px;font-size:10px;gap:3px}.conversation-switch button svg{width:14px;height:14px}.conversation-switch-full{display:none}.conversation-switch-short{display:inline}.chat-header .chat-model-controls>select{width:64px!important;font-size:10px!important}.chat-header .chat-model-controls>button[aria-haspopup="dialog"]{min-width:40px!important}.chat-header>div:last-child>button{width:26px}.chat-header>div:first-of-type>button{width:26px}.chat-header{gap:3px}}
+
+/* One composer surface for direct and group conversations. */
+.conversation-composer-wrap{flex-shrink:0;padding:8px 16px max(8px,env(safe-area-inset-bottom));background:#FFFDF9}
+.conversation-composer{overflow:visible;border:1px solid #E1D9CC;border-radius:16px;background:#FFFDF9;box-shadow:0 8px 30px rgba(36,33,29,.08)}
+.conversation-composer-wrap>.conversation-composer{width:100%;max-width:860px;margin:0 auto}
+.conversation-composer:focus-within{border-color:#C96442;box-shadow:0 0 0 4px #C964421A,0 8px 30px #24211D14}
+.conversation-composer-input{display:block;width:100%;min-height:48px!important;max-height:180px;resize:none!important;border:0!important;border-radius:16px!important;background:#FFFDF9!important;padding:12px 20px 0!important;font-size:15px!important;line-height:28px!important;box-shadow:none!important;outline:none!important;color:#3A342D}
+.conversation-composer-input::placeholder{color:#A79C8E}
+.conversation-composer-controls{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 8px 8px}
+.conversation-composer-options{display:flex;align-items:center;min-width:0;gap:4px}
+.conversation-composer-options svg{flex-shrink:0}
+.conversation-composer-send{display:grid!important;place-items:center;width:36px;height:36px;min-height:36px!important;flex-shrink:0;border:1px solid #C96442!important;border-radius:999px!important;background:#C96442!important;padding:0!important;color:white!important}
+.conversation-composer-send:hover{background:#A94E30!important}.conversation-composer-send:disabled{opacity:.4}
+.conversation-recipients{max-width:140px;min-width:0}
+@media(max-width:767px){.conversation-composer-wrap{padding:6px 10px max(8px,env(safe-area-inset-bottom))}.conversation-composer-options{gap:0}.conversation-recipients{max-width:80px!important}.conversation-composer-controls{gap:4px}}

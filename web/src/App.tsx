@@ -184,7 +184,7 @@ export default function App(){
   window.addEventListener('keydown',shortcuts)
   return()=>{mounted=false;clearInterval(poll);clearTimeout(refreshTimer);stream.close();window.removeEventListener('keydown',shortcuts)}
  },[navigate])
- return <OwnerProfileProvider><div className="h-dvh overflow-hidden bg-[#F6F3EC] font-sans text-[#24211D]">
+ return <OwnerProfileProvider><div className="h-dvh overflow-hidden bg-[#FFFDF9] font-sans text-[#24211D]">
   <ContextMenu/>
   <main inert={settingsOpen} className="h-dvh min-w-0">
    {visited.chat&&<div hidden={mode!=='chat'} className="h-full page-chat"><PageLoadBoundary><Suspense fallback={<div role="status" className="p-8 text-sm text-[#7C7469]">대화 불러오는 중…</div>}>
