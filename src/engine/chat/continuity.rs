@@ -671,6 +671,11 @@ fn cloudflare_worker_provider(provider:&ProviderRef)->bool {
         && url.path().contains("/ai/")
 }
 
+fn opencode_go_provider(state:&AppState, provider:&ProviderRef)->bool {
+    state.store.get("provider",&provider.id)
+        .is_some_and(|record|record["integration"]=="opencode-go")
+}
+
 /// Both HTTP and WebSocket must send the same negotiated cache identity.
 pub(super) fn hinted_body(state: &AppState, provider: &ProviderRef, original: &Value, plan: &mut Value, wire: CacheWire) -> Value {
     let known=state.store.get("provider_wire_feature", &feature_id(provider,wire));
@@ -681,8 +686,13 @@ pub(super) fn hinted_body(state: &AppState, provider: &ProviderRef, original: &V
     // and documents x-session-affinity, not OpenAI's prompt_cache_key.
     // Avoid a guaranteed unsupported parameter negotiation on that route.
     let cloudflare=cloudflare_worker_provider(provider) && matches!(wire,CacheWire::Key);
-    let hinted=!disabled && !cloudflare && apply_hint(&mut body,plan,wire);
-    plan["cacheHint"]=json!(if cloudflare {"x-session-affinity"}else{wire.field()});
+    // OpenCode Go publishes a session-affinity *header*, not OpenAI's
+    // prompt_cache_key JSON field. The latter can trigger a rejected request
+    // or route-dependent prompt mutation instead of improving cache hits.
+    let opencode=opencode_go_provider(state,provider) && matches!(wire,CacheWire::Key);
+    let hinted=!disabled && !cloudflare && !opencode && apply_hint(&mut body,plan,wire);
+    plan["cacheHint"]=json!(if cloudflare {"x-session-affinity"}
+        else if opencode {"x-opencode-session"}else{wire.field()});
     plan["wireHintSent"]=json!(hinted);
     plan["cacheHintAcceptance"]=if disabled && !cloudflare {json!(false)} else {Value::Null};
     body
@@ -696,8 +706,7 @@ pub(super) async fn send(
 ) -> Result<reqwest::Response,String> {
     let mut body=hinted_body(state,provider,original,plan,wire);
     let mut hinted=plan["wireHintSent"]==true;
-    let opencode_go=state.store.get("provider",&provider.id)
-        .is_some_and(|record|record["integration"]=="opencode-go");
+    let opencode_go=opencode_go_provider(state,provider);
     for attempt in 1..=2 {
         plan["httpRequests"]=json!(attempt);
         let mut request=builder.try_clone().ok_or("모델 요청을 복제할 수 없습니다.")?;
@@ -905,11 +914,12 @@ mod tests {
     async fn opencode_go_direct_sends_the_stable_session_header() {
         use axum::{extract::State,http::HeaderMap,routing::post,Json,Router};
         use std::sync::{Arc,Mutex};
-        type Seen=Arc<Mutex<Vec<(String,Option<String>)>>>;
-        async fn endpoint(State(seen):State<Seen>,headers:HeaderMap,Json(_body):Json<Value>)->Json<Value>{
+        type Seen=Arc<Mutex<Vec<(String,Option<String>,bool)>>>;
+        async fn endpoint(State(seen):State<Seen>,headers:HeaderMap,Json(body):Json<Value>)->Json<Value>{
             seen.lock().unwrap().push((
                 headers["x-dominion-conversation"].to_str().unwrap_or("").to_string(),
                 headers.get("x-opencode-session").and_then(|value|value.to_str().ok()).map(str::to_string),
+                body.get("prompt_cache_key").is_some(),
             ));
             Json(json!({"ok":true}))
         }
@@ -931,6 +941,9 @@ mod tests {
         let affinity=plan["cacheAffinityId"].as_str().unwrap();
         assert_eq!(seen[0].0,affinity);
         assert_eq!(seen[0].1.as_deref(),Some(affinity),"direct OpenCode Go must receive the session affinity");
+        assert!(!seen[0].2,
+            "OpenCode Go must not receive an unadvertised OpenAI prompt_cache_key");
+        assert_eq!(plan["cacheHint"],"x-opencode-session");
         drop(seen);server.abort();let _=std::fs::remove_dir_all(root);
     }
 
