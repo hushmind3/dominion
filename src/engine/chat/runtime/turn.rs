@@ -433,9 +433,13 @@ pub(super) async fn run_turn_body(
     let mut plan_digest: Option<String> = None;
     if acceptance.is_some()
         && request.tools_enabled
+        && request.tools_execution_enabled
         && source_message_id.is_none()
         && plan_requested
     {
+        // Charge the ATTEMPT before the paid provider request. Failed
+        // preplans previously escaped the model-call ledger entirely.
+        metrics.lock().unwrap().model_calls += 1;
         if let Some(plan) = action_plan(state, request, acceptance.as_ref().map(|(text, _)| text.as_str()).unwrap_or("")).await {
             plan_digest = Some(crate::engine::memory::stable_id(&[&plan]));
             // Persist the plan and its semantic score so policy experiments can
@@ -453,7 +457,6 @@ pub(super) async fn run_turn_body(
                 state.store.put("execution", &execution);
             }
             messages.insert(1, json!({"role":"system","content":format!("Internal execution plan. Verify every step with real tools, never claims:\n{plan}")}));
-            metrics.lock().unwrap().model_calls += 1;
         }
     }
     if subtask_count > 1 && acceptance.is_some() && request.tools_enabled && request.tools_execution_enabled {
