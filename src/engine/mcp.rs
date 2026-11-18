@@ -77,43 +77,48 @@ fn enabled_servers(state: &AppState) -> Vec<Value> {
 
 /// Fetch (and cache) the tool list of every enabled MCP server.
 pub async fn tools(state: &AppState) -> Vec<McpTool> {
-    let mut collected = Vec::new();
-    let servers=enabled_servers(state);
-    for server in &servers {
-        let id = server
-            .get("id")
-            .and_then(|value| value.as_str())
-            .unwrap_or("")
-            .to_string();
-        if id.is_empty() {
-            continue;
-        }
-        let namespace=server_namespace(server,&servers);
-        // Namespace is part of the cache key so adding a colliding server
-        // cannot reuse a stale definition with its old unqualified name.
-        let cache_key=format!("{id}:{namespace}");
-        if let Some((at, tools)) = cache().lock().unwrap().get(&cache_key) {
-            if at.elapsed() < CACHE_TTL {
-                collected.extend(tools.clone());
-                continue;
+    use futures_util::{stream, StreamExt};
+    let servers = enabled_servers(state);
+    // Discover independent MCP servers concurrently, but keep tool ordering
+    // deterministic for model-schema caching and reproducible tool selection.
+    // Bounded fan-out also prevents many configured servers from spawning at
+    // once or a single slow server from delaying all other handshakes.
+    let lookups = servers.iter().filter_map(|server| {
+        let id = server["id"].as_str()?.to_string();
+        if id.is_empty() { return None; }
+        let namespace = server_namespace(server, &servers);
+        let cache_key = format!("{id}:{namespace}");
+        Some(async move {
+            let cached = {
+                let guard = cache().lock().unwrap();
+                guard.get(&cache_key).and_then(|(at, tools)| {
+                    (at.elapsed() < CACHE_TTL).then(|| tools.clone())
+                })
+            };
+            if let Some(tools) = cached { return tools; }
+            match list_server(state, server, &namespace).await {
+                Ok(tools) => {
+                    cache().lock().unwrap().insert(
+                        cache_key, (Instant::now(), tools.clone())
+                    );
+                    tools
+                }
+                Err(error) => {
+                    state.store.audit(
+                        "mcp.list_failed", json!({ "server": id, "error": error })
+                    );
+                    Vec::new()
+                }
             }
-        }
-        match list_server(state, server, &namespace).await {
-            Ok(tools) => {
-                cache()
-                    .lock()
-                    .unwrap()
-                    .insert(cache_key, (Instant::now(), tools.clone()));
-                collected.extend(tools);
-            }
-            Err(error) => {
-                state
-                    .store
-                    .audit("mcp.list_failed", json!({ "server": id, "error": error }));
-            }
-        }
-    }
-    collected
+        })
+    });
+    stream::iter(lookups)
+        .buffered(4)
+        .collect::<Vec<Vec<McpTool>>>()
+        .await
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 async fn list_server(state: &AppState, server: &Value, server_slug:&str) -> Result<Vec<McpTool>, String> {
@@ -654,6 +659,55 @@ mod tests {
         ).await.expect("MCP SSE response must not wait for stream closure").unwrap();
         assert_eq!(reply["result"]["ready"], true);
         server.abort();
+    }
+
+
+    #[tokio::test]
+    async fn independent_mcp_servers_list_concurrently_but_keep_stable_order() {
+        use axum::{routing::post, Json, Router};
+        use std::sync::Arc;
+        let state = temp_state();
+        let gate = Arc::new(tokio::sync::Barrier::new(3));
+        let mut servers = Vec::new();
+        for index in 0..3 {
+            let gate = gate.clone();
+            let name = format!("MCP concurrency {index}");
+            let tool_name = format!("tool_{index}");
+            let app = Router::new().route("/mcp", post(move |Json(payload): Json<Value>| {
+                let gate = gate.clone();
+                let tool_name = tool_name.clone();
+                async move {
+                    let method = payload["method"].as_str().unwrap_or("");
+                    if method == "tools/list" {
+                        gate.wait().await;
+                    }
+                    Json(json!({
+                        "jsonrpc":"2.0", "id": payload["id"],
+                        "result": if method == "tools/list" {
+                            json!({"tools":[{"name": tool_name,
+                                "inputSchema":{"type":"object","properties":{}}}]})
+                        } else { json!({}) }
+                    }))
+                }
+            }));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            servers.push(tokio::spawn(async move {
+                axum::serve(listener, app).await.unwrap();
+            }));
+            state.store.put("mcp", &json!({
+                "id": format!("concurrent-{index}"),
+                "name": name,
+                "transport": "http",
+                "url": format!("http://{addr}/mcp"),
+            }));
+        }
+        let listed = tokio::time::timeout(Duration::from_secs(6), tools(&state))
+            .await.expect("independent MCP discovery must not be serialized");
+        assert_eq!(listed.len(), 3);
+        let names = listed.into_iter().map(|tool| tool.tool).collect::<Vec<_>>();
+        assert_eq!(names, vec!["tool_0", "tool_1", "tool_2"]);
+        for server in servers { server.abort(); }
     }
 
     #[test]
