@@ -150,7 +150,9 @@ pub(crate) async fn dispatch_tool_call(
             tools_enabled: request.tools_enabled,
             tools_execution_enabled: request.tools_execution_enabled,
         };
-        let outcome = if call.name.starts_with("mcp__") {
+        let outcome = if call.name==capability::SEARCH {
+            capability::search(state,session_id,&arguments).await
+        } else if call.name.starts_with("mcp__") {
             mcp::call(state, &call.name, &arguments).await
         } else {
             tools::execute(&context, &call.name, &arguments, execution_id).await
