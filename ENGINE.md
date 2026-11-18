@@ -333,3 +333,21 @@ Rust 커널의 구조 검사와 컴파일 성공은 DB 조회량·불용 호출�
 `nine_participants_three_owner_turns_complete_thirty_messages_with_selective_work_context` 통합 테스트는 모의 OpenAI 호환 SSE 제공자 27회와 그룹 주인 메시지 3개를 사용해 각 9명 전원의 응답, 모든 그룹 작업의 `completed` 판정, 27건의 네이티브 실행 기록, 3번째 턴의 오래된 1번째 턴 동료 발언 제거와 직전 본인 답변 보존까지 확인합니다. GitHub Actions 개발용 Rust CI에서 통과했습니다.
 
 이번 변경의 모델 품질 및 유료 API 토큰 절약량은 동일한 9인·3턴·동일 제공자·동일 작업으로 재실측하기 전까지 주장하지 않습니다. 2026년의 Shared Selective Persistent Memory (arXiv:2607.09493) 및 ContextWeaver (arXiv:2604.23069)는 중복 원문 제거와 출처/의존 보존을 함께 다루므로 설계 검토에 참고했습니다. 기존 엔진의 메모리 선택기를 또 하나 복제하거나 모델 요약 라운드를 추가하지 않았습니다.
+
+## 채팅 실행 중단과 그룹 프리픽스 캐시 (2026-11-18)
+
+### 채팅 중단: UI → HTTP → 네이티브 커널 → Provider 스트림
+
+기존 `Chat.tsx`에는 전송 중 회전 아이콘만 있었고, 실제 사용자 중단 버튼은 없었습니다. 이제 전송 버튼이 활성 실행 중 키보드 접근 가능한 ■ 중단 버튼으로 바뀝니다. `stopChat`은 `POST /api/sessions/:id/cancel`을 호출하고 서버의 `stopped=true` 확인 후에만 브라우저의 `AbortController`를 종료합니다. 이 절차가 끝나면 로딩과 승인 UI를 정리하고 새 전송을 허용합니다. 만료된 SSE 이벤트는 실행별 `AbortController` 신원·stopping 상태로 무시하고 실행 이력/승인 목록을 갱신합니다. 기존 `/stop`도 동일한 함수를 사용합니다.
+
+`src/api/sessions.rs`는 작업 취소 후 해당 세션의 실행 가드와 SQLite 상태가 모두 종료됐는지 확인하며 최대 5초 동안 기다립니다. 도중 종료되지 않으면 `stopped=false`를 반환해 화면이 중단 완료를 섣불리 표시하지 않습니다. Rust `run_turn_with_policy`의 `tokio::select!`는 취소 세대 번호 변경을 감지해 네이티브 모델/도구 실행 Future를 드롭하고, `finish_attempt`에서 `cancelled` 상태를 기록합니다. HTTP 요청이 실제 실행 시작보다 먼저 승인됐을 때도 입장 시점 취소 세대 번호를 전달해, 늦게 시작된 과거 요청이 새 STOP을 지울 수 없도록 차단합니다.
+
+개발 CI는 모델이 HTTP SSE 헤더만 보낸 뒤 토큰을 전혀 내보내지 않는 모의 Provider 테스트, 실제 API 취소 확인, `cancelled` 실행 기록, 응답 미저장, 동일 세션에서 새 대화 재개, 시작 전 취소 경쟁을 검증합니다. 프론트엔드 타입 검사·Vite 빌드와 UI 회귀 계약 테스트도 수행합니다. 외부 제공자 서버의 물리적 GPU 추론 종료는 해당 서비스가 끊긴 HTTP 요청을 감지하는지에 영향을 받으므로, DOMINION 자체가 외부 모델 프로세스를 임의로 종료했다고 주장하지 않습니다.
+
+### 공동 정적 프리픽스 → 참가자 페르소나 → 동적 대화
+
+방 시스템 프롬프트는 `DOMINION 공통 정체성 + 주인 지침 + 방 규칙·참가자 명단·주제·도구 계약 + 해당 참가자 페르소나` 순서로 조립합니다. 기존 private/chat `identity_prefix`는 바꾸지 않아 1:1 대화 호환성을 유지합니다. 동일한 방에서 9명에게 서로 다른 페르소나를 부여하더라도 앞쪽 공통 정적 토큰은 정확히 동일하며, 원래 역할 지침과 기억·증거는 보존합니다. 각 사용자 발언과 검색 근거는 뒤의 동적 컨텍스트에서 이전과 같이 선별됩니다.
+
+Cloudflare Workers AI에서는 공식 프리픽스 캐시 문서(https://developers.cloudflare.com/workers-ai/features/prompt-caching/)의 권고에 따라 `x-session-affinity` 헤더를 전달합니다. 하나의 방·제공자·모델·계정에 속하는 참가자는 동일한 캐시 라우팅 ID를 사용하지만 각 에이전트의 `transportSessionId`, 대화 커서, 권한 및 DB 상태는 서로 분리됩니다. 개인 세션은 자체 ID를 사용합니다. Workers AI 경로에서는 명세가 다른 OpenAI `prompt_cache_key`를 불필요하게 삽입하지 않습니다. 그 외 OpenAI 호환 Provider의 기존 캐시 협상은 유지합니다.
+
+실제 제공자 캐시 사용량은 `cachedPromptTokens`의 `null`/0/양수 상태를 구분합니다. 캐시 미지원 또는 미보고 모델(GLM-4.7-Flash 포함 가능성)에서 지원을 추정하지 않습니다. `promptTokens` 총량이 유지돼도 `cachedPromptTokens`, 비캐시 입력, 첫 토큰 지연, 비용이 달라질 수 있으므로 동일 모델·같은 9인×3턴 작업으로 재측정해야 합니다. 캐시 가능 접두부가 제공자 블록 최소 크기보다 짧을 수도 있으므로 코드 변경만으로 적중이나 절감을 주장하지 않습니다.
