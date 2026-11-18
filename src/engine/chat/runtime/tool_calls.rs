@@ -164,6 +164,8 @@ pub(super) async fn dispatch_tool_call(
         } else if state.store.get("session",session_id).is_some_and(|s|
             s["parallelReadOnly"]==true) && !tools::parallel_read_only_tool(&call.name){
             Err("병렬 조사 하위 에이전트는 쓰기·셸·위임·MCP 실행을 할 수 없습니다.".into())
+        } else if call.name==capability::SEARCH {
+            capability::search(state,session_id,execution_id,&arguments).await
         } else if call.name.starts_with("mcp__") {
             mcp::call(state, &call.name, &arguments).await
         } else {
