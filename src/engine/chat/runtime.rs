@@ -36,7 +36,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 // Child modules share only the existing durable chat execution interfaces.
 // They use the parent's imports; this coordinator owns the public entrypoints.
-use super::{budget,context,continuity,protocol,room_context,tool_schedule,trace_budget};
+use super::{budget,capability,context,continuity,protocol,room_context,tool_schedule,trace_budget};
 mod turn_body;
 mod program;
 mod observations;
