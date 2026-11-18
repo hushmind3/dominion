@@ -215,14 +215,24 @@ fn context_block_with_manifest(
         .filter_map(|skill| {
             let id = skill.get("id").and_then(|v| v.as_str())?.to_string();
             let name = skill.get("name").and_then(|v| v.as_str())?.to_string();
-            let instructions = skill
-                .get("instructions")
-                .or_else(|| skill.get("description"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .chars()
-                .take(700)
-                .collect::<String>();
+            // Only the catalog is loaded into the prompt when a read tool
+            // is available. The complete SKILL.md stays in SQLite and can be
+            // paged by skill_view without rebuilding this context every turn.
+            // Model-only turns retain the legacy excerpt instead of losing
+            // operational instructions they cannot fetch.
+            let detail = if request.tools_enabled && request.tools_execution_enabled {
+                skill.get("description")
+                    .or_else(|| skill.get("instructions"))
+                    .and_then(|value|value.as_str())
+                    .unwrap_or("")
+                    .chars().take(180).collect::<String>()
+            } else {
+                skill.get("instructions")
+                    .or_else(|| skill.get("description"))
+                    .and_then(|value|value.as_str())
+                    .unwrap_or("")
+                    .chars().take(700).collect::<String>()
+            };
             items.push(json!({
                 "kind": "skill",
                 "id": id,
@@ -233,10 +243,13 @@ fn context_block_with_manifest(
                     skill["updatedAt"].as_str().unwrap_or(""),
                 ]),
             }));
-            Some((name, instructions))
+            Some((name, id, detail))
         })
         .collect::<Vec<_>>();
-    skills.truncate(5);
+    // Stable catalog ordering avoids spurious provider cache invalidations
+    // when SQLite enumerates enabled skills in a different row order.
+    skills.sort_by(|a,b|a.1.cmp(&b.1));
+    skills.truncate(12);
 
     let mut reliability = Vec::new();
     for stat in state.store.all("tool_stat") {
@@ -307,9 +320,13 @@ fn context_block_with_manifest(
     }
     let mut block = memories.unwrap_or_default();
     if !skills.is_empty() {
-        block.push_str("\n\nEnabled skills (follow when applicable):");
-        for (name, instructions) in &skills {
-            block.push_str(&format!("\n- {name}: {instructions}"));
+        if request.tools_enabled && request.tools_execution_enabled {
+            block.push_str("\n\nEnabled skills index (read matching instructions with skill_view before use):");
+        } else {
+            block.push_str("\n\nEnabled skills (model-only excerpts):");
+        }
+        for (name, id, detail) in &skills {
+            block.push_str(&format!("\n- {name} [id={id}]: {detail}"));
         }
     }
     if !reliability.is_empty() {
