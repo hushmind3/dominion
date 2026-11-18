@@ -885,6 +885,20 @@ async fn stream_completion_once_body(
         provider.requests_per_minute,
     )?;
     let _permit = crate::engine::gateway::acquire(&provider.base_url, provider.local).await;
+    // A Chat Completions HTTP route has no server-side delta guarantee.
+    // Report complete wire input, distinct from provider-reported cached KV
+    // tokens. Never pretend an affinity header means skipped persona input.
+    continuity["incrementalTransport"]=json!({
+        "wire":"http","mode":"full-request",
+        "personaResent":true,
+        "sentInputTokens":super::room_context::input_estimate(&provider_messages,
+            if compatible { &[] } else { tools }),
+        "instructionTokens":super::room_context::estimate(
+            &provider_messages.iter().filter(|row|row["role"]=="system")
+                .filter_map(|row|row["content"].as_str())
+                .collect::<Vec<_>>().join("\n\n")),
+        "cacheHitTokens":null,
+    });
     let builder = crate::engine::gateway::benchmark_request(
         client.post(format!("{}/chat/completions", provider.base_url)),
     )

@@ -1174,6 +1174,16 @@ pub(super) async fn run_turn_body(
                                 .map_or(Value::Null,|tokens|json!(tokens))
                         }else{Value::Null},
                         "usageExact":completion.usage_exact,
+                        "wire":metadata["continuity"]["incrementalTransport"]["wire"],
+                        "wireMode":metadata["continuity"]["incrementalTransport"]["mode"],
+                        "wireInputTokensEstimated":
+                            metadata["continuity"]["incrementalTransport"]["sentInputTokens"],
+                        "wireInstructionTokensEstimated":
+                            metadata["continuity"]["incrementalTransport"]["instructionTokens"],
+                        "personaResentOnWire":
+                            metadata["continuity"]["incrementalTransport"]["personaResent"],
+                        "cacheAffinitySamePrefix":
+                            metadata["continuity"]["samePrefixAsPreviousRequest"],
                         "toolsAdvertised":round_tools.len(),
                         "toolSchemaTokensEstimated":super::room_context::estimate(&json!(round_tools).to_string()),
                         "nativeInputTokensEstimated":round_input_tokens,
