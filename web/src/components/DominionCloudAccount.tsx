@@ -22,7 +22,6 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
  const [providerSort,setProviderSort]=useState<'name'|'models'>('name')
  const [managementTab,setManagementTab]=useState<'cloud'|'providers'>('cloud')
  const [providerPage,setProviderPage]=useState(0)
- const [cloudTab,setCloudTab]=useState<'models'|'providers'>('models')
  const [providerMinModels,setProviderMinModels]=useState(false)
  const [busy,setBusy]=useState(false)
  const [message,setMessage]=useState('')
@@ -173,12 +172,12 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
  return <section className="rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] p-4">
   <div className="flex flex-wrap gap-2 border-b border-[#E7E0D5] pb-3 mb-3" role="tablist" aria-label="모델 연결 관리">
    <button type="button" role="tab" aria-selected={managementTab==='cloud'} onClick={()=>setManagementTab('cloud')} className={`rounded-lg px-3 py-2 text-[12px] ${managementTab==='cloud'?'bg-[#C96442] text-white':'border'}`}>DOMINION Cloud</button>
-   <button type="button" role="tab" aria-selected={managementTab==='providers'} onClick={()=>{setManagementTab('providers');setShowAdvanced(true);if(!catalog.length)void loadCatalog()}} className={`rounded-lg px-3 py-2 text-[12px] ${managementTab==='providers'?'bg-[#C96442] text-white':'border'}`}>업체·모델 연결</button>
+   <button type="button" role="tab" aria-selected={managementTab==='providers'} onClick={()=>{setManagementTab('providers');if(!catalog.length)void loadCatalog()}} className={`rounded-lg px-3 py-2 text-[12px] ${managementTab==='providers'?'bg-[#C96442] text-white':'border'}`}>업체·모델 연결</button>
   </div>
   {managementTab==='cloud'&&<><strong className="text-[13px]">DOMINION Cloud · 구글 로그인</strong>
   <p className="mt-1 text-[12px] text-[#7C7469]">DOMINION 계정 하나로 무료·유료 모델을 선택합니다. 업체 API 키는 서버에서 관리합니다.</p>
   {cloudUrl&&clientId?<div className="mt-3" ref={button}/>:<p className="mt-2 text-[12px] text-[#7C7469]">DOMINION Cloud 로그인 미설정 · 다른 AI 업체는 아래에서 연결할 수 있습니다.</p>}
-  {cloudTab==='models'&&token&&<div className="mt-3 flex flex-wrap items-center gap-2">
+  {token&&<div className="mt-3 flex flex-wrap items-center gap-2">
    <input aria-label="모델 검색" value={modelSearch} onChange={e=>setModelSearch(e.target.value)} placeholder="모델 이름 또는 업체 검색" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
    <select aria-label="모델 요금 필터" value={modelFilter} onChange={e=>setModelFilter(e.target.value as 'all'|'free'|'paid')} className="rounded-lg border px-3 py-2 text-[12px]">
     <option value="all">전체</option><option value="free">무료</option><option value="paid">유료</option>
@@ -190,12 +189,8 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
    <button type="button" disabled={busy||!selected||!models.some(model=>model.id===selected&&(modelFilter==='all'||(modelFilter==='free'?model.free:!model.free))&&(model.id+' '+(model.name||'')+' '+(model.provider||'')).toLowerCase().includes(modelSearch.toLowerCase()))} onClick={()=>void register()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">모델 등록</button>
   </div>}
   {token&&<button type="button" className="mt-3 rounded-lg border px-3 py-2 text-[12px]" onClick={()=>{setToken('');setModels([]);setSelected('');setMessage('로그아웃되었습니다.');window.google?.accounts.id.disableAutoSelect?.()}}>로그아웃</button>}
-  {message&&<p role="status" className="mt-2 text-[12px] text-[#7C7469]">{message}</p>}
-  <div className="mt-4 flex flex-wrap gap-2 border-b border-[#E7E0D5] pb-3" role="tablist" aria-label="클라우드 모델 관리">
-   <button type="button" role="tab" aria-selected={cloudTab==='models'} onClick={()=>{setCloudTab('models');setShowAdvanced(false)}} className={'rounded-lg px-3 py-2 text-[12px] '+(cloudTab==='models'?'bg-[#C96442] text-white':'border')}>내 클라우드 모델</button>
-   <button type="button" role="tab" aria-selected={cloudTab==='providers'} onClick={()=>{setCloudTab('providers');setShowAdvanced(true);if(!catalog.length)void loadCatalog()}} className={'rounded-lg px-3 py-2 text-[12px] '+(cloudTab==='providers'?'bg-[#C96442] text-white':'border')}>AI 업체 탐색·연결</button>
-  </div>
-  {cloudTab==='providers'&&showAdvanced&&<div className="mt-4 border-t border-[#E7E0D5] pt-4">
+  </>}
+  {managementTab==='providers'&&<div className="mt-4 border-t border-[#E7E0D5] pt-4">
    <div className="flex flex-wrap gap-2"><button type="button" aria-pressed={connectionTab==='providers'} onClick={()=>setConnectionTab('providers')} className={'rounded-lg border px-3 py-2 text-[12px] '+(connectionTab==='providers'?'bg-[#EEE5D8] font-semibold':'')}>업체 탐색·연결</button><button type="button" aria-pressed={connectionTab==='openrouter'} onClick={()=>setConnectionTab('openrouter')} className={'rounded-lg border px-3 py-2 text-[12px] '+(connectionTab==='openrouter'?'bg-[#EEE5D8] font-semibold':'')}>OpenRouter 무료 모델</button></div>
    {connectionTab==='providers'&&<div className="mt-3"><strong className="text-[13px]">AI 업체 통합 연결 · models.dev</strong>
    <p className="mt-1 text-[12px] text-[#7C7469]">업체 검색 → API 키 연결 → 모델 조회 → 채팅 등록 · 공개 모델 목록과 실제 사용 권한은 다를 수 있습니다.</p>
@@ -229,7 +224,7 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
    {catalogMessage&&<p role="status" className="mt-2 text-[12px] text-[#7C7469]">{catalogMessage}</p>}
    </div>}
   </div>}
-  {cloudTab==='providers'&&showAdvanced&&<div className="mt-4 border-t border-[#E7E0D5] pt-4">
+  {managementTab==='providers'&&<div className="mt-4 border-t border-[#E7E0D5] pt-4">
    <strong className="text-[13px]">OpenRouter 무료 모델 일괄 등록</strong>
    <p className="mt-1 text-[12px] text-[#7C7469]">OpenRouter API 키로 최신 무료 텍스트 모델을 가져옵니다.</p>
    <div className="mt-2 flex flex-wrap gap-2">
@@ -238,6 +233,5 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
    </div>
    {routerMessage&&<p role="status" className="mt-2 text-[12px] text-[#7C7469]">{routerMessage}</p>}
   </div>}
-  </>}
  </section>
 }
