@@ -247,6 +247,33 @@ pub(super) async fn dispatch_tool_call(
     procedure_strategy: Option<&str>,
     procedure_revision: Option<&str>,
 ) -> Result<(Value, bool, String), String> {
+    // Unwrap only tools discovered in this execution. The real tool name
+    // proceeds through the same effect ledger, owner approval and sandbox gates.
+    // An invalid discovery call becomes an ordinary tool failure, not a bypass
+    // or a fatal turn error.
+    let bridge = if call.name == crate::engine::capability::CALL {
+        Some(crate::engine::capability::resolve(
+            state, session_id, execution_id, &arguments,
+        ).await)
+    } else {
+        None
+    };
+    let mut effective_call = None;
+    let mut bridge_error = None;
+    let arguments = match bridge {
+        Some(Ok((name, resolved_args))) => {
+            effective_call = Some(ToolCall {
+                id: call.id.clone(), name, arguments: resolved_args.to_string(),
+            });
+            resolved_args
+        }
+        Some(Err(error)) => {
+            bridge_error = Some(error);
+            arguments
+        }
+        None => arguments,
+    };
+    let call = effective_call.as_ref().unwrap_or(call);
     let argument_strategy = crate::engine::algorithms::choose_for_agent(
         state,
         "tool.arguments",
@@ -398,7 +425,9 @@ pub(super) async fn dispatch_tool_call(
             tools_enabled: request.tools_enabled,
             tools_execution_enabled: request.tools_execution_enabled,
         };
-        let outcome = if session["delegationWorkspace"].is_object()&&(call.name.starts_with("mcp__")||matches!(call.name.as_str(),"github_api"|"github_file_read"|"github_file_update"|"browser_control")){
+        let outcome = if let Some(error) = bridge_error.as_ref() {
+            Err(error.clone())
+        } else if session["delegationWorkspace"].is_object()&&(call.name.starts_with("mcp__")||matches!(call.name.as_str(),"github_api"|"github_file_read"|"github_file_update"|"browser_control")){
             Err("격리 위임 작업에서는 외부 변경 도구를 실행할 수 없습니다.".into())
         } else if session["readOnly"]==true&&!tools::observational(&call.name){
             Err("읽기 전용 위임 작업에는 이 도구를 실행할 권한이 없습니다.".into())
