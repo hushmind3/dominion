@@ -165,7 +165,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',hideMan
    setMessage('모델이 등록됐습니다. 채팅에서 선택해 사용하세요.')
   }catch(error){setMessage((error as Error).message)}finally{setBusy(false)}
  }
- const filteredCatalog=catalog.filter(p=>(p.name+' '+p.id).toLowerCase().includes(catalogSearch.toLowerCase())&&(!providerMinModels||p.models>0)).sort((a,b)=>providerSort==='models'?b.models-a.models||a.name.localeCompare(b.name))
+ const filteredCatalog=catalog.filter(p=>(p.name+' '+p.id).toLowerCase().includes(catalogSearch.toLowerCase())&&(!providerMinModels||p.models>0)).sort((a,b)=>providerSort==='models'?b.models-a.models||a.name.localeCompare(b.name):a.name.localeCompare(b.name))
  const providerPageCount=Math.max(1,Math.ceil(filteredCatalog.length/40))
  const visibleCatalog=filteredCatalog.slice(providerPage*40,(providerPage+1)*40)
  return <section className="rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] p-4">
