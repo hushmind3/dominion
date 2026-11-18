@@ -147,7 +147,7 @@ mod tests{
     }
     #[test] fn folded_events_keep_publisher_and_story_provenance(){
         let row=json!({"id":"original-news","url":"https://news.google.com/rss/articles/one",
-            "title":"Korean robots fall in price","description":"한국 로봇 가격 인하",
+            "title":"한국 로봇 가격 하락","description":"hardware cost cuts",
             "sourceName":"Korean market RSS","publisherName":"Reuters",
             "publisherDomain":"reuters.com","storyClusterId":"same-story-id",
             "storyRelationship":"matching_headline_requires_independent_source_review"});
@@ -164,10 +164,10 @@ mod tests{
     #[test] fn source_to_event_to_pending_pair_is_indexed_and_restart_safe(){
         let store=crate::db::Store::open(std::path::Path::new(":memory:")).unwrap();
         let input=vec![
-            json!({"id":"cn1","title":"中国机器人芯片降价","url":"https://example.org/cn",
+            json!({"id":"cn1","title":"中国机器人芯片降价","url":"https://cn-supplier.example/cn",
                 "description":"중국 가격 하락", "sourceName":"CN supplier journal",
                 "publishedAt":"2026-11-16T00:00:00Z","capturedAt":"2026-11-16T00:05:00Z"}),
-            json!({"id":"kr1","title":"한국 반도체 설비 비용 상승","url":"https://example.org/kr",
+            json!({"id":"kr1","title":"한국 반도체 설비 비용 상승","url":"https://kr-buyer.example/kr",
                 "description":"한국 가격 인상","sourceName":"KR industry journal",
                 "publishedAt":"2026-11-16T00:00:00Z","capturedAt":"2026-11-16T00:05:00Z"})
         ];
