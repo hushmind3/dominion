@@ -12,6 +12,7 @@ on:
       - 'src/api/mod.rs'
       - 'tests/e2e.rs'
       - 'src/engine/chat/**'
+      - 'src/engine/room_state.rs'
       - 'src/api/sessions.rs'
       - 'src/api/chat.rs'
       - 'src/state.rs'
@@ -72,6 +73,8 @@ jobs:
           cargo test --bin dominion-rust cancel_api_interrupts_silent_http_generation_and_allows_same_session_retry
           cargo test --bin dominion-rust engine::chat::runtime::cancellation_watch_tests
           cargo test --bin dominion-rust engine::chat::room_context::tests
+          cargo test --bin dominion-rust engine::chat::continuity::tests
+          cargo test --bin dominion-rust engine::room_state::tests
           cargo test --bin dominion-rust engine::verification
           cargo test --bin dominion-rust engine::native_adjudication::tests
           cargo test --bin dominion-rust db::tests
