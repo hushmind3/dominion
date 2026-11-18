@@ -428,7 +428,7 @@ pub fn opencode_go_base_url(base_url:&str)->bool{
     let Ok(url)=reqwest::Url::parse(base_url) else{return false};
     url.scheme()=="https" && url.host_str()==Some("opencode.ai")
         && ["/zen/go","/inference/go"].iter().any(|prefix|
-            url.path().strip_prefix(prefix)
+            url.path().strip_prefix(*prefix)
                 .is_some_and(|suffix|suffix.is_empty() || suffix.starts_with('/')))
 }
 
