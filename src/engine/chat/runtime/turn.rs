@@ -1029,35 +1029,12 @@ pub(super) async fn run_turn_body(
                     .as_deref()
                     .map(|source| evidence_for_source(state, session_id, source, execution_id))
                     .unwrap_or_default();
-                let mut gaps = verification::check_acceptance(state, acceptance_text, checks, &evidence);
-                let mut next_action = String::new();
+                let gaps = verification::check_acceptance(state, acceptance_text, checks, &evidence);
                 if !gaps.is_empty() {
-                    // Independent reviewer: deterministic checks still win, but
-                    // the reviewer supplies a concrete repair strategy.
-                    let precise_replacement = checks.as_array().is_some_and(|checks|
-                        checks.iter().any(|check| check["type"] == "file_replace_exact"));
-                    let review = if precise_replacement {
-                        None
-                    } else {
-                        review_action(state, request, acceptance_text, &final_content, &evidence, &gaps).await
-                    };
-                    if let Some(review) = review {
-                        gaps.extend(review.gaps);
-                        gaps.sort();
-                        gaps.dedup();
-                        next_action = review.next_action.unwrap_or_default();
-                        metrics.lock().unwrap().model_calls += 1;
-                        // The reviewer may guide the CURRENT repair turn;
-                        // it must not create autonomous RSI strategy records.
-                        // Existing failure evidence and nextAction are saved
-                        // immediately below for later user-requested reuse.
-                        state.store.audit("acceptance.review", json!({
-                            "sessionId": session_id,
-                            "executionId": execution_id,
-                            "gaps": gaps,
-                            "nextAction": next_action,
-                        }));
-                    }
+                    // The host has already evaluated the acceptance predicate.
+                    // Send exact unmet conditions to the NEXT regular model
+                    // turn; a second paid "reviewer" call cannot certify them.
+                    // Preserve retries, receipts and owner-defined checks.
                     if !request.tools_enabled {
                         return Err(format!(
                             "도구가 비활성 상태라 요청한 작업을 실제로 수행할 수 없습니다: {}",
@@ -1086,13 +1063,8 @@ pub(super) async fn run_turn_body(
                         messages.push(json!({
                             "role": "user",
                             "content": format!(
-                                "자동 검증/리뷰 결과 아직 완료되지 않았습니다:\n- {}\n\n{}\n말로만 완료하지 말고, 지금 실제 도구를 호출해 빠진 작업을 수행한 뒤 결과를 확인하세요.",
-                                gaps.join("\n- "),
-                                if next_action.trim().is_empty() {
-                                    "전략을 바꿔 다시 시도하세요.".to_string()
-                                } else {
-                                    format!("다음 전략: {next_action}")
-                                }
+                                "실제 실행 기록과 독립 검증에서 미충족 조건이 남아 있습니다:\n- {}\n\n이 조건을 해결할 다른 도구나 절차를 선택하고, 실제 실행 결과로 다시 검증하세요. 완료했다고 주장하는 텍스트는 증거가 아닙니다.",
+                                gaps.join("\n- ")
                             )
                         }));
                         continue;
