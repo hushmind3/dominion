@@ -52,6 +52,12 @@ jobs:
         run: |
           cargo test --locked --bin dominion-rust engine::improve::tests
           cargo test --locked --bin dominion-rust db::tests::active_improvement_lookup_uses_partial_index_in_query_plan
+      - name: Indexed child evidence and role-scoped delegation (dev profile)
+        run: |
+          cargo test --locked --bin dominion-rust db::tests::delegated_results_use_recent_index_without_loading_unrelated_history
+          cargo test --locked --bin dominion-rust engine::tools::delegation::profile_tests
+          cargo test --locked --bin dominion-rust delegation_depth_is_bounded_and_cycle_safe
+          cargo test --locked --bin dominion-rust task_results_are_scoped_to_the_owning_or_parent_session
       - name: Progressive capability catalog and session-scope regressions (dev profile)
         run: cargo test --locked --bin dominion-rust engine::capability::tests
       - name: Bounded model-visible tool selection regressions (dev profile)
