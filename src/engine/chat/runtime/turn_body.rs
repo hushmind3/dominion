@@ -251,7 +251,7 @@ pub(super) async fn run_turn_body(
     {
         tool_definitions.iter().find(|tool|tool_name(tool)=="room_message_read").cloned()
     }else{None};
-    if !is_room {
+    if peer_reader.is_none(){
         tool_definitions.retain(|tool|tool_name(tool)!="room_message_read");
     }
     // Freeze a same-turn provider-catalog ceiling *after* connection
