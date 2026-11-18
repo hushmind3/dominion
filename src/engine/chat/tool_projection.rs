@@ -204,15 +204,28 @@ pub(super) fn select_panel_tool_definitions(definitions:Vec<Value>,query:&str)->
     let wants_save_memory=mentions(&["기억해","기억해 둬","메모리에 저장",
         "remember this","save memory"]);
     let wants_skill=mentions(&["스킬","skill","재사용 절차","reusable procedure"]);
-    let wants_browser=mentions(&["브라우저","browser","웹페이지","웹사이트","사이트",
-        "웹 검색","웹에서","네이버","구글","드라이브","drive","docs","문서","시트","sheets",
-        "스프레드시트","github","깃허브","접속","페이지 이동",
+    // A local docs/ directory or .github/workflows path is not a
+    // cloud connector request. Require explicit provider/browser intent.
+    let google_service=mentions(&[
+        "google docs","google drive","google sheets",
+        "docs.google.com","drive.google.com","sheets.google.com",
+        "구글 문서","구글문서","구글 드라이브","구글드라이브",
+        "구글 시트","구글시트",
+    ]);
+    let wants_browser=google_service || mentions(&[
+        "브라우저","browser","웹페이지","웹사이트","사이트",
+        "웹 검색","웹에서","네이버","구글 검색","구글에서",
+        "github.com","깃허브 접속","접속","페이지 이동",
         "click the page","스크린샷","screenshot","ui test","e2e test",
-        "open url","visit url","website","web page"]);
+        "open url","visit url","website","web page","http://","https://",
+    ]);
     let wants_github=mentions(&["깃허브","github","git push","git commit",
         "커밋","푸시","레포지토리","리포지토리","repository",
         "풀 리퀘스트","pull request","이슈 생성","issue 생성"]);
-    let wants_google=mentions(&["구글","google","드라이브","drive","docs","문서","시트","sheets","스프레드시트"]);
+    let wants_google=google_service || mentions(&[
+        "구글 계정","google account","구글 로그인","google login",
+        "드라이브에 업로드","드라이브에서 가져","온라인 스프레드시트",
+    ]);
     let wants_accounts=mentions(&["연결 계정","로그인 계정","oauth","connected account"]);
     definitions.into_iter().filter(valid_tool_definition).filter(|definition|{
         match tool_name(definition){
@@ -361,6 +374,47 @@ mod tests {
         assert_eq!(select_panel_tool_definitions(definitions.clone(),"읽어"),
             vec![valid.clone()]);
         assert_eq!(trim_tool_definitions(definitions,10000),vec![valid]);
+    }
+
+    #[test]
+    fn local_docs_paths_do_not_activate_google_or_browser_tool_schemas(){
+        let definition=|name:&str|json!({"type":"function","function":{
+            "name":name,"parameters":{"type":"object"}
+        }});
+        let catalog=[
+            "workspace_read","workspace_write","shell_exec",
+            "browser_control","google_docs_read","google_drive_search",
+            "google_sheets_read","account_status"
+        ].iter().map(|name|definition(name)).collect::<Vec<_>>();
+        let names=|query:&str|{
+            select_panel_tool_definitions(catalog.clone(),query)
+                .iter().map(tool_name).map(str::to_string)
+                .collect::<std::collections::HashSet<_>>()
+        };
+        for query in [
+            "docs/a.txt와 docs/b.txt를 만들고 SUMMARY.md 생성해",
+            "로컬 문서 docs/a.txt를 읽어",
+            "C:\\docs\\a.txt를 수정하고 시트 파일을 로컬에 저장해"
+        ]{
+            let selected=names(query);
+            assert!(selected.contains("workspace_write"),"{query}");
+            for unrelated in ["browser_control","google_docs_read",
+                "google_drive_search","google_sheets_read","account_status"]{
+                assert!(!selected.contains(unrelated),"{query} must not advertise {unrelated}");
+            }
+        }
+        for query in [
+            "Google Docs 문서를 읽어",
+            "https://docs.google.com/document/d/123 수정해",
+            "구글 드라이브에서 문서를 가져와"
+        ]{
+            let selected=names(query);
+            assert!(selected.contains("google_docs_read"),"{query}");
+            assert!(selected.contains("google_drive_search"),"{query}");
+            assert!(selected.contains("browser_control"),"{query}");
+            assert!(selected.contains("account_status"),"{query}");
+        }
+        assert!(names("브라우저에서 사이트 열어").contains("browser_control"));
     }
 
     #[test]

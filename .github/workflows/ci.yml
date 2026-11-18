@@ -79,6 +79,7 @@ jobs:
           cargo test --lib engine::chat::room_context::tests::nine_agents_retain_source_addressed_peer_coverage_without_nine_full_replays
           cargo test --lib engine::chat::room_context::tests::short_peer_index_keeps_exact_sources_without_repeated_receipt_metadata
           cargo test --lib engine::chat::runtime::action_review::tests::multi_file_contract_reuses_native_plan_but_preserves_explicit_planning
+          cargo test --lib engine::chat::tool_projection::tests::local_docs_paths_do_not_activate_google_or_browser_tool_schemas
           cargo test --lib engine::tools::tests::room_source_reader_preserves_full_peer_history_and_private_scope
           cargo test --lib engine::chat::continuity::tests::indexed_peer_never_duplicates_a_full_reply_in_committed_prefix
           # The model-route and participant continuation pointers must commit
