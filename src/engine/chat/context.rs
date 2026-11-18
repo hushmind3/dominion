@@ -623,6 +623,32 @@ mod tests {
     }
 
     #[test]
+    fn tool_enabled_context_lists_skills_without_loading_full_instructions() {
+        let (state,dir)=state();
+        state.store.put("skill",&json!({
+            "id":"skill-1","scope":"global","name":"Specialist",
+            "description":"Inspect specialized project data",
+            "instructions":"SECRET-FULL-SKILL-TEXT-NEVER-PRELOAD",
+            "enabled":true,"status":"active"
+        }));
+        let request=TurnRequest::from_value(&json!({
+            "input":"inspect the task","toolsEnabled":true,"toolsExecutionEnabled":true
+        })).unwrap();
+        let built=system_prompt_with_manifest_at(&state,&request,"private","inspect",None,None);
+        assert!(built.dynamic_context.contains("Enabled skills index"));
+        assert!(built.dynamic_context.contains("skill-1"));
+        assert!(built.dynamic_context.contains("Inspect specialized project data"));
+        assert!(!built.dynamic_context.contains("SECRET-FULL-SKILL-TEXT-NEVER-PRELOAD"));
+        let no_tools=TurnRequest::from_value(&json!({
+            "input":"inspect the task","toolsEnabled":false
+        })).unwrap();
+        let built_off=system_prompt_with_manifest_at(&state,&no_tools,"private","inspect",None,None);
+        assert!(built_off.dynamic_context.contains("SECRET-FULL-SKILL-TEXT-NEVER-PRELOAD"),
+            "tool-free model must still receive necessary skill instructions");
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn room_history_preserves_stored_reasoning_for_provider_specific_replay() {
         let (state, dir) = state();
         state
