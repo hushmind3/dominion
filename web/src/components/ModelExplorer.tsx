@@ -131,7 +131,7 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
  const selectedJob=jobs.filter(j=>j.repo===detail?.id&&j.optionId===option?.id&&(j.revision||'main')===(detail?.revision||'main')&&['resolving','downloading','paused','failed','cancelled','completed'].includes(j.status)).sort((a,b)=>(b.startedAt||'').localeCompare(a.startedAt||''))[0]
  const installedId=selectedJob?.installedId??
   (selectedJob?.status==='completed'?selectedJob.optionId.split('/').at(-1):undefined)
- const existing=installed.find(m=>m.id===installedId)
+ const existing=installed.find(m=>m.id===installedId||(m.repo===detail?.id&&m.optionId===option?.id))
  const activeModel=installed.find(m=>m.id===runtime.id)
  const needEngine=runtime.capabilities?.gguf.available===false;
  const installing=['checking','downloading','extracting','verifying'].includes(runtime.setup?.status||'');
@@ -268,7 +268,7 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
      {!detail.options.length&&<p className="mt-3 text-[12px] text-amber-700">{t('models.noGguf')}</p>}
      {option&&<div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl bg-[#FAF7F1] p-3">
       <span className="text-[12px] text-[#5C544A]">{t('models.sizeLabel')} <strong>{fmt(option.bytes)}</strong></span>
-      {existing?<><Button variant="bare" type="button" className={btn+' !border-[#C96442] !bg-[#C96442] !text-white'} disabled={Boolean(working)||runtime.status==='loading'} onClick={()=>void load(existing.id)}><Play size={13}/>{working==='load'+existing.id?t('models.loadingModel'):runtime.status==='ready'&&runtime.id===existing.id?t('models.inUse'):t('models.run')}</Button><Button variant="bare" type="button" className={btn} onClick={()=>setView('installed')}><Check size={14}/>{t('models.installedView')}</Button></>:
+      {existing?<><Button variant="bare" type="button" className={btn+' !border-[#C96442] !bg-[#C96442] !text-white'} disabled={Boolean(working)||runtime.status==='loading'||(runtime.status==='ready'&&runtime.id===existing.id)} onClick={()=>void load(existing.id)}><Play size={13}/>{working==='load'+existing.id?t('models.loadingModel'):runtime.status==='ready'&&runtime.id===existing.id?t('models.inUse'):t('models.run')}</Button>{runtime.status==='ready'&&runtime.id===existing.id&&runtime.model&&<Button variant="bare" type="button" className={btn} onClick={()=>{window.location.hash='#/chat?'+new URLSearchParams({provider:'dominion-native',model:runtime.model!})}}><ArrowRight size={14}/>{t('models.chat')}</Button>}<Button variant="bare" type="button" className={btn} onClick={()=>setView('installed')}><Check size={14}/>{t('models.installedView')}</Button></>:
        <Button variant="bare" type="button" className="flex h-8 items-center gap-2 rounded-lg bg-[#C96442] px-3 text-[11px] font-semibold text-white disabled:opacity-40" disabled={Boolean(working)||['resolving','downloading'].includes(selectedJob?.status||'')||detail.gated} onClick={()=>void safe('download',()=>post('/api/model-library/download',{repo:detail.id,optionId:option.id,format:option.format,files:option.files,revision:detail.revision}))}><ArrowDownToLine size={14}/>{working==='download'?t('models.requesting'):selectedJob?.status==='downloading'?t('models.downloading'):t('models.downloadStart')}</Button>}
       {detail.gated&&<span className="text-[11px] text-amber-700">{t('models.approval')}</span>}
      </div>}
