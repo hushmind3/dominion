@@ -153,6 +153,21 @@ pub async fn cancel_session(
         "running":running,"requestRecorded":request_recorded }))
 }
 
+/// One process may release its active session before a detached provider
+/// response is fully recorded. The UI must keep Stop active until both the
+/// live session guard and the durable execution journal are terminal.
+pub async fn cancel_status(
+    State(state): State<AppState>,Path(id):Path<String>
+) -> Json<Value> {
+    let active=state.active.lock().unwrap().contains(&id);
+    let running=state.store.all("execution").iter().any(|execution|{
+        execution["sessionId"].as_str()==Some(id.as_str())
+            && execution["status"]=="running"
+    });
+    Json(json!({"sessionId":id,"stopped":!active&&!running,
+        "active":active,"running":running}))
+}
+
 pub async fn compact_session(
     State(state): State<AppState>,
     Path(id): Path<String>,
