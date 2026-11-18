@@ -192,7 +192,12 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    return;
   }
   try{
-   const answer=await post<{cancelled:boolean}>('/api/sessions/'+encodeURIComponent(id)+'/cancel',{});
+   const answer=await post<{cancelled:boolean;settled?:boolean}>('/api/sessions/'+encodeURIComponent(id)+'/cancel',{});
+   if(answer.settled===false){
+    stopRequested.current=false;
+    setError(t('chat.stopNotSettled'));
+    return;
+   }
    if(stream.current===controller){
     controller.abort();
     setCommandInfo(answer.cancelled?t('chat.cmd.stopRequested'):t('chat.cmd.nothingRunning'));
@@ -235,7 +240,8 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    if(name==='stop'){
     if(stream.current){await stopChat();return;}
     if(!current)throw Error(t('chat.cmd.noSessionStop'));
-    const answer=await post<{cancelled:boolean}>('/api/sessions/'+encodeURIComponent(current)+'/cancel',{});
+    const answer=await post<{cancelled:boolean;settled?:boolean}>('/api/sessions/'+encodeURIComponent(current)+'/cancel',{});
+    if(answer.settled===false)throw Error(t('chat.stopNotSettled'));
     setCommandInfo(answer.cancelled?t('chat.cmd.stopRequested'):t('chat.cmd.nothingRunning'));return;
    }
    if(name==='status'){
