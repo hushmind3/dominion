@@ -391,6 +391,97 @@ fn durable_history_restores_out_of_order_results_by_call_identity() {
 }
 
 #[tokio::test]
+async fn stop_before_native_turn_starts_does_not_clear_newer_cancellation() {
+    let state=temp_state();
+    state.store.put("session",&json!({"id":"prestop"})).unwrap();
+    let admitted=state.cancellation_generation("prestop");
+    state.cancel_session("prestop");
+    let request=TurnRequest::from_value(&json!({
+        "sessionId":"prestop","input":"this turn must never start",
+        "toolsEnabled":false,"autoLearning":false
+    })).unwrap();
+    let (tx,_rx)=tokio::sync::mpsc::unbounded_channel();
+    let outcome=super::runtime::run_turn_http(&state,&request,&tx,Some(admitted)).await;
+    assert!(outcome.unwrap_err().contains("중단"));
+    assert!(state.is_cancelled("prestop"));
+    assert!(state.store.all("execution").is_empty(),
+        "a cancelled-before-start turn cannot acquire a model execution");
+    assert!(state.store.messages("prestop").is_empty());
+    let _=std::fs::remove_dir_all(&state.config.data_dir);
+}
+
+#[tokio::test]
+async fn user_stop_preempts_silent_model_stream_and_next_turn_succeeds() {
+    use axum::{extract::State, response::{IntoResponse,Response,sse::{Event,Sse}}, routing::post,
+        Router};
+    use std::{convert::Infallible,sync::{Arc,atomic::{AtomicUsize,Ordering}}};
+    async fn model(State(count):State<Arc<AtomicUsize>>)->Response {
+        let attempt=count.fetch_add(1,Ordering::SeqCst);
+        if attempt==0 {
+            // 200 OK and an SSE body, but no token, no heartbeat, no DONE.
+            // Only cancellation can release this provider request.
+            return Sse::new(futures_util::stream::pending::<Result<Event,Infallible>>())
+                .into_response();
+        }
+        let bytes=format!("data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+            json!({"choices":[{"delta":{"content":"new turn works"}}]}),
+            json!({"choices":[{"delta":{},"finish_reason":"stop"}],
+                "usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14}}));
+        ([(axum::http::header::CONTENT_TYPE,"text/event-stream")],bytes).into_response()
+    }
+    let counter=Arc::new(AtomicUsize::new(0));
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address=listener.local_addr().unwrap();
+    let app=Router::new().route("/chat/completions",post(model))
+        .with_state(counter.clone());
+    let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap()});
+    let state=temp_state();
+    state.store.put("provider",&json!({"id":"silent-model",
+        "kind":"openai","baseUrl":format!("http://{address}"),
+        "model":"silent-test","enabled":true})).unwrap();
+    state.store.put("session",&json!({"id":"stop-test","providerId":"silent-model"})).unwrap();
+    let request=TurnRequest::from_value(&json!({"sessionId":"stop-test",
+        "input":"Say something","providerId":"silent-model",
+        "toolsEnabled":false,"toolsExecutionEnabled":false,"autoLearning":false,
+        "thinking":false})).unwrap();
+    let admitted=state.cancellation_generation("stop-test");
+    let run_state=state.clone();let run_request=request.clone();
+    let (tx,_rx)=tokio::sync::mpsc::unbounded_channel();
+    let task=tokio::spawn(async move{
+        super::runtime::run_turn_http(&run_state,&run_request,&tx,Some(admitted)).await
+    });
+    tokio::time::timeout(Duration::from_secs(4),async{
+        while counter.load(Ordering::SeqCst)<1 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("the model must be reached before cancellation");
+    let started=std::time::Instant::now();
+    let ack=crate::api::sessions::cancel_session(
+        axum::extract::State(state.clone()),
+        axum::extract::Path("stop-test".to_string()),
+    ).await.0;
+    assert_eq!(ack["stopped"],true,"cancel must confirm durable turn teardown: {ack}");
+    assert!(started.elapsed()<Duration::from_secs(3),"silent request must be preempted");
+    assert!(task.await.unwrap().unwrap_err().contains("중단"));
+    let cancelled=state.store.all("execution");
+    assert_eq!(cancelled.len(),1);
+    assert_eq!(cancelled[0]["status"],"cancelled");
+    assert!(state.store.messages("stop-test").iter().all(|m|m["role"]!="assistant"),
+        "a later provider completion must never save an assistant answer");
+
+    // Same session can be resumed without carrying a stale cancellation mark.
+    let (tx2,_rx2)=tokio::sync::mpsc::unbounded_channel();
+    let next=tokio::time::timeout(Duration::from_secs(4),
+        run_turn(&state,&request,&tx2)).await.unwrap().unwrap().unwrap();
+    assert_eq!(next["content"],"new turn works");
+    assert_eq!(counter.load(Ordering::SeqCst),2);
+    assert_eq!(state.store.all("execution").iter()
+        .filter(|e|e["status"]=="cancelled").count(),1);
+    server.abort();
+    let _=std::fs::remove_dir_all(&state.config.data_dir);
+}
+
+#[tokio::test]
 async fn ordinary_chat_runs_native_tools_through_the_imported_rust_kernel() {
     use axum::{extract::State, routing::post, Json, Router};
     use axum::response::IntoResponse;
