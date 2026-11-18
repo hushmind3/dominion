@@ -100,6 +100,15 @@ pub trait Host: Send {
         &'a mut self,
         ctx: &'a mut Context<'_>,
     ) -> BoxFuture<'a, Result<Flow, String>>;
+    /// Commit a verified, already-observed result without buying another model
+    /// turn. Hosts must recheck owner revision, postconditions and durable tool
+    /// receipts; a proposed plan or model claim cannot pass this barrier.
+    fn reconcile_verified<'a>(
+        &'a mut self,
+        _ctx: &'a mut Context<'_>,
+    ) -> BoxFuture<'a, Result<Flow, String>> {
+        Box::pin(async { Ok(Flow::Continue) })
+    }
     fn exhausted(&mut self) -> Result<(), String>;
     fn completion(&self) -> Result<(String, usize, u64), String>;
     fn confirm_completion(&mut self) -> Result<Flow, String> {
@@ -159,6 +168,23 @@ impl Engine {
             plan?;
         }
         while !complete {
+            ctx.snapshot = host.reload()?;
+            ctx.check_cancelled()?;
+            // A completed tool round may have met all frozen postconditions.
+            // Reconcile before reserving the next model call, including when
+            // the last paid round was used to perform the successful mutation.
+            // In-flight tool/model intents can never be bypassed here.
+            if !ctx.snapshot.model_in_flight
+                && ctx.snapshot.native.in_flight.is_none()
+                && ctx.snapshot.native.read_batch_in_flight.is_empty()
+                && ctx.snapshot.native.queued_calls.is_empty()
+                && host.reconcile_verified(&mut ctx).await? == Flow::Complete
+            {
+                if host.confirm_completion()? == Flow::Complete {
+                    ctx.phase("verified_checkpoint")?;
+                    break;
+                }
+            }
             ctx.snapshot = host.reload()?;
             ctx.check_cancelled()?;
             let Some(round) = ctx.snapshot.next_round(&mut ctx.budget, ctx.journal)? else {
