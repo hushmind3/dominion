@@ -40,6 +40,8 @@ jobs:
         run: cargo test --locked -p dominion-core --lib
       - name: Durable job and cancellation regressions (dev profile)
         run: cargo test --locked --bin dominion-rust engine::jobs::tests
+      - name: Streamable HTTP MCP and concurrent capability discovery (dev profile)
+        run: cargo test --locked --bin dominion-rust engine::mcp::tests
       - name: Progressive capability catalog and session-scope regressions (dev profile)
         run: cargo test --locked --bin dominion-rust engine::capability::tests
       - name: Bounded model-visible tool selection regressions (dev profile)
