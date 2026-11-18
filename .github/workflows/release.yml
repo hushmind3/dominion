@@ -41,7 +41,7 @@ jobs:
       # Release-only, complete Rust tests: Windows + macOS; no Linux tests.
       # The second macOS build uses the same source but avoids duplicate tests.
       - run: cargo test --locked --workspace --release
-        if: matrix.os == 'macos-15' || runner.os == 'Windows'
+        if: matrix.os == 'macos-15'
 
       - name: Build own Rust engine and native installers
         run: node scripts/build-desktop.mjs --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}

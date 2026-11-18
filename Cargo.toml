@@ -3,7 +3,7 @@ members = [".", "crates/dominion-core"]
 
 [package]
 name = "dominion-rust"
-version = "0.3.0"
+version = "0.4.2"
 edition = "2021"
 license = "Apache-2.0"
 

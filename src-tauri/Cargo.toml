@@ -1,6 +1,8 @@
+[workspace]
+
 [package]
 name = "dominion-desktop"
-version = "0.2.9"
+version = "0.4.2"
 edition = "2021"
 description = "DOMINION native desktop host for its independent Rust engine"
 authors = ["hushmind3"]
