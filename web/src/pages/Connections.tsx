@@ -34,8 +34,9 @@ export function ConnectionsPage(){
  const [error,setError]=useState(''),[info,setInfo]=useState(''),[probe,setProbe]=useState<Record<string,string>>({}),[saving,setSaving]=useState(false);
  const [oauthEditor,setOauthEditor]=useState<{id:string;clientId:string;clientSecret:string}|null>(null);
  const [oauthSaving,setOauthSaving]=useState(false),[oauthError,setOauthError]=useState('');
+ const channelIcons:Record<string,typeof MessageCircle>={discord:MessageCircle,telegram:Send,slack:Blocks,whatsapp:MessageCircle,signal:ShieldCheck,teams:UsersRound,matrix:Blocks,webhook:Link2};
  const installed=useMemo(()=>new Set(channels.value.map(x=>x.kind)),[channels.value]);
- const filtered=useMemo(()=>registry.value.filter(x=>(category==='all'||x.category===category)&&[x.name,x.id,x.description].join(' ').toLowerCase().includes(query.toLowerCase())),[registry.value,category,query]);
+ const filtered=useMemo(()=>[...new Map(registry.value.filter(x=>(category==='all'||x.category===category)&&[x.name,x.id,x.description].join(' ').toLowerCase().includes(query.toLowerCase())).map(x=>[x.id.toLowerCase(),x])).values()].sort((a,b)=>Number(b.available)-Number(a.available)||a.name.localeCompare(b.name)),[registry.value,category,query]);
  const online=channels.value.filter(c=>active(c.status)).length;
  const outbound=channels.value.filter(c=>c.status==='outbound_ready').length;
  const ready=registry.value.filter(x=>x.available).length;
@@ -51,7 +52,7 @@ export function ConnectionsPage(){
   try{
    await post('/api/channels',editor.record);
    setEditor(null);setInfo(t('conn.dlg.saved',{name:editor.entry.name}));
-   await channels.reload();
+   await channels.reload();await registry.reload();
   }catch(e){setError((e as Error).message)}finally{setSaving(false)}
  };
  const diagnose=async(id:string)=>{
@@ -97,8 +98,8 @@ export function ConnectionsPage(){
    <div className="mb-5 flex flex-wrap items-center gap-3"><div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-[#E7E0D5] bg-white px-3 py-2"><Search size={17}/><TextInput value={query} onChange={e=>setQuery(e.target.value)} placeholder={t('conn.search')}/></div><div className="flex flex-wrap items-center gap-2"><Filter size={15}/>{groups.map(g=><Button variant={category===g.id?'primary':'ghost'} onClick={()=>setCategory(g.id)} key={g.id}>{t(g.name)}</Button>)}</div></div>
    {registry.error&&<Notice message={registry.error}/>}
    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-    {filtered.map(entry=>{const bindings=channels.value.filter(c=>c.kind===entry.id);return <Panel key={entry.id} className="flex min-w-0 flex-col gap-3 rounded-xl border border-[#E7E0D5] bg-white p-5 shadow-sm">
-     <div className="flex items-start justify-between gap-3"><div className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]"><MessageCircle size={23}/></div><StatusPill status={entry.available?'available':'planned'}>{entry.available?t('conn.available'):t('conn.unavailable')}</StatusPill></div>
+    {filtered.map(entry=>{const bindings=channels.value.filter(c=>c.kind===entry.id);const ChannelIcon=channelIcons[entry.id.toLowerCase()]||MessageCircle;return <Panel key={entry.id} className="flex min-w-0 flex-col gap-3 rounded-xl border border-[#E7E0D5] bg-white p-5 shadow-sm">
+     <div className="flex items-start justify-between gap-3"><div className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]"><ChannelIcon size={23}/></div><StatusPill status={entry.available?'available':'planned'}>{entry.available?t('conn.available'):t('conn.unavailable')}</StatusPill></div>
      <h3>{entry.name}</h3><p>{entry.description}</p>
      <div className="flex flex-wrap gap-1.5">{entry.features.map(f=><span key={f}>{f}</span>)}<span>{entry.mode==='outbound'?t('conn.outboundOnly'):entry.mode}</span></div>
      {bindings.map(c=><div className="flex items-center gap-2 text-xs text-[#7C7469]" key={c.id}><div ><strong>{c.name}</strong>{c.roomId&&<small>{t('conn.room')} · {rooms.value.find(r=>r.id===c.roomId)?.name||t('conn.roomDeleted')}</small>}{entry.mode==='outbound'&&(c.chatId||c.channelId)&&<small>{t('conn.target')} · {c.chatId||c.channelId}</small>}<small>{badge(c.status)}{c.runtimeError?' · '+c.runtimeError:''}</small>{entry.mode==='outbound'&&c.delivery&&<small>{t('conn.delivery',{pending:c.delivery.pending??0,sending:c.delivery.sending??0,sent:c.delivery.sent??0,review:c.delivery.needsReview??0})}</small>}{entry.mode==='outbound'&&c.delivery?.lastError&&<small className="text-[#A94E30]">{t('conn.lastError')} · {c.delivery.lastError}</small>}{probe[c.id]&&<small>{probe[c.id]}</small>}</div><div className={active(c.status)?'size-2 rounded-full bg-emerald-500':'size-2 rounded-full bg-slate-300'}/><Button size="icon" variant="ghost" title={t('conn.dlg.settings')} onClick={()=>openEditor(entry,c)}><Settings2 size={16}/></Button><Button size="icon" variant="ghost" title={t('conn.dlg.diagnose')} onClick={()=>diagnose(c.id)}><Activity size={16}/></Button><Button size="icon" variant="ghost" title={t('conn.dlg.delete')} onClick={async()=>{if(confirm(t('conn.dlg.removeConfirm',{name:c.name}))){try{await del('/api/channels/'+c.id);await channels.reload()}catch(e){setError((e as Error).message)}}}}><Trash2 size={15}/></Button></div>)}
