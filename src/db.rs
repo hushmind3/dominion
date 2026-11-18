@@ -183,6 +183,17 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_operation_session
                  ON records(json_extract(data,'$.sessionId'))
                  WHERE kind='execution_operation';
+             -- Effect admission is called on every mutating tool. Read only
+             -- same-resource version history and exact effect retries instead
+             -- of deserializing every operation in a long-lived session.
+             CREATE INDEX IF NOT EXISTS idx_operation_session_resource
+                 ON records(json_extract(data,'$.sessionId'),
+                            json_extract(data,'$.resourceKey'), updated_at DESC)
+                 WHERE kind='execution_operation';
+             CREATE INDEX IF NOT EXISTS idx_operation_session_effect
+                 ON records(json_extract(data,'$.sessionId'),
+                            json_extract(data,'$.effectId'), updated_at DESC)
+                 WHERE kind='execution_operation';
              CREATE INDEX IF NOT EXISTS idx_algorithm_kind
                  ON records(json_extract(data,'$.kind'))
                  WHERE kind='algorithm';
@@ -328,6 +339,40 @@ impl Store {
         let rows=stmt.query_map([session_id],record_from_row)
             .map_err(|e|e.to_string())?;
         rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    /// Exact resource-version and effect-retry scope, newest first.
+    /// UNION ALL keeps both partial expression indexes eligible, while the
+    /// second arm excludes resources already returned by the first. This
+    /// preserves every earlier unresolved effect without a lossy LIMIT.
+    pub fn related_effect_operations(
+        &self,
+        session_id: &str,
+        resource_key: Option<&str>,
+        effect_id: Option<&str>,
+    ) -> Result<Vec<Value>, String> {
+        if resource_key.is_none() && effect_id.is_none() {
+            return Ok(Vec::new());
+        }
+        let conn = self.conn.lock().map_err(|error| error.to_string())?;
+        let mut statement = conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM (
+                SELECT data,id,created_at,updated_at FROM records
+                WHERE kind='execution_operation'
+                  AND json_extract(data,'$.sessionId')=?1
+                  AND json_extract(data,'$.resourceKey')=?2
+                UNION ALL
+                SELECT data,id,created_at,updated_at FROM records
+                WHERE kind='execution_operation'
+                  AND json_extract(data,'$.sessionId')=?1
+                  AND json_extract(data,'$.effectId')=?3
+                  AND (?2 IS NULL OR json_extract(data,'$.resourceKey') IS NOT ?2)
+             ) ORDER BY updated_at DESC,id DESC"
+        ).map_err(|error| error.to_string())?;
+        let rows = statement
+            .query_map(params![session_id, resource_key, effect_id], record_from_row)
+            .map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
     }
 
     /// Resume only snapshots of the requested task, not all executions.
@@ -2100,6 +2145,105 @@ mod tests {
                 .unwrap();
         }
         assert!(store.active_jobs().is_err());
+    }
+
+    #[test]
+    fn scoped_effect_history_preserves_pending_replay_and_resource_inspection() {
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        let resource="github:example";
+        let effect_id="effect-repeat";
+        store.put("execution_operation", &json!({
+            "id":"pending", "sessionId":"owner", "resourceKey":resource,
+            "effectId":effect_id, "effectState":"effect_unknown",
+            "observedVersion":"sha256:old"
+        })).unwrap();
+        for n in 0..320 {
+            store.put("execution_operation", &json!({
+                "id":format!("unrelated-{n}"), "sessionId":"owner",
+                "resourceKey":format!("other-{n}"), "effectId":format!("noise-{n}"),
+                "effectState":"completed"
+            })).unwrap();
+        }
+        store.put("execution_operation", &json!({
+            "id":"wrong-session", "sessionId":"different",
+            "resourceKey":resource, "effectId":effect_id,
+            "effectState":"effect_unknown"
+        })).unwrap();
+        store.put("execution_operation", &json!({
+            "id":"same-resource", "sessionId":"owner", "resourceKey":resource,
+            "effectId":"different-effect", "effectState":"verified",
+            "observedVersion":"sha256:new"
+        })).unwrap();
+        store.put("execution_operation", &json!({
+            "id":"same-effect", "sessionId":"owner", "resourceKey":"unrelated-resource",
+            "effectId":effect_id, "effectState":"started"
+        })).unwrap();
+
+        let scoped=store.related_effect_operations(
+            "owner",Some(resource),Some(effect_id)
+        ).unwrap();
+        assert_eq!(scoped.len(),3, "{scoped:?}");
+        assert!(scoped.iter().any(|op|op["id"]=="pending"));
+        assert!(scoped.iter().any(|op|op["id"]=="same-resource"));
+        assert!(scoped.iter().any(|op|op["id"]=="same-effect"));
+        let all=store.session_operations("owner").unwrap();
+        assert_eq!(all.len(),323);
+        let expected=all.iter()
+            .filter(|op|op["resourceKey"]==resource || op["effectId"]==effect_id)
+            .map(|op|op["id"].clone()).collect::<Vec<_>>();
+        let actual=scoped.iter().map(|op|op["id"].clone()).collect::<Vec<_>>();
+        assert_eq!(actual,expected,"scoped results must retain full-session order");
+        let effect=json!({"effectId":effect_id,"gated":true,"tool":"github_api"});
+        let scoped_ordered=scoped.iter().rev().cloned().collect::<Vec<_>>();
+        let all_ordered=all.iter().rev().cloned().collect::<Vec<_>>();
+        assert_eq!(
+            crate::engine::effect::unresolved(&effect,&scoped_ordered),
+            crate::engine::effect::unresolved(&effect,&all_ordered)
+        );
+        assert_eq!(
+            crate::engine::effect::prepare("owner","github_api",
+                &json!({"path":"example","method":"POST"}),&scoped_ordered)
+                ["beforeVersion"]["version"],
+            crate::engine::effect::prepare("owner","github_api",
+                &json!({"path":"example","method":"POST"}),&all_ordered)
+                ["beforeVersion"]["version"]
+        );
+        assert_eq!(
+            store.related_effect_operations("owner",None,Some(effect_id))
+                .unwrap().len(),2
+        );
+        assert_eq!(
+            store.related_effect_operations("owner",None,None).unwrap().len(),0
+        );
+        assert_eq!(
+            store.related_effect_operations("owner",Some(resource),None)
+                .unwrap().len(),2
+        );
+    }
+
+    #[test]
+    fn scoped_effect_history_query_uses_both_partial_indexes() {
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        let conn=store.conn.lock().unwrap();
+        let mut statement=conn.prepare(
+            "EXPLAIN QUERY PLAN SELECT data,id,created_at,updated_at FROM (
+                SELECT data,id,created_at,updated_at FROM records
+                WHERE kind='execution_operation'
+                  AND json_extract(data,'$.sessionId')=?1
+                  AND json_extract(data,'$.resourceKey')=?2
+                UNION ALL
+                SELECT data,id,created_at,updated_at FROM records
+                WHERE kind='execution_operation'
+                  AND json_extract(data,'$.sessionId')=?1
+                  AND json_extract(data,'$.effectId')=?3
+                  AND (?2 IS NULL OR json_extract(data,'$.resourceKey') IS NOT ?2)
+             ) ORDER BY updated_at DESC,id DESC"
+        ).unwrap();
+        let details=statement.query_map(params!["owner","resource","effect"],
+            |row|row.get::<_,String>(3)).unwrap()
+            .collect::<Result<Vec<_>,_>>().unwrap().join("\\n");
+        assert!(details.contains("idx_operation_session_resource"),"{details}");
+        assert!(details.contains("idx_operation_session_effect"),"{details}");
     }
 
     #[test]
