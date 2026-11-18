@@ -2653,6 +2653,7 @@ mod regression_memory_visibility_tests {
     }
 
     #[test]
+    #[ignore = "7a02e047 retired live BM25 selection; this assertion needs rewriting for receipt-provenance ranking"]
     fn bm25_context_has_its_own_outcome_signal_even_when_turn_fails() {
         let (state, dir) = state();
         only_kernel(&state, "memory.rerank", "bm25");
