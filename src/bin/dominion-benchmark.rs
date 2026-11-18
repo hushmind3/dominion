@@ -406,7 +406,7 @@ fn classify_error(text: &str, elapsed_ms: u128, limit_ms: u128) -> &'static str 
         return "stream_error";
     }
     if text.starts_with("HTTP") || text.starts_with("transport:")
-        || text.contains(": error sending request") {
+        || text.contains("\\nstream:") || text.contains(": error sending request") {
         return "transport_error";
     }
     if text.contains("revision") || text.contains("계약") {
@@ -1639,6 +1639,13 @@ mod tests {
         assert_eq!(evidence["statuses"][0],"cancelled");
         assert!(polls.load(Ordering::SeqCst)>=2);
         server.abort();
+    }
+
+    #[test]
+    fn truncated_http_stream_is_not_counted_as_a_completed_trial() {
+        assert_eq!(classify_error("transport: operation timed out",15_000,240_000),"transport_error");
+        assert_eq!(classify_error("data: partial\\nstream: timeout",239_900,240_000),"transport_error");
+        assert_eq!(classify_error("data: complete",240_010,240_000),"timeout");
     }
 
     #[test]
