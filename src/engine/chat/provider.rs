@@ -1469,6 +1469,9 @@ async fn stream_codex_once(
         .ok_or("Codex OAuth 계정 ID가 없습니다. 모델 관리에서 Codex를 다시 가져오세요.")?;
     let started = std::time::Instant::now();
     let (instructions, input) = codex_input(messages);
+    // Assemble the persistent developer item while the immutable persona
+    // string is still borrowed; the fallback HTTP body owns the full string.
+    let ws_input=codex_ws_persistent_input(&instructions, &input);
     let mut body = json!({
         "model": provider.model,
         "instructions": if instructions.is_empty() { "You are a helpful assistant. Answer in Korean unless the user writes in another language.".to_string() } else { instructions },
@@ -1504,7 +1507,6 @@ async fn stream_codex_once(
     // retransmit the same 4k prompt on *every* WebSocket response.create.
     // Codex's HTTP fallback below keeps the unmodified, fully compatible
     // top-level instructions and full explicit history.
-    let ws_input=codex_ws_persistent_input(&instructions, &input);
     let mut ws_body=body.clone();
     ws_body["instructions"]=json!("Follow the developer guidance in the conversation input.");
     let ws_body=super::continuity::hinted_body(state,provider,&ws_body,continuity,super::continuity::CacheWire::Key);
