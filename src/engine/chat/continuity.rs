@@ -164,7 +164,17 @@ pub(crate) fn project(
     if reason.is_none() {
         let seen = frames.iter().filter_map(|frame|frame["key"].as_str().map(str::to_string))
             .collect::<std::collections::HashSet<_>>();
-        frames.extend(fresh.iter().filter(|frame|!seen.contains(frame["key"].as_str().unwrap_or(""))).cloned());
+        frames.extend(fresh.iter().filter(|frame|{
+            let key=frame["key"].as_str().unwrap_or("");
+            if seen.contains(key){return false;}
+            // If the full, immutable peer reply is already in this provider's
+            // preserved conversation prefix, appending its short source index
+            // would pay new tokens to repeat content the model already has.
+            // On an actual rebase the index remains in fresh and can be read
+            // on demand via the scoped room tool.
+            !key.strip_prefix("room-peer-index:")
+                .is_some_and(|source|seen.contains(source))
+        }).cloned());
         let session = state.store.get("session", session_id).unwrap_or(Value::Null);
         let room = session["roomId"].as_str().and_then(|id|state.store.get("room", id));
         // This is a *history* allowance in addition to mandatory identity, not
@@ -454,6 +464,27 @@ mod tests {
             &json!({"previousRouteReplyMessageId":"unknown"})));
         assert!(!has_confirmed_ws_history(&state,&json!({})));
         drop(state);std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn indexed_peer_never_duplicates_a_full_reply_in_committed_prefix(){
+        // A prior exact reply already belongs to the provider's working
+        // view. Its later index must not produce fresh tokens for the same
+        // source; after rebase the index is still eligible for delivery.
+        let previous=vec![json!({"key":"peer-original","message":{
+            "role":"assistant","content":"exact original participant answer"
+        }})];
+        let fresh=vec![json!({"key":"room-peer-index:peer-original",
+            "message":{"role":"user","content":"brief id peer-original"}})];
+        let seen=previous.iter().filter_map(|frame|frame["key"].as_str().map(str::to_string))
+            .collect::<std::collections::HashSet<_>>();
+        let append=fresh.iter().filter(|frame|{
+            let key=frame["key"].as_str().unwrap_or("");
+            !seen.contains(key) && !key.strip_prefix("room-peer-index:")
+                .is_some_and(|source|seen.contains(source))
+        }).cloned().collect::<Vec<_>>();
+        assert!(append.is_empty());
+        assert_eq!(fresh.len(),1,"a true rebase can restore the source index");
     }
 
     #[test]
