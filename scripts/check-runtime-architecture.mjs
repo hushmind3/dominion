@@ -86,6 +86,32 @@ for(const line of api.split('\n'))if(/\.route\("\/api\/(?:rsi|video|youtube)(?:\
   throw Error('Retired mutation endpoint is registered: '+line.trim())
 const bootstrap=readFileSync(path.join(root,'src/bootstrap.rs'),'utf8')
 if(bootstrap.includes('refresh_free_catalog('))throw Error('Idle provider-model sweep reintroduced')
+// Check the transitive finalization and prompt-selection paths, not just
+// the file that calls them: an indirect full-history scan is still O(history).
+const improvementSource=readFileSync(path.join(root,'src/engine/improve.rs'),'utf8')
+const finalizationUpdates=improvementSource.match(/pub fn execution_updates\([\s\S]*?\n\}/)?.[0]
+const activeSelection=improvementSource.match(/pub fn active_values_with_execution\([\s\S]*?\n\}/)?.[0]
+const recentBaseline=improvementSource.match(/fn baseline_success\([\s\S]*?\n\}/)?.[0]
+if(!finalizationUpdates||
+   /\.(?:try_all|all)\("(?:execution_operation|improvement)"\)/.test(finalizationUpdates)||
+   !finalizationUpdates.includes('store.execution_operations(run_id)')||
+   !finalizationUpdates.includes('store.try_records_by_ids("improvement"'))
+  throw Error('Indirect full-table history scan returned to task finalization')
+if(!activeSelection||
+   /\.all\("improvement"\)/.test(activeSelection)||
+   !activeSelection.includes('active_improvements_for_scope(')||
+   (activeSelection.match(/choose_for_agent\(/g)||[]).length!==1)
+  throw Error('Turn-time strategy catalog may rescan history or select one kernel per candidate')
+if(!recentBaseline||
+   /\.all\("execution"\)|\.rev\(\)\.take\(40\)/.test(recentBaseline)||
+   !recentBaseline.includes('try_recent_records("execution", 40)'))
+  throw Error('Strategy baseline must use recent indexed execution facts')
+if(modules.includes('pub mod scheduler;')||bootstrap.includes('engine::scheduler::start(')||
+   existsSync(path.join(root,'src/engine/scheduler.rs'))||
+   /pub fn schedule_experiments\(/.test(improvementSource))
+  throw Error('Retired autonomous experiment scheduling loop reintroduced')
+if(/pub async fn run_quiet_with_stats\(/.test(modules))
+  throw Error('Unused quiet-turn evidence wrapper reintroduced')
 const store=readFileSync(path.join(root,'src/db.rs'),'utf8')
 const jobs=readFileSync(path.join(root,'src/engine/jobs.rs'),'utf8')
 const approval=readFileSync(path.join(root,'src/engine/chat/approval.rs'),'utf8')
