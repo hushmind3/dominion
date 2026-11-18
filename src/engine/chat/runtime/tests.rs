@@ -823,7 +823,7 @@ mod harness_tool_selection_tests {
                 "parameters":{"type":"object","properties":{}}
             }}));
         }
-        let shown=progressive_tools(available.clone(),"read code and inspect files");
+        let shown=tool_catalog::progressive_tools(available.clone(),"read code and inspect files");
         let names=shown.iter().map(tool_name).collect::<Vec<_>>();
         assert!(names.contains(&"dominion_tool_search"));
         assert!(names.contains(&"dominion_tool_call"));
@@ -839,7 +839,7 @@ mod harness_tool_selection_tests {
             .filter(|definition|matches!(tool_name(definition),
                 "workspace_read"|"workspace_write"|"dominion_tool_search"|"dominion_tool_call"))
             .collect::<Vec<_>>();
-        let shown=progressive_tools(definitions,"write file");
+        let shown=tool_catalog::progressive_tools(definitions,"write file");
         assert_eq!(shown.len(),4);
         assert!(shown.iter().any(|definition|tool_name(definition)=="workspace_write"));
     }
