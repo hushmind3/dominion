@@ -40,3 +40,33 @@ Google login must use the official Google Identity Services client on the
 frontend and submit the resulting ID token to this backend. Google OAuth
 credentials, Cloudflare D1 ID, and model supplier credentials are not
 committed to this repository.
+
+## Google login and free models (November 2026)
+
+The Model Hub now displays a DOMINION Cloud account card. Configure the frontend build
+with `VITE_DOMINION_CLOUD_URL=https://YOUR_WORKER.workers.dev` and
+`VITE_DOMINION_GOOGLE_CLIENT_ID=YOUR_GOOGLE_WEB_CLIENT_ID`. The Worker must use the
+same `GOOGLE_CLIENT_ID` and set `ALLOWED_ORIGIN` to the exact frontend origin.
+Use Google Identity Services on a supported HTTPS web origin. Google Sign-In
+is not supported inside embedded desktop webviews; native desktop needs a
+system-browser authorization-code/PKCE flow before production.
+
+The Worker `FREE_MODELS_JSON` variable is a JSON array, e.g.
+`[{"id":"example-free-model","upstream_model":"provider-specific-id"}]`.
+Set `FREE_DAILY_LIMIT=20` for an initial per-account request limit. The
+configured `UPSTREAM_URL` and secret `UPSTREAM_API_KEY` must refer to an
+inference supplier that actually allows the intended commercial gateway use.
+An empty model array intentionally displays no models. No free provider
+credentials or quota have been provisioned by committing this code.
+
+`GET /v1/models` lists configured free models for authenticated accounts.
+`POST /v1/chat/completions` forwards supported free model requests and SSE
+streams through the Worker with a daily account quota. Registering a model
+in the desktop UI saves the DOMINION session as the provider credential in
+the existing local Rust provider store. Reauthenticate when that session expires.
+
+**Not production-ready:** the free quota is per request rather than tokens,
+there is no global upstream spend ceiling, and upstream billing may continue
+after client cancellation. Add upstream billing controls, token metering,
+rate limiting by IP and account, replay/abuse protection, expiry handling,
+and tests before enabling broad public signup.
