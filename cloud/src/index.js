@@ -75,8 +75,9 @@ async function freeProxy(request, env, user) {
   const body = await maxBody(request);
   const model = freeModels(env).find(x => x.id === body.model);
   if (!model || (model.backend !== 'workers-ai' && (!env.UPSTREAM_API_KEY || !env.UPSTREAM_URL))) return err('Free model not available', 503);
-  if (body.stream === true || body.tools !== undefined || body.tool_choice !== undefined || body.n !== undefined || body.response_format !== undefined)
-    return err('Free model currently supports text-only non-streaming requests');
+  // Chat clients may request streaming and advertise tools by default.
+  // Free text models do not execute tools; compatibility mode ignores tool schemas.
+  if (body.n !== undefined && body.n !== 1) return err('Only one completion supported');
   if (!Array.isArray(body.messages) || !body.messages.length ||
       JSON.stringify(body.messages).length > 50000 ||
       (body.max_tokens !== undefined && (!Number.isSafeInteger(body.max_tokens) || body.max_tokens < 1)))
@@ -91,13 +92,27 @@ async function freeProxy(request, env, user) {
     try {
       const answer = await env.AI.run(model.id, { messages: body.messages, max_tokens: Math.min(1024, body.max_tokens || 512) });
       const content = typeof answer?.response === 'string' ? answer.response : '';
-      return json({ id: crypto.randomUUID(), object: 'chat.completion', model: model.id, choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }], usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } }, 200, { 'x-dominion-free-remaining': String(Math.max(0, limit - updated.used)) });
+      const completionId = crypto.randomUUID();
+      const quotaHeaders = { 'x-dominion-free-remaining': String(Math.max(0, limit - updated.used)) };
+      if (body.stream === true) {
+        const chunk = (delta, finish_reason = null) => ({
+          id: completionId, object: 'chat.completion.chunk', created: now(), model: model.id,
+          choices: [{ index: 0, delta, finish_reason }]
+        });
+        const payload = 'data: ' + JSON.stringify(chunk({ role: 'assistant', content })) + '\\n\\n'
+          + 'data: ' + JSON.stringify(chunk({}, 'stop')) + '\\n\\n'
+          + 'data: [DONE]\\n\\n';
+        return new Response(payload, { status: 200, headers: {
+          'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', ...quotaHeaders
+        } });
+      }
+      return json({ id: completionId, object: 'chat.completion', model: model.id, choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }], usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } }, 200, quotaHeaders);
     } catch { return err('Workers AI inference unavailable', 502); }
   }
   const upstream = await fetch(env.UPSTREAM_URL.replace(/\/$/, '') + '/chat/completions', {
     method: 'POST',
     headers: { authorization: 'Bearer ' + env.UPSTREAM_API_KEY, 'content-type': 'application/json' },
-    body: JSON.stringify({ model: model.upstream_model || model.id, messages: body.messages, stream: false, max_tokens: Math.min(2048, body.max_tokens || 1024) }),
+    body: JSON.stringify({ model: model.upstream_model || model.id, messages: body.messages, stream: body.stream === true, max_tokens: Math.min(2048, body.max_tokens || 1024) }),
     signal: AbortSignal.timeout(90000)
   });
   if (!upstream.ok) return err('Free model provider unavailable', 502);
