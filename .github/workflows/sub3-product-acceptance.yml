@@ -19,6 +19,10 @@ on:
       - 'src/engine/improve.rs'
       - 'src/engine/native_adjudication.rs'
       - 'src/engine/native_agent.rs'
+      - 'src/engine/skill_discovery.rs'
+      - 'src/engine/mod.rs'
+      - 'src/engine/tools.rs'
+      - 'src/engine/skills.rs'
       - 'src/engine/program.rs'
       - 'src/engine/algorithms.rs'
       - 'src/engine/adaptation_loop.rs'
@@ -42,7 +46,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Harness and product contract tests (dev profile only)
         run: |
-          cargo test -p dominion-harness
+          test ! -d crates/harness
+          ! grep -q 'dominion-harness' Cargo.toml
+          ! grep -q 'dominion_harness::' src/api/sdk.rs
+          cargo test --bin dominion-rust engine::skill_discovery::tests
           cargo test --bin dominion-rust engine::chat::tests
           cargo test --bin dominion-rust engine::verification
           cargo test --bin dominion-rust engine::native_adjudication::tests
