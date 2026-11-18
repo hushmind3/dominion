@@ -1,5 +1,6 @@
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -1077,6 +1078,43 @@ impl Store {
         rows.filter_map(|row| row.ok()).collect()
     }
 
+    /// Read only the final `limit` message tool-call columns for lazy room
+    /// catalog selection. Never materialize a long session's full transcript
+    /// merely to recover the tool names used in its last few turns.
+    pub fn recent_message_tool_names(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<HashSet<String>, String> {
+        let conn = self.conn.lock().map_err(|error| error.to_string())?;
+        let mut statement = conn
+            .prepare(
+                "SELECT tool_calls FROM messages WHERE session_id=?1
+                 ORDER BY created_at DESC,rowid DESC LIMIT ?2",
+            )
+            .map_err(|error| error.to_string())?;
+        let rows = statement
+            .query_map(params![session_id, limit.min(30) as i64], |row| {
+                row.get::<_, Option<String>>(0)
+            })
+            .map_err(|error| error.to_string())?;
+        let mut names = HashSet::new();
+        for row in rows {
+            let Some(raw) = row.map_err(|error| error.to_string())? else {
+                continue;
+            };
+            let Ok(calls) = serde_json::from_str::<Value>(&raw) else {
+                continue;
+            };
+            for call in calls.as_array().into_iter().flatten() {
+                if let Some(name) = call["function"]["name"].as_str() {
+                    names.insert(name.to_lowercase());
+                }
+            }
+        }
+        Ok(names)
+    }
+
     /// Error-preserving variant for model-context assembly. A database failure
     /// must abort the turn, not look like a session with no history.
     pub fn try_messages(&self, session_id: &str) -> Result<Vec<Value>, String> {
@@ -1582,6 +1620,40 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let store = Store::open(&dir.join("dominion.sqlite")).unwrap();
         (store, dir)
+    }
+
+    #[test]
+    fn recent_room_tool_lookup_is_indexed_bounded_and_session_scoped() {
+        let store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        for index in 0..42 {
+            let calls = match index {
+                0 => json!([{"function":{"name":"OLD_TOOL"}}]),
+                40 => json!([{"function":{"name":"SHELL_EXEC"}}]),
+                _ => Value::Null,
+            };
+            store.write_message(&json!({
+                "id": format!("room-{index:03}"),
+                "session_id": "room-a",
+                "role": "assistant",
+                "content": "old transcript content should not be loaded",
+                "tool_calls": calls
+            })).unwrap();
+        }
+        store.write_message(&json!({
+            "id":"foreign","session_id":"room-b","role":"assistant",
+            "tool_calls":[{"function":{"name":"FOREIGN_TOOL"}}]
+        })).unwrap();
+        let names = store.recent_message_tool_names("room-a", 30).unwrap();
+        assert!(names.contains("shell_exec"));
+        assert!(!names.contains("old_tool"));
+        assert!(!names.contains("foreign_tool"));
+        assert!(store.recent_message_tool_names("room-a", 0).unwrap().is_empty());
+        let plan: String = store.conn.lock().unwrap().query_row(
+            "EXPLAIN QUERY PLAN SELECT tool_calls FROM messages
+             WHERE session_id='room-a' ORDER BY created_at DESC,rowid DESC LIMIT 30",
+            [], |row| row.get(3)
+        ).unwrap();
+        assert!(plan.contains("idx_messages_session"), "{plan}");
     }
 
     #[test]
