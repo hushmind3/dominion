@@ -316,7 +316,7 @@ Contributions are welcome — particularly **reproducible bug reports, test case
 - [Submit a pull request](https://github.com/hushmind3/dominion-rust/pulls) — explain the change and include appropriate tests when possible.
 - Never include API keys, bot tokens, private conversations, or other secrets in reports.
 
-**License:** [Apache 2.0](LICENSE) · **한국어:** [README.ko.md](README.ko.md)
+**License:** [MIT](LICENSE) · **한국어:** [README.ko.md](README.ko.md)
 
 ## Optional Money tool
 
