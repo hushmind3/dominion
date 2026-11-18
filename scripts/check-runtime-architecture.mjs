@@ -181,6 +181,14 @@ if(!sdkApi.includes('engine::run_quiet(&state,&request).await')||
    !sdkApi.includes('record["modelAccounting"]=run["modelAccounting"].clone()'))
   throw Error('SDK/chat execution or cost semantics diverged from common Rust core')
 
+// An evidence-scoped repair directive must be consumed before another paid
+// reviewer; unknown external effects cannot enter the automatic retry loop.
+if(!finalizationSource.includes('pub(super) fn acceptance_repair(')||
+   !adapter.includes('let repair = acceptance_repair(&progress, checks, can_retry);')||
+   !adapter.includes('repair == AcceptanceRepair::Reconcile')||
+   !adapter.includes('repair != AcceptanceRepair::Reviewer')||
+   !adapter.includes('if can_retry {'))
+  throw Error('Verifier-grounded repair escalation or uncertain-effect stop was bypassed')
 const frontend=readFileSync(path.join(root,'web/src/App.tsx'),'utf8')+readFileSync(path.join(root,'web/src/components/WorkspaceShell.tsx'),'utf8')
 if(/VideoPage|SelfImprovementPage|id:'(?:video|rsi)'/.test(frontend))throw Error('Retired UI is reachable')
 if(existsSync(path.join(root,'web/src/components/ImprovementNotice.tsx')))throw Error('Retired RSI prompt widget remains')
