@@ -40,6 +40,7 @@ use super::{budget,context,continuity,protocol,room_context,tool_schedule,trace_
 mod turn_body;
 mod program;
 mod observations;
+mod candidate_rollout;
 mod deterministic;
 mod tool_calls;
 mod action_review;
