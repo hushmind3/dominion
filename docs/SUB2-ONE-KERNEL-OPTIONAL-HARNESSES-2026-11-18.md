@@ -40,7 +40,7 @@ The model sees exactly **one** optional `external_harness_run` tool and an enum 
 - In a controlled `DOMINION_BENCHMARK=1` treatment arm, the advanced repair runs for the existing benchmark harness even without a UI flag; production is unaffected.
 - External processes are **not** nested Dominion runs. They execute one independently delegated task and return one result through `tools::execute` → `dispatch_tool_call`. One tool call consumes the same budget, approval, cancellation generation and operation journal as other side-effecting tools.
 - All external harness runs are classified as potentially mutating. They share the native workspace resource lock with other writes/shell runs, and unknown outcomes suppress blind retries.
-- Up to 8 IDs can be registered. No CLI command is invoked until a user-approved task actually selects it. Bounded task input (24 KiB), stdout tail (48 KiB), stderr (6 KiB), timeout (5–600 seconds). Truncated/failed result or unfinished output pipes is treated as uncertain, not verified success.
+- Up to 8 IDs can be registered. No CLI command is invoked until a user-approved task actually selects it. Bounded task input (24 KiB), shared native stdout/stderr capture (up to ~80 KiB each), timeout (5–600 seconds). A truncated/failed result or stalled stdin is **not** a verified success.
 - On Unix a child starts in its own process group and cancellation/timeout kills that group. On other platforms child cancellation does not guarantee termination of all descendants. A CLI may spawn detached processes or manipulate remote services; this adapter is **not an adversarial sandbox**. Do not delegate tasks that require stronger isolation without an independent external sandbox/runtime.
 
 ## Why not merge Pi, Goose, OpenHands, etc.?
@@ -49,6 +49,14 @@ The model sees exactly **one** optional `external_harness_run` tool and an enum 
 - Goose / DeepSeek extensibility indicates a **registration surface**, not a reason to copy plugin frameworks or carry several in-memory workers.
 - OpenHands / SWE-ReX show that execution-environment isolation is separate from agent decisions; Dominion's optional native file copy is not equivalent to a Docker/remote sandbox.
 - Existing `tool.discovery` already supports different native tool sets. The 2026 harness comparison at https://arxiv.org/abs/2609.20804 reports model-dependent outcomes of bash-only versus structured tools. Do not infer a tool configuration from the model's parameter count alone; run identical task/model/budget A/B comparisons.
+
+## Source-level cleanup after reviewing the actual native runner
+
+The first implementation added a second process spawn/kill/pipe/timeout stack in `tools_external_harness.rs` even though `tools.rs` already had the tested `run_command`/process-group supervisor. That duplication has been removed. The existing supervisor now accepts optional bounded stdin in the same timeout/cancellation scope; native shell and terminal calls still use the same code with null stdin. The external adapter only supplies the operator-registered command, task, cancellation event, and output parsing.
+
+A separate defect caused the configured external delegate to disappear when `tool.discovery=core`, because the built-in core set only included `delegate_task`. The optional external delegate is now retained **only where the selected core already allows delegation**; an explicit core list without delegation still excludes it. Duplicate mutating-tool classifications in `turn_body.rs` were removed, and external task delegation no longer inherits a direct workspace read-before-write heuristic.
+
+Measured source changes for the supervisor consolidation: `tools_external_harness.rs` shrank from 309 to 225 lines (**84 lines removed**); the shared native tool executor gained ~33 lines. Rust line count is not compiled binary size. CLI programs are still not bundled and binary/idle-memory differences have not been benchmarked.
 
 ## Test and source scope
 
