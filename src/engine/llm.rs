@@ -312,8 +312,9 @@ mod tests {
                 let session=headers.get("x-opencode-session")
                     .and_then(|value|value.to_str().ok()).unwrap_or("").to_string();
                 let model=body["model"].as_str().unwrap_or("").to_string();
+                let requires_go_affinity=model=="deepseek-v4.1-flash";
                 seen.lock().unwrap().push((model,session.clone()));
-                if session.is_empty() && model=="deepseek-v4.1-flash" {
+                if session.is_empty() && requires_go_affinity {
                     return (axum::http::StatusCode::BAD_REQUEST,
                         Json(json!({"error":{"type":"MissingSessionID"}})));
                 }
