@@ -3,25 +3,45 @@ use super::{TurnRequest, HISTORY_LIMIT};
 use crate::state::AppState;
 use serde_json::{json, Value};
 
-/// One identity prefix per bot, shared by private chat, rooms and channels.
-/// Conversation-specific instructions follow this prefix, never precede it.
-pub(super) fn identity_prefix(state:&AppState,request:&TurnRequest)->(String,Vec<Value>){
-    let mut text=String::from("DOMINION 지속 에이전트. 정체성과 개인 경험은 에이전트 ID에 속하며 대화 장소가 바뀌어도 유지한다. 실제 권한과 도구는 현재 실행 경계에 따른다.");
+const BASE_IDENTITY:&str="DOMINION 지속 에이전트. 정체성과 개인 경험은 에이전트 ID에 속하며 대화 장소가 바뀌어도 유지한다. 실제 권한과 도구는 현재 실행 경계에 따른다.";
+
+// Room speakers reuse this exact block BEFORE their individual persona.
+// Keep owner instructions byte-stable and authoritative for all speakers.
+pub(super) fn room_common_identity(state:&AppState)->(String,Vec<Value>){
+    let mut text=BASE_IDENTITY.to_string();
     let mut items=Vec::new();
-    if let Some(agent)=request.agent_id.as_deref().and_then(|id|state.store.get("agent",id)) {
-        text.push_str(&format!("\n활성 에이전트: {} (id: {}).",agent["name"].as_str().unwrap_or(""),agent["id"].as_str().unwrap_or("")));
-        if let Some(persona)=agent["systemPrompt"].as_str().filter(|s|!s.trim().is_empty()) {
-            text.push_str("\n에이전트 지침:\n");text.push_str(persona);
-            items.push(json!({"kind":"persona","id":agent["id"],"digest":crate::engine::memory::stable_id(&[persona])}));
-        }
-    }
-    if let Some(settings)=state.store.get("assistant_settings","global").filter(|s|s["enabled"]!=false) {
-        if let Some(instructions)=settings["instructions"].as_str().filter(|s|!s.trim().is_empty()) {
-            text.push_str("\n주인 지시(페르소나보다 우선):\n");text.push_str(instructions);
+    if let Some(settings)=state.store.get("assistant_settings","global").filter(|s|s["enabled"]!=false){
+        if let Some(instructions)=settings["instructions"].as_str().filter(|s|!s.trim().is_empty()){
+            text.push_str("\n주인 지시(페르소나보다 우선):\n");
+            text.push_str(instructions);
             items.push(json!({"kind":"owner_instructions","digest":crate::engine::memory::stable_id(&[instructions])}));
         }
     }
     (text,items)
+}
+
+pub(super) fn agent_identity_suffix(state:&AppState,request:&TurnRequest)->(String,Vec<Value>){
+    let mut text=String::new();
+    let mut items=Vec::new();
+    if let Some(agent)=request.agent_id.as_deref().and_then(|id|state.store.get("agent",id)){
+        text.push_str(&format!("\n활성 에이전트: {} (id: {}).",agent["name"].as_str().unwrap_or(""),agent["id"].as_str().unwrap_or("")));
+        if let Some(persona)=agent["systemPrompt"].as_str().filter(|s|!s.trim().is_empty()){
+            text.push_str("\n에이전트 지침:\n");
+            text.push_str(persona);
+            items.push(json!({"kind":"persona","id":agent["id"],"digest":crate::engine::memory::stable_id(&[persona])}));
+        }
+    }
+    (text,items)
+}
+
+/// Private chat and channels retain their previous identity contract.
+/// Rooms assemble their common block first, then the individual suffix.
+pub(super) fn identity_prefix(state:&AppState,request:&TurnRequest)->(String,Vec<Value>){
+    let (persona,mut items)=agent_identity_suffix(state,request);
+    let (common,owner_items)=room_common_identity(state);
+    items.extend(owner_items);
+    let owner_suffix=common.strip_prefix(BASE_IDENTITY).unwrap_or("");
+    (format!("{BASE_IDENTITY}{persona}{owner_suffix}"),items)
 }
 
 #[allow(dead_code)] // compatibility wrapper for tests and old callers
