@@ -90,6 +90,9 @@ const current = await api.nativeRuns.get(run.id)
 
 ## 💾 컨텍스트·스킬·토큰 최적화
 
+**2026년 로컬 KV 캐시 엔진 보강:** 내장 `llama.cpp` 모델은 `cache_prompt: true`를 사용하고, 지원하지 않는 `prompt_cache_key`를 전송·재시도하지 않습니다. 외부 llama.cpp 모델은 제공자 설정에 `"cacheBackend":"llama.cpp","kvCacheEnabled":true`, vLLM 모델은 `"cacheBackend":"vllm","kvCacheEnabled":true`를 지정하면 해당 서버의 KV 캐시 경로를 사용합니다. vLLM은 9인 그룹의 **공통 지침 캐시를 방 안에서 공유**하고 다른 방과는 격리합니다. 해당 로컬 모델은 기억을 보존하면서 누적 문맥을 1회 검색 예산보다 오래 유지합니다. **일반 HTTP 요청은 원본 프롬프트를 여전히 전송합니다. 서버가 앞부분의 재계산을 생략하는 방식이며 Codex WebSocket의 증분 전송과 다릅니다.** 서버 슬롯/모델 용량과 실제 캐시 적중률은 따로 검증해야 합니다. [그룹대화 구조 및 검증](docs/SUB3-ROOM-CONTEXT-DELTA-2026-11-18.md).
+
+
 **고정 프롬프트·페르소나 최초 1회 전송(2026-11-18, Codex WebSocket 경로):** 첫 요청의 `developer` 입력에 그룹 공통 지침과 해당 에이전트 페르소나를 넣습니다. 연결된 후속 호출은 `previous_response_id`와 새 대화·도구 결과만 전송하므로 동일한 4,000토큰 지침을 네트워크 요청에 다시 싣지 않습니다. 지침 변경·세션 만료·연결 종료 시 원본으로 재초기화하며, 별도 에이전트의 페르소나와 기억이 섞이지 않도록 각각의 체인을 유지합니다. **일반 Chat Completions API와 세션 저장을 지원하지 않는 로컬 모델까지 동일하게 적용됐다는 뜻은 아닙니다.** 서버의 실제 KV 캐시·연결 상태 및 제공자 과금 토큰은 별개로 측정해야 합니다.
 
 
