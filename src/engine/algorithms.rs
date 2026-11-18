@@ -905,16 +905,21 @@ pub fn list(state: &AppState) -> Value {
     })
 }
 
-pub fn active(state: &AppState, kind: &str) -> Option<Value> {
-    seed(state);
-    state
-        .store
-        .all("algorithm")
-        .into_iter()
-        .find(|item| {
-            item["kind"].as_str() == Some(kind)
-                && item["status"].as_str() == Some("active")
-        })
+/// Fetch one execution-policy domain, not every historical kernel/stat.
+fn scoped_algorithms(state: &AppState, kind: &str) -> Option<Vec<Value>> {
+    let mut rows=state.store.algorithms_for_kind(kind).ok()?;
+    if rows.is_empty() {
+        seed(state);
+        rows=state.store.algorithms_for_kind(kind).ok()?;
+    }
+    Some(rows)
+}
+pub fn active(state: &AppState,kind:&str)->Option<Value>{
+    scoped_algorithms(state,kind)?.into_iter()
+        .filter(|row|row["status"]=="active")
+        .max_by(|a,b|a["activatedAt"].as_str().unwrap_or("")
+            .cmp(b["activatedAt"].as_str().unwrap_or(""))
+            .then_with(||a["id"].as_str().cmp(&b["id"].as_str())))
 }
 
 /// The executable kernel chosen for a kind. `variant` is display metadata and
@@ -955,120 +960,49 @@ fn stat_id(agent: &str, kind: &str, revision: &str) -> String {
     )
 }
 
-/// UCB1 over the agent's own outcomes. The model is irrelevant; what improves
-/// is which judgment kernel this bot has actually had success with.
+/// Evidence-qualified 2026 policy boundary: independent domain observations
+/// may enter the audit ledger, but unpaired outcome counts cannot choose a
+/// live executable kernel. Only active/validated/builtin policies are eligible.
+/// No paid exploration or hallucinated counterfactual reward is performed.
+fn evidence_qualified_kernel(rows:&[Value],kind:&str)->Option<(Value,&'static str)>{
+    rows.iter().filter_map(|algorithm|{
+        if algorithm["kind"].as_str()!=Some(kind)||
+           !algorithm["implementation"].as_str()
+            .is_some_and(|impl_name|kernel_exists(kind,impl_name)){return None;}
+        let (tier,basis)=match algorithm["status"].as_str(){
+            Some("active")=>(3u8,"explicit_activation"),
+            Some("validated")=>(2u8,"evaluated_fallback"),
+            Some("available") if algorithm["source"]=="builtin"
+                =>(1u8,"builtin_fallback"),
+            _=>return None,
+        };
+        Some((tier,basis,algorithm))
+    }).max_by(|(ta,_,a),(tb,_,b)|ta.cmp(tb)
+        .then_with(||a["activatedAt"].as_str().unwrap_or("")
+            .cmp(b["activatedAt"].as_str().unwrap_or("")))
+        .then_with(||b["id"].as_str().cmp(&a["id"].as_str())))
+      .map(|(_,basis,algorithm)|(algorithm.clone(),basis))
+}
 pub fn choose_for_agent(
-    state: &AppState,
-    kind: &str,
-    agent_id: Option<&str>,
-    execution_id: Option<&str>,
-) -> Option<Value> {
-    seed(state);
-    let agent = agent_of(state, agent_id)?;
-    let candidates = state
-        .store
-        .all("algorithm")
-        .into_iter()
-        .filter(|algorithm| {
-            algorithm["kind"].as_str() == Some(kind)
-                // Builtins are trusted executable baselines. Generated/user
-                // candidates cannot enter live UCB exploration merely by
-                // being registered as "available": they require validation
-                // or explicit activation by the owner.
-                && (matches!(algorithm["status"].as_str(),
-                        Some("active" | "validated"))
-                    || (algorithm["status"].as_str() == Some("available")
-                        && algorithm["source"].as_str() == Some("builtin")))
-                && algorithm["implementation"]
-                    .as_str()
-                    .is_some_and(|implementation| kernel_exists(kind, implementation))
-        })
-        .collect::<Vec<_>>();
-    if candidates.is_empty() {
-        return None;
-    }
-    let all_stats = state.store.all("algorithm_stat");
-    let stats = all_stats
-        .iter()
-        .filter(|stat| {
-            stat["agentId"].as_str() == Some(agent.as_str())
-                && stat["kind"].as_str() == Some(kind)
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    let global_stats = all_stats
-        .iter()
-        .filter(|stat| {
-            stat["agentId"].as_str() == Some("global")
-                && stat["kind"].as_str() == Some(kind)
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    let total = stats
-        .iter()
-        .map(|stat| stat["uses"].as_u64().unwrap_or(0))
-        .sum::<u64>() as f64;
-    let active_revision = active(state, kind)
-        .and_then(|algorithm| algorithm["revision"].as_str().map(str::to_string));
-    let chosen = candidates
-        .into_iter()
-        .max_by(|a, b| {
-            let score = |algorithm: &Value| {
-                let revision = algorithm["revision"].as_str().unwrap_or("");
-                let stat = stats
-                    .iter()
-                    .find(|stat| stat["revision"].as_str() == Some(revision))
-                    .or_else(|| {
-                        global_stats
-                            .iter()
-                            .find(|stat| stat["revision"].as_str() == Some(revision))
-                    });
-                let uses = stat
-                    .and_then(|stat| stat["uses"].as_u64())
-                    .unwrap_or(0) as f64;
-                let successes = stat
-                    .and_then(|stat| stat["successes"].as_u64())
-                    .unwrap_or(0) as f64;
-                let rate = if uses > 0.0 { successes / uses } else { 0.0 };
-                let exploration = if uses > 0.0 {
-                    (2.0 * (total + 1.0).ln() / uses).sqrt()
-                } else {
-                    1.5
-                };
-                let active_bonus = if active_revision
-                    .as_deref()
-                    == algorithm["revision"].as_str()
-                {
-                    0.05
-                } else {
-                    0.0
-                };
-                rate + exploration + active_bonus
-            };
-            score(a)
-                .partial_cmp(&score(b))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })?;
-    if let Some(execution_id) = execution_id {
-        let usage_id = format!(
-            "algorithm-usage-{}",
-            crate::engine::memory::stable_id(&[execution_id, kind])
-        );
-        if state.store.get("algorithm_usage", &usage_id).is_none() {
-            if let Some(saved) = state.store.put(
-                "algorithm_usage",
-                &json!({
-                    "id": usage_id,
-                    "executionId": execution_id,
-                    "agentId": agent,
-                    "kind": kind,
-                    "revision": chosen["revision"],
-                    "status": "pending",
-                    "createdAt": chrono::Utc::now().to_rfc3339(),
-                }),
-            ) {
-                state.bus.record("algorithm_usage", &saved);
-            }
+    state:&AppState,kind:&str,agent_id:Option<&str>,
+    execution_id:Option<&str>,
+)->Option<Value>{
+    let agent=agent_of(state,agent_id)?;
+    let rows=scoped_algorithms(state,kind)?;
+    let (chosen,basis)=evidence_qualified_kernel(&rows,kind)?;
+    if let Some(execution_id)=execution_id {
+        let usage_id=format!("algorithm-usage-{}",
+            crate::engine::memory::stable_id(&[execution_id,kind]));
+        // The first durable assignment wins. A later retry may not rewrite
+        // the identity of an executed effect for convenient scoring.
+        if let Some(saved)=state.store.put_if_absent("algorithm_usage",&json!({
+            "id":usage_id,"executionId":execution_id,"agentId":agent,
+            "kind":kind,"revision":chosen["revision"],"status":"pending",
+            "selectionPolicy":"evidence-gated-execution-2026",
+            "selectionBasis":basis,"historicalStatUse":"diagnostics_only",
+            "createdAt":chrono::Utc::now().to_rfc3339()
+        })){
+            state.bus.record("algorithm_usage",&saved);
         }
     }
     Some(chosen)
@@ -1077,8 +1011,8 @@ pub fn choose_for_agent(
 /// Route genuinely multi-step goals to an executable decomposition kernel
 /// instead of leaving the active "single-step" default in charge of every new
 /// agent. Grade the *same owner request* with each eligible kernel first, while
-/// keeping the learned UCB decision for ties and simple requests. The selected
-/// kernel, not the ignored UCB suggestion, receives execution feedback.
+/// keeping the evidence-gated decision for ties and simple requests. The selected
+/// kernel, not the ignored non-executable suggestion, receives execution feedback.
 pub fn choose_decomposition_for_agent(
     state: &AppState,
     agent_id: Option<&str>,
@@ -1089,7 +1023,7 @@ pub fn choose_decomposition_for_agent(
     let baseline = crate::engine::decompose::decompose(request, &selected);
     let mut best_score = baseline["qualityScore"].as_f64().unwrap_or(0.0);
     let mut chosen = selected;
-    let candidates = state.store.all("algorithm");
+    let candidates = scoped_algorithms(state, "task.decomposition")?;
     for candidate in candidates {
         if candidate["kind"] != "task.decomposition"
             || !(matches!(candidate["status"].as_str(), Some("active" | "validated"))
@@ -1103,9 +1037,9 @@ pub fn choose_decomposition_for_agent(
         let score = decomposition["qualityScore"].as_f64().unwrap_or(0.0);
         let ordered = decomposition["quality"]["orderPreserved"] == true;
         let step_count = decomposition["subtasks"].as_array().map(Vec::len).unwrap_or(0);
-        // Only override UCB when the alternative demonstrably extracts
+        // Only override the activated kernel when the alternative demonstrably extracts
         // multiple ordered actions. A vague increase in heuristic score alone
-        // must not replace a user's learned selection.
+        // must not replace a user's approved selection.
         if ordered && step_count > 1 && score > best_score + 0.05 {
             best_score = score;
             chosen = candidate;
@@ -1119,7 +1053,10 @@ pub fn choose_decomposition_for_agent(
             if let Some(saved)=state.store.put("algorithm_usage",&json!({
                 "id":id,"executionId":execution_id,"agentId":agent,
                 "kind":"task.decomposition","revision":chosen["revision"],
-                "status":"pending","createdAt":chrono::Utc::now().to_rfc3339()
+                "status":"pending","selectionPolicy":"same-request-differential-probe-2026",
+                "selectionBasis":"observable_decomposition_gain",
+                "historicalStatUse":"diagnostics_only",
+                "createdAt":chrono::Utc::now().to_rfc3339()
             })) {
                 state.bus.record("algorithm_usage",&saved);
             }
@@ -1315,7 +1252,7 @@ fn usage_rating(usage: &Value, task_outcome: &str, competing:usize)
         }
     }
     // Task success alone cannot distinguish planning, tool choice, memory
-    // and verification. Updating each arm's UCB counter would manufacture
+    // and verification. Updating an unpaired exploration reward would manufacture
     // correlated "wins"; keep exposure without assigning causal credit.
     if competing!=1{return None;}
     match task_outcome {
@@ -1999,7 +1936,7 @@ mod tests {
     }
 
     #[test]
-    fn unverified_generated_algorithms_never_enter_live_ucb_until_promoted() {
+    fn unverified_generated_algorithms_never_enter_live_selection_until_promoted() {
         let (state, dir) = state();
         seed(&state);
         let candidate = register(&state, &json!({
