@@ -50,3 +50,18 @@ Design boundary (compared with OpenClaw ACP Agents / acpx and Hermes toolsets; n
 5. **No premature integration:** current `src/engine/native_agent.rs` binds the MCP manifest before dispatch; `src/engine/chat/runtime/` still has an older separate interactive path. This change does not claim those paths have been merged or that an ACP backend is running.
 
 Added a source-level regression for adaptive tool visibility and stale-plan suppression. It was committed without local Cargo execution; the corresponding Rust test and full CI remain **not run** in this session. External runtime adapters and full chat/kernel unification are **not implemented** by this patch.
+
+## 2026-11-18 — Legacy harness API cutover without copying runtimes
+
+**Observed pre-change duplication:** `/api/harness/runs` started `dominion_harness::AgentSdk::run` with its own `sdk_run` record, `sdk-runs/*.json` FileJournal, approval and resume flow. `/api/sdk/runs` already used `jobs::create` → `engine::native_agent::run` → `dominion_agent_sdk::Kernel`, with the host-owned durable SQLite job/operation journal. The old `crates/harness` binary and the interactive `chat/runtime/turn.rs` loop are separate paths.
+
+**Now:** A NEW POST to `/api/harness/runs` forwards to `sdk_runs::create` and the existing native job kernel. Its `harnessCompat=true` marker is persisted only to keep the two public API history views separate. `sdk::list/one/approve/cancel/resume/reconcile` dispatch to native handlers for this marker and retain old handlers for preexisting `sdk_run` checkpoints. The old `AgentSdk::run` is not invoked for new requests to this HTTP API. Existing legacy files, historical entries and in-doubt effect state are **not** migrated, reinterpreted, or discarded. The standalone `crates/harness` CLI is not removed, and chat remains a separate loop.
+
+**No permission expansion:** New compatibility jobs pin only the previous workspace list/read/write/replace operations and approved shell, with the former 160-call cap. They cannot silently discover or execute browser, external account, web, arbitrary-host-file or MCP tools. The native tool host rejects a model-provided nonempty `cwd` for legacy-surface shell invocations because the old harness used the fixed workspace root. Native jobs continue using the existing approval, validation, effect journal and verification gates. Default native SDK jobs remain unchanged.
+
+**Code and source-level regression coverage:**
+- `src/api/sdk.rs`: new run is a native job with `harnessCompat=true`, max rounds and model preserved, restricted tool set and no new `sdk_run`; public panel histories are isolated; previous `sdk_run` records remain readable.
+- `src/engine/native_agent.rs`: legacy native shell must not select a different work directory.
+- `src/api/sdk_runs.rs` + `src/api/jobs.rs`: marker is passed only as UI/history scope, no second worker or authority.
+
+**Status:** committed, with GitHub file/head verification planned. Local Cargo/rustc is not installed here, so changed Rust tests and CI **were not executed**. No measured latency, token or completion-rate gain is claimed. This is a safe **new-HTTP-run cutover**, not total one-loop completion; retiring the legacy binary and unifying chat, external ACP runtimes or historical checkpoint formats requires separate verified migration work.
