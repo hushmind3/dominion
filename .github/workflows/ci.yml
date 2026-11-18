@@ -7,6 +7,9 @@ on:
     branches: [dominion-sub2]
     paths:
       - 'src/**/*.rs'
+      - 'web/src/**/*.ts'
+      - 'web/src/**/*.tsx'
+      - 'web/package*.json'
       - 'crates/**/*.rs'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -41,6 +44,14 @@ jobs:
           cargo test --lib engine::chat::tool_schedule::tests
           # Evidence-delta completion gate is used by ordinary chat, not only SDK jobs.
           cargo test --lib engine::chat::runtime::action_review::tests
+          # Stop is a server-side cancellation, not a browser-only SSE abort.
+          cargo test --lib engine::chat::tests::browser_stop_tombstone_precedes_late_chat_post_without_creating_messages
+          cargo test --lib engine::chat::tests::browser_stop_preempts_model_with_no_output_and_next_turn_succeeds
+          cargo test --lib engine::chat::runtime::cancellation_drain_tests
+          # Stable same-room prefix and Cloudflare Workers AI opt-in affinity.
+          cargo test --lib engine::chat::room_context::tests::identity_has_a_shared_stable_prefix_without_changing_owner_personas
+          cargo test --lib engine::chat::continuity::tests::workers_ai_affinity_is_room_shared_and_cache_hint_uses_header_only
+          cargo test --lib engine::chat::provider::tests::cache_usage_distinguishes_hit_from_missing_telemetry
           # Shared room execution: cancelled epoch versus fresh owner, and
           # provider-wire input costs per participating agent.
           cargo test --lib engine::chat::room_context::tests::wire_profile_attributes_selected_messages_without_retaining_raw_text
@@ -92,3 +103,17 @@ jobs:
           cargo test --lib db::tests::algorithm_kind_query_is_indexed_and_excludes_unrelated_live_policies
           # Isolated native A/B runner: compile and validate frozen repair fixture.
           cargo test --bin dominion-benchmark
+
+  frontend-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+      - name: Frontend stop-button TypeScript contract (no build or browser matrix)
+        run: |
+          npm ci --prefix web --ignore-scripts
+          npm --prefix web run typecheck
