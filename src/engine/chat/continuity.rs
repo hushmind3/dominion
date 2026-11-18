@@ -674,6 +674,73 @@ mod tests {
     }
 
     #[test]
+    fn room_snapshot_is_replaced_at_owner_turn_boundary_without_losing_self_or_peer_context() {
+        let root=std::env::temp_dir().join(format!("dominion-room-snapshot-{}",uuid::Uuid::new_v4()));
+        let state=state(&root);
+        state.store.put("session",&json!({"id":"room:ctx","roomId":"ctx"})).unwrap();
+        state.store.put("room",&json!({"id":"ctx","contextBudgetTokens":12000})).unwrap();
+        let provider=route();
+        let request=TurnRequest::from_value(&json!({"input":"Keep discussing","agentId":"agent-0"})).unwrap();
+        let mut previous_reply=None::<String>;
+        for turn in 0..16 {
+            let owner=format!("owner-{turn}");
+            let system=json!({"role":"system","content":"stable owner and agent instructions",
+                "_dominion_source":owner,"_dominion_dependencies":[]});
+            let mut messages=vec![
+                system,
+                json!({"role":"user","content":format!("ROOM_STATE_VERSION_{turn}"),
+                    "_dominion_frame":format!("room-shared:{owner}")}),
+                json!({"role":"user","content":format!("OWNER_DECISION_VERSION_{turn}"),
+                    "_dominion_frame":format!("owner-state:version-{turn}")}),
+            ];
+            if let Some(ref id)=previous_reply {
+                messages.push(json!({"role":"assistant","content":format!("MY_PREVIOUS_REPLY_{}",turn-1),
+                    "_dominion_frame":id}));
+            }
+            for peer in 0..4 {
+                messages.push(json!({"role":"user","content":format!("PEER_{turn}_{peer}"),
+                    "_dominion_frame":format!("peer-{turn}-{peer}")}));
+            }
+            messages.push(json!({"role":"user","content":format!("OWNER_CURRENT_{turn}"),
+                "_dominion_frame":owner}));
+            let mut plan=prepare(&state,&provider,&request,"room:ctx","stable owner and agent instructions",&json!({})).unwrap();
+            let (wire,pending)=project(&state,&provider,&messages,&[],"room:ctx",&mut plan);
+            let body=json!(wire).to_string();
+            assert!(body.contains(&format!("ROOM_STATE_VERSION_{turn}")),"{turn}: {body}");
+            assert!(body.contains(&format!("OWNER_DECISION_VERSION_{turn}")),"{turn}: {body}");
+            assert!(body.contains(&format!("OWNER_CURRENT_{turn}")),"{turn}: {body}");
+            assert_eq!(body.matches("ROOM_STATE_VERSION_").count(),1,"{turn}: stale shared snapshot leaked");
+            assert_eq!(body.matches("OWNER_DECISION_VERSION_").count(),1,"{turn}: stale owner state leaked");
+            assert!(wire.len()<=messages.len(),"history unexpectedly grew across turns");
+            if turn>0 {
+                assert_eq!(plan["workingView"]["rebaseReason"],"room_snapshot_rotated");
+                assert_eq!(plan["workingView"]["reclaimedStaleRoomSnapshots"],1);
+                assert!(body.contains(&format!("MY_PREVIOUS_REPLY_{}",turn-1)),
+                    "latest self reply must survive the snapshot rotation");
+                assert!(!body.contains(&format!("ROOM_STATE_VERSION_{}",turn-1)));
+            }
+            let saved=state.store.write_message(&json!({
+                "id":format!("reply-{turn}"),"session_id":"room:ctx","role":"assistant",
+                "agent_id":"agent-0","content":format!("MY_PREVIOUS_REPLY_{turn}"),
+                "metadata":{"replyToMessageId":owner}
+            })).unwrap();
+            commit(&state,&plan,&saved);
+            commit_projection(&state,&plan,&saved,pending.unwrap());
+            previous_reply=saved["id"].as_str().map(str::to_string);
+        }
+        let record=state.store.get("participant_conversation",
+            prepare(&state,&provider,&request,"room:ctx","stable owner and agent instructions",&json!({}))
+                .unwrap()["participantId"].as_str().unwrap()).unwrap();
+        let frames=record["workingView"]["frames"].as_array().unwrap();
+        assert_eq!(frames.iter().filter(|frame|frame["key"].as_str()
+            .is_some_and(|key|key.starts_with("room-shared:"))).count(),1);
+        assert_eq!(frames.iter().filter(|frame|frame["key"].as_str()
+            .is_some_and(|key|key.starts_with("owner-state:"))).count(),1);
+        assert!(frames.len()<=12,"16 turns should not grow the durable working view without bound");
+        crate::test_support::cleanup_dir(root);
+    }
+
+    #[test]
     fn replay_does_not_duplicate_tool_pairs_or_retain_revoked_knowledge() {
         let root=std::env::temp_dir().join(format!("dominion-projection-tools-{}",uuid::Uuid::new_v4()));
         let state=state(&root);
