@@ -55,6 +55,8 @@ fn enrich(text:&str)->String {
  let mut s=lower.clone();
  for (need,aliases) in [
   ("코드"," workspace code file read replace edit shell"),
+  ("inspect"," workspace read range code search"),
+  ("code"," workspace read range code search"),
   ("파일"," workspace file read write replace"),
   ("구현"," code workspace replace write test"),
   ("수정"," code replace file write edit"),
@@ -296,6 +298,11 @@ mod tests{
    &["publish artifact to archive".into()],&[]);
   assert!(!corrected.iter().any(|tool|tool.name=="mcp__archive_publish"));
   assert!(corrected.iter().any(|tool|tool.name=="workspace_read_range"));
+  // A direct follow-up must rediscover the relevant inspection tool even
+  // when the original objective was unrelated and the old plan was to publish.
+  let inspected=select(&c,"Publish a report","",Some("Inspect code"),
+      &["publish artifact to archive".into()],&[]);
+  assert!(inspected.iter().any(|tool|tool.name=="workspace_read_range"));
  }
  #[test]
  fn small_catalog_stays_fully_visible_without_new_discovery_rounds(){
