@@ -142,6 +142,7 @@ pub(super) fn system_prompt_with_manifest_at(
     if let Some((context, mut context_items, watermark)) =
         context_block_with_manifest(
             state, session_id, request.agent_id.as_deref(), query, improvements, execution_id,
+            request.tools_enabled && request.tools_execution_enabled,
         )
     {
         dynamic.push_str("\n\n");
@@ -195,7 +196,7 @@ fn context_block(
     query: &str,
     improvements: Option<&[Value]>,
 ) -> Option<String> {
-    context_block_with_manifest(state, session_id, agent_id, query, improvements, None)
+    context_block_with_manifest(state, session_id, agent_id, query, improvements, None, false)
         .map(|(block, _, _)| block)
 }
 
@@ -206,6 +207,7 @@ fn context_block_with_manifest(
     query: &str,
     improvements: Option<&[Value]>,
     execution_id: Option<&str>,
+    allow_skill_read:bool,
 ) -> Option<(String, Vec<Value>, String)> {
     let scope = crate::engine::memory::MemoryScope::for_session(&state.store, session_id, agent_id);
     let (memories, mut items) =
@@ -233,9 +235,18 @@ fn context_block_with_manifest(
         .map(|skill|{
             let id=skill["id"].as_str().unwrap_or("").to_owned();
             let name=skill["name"].as_str().unwrap_or("").chars().take(80).collect::<String>();
-            let description=skill["description"].as_str().filter(|s|!s.trim().is_empty())
-                .unwrap_or_else(||skill["instructions"].as_str().unwrap_or(""))
-                .chars().take(120).collect::<String>();
+            let description=if allow_skill_read {
+                skill["description"].as_str().filter(|s|!s.trim().is_empty())
+                    .unwrap_or_else(||skill["instructions"].as_str().unwrap_or(""))
+                    .chars().take(120).collect::<String>()
+            }else{
+                // Tools are disabled for this turn; the agent could not load
+                // anything lazily. Preserve the previous bounded instructions
+                // so enabled skills remain usable without tool access.
+                skill["instructions"].as_str()
+                    .or_else(||skill["description"].as_str()).unwrap_or("")
+                    .chars().take(700).collect::<String>()
+            };
             items.push(json!({"kind":"skill","id":id,"name":name,
                 "revision":crate::engine::memory::stable_id(&[
                     skill["id"].as_str().unwrap_or(""),
@@ -315,7 +326,11 @@ fn context_block_with_manifest(
     }
     let mut block = memories.unwrap_or_default();
     if !skills.is_empty() {
-        block.push_str("\n\nAvailable skills (index only). When one is relevant, call skill_read with its ID before following the instructions:");
+        block.push_str(if allow_skill_read {
+            "\n\nAvailable skills (index only). When relevant, call skill_read with its ID before following instructions:"
+        }else{
+            "\n\nEnabled skills (tools unavailable this turn; bounded instructions follow when applicable):"
+        });
         for (id,name,description) in &skills {
             block.push_str(&format!("\n- [{id}] {name}: {description}"));
         }
@@ -641,7 +656,7 @@ mod tests {
             "description":"For documentation",
             "instructions":"Do not hallucinate missing files"}));
         let (block,items,_)=context_block_with_manifest(
-            &state,"s",None,"workspace review",None,None).unwrap();
+            &state,"s",None,"workspace review",None,None,true).unwrap();
         let a=block.find("[a-1] Alpha").unwrap();
         let z=block.find("[z-2] Zulu").unwrap();
         assert!(a<z,"skill manifest must be stable, not insertion-ordered");
