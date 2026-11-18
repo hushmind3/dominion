@@ -218,8 +218,8 @@ mod tests{
         let subsequent=bounded_tool_trace(&transcript,40_000);
         assert_eq!(subsequent.len(),4);
         assert_eq!(subsequent[2]["_dominion_trace_compacted"],true);
-        assert!(!subsequent.to_string().contains(&source[..500]));
-        assert!(subsequent.to_string().len()<transcript.to_string().len()/3);
+        assert!(!json!(subsequent).to_string().contains(&source[..500]));
+        assert!(json!(subsequent).to_string().len()<json!(transcript).to_string().len()/3);
         // A narrow route cannot opt in to unlimited source replay.
         let constrained=bounded_tool_trace(&transcript[..4],8_000);
         assert_eq!(constrained[2]["_dominion_trace_compacted"],true);
@@ -234,7 +234,7 @@ mod tests{
         let wire=bounded_tool_trace(&transcript,40_000);
         assert_eq!(wire.len(),2);
         assert_eq!(wire[1]["_dominion_trace_compacted"],true);
-        assert!(!wire.to_string().contains("LARGE_WRITE_CONTENT_LARGE_WRITE_CONTENT_"));
+        assert!(!json!(wire).to_string().contains("LARGE_WRITE_CONTENT_LARGE_WRITE_CONTENT_"));
     }
     #[test]
     fn incomplete_or_duplicated_tool_frames_are_never_rewritten(){
