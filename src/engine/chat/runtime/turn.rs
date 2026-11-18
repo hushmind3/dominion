@@ -927,6 +927,8 @@ pub(super) async fn run_turn_body(
                     "projectedReusedHistoryTokensEstimate":metadata["continuity"]["workingView"]["estimatedReusedHistoryTokens"],
                     "projectedNewHistoryTokensEstimate":metadata["continuity"]["workingView"]["estimatedNewHistoryTokens"],
                     "providerId":provider.id,"model":provider.model,
+                    "localPrefixCacheBackend":metadata["continuity"]["localPrefixCacheBackend"],
+                    "localPrefixCacheMode":metadata["continuity"]["localPrefixCacheMode"],
                     "providerPromptTokens":call_prompt,
                     "providerOutputTokens":call_completion,
                     "providerCacheReadTokens":if completion.usage_exact {
