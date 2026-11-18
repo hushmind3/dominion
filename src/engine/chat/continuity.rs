@@ -211,6 +211,17 @@ pub(crate) fn prepare(
         &provider.reasoning_protocol, &identity,
     ]);
     let key = format!("dominion_{affinity}");
+    // Cloudflare's affinity is a routing hint, not a conversation cursor.
+    // Use the room session for identical provider/model routes so all nine
+    // speakers can land on the same prefix-cache instance. Durable history
+    // and response IDs remain isolated by the participant-specific scope.
+    let cache_routing_affinity = if state.store.get("session",session_id)
+        .is_some_and(|session|session["roomId"].is_string())
+    {
+        stable_id(&["cloudflare-room-cache-v1",session_id,&provider.id,
+            &provider.base_url,&provider.model,
+            provider.account_id.as_deref().unwrap_or(""),&provider.kind])
+    } else { affinity.clone() };
     let previous = state.store.get("model_conversation", &id);
     let same_prefix = previous.as_ref().is_some_and(|record|record["prefixDigest"] == prefix);
     let mut record = previous.unwrap_or_else(||json!({
@@ -220,6 +231,7 @@ pub(crate) fn prepare(
     }));
     record["transportSessionId"] = json!(scope);
     record["cacheAffinityId"] = json!(affinity);
+    record["cacheRoutingAffinityId"] = json!(cache_routing_affinity);
     record["cacheKey"] = json!(key);
     record["prefixDigest"] = json!(prefix);
     record["lastRequestedAt"] = json!(chrono::Utc::now().to_rfc3339());
@@ -227,7 +239,9 @@ pub(crate) fn prepare(
         .ok_or("봇의 지속 대화 상태를 저장할 수 없습니다.")?;
     Ok(json!({
         "id":id,"participantId":participant_id,"transport":provider.kind,"mode":"prefix-reuse",
-        "transportSessionId":scope,"cacheAffinityId":affinity,"cacheKey":key,"prefixDigest":prefix,
+        "transportSessionId":scope,"cacheAffinityId":affinity,
+        "cacheRoutingAffinityId":cache_routing_affinity,
+        "cacheKey":key,"prefixDigest":prefix,
         "samePrefixAsPreviousRequest":same_prefix,
         "previousReplyMessageId":participant.get("lastReplyMessageId").unwrap_or(&record["lastReplyMessageId"]),
         "participantBaseReplyMessageId":participant["lastReplyMessageId"],
@@ -301,16 +315,30 @@ pub(super) fn note_hint(state: &AppState, provider: &ProviderRef, wire: CacheWir
     }));
 }
 
+/// Only Cloudflare Workers AI understands this routing header. An arbitrary
+/// OpenAI-compatible gateway must never receive provider-specific headers.
+fn cloudflare_worker_provider(provider:&ProviderRef)->bool {
+    if provider.kind.eq_ignore_ascii_case("cloudflare"){ return true; }
+    let Ok(url)=reqwest::Url::parse(&provider.base_url) else{return false};
+    matches!(url.host_str(),Some("api.cloudflare.com"))
+        && url.path().contains("/accounts/")
+        && url.path().contains("/ai/")
+}
+
 /// Both HTTP and WebSocket must send the same negotiated cache identity.
 pub(super) fn hinted_body(state: &AppState, provider: &ProviderRef, original: &Value, plan: &mut Value, wire: CacheWire) -> Value {
     let known=state.store.get("provider_wire_feature", &feature_id(provider,wire));
     let disabled=known.as_ref().is_some_and(|record|record["accepted"]==false
         && record["expiresAt"].as_i64().is_some_and(|until|until>chrono::Utc::now().timestamp()));
     let mut body=original.clone();
-    let hinted=!disabled && apply_hint(&mut body,plan,wire);
-    plan["cacheHint"]=json!(wire.field());
+    // Workers AI chooses prefix caching automatically for supported models
+    // and documents x-session-affinity, not OpenAI's prompt_cache_key.
+    // Avoid a guaranteed unsupported parameter negotiation on that route.
+    let cloudflare=cloudflare_worker_provider(provider) && matches!(wire,CacheWire::Key);
+    let hinted=!disabled && !cloudflare && apply_hint(&mut body,plan,wire);
+    plan["cacheHint"]=json!(if cloudflare {"x-session-affinity"}else{wire.field()});
     plan["wireHintSent"]=json!(hinted);
-    plan["cacheHintAcceptance"]=if disabled {json!(false)} else {Value::Null};
+    plan["cacheHintAcceptance"]=if disabled && !cloudflare {json!(false)} else {Value::Null};
     body
 }
 
@@ -332,6 +360,14 @@ pub(super) async fn send(
             // OpenCode Go's direct endpoint uses the same stable conversation
             // affinity under its own header. No local proxy is involved.
             if opencode_go { request=request.header("x-opencode-session",id); }
+        }
+        if cloudflare_worker_provider(provider) {
+            if let Some(id)=plan["cacheRoutingAffinityId"].as_str()
+                .or_else(||plan["cacheAffinityId"].as_str())
+            {
+                request=request.header("x-session-affinity",id);
+                plan["affinityHeaderSent"]=json!("x-session-affinity");
+            }
         }
         let response=request.json(&body).send().await.map_err(|e|format!("{} 연결 실패: {}",provider.name,crate::engine::gateway::transport_error(e)))?;
         let status=response.status();
@@ -467,6 +503,56 @@ mod tests {
         assert_eq!(seen[0],seen[1]);assert_eq!(seen[1],seen[2]);
         assert_ne!(seen[2],seen[3],"another bot must have a separate route affinity");
         drop(seen);server.abort();let _=std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn cloudflare_room_affinity_is_shared_by_nine_speakers_without_reusing_their_cursors() {
+        use axum::{extract::State,http::HeaderMap,routing::post,Json,Router};
+        use std::sync::{Arc,Mutex};
+        type Seen=Arc<Mutex<Vec<(String,String,bool)>>>;
+        async fn endpoint(State(seen):State<Seen>,headers:HeaderMap,
+            Json(body):Json<Value>)->Json<Value> {
+            let affinity=headers.get("x-session-affinity").unwrap().to_str().unwrap().to_string();
+            let cursor=headers.get("x-dominion-conversation").unwrap().to_str().unwrap().to_string();
+            seen.lock().unwrap().push((affinity,cursor,body.get("prompt_cache_key").is_some()));
+            Json(json!({"ok":true}))
+        }
+        let seen:Seen=Arc::new(Mutex::new(Vec::new()));
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address=listener.local_addr().unwrap();
+        let app=Router::new().route("/test",post(endpoint)).with_state(seen.clone());
+        let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap()});
+        let root=std::env::temp_dir().join(format!("dominion-cloudflare-{}",uuid::Uuid::new_v4()));
+        let state=state(&root);
+        state.store.put("session",&json!({"id":"room:nine","roomId":"nine"})).unwrap();
+        state.store.put("session",&json!({"id":"private","agentId":"a"})).unwrap();
+        let mut provider=route();provider.base_url=format!("http://{address}");
+        provider.kind="cloudflare".into();
+        let client=reqwest::Client::new();
+        let mut room_affinities=Vec::new();let mut cursor_ids=Vec::new();
+        for index in 0..9 {
+            let agent=format!("agent-{index}");
+            let request=TurnRequest::from_value(&json!({"agentId":agent,"input":"talk"})).unwrap();
+            let mut plan=prepare(&state,&provider,&request,"room:nine","stable identity",&json!({})).unwrap();
+            let response=send(&state,&provider,client.post(format!("http://{address}/test")),
+                &json!({"messages":[{"role":"system","content":"immutable rules"}]}),
+                &mut plan,CacheWire::Key).await.unwrap();
+            assert!(response.status().is_success());
+            room_affinities.push(plan["cacheRoutingAffinityId"].clone());
+            cursor_ids.push(plan["transportSessionId"].clone());
+        }
+        assert!(room_affinities.iter().all(|id|id==&room_affinities[0]));
+        assert_eq!(cursor_ids.iter().collect::<std::collections::HashSet<_>>().len(),9);
+        let private=TurnRequest::from_value(&json!({"agentId":"agent-0","input":"private"})).unwrap();
+        let private_plan=prepare(&state,&provider,&private,"private","stable identity",&json!({})).unwrap();
+        assert_ne!(private_plan["cacheRoutingAffinityId"],room_affinities[0]);
+        let rows=seen.lock().unwrap();
+        assert_eq!(rows.len(),9);
+        assert!(rows.iter().all(|row|row.0==rows[0].0));
+        assert!(rows.iter().all(|row|!row.2),
+            "Cloudflare should not receive an unrelated prompt_cache_key");
+        assert_ne!(rows[0].1,rows[1].1,"participant conversation cursors must remain private");
+        drop(rows);server.abort();let _=std::fs::remove_dir_all(root);
     }
 
     #[tokio::test]
