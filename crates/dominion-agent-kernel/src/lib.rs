@@ -72,6 +72,44 @@ pub fn read_only_shell_command(command: &str) -> bool {
     }
 }
 
+/// `terminal_exec` sends an executable and argv separately. Evaluate the
+/// actual native command for replay admission, not just the executable name:
+/// `cargo` alone is not a test, while `cargo + ["test"]` is. Never interpolate
+/// argv through a shell; this is classification of an already executed call.
+fn observed_read_only_command(item:&Value)->bool{
+    let tool=item["tool"].as_str().unwrap_or("");
+    let args=&item["arguments"];
+    let Some(executable)=args["command"].as_str() else{return false};
+    if tool=="shell_exec"{return read_only_shell_command(executable);}
+    if tool!="terminal_exec"{return false;}
+    if executable.is_empty() || executable.chars().any(char::is_whitespace){
+        return false;
+    }
+    let Some(argv)=args["args"].as_array() else{
+        return read_only_shell_command(executable);
+    };
+    let mut command=executable.to_owned();
+    for part in argv{
+        let Some(part)=part.as_str() else{return false};
+        if part.is_empty() || part.chars().any(char::is_whitespace){
+            // We cannot prove a shell-like string is just one benign flag.
+            return false;
+        }
+        command.push(' ');
+        command.push_str(part);
+    }
+    read_only_shell_command(&command)
+}
+
+/// A tool result explicitly labelled uncertain must never be silently
+/// promoted by the final file-oracle. This differs from a *known successful*
+/// non-idempotent write, which should not be replayed but can be verified.
+pub fn observed_unknown_outcome(evidence:&[Value])->bool{
+    evidence.iter().any(|item|
+        item["outcomeUnknown"]==true || item["result"]["outcomeUnknown"]==true
+        || item["effectUnknown"]==true || item["result"]["effectUnknown"]==true)
+}
+
 pub fn side_effect_unknown(evidence:&[Value])->bool {
     // Workspace edits and read-only operations are retryable after a fresh
     // verifier pass; arbitrary shell/MCP/HTTP writes are not.
@@ -103,8 +141,7 @@ pub fn side_effect_unknown(evidence:&[Value])->bool {
             "workspace_write"|"workspace_replace"|"workspace_replace_range"|
             "workspace_apply_patch"|"file_write"
         );
-        !(known_read || local_replay || (matches!(tool,"shell_exec"|"terminal_exec")
-            && read_only_shell_command(item["arguments"]["command"].as_str().unwrap_or(""))))
+        !(known_read || local_replay || observed_read_only_command(item))
     })
 }
 pub fn decide(
@@ -116,11 +153,7 @@ pub fn decide(
     attempt:usize,
     max_attempts:usize,
 ) -> Decision {
-    if evidence.iter().any(|item|
-        item["outcomeUnknown"]==true || item["result"]["outcomeUnknown"]==true
-        || item["effectUnknown"]==true || item["result"]["effectUnknown"]==true){
-        return Decision::Review;
-    }
+    if observed_unknown_outcome(evidence){return Decision::Review;}
     if gaps.is_empty() && error.is_none(){return Decision::Accept;}
     // Even if a provider fails after the last successful workspace write,
     // a frozen independent verifier can demonstrate the artifact exists.
@@ -198,6 +231,59 @@ pub fn owner_intent(original:&str,messages:&[Value])->OwnerIntent{
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn structured_terminal_read_only_argv_allows_safe_verifier_retries(){
+        let command=|exe:&str,args:&[&str]|json!({
+            "tool":"terminal_exec","arguments":{"command":exe,"args":args},
+            "result":{"exitCode":0}
+        });
+        for (exe,args) in [
+            ("cargo",vec!["test","--lib"]),
+            ("npm",vec!["run","typecheck"]),
+            ("git",vec!["-C","project","diff","--stat"]),
+            ("rg",vec!["needles","src"]),
+        ]{
+            let evidence=vec![command(exe,&args)];
+            assert!(!side_effect_unknown(&evidence),
+                "successful read-only terminal argv should permit repair: {evidence:?}");
+            assert_eq!(decide(Strategy::Focused,true,
+                &["missing criterion".into()],None,&evidence,0,3),Decision::Repair);
+        }
+        for (exe,args) in [
+            ("git",vec!["commit","-am","msg"]),
+            ("npm",vec!["install"]),
+            ("python",vec!["-c","print(1)"]),
+        ]{
+            assert!(side_effect_unknown(&[command(exe,&args)]),
+                "{exe} {args:?} must remain replay gated");
+        }
+        assert!(side_effect_unknown(&[command("cargo",&["test;rm","-rf"])]));
+        assert!(side_effect_unknown(&[json!({"tool":"terminal_exec",
+            "arguments":{"command":"cargo","args":["test",{"invalid":true}]},
+            "result":{"exitCode":0}})]));
+    }
+
+    #[test]
+    fn known_successful_remote_effect_and_unknown_outcome_are_distinct(){
+        let completed=vec![json!({"tool":"github_api",
+            "arguments":{"method":"POST"},"result":{"ok":true}})];
+        assert!(side_effect_unknown(&completed),
+            "do not automatically replay an already applied remote mutation");
+        assert!(!observed_unknown_outcome(&completed),
+            "settled tool success is not an unknown outcome");
+        assert_eq!(decide(Strategy::Focused,true,&[],None,&completed,0,3),
+            Decision::Accept,
+            "independent verifier success may settle a known remote effect");
+        assert_eq!(decide(Strategy::Focused,true,
+            &["missing evidence".into()],None,&completed,0,3),
+            Decision::Review);
+        let unresolved=vec![json!({"tool":"github_api",
+            "arguments":{"method":"POST"},"result":{"outcomeUnknown":true}})];
+        assert!(observed_unknown_outcome(&unresolved));
+        assert_eq!(decide(Strategy::Focused,true,&[],None,&unresolved,0,3),
+            Decision::Review);
+    }
+
     #[test]
     fn unknown_external_effect_never_grants_automatic_repair() {
         let observations=vec![json!({"tool":"mcp__billing__charge",
