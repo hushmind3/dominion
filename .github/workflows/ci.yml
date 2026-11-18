@@ -63,6 +63,7 @@ jobs:
           cargo test --lib engine::adaptation::trace_ir::tests
           cargo test --lib engine::adaptation::repair_tournament::tests
           cargo test --lib engine::adaptation_loop::selection_tests
+          cargo test --lib engine::chat::runtime::candidate_rollout::tests
           cargo test --lib engine::chat::runtime::program::repair_completion_tests
           cargo test --lib engine::chat::runtime::program::review_settlement_tests
           cargo test --lib engine::chat::outcome::program_review_outcome_tests
