@@ -197,6 +197,19 @@ async function proxy(request, env, user) {
   // Conservative upper bound: charge for all input bytes as tokens, plus max output tokens.
   const reserve = encoded.length * inputPrice + maxTokens * outputPrice;
   if (!Number.isSafeInteger(reserve) || reserve > 1000000000) return err('Request exceeds limit');
+  // Operator-side daily ceiling is independent of users' prepaid balances.
+  // Include outstanding reservations so concurrent requests count toward the budget.
+  const dailyBudget = Number(env.PAID_DAILY_BUDGET_MICRO_KRW || 0);
+  if (dailyBudget !== 0) {
+    if (!Number.isSafeInteger(dailyBudget) || dailyBudget < 0)
+      return err('Invalid operator daily budget', 503);
+    const dayStart = Math.floor(Date.now() / 86400000) * 86400;
+    const spent = await env.DB.prepare(
+      "SELECT COALESCE(SUM(CASE WHEN status='reserved' THEN reserved ELSE charged END),0) AS total FROM usage WHERE created_at>=?"
+    ).bind(dayStart).first();
+    if (Number(spent?.total || 0) + reserve > dailyBudget)
+      return err('Operator daily model budget reached', 429);
+  }
   const id = crypto.randomUUID();
   const debited = await env.DB.prepare('UPDATE accounts SET credits=credits-? WHERE id=? AND credits>=? RETURNING credits')
     .bind(reserve, user.id, reserve).first();
