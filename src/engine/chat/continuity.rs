@@ -328,6 +328,24 @@ pub(crate) fn project(
         json!({"key":key,"message":body})
     }).collect::<Vec<_>>();
     let mut frames = previous["frames"].as_array().cloned().unwrap_or_default();
+    let room_session=state.store.get("session",session_id)
+        .is_some_and(|session|session["roomId"].is_string());
+    // Delayed room tasks can arrive out of order. A participant must NEVER
+    // inherit facts learned from a later owner message when replaying an
+    // earlier source cursor in the same durable transcript.
+    let source_rewound=room_session && participant["lastSourceMessageId"]
+        .as_str().is_some_and(|previous_source| {
+            if previous_source==source {return false;}
+            let messages=state.store.messages(session_id);
+            let old=messages.iter().position(|row|row["id"]==previous_source);
+            let current=messages.iter().position(|row|row["id"]==source);
+            matches!((old,current),(Some(old),Some(current)) if current<old)
+        });
+    let owner_state_absent=room_session
+        && frames.iter().any(|frame|frame["key"].as_str()
+            .is_some_and(|key|key.starts_with("owner-state:")))
+        && !fresh.iter().any(|frame|frame["key"].as_str()
+            .is_some_and(|key|key.starts_with("owner-state:")));
     // Legacy tool-heavy room projections could carry an owner-state frame
     // without its revision proof. Never use the monotonic fast path for those
     // frames; rebuild a fresh source-scoped projection once.
@@ -340,6 +358,8 @@ pub(crate) fn project(
     let mut reason = if frames.is_empty() { Some("initial") }
         else if previous["signature"] != signature { Some("contract_changed") }
         else if participant["lastReplyMessageId"].as_str().is_some_and(|id|state.store.message(id).is_none()) { Some("transcript_reset") }
+        else if source_rewound { Some("owner_cursor_rewound") }
+        else if owner_state_absent { Some("owner_state_scope_changed") }
         else if owner_proof_missing { Some("owner_state_proof_missing") }
         else if dependencies.iter().any(|dependency| {
             state.store.get(dependency["kind"].as_str().unwrap_or(""),dependency["id"].as_str().unwrap_or(""))
@@ -1185,6 +1205,47 @@ mod tests {
             "host-estimated new history should be cheaper than cold full reconstruction: {projected_new}/{rebuilt_full}");
         assert_eq!(state.store.messages("room:long").len(),100*10,
             "all owner and nine speaker original records remain durable");
+        crate::test_support::cleanup_dir(root);
+    }
+
+    #[test]
+    fn delayed_owner_turn_cannot_reuse_facts_from_a_future_source() {
+        let root=std::env::temp_dir().join(format!("dominion-owner-rewind-{}",uuid::Uuid::new_v4()));
+        let state=state(&root);
+        state.store.put("session",&json!({"id":"room:rewind","roomId":"rewind"})).unwrap();
+        state.store.put("room",&json!({"id":"rewind","workingViewBudgetTokens":10000})).unwrap();
+        for id in ["owner-old","owner-new"] {
+            state.store.write_message(&json!({"id":id,"session_id":"room:rewind",
+                "role":"user","content":id,"metadata":{"authorKind":"owner"}})).unwrap();
+        }
+        let provider=route();
+        let request=TurnRequest::from_value(&json!({"input":"test","agentId":"agent"})).unwrap();
+        let identity="stable instructions";
+        let later=vec![
+            json!({"role":"system","content":identity,"_dominion_source":"owner-new",
+                "_dominion_dependencies":[]}),
+            json!({"role":"user","content":"FUTURE_OWNER_FACT",
+                "_dominion_frame":"owner-state:latest"}),
+            json!({"role":"user","content":"owner-new","_dominion_frame":"owner-new"}),
+        ];
+        let mut plan=prepare(&state,&provider,&request,"room:rewind",identity,&json!({})).unwrap();
+        let (_,pending)=project(&state,&provider,&later,&[],"room:rewind",&mut plan);
+        let saved=state.store.write_message(&json!({"session_id":"room:rewind",
+            "agent_id":"agent","role":"assistant","content":"future answer",
+            "metadata":{"replyToMessageId":"owner-new"}})).unwrap();
+        commit(&state,&plan,&saved);
+        commit_projection(&state,&plan,&saved,pending.unwrap());
+        let earlier=vec![
+            json!({"role":"system","content":identity,"_dominion_source":"owner-old",
+                "_dominion_dependencies":[]}),
+            json!({"role":"user","content":"owner-old","_dominion_frame":"owner-old"}),
+        ];
+        let mut replay=prepare(&state,&provider,&request,"room:rewind",identity,&json!({})).unwrap();
+        let (wire,_)=project(&state,&provider,&earlier,&[],"room:rewind",&mut replay);
+        assert_eq!(replay["workingView"]["rebaseReason"],"owner_cursor_rewound");
+        assert!(!wire.to_string().contains("FUTURE_OWNER_FACT"));
+        assert!(!wire.to_string().contains("future answer"));
+        assert!(wire.to_string().contains("owner-old"));
         crate::test_support::cleanup_dir(root);
     }
 
