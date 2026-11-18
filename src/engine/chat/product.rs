@@ -1638,6 +1638,10 @@ impl Host for MainTurn<'_> {
             // Publish only after the owner revision has been confirmed and
             // the final assistant message is durable in save().
             self.metadata["completionSource"] = json!("kernel_verified_checkpoint");
+            // The provider projection predates the completed tool exchange.
+            // The next request must rebuild tool-call/result pairing from the
+            // durable transcript rather than project a provisional reply.
+            self.continuation_projection = None;
             self.state.store.audit("acceptance.kernel_reconciled", json!({
                 "executionId": self.execution_id,
                 "sessionId": self.session_id,
