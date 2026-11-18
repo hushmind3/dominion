@@ -215,6 +215,10 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_running_execution
                  ON records(json_extract(data,'$.status'))
                  WHERE kind='execution';
+             CREATE INDEX IF NOT EXISTS idx_active_execution_session
+                 ON records(json_extract(data,'$.sessionId'))
+                 WHERE kind='execution'
+                   AND json_extract(data,'$.status')='running';
              CREATE INDEX IF NOT EXISTS idx_running_operation
                  ON records(json_extract(data,'$.status'))
                  WHERE kind='execution_operation';
@@ -2285,8 +2289,8 @@ mod tests {
              LIMIT 1)",
         ).unwrap().query_map(["target"],|row|row.get::<_,String>(3))
             .unwrap().collect::<Result<Vec<_>,_>>().unwrap();
-        assert!(plans.iter().any(|line|line.contains("idx_sdk_execution_session")),
-            "session cancellation must not scan all execution records: {plans:?}");
+        assert!(plans.iter().any(|line|line.contains("idx_active_execution_session")),
+            "session cancellation must use its running-session partial index: {plans:?}");
     }
 
     #[test]
