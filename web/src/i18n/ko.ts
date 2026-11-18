@@ -500,6 +500,7 @@ const ko = {
   'chat.stop': '중단',
   'chat.stopPending': '중단 요청 중…',
   'chat.stopFailed': '서버가 중단 요청을 기록하지 못했습니다.',
+  'chat.stopStillRunning': '중단 요청은 기록됐습니다. 실행 종료를 아직 확인하지 못했습니다. 다시 중단을 눌러 확인하세요.',
   'chat.copy': '복사',
   'chat.noModel': '모델 서버 미연결',
   'chat.manage': '연결 관리',
