@@ -268,3 +268,13 @@ SDK 완료 증거 조회 실패는 `needs_review`와 `failureClass=completion_ev
 ## 머니 비교 가격의 계산·근거 경계 (2026-11-18)
 
 `money_price`는 원문에 인용된 구매측·공급측 가격의 단위·사양·수량·관측 시점과 호가·희망가격·거래 언급의 차이를 검토합니다. 가격과 환율 인용을 기존 SQLite 원문에서 확인할 수 있고 배송·관세·수수료·반품·노동 비용이 모두 입력된 때만 원화 단위 차액을 계산합니다. 외화 환율 원문이 없으면 원화 환산은 미확인으로 둡니다. 계산 결과는 머니 후보와 보관함에서 참고 가격 차이로만 표시하며 실제 매출·순이익으로 간주하지 않습니다. 모델·도구 추가 호출이나 별도 DB가 없습니다.
+
+## MCP 원격 도구 발견·스트리밍 응답 (2026-11-18)
+
+`src/engine/mcp.rs`에서 활성 MCP 서버의 `tools/list` 조회를 최대 4개 동시 실행합니다. 단일 서버의 연결·응답이 느리더라도 다른 서버의 도구 목록 조회가 순차 대기하지 않으며, 모델에 전달할 목록은 설정 레코드 조회 순서대로 합칩니다. 기존 120초 서버별 스키마 캐시, 서버 이름 충돌 방지, 기존 승인 정책과 도구 실행 게이트는 그대로 사용합니다.
+
+HTTP MCP의 `text/event-stream` 응답은 전체 연결 종료를 기다리지 않고 네트워크 청크에서 이벤트를 조립합니다. `data:`의 JSON-RPC 응답은 요청 ID를 검증하고, 무관한 진행 알림·하트비트·다른 요청의 응답은 건너뜁니다. 응답을 찾으면 즉시 스트림을 닫으며, 단일 이벤트 2MiB 상한과 미완료 스트림 오류를 명시합니다. 빈 HTTP 본문을 도구 호출 성공으로 오인하지 않으며 일반 JSON 응답에도 요청 ID 검증을 적용합니다.
+
+관련 Rust 회귀는 `cargo test --locked --bin dominion-rust engine::mcp::tests`이고 개발 CI의 별도 단계로 등록됐습니다. 테스트는 응답을 보낸 뒤 서버가 연결을 닫지 않는 SSE, 무관한 ID, 하트비트, 독립 MCP 서버의 동시 목록 조회 및 결과 순서 보존을 대상으로 합니다. 2026-07-28 MCP의 신규 핸드셰이크 없는 `_meta`·필수 HTTP 헤더·`x-mcp-header` 전면 지원은 이번 변경 범위 밖입니다. 기존 클라이언트의 초기화 절차는 유지되므로 이 개선을 2026년 최신 MCP 프로토콜 전체 지원으로 표현하지 않습니다.
+
+참조: [MCP 2026-07-28 Streamable HTTP 규격](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2026-07-28/basic/transports/streamable-http.mdx), [Goose 확장 관리](https://github.com/aaif-goose/goose/blob/main/documentation/docs/mcp/extension-manager-mcp.md), [DeepSeek Harness의 Cordis 구조](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md). 외부 프로젝트의 실행기를 합치지 않고 기존 Rust 도구 경계를 개선했습니다.
