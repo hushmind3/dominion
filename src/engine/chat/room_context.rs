@@ -999,7 +999,7 @@ mod tests {
             let mut changed_room=room.clone();changed_room["topic"]=json!("different topic");
             changed_room["agentIds"]=json!([id]);
             let changed=core(&state,&request,&changed_room,"").0;
-            assert!(changed.starts_with(&context::identity_prefix(&state,&request).0));
+            assert!(changed.starts_with(&context::room_shared_identity_prefix(&state).0));
         }
         // The entire common charter (including room topic, roster and
         // owner policy) is byte-identical before any participant persona.
