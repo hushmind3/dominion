@@ -245,6 +245,20 @@ pub(crate) fn project(
         .any(|old| old["key"] == new["key"] && old["message"] != new["message"])) {
         reason = Some("source_changed");
     }
+    // Distinguish the room-wide observation from its owner-turn cursor.
+    // A different actual response/work status must replace the prior frame:
+    // accumulating both would teach the model mutually inconsistent states.
+    let current_shared = fresh.iter()
+        .filter_map(|frame|frame["key"].as_str())
+        .find(|key|key.starts_with("room-shared:"));
+    let stale_shared_frames = current_shared.map(|current| frames.iter()
+        .filter(|frame|frame["key"].as_str().is_some_and(|key|
+            key.starts_with("room-shared:") && key != current)).count())
+        .unwrap_or(0);
+    if reason.is_none() && stale_shared_frames > 0 {
+        reason = Some("room_snapshot_rotated");
+    }
+    let previous_frames = frames.len();
     let mut reused = frames.len();
     if reason.is_none() {
         let seen = frames.iter().filter_map(|frame|frame["key"].as_str().map(str::to_string))
@@ -280,11 +294,24 @@ pub(crate) fn project(
             }
         }
     }
+    // Host-side prefix lengths are useful for diagnosing rebases, but are
+    // never billed/provider cache hits. Count old frames and appended frames
+    // independently; transport and provider usage are separate measurements.
+    let estimate_frames = |slice: &[Value]| -> usize {
+        super::room_context::estimate(&json!(slice.iter()
+            .map(|frame| &frame["message"]).collect::<Vec<_>>()).to_string())
+    };
+    let reused_estimate = if reused == 0 { 0 } else { estimate_frames(&frames[..reused]) };
+    let new_estimate = if reused == frames.len() { 0 } else { estimate_frames(&frames[reused..]) };
     let mut projected = vec![wire_message(&messages[0])];
     projected.extend(frames.iter().map(|frame|frame["message"].clone()));
     plan["workingView"] = json!({
         "epoch":epoch,"reusedFrames":reused,"appendedFrames":frames.len().saturating_sub(reused),
         "rebaseReason":reason,"sourceMessageId":source,
+        "previousFrames":previous_frames,"reclaimedStaleRoomSnapshots":stale_shared_frames,
+        "estimatedReusedHistoryTokens":reused_estimate,
+        "estimatedNewHistoryTokens":new_estimate,
+        "historyEstimateKind":"host-projection-not-provider-cache-or-billing",
         "inputDigest":stable_id(&[&json!(projected).to_string()]),
         "estimatedInputTokens":super::room_context::input_estimate(&projected, tools),
     });
