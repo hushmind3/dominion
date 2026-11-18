@@ -159,7 +159,7 @@ pub(super) fn select_room_tools(
             &["메모리", "memory", "기억해둬", "기억해 둬", "저장해"],
             &["memory_store", "memory_search"],
         ),
-        (&["스킬", "skill"], &["skill_search","skill_read","skill_propose"]),
+        (&["스킬", "skill"], &["skill_search","skill_read","skill_resource_read","skill_propose"]),
         (
             &["위임", "delegate", "task", "에이전트"],
             &["delegate_task", "task_status", "task_result"],
