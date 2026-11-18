@@ -1539,9 +1539,11 @@ async fn stream_codex_once(
         &provider.api_key,
     )
     .await?;
-    // Prefer the incremental websocket transport: the identity/persona
-    // instructions are still sent every call, but the accumulated transcript
-    // is replaced by the new suffix while the connection holds the chain.
+    // Prefer the stateful websocket transport: codex_ws seeds the owner
+    // charter and speaker persona as the initial chained developer input.
+    // Subsequent previous_response_id requests send ONLY new items; a
+    // changed contract or fresh socket reboots the full developer prefix.
+    // HTTP fallback still sends full top-level instructions every call.
     let ws_body=super::continuity::hinted_body(state,provider,&body,continuity,super::continuity::CacheWire::Key);
     let websocket = super::codex_ws::stream(
         state,
