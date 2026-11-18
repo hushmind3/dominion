@@ -112,14 +112,35 @@ async function upstreamFreeCatalog(env) {
     return freeCatalogCache.models;
   }
 }
-async function availableModels(env) {
+// Worker-isolate cache reduces catalog traffic. Expired snapshots are retained
+// for transient upstream failures; the scheduled handler refreshes proactively.
+let catalogCache = { expires: 0, models: [], refreshedAt: 0 };
+const modelFailures = new Map();
+const catalogTtl = 15 * 60 * 1000;
+function modelAvailable(id) {
+  const entry = modelFailures.get(id);
+  return !entry || entry.until <= Date.now();
+}
+function markModelResult(id, ok) {
+  if (ok) { modelFailures.delete(id); return; }
+  const old = modelFailures.get(id);
+  const count = (old?.count || 0) + 1;
+  modelFailures.set(id, { count, until: count >= 3 ? Date.now() + 5 * 60 * 1000 : 0 });
+}
+async function availableModels(env, refresh = false) {
+  if (!refresh && catalogCache.expires > Date.now()) return catalogCache.models;
   const upstream = await upstreamFreeCatalog(env);
-  return healthyModels([...new Map([...freeModels(env), ...upstream].map(m => [m.id, m])).values()]);
+  // Keep the last known catalog when discovery temporarily fails.
+  const previous = upstream.length ? upstream : catalogCache.models.filter(m => m.backend === 'upstream');
+  const models = [...new Map([...freeModels(env), ...previous].map(m => [m.id, m])).values()];
+  catalogCache = { models, expires: Date.now() + catalogTtl, refreshedAt: Date.now() };
+  return models;
 }
 async function freeProxy(request, env, user) {
   const body = await maxBody(request);
   const model = (await availableModels(env)).find(x => x.id === body.model);
   if (!model || (model.backend !== 'workers-ai' && (!env.UPSTREAM_API_KEY || !env.UPSTREAM_URL))) return err('Free model not available', 503);
+  if (!modelAvailable(model.id)) return err('Model temporarily unavailable', 503);
   // Chat clients may request streaming and advertise tools by default.
   // Free text models do not execute tools; compatibility mode ignores tool schemas.
   if (body.n !== undefined && body.n !== 1) return err('Only one completion supported');
@@ -136,6 +157,7 @@ async function freeProxy(request, env, user) {
   if (model.backend === 'workers-ai') {
     try {
       const answer = await env.AI.run(model.id, { messages: body.messages, max_tokens: Math.min(1024, body.max_tokens || 512) });
+      markModelResult(model.id, true);
       const content = typeof answer?.response === 'string' ? answer.response : '';
       if (!content) throw Error('Empty model response');
       markSuccess(model.id);
@@ -239,6 +261,9 @@ async function routeCompletion(request, env, user) {
   return proxy(request, env, user);
 }
 export default {
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil(availableModels(env, true));
+  },
   async fetch(request, env) {
     const origin = request.headers.get('origin');
     const headers = cors(origin, env);
