@@ -813,13 +813,13 @@ mod tests {
                 })).unwrap();
                 let compiled=compile(&state,&request,"room:r",&source,&tools,&[]).unwrap();
                 let selected=compiled.accounting["selectedMessageIds"].as_array().unwrap();
-                assert!(selected.iter().any(|s|s==&source));
+                assert!(selected.iter().any(|s|s.as_str()==Some(source.as_str())));
                 assert!(compiled.history.iter().any(|row|row["_dominion_frame"]==
                     format!("room-shared:{source}")));
                 assert!(!compiled.system.prompt.contains("LEAKED_NEXT_TURN"));
                 if turn>0 {
                     let previous=format!("agent-{index}-turn-{}",turn-1);
-                    assert_eq!(compiled.accounting["previousSelfMessageId"],previous);
+                    assert_eq!(compiled.accounting["previousSelfMessageId"].as_str(),Some(previous.as_str()));
                 }
                 let mut wire=vec![json!({"role":"system","content":compiled.system.prompt})];
                 wire.extend(compiled.history);
