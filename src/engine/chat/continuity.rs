@@ -664,6 +664,16 @@ fn cloudflare_route(state:&AppState,provider:&ProviderRef)->bool{
 
 /// Both HTTP and WebSocket must send the same negotiated cache identity.
 pub(super) fn hinted_body(state: &AppState, provider: &ProviderRef, original: &Value, plan: &mut Value, wire: CacheWire) -> Value {
+    // llama.cpp and vLLM use server-side KV cache, not OpenAI's
+    // prompt_cache_key JSON extension. Avoid a guaranteed 400/422 feature
+    // probe and the wasted retry before the first local inference.
+    if matches!(wire,CacheWire::Key)
+        && super::provider::local_cache_backend(state,provider).is_some() {
+        plan["cacheHint"]=json!("local-server-kv-prefix");
+        plan["wireHintSent"]=json!(false);
+        plan["cacheHintAcceptance"]=Value::Null;
+        return original.clone();
+    }
     if matches!(wire,CacheWire::Key) && cloudflare_route(state,provider){
         plan["cacheHint"]=json!("x-session-affinity");
         plan["wireHintSent"]=json!(false);
