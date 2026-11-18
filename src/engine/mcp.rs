@@ -366,6 +366,57 @@ impl StdioSession {
     }
 }
 
+
+const MAX_SSE_EVENT_BYTES: usize = 2 * 1024 * 1024;
+
+/// A request-scoped SSE stream can remain open after its JSON-RPC response.
+/// Parse complete events as bytes (UTF-8 may cross network chunk boundaries),
+/// skipping heartbeat comments and unrelated notifications/responses.
+fn sse_event_boundary(bytes: &[u8]) -> Option<(usize, usize)> {
+    for index in 0..bytes.len() {
+        if bytes[index] != b'\n' {
+            continue;
+        }
+        if bytes.get(index + 1) == Some(&b'\n') {
+            return Some((index, 2));
+        }
+        if bytes.get(index + 1) == Some(&b'\r')
+            && bytes.get(index + 2) == Some(&b'\n')
+        {
+            return Some((index, 3));
+        }
+    }
+    None
+}
+
+fn sse_response_event(event: &[u8], request_id: Option<&Value>) -> Option<Value> {
+    let text = std::str::from_utf8(event).ok()?;
+    let mut data = String::new();
+    for line in text.lines() {
+        let line = line.trim_end_matches('\r');
+        if let Some(value) = line.strip_prefix("data:") {
+            if !data.is_empty() {
+                data.push('\n');
+            }
+            data.push_str(value.strip_prefix(' ').unwrap_or(value));
+        }
+    }
+    let response: Value = serde_json::from_str(&data).ok()?;
+    if response.get("result").is_none() && response.get("error").is_none() {
+        return None;
+    }
+    if let Some(request_id) = request_id {
+        // 2026 Streamable HTTP also permits a transport-level JSON-RPC
+        // error without an id. Never accept another request's response.
+        if response.get("id") != Some(request_id)
+            && !(response.get("id").is_none() && response.get("error").is_some())
+        {
+            return None;
+        }
+    }
+    Some(response)
+}
+
 // ------------------------------------------------------------------- http
 
 struct HttpSession {
@@ -483,30 +534,49 @@ impl HttpSession {
             .and_then(|value| value.to_str().ok())
             .unwrap_or("")
             .to_string();
-        let text = response.text().await.map_err(|error| error.to_string())?;
-        if text.trim().is_empty() {
-            return Ok(json!({}));
-        }
         if content_type.contains("text/event-stream") {
-            for block in text.split("\n\n") {
-                let payload = block
-                    .lines()
-                    .filter(|line| line.starts_with("data:"))
-                    .map(|line| line[5..].trim_start())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                if payload.is_empty() {
-                    continue;
-                }
-                if let Ok(value) = serde_json::from_str::<Value>(&payload) {
-                    if value.get("result").is_some() || value.get("error").is_some() {
+            use futures_util::StreamExt;
+            let mut stream = response.bytes_stream();
+            let mut pending = Vec::new();
+            while let Some(chunk) = stream.next().await {
+                pending.extend_from_slice(&chunk.map_err(|error| error.to_string())?);
+                while let Some((end, delimiter_len)) = sse_event_boundary(&pending) {
+                    if end > MAX_SSE_EVENT_BYTES {
+                        return Err("MCP SSE 이벤트 크기 제한을 초과했습니다.".into());
+                    }
+                    let event = pending[..end].to_vec();
+                    pending.drain(..end + delimiter_len);
+                    if let Some(value) = sse_response_event(&event, payload.get("id")) {
+                        // Return without waiting for the server to close SSE.
                         return Ok(value);
                     }
                 }
+                if pending.len() > MAX_SSE_EVENT_BYTES {
+                    return Err("MCP SSE 이벤트 크기 제한을 초과했습니다.".into());
+                }
             }
-            return Ok(json!({}));
+            if let Some(value) = sse_response_event(&pending, payload.get("id")) {
+                return Ok(value);
+            }
+            return Err("MCP SSE 스트림이 요청 결과 없이 종료됐습니다.".into());
         }
-        serde_json::from_str::<Value>(&text).map_err(|error| error.to_string())
+        let text = response.text().await.map_err(|error| error.to_string())?;
+        if text.trim().is_empty() {
+            return if payload.get("id").is_none() {
+                Ok(json!({}))
+            } else {
+                Err("MCP HTTP 요청에 대한 응답 본문이 비었습니다.".into())
+            };
+        }
+        let value = serde_json::from_str::<Value>(&text).map_err(|error| error.to_string())?;
+        if let Some(request_id) = payload.get("id") {
+            if value.get("id") != Some(request_id)
+                && !(value.get("id").is_none() && value.get("error").is_some())
+            {
+                return Err("MCP JSON-RPC 응답 ID가 요청과 일치하지 않습니다.".into());
+            }
+        }
+        Ok(value)
     }
 }
 
@@ -529,6 +599,61 @@ mod tests {
         let store = Store::open(&config.db_path()).unwrap();
         let vault = Vault::open(&config.key_path());
         AppState::new(config, store, vault)
+    }
+
+
+    #[test]
+    fn sse_parser_ignores_heartbeats_foreign_replies_and_crlf_boundaries() {
+        let heartbeat = b": keepalive\r\n";
+        assert!(sse_response_event(heartbeat, Some(&json!(7))).is_none());
+        let notification = br#"data: {"jsonrpc":"2.0","method":"notifications/progress"}"#;
+        assert!(sse_response_event(notification, Some(&json!(7))).is_none());
+        let wrong = br#"data: {"jsonrpc":"2.0","id":8,"result":{"wrong":true}}"#;
+        assert!(sse_response_event(wrong, Some(&json!(7))).is_none());
+        let matching = br#"data: {"jsonrpc":"2.0","id":7,"result":{"ready":true}}"#;
+        assert_eq!(sse_response_event(matching, Some(&json!(7))).unwrap()["result"]["ready"], true);
+        assert_eq!(sse_event_boundary(b"data: x\r\n\r\n"), Some((8, 3)));
+        assert_eq!(sse_event_boundary(b"data: x\n\n"), Some((7, 2)));
+        let transport_error = br#"data: {"jsonrpc":"2.0","error":{"code":-32600,"message":"invalid"}}"#;
+        assert!(sse_response_event(transport_error, Some(&json!(7))).is_some());
+    }
+
+    #[tokio::test]
+    async fn sse_request_returns_without_waiting_for_server_to_close() {
+        use axum::{response::sse::{Event, Sse}, routing::post, Json, Router};
+        use std::convert::Infallible;
+        let app = Router::new().route("/mcp", post(|Json(_request): Json<Value>| async move {
+            let events = async_stream::stream! {
+                yield Ok::<Event, Infallible>(Event::default().comment("keepalive"));
+                yield Ok::<Event, Infallible>(Event::default().data(
+                    json!({"jsonrpc":"2.0","id":999,"result":{"wrong":true}}).to_string()
+                ));
+                yield Ok::<Event, Infallible>(Event::default().data(
+                    json!({"jsonrpc":"2.0","id":7,"result":{"ready":true}}).to_string()
+                ));
+                std::future::pending::<()>().await;
+            };
+            Sse::new(events)
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut client = HttpSession {
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(3)).build().unwrap(),
+            url: format!("http://{address}/mcp"),
+            session: None,
+            token: None,
+            next_id: 1,
+        };
+        let reply = tokio::time::timeout(
+            Duration::from_secs(2),
+            client.post(&json!({"jsonrpc":"2.0","id":7,"method":"tools/list","params":{}}))
+        ).await.expect("MCP SSE response must not wait for stream closure").unwrap();
+        assert_eq!(reply["result"]["ready"], true);
+        server.abort();
     }
 
     #[test]
