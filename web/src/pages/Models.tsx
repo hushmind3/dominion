@@ -428,7 +428,7 @@ export function ModelHub(){
    {!visiblePresets.length&&<p className="py-8 text-center text-[12px] text-[#9C9388]">{t('models.noPreset')}</p>}
   </section>}
   {tab==='local'&&<div className="mt-5"><ModelExplorer initialView="installed"/></div>}
-  {tab==='huggingface'&&<div className="mt-5"><ModelExplorer key="huggingface-browser" initialView="search"/></div>}
+  {tab==='huggingface'&&<div className="mt-5"><ModelExplorer key="huggingface-browser" initialView="search" hideNavigation/></div>}
   {tab==='huggingface'&&<div className="mt-5"><ModelExplorer initialView="search"/></div>}
 
   {removedName&&<p role="status" className="mb-4 mt-4 text-[12px] text-emerald-700">{t('models.dlg.disconnected',{name:removedName})}</p>}
