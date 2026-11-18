@@ -114,7 +114,7 @@ async function upstreamFreeCatalog(env) {
 }
 // Worker-isolate cache reduces catalog traffic. Expired snapshots are retained
 // for transient upstream failures; the scheduled handler refreshes proactively.
-let catalogCache = { expires: 0, models: [], refreshedAt: 0 };
+let catalogCache = { expires: 0, models: [], refreshedAt: 0, upstreamVerifiedAt: 0 };
 const modelFailures = new Map();
 const catalogTtl = 15 * 60 * 1000;
 function modelAvailable(id) {
@@ -131,9 +131,11 @@ async function availableModels(env, refresh = false) {
   if (!refresh && catalogCache.expires > Date.now()) return catalogCache.models;
   const upstream = await upstreamFreeCatalog(env);
   // Keep the last known catalog when discovery temporarily fails.
-  const previous = upstream.length ? upstream : catalogCache.models.filter(m => m.backend === 'upstream');
+  // Never keep a promotional free tier indefinitely: prices may change.
+  const staleSafe = Date.now() - catalogCache.upstreamVerifiedAt < 60 * 60 * 1000;
+  const previous = upstream.length ? upstream : staleSafe ? catalogCache.models.filter(m => m.backend === 'upstream') : [];
   const models = [...new Map([...freeModels(env), ...previous].map(m => [m.id, m])).values()];
-  catalogCache = { models, expires: Date.now() + catalogTtl, refreshedAt: Date.now() };
+  catalogCache = { models, expires: Date.now() + catalogTtl, refreshedAt: Date.now(), upstreamVerifiedAt: upstream.length ? Date.now() : catalogCache.upstreamVerifiedAt };
   return models;
 }
 async function freeProxy(request, env, user) {
