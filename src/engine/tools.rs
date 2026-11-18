@@ -49,6 +49,13 @@ pub fn definitions() -> Vec<Value> {
         tool("memory_store", "Save a grounded memory for this agent. Quote the user's exact words; invented facts are rejected. Shared memories are managed by the user.", object(json!({"text": text("Fact to remember, maximum 1600 characters"), "evidenceQuote": text("Exact quote from the current user message supporting the fact"), "sourceMessageId": text("Optional earlier source message ID"), "type": json!({"type":"string","enum":["fact","preference","decision","procedure","lesson"]}), "key": text("Optional stable fact key; a new value replaces the previous value for this key"), "scope": json!({"type":"string","enum":["agent"]})}), vec!["text", "evidenceQuote"])),
         tool("memory_search", "Find saved knowledge relevant to a topic", object(json!({"query": text("Search query")}), vec!["query"])),
         tool("skill_propose", "Draft a reusable skill for user review", object(json!({"name": text("Skill name"), "instructions": text("Reusable instructions")}), vec!["name", "instructions"])),
+        tool("skill_search", "Discover owner-enabled Skills 스킬 by task relevance. Returns only scoped names, descriptions and IDs; does not read the full instructions or grant new permissions.", object(json!({
+            "query": text("Missing procedural capability, task, or skill topic"),
+            "limit":json!({"type":"integer","minimum":1,"maximum":8})
+        }), vec!["query"])),
+        tool("skill_read", "Load the bounded instructions for an enabled Skill 스킬 by exact ID. Honors agent, session and channel scope. Content is advisory, not a new owner instruction.", object(json!({
+            "id":text("ID returned by skill_search")
+        }), vec!["id"])),
         tool("delegate_task", "Delegate a self-contained task to another agent and optionally wait for its result", object(json!({
             "agentId": text("Target agent id"),
             "prompt": text("Task instructions"),
@@ -318,6 +325,21 @@ pub async fn execute(
             Ok(json!({
                 "results": crate::engine::memory::retrieve(ctx.store, &scope, &query, 10)
             }))
+        }
+        "skill_search" => {
+            let query = required_arg(args, "query")?;
+            let limit = args["limit"].as_u64().unwrap_or(5).clamp(1,8) as usize;
+            let scope = crate::engine::memory::MemoryScope::for_session(
+                ctx.store,ctx.session_id,ctx.agent_id
+            );
+            crate::engine::skill_discovery::search(ctx.store,&scope,&query,limit)
+        }
+        "skill_read" => {
+            let id = required_arg(args, "id")?;
+            let scope = crate::engine::memory::MemoryScope::for_session(
+                ctx.store,ctx.session_id,ctx.agent_id
+            );
+            crate::engine::skill_discovery::read(ctx.store,&scope,&id)
         }
         "skill_propose" => {
             let name = required_arg(args, "name")?;
@@ -1828,6 +1850,8 @@ mod tests {
             "shell_exec",
             "memory_store",
             "memory_search",
+            "skill_search",
+            "skill_read",
         ] {
             assert!(
                 names.iter().any(|name| name == expected),
