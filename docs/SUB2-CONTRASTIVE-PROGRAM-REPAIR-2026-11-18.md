@@ -105,10 +105,19 @@ The runner creates a disposable temporary workspace and engine. Results
 include individual native execution and operation receipts, the selected
 repair arm, evidence of actual revision, preflight/postflight call IDs,
 AB/BA assignments, deterministic file oracle results and observed tokens.
-The summary exposes verified completions, cost in observed tokens per verified
-completion and a paired effect. Monetary cost remains unavailable without
-real provider billing; model/token overhead cannot be silently converted to
-currency.
+For every trial the runner queries the existing native
+`GET /api/sessions/:id/usage` ledger. Unlike the execution's streamed-only
+token field, this includes non-streaming repair-planner calls. The summary
+reports total observed tokens and tokens per **independently verified
+completion** only when *every* assigned trial has actual session usage
+coverage. Missing usage produces null efficiency, not an invented zero.
+The source metadata records that repair-planner temperature is 0.2 and normal
+chat sampling may be provider-defined (not falsely frozen to 0).
+Monetary cost remains unavailable without real provider invoices; local
+compute/electricity cannot be silently converted into API spend.
+
+The paired effect and observed tokens are experimental outputs, not a claim
+of a benefit until real model trials have actually been executed.
 
 This A/B tests the *incremental value of Dominion's contrastive repair* versus
 its earlier single-repair path. It is **NOT** a head-to-head comparison against
