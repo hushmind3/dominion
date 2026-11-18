@@ -678,6 +678,23 @@ async fn run_turn_body(
     }
     let context_overflow = false;
     let mut context_items = prompt_context.items.clone();
+    // The profile is trusted child-session metadata, not a model-generated
+    // role claim. Admission is enforced separately by the tool gateway.
+    if let Some(profile) = session["delegationProfile"].as_str() {
+        let role_instruction = match profile {
+            "inspection" => Some("Inspection worker: inspect code and evidence only. Report exact file paths and observations; do not claim changes."),
+            "implementation" => Some("Implementation worker: change only the isolated task worktree. Verify the result and describe the patch; the parent decides whether to integrate."),
+            "verification" => Some("Verification worker: inspect the isolated worktree and run only approved Cargo tests. Report failed checks and precise evidence without modifying source files."),
+            _ => None,
+        };
+        if let Some(instruction) = role_instruction {
+            messages.push(json!({"role":"system","content":instruction}));
+            context_items.push(json!({
+                "kind":"delegation_profile","profile":profile,
+                "isolated":session["delegationWorkspace"].is_object(),
+            }));
+        }
+    }
     let retrieved_experience_ids = context_items
         .iter()
         .filter(|item| item["kind"].as_str() == Some("experience"))
