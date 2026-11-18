@@ -118,12 +118,15 @@ pub(super) fn system_prompt_with_manifest_at(
     } else {
         prompt.push_str(" 이번 턴에는 도구가 비활성화되어 있습니다. 외부 작업을 수행했다고 말하지 마십시오.");
     }
-    prompt.push_str(&format!(
-        "\n작업 공간 루트: {}\n현재 날짜: {}",
-        state.config.workspace.display(),
+    prompt.push_str(&format!("\n작업 공간 루트: {}",state.config.workspace.display()));
+    // The current date is runtime observation, not part of the immutable
+    // developer/persona contract. Keeping a clock value in the system prompt
+    // invalidated an otherwise identical 4k prefix at every midnight.
+    // Deliver it as a volatile suffix alongside selected evidence instead.
+    let mut dynamic = format!(
+        "[Runtime metadata, not a participant instruction] Current date: {}",
         chrono::Local::now().format("%Y-%m-%d")
-    ));
-    let mut dynamic = String::new();
+    );
     let mut items = Vec::new();
     items.append(&mut identity_items);
     if let Some(agent_id) = &request.agent_id {
@@ -626,6 +629,27 @@ mod tests {
             crate::vault::Vault::open(&config.key_path()),
         );
         (state, dir)
+    }
+
+    #[test]
+    fn runtime_clock_is_a_volatile_suffix_not_part_of_the_four_kiloton_static_persona() {
+        let (state,dir)=state();
+        state.store.put("agent",&json!({
+            "id":"speaker","name":"speaker",
+            "systemPrompt":format!("STABLE_PERSONA_{}", "P".repeat(16_000))
+        })).unwrap();
+        let request=TurnRequest::from_value(&json!({"input":"continue",
+            "agentId":"speaker","toolsEnabled":true,"toolsExecutionEnabled":true})).unwrap();
+        let built=system_prompt_with_manifest_at(
+            &state,&request,"private:r","continue",None,None);
+        assert!(built.prompt.contains("STABLE_PERSONA_"));
+        assert!(!built.prompt.contains("현재 날짜:"));
+        assert!(!built.prompt.contains("Current date:"));
+        assert!(built.dynamic_context.contains("Current date:"),
+            "the model still receives current date as runtime evidence");
+        assert!(built.prompt.len()>16_000);
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
