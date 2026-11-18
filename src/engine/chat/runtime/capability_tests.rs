@@ -40,7 +40,11 @@ async fn discover_then_execute_real_file_tool_via_same_native_gateway(){
     let metrics=std::sync::Mutex::new(Metrics::default());
     let original=tools::definitions();
     assert!(original.len()>18,"discovery fixture needs a real large catalog");
-    let mut visible=capability::project(original.clone(),"코드 변경 테스트");
+    // Match the Home SDK's real first-step projection: an ordinary code
+    // task does not advertise the unrestricted absolute-path file reader.
+    let panel=select_panel_tool_definitions(
+        original.clone(),"코드 변경 테스트");
+    let mut visible=capability::project(panel,"코드 변경 테스트");
     assert!(!visible.iter().any(|item|tool_name(item)=="file_read"));
     visible.insert(0,capability::definition());
     assert!(super::super::tool_projection::advertised_tool(
