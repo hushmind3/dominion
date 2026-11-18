@@ -51,6 +51,24 @@ Design boundary (compared with OpenClaw ACP Agents / acpx and Hermes toolsets; n
 
 Added a source-level regression for adaptive tool visibility and stale-plan suppression. It was committed without local Cargo execution; the corresponding Rust test and full CI remain **not run** in this session. External runtime adapters and full chat/kernel unification are **not implemented** by this patch.
 
+## 2026-11-18 — Capability research and progressive Skill disclosure
+
+External source-code/design comparison (research is advisory, no external runtime is bundled or merged):
+- Pi ([extension registration](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/extensions/types.ts)): a small agent-core boundary with externally registered tools is preferable to duplicating Dominion's kernel.
+- mini-SWE-agent ([repository](https://github.com/SWE-agent/mini-swe-agent)): the Bash-centered minimal loop is a useful cost/complexity contrast, not a reason to replace typed native dispatch for smaller local models.
+- Goose ([official extensions](https://goose-docs.ai/docs/getting-started/using-extensions/)): built-in Skills discovery/load and MCP-hosted tools can be enabled without new agent loops.
+- OpenHands ([official SDK architecture](https://github.com/OpenHands/docs/blob/main/sdk/arch/overview.mdx)): agent code, workspace executors, tools and server should retain separable contracts and ownership.
+- DeepSeek Harness ([official architecture](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md)): reversible plugin lifecycles are worth comparing with Dominion's owner-enabled modules; its whole agent loop is **not** imported.
+- Microsoft Agent Framework ([2026-08-10 Skills](https://learn.microsoft.com/en-us/agent-framework/agents/skills)): Skills have metadata → instructions → references → optional scripts, progressively exposed. Dominion implements only read-only discovery/instruction/reference stages. Script execution stays under existing owner-approved tools.
+
+Implemented on sub3 (without a new planner/engine):
+1. `src/engine/skill_discovery.rs`: metadata-only bounded relevance selection of owner-enabled Skills; no blind first-three insertion; stable tie-breaking; no model call; zero instructions for unmatched Skills.
+2. `src/engine/tools.rs`: `skill_search`, `skill_read`, `skill_resource_read` through the existing Rust host and tool journal, with separate reads for full instructions/references. Skill resources reject absolute paths, traversal and canonical symlink escape, require UTF-8, cap filesystem bytes and returned text. There is **no** script auto-execution, MCP enablement, permission escalation or source promotion.
+3. `src/engine/native_agent.rs`: at most two task-relevant enabled Skill excerpts in the original prompt. `src/engine/chat/runtime/selection.rs` surfaces the same read-only tools for relevant chat requests. `crates/dominion-agent-sdk/src/runtime.rs` classifies them as read-only, preserving existing scheduler admission.
+4. Tests cover a relevant Skill beyond the first three, disabled/draft/session/partition filtering, external-channel opt-in, deterministic ranking, live store lookup and revocation, bounded tool/prompt output, path traversal and symlink escape.
+
+Status: code and source-level tests committed; Rust compiler, tests and full CI not run in this environment. No measured task success/latency/token advantage is claimed. This is one substantial **capability-broker** improvement, not adoption of Pi, Goose, OpenHands, DeepSeek, Codex or Hermes as a product runtime.
+
 ## 2026-11-18 — Legacy harness API cutover without copying runtimes
 
 **Observed pre-change duplication:** `/api/harness/runs` started `dominion_harness::AgentSdk::run` with its own `sdk_run` record, `sdk-runs/*.json` FileJournal, approval and resume flow. `/api/sdk/runs` already used `jobs::create` → `engine::native_agent::run` → `dominion_agent_sdk::Kernel`, with the host-owned durable SQLite job/operation journal. The old `crates/harness` binary and the interactive `chat/runtime/turn.rs` loop are separate paths.
