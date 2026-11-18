@@ -30,7 +30,7 @@ pub(super) fn mark_openai_explicit_prefix(body:&mut Value)->bool {
     let Some(first)=messages.first_mut() else{return false};
     if !matches!(first["role"].as_str(),Some("system"|"developer")){return false;}
     let Some(content)=first["content"].as_str().map(str::to_string) else{return false};
-    if super::room_context::estimate(&content)<1024{return false;}
+    if super::super::room_context::estimate(&content)<1024{return false;}
     first["content"]=json!([{"type":"text","text":content,
         "prompt_cache_breakpoint":{"mode":"explicit"}}]);
     body["prompt_cache_options"]=json!({"mode":"explicit"});
