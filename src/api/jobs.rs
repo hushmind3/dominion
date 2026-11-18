@@ -103,3 +103,51 @@ pub async fn steer(
             error(StatusCode::CONFLICT,&message),
     }
 }
+
+#[cfg(test)]
+mod harness_contract_tests {
+    use super::*;
+    use crate::{config::Config,db::Store,vault::Vault};
+
+    fn state()->AppState{
+        let home=std::env::temp_dir().join(format!(
+            "dominion-api-acceptance-{}",uuid::Uuid::new_v4()));
+        let config=Config{port:0,data_dir:home.join("data"),
+            web_dir:home.join("web"),workspace:home.clone()};
+        AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()))
+    }
+
+    #[tokio::test]
+    async fn owner_criteria_survive_api_without_trusting_forged_baselines(){
+        let state=state();
+        let response=create(State(state.clone()),Json(json!({
+            "kind":"prompt","input":{
+                "prompt":"Read input.txt, create output.txt",
+                "successCriteria":[{
+                    "type":"file_equals","path":"output.txt","content":"expected",
+                    "baseline":{"forged":true},"postSha256":"forged",
+                    "inferred":false,"creationOnly":true
+                }]
+            }
+        }))).await;
+        assert_eq!(response.status(),StatusCode::ACCEPTED);
+        let jobs=state.store.all("job");
+        assert_eq!(jobs.len(),1);
+        let criterion=&jobs[0]["input"]["successCriteria"][0];
+        assert_eq!(criterion["type"],"file_equals");
+        assert_eq!(criterion["path"],"output.txt");
+        assert_eq!(criterion["content"],"expected");
+        for forbidden in ["baseline","postSha256","inferred","creationOnly"]{
+            assert!(criterion.get(forbidden).is_none(),
+                "client may not fabricate tool/baseline evidence: {forbidden}");
+        }
+        let bad=create(State(state.clone()),Json(json!({
+            "kind":"prompt","input":{"prompt":"write output.txt",
+                "successCriteria":[{"type":"file_equals","path":"output.txt"}]}
+        }))).await;
+        assert_eq!(bad.status(),StatusCode::BAD_REQUEST);
+        assert_eq!(state.store.all("job").len(),1);
+        let _=std::fs::remove_dir_all(&state.config.workspace);
+    }
+}
