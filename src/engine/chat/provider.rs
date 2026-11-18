@@ -1415,6 +1415,25 @@ fn codex_input(messages: &[Value]) -> (String, Vec<Value>) {
     (instructions, input)
 }
 
+/// Persistent Responses/WebSocket input: keep the full immutable room
+/// contract in a high-priority input message, not top-level instructions.
+/// Responses previous_response_id inherits earlier input messages, while it
+/// does NOT inherit top-level instructions. After a verified prefix match,
+/// the socket sends only newly appended items. An edit/reconnect resends this
+/// complete anchor on a fresh chain. HTTP fallback keeps the original full
+/// top-level instructions to preserve compatibility with the Codex gateway.
+fn codex_ws_persistent_input(instructions: &str, input: &[Value]) -> Vec<Value> {
+    let mut persisted=Vec::with_capacity(input.len()+1);
+    if !instructions.trim().is_empty() {
+        persisted.push(json!({
+            "role":"developer",
+            "content":[{"type":"input_text","text":instructions}]
+        }));
+    }
+    persisted.extend_from_slice(input);
+    persisted
+}
+
 /// Terminal failure events have identical meaning on HTTP and WebSocket.
 pub(super) fn codex_terminal_error(piece: &Value) -> Option<String> {
     let message = match piece["type"].as_str()? {
@@ -1480,10 +1499,15 @@ async fn stream_codex_once(
         &provider.api_key,
     )
     .await?;
-    // Prefer the incremental websocket transport: the identity/persona
-    // instructions are still sent every call, but the accumulated transcript
-    // is replaced by the new suffix while the connection holds the chain.
-    let ws_body=super::continuity::hinted_body(state,provider,&body,continuity,super::continuity::CacheWire::Key);
+    // Preserve the full persona/system contract once in the Responses input
+    // chain. A top-level 'instructions' field is per-call and would otherwise
+    // retransmit the same 4k prompt on *every* WebSocket response.create.
+    // Codex's HTTP fallback below keeps the unmodified, fully compatible
+    // top-level instructions and full explicit history.
+    let ws_input=codex_ws_persistent_input(&instructions, &input);
+    let mut ws_body=body.clone();
+    ws_body["instructions"]=json!("Follow the developer guidance in the conversation input.");
+    let ws_body=super::continuity::hinted_body(state,provider,&ws_body,continuity,super::continuity::CacheWire::Key);
     let websocket = super::codex_ws::stream(
         state,
         provider,
@@ -1491,7 +1515,7 @@ async fn stream_codex_once(
         &access,
         continuity["transportSessionId"].as_str().unwrap_or(""),
         &ws_body,
-        input,
+        ws_input,
         session_id,
         tx,
     )
