@@ -1989,6 +1989,61 @@ mod tests {
         drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
+    #[tokio::test]
+    async fn nine_participants_three_owner_turns_complete_thirty_messages_with_selective_work_context() {
+        let (state, dir) = test_state();
+        let ids=(1..=9).map(|index|format!("agent-{index}")).collect::<Vec<_>>();
+        for id in &ids {
+            state.store.put("agent",&json!({
+                "id":id,"name":id,"providerId":"p","model":"test",
+            })).unwrap();
+        }
+        state.store.patch_if("room","r","id",&json!("r"),&json!({
+            "agentIds":ids,"rounds":1,"maxTurns":9,
+            "toolsEnabled":true,"autoLearning":false,
+            "contextBudgetTokens":1,
+        })).unwrap();
+        let deltas=(0..27).map(|index|
+            text_delta(&format!("SPEAKER_RESPONSE_{index:02}")))
+            .collect::<Vec<_>>();
+        let (server,bodies)=provider(&state,deltas,None).await;
+        for turn in 0..3 {
+            let id=format!("three-owner-{turn}");
+            let job=save_owner_job(&state,&id,
+                &format!("파일 결과에 대해 각자 의견을 말해주세요. 라운드 {turn}"));
+            let result=run(&run_context(&state,&id),&job).await.unwrap();
+            assert_eq!(result["status"],"completed","round {turn}: {result}");
+            assert_eq!(result["turns"],9,"round {turn}: {result}");
+            let unique=result["outputs"].as_array().unwrap().iter()
+                .filter_map(|item|item["agentId"].as_str())
+                .collect::<HashSet<_>>();
+            assert_eq!(unique.len(),9,"round {turn}: every agent must speak");
+        }
+        let transcript=state.store.messages("room:r");
+        assert_eq!(transcript.len(),30,"3 owner + 27 distinct agent messages");
+        assert_eq!(transcript.iter().filter(|m|m["role"]=="user").count(),3);
+        assert_eq!(transcript.iter().filter(|m|m["role"]=="assistant").count(),27);
+        assert_eq!(bodies.lock().unwrap().len(),27);
+        let all=state.store.all("execution");
+        assert_eq!(all.len(),27);
+        assert!(all.iter().all(|run|
+            run["contextPolicy"]=="native-work-context"
+            && run["inputContext"]["conversationSelection"]=="room-selective-v1"
+            && run["inputContext"]["selectedMessageIds"].is_array()
+        ),"work tools must retain selected room history on all 27 executions");
+        let bodies=bodies.lock().unwrap();
+        let third_round_first=&bodies[18];
+        let encoded=third_round_first.to_string();
+        assert!(!encoded.contains("SPEAKER_RESPONSE_00"),
+            "third owner turn must not resend unrelated first-turn peer replies");
+        assert!(encoded.contains("SPEAKER_RESPONSE_09"),
+            "last committed peer conversation must remain available to next owner turn");
+        drop(bodies);
+        server.abort();
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn discussion_mentions_cannot_starve_the_remaining_first_speakers() {
         let mut pending = VecDeque::from(vec!["c".to_string()]);
