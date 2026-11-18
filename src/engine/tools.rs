@@ -35,7 +35,7 @@ pub fn definitions() -> Vec<Value> {
     };
     let text = |description: &str| json!({ "type": "string", "description": description });
 
-    vec![
+    let mut definitions = vec![
         tool("workspace_list", "List files and folders in the workspace", object(json!({"path": text("Relative folder path")}), vec![])),
         tool("workspace_read", "Read a UTF-8 file from the workspace", object(json!({"path": text("Relative file path")}), vec!["path"])),
         tool("workspace_read_range", "Read only a line range from a workspace file. Use the line numbers from the repository index instead of reading a large file end to end.", object(json!({"path": text("Relative file path"), "startLine": json!({"type":"integer","minimum":1}), "endLine": json!({"type":"integer","minimum":1, "description":"Inclusive end line; at most 400 lines are returned"})}), vec!["path","startLine"])),
@@ -100,7 +100,9 @@ pub fn definitions() -> Vec<Value> {
             "content":text("Complete new UTF-8 file content"),
             "message":text("Git commit message")
         }),vec!["owner","repo","path","branch","expectedSha","content","message"])),
-    ]
+    ];
+    definitions.extend(crate::engine::capability::definitions());
+    definitions
 }
 
 #[cfg(test)]
@@ -144,7 +146,7 @@ pub fn requires_approval(name: &str) -> bool {
 }
 
 pub fn observational(name:&str)->bool{
-    matches!(name,"workspace_git_status"|"workspace_git_diff"|"workspace_list"|"workspace_read"|"workspace_read_range"|"code_search"|"file_list"|"file_read"|"memory_search"|"web_search"|"http_fetch"|"task_status"|"task_result"|"account_status"|"github_file_read"|"github_repositories")
+    matches!(name,"dominion_tool_search" | "dominion_tool_call" | "workspace_git_status"|"workspace_git_diff"|"workspace_list"|"workspace_read"|"workspace_read_range"|"code_search"|"file_list"|"file_read"|"memory_search"|"web_search"|"http_fetch"|"task_status"|"task_result"|"account_status"|"github_file_read"|"github_repositories")
 }
 
 pub async fn execute(
@@ -371,6 +373,8 @@ pub async fn execute(
         "task_integrate" => crate::engine::delegation_worktree::integrate(ctx,args).await,
         "task_status" => task_payload(ctx, args, false),
         "task_result" => task_payload(ctx, args, true),
+        "dominion_tool_search" => crate::engine::capability::search(ctx.state,ctx.session_id,args).await,
+        "dominion_tool_call" => Err("발견한 도구는 승인·효과 추적 게이트를 통해서만 호출할 수 있습니다.".into()),
         "account_status" => Ok(json!({
             "providers": crate::engine::oauth::status(ctx.state),
         })),
