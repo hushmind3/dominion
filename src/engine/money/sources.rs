@@ -224,6 +224,14 @@ fn needs_article_fetch(item:&Value,stored:Option<&Value>)->bool{
     if item["url"].as_str().is_none_or(|url|!url.starts_with("https://")&&!url.starts_with("http://")){
         return false;
     }
+    // A Google News RSS article URL is only a redirect/aggregation page.
+    // Fetching it as a "primary article" creates false full-text evidence
+    // and burns one of the four permitted original-page fetch attempts.
+    if item["url"].as_str().and_then(|raw|reqwest::Url::parse(raw).ok())
+        .and_then(|parsed|parsed.host_str().map(str::to_string))
+        .is_some_and(|host|host=="news.google.com"||host=="google.com"){
+        return false;
+    }
     // Headline-only records still need a real source page.
     !stored.is_some_and(|row|row["articleExcerpt"].as_str()
         .is_some_and(|text|text.chars().count()>100))
@@ -389,6 +397,9 @@ mod tests{
         let fetched=json!({"articleExcerpt":"article ".repeat(30),"contentStatus":"page_fetched"});
         assert!(!needs_article_fetch(&item,Some(&fetched)));
         assert!(!needs_article_fetch(&json!({"url":"javascript:alert(1)"}),None));
+        assert!(!needs_article_fetch(&json!({
+            "url":"https://news.google.com/rss/articles/syndicated"
+        }),None),"aggregator HTML is not publisher primary text");
     }
     #[test] fn rotating_sources_span_multiple_markets_and_buyers(){
         assert!(SOURCES.len()>=20);
