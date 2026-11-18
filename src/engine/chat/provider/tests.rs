@@ -6,6 +6,46 @@ mod contract_tests {
     use super::*;
 
     #[test]
+    fn codex_ws_registers_full_persona_once_and_reuses_its_response_chain() {
+        let long= format!("ROOM_OWNER_POLICY_{}\nPERSONA_SHALL_SURVIVE", "x".repeat(16_000));
+        let (instructions, base)=codex_input(&[
+            json!({"role":"system","content":long}),
+            json!({"role":"user","content":"first owner request"}),
+        ]);
+        let persisted=codex_ws_persistent_input(&instructions,&base);
+        assert_eq!(persisted.len(),2);
+        assert_eq!(persisted[0]["role"],"developer");
+        assert_eq!(persisted[0]["content"][0]["text"],instructions);
+        assert_eq!(persisted[1]["role"],"user");
+        let old=vec![
+            super::super::codex_ws::item_signature(&persisted[0]),
+            super::super::codex_ws::item_signature(&persisted[1]),
+            super::super::codex_ws::item_signature(&json!({
+                "role":"assistant","content":[{"type":"output_text","text":"reply"}]
+            })),
+        ];
+        let mut next=persisted.clone();
+        next.push(json!({"role":"assistant","content":[{"type":"output_text","text":"reply"}]}));
+        next.push(json!({"role":"user","content":[{"type":"input_text","text":"second owner request"}]}));
+        let incoming=next.iter().map(super::super::codex_ws::item_signature).collect::<Vec<_>>();
+        assert_eq!(super::super::codex_ws::plan_chain(&old,&incoming),
+            super::super::codex_ws::Plan::Delta(old.len()));
+        let delta=next[old.len()..].to_vec();
+        assert!(!json!(delta).to_string().contains("PERSONA_SHALL_SURVIVE"),
+            "the second WebSocket wire request must not resend the 4k static persona");
+        let mut altered=next.clone();
+        altered[0]["content"][0]["text"]=json!("owner edited persona");
+        let edited=altered.iter().map(super::super::codex_ws::item_signature).collect::<Vec<_>>();
+        assert_eq!(super::super::codex_ws::plan_chain(&old,&edited),
+            super::super::codex_ws::Plan::Full,
+            "changing owner instructions must force a complete fresh chain");
+        // HTTP must still receive the original full instructions; this new
+        // construction is only used for the stateful Codex WebSocket path.
+        assert!(instructions.contains("PERSONA_SHALL_SURVIVE"));
+        assert_eq!(base.len(),1);
+    }
+
+    #[test]
     fn codex_input_preserves_attachment_text_and_images() {
         let image = "data:image/png;base64,aW1hZ2U=";
         let (instructions, input) = codex_input(&[
