@@ -101,7 +101,7 @@ fn ranked(catalog:&HashMap<String,ToolSpec>,query:&str)->Vec<String>{
 /// Deterministic stable shortlist. Internal discovery receives no permissions
 /// beyond the already-authorized catalog, and the original host owns dispatch.
 pub(crate) fn select(catalog:&HashMap<String,ToolSpec>,task:&str,owner:&str,
- directive:Option<&str>,_plan:&[String],receipts:&[Receipt])->Vec<ToolSpec>{
+ directive:Option<&str>,plan:&[String],receipts:&[Receipt])->Vec<ToolSpec>{
  if !needed(catalog){
   let mut all=catalog.values().cloned().collect::<Vec<_>>();
   all.sort_by(|a,b|a.name.cmp(&b.name));
@@ -123,6 +123,22 @@ pub(crate) fn select(catalog:&HashMap<String,ToolSpec>,task:&str,owner:&str,
    if displayed.len()>=VISIBLE{break;}
    if catalog.get(*name).is_some_and(|spec|spec.read_only){
     displayed.insert((*name).into());
+   }
+  }
+ }
+ // Reuse the *existing* model plan as a discovery hint, not as execution
+ // authority. A later owner correction supersedes the old plan immediately.
+ // This lets the model change strategies after observed tool results without
+ // adding another planner, runtime, router or paid discovery call.
+ if directive.is_none() {
+  let plan_query=plan.iter().rev().take(3)
+   .map(|step|step.chars().take(160).collect::<String>())
+   .collect::<Vec<_>>().join(" ");
+  if !plan_query.trim().is_empty() {
+   let plan_quota=displayed.len().saturating_add(3).min(VISIBLE);
+   for name in ranked(catalog,&plan_query) {
+    if displayed.len()>=plan_quota{break}
+    displayed.insert(name);
    }
   }
  }
@@ -263,6 +279,23 @@ mod tests{
   c.get_mut("workspace_list").unwrap().read_only=false;
   let forbidden=select(&c,"Analyze market risk","",None,&[],&[receipt]);
   assert!(!forbidden.iter().any(|s|s.name=="workspace_list"));
+ }
+ #[test]
+ fn revised_plan_discovers_a_different_authorized_tool_without_a_second_loop(){
+  let c=catalog();
+  let before=select(&c,"Review a market report","",None,&[],&[]);
+  assert!(!before.iter().any(|tool|tool.name=="mcp__archive_publish"));
+  let revised=select(&c,"Review a market report","",None,
+   &["publish artifact to archive".into()],&[]);
+  assert!(revised.iter().any(|tool|tool.name=="mcp__archive_publish"));
+  assert!(revised.len()<=VISIBLE);
+  assert!(revised.iter().all(|tool|c.contains_key(&tool.name)));
+  // An explicit new owner directive cannot be overridden by the stale plan.
+  let corrected=select(&c,"Review a market report","",
+   Some("Inspect code instead of publishing"),
+   &["publish artifact to archive".into()],&[]);
+  assert!(!corrected.iter().any(|tool|tool.name=="mcp__archive_publish"));
+  assert!(corrected.iter().any(|tool|tool.name=="workspace_read_range"));
  }
  #[test]
  fn small_catalog_stays_fully_visible_without_new_discovery_rounds(){
