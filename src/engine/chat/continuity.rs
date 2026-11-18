@@ -987,6 +987,101 @@ mod tests {
     }
 
     #[test]
+    fn room_selector_budget_is_not_the_accumulated_cache_prefix_budget() {
+        let root=std::env::temp_dir().join(format!("dominion-room-budget-{}",uuid::Uuid::new_v4()));
+        let state=state(&root);
+        state.store.put("session",&json!({"id":"room:r","roomId":"r"})).unwrap();
+        state.store.put("room",&json!({"id":"r","contextBudgetTokens":2000})).unwrap();
+        let request=TurnRequest::from_value(&json!({"input":"continue","agentId":"a"})).unwrap();
+        let provider=route();
+        let system=|source:&str|json!({"role":"system","content":"stable identity","_dominion_source":source});
+        let first=vec![system("o1"),json!({"role":"user",
+            "content":format!("OLD_EVIDENCE_{}", "a".repeat(4500)),
+            "_dominion_frame":"o1"})];
+        let mut plan=prepare(&state,&provider,&request,"room:r","stable identity",&json!({})).unwrap();
+        let (first_wire,pending)=project(&state,&provider,&first,&[],"room:r",&mut plan);
+        let saved=state.store.write_message(&json!({"session_id":"room:r",
+            "role":"assistant","agent_id":"a","content":"previous answer",
+            "metadata":{"replyToMessageId":"o1"}})).unwrap();
+        commit(&state,&plan,&saved);
+        commit_projection(&state,&plan,&saved,pending.unwrap());
+        let second=vec![system("o2"),json!({"role":"user",
+            "content":format!("NEW_EVIDENCE_{}", "b".repeat(4500)),
+            "_dominion_frame":"o2"})];
+        let mut next=prepare(&state,&provider,&request,"room:r","stable identity",&json!({})).unwrap();
+        let (wire,_)=project(&state,&provider,&second,&[],"room:r",&mut next);
+        assert!(next["workingView"]["rebaseReason"].is_null(),"{next}");
+        assert_eq!(&wire[..first_wire.len()],first_wire.as_slice());
+        assert!(next["workingView"]["estimatedReusedHistoryTokens"].as_u64().unwrap()>0);
+        assert!(next["workingView"]["estimatedInputTokens"].as_u64().unwrap()>2_000);
+        assert_eq!(working_view_allowance(
+            state.store.get("room","r").as_ref(),&provider,0),8_000);
+        let mut small=provider.clone();
+        small.context_tokens=Some(4_200);
+        small.max_output_tokens=Some(1_000);
+        assert_eq!(working_view_allowance(
+            state.store.get("room","r").as_ref(),&small,200),3_000,
+            "provider capacity minus reserved output and fixed prompt is hard");
+        drop(state);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn budget_rotation_carries_only_valid_owner_facts_not_old_transcript() {
+        let root=std::env::temp_dir().join(format!("dominion-verified-budget-{}",uuid::Uuid::new_v4()));
+        let state=state(&root);
+        state.store.put("session",&json!({"id":"room:r","roomId":"r"})).unwrap();
+        state.store.put("room",&json!({"id":"r",
+            "contextBudgetTokens":400,"workingViewBudgetTokens":900})).unwrap();
+        state.store.put("room_state",&json!({"id":"owner-record","facts":[
+            {"id":"a","kind":"decision","status":"active","text":"PRESERVE_ALPHA",
+                "verifiedLocalOwner":true,"sourceMessageId":"o1"},
+            {"id":"b","kind":"decision","status":"active","text":"PRESERVE_BETA",
+                "verifiedLocalOwner":true,"sourceMessageId":"o2"}
+        ]})).unwrap();
+        let provider=route();
+        let request=TurnRequest::from_value(&json!({"input":"continue","agentId":"agent"})).unwrap();
+        let frames=|source:&str,fact:&str,old_peer:bool| {
+            let deps=dependencies(&state,&[json!({"kind":"owner_state","id":"owner-record"})]);
+            let mut result=vec![json!({"role":"system","content":"stable contract",
+                "_dominion_source":source,"_dominion_dependencies":deps}),
+                json!({"role":"user","_dominion_frame":"owner-state:owner-record",
+                    "content":format!("[주인 확정 상태: 원문]\n- [decision] {fact}")})];
+            if old_peer {result.push(json!({"role":"user",
+                "content":format!("OLD_PEER_{}", "x".repeat(2_300)),
+                "_dominion_frame":"previous-peer"}));}
+            result.push(json!({"role":"user","content":format!("Question {source}"),"_dominion_frame":source}));
+            result
+        };
+        let mut first=prepare(&state,&provider,&request,"room:r","stable contract",&json!({})).unwrap();
+        let (_,pending)=project(&state,&provider,&frames("o1","PRESERVE_ALPHA",true),&[],"room:r",&mut first);
+        let saved=state.store.write_message(&json!({"session_id":"room:r","role":"assistant",
+            "agent_id":"agent","content":"my earlier answer",
+            "metadata":{"replyToMessageId":"o1"}})).unwrap();
+        commit(&state,&first,&saved);
+        commit_projection(&state,&first,&saved,pending.unwrap());
+        let mut second=prepare(&state,&provider,&request,"room:r","stable contract",&json!({})).unwrap();
+        let (wire,_)=project(&state,&provider,&frames("o2","PRESERVE_BETA",false),&[],"room:r",&mut second);
+        assert_eq!(second["workingView"]["rebaseReason"],"history_budget");
+        assert_eq!(second["workingView"]["carriedVerifiedOwnerFacts"],1);
+        let text=serde_json::to_string(&wire).unwrap();
+        assert!(text.contains("PRESERVE_ALPHA"));
+        assert!(text.contains("PRESERVE_BETA"));
+        assert!(!text.contains("OLD_PEER_"),
+            "bounded rebase drops old optional transcript but retains owner facts");
+        // An actual owner correction clears old evidence even if there was
+        // enough space in the previous epoch.
+        let mut changed=state.store.get("room_state","owner-record").unwrap();
+        changed["facts"][0]["status"]=json!("superseded");
+        state.store.put("room_state",&changed);
+        let (corrected,_)=project(&state,&provider,&frames("o3","PRESERVE_BETA",false),&[],"room:r",&mut second);
+        assert_eq!(second["workingView"]["rebaseReason"],"context_evidence_changed");
+        assert!(!serde_json::to_string(&corrected).unwrap().contains("PRESERVE_ALPHA"));
+        drop(state);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn committed_working_view_keeps_wire_prefix_when_selection_slides_and_routes_change() {
         let root=std::env::temp_dir().join(format!("dominion-projection-{}",uuid::Uuid::new_v4()));
         let state=state(&root);
@@ -1021,7 +1116,10 @@ mod tests {
         let (rebased,_)=project(&state,&changed,&edited,&[],"room:test",&mut second_plan);
         assert_eq!(second_plan["workingView"]["rebaseReason"],"contract_changed");
         assert_eq!(rebased.len(),edited.len());
-        state.store.put("room",&json!({"id":"test","contextBudgetTokens":1}));
+        // The selection cap and cumulative prefix epoch are independent.
+        // Force a rotation with the latter instead of relying on the old
+        // conflation of both budgets.
+        state.store.put("room",&json!({"id":"test","contextBudgetTokens":1,"workingViewBudgetTokens":1}));
         let (bounded,_)=project(&state,&changed,&second,&[],"room:test",&mut second_plan);
         assert_eq!(second_plan["workingView"]["rebaseReason"],"history_budget");
         assert_eq!(bounded.len(),second.len());
