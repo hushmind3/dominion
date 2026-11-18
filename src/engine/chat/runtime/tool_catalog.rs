@@ -316,7 +316,7 @@ pub(super) fn progressive_tools(definitions: Vec<Value>, query: &str) -> Vec<Val
         let mut short=Vec::new();
         // Basic navigation and evidence remain visible even with many MCPs.
         for name in ["workspace_list","workspace_read","workspace_read_range",
-            "code_search","shell_exec","web_search","delegate_task"] {
+            "code_search","skill_view","shell_exec","web_search","delegate_task"] {
             if let Some(definition)=full.iter().find(|d|tool_name(d)==name) {
                 short.push(definition.clone());
             }
