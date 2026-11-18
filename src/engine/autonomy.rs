@@ -367,6 +367,57 @@ pub async fn execute(
 mod tests{
     use super::*;
     #[test]
+    fn verifier_terminal_checkpoint_records_review_without_promoting_file_success() {
+        use crate::{config::Config,db::Store,state::AppState,vault::Vault};
+        let root=std::env::temp_dir().join(format!(
+            "dominion-autonomy-terminal-{}",uuid::Uuid::new_v4()));
+        let config=Config{port:0,data_dir:root.join("data"),
+            web_dir:root.join("web"),workspace:root.clone()};
+        let state=AppState::new(config.clone(),
+            Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()));
+        let job_id="terminal-review";
+        state.store.put("job",&json!({"id":job_id,"kind":"prompt",
+            "status":"running","attempts":1,"runEpoch":1,
+            "input":{"prompt":"change output.py"}})).unwrap();
+        let context=JobContext::new(state.clone(),job_id.into());
+        let criteria=json!([{"type":"file_changed","path":"output.py"}]);
+        let gaps=vec!["write receipt did not match output.py".to_owned()];
+        let receipts=vec![json!({"attempt":1,"outcome":"needs_review",
+            "gaps":gaps,"toolSuccess":1})];
+        let unknown=vec![json!({"tool":"github_api",
+            "arguments":{"method":"POST"},"result":{"ok":true}})];
+        terminal_checkpoint(&context,"needs_review",1,&criteria,&gaps,
+            &receipts,Some("late review needed"),&unknown,false).unwrap();
+        let job=state.store.get("job",job_id).unwrap();
+        assert_eq!(job["status"],"running",
+            "only the outer job owner may commit the terminal job status");
+        assert_eq!(job["autonomousState"]["status"],"needs_review");
+        assert_eq!(job["autonomousState"]["phase"],"needs_review");
+        assert_eq!(job["autonomousState"]["unmetChecks"],json!(gaps));
+        assert_eq!(job["autonomousState"]["receipts"],json!(receipts));
+        assert_eq!(job["autonomousState"]["lastError"],"late review needed");
+        assert_eq!(job["autonomousState"]["unsettledEffects"],true);
+        assert_eq!(job["autonomousState"]["verificationPassed"],false);
+        assert_eq!(job["input"]["prompt"],"change output.py");
+
+        // The same helper records an independently verified terminal state
+        // without synthesizing additional tool invocations.
+        terminal_checkpoint(&context,"completed",2,&criteria,&[],&receipts,
+            None,&[],true).unwrap();
+        let saved=state.store.get("job",job_id).unwrap();
+        assert_eq!(saved["autonomousState"]["status"],"completed");
+        assert_eq!(saved["autonomousState"]["verificationPassed"],true);
+        assert_eq!(saved["autonomousState"]["unmetChecks"],json!([]));
+        state.store.patch_if("job",job_id,"status",&json!("running"),
+            &json!({"status":"cancelled"})).unwrap();
+        assert!(terminal_checkpoint(&context,"completed",3,&criteria,&[],
+            &receipts,None,&[],true).is_err(),
+            "a cancelled owner must reject a stale terminal checkpoint");
+        let _=std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn shell_replay_barrier_handles_git_global_flags_and_package_commands() {
         for safe in ["git status","git -C project diff --stat",
                      "cargo test --release","npm run typecheck --prefix web",
