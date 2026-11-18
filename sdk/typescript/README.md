@@ -1,3 +1,7 @@
+## Shared Rust tool discovery contract (sub2, 2026-11-18)
+
+The SDK calls the same chat/prompt-job Rust turn engine as the GUI. For large available native/MCP tool catalogs, the engine may advertise `dominion_tool_search` alongside a bounded set of relevant real tool schemas. After a successful search receipt, subsequent model rounds can invoke newly promoted tools by their **original** names. The TypeScript SDK does not implement its own search, tool executor or authorization, and no new public SDK endpoint is required. Unadvertised model tool names are rejected before native dispatch. Explicit user-selected core/filtered strategies and single-file shortcuts keep their previous tool inventory. See [Rust code and verification scope](../../docs/SUB2-PROGRESSIVE-NATIVE-TOOLS-2026-11-18.md).
+
 # @dominion/sdk — TypeScript / JavaScript
 
 This is the external client for the **same native Rust/Axum API used by the React GUI**. It does not embed a second harness, forward prompts to a third-party agent, or expose an incompatible `/api/v1` contract.
