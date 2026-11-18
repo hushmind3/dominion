@@ -107,8 +107,21 @@ fn is_deep_request(input: &str) -> bool {
         .any(|term| lower.contains(term))
 }
 
+/// A broadcast request is an owner instruction, not a byproduct of a
+/// participant name appearing in an example or quoted test fixture. Only
+/// explicit @mentions should override the broadcast cohort.
+fn owner_requests_everyone(input: &str) -> bool {
+    let text = mention_text(input).to_lowercase();
+    [
+        "다들", "다 같이", "다같이", "모두", "모든", "전원", "전부", "각자",
+        "아홉 명", "아홉명", "9명", "everyone", "all agents",
+    ]
+    .iter()
+    .any(|term| text.contains(term))
+}
+
 /// Chooses the smallest useful cohort for a discussion turn. The owner can
-/// still force everyone with "다들/모두/전원"; mentions override this entirely.
+/// force everyone with an explicit broadcast request; @mentions stay targeted.
 fn speaker_window(
     state: &AppState,
     room: &Value,
@@ -251,9 +264,12 @@ pub fn plan_speakers(
         }
         return Ok(selected);
     }
-    let mentioned = mentioned_agents(state, &roster, input)?;
+    let (mentioned, explicitly_addressed) = mentioned_agents_with_intent(state, &roster, input)?;
     match mode.as_str() {
         "discussion" => {
+            if owner_requests_everyone(input) && !explicitly_addressed {
+                return Ok(roster);
+            }
             if !mentioned.is_empty() {
                 return Ok(mentioned);
             }
@@ -543,7 +559,15 @@ async fn run_locked(
                 }
             }
             let mentioned = mentioned_agents(state, &roster, &text).unwrap_or_default();
-            cohort = if mentioned.is_empty() { roster.clone() } else { mentioned };
+            let explicit_owner_at = mentioned_agents_with_intent(state, &roster, owner_text)
+                .map(|(_, has_at)| has_at).unwrap_or(false);
+            cohort = if owner_requests_everyone(owner_text) && !explicit_owner_at {
+                roster.clone()
+            } else if mentioned.is_empty() {
+                roster.clone()
+            } else {
+                mentioned
+            };
         }
         if stopped(context, session_id, generation) {
             return Ok(finish(
@@ -1128,8 +1152,17 @@ fn mentioned_agents(
     roster: &[String],
     input: &str,
 ) -> Result<Vec<String>, String> {
+    mentioned_agents_with_intent(state, roster, input).map(|(ids, _)| ids)
+}
+
+fn mentioned_agents_with_intent(
+    state: &AppState,
+    roster: &[String],
+    input: &str,
+) -> Result<(Vec<String>, bool), String> {
     let text = mention_text(input).to_lowercase();
     let mut matches = Vec::new();
+    let mut explicitly_addressed = false;
     for (order, id) in roster.iter().enumerate() {
         let agent = state
             .store
@@ -1151,6 +1184,7 @@ fn mentioned_agents(
                     && mention_boundary(text[position + marker.len()..].chars().next())
                 {
                     matches.push((position, marker.len(), order, id.clone(), alias.clone()));
+                    explicitly_addressed = true;
                 }
             }
             // Owners often address a participant naturally ("샤르티아야",
@@ -1184,10 +1218,10 @@ fn mentioned_agents(
         }
     }
     let mut seen = HashSet::new();
-    Ok(matches
+    Ok((matches
         .into_iter()
         .filter_map(|(_, _, _, id, _)| seen.insert(id.clone()).then_some(id))
-        .collect())
+        .collect(), explicitly_addressed))
 }
 
 #[cfg(test)]
@@ -1342,6 +1376,38 @@ mod tests {
             vec!["a".to_string(), "b".to_string()]
         );
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn nine_speaker_broadcast_with_named_example_does_not_silence_eight_agents() {
+        let (state, dir) = test_state();
+        let names = [
+            "아인즈", "알베도", "샤르티아", "코퀴토스", "데미우르고스",
+            "아우라", "마레", "세바스", "판도라 액터",
+        ];
+        let roster = names.iter().enumerate().map(|(index, name)| {
+            let id = format!("agent-{index}");
+            state.store.put("agent", &json!({"id":id,"name":name})).unwrap();
+            id
+        }).collect::<Vec<_>>();
+        let mut config=room(&state);
+        config["agentIds"]=json!(roster);
+        config["routingMode"]=json!("discussion");
+        config["maxTurns"]=json!(9);
+        let all = plan_speakers(&state, &config,
+            "9명 전원 각자 직전에 말한 숫자를 반복하세요. 예시: 샤르티아 77",
+            None).unwrap();
+        assert_eq!(all, roster, "quoted examples must not turn a broadcast into a unicast");
+        let targeted = plan_speakers(&state, &config,
+            "9명에게 공지합니다. @샤르티아만 먼저 답하세요",
+            None).unwrap();
+        assert_eq!(targeted, vec!["agent-2".to_string()],
+            "a real @mention continues to override a broadcast");
+        // Ordinary targeted speech is unchanged for owners not asking for all.
+        let natural = plan_speakers(&state, &config,
+            "샤르티아야 네가 답해",None).unwrap();
+        assert_eq!(natural,vec!["agent-2".to_string()]);
+        crate::test_support::cleanup_dir(dir);
     }
 
     #[test]
