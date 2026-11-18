@@ -643,6 +643,46 @@ impl Store {
         Some(record)
     }
 
+    /// Advance a provider route and participant cursor as one durable event.
+    /// The second guard must not leave a half-committed first row behind:
+    /// SQLite rolls back both writes on any failed compare or update.
+    pub fn patch_pair_if(
+        &self,
+        first: (&str, &str, &Value, &Value),
+        second: (&str, &str, &Value, &Value),
+    ) -> Option<()> {
+        let mut conn = self.conn.lock().ok()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).ok()?;
+        for (kind, id, guards, patch) in [first, second] {
+            let guards = guards.as_object()?;
+            let changes = patch.as_object()?;
+            // The method is for cursor/progress patches, not record reparenting.
+            if changes.keys().any(|key| matches!(
+                key.as_str(), "id" | "kind" | "sessionId" | "agentId"
+            )) {
+                return None;
+            }
+            let mut record = tx.query_row(
+                "SELECT data,id,created_at,updated_at FROM records WHERE kind=?1 AND id=?2",
+                params![kind, id],
+                record_from_row,
+            ).ok()?;
+            if guards.iter().any(|(field, expected)| {
+                record.get(field).unwrap_or(&Value::Null) != expected
+            }) {
+                return None;
+            }
+            for (field, value) in changes {
+                record[field] = value.clone();
+            }
+            tx.execute(
+                "UPDATE records SET data=?3,updated_at=datetime('now') WHERE kind=?1 AND id=?2",
+                params![kind, id, record.to_string()],
+            ).ok()?;
+        }
+        tx.commit().ok()
+    }
+
     /// The running job attempt, not merely the job ID, owns all progress
     /// and terminal transitions. A stale async provider/tool worker cannot
     /// write after cancellation or after the dispatcher requeues an attempt.

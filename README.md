@@ -47,6 +47,8 @@
 | **External integrations** | Configured connections such as Telegram, Discord, GitHub and MCP; credentials/permissions required | `src/engine/telegram.rs`, `discord.rs`, `mcp.rs` |
 | **SDKs** | Embeddable Rust lifecycle and typed TypeScript HTTP client | `src/sdk.rs`, `sdk/typescript/` |
 
+**Durable conversation correctness (sub2):** Provider-route and participant continuation cursors are advanced together by one SQLite compare-and-swap transaction. Late concurrent replies and obsolete persona prefixes cannot partially overwrite persisted continuity; regression tests cover both cases. Source: `src/engine/chat/continuity.rs` and `src/db.rs`. This is a source-level correctness change; live provider behavior remains separately measured.
+
 **Product scope:** The built-in video/audio rendering pipeline and autonomous generational RSI campaigns were retired **on this branch**. Media generation can be invoked through user-configured MCP/Connections. Historical SQLite rows, chat, archived jobs and existing media files remain readable; there is no background self-modifying-core campaign.
 
 ## Quick start

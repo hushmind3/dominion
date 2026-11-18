@@ -303,24 +303,46 @@ pub(crate) fn prepare(
 }
 
 /// Only a durably stored visible answer advances the bot's continuation cursor.
+/// Commit both durable continuation cursors in one SQLite transaction.
+/// A late reply from a concurrent turn, or a reply rendered with an obsolete
+/// prefix, must not advance either cursor. In particular, an old provider
+/// route must not claim a reply rejected by the participant's conversation.
 pub(crate) fn commit(state: &AppState, continuity: &Value, message: &Value) {
     let Some(id) = continuity["id"].as_str() else { return };
-    let Some(saved) = message["id"].as_str().and_then(|id|state.store.message(id)) else { return };
+    let Some(participant_id) = continuity["participantId"].as_str() else { return };
+    let Some(saved) = message["id"].as_str().and_then(|id| state.store.message(id)) else { return };
     let Some(record) = state.store.get("model_conversation", id) else { return };
     if saved["role"] != "assistant" || saved["session_id"] != record["sessionId"]
         || saved["agent_id"] != record["agentId"] { return; }
-    if state.store.patch_if("model_conversation", id, "cacheKey", &continuity["cacheKey"], &json!({
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    let route_guard = json!({
+        "lastReplyMessageId":continuity["previousRouteReplyMessageId"],
+        "cacheKey":continuity["cacheKey"],
+        "prefixDigest":continuity["prefixDigest"],
+        "sessionId":saved["session_id"],
+        "agentId":saved["agent_id"],
+    });
+    let participant_guard = json!({
+        "lastReplyMessageId":continuity["participantBaseReplyMessageId"],
+        "sessionId":saved["session_id"],
+        "agentId":saved["agent_id"],
+    });
+    let route_patch = json!({
         "lastReplyMessageId":saved["id"],
         "lastSourceMessageId":saved["metadata"]["replyToMessageId"],
-        "lastCompletedAt":chrono::Utc::now().to_rfc3339(),
+        "lastCompletedAt":timestamp,
         "lastUsage":saved["metadata"]["usage"],
-    })).is_none() {return;}
-    if let Some(participant_id) = continuity["participantId"].as_str() {
-        let _ = state.store.patch_if("participant_conversation", participant_id, "lastReplyMessageId", &continuity["participantBaseReplyMessageId"], &json!({
-            "lastReplyMessageId":saved["id"],"lastSourceMessageId":saved["metadata"]["replyToMessageId"],
-            "lastCompletedAt":chrono::Utc::now().to_rfc3339(),"lastRouteId":id,
-        }));
-    }
+    });
+    let participant_patch = json!({
+        "lastReplyMessageId":saved["id"],
+        "lastSourceMessageId":saved["metadata"]["replyToMessageId"],
+        "lastCompletedAt":timestamp,
+        "lastRouteId":id,
+    });
+    let _ = state.store.patch_pair_if(
+        ("model_conversation", id, &route_guard, &route_patch),
+        ("participant_conversation", participant_id, &participant_guard, &participant_patch),
+    );
 }
 
 /// True only for the first-party Cloudflare Workers AI REST/compat route.
@@ -514,6 +536,87 @@ mod tests {
         provider.max_output_tokens=Some(1000);
         assert_eq!(continuation_history_allowance(&provider,2000,500,true),3000,
             "native model context and output reservation remain hard bounds");
+    }
+
+    #[test]
+    fn stale_cross_route_completion_does_not_half_commit_model_cursor() {
+        let root = std::env::temp_dir().join(format!("sub2-atomic-cursors-{}", uuid::Uuid::new_v4()));
+        let state = state(&root);
+        let req = TurnRequest::from_value(&json!({"input":"do work","agentId":"agent-a"})).unwrap();
+        let first_route = route();
+        let mut second_route = route();
+        second_route.model = "model-b".into();
+        let first = prepare(&state, &first_route, &req, "room:atomic", "persona", &json!({})).unwrap();
+        let second = prepare(&state, &second_route, &req, "room:atomic", "persona", &json!({})).unwrap();
+        let first_reply = state.store.write_message(&json!({
+            "session_id":"room:atomic","agent_id":"agent-a","role":"assistant","content":"older"
+        })).unwrap();
+        let second_reply = state.store.write_message(&json!({
+            "session_id":"room:atomic","agent_id":"agent-a","role":"assistant","content":"winner"
+        })).unwrap();
+        commit(&state, &second, &second_reply);
+        // First route guard still matches (null). Without a *joint* CAS,
+        // its model route cursor advances even though participant CAS fails.
+        commit(&state, &first, &first_reply);
+        let participant = state.store.get("participant_conversation",
+            second["participantId"].as_str().unwrap()).unwrap();
+        let older_route = state.store.get("model_conversation",
+            first["id"].as_str().unwrap()).unwrap();
+        let winning_route = state.store.get("model_conversation",
+            second["id"].as_str().unwrap()).unwrap();
+        assert_eq!(participant["lastReplyMessageId"],second_reply["id"]);
+        assert!(older_route["lastReplyMessageId"].is_null(),"rejected older route remains unchanged");
+        assert_eq!(winning_route["lastReplyMessageId"],second_reply["id"]);
+
+        // A subsequent legitimate turn on the previously losing route
+        // must be able to advance both cursors using the new participant base.
+        let resumed = prepare(&state, &first_route, &req, "room:atomic", "persona", &json!({})).unwrap();
+        let resumed_reply = state.store.write_message(&json!({
+            "session_id":"room:atomic","agent_id":"agent-a","role":"assistant","content":"resumed"
+        })).unwrap();
+        commit(&state, &resumed, &resumed_reply);
+        assert_eq!(state.store.get("model_conversation",first["id"].as_str().unwrap())
+            .unwrap()["lastReplyMessageId"],resumed_reply["id"]);
+        assert_eq!(state.store.get("participant_conversation",first["participantId"].as_str().unwrap())
+            .unwrap()["lastReplyMessageId"],resumed_reply["id"]);
+        drop(state);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn stale_same_route_and_obsolete_prefix_cannot_rewind_cursors() {
+        let root = std::env::temp_dir().join(format!("sub2-prefix-cas-{}",uuid::Uuid::new_v4()));
+        let state = state(&root);
+        let req = TurnRequest::from_value(&json!({"input":"work","agentId":"agent-a"})).unwrap();
+        let provider = route();
+        let obsolete = prepare(&state,&provider,&req,"room:prefix","old persona",&json!({})).unwrap();
+        let current = prepare(&state,&provider,&req,"room:prefix","new persona",&json!({})).unwrap();
+        let reply = state.store.write_message(&json!({
+            "session_id":"room:prefix","agent_id":"agent-a","role":"assistant","content":"stale"
+        })).unwrap();
+        commit(&state,&obsolete,&reply);
+        assert!(state.store.get("model_conversation",current["id"].as_str().unwrap())
+            .unwrap()["lastReplyMessageId"].is_null());
+        let accepted = state.store.write_message(&json!({
+            "session_id":"room:prefix","agent_id":"agent-a","role":"assistant","content":"accepted"
+        })).unwrap();
+        commit(&state,&current,&accepted);
+        let late = prepare(&state,&provider,&req,"room:prefix","new persona",&json!({})).unwrap();
+        let later = prepare(&state,&provider,&req,"room:prefix","new persona",&json!({})).unwrap();
+        let winning = state.store.write_message(&json!({
+            "session_id":"room:prefix","agent_id":"agent-a","role":"assistant","content":"newer"
+        })).unwrap();
+        commit(&state,&later,&winning);
+        let losing = state.store.write_message(&json!({
+            "session_id":"room:prefix","agent_id":"agent-a","role":"assistant","content":"late stale"
+        })).unwrap();
+        commit(&state,&late,&losing);
+        assert_eq!(state.store.get("model_conversation",current["id"].as_str().unwrap())
+            .unwrap()["lastReplyMessageId"],winning["id"]);
+        assert_eq!(state.store.get("participant_conversation",current["participantId"].as_str().unwrap())
+            .unwrap()["lastReplyMessageId"],winning["id"]);
+        drop(state);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
