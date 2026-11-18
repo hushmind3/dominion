@@ -107,12 +107,17 @@ fn search_receipts(args: &Value, receipts: &[Receipt]) -> Result<Value, String> 
             "nextOffset":(offset+matches.len()<total).then_some(offset+matches.len()),
             "matches":matches}));
     }
+    // Search original JSON leaves without serializing every historical result.
+    // A tool response can contain megabytes of text; its durable representation
+    // must not become an allocation on each keyword lookup.
+    let matcher=LiteralMatcher::new(&needle);
     let mut matches=Vec::new();
     let mut total=0usize;
     for receipt in receipts.iter().rev() {
-        let haystack=format!("{} {} {} {}",receipt.id,receipt.tool,
-            receipt.arguments,receipt.result).to_lowercase();
-        if !haystack.contains(&needle) {continue;}
+        if !matcher.contains(&receipt.id)
+            && !matcher.contains(&receipt.tool)
+            && !json_contains(&matcher,&receipt.arguments)
+            && !json_contains(&matcher,&receipt.result) {continue;}
         if total >= offset && matches.len() < limit {
             matches.push(preview(receipt));
         }
@@ -121,6 +126,53 @@ fn search_receipts(args: &Value, receipts: &[Receipt]) -> Result<Value, String> 
     Ok(json!({"query":query,"offset":offset,"total":total,
         "nextOffset":(offset+matches.len()<total).then_some(offset+matches.len()),
         "matches":matches}))
+}
+
+/// Streaming Unicode-lowercased literal matching with a reusable KMP table.
+/// No whole-result JSON serialization or lowercased megabyte copy is needed.
+struct LiteralMatcher {
+    pattern:Vec<char>,
+    prefixes:Vec<usize>,
+}
+impl LiteralMatcher {
+    fn new(folded_query:&str)->Self {
+        let pattern=folded_query.chars().collect::<Vec<_>>();
+        let mut prefixes=vec![0;pattern.len()];
+        let mut matched=0usize;
+        for i in 1..pattern.len() {
+            while matched>0 && pattern[i]!=pattern[matched] {
+                matched=prefixes[matched-1];
+            }
+            if pattern[i]==pattern[matched] {matched+=1;}
+            prefixes[i]=matched;
+        }
+        Self{pattern,prefixes}
+    }
+    fn contains(&self,text:&str)->bool {
+        if self.pattern.is_empty() {return true;}
+        let mut matched=0usize;
+        for ch in text.chars().flat_map(char::to_lowercase) {
+            while matched>0 && ch!=self.pattern[matched] {
+                matched=self.prefixes[matched-1];
+            }
+            if ch==self.pattern[matched] {matched+=1;}
+            if matched==self.pattern.len() {return true;}
+        }
+        false
+    }
+}
+/// Inspect keys and scalar values, including nested tool results. JSON syntax
+/// and unrelated field boundaries are not mistaken for searchable evidence.
+fn json_contains(matcher:&LiteralMatcher,value:&Value)->bool {
+    match value {
+        Value::String(text)=>matcher.contains(text),
+        Value::Array(items)=>items.iter().any(|item|json_contains(matcher,item)),
+        Value::Object(fields)=>fields.iter().any(|(key,item)|
+            matcher.contains(key)||json_contains(matcher,item)),
+        Value::Number(number)=>matcher.contains(&number.to_string()),
+        Value::Bool(value)=>matcher.contains(if *value {"true"} else {"false"}),
+        Value::Null=>matcher.contains("null"),
+    }
 }
 
 /// Keep beginning *and* end. Diagnostics commonly appear at the end of
@@ -348,6 +400,32 @@ mod tests {
         let past_end=search_receipts(&json!({"offset":999,"limit":3}),&data).unwrap();
         assert!(past_end["matches"].as_array().unwrap().is_empty());
         assert_eq!(past_end["total"],150);
+    }
+    #[test]
+    fn streaming_receipt_search_finds_nested_multilingual_and_tail_evidence() {
+        let mut data=(0..24).map(|i|receipt(&format!("history-{i}"),i+1,true,
+            json!({"payload":"x".repeat(60_000)}))).collect::<Vec<_>>();
+        data[8].result=json!({"nested":[{"diagnostic":
+            format!("{}CARGO E0308: 끝나는_오류", "y".repeat(60_000))}]});
+        data[2].arguments=json!({"path":"src/检索/테스트.rs"});
+        let error=search_receipts(&json!({"query":"cargo e0308","limit":2}),&data).unwrap();
+        assert_eq!(error["total"],1);
+        assert_eq!(error["matches"][0]["id"],"history-8");
+        let korean=search_receipts(&json!({"query":"끝나는_오류"}),&data).unwrap();
+        assert_eq!(korean["total"],1);
+        let chinese=search_receipts(&json!({"query":"检索"}),&data).unwrap();
+        assert_eq!(chinese["matches"][0]["id"],"history-2");
+        // JSON object keys remain searchable without allocating the entire body.
+        data[4].result=json!({"uniqueDiagnosticKey":"x".repeat(60_000)});
+        let key=search_receipts(&json!({"query":"UniqueDiagnosticKey"}),&data).unwrap();
+        assert_eq!(key["matches"][0]["id"],"history-4");
+    }
+    #[test]
+    fn search_does_not_match_keywords_concatenated_across_unrelated_fields() {
+        let data=vec![Receipt{id:"first".into(),step:1,tool:"workspace_read".into(),
+            arguments:json!({"a":"hello"}),success:true,result:json!({"b":"world"})}];
+        assert_eq!(search_receipts(&json!({"query":"helloworld"}),&data)
+            .unwrap()["total"],0);
     }
     #[test]
     fn search_pages_and_never_reads_other_run_ids() {
