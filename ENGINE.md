@@ -1,3 +1,7 @@
+## Sub2 — Money source lineage and in-cycle evidence pairing (2026-11-18)
+
+`money_sources::run` keeps distinct original article URLs while merging identical-URL feed origins; each observation stores publisher identity and an exact normalized-headline story cluster. `Store::money_ingest_signals` and `money_fold_sources` backfill missing attribution without rewriting source text, re-running completed effects or resetting reviewed event state. Both the pre-existing economic tension matcher and the indexed event asymmetry path reject ungrounded Google News feed independence and identical clustered stories. Newly collected observations enter the same cycle's existing bounded native pairing path. [Source-to-event contract](docs/SUB2-MONEY-SOURCE-LINEAGE-2026-11-18.md).
+
 ## Sub2 — progressive discovery reuses the existing native kernel (2026-11-18)
 
 `chat::capability` is an inert projection and search module, not a second agent loop. `run_turn_body` retains provider-round tool admission and search-to-next-round schema promotion; `dispatch_tool_call` owns search receipts and subsequent concrete native/MCP tool effects. The original SDK and room APIs enter through this same turn loop; the full user-allowed catalog is never a permission grant. See [typed execution/limits/tests](docs/SUB2-PROGRESSIVE-NATIVE-TOOLS-2026-11-18.md). Rust tests and real-model benchmarks have not been executed for this change.
