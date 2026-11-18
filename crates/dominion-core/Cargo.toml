@@ -2,7 +2,7 @@
 name = "dominion-core"
 version = "0.3.0"
 edition = "2021"
-license = "Apache-2.0"
+license = "MIT"
 description = "Dominion native Rust harness, hosted by the product SQLite/tool/model adapters"
 
 [dependencies]
