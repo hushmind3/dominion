@@ -989,6 +989,20 @@ pub fn choose_for_agent(
 )->Option<Value>{
     let agent=agent_of(state,agent_id)?;
     let rows=scoped_algorithms(state,kind)?;
+    if let Some(execution_id)=execution_id {
+        let usage_id=format!("algorithm-usage-{}",
+            crate::engine::memory::stable_id(&[execution_id,kind]));
+        if let Some(assigned)=state.store.get("algorithm_usage",&usage_id){
+            // A prior in-flight action is bound to its actual revision. Never
+            // dispatch a different variant while attributing the outcome to
+            // the first one, even after owner activation changes.
+            return rows.iter().find(|row|
+                row["revision"]==assigned["revision"]&&
+                row["status"]!="disabled"&&
+                row["implementation"].as_str().is_some_and(|impl_name|
+                    kernel_exists(kind,impl_name))).cloned();
+        }
+    }
     let (chosen,basis)=evidence_qualified_kernel(&rows,kind)?;
     if let Some(execution_id)=execution_id {
         let usage_id=format!("algorithm-usage-{}",
@@ -1831,6 +1845,71 @@ mod tests {
         let store = Store::open(&config.db_path()).unwrap();
         let vault = Vault::open(&config.key_path());
         (AppState::new(config, store, vault), dir)
+    }
+
+
+    #[test]
+    fn unpaired_statistics_cannot_override_owner_activated_kernel() {
+        let (state,dir)=state();
+        seed(&state);
+        let before=active(&state,"memory.importance").unwrap();
+        let fallback=state.store.algorithms_for_kind("memory.importance").unwrap()
+            .into_iter().find(|row|row["id"]!=before["id"]&&row["source"]=="builtin")
+            .expect("two builtin kernels");
+        for agent in ["agent-local","global"] {
+            state.store.put("algorithm_stat",&json!({
+                "id":format!("fake-{agent}"),"agentId":agent,
+                "kind":"memory.importance","revision":fallback["revision"],
+                "uses":1000000,"successes":1000000,"failures":0,
+                "successRate":1.0
+            })).unwrap();
+        }
+        let chosen=choose_for_agent(&state,"memory.importance",
+            Some("agent-local"),Some("pinned-1")).unwrap();
+        assert_eq!(chosen["revision"],before["revision"],
+            "unpaired wins must not displace explicit activation");
+        let usage_id=format!("algorithm-usage-{}",crate::engine::memory::stable_id(
+            &["pinned-1","memory.importance"]));
+        let usage=state.store.get("algorithm_usage",&usage_id).unwrap();
+        assert_eq!(usage["selectionBasis"],"explicit_activation");
+        assert_eq!(usage["historicalStatUse"],"diagnostics_only");
+        activate(&state,fallback["id"].as_str().unwrap()).unwrap();
+        assert_eq!(choose_for_agent(&state,"memory.importance",
+            Some("agent-local"),Some("pinned-1")).unwrap()["revision"],
+            before["revision"],"an in-flight execution must keep its original revision");
+        assert_eq!(choose_for_agent(&state,"memory.importance",
+            Some("agent-local"),Some("pinned-2")).unwrap()["revision"],
+            fallback["revision"],"future runs may observe explicit owner activation");
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn hidden_generated_candidates_cannot_explore_and_disabled_pins_halt() {
+        let (state,dir)=state();
+        seed(&state);
+        let original=active(&state,"learning.applicability").unwrap();
+        let available=register(&state,&json!({
+            "kind":"learning.applicability",
+            "name":"unreviewed speculative trial",
+            "implementation":"probe-unknown","source":"generated",
+            "parameters":{"probeBudget":999}
+        })).unwrap();
+        for agent in ["global","agent"] {
+            state.store.put("algorithm_stat",&json!({
+                "id":format!("adversarial-{agent}"),"agentId":agent,
+                "kind":"learning.applicability","revision":available["revision"],
+                "uses":999999,"successes":999999,"failures":0
+            })).unwrap();
+        }
+        assert_eq!(choose_for_agent(&state,"learning.applicability",Some("agent"),
+            Some("test-run")).unwrap()["id"],original["id"]);
+        disable(&state,original["id"].as_str().unwrap()).unwrap();
+        assert!(choose_for_agent(&state,"learning.applicability",Some("agent"),
+            Some("test-run")).is_none(),"disabled pinned kernel must not be replayed");
+        assert_ne!(choose_for_agent(&state,"learning.applicability",Some("agent"),
+            Some("another-run")).map(|item|item["id"].clone()),Some(available["id"].clone()),
+            "unreviewed generated candidate cannot be promoted via fake stats");
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]
