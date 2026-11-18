@@ -211,6 +211,15 @@ pub(crate) fn prepare(
         &provider.reasoning_protocol, &identity,
     ]);
     let key = format!("dominion_{affinity}");
+    // Workers AI routes a stable affinity to the same model instance.
+    // Room speakers may reuse the SAME stable room-level prefix while their
+    // existing per-agent cache keys and conversation cursors stay isolated.
+    let session_affinity = state.store.get("session",session_id)
+        .and_then(|session|session["roomId"].as_str().map(str::to_string))
+        .map(|room_id|stable_id(&[
+            "cloudflare-room-affinity-v1",&room_id,&provider.id,&provider.base_url,
+            &provider.model,provider.account_id.as_deref().unwrap_or(""),
+        ])).unwrap_or_else(||affinity.clone());
     let previous = state.store.get("model_conversation", &id);
     let same_prefix = previous.as_ref().is_some_and(|record|record["prefixDigest"] == prefix);
     let mut record = previous.unwrap_or_else(||json!({
@@ -220,6 +229,7 @@ pub(crate) fn prepare(
     }));
     record["transportSessionId"] = json!(scope);
     record["cacheAffinityId"] = json!(affinity);
+    record["sessionAffinityId"] = json!(session_affinity);
     record["cacheKey"] = json!(key);
     record["prefixDigest"] = json!(prefix);
     record["lastRequestedAt"] = json!(chrono::Utc::now().to_rfc3339());
@@ -227,7 +237,8 @@ pub(crate) fn prepare(
         .ok_or("봇의 지속 대화 상태를 저장할 수 없습니다.")?;
     Ok(json!({
         "id":id,"participantId":participant_id,"transport":provider.kind,"mode":"prefix-reuse",
-        "transportSessionId":scope,"cacheAffinityId":affinity,"cacheKey":key,"prefixDigest":prefix,
+        "transportSessionId":scope,"cacheAffinityId":affinity,"sessionAffinityId":session_affinity,
+        "cacheKey":key,"prefixDigest":prefix,
         "samePrefixAsPreviousRequest":same_prefix,
         "previousReplyMessageId":participant.get("lastReplyMessageId").unwrap_or(&record["lastReplyMessageId"]),
         "participantBaseReplyMessageId":participant["lastReplyMessageId"],
@@ -322,8 +333,12 @@ pub(super) async fn send(
 ) -> Result<reqwest::Response,String> {
     let mut body=hinted_body(state,provider,original,plan,wire);
     let mut hinted=plan["wireHintSent"]==true;
-    let opencode_go=state.store.get("provider",&provider.id)
-        .is_some_and(|record|record["integration"]=="opencode-go");
+    let integration=state.store.get("provider",&provider.id)
+        .and_then(|record|record["integration"].as_str().map(str::to_string))
+        .unwrap_or_default();
+    let opencode_go=integration=="opencode-go";
+    let cloudflare=provider.base_url.to_ascii_lowercase().contains("cloudflare.com")
+        || integration=="cloudflare-workers-ai";
     for attempt in 1..=2 {
         plan["httpRequests"]=json!(attempt);
         let mut request=builder.try_clone().ok_or("모델 요청을 복제할 수 없습니다.")?;
@@ -332,6 +347,15 @@ pub(super) async fn send(
             // OpenCode Go's direct endpoint uses the same stable conversation
             // affinity under its own header. No local proxy is involved.
             if opencode_go { request=request.header("x-opencode-session",id); }
+        }
+        if cloudflare {
+            if let Some(id)=plan["sessionAffinityId"].as_str()
+                .or_else(||plan["cacheAffinityId"].as_str()) {
+                // Provider-specific routing hint; NOT an authorization token.
+                // A successful HTTP response does not prove a KV cache hit.
+                request=request.header("x-session-affinity",id);
+                plan["providerSessionAffinitySent"]=json!(true);
+            }
         }
         let response=request.json(&body).send().await.map_err(|e|format!("{} 연결 실패: {e}",provider.name))?;
         let status=response.status();
