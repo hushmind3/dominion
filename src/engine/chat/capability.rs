@@ -50,11 +50,27 @@ fn words(query:&str)->HashSet<String>{
     ] {
         if lower.contains(needle){words.extend(aliases.iter().map(|item|item.to_string()));}
     }
+    // The filename prefix "docs/" must not rank Google Docs tools.
+    if (lower.contains("docs/") || lower.contains("docs\\"))
+        && !lower.contains("google") && !lower.contains("구글"){
+        words.remove("docs");
+    }
     words
 }
 
 fn rank(def:&Value,query:&str,words:&HashSet<String>)->i32{
     let label=name(def).to_lowercase();
+    let requested=query.to_lowercase();
+    // A local docs/ path or generic "document" intent is not a
+    // Google Docs/Drive authorization signal. Search still finds these
+    // tools when the user names the cloud service explicitly.
+    let google_intent=["google","구글","docs.google.com","drive.google.com",
+        "sheets.google.com"].iter().any(|term|requested.contains(term));
+    if label.starts_with("google_") && !google_intent{return -100;}
+    let browser_intent=["browser","브라우저","웹","사이트","http://","https://",
+        "screenshot","스크린샷","visit url","open url","페이지 이동"]
+        .iter().any(|term|requested.contains(term));
+    if label=="browser_control" && !browser_intent{return -100;}
     let summary=def.pointer("/function/description")
         .and_then(Value::as_str).unwrap_or("").to_lowercase();
     if label.is_empty(){return 0;}
@@ -232,6 +248,33 @@ mod tests{
         assert!(serde_json::to_vec(&a).unwrap().len()*2
             <serde_json::to_vec(&original).unwrap().len());
     }
+    #[test]
+    fn local_docs_paths_do_not_rank_cloud_schemas_in_native_discovery(){
+        let mut catalog=sample();
+        for name in ["google_docs_read","google_drive_search",
+            "google_sheets_read","browser_control"]{
+            catalog.push(json!({"type":"function","function":{
+                "name":name,
+                "description":"Read docs and documents using cloud tools",
+                "parameters":{"type":"object"}
+            }}));
+        }
+        let local=project(catalog.clone(),
+            "Create docs/a.txt, docs/b.txt and SUMMARY.md in the workspace");
+        for tool in ["google_docs_read","google_drive_search",
+            "google_sheets_read","browser_control"]{
+            assert!(!local.iter().any(|row|name(row)==tool),
+                "local docs directory must not advertise {tool}");
+        }
+        let cloud=project(catalog.clone(),"Open Google Docs and read it");
+        assert!(cloud.iter().any(|row|name(row)=="google_docs_read"));
+        let search=search_catalog(&catalog,&json!({
+            "query":"google docs read","limit":5
+        })).unwrap();
+        assert!(search["matches"].as_array().unwrap().iter()
+            .any(|row|row["name"]=="google_docs_read"));
+    }
+
     #[test]
     fn search_promotes_only_catalogued_schemas_and_limits_growth(){
         let all=sample();

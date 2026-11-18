@@ -570,7 +570,7 @@ pub(super) async fn run_turn_body(
         && state.store.messages(session_id).iter().any(|message|
             message["role"]=="assistant"
             && message["metadata"]["authorKind"]=="agent");
-    let native_contract_plan=session["sdkUiPolicy"].is_object()
+    let native_contract_plan=!is_room
         && planning_policy.is_none()
         && local_multifile_contract_needs_no_secondary_planner(&request.input,&acceptance);
     let plan_requested=match session["sdkUiPolicy"]["planningMode"].as_str(){
