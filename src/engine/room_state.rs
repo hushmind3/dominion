@@ -468,6 +468,48 @@ mod tests {
     }
 
     #[test]
+    fn nine_speaker_status_reuses_visible_digest_across_identical_completed_rounds() {
+        let (state,dir)=state();
+        let session_id="room:r";
+        let members=(0..9).map(|index|format!("agent-{index}")).collect::<Vec<_>>();
+        for (index,id) in members.iter().enumerate() {
+            state.store.put("agent",&json!({"id":id,"name":format!("Speaker {index}")})).unwrap();
+        }
+        let room=json!({"id":"r","agentIds":members});
+        state.store.put("room",&room).unwrap();
+        let mut transcript=vec![json!({"id":"owner-1","session_id":session_id,"role":"user",
+            "content":"First question","metadata":{"authorKind":"owner"}})];
+        let reply=|owner:&str,index:usize|json!({
+            "id":format!("reply-{owner}-{index}"),"session_id":session_id,
+            "role":"assistant","agent_id":format!("agent-{index}"),
+            "content":format!("Speaker {index} contribution"),
+            "metadata":{"replyToMessageId":owner}
+        });
+        for index in 0..9 {transcript.push(reply("owner-1",index));}
+        let first=conversation_context(&state,&room,session_id,"owner-2",&transcript);
+        transcript.push(json!({"id":"owner-2","session_id":session_id,
+            "role":"user","content":"Second question","metadata":{"authorKind":"owner"}}));
+        for index in 0..9 {transcript.push(reply("owner-2",index));}
+        let second=conversation_context(&state,&room,session_id,"owner-3",&transcript);
+        assert_eq!(first["textDigest"],second["textDigest"],
+            "same completed roster/observations should be a single cacheable state");
+        assert_eq!(first["text"],second["text"]);
+        assert_ne!(first["digest"],second["digest"],
+            "different owner cursors keep independent full provenance");
+        assert_eq!(second["previousOwnerMessageId"],"owner-2");
+        assert!(!second["text"].as_str().unwrap().contains("owner-2"),
+            "cursor IDs must not leak into the model-visible repeated status");
+        transcript.push(json!({"id":"owner-3","session_id":session_id,
+            "role":"user","content":"Third question","metadata":{"authorKind":"owner"}}));
+        for index in 0..8 {transcript.push(reply("owner-3",index));}
+        let changed=conversation_context(&state,&room,session_id,"owner-4",&transcript);
+        assert_ne!(changed["textDigest"],second["textDigest"],
+            "a missing participant must change the visible room observation");
+        assert!(changed["text"].as_str().unwrap().contains("Speaker 8"));
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn queued_corrections_do_not_change_an_earlier_request_snapshot() {
         let (state,dir)=state();
         let first=owner("m1","규칙은 변경 전 값이다. 기억해.");
