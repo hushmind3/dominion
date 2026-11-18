@@ -72,4 +72,4 @@ jobs:
           cargo test --lib engine::algorithms::tests
           cargo test --lib db::tests::algorithm_kind_query_is_indexed_and_excludes_unrelated_live_policies
           # Isolated native A/B runner: compile and validate frozen repair fixture.
-          cargo test --bin dominion-benchmark tests::repair_ab_program_is_frozen_and_has_an_explicit_failure
+          cargo test --bin dominion-benchmark
