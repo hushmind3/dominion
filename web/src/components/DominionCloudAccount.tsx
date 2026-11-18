@@ -2,7 +2,7 @@ import {useEffect,useRef,useState} from 'react'
 import {get,post} from '../api'
 
 type GoogleResponse={credential:string}
-type GoogleIdentity={accounts:{id:{disableAutoSelect?:()=>void;initialize:(config:{client_id:string;callback:(response:GoogleResponse)=>void})=>void;renderButton:(element:HTMLElement,options:Record<string,unknown>)=>void;disableAutoSelect?:()=>void;disableAutoSelect?:()=>void;disableAutoSelect?:()=>void}}}
+type GoogleIdentity={accounts:{id:{initialize:(config:{client_id:string;callback:(response:GoogleResponse)=>void})=>void;renderButton:(element:HTMLElement,options:Record<string,unknown>)=>void;disableAutoSelect?:()=>void;disableAutoSelect?:()=>void}}}
 declare global {interface Window {google?:GoogleIdentity}}
 type Model={id:string;name?:string;free:boolean;provider?:string;input_micro_krw?:number;output_micro_krw?:number}
 type CatalogProvider={id:string;name:string;api:string;models:number;doc?:string}
@@ -20,16 +20,11 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
  const [showAdvanced,setShowAdvanced]=useState(false)
  const [connectionTab,setConnectionTab]=useState<'providers'|'openrouter'>('providers')
  const [catalogSort,setCatalogSort]=useState<'name'|'models'>('name')
- const [activeTab,setActiveTab]=useState<'cloud'|'providers'>('cloud')
  const [providerSort,setProviderSort]=useState<'name'|'models'>('name')
  const [advancedTab,setAdvancedTab]=useState<'providers'|'router'>('providers')
  const [managementTab,setManagementTab]=useState<'cloud'|'providers'>('cloud')
- const [providerSort,setProviderSort]=useState<'name'|'models'>('name')
  const [providerPage,setProviderPage]=useState(0)
- const [advancedTab,setAdvancedTab]=useState<'providers'|'router'>('providers')
- const [providerSort,setProviderSort]=useState<'name'|'models'>('name')
  const [cloudTab,setCloudTab]=useState<'models'|'providers'>('models')
- const [providerSort,setProviderSort]=useState<'name'|'models'>('name')
  const [providerMinModels,setProviderMinModels]=useState(false)
  const [busy,setBusy]=useState(false)
  const [message,setMessage]=useState('')
