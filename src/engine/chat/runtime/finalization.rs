@@ -6,6 +6,47 @@ pub(super) struct ActionReview {
     pub(super) next_action: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AcceptanceRepair {
+    /// The durable postcondition/receipt graph already identifies what to do.
+    /// Feed its directive to the main model; no separate reviewer is needed.
+    Verifier,
+    /// The same proof frontier survived a tool round, or has no typed match.
+    /// Ask the existing reviewer for a different approach, without granting
+    /// it authority to waive any acceptance check.
+    Reviewer,
+    /// A mutation may already have happened without an observed result.
+    /// Do not make a second effectful attempt before reconciliation.
+    Reconcile,
+}
+
+/// 2026 receipt-grounded repair escalation. A verifier-derived proof frontier
+/// is actionable on its own for the first attempt. Model review is only worth
+/// paying for after stagnation or for a genuinely untyped/ambiguous failure.
+pub(super) fn acceptance_repair(
+    progress: &Value, checks: &Value, can_retry: bool,
+) -> AcceptanceRepair {
+    let frontiers=progress.pointer("/obligationLineage/frontiers")
+        .and_then(Value::as_array);
+    if frontiers.is_some_and(|items|
+        items.iter().any(|f| f["kind"] == "unresolved_external_effect")
+    ) {
+        return AcceptanceRepair::Reconcile;
+    }
+    if !can_retry
+        || checks.as_array().is_some_and(|checks|
+            checks.iter().any(|c|c["type"]=="file_replace_exact")
+        ) {
+        return AcceptanceRepair::Verifier;
+    }
+    match frontiers {
+        Some(items) if !items.is_empty() && progress["mode"]!="reconsider" =>
+            AcceptanceRepair::Verifier,
+        _ => AcceptanceRepair::Reviewer,
+    }
+}
+
+
 pub(super) fn simple_file_creation(
     state: &AppState, input: &str, acceptance: &Option<(String, Value)>,
 ) -> Option<std::path::PathBuf> {
@@ -857,3 +898,39 @@ pub(super) fn record_tool_stat(state: &AppState, session_id: &str, agent_id: Opt
     }
 }
 
+#[cfg(test)]
+mod acceptance_repair_tests {
+    use super::*;
+    #[test]
+    fn typed_receipt_frontier_avoids_reviewer_until_progress_stalls() {
+        let checks=json!([{"type":"file_contains","path":"out.md","contains":"ok"}]);
+        let first=json!({"mode":"execute","obligationLineage":{"frontiers":[
+            {"resource":"workspace:out.md","kind":"no_attributable_receipt",
+             "directive":"Inspect and write out.md"}
+        ]}});
+        assert_eq!(acceptance_repair(&first,&checks,true),AcceptanceRepair::Verifier);
+        let stalled=json!({"mode":"reconsider","obligationLineage":first["obligationLineage"]});
+        assert_eq!(acceptance_repair(&stalled,&checks,true),AcceptanceRepair::Reviewer);
+        assert_eq!(acceptance_repair(&stalled,&checks,false),AcceptanceRepair::Verifier);
+    }
+
+    #[test]
+    fn missing_typed_evidence_uses_reviewer_only_when_retry_is_possible() {
+        let generic=json!({"mode":"execute","obligationLineage":{"frontiers":[]}});
+        let checks=json!([{"type":"command_succeeded","command":"cargo test"}]);
+        assert_eq!(acceptance_repair(&generic,&checks,true),AcceptanceRepair::Reviewer);
+        assert_eq!(acceptance_repair(&generic,&checks,false),AcceptanceRepair::Verifier);
+        let frozen=json!([{"type":"file_replace_exact","path":"src/lib.rs"}]);
+        assert_eq!(acceptance_repair(&generic,&frozen,true),AcceptanceRepair::Verifier);
+    }
+
+    #[test]
+    fn uncertain_external_effect_must_be_reconciled_before_any_retry() {
+        let uncertain=json!({"mode":"reconsider","obligationLineage":{"frontiers":[
+            {"kind":"unresolved_external_effect","resource":"workspace:out.md",
+             "receiptIds":["unknown-1"]}
+        ]}});
+        assert_eq!(acceptance_repair(&uncertain,&json!([]),true),AcceptanceRepair::Reconcile);
+        assert_eq!(acceptance_repair(&uncertain,&json!([]),false),AcceptanceRepair::Reconcile);
+    }
+}
