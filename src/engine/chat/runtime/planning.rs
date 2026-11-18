@@ -81,7 +81,7 @@ mod planning_cost_tests {
     #[test]
     fn composite_work_still_requests_planning_without_disabling_policy_override() {
         assert!(needs_plan("수정한 뒤 테스트하고 결과를 검증해", &None));
-        assert!(needs_plan(&"복합 작업 ".repeat(40), &None));
+        assert!(needs_plan(&"복합 작업 ".repeat(50), &None));
         assert!(needs_plan("파일 처리", &Some((
             "파일 처리".into(), json!([
                 {"type":"file_exists"},{"type":"file_changed"},
