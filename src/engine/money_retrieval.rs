@@ -80,7 +80,37 @@ pub fn select(rankings:&[(f64,Vec<Value>)],recent:&[Value],limit:usize)->Vec<Val
         *origins.entry(rows[index].domain.clone()).or_insert(0)+=1;
         chosen.push(index);
     }
-    chosen.into_iter().map(|i|rows[i].fact.clone()).collect()
+    // Keep the selected model context small, but carry bounded lineage for
+    // near-duplicate observations that would otherwise vanish from retrieval.
+    // Similar reporting is NOT proof of independent verification or a sale.
+    chosen.into_iter().map(|i|{
+        let mut fact=rows[i].fact.clone();
+        let mut similar_sources=Vec::new();
+        let mut similar_count=0usize;
+        for (other_index,other) in rows.iter().enumerate(){
+            if other_index==i || other.fact["url"]==rows[i].fact["url"] {continue;}
+            if similarity(&rows[i].grams,&other.grams)<0.84 {continue;}
+            similar_count+=1;
+            if similar_sources.len()<2 {
+                similar_sources.push(serde_json::json!({
+                    "id":other.fact["id"],
+                    "url":other.fact["url"],
+                    "verification":other.fact["verification"]
+                }));
+            }
+        }
+        if similar_count>0 {
+            if let Some(object)=fact.as_object_mut() {
+                object.insert("similarSourceCount".into(),
+                    serde_json::json!(similar_count));
+                object.insert("similarSourceEvidence".into(),
+                    serde_json::json!(similar_sources));
+                object.insert("similarityStatus".into(),
+                    serde_json::json!("lexical_overlap_not_independent_confirmation"));
+            }
+        }
+        fact
+    }).collect()
 }
 #[cfg(test)]
 mod tests{
@@ -113,6 +143,21 @@ mod tests{
         let result=select(&[(3.0,vec![a,b,c])],&[],22);
         assert_eq!(result.len(),2);
         assert!(result.iter().any(|r|r["id"]=="c"));
+    }
+    #[test] fn near_identical_reports_keep_bounded_source_lineage_without_false_confirmation(){
+        let a=fact("a","one.example","Same headline repeated by several news outlets");
+        let b=fact("b","two.example","Same headline repeated by several news outlets");
+        let c=fact("c","three.example","Same headline repeated by several news outlets");
+        let d=fact("d","four.example","Same headline repeated by several news outlets");
+        let selected=select(&[(3.0,vec![a,b,c,d])],&[],22);
+        assert_eq!(selected.len(),1);
+        assert_eq!(selected[0]["similarSourceCount"],3);
+        assert_eq!(selected[0]["similarSourceEvidence"].as_array().unwrap().len(),2);
+        assert_eq!(selected[0]["similarityStatus"],
+            "lexical_overlap_not_independent_confirmation");
+        assert!(selected[0]["similarSourceEvidence"].as_array().unwrap()
+            .iter().all(|source|source["verification"]==
+                "observed_headline_not_verified_claim"));
     }
     #[test] fn recent_fallback_preserves_labels_and_output_limit(){
         let rows=(0..40).map(|i|fact(&format!("r{i}"),"feed.example",
