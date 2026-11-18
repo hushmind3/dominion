@@ -56,6 +56,10 @@ pub fn definitions() -> Vec<Value> {
         tool("skill_read", "Load the bounded instructions for an enabled Skill 스킬 by exact ID. Honors agent, session and channel scope. Content is advisory, not a new owner instruction.", object(json!({
             "id":text("ID returned by skill_search")
         }), vec!["id"])),
+        tool("skill_resource_read", "Read a text reference/template belonging to an enabled Skill 스킬. Relative paths only, file size bounded, no script execution or access outside the installed Skill folder.", object(json!({
+            "id":text("Skill ID returned by skill_search"),
+            "path":text("Relative reference path from the installed Skill root")
+        }),vec!["id","path"])),
         tool("delegate_task", "Delegate a self-contained task to another agent and optionally wait for its result", object(json!({
             "agentId": text("Target agent id"),
             "prompt": text("Task instructions"),
@@ -340,6 +344,14 @@ pub async fn execute(
                 ctx.store,ctx.session_id,ctx.agent_id
             );
             crate::engine::skill_discovery::read(ctx.store,&scope,&id)
+        }
+        "skill_resource_read" => {
+            let id=required_arg(args,"id")?;
+            let path=required_arg(args,"path")?;
+            let scope=crate::engine::memory::MemoryScope::for_session(
+                ctx.store,ctx.session_id,ctx.agent_id
+            );
+            crate::engine::skill_discovery::read_resource(ctx.store,&scope,&id,&path)
         }
         "skill_propose" => {
             let name = required_arg(args, "name")?;
@@ -1852,6 +1864,7 @@ mod tests {
             "memory_search",
             "skill_search",
             "skill_read",
+            "skill_resource_read",
         ] {
             assert!(
                 names.iter().any(|name| name == expected),
