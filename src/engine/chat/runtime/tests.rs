@@ -159,6 +159,57 @@ mod outcome_tests {
         let _=std::fs::remove_dir_all(dir);
     }
 
+    #[tokio::test]
+    async fn discovered_read_uses_the_existing_real_tool_gateway() {
+        let (state,dir)=state();
+        std::fs::write(dir.join("observed.txt"),"original disk evidence").unwrap();
+        let session_id="cap-session";
+        let execution_id="cap-execution";
+        state.store.put("session",&json!({"id":session_id}));
+        state.store.put("execution",&json!({"id":execution_id,"sessionId":session_id,"status":"running"}));
+        let request=TurnRequest {
+            session_id:Some(session_id.into()),input:"inspect observed.txt".into(),
+            attachment_ids:Vec::new(),agent_id:None,provider_id:None,
+            model:None,tools_enabled:true,tools_execution_enabled:true,
+            thinking:None,reasoning_effort:None,reasoning_language:None,
+            auto_learning:false,system_override:None,task_id:None,
+            parent_task_id:None,task_revision:None,verification_owner:None,
+        };
+        let (tx,_rx)=tokio::sync::mpsc::unbounded_channel();
+        let metrics=std::sync::Mutex::new(Metrics::default());
+        let search_args=json!({"query":"workspace read"});
+        let search_call=ToolCall {
+            id:"lookup".into(),name:"dominion_tool_search".into(),
+            arguments:search_args.to_string(),
+        };
+        let (search_result,ok,_)=dispatch_tool_call(
+            &state,&tx,&json!({"id":session_id}),&request,session_id,execution_id,
+            &search_call,search_args,&metrics,1,0,0,false,"model",None,None,None,
+        ).await.expect("search must use the native gateway");
+        assert!(ok,"{search_result}");
+        assert!(search_result["matches"].as_array().unwrap().iter()
+            .any(|item|item["name"]=="workspace_read"));
+        let args=json!({"name":"workspace_read","arguments":{"path":"observed.txt"}});
+        let call=ToolCall {
+            id:"discovered".into(),name:"dominion_tool_call".into(),
+            arguments:args.to_string(),
+        };
+        let (result,ok,_)=dispatch_tool_call(
+            &state,&tx,&json!({"id":session_id}),&request,session_id,execution_id,
+            &call,args,&metrics,2,0,1,false,"model",None,None,None,
+        ).await.expect("discovered read must dispatch through the normal tool gateway");
+        assert!(ok,"{result}");
+        assert_eq!(result["content"],"original disk evidence");
+        let operations=state.store.execution_operations(execution_id).unwrap();
+        assert_eq!(operations.len(),2);
+        assert!(operations.iter().any(|operation|
+            operation["tool"]=="dominion_tool_search"&&operation["status"]=="completed"));
+        assert!(operations.iter().any(|operation|
+            operation["tool"]=="workspace_read"&&operation["status"]=="completed"
+                &&operation["origin"]=="model"));
+        let _=std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn finalization_hash_ignores_mutable_counters_and_timings() {
         let base = json!({
@@ -760,6 +811,37 @@ mod harness_tool_selection_tests {
             true,
         );
         assert_eq!(selected.len(), 8);
+    }
+
+    #[test]
+    fn progressive_disclosure_preserves_search_and_call_but_bounds_large_catalogs() {
+        let mut available=crate::engine::tools::definitions();
+        for index in 0..90 {
+            available.push(json!({"type":"function","function":{
+                "name":format!("mcp__catalog__item_{index:03}"),
+                "description":"Unrelated third party integration",
+                "parameters":{"type":"object","properties":{}}
+            }}));
+        }
+        let shown=progressive_tools(available.clone(),"read code and inspect files");
+        let names=shown.iter().map(tool_name).collect::<Vec<_>>();
+        assert!(names.contains(&"dominion_tool_search"));
+        assert!(names.contains(&"dominion_tool_call"));
+        assert!(names.contains(&"workspace_read"));
+        assert!(shown.len()<=16,"large catalogs should not flood small models");
+        assert!(shown.len()<available.len()/3);
+        assert_eq!(names.iter().filter(|name|**name=="dominion_tool_search").count(),1);
+    }
+
+    #[test]
+    fn small_catalog_retains_native_tool_contracts() {
+        let definitions=crate::engine::tools::definitions().into_iter()
+            .filter(|definition|matches!(tool_name(definition),
+                "workspace_read"|"workspace_write"|"dominion_tool_search"|"dominion_tool_call"))
+            .collect::<Vec<_>>();
+        let shown=progressive_tools(definitions,"write file");
+        assert_eq!(shown.len(),4);
+        assert!(shown.iter().any(|definition|tool_name(definition)=="workspace_write"));
     }
 
     #[test]
