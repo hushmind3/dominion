@@ -721,6 +721,48 @@ mod harness_tool_selection_tests {
     }
 
     #[test]
+    fn room_acceptance_fallback_never_exposes_every_discovered_mcp_schema() {
+        let mut definitions = vec![
+            json!({"type":"function","function":{"name":"workspace_list"}}),
+            json!({"type":"function","function":{"name":"workspace_read"}}),
+            json!({"type":"function","function":{"name":"workspace_write"}}),
+            json!({"type":"function","function":{"name":"shell_exec"}}),
+        ];
+        for index in 0..60 {
+            definitions.push(json!({
+                "type":"function",
+                "function":{"name":format!("mcp_misc_{index}"),"description":"opaque adapter"}
+            }));
+        }
+        let selected = select_room_tools(
+            definitions,
+            "작업",
+            &std::collections::HashSet::new(),
+            true,
+        );
+        let names = selected.iter().map(tool_name).collect::<Vec<_>>();
+        assert_eq!(selected.len(), 4, "the first step must not load 60 unrelated schemas");
+        assert!(names.contains(&"workspace_read"));
+        assert!(names.contains(&"workspace_write"));
+        assert!(names.contains(&"shell_exec"));
+        assert!(!names.iter().any(|name| name.starts_with("mcp_misc_")));
+    }
+
+    #[test]
+    fn fallback_without_native_tools_is_also_bounded() {
+        let definitions = (0..32)
+            .map(|index| json!({"type":"function","function":{"name":format!("mcp_extra_{index}")}}))
+            .collect::<Vec<_>>();
+        let selected = select_room_tools(
+            definitions,
+            "작업",
+            &std::collections::HashSet::new(),
+            true,
+        );
+        assert_eq!(selected.len(), 8);
+    }
+
+    #[test]
     fn path_arguments_are_normalized_only_when_the_kernel_is_active() {
         let raw = json!({"path":"  ./sub//file.txt  ","content":"x"});
         let untouched = normalize_tool_arguments(raw.clone(), "none");
