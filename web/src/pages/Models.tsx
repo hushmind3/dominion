@@ -329,7 +329,7 @@ export function ModelHub(){
   {id:'oauth',label:t('models.tab.oauth')},
  ]
  return <div className="mx-auto w-full max-w-[1200px] px-4 py-5 sm:px-6 lg:py-6">
-  <DominionCloudAccount onProviderAdded={providers.reload}/>
+
   <header className="mb-4 flex flex-wrap items-end justify-between gap-3">
    <div><h1 className="m-0 text-[19px] font-bold tracking-tight text-[#24211D]">{t('models.page.title')}</h1><p className="mt-1 text-[12px] text-[#7C7469]">{t('models.page.desc')}</p></div>
    <Button type="button" onClick={()=>open()} className="inline-flex h-8 items-center gap-2 rounded-lg border border-[#E1D9CC] bg-white px-3 text-[11px] font-semibold text-[#3A342D] hover:bg-[#FAF7F1]"><Plus size={14}/> {t('models.apiAdd')}</Button>
@@ -351,7 +351,8 @@ export function ModelHub(){
    <span className="ml-auto text-[10px] text-[#9C9388]">{freeCatalog.value.updatedAt?t('models.freeCheck.updated',{time:new Date(freeCatalog.value.updatedAt).toLocaleString()}):t('models.freeCheck.empty')}</span>
    <Button type="button" variant="ghost" size="sm" disabled={freeBusy} onClick={()=>void refreshFreeCatalog()}>{freeBusy?<RefreshCw size={13} className="animate-spin"/>:<RefreshCw size={13}/>} {freeBusy?t('models.freeCheck.checking'):t('models.freeCheck.refresh')}</Button>
   </section>
-  {tab==='catalog'&&<section className="rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-5 shadow-[0_1px_2px_rgba(36,33,29,.04)]">
+  {tab==='providers'&&<div className="mb-4"><DominionCloudAccount onProviderAdded={providers.reload}/></div>}
+   {tab==='catalog'&&<section className="rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-5 shadow-[0_1px_2px_rgba(36,33,29,.04)]">
    <div className="mb-3 flex flex-wrap items-start justify-between gap-2"><div><h2 className="m-0 text-[16px] font-bold text-[#24211D]">{t('models.catalog.title')}</h2><p className="mt-1 text-[12px] text-[#7C7469]">{t('models.catalog.desc')}</p></div><Button type="button" variant="ghost" size="sm" disabled={catalog.loading} onClick={()=>void catalog.reload()}>{catalog.loading?<RefreshCw size={13} className="animate-spin"/>:<RefreshCw size={13}/>} {t('models.catalog.refresh')}</Button></div>
    <div className="mb-2 flex flex-wrap items-center gap-2"><TextInput value={query} onChange={e=>{setQuery(e.target.value);setCatalogLimit(60)}} placeholder={t('models.providerSearch')} className="min-w-[180px] flex-1 !text-[12px]"/><SelectInput aria-label="업체 정렬" value={catalogSort} onChange={e=>setCatalogSort(e.target.value as 'name'|'models')} className="!w-auto !text-[12px]"><option value="name">업체 이름순</option><option value="models">모델 많은 순</option></SelectInput><span className="text-[11px] text-[#7C7469]">{catalogVisible.length}개 업체 · 중복 주소 제외</span></div>
    {catalog.error&&<Notice message={catalog.error}/>}
