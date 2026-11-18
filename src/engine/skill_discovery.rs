@@ -56,11 +56,11 @@ fn relevance(skill:&Value,query:&str)->i32{
         items.iter().filter_map(Value::as_str).take(16)
             .collect::<Vec<_>>().join(" ").to_lowercase()).unwrap_or_default();
     let mut score=0i32;
-    if name.chars().count()>=3 && needle.contains(&name) {score+=16;}
+    if name.chars().count()>=3 && needle.contains(name.as_str()) {score+=16;}
     for token in tokens {
-        if name.contains(&token){score+=6;}
-        if description.contains(&token){score+=2;}
-        if tags.contains(&token){score+=3;}
+        if name.contains(token.as_str()){score+=6;}
+        if description.contains(token.as_str()){score+=2;}
+        if tags.contains(token.as_str()){score+=3;}
     }
     score
 }
