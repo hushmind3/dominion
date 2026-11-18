@@ -702,11 +702,15 @@ mod tests {
                 "url": format!("http://{addr}/mcp"),
             }));
         }
+        let expected = enabled_servers(&state).iter().map(|server| {
+            let suffix = server["id"].as_str().unwrap().trim_start_matches("concurrent-");
+            format!("tool_{suffix}")
+        }).collect::<Vec<_>>();
         let listed = tokio::time::timeout(Duration::from_secs(6), tools(&state))
             .await.expect("independent MCP discovery must not be serialized");
         assert_eq!(listed.len(), 3);
         let names = listed.into_iter().map(|tool| tool.tool).collect::<Vec<_>>();
-        assert_eq!(names, vec!["tool_0", "tool_1", "tool_2"]);
+        assert_eq!(names, expected, "completion order cannot reorder tool schemas");
         for server in servers { server.abort(); }
     }
 
