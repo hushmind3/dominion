@@ -113,11 +113,19 @@ fn knowledge_context(state:&AppState,campaign:&Value) -> String {
     }
     let recent=state.store.money_fact_recent(120).unwrap_or_default();
     let facts=crate::engine::money_retrieval::select(&rankings,&recent,22);
-    facts.into_iter().map(|f|format!(
-        "- [{}] {} | {} | {}",
-        bounded(&f["verification"],26),bounded(&f["claim"],240),
-        bounded(&f["url"],220),bounded(&f["originCampaignId"],50)
-    )).collect::<Vec<_>>().join("\n")
+    facts.into_iter().map(|f|{
+        // A single related URL is enough to preserve the retrieval trail in
+        // a small-model context; the full bounded lineage remains in the
+        // deterministic retrieval record for inspection.
+        let similar=f["similarSourceEvidence"].as_array()
+            .and_then(|sources|sources.first())
+            .map(|source|format!(" | 유사원문(독립검증 아님)={}",
+                bounded(&source["url"],180))).unwrap_or_default();
+        format!("- [{}] {} | {} | {}{}",
+            bounded(&f["verification"],26),bounded(&f["claim"],240),
+            bounded(&f["url"],220),bounded(&f["originCampaignId"],50),
+            similar)
+    }).collect::<Vec<_>>().join("\n")
 }
 
 fn fact_id(url:&str,claim:&str)->String {
