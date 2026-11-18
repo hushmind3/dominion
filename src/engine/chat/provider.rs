@@ -1309,6 +1309,10 @@ fn codex_input(messages: &[Value]) -> (String, Vec<Value>) {
                 }
                 instructions.push_str(&content);
             }
+            "developer" => {
+                input.push(json!({"role":"developer",
+                    "content":[{"type":"input_text","text":content}]}));
+            }
             "assistant" => {
                 if !content.trim().is_empty() {
                     input.push(json!({
@@ -1373,6 +1377,35 @@ fn codex_input(messages: &[Value]) -> (String, Vec<Value>) {
         }));
     }
     (instructions, input)
+}
+
+/// Responses WebSocket chains preserve developer input items, but not
+/// top-level instructions. Keep all original system rules as developer items
+/// in their order, allowing a matching chain to omit them on later calls.
+/// HTTP retains its original top-level instructions unchanged.
+fn codex_ws_bootstrap_input(messages:&[Value])->Vec<Value>{
+    let rows=messages.iter().map(|message|{
+        let mut item=message.clone();
+        if item["role"]=="system"{item["role"]=json!("developer");}
+        item
+    }).collect::<Vec<_>>();
+    codex_input(&rows).1
+}
+
+fn codex_ws_developer_feature_id(provider:&ProviderRef)->String{
+    format!("codex-ws-developer-v1-{}",crate::engine::memory::stable_id(&[
+        &provider.id,&provider.base_url,&provider.model,
+    ]))
+}
+fn codex_ws_developer_enabled(state:&AppState,provider:&ProviderRef)->bool{
+    state.store.get("provider_wire_feature",&codex_ws_developer_feature_id(provider))
+        .is_none_or(|row|row["accepted"]!=false)
+}
+fn codex_ws_developer_unsupported(error:&str)->bool{
+    let error=error.to_ascii_lowercase();
+    error.contains("developer") && ["unsupported","not supported","unrecognized",
+        "invalid role","unknown role","not allowed","invalid value"]
+        .iter().any(|reason|error.contains(reason))
 }
 
 /// Terminal failure events have identical meaning on HTTP and WebSocket.
@@ -1440,10 +1473,17 @@ async fn stream_codex_once(
         &provider.api_key,
     )
     .await?;
-    // Prefer the incremental websocket transport: the identity/persona
-    // instructions are still sent every call, but the accumulated transcript
-    // is replaced by the new suffix while the connection holds the chain.
-    let ws_body=super::continuity::hinted_body(state,provider,&body,continuity,super::continuity::CacheWire::Key);
+    // The first successful WS request carries the charter and persona as
+    // developer INPUT. Subsequent previous_response_id turns send only new
+    // input items. Every HTTP fallback still sends the full original system.
+    let ws_developer=codex_ws_developer_enabled(state,provider);
+    let mut ws_body=super::continuity::hinted_body(
+        state,provider,&body,continuity,super::continuity::CacheWire::Key);
+    let ws_input=if ws_developer{
+        ws_body["instructions"]=json!(
+            "Continue following the developer instructions in this conversation.");
+        codex_ws_bootstrap_input(messages)
+    }else{input.clone()};
     let websocket = super::codex_ws::stream(
         state,
         provider,
@@ -1451,7 +1491,7 @@ async fn stream_codex_once(
         &access,
         continuity["transportSessionId"].as_str().unwrap_or(""),
         &ws_body,
-        input,
+        ws_input,
         session_id,
         tx,
     )
@@ -1479,6 +1519,25 @@ async fn stream_codex_once(
                 completion.cached_prompt_tokens,
             );
             return Ok(completion);
+        }
+        Err(super::codex_ws::WsError::Fatal(message))
+            if ws_developer && codex_ws_developer_unsupported(&message) => {
+            // The adapter rejected developer-role input before generating.
+            // Disable this optimization for the exact provider route and
+            // use the complete top-level instructions on the HTTP fallback.
+            let _=state.store.put("provider_wire_feature",&json!({
+                "id":codex_ws_developer_feature_id(provider),
+                "accepted":false,"reason":"developer input unsupported",
+            }));
+            continuity["incrementalTransport"]=json!({
+                "wire":"http","mode":"full-fallback",
+                "fallbackReason":"developer input unsupported",
+                "personaResent":true,
+            });
+            state.store.audit("codex.ws.developer_unsupported",json!({
+                "sessionId":session_id,"providerId":provider.id,
+                "reason":message.chars().take(180).collect::<String>(),
+            }));
         }
         Err(super::codex_ws::WsError::Fatal(message)) => return Err(message),
         Err(super::codex_ws::WsError::HintRejected(reason)) => {
@@ -2292,6 +2351,29 @@ mod tests {
         }
         assert_eq!(text, "파일을 생성했습니다.");
         assert!(!text.contains("tool_call"));
+    }
+
+    #[test]
+    fn codex_websocket_bootstraps_persona_once_as_developer_input(){
+        let source=vec![
+            json!({"role":"system","content":"COMMON_PERSONA_PROMPT"}),
+            json!({"role":"user","content":"write file"}),
+            json!({"role":"assistant","content":"checking"}),
+            json!({"role":"system","content":"verify patch"}),
+            json!({"role":"user","content":"continue"}),
+        ];
+        let (http_instructions,http_input)=codex_input(&source);
+        assert!(http_instructions.contains("COMMON_PERSONA_PROMPT"));
+        assert!(http_input.iter().all(|row|row["role"]!="developer"),
+            "HTTP preserves its top-level instructions");
+        let ws=codex_ws_bootstrap_input(&source);
+        assert_eq!(ws[0]["role"],"developer");
+        assert_eq!(ws[0]["content"][0]["text"],"COMMON_PERSONA_PROMPT");
+        assert_eq!(ws[1]["role"],"user");
+        assert_eq!(ws[3]["role"],"developer");
+        assert_eq!(ws[3]["content"][0]["text"],"verify patch");
+        assert!(codex_ws_developer_unsupported("invalid role developer is not supported"));
+        assert!(!codex_ws_developer_unsupported("model is unavailable"));
     }
 
     #[tokio::test]

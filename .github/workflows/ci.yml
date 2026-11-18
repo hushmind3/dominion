@@ -66,6 +66,8 @@ jobs:
           cargo test --lib engine::chat::continuity::tests::a_committed_ws_transport_not_provider_kind_alone_admits_longer_history
           cargo test --lib sdk::tests::native_wait_wakes_on_matching_durable_event_and_stops_polling_idle_jobs
           cargo test --lib engine::chat::provider::tests::cache_usage_distinguishes_hit_from_missing_telemetry
+          cargo test --lib engine::chat::provider::tests::codex_websocket_bootstraps_persona_once_as_developer_input
+          cargo test --lib engine::chat::codex_ws::tests::developer_persona_is_wire_sent_once_and_rebased_on_revision
           # Shared room execution: cancelled epoch versus fresh owner, and
           # provider-wire input costs per participating agent.
           cargo test --lib engine::chat::room_context::tests::wire_profile_attributes_selected_messages_without_retaining_raw_text

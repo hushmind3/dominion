@@ -6,10 +6,10 @@
 //! the socket per participant session, tracks which input items the remote
 //! chain already holds, and sends only the new suffix on later calls.
 //!
-//! `instructions` are not inherited through `previous_response_id` (measured:
-//! a directive absent from the continuation request is not applied), so the
-//! full identity/persona prefix is re-sent on every call. Only accumulated
-//! transcript items are reduced.
+//! Top-level `instructions` are not inherited through `previous_response_id`.
+//! The provider adapter instead stores the initial persona as a developer
+//! input item inside the stateful chain. Changed developer input, expired
+//! sockets and HTTP fallbacks all resend the complete verified instruction.
 use super::{Completion, ProviderRef};
 use crate::state::AppState;
 use futures_util::{SinkExt, StreamExt};
@@ -823,6 +823,51 @@ mod tests {
         assert_eq!(requests.recv().await.unwrap()["prompt_cache_key"],"stable-key");
         assert!(requests.try_recv().is_err(),"do not open another socket to send the same rejected hint");
         server.abort();drop(state); std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn developer_persona_is_wire_sent_once_and_rebased_on_revision(){
+        let (state,root)=test_state();
+        let (provider,mut requests,server)=fixture(vec![
+            json!({"type":"response.output_text.delta","delta":"reply"}),
+            json!({"type":"response.completed","response":{
+                "id":"resp-1","output":[]}}),
+        ]).await;
+        let (tx,_)=tokio::sync::mpsc::unbounded_channel();
+        let developer=item("developer","COMMON_PERSONA_STABLE");
+        let owner=item("user","request one");
+        let prefix=vec![developer.clone(),owner.clone()];
+        let base=json!({"instructions":"Continue following existing developer instructions."});
+        let first=stream(&state,&provider,"fixture","fixture","session",&base,
+            prefix.clone(),"session",&tx).await.unwrap();
+        let first_wire=requests.recv().await.unwrap();
+        assert_eq!(first_wire["input"],json!(prefix));
+        assert_eq!(first_wire["instructions"],base["instructions"]);
+        assert_eq!(first.transport["chainReusedItems"],0);
+        let second_input=vec![
+            developer.clone(),owner.clone(),item("assistant","reply"),
+            item("user","new task")
+        ];
+        let second=stream(&state,&provider,"fixture","fixture","session",&base,
+            second_input,"session",&tx).await.unwrap();
+        let second_wire=requests.recv().await.unwrap();
+        assert_eq!(second_wire["input"],json!([item("user","new task")]),
+            "persona and old dialogue must not travel again");
+        assert_eq!(second_wire["previous_response_id"],"resp-1");
+        assert_eq!(second.transport["chainReusedItems"],3);
+        let revised=vec![
+            item("developer","COMMON_PERSONA_REVISED"),owner,
+            item("assistant","reply"),item("user","new task")
+        ];
+        let third=stream(&state,&provider,"fixture","fixture","session",&base,
+            revised.clone(),"session",&tx).await.unwrap();
+        let third_wire=requests.recv().await.unwrap();
+        assert_eq!(third_wire["input"],json!(revised),
+            "persona revision must send a full new prefix");
+        assert!(third_wire.get("previous_response_id").is_none());
+        assert_eq!(third.transport["mode"],"full");
+        forget(&registry_key(&provider,"fixture","session"));
+        server.abort();drop(state);std::fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]
