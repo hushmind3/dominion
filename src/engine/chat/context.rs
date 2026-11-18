@@ -231,7 +231,10 @@ fn context_block_with_manifest(
             a["id"].as_str().unwrap_or("").cmp(b["id"].as_str().unwrap_or(""))
         })
     });
-    let skills = available_skills.into_iter().take(12)
+    // Tool-disabled turns must not expand the old five-skill bound into
+    // twelve eagerly injected 700-character instruction bodies.
+    let skill_limit=if allow_skill_read {12} else {5};
+    let skills = available_skills.into_iter().take(skill_limit)
         .map(|skill|{
             let id=skill["id"].as_str().unwrap_or("").to_owned();
             let name=skill["name"].as_str().unwrap_or("").chars().take(80).collect::<String>();
