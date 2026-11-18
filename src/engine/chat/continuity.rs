@@ -200,9 +200,19 @@ pub(crate) fn project(
         json!({"key":key,"message":body})
     }).collect::<Vec<_>>();
     let mut frames = previous["frames"].as_array().cloned().unwrap_or_default();
+    // Legacy tool-heavy room projections could carry an owner-state frame
+    // without its revision proof. Never use the monotonic fast path for those
+    // frames; rebuild a fresh source-scoped projection once.
+    let owner_proof_missing = frames.iter().any(|frame|
+        frame["key"].as_str().is_some_and(|key| key.starts_with("owner-state:")))
+        && !dependencies.iter().any(|dependency|
+            dependency["kind"] == "room_state"
+                && dependency["activeFacts"].is_array()
+                && dependency["metadataDigest"].is_string());
     let mut reason = if frames.is_empty() { Some("initial") }
         else if previous["signature"] != signature { Some("contract_changed") }
         else if participant["lastReplyMessageId"].as_str().is_some_and(|id|state.store.message(id).is_none()) { Some("transcript_reset") }
+        else if owner_proof_missing { Some("owner_state_proof_missing") }
         else if dependencies.iter().any(|dependency| {
             state.store.get(dependency["kind"].as_str().unwrap_or(""),dependency["id"].as_str().unwrap_or(""))
                 .is_none_or(|record| {
