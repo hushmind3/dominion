@@ -73,6 +73,17 @@ fn frame_key(message: &Value, source: &str, index: usize) -> String {
         .unwrap_or_else(|| format!("transient-{}", stable_id(&[source, &index.to_string(), &wire_message(message).to_string()])))
 }
 
+/// Enlarged history is beneficial only after this exact provider route
+/// has a committed, successful WS response. When Codex fell back to HTTP,
+/// its returned transport is "http" and the next turn keeps the room's
+/// normal context budget instead of growing full HTTP resend costs.
+fn has_confirmed_ws_history(state:&AppState,plan:&Value)->bool{
+    plan["previousRouteReplyMessageId"].as_str()
+        .and_then(|id|state.store.message(id))
+        .is_some_and(|reply|
+            reply["metadata"]["continuity"]["incrementalTransport"]["wire"]=="websocket")
+}
+
 /// The room's contextBudgetTokens bounds the FRESH selected context. For an
 /// actually persistent Codex WebSocket chain, reusing the older frames costs
 /// no transcript bytes on the next turn. Rebase only once that carried-over
@@ -161,8 +172,9 @@ pub(crate) fn project(
         let allowance = room.as_ref().map(|room|room["contextBudgetTokens"].as_u64().unwrap_or(2_000) as usize)
             .unwrap_or(40_000);
         let fixed = super::room_context::input_estimate(&[wire_message(&messages[0])], tools);
-        let websocket_enabled=!std::env::var("DOMINION_CODEX_WS")
-            .is_ok_and(|mode|matches!(mode.as_str(),"off"|"http"));
+        let websocket_enabled=has_confirmed_ws_history(state,plan)
+            && !std::env::var("DOMINION_CODEX_WS")
+                .is_ok_and(|mode|matches!(mode.as_str(),"off"|"http"));
         let allowance=continuation_history_allowance(provider,allowance,fixed,websocket_enabled);
         plan["workingViewBudgetTokens"]=json!(allowance);
         let history_cost = |rows:&[Value]| super::room_context::input_estimate(
@@ -423,6 +435,27 @@ mod tests {
     fn route() -> ProviderRef {
         ProviderRef { id:"p".into(),name:"test".into(),base_url:"https://example.test/codex".into(),api_key:"never-store-this".into(),model:"model-a".into(),tool_mode:"native".into(),reasoning_protocol:"openai".into(),local:false,context_tokens:None,max_output_tokens:None,requests_per_minute:None,kind:"codex".into(),account_id:Some("account-a".into()) }
     }
+    #[test]
+    fn a_committed_ws_transport_not_provider_kind_alone_admits_longer_history(){
+        let dir=std::env::temp_dir().join(format!("sub2-ws-audit-{}",uuid::Uuid::new_v4()));
+        let state=state(&dir);
+        let with=|wire:&str|state.store.write_message(&json!({
+            "session_id":"room:a","agent_id":"a","role":"assistant",
+            "content":format!("transport {wire}"),
+            "metadata":{"continuity":{"incrementalTransport":{"wire":wire}}}
+        })).unwrap();
+        let previous_ws=with("websocket");
+        let previous_http=with("http");
+        assert!(has_confirmed_ws_history(&state,
+            &json!({"previousRouteReplyMessageId":previous_ws["id"]})));
+        assert!(!has_confirmed_ws_history(&state,
+            &json!({"previousRouteReplyMessageId":previous_http["id"]})));
+        assert!(!has_confirmed_ws_history(&state,
+            &json!({"previousRouteReplyMessageId":"unknown"})));
+        assert!(!has_confirmed_ws_history(&state,&json!({})));
+        drop(state);std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn only_persistent_ws_enlarges_bounded_history_not_http_replay(){
         let mut provider=route();
