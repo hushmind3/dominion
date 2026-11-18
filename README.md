@@ -1,287 +1,249 @@
 # DOMINION
 
-<p align="center">
-  <img src="src-tauri/icons/icon.png" alt="DOMINION" width="90" />
+**Bring your own model. Run your own agents. Own your workflow.**
+
+<p>
+  <img src="src-tauri/icons/icon.png" alt="DOMINION" width="80" />
 </p>
 
-<h3 align="center">Bring your own model. Run your own agents. Own your workflow.</h3>
+An open-source, local-first AI agent workspace — a native Rust execution engine with a Tauri desktop app.
+Point it at your own API keys or a local model, then let tool-using agents read and edit code, run commands,
+search the web, call MCP servers and work together in multi-agent rooms. Every file write and shell command
+waits for your approval, and all state stays in a SQLite database on your machine.
 
-<p align="center">
-  <strong>An open-source, local-first AI agent workspace powered by a native Rust execution engine.</strong><br/>
-  Connect your own cloud or local LLMs. Run tool-using agents, collaborate across multiple agents, connect external media tools through MCP, and complete verified workflows.
-</p>
+[English](README.md) · [한국어](README.ko.md)
 
-<p align="center">
-  <a href="README.md"><strong>English</strong></a> · <a href="README.ko.md">한국어</a>
-</p>
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+![Engine: Rust](https://img.shields.io/badge/engine-Rust-262626)
+![Desktop: Tauri 2](https://img.shields.io/badge/desktop-Tauri%202-24C8DB)
+![UI: React](https://img.shields.io/badge/UI-React-149ECA)
+![Models: BYOK + local](https://img.shields.io/badge/models-BYOK%20%2B%20local-6855D8)
 
-<p align="center">
-  <a href="LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue" /></a>
-  <img alt="Rust engine" src="https://img.shields.io/badge/engine-Rust-262626" />
-  <img alt="React interface" src="https://img.shields.io/badge/interface-React-149ECA" />
-  <img alt="BYOK and local LLMs" src="https://img.shields.io/badge/models-BYOK%20%2B%20local-6855D8" />
-  <a href="https://github.com/hushmind3/dominion-rust/actions"><img alt="GitHub Actions" src="https://img.shields.io/github/actions/workflow/status/hushmind3/dominion-rust/ci.yml?branch=main&label=CI" /></a>
-</p>
-
-<p align="center">
-  <a href="#-screenshots">Screenshots</a> ·
-  <a href="#-what-you-can-do">Features</a> ·
-  <a href="#-quick-start">Quick start</a> ·
-  <a href="#-architecture">Architecture</a> ·
-  <a href="https://github.com/hushmind3/dominion-rust/discussions">Discussions</a> ·
-  <a href="#-contributing">Contribute</a>
-</p>
+[Screenshots](#screenshots) · [Features](#what-you-can-do) · [Models](#models) · [Install](#quick-start) ·
+[Architecture](#architecture) · [Status](#project-status) · [Discussions](https://github.com/hushmind3/dominion-rust/discussions)
 
 ---
 
-## Native Rust execution harness (2026)
+## Screenshots
 
-DOMINION does **not** use a lexical retrieval score as its agent controller.
-The [`dominion-core` Rust engine](crates/dominion-core/src/engine.rs) owns the
-bounded **initialize → plan (when needed) → model → tool admission/execution →
-verification → completion** loop. The product adapter in
-[`src/engine/chat/product.rs`](src/engine/chat/product.rs) connects that loop
-to the actual provider, user instruction, workspace, approvals, SQLite
-receipts and frozen acceptance conditions.
+<!-- TODO before publishing: re-capture these from the current build. The first image still shows the
+     retired "영상 제작" sidebar entry and no Money entry, so it is older than the current navigation. -->
 
-| Execution layer | Actual implementation |
-| --- | --- |
-| **Kernel / safety** | [Shared driver](crates/dominion-core/src/engine.rs), [native snapshots and tool intents](crates/dominion-core/src/hosted.rs), [shared budgets](crates/dominion-core/src/budget.rs); cancellation, outstanding approval or unresolved tool/child effects block false completion. |
-| **Planning / control** | [Versioned executable algorithms](src/engine/algorithms.rs), including `acceptance-lineage-dag-2026` for task decomposition, selection of applicable strategies and budget-aware tool use. Algorithm records select real Rust kernels; old experimental records are not an autonomous self-modifying engine. |
-| **Verification / repair** | [Frozen postcondition verifier](src/engine/verification.rs), [resource-scoped obligation frontier](src/engine/obligation_repair.rs), [receipt-based recovery](src/engine/recovery.rs) and [bounded causal diagnostics](src/engine/adaptation/diagnostics.rs). Completed mutations are not blindly replayed. |
-| **Memory / context** | [Evidence-lineage memory reranking](src/engine/memory.rs), [owner-confirmed room state](src/engine/room_state.rs), [source-aware room compilation](src/engine/chat/room_context.rs), and [lazy skill inspection](src/engine/tools.rs). Lexical search is a candidate retrieval component, **not the harness policy**. |
-| **Provider / token reuse** | [Provider-specific request assembly](src/engine/chat/provider.rs), [Codex incremental WebSocket](src/engine/chat/codex_ws.rs) and [continuity policy](src/engine/chat/continuity.rs). History eviction and owner edits may require a safe full rebase; transport byte estimates and provider-billed cache tokens are recorded separately. |
+**Multi-agent room — several agents share one conversation, with per-speaker token accounting**
 
-**Verified-checkpoint completion:** after real tool effects satisfy every frozen
-postcondition, the kernel can finish without buying an extra model round.
-That shortcut requires attributable persisted receipts, no unresolved effects,
-a current owner revision and cleared standing procedures. The final response
-is published only after its durable message write. This is not a blanket claim
-that every successful tool call completes a task.
-
-**Current limitations:** the 2026-11-09 nine-agent / 100-owner-turn benchmark
-[`ROOM-100-TURN-LUNA`](benchmark/ROOM-100-TURN-LUNA-2026-11-09.json)
-reported 18.15% provider cache reuse and failed long-range recall on its
-older experimental branch. Recent code changes have **not** yet established
-a new cache hit rate, recall improvement, cost saving or live-model success
-rate. Source-level changes and mocked regressions should never be described
-as an end-to-end performance result.
-
-The existing React UI, product SQLite data, OAuth credentials and external
-MCP contracts are preserved. Native video/audio creation and perpetual RSI
-campaigns have been retired; existing records remain readable, while requested
-code changes use ordinary inspect → edit → test → verify tasks.
-For execution recovery, provenance and acceptance invariants, see
-[the detailed harness contract](docs/HARNESS.md).
-
-### Group-room recall without resending confirmed facts
-
-Room turns use a **proof-carrying append-only working view** in
-[`continuity.rs`](src/engine/chat/continuity.rs). The current question may
-select a different subset of existing owner-confirmed facts. When those facts
-are still valid in the persisted `room_state` evidence ledger, the runtime
-keeps the previous prefix and sends only the newly selected verbatim fact
-lines. Adding a genuine new owner fact is also appendable if every previously
-visible fact is unchanged. **Corrections, supersession, revoked evidence,
-scope changes, modified system instructions, and history-budget rotation**
-force a fresh source-scoped projection instead of silently reusing stale text.
-
-This also applies to **tool-heavy group work**: the native-work fallback
-carries the room owner-state provenance, and legacy projections without a
-verified revision proof are rebuilt once. Original owner messages and tool
-receipts remain in SQLite; the optimization changes the model-visible
-projection, not durable memory. The
-[`owner_fact_selection_reuses_prefix_and_appends_missing_facts_until_real_revision`]
-(src/engine/chat/continuity.rs) regression verifies append-only reuse,
-deduplication and correction invalidation.
-
-**Measurement boundary:** a reusable prefix is not proof of a provider cache
-hit. Per-execution `providerPromptTokens`, `providerCachedPromptTokens`
-and `providerNewPromptTokens` are populated only from usable provider
-accounting. Real-model nine-speaker / 100-turn memory accuracy and new-token
-reduction must be measured separately.
-
-## Development vs release validation
-
-Normal Rust source pushes run only scoped, default-profile kernel/job/Money regression tests on macOS via `.github/workflows/ci.yml`. They do **not** trigger frontend builds, `cargo build/check`, release-profile builds, installer packaging, or the Windows/macOS release matrix. The separate `.github/workflows/release.yml` performs those full checks only for version tags or an explicit manual release request. Passing scoped tests does not imply that a distributable desktop release has been validated.
-
-## 💰 Money intelligence
-
-Money cards also allow the owner to explicitly authorize a prototype implementation through a thin Money approval endpoint that atomically binds the candidate to the **same native SDK execution path** used elsewhere in the product. This binds the selected agent persona, preserves a generic source link across reloads, and exposes native approvals/cancellation/recovery without introducing a separate Money runner. Public sales, purchases, outreach and deployment are outside that MVP authorization.
-
-
-Money discovery collects public RSS, GitHub and Hugging Face signals with the existing Rust worker queue and stores the evidence in indexed SQLite. It produces source-backed business hypotheses without model tokens and offers opt-in AI inference through the existing durable job kernel. Research never authorizes outreach, spending or implementing a business.
-
-[Money architecture and limitations](docs/MONEY.md). No separate execution kernel or autonomous source-code modification system is introduced.
-
-## What is DOMINION?
-
-**DOMINION is an AI agent tool, not another AI model or a token-reselling service.**
-
-Connect a model you already have access to — including supported cloud APIs and locally hosted models — and use it inside an agent workspace. DOMINION's Rust harness handles tool execution, permissions, durable tasks, long-term memory, and multi-agent coordination. Native media generation and autonomous RSI campaigns have been retired; use external MCP tools for media generation and ordinary verified agent tasks for code changes.
-
-You choose the models. You control the credentials. You run the workspace.
-
-**Designed for developers, local-LLM enthusiasts, and people who want to experiment with their own autonomous workflows.**
-
-## 📸 Screenshots
-
-**Multi-agent room — agents sharing a conversation, with participant and room controls**
-
-<p align="center">
+<p>
   <a href="docs/01-multi-agent-room.webp">
-    <img src="docs/01-multi-agent-room.webp" alt="DOMINION multi-agent room with multiple participants, conversation history, and room settings" width="100%" />
+    <img src="docs/01-multi-agent-room.webp" alt="DOMINION multi-agent room with participants, shared conversation and room controls" width="100%" />
   </a>
 </p>
 
-<table>
-  <tr>
-    <td align="center" width="50%"><strong>Chat workspace</strong></td>
-    <td align="center" width="50%"><strong>Agent studio</strong></td>
-  </tr>
-  <tr>
-    <td><a href="docs/02-chat-workspace.webp"><img src="docs/02-chat-workspace.webp" alt="DOMINION chat workspace with model selector and task input" width="100%" /></a></td>
-    <td><a href="docs/03-agent-studio.webp"><img src="docs/03-agent-studio.webp" alt="DOMINION agent studio with individual agent cards, roles, and model settings" width="100%" /></a></td>
-  </tr>
-  <tr>
-    <td align="center">Choose a model and give it a task.</td>
-    <td align="center">Configure independent agents and roles.</td>
-  </tr>
-</table>
-
-<sub>Real development-build screenshots with Korean UI labels. English and Korean UI translation files are included in the project. Screenshots show interfaces, not claims of comprehensive real-model reliability.</sub>
-
-## ✨ What you can do
-
-| Feature | Description |
+| Chat workspace | Agent studio |
 | --- | --- |
-| **Your models, your keys** | Register supported API providers with your own credentials. No DOMINION-hosted token subscription required. |
-| **Local LLMs** | Connect local inference with GGUF/llama.cpp or Ollama; a macOS MLX path is also available. |
-| **Tool-using agents** | Work with files, shell commands, HTTP/search tools, skills, and MCP integrations, subject to execution policies. |
-| **Persistent memory** | Store conversation context, verified experience, corrections, and execution history locally. |
-| **Multi-agent rooms** | Give agents separate roles, run shared discussions, and coordinate workflows with multiple participants. |
-| **Durable jobs** | Track tasks, approvals, execution evidence, cancellation, and recovery in SQLite. |
-| **Messaging channels** | Native Telegram and Discord adapters; currently require bot credentials and manual configuration. |
+| [<img src="docs/02-chat-workspace.webp" alt="DOMINION chat workspace with model selector and task input" width="100%" />](docs/02-chat-workspace.webp) | [<img src="docs/03-agent-studio.webp" alt="DOMINION agent studio with agent cards, roles and model settings" width="100%" />](docs/03-agent-studio.webp) |
+| Pick a model and give it a task. | Give each agent its own role, instructions and model. |
 
-### Why a separate agent workspace?
+<sub>Captured from a development build of the Korean UI. Screenshots show the interface, not a claim of
+real-model reliability.</sub>
 
-- **Model flexibility:** use supported cloud models or run locally without locking the entire workflow to one provider.
-- **Execution you can inspect:** tasks have tool calls, outcomes, approvals, and error records, not just chat messages.
-- **Local-first state:** SQLite stores agent data and history locally by default.
-- **Open code:** inspect and extend a Rust engine with a React UI under the Apache-2.0 license.
+## What you can do
 
-## ⚡ Quick start
+| Feature | What it actually does |
+| --- | --- |
+| **Your models, your keys** | Over 30 provider presets — OpenAI, Anthropic, Gemini, DeepSeek, Mistral, xAI, OpenRouter, Groq, Cerebras, Together, Perplexity, GitHub Models and more. No DOMINION account, no token resale. |
+| **Local models** | Ollama, LM Studio, llama.cpp (`llama-server`, GGUF including split files), vLLM, LiteLLM and MLX on macOS. Model download and install are handled in **Models**. |
+| **Subscription logins** | Already paying for ChatGPT or a CLI agent? Codex ChatGPT OAuth and `claude` / `gemini` / `opencode` CLI logins can be used as inference transports. DOMINION still owns the tools, approvals and history — the CLI is only a text generator. |
+| **Tool-using agents** | Workspace and absolute-path file tools, line-range edits guarded by SHA-256, shell and terminal execution, web search, HTTP fetch, headless Chrome control, GitHub read/commit, MCP tools and skills. |
+| **Approvals and receipts** | Writes, shell commands, browser actions and GitHub commits raise an approval request. Cancelled batches record aborted receipts instead of silently dropping calls; uncertain external effects pause for review. |
+| **Durable jobs** | Each turn is a job with checkpoints, cancellation and recovery in SQLite. Once stored tool receipts satisfy the task's postconditions the run can finish without another model round. `POST /api/sdk/runs` accepts an `idempotencyKey` so a retried request returns the original run (and 409 if the arguments changed) instead of executing twice. |
+| **Multi-agent rooms** | Up to 32 participants, speaker order, mentions, shared room knowledge and per-speaker prompt/cache token accounting. Agents can also delegate to each other with isolated Git worktrees and role profiles (`general`, `inspection`, `implementation`, `verification`). |
+| **Memory** | Local SQLite memory — no embedding service, no external memory server. The default `evidence-lineage-2026` reranker scores candidates by the provenance it can verify, and the model must quote your exact words (`evidenceQuote`) to store a fact, so invented memories are rejected. |
+| **Attachments** | Drop images (PNG/JPEG/GIF/WebP) or UTF-8 text files up to 8 MiB into a chat; they are stored locally with the session and served back by the engine. |
+| **Messaging channels** | Telegram bot polling and Discord adapters. Both need your own bot token and destination IDs configured by hand. |
+| **Money research tool (off by default)** | Collects public RSS, GitHub and Hugging Face signals on a local schedule with zero model tokens, then turns them into source-linked business hypotheses. Enable in **Settings → Money tool**. |
 
-**Source build for macOS and Windows.** Install Git, Rust stable/Cargo, Node.js **24.12+**, and your OS's C/C++ build prerequisites. On Windows, you will also need the MSVC build tools and Windows SDK.
+## Models
 
-```bash
+Anything that speaks the OpenAI chat-completions API works: pick a preset or add a base URL. Anthropic is
+supported natively. For local inference, install the runtime once and DOMINION finds the models on disk:
+
+- **Ollama** — start `ollama serve`, add the local preset.
+- **LM Studio / vLLM / llama.cpp / LiteLLM** — point at the local server port (LM Studio 1234, llama.cpp 8080, vLLM 8000, LiteLLM 4000).
+- **MLX** — macOS only, models downloaded into the app's data directory.
+
+Cloud tokens are billed by the provider you chose; local models use your own hardware. Keys are sealed with
+ChaCha20-Poly1305 in a local key vault — the app never shows them again after saving.
+
+## Quick start
+
+DOMINION runs on **macOS 13.3+** and **Windows** (WebView2). Linux is not a supported target yet.
+
+**1. Install the released desktop app.** Download the latest installer from
+[Releases](https://github.com/hushmind3/dominion-rust/releases/latest) — currently **v0.4.3**:
+
+| Platform | File |
+| --- | --- |
+| macOS, Apple Silicon | `DOMINION_0.4.3_aarch64.dmg` |
+| macOS, Intel | `DOMINION_0.4.3_x64.dmg` |
+| Windows, installer | `DOMINION_0.4.3_x64-setup.exe` |
+| Windows, MSI | `DOMINION_0.4.3_x64_en-US.msi` · `DOMINION_0.4.3_x64_ko-KR.msi` |
+
+These builds are unsigned, so macOS Gatekeeper and Windows SmartScreen ask you to confirm on first launch.
+The app keeps its SQLite database, keys, logs and task workspace in your OS app-data folder — nothing is
+written into the installed bundle.
+
+**2. Build the desktop app yourself (Tauri).** This is the product; the window hosts the Rust engine as a
+bundled sidecar.
+
+```
 git clone https://github.com/hushmind3/dominion-rust.git
 cd dominion-rust
 npm ci --prefix web
+node scripts/build-desktop.mjs
+```
+
+Requirements: Git, Rust stable with Cargo, Node.js **24.12+**, and your platform's C/C++ build tools
+(on Windows, MSVC with the C++ desktop workload and the Windows SDK). The bundle lands in
+`src-tauri/target/release/bundle/` — `macos/DOMINION.app` plus a DMG on macOS, MSI and NSIS installers on
+Windows. See [docs/DESKTOP.md](docs/DESKTOP.md) for signing, data locations and sidecar/port behaviour.
+
+**3. Browser mode (engine + Vite bundle).** Faster loop while developing:
+
+```
+npm ci --prefix web
 npm run build --prefix web
-cargo run --release -- --home .
+cargo run --release -- --home . --open
 ```
 
-Open **http://127.0.0.1:4317** in your browser.
+Then open <http://127.0.0.1:4317>.
 
-1. Add your own API provider, or configure a compatible local-model runtime in **Models**.
-2. Select a model in **Chat** and try a task.
-3. Explore **Agents**, **Multi-Agent Rooms**, **Memory**, **Workflows**, and **MCP / Skills**.
-4. To use Telegram or Discord, configure your bot credentials and destination IDs in **Connections**.
+### First five minutes
 
-Cloud-model usage is billed by your provider. Local models use your own hardware. **Prebuilt release downloads are not yet available** — follow the source build above.
+1. **Models** → add a cloud provider with your key, or a local runtime.
+2. **Chat** → choose the model, give it a task, watch tools and approvals appear inline.
+3. **Agents** → give an agent a role and instructions; it keeps its own memory and model.
+4. **Rooms** → put several agents in one room and let them discuss a task.
+5. **Connections** → add a Telegram or Discord bot if you want to talk to agents from your phone.
 
-More details: [installation guide (Korean)](docs/GETTING-STARTED.md) · [desktop build guide](docs/DESKTOP.md).
+More detail: [setup guide (Korean)](docs/GETTING-STARTED.md) · [desktop build](docs/DESKTOP.md) · [account connections](docs/ACCOUNT-CONNECTIONS.md).
 
-## 🧱 Architecture
+## Architecture
 
-```text
-React UI (Vite)
-       │
-       ▼
-Rust HTTP API (Axum) ──► SQLite (local state, memory, jobs, logs)
-       │
-       ▼
-Native Rust agent harness
-       ├── Chat / streaming / tool calls / approvals
-       ├── Memory / experience / workflows / multi-agent rooms
-       ├── Skills / MCP / Telegram / Discord
-       ├── Verified outcomes / explicit error recovery / durable checkpoints
-       ├── User-configured model APIs
-       └── Local inference (GGUF / llama.cpp and other configured runtimes)
+```
+React + Vite UI  ──  Tauri 2 desktop shell (macOS / Windows)
+        │                        │
+        ▼                        ▼
+Rust HTTP API (Axum, 127.0.0.1)  ──►  SQLite (state, memory, jobs, receipts, logs)
+        │
+        ▼
+Native Rust agent engine (crates/dominion-core + product adapters)
+        ├── chat, streaming, tool calls, approvals, cancellation, recovery
+        ├── memory, experience, rooms, delegated jobs, verification
+        ├── skills, MCP (stdio + Streamable HTTP), Telegram, Discord
+        └── model adapters: cloud APIs, local runtimes, CLI logins
 ```
 
-The agent execution engine is written in **Rust**. Node.js is used to build the React frontend rather than to host the agent runtime. Some local-model integrations and MCP servers may require their own processes.
+The agent runtime is Rust; Node only builds the interface. Chat, rooms, scheduled jobs and the HTTP SDK all
+execute through the same engine and the same SQLite journal, so there is no second runtime to reason about.
 
-**Native API / SDK:** The TypeScript client in [`packages/sdk-typescript`](packages/sdk-typescript/README.md) uses the same Rust execution path as chat. Its `waitForRun` stops at completion, approval and manual-recovery boundaries; `waitForVerifiedRun` requires `taskOutcome: "succeeded"` with independent verification evidence. SDK run creation persists task limits and the execution owner atomically. A text answer alone is not evidence of an implemented or tested artifact.
+### What runs the loop
 
-**Technical docs:** [Engine](ENGINE.md) · [Documentation index](docs/INDEX.md) · [Agent harness contract](docs/HARNESS.md).
+The agent is not a prompt wrapper around a search score. `crates/dominion-core` owns a bounded
+**initialize → plan (when needed) → model → tool admission and execution → verification → completion** loop,
+and [`src/engine/chat/product.rs`](src/engine/chat/product.rs) connects it to your provider, workspace,
+approvals and SQLite receipts.
 
-## 🚧 Project status
+| Layer | What is in the repository |
+| --- | --- |
+| **Kernel and safety** | One shared Rust driver, native snapshots and tool intents, shared token/cost budgets. Cancellation, a pending approval or an unresolved external effect blocks completion. |
+| **Planning** | A registry of versioned, executable algorithms — `acceptance-lineage-dag-2026` for task decomposition and strategy selection. Archived experimental records are history, not an autonomous self-modifying engine. |
+| **Verification and repair** | Frozen postcondition checks, a per-resource obligation frontier, receipt-based recovery and bounded causal diagnostics. A model that says the work is done does not complete the task. |
+| **Memory and context** | `evidence-lineage-2026` reranking over a local SQLite corpus, owner-confirmed room state and source-scoped room context. BM25 remains as one candidate-retrieval kernel, not as the harness policy. |
+| **Token reuse** | Provider-specific request assembly, Codex incremental WebSocket transport, and an append-only room projection that keeps a verified prefix and sends only newly selected owner facts. Corrections, revocations and instruction changes force a rebuild. |
 
-DOMINION is an **active developer preview**, not a managed SaaS or a fully validated commercial agent product.
+Two consequences worth knowing:
 
-- The repository implements chat, tool execution, memory, multi-agent rooms, workflow jobs, and model connections. Real-world results depend on model capabilities and the environment.
-- Multi-agent behavior includes mocked-model tests; long-running real-model reliability is still an area to validate.
-- Telegram and Discord integration currently require manual bot setup rather than one-click provisioning.
-- Cache and context-management code exists, but no fixed token-saving percentage is guaranteed.
-- Check the [CI results](https://github.com/hushmind3/dominion-rust/actions) for the status of a particular commit.
+- **Verified-checkpoint completion.** When real tool receipts already satisfy every frozen postcondition, the
+  kernel can finish without buying another model round. It needs attributable persisted receipts, no
+  unresolved effects and a current owner revision.
+- **A reusable prefix is not a cache hit.** Prompt, cached-prompt and new-prompt tokens are recorded per
+  execution, and only from provider accounting.
 
-## 🤝 Contributing
+**TypeScript client:** [`packages/sdk-typescript`](packages/sdk-typescript/README.md) is a thin HTTP client over
+that engine, not a second harness. `waitForRun` stops at completion, approval and manual-recovery boundaries;
+`waitForVerifiedRun` only returns success for `taskOutcome: "succeeded"` backed by independent verification evidence.
 
-Contributions are welcome — particularly **reproducible bug reports, test cases, model/provider compatibility fixes, Rust harness improvements, UI work, and documentation**.
+**Deep dives:** [engine](ENGINE.md) · [harness contract](docs/HARNESS.md) ·
+[implementation notes moved off this page](docs/HARNESS-DETAIL-2026-11-18.md) · [docs index](docs/INDEX.md).
 
-- [Join Discussions](https://github.com/hushmind3/dominion-rust/discussions) — ask questions, share your setup, and propose ideas for agent workflows and MCP integrations.
-- [Open an issue](https://github.com/hushmind3/dominion-rust/issues) — include your OS, model/provider, reproduction steps, and expected vs. actual behavior.
-- [Submit a pull request](https://github.com/hushmind3/dominion-rust/pulls) — explain the change and include appropriate tests when possible.
-- Never include API keys, bot tokens, private conversations, or other secrets in reports.
+## What the agents can do — and what they cannot
 
-**License:** [Apache 2.0](LICENSE) · **한국어:** [README.ko.md](README.ko.md)
+Observational tools (list, read, search, status) run immediately. Anything that mutates something asks first:
 
-## Optional Money tool
+| Needs approval | Runs without asking |
+| --- | --- |
+| `shell_exec`, `terminal_exec` | `workspace_list`, `workspace_read`, `workspace_read_range`, `code_search` |
+| `workspace_write`, `workspace_replace`, `file_write` | `web_search`, `http_fetch` |
+| `browser_control` (open, click, type, screenshot) | `memory_search`, `skill_view`, `task_status`, `task_result` |
+| GitHub commits and `github_api` write methods | `workspace_git_status`, `workspace_git_diff`, `github_file_read` |
 
-The Money research capability can be enabled or paused in **Settings → Money tool**. New installations start with the tool disabled; existing installs with Money data keep their prior on state. Pausing stops its background RSS, catalog and AI jobs and keeps archives and separately approved SDK work. It uses the normal Rust harness and the same SQLite DB; no dedicated Money model runner or DB service is created. Existing source collection now links evidence found in the current ingestion cycle rather than waiting for the next scheduler turn.
+Delegated child jobs inherit the parent's permission, never widen it, and share one token/cost budget.
+A verification child can only run approved Cargo tests inside a sandboxed worktree.
 
-Money retains even rejected and deferred opportunities. The collapsed **전체 후보·보류 기록** panel searches all historical candidates with bounded SQLite pages, displays saved source URLs and allows owners to defer or reopen ideas for research without model tokens.
+## Measured, not claimed
 
-### Retry-safe native SDK jobs
+This repository contains two measurements. Neither is a product-wide benchmark.
 
-The shared `POST /api/sdk/runs` accepts an optional `idempotencyKey` (up to 128 ASCII letters, digits, hyphens, underscores, dots or colons). A repeated identical request with that key returns the original persisted SDK run rather than starting a second model/tool execution. Using a key with changed arguments returns HTTP 409. The claim, session and run share one SQLite transaction. Older clients without this option retain their behavior.
+**Retrieval inclusion (2026-11-06).** On 21 synthetic memories, a free API model and a local 3B model were asked
+3 questions each. With no reranking kernel the correct memory reached the model **0/6** times; with the
+then-default BM25 kernel it reached the model **6/6** times. Answer accuracy stayed noisy, and the document says
+so. This was run on the experimental `codex/native-memory-harness` branch with the BM25 kernel; the default
+reranker today is `evidence-lineage-2026`, and no equivalent measurement has been taken for it. See
+[docs/REAL-MODEL-EXPERIMENT-2026-11-06.md](docs/REAL-MODEL-EXPERIMENT-2026-11-06.md).
 
-### Indexed SDK completion and reconciliation evidence
+**Group-room cost and recall (2026-11-09).** The nine-agent, 100-owner-turn run
+[`ROOM-100-TURN-LUNA`](benchmark/ROOM-100-TURN-LUNA-2026-11-09.json) reported **18.15 %** provider cache reuse
+and failed long-range recall on its experimental branch. The reuse work since then — append-only verified room
+state, the Codex incremental transport — has regression tests but no new measured cache-hit rate, recall
+improvement or cost saving.
 
-A native SDK run now reads its last execution by session ID using the existing SQLite session index instead of deserializing all prior executions. Operator reconciliation selects only the native frames for the exact execution ID; a dedicated partial SQLite index backs that lookup. Evidence read failures remain explicit and cannot be silently treated as verified completion. Session records, API fields, approval boundaries and model selection are unchanged.
+Nothing else here is a benchmark: no published token-savings percentage, no self-improvement claims, and no
+quality numbers that were not measured on this machine.
 
-If post-completion SQLite evidence retrieval fails, the SDK marks the run `needs_review` instead of allowing blind model/tool replay. The existing resume endpoint can then **recheck only already-persisted completed execution evidence**; it never runs an extra model round in that state. If evidence is still missing or an effect is uncertain, the run remains paused for inspection.
+## Optional: Money research tool
 
-Money evidence is source-versioned: stored page revisions are content-addressed and immutable, and model-proposed quotations are checked against archived page text without extra model tokens. The Money candidate and archive screens show each quote status and offer on-demand access to previously captured page versions. A quote match is source-text provenance, not validation of payment or buyer intent.
+Off for new installs (**Settings → Money tool**). It collects public RSS, GitHub and Hugging Face signals into
+indexed SQLite without spending model tokens, keeps source versions content-addressed and immutable, and checks
+model-proposed quotations against archived page text. Research never authorizes outreach, spending or
+implementation; those stay outside its scope. See [docs/MONEY.md](docs/MONEY.md).
 
-Money can also show an **indicative won-denominated price spread** when two independent archived sources include exact quoted prices, comparable dates/specifications/quantities and complete shipping, duty, platform, returns and labor costs. Currency conversion requires independently archived FX quotations; unknown figures remain null rather than guessed profit.
+## Project status
 
-### Role-scoped delegated jobs (2026)
+DOMINION is an **active developer preview**, not a managed service and not a validated commercial agent product.
 
-The existing `delegate_task` tool now accepts an optional `profile`: `general` (backward-compatible default), `inspection` (read-only observation), `implementation` (isolated code changes), or `verification` (observation and approved Cargo tests). Task-specific profiles require `isolatedWorktree: true`; child jobs inherit the shared native Rust driver, approvals, cancellation, and hierarchical token/cost budget. Admission is checked again during progressive tool discovery and final tool dispatch, not just in the model-visible catalog.
+- **Installers are unsigned.** v0.4.3 ships macOS DMGs and Windows MSI/NSIS installers, but without Apple or
+  Windows signing certificates, so first launch needs a manual confirmation. No earlier version was published.
+- **macOS and Windows only.** The engine is portable, but CI and installers target those two.
+- **Focused CI, not full validation.** Routine pushes run a scoped Rust regression set on macOS, and only when
+  engine, crate or a handful of named web files change. The frontend build, release-profile tests and both
+  installers run only in `release.yml`, for a version tag or a manual run. A green check on a commit does not
+  mean a distributable build was verified. See [Actions](https://github.com/hushmind3/dominion-rust/actions).
+- **Real-model reliability is unproven at length.** Room and delegation paths are covered by mocked-model tests;
+  long multi-hour real-model runs are not established.
+- **Channels need manual setup.** Telegram and Discord require your own bot credentials; there is no one-click bot creation.
+- **Retired features.** Built-in video generation and autonomous RSI campaigns are gone; archived records are
+  read-only (`GET /api/rsi/*` returns `retired: true`). Use MCP tools for media generation.
+- **Approvals are deliberate.** Every mutation asks first; unattended, hours-long autonomy is not the design goal.
 
-`task_result` returns up to 20 **most recent successful** tool receipts for the owned child session via an indexed SQLite query, rather than scanning the global journal. Waiting parents subscribe to exact job events with a bounded durable-state fallback. Existing SDK, GUI, task and stored job interfaces remain unchanged; these improvements have Rust regression coverage but not a measured live-model completion-rate uplift.
+## Contributing
 
-### Benchmark timeouts and room usage diagnostics
+The most useful contributions are reproducible bug reports, test cases, model/provider compatibility fixes,
+Rust engine improvements, UI work and documentation.
 
-The repository's `dominion-benchmark` runner now explicitly cancels a trial's server-side session when its SSE transport times out or breaks. It confirms the execution has reached a terminal state before resetting fixtures or beginning another arm; inability to confirm fails the experiment closed. The recorded `trial.json` includes the submitted task, cancellation evidence, provider token accounting and prompt-context metadata. This change does **not** alter any separately maintained external ZIP runner.
+- [Discussions](https://github.com/hushmind3/dominion-rust/discussions) — setups, questions, workflow ideas.
+- [Issues](https://github.com/hushmind3/dominion-rust/issues) — include OS, model/provider, reproduction steps, expected vs. actual.
+- [Pull requests](https://github.com/hushmind3/dominion-rust/pulls) — explain the change and add tests where it matters.
+- Never paste API keys, bot tokens or private conversations into an issue.
 
-Room exchange outputs now include `outputs[].modelAccounting` for each speaker, keyed by the persisted native execution ID. It shows provider-reported prompt/output/cache tokens separately from the estimated persona, system, memory, shared-state, history and tool-schema components. Unknown token counts remain null rather than being treated as zero. `/api/sessions/:id/cancel` also uses an indexed running-session query instead of scanning historical executions. These are regression-tested development improvements, not a claimed live-model success-rate uplift.
+## License
 
-### Selective 9-agent room context across multiple owner turns
-
-Room work that requires native tools or procedures no longer reverts to the full ordinary-chat transcript just because fixed tool schemas exceed the conversational target budget. The native work system/tool prompt is preserved, while prior owner instructions, committed current responses, personal history and provenance-linked tool results use the already existing source-scoped room context selector. The original transcript and memory remain intact.
-
-Each native work execution persists `inputContext.conversationSelection=room-selective-v1`, selected message IDs, available messages and estimated context components. A CI integration test exercises **9 agents × 3 distinct owner turns = 27 model replies + 3 owner messages** using a mock streaming provider; it verifies all agents respond, no premature completion is claimed, and irrelevant first-turn peer content is not replayed during turn three. Real-model token and task-quality comparisons are pending.
-
-The room compiler now pins at most the latest **two** peer replies for complex owner requests (**one** otherwise), while independently preserving the current owner instruction and each speaker's own previous reply. Up to eight additional current-speaker candidates compete with historical evidence under the configured context budget using lexical relevance, recency and token cost. Only the prompt projection is reduced; every full speaker message stays in SQLite. The `room_context` accounting adds `peerCandidates`, `peerPinned` and `peerSelected` for before/after diagnosis. No measured token reduction or accuracy improvement is claimed yet.
-
-For native task runs that exhaust their model-round allowance, the finalization boundary now checks durable completed tool receipts against the frozen acceptance obligations once more, without another paid model call. Successful terminal verification produces a normal completed run; incomplete verification persists `execution.terminalReview` with remaining obligations and remains a failure instead of upgrading a merely present file to success. These new source-level regression cases have not yet been executed on Windows/macOS release environments.
-
-### Native chat stop and Cloudflare room cache affinity
-
-During an active chat turn the Send icon becomes an accessible **Stop** control. Stop calls the server cancellation API and waits for durable native turn teardown before aborting the browser SSE stream, releasing the composer and allowing another turn in the same session. The same control is used by `/stop`. The server's admission-epoch snapshot prevents stop-before-start races, and native `tokio::select!` drops stalled model/HTTP work on cancellation. A Rust HTTP fixture verifies a tokenless pending SSE request, cancelled execution, no late assistant save and successful next turn; frontend TypeScript/build and UI wiring tests run in CI.
-
-In group rooms, stable global instructions, owner rules and room/roster context now appear **before** the participant-specific persona, so consecutive speakers have a common cacheable prefix. Cloudflare Workers AI requests send `x-session-affinity` scoped to the same room/provider/model/account cohort; participant conversation cursors remain separate. Unsupported Workers AI routes are not sent OpenAI-specific `prompt_cache_key`. Provider cached tokens are reported as `null` when missing, never inferred from prompt length. Prefix reuse and real billed discounts depend on model/provider support and require measured comparisons; these code changes alone do not establish cache hit rates.
+[Apache 2.0](LICENSE) · [한국어 README](README.ko.md)
