@@ -17,6 +17,21 @@ const MAX_TOTAL_BYTES: usize=8*1024*1024;
 const MAX_NODES: usize=16;
 const MAX_CANDIDATES: usize=3;
 
+/// Expensive counterfactual work is an owner-selected capability, not the
+/// default execution loop. Reuses the existing algorithm/session policies;
+/// no new background worker or runtime state is created at startup.
+pub(super) fn enabled(state:&AppState,session:&Value)->bool{
+    if std::env::var("DOMINION_BENCHMARK").as_deref()==Ok("1")
+        && crate::engine::policy::active(state,"execution").as_ref()
+            .is_some_and(|policy|policy["parameters"]["benchmarkRepairArm"]=="treatment"){
+        return true;
+    }
+    session["sdkUiPolicy"]["candidateRollout"]==true
+        || crate::engine::algorithms::active(state,"program.repair")
+            .as_ref().is_some_and(|algorithm|
+                algorithm["parameters"]["candidateRollout"]==true)
+}
+
 struct TrialArea {
     root:PathBuf,
 }
@@ -528,6 +543,25 @@ mod tests{
             config.workspace.join("bench/config.txt")).unwrap(),"mode=draft");
         drop(state);
         std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn candidate_execution_is_opt_in_and_default_runner_is_unchanged(){
+        let dir=std::env::temp_dir().join(format!("rollout-toggle-{}",uuid::Uuid::new_v4()));
+        let config=crate::config::Config{
+            port:0,data_dir:dir.join("data"),web_dir:dir.join("web"),
+            workspace:dir.join("workspace"),
+        };
+        std::fs::create_dir_all(&config.workspace).unwrap();
+        let state=AppState::new(config.clone(),
+            crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        assert!(!enabled(&state,&json!({"id":"session-1"})));
+        assert!(enabled(&state,&json!({"id":"session-2",
+            "sdkUiPolicy":{"candidateRollout":true}})));
+        assert!(!enabled(&state,&json!({"id":"session-3",
+            "sdkUiPolicy":{"candidateRollout":false}})));
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn rejects_absolute_traversal_and_nonlocal_candidate_paths(){
