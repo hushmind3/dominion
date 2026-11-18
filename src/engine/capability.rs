@@ -94,7 +94,7 @@ fn score(definition:&Value,query:&str,words:&HashSet<String>)->i32{
     score
 }
 
-fn ranked(catalog:&[Value],query:&str)->Vec<(i32,&Value)> {
+fn ranked<'a>(catalog:&'a [Value],query:&str)->Vec<(i32,&'a Value)> {
     let words=terms(query);
     let mut matches=catalog.iter().map(|definition|(
         score(definition,query,&words),definition
