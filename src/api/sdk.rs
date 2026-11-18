@@ -183,6 +183,10 @@ fn public_view_indexed(state:&AppState,mut record:Value,index:&ViewIndex)->Value
             "failureClass":record["failureClass"]
         });
         record["runtime"]=json!("dominion-core");
+        // Chat and SDK share the same native execution accounting. The
+        // checkpoint's old usage fields describe the primary response only.
+        record["modelAccounting"]=run["modelAccounting"].clone();
+        record["checkpoint"]["modelAccounting"]=run["modelAccounting"].clone();
     }
     record
 }
