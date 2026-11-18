@@ -453,6 +453,44 @@ fn rewrite_pending_node(
     Ok(rewritten)
 }
 
+/// Insert new work before an uncompleted durable ID, including inside a
+/// nested program frame. Never replay an effect in a completed ancestor.
+fn insert_before_pending(
+    nodes:&mut Vec<Value>, target:&str, addition:&Value,
+    completed:&std::collections::BTreeSet<String>,
+    completed_ancestor:bool, matches:&mut usize, depth:usize,
+)->Result<(),String>{
+    if depth>16{return Err("recovery insertion exceeds nesting bound".into());}
+    let mut index=0usize;
+    while index<nodes.len(){
+        let id=nodes[index]["id"].as_str().unwrap_or("").to_string();
+        let is_completed=completed.iter().any(|done|
+            done==&id || (!id.is_empty()&&done.strip_suffix(id.as_str())
+                .is_some_and(|prefix|prefix.ends_with(':'))));
+        if id==target {
+            if completed_ancestor||touches_completed(&nodes[index],completed){
+                return Err(format!(
+                    "cannot insert before {target}: operation or containing frame already completed"
+                ));
+            }
+            nodes.insert(index,addition.clone());
+            *matches+=1;
+            return Ok(());
+        }
+        for field in ["nodes","then","else","body"] {
+            if let Some(children)=nodes[index][field].as_array(){
+                let mut updated=children.clone();
+                insert_before_pending(&mut updated,target,addition,completed,
+                    completed_ancestor||is_completed,matches,depth+1)?;
+                nodes[index][field]=Value::Array(updated);
+                if *matches>0{return Ok(());}
+            }
+        }
+        index+=1;
+    }
+    Ok(())
+}
+
 /// Validate tool authority and data dependencies through *every* control-flow
 /// branch. Parallel siblings cannot consume each other's uncommitted outputs;
 /// a value created by only one side of a branch is not guaranteed after it.
@@ -587,9 +625,23 @@ pub fn apply_revision_proposal(
             return Err(format!("replacement node {id} does not exist in the current program"));
         }
     }
-    for node in additions {
+    for mut node in additions {
+        // insertBefore is patch metadata, not a runtime node field.
+        let before=node.get("insertBefore")
+            .and_then(Value::as_str).map(str::to_owned);
+        if let Some(obj)=node.as_object_mut(){obj.remove("insertBefore");}
         validate_node(&node)?;
-        nodes.push(node);
+        if let Some(target)=before {
+            if target.is_empty(){return Err("insertBefore requires a node id".into());}
+            let mut matches=0usize;
+            insert_before_pending(&mut nodes,&target,&node,&completed,
+                false,&mut matches,0)?;
+            if matches!=1 {
+                return Err(format!("insertBefore target {target} is not uniquely pending"));
+            }
+        } else {
+            nodes.push(node);
+        }
     }
     if program["nodes"] == Value::Array(nodes.clone()) {
         return Err("revision proposes no executable change".into());
@@ -752,6 +804,41 @@ pub fn checkpoint_skip_completed(checkpoint: &Value, node_id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inserted_recovery_runs_before_original_verifier_without_replaying_past_effects(){
+        let original=json!({"revision":"base","nodes":[
+            {"type":"observe","id":"finished"},
+            {"type":"sequence","id":"block","nodes":[
+                {"type":"observe","id":"pending"},
+                {"type":"verify","id":"accept","checks":[
+                    {"predicate":{"op":"exists","from":"pending"}}
+                ]}
+            ]}
+        ]});
+        let mut cp=new_checkpoint(&original);
+        cp["completedOperationIds"]=json!(["finished"]);
+        cp["programFailure"]=json!({"nodeId":"accept","kind":"verification_failed"});
+        let proposal=json!({"baseRevision":"base","reason":"repair the artifact",
+            "evidenceIds":["accept"],"addNodes":[
+                {"type":"call_tool","id":"fix","tool":"workspace_write",
+                    "insertBefore":"accept",
+                    "inputs":{"path":"out.txt","content":"repaired"}}
+            ]});
+        let allowed=vec!["workspace_write".to_string()];
+        let revised=apply_revision_proposal(&original,&cp,&proposal,&allowed,64,"replace").unwrap();
+        assert_eq!(revised["nodes"][0]["id"],"finished");
+        assert_eq!(revised["nodes"][1]["nodes"][1]["id"],"fix");
+        assert_eq!(revised["nodes"][1]["nodes"][2]["id"],"accept");
+        assert_eq!(revised["nodes"][1]["nodes"][1]["insertBefore"],Value::Null);
+        let mut unsafe_proposal=proposal.clone();
+        unsafe_proposal["addNodes"][0]["insertBefore"]=json!("finished");
+        assert!(apply_revision_proposal(&original,&cp,&unsafe_proposal,
+            &allowed,64,"replace").unwrap_err().contains("already completed"));
+        unsafe_proposal["addNodes"][0]["insertBefore"]=json!("invented");
+        assert!(apply_revision_proposal(&original,&cp,&unsafe_proposal,
+            &allowed,64,"replace").unwrap_err().contains("not uniquely pending"));
+    }
 
     #[test]
     fn repair_cannot_weaken_original_verifier_or_hide_it_inside_new_control_flow() {
