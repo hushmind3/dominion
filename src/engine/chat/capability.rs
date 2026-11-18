@@ -166,6 +166,7 @@ pub(super) async fn search(
     let execution=state.store.get("execution",execution_id)
         .ok_or("도구 탐색 실행 기록이 없습니다.")?;
     if execution["sessionId"].as_str()!=Some(session_id)
+        || execution["status"]!="running"
         || execution["progressiveToolDiscovery"]!=true{
         return Err("이 실행에서는 동적 도구 탐색이 활성화되지 않았습니다.".into());
     }
