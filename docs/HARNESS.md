@@ -108,6 +108,30 @@ Sources inspected:
 - Airbnb `agent_harness_optimizer/optimizers/prism/loop.py` and
   `framework/acceptance.py`
 
+## 2026 frozen-acceptance obligation graph
+
+The production `task.decomposition` selection now chooses the bounded,
+`acceptance-lineage-dag-2026` executor. It converts only the pre-tool-call
+frozen acceptance criteria into obligation nodes with stable provenance IDs,
+recognised native predicate types and explicitly declared dependency edges.
+No keyword-only text split can become a success claim, and a missing frozen
+criterion stays `unverified_owner_request`.
+
+The graph is persisted to the original execution and forwarded to the model
+as **pending** requirements, never as completed actions. The prior
+`qualityScore` (token/segment coverage) is deliberately null for this
+kernel. The kernel's usage is marked unrated until separate native tool and
+acceptance receipts decide task completion. A repaired or migrated database
+retains old decomposition records read-only; the old `single-step`,
+`clause-split` and `numbered-first` implementations cannot be registered
+or reactivated through the algorithm API. Historical fixture evaluation code
+remains to compare old records rather than falsifying improvements.
+
+This is a project-specific implementation influenced by the 2026 evidence,
+provenance and held-out validation work in HarnessFix and the AHO/PRISM
+protocol. It does not claim independent paper-level benchmark results or
+measured real-model lift.
+
 ## Hot-path and restart cleanup
 
 - The failure observer now reuses the existing learned-method workspace

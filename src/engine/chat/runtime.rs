@@ -761,8 +761,16 @@ async fn run_turn_body(
         task_input(&session,&request.input),
     )
     .unwrap_or(Value::Null);
-    let decomposition =
-        crate::engine::decompose::decompose(task_input(&session,&request.input), &decomposition_algorithm);
+    let frozen_checks = acceptance.as_ref().map(|(_,checks)| checks).unwrap_or(&Value::Null);
+    let decomposition = crate::engine::decompose::decompose_with_acceptance(
+        task_input(&session,&request.input), &decomposition_algorithm, frozen_checks,
+    );
+    if decomposition["qualityScore"].is_null() {
+        crate::engine::algorithms::mark_unrated(
+            state, execution_id,"task.decomposition",
+            "postcondition graph pending real native verification receipts",
+        );
+    }
     let subtask_count = decomposition["subtasks"]
         .as_array()
         .map(Vec::len)
@@ -809,7 +817,7 @@ async fn run_turn_body(
         messages.insert(1, json!({
             "role":"system",
             "content":format!(
-                "Engine-owned task decomposition. Complete these subtasks in order and verify each with real tools before claiming done:\n{subtasks}"
+                "Engine-owned frozen acceptance obligations. They are NOT completed work. Resolve every applicable check with actual tool receipts. Only explicit dependency links impose order; never claim success from the checklist itself:\n{subtasks}"
             )
         }));
     }

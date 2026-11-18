@@ -46,7 +46,7 @@ pub fn executable_kernels(kind: &str) -> &'static [&'static str] {
         "tool.discovery" => &["all", "core", "query-relevant"],
         "tool.combination" => &["sequential", "parallel-reads"],
         "tool.arguments" => &["none", "normalize-paths"],
-        "task.decomposition" => &["single-step", "clause-split", "numbered-first"],
+        "task.decomposition" => &["acceptance-lineage-dag-2026"],
         "execution.budget" => &["standard", "extended", "lean"],
         "memory.retrieval" => &["lexical", "failure-first", "balanced"],
         "memory.rerank" => &["none", "bm25", "bm25-importance"],
@@ -471,24 +471,10 @@ pub fn builtins() -> Vec<Value> {
         ),
         builtin(
             "task.decomposition",
-            "single-step",
-            "single-step",
-            "요청 전체를 하나의 작업으로 취급한다.",
-            json!({}),
-        ),
-        builtin(
-            "task.decomposition",
-            "clause-split",
-            "clause-split",
-            "명시적 연결어·구분자로 요청을 순서 있는 하위 작업으로 나눈다.",
-            json!({}),
-        ),
-        builtin(
-            "task.decomposition",
-            "numbered-first",
-            "numbered-first",
-            "명시적 번호/목록이 있으면 그 순서를 우선 사용한다.",
-            json!({}),
+            "acceptance-lineage-dag-2026",
+            "acceptance-lineage-dag-2026",
+            "Frozen acceptance checks become observable obligations without predicted completion grades.",
+            json!({"unknown":"hold","source":"frozen_acceptance"}),
         ),
         builtin(
             "execution.budget",
@@ -660,7 +646,10 @@ pub fn seed(state: &AppState) -> Vec<Value> {
         .store
         .all("algorithm")
         .into_iter()
-        .filter(|item| item["status"].as_str() == Some("active"))
+        .filter(|item| item["status"].as_str() == Some("active")
+            && item["kind"].as_str().is_some_and(|kind|
+                item["implementation"].as_str().is_some_and(|implementation|
+                    kernel_exists(kind,implementation))))
         .filter_map(|item| item["kind"].as_str().map(str::to_string))
         .collect::<std::collections::BTreeSet<_>>();
     for mut algorithm in builtins() {
@@ -787,6 +776,8 @@ pub fn list(state: &AppState) -> Value {
                 .filter(|item| item["kind"].as_str() == Some(*kind))
                 .map(|item| {
                     let mut row = item.clone();
+                    row["retired"] = json!(row["implementation"].as_str()
+                        .is_none_or(|implementation| !kernel_exists(kind,implementation)));
                     let revision = row["revision"].as_str().unwrap_or("").to_string();
                     if let Some(observed) = observations.get(&revision) {
                         row["stats"] = observed.clone();
@@ -799,7 +790,8 @@ pub fn list(state: &AppState) -> Value {
                 "retired": ARCHIVED_KINDS.contains(kind),
                 "label": kind_label(kind),
                 "kernels": executable_kernels(kind),
-                "active": rows.iter().find(|item| item["status"].as_str() == Some("active")).cloned(),
+                "active": rows.iter().find(|item| item["status"].as_str() == Some("active")
+                    && item["retired"] != true).cloned(),
                 "algorithms": rows,
             })
         })
@@ -820,7 +812,8 @@ pub fn list(state: &AppState) -> Value {
 pub fn active(state: &AppState, kind: &str) -> Option<Value> {
     if ARCHIVED_KINDS.contains(&kind) { return None; }
     let mut rows = state.store.algorithms_for_kind(kind).ok()?;
-    if rows.is_empty() {
+    if !rows.iter().any(|row| row["implementation"].as_str()
+        .is_some_and(|implementation|kernel_exists(kind,implementation))) {
         seed(state);
         rows = state.store.algorithms_for_kind(kind).ok()?;
     }
@@ -828,6 +821,8 @@ pub fn active(state: &AppState, kind: &str) -> Option<Value> {
         .find(|item| {
             item["kind"].as_str() == Some(kind)
                 && item["status"].as_str() == Some("active")
+                && item["implementation"].as_str().is_some_and(|implementation|
+                    kernel_exists(kind,implementation))
         })
 }
 
@@ -847,6 +842,7 @@ pub fn variant(state: &AppState, kind: &str) -> String {
             "tool.selection" => "read-before-write".into(),
             "verification.predicate" => "three-valued".into(),
             "learning.applicability" => "conservative".into(),
+            "task.decomposition" => "acceptance-lineage-dag-2026".into(),
             _ => "balanced".into(),
         })
 }
@@ -883,7 +879,8 @@ pub fn choose_for_agent(
 ) -> Option<Value> {
     if ARCHIVED_KINDS.contains(&kind) { return None; }
     let mut records = state.store.algorithms_for_kind(kind).ok()?;
-    if records.is_empty() {
+    if !records.iter().any(|row| row["implementation"].as_str()
+        .is_some_and(|implementation|kernel_exists(kind,implementation))) {
         seed(state);
         records = state.store.algorithms_for_kind(kind).ok()?;
     }
@@ -937,49 +934,9 @@ pub fn choose_decomposition_for_agent(
     state: &AppState,
     agent_id: Option<&str>,
     execution_id: Option<&str>,
-    request: &str,
+    _request: &str,
 ) -> Option<Value> {
-    let selected = choose_for_agent(state, "task.decomposition", agent_id, None)?;
-    let baseline = crate::engine::decompose::decompose(request, &selected);
-    let mut best_score = baseline["qualityScore"].as_f64().unwrap_or(0.0);
-    let mut chosen = selected;
-    let candidates = state.store.algorithms_for_kind("task.decomposition").ok()?;
-    for candidate in candidates {
-        if candidate["kind"] != "task.decomposition"
-            || !(matches!(candidate["status"].as_str(), Some("active" | "validated"))
-                || (candidate["status"] == "available" && candidate["source"] == "builtin"))
-            || !candidate["implementation"].as_str()
-                .is_some_and(|kernel| kernel_exists("task.decomposition", kernel))
-        {
-            continue;
-        }
-        let decomposition = crate::engine::decompose::decompose(request, &candidate);
-        let score = decomposition["qualityScore"].as_f64().unwrap_or(0.0);
-        let ordered = decomposition["quality"]["orderPreserved"] == true;
-        let step_count = decomposition["subtasks"].as_array().map(Vec::len).unwrap_or(0);
-        // Only override the active baseline when the alternative demonstrably extracts
-        // multiple ordered actions. A vague increase in heuristic score alone
-        // must not replace a user's learned selection.
-        if ordered && step_count > 1 && score > best_score + 0.05 {
-            best_score = score;
-            chosen = candidate;
-        }
-    }
-    if let Some(execution_id) = execution_id {
-        let agent=agent_of(state,agent_id)?;
-        let id=format!("algorithm-usage-{}",
-            crate::engine::memory::stable_id(&[execution_id,"task.decomposition"]));
-        if state.store.get("algorithm_usage",&id).is_none() {
-            if let Some(saved)=state.store.put("algorithm_usage",&json!({
-                "id":id,"executionId":execution_id,"agentId":agent,
-                "kind":"task.decomposition","revision":chosen["revision"],
-                "status":"pending","createdAt":chrono::Utc::now().to_rfc3339()
-            })) {
-                state.bus.record("algorithm_usage",&saved);
-            }
-        }
-    }
-    Some(chosen)
+    choose_for_agent(state,"task.decomposition",agent_id,execution_id)
 }
 
 pub fn variant_for_agent(
@@ -1536,6 +1493,10 @@ pub fn activate(state: &AppState, id: &str) -> Result<Value, String> {
     if ARCHIVED_KINDS.contains(&kind.as_str()) {
         return Err("retired algorithm kind is read-only".into());
     }
+    if !algorithm["implementation"].as_str().is_some_and(|implementation|
+        kernel_exists(&kind,implementation)) {
+        return Err("retired algorithm implementation is read-only".into());
+    }
     let mut records = Vec::new();
     for mut other in state.store.all("algorithm") {
         if other["kind"].as_str() == Some(kind.as_str())
@@ -1582,6 +1543,11 @@ pub fn activate_checked(state: &AppState, id: &str, force: bool) -> Result<Value
     };
     if algorithm["kind"].as_str().is_some_and(|kind| ARCHIVED_KINDS.contains(&kind)) {
         return Err("retired algorithm kind is read-only".into());
+    }
+    if !algorithm["kind"].as_str().is_some_and(|kind|
+        algorithm["implementation"].as_str().is_some_and(|implementation|
+            kernel_exists(kind,implementation))) {
+        return Err("retired algorithm implementation is read-only".into());
     }
     if !force && algorithm["status"].as_str() != Some("active") {
         let kind = algorithm["kind"].as_str().unwrap_or("");
@@ -1708,26 +1674,57 @@ mod tests {
     }
 
     #[test]
-    fn genuine_multistep_goals_use_the_improved_kernel_in_live_selection() {
+    fn legacy_only_database_seeds_new_kernel_without_deleting_history() {
         let (state,dir)=state();
-        let input="설정을 읽고 결과를 저장한 다음 검증해";
-        let initial=choose_for_agent(&state,"task.decomposition",Some("agent"),None).unwrap();
-        assert_eq!(initial["implementation"],"single-step");
-        let chosen=choose_decomposition_for_agent(
-            &state,Some("agent"),Some("real-execution"),input).unwrap();
-        assert_ne!(chosen["implementation"],"single-step");
-        let actual=crate::engine::decompose::decompose(input,&chosen);
-        assert_eq!(actual["subtasks"].as_array().unwrap().len(),3);
-        assert!(actual["qualityScore"].as_f64().unwrap()>0.75);
-        let id=format!("algorithm-usage-{}",
-            crate::engine::memory::stable_id(&["real-execution","task.decomposition"]));
-        let usage=state.store.get("algorithm_usage",&id).unwrap();
-        assert_eq!(usage["revision"],chosen["revision"],
-            "feedback must reach the kernel that actually ran");
-        let simple=choose_decomposition_for_agent(
-            &state,Some("other-agent"),Some("simple-execution"),"파일을 열어").unwrap();
-        assert_eq!(simple["implementation"],"single-step",
-            "single actions should still use the learned/default kernel");
+        state.store.put("algorithm",&json!({
+            "id":"legacy-only","kind":"task.decomposition",
+            "implementation":"numbered-first","status":"active",
+            "name":"archived-owner-rule","revision":"old"
+        }));
+        let selected=choose_for_agent(&state,"task.decomposition",None,None).unwrap();
+        assert_eq!(selected["implementation"],"acceptance-lineage-dag-2026");
+        assert_eq!(state.store.get("algorithm","legacy-only").unwrap()
+            ["status"],"active","historical record is not deleted or rewritten");
+        assert!(active(&state,"task.decomposition")
+            .is_some_and(|item| item["implementation"]=="acceptance-lineage-dag-2026"));
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn live_decomposition_is_obligation_grounded_and_legacy_kernels_are_read_only() {
+        let (state,dir)=state();
+        let selected=choose_decomposition_for_agent(
+            &state,Some("agent"),Some("run-2026"),"수정하고 검사해"
+        ).unwrap();
+        assert_eq!(selected["implementation"],"acceptance-lineage-dag-2026");
+        let checks=json!([
+            {"type":"file_exists","path":"output.md"},
+            {"type":"command_succeeded","command":"cargo test","dependsOnCheck":1}
+        ]);
+        let graph=crate::engine::decompose::decompose_with_acceptance(
+            "수정하고 검사해",&selected,&checks);
+        assert_eq!(graph["subtasks"].as_array().unwrap().len(),2);
+        assert_eq!(graph["edges"].as_array().unwrap().len(),1);
+        assert!(graph["qualityScore"].is_null());
+        let usage_id=format!("algorithm-usage-{}",
+            crate::engine::memory::stable_id(&["run-2026","task.decomposition"]));
+        assert_eq!(state.store.get("algorithm_usage",&usage_id).unwrap()["revision"],
+            selected["revision"]);
+        state.store.put("algorithm",&json!({
+            "id":"old-split","kind":"task.decomposition","implementation":"clause-split",
+            "name":"old","status":"active","revision":"legacy",
+        }));
+        assert!(activate_checked(&state,"old-split",true).is_err());
+        assert!(register(&state,&json!({
+            "kind":"task.decomposition","name":"revived","implementation":"clause-split"
+        })).is_err());
+        assert_eq!(choose_for_agent(&state,"task.decomposition",None,None).unwrap()
+            ["implementation"],"acceptance-lineage-dag-2026");
+        let listed=list(&state);
+        let kind=listed["kinds"].as_array().unwrap().iter()
+            .find(|row|row["kind"]=="task.decomposition").unwrap();
+        assert!(kind["algorithms"].as_array().unwrap().iter()
+            .any(|row|row["id"]=="old-split"&&row["retired"]==true));
         let _=std::fs::remove_dir_all(dir);
     }
 

@@ -6,7 +6,7 @@
 //! coverage, order preservation and how many explicit clauses were found.
 use serde_json::{json, Value};
 
-pub const KERNELS: &[&str] = &["single-step", "clause-split", "numbered-first"];
+pub const KERNELS: &[&str] = &["acceptance-lineage-dag-2026", "single-step", "clause-split", "numbered-first"];
 
 fn kernel(algorithm: &Value) -> &str {
     algorithm["implementation"]
@@ -246,8 +246,144 @@ pub fn decompose(input: &str, algorithm: &Value) -> Value {
     })
 }
 
+/// 2026 evidence-linked planning surface: derive obligations only from the
+/// frozen acceptance predicates owned by this turn. Model-authored guesses,
+/// lexical coverage and unobserved step counts never constitute proof.
+///
+/// Legacy lexical kernels remain inside this module for historical experiment
+/// replay but are not offered as executable live algorithm registry kernels.
+pub fn decompose_with_acceptance(input: &str, algorithm: &Value, checks: &Value) -> Value {
+    if kernel(algorithm) != "acceptance-lineage-dag-2026" {
+        return decompose(input, algorithm);
+    }
+    use std::collections::HashMap;
+    let empty = Vec::new();
+    let all = checks.as_array().unwrap_or(&empty);
+    let mut seen = std::collections::HashSet::new();
+    let mut by_ordinal: HashMap<usize, String> = HashMap::new();
+    let mut subtasks = Vec::new();
+    let mut edges = Vec::new();
+    let mut duplicate = 0usize;
+    let mut unsupported = 0usize;
+    let mut invalid_dependencies = 0usize;
+    let mut inferred = 0usize;
+    for (index, check) in all.iter().take(20).enumerate() {
+        let canonical = check.to_string();
+        if !seen.insert(canonical.clone()) {
+            duplicate += 1;
+            continue;
+        }
+        let kind = check["type"].as_str().unwrap_or("");
+        let recognized = matches!(kind,
+            "file_exists" | "file_absent" | "file_changed" |
+            "file_contains" | "file_equals" | "file_replace_exact" |
+            "tool_succeeded" | "command_succeeded");
+        if !recognized { unsupported += 1; }
+        if check["inferred"] == true { inferred += 1; }
+        let check_id = format!("obligation-{}", crate::engine::memory::stable_id(
+            &[input, canonical.as_str()]
+        ));
+        let subject = check["path"].as_str().or_else(||
+            check["tool"].as_str()).or_else(||
+            check["command"].as_str()).unwrap_or("unresolved");
+        let display = subject.chars().take(160).collect::<String>();
+        let mut depends_on: Vec<String> = Vec::new();
+        // Only explicit, earlier criterion ordinal dependencies are admitted.
+        // No model or keyword rule may fabricate an execution order.
+        if let Some(earlier) = check["dependsOnCheck"].as_u64() {
+            let earlier = earlier as usize;
+            if earlier == 0 || earlier > index {
+                invalid_dependencies += 1;
+            } else if let Some(parent) = by_ordinal.get(&earlier) {
+                depends_on.push(parent.clone());
+                edges.push(json!({"from":parent,"to":check_id,"basis":"frozen_criterion"}));
+            } else {
+                invalid_dependencies += 1;
+            }
+        }
+        by_ordinal.insert(index + 1, check_id.clone());
+        subtasks.push(json!({
+            "index":subtasks.len()+1,
+            "id":check_id,
+            "text":format!("검증 {kind}: {display}"),
+            "obligation":check,
+            "dependsOn":depends_on,
+            "status":if recognized {"pending_evidence"} else {"unsupported_verifier"},
+            "origin":if check["inferred"]==true {"inferred_acceptance"} else {"frozen_acceptance"},
+            "proof":"not_yet_observed",
+        }));
+    }
+    if subtasks.is_empty() && !input.trim().is_empty() {
+        subtasks.push(json!({
+            "index":1,"text":input.trim(),"status":"unverified_owner_request",
+            "origin":"owner_message","proof":"no_frozen_acceptance",
+        }));
+    }
+    let blocked = unsupported > 0 || invalid_dependencies > 0 || all.len() > 20;
+    let recorded_criteria = subtasks.iter().filter(|step| step["obligation"].is_object()).count();
+    json!({
+        "kernel":"acceptance-lineage-dag-2026",
+        "subtasks":subtasks,"edges":edges,
+        "qualityScore":Value::Null,
+        "quality":{
+            "measurement":"frozen_obligation_lineage_not_model_score",
+            "criteriaReceived":all.len(),
+            "criteriaRecorded":recorded_criteria,
+            "duplicateCriteria":duplicate,
+            "unsupportedCriteria":unsupported,
+            "invalidDependencies":invalid_dependencies,
+            "inferredCriteria":inferred,
+            "truncatedCriteria":all.len().saturating_sub(20),
+            "executableClaimsAuthorized":false,
+            "allVerifiable":!blocked && !all.is_empty(),
+        },
+        "revision":algorithm["revision"],
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn frozen_obligations_preserve_exact_postconditions_and_provenance() {
+        let algo=algorithm("acceptance-lineage-dag-2026");
+        let checks=json!([
+            {"type":"file_exists","path":"output.md","inferred":true},
+            {"type":"command_succeeded","command":"cargo test --locked",
+             "dependsOnCheck":1}
+        ]);
+        let ledger=decompose_with_acceptance("create and test",&algo,&checks);
+        assert_eq!(ledger["subtasks"].as_array().unwrap().len(),2);
+        assert_eq!(ledger["edges"].as_array().unwrap().len(),1);
+        assert_eq!(ledger["subtasks"][1]["dependsOn"][0],ledger["subtasks"][0]["id"]);
+        assert_eq!(ledger["subtasks"][0]["obligation"],checks[0]);
+        assert_eq!(ledger["subtasks"][0]["origin"],"inferred_acceptance");
+        assert!(ledger["qualityScore"].is_null(),
+            "a plan must not self-grade as completed evidence");
+        assert_eq!(ledger["quality"]["allVerifiable"],true);
+        let replay=decompose_with_acceptance("create and test",&algo,&checks);
+        assert_eq!(ledger["subtasks"][0]["id"],replay["subtasks"][0]["id"]);
+    }
+
+    #[test]
+    fn unverified_or_fabricated_obligations_never_claim_task_success() {
+        let algo=algorithm("acceptance-lineage-dag-2026");
+        let empty=decompose_with_acceptance("inspect unknown service",&algo,&Value::Null);
+        assert_eq!(empty["subtasks"][0]["status"],"unverified_owner_request");
+        assert_eq!(empty["quality"]["allVerifiable"],false);
+        assert!(empty["qualityScore"].is_null());
+        let unknown=decompose_with_acceptance("write",&algo,&json!([
+            {"type":"file_exists","path":"out.rs","dependsOnCheck":5},
+            {"type":"file_exists","path":"out.rs","dependsOnCheck":5},
+            {"type":"model_says_success","path":"out.rs"}
+        ]));
+        assert_eq!(unknown["quality"]["duplicateCriteria"],1);
+        assert_eq!(unknown["quality"]["unsupportedCriteria"],1);
+        assert_eq!(unknown["quality"]["invalidDependencies"],1);
+        assert_eq!(unknown["quality"]["allVerifiable"],false);
+        assert!(unknown["qualityScore"].is_null());
+    }
+
+
     use super::*;
 
     fn algorithm(implementation: &str) -> Value {
