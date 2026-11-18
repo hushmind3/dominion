@@ -61,5 +61,7 @@ jobs:
           cargo test --bin dominion-rust engine::program::tests
           cargo test --bin dominion-rust db::tests
           cargo test --bin dominion-rust engine::native_agent::tests
+          cargo test --bin dominion-rust engine::native_stream::tests
+          cargo test --bin dominion-rust native_stream_chat_http_fragmented_calls_are_durable_and_unexecuted
           cargo test --bin dominion-rust engine::skill_discovery::tests
           cargo test --bin dominion-rust api::sdk::tests
