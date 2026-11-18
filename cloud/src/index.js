@@ -228,8 +228,6 @@ async function proxy(request, env, user) {
   if (!env.PAID_DAILY_BUDGET_MICRO_KRW || !Number.isSafeInteger(dailyBudget) || dailyBudget <= 0)
     return err('Operator daily paid budget must be configured', 503);
   {
-    if (!Number.isSafeInteger(dailyBudget) || dailyBudget <= 0)
-      return err('Invalid operator daily budget', 503);
     const dayStart = Math.floor(Date.now() / 86400000) * 86400;
     const spent = await env.DB.prepare(
       "SELECT COALESCE(SUM(CASE WHEN status='reserved' THEN reserved ELSE charged END),0) AS total FROM usage WHERE created_at>=?"
