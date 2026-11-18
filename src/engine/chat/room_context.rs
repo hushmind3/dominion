@@ -929,15 +929,33 @@ mod tests {
             state.store.put("agent",&json!({"id":id,"name":id,"systemPrompt":persona}));
             let mut request=request.clone();request.agent_id=Some(id.into());
             let (prompt,_,_)=core(&state,&request,&room,"");
-            assert!(prompt.starts_with(&context::identity_prefix(&state,&request).0));
+            assert!(prompt.starts_with(&context::room_common_identity(&state).0));
             assert_eq!(prompt.matches(persona).count(),1);
+            assert!(prompt.find("DOMINION 단체 대화").unwrap()<prompt.find(persona).unwrap());
+            assert!(prompt.find("방 참가자").unwrap()<prompt.find(persona).unwrap());
             let private=context::system_prompt(&state,&request,"private-chat","");
             assert!(private.starts_with(&context::identity_prefix(&state,&request).0));
             let mut changed_room=room.clone();changed_room["topic"]=json!("different topic");
             changed_room["agentIds"]=json!([id]);
             let changed=core(&state,&request,&changed_room,"").0;
-            assert!(changed.starts_with(&context::identity_prefix(&state,&request).0));
+            assert!(changed.starts_with(&context::room_common_identity(&state).0));
         }
+        let mut one=request.clone();
+        one.agent_id=Some("one".into());
+        let mut two=request.clone();
+        two.agent_id=Some("two".into());
+        let a=core(&state,&one,&room,"").0;
+        let b=core(&state,&two,&room,"").0;
+        let shared_prefix=a.chars().zip(b.chars()).take_while(|(x,y)|x==y).count();
+        assert!(shared_prefix>=context::room_common_identity(&state).0.chars().count());
+        assert!(shared_prefix>200,"speaker personas cannot split the room prompt at its start");
+        // Owner instruction changes must invalidate the prefix, not disappear.
+        state.store.put("assistant_settings",&json!({"id":"global","enabled":true,
+            "instructions":"OWNER_POLICY_STABLE"})).unwrap();
+        let changed=core(&state,&one,&room,"").0;
+        assert!(changed.contains("OWNER_POLICY_STABLE"));
+        assert!(changed.find("OWNER_POLICY_STABLE").unwrap()<changed.find("OWNER_PERSONA_ONE").unwrap());
+        assert_eq!(changed.matches("OWNER_POLICY_STABLE").count(),1);
         assert!(!asks_room_origin("매번 처음 보냐"));
         assert!(!asks_room_origin("처음부터 다시 시작하지 마"));
         assert!(asks_room_origin("처음에 무슨 말을 했지?"));
