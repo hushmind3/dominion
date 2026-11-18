@@ -221,7 +221,7 @@ mod tests{
         assert!(!subsequent.to_string().contains(&source[..500]));
         assert!(subsequent.to_string().len()<transcript.to_string().len()/3);
         // A narrow route cannot opt in to unlimited source replay.
-        let constrained=bounded_tool_trace(&transcript[..3],8_000);
+        let constrained=bounded_tool_trace(&transcript[..4],8_000);
         assert_eq!(constrained[2]["_dominion_trace_compacted"],true);
     }
     #[test]
