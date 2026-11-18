@@ -17,7 +17,7 @@
 
 **DOMINION** is a local-first, open-source agent workspace. The **native Rust engine** owns model calls, tool execution, approvals, cancellation, durable jobs, verification and recovery. The React UI, HTTP API, embeddable Rust SDK and optional TypeScript SDK are interfaces to that same engine—not separate agents.
 
-**This README describes the experimental `dominion-sub2` branch as of 2026-11-18**, not the default `main` branch or a verified production release. Connect your own model/provider; DOMINION does not resell model tokens.
+**This README describes the experimental `dominion-sub2` branch as of 2026-11-19**, not the default `main` branch or a verified production release. Connect your own model/provider; DOMINION does not resell model tokens.
 
 [Quick start](#quick-start) · [Features](#features) · [Architecture](#architecture-and-source-map) · [SDKs and API](#sdks-and-api) · [Honest limits](#verification-and-limitations) · [한국어](README.ko.md)
 
@@ -41,7 +41,7 @@
 | **Agent chat** | Streaming messages, native tool calls, approval gates, per-request Stop and per-session persisted history | `web/src/pages/Chat.tsx`, `src/api/chat.rs`, `src/engine/chat/` |
 | **Autonomous jobs** | User goals, bounded execution, explicit verification, checkpoints, review states, cancel/retry and owner steering | `src/engine/jobs.rs`, `src/engine/autonomy.rs`, `src/engine/verification.rs` |
 | **Multi-agent rooms** | Individual personas, room-wide owner facts, selected peer context and independent participant continuations | `src/engine/rooms.rs`, `src/engine/chat/room_context.rs` |
-| **Context efficiency** | Stable shared room prefix, bounded context selection, cached-token telemetry, Codex WebSocket incremental continuation where available | `src/engine/chat/context.rs`, `continuity.rs`, `codex_ws.rs` |
+| **Context efficiency** | Stable room prefix, source-aware tool-result replay (one budgeted full read before compaction), bounded context selection, cache telemetry and Codex WebSocket continuation | `src/engine/chat/context.rs`, `trace_budget.rs`, `continuity.rs`, `codex_ws.rs` |
 | **Skills / MCP / discovery** | Permission-scoped native tools, progressive tool schemas, enabled-skill index and on-demand `skill_read` with pagination | `src/engine/tools.rs`, `src/engine/chat/capability.rs` |
 | **Money research** | Optional evidence gathering, article provenance, candidate comparison, hypotheses and explicit owner review; no automatic business purchase/deployment | `src/engine/money/`, `src/api/money/` |
 | **External integrations** | Configured connections such as Telegram, Discord, GitHub and MCP; credentials/permissions required | `src/engine/telegram.rs`, `discord.rs`, `mcp.rs` |
