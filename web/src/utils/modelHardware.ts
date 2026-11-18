@@ -36,3 +36,11 @@ export function classifyRuntimeFailure(error:string):RuntimeFailure{
  if(/backend|engine|executable|llama[.-]?(?:cpp|server)|mlx.*실행기|not.installed|설치.*안|spawn|실행기.*필요|실행기.*없/i.test(message))return 'engine'
  return 'other'
 }
+
+export type LaunchDownloadAction='start'|'wait'|'resume'|'installed'
+export function planDownloadLaunch(status:string|undefined,installed:boolean):LaunchDownloadAction{
+ if(installed)return 'installed'
+ if(status==='resolving'||status==='downloading')return 'wait'
+ if(status==='paused'||status==='failed'||status==='cancelled')return 'resume'
+ return 'start'
+}
