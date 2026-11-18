@@ -1127,6 +1127,9 @@ mod tests {
                     json!({"choices":[{"index":0,"delta":{"tool_calls":[{
                         "index":0,"function":{"arguments":"src/한글.rs\"}"}}]}}]}),
                     json!({"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}),
+                    // Cloudflare/OpenAI-compatible providers may repeat the same
+                    // terminal marker before the final usage-only packet.
+                    json!({"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}),
                     json!({"choices":[],"usage":{"prompt_tokens":41,"completion_tokens":7,
                         "prompt_tokens_details":{"cached_tokens":28}}}),
                 ];
