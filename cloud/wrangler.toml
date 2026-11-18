@@ -14,7 +14,18 @@ database_id = "edc9c387-310e-4660-aac7-db53f9da5d17"
 # UPSTREAM_API_KEY=<operator-owned key> (set as Worker secret)
 # UPSTREAM_FREE_DISCOVERY=1 (set as Worker variable to discover verified :free models)
 # FREE_DAILY_LIMIT=20 (per DOMINION account; adjust for operating budget)
-# Paid upstream inference remains disabled until model and prices are configured.
+# Direct provider routing (OpenRouter is NOT required):
+# Set secrets OPENAI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY,
+# TOGETHER_API_KEY, MISTRAL_API_KEY individually as needed.
+# PAID_MODELS_JSON is an operator-managed Worker variable, for example:
+# [{"id":"deepseek-chat","provider":"deepseek","name":"DeepSeek Chat",
+#   "input_micro_krw":1,"output_micro_krw":2}]
+# Example prices are placeholders, NOT actual provider prices.
+# Pricing units are micro-KRW per token (1000 micro-KRW = 1 KRW).
+# Models only appear if their provider secret is configured.
+# PAID_DAILY_BUDGET_MICRO_KRW sets an optional operator budget ceiling.
+# Paid requests require prepaid user credits. No auto-charging of user cards.
+# Paid streaming and tool calls are not yet enabled.
 
 [ai]
 binding = "AI"
