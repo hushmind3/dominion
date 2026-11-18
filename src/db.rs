@@ -627,6 +627,31 @@ impl Store {
         Ok(records)
     }
 
+    /// Fetch only the specific records attached to a completed execution.
+    /// This preserves SQL errors instead of converting them into an empty
+    /// result, and uses the existing (kind, id) primary key for each lookup.
+    /// Historical improvement/operation archives are never materialized.
+    pub fn try_records_by_ids(&self, kind: &str, ids: &[String]) -> Result<Vec<Value>, String> {
+        if ids.is_empty() { return Ok(Vec::new()); }
+        let conn = self.conn.lock().map_err(|error| error.to_string())?;
+        let mut statement = conn.prepare(
+            "SELECT data, id, created_at, updated_at FROM records WHERE kind=?1 AND id=?2",
+        ).map_err(|error| error.to_string())?;
+        let mut found = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for id in ids {
+            if !seen.insert(id.as_str()) { continue; }
+            if let Some(value) = statement
+                .query_row(params![kind, id], record_from_row)
+                .optional()
+                .map_err(|error| error.to_string())?
+            {
+                found.push(value);
+            }
+        }
+        Ok(found)
+    }
+
     pub fn count(&self, kind: &str) -> usize {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
