@@ -114,6 +114,7 @@ jobs:
         run: |
           cargo test --locked --bin dominion-rust codex_ws_registers_full_persona_once_and_reuses_its_response_chain
           cargo test --locked --bin dominion-rust complete_websocket_exchange_sends_static_persona_only_on_first_response
+          cargo test --locked --bin dominion-rust rejected_developer_role_requires_full_instruction_fallback_not_silent_omission
       - name: Room shared-prefix caching and Cloudflare affinity (dev profile)
         run: |
           cargo test --locked --bin dominion-rust shared_room_owner_rules_precede_agent_persona_with_no_identity_loss
