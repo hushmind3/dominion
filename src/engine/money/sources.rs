@@ -175,15 +175,27 @@ fn preserve_observations(signals:Vec<Value>,history:&[Value])->(Vec<Value>,usize
         .filter_map(|row|row["title"].as_str())
         .map(normalized_title).filter(|name|!name.is_empty())
         .collect::<std::collections::HashSet<_>>();
-    let mut urls=std::collections::HashSet::new();
-    let mut preserved=Vec::new();
+    let mut url_indices=std::collections::HashMap::<String,usize>::new();
+    let mut preserved=Vec::<Value>::new();
     let mut duplicate_urls=0;
     for mut signal in signals{
-        let Some(url)=signal["url"].as_str().filter(|url|!url.is_empty()) else{continue;};
-        if !urls.insert(url.to_string()){
+        let Some(url)=signal["url"].as_str().filter(|url|!url.is_empty())
+            .map(str::to_string) else{continue;};
+        if let Some(&index)=url_indices.get(&url){
             duplicate_urls+=1;
+            // Multiple feed search channels are provenance for one article,
+            // not another news story. Keep each feed path in that one row.
+            let new_feed=signal["sourceName"].as_str().unwrap_or("");
+            let mut origins=preserved[index]["observedFeeds"].as_array().cloned()
+                .unwrap_or_default();
+            if !new_feed.is_empty() && origins.len()<12
+                && !origins.iter().any(|entry|entry.as_str()==Some(new_feed)){
+                origins.push(json!(new_feed));
+                preserved[index]["observedFeeds"]=json!(origins);
+            }
             continue;
         }
+        url_indices.insert(url,preserved.len());
         let normalized=normalized_title(signal["title"].as_str().unwrap_or(""));
         if normalized.is_empty(){continue;}
         let previously_seen=!titles.insert(normalized.clone());
@@ -315,8 +327,10 @@ mod tests{
         let batch=vec![
             json!({"title":"supplier raises prices 20%!","url":"https://one.example/story"}),
             json!({"title":"supplier raises prices 20%!","url":"https://two.example/story"}),
-            json!({"title":"New public buyer tender","url":"https://three.example/tender"}),
-            json!({"title":"New public buyer tender","url":"https://three.example/tender"}),
+            json!({"title":"New public buyer tender","url":"https://three.example/tender",
+                "sourceName":"Feed one","observedFeeds":["Feed one"]}),
+            json!({"title":"New public buyer tender","url":"https://three.example/tender",
+                "sourceName":"Feed two","observedFeeds":["Feed two"]}),
         ];
         let (kept,duplicate_urls)=preserve_observations(batch,&history);
         assert_eq!(kept.len(),3);
@@ -327,6 +341,7 @@ mod tests{
             "matching_headline_requires_independent_source_review");
         assert_eq!(kept[2]["storyRelationship"],
             "first_seen_headline_in_recent_window");
+        assert_eq!(kept[2]["observedFeeds"].as_array().unwrap().len(),2);
     }
 
     #[test] fn google_news_feeds_carry_publisher_identity_not_feed_identity(){
