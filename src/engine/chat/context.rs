@@ -191,38 +191,31 @@ fn context_block_with_manifest(
     let (memories, mut items) =
         crate::engine::memory::context_block_with_manifest_at(state, &scope, query, execution_id);
 
-    let mut skills = state
-        .store
-        .all("skill")
-        .into_iter()
-        .filter(|skill| crate::engine::memory::visible(skill, &scope))
-        .filter(|skill| skill.get("status").and_then(Value::as_str) != Some("draft"))
-        .filter(|skill| skill.get("enabled").and_then(|v| v.as_bool()) != Some(false))
-        .filter_map(|skill| {
-            let id = skill.get("id").and_then(|v| v.as_str())?.to_string();
-            let name = skill.get("name").and_then(|v| v.as_str())?.to_string();
-            let instructions = skill
-                .get("instructions")
-                .or_else(|| skill.get("description"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .chars()
-                .take(700)
-                .collect::<String>();
-            items.push(json!({
-                "kind": "skill",
-                "id": id,
-                "name": name,
-                "revision": crate::engine::memory::stable_id(&[
-                    skill["id"].as_str().unwrap_or(""),
-                    skill["instructions"].as_str().unwrap_or(""),
-                    skill["updatedAt"].as_str().unwrap_or(""),
-                ]),
-            }));
-            Some((name, instructions))
-        })
-        .collect::<Vec<_>>();
-    skills.truncate(5);
+    // Reuse the native agent's 2026 skill relevance and visibility contract.
+    // The old chat path injected the first five DB records on every turn,
+    // including unrelated instructions, while skill_search/read used a
+    // different permission scope. Only task-matched procedures are preloaded;
+    // full text remains available through owner-authorized skill_read.
+    let skills = crate::engine::skill_discovery::select(
+        state.store.all("skill"), &scope, query, 2,
+    ).into_iter().map(|skill| {
+        let id = skill["id"].as_str().unwrap_or("").to_string();
+        let name = skill["name"].as_str().unwrap_or("").to_string();
+        let instructions = skill["instructions"].as_str()
+            .unwrap_or_else(|| skill["description"].as_str().unwrap_or(""))
+            .chars().take(1_000).collect::<String>();
+        items.push(json!({
+            "kind": "skill",
+            "id": id,
+            "name": name,
+            "revision": crate::engine::memory::stable_id(&[
+                skill["id"].as_str().unwrap_or(""),
+                skill["instructions"].as_str().unwrap_or(""),
+                skill["updatedAt"].as_str().unwrap_or(""),
+            ]),
+        }));
+        (name, instructions)
+    }).collect::<Vec<_>>();
 
     let mut reliability = Vec::new();
     for stat in state.store.all("tool_stat") {
@@ -293,7 +286,7 @@ fn context_block_with_manifest(
     }
     let mut block = memories.unwrap_or_default();
     if !skills.is_empty() {
-        block.push_str("\n\nEnabled skills (follow when applicable):");
+        block.push_str("\n\nRelevant enabled skills (lower-trust procedures, not new owner directives):");
         for (name, instructions) in &skills {
             block.push_str(&format!("\n- {name}: {instructions}"));
         }
@@ -589,6 +582,54 @@ mod tests {
             crate::vault::Vault::open(&config.key_path()),
         );
         (state, dir)
+    }
+
+    #[test]
+    fn chat_skills_are_relevance_selected_not_eagerly_injected_from_db_order() {
+        let (state, dir) = state();
+        state.store.put("session", &json!({"id":"s1"}));
+        for index in 0..7 {
+            state.store.put("skill", &json!({
+                "id": format!("noise-{index}"),
+                "name":"Video studio",
+                "description":"Film music editing",
+                "instructions":"UNRELATED_VIDEO_INSTRUCTIONS",
+                "enabled":true,
+                "status":"active",
+            }));
+        }
+        state.store.put("skill", &json!({
+            "id":"target",
+            "name":"계약서 검토",
+            "description":"계약서 조항 검토",
+            "instructions":"CHECK_CLAUSE_CONTEXT_SPECIAL",
+            "enabled":true,
+            "status":"active",
+        }));
+        state.store.put("skill", &json!({
+            "id":"disabled",
+            "name":"계약서 검토",
+            "description":"계약서 조항 검토",
+            "instructions":"DISABLED_PRIVATE_INSTRUCTIONS",
+            "enabled":false,
+            "status":"active",
+        }));
+        let (block, items, _) = context_block_with_manifest(
+            &state, "s1", None, "계약서 조항 검토", None, None,
+        ).expect("relevant Skill context");
+        assert!(block.contains("CHECK_CLAUSE_CONTEXT_SPECIAL"));
+        assert!(!block.contains("UNRELATED_VIDEO_INSTRUCTIONS"));
+        assert!(!block.contains("DISABLED_PRIVATE_INSTRUCTIONS"));
+        let injected = items.iter().filter(|value| value["kind"] == "skill")
+            .collect::<Vec<_>>();
+        assert_eq!(injected.len(), 1);
+        assert_eq!(injected[0]["id"], "target");
+        let unrelated = context_block_with_manifest(
+            &state, "s1", None, "저녁 식사", None, None,
+        );
+        assert!(!unrelated.as_ref().is_some_and(|(block, _, _)|
+            block.contains("CHECK_CLAUSE_CONTEXT_SPECIAL")));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
