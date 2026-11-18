@@ -335,6 +335,7 @@ mod harness;
 mod adaptation;
 mod program;
 mod selection;
+mod capability;
 mod shortcuts;
 mod dispatch;
 mod planning;
