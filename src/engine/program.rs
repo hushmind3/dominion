@@ -675,6 +675,21 @@ pub fn apply_revision_proposal(
 ///
 /// The selection is multi-objective and abstains on incomparable candidates:
 /// it never calls an LLM, guesses future success, or rewards predicted gains.
+/// Evidence references must be durable identifiers recorded by this run,
+/// not free-form assertions supplied by the repair model.
+fn repair_evidence_is_host_observed(checkpoint:&Value,proposal:&Value)->bool{
+    let refs=checkpoint["observationRefs"].as_object();
+    match proposal.get("evidenceIds"){
+        None=>true,
+        Some(Value::Array(ids)) if ids.len()<=8=>ids.iter().all(|id|{
+            let Some(id)=id.as_str() else{return false;};
+            refs.is_some_and(|known|known.contains_key(id))
+                || checkpoint["programFailure"]["nodeId"].as_str()==Some(id)
+        }),
+        _=>false,
+    }
+}
+
 /// A refuted verifier will execute before any merely appended action. A
 /// model's "I repaired it" claim is not a reason to bypass this ordering.
 /// Require an executable intervention inserted BEFORE the exact failed gate.
@@ -709,6 +724,9 @@ pub fn adjudicate_revision_proposals(
     // A singleton retains the original revision contract without fabricated
     // comparative evidence. The new multi-candidate gate is opt-in.
     if proposals.len()==1 {
+        if !repair_evidence_is_host_observed(checkpoint,&proposals[0]) {
+            return Err("repair evidence references are not observed in host checkpoint".into());
+        }
         if !repairs_failed_verifier_order(checkpoint,&proposals[0]) {
             return Err("verification repair must run before the unchanged failed gate".into());
         }
@@ -717,21 +735,13 @@ pub fn adjudicate_revision_proposals(
     }
     let mut admitted=Vec::<(usize,Value,usize,usize,usize)>::new();
     let mut rejected=Vec::<Value>::new();
-    let observed=checkpoint["observationRefs"].as_object();
     for (index,proposal) in proposals.iter().enumerate(){
         if !repairs_failed_verifier_order(checkpoint,proposal) {
             rejected.push(json!({"index":index,
                 "reason":"repair_actions_do_not_precede_failed_verifier"}));
             continue;
         }
-        let reference_ids=proposal["evidenceIds"].as_array()
-            .cloned().unwrap_or_default();
-        let valid_references=reference_ids.len()<=8&&reference_ids.iter().all(|id|{
-            let Some(id)=id.as_str() else{return false;};
-            observed.is_some_and(|refs|refs.contains_key(id))
-                || checkpoint["programFailure"]["nodeId"].as_str()==Some(id)
-        });
-        if !valid_references {
+        if !repair_evidence_is_host_observed(checkpoint,proposal) {
             rejected.push(json!({"index":index,"reason":"missing_host_observation_reference"}));
             continue;
         }
@@ -960,6 +970,16 @@ mod tests {
         assert!(adjudicate_revision_proposals(
             &base,&checkpoint,&response,&tools,64,"replace").unwrap_err()
             .contains("incomparable"));
+        let mut singleton=json!({"baseRevision":"t","reason":"unsupported witness",
+            "evidenceIds":["unobserved"],"addNodes":[
+                {"type":"call_tool","id":"one","tool":"workspace_read",
+                    "inputs":{"path":"out"}}]});
+        assert!(adjudicate_revision_proposals(
+            &base,&checkpoint,&singleton,&tools,64,"replace")
+            .unwrap_err().contains("not observed"));
+        singleton["evidenceIds"]=json!([]);
+        assert!(adjudicate_revision_proposals(
+            &base,&checkpoint,&singleton,&tools,64,"replace").is_ok());
         let made_up=json!({"baseRevision":"t","reason":"fabricated trace",
             "evidenceIds":["nonexistent"],"addNodes":[
                 {"type":"call_tool","id":"fake","tool":"workspace_read",
