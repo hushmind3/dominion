@@ -76,42 +76,6 @@ function freeModels(env) {
   const all = [...(env.AI ? builtinModels : []), ...allowed];
   return [...new Map(all.map(x => [x.id, x])).values()];
 }
-// Cache catalog discovery per isolate; refresh at a bounded interval.
-let freeCatalogCache = { expires: 0, models: [] };
-const modelFailures = new Map();
-function healthyModels(models) {
-  const time = Date.now();
-  return models.filter(m => (modelFailures.get(m.id)?.until || 0) <= time);
-}
-function markFailure(id) {
-  const previous = modelFailures.get(id);
-  const count = (previous?.until > Date.now() ? previous.count : 0) + 1;
-  modelFailures.set(id, { count, until: Date.now() + Math.min(300000, 15000 * 2 ** Math.min(count - 1, 5)) });
-  if (modelFailures.size > 500) {
-    for (const [key, value] of modelFailures) if (value.until < Date.now()) modelFailures.delete(key);
-  }
-}
-function markSuccess(id) { modelFailures.delete(id); }
-async function upstreamFreeCatalog(env) {
-  if (!env.UPSTREAM_API_KEY || !env.UPSTREAM_URL || !env.UPSTREAM_FREE_DISCOVERY) return [];
-  const ttl = Math.max(60000, Math.min(3600000, Number(env.FREE_CATALOG_TTL_MS) || 300000));
-  if (Date.now() < freeCatalogCache.expires) return freeCatalogCache.models;
-  const url = env.UPSTREAM_URL.replace(/\\/$/, '') + '/models';
-  try {
-    const res = await fetch(url, { headers: { authorization: 'Bearer ' + env.UPSTREAM_API_KEY }, signal: AbortSignal.timeout(12000) });
-    if (!res.ok) throw Error('Catalog unavailable');
-    const data = await res.json();
-    if (!Array.isArray(data.data)) throw Error('Invalid catalog');
-    const models = data.data.filter(m => typeof m.id === 'string' && m.id.endsWith(':free') &&
-      m.pricing && Number(m.pricing.prompt) === 0 && Number(m.pricing.completion) === 0)
-      .slice(0, 300).map(m => ({ id: m.id, name: m.name || m.id, free: true, backend: 'upstream' }));
-    freeCatalogCache = { expires: Date.now() + ttl, models };
-    return models;
-  } catch {
-    freeCatalogCache.expires = Date.now() + 60000;
-    return freeCatalogCache.models;
-  }
-}
 // Worker-isolate cache reduces catalog traffic. Expired snapshots are retained
 // for transient upstream failures; the scheduled handler refreshes proactively.
 let catalogCache = { expires: 0, models: [], refreshedAt: 0, upstreamVerifiedAt: 0 };
