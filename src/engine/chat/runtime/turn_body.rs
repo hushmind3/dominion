@@ -237,6 +237,23 @@ pub(super) async fn run_turn_body(
         tool_definitions.retain(|tool|tool_name(tool)!="skill_read");
     }
     let is_room = session["roomId"].is_string();
+    // Source-addressed peer reads are useful for exact group recall and
+    // synthesis, but a tool schema on every casual room greeting wastes
+    // provider input. Keep the capability available at the native executor;
+    // only advertise it when the owner's request can need full peer sources.
+    let peer_reader=if is_room && request.tools_enabled && request.tools_execution_enabled
+        && session["roomId"].as_str()
+            .and_then(|id|state.store.get("room",id))
+            .is_some_and(|room|room["agentIds"].as_array().is_some_and(|members|members.len()>=5))
+        && ["원문","인용","발언","각자","누가","기억","종합","전체 의견",
+            "quote","verbatim","recall","who said","all agents","each agent"]
+            .iter().any(|word|request.input.to_lowercase().contains(word))
+    {
+        tool_definitions.iter().find(|tool|tool_name(tool)=="room_message_read").cloned()
+    }else{None};
+    if !is_room {
+        tool_definitions.retain(|tool|tool_name(tool)!="room_message_read");
+    }
     // Freeze a same-turn provider-catalog ceiling *after* connection
     // filtering, then apply the same user and read-only restrictions that
     // the native dispatcher enforces. Search may not promote outside this.
@@ -334,6 +351,15 @@ pub(super) async fn run_turn_body(
             if !tool_definitions.iter().any(|tool|tool_name(tool)=="skill_read") {
                 tool_definitions.push(loader);
             }
+        }
+    }
+    if let Some(loader)=peer_reader{
+        if request.tools_enabled && request.tools_execution_enabled
+            && simple_creation_target.is_none()
+            && (session["sdkUiPolicy"].is_null()
+                || tools::ui_tool_allowed(&session["sdkUiPolicy"],"room_message_read"))
+            && !tool_definitions.iter().any(|tool|tool_name(tool)=="room_message_read"){
+            tool_definitions.push(loader);
         }
     }
     let compiled = if is_room {
