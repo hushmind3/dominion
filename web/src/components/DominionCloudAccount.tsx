@@ -165,10 +165,11 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
    <select aria-label="모델 요금 필터" value={modelFilter} onChange={e=>setModelFilter(e.target.value as 'all'|'free'|'paid')} className="rounded-lg border px-3 py-2 text-[12px]">
     <option value="all">전체</option><option value="free">무료</option><option value="paid">유료</option>
    </select>
-   <select aria-label="DOMINION 모델" value={selected} onChange={e=>setSelected(e.target.value)} className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]">
+   <select aria-label="DOMINION 모델" value={models.some(model=>model.id===selected&&(modelFilter==='all'||(modelFilter==='free'?model.free:!model.free))&&(model.id+' '+(model.name||'')+' '+(model.provider||'')).toLowerCase().includes(modelSearch.toLowerCase()))?selected:''} onChange={e=>setSelected(e.target.value)} className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]">
+    <option value="" disabled>모델을 선택하세요</option>
     {models.filter(model=>(modelFilter==='all'||(modelFilter==='free'?model.free:!model.free))&&(model.id+' '+(model.name||'')+' '+(model.provider||'')).toLowerCase().includes(modelSearch.toLowerCase())).map(model=><option key={model.id} value={model.id}>{model.name||model.id} · {model.free?'무료':'유료'}{model.provider?' · '+model.provider:''}</option>)}
    </select>
-   <button type="button" disabled={busy||!selected} onClick={()=>void register()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">모델 등록</button>
+   <button type="button" disabled={busy||!selected||!models.some(model=>model.id===selected&&(modelFilter==='all'||(modelFilter==='free'?model.free:!model.free))&&(model.id+' '+(model.name||'')+' '+(model.provider||'')).toLowerCase().includes(modelSearch.toLowerCase()))} onClick={()=>void register()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">모델 등록</button>
   </div>}
   {message&&<p role="status" className="mt-2 text-[12px] text-[#7C7469]">{message}</p>}
   <button type="button" onClick={()=>setShowAdvanced(value=>!value)} className="mt-4 rounded-lg border px-3 py-2 text-[12px]">{showAdvanced?'고급 업체 연결 닫기':'고급 설정 · 직접 업체 API 연결'}</button>
