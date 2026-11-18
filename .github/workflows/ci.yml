@@ -110,6 +110,10 @@ jobs:
         run: cargo test --locked --bin dominion-rust money_
       - name: Nine-speaker three-turn work context and complete group delivery (dev profile)
         run: cargo test --locked --bin dominion-rust nine_participants_three_owner_turns_complete_thirty_messages_with_selective_work_context
+      - name: Stateful Codex persona inheritance and per-turn wire delta (dev profile)
+        run: |
+          cargo test --locked --bin dominion-rust codex_ws_registers_full_persona_once_and_reuses_its_response_chain
+          cargo test --locked --bin dominion-rust complete_websocket_exchange_sends_static_persona_only_on_first_response
       - name: Room shared-prefix caching and Cloudflare affinity (dev profile)
         run: |
           cargo test --locked --bin dominion-rust shared_room_owner_rules_precede_agent_persona_with_no_identity_loss
