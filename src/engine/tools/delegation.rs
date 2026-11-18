@@ -175,7 +175,7 @@ pub(super) fn task_payload(ctx: &ToolContext<'_>, args: &Value, with_result: boo
 /// and the unified executor use this same rule. Default delegation keeps the
 /// existing tool set. Verification can run a narrowly specified Cargo test
 /// command inside the mandatory isolated worktree and sandbox.
-pub(super) fn profile_tool_visible(session: &Value, name: &str) -> bool {
+pub(crate) fn profile_tool_visible(session: &Value, name: &str) -> bool {
     match session["delegationProfile"].as_str().unwrap_or("general") {
         "inspection" => observational(name),
         "verification" => observational(name) || name == "terminal_exec",
@@ -184,7 +184,7 @@ pub(super) fn profile_tool_visible(session: &Value, name: &str) -> bool {
     }
 }
 
-pub(super) fn profile_tool_allowed(session: &Value, name: &str, args: &Value) -> bool {
+pub(crate) fn profile_tool_allowed(session: &Value, name: &str, args: &Value) -> bool {
     if !profile_tool_visible(session, name) { return false; }
     if session["delegationProfile"] == "verification" && name == "terminal_exec" {
         let program = args["command"].as_str().unwrap_or("");
