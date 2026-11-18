@@ -180,7 +180,17 @@ fn append_owner_fact_deltas(fresh: &[Value], prior: &[Value]) -> Vec<Value> {
 /// context capacity demands a rotation. Enforcing the 2k *selector* budget
 /// against the cumulative cached prefix rebased almost every owner turn.
 fn working_view_allowance(room: Option<&Value>, provider: &ProviderRef, fixed: usize) -> usize {
-    let selection = room.and_then(|room|room["contextBudgetTokens"].as_u64())
+    // Preserve private/native coding behavior. Only group-room participants
+    // opt into the enlarged multi-turn cache epoch; non-room history used a
+    // 40k allowance before this change and must retain that contract.
+    let Some(room)=room else {
+        return provider.context_tokens.map(|capacity|
+            40_000usize.min((capacity as usize)
+                .saturating_sub(provider.max_output_tokens.unwrap_or(4096) as usize)
+                .saturating_sub(fixed))
+        ).unwrap_or(40_000);
+    };
+    let selection = room["contextBudgetTokens"].as_u64()
         .unwrap_or(2_000) as usize;
     // Explicit epoch tuning is independent of the conversational selector.
     // Default to four request selections per epoch, bounded against runaway
@@ -1024,6 +1034,17 @@ mod tests {
             "provider capacity minus reserved output and fixed prompt is hard");
         drop(state);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn private_coding_context_keeps_original_forty_thousand_token_allowance() {
+        let provider=route();
+        assert_eq!(working_view_allowance(None,&provider,0),40_000,
+            "non-room sessions must not inherit the room-specific 8k epoch");
+        let mut bounded=provider.clone();
+        bounded.context_tokens=Some(16_000);
+        bounded.max_output_tokens=Some(2_000);
+        assert_eq!(working_view_allowance(None,&bounded,500),13_500);
     }
 
     #[test]
