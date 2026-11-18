@@ -675,6 +675,28 @@ pub fn apply_revision_proposal(
 ///
 /// The selection is multi-objective and abstains on incomparable candidates:
 /// it never calls an LLM, guesses future success, or rewards predicted gains.
+/// A refuted verifier will execute before any merely appended action. A
+/// model's "I repaired it" claim is not a reason to bypass this ordering.
+/// Require an executable intervention inserted BEFORE the exact failed gate.
+fn repairs_failed_verifier_order(checkpoint:&Value,proposal:&Value)->bool{
+    if checkpoint["programFailure"]["kind"]!="verification_failed" {
+        return true;
+    }
+    let Some(failed)=checkpoint["programFailure"]["nodeId"]
+        .as_str().filter(|id|!id.is_empty()) else{return false;};
+    fn actionable(node:&Value)->bool{
+        if matches!(node["type"].as_str(),Some("call_tool"|"delegate"|"model_decision")){
+            return true;
+        }
+        ["nodes","then","else","body"].iter().any(|field|
+            node[*field].as_array().is_some_and(|children|
+                children.iter().any(actionable)))
+    }
+    proposal["addNodes"].as_array().is_some_and(|nodes|
+        nodes.iter().any(|node|
+            node["insertBefore"].as_str()==Some(failed)&&actionable(node)))
+}
+
 pub fn adjudicate_revision_proposals(
     program:&Value,checkpoint:&Value,response:&Value,
     allowed_tools:&[String],max_nodes:usize,repair_mode:&str,
@@ -687,6 +709,9 @@ pub fn adjudicate_revision_proposals(
     // A singleton retains the original revision contract without fabricated
     // comparative evidence. The new multi-candidate gate is opt-in.
     if proposals.len()==1 {
+        if !repairs_failed_verifier_order(checkpoint,&proposals[0]) {
+            return Err("verification repair must run before the unchanged failed gate".into());
+        }
         return apply_revision_proposal(program,checkpoint,&proposals[0],
             allowed_tools,max_nodes,repair_mode);
     }
@@ -694,6 +719,11 @@ pub fn adjudicate_revision_proposals(
     let mut rejected=Vec::<Value>::new();
     let observed=checkpoint["observationRefs"].as_object();
     for (index,proposal) in proposals.iter().enumerate(){
+        if !repairs_failed_verifier_order(checkpoint,proposal) {
+            rejected.push(json!({"index":index,
+                "reason":"repair_actions_do_not_precede_failed_verifier"}));
+            continue;
+        }
         let reference_ids=proposal["evidenceIds"].as_array()
             .cloned().unwrap_or_default();
         let valid_references=reference_ids.len()<=8&&reference_ids.iter().all(|id|{
@@ -804,6 +834,27 @@ pub fn checkpoint_skip_completed(checkpoint: &Value, node_id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refuted_verifier_cannot_be_bypassed_by_appending_unreachable_fix(){
+        let base=json!({"revision":"before","nodes":[
+            {"type":"verify","id":"gate","checks":[
+                {"predicate":{"op":"equal","a":1,"b":2}}]}
+        ]});
+        let mut cp=new_checkpoint(&base);
+        cp["programFailure"]=json!({"nodeId":"gate",
+            "kind":"verification_failed"});
+        let mut proposal=json!({"baseRevision":"before","reason":"real intervention",
+            "addNodes":[{"type":"call_tool","id":"fix",
+                "tool":"workspace_write","inputs":{"path":"out.txt","content":"x"}}]});
+        let tools=vec!["workspace_write".to_owned()];
+        assert!(adjudicate_revision_proposals(
+            &base,&cp,&proposal,&tools,64,"replace").unwrap_err()
+            .contains("must run before"));
+        proposal["addNodes"][0]["insertBefore"]=json!("gate");
+        assert!(adjudicate_revision_proposals(
+            &base,&cp,&proposal,&tools,64,"replace").is_ok());
+    }
 
     #[test]
     fn inserted_recovery_runs_before_original_verifier_without_replaying_past_effects(){
