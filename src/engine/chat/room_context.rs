@@ -821,6 +821,94 @@ mod tests {
     }
 
     #[test]
+    fn group_replay_keeps_committed_answer_but_not_prior_private_reasoning() {
+        let state=state();
+        message(&state,"earlier-owner","user","어제 약속했던 배포 버전은?");
+        state.store.write_message(&json!({
+            "id":"answer","session_id":"room:r","role":"assistant","agent_id":"a",
+            "content":"배포 버전은 7입니다.","reasoning":"PRIVATE_REASONING_NOT_FOR_GROUP ".repeat(500),
+            "metadata":{"replyToMessageId":"earlier-owner"}
+        })).unwrap();
+        message(&state,"current","user","내가 약속했던 버전은?");
+        let request=TurnRequest::from_value(&json!({
+            "input":"내가 약속했던 버전은?","agentId":"a","toolsEnabled":false
+        })).unwrap();
+        let compiled=compile(&state,&request,"room:r","current",&[],&[]).unwrap();
+        let context=json!(compiled.history).to_string();
+        assert!(context.contains("배포 버전은 7입니다."),"committed answer retained");
+        assert!(!context.contains("PRIVATE_REASONING_NOT_FOR_GROUP"));
+        assert!(state.store.message("answer").unwrap()["reasoning"].as_str()
+            .unwrap().contains("PRIVATE_REASONING_NOT_FOR_GROUP"),
+            "durable raw original cannot be destroyed by prompt compaction");
+        let dir=state.config.data_dir.clone();drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn nine_speaker_long_prose_uses_profitable_peer_brief_and_preserves_sources() {
+        let state=state();
+        let agents=(0..9).map(|n|format!("speaker-{n}")).collect::<Vec<_>>();
+        state.store.put("room",&json!({"id":"r","agentIds":agents,
+            "contextBudgetTokens":20000})).unwrap();
+        for n in 0..9 {
+            let id=format!("speaker-{n}");
+            state.store.put("agent",&json!({"id":id,"name":format!("Name{n}")})).unwrap();
+        }
+        message(&state,"owner","user","각자 의견을 말하고 마지막 참가자가 정리하세요");
+        for n in 0..8 {
+            let id=format!("voice-{n}");
+            let text=format!("Voice{n} exact source: {}",format!("analysis{n} ").repeat(110));
+            state.store.write_message(&json!({"id":id,"session_id":"room:r",
+                "role":"assistant","agent_id":format!("speaker-{n}"),
+                "content":text,"metadata":{"replyToMessageId":"owner"}})).unwrap();
+        }
+        let request=TurnRequest::from_value(&json!({"input":"각자 의견을 말하고 마지막 참가자가 정리하세요",
+            "agentId":"speaker-8","toolsEnabled":false})).unwrap();
+        let compiled=compile(&state,&request,"room:r","owner",&[],&[]).unwrap();
+        let ids=compiled.accounting["peerBriefMessageIds"].as_array().unwrap();
+        assert_eq!(ids.len(),2,"latest of three raw peers should remain exact");
+        assert!(compiled.accounting["peerBriefEstimatedTokensSaved"].as_u64().unwrap()>100);
+        let rendered=json!(compiled.history).to_string();
+        assert!(rendered.contains("room-peer-brief"));
+        assert!(rendered.contains("Voice7 exact source"));
+        assert!(rendered.contains(&"analysis7 ".repeat(110)),
+            "newest peer must remain byte-for-byte available");
+        assert!(!rendered.contains(&"analysis5 ".repeat(110)));
+        assert_eq!(state.store.message("voice-5").unwrap()["content"].as_str().unwrap(),
+            format!("Voice5 exact source: {}", "analysis5 ".repeat(110)));
+        assert_eq!(state.store.messages("room:r").len(),9);
+        let dir=state.config.data_dir.clone();drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn explicit_exact_quote_request_never_compacts_peer_speech() {
+        let state=state();
+        let agents=(0..9).map(|n|format!("speaker-{n}")).collect::<Vec<_>>();
+        state.store.put("room",&json!({"id":"r","agentIds":agents,"contextBudgetTokens":20000})).unwrap();
+        for n in 0..9 {
+            state.store.put("agent",&json!({"id":format!("speaker-{n}"),"name":format!("Name{n}")})).unwrap();
+        }
+        message(&state,"owner","user","동료 발언을 원문 그대로 인용해");
+        for n in 0..8 {
+            state.store.write_message(&json!({
+                "id":format!("voice-{n}"),"session_id":"room:r",
+                "role":"assistant","agent_id":format!("speaker-{n}"),
+                "content":format!("EXACT_{n}: {}","verbatim passage ".repeat(100)),
+                "metadata":{"replyToMessageId":"owner"}
+            })).unwrap();
+        }
+        let request=TurnRequest::from_value(&json!({"input":"동료 발언을 원문 그대로 인용해",
+            "agentId":"speaker-8","toolsEnabled":false})).unwrap();
+        let compiled=compile(&state,&request,"room:r","owner",&[],&[]).unwrap();
+        assert_eq!(compiled.accounting["peerBriefMessageIds"].as_array().unwrap().len(),0);
+        let rendered=json!(compiled.history).to_string();
+        assert!(rendered.contains(&"verbatim passage ".repeat(100)));
+        let dir=state.config.data_dir.clone();drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn compiler_recalls_old_corrections_and_preserves_identity_without_a_model() {
         let state = state();
         message(&state, "old", "user", "배포 포트는 8000이다.");
