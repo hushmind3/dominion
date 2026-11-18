@@ -16,6 +16,7 @@ mod protocol;
 mod provider;
 mod runtime;
 mod tool_projection;
+mod capability;
 mod outcome;
 #[cfg(test)]
 mod tests;
