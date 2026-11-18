@@ -308,6 +308,21 @@ impl Store {
         Ok(count.max(0) as usize)
     }
 
+    /// Session cancellation must not materialize the global execution
+    /// archive. The existing session index bounds the active-run probe.
+    pub fn has_running_execution_for_session(&self, session_id: &str) -> Result<bool, String> {
+        let conn=self.conn.lock().map_err(|error|error.to_string())?;
+        let running=conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM records
+             WHERE kind='execution'
+               AND json_extract(data,'$.sessionId')=?1
+               AND json_extract(data,'$.status')='running'
+             LIMIT 1)",
+            [session_id],|row|row.get::<_,i64>(0),
+        ).map_err(|error|error.to_string())?;
+        Ok(running!=0)
+    }
+
     pub fn active_jobs(&self) -> Result<Vec<Value>, String> {
         let conn=self.conn.lock().map_err(|e|e.to_string())?;
         let mut stmt=conn.prepare("SELECT data,id,created_at,updated_at FROM records
@@ -2247,6 +2262,31 @@ mod tests {
         assert_eq!(store.sdk_used_model_calls("s-a","e2").unwrap(),3);
         assert_eq!(store.sdk_used_model_calls("s-a","missing").unwrap(),8);
         assert_eq!(store.sdk_used_model_calls("s-b","missing").unwrap(),90);
+    }
+
+    #[test]
+    fn session_running_probe_avoids_global_history_and_uses_session_index() {
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        for i in 0..100 {
+            store.put("execution",&json!({"id":format!("old-{i}"),
+                "sessionId":"other","status":"completed"})).unwrap();
+        }
+        store.put("execution",&json!({"id":"active",
+            "sessionId":"target","status":"running"})).unwrap();
+        assert!(store.has_running_execution_for_session("target").unwrap());
+        assert!(!store.has_running_execution_for_session("other").unwrap());
+        assert!(!store.has_running_execution_for_session("unknown").unwrap());
+        let conn=store.conn.lock().unwrap();
+        let plans=conn.prepare(
+            "EXPLAIN QUERY PLAN SELECT EXISTS(SELECT 1 FROM records
+             WHERE kind='execution'
+               AND json_extract(data,'$.sessionId')=?1
+               AND json_extract(data,'$.status')='running'
+             LIMIT 1)",
+        ).unwrap().query_map(["target"],|row|row.get::<_,String>(3))
+            .unwrap().collect::<Result<Vec<_>,_>>().unwrap();
+        assert!(plans.iter().any(|line|line.contains("idx_sdk_execution_session")),
+            "session cancellation must not scan all execution records: {plans:?}");
     }
 
     #[test]
