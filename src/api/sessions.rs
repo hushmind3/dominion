@@ -116,17 +116,41 @@ pub async fn fork_session(State(state): State<AppState>, Path(id): Path<String>)
 
 // ---------------------------------------------------------------- approvals
 
-pub async fn cancel_session(State(state): State<AppState>, Path(id): Path<String>) -> Json<Value> {
+/// The browser may issue Stop before its /api/chat POST reaches the Rust
+/// runtime. Reserve an immutable UUID stop tombstone first, then cancel the
+/// active session epoch. Old /stop clients can continue sending an empty body.
+pub async fn cancel_session(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: Option<Json<Value>>,
+) -> Json<Value> {
+    let request_id=body.as_ref()
+        .and_then(|Json(body)|body["requestId"].as_str())
+        .filter(|id|uuid::Uuid::parse_str(id).is_ok());
     let running = state.store.all("execution").iter().any(|execution| {
         execution.get("sessionId").and_then(|value| value.as_str()) == Some(id.as_str())
             && execution.get("status").and_then(|value| value.as_str()) == Some("running")
     });
+    let mut request_recorded=false;
+    if let Some(request_id)=request_id {
+        // A cancellation marker is scoped to one session and one UI turn.
+        // Never let an external UUID become a way to cancel a different chat.
+        let existing=state.store.get("chat_cancel_request",request_id);
+        if existing.as_ref().is_none_or(|record|record["sessionId"]==id) {
+            request_recorded=state.store.put("chat_cancel_request",&json!({
+                "id":request_id,"sessionId":id,"cancelled":true,
+                "cancelledAt":chrono::Utc::now().to_rfc3339()
+            })).is_some();
+        }
+    }
     state.cancel_session(&id);
     state.store.audit(
         "session.cancel",
-        json!({ "sessionId": id, "running": running }),
+        json!({ "sessionId": id, "running": running,
+            "requestId":request_id,"requestRecorded":request_recorded }),
     );
-    Json(json!({ "cancelled": running }))
+    Json(json!({ "cancelled": running||request_recorded,
+        "running":running,"requestRecorded":request_recorded }))
 }
 
 pub async fn compact_session(
