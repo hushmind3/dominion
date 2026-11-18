@@ -237,6 +237,35 @@ pub(crate) fn commit_projection(state: &AppState, plan: &Value, message: &Value,
     }));
 }
 
+/// 2026 source-aware cache diagnostics: never persist private persona
+/// bytes or tool arguments, only hashes and bounded tool names. The
+/// provider cache decides actual hits; these are explainable prefix revisions.
+fn prefix_parts(instructions:&str,reasoning:&Value)->Value{
+    let tools=reasoning["tools"].as_array().cloned().unwrap_or_default();
+    let names=tools.iter().filter_map(|item|
+        item["function"]["name"].as_str().or_else(||item["name"].as_str()))
+        .map(str::to_string).collect::<Vec<_>>();
+    let mut options=reasoning.clone();
+    if let Some(map)=options.as_object_mut(){map.remove("tools");}
+    json!({
+        "system":stable_id(&["system-prefix-v1",instructions]),
+        "toolSchemas":stable_id(&["tool-schemas-v1",&json!(tools).to_string()]),
+        "toolNames":names,
+        "modelOptions":stable_id(&["model-options-v1",&options.to_string()]),
+    })
+}
+
+fn prefix_change(previous:Option<&Value>,now:&Value)->&'static str{
+    let Some(previous)=previous else{return "initial"};
+    let old=&previous["cachePrefixParts"];
+    if !old.is_object(){return "legacy_unclassified";}
+    if old["system"]!=now["system"]{return "system_or_persona_changed";}
+    if old["toolNames"]!=now["toolNames"]{return "tool_set_changed";}
+    if old["toolSchemas"]!=now["toolSchemas"]{return "tool_schema_changed";}
+    if old["modelOptions"]!=now["modelOptions"]{return "model_options_changed";}
+    "prefix_stable"
+}
+
 pub(crate) fn prepare(
     state: &AppState, provider: &ProviderRef, request: &TurnRequest,
     session_id: &str, instructions: &str, reasoning: &Value,
@@ -280,6 +309,8 @@ pub(crate) fn prepare(
         &provider.model,
     ]);
     let previous = state.store.get("model_conversation", &id);
+    let current_prefix_parts=prefix_parts(instructions,reasoning);
+    let prefix_change=prefix_change(previous.as_ref(),&current_prefix_parts);
     let same_prefix = previous.as_ref().is_some_and(|record|record["prefixDigest"] == prefix);
     let mut record = previous.unwrap_or_else(||json!({
         "id":id,"sessionId":session_id,"agentId":request.agent_id,
@@ -291,6 +322,7 @@ pub(crate) fn prepare(
     record["workersAiSessionAffinity"] = json!(workers_affinity);
     record["cacheKey"] = json!(key);
     record["prefixDigest"] = json!(prefix);
+    record["cachePrefixParts"]=current_prefix_parts.clone();
     record["lastRequestedAt"] = json!(chrono::Utc::now().to_rfc3339());
     state.store.put("model_conversation", &record)
         .ok_or("봇의 지속 대화 상태를 저장할 수 없습니다.")?;
@@ -300,6 +332,8 @@ pub(crate) fn prepare(
         "workersAiSessionAffinity":workers_affinity,
         "cacheKey":key,"prefixDigest":prefix,
         "samePrefixAsPreviousRequest":same_prefix,
+        "prefixChange":prefix_change,
+        "prefixParts":current_prefix_parts,
         "previousReplyMessageId":participant.get("lastReplyMessageId").unwrap_or(&record["lastReplyMessageId"]),
         "participantBaseReplyMessageId":participant["lastReplyMessageId"],
         "previousRouteReplyMessageId":record["lastReplyMessageId"],
@@ -634,6 +668,51 @@ mod tests {
             .unwrap()["lastReplyMessageId"],winning["id"]);
         drop(state);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn same_persona_and_canonical_tools_keep_prefix_diagnostics_stable(){
+        let root=std::env::temp_dir().join(format!("dominion-cache-parts-{}",uuid::Uuid::new_v4()));
+        let state=state(&root);
+        let provider=route();
+        let request=TurnRequest::from_value(&json!({"agentId":"a","input":"first"})).unwrap();
+        let tool=|name:&str|json!({"type":"function","function":{
+            "name":name,"parameters":{"type":"object"}
+        }});
+        let mk=|tools:Vec<Value>,effort:&str|json!({
+            "tools":super::super::tool_projection::canonical_tool_definitions(tools),
+            "thinking":true,"effort":effort,"toolMode":"native"
+        });
+        let a=tool("workspace_read");
+        let b=tool("workspace_write");
+        let one=prepare(&state,&provider,&request,"room:one","LONG_STATIC_PERSONA",
+            &mk(vec![b.clone(),a.clone()],"low")).unwrap();
+        assert_eq!(one["prefixChange"],"initial");
+        let two=prepare(&state,&provider,&request,"room:one","LONG_STATIC_PERSONA",
+            &mk(vec![a.clone(),b.clone()],"low")).unwrap();
+        assert_eq!(two["prefixChange"],"prefix_stable");
+        assert_eq!(one["prefixDigest"],two["prefixDigest"]);
+        assert_eq!(one["cacheKey"],two["cacheKey"]);
+        let settings=prepare(&state,&provider,&request,"room:one","LONG_STATIC_PERSONA",
+            &mk(vec![a.clone(),b.clone()],"high")).unwrap();
+        assert_eq!(settings["prefixChange"],"model_options_changed");
+        assert_eq!(settings["cacheKey"],two["cacheKey"],
+            "effort changes do not rotate the session routing key");
+        let new_tool=prepare(&state,&provider,&request,"room:one","LONG_STATIC_PERSONA",
+            &mk(vec![a.clone()],"high")).unwrap();
+        assert_eq!(new_tool["prefixChange"],"tool_set_changed");
+        let mut modified=a.clone();
+        modified["function"]["description"]=json!("revised schema");
+        let schema=prepare(&state,&provider,&request,"room:one","LONG_STATIC_PERSONA",
+            &mk(vec![modified],"high")).unwrap();
+        assert_eq!(schema["prefixChange"],"tool_schema_changed");
+        let identity=prepare(&state,&provider,&request,"room:one","REVISED_PERSONA",
+            &mk(vec![a],"high")).unwrap();
+        assert_eq!(identity["prefixChange"],"system_or_persona_changed");
+        assert!(state.store.get("model_conversation",
+            one["id"].as_str().unwrap()).unwrap().to_string()
+            .contains("cachePrefixParts"));
+        drop(state);std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

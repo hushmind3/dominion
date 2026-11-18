@@ -1190,6 +1190,23 @@ pub(super) async fn run_turn_body(
                             metadata["continuity"]["incrementalTransport"]["developerBootstrapSent"],
                         "cacheAffinitySamePrefix":
                             metadata["continuity"]["samePrefixAsPreviousRequest"],
+                        "cachePrefixChange":
+                            metadata["continuity"]["prefixChange"],
+                        "cacheSystemDigest":
+                            metadata["continuity"]["prefixParts"]["system"],
+                        "cacheToolSchemaDigest":
+                            metadata["continuity"]["prefixParts"]["toolSchemas"],
+                        "cacheModelOptionsDigest":
+                            metadata["continuity"]["prefixParts"]["modelOptions"],
+                        "cacheReadPermille":if completion.usage_exact && call_prompt>0 {
+                            completion.cached_prompt_tokens.map(|cached|
+                                cached.min(call_prompt).saturating_mul(1000)/call_prompt)
+                                .map_or(Value::Null,|ratio|json!(ratio))
+                        }else{Value::Null},
+                        "benchmarkCacheDisabled":std::env::var("DOMINION_BENCHMARK")
+                            .as_deref()==Ok("1")
+                            && std::env::var("DOMINION_BENCHMARK_EXPECTED_ROUTE")
+                                .is_ok_and(|route|!route.is_empty()),
                         "toolsAdvertised":round_tools.len(),
                         "toolSchemaTokensEstimated":super::room_context::estimate(&json!(round_tools).to_string()),
                         "nativeInputTokensEstimated":round_input_tokens,
