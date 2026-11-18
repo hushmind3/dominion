@@ -17,6 +17,9 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
  const [modelSearch,setModelSearch]=useState('')
  const [modelFilter,setModelFilter]=useState<'all'|'free'|'paid'>('all')
  const [showAdvanced,setShowAdvanced]=useState(false)
+ const [managementTab,setManagementTab]=useState<'cloud'|'providers'>('cloud')
+ const [providerSort,setProviderSort]=useState<'name'|'models'>('name')
+ const [providerPage,setProviderPage]=useState(0)
  const [advancedTab,setAdvancedTab]=useState<'providers'|'router'>('providers')
  const [providerSort,setProviderSort]=useState<'name'|'models'>('name')
  const [cloudTab,setCloudTab]=useState<'models'|'providers'>('models')
@@ -162,7 +165,11 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
   }catch(error){setMessage((error as Error).message)}finally{setBusy(false)}
  }
  return <section className="rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] p-4">
-  <strong className="text-[13px]">DOMINION Cloud · 구글 로그인</strong>
+  <div className="flex flex-wrap gap-2 border-b border-[#E7E0D5] pb-3 mb-3" role="tablist" aria-label="모델 연결 관리">
+   <button type="button" role="tab" aria-selected={managementTab==='cloud'} onClick={()=>setManagementTab('cloud')} className={`rounded-lg px-3 py-2 text-[12px] ${managementTab==='cloud'?'bg-[#C96442] text-white':'border'}`}>DOMINION Cloud</button>
+   <button type="button" role="tab" aria-selected={managementTab==='providers'} onClick={()=>{setManagementTab('providers');setShowAdvanced(true);if(!catalog.length)void loadCatalog()}} className={`rounded-lg px-3 py-2 text-[12px] ${managementTab==='providers'?'bg-[#C96442] text-white':'border'}`}>업체·모델 연결</button>
+  </div>
+  {managementTab==='cloud'&&<><strong className="text-[13px]">DOMINION Cloud · 구글 로그인</strong>
   <p className="mt-1 text-[12px] text-[#7C7469]">DOMINION 계정 하나로 무료·유료 모델을 선택합니다. 업체 API 키는 서버에서 관리합니다.</p>
   {cloudUrl&&clientId?<div className="mt-3" ref={button}/>:<p className="mt-2 text-[12px] text-[#7C7469]">DOMINION Cloud 로그인 미설정 · 다른 AI 업체는 아래에서 연결할 수 있습니다.</p>}
   {cloudTab==='models'&&token&&<div className="mt-3 flex flex-wrap items-center gap-2">
@@ -186,7 +193,7 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
    <p className="mt-1 text-[12px] text-[#7C7469]">업체 검색 → API 키 연결 → 실제 모델 조회 → 채팅 등록</p>
    <div className="mt-2 flex flex-wrap gap-2">
     <button type="button" disabled={catalogBusy} onClick={()=>void loadCatalog()} className="rounded-lg border px-3 py-2 text-[12px]">업체 목록 불러오기</button>
-    <input aria-label="AI 업체 검색" value={catalogSearch} onChange={e=>setCatalogSearch(e.target.value)} placeholder="업체 이름 검색" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
+    <input aria-label="AI 업체 검색" value={catalogSearch} onChange={e=>{setCatalogSearch(e.target.value);setProviderPage(0)}} placeholder="업체 이름 검색" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
     <select aria-label="업체 정렬" value={providerSort} onChange={e=>setProviderSort(e.target.value as 'name'|'models')} className="rounded-lg border px-3 py-2 text-[12px]"><option value="name">이름순</option><option value="models">모델 많은 순</option></select>
    </div>
    {catalog.length>0&&<div className="mt-2 flex flex-wrap items-center gap-2 text-[12px]">
@@ -194,11 +201,12 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
     <select aria-label="업체 정렬" value={providerSort} onChange={e=>setProviderSort(e.target.value as 'name'|'models')} className="rounded-lg border px-2 py-2"><option value="name">이름순</option><option value="models">모델 많은 순</option></select>
     <label className="flex items-center gap-1"><input type="checkbox" checked={providerMinModels} onChange={e=>setProviderMinModels(e.target.checked)}/>모델 있는 업체만</label>
    </div>}
-   {catalog.length>0&&<div className="mt-2 flex flex-wrap gap-2">
+   {catalog.length>0&&<div className="mt-2 flex flex-wrap gap-2"><select aria-label="업체 정렬" value={providerSort} onChange={e=>{setProviderSort(e.target.value as 'name'|'models');setProviderPage(0)}} className="rounded-lg border px-3 py-2 text-[12px]"><option value="name">이름순</option><option value="models">모델 많은 순</option></select>
     <select aria-label="AI 업체 선택" value={catalogId} onChange={e=>{setCatalogId(e.target.value);setCatalogModels([]);setCatalogProviderId('')}} className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]">
      <option value="">업체를 선택하세요</option>
      {catalog.filter(p=>(p.name+' '+p.id).toLowerCase().includes(catalogSearch.toLowerCase())&&(!providerMinModels||p.models>0)).sort((a,b)=>providerSort==='models'?b.models-a.models||a.name.localeCompare(b.name):a.name.localeCompare(b.name)).map(p=><option key={p.id} value={p.id}>{p.name} ({p.models})</option>)}
     </select>
+    <div className="flex items-center gap-2 text-[12px]"><button type="button" className="rounded border px-2 py-1" disabled={providerPage===0} onClick={()=>setProviderPage(p=>Math.max(0,p-1))}>이전</button><span>{providerPage+1} / {Math.max(1,Math.ceil(catalog.filter(p=>(p.name+' '+p.id).toLowerCase().includes(catalogSearch.toLowerCase())).length/40))}</span><button type="button" className="rounded border px-2 py-1" disabled={(providerPage+1)*40>=catalog.filter(p=>(p.name+' '+p.id).toLowerCase().includes(catalogSearch.toLowerCase())).length} onClick={()=>setProviderPage(p=>p+1)}>다음</button></div>
     <input type="password" autoComplete="off" aria-label="업체 API 키" value={catalogKey} onChange={e=>setCatalogKey(e.target.value)} placeholder="API 키" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
     <button type="button" disabled={catalogBusy||!catalogId} onClick={()=>void connectCatalog()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">연결 및 모델 조회</button>
    </div>}
