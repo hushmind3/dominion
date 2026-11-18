@@ -117,7 +117,7 @@ assert.ok(capabilityBridge.includes('execution_operations(execution_id)')&&
  capabilityBridge.includes('schemaSha256')&&
  capabilityBridge.includes('dominion_agent_sdk::validate_arguments'),
  'Progressive discovery must keep same-run receipt, schema pinning and argument admission');
-assert.ok(chatTurn.includes('capability::resolve(')&&
+assert.ok(chatTurn.includes('capability::bind_model_call(')&&
  chatDispatch.includes('capability::search(state,session_id,&arguments).await'),
  'Chat discovery must route through the existing execution and tool journal');
 console.log(JSON.stringify({leanProduct:true,legacyNoReplay:true,coreChat:true,
