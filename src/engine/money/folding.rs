@@ -84,6 +84,10 @@ pub fn extract(source:&Value)->Vec<Value>{
         output.push(json!({"id":event_id,"sourceId":id,
             "url":url,"title":limit(field(source,"title"),220),
             "sourceName":field(source,"sourceName"),
+            "publisherName":field(source,"publisherName"),
+            "publisherDomain":field(source,"publisherDomain"),
+            "storyClusterId":field(source,"storyClusterId"),
+            "storyRelationship":field(source,"storyRelationship"),
             "sourceKind":source_kind(field(source,"sourceName")),
             "marketRegion":region,"regionConfidence":if region=="UNKNOWN"{"unknown"}else{"lexical"},
             "entityKey":entity,"entityPrecision":precision,
@@ -141,6 +145,22 @@ mod tests{
         assert_eq!(out[0]["entityPrecision"],"sector_proxy");
         assert_eq!(out[0]["status"],"new");
     }
+    #[test] fn folded_events_keep_publisher_and_story_provenance(){
+        let row=json!({"id":"original-news","url":"https://news.google.com/rss/articles/one",
+            "title":"Korean robots fall in price","description":"한국 로봇 가격 인하",
+            "sourceName":"Korean market RSS","publisherName":"Reuters",
+            "publisherDomain":"reuters.com","storyClusterId":"same-story-id",
+            "storyRelationship":"matching_headline_requires_independent_source_review"});
+        let events=extract(&row);
+        assert!(!events.is_empty());
+        assert!(events.iter().all(|e|e["publisherDomain"]=="reuters.com"));
+        assert!(events.iter().all(|e|e["storyClusterId"]=="same-story-id"));
+        assert!(events.iter().all(|e|e["storyRelationship"]==
+            "matching_headline_requires_independent_source_review"));
+        assert!(events.iter().all(|e|e["verification"]==
+            "source_text_lexical_event_not_economic_fact"));
+    }
+
     #[test] fn source_to_event_to_pending_pair_is_indexed_and_restart_safe(){
         let store=crate::db::Store::open(std::path::Path::new(":memory:")).unwrap();
         let input=vec![
