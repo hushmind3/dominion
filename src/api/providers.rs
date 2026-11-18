@@ -1363,9 +1363,8 @@ fn model_free_status(
     if item["free"].as_bool() == Some(true) || item["is_free"].as_bool() == Some(true) {
         return (Some(true), "provider-metadata");
     }
-    if id.ends_with(":free") || id.contains(":free") {
-        return (Some(true), "openrouter-free-suffix");
-    }
+    // Price metadata wins over a suffix. Do not label a billable endpoint free
+    // just because its model ID contains a historical promotional name.
     if let Some(pricing) = item.get("pricing") {
         let zero = |key: &str| {
             pricing
@@ -1379,6 +1378,16 @@ fn model_free_status(
                 .is_some_and(|value| value == 0.0)
         };
         return (Some(zero("prompt") && zero("completion")), "provider-pricing");
+    }
+    if id.to_ascii_lowercase().ends_with(":free") {
+        return (Some(true), "openrouter-free-suffix");
+    }
+    // OpenCode Go publishes free variants with the `-free` suffix, not `:free`.
+    // Scope this fallback to OpenCode's API rather than unrelated providers.
+    if (base.contains("opencode.ai/inference/") || base.contains("opencode.ai/zen/"))
+        && id.to_ascii_lowercase().ends_with("-free")
+    {
+        return (Some(true), "opencode-free-suffix");
     }
     (None, "no-pricing-metadata")
 }
@@ -1973,6 +1982,28 @@ mod tests {
         assert!(model_is_free(&free_suffix, "openai", "https://openrouter.ai/api/v1", &zero, "meta/llama"));
         let paid = json!({"pricing":{"prompt":"0.000001","completion":"0.000002"}});
         assert!(!model_is_free(&free_suffix, "openai", "https://openrouter.ai/api/v1", &paid, "meta/llama"));
+    }
+
+    #[test]
+    fn opencode_go_free_models_are_recognized_without_pricing_metadata() {
+        let base = "https://opencode.ai/inference/go/openai/v1";
+        for id in ["iceman-contributor-free", "longcat-2.5-free", "hy4-flash-free"] {
+            let (free, source) = model_free_status(&Value::Null, "openai", base, &Value::Null, id);
+            assert_eq!(free, Some(true), "{id}");
+            assert_eq!(source, "opencode-free-suffix");
+        }
+        for id in ["qwen3.8-max", "qwen3.8-flash", "deepseek-v4.1-flash", "kimi-k3.1-pro"] {
+            assert_eq!(model_free_status(&Value::Null, "openai", base, &Value::Null, id).0, None, "{id}");
+        }
+        let paid = json!({"pricing":{"prompt":"0.000001","completion":"0.000002"}});
+        assert_eq!(
+            model_free_status(&Value::Null, "openai", base, &paid, "iceman-contributor-free").0,
+            Some(false)
+        );
+        assert_eq!(
+            model_free_status(&Value::Null, "openai", "https://api.example/v1", &Value::Null, "iceman-contributor-free").0,
+            None
+        );
     }
 
     #[test]
