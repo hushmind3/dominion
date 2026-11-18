@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
-import {classifyRuntimeFailure,memoryFit,requiredMemory,selectRecommended,selectSmaller} from '../src/utils/modelHardware.ts'
+import {classifyRuntimeFailure,memoryFit,requiredMemory,selectRecommended,selectSmaller,planDownloadLaunch} from '../src/utils/modelHardware.ts'
 
 const gguf=(id,bytes)=>({id,format:'gguf',bytes})
 const mlx=(id,bytes)=>({id,format:'mlx',bytes})
@@ -34,4 +34,15 @@ test('model menu renders only one Hugging Face browser and unique tab id',()=>{
  assert.equal([...source.matchAll(/id:'huggingface'/g)].length,1)
  assert.equal([...source.matchAll(/<ModelExplorer[^>]*initialView="search"/g)].length,1)
  assert.match(source,/hideManagementNavigation/)
+})
+
+test('queued model launch resumes interrupted downloads instead of leaving them paused',()=>{
+ assert.equal(planDownloadLaunch(undefined,false),'start')
+ assert.equal(planDownloadLaunch('downloading',false),'wait')
+ assert.equal(planDownloadLaunch('resolving',false),'wait')
+ assert.equal(planDownloadLaunch('paused',false),'resume')
+ assert.equal(planDownloadLaunch('failed',false),'resume')
+ assert.equal(planDownloadLaunch('cancelled',false),'resume')
+ assert.equal(planDownloadLaunch('completed',false),'start')
+ assert.equal(planDownloadLaunch('completed',true),'installed')
 })
