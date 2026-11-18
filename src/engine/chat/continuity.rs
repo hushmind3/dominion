@@ -28,7 +28,7 @@ fn evidence_digest(kind: &str, record: &Value) -> String {
     if kind=="room_state" {
         meaning.insert("facts".into(),json!(record["facts"].as_array().into_iter().flatten()
             .filter(|fact|fact["status"]=="active")
-            .map(|fact|json!({"id":fact["id"],"kind":fact["kind"],"text":fact["text"],"sourceMessageId":fact["sourceMessageId"]}))
+            .map(|fact|json!({"id":fact["id"],"kind":fact["kind"],"text":fact["text"],"sourceMessageId":fact["sourceMessageId"],"verifiedLocalOwner":fact["verifiedLocalOwner"]}))
             .collect::<Vec<_>>()));
     }
     for field in ["text","content","instructions","description","name","lesson","avoid","request",
@@ -49,6 +49,37 @@ fn evidence_digest(kind: &str, record: &Value) -> String {
     stable_id(&[&Value::Object(meaning).to_string()])
 }
 
+/// Exact active owner facts form a monotonic evidence ledger. A later owner
+/// fact is safe to append, whereas an edited/superseded old fact must invalidate
+/// the prefix, including when the lexical selector did not reselect it.
+fn active_owner_facts(record: &Value) -> Vec<Value> {
+    record["facts"].as_array().into_iter().flatten()
+        .filter(|fact| fact["status"] == "active")
+        // Only revision fingerprints are persisted in the participant cache.
+        // Exact wording remains in room_state and the transcript, not another
+        // 9-way copy of every potentially long owner instruction.
+        .map(|fact| json!(stable_id(&[&json!({
+            "id":fact["id"],"kind":fact["kind"],"text":fact["text"],
+            "sourceMessageId":fact["sourceMessageId"],"verifiedLocalOwner":fact["verifiedLocalOwner"]
+        }).to_string()])))
+        .collect()
+}
+
+fn owner_fact_metadata_digest(record: &Value) -> String {
+    let mut metadata = record.clone();
+    metadata["facts"] = json!([]);
+    evidence_digest("room_state", &metadata)
+}
+
+fn owner_fact_prefix_still_valid(dependency: &Value, record: &Value) -> bool {
+    if dependency["kind"] != "room_state"
+        || dependency["metadataDigest"] != owner_fact_metadata_digest(record)
+    { return false; }
+    let Some(previous) = dependency["activeFacts"].as_array() else { return false; };
+    let current = active_owner_facts(record);
+    previous.iter().all(|old| current.contains(old))
+}
+
 pub(crate) fn dependencies(state: &AppState, items: &[Value]) -> Vec<Value> {
     items.iter().filter_map(|item| {
         let kind = match item["kind"].as_str()? {
@@ -58,7 +89,12 @@ pub(crate) fn dependencies(state: &AppState, items: &[Value]) -> Vec<Value> {
         };
         let id=item["id"].as_str()?;
         let record=state.store.get(kind,id)?;
-        Some(json!({"kind":kind,"id":id,"digest":evidence_digest(kind, &record)}))
+        let mut dependency=json!({"kind":kind,"id":id,"digest":evidence_digest(kind, &record)});
+        if kind == "room_state" {
+            dependency["activeFacts"] = json!(active_owner_facts(&record));
+            dependency["metadataDigest"] = json!(owner_fact_metadata_digest(&record));
+        }
+        Some(dependency)
     }).collect()
 }
 
@@ -71,6 +107,177 @@ fn frame_key(message: &Value, source: &str, index: usize) -> String {
     }
     message["_dominion_frame"].as_str().map(str::to_string)
         .unwrap_or_else(|| format!("transient-{}", stable_id(&[source, &index.to_string(), &wire_message(message).to_string()])))
+}
+
+/// Immutable room-owner evidence can be accumulated as a semantic delta.
+///
+/// A different owner question can retrieve a *different subset* of the very
+/// same authenticated facts. Treating this as an edit to the old snapshot
+/// forces a full provider-cache rebase and also loses previously seen facts.
+/// Append only newly selected verbatim fact lines instead. Actual edits,
+/// supersession and scope changes are checked by the owner-state dependency
+/// revision in project() *before* this optimization runs.
+fn append_owner_fact_deltas(fresh: &[Value], prior: &[Value]) -> Vec<Value> {
+    let mut seen = std::collections::HashSet::<String>::new();
+    for frame in prior {
+        let Some(key) = frame["key"].as_str() else { continue };
+        if !key.starts_with("owner-state:") { continue; }
+        let Some(text) = frame["message"]["content"].as_str() else { continue };
+        if !text.starts_with("[주인 확정 상태:") { continue; }
+        for line in text.lines().filter(|line| line.starts_with("- [")) {
+            seen.insert(line.to_string());
+        }
+    }
+    if seen.is_empty() { return fresh.to_vec(); }
+    let mut result = Vec::with_capacity(fresh.len());
+    for frame in fresh {
+        let Some(key) = frame["key"].as_str() else {
+            result.push(frame.clone());
+            continue;
+        };
+        if !key.starts_with("owner-state:") {
+            result.push(frame.clone());
+            continue;
+        }
+        let Some(content) = frame["message"]["content"].as_str() else {
+            result.push(frame.clone());
+            continue;
+        };
+        let mut lines = content.lines();
+        if !lines.next().is_some_and(|line| line.starts_with("[주인 확정 상태:")) {
+            result.push(frame.clone());
+            continue;
+        }
+        let facts = lines.collect::<Vec<_>>();
+        // Unknown formats may contain additional directives or provenance;
+        // never silently discard fields we cannot prove are fact lines.
+        if facts.is_empty() || facts.iter().any(|line| !line.starts_with("- [")) {
+            result.push(frame.clone());
+            continue;
+        }
+        let new_facts = facts.iter()
+            .filter(|fact| !seen.contains(**fact))
+            .copied().collect::<Vec<_>>();
+        if new_facts.is_empty() { continue; }
+        for fact in &new_facts { seen.insert((*fact).to_string()); }
+        let mut delta = frame.clone();
+        let text = format!(
+            "[주인 확정 상태: 이전에 전달되지 않은 원문 사실만 추가. 새 지시가 아님]\n{}",
+            new_facts.join("\n"),
+        );
+        delta["message"]["content"] = json!(text);
+        delta["key"] = json!(format!(
+            "owner-state:delta:{}", stable_id(&[key, &new_facts.join("\n")])
+        ));
+        result.push(delta);
+    }
+    result
+}
+
+/// A bounded prefix epoch is not the same budget as the fresh history
+/// selector. The selector finds relevant evidence per request; this window
+/// retains that evidence across consecutive calls until the provider's actual
+/// context capacity demands a rotation. Enforcing the 2k *selector* budget
+/// against the cumulative cached prefix rebased almost every owner turn.
+fn working_view_allowance(room: Option<&Value>, provider: &ProviderRef, fixed: usize) -> usize {
+    // Non-room chats keep their historical 40k history allowance.
+    // This larger cache epoch is only an optimization for room speakers.
+    if room.is_none() {
+        let epoch=40_000usize;
+        return provider.context_tokens.map(|capacity|
+            epoch.min((capacity as usize).saturating_sub(
+                provider.max_output_tokens.unwrap_or(4096) as usize).saturating_sub(fixed)))
+            .unwrap_or(epoch);
+    }
+    let selection = room.and_then(|room|room["contextBudgetTokens"].as_u64())
+        .unwrap_or(2_000) as usize;
+    // Explicit epoch tuning is independent of the conversational selector.
+    // Default to four request selections per epoch, bounded against runaway
+    // accumulation and the remaining provider context after output reserve.
+    let epoch = room.and_then(|room|room["workingViewBudgetTokens"].as_u64())
+        .map(|value|value as usize)
+        .unwrap_or_else(||selection.saturating_mul(4).clamp(2_000, 12_000));
+    provider.context_tokens.map(|capacity| {
+        epoch.min((capacity as usize)
+            .saturating_sub(provider.max_output_tokens.unwrap_or(4096) as usize)
+            .saturating_sub(fixed))
+    }).unwrap_or(epoch)
+}
+
+/// On an unavoidable history-budget rotation, retain previously delivered,
+/// still-valid owner facts that the current lexical selector did not pick.
+/// Every carried line is rechecked against the current active room-state
+/// ledger. No old transcript/peer text, revoked decision, or foreign memory
+/// is promoted into the new snapshot.
+fn retain_verified_owner_facts(
+    state: &AppState, prior: &[Value], fresh: &mut Vec<Value>,
+    prior_dependencies: &[Value], token_allowance: usize,
+) -> usize {
+    let mut present=std::collections::HashSet::<String>::new();
+    for frame in fresh.iter() {
+        if !frame["key"].as_str().is_some_and(|key|key.starts_with("owner-state:")) { continue; }
+        if let Some(content)=frame["message"]["content"].as_str() {
+            present.extend(content.lines().filter(|line|line.starts_with("- ["))
+                .map(str::to_string));
+        }
+    }
+    // Never introduce an owner fact when the compiler did not provide owner
+    // state at all; this protects the source-cursor visibility boundary.
+    if !fresh.iter().any(|frame|frame["key"].as_str()
+        .is_some_and(|key|key.starts_with("owner-state:"))) {return 0;}
+    // Proofs were already validated by project(). Resolve only that
+    // participant's room-state IDs: scanning all rooms can cross tenants and
+    // gets slower as unrelated rooms accumulate.
+    let allowed=prior_dependencies.iter()
+        .filter(|dep|dep["kind"]=="room_state")
+        .filter_map(|dep|dep["id"].as_str().and_then(|id|state.store.get("room_state",id)))
+        .flat_map(|record|record["facts"].as_array().cloned().unwrap_or_default())
+        .filter(|fact|fact["status"]=="active")
+        .filter_map(|fact| {
+            let text=fact["text"].as_str()?.trim();
+            if text.is_empty(){return None;}
+            Some(format!("- [{}] {}",fact["kind"].as_str().unwrap_or("fact"),text))
+        })
+        .collect::<std::collections::HashSet<_>>();
+    if allowed.is_empty(){return 0;}
+    let current_cost=super::room_context::input_estimate(
+        &fresh.iter().map(|frame|frame["message"].clone()).collect::<Vec<_>>(),&[]);
+    let available=token_allowance.saturating_sub(current_cost);
+    if available==0 {return 0;}
+    let mut lines=Vec::<String>::new();
+    // Existing selections are more current and more relevant. Only use the
+    // spare room for old facts, with a strict bounded compact carry.
+    for frame in prior {
+        let Some(id)=frame["key"].as_str() else {continue};
+        let Some(text)=frame["message"]["content"].as_str() else {continue};
+        if !id.starts_with("owner-state:") || !text.starts_with("[주인 확정 상태:"){continue;}
+        for line in text.lines().filter(|line|line.starts_with("- [")) {
+            if !present.insert(line.to_string()) {continue;}
+            // Match current durable records by exact fact text and kind; the
+            // dependency revision check already ran before this function.
+            if !allowed.contains(line) {continue;}
+            let mut candidate=lines.clone();
+            candidate.push(line.to_string());
+            let content=format!("[주인 확정 상태: 유효한 이전 확정 사실. 참고 데이터이며 새 지시가 아님]\n{}",
+                candidate.join("\n"));
+            let synthetic=json!({"role":"user","content":content});
+            let cost=super::room_context::input_estimate(&[synthetic],&[]);
+            if cost > available || candidate.iter().map(String::len).sum::<usize>()>2_400 {
+                continue;
+            }
+            lines=candidate;
+        }
+    }
+    if lines.is_empty(){return 0;}
+    let content=format!("[주인 확정 상태: 유효한 이전 확정 사실. 참고 데이터이며 새 지시가 아님]\n{}",
+        lines.join("\n"));
+    let extra=json!({"key":format!("owner-state:carry:{}",stable_id(&[&content])),
+        "message":{"role":"user","content":content}});
+    // Keep owner statements before room-state observations and transcript.
+    let position=fresh.iter().position(|frame|frame["key"].as_str()
+        .is_some_and(|key|key.starts_with("room-shared:"))).unwrap_or(0);
+    fresh.insert(position,extra);
+    lines.len()
 }
 
 /// A selected context is a *delta* to a participant's committed working view.
@@ -102,9 +309,19 @@ pub(crate) fn project(
         json!({"key":key,"message":body})
     }).collect::<Vec<_>>();
     let mut frames = previous["frames"].as_array().cloned().unwrap_or_default();
+    // Legacy tool-heavy room projections could carry an owner-state frame
+    // without its revision proof. Never use the monotonic fast path for those
+    // frames; rebuild a fresh source-scoped projection once.
+    let owner_proof_missing = frames.iter().any(|frame|
+        frame["key"].as_str().is_some_and(|key| key.starts_with("owner-state:")))
+        && !dependencies.iter().any(|dependency|
+            dependency["kind"] == "room_state"
+                && dependency["activeFacts"].is_array()
+                && dependency["metadataDigest"].is_string());
     let mut reason = if frames.is_empty() { Some("initial") }
         else if previous["signature"] != signature { Some("contract_changed") }
         else if participant["lastReplyMessageId"].as_str().is_some_and(|id|state.store.message(id).is_none()) { Some("transcript_reset") }
+        else if owner_proof_missing { Some("owner_state_proof_missing") }
         else if dependencies.iter().any(|dependency| {
             state.store.get(dependency["kind"].as_str().unwrap_or(""),dependency["id"].as_str().unwrap_or(""))
                 .is_none_or(|record| {
@@ -115,87 +332,109 @@ pub(crate) fn project(
                         "experience_rule"=>crate::engine::experience::rule_visible(&record,&scope),
                         _=>true,
                     };
-                    !visible || json!(evidence_digest(dependency["kind"].as_str().unwrap_or(""), &record)) != dependency["digest"]
+                    !visible || (json!(evidence_digest(dependency["kind"].as_str().unwrap_or(""), &record)) != dependency["digest"]
+                        && !owner_fact_prefix_still_valid(dependency, &record))
                 })
         }) { Some("context_evidence_changed") }
         else if participant["lastReplyMessageId"] != plan["participantBaseReplyMessageId"] { Some("concurrent_commit") }
         else { None };
     // A source can be edited or re-rendered (e.g. attachment availability).
     // Never silently retain an obsolete version under the same source ID.
-    if reason.is_none() && fresh.iter().any(|new| frames.iter()
+    // Keep the full fresh snapshot for any genuine rebase. Only an appendable
+    // projection may replace repeated owner-state snapshots with fact deltas.
+    let appended = if reason.is_none() {
+        append_owner_fact_deltas(&fresh, &frames)
+    } else {
+        fresh.clone()
+    };
+    if reason.is_none() && appended.iter().any(|new| frames.iter()
         .any(|old| old["key"] == new["key"] && old["message"] != new["message"])) {
         reason = Some("source_changed");
     }
-    // The room snapshot is an observation, not a standing instruction.
-    // room_context now keys equal model-visible status by CONTENT, not by
-    // owner message ID. Reuse an unchanged snapshot as a real cached prefix;
-    // a changed speaker/response/work status has a different key and forces
-    // a fresh bounded context. Never accumulate stale snapshot versions.
-    // Owner text, corrections, own answer and relevant peer evidence stay in
-    // the fresh compiler view, not in this derived status key.
-    let current_room_source=fresh.iter().filter_map(|frame|frame["key"].as_str())
+    // Distinguish the room-wide observation from its owner-turn cursor.
+    // A different actual response/work status must replace the prior frame:
+    // accumulating both would teach the model mutually inconsistent states.
+    let current_shared = fresh.iter()
+        .filter_map(|frame|frame["key"].as_str())
         .find(|key|key.starts_with("room-shared:"));
-    let stale_snapshots=current_room_source.map(|current|frames.iter()
+    let stale_shared_frames = current_shared.map(|current| frames.iter()
         .filter(|frame|frame["key"].as_str().is_some_and(|key|
-            key.starts_with("room-shared:") && key!=current)).count())
+            key.starts_with("room-shared:") && key != current)).count())
         .unwrap_or(0);
-    if reason.is_none() && stale_snapshots>0 {
-        reason=Some("room_snapshot_rotated");
+    if reason.is_none() && stale_shared_frames > 0 {
+        reason = Some("room_snapshot_rotated");
     }
-    let old_frame_count=frames.len();
+    let previous_frames = frames.len();
     let mut reused = frames.len();
     if reason.is_none() {
         let seen = frames.iter().filter_map(|frame|frame["key"].as_str().map(str::to_string))
             .collect::<std::collections::HashSet<_>>();
-        frames.extend(fresh.iter().filter(|frame|!seen.contains(frame["key"].as_str().unwrap_or(""))).cloned());
+        frames.extend(appended.iter().filter(|frame|!seen.contains(frame["key"].as_str().unwrap_or(""))).cloned());
         let session = state.store.get("session", session_id).unwrap_or(Value::Null);
         let room = session["roomId"].as_str().and_then(|id|state.store.get("room", id));
-        // This is a *history* allowance in addition to mandatory identity, not
-        // a cap that discards persona or the current selected request.
-        let allowance = room.as_ref().map(|room|room["contextBudgetTokens"].as_u64().unwrap_or(2_000) as usize)
-            .unwrap_or(40_000);
+        // Independent bounded epoch budget: the 2k per-request selector is
+        // not an instruction to evict a useful cacheable prefix every turn.
         let fixed = super::room_context::input_estimate(&[wire_message(&messages[0])], tools);
-        let allowance = provider.context_tokens.map(|capacity| {
-            allowance.min((capacity as usize).saturating_sub(provider.max_output_tokens.unwrap_or(4096) as usize).saturating_sub(fixed))
-        }).unwrap_or(allowance);
+        let allowance = working_view_allowance(room.as_ref(), provider, fixed);
         let history_cost = |rows:&[Value]| super::room_context::input_estimate(
             &rows.iter().map(|frame|frame["message"].clone()).collect::<Vec<_>>(), &[]);
         if history_cost(&frames) > allowance.max(history_cost(&fresh)) {
             reason = Some("history_budget");
         }
     }
+    let mut carried_owner_facts=0;
     let mut epoch = previous["epoch"].as_u64().unwrap_or(0);
-    if reason.is_some() { frames = fresh; dependencies=fresh_dependencies; reused = 0; epoch += 1; }
+    if reason.is_some() {
+        let mut rebased=fresh;
+        // Other reasons (revocation, edited source, changed provider contract)
+        // intentionally discard old frames. Only a budget rotation can carry
+        // independently verified immutable owner evidence forward.
+        if reason == Some("history_budget") {
+            let session=state.store.get("session",session_id).unwrap_or(Value::Null);
+            let room=session["roomId"].as_str().and_then(|id|state.store.get("room",id));
+            let fixed=super::room_context::input_estimate(&[wire_message(&messages[0])],tools);
+            let allowance=working_view_allowance(room.as_ref(),provider,fixed);
+            carried_owner_facts=retain_verified_owner_facts(
+                state,&frames,&mut rebased,&dependencies,allowance);
+        }
+        frames=rebased;
+        dependencies=fresh_dependencies;
+        reused=0;
+        epoch+=1;
+    }
     else {
         for dependency in fresh_dependencies {
-            if !dependencies.iter().any(|old|old["kind"]==dependency["kind"] && old["id"]==dependency["id"]) {
+            if let Some(previous) = dependencies.iter_mut().find(|old|
+                old["kind"] == dependency["kind"] && old["id"] == dependency["id"]) {
+                // Refresh the evidence proof after a safe monotonic addition,
+                // so later revocation of the new fact also invalidates it.
+                *previous = dependency;
+            } else {
                 dependencies.push(dependency);
             }
         }
     }
-    // Distinguish host-side history reuse from provider-side cache reads.
-    // These are estimates of the serialized model-visible history, not
-    // billable token deltas. Server cache hits are measured from usage data.
-    let estimate_frames = |records: &[Value]| -> usize {
-        super::room_context::estimate(&json!(records.iter()
-            .map(|record| &record["message"]).collect::<Vec<_>>()).to_string())
+    // Host-side prefix lengths are useful for diagnosing rebases, but are
+    // never billed/provider cache hits. Count old frames and appended frames
+    // independently; transport and provider usage are separate measurements.
+    let estimate_frames = |slice: &[Value]| -> usize {
+        super::room_context::estimate(&json!(slice.iter()
+            .map(|frame| &frame["message"]).collect::<Vec<_>>()).to_string())
     };
-    let estimated_reused_history_tokens = if reused == 0 { 0 }
-        else { estimate_frames(&frames[..reused]) };
-    let estimated_new_history_tokens = if reused >= frames.len() { 0 }
-        else { estimate_frames(&frames[reused..]) };
+    let reused_estimate = if reused == 0 { 0 } else { estimate_frames(&frames[..reused]) };
+    let new_estimate = if reused == frames.len() { 0 } else { estimate_frames(&frames[reused..]) };
     let mut projected = vec![wire_message(&messages[0])];
     projected.extend(frames.iter().map(|frame|frame["message"].clone()));
     plan["workingView"] = json!({
         "epoch":epoch,"reusedFrames":reused,"appendedFrames":frames.len().saturating_sub(reused),
         "rebaseReason":reason,"sourceMessageId":source,
-        "previousFrames":old_frame_count,
-        "reclaimedStaleRoomSnapshots":stale_snapshots,
+        "previousFrames":previous_frames,"reclaimedStaleRoomSnapshots":stale_shared_frames,
+        "carriedVerifiedOwnerFacts":carried_owner_facts,
+        "estimatedReusedHistoryTokens":reused_estimate,
+        "estimatedNewHistoryTokens":new_estimate,
+        "historyEstimateKind":"host-projection-not-provider-cache-or-billing",
         "inputDigest":stable_id(&[&json!(projected).to_string()]),
         "estimatedInputTokens":super::room_context::input_estimate(&projected, tools),
-        "estimatedReusedHistoryTokens":estimated_reused_history_tokens,
-        "estimatedNewHistoryTokens":estimated_new_history_tokens,
-        "historyEstimateKind":"host-projection-not-provider-cache-or-billing",
     });
     (projected, Some(Projection { frames, dependencies, signature, epoch }))
 }
@@ -836,6 +1075,75 @@ mod tests {
             .is_some_and(|key|key.starts_with("owner-state:"))).count(),1);
         assert!(frames.len()<=12,"16 turns should not grow the durable working view without bound");
         crate::test_support::cleanup_dir(root);
+    }
+
+    #[test]
+    fn owner_fact_selection_reuses_prefix_and_appends_missing_facts_until_real_revision() {
+        let root=std::env::temp_dir().join(format!("dominion-owner-delta-{}",uuid::Uuid::new_v4()));
+        let state=state(&root);
+        state.store.put("session",&json!({"id":"room:r","roomId":"r"}));
+        state.store.put("room",&json!({"id":"r","contextBudgetTokens":12000}));
+        state.store.put("room_state",&json!({"id":"owner-record","facts":[
+            {"id":"fact-a","status":"active","text":"alpha fact","sourceMessageId":"owner1"}
+        ]}));
+        let request=TurnRequest::from_value(&json!({"input":"remember","agentId":"a"})).unwrap();
+        let provider=route();
+        let messages=|source:&str, facts:&str| {
+            let deps=dependencies(&state,&[json!({"kind":"owner_state","id":"owner-record"})]);
+            vec![
+                json!({"role":"system","content":"stable owner identity","_dominion_source":source,"_dominion_dependencies":deps}),
+                json!({"role":"user","content":format!("[주인 확정 상태: 엔진 원문]\n{facts}"),
+                    "_dominion_frame":"owner-state:owner-record"}),
+                json!({"role":"user","content":format!("question {source}"),"_dominion_frame":source}),
+            ]
+        };
+        let alpha="- [decision] ALPHA_VERBATIM";
+        let beta="- [decision] BETA_VERBATIM";
+        let mut first=prepare(&state,&provider,&request,"room:r","stable owner identity",&json!({})).unwrap();
+        let (first_wire,pending)=project(&state,&provider,&messages("owner1",alpha),&[],"room:r",&mut first);
+        let answer=state.store.write_message(&json!({"session_id":"room:r","agent_id":"a",
+            "role":"assistant","content":"I heard alpha","metadata":{"replyToMessageId":"owner1"}})).unwrap();
+        commit(&state,&first,&answer);
+        commit_projection(&state,&first,&answer,pending.unwrap());
+        // A genuinely new confirmed fact must be appendable too, not only a
+        // different lexical subset of an unchanged state record.
+        let mut augmented=state.store.get("room_state","owner-record").unwrap();
+        augmented["facts"].as_array_mut().unwrap().push(json!({
+            "id":"fact-b","status":"active","text":"beta fact","sourceMessageId":"owner2"
+        }));
+        state.store.put("room_state",&augmented);
+        let mut second=prepare(&state,&provider,&request,"room:r","stable owner identity",&json!({})).unwrap();
+        let (second_wire,pending)=project(&state,&provider,&messages("owner2",beta),&[],"room:r",&mut second);
+        assert!(second["workingView"]["rebaseReason"].is_null(),"{second}");
+        assert_eq!(&second_wire[..first_wire.len()],first_wire.as_slice());
+        let full=serde_json::to_string(&second_wire).unwrap();
+        assert_eq!(full.matches("ALPHA_VERBATIM").count(),1);
+        assert_eq!(full.matches("BETA_VERBATIM").count(),1);
+        assert_eq!(second["workingView"]["appendedFrames"],2);
+        let answer=state.store.write_message(&json!({"session_id":"room:r","agent_id":"a",
+            "role":"assistant","content":"I heard beta","metadata":{"replyToMessageId":"owner2"}})).unwrap();
+        commit(&state,&second,&answer);
+        commit_projection(&state,&second,&answer,pending.unwrap());
+        let mut third=prepare(&state,&provider,&request,"room:r","stable owner identity",&json!({})).unwrap();
+        let (third_wire,_)=project(&state,&provider,&messages("owner3",alpha),&[],"room:r",&mut third);
+        assert!(third["workingView"]["rebaseReason"].is_null(),"{third}");
+        assert_eq!(third["workingView"]["appendedFrames"],1,
+            "already remembered owner facts must not be retransmitted");
+        assert_eq!(serde_json::to_string(&third_wire).unwrap().matches("ALPHA_VERBATIM").count(),1);
+        // Source evidence changes are a hard invalidation, not an append-only delta.
+        let mut edited=state.store.get("room_state","owner-record").unwrap();
+        edited["facts"][0]["status"]=json!("superseded");
+        edited["facts"].as_array_mut().unwrap().push(json!({
+            "id":"fact-c","status":"active","text":"corrected fact","sourceMessageId":"owner4"
+        }));
+        state.store.put("room_state",&edited);
+        let (replaced,_)=project(&state,&provider,&messages("owner4","- [correction] CORRECTED_ALPHA"),
+            &[],"room:r",&mut third);
+        assert_eq!(third["workingView"]["rebaseReason"],"context_evidence_changed");
+        assert!(!serde_json::to_string(&replaced).unwrap().contains("ALPHA_VERBATIM"));
+        assert!(serde_json::to_string(&replaced).unwrap().contains("CORRECTED_ALPHA"));
+        drop(state);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
