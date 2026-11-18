@@ -570,13 +570,6 @@ pub(crate) fn compile(
             current_speakers.insert(row["agent_id"].as_str().unwrap_or(""), index);
         }
     }
-    let deep_context = query.chars().count() > 240
-        || [
-            "분석", "설계", "구현", "검토", "조사", "테스트", "버그", "최적화", "리팩터",
-            "원인", "해결", "비교", "계획", "문서", "아키텍처", "리뷰",
-        ]
-        .iter()
-        .any(|term| query.to_lowercase().contains(term));
     // The shared read model covers every participant. Raw peer messages are
     // task evidence, not a partial roster from which to infer absence.
     // Quote requests still get complete source text. Ordinary synthesis
@@ -584,7 +577,7 @@ pub(crate) fn compile(
     // of replaying six long peer answers to every subsequent agent.
     let quote_requested=["인용","원문","그대로","verbatim","quote","exact"].iter()
         .any(|phrase|query.to_lowercase().contains(phrase));
-    let keep_speakers = if quote_requested{9}else if deep_context{3}else{3};
+    let keep_speakers = if quote_requested{9}else{3};
     let mut speaker_indices = current_speakers.values().copied().collect::<Vec<_>>();
     speaker_indices.sort_unstable();
     let current_contributions = speaker_indices
