@@ -302,6 +302,7 @@ pub async fn execute(
                 run_id,
                 name == "workspace_write",
                 args["expectedSha256"].as_str(),
+                args["requireAbsent"] == true,
             )
             .await
         }
@@ -355,6 +356,7 @@ pub async fn execute(
                 run_id,
                 name == "workspace_write",
                 args["expectedSha256"].as_str(),
+                args["requireAbsent"] == true,
             )
             .await
         }
@@ -1056,6 +1058,7 @@ async fn checked_write(
     run_id: &str,
     workspace_write: bool,
     expected_sha256: Option<&str>,
+    require_absent: bool,
 ) -> Result<Value, String> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -1078,6 +1081,31 @@ async fn checked_write(
         }
     };
     let _guard = lock.lock().await;
+    if require_absent {
+        let target=canonical.as_ref().map_err(|e|e.to_string())?;
+        // The candidate was tested against a missing file. Use create_new
+        // under the same native lock; do not overwrite a file created since.
+        if tokio::fs::symlink_metadata(target).await.is_ok() {
+            return Ok(json!({"error":"candidate target now exists",
+                "staleVersion":true,"expectedAbsent":true}));
+        }
+        let parent=target.parent().ok_or("candidate target has no parent")?;
+        tokio::fs::create_dir_all(parent).await.map_err(|e|e.to_string())?;
+        let mut file=match tokio::fs::OpenOptions::new()
+            .write(true).create_new(true).open(target).await {
+            Ok(file)=>file,
+            Err(error) if error.kind()==std::io::ErrorKind::AlreadyExists=>
+                return Ok(json!({"error":"candidate target appeared during commit",
+                    "staleVersion":true,"expectedAbsent":true})),
+            Err(error)=>return Err(error.to_string()),
+        };
+        file.write_all(content.as_bytes()).await.map_err(|e|e.to_string())?;
+        file.flush().await.map_err(|e|e.to_string())?;
+        return Ok(json!({"path":path.to_string_lossy(),"written":true,
+            "bytes":content.len(),"changed":true,
+            "postSha256":format!("{:x}",Sha256::digest(content.as_bytes())),
+            "conditionalAbsent":true}));
+    }
     let Some(policy) = policy else {
         // Even without the opt-in guard, a caller that supplies a frozen
         // version gets a compare-before-write under the same per-file lock.
