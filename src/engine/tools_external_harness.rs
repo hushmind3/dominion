@@ -61,7 +61,9 @@ fn parse_adapters(raw:&str)->Vec<Adapter>{
 fn adapters()->Vec<Adapter>{
     std::env::var(ENV_KEY).map(|raw|parse_adapters(&raw)).unwrap_or_default()
 }
-pub(super) fn configured()->bool{!adapters().is_empty()}
+pub(super) fn configured_ids()->Vec<String>{
+    adapters().into_iter().map(|entry|entry.id).collect()
+}
 
 async fn read_tail<R:AsyncRead+Unpin>(mut stream:R,limit:usize)->(String,bool){
     let mut retained=Vec::<u8>::with_capacity(limit.min(4096));
