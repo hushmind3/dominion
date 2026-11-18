@@ -6,10 +6,12 @@
 //! the socket per participant session, tracks which input items the remote
 //! chain already holds, and sends only the new suffix on later calls.
 //!
-//! `instructions` are not inherited through `previous_response_id` (measured:
-//! a directive absent from the continuation request is not applied), so the
-//! full identity/persona prefix is re-sent on every call. Only accumulated
-//! transcript items are reduced.
+//! Top-level `instructions` are NOT inherited by `previous_response_id`.
+//! Instead, seed the chain with a trusted, first-input `developer` message:
+//! the model retains that developer item in the chained conversation and
+//! subsequent turns send ONLY the new input suffix. An edited persona creates
+//! a new chain. Reconnect/truncation is a full bootstrap; never assume an old
+//! WebSocket chain persists after a socket or process restart.
 use super::{Completion, ProviderRef};
 use crate::state::AppState;
 use futures_util::{SinkExt, StreamExt};
@@ -102,6 +104,22 @@ pub(super) fn item_signature(item: &Value) -> (String, String) {
 
 /// A prefix match is the only safe incremental form. Any edit, truncation or
 /// reordering means the remote chain diverged, so the full request is resent.
+/// A Responses `instructions` field applies only to the current response.
+/// Encode durable owner rules and the speaker persona as the FIRST input
+/// developer message, so `previous_response_id` can preserve them in the
+/// session. This is a transport shape change only: the trusted string still
+/// originates in the harness-generated system prompt.
+fn seed_developer_input(base: &Value, input: &[Value]) -> Vec<Value> {
+    let Some(system)=base["instructions"].as_str().filter(|s|!s.trim().is_empty()) else {
+        return input.to_vec();
+    };
+    let mut seeded=Vec::with_capacity(input.len()+1);
+    seeded.push(json!({"role":"developer",
+        "content":[{"type":"input_text","text":system}]}));
+    seeded.extend_from_slice(input);
+    seeded
+}
+
 pub(super) fn plan_chain(chain: &[(String, String)], incoming: &[(String, String)]) -> Plan {
     if chain.is_empty() || chain.len() >= incoming.len() {
         return Plan::Full;
@@ -316,6 +334,14 @@ pub(super) async fn stream(
     let chain = chain_for(&key);
     let mut guard = chain.lock().await;
     guard.used = Instant::now();
+    // The first WS generation registers the immutable persona with the
+    // server-side conversation chain. Every successful later continuation
+    // inherits it through `previous_response_id` without resending its
+    // 4k-token payload on the wire.
+    let seeded=seed_developer_input(base,&input);
+    let mut wire_base=base.clone();
+    if let Some(object)=wire_base.as_object_mut() {object.remove("instructions");}
+    let input=seeded;
     let incoming = input
         .iter()
         .map(item_signature)
@@ -327,7 +353,7 @@ pub(super) async fn stream(
         account_id,
         access,
         transport_session_id,
-        base,
+        &wire_base,
         &input,
         plan,
         session_id,
@@ -352,7 +378,8 @@ pub(super) async fn stream(
                     "chainItems":guard.items.len(),
                     "sentInputTokens":super::room_context::estimate(&json!(&input[delta_items..]).to_string()),
                     "fullInputTokens":super::room_context::estimate(&json!(input).to_string()),
-                    "instructionTokens":super::room_context::estimate(&json!(base["instructions"]).to_string()),
+                    "bootstrapDeveloperTokens":super::room_context::estimate(&json!(input.first()).to_string()),
+                    "developerInputSent":delta_items == 0,
                     "responseId":response_id,
                     "modelCalls":0
                 }),
@@ -383,7 +410,7 @@ pub(super) async fn stream(
                 account_id,
                 access,
                 transport_session_id,
-                base,
+                &wire_base,
                 &input,
                 Plan::Full,
                 session_id,
@@ -412,7 +439,8 @@ pub(super) async fn stream(
                             "chainItems":guard.items.len(),
                             "sentInputTokens":super::room_context::estimate(&json!(input).to_string()),
                             "fullInputTokens":super::room_context::estimate(&json!(input).to_string()),
-                            "instructionTokens":super::room_context::estimate(&json!(base["instructions"]).to_string()),
+                            "bootstrapDeveloperTokens":super::room_context::estimate(&json!(input.first()).to_string()),
+                            "developerInputSent":true,
                             "responseId":response_id,
                             "reconnectReason":first_error,
                             "modelCalls":0
@@ -767,6 +795,27 @@ mod tests {
     }
 
     #[test]
+    fn durable_developer_seed_is_content_addressed_by_the_existing_chain() {
+        let original=vec![item("user","turn-1")];
+        let base=json!({"instructions":"OWNER_CHARTER and AGENT_PERSONA (4000-token equivalent)"});
+        let seeded=seed_developer_input(&base,&original);
+        assert_eq!(seeded.len(),2);
+        assert_eq!(seeded[0]["role"],"developer");
+        assert!(seeded[0].to_string().contains("AGENT_PERSONA"));
+        let transcript=seeded.iter().map(item_signature).collect::<Vec<_>>();
+        let mut incoming=seeded.clone();
+        incoming.push(item("assistant","answer-1"));
+        incoming.push(item("user","turn-2"));
+        let signature=incoming.iter().map(item_signature).collect::<Vec<_>>();
+        assert_eq!(plan_chain(&transcript,&signature),Plan::Delta(2));
+        let changed=seed_developer_input(
+            &json!({"instructions":"UPDATED owner rules / DIFFERENT PERSONA"}),&original);
+        let changed_sig=changed.iter().map(item_signature).collect::<Vec<_>>();
+        assert_eq!(plan_chain(&transcript,&changed_sig),Plan::Full,
+            "changed owner instructions or a different agent require bootstrap");
+    }
+
+    #[test]
     fn a_matching_prefix_sends_only_the_new_suffix() {
         let chain = vec![("user".to_string(), "one".to_string())];
         let incoming = vec![
@@ -889,6 +938,40 @@ mod tests {
         assert!(matches!(result,Err(WsError::HintRejected(_))));
         assert_eq!(requests.recv().await.unwrap()["prompt_cache_key"],"stable-key");
         assert!(requests.try_recv().is_err(),"do not open another socket to send the same rejected hint");
+        server.abort();crate::test_support::cleanup_dir(root);
+    }
+
+    #[tokio::test]
+    async fn group_speaker_bootstraps_persona_once_then_sends_only_turn_delta() {
+        let (state,root)=test_state();
+        let (provider,mut requests,server)=fixture(vec![
+            json!({"type":"response.output_text.delta","delta":"reply"}),
+            json!({"type":"response.completed","response":{"id":"resp-1","output":[]}})
+        ]).await;
+        let (tx,_rx)=tokio::sync::mpsc::unbounded_channel();
+        let developer="COMMON_ROOM_INSTRUCTIONS\nAGENT_PERSONA";
+        let base=json!({"model":"fixture","instructions":developer});
+        let original=vec![item("user","turn-one")];
+        let initial=stream(&state,&provider,"fixture","fixture","room-a",
+            &base,original.clone(),"room-a",&tx).await.unwrap();
+        let first=requests.recv().await.unwrap();
+        assert!(first.get("instructions").is_none(),
+            "long-lived guidance belongs to the developer input, not top-level instructions");
+        assert_eq!(first["input"][0]["role"],"developer");
+        assert_eq!(first["input"][1],original[0]);
+        assert!(first.get("previous_response_id").is_none());
+        assert_eq!(initial.transport["mode"],"full");
+        let updated=vec![original[0].clone(),item("assistant","reply"),item("user","turn-two")];
+        let continuation=stream(&state,&provider,"fixture","fixture","room-a",
+            &base,updated,"room-a",&tx).await.unwrap();
+        let second=requests.recv().await.unwrap();
+        assert_eq!(second["previous_response_id"],"resp-1");
+        assert_eq!(second["input"],json!([item("user","turn-two")]),
+            "second model call must not resend the common 4k prompt or persona");
+        assert!(second.get("instructions").is_none());
+        assert_eq!(continuation.transport["mode"],"delta");
+        assert_eq!(continuation.transport["developerInputSent"],false);
+        forget(&registry_key(&provider,"fixture","room-a"));
         server.abort();crate::test_support::cleanup_dir(root);
     }
 
