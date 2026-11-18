@@ -1424,7 +1424,21 @@ pub(super) async fn propose_program_revision(
         .iter()
         .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_string))
         .collect::<Vec<_>>();
-    let system = "You are the DOMINION program repair planner. A typed execution program failed. Generate up to 3 DISTINCT candidate revisions in one response, not strategy labels. Return JSON: {\"candidateRevisions\":[{\"baseRevision\":\"...\",\"reason\":\"...\",\"evidenceIds\":[\"program-failure\"],\"replacePendingNodes\":[],\"addNodes\":[],\"preflight\":{\"tool\":\"workspace_read\",\"inputs\":{\"path\":\"config.txt\"},\"predicate\":{\"type\":\"equals\",\"from\":\"result\",\"path\":\"/content\",\"value\":\"expected real content\"}}}]}. Each candidate requires a DIFFERENT repair and a read-only preflight with machine-checkable expected observation of current workspace state. The Rust gateway will REALLY execute these tests before choosing. Do not assume tests pass. Cite program-failure, the failed node ID, or an existing checkpoint observationRef as evidence. Preserve completed node IDs and external effects. Available node types are observe, call_tool, branch, sequence, parallel, loop, verify, delegate, model_decision. You MAY return one legacy revision object if meaningful contrasting probes are impossible.";
+    // A/B instrumentation is locked to a disposable benchmark instance.
+    // Production always uses native contrastive repair; no user-selectable
+    // bypass of postflight or tool admission is introduced.
+    let legacy_benchmark_arm =
+        std::env::var("DOMINION_BENCHMARK").as_deref()==Ok("1")
+        && crate::engine::policy::active(ctx.state, "execution")
+            .as_ref().is_some_and(|policy|
+                policy["parameters"]["benchmarkRepairArm"]=="baseline");
+    let system = if legacy_benchmark_arm {
+        "You are the DOMINION program repair planner. A typed execution program failed. Propose ONE concrete revision changing only PENDING nodes. Return JSON only: {\"baseRevision\":\"...\",\"reason\":\"...\",\"evidenceIds\":[\"program-failure\"],\"replacePendingNodes\":[],\"addNodes\":[],\"expectedObservations\":[]}. Do not replace completed IDs or replay confirmed effects. Use the current failed node and execution observations to repair the task."
+            .to_string()
+    } else {
+        "You are the DOMINION program repair planner. A typed execution program failed. Generate up to 3 DISTINCT candidate revisions in one response, not strategy labels. Return JSON: {\"candidateRevisions\":[{\"baseRevision\":\"...\",\"reason\":\"...\",\"evidenceIds\":[\"program-failure\"],\"replacePendingNodes\":[],\"addNodes\":[],\"preflight\":{\"tool\":\"workspace_read\",\"inputs\":{\"path\":\"config.txt\"},\"predicate\":{\"type\":\"equals\",\"from\":\"result\",\"path\":\"/content\",\"value\":\"expected real content\"}},\"postflight\":{\"tool\":\"workspace_read\",\"inputs\":{\"path\":\"config.txt\"},\"predicate\":{\"type\":\"equals\",\"from\":\"result\",\"path\":\"/content\",\"value\":\"expected updated content\"}}}]}. Each candidate requires an independently checkable read-only preflight and postflight. The Rust gateway executes the observations, not the model. Do not assume they pass. Cite real failed operation/checkpoint evidence and preserve completed effects. You MAY return one legacy revision if no meaningful contrasting probes exist."
+            .to_string()
+    };
     // Same HTIR source as native failed-tool repair. Program candidates see
     // the actual failed call's dependency slice, never guessed provenance.
     let trace=crate::engine::adaptation::trace_ir::compile(
@@ -1433,9 +1447,9 @@ pub(super) async fn propose_program_revision(
         failure["tool"].as_str().unwrap_or(""),
         &failure["observation"]["arguments"],
     );
-    let system = format!(
-        "{system} Each candidateRevisions entry MUST also include postflight: {{tool, inputs, predicate}} with a READ-ONLY tool and a machine-checkable result predicate for the state AFTER its proposed revision executes. Postflight is executed through the native gateway; Unknown/False/denied cannot mark repair complete. Candidates with unrelated node replacements are rejected. An added observe/verify node may be composed with a revision of the failed node if both independent preflights pass."
-    );
+    let system = if legacy_benchmark_arm { system } else { format!(
+        "{system} Each candidateRevisions entry MUST include a READ-ONLY postflight and machine-checkable result predicate for the state AFTER revision execution. Unknown, false or denied cannot mark repair complete. Unrelated node rewrites are rejected. Independent preflights of compatible candidates may be combined."
+    ) };
     let prompt = format!(
         "Current program: {program}\nCheckpoint: {checkpoint}\nFailure observation: {failure}\nNative failure provenance: {trace}\nAvailable tools: {available:?}\nReturn only JSON."
     );
@@ -1461,6 +1475,9 @@ pub(super) async fn propose_program_revision(
     .unwrap_or_else(|| "replace".into());
     let mut grounded_failure=failure.clone();
     grounded_failure["trace"]=trace.clone();
+    if legacy_benchmark_arm && proposal["candidateRevisions"].is_array() {
+        return Err("baseline arm must emit exactly one legacy ProgramIR revision".into());
+    }
     let candidates = crate::engine::adaptation::repair_tournament::prepare(
         &proposal, program, checkpoint, &grounded_failure, &available, &repair_mode,
     )?;
@@ -1496,6 +1513,7 @@ pub(super) async fn propose_program_revision(
     revised["repairTournament"] = json!({
         "decision":audit,"probeReceipts":called,
         "failureTraceFocus":trace["focus"],
+        "benchmarkRepairArm":if legacy_benchmark_arm {"baseline"} else {"treatment_or_production"},
     });
     Ok(Some(revised))
 }
