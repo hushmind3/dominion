@@ -60,6 +60,7 @@ pub fn definitions() -> Vec<Value> {
         tool("http_fetch", "Fetch a URL and return its readable text content", object(json!({"url": text("HTTP or HTTPS URL")}), vec!["url"])),
         tool("memory_store", "Save a grounded memory for this agent. Quote the user's exact words; invented facts are rejected. Shared memories are managed by the user.", object(json!({"text": text("Fact to remember, maximum 1600 characters"), "evidenceQuote": text("Exact quote from the current user message supporting the fact"), "sourceMessageId": text("Optional earlier source message ID"), "type": json!({"type":"string","enum":["fact","preference","decision","procedure","lesson"]}), "key": text("Optional stable fact key; a new value replaces the previous value for this key"), "scope": json!({"type":"string","enum":["agent"]})}), vec!["text", "evidenceQuote"])),
         tool("memory_search", "Find saved knowledge relevant to a topic", object(json!({"query": text("Search query")}), vec!["query"])),
+        tool("skill_view", "Load an enabled skill's original instructions on demand by exact skill ID or name; page large skills by startLine", object(json!({"id": text("Enabled skill ID or exact name from the skill index"),"startLine":json!({"type":"integer","minimum":1}),"maxLines":json!({"type":"integer","minimum":1,"maximum":160})}), vec!["id"])),
         tool("skill_propose", "Draft a reusable skill for user review", object(json!({"name": text("Skill name"), "instructions": text("Reusable instructions")}), vec!["name", "instructions"])),
         tool("delegate_task", "Delegate a self-contained task to another agent and optionally wait for its result", object(json!({
             "agentId": text("Target agent id"),
@@ -154,7 +155,7 @@ pub fn requires_approval(name: &str) -> bool {
 }
 
 pub fn observational(name:&str)->bool{
-    matches!(name,"dominion_tool_search" | "dominion_tool_call" | "workspace_git_status"|"workspace_git_diff"|"workspace_list"|"workspace_read"|"workspace_read_range"|"code_search"|"file_list"|"file_read"|"memory_search"|"web_search"|"http_fetch"|"task_status"|"task_result"|"account_status"|"github_file_read"|"github_repositories")
+    matches!(name,"dominion_tool_search" | "dominion_tool_call" | "workspace_git_status"|"workspace_git_diff"|"workspace_list"|"workspace_read"|"workspace_read_range"|"code_search"|"file_list"|"file_read"|"memory_search"|"skill_view"|"web_search"|"http_fetch"|"task_status"|"task_result"|"account_status"|"github_file_read"|"github_repositories")
 }
 
 pub async fn execute(
@@ -350,6 +351,39 @@ pub async fn execute(
             );
             Ok(json!({
                 "results": crate::engine::memory::retrieve(ctx.store, &scope, &query, 10)
+            }))
+        }
+        "skill_view" => {
+            let id = required_arg(args, "id")?;
+            let scope = crate::engine::memory::MemoryScope::for_session(
+                ctx.store, ctx.session_id, ctx.agent_id,
+            );
+            let record = ctx.store.all("skill").into_iter().find(|record| {
+                (record["id"].as_str() == Some(id.as_str())
+                    || record["name"].as_str() == Some(id.as_str()))
+                    && record["enabled"] != false
+                    && record["status"] != "draft"
+                    && crate::engine::memory::visible(record, &scope)
+            }).ok_or("활성화된 스킬을 찾을 수 없거나 접근 권한이 없습니다.")?;
+            let instructions = record["instructions"].as_str()
+                .or_else(||record["description"].as_str()).unwrap_or("");
+            let lines: Vec<&str> = instructions.lines().collect();
+            let start = args["startLine"].as_u64().unwrap_or(1).max(1) as usize;
+            let count = args["maxLines"].as_u64().unwrap_or(100).clamp(1,160) as usize;
+            if start > lines.len().max(1) {
+                return Err("스킬의 읽기 시작 줄이 전체 줄 수를 초과했습니다.".into());
+            }
+            let end = start.saturating_sub(1).saturating_add(count).min(lines.len());
+            let excerpt = lines[start - 1..end].join("\n");
+            Ok(json!({
+                "id":record["id"],"name":record["name"],"content":excerpt,
+                "startLine":start,"endLine":end,"totalLines":lines.len(),
+                "hasMore":end<lines.len(),
+                "revision":crate::engine::memory::stable_id(&[
+                    record["id"].as_str().unwrap_or(""),
+                    instructions,
+                    record["updatedAt"].as_str().unwrap_or("")
+                ])
             }))
         }
         "skill_propose" => {
