@@ -1,3 +1,7 @@
+## Sub2 — unified tool receipts and scoped effect admission (2026-11-18)
+
+The exact deterministic file replacement shortcut now delegates to the standard native `dispatch_tool_call`. No second permission/tool execution stack survives. Its operations keep full durable native receipts but never persist unmatched provider `role=tool` messages. `Store::related_effect_operations` uses separate session/resource and session/effect indexes to preserve complete related recovery state while excluding unrelated historical records from every effect admission/read-back. See [full change and test status](docs/SUB2-SCOPED-NATIVE-EFFECTS-2026-11-18.md).
+
 ## Sub2 — Lean-core cutover: runtime before optional capabilities (2026-11-16)
 
 - New owner decision: Rust executes requested tasks, no automatic core evolution. MCP/Connections provide optional video/voice tools.
