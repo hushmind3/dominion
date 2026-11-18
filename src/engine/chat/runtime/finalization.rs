@@ -925,6 +925,64 @@ mod acceptance_repair_tests {
     }
 
     #[test]
+    fn sqlite_receipts_and_real_artifact_drive_review_escalation_without_model_calls() {
+        use crate::{config::Config, db::Store, vault::Vault};
+        let dir=std::env::temp_dir().join(format!(
+            "dominion-review-gate-{}",uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("report.md"),"old bytes").unwrap();
+        let config=Config{
+            port:0,data_dir:dir.clone(),web_dir:dir.join("web"),workspace:dir.clone(),
+        };
+        let state=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()));
+        let checks=json!([{"type":"file_contains","path":"report.md",
+            "contains":"verified bytes"}]);
+        state.store.put("execution",&json!({"id":"real-run","sessionId":"s",
+            "status":"running","acceptanceChecks":checks})).unwrap();
+        for (id,tool,seq) in [("write","workspace_write",1),
+            ("read","workspace_read",2)]{
+            state.store.put("execution_operation",&json!({
+                "id":id,"runId":"real-run","tool":tool,"opSeq":seq,
+                "arguments":{"path":"report.md"},
+                "status":"completed","result":{"success":true}
+            })).unwrap();
+        }
+        let evidence=state.store.execution_operations("real-run").unwrap();
+        let gaps=verification::check_acceptance(
+            &state,"update report.md with verified bytes",&checks,&evidence,
+        );
+        assert!(!gaps.is_empty());
+        let first=crate::engine::recovery::acceptance_progress(
+            &state,"real-run",0,&gaps,&evidence).unwrap();
+        assert_eq!(first["obligationLineage"]["frontiers"][0]["kind"],
+            "postcondition_contradicts_mutation");
+        assert_eq!(acceptance_repair(&first,&checks,true),AcceptanceRepair::Verifier);
+        let stalled=crate::engine::recovery::acceptance_progress(
+            &state,"real-run",1,&gaps,&evidence).unwrap();
+        assert_eq!(stalled["mode"],"reconsider");
+        assert_eq!(acceptance_repair(&stalled,&checks,true),AcceptanceRepair::Reviewer);
+        state.store.put("execution_operation",&json!({
+            "id":"unknown","runId":"real-run","tool":"workspace_write",
+            "arguments":{"path":"report.md"},"opSeq":3,
+            "status":"interrupted","outcomeUnknown":true,"result":{"success":false}
+        })).unwrap();
+        let all=state.store.execution_operations("real-run").unwrap();
+        let unknown=crate::engine::recovery::acceptance_progress(
+            &state,"real-run",2,&gaps,&all).unwrap();
+        assert_eq!(acceptance_repair(&unknown,&checks,true),AcceptanceRepair::Reconcile);
+        // Model claims or successful tool receipts never substitute for bytes.
+        std::fs::write(dir.join("report.md"),"verified bytes").unwrap();
+        let corrected=verification::check_acceptance(
+            &state,"update report.md with verified bytes",&checks,&evidence,
+        );
+        assert!(corrected.iter().all(|gap|!gap.contains("file_contains")));
+        drop(state);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn uncertain_external_effect_must_be_reconciled_before_any_retry() {
         let uncertain=json!({"mode":"reconsider","obligationLineage":{"frontiers":[
             {"kind":"unresolved_external_effect","resource":"workspace:out.md",
