@@ -123,6 +123,32 @@ speaker. Unknown provider cache figures are `null`, never assumed zero.
 The targeted 9-speaker stable-status and changed-status regressions run in
 development CI; they do not establish a new live-provider token reduction.
 
+### Memory-first cache epoch rotation (2026-11-18)
+
+Group context now separates the per-turn `contextBudgetTokens` **evidence
+selection** from the bounded, provider-capacity-aware cached prefix epoch.
+Without an explicit `workingViewBudgetTokens` setting, the engine keeps up
+to four selection budgets (between 2,000 and 12,000 estimated history tokens),
+clamped by the provider context window minus output and fixed prompt reserves.
+This prevents a small per-turn selection from prematurely invalidating a
+useful cached prefix. An explicit room `workingViewBudgetTokens` overrides
+that policy.
+
+When the epoch genuinely overflows, the compiler keeps the selected current
+owner request, self-answer, peers and retrieved evidence. Any *additional*
+previously transmitted owner-confirmed facts are carried only while there is
+room in the new bounded projection, after revalidating their exact text
+against the same participant's existing room-state provenance. No entire-room
+memory scan, new model summarization call or cross-room recall is performed.
+Actual corrections, revoked evidence, changes to tools or instructions are
+hard invalidations: old text is not replayed.
+
+Regressions cover distinct selector/epoch budgets, verified owner-fact carry,
+stale peer eviction, and owner correction invalidation. These source tests
+do not constitute a new 9-person real-provider benchmark or prove billable
+uncached-token reductions; per-call provider usage remains the measurement
+source.
+
 ## Development vs release validation
 
 Normal Rust source pushes run only scoped, default-profile kernel/job/Money regression tests on macOS via `.github/workflows/ci.yml`. They do **not** trigger frontend builds, `cargo build/check`, release-profile builds, installer packaging, or the Windows/macOS release matrix. The separate `.github/workflows/release.yml` performs those full checks only for version tags or an explicit manual release request. Passing scoped tests does not imply that a distributable desktop release has been validated.
