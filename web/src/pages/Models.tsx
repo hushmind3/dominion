@@ -5,6 +5,7 @@ import {Button,TextInput,SelectInput} from '../components/Primitives'
 import {FormField,Notice,refresh,useRemote} from '../components/UI'
 import {DialogBackdrop,DialogPanel} from '../components/Dialog'
 import {ModelExplorer} from '../components/ModelExplorer'
+import {DominionCloudAccount} from '../components/DominionCloudAccount'
 import {DominionCloudConnection} from '../components/DominionCloudConnection'
 import {ModelPicker} from '../components/ModelPicker'
 import {OAuthConnectionCard} from '../components/OAuthConnectionCard'
@@ -327,6 +328,7 @@ export function ModelHub(){
   {id:'oauth',label:t('models.tab.oauth')},
  ]
  return <div className="mx-auto w-full max-w-[1200px] px-4 py-5 sm:px-6 lg:py-6">
+  <DominionCloudAccount onProviderAdded={providers.reload}/>
   <header className="mb-4 flex flex-wrap items-end justify-between gap-3">
    <div><h1 className="m-0 text-[19px] font-bold tracking-tight text-[#24211D]">{t('models.page.title')}</h1><p className="mt-1 text-[12px] text-[#7C7469]">{t('models.page.desc')}</p></div>
    <Button type="button" onClick={()=>open()} className="inline-flex h-8 items-center gap-2 rounded-lg border border-[#E1D9CC] bg-white px-3 text-[11px] font-semibold text-[#3A342D] hover:bg-[#FAF7F1]"><Plus size={14}/> {t('models.apiAdd')}</Button>
