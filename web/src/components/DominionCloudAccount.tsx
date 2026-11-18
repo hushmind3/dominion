@@ -9,14 +9,13 @@ type CatalogProvider={id:string;name:string;api:string;models:number;doc?:string
 type RemoteModel={id:string;name?:string}
 const cloudUrl=(import.meta.env.VITE_DOMINION_CLOUD_URL||'').replace(/\/$/,'')
 const clientId=import.meta.env.VITE_DOMINION_GOOGLE_CLIENT_ID||''
-export function DominionCloudAccount({onProviderAdded,initialTab='cloud'}:{onProviderAdded:()=>Promise<unknown>;initialTab?:'cloud'|'providers'}) {
+export function DominionCloudAccount({onProviderAdded,initialTab='cloud',hideManagementNavigation=false}:{onProviderAdded:()=>Promise<unknown>;initialTab?:'cloud'|'providers';hideManagementNavigation?:boolean}) {
  const button=useRef<HTMLDivElement>(null)
  const [token,setToken]=useState('')
  const [models,setModels]=useState<Model[]>([])
  const [selected,setSelected]=useState('')
  const [modelSearch,setModelSearch]=useState('')
  const [modelFilter,setModelFilter]=useState<'all'|'free'|'paid'>('all')
- const [connectionTab,setConnectionTab]=useState<'providers'|'openrouter'>('providers')
  const [providerSort,setProviderSort]=useState<'name'|'models'>('name')
  const [managementTab,setManagementTab]=useState<'cloud'|'providers'>(initialTab)
  const [providerPage,setProviderPage]=useState(0)
@@ -78,6 +77,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud'}:{onPro
    setCatalogMessage(data.error||'업체 '+(data.providers||[]).length+'개를 불러왔습니다.')
   }catch(e){setCatalogMessage((e as Error).message)}finally{setCatalogBusy(false)}
  }
+ useEffect(()=>{if(managementTab==='providers'&&!catalog.length)void loadCatalog()},[managementTab])
  async function connectCatalog(){
   if(!catalogKey.trim()){setCatalogMessage('API 키를 입력한 후 연결하세요.');return}
   const entry=catalog.find(p=>p.id===catalogId)
@@ -167,11 +167,14 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud'}:{onPro
    setMessage('모델이 등록됐습니다. 채팅에서 선택해 사용하세요.')
   }catch(error){setMessage((error as Error).message)}finally{setBusy(false)}
  }
+ const filteredCatalog=catalog.filter(p=>(p.name+' '+p.id).toLowerCase().includes(catalogSearch.toLowerCase())&&(!providerMinModels||p.models>0)).sort((a,b)=>providerSort==='models'?b.models-a.models||a.name.localeCompare(b.name))
+ const providerPageCount=Math.max(1,Math.ceil(filteredCatalog.length/40))
+ const visibleCatalog=filteredCatalog.slice(providerPage*40,(providerPage+1)*40)
  return <section className="rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] p-4">
-  <div className="flex flex-wrap gap-2 border-b border-[#E7E0D5] pb-3 mb-3" role="tablist" aria-label="모델 연결 관리">
+  {!hideManagementNavigation&&<div className="flex flex-wrap gap-2 border-b border-[#E7E0D5] pb-3 mb-3" role="tablist" aria-label="모델 연결 관리">
    <button type="button" role="tab" aria-selected={managementTab==='cloud'} onClick={()=>setManagementTab('cloud')} className={`rounded-lg px-3 py-2 text-[12px] ${managementTab==='cloud'?'bg-[#C96442] text-white':'border'}`}>DOMINION Cloud</button>
    <button type="button" role="tab" aria-selected={managementTab==='providers'} onClick={()=>{setManagementTab('providers');if(!catalog.length)void loadCatalog()}} className={`rounded-lg px-3 py-2 text-[12px] ${managementTab==='providers'?'bg-[#C96442] text-white':'border'}`}>업체·모델 연결</button>
-  </div>
+  </div>}
   {managementTab==='cloud'&&<><strong className="text-[13px]">DOMINION Cloud · 구글 로그인</strong>
   <p className="mt-1 text-[12px] text-[#7C7469]">DOMINION 계정 하나로 무료·유료 모델을 선택합니다. 업체 API 키는 서버에서 관리합니다.</p>
   {cloudUrl&&clientId?<div className="mt-3" ref={button}/>:<p className="mt-2 text-[12px] text-[#7C7469]">DOMINION Cloud 로그인 미설정 · 다른 AI 업체는 아래에서 연결할 수 있습니다.</p>}
@@ -189,23 +192,23 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud'}:{onPro
   {token&&<button type="button" className="mt-3 rounded-lg border px-3 py-2 text-[12px]" onClick={()=>{setToken('');setModels([]);setSelected('');setMessage('로그아웃되었습니다.');window.google?.accounts.id.disableAutoSelect?.()}}>로그아웃</button>}
   </>}
   {managementTab==='providers'&&<div className="mt-4 border-t border-[#E7E0D5] pt-4">
-   <div className="flex flex-wrap gap-2"><button type="button" aria-pressed={connectionTab==='providers'} onClick={()=>setConnectionTab('providers')} className={'rounded-lg border px-3 py-2 text-[12px] '+(connectionTab==='providers'?'bg-[#EEE5D8] font-semibold':'')}>업체 탐색·연결</button><button type="button" aria-pressed={connectionTab==='openrouter'} onClick={()=>setConnectionTab('openrouter')} className={'rounded-lg border px-3 py-2 text-[12px] '+(connectionTab==='openrouter'?'bg-[#EEE5D8] font-semibold':'')}>OpenRouter 무료 모델</button></div>
-   {connectionTab==='providers'&&<div className="mt-3"><strong className="text-[13px]">AI 업체 통합 연결 · models.dev</strong>
+
+   <div className="mt-3"><strong className="text-[13px]">AI 업체 통합 연결 · models.dev</strong>
    <p className="mt-1 text-[12px] text-[#7C7469]">업체 검색 → API 키 연결 → 모델 조회 → 채팅 등록 · 공개 모델 목록과 실제 사용 권한은 다를 수 있습니다.</p>
    <div className="mt-2 flex flex-wrap gap-2">
     <button type="button" disabled={catalogBusy} onClick={()=>void loadCatalog()} className="rounded-lg border px-3 py-2 text-[12px]">업체 목록 불러오기</button>
     <input aria-label="AI 업체 검색" value={catalogSearch} onChange={e=>{setCatalogSearch(e.target.value);setProviderPage(0)}} placeholder="업체 이름 검색" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
    </div>
    {catalog.length>0&&<div className="mt-2 flex flex-wrap items-center gap-2 text-[12px]">
-    <span className="text-[#7C7469]">{catalog.filter(p=>(p.name+' '+p.id).toLowerCase().includes(catalogSearch.toLowerCase())&&(!providerMinModels||p.models>0)).length} / {catalog.length}개 업체</span>
-    <label className="flex items-center gap-1"><input type="checkbox" checked={providerMinModels} onChange={e=>setProviderMinModels(e.target.checked)}/>모델 있는 업체만</label>
+    <span className="text-[#7C7469]">{filteredCatalog.length} / {catalog.length}개 업체</span>
+    <label className="flex items-center gap-1"><input type="checkbox" checked={providerMinModels} onChange={e=>{setProviderMinModels(e.target.checked);setProviderPage(0)}}/>모델 있는 업체만</label>
    </div>}
    {catalog.length>0&&<div className="mt-2 flex flex-wrap gap-2"><select aria-label="업체 정렬" value={providerSort} onChange={e=>{setProviderSort(e.target.value as 'name'|'models');setProviderPage(0)}} className="rounded-lg border px-3 py-2 text-[12px]"><option value="name">이름순</option><option value="models">모델 많은 순</option></select>
     <select aria-label="AI 업체 선택" value={catalogId} onChange={e=>{setCatalogId(e.target.value);setCatalogModels([]);setCatalogProviderId('')}} className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]">
      <option value="">업체를 선택하세요</option>
-     {catalog.filter(p=>(p.name+' '+p.id).toLowerCase().includes(catalogSearch.toLowerCase())&&(!providerMinModels||p.models>0)).sort((a,b)=>providerSort==='models'?b.models-a.models||a.name.localeCompare(b.name):a.name.localeCompare(b.name)).map(p=><option key={p.id} value={p.id}>{p.name} ({p.models})</option>)}
+     {visibleCatalog.map(p=><option key={p.id} value={p.id}>{p.name} ({p.models})</option>)}
     </select>
-    <div className="flex items-center gap-2 text-[12px]"><button type="button" className="rounded border px-2 py-1" disabled={providerPage===0} onClick={()=>setProviderPage(p=>Math.max(0,p-1))}>이전</button><span>{providerPage+1} / {Math.max(1,Math.ceil(catalog.filter(p=>(p.name+' '+p.id).toLowerCase().includes(catalogSearch.toLowerCase())).length/40))}</span><button type="button" className="rounded border px-2 py-1" disabled={(providerPage+1)*40>=catalog.filter(p=>(p.name+' '+p.id).toLowerCase().includes(catalogSearch.toLowerCase())).length} onClick={()=>setProviderPage(p=>p+1)}>다음</button></div>
+    <div className="flex items-center gap-2 text-[12px]"><button type="button" className="rounded border px-2 py-1" disabled={providerPage===0} onClick={()=>setProviderPage(p=>Math.max(0,p-1))}>이전</button><span>{providerPage+1} / {providerPageCount}</span><button type="button" className="rounded border px-2 py-1" disabled={providerPage+1>=providerPageCount} onClick={()=>setProviderPage(p=>p+1)}>다음</button></div>
     <input type="password" autoComplete="off" aria-label="업체 API 키" value={catalogKey} onChange={e=>setCatalogKey(e.target.value)} placeholder="API 키" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
     <button type="button" disabled={catalogBusy||!catalogId} onClick={()=>void connectCatalog()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">연결 및 모델 조회</button>
    </div>}
@@ -214,10 +217,10 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud'}:{onPro
     <button type="button" disabled={catalogBusy||!catalogModel} onClick={()=>void saveCatalogModel()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">채팅에 등록</button>
     <button type="button" disabled={catalogBusy||!catalogProviderId} onClick={()=>void importCatalogModels()} className="rounded-lg border px-3 py-2 text-[12px] disabled:opacity-50">조회된 모델 전체 등록</button>
    </div>}
-   {catalog.length>0&&<p className="mt-2 text-[12px] text-[#7C7469]">검색 결과 {catalog.filter(p=>(p.name+' '+p.id).toLowerCase().includes(catalogSearch.toLowerCase())).length}개 / 전체 {catalog.length}개 업체 · 중복 ID 제외</p>}
+   {catalog.length>0&&<p className="mt-2 text-[12px] text-[#7C7469]">검색 결과 {filteredCatalog.length}개 / 전체 {catalog.length}개 업체 · 중복 ID 제외</p>}
    <p className="mt-2 text-[12px] text-[#7C7469]">업체 목록의 모델 수는 공개 카탈로그 기준입니다. 실제 사용에는 API 키 또는 기존 연결이 필요합니다.</p>
    {catalogMessage&&<p role="status" className="mt-2 text-[12px] text-[#7C7469]">{catalogMessage}</p>}
-   </div>}
+   </div>
   </div>}
   {managementTab==='providers'&&<div className="mt-4 border-t border-[#E7E0D5] pt-4">
    <strong className="text-[13px]">OpenRouter 무료 모델 일괄 등록</strong>
