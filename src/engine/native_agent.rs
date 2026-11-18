@@ -181,6 +181,17 @@ fn manual_recovery_guard(job:&Value,specs:&[ToolSpec],action:&Action)->Result<()
     Ok(())
 }
 
+// The retired harness API always ran shell commands from its fixed
+// workspace root. Its native-kernel compatibility path must not turn a
+// model-supplied cwd into an arbitrary host working directory.
+fn legacy_harness_shell_scope(job:&Value,action:&Action)->Result<(),String>{
+    if job["input"]["harnessCompat"]==true && action.tool=="shell_exec"
+        && action.arguments["cwd"].as_str().is_some_and(|cwd|!cwd.is_empty()) {
+        return Err("Legacy harness shell commands must use the workspace root; omit cwd".into());
+    }
+    Ok(())
+}
+
 impl Tools for NativeTools {
     fn definitions(&self) -> Vec<ToolSpec> { self.tool_specs.clone() }
     fn execute<'a>(&'a self, action: &'a Action) -> BoxFuture<'a, Result<Value, String>> {
@@ -191,6 +202,7 @@ impl Tools for NativeTools {
             let current=self.state.store.get("job",&self.run_id)
                 .ok_or("Native run record disappeared during tool dispatch")?;
             manual_recovery_guard(&current,&self.tool_specs,action)?;
+            legacy_harness_shell_scope(&current,action)?;
             let mcp_spec=if action.tool.starts_with("mcp__") {
                 Some(self.tool_specs.iter().find(|spec|spec.name==action.tool)
                     .ok_or("MCP operation not in the pinned authorized tool catalog")?)
@@ -780,6 +792,21 @@ mod native_result_tests {
         assert!(failure.contains("END_ERROR"));
         assert!(!failure.contains("prelude".repeat(400).as_str()));
         assert!(failure.len()<3600);
+    }
+    #[test]
+    fn legacy_harness_native_shell_stays_workspace_bound(){
+        let action=Action{
+            id:"shell-one".into(),tool:"shell_exec".into(),
+            arguments:json!({"command":"pwd","cwd":"/tmp"}),
+            depends_on:vec![]
+        };
+        let legacy=json!({"input":{"harnessCompat":true}});
+        assert!(legacy_harness_shell_scope(&legacy,&action).is_err());
+        let native=json!({"input":{"clientSurface":"native_agent_panel"}});
+        assert!(legacy_harness_shell_scope(&native,&action).is_ok());
+        let mut fixed=action;
+        fixed.arguments=json!({"command":"pwd"});
+        assert!(legacy_harness_shell_scope(&legacy,&fixed).is_ok());
     }
     #[test]
     fn native_tool_authority_survives_catalog_reordering_but_rejects_policy_drift() {
