@@ -119,19 +119,23 @@ fn ranked<'a>(catalog:&'a [Value],query:&str)->Vec<(f64,&'a Value)> {
     let average_length=documents.iter().map(|doc|doc.length).sum::<f64>()
         /documents.len() as f64;
     let total=documents.len() as f64;
+    // Compute corpus rarity once per query, not once for every candidate.
+    // This keeps discovery linear in catalog size for a bounded query.
+    let rarity=query_terms.iter().map(|term|{
+        let df=documents.iter().filter(|candidate|
+            candidate.name_terms.iter().any(|word|word==term)
+            ||candidate.description_terms.iter().any(|word|word==term)
+            ||candidate.parameter_terms.iter().any(|word|word==term)
+        ).count() as f64;
+        (1.0+(total-df+0.5)/(df+0.5)).ln()
+    }).collect::<Vec<_>>();
     let mut ranked=Vec::new();
     let normalized_query=query.trim().to_lowercase();
     for doc in &documents {
         let mut score=if normalized_query==doc.name {100.0} else {0.0};
         if doc.name.len()>=5 && normalized_query.contains(&doc.name) {score+=20.0;}
         let length_norm=1.2*(0.25+0.75*doc.length/average_length);
-        for term in &query_terms {
-            let df=documents.iter().filter(|candidate|
-                candidate.name_terms.iter().any(|word|word==term)
-                ||candidate.description_terms.iter().any(|word|word==term)
-                ||candidate.parameter_terms.iter().any(|word|word==term)
-            ).count() as f64;
-            let idf=(1.0+(total-df+0.5)/(df+0.5)).ln();
+        for (term,idf) in query_terms.iter().zip(rarity.iter()) {
             let name_hits=doc.name_terms.iter().filter(|word|*word==term).count() as f64;
             let description_hits=doc.description_terms.iter().filter(|word|*word==term).count() as f64;
             let parameter_hits=doc.parameter_terms.iter().filter(|word|*word==term).count() as f64;
