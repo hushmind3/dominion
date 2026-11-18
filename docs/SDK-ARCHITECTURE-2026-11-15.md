@@ -1,5 +1,6 @@
 # DOMINION 2026-11-15 Frontier Comparison — source-backed working audit
 
+> **Historical architecture note (2026-11-15):** This document records earlier design states. The retired `crates/harness` runner/CLI was removed on 2026-11-18. For active execution paths and legacy read-only archival behavior, consult [HARNESS.md](HARNESS.md). Sections discussing older workflow runners are not current deployment instructions.\n\n
 ## Comparison standard
 
 Reference is the finished frontier-class autonomous agent product, not merely whether a function or API endpoint exists. Compare end-to-end source editing and task completion, memory and session continuation, tool permissions and sandbox, failure recovery, parallel agents, model/provider independence, context/cache/cost, video, group rooms, verified non-weight RSI, SDK/API parity and a non-developer UI. DOMINION's rubric weights: autonomous work 25, engine/RSI 15, turn-key video 15, cost 10, rooms 8, extension 8, providers 6, UX 5, maintenance 5, operations 3.
