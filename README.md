@@ -208,3 +208,9 @@ If post-completion SQLite evidence retrieval fails, the SDK marks the run `needs
 Money evidence is source-versioned: stored page revisions are content-addressed and immutable, and model-proposed quotations are checked against archived page text without extra model tokens. The Money candidate and archive screens show each quote status and offer on-demand access to previously captured page versions. A quote match is source-text provenance, not validation of payment or buyer intent.
 
 Money can also show an **indicative won-denominated price spread** when two independent archived sources include exact quoted prices, comparable dates/specifications/quantities and complete shipping, duty, platform, returns and labor costs. Currency conversion requires independently archived FX quotations; unknown figures remain null rather than guessed profit.
+
+### Role-scoped delegated jobs (2026)
+
+The existing `delegate_task` tool now accepts an optional `profile`: `general` (backward-compatible default), `inspection` (read-only observation), `implementation` (isolated code changes), or `verification` (observation and approved Cargo tests). Task-specific profiles require `isolatedWorktree: true`; child jobs inherit the shared native Rust driver, approvals, cancellation, and hierarchical token/cost budget. Admission is checked again during progressive tool discovery and final tool dispatch, not just in the model-visible catalog.
+
+`task_result` returns up to 20 **most recent successful** tool receipts for the owned child session via an indexed SQLite query, rather than scanning the global journal. Waiting parents subscribe to exact job events with a bounded durable-state fallback. Existing SDK, GUI, task and stored job interfaces remain unchanged; these improvements have Rust regression coverage but not a measured live-model completion-rate uplift.
