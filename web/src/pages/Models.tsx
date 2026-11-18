@@ -21,7 +21,7 @@ type CatalogResponse={providers:CatalogProvider[];cached?:boolean;error?:string}
 type FreeCatalogModel={id:string;free?:boolean|null;freeStatus?:string;freeSource?:string}
 type FreeCatalogProvider={providerId:string;providerName:string;reachable:boolean;error?:string;models:FreeCatalogModel[]}
 type FreeCatalog={status?:string;updatedAt?:string;providers:FreeCatalogProvider[];counts?:{free:number;paid:number;unknown:number}}
-type Tab='providers'|'cloud'|'connect'|'free'|'catalog'|'local'|'oauth'
+type Tab='providers'|'cloud'|'connect'|'free'|'catalog'|'local'|'huggingface'|'oauth'
 
 const opencodeGoPreset:ProviderPreset={name:'OpenCode Go',baseUrl:'https://opencode.ai/inference/go/openai/v1',kind:'openai',local:false,category:'cloud',integration:'opencode-go'}
 
@@ -331,6 +331,7 @@ export function ModelHub(){
   {id:'free',label:'무료 모델',count:freeCatalog.value.counts?.free||0},
   {id:'catalog',label:'업체 탐색'},
   {id:'local',label:'로컬',count:providers.value.filter(p=>p.local).length},
+  {id:'huggingface',label:'허깅페이스 모델 검색'},
   {id:'oauth',label:'계정 인증'},
  ]
  return <div className="mx-auto w-full max-w-[1200px] px-4 py-5 sm:px-6 lg:py-6">
@@ -426,6 +427,7 @@ export function ModelHub(){
    {!visiblePresets.length&&<p className="py-8 text-center text-[12px] text-[#9C9388]">{t('models.noPreset')}</p>}
   </section>}
   {tab==='local'&&<div className="mt-5"><ModelExplorer/></div>}
+  {tab==='huggingface'&&<div className="mt-5"><ModelExplorer initialView="search"/></div>}
 
   {removedName&&<p role="status" className="mb-4 mt-4 text-[12px] text-emerald-700">{t('models.dlg.disconnected',{name:removedName})}</p>}
   {!modal&&<div className="mt-4"><Notice message={error||providers.error}/></div>}
