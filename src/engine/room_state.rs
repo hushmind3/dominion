@@ -57,18 +57,26 @@ pub(crate) fn conversation_context(
             "repliedToPreviousRequest":previous_replies.contains_key(id),
             "executionId":execution.as_ref().map(|e|&e["id"]),"toolCalls":tool_calls}));
     }
-    let mut text=String::from("[방 공통 상태: 현재 요청 시점까지의 전체 원문 기록에서 엔진이 계산함]\n");
+    // Separate a cursor-specific audit receipt from the content of the
+    // model-visible room observation. Message IDs and receipt IDs belong in
+    // the stored snapshot. They must not vary an otherwise identical cacheable
+    // prefix on every new owner turn.
+    let mut text=String::from("[방 공통 상태: 현재 요청 이전의 확정 응답·실행 기록 기준] ");
     if previous.is_some() {
-        // The actual prior owner message is already selected verbatim by the
-        // compiler. Keep its reference here rather than repeat its body.
-        text.push_str(&format!("직전 요청의 응답 기록: {}/{}명. 응답함: {}. 응답 기록 없음: {}.\n",
-            responded.len(),members.len(),responded.join(", "),if missing.is_empty(){"없음".into()}else{missing.join(", ")}));
-    }else{text.push_str("이 방의 첫 주인 요청이며 이전 응답 기록은 없음.\n");}
-    text.push_str(&format!("기준 요청: {source_id}. 직전 요청: {}.\n",previous_id.unwrap_or("없음")));
-    if !observed_work.is_empty(){text.push_str(&format!("관측된 작업: {}.\n",observed_work.join("; ")));}
-    text.push_str("이후 대화는 선택된 발췌다. 발췌에 안 보인다는 이유로 미응답·부재로 판단하지 말 것. 발언과 실제 도구 실행 결과는 구분할 것.");
+        text.push_str(&format!("직전 요청 응답 {}/{}명. 미응답: {}.",
+            responded.len(),members.len(),
+            if missing.is_empty(){"없음".into()}else{missing.join(", ")}));
+    }else{
+        text.push_str("첫 주인 요청. 이전 응답 없음.");
+    }
+    if !observed_work.is_empty(){
+        text.push_str(&format!(" 관측된 작업: {}.",observed_work.join("; ")));
+    }
+    text.push_str(" 선택된 동료 발췌에 없다는 이유만으로 미응답을 단정하지 말 것. 실제 도구 결과와 발언을 구분할 것.");
+    let text_digest=memory::stable_id(&[&text]);
     let snapshot=json!({"sessionId":session_id,"sourceMessageId":source_id,"memberIds":members,
         "previousOwnerMessageId":previous_id,"participants":participants,"text":text,
+        "textDigest":text_digest,
         "digest":memory::stable_id(&[&json!([source_id,previous_id,&participants]).to_string()])});
     if let Some(id)=room["id"].as_str(){
         state.store.patch_if("room",id,"id",&json!(id),&json!({"sharedContext":snapshot}));
