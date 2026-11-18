@@ -83,12 +83,16 @@ pub async fn tools(state: &AppState) -> Vec<McpTool> {
     // deterministic for model-schema caching and reproducible tool selection.
     // Bounded fan-out also prevents many configured servers from spawning at
     // once or a single slow server from delaying all other handshakes.
-    let lookups = servers.iter().filter_map(|server| {
+    // Own each record before entering an async future. Borrowing from an
+    // iterator closure across await makes the outer agent future non-Send on
+    // some stable Rust compilers, breaking tokio::spawn call sites.
+    let entries = servers.iter().filter_map(|server| {
         let id = server["id"].as_str()?.to_string();
         if id.is_empty() { return None; }
-        let namespace = server_namespace(server, &servers);
+        Some((id, server_namespace(server, &servers), server.clone()))
+    }).collect::<Vec<_>>();
+    let lookups = entries.into_iter().map(|(id, namespace, server)| async move {
         let cache_key = format!("{id}:{namespace}");
-        Some(async move {
             let cached = {
                 let guard = cache().lock().unwrap();
                 guard.get(&cache_key).and_then(|(at, tools)| {
@@ -96,7 +100,7 @@ pub async fn tools(state: &AppState) -> Vec<McpTool> {
                 })
             };
             if let Some(tools) = cached { return tools; }
-            match list_server(state, server, &namespace).await {
+            match list_server(state, &server, &namespace).await {
                 Ok(tools) => {
                     cache().lock().unwrap().insert(
                         cache_key, (Instant::now(), tools.clone())
@@ -110,7 +114,6 @@ pub async fn tools(state: &AppState) -> Vec<McpTool> {
                     Vec::new()
                 }
             }
-        })
     });
     stream::iter(lookups)
         .buffered(4)
