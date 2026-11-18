@@ -79,6 +79,9 @@ pub fn resource_key(tool: &str, arguments: &Value) -> Option<String> {
                 normalize_path(path.unwrap_or(""))))
         },
         "http_fetch" => arguments["url"].as_str().map(|url| format!("http:{url}")),
+        // One external harness owns a separate tool loop and can mutate
+        // the entire workspace. It is never a read-only status operation.
+        "external_harness_run" => Some("external-harness:workspace".into()),
         "shell_exec" | "terminal_exec" => Some(format!(
             "process:{}",
             arguments["cwd"]
@@ -104,7 +107,7 @@ pub fn resource_key(tool: &str, arguments: &Value) -> Option<String> {
 /// world. A read can still have side effects (locks, billing reservations), so
 /// callers must not treat this classification as a safety proof.
 pub fn is_effectful(tool: &str, arguments: &Value) -> bool {
-    if matches!(tool, "shell_exec" | "terminal_exec") {
+    if matches!(tool, "shell_exec" | "terminal_exec" | "external_harness_run") {
         return true;
     }
     if tool == "github_file_read" {return false;}
@@ -516,6 +519,16 @@ mod tests {
             "effectState": state,
             "finishedAt": "2026-11-07T00:00:00Z",
         })
+    }
+
+    #[test]
+    fn external_harness_is_always_effectful_and_has_one_workspace_resource(){
+        let a=json!({"harnessId":"pi","prompt":"edit file"});
+        let b=json!({"harnessId":"opencode","prompt":"edit file"});
+        assert!(is_effectful("external_harness_run",&a));
+        assert_eq!(resource_key("external_harness_run",&a),
+            resource_key("external_harness_run",&b));
+        assert!(effect_id("session-a","external_harness_run",&a).is_some());
     }
 
     #[test]
