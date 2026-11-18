@@ -834,7 +834,7 @@ mod tests {
                 assert!(compiled.history.iter().any(|row|row["_dominion_frame"].as_str()
                     .is_some_and(|frame|frame.starts_with("room-shared:"))));
                 assert_eq!(compiled.accounting["sharedTextDigest"].as_str().map(str::len),
-                    Some(64),"derived content-addressed status must be stable");
+                    Some(32),"stable_id emits two 64-bit hexadecimal components");
                 assert!(!compiled.system.prompt.contains("LEAKED_NEXT_TURN"));
                 if turn>0 {
                     let previous=format!("agent-{index}-turn-{}",turn-1);
