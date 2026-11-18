@@ -358,6 +358,7 @@ async fn run_locked(
     // message was submitted, never a later model-supplied policy.
     let room = input
         .get("roomSnapshot")
+        .or_else(||job.pointer("/roomBinding/roomSnapshot"))
         .filter(|value| value.is_object())
         .cloned()
         .unwrap_or_else(|| current_room.clone());
@@ -409,13 +410,14 @@ async fn run_locked(
         return Err("그룹 세션 취소 세대를 복구하는 저장소 작업이 실패했습니다.".into());
     }
 
-    // Internal automations and compatibility callers receive the same frozen
-    // policy as the owner-message API, including on a later safe restart.
-    let mut bound_input = input.clone();
-    bound_input["roomSnapshot"] = room.clone();
-    bound_input["sessionId"] = json!(session_id);
-    bound_input["generation"] = json!(generation);
-    context.checkpoint(json!({"input":bound_input}))?;
+    // The queued owner's `input` is immutable under the native job checkpoint
+    // CAS. Earlier group runs tried to rewrite `input` and were rejected
+    // BEFORE the first model call. Freeze compatibility room bindings in a
+    // separate field, leaving owner text and permissions untouched.
+    let mut room_binding=json!({
+        "roomSnapshot":room,"sessionId":session_id,"generation":generation
+    });
+    context.checkpoint(json!({"roomBinding":room_binding}))?;
 
     let source = owner_message(context, input, session_id, room_id)?;
     let source_id = source["id"].as_str().ok_or("주인 메시지 ID가 없습니다.")?;
@@ -442,9 +444,10 @@ async fn run_locked(
         .as_ref()
         .and_then(crate::engine::episode::contract_revision)
         .map(str::to_string);
-    bound_input["taskId"] = json!(task_id);
-    bound_input["taskRevision"] = json!(task_revision);
-    context.checkpoint(json!({"input":bound_input}))?;
+    room_binding["taskId"]=json!(task_id);
+    room_binding["taskRevision"]=json!(task_revision);
+    room_binding["sourceMessageId"]=json!(source_id);
+    context.checkpoint(json!({"roomBinding":room_binding}))?;
     let roster = if let Some(value) = existing.get("roster") {
         id_list(value)?
     } else {
