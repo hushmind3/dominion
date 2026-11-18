@@ -383,6 +383,19 @@ pub(crate) fn project(
     if reason.is_none() && stale_shared_frames > 0 {
         reason = Some("room_snapshot_rotated");
     }
+    // Runtime date is an observation that expires at midnight. Keeping a
+    // prior date in the append-only cached view would make two conflicting
+    // "current date" statements available to the model. Exact same-day
+    // frames still reuse their prefix without a new token cost.
+    let current_runtime_date=fresh.iter().filter_map(|frame|frame["key"].as_str())
+        .find(|key|key.starts_with("runtime-date:"));
+    let stale_runtime_dates=current_runtime_date.map(|current|frames.iter()
+        .filter(|frame|frame["key"].as_str().is_some_and(|key|
+            key.starts_with("runtime-date:") && key!=current)).count())
+        .unwrap_or(0);
+    if reason.is_none() && stale_runtime_dates>0 {
+        reason=Some("runtime_date_rotated");
+    }
     let previous_frames = frames.len();
     let mut reused = frames.len();
     if reason.is_none() {
@@ -448,6 +461,7 @@ pub(crate) fn project(
         "epoch":epoch,"reusedFrames":reused,"appendedFrames":frames.len().saturating_sub(reused),
         "rebaseReason":reason,"sourceMessageId":source,
         "previousFrames":previous_frames,"reclaimedStaleRoomSnapshots":stale_shared_frames,
+        "reclaimedStaleRuntimeDates":stale_runtime_dates,
         "carriedVerifiedOwnerFacts":carried_owner_facts,
         "estimatedReusedHistoryTokens":reused_estimate,
         "estimatedNewHistoryTokens":new_estimate,
@@ -1171,6 +1185,39 @@ mod tests {
             "host-estimated new history should be cheaper than cold full reconstruction: {projected_new}/{rebuilt_full}");
         assert_eq!(state.store.messages("room:long").len(),100*10,
             "all owner and nine speaker original records remain durable");
+        crate::test_support::cleanup_dir(root);
+    }
+
+    #[test]
+    fn runtime_date_changes_remove_stale_date_without_losing_owner_decision() {
+        let root=std::env::temp_dir().join(format!("dominion-date-rotation-{}",uuid::Uuid::new_v4()));
+        let state=state(&root);
+        state.store.put("session",&json!({"id":"room:day","roomId":"day"})).unwrap();
+        state.store.put("room",&json!({"id":"day","workingViewBudgetTokens":12000})).unwrap();
+        let provider=route();
+        let request=TurnRequest::from_value(&json!({"input":"continue","agentId":"a"})).unwrap();
+        let messages=|source:&str,date:&str|vec![
+            json!({"role":"system","content":"stable owner identity",
+                "_dominion_source":source,"_dominion_dependencies":[]}),
+            json!({"role":"user","content":"[주인 확정 상태] KEEP_CORRECTION",
+                "_dominion_frame":"owner-state:fact"}),
+            json!({"role":"user","content":date,"_dominion_frame":format!("runtime-date:{date}")}),
+            json!({"role":"user","content":source,"_dominion_frame":source}),
+        ];
+        let mut first=prepare(&state,&provider,&request,"room:day","stable owner identity",&json!({})).unwrap();
+        let (first_wire,pending)=project(&state,&provider,&messages("owner-one","2026-11-18"),&[],"room:day",&mut first);
+        let saved=state.store.write_message(&json!({"id":"reply-one",
+            "session_id":"room:day","agent_id":"a","role":"assistant","content":"okay",
+            "metadata":{"replyToMessageId":"owner-one"}})).unwrap();
+        commit(&state,&first,&saved);commit_projection(&state,&first,&saved,pending.unwrap());
+        let mut next=prepare(&state,&provider,&request,"room:day","stable owner identity",&json!({})).unwrap();
+        let (second_wire,_)=project(&state,&provider,&messages("owner-two","2026-11-19"),&[],"room:day",&mut next);
+        assert_eq!(next["workingView"]["rebaseReason"],"runtime_date_rotated");
+        assert_eq!(next["workingView"]["reclaimedStaleRuntimeDates"],1);
+        assert!(!second_wire.iter().any(|row|row["content"]=="2026-11-18"));
+        assert!(second_wire.iter().any(|row|row["content"]=="2026-11-19"));
+        assert!(second_wire.iter().any(|row|row["content"]=="[주인 확정 상태] KEEP_CORRECTION"));
+        assert!(first_wire.iter().any(|row|row["content"]=="2026-11-18"));
         crate::test_support::cleanup_dir(root);
     }
 
