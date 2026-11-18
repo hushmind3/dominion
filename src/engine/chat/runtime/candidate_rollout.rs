@@ -404,6 +404,131 @@ pub(super) async fn evaluate(
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[tokio::test]
+    async fn real_native_interpreter_executes_two_isolated_candidates_and_selects_actual_winner(){
+        let root=std::env::temp_dir().join(format!(
+            "dominion-real-trial-{}",uuid::Uuid::new_v4()));
+        let config=crate::config::Config{
+            port:0,data_dir:root.join("data"),web_dir:root.join("web"),
+            workspace:root.join("workspace"),
+        };
+        std::fs::create_dir_all(config.workspace.join("bench")).unwrap();
+        std::fs::create_dir_all(&config.data_dir).unwrap();
+        let target=config.workspace.join("bench/config.txt");
+        std::fs::write(&target,"mode=draft").unwrap();
+        let store=crate::db::Store::open(&config.db_path()).unwrap();
+        let state=AppState::new(config.clone(),store,
+            crate::vault::Vault::open(&config.key_path()));
+        let session=json!({"id":"sandbox-test-session","title":"isolated test"});
+        state.store.put("session",&session).unwrap();
+        let request=TurnRequest::from_value(&json!({
+            "input":"turn draft configuration into final","toolsEnabled":true,
+            "toolsExecutionEnabled":true,
+        })).unwrap();
+        let original=json!({"revision":"original-v1","nodes":[
+            {"id":"repair_target","type":"call_tool","tool":"workspace_read",
+             "inputs":{"path":"bench/config.txt"},"onFailure":"revise"}
+        ]});
+        let checkpoint=crate::engine::program::new_checkpoint(&original);
+        let variant=|id:&str,content:&str|json!({
+            "id":id,"repairsFailedNode":true,
+            "revision":{"revision":format!("revision-{id}"),"nodes":[
+                {"id":"inspect","type":"call_tool","tool":"workspace_read",
+                 "inputs":{"path":"bench/config.txt"}},
+                {"id":"repair_target","type":"call_tool","tool":"workspace_write",
+                 "inputs":{"path":"bench/config.txt","content":content}}
+            ]},
+            "probes":[{"id":id,
+                "predicate":{"type":"equals","from":"result",
+                    "path":"/content","value":"mode=draft"}}],
+            "postflights":[{"id":format!("post-{id}"),
+                "tool":"workspace_read","inputs":{"path":"bench/config.txt"},
+                "predicate":{"type":"equals","from":"result",
+                    "path":"/content","value":"mode=final"}}],
+        });
+        let variants=vec![variant("p0","mode=incorrect"),variant("p1","mode=final")];
+        let observed=json!({
+            "p0":{"status":"completed","result":{"content":"mode=draft"}},
+            "p1":{"status":"completed","result":{"content":"mode=draft"}},
+        });
+        let (tx,_rx)=tokio::sync::mpsc::unbounded_channel::<Value>();
+        let metrics=std::sync::Mutex::new(Metrics::default());
+        let ctx=ProgramCtx{
+            state:&state,tx:&tx,session:&session,request:&request,
+            session_id:"sandbox-test-session",execution_id:"real-parent-run",
+            metrics:&metrics,generation:0,
+        };
+        let mut budget=super::budget::BudgetLedger::new(4,24,
+            std::time::Duration::from_secs(40));
+        let result=evaluate(&ctx,&variants,&observed,&checkpoint,&mut budget)
+            .await.unwrap().expect("native local candidates must be executed");
+        let (chosen,audit)=result;
+        assert_eq!(audit["selected"],"p1","only the actual successful write should win");
+        assert_eq!(audit["comparison"][0]["verified"],false);
+        assert_eq!(audit["comparison"][1]["verified"],true);
+        assert_eq!(chosen["nodes"][1]["inputs"]["expectedSha256"],
+            format!("{:x}",Sha256::digest(b"mode=draft")));
+        assert_eq!(std::fs::read_to_string(&target).unwrap(),"mode=draft",
+            "no speculative candidate may change the owner workspace");
+        assert!(state.store.all("execution_operation").is_empty(),
+            "speculative receipts must stay in independent trial databases");
+        assert!(!baseline_matches(&config.workspace,&json!({
+            "bench/config.txt":"intentionally-stale"
+        })).unwrap());
+        assert!(budget.snapshot()["tools"].as_u64().unwrap()>=6);
+        drop(state);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn no_successful_local_candidate_prevents_live_mutation(){
+        let root=std::env::temp_dir().join(format!(
+            "dominion-failed-trial-{}",uuid::Uuid::new_v4()));
+        let config=crate::config::Config{
+            port:0,data_dir:root.join("data"),web_dir:root.join("web"),
+            workspace:root.join("workspace"),
+        };
+        std::fs::create_dir_all(config.workspace.join("bench")).unwrap();
+        std::fs::create_dir_all(&config.data_dir).unwrap();
+        std::fs::write(config.workspace.join("bench/config.txt"),"mode=draft").unwrap();
+        let store=crate::db::Store::open(&config.db_path()).unwrap();
+        let state=AppState::new(config.clone(),store,
+            crate::vault::Vault::open(&config.key_path()));
+        let session=json!({"id":"failed-trial-session"});
+        state.store.put("session",&session).unwrap();
+        let request=TurnRequest::from_value(&json!({"input":"repair config"})).unwrap();
+        let source=json!({"revision":"initial","nodes":[]});
+        let checkpoint=crate::engine::program::new_checkpoint(&source);
+        let candidates=vec![json!({
+            "id":"p0","repairsFailedNode":true,
+            "revision":{"revision":"bad","nodes":[
+                {"id":"read","type":"call_tool","tool":"workspace_read",
+                 "inputs":{"path":"bench/config.txt"}},
+                {"id":"fix","type":"call_tool","tool":"workspace_write",
+                 "inputs":{"path":"bench/config.txt","content":"broken"}}
+            ]},
+            "probes":[{"id":"p0","predicate":{"type":"equals",
+                "from":"result","path":"/content","value":"mode=draft"}}],
+            "postflights":[{"id":"post","tool":"workspace_read",
+                "inputs":{"path":"bench/config.txt"},
+                "predicate":{"type":"equals","from":"result",
+                    "path":"/content","value":"mode=final"}}]
+        })];
+        let (tx,_rx)=tokio::sync::mpsc::unbounded_channel::<Value>();
+        let metrics=std::sync::Mutex::new(Metrics::default());
+        let ctx=ProgramCtx{state:&state,tx:&tx,session:&session,request:&request,
+            session_id:"failed-trial-session",execution_id:"real-parent-run",
+            metrics:&metrics,generation:0};
+        let mut budget=super::budget::BudgetLedger::new(4,12,
+            std::time::Duration::from_secs(40));
+        let err=evaluate(&ctx,&candidates,&json!({
+            "p0":{"status":"completed","result":{"content":"mode=draft"}}
+        }),&checkpoint,&mut budget).await.unwrap_err();
+        assert!(err.contains("all isolated candidate executions failed"));
+        assert_eq!(std::fs::read_to_string(
+            config.workspace.join("bench/config.txt")).unwrap(),"mode=draft");
+        drop(state);
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn rejects_absolute_traversal_and_nonlocal_candidate_paths(){
         assert!(permitted_path("src/main.rs").is_ok());
