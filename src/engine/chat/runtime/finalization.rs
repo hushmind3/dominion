@@ -387,6 +387,32 @@ pub(in crate::engine::chat) fn finalize_execution(
     record["tokens"] = json!(counters.tokens);
     record["modelCalls"] = json!(counters.model_calls);
     record["toolCalls"] = json!(counters.tool_calls);
+    // A model call is a logical planner/reviewer/adaptation invocation, not
+    // necessarily one upstream request. Auxiliary retries have their own
+    // provider/token receipts. Keep the legacy primary token counter stable.
+    let primary_calls=counters.model_calls.saturating_sub(counters.auxiliary_calls);
+    record["primaryModelCalls"]=json!(primary_calls);
+    record["auxiliaryModelCalls"]=json!(counters.auxiliary_calls);
+    let primary_estimated = match result {
+        Ok(Some(message)) => message["metadata"]["usage"]["estimated"] == true,
+        _ => true,
+    };
+    let accounting = match state.store.auxiliary_model_calls(execution_id) {
+        Ok(rows) => crate::engine::llm::summarize_auxiliary_model_calls(
+            &rows, counters.auxiliary_calls, primary_calls, counters.tokens, primary_estimated,
+        ),
+        Err(error) => {
+            state.store.audit("model.accounting_read_failed",
+                json!({"executionId":execution_id,"error":error}));
+            json!({"usageComplete":false,"tokenScope":"primary_only",
+                "primaryCalls":primary_calls,
+                "auxiliaryLogicalCalls":counters.auxiliary_calls,
+                "primaryTokens":counters.tokens,
+                "auxiliaryObservedTokens":null,"observedTotalTokens":null,
+                "reason":"execution-scoped auxiliary receipt query failed"})
+        }
+    };
+    record["modelAccounting"]=accounting;
     record["firstTokenMs"] = json!(counters.first_token_ms);
     record["modelElapsedMs"] = json!(counters.model_elapsed_ms);
     record["toolElapsedMs"] = json!(counters.tool_elapsed_ms);
