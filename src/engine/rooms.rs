@@ -893,6 +893,7 @@ fn speaker_model_accounting(state: &AppState, message: &Value) -> Value {
         "contextPolicy":execution["contextPolicy"],
         "modelCalls":execution["modelCalls"],
         "toolCalls":execution["toolCalls"],
+        "modelCallUsage":input["modelCallUsage"],
         "provider":{
             "promptTokens":usage["promptTokens"],
             "completionTokens":usage["completionTokens"],
@@ -2088,6 +2089,11 @@ mod tests {
                 "sharedStateTokens":120,"memoryTokens":null,
                 "historyTokens":250,"toolSchemaTokens":0,
                 "totalInputTokens":556,"projectedInputTokensEstimate":540,
+                "modelCallUsage":[{"completedCallIndex":1,"promptTokens":400,
+                    "cachedPromptTokens":null,"newPromptTokens":null,
+                    "usageExact":true},{"completedCallIndex":2,
+                    "promptTokens":210,"cachedPromptTokens":80,"newPromptTokens":130,
+                    "usageExact":true}],
                 "providerUsageExact":true}
         })).unwrap();
         state.store.put("execution",&json!({
@@ -2108,6 +2114,10 @@ mod tests {
         assert_eq!(accounting["estimatedInputComponents"]["total"],556);
         assert_eq!(accounting["estimatedInputComponents"]["memory"],Value::Null);
         assert_eq!(accounting["provider"]["cachedPromptTokens"],Value::Null);
+        assert_eq!(accounting["modelCallUsage"][0]["newPromptTokens"],Value::Null,
+            "unknown cache reads must never be converted to zero");
+        assert_eq!(accounting["modelCallUsage"][1]["newPromptTokens"],130);
+        assert_eq!(accounting["modelCallUsage"].as_array().unwrap().len(),2);
         assert_eq!(accounting["providerExact"],true);
         assert_eq!(speaker_model_accounting(&state,&json!({}))["available"],false);
         drop(state);
