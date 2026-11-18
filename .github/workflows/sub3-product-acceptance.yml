@@ -20,6 +20,7 @@ on:
       - 'src/engine/native_adjudication.rs'
       - 'src/engine/native_agent.rs'
       - 'src/engine/program.rs'
+      - 'src/engine/algorithms.rs'
       - 'src/engine/adaptation_loop.rs'
       - 'src/engine/code_index.rs'
   workflow_dispatch:
@@ -50,6 +51,7 @@ jobs:
           cargo test --bin dominion-rust engine::native_replay::tests
           cargo test --bin dominion-rust api::native_replay::tests
           cargo test --bin dominion-rust engine::program::tests
+          cargo test --bin dominion-rust engine::algorithms::tests
           cargo test --bin dominion-rust engine::adaptation_loop::tests
           cargo test --bin dominion-rust engine::chat::runtime::program::evidence_join_tests
           cargo test --bin dominion-rust engine::chat::runtime::program::recovery_tests
