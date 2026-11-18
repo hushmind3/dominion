@@ -324,6 +324,13 @@ pub(super) async fn stream(
     let chain = chain_for(&key);
     let mut guard = chain.lock().await;
     guard.used = Instant::now();
+    // Track the one-time high-priority prompt independently from the
+    // provider's billed/cached token counters. Reuse is a transport fact;
+    // it does not mean old context tokens were free to process.
+    let static_anchor_estimate = input.first()
+        .filter(|item|item["role"]=="developer")
+        .map(|item|super::room_context::estimate(&item.to_string()))
+        .unwrap_or(0);
     let incoming = input
         .iter()
         .map(item_signature)
@@ -369,6 +376,9 @@ pub(super) async fn stream(
                     "sentInputTokens":super::room_context::estimate(&json!(&input[delta_items..]).to_string()),
                     "fullInputTokens":super::room_context::estimate(&json!(input).to_string()),
                     "instructionTokens":super::room_context::estimate(&json!(base["instructions"]).to_string()),
+                    "persistentPersonaTokensEstimate":static_anchor_estimate,
+                    "personaWireTokensEstimate":if delta_items==0 {static_anchor_estimate}else{0},
+                    "personaChainInherited":delta_items>0 && static_anchor_estimate>0,
                     "responseId":response_id,
                     "modelCalls":0
                 }),
@@ -422,6 +432,9 @@ pub(super) async fn stream(
                             "sentInputTokens":super::room_context::estimate(&json!(input).to_string()),
                             "fullInputTokens":super::room_context::estimate(&json!(input).to_string()),
                             "instructionTokens":super::room_context::estimate(&json!(base["instructions"]).to_string()),
+                            "persistentPersonaTokensEstimate":static_anchor_estimate,
+                            "personaWireTokensEstimate":static_anchor_estimate,
+                            "personaChainInherited":false,
                             "responseId":response_id,
                             "reconnectReason":first_error,
                             "modelCalls":0
@@ -911,6 +924,9 @@ mod tests {
         assert!(!sent_two.to_string().contains("STATIC_OWNER_PERSONA_"),
             "fixed 4k persona must be inherited, not retransmitted");
         assert_eq!(second.transport["mode"],"delta");
+        assert_eq!(second.transport["personaChainInherited"],true);
+        assert_eq!(second.transport["personaWireTokensEstimate"],0);
+        assert!(first.transport["personaWireTokensEstimate"].as_u64().unwrap()>4_000);
         assert!(second.transport["sentInputTokens"].as_u64().unwrap()
             < second.transport["fullInputTokens"].as_u64().unwrap());
         forget(&registry_key(&provider,"fixture","room-speaker"));
