@@ -267,20 +267,20 @@ mod tests{
         let mut skill=item("safe","코드 검토","review");
         skill["path"]=json!(root.to_string_lossy().to_string());
         let inserted=db.put("skill",&skill).unwrap();
-        let id=inserted["id"].as_str().unwrap();
-        assert_eq!(read_resource(&db,&scope(),id,"references/guide.md").unwrap()["content"],
+        let id=inserted["id"].as_str().unwrap().to_owned();
+        assert_eq!(read_resource(&db,&scope(),&id,"references/guide.md").unwrap()["content"],
             "Verified reference content");
-        assert!(read_resource(&db,&scope(),id,"../secrets.txt").is_err());
-        assert!(read_resource(&db,&scope(),id,"/tmp/secrets.txt").is_err());
+        assert!(read_resource(&db,&scope(),&id,"../secrets.txt").is_err());
+        assert!(read_resource(&db,&scope(),&id,"/tmp/secrets.txt").is_err());
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink("/etc/hosts",references.join("outside.md")).unwrap();
-            assert!(read_resource(&db,&scope(),id,"references/outside.md").is_err());
+            assert!(read_resource(&db,&scope(),&id,"references/outside.md").is_err());
         }
         let mut stopped=inserted;
         stopped["enabled"]=json!(false);
         db.put("skill",&stopped).unwrap();
-        assert!(read_resource(&db,&scope(),id,"references/guide.md").is_err());
+        assert!(read_resource(&db,&scope(),&id,"references/guide.md").is_err());
         let _=std::fs::remove_dir_all(root);
     }
     #[test]
