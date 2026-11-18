@@ -49,7 +49,7 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
   setBusy(true);setMessage('')
   try{
    const existing=await get<Array<{id:string;baseUrl:string;model:string}>>('/api/providers')
-   const match=existing.find(p=>p.baseUrl.replace(/\\/$/,'')===cloudUrl+'/v1'&&p.model===selected)
+   const match=existing.find(p=>p.baseUrl.replace(/\/$/,'')===cloudUrl+'/v1'&&p.model===selected)
    if(match){
     setMessage('이미 등록된 모델입니다. 중복 등록하지 않았습니다.')
     return
