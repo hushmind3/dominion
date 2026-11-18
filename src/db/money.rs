@@ -470,6 +470,29 @@ impl Store {
                 [id],|row|row.get(0)).optional().map_err(|e|e.to_string())?;
             if let Some(existing)=existing{
                 let mut stored:Value=serde_json::from_str(&existing).map_err(|e|e.to_string())?;
+                let mut changed=false;
+                // Historical source rows remain stable, but previously
+                // missing attribution can be enriched when a later fetch
+                // supplies archived publisher/cluster metadata. Never replace
+                // an existing publisher assertion or captured source text.
+                for key in ["publisherName","publisherDomain","storyClusterId",
+                    "storyRelationship"] {
+                    let absent=stored[key].as_str().is_none_or(str::is_empty);
+                    let known=signal[key].as_str().is_some_and(|text|!text.is_empty());
+                    if absent && known {
+                        stored[key]=signal[key].clone();
+                        changed=true;
+                    }
+                }
+                let mut origins=stored["observedFeeds"].as_array().cloned()
+                    .unwrap_or_default();
+                let latest=signal["sourceName"].as_str().unwrap_or("");
+                if !latest.is_empty() && origins.len()<12
+                    && !origins.iter().any(|entry|entry.as_str()==Some(latest)){
+                    origins.push(json!(latest));
+                    changed=true;
+                }
+                if changed {stored["observedFeeds"]=json!(origins);}
                 let old_len=stored["articleExcerpt"].as_str().unwrap_or("").chars().count();
                 let new_len=signal["articleExcerpt"].as_str().unwrap_or("").chars().count();
                 // Preserve original capture time; never overwrite an existing body.
@@ -477,6 +500,9 @@ impl Store {
                     stored["articleExcerpt"]=signal["articleExcerpt"].clone();
                     stored["contentStatus"]=json!("page_fetched");
                     stored["lastFetchedAt"]=signal["capturedAt"].clone();
+                    changed=true;
+                }
+                if changed {
                     stored["foldStatus"]=json!("new");
                     upsert_tx(&tx,"money_signal",&stored)?;
                     refresh_money_source_fact_tx(&tx,&money_signal_fact(&stored))?;
@@ -1067,6 +1093,42 @@ mod idle_autopilot_tests {
 #[cfg(test)]
 mod dashboard_stats_tests {
     use super::*;
+    #[test]
+    fn syndicated_feeds_enrich_source_identity_without_overwriting_history(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        let original=json!({"id":"same-article","url":"https://news.google.com/rss/articles/one",
+            "title":"Robotics buyer request","description":"Original archived excerpt",
+            "articleExcerpt":"","contentStatus":"headline_observed",
+            "sourceName":"Google search channel A",
+            "capturedAt":"2026-11-17T08:00:00Z"});
+        assert_eq!(store.money_ingest_signals(&[original]).unwrap(),1);
+        let enriched=json!({"id":"same-article",
+            "url":"https://news.google.com/rss/articles/one",
+            "title":"Changed text must not overwrite the original",
+            "description":"Changed description must not overwrite the original",
+            "articleExcerpt":"Fact-checked primary report ".repeat(12),
+            "contentStatus":"page_fetched",
+            "capturedAt":"2026-11-18T09:00:00Z",
+            "sourceName":"Google search channel B",
+            "publisherName":"Reuters","publisherDomain":"reuters.com",
+            "storyClusterId":"same-story","storyRelationship":
+                "matching_headline_requires_independent_source_review"});
+        assert_eq!(store.money_ingest_signals(&[enriched.clone()]).unwrap(),0);
+        let saved=store.get("money_signal","same-article").unwrap();
+        assert_eq!(saved["title"],"Robotics buyer request");
+        assert_eq!(saved["description"],"Original archived excerpt");
+        assert_eq!(saved["capturedAt"],"2026-11-17T08:00:00Z");
+        assert_eq!(saved["publisherDomain"],"reuters.com");
+        assert_eq!(saved["storyClusterId"],"same-story");
+        assert_eq!(saved["contentStatus"],"page_fetched");
+        assert_eq!(saved["observedFeeds"].as_array().unwrap().len(),2);
+        assert_eq!(saved["foldStatus"],"new");
+        assert_eq!(store.money_ingest_signals(&[enriched]).unwrap(),0);
+        let again=store.get("money_signal","same-article").unwrap();
+        assert_eq!(again["observedFeeds"].as_array().unwrap().len(),2);
+        assert_eq!(again["title"],saved["title"]);
+    }
+
     #[test]
     fn sql_projection_preserves_money_counts_model_breakdown_and_latest_ingest(){
         let store=Store::open(std::path::Path::new(":memory:")).unwrap();
