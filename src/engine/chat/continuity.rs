@@ -258,11 +258,15 @@ pub(crate) fn prepare(
     ]);
     let id = format!("conversation-{scope}");
     let prefix = stable_id(&[instructions, &reasoning.to_string()]);
-    // Cache affinity belongs to the bot, not the room. Transport cursors
-    // above remain conversation-local so a cache hint cannot mix histories.
+    // Go/HTTP prompt affinity is PER CONVERSATION, not just per agent.
+    // Reusing one id for the same persona in independent rooms can evict
+    // warm prefixes or route unrelated sessions to the same worker.
+    // Preserve the shared room charter as identical content without merging
+    // distinct participant/session cache namespaces.
     let identity = super::context::identity_prefix(state, request).0;
     let affinity = stable_id(&[
-        "agent-cache-v2", request.agent_id.as_deref().unwrap_or(session_id),
+        "participant-cache-v3", session_id,
+        request.agent_id.as_deref().unwrap_or(""),
         &provider.id, &provider.base_url, &provider.model,
         provider.account_id.as_deref().unwrap_or(""), &provider.kind,
         &provider.reasoning_protocol, &identity,
@@ -365,7 +369,8 @@ fn is_opencode_go(state:&AppState,provider:&ProviderRef)->bool{
     }
     let Ok(url)=reqwest::Url::parse(&provider.base_url) else{return false};
     url.scheme()=="https" && url.host_str()==Some("opencode.ai")
-        && (url.path()=="/zen/go" || url.path().starts_with("/zen/go/"))
+        && ["/zen/go","/inference/go"].iter().any(|prefix|
+            url.path()==*prefix || url.path().starts_with(&format!("{prefix}/")))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -652,13 +657,13 @@ mod tests {
         let mut peer=request.clone();peer.agent_id=Some("b".into());
         assert_ne!(first["cacheKey"],other(&provider,&peer,"room:one","full persona")["cacheKey"]);
         let another_room = other(&provider,&request,"room:two","another room contract");
-        assert_eq!(first["cacheKey"],another_room["cacheKey"]);
-        assert_eq!(first["cacheAffinityId"],another_room["cacheAffinityId"]);
+        assert_ne!(first["cacheKey"],another_room["cacheKey"]);
+        assert_ne!(first["cacheAffinityId"],another_room["cacheAffinityId"]);
         assert_ne!(first["participantId"],another_room["participantId"]);
         assert_ne!(first["transportSessionId"],another_room["transportSessionId"]);
         assert!(another_room["previousReplyMessageId"].is_null());
         let private_chat=other(&provider,&request,"private:one","private chat contract");
-        assert_eq!(first["cacheKey"],private_chat["cacheKey"]);
+        assert_ne!(first["cacheKey"],private_chat["cacheKey"]);
         assert!(private_chat["previousReplyMessageId"].is_null());
         for change in ["model","account","endpoint"] {
             let mut changed=provider.clone();
@@ -725,8 +730,9 @@ mod tests {
         }
         let seen=seen.lock().unwrap();
         assert_eq!(seen.len(),4,"one negotiation retry, then no further retries");
-        assert_eq!(seen[0],seen[1]);assert_eq!(seen[1],seen[2]);
-        assert_ne!(seen[2],seen[3],"another bot must have a separate route affinity");
+        assert_eq!(seen[0],seen[1],"same request retries preserve the affinity");
+        assert_ne!(seen[1],seen[2],"independent sessions must not share one affinity");
+        assert_ne!(seen[2],seen[3],"other bots have a separate affinity");
         drop(seen);server.abort();let _=drop(state); std::fs::remove_dir_all(root);
     }
 
@@ -740,10 +746,18 @@ mod tests {
             "imported Go provider may lack the integration metadata");
         provider.base_url="https://opencode.ai/zen/go".into();
         assert!(is_opencode_go(&state,&provider));
+        for url in ["https://opencode.ai/inference/go/v1",
+            "https://opencode.ai/inference/go/openai/v1",
+            "https://opencode.ai/inference/go"]{
+            provider.base_url=url.into();
+            assert!(is_opencode_go(&state,&provider),"{url}");
+        }
         for url in [
             "https://opencode.ai.evil.example/zen/go/v1",
             "http://opencode.ai/zen/go/v1",
             "https://opencode.ai/zen/god/v1",
+            "https://opencode.ai/inference/goose/v1",
+            "https://opencode.ai.evil.test/inference/go/openai/v1",
             "https://example.test/zen/go/v1",
         ]{
             provider.base_url=url.into();

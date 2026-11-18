@@ -362,6 +362,9 @@ pub(super) async fn run_turn_body(
             tool_definitions.push(loader);
         }
     }
+    // Stable tool schema serialization is a provider cache boundary: MCP
+    // discovery and skill registration may complete in different orders.
+    tool_definitions=canonical_tool_definitions(tool_definitions);
     let compiled = if is_room {
         let source = source_message_id.or(reply_to.as_deref()).ok_or("응답할 원문이 없습니다.")?;
         let compiled = super::room_context::compile(
@@ -948,7 +951,8 @@ pub(super) async fn run_turn_body(
                         .clamp(4_000, 60_000)
                 })
                 .unwrap_or(60_000);
-            round_tools = trim_tool_definitions(round_tools, budget);
+            round_tools = trim_tool_definitions(
+                canonical_tool_definitions(round_tools), budget);
         }
         // Full tool call arguments and results stay in SQLite and the native
         // in-memory transcript. Only the provider-wire replay is bounded:

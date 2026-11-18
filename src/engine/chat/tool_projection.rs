@@ -29,6 +29,34 @@ fn valid_tool_definition(definition: &Value) -> bool {
         && !name.chars().any(|c|c.is_control() || c.is_whitespace())
 }
 
+/// 2026 provider-prefix contract: registration timing must not change the
+/// serialized tools array for an identical set of owner-enabled schemas.
+/// Keep the search gateway and core read/edit/test primitives ahead of
+/// optional capabilities so context-budget clipping never promotes an MCP
+/// schema over an indispensable file operation. Among identical tool names,
+/// full schema bytes break ties deterministically. This changes visibility
+/// order only: dispatcher permissions and approvals stay authoritative.
+pub(super) fn canonical_tool_definitions(mut definitions:Vec<Value>)->Vec<Value>{
+    let priority=|name:&str|->usize{match name{
+        "dominion_tool_search"=>0,
+        "workspace_list"=>1,"workspace_read"=>2,"workspace_read_range"=>3,
+        "code_search"=>4,"workspace_apply_patch"=>5,
+        "workspace_replace_range"=>6,"workspace_replace"=>7,
+        "workspace_write"=>8,"shell_exec"=>9,"terminal_exec"=>10,
+        "web_search"=>11,"http_fetch"=>12,
+        "skill_read"=>13,"room_message_read"=>14,
+        _=>100,
+    }};
+    definitions.sort_by(|a,b|{
+        let left=tool_name(a);
+        let right=tool_name(b);
+        priority(left).cmp(&priority(right))
+            .then_with(||left.cmp(right))
+            .then_with(||a.to_string().cmp(&b.to_string()))
+    });
+    definitions
+}
+
 pub(super) fn room_tool_request(input: &str) -> bool {
     let lower = input.to_lowercase();
     [
@@ -359,6 +387,33 @@ pub(super) fn trim_tool_definitions(definitions: Vec<Value>, budget: usize) -> V
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn canonical_tools_preserve_cache_prefix_across_mcp_registration_order(){
+        let mk=|name:&str|json!({"type":"function","function":{
+            "name":name,"description":format!("{name} tool"),
+            "parameters":{"type":"object","properties":{"path":{"type":"string"}}}
+        }});
+        let a=vec![mk("mcp__zeta"),mk("workspace_write"),mk("mcp__alpha"),
+            mk("shell_exec"),mk("workspace_read"),mk("dominion_tool_search")];
+        let mut b=a.clone();
+        b.reverse();
+        let sorted=canonical_tool_definitions(a.clone());
+        assert_eq!(sorted,canonical_tool_definitions(b));
+        assert_eq!(sorted[0]["function"]["name"],"dominion_tool_search");
+        assert_eq!(sorted[1]["function"]["name"],"workspace_read");
+        assert_eq!(sorted[2]["function"]["name"],"workspace_write");
+        assert_eq!(sorted[3]["function"]["name"],"shell_exec");
+        assert_eq!(sorted[4]["function"]["name"],"mcp__alpha");
+        assert_eq!(sorted[5]["function"]["name"],"mcp__zeta");
+        let clipped=trim_tool_definitions(sorted.clone(),
+            sorted[0].to_string().len()+sorted[1].to_string().len()
+                +sorted[2].to_string().len());
+        assert!(clipped.iter().any(|tool|tool_name(tool)=="workspace_read"));
+        assert!(clipped.iter().any(|tool|tool_name(tool)=="workspace_write"));
+        let changed=mk("mcp__alpha");
+        assert_eq!(changed,a[2],"sorting must not mutate tool schema payloads");
+    }
 
     #[test]
     fn malformed_catalog_entries_cannot_displace_actual_tools() {

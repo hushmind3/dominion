@@ -755,7 +755,8 @@ async fn stream_completion_once(
         .collect::<Vec<_>>().join("\n\n");
     // Tool order is part of the execution contract: compatibility menus may
     // use that priority when their schema budget is limited.
-    let ordered_tools=tools.to_vec();
+    let ordered_tools=super::tool_projection::canonical_tool_definitions(
+        tools.to_vec());
     let settings=json!({"thinking":request.thinking,"effort":request.reasoning_effort,
         "tools":ordered_tools,"toolMode":provider.tool_mode});
     let mut continuity=super::continuity::prepare(state,provider,request,session_id,&instructions,&settings)?;
