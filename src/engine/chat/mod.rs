@@ -218,6 +218,8 @@ pub(crate) struct ProviderRef {
 #[derive(Default)]
 struct Metrics {
     model_calls: u32,
+    /// Logical non-streaming helper calls; retries are separately receipted.
+    auxiliary_calls: u32,
     tool_calls: u32,
     iterations: u32,
     tokens: u64,
