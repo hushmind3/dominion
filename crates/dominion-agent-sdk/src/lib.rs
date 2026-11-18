@@ -16,6 +16,7 @@ mod scheduler;
 mod acceptance;
 mod context;
 mod tool_discovery;
+pub use tool_discovery::tool_relevance;
 mod failure_guidance;
 mod schema;
 pub use schema::validate_arguments;
