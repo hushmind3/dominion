@@ -171,7 +171,11 @@ impl Host for MainTurn<'_> {
         _ctx: &'a mut Context<'_>,
     ) -> BoxFuture<'a, Result<Option<String>, String>> {
         Box::pin(async move {
-            self.metrics.lock().unwrap().model_calls += 1;
+            {
+                let mut counters=self.metrics.lock().unwrap();
+                counters.model_calls+=1;
+                counters.auxiliary_calls+=1;
+            }
             if let Some(plan) = action_plan(
                 self.state,
                 &self.request,
@@ -179,6 +183,7 @@ impl Host for MainTurn<'_> {
                     .as_ref()
                     .map(|(text, _)| text.as_str())
                     .unwrap_or(""),
+                self.execution_id,
             )
             .await
             {
@@ -665,7 +670,11 @@ impl Host for MainTurn<'_> {
                     let review = if precise_replacement {
                         None
                     } else {
-                        self.metrics.lock().unwrap().model_calls += 1;
+                        {
+                            let mut counters=self.metrics.lock().unwrap();
+                            counters.model_calls+=1;
+                            counters.auxiliary_calls+=1;
+                        }
                         dominion_core::engine::model_call(
                             &mut ctx.snapshot,
                             ctx.journal,
@@ -677,6 +686,7 @@ impl Host for MainTurn<'_> {
                                 &self.final_content,
                                 &evidence,
                                 &gaps,
+                                self.execution_id,
                             ),
                         )
                         .await?
