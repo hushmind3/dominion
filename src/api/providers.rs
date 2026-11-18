@@ -1202,6 +1202,24 @@ pub async fn save_provider(State(state): State<AppState>, Json(body): Json<Value
         map.remove("hasKey");
     }
 
+    // Reuse a credential only from a provider at the exact same API endpoint.
+    // This lets a connected account register multiple models without exposing its key.
+    if let Some(source_id) = body.get("credentialSourceId").and_then(Value::as_str) {
+        let source = state.store.get("provider", source_id);
+        let same_endpoint = source.as_ref().and_then(|p| p["baseUrl"].as_str())
+            .is_some_and(|url| url.trim_end_matches('/') == parsed.as_str().trim_end_matches('/'));
+        if !same_endpoint {
+            return error(StatusCode::BAD_REQUEST, "인증 정보를 재사용할 수 없는 업체입니다.");
+        }
+        if let Some(secret) = state.read_secret(&format!("provider:{source_id}")) {
+            state.save_secret(&format!("provider:{id}"), &secret);
+        } else {
+            return error(StatusCode::BAD_REQUEST, "연결된 업체의 인증 정보를 찾을 수 없습니다.");
+        }
+    }
+    if let Value::Object(ref mut map) = record {
+        map.remove("credentialSourceId");
+    }
     let mut fresh_key: Option<String> = None;
     if let Some(api_key) = body.get("apiKey").and_then(|value| value.as_str()) {
         if api_key.starts_with("••") {
