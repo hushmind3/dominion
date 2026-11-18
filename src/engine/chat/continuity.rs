@@ -80,10 +80,9 @@ fn frame_key(message: &Value, source: &str, index: usize) -> String {
 /// Generic HTTP/Cloudflare/local routes keep the exact selected budget: they
 /// resend full prompts, so growing their carried-over history would cost more.
 fn continuation_history_allowance(
-    provider:&ProviderRef, selected:usize, fixed:usize
+    provider:&ProviderRef, selected:usize, fixed:usize, websocket_enabled:bool
 )->usize{
-    let incremental=provider.kind=="codex" && !std::env::var("DOMINION_CODEX_WS")
-        .is_ok_and(|mode|matches!(mode.as_str(),"off"|"http"));
+    let incremental=provider.kind=="codex" && websocket_enabled;
     let preferred=if incremental{
         selected.max(selected.saturating_mul(4).min(12_000))
     }else{selected};
@@ -159,7 +158,9 @@ pub(crate) fn project(
         let allowance = room.as_ref().map(|room|room["contextBudgetTokens"].as_u64().unwrap_or(2_000) as usize)
             .unwrap_or(40_000);
         let fixed = super::room_context::input_estimate(&[wire_message(&messages[0])], tools);
-        let allowance=continuation_history_allowance(provider,allowance,fixed);
+        let websocket_enabled=!std::env::var("DOMINION_CODEX_WS")
+            .is_ok_and(|mode|matches!(mode.as_str(),"off"|"http"));
+        let allowance=continuation_history_allowance(provider,allowance,fixed,websocket_enabled);
         plan["workingViewBudgetTokens"]=json!(allowance);
         let history_cost = |rows:&[Value]| super::room_context::input_estimate(
             &rows.iter().map(|frame|frame["message"].clone()).collect::<Vec<_>>(), &[]);
@@ -426,19 +427,20 @@ mod tests {
         // Offline test validates the model/provider boundary, not the live
         // provider cache hit rate.
         provider.context_tokens=None;
-        std::env::remove_var("DOMINION_CODEX_WS");
-        assert_eq!(continuation_history_allowance(&provider,2000,500),8000);
-        assert_eq!(continuation_history_allowance(&provider,6000,500),12000);
+        assert_eq!(continuation_history_allowance(&provider,2000,500,true),8000);
+        assert_eq!(continuation_history_allowance(&provider,6000,500,true),12000);
+        assert_eq!(continuation_history_allowance(&provider,2000,500,false),2000,
+            "explicit WS opt-out keeps default room window");
         provider.kind="openai".into();
-        assert_eq!(continuation_history_allowance(&provider,2000,500),2000,
+        assert_eq!(continuation_history_allowance(&provider,2000,500,true),2000,
             "normal HTTP input is re-sent in full, no expanded history");
         provider.kind="ollama".into();
-        assert_eq!(continuation_history_allowance(&provider,2000,500),2000,
+        assert_eq!(continuation_history_allowance(&provider,2000,500,true),2000,
             "local stateless completion must not inflate context");
         provider.kind="codex".into();
         provider.context_tokens=Some(4500);
         provider.max_output_tokens=Some(1000);
-        assert_eq!(continuation_history_allowance(&provider,2000,500),3000,
+        assert_eq!(continuation_history_allowance(&provider,2000,500,true),3000,
             "native model context and output reservation remain hard bounds");
     }
 
