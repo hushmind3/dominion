@@ -271,7 +271,7 @@ mod tests{
         let found=discover(&signals,30);
         assert_eq!(found.len(),2);
         assert!(found.iter().all(|item|item["evidenceStatus"]
-            =="two_independent_source_mentions_not_causality"));
+            =="two_distinct_publisher_mentions_not_verified_independent_reporting"));
     }
     #[test] fn buyer_signal_joins_supplier_change_but_is_not_a_paid_order(){
         let data=vec![article("s","tech source",&["hardware"],"cost_drop"),
