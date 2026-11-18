@@ -1,7 +1,51 @@
 //! Scheduled maintenance: bounded database backups.
 use crate::state::AppState;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+/// Cleans up plaintext SQLite and staged ciphertext on *every* early return.
+/// A failed backup must not leave an unencrypted database in the backup directory.
+struct TemporarySnapshot(PathBuf);
+
+impl Drop for TemporarySnapshot {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Publish a fully flushed ciphertext file only after all bytes are written.
+/// The staging file is on the same filesystem so rename is atomic.
+fn write_sealed_snapshot(destination: &Path, bytes: &[u8]) -> Result<(), String> {
+    let staged = destination.with_file_name(format!(
+        ".dominion-sealed-{}.tmp",
+        uuid::Uuid::new_v4()
+    ));
+    let _cleanup = TemporarySnapshot(staged.clone());
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&staged)
+        .map_err(|error| error.to_string())?;
+    file.write_all(bytes).map_err(|error| error.to_string())?;
+    file.sync_all().map_err(|error| error.to_string())?;
+    drop(file);
+    std::fs::rename(&staged, destination).map_err(|error| error.to_string())
+}
+
+/// An offsite copy must not become visible to restore/rotation while incomplete.
+fn copy_sealed_snapshot(source: &Path, destination: &Path) -> Result<(), String> {
+    let staged = destination.with_file_name(format!(
+        ".dominion-copy-{}.tmp",
+        uuid::Uuid::new_v4()
+    ));
+    let _cleanup = TemporarySnapshot(staged.clone());
+    std::fs::copy(source, &staged).map_err(|error| error.to_string())?;
+    std::fs::File::open(&staged)
+        .and_then(|file| file.sync_all())
+        .map_err(|error| error.to_string())?;
+    std::fs::rename(&staged, destination).map_err(|error| error.to_string())
+}
 
 fn interval_seconds() -> u64 {
     std::env::var("DOMINION_BACKUP_INTERVAL_SECS")
@@ -61,10 +105,13 @@ fn offsite_directory() -> Option<PathBuf> {
 pub fn create_snapshot(state: &AppState) -> Result<PathBuf, String> {
     let directory = state.config.data_dir.join("backups");
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-    let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+    let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S-%6f");
     let temp = directory.join(format!(".backup-{}.tmp", uuid::Uuid::new_v4()));
+    let plaintext_cleanup = TemporarySnapshot(temp.clone());
     state.store.backup_to(&temp)?;
     let bytes = std::fs::read(&temp).map_err(|error| error.to_string())?;
+    // The plaintext is no longer needed on disk, including if key loading fails.
+    drop(plaintext_cleanup);
     let ring = crate::engine::backup_keys::KeyRing::load_or_create(&state.config.data_dir)?;
     // The snapshot carries the vault key that its provider secrets were sealed
     // with, so restoring an older snapshot remains decryptable after rotation.
@@ -72,13 +119,15 @@ pub fn create_snapshot(state: &AppState) -> Result<PathBuf, String> {
     container.extend_from_slice(&state.vault.primary_key());
     container.extend_from_slice(&bytes);
     let sealed = ring.encrypt(&container)?;
-    let path = directory.join(format!("dominion-{stamp}.sqlite.enc"));
-    std::fs::write(&path, &sealed).map_err(|error| error.to_string())?;
-    let _ = std::fs::remove_file(&temp);
+    // A UUID prevents concurrent/manual backups from replacing one another.
+    let path = directory.join(format!(
+        "dominion-{stamp}-{}.sqlite.enc",
+        uuid::Uuid::new_v4()
+    ));
+    write_sealed_snapshot(&path, &sealed)?;
     if let Some(offsite) = offsite_directory() {
         std::fs::create_dir_all(&offsite).map_err(|error| error.to_string())?;
-        std::fs::copy(&path, offsite.join(path.file_name().unwrap_or_default()))
-            .map_err(|error| error.to_string())?;
+        copy_sealed_snapshot(&path, &offsite.join(path.file_name().unwrap_or_default()))?;
         prune_backups(&offsite, keep_count());
     }
     prune_backups(&directory, keep_count());
@@ -95,8 +144,17 @@ pub fn create_snapshot(state: &AppState) -> Result<PathBuf, String> {
 
 /// Scheduled path: create locally, then best-effort remote transfer. A remote
 /// failure never deletes the local snapshot.
+async fn create_snapshot_off_thread(state: &AppState) -> Result<PathBuf, String> {
+    // SQLite VACUUM and filesystem encryption are blocking work. Do not stall
+    // the same Tokio workers serving chat, approvals, cancellation and SDK APIs.
+    let snapshot_state = state.clone();
+    tokio::task::spawn_blocking(move || create_snapshot(&snapshot_state))
+        .await
+        .map_err(|error| format!("backup worker failed: {error}"))?
+}
+
 pub async fn backup_now(state: &AppState) -> Result<PathBuf, String> {
-    let path = create_snapshot(state)?;
+    let path = create_snapshot_off_thread(state).await?;
     let _ = crate::engine::remote_backup::upload_if_configured(state, &path).await;
     Ok(path)
 }
@@ -105,7 +163,7 @@ pub async fn backup_now(state: &AppState) -> Result<PathBuf, String> {
 pub async fn backup_now_with_remote(
     state: &AppState,
 ) -> Result<(PathBuf, Option<crate::engine::remote_backup::RemoteReport>), String> {
-    let path = create_snapshot(state)?;
+    let path = create_snapshot_off_thread(state).await?;
     let report = crate::engine::remote_backup::upload_if_configured(state, &path).await;
     Ok((path, report))
 }
@@ -196,6 +254,36 @@ mod tests {
             })
             .count();
         assert_eq!(leftovers, 0);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn consecutive_snapshots_never_overwrite_one_another() {
+        let (state, dir) = state();
+        let first = create_snapshot(&state).unwrap();
+        let second = create_snapshot(&state).unwrap();
+        assert_ne!(first, second);
+        assert!(first.is_file() && second.is_file());
+        for path in [&first, &second] {
+            let sealed = std::fs::read(path).unwrap();
+            assert!(crate::engine::backup_keys::decrypt_backup(&state, &sealed).is_some());
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn plaintext_is_removed_when_key_initialization_fails() {
+        let (state, dir) = state();
+        // A regular file where the key directory belongs forces a failure
+        // after SQLite has written its plaintext VACUUM snapshot.
+        std::fs::write(dir.join("backup-keys"), b"block key creation").unwrap();
+        assert!(create_snapshot(&state).is_err());
+        let leftovers = std::fs::read_dir(dir.join("backups"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("tmp"))
+            .count();
+        assert_eq!(leftovers, 0, "plaintext backup leaked after an error");
         let _ = std::fs::remove_dir_all(dir);
     }
 
