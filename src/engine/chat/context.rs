@@ -213,38 +213,38 @@ fn context_block_with_manifest(
 
     let skills_enabled=state.store.get("session",session_id).is_none_or(|session|
         session["sdkUiPolicy"].is_null() || session["sdkUiPolicy"]["skillsEnabled"]==true);
-    let mut skills = state
-        .store
-        .all("skill")
-        .into_iter()
+    // Progressive disclosure: only the stable skill index goes into every
+    // prompt. Full instructions remain available via the scoped skill_read
+    // tool when a relevant skill is actually needed. Never send 5 * 700
+    // characters of unrelated instructions to every model call.
+    let mut available_skills = state.store.all("skill").into_iter()
         .filter(|skill| skills_enabled && crate::engine::memory::visible(skill, &scope))
         .filter(|skill| skill.get("status").and_then(Value::as_str) != Some("draft"))
-        .filter(|skill| skill.get("enabled").and_then(|v| v.as_bool()) != Some(false))
-        .filter_map(|skill| {
-            let id = skill.get("id").and_then(|v| v.as_str())?.to_string();
-            let name = skill.get("name").and_then(|v| v.as_str())?.to_string();
-            let instructions = skill
-                .get("instructions")
-                .or_else(|| skill.get("description"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .chars()
-                .take(700)
-                .collect::<String>();
-            items.push(json!({
-                "kind": "skill",
-                "id": id,
-                "name": name,
-                "revision": crate::engine::memory::stable_id(&[
+        .filter(|skill| skill.get("enabled").and_then(Value::as_bool) != Some(false))
+        .filter(|skill| skill["id"].as_str().is_some_and(|id|!id.is_empty()))
+        .collect::<Vec<_>>();
+    available_skills.sort_by(|a,b| {
+        let name = |row:&Value|row["name"].as_str().unwrap_or("").to_lowercase();
+        name(a).cmp(&name(b)).then_with(||{
+            a["id"].as_str().unwrap_or("").cmp(b["id"].as_str().unwrap_or(""))
+        })
+    });
+    let skills = available_skills.into_iter().take(12)
+        .map(|skill|{
+            let id=skill["id"].as_str().unwrap_or("").to_owned();
+            let name=skill["name"].as_str().unwrap_or("").chars().take(80).collect::<String>();
+            let description=skill["description"].as_str().filter(|s|!s.trim().is_empty())
+                .unwrap_or_else(||skill["instructions"].as_str().unwrap_or(""))
+                .chars().take(120).collect::<String>();
+            items.push(json!({"kind":"skill","id":id,"name":name,
+                "revision":crate::engine::memory::stable_id(&[
                     skill["id"].as_str().unwrap_or(""),
                     skill["instructions"].as_str().unwrap_or(""),
                     skill["updatedAt"].as_str().unwrap_or(""),
-                ]),
+                ])
             }));
-            Some((name, instructions))
-        })
-        .collect::<Vec<_>>();
-    skills.truncate(5);
+            (id,name,description)
+        }).collect::<Vec<_>>();
 
     let mut reliability = Vec::new();
     for stat in state.store.all("tool_stat") {
@@ -315,9 +315,9 @@ fn context_block_with_manifest(
     }
     let mut block = memories.unwrap_or_default();
     if !skills.is_empty() {
-        block.push_str("\n\nEnabled skills (follow when applicable):");
-        for (name, instructions) in &skills {
-            block.push_str(&format!("\n- {name}: {instructions}"));
+        block.push_str("\n\nAvailable skills (index only). When one is relevant, call skill_read with its ID before following the instructions:");
+        for (id,name,description) in &skills {
+            block.push_str(&format!("\n- [{id}] {name}: {description}"));
         }
     }
     if !reliability.is_empty() {
