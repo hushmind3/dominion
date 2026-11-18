@@ -198,8 +198,12 @@ fn working_view_allowance(room: Option<&Value>, provider: &ProviderRef, fixed: u
     // Owner-configured workingViewBudgetTokens takes precedence in both cases.
     let epoch = room.and_then(|room|room["workingViewBudgetTokens"].as_u64())
         .map(|value|value as usize)
-        .unwrap_or_else(||if provider.local {
-            selection.max(128)
+        .unwrap_or_else(||if selection<256 {
+            // Honor an explicitly tiny selector budget instead of silently
+            // widening it to 2k; this is also useful for admission tests.
+            selection
+        }else if provider.local {
+            selection
         }else{
             selection.saturating_mul(4).clamp(2_000, 12_000)
         });
@@ -356,7 +360,9 @@ pub(crate) fn project(
     // without its revision proof. Never use the monotonic fast path for those
     // frames; rebuild a fresh source-scoped projection once.
     let owner_proof_missing = frames.iter().any(|frame|
-        frame["key"].as_str().is_some_and(|key| key.starts_with("owner-state:")))
+        frame["key"].as_str().is_some_and(|key| key.starts_with("owner-state:"))
+            && frame["message"]["content"].as_str().is_some_and(|content|
+                content.starts_with("[주인 확정 상태:")))
         && !dependencies.iter().any(|dependency|
             dependency["kind"] == "room_state"
                 && dependency["activeFacts"].is_array()
