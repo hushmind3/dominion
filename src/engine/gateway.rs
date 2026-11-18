@@ -427,6 +427,20 @@ pub async fn send(
     body: &Value,
     timeout: Duration,
 ) -> Result<GatewayResponse, String> {
+    send_with_affinity(route,client,body,timeout,None).await
+}
+
+/// OpenCode Go's relay requires a stable session ID even on helper calls.
+/// The caller explicitly supplies an opaque, already scoped ID only for
+/// OpenCode Go; every retry reuses the same header. Other providers never
+/// receive a provider-specific routing hint.
+pub async fn send_with_affinity(
+    route: &Route,
+    client: &reqwest::Client,
+    body: &Value,
+    timeout: Duration,
+    opencode_session: Option<&str>,
+) -> Result<GatewayResponse, String> {
     reserve_generation(
         &route.base_url,
         &route.model,
@@ -435,9 +449,13 @@ pub async fn send(
     let permit = acquire(&route.base_url, route.local).await;
     let mut last_error = String::new();
     for attempt in 0..2 {
-        match benchmark_request(client.post(route.endpoint("/chat/completions")))
+        let mut request=benchmark_request(client.post(route.endpoint("/chat/completions")))
             .header("Content-Type", "application/json")
-            .header("Authorization", format!("Bearer {}", route.api_key))
+            .header("Authorization", format!("Bearer {}", route.api_key));
+        if let Some(session)=opencode_session.filter(|session| !session.is_empty()) {
+            request=request.header("x-opencode-session",session);
+        }
+        match request
             .json(body)
             .timeout(timeout)
             .send()
