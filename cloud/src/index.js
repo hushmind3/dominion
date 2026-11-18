@@ -76,22 +76,45 @@ function freeModels(env) {
   const all = [...(env.AI ? builtinModels : []), ...allowed];
   return [...new Map(all.map(x => [x.id, x])).values()];
 }
+// Cache catalog discovery per isolate; refresh at a bounded interval.
+let freeCatalogCache = { expires: 0, models: [] };
+const modelFailures = new Map();
+function healthyModels(models) {
+  const time = Date.now();
+  return models.filter(m => (modelFailures.get(m.id)?.until || 0) <= time);
+}
+function markFailure(id) {
+  const previous = modelFailures.get(id);
+  const count = (previous?.until > Date.now() ? previous.count : 0) + 1;
+  modelFailures.set(id, { count, until: Date.now() + Math.min(300000, 15000 * 2 ** Math.min(count - 1, 5)) });
+  if (modelFailures.size > 500) {
+    for (const [key, value] of modelFailures) if (value.until < Date.now()) modelFailures.delete(key);
+  }
+}
+function markSuccess(id) { modelFailures.delete(id); }
 async function upstreamFreeCatalog(env) {
   if (!env.UPSTREAM_API_KEY || !env.UPSTREAM_URL || !env.UPSTREAM_FREE_DISCOVERY) return [];
-  const url = env.UPSTREAM_URL.replace(/\/$/, '') + '/models';
+  const ttl = Math.max(60000, Math.min(3600000, Number(env.FREE_CATALOG_TTL_MS) || 300000));
+  if (Date.now() < freeCatalogCache.expires) return freeCatalogCache.models;
+  const url = env.UPSTREAM_URL.replace(/\\/$/, '') + '/models';
   try {
     const res = await fetch(url, { headers: { authorization: 'Bearer ' + env.UPSTREAM_API_KEY }, signal: AbortSignal.timeout(12000) });
-    if (!res.ok) return [];
+    if (!res.ok) throw Error('Catalog unavailable');
     const data = await res.json();
-    if (!Array.isArray(data.data)) return [];
-    return data.data.filter(m => typeof m.id === 'string' && m.id.endsWith(':free') &&
+    if (!Array.isArray(data.data)) throw Error('Invalid catalog');
+    const models = data.data.filter(m => typeof m.id === 'string' && m.id.endsWith(':free') &&
       m.pricing && Number(m.pricing.prompt) === 0 && Number(m.pricing.completion) === 0)
       .slice(0, 300).map(m => ({ id: m.id, name: m.name || m.id, free: true, backend: 'upstream' }));
-  } catch { return []; }
+    freeCatalogCache = { expires: Date.now() + ttl, models };
+    return models;
+  } catch {
+    freeCatalogCache.expires = Date.now() + 60000;
+    return freeCatalogCache.models;
+  }
 }
 async function availableModels(env) {
   const upstream = await upstreamFreeCatalog(env);
-  return [...new Map([...freeModels(env), ...upstream].map(m => [m.id, m])).values()];
+  return healthyModels([...new Map([...freeModels(env), ...upstream].map(m => [m.id, m])).values()]);
 }
 async function freeProxy(request, env, user) {
   const body = await maxBody(request);
@@ -114,6 +137,8 @@ async function freeProxy(request, env, user) {
     try {
       const answer = await env.AI.run(model.id, { messages: body.messages, max_tokens: Math.min(1024, body.max_tokens || 512) });
       const content = typeof answer?.response === 'string' ? answer.response : '';
+      if (!content) throw Error('Empty model response');
+      markSuccess(model.id);
       const completionId = crypto.randomUUID();
       const quotaHeaders = { 'x-dominion-free-remaining': String(Math.max(0, limit - updated.used)) };
       if (body.stream === true) {
@@ -129,7 +154,7 @@ async function freeProxy(request, env, user) {
         } });
       }
       return json({ id: completionId, object: 'chat.completion', model: model.id, choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }], usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } }, 200, quotaHeaders);
-    } catch { return err('Workers AI inference unavailable', 502); }
+    } catch { markFailure(model.id); return err('Workers AI inference unavailable', 502); }
   }
   const upstream = await fetch(env.UPSTREAM_URL.replace(/\/$/, '') + '/chat/completions', {
     method: 'POST',
@@ -137,7 +162,8 @@ async function freeProxy(request, env, user) {
     body: JSON.stringify({ model: model.upstream_model || model.id, messages: body.messages, stream: body.stream === true, max_tokens: Math.min(2048, body.max_tokens || 1024) }),
     signal: AbortSignal.timeout(90000)
   });
-  if (!upstream.ok) return err('Free model provider unavailable', 502);
+  if (!upstream.ok) { if (upstream.status === 404 || upstream.status === 429 || upstream.status >= 500) markFailure(model.id); return err('Free model provider unavailable', 502); }
+  markSuccess(model.id);
   const headers = new Headers({ 'cache-control': 'no-store', 'x-dominion-free-remaining': String(Math.max(0, limit - updated.used)) });
   headers.set('content-type', upstream.headers.get('content-type') || (body.stream ? 'text/event-stream' : 'application/json'));
   return new Response(upstream.body, { status: upstream.status, headers });
@@ -198,7 +224,18 @@ async function routeCompletion(request, env, user) {
   const raw = await request.clone().text();
   let body;
   try { body = JSON.parse(raw); } catch { return err('Invalid JSON'); }
-  if ((await availableModels(env)).some(x => x.id === body.model)) return freeProxy(request, env, user);
+  const available = await availableModels(env);
+  if (available.some(x => x.id === body.model)) return freeProxy(request, env, user);
+  if (body.model === 'dominion/free-auto') {
+    const candidates = available.filter(x => x.free).slice(0, 5);
+    if (!candidates.length) return err('No healthy free models available', 503);
+    for (const candidate of candidates) {
+      const attempted = new Request(request, { body: JSON.stringify({ ...body, model: candidate.id }) });
+      const response = await freeProxy(attempted, env, user);
+      if (response.ok || response.status === 429) return response;
+    }
+    return err('All free models temporarily unavailable', 503);
+  }
   return proxy(request, env, user);
 }
 export default {
@@ -215,7 +252,7 @@ export default {
       if (path === '/v1/auth/google' && request.method === 'POST') response = await login(request, env);
       else if (path === '/v1/models' && request.method === 'GET') {
         const user = await account(request, env);
-        response = user ? json({ data: (await availableModels(env)).map(x => ({ id: x.id, name: x.name || x.id, object: 'model', free: true })) }) : err('Unauthorized', 401);
+        response = user ? json({ data: [{ id: 'dominion/free-auto', name: 'DOMINION Free Auto', object: 'model', free: true }, ...(await availableModels(env)).map(x => ({ id: x.id, name: x.name || x.id, object: 'model', free: true }))] }) : err('Unauthorized', 401);
       }
       else if (path === '/v1/me' && request.method === 'GET') {
         const user = await account(request, env);
