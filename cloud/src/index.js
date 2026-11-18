@@ -176,7 +176,7 @@ async function freeProxy(request, env, user) {
         } });
       }
       return json({ id: completionId, object: 'chat.completion', model: model.id, choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }], usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } }, 200, quotaHeaders);
-    } catch { markFailure(model.id); return err('Workers AI inference unavailable', 502); }
+    } catch { markFailure(model.id); await env.DB.prepare('UPDATE free_quota SET used=MAX(0,used-1) WHERE account_day=?').bind(key).run(); return err('Workers AI inference unavailable', 502); }
   }
   const upstream = await fetch(env.UPSTREAM_URL.replace(/\/$/, '') + '/chat/completions', {
     method: 'POST',
@@ -184,7 +184,7 @@ async function freeProxy(request, env, user) {
     body: JSON.stringify({ model: model.upstream_model || model.id, messages: body.messages, stream: body.stream === true, max_tokens: Math.min(2048, body.max_tokens || 1024) }),
     signal: AbortSignal.timeout(90000)
   });
-  if (!upstream.ok) { if (upstream.status === 404 || upstream.status === 429 || upstream.status >= 500) markFailure(model.id); return err('Free model provider unavailable', 502); }
+  if (!upstream.ok) { if (upstream.status === 404 || upstream.status === 429 || upstream.status >= 500) markFailure(model.id); await env.DB.prepare('UPDATE free_quota SET used=MAX(0,used-1) WHERE account_day=?').bind(key).run(); return err('Free model provider unavailable', 502); }
   markSuccess(model.id);
   const headers = new Headers({ 'cache-control': 'no-store', 'x-dominion-free-remaining': String(Math.max(0, limit - updated.used)) });
   headers.set('content-type', upstream.headers.get('content-type') || (body.stream ? 'text/event-stream' : 'application/json'));
