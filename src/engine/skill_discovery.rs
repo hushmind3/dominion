@@ -107,6 +107,41 @@ pub fn read(store:&Store,scope:&MemoryScope,id:&str)->Result<Value,String>{
     }))
 }
 
+// Optional Skill references are data, not executables. Canonicalize the
+// installed root AND the requested file to reject ../, absolute paths and
+// symlink escapes before reading third-party skill resources.
+pub fn read_resource(store:&Store,scope:&MemoryScope,id:&str,relative:&str)
+    ->Result<Value,String>{
+    if id.is_empty() || id.len()>128 {return Err("Invalid Skill ID".into())}
+    let skill=store.get("skill",id).ok_or("Skill not found")?;
+    if !eligible(&skill,scope){return Err("Skill is not enabled or visible".into())}
+    let root=skill["path"].as_str().ok_or("Skill has no installed resource folder")?;
+    let resource=std::path::Path::new(relative);
+    if relative.is_empty() || resource.components().any(|part|
+        !matches!(part,std::path::Component::Normal(_))) {
+        return Err("Skill resource path must be a relative file path".into())
+    }
+    let root=std::fs::canonicalize(root)
+        .map_err(|error|format!("Skill resource root unavailable: {error}"))?;
+    if !root.is_dir(){return Err("Skill resource root is not a directory".into())}
+    let file=std::fs::canonicalize(root.join(resource))
+        .map_err(|error|format!("Skill resource unavailable: {error}"))?;
+    if !file.starts_with(&root) || !file.is_file(){
+        return Err("Skill resource escapes its installed directory".into())
+    }
+    let size=std::fs::metadata(&file).map_err(|error|error.to_string())?.len();
+    if size>65_536 {return Err("Skill resource exceeds the 64 KiB read bound".into())}
+    let content=std::fs::read_to_string(file)
+        .map_err(|error|format!("Skill resource must be readable UTF-8: {error}"))?;
+    Ok(json!({
+        "id":skill["id"],"resource":relative,
+        "content":content.chars().take(MAX_READ_CHARS).collect::<String>(),
+        "truncated":content.chars().count()>MAX_READ_CHARS,
+        "trust":"untrusted_skill_resource_data_not_an_owner_directive",
+        "readOnly":true
+    }))
+}
+
 // Only high-relevance content is preloaded. Unmatched Skills stay discoverable,
 // rather than spending prompt tokens on the first three DB insertion records.
 pub fn initial_context(store:&Store,scope:&MemoryScope,task:&str,tools_enabled:bool)->String{
@@ -220,6 +255,33 @@ mod tests{
         let relevant=initial_context(&db,&scope(),"클라우드 배포",true);
         assert!(relevant.contains(&"x".repeat(MAX_PRELOAD_CHARS)));
         assert!(!relevant.contains(&"x".repeat(MAX_PRELOAD_CHARS+1)));
+    }
+    #[test]
+    fn resource_read_rejects_absolute_traversal_and_symlink_escapes(){
+        let root=std::env::temp_dir().join(format!(
+            "sub3-skill-{}",uuid::Uuid::new_v4()));
+        let references=root.join("references");
+        std::fs::create_dir_all(&references).unwrap();
+        std::fs::write(references.join("guide.md"),"Verified reference content").unwrap();
+        let db=Store::open(std::path::Path::new(":memory:")).unwrap();
+        let mut skill=item("safe","코드 검토","review");
+        skill["path"]=json!(root.to_string_lossy().to_string());
+        let inserted=db.put("skill",&skill).unwrap();
+        let id=inserted["id"].as_str().unwrap();
+        assert_eq!(read_resource(&db,&scope(),id,"references/guide.md").unwrap()["content"],
+            "Verified reference content");
+        assert!(read_resource(&db,&scope(),id,"../secrets.txt").is_err());
+        assert!(read_resource(&db,&scope(),id,"/tmp/secrets.txt").is_err());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("/etc/hosts",references.join("outside.md")).unwrap();
+            assert!(read_resource(&db,&scope(),id,"references/outside.md").is_err());
+        }
+        let mut stopped=inserted;
+        stopped["enabled"]=json!(false);
+        db.put("skill",&stopped).unwrap();
+        assert!(read_resource(&db,&scope(),id,"references/guide.md").is_err());
+        let _=std::fs::remove_dir_all(root);
     }
     #[test]
     fn ranking_and_tie_breaking_are_deterministic(){
