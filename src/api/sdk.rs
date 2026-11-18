@@ -440,6 +440,12 @@ mod parity_tests {
         let record=state.store.get("job",&id).expect("native job-backed harness record");
         assert_eq!(record["input"]["harnessCompat"],true);
         assert_eq!(record["input"]["limits"]["maxSteps"],3);
+        assert_eq!(record["input"]["limits"]["maxToolCalls"],160);
+        let allowed=record["input"]["allowedTools"].as_array().unwrap();
+        assert!(allowed.iter().any(|tool|tool=="workspace_read"));
+        assert!(allowed.iter().any(|tool|tool=="shell_exec"));
+        assert!(!allowed.iter().any(|tool|tool=="web_search" || tool=="browser_control"
+            || tool.as_str().is_some_and(|name|name.starts_with("mcp__"))));
         assert_eq!(record["input"]["model"],"test-model");
         assert_eq!(record["input"]["prompt"],"Inspect a file and verify it");
         assert!(state.store.get("sdk_run",&id).is_none(),
@@ -447,6 +453,18 @@ mod parity_tests {
         let detail=one(State(state.clone()),Path(id.clone())).await;
         assert_eq!(detail.status(),StatusCode::OK);
         assert_eq!(list(State(state.clone())).await.0.as_array().unwrap().len(),1);
+        // The two public SDK menus are views, not duplicate engines, and
+        // their run histories remain separately scoped.
+        assert!(sdk_runs::list(State(state.clone())).await.0.as_array().unwrap().is_empty());
+        // Pre-migration FileJournal records are still visible and not
+        // silently interpreted as new native-kernel checkpoints.
+        state.store.put("sdk_run",&json!({
+            "id":"legacy-fixture","status":"interrupted",
+            "instruction":"Legacy work to inspect"
+        })).unwrap();
+        assert_eq!(one(State(state.clone()),Path("legacy-fixture".into()))
+            .await.status(),StatusCode::OK);
+        assert_eq!(list(State(state.clone())).await.0.as_array().unwrap().len(),2);
         if let Some(session)=record["sessionId"].as_str() {
             state.cancel_session(session);
         }
