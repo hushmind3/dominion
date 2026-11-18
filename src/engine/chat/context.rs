@@ -138,6 +138,7 @@ pub(super) fn system_prompt_with_manifest_at(
     if let Some((context, mut context_items, watermark)) =
         context_block_with_manifest(
             state, session_id, request.agent_id.as_deref(), query, improvements, execution_id,
+            request.tools_enabled && request.tools_execution_enabled,
         )
     {
         dynamic.push_str("\n\n");
@@ -189,7 +190,7 @@ fn context_block(
     query: &str,
     improvements: Option<&[Value]>,
 ) -> Option<String> {
-    context_block_with_manifest(state, session_id, agent_id, query, improvements, None)
+    context_block_with_manifest(state, session_id, agent_id, query, improvements, None, false)
         .map(|(block, _, _)| block)
 }
 
@@ -200,6 +201,7 @@ fn context_block_with_manifest(
     query: &str,
     improvements: Option<&[Value]>,
     execution_id: Option<&str>,
+    can_fetch_skills: bool,
 ) -> Option<(String, Vec<Value>, String)> {
     let scope = crate::engine::memory::MemoryScope::for_session(&state.store, session_id, agent_id);
     let (memories, mut items) =
@@ -220,7 +222,7 @@ fn context_block_with_manifest(
             // paged by skill_view without rebuilding this context every turn.
             // Model-only turns retain the legacy excerpt instead of losing
             // operational instructions they cannot fetch.
-            let detail = if request.tools_enabled && request.tools_execution_enabled {
+            let detail = if can_fetch_skills {
                 skill.get("description")
                     .or_else(|| skill.get("instructions"))
                     .and_then(|value|value.as_str())
@@ -320,7 +322,7 @@ fn context_block_with_manifest(
     }
     let mut block = memories.unwrap_or_default();
     if !skills.is_empty() {
-        if request.tools_enabled && request.tools_execution_enabled {
+        if can_fetch_skills {
             block.push_str("\n\nEnabled skills index (read matching instructions with skill_view before use):");
         } else {
             block.push_str("\n\nEnabled skills (model-only excerpts):");
