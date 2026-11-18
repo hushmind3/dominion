@@ -179,7 +179,7 @@ fn append_owner_fact_deltas(fresh: &[Value], prior: &[Value]) -> Vec<Value> {
 /// retains that evidence across consecutive calls until the provider's actual
 /// context capacity demands a rotation. Enforcing the 2k *selector* budget
 /// against the cumulative cached prefix rebased almost every owner turn.
-fn working_view_allowance(room: Option<&Value>, provider: &ProviderRef, fixed: usize) -> usize {
+fn working_view_allowance(room: Option<&Value>, provider: &ProviderRef, fixed: usize, server_kv_cache:bool) -> usize {
     // Non-room chats keep their historical 40k history allowance.
     // This larger cache epoch is only an optimization for room speakers.
     if room.is_none() {
@@ -202,7 +202,7 @@ fn working_view_allowance(room: Option<&Value>, provider: &ProviderRef, fixed: u
             // Honor an explicitly tiny selector budget instead of silently
             // widening it to 2k; this is also useful for admission tests.
             selection
-        }else if provider.local {
+        }else if provider.local && !server_kv_cache {
             selection
         }else{
             selection.saturating_mul(4).clamp(2_000, 12_000)
@@ -439,7 +439,7 @@ pub(crate) fn project(
         // Independent bounded epoch budget: the 2k per-request selector is
         // not an instruction to evict a useful cacheable prefix every turn.
         let fixed = super::room_context::input_estimate(&[wire_message(&messages[0])], tools);
-        let allowance = working_view_allowance(room.as_ref(), provider, fixed);
+        let allowance = working_view_allowance(room.as_ref(), provider, fixed,super::provider::local_cache_backend(state,provider).is_some());
         let history_cost = |rows:&[Value]| super::room_context::input_estimate(
             &rows.iter().map(|frame|frame["message"].clone()).collect::<Vec<_>>(), &[]);
         if history_cost(&frames) > allowance.max(history_cost(&fresh)) {
@@ -457,7 +457,7 @@ pub(crate) fn project(
             let session=state.store.get("session",session_id).unwrap_or(Value::Null);
             let room=session["roomId"].as_str().and_then(|id|state.store.get("room",id));
             let fixed=super::room_context::input_estimate(&[wire_message(&messages[0])],tools);
-            let allowance=working_view_allowance(room.as_ref(),provider,fixed);
+            let allowance=working_view_allowance(room.as_ref(),provider,fixed,super::provider::local_cache_backend(state,provider).is_some());
             carried_owner_facts=retain_verified_owner_facts(
                 state,session_id,source,&frames,&mut rebased,&dependencies,allowance);
         }
@@ -1146,16 +1146,18 @@ mod tests {
     fn local_without_reported_cache_uses_small_default_epoch_but_respects_owner_setting() {
         let mut provider=route();
         let room=json!({"contextBudgetTokens":2000});
-        assert_eq!(working_view_allowance(Some(&room),&provider,0),8000);
+        assert_eq!(working_view_allowance(Some(&room),&provider,0,false),8000);
         provider.local=true;
-        assert_eq!(working_view_allowance(Some(&room),&provider,0),2000,
+        assert_eq!(working_view_allowance(Some(&room),&provider,0,false),2000,
             "avoid reprocessing four full selections on an unverified local KV cache");
+        assert_eq!(working_view_allowance(Some(&room),&provider,0,true),8000,
+            "a confirmed local KV prefix cache should keep four relevant selections");
         let customized=json!({"contextBudgetTokens":2000,"workingViewBudgetTokens":10000});
-        assert_eq!(working_view_allowance(Some(&customized),&provider,0),10000);
+        assert_eq!(working_view_allowance(Some(&customized),&provider,0,false),10000);
         provider.context_tokens=Some(8000);
         provider.max_output_tokens=Some(1000);
-        assert_eq!(working_view_allowance(Some(&customized),&provider,500),6500);
-        assert_eq!(working_view_allowance(None,&provider,500),6500,
+        assert_eq!(working_view_allowance(Some(&customized),&provider,500,false),6500);
+        assert_eq!(working_view_allowance(None,&provider,500,false),6500,
             "non-room context still honors model capacity and output reservation");
     }
 
