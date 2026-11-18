@@ -70,7 +70,6 @@ pub mod rooms;
 pub mod room_knowledge;
 pub mod room_state;
 pub mod run_state;
-pub mod scheduler;
 pub mod skills;
 pub mod telegram;
 pub mod tools;
@@ -134,16 +133,6 @@ pub async fn run_quiet_resume(
     drop(sender);
     let _ = drain.await;
     result
-}
-
-/// Compatibility wrapper; harnesses that need evidence after a model/runtime
-/// error use run_quiet_outcome instead of discarding completed tool work.
-pub async fn run_quiet_with_stats(
-    state: &AppState,
-    request: &chat::TurnRequest,
-) -> Result<(Option<Value>, TurnStats), String> {
-    let (result, stats) = run_quiet_outcome(state, request).await;
-    result.map(|message| (message, stats))
 }
 
 /// Drain events without materializing transient tool arguments/results in a
