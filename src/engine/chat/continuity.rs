@@ -1167,6 +1167,12 @@ mod tests {
         state.store.put("room",&json!({"id":"long",
             "contextBudgetTokens":1400,"workingViewBudgetTokens":12000})).unwrap();
         let provider=route();
+        let owner_record_id=format!("room-state-{}",stable_id(&["long"]));
+        state.store.put("room_state",&json!({"id":owner_record_id,"facts":[{
+            "id":"deployment-decision","kind":"decision","text":"KEEP_DEPLOYMENT_9000",
+            "status":"active","verifiedLocalOwner":true,"sourceMessageId":"owner-0"
+        }]})).unwrap();
+        let owner_deps=dependencies(&state,&[json!({"kind":"owner_state","id":owner_record_id})]);
         let mut prior=std::collections::HashMap::<String,String>::new();
         let mut reused_calls=0usize;
         let mut rotated_calls=0usize;
@@ -1185,7 +1191,7 @@ mod tests {
                 let status=if turn==0 {"no prior group round"}else{"nine responses received"};
                 let mut fresh=vec![
                     json!({"role":"system","content":identity,
-                        "_dominion_source":source,"_dominion_dependencies":[]}),
+                        "_dominion_source":source,"_dominion_dependencies":owner_deps}),
                     json!({"role":"user","content":status,
                         "_dominion_frame":format!("room-shared:{}",stable_id(&[status]))}),
                     json!({"role":"user",
@@ -1199,8 +1205,9 @@ mod tests {
                 }
                 fresh.push(json!({"role":"user","content":format!("owner work item {turn}"),
                     "_dominion_frame":source}));
-                rebuilt_full+=super::room_context::input_estimate(
-                    &fresh.iter().map(wire_message).collect::<Vec<_>>(),&[]);
+                rebuilt_full+=super::room_context::estimate(&json!(
+                    fresh.iter().skip(1).map(wire_message).collect::<Vec<_>>()
+                ).to_string());
                 let mut plan=prepare(&state,&provider,&request,"room:long",&identity,&json!({})).unwrap();
                 let (wire,pending)=project(&state,&provider,&fresh,&[],"room:long",&mut plan);
                 let reason=&plan["workingView"]["rebaseReason"];
