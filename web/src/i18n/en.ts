@@ -501,6 +501,7 @@ const en: Record<LocaleKey, string> = {
   'chat.stop': 'Stop generating',
   'chat.stopping': 'Stopping…',
   'chat.stopFailed': 'Could not stop the active run: {error}',
+  'chat.stopNotSettled': 'The server has not confirmed that the run stopped. You can retry cancellation.',
   'chat.copy': 'Copy',
   'chat.noModel': 'Model server disconnected',
   'chat.manage': 'Manage connection',
