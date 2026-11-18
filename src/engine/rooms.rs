@@ -1133,11 +1133,21 @@ fn mention_text(input: &str) -> String {
             out.push('\n');
             continue;
         }
+        let mut quoted:Option<char>=None;
         for ch in line.chars() {
-            if ch == '`' {
+            if ch == '`' && quoted.is_none() {
                 inline = !inline;
                 out.push(' ');
             } else if inline {
+                out.push(' ');
+            } else if let Some(close)=quoted {
+                if ch==close {quoted=None;}
+                out.push(' ');
+            } else if let Some(close)=match ch {
+                '\''=>Some('\''),'"'=>Some('"'),'‘'=>Some('’'),'“'=>Some('”'),
+                '「'=>Some('」'),'『'=>Some('』'),_=>None
+            } {
+                quoted=Some(close);
                 out.push(' ');
             } else {
                 out.push(ch);
@@ -1161,6 +1171,23 @@ fn bare_mention_follows(after: &str) -> bool {
     ];
     PARTICLES.iter().any(|particle| after.starts_with(particle))
 }
+/// A bare name in the middle of an example or report is not a routing command.
+/// Permit a direct vocative anywhere; ordinary grammatical mentions must
+/// begin an addressed clause (including a list led by another participant).
+fn bare_name_is_address(before:&str,after:&str,names:&[String])->bool {
+    if ["야","아","님","씨","에게","한테","께"].iter().any(|p|after.starts_with(p)){
+        return true;
+    }
+    let lead=before.rsplit('\n').next().unwrap_or("").trim_start();
+    if lead.is_empty(){return true;}
+    names.iter().any(|name|{
+        lead.strip_prefix(name).is_some_and(|rest| {
+            let rest=rest.trim_start();
+            rest.starts_with("와 ")||rest.starts_with("과 ")||rest.starts_with("랑 ")
+                ||rest.starts_with(", ")||rest.starts_with(" 및 ")
+        })
+    })
+}
 /// Optional silence: a member may decline its turn instead of speaking.
 fn is_silence(content: &str) -> bool {
     let text = content.trim();
@@ -1177,6 +1204,9 @@ fn mentioned_agents(
     input: &str,
 ) -> Result<Vec<String>, String> {
     let text = mention_text(input).to_lowercase();
+    let names=roster.iter().filter_map(|id|state.store.get("agent",id)
+        .and_then(|agent|agent["name"].as_str().map(str::to_lowercase)))
+        .collect::<Vec<_>>();
     let mut matches = Vec::new();
     for (order, id) in roster.iter().enumerate() {
         let agent = state
@@ -1215,7 +1245,8 @@ fn mentioned_agents(
                     continue;
                 }
                 let after = &text[position + alias.len()..];
-                if bare_mention_follows(after) {
+                if bare_mention_follows(after)
+                    && bare_name_is_address(&text[..position],after,&names) {
                     matches.push((position, alias.len(), order, id.clone(), alias.clone()));
                 }
             }
@@ -1390,6 +1421,32 @@ mod tests {
             vec!["a".to_string(), "b".to_string()]
         );
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn quoted_or_explanatory_names_never_route_an_entire_room_to_one_agent(){
+        let (state,dir)=test_state();
+        for (id,name) in [("s","샤르티아"),("a","아인즈"),("b","알베도")] {
+            state.store.put("agent",&json!({"id":id,"name":name})).unwrap();
+        }
+        let roster=vec!["s".to_string(),"a".to_string(),"b".to_string()];
+        for prompt in [
+            "예시 문장에 '샤르티아'라고 썼습니다. 모두 자기 숫자를 말하세요.",
+            "예시: \"샤르티아\"는 과거에 말한 숫자를 기억합니다.",
+            "참고 자료에는 ‘샤르티아’라는 이름이 있습니다.",
+            "예시 문장에 샤르티아 이름을 넣었습니다. 모두 답하세요.",
+            "앞선 답변에서는 샤르티아가 이미 말했습니다. 다시 전원이 답하세요.",
+        ] {
+            assert!(mentioned_agents(&state,&roster,prompt).unwrap().is_empty(),
+                "quoted/example participant name must not silence others: {prompt}");
+        }
+        assert_eq!(mentioned_agents(&state,&roster,"샤르티아야 숫자 말해봐").unwrap(),
+            vec!["s"]);
+        assert_eq!(mentioned_agents(&state,&roster,"아인즈와 알베도가 검토해").unwrap(),
+            vec!["a","b"]);
+        assert_eq!(mentioned_agents(&state,&roster,"예시 이름은 '@샤르티아'이고 @아인즈는 답해").unwrap(),
+            vec!["a"]);
+        drop(state);let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]
