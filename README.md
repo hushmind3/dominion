@@ -101,6 +101,28 @@ and `providerNewPromptTokens` are populated only from usable provider
 accounting. Real-model nine-speaker / 100-turn memory accuracy and new-token
 reduction must be measured separately.
 
+### Group-state cache stability and call-level accounting (2026-11-18)
+
+The shared room status now separates **cursor-specific provenance** from
+**model-visible content identity**: `room_state::conversation_context`
+persists speaker/receipt/source IDs and a full `digest`, while the compact
+status text has its own `textDigest`. `room_context::compile` uses
+`room-shared:{textDigest}` so identical nine-speaker outcomes across distinct
+owner turns do not change the cached prefix. The existing owner corrections,
+prior self response, selected peer evidence and full SQLite transcript remain
+available. When the actual responded/missing/work state changes,
+`continuity::project` rotates away the obsolete status frame instead of
+accumulating conflicting snapshots.
+
+Each completed group model call now records a bounded small
+`inputContext.modelCallUsage` entry with provider-reported prompt, cached,
+uncached/new and output tokens, plus **separately labeled host-only**
+reused/appended-history estimates and the transport rebase reason. Group
+`outputs[].modelAccounting.modelCallUsage` exposes these receipts per
+speaker. Unknown provider cache figures are `null`, never assumed zero.
+The targeted 9-speaker stable-status and changed-status regressions run in
+development CI; they do not establish a new live-provider token reduction.
+
 ## Development vs release validation
 
 Normal Rust source pushes run only scoped, default-profile kernel/job/Money regression tests on macOS via `.github/workflows/ci.yml`. They do **not** trigger frontend builds, `cargo build/check`, release-profile builds, installer packaging, or the Windows/macOS release matrix. The separate `.github/workflows/release.yml` performs those full checks only for version tags or an explicit manual release request. Passing scoped tests does not imply that a distributable desktop release has been validated.
