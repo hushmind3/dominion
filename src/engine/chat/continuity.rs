@@ -1205,7 +1205,7 @@ mod tests {
                 }
                 fresh.push(json!({"role":"user","content":format!("owner work item {turn}"),
                     "_dominion_frame":source}));
-                rebuilt_full+=super::room_context::estimate(&json!(
+                rebuilt_full+=super::super::room_context::estimate(&json!(
                     fresh.iter().skip(1).map(wire_message).collect::<Vec<_>>()
                 ).to_string());
                 let mut plan=prepare(&state,&provider,&request,"room:long",&identity,&json!({})).unwrap();
@@ -1279,9 +1279,9 @@ mod tests {
         let mut replay=prepare(&state,&provider,&request,"room:rewind",identity,&json!({})).unwrap();
         let (wire,_)=project(&state,&provider,&earlier,&[],"room:rewind",&mut replay);
         assert_eq!(replay["workingView"]["rebaseReason"],"owner_cursor_rewound");
-        assert!(!wire.to_string().contains("FUTURE_OWNER_FACT"));
-        assert!(!wire.to_string().contains("future answer"));
-        assert!(wire.to_string().contains("owner-old"));
+        assert!(!json!(wire).to_string().contains("FUTURE_OWNER_FACT"));
+        assert!(!json!(wire).to_string().contains("future answer"));
+        assert!(json!(wire).to_string().contains("owner-old"));
         crate::test_support::cleanup_dir(root);
     }
 
@@ -1353,7 +1353,7 @@ mod tests {
         let mut second=fresh.clone();
         assert_eq!(retain_verified_owner_facts(&state,"room:scope","now",
             &prior,&mut second,&prior_deps,5000),1);
-        let rendered=second.to_string();
+        let rendered=json!(second).to_string();
         assert!(rendered.contains("IN_SCOPE"));
         assert!(!rendered.contains("FOREIGN"));
         assert!(!rendered.contains("FUTURE"));
