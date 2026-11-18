@@ -183,6 +183,13 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_algorithm_kind
                  ON records(json_extract(data,'$.kind'))
                  WHERE kind='algorithm';
+             CREATE INDEX IF NOT EXISTS idx_improvement_active_scope
+                 ON records(json_extract(data,'$.partitionKey'),
+                            json_extract(data,'$.scope'),
+                            json_extract(data,'$.kind'),
+                            json_extract(data,'$.agentId'))
+                 WHERE kind='improvement'
+                   AND json_extract(data,'$.status') IN ('adopted','validated');
              CREATE INDEX IF NOT EXISTS idx_execution_task
                  ON records(json_extract(data,'$.taskId'))
                  WHERE kind='execution';
@@ -650,6 +657,47 @@ impl Store {
             }
         }
         Ok(found)
+    }
+
+    /// Newest execution facts, with deterministic same-second ordering.
+    /// Uses idx_records_kind_updated rather than reading the complete archive.
+    pub fn try_recent_records(&self, kind: &str, limit: usize) -> Result<Vec<Value>, String> {
+        if limit == 0 { return Ok(Vec::new()); }
+        let conn = self.conn.lock().map_err(|error| error.to_string())?;
+        let mut statement = conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind=?1 ORDER BY updated_at DESC,rowid DESC LIMIT ?2",
+        ).map_err(|error| error.to_string())?;
+        let rows = statement.query_map(
+            params![kind, limit.min(1_000) as i64], record_from_row
+        ).map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
+    }
+
+    /// Select only relevant, live strategy/tool-policy records for this agent.
+    /// Historic, rejected and unrelated agent revisions never reach the
+    /// per-turn selection algorithm or consume prompt/context preparation.
+    pub fn active_improvements_for_scope(
+        &self, partition_key: &str, agent_id: Option<&str>,
+    ) -> Result<Vec<Value>, String> {
+        let conn = self.conn.lock().map_err(|error| error.to_string())?;
+        let mut statement = conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='improvement'
+               AND json_extract(data,'$.status') IN ('adopted','validated')
+               AND json_extract(data,'$.kind') IN ('strategy','tool_policy')
+               AND (
+                 json_extract(data,'$.scope')='global'
+                 OR (json_extract(data,'$.partitionKey')=?1
+                     AND (json_extract(data,'$.scope')='shared'
+                          OR json_extract(data,'$.agentId') IS ?2))
+               )
+             ORDER BY updated_at DESC,rowid DESC",
+        ).map_err(|error| error.to_string())?;
+        let rows = statement.query_map(
+            params![partition_key, agent_id], record_from_row
+        ).map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
     }
 
     pub fn count(&self, kind: &str) -> usize {
