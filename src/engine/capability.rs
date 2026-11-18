@@ -81,28 +81,75 @@ fn terms(query:&str)->HashSet<String> {
     words
 }
 
-fn score(definition:&Value,query:&str,words:&HashSet<String>)->i32{
-    let name=tool_name(definition).to_lowercase();
-    let description=definition.pointer("/function/description")
-        .and_then(Value::as_str).unwrap_or("").to_lowercase();
-    let mut score=0;
-    if query.to_lowercase().contains(&name) {score+=32;}
-    for term in words {
-        if name.split(|c:char|!c.is_alphanumeric()).any(|part|part==term){score+=12;}
-        else if name.contains(term){score+=7;}
-        else if description.contains(term){score+=2;}
-    }
-    score
+/// 2026-style deferred-tool ranking: IDF favors discriminative capabilities
+/// instead of rewarding the same generic "search" description on every MCP.
+fn tokens(text:&str)->Vec<String>{
+    text.to_lowercase().split(|ch:char|!ch.is_alphanumeric())
+        .filter(|word|word.chars().count()>=2)
+        .map(str::to_string).collect()
 }
 
-fn ranked<'a>(catalog:&'a [Value],query:&str)->Vec<(i32,&'a Value)> {
-    let words=terms(query);
-    let mut matches=catalog.iter().map(|definition|(
-        score(definition,query,&words),definition
-    )).filter(|(score,_)|*score>0).collect::<Vec<_>>();
-    matches.sort_by(|a,b|b.0.cmp(&a.0).then_with(||
+fn ranked<'a>(catalog:&'a [Value],query:&str)->Vec<(f64,&'a Value)> {
+    struct Document<'a> {
+        definition:&'a Value,
+        name:String,
+        name_terms:Vec<String>,
+        description_terms:Vec<String>,
+        parameter_terms:Vec<String>,
+        length:f64,
+    }
+    let mut query_terms=terms(query).into_iter().collect::<Vec<_>>();
+    query_terms.sort_unstable();
+    if query_terms.is_empty(){return Vec::new();}
+    let documents=catalog.iter().map(|definition|{
+        let name=tool_name(definition).to_lowercase();
+        let name_terms=tokens(&name);
+        let description_terms=tokens(definition.pointer("/function/description")
+            .and_then(Value::as_str).unwrap_or(""));
+        // Parameter *names* help distinguish otherwise similar tools without
+        // indexing or copying large parameter descriptions into every search.
+        let parameter_terms=definition.pointer("/function/parameters/properties")
+            .and_then(Value::as_object)
+            .map(|properties|properties.keys().flat_map(|key|tokens(key)).collect::<Vec<_>>())
+            .unwrap_or_default();
+        let length=(name_terms.len()+description_terms.len()+parameter_terms.len()).max(1) as f64;
+        Document{definition,name,name_terms,description_terms,parameter_terms,length}
+    }).collect::<Vec<_>>();
+    if documents.is_empty(){return Vec::new();}
+    let average_length=documents.iter().map(|doc|doc.length).sum::<f64>()
+        /documents.len() as f64;
+    let total=documents.len() as f64;
+    let mut ranked=Vec::new();
+    let normalized_query=query.trim().to_lowercase();
+    for doc in &documents {
+        let mut score=if normalized_query==doc.name {100.0} else {0.0};
+        if doc.name.len()>=5 && normalized_query.contains(&doc.name) {score+=20.0;}
+        let length_norm=1.2*(0.25+0.75*doc.length/average_length);
+        for term in &query_terms {
+            let df=documents.iter().filter(|candidate|
+                candidate.name_terms.iter().any(|word|word==term)
+                ||candidate.description_terms.iter().any(|word|word==term)
+                ||candidate.parameter_terms.iter().any(|word|word==term)
+            ).count() as f64;
+            let idf=(1.0+(total-df+0.5)/(df+0.5)).ln();
+            let name_hits=doc.name_terms.iter().filter(|word|*word==term).count() as f64;
+            let description_hits=doc.description_terms.iter().filter(|word|*word==term).count() as f64;
+            let parameter_hits=doc.parameter_terms.iter().filter(|word|*word==term).count() as f64;
+            let mut frequency=8.0*name_hits+2.0*description_hits+parameter_hits;
+            // Preserve useful partial identifier matches, but do not let
+            // generic substrings dominate exact rare-term matches.
+            if frequency==0.0 && term.chars().count()>=3 && doc.name.contains(term) {
+                frequency=1.0;
+            }
+            if frequency>0.0 {
+                score+=idf*2.2*frequency/(frequency+length_norm);
+            }
+        }
+        if score>0.0 {ranked.push((score,doc.definition));}
+    }
+    ranked.sort_by(|a,b|b.0.total_cmp(&a.0).then_with(||
         tool_name(a.1).cmp(tool_name(b.1))));
-    matches
+    ranked
 }
 
 pub async fn search(state:&AppState,session_id:&str,args:&Value)->Result<Value,String> {
@@ -237,4 +284,48 @@ mod tests {
         assert!(results["matches"].as_array().unwrap().iter().all(|r|r["name"]!="shell_exec"));
         let _=std::fs::remove_dir_all(dir);
     }
+    #[test]
+    fn discovery_prefers_rare_capability_over_generic_mcp_descriptions(){
+        let mut definitions=(0..40).map(|index|json!({"type":"function","function":{
+            "name":format!("mcp__common__search_{index}"),
+            "description":"Search files and records in common integrations"
+        }})).collect::<Vec<_>>();
+        definitions.push(json!({"type":"function","function":{
+            "name":"mcp__git__review_pull_request",
+            "description":"Review a pull request and inspect its changed files"
+        }}));
+        let matches=ranked(&definitions,"review pull request");
+        assert_eq!(tool_name(matches[0].1),"mcp__git__review_pull_request");
+    }
+
+    #[test]
+    fn exact_tool_identifier_outweighs_verbose_generic_matches(){
+        let definitions=vec![
+            json!({"type":"function","function":{
+                "name":"mcp__other__search","description":"github_file_update github_file_update tool"
+            }}),
+            json!({"type":"function","function":{
+                "name":"github_file_update","description":"Update one file"
+            }})
+        ];
+        let matches=ranked(&definitions,"github_file_update");
+        assert_eq!(tool_name(matches[0].1),"github_file_update");
+    }
+
+    #[test]
+    fn discovery_rank_is_stable_when_catalog_order_changes(){
+        let mut definitions=vec![
+            json!({"type":"function","function":{"name":"github_file_read","description":"read repository file"}}),
+            json!({"type":"function","function":{"name":"github_file_update","description":"update repository file"}}),
+            json!({"type":"function","function":{"name":"web_search","description":"search online"}}),
+        ];
+        let before=ranked(&definitions,"github file")
+            .iter().map(|(_,d)|tool_name(d).to_string()).collect::<Vec<_>>();
+        definitions.reverse();
+        let after=ranked(&definitions,"github file")
+            .iter().map(|(_,d)|tool_name(d).to_string()).collect::<Vec<_>>();
+        assert_eq!(before,after);
+        assert!(ranked(&definitions,"qzzyzx-no-such-tool").is_empty());
+    }
+
 }
