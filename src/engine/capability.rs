@@ -4,6 +4,7 @@
 use crate::{engine::{mcp,tools},state::AppState};
 use serde_json::{json,Value};
 use std::collections::HashSet;
+use sha2::{Digest,Sha256};
 
 pub const SEARCH: &str = "dominion_tool_search";
 pub const CALL: &str = "dominion_tool_call";
@@ -33,6 +34,11 @@ fn tool_name(definition:&Value)->&str {
     definition.pointer("/function/name").and_then(Value::as_str).unwrap_or("")
 }
 
+/// Search receipts bind the exact offered schema, not just a mutable tool name.
+fn schema_digest(definition:&Value)->String {
+    format!("{:x}",Sha256::digest(definition["function"]["parameters"].to_string().as_bytes()))
+}
+
 fn enabled_in_session(state:&AppState,session_id:&str,name:&str)->bool {
     if name.is_empty() || name==SEARCH || name==CALL {return false;}
     let session=state.store.get("session",session_id).unwrap_or(Value::Null);
@@ -46,6 +52,12 @@ fn enabled_in_session(state:&AppState,session_id:&str,name:&str)->bool {
 }
 
 async fn catalog(state:&AppState,session_id:&str)->Vec<Value> {
+    let Some(session)=state.store.get("session",session_id) else {return Vec::new()};
+    if session["toolsEnabled"]==false {return Vec::new();}
+    if let Some(room_id)=session["roomId"].as_str(){
+        if state.store.get("room",room_id)
+            .is_some_and(|room|room["toolsEnabled"]==false){return Vec::new();}
+    }
     let mut all=tools::definitions();
     all.extend(mcp::definitions(state).await);
     let mut unique=HashSet::new();
@@ -171,6 +183,7 @@ pub async fn search(state:&AppState,session_id:&str,args:&Value)->Result<Value,S
         "description":tool.pointer("/function/description").and_then(Value::as_str)
             .unwrap_or("").chars().take(180).collect::<String>(),
         "parameters":tool.pointer("/function/parameters"),
+        "schemaSha256":schema_digest(tool),
         "requiresApproval":if tool_name(tool).starts_with("mcp__"){
             mcp::requires_approval(state,tool_name(tool))
         }else{tools::requires_approval(tool_name(tool))}
@@ -192,22 +205,27 @@ pub async fn resolve(
         .ok_or("도구 인수는 JSON 객체여야 합니다.")?;
     let execution=state.store.get("execution",execution_id)
         .ok_or("도구 호출에 연결된 실행 기록이 없습니다.")?;
-    if execution["sessionId"].as_str()!=Some(session_id){
-        return Err("다른 세션의 실행 기록으로 도구를 호출할 수 없습니다.".into());
+    if execution["sessionId"].as_str()!=Some(session_id) || execution["status"]!="running" {
+        return Err("진행 중인 동일 세션 실행에서만 검색한 도구를 호출할 수 있습니다.".into());
     }
+    let all=catalog(state,session_id).await;
+    let definition=all.iter().find(|definition|tool_name(definition)==name)
+        .ok_or("도구가 더 이상 연결돼 있지 않거나 현재 세션에서 허용되지 않습니다.")?;
+    let current_schema=schema_digest(definition);
+    // A prior search receipt is evidence only for the exact schema offered.
+    // A newly refreshed search can authorize a newer schema in the same run.
     let discovered=state.store.execution_operations(execution_id)?.iter().any(|operation|{
         operation["status"]=="completed" && operation["tool"]==SEARCH
             && operation["origin"]=="model"
             && operation["sessionId"].as_str()==Some(session_id)
             && operation["result"]["matches"].as_array().is_some_and(|matches|
-                matches.iter().any(|item|item["name"].as_str()==Some(name)))
+                matches.iter().any(|item|
+                    item["name"].as_str()==Some(name)
+                    && item["schemaSha256"].as_str()==Some(current_schema.as_str())))
     });
     if !discovered {
-        return Err("이 실행에서 검색한 적 없는 도구입니다. dominion_tool_search로 먼저 찾으세요.".into());
+        return Err("이 도구의 현재 스키마로 다시 검색해야 합니다.".into());
     }
-    let all=catalog(state,session_id).await;
-    let definition=all.iter().find(|definition|tool_name(definition)==name)
-        .ok_or("도구가 더 이상 연결돼 있지 않거나 현재 세션에서 허용되지 않습니다.")?;
     let arguments=Value::Object(arguments.clone());
     let session=state.store.get("session",session_id).unwrap_or(Value::Null);
     if !tools::profile_tool_allowed(&session,name,&arguments) {
@@ -237,8 +255,8 @@ mod tests {
     async fn discovered_tool_needs_same_execution_receipt_and_real_schema() {
         let (state,dir)=state();
         state.store.put("session",&json!({"id":"owner"}));
-        state.store.put("execution",&json!({"id":"run-a","sessionId":"owner"}));
-        state.store.put("execution",&json!({"id":"run-b","sessionId":"owner"}));
+        state.store.put("execution",&json!({"id":"run-a","sessionId":"owner","status":"running"}));
+        state.store.put("execution",&json!({"id":"run-b","sessionId":"owner","status":"running"}));
         let results=search(&state,"owner",&json!({"query":"workspace read"})).await.unwrap();
         assert!(results["matches"].as_array().unwrap().iter().any(|r|r["name"]=="workspace_read"));
         state.store.put("execution_operation",&json!({"id":"search-a","runId":"run-a",
@@ -330,6 +348,59 @@ mod tests {
             .iter().map(|(_,d)|tool_name(d).to_string()).collect::<Vec<_>>();
         assert_eq!(before,after);
         assert!(ranked(&definitions,"qzzyzx-no-such-tool").is_empty());
+    }
+
+    #[tokio::test]
+    async fn stale_schema_receipt_and_finished_execution_cannot_dispatch(){
+        let (state,dir)=state();
+        state.store.put("session",&json!({"id":"owner"})).unwrap();
+        state.store.put("execution",&json!({"id":"run","sessionId":"owner","status":"running"})).unwrap();
+        let good=search(&state,"owner",&json!({"query":"workspace read","limit":8}))
+            .await.unwrap();
+        let payload=json!({"name":"workspace_read","arguments":{"path":"README.md"}});
+        let mut stale=good.clone();
+        for result in stale["matches"].as_array_mut().unwrap(){
+            if result["name"]=="workspace_read"{
+                result["schemaSha256"]=json!("stale-schema");
+            }
+        }
+        state.store.put("execution_operation",&json!({"id":"old-search","runId":"run",
+            "sessionId":"owner","origin":"model","status":"completed","tool":SEARCH,
+            "result":stale})).unwrap();
+        assert!(resolve(&state,"owner","run",&payload).await.is_err());
+        state.store.put("execution_operation",&json!({"id":"new-search","runId":"run",
+            "sessionId":"owner","origin":"model","status":"completed","tool":SEARCH,
+            "result":good})).unwrap();
+        assert!(resolve(&state,"owner","run",&payload).await.is_ok());
+        let mut run=state.store.get("execution","run").unwrap();
+        run["status"]=json!("completed");
+        state.store.put("execution",&run).unwrap();
+        assert!(resolve(&state,"owner","run",&payload).await.is_err());
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn owner_room_tool_revocation_immediately_invalidates_search_receipts(){
+        let (state,dir)=state();
+        state.store.put("room",&json!({"id":"r","toolsEnabled":true})).unwrap();
+        state.store.put("session",&json!({"id":"s","roomId":"r"})).unwrap();
+        state.store.put("execution",&json!({"id":"run","sessionId":"s","status":"running"})).unwrap();
+        let results=search(&state,"s",&json!({"query":"workspace read","limit":8}))
+            .await.unwrap();
+        assert!(results["matches"].as_array().unwrap().iter()
+            .any(|tool|tool["name"]=="workspace_read"));
+        state.store.put("execution_operation",&json!({"id":"search","runId":"run",
+            "sessionId":"s","origin":"model","status":"completed","tool":SEARCH,
+            "result":results})).unwrap();
+        let payload=json!({"name":"workspace_read","arguments":{"path":"README.md"}});
+        assert!(resolve(&state,"s","run",&payload).await.is_ok());
+        let mut room=state.store.get("room","r").unwrap();
+        room["toolsEnabled"]=json!(false);
+        state.store.put("room",&room).unwrap();
+        assert!(resolve(&state,"s","run",&payload).await.is_err());
+        assert_eq!(search(&state,"s",&json!({"query":"workspace read"}))
+            .await.unwrap()["matches"].as_array().unwrap().len(),0);
+        let _=std::fs::remove_dir_all(dir);
     }
 
 }
