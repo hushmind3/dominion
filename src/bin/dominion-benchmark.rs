@@ -1614,7 +1614,7 @@ mod tests {
         let cancelled=Arc::new(AtomicBool::new(false));
         let polls=Arc::new(AtomicUsize::new(0));
         let router=Router::new()
-            .route("/api/sessions/{id}/cancel",
+            .route("/api/sessions/:id/cancel",
                 ax_post(|AxumPath(id):AxumPath<String>,
                     State(flags):State<(Arc<AtomicBool>,Arc<AtomicUsize>)>|async move {
                     assert_eq!(id,"trial");
