@@ -48,12 +48,28 @@ fn source_name(v:&Value)->&str{v["sourceName"].as_str().unwrap_or("")}
 fn item_id(v:&Value)->&str{v["id"].as_str().unwrap_or("")}
 /// Different RSS feed names do not imply independent reporting: e.g. two
 /// sections of one publisher or a mirrored headline from one aggregator.
-fn source_host(v:&Value)->String{
-    let raw=v["url"].as_str().unwrap_or("");
-    let Ok(url)=reqwest::Url::parse(raw)else{return String::new()};
-    if url.scheme()!="https"{return String::new();}
-    let Some(host)=url.host_str()else{return String::new()};
-    let host=host.trim_start_matches("www.").to_ascii_lowercase();
+/// Publisher identity used by both Money causal-pair and historical
+/// asymmetry paths. A Google News link identifies an aggregator: it cannot
+/// prove distinct reporting origins without an archived RSS publisher URL.
+/// Prefer the publisher URL captured from the actual RSS <source> element.
+pub(crate) fn source_host(v:&Value)->String{
+    let publisher=v["publisherDomain"].as_str().unwrap_or("").trim();
+    let raw=if !publisher.is_empty(){
+        publisher.to_string()
+    }else{
+        let raw=v["url"].as_str().unwrap_or("");
+        let Ok(url)=reqwest::Url::parse(raw)else{return String::new()};
+        if url.scheme()!="https"{return String::new();}
+        let Some(host)=url.host_str()else{return String::new()};
+        host.to_string()
+    };
+    let host=raw.trim_start_matches("www.").to_ascii_lowercase();
+    if host=="news.google.com"||host=="google.com"
+        ||host.ends_with(".google.com"){return String::new();}
+    // The identifier must be a DNS name, not a feed label or arbitrary
+    // model text. Empty/unknown origins cannot count as separate sources.
+    if host.is_empty()||host.contains('/')||host.contains(':')
+        ||host.split('.').count()<2{return String::new();}
     let labels=host.split('.').collect::<Vec<_>>();
     let suffixes=["co.kr","or.kr","go.kr","com.cn","com.tw","co.jp","co.uk","com.au","co.nz"];
     let depth=if suffixes.iter().any(|suffix|host.ends_with(&format!(".{suffix}"))){3}else{2};
@@ -90,6 +106,11 @@ fn pair_score(supply:&Value,buyer:&Value,pattern:Mechanism)->Option<f64>{
     if supply_host.is_empty()||buyer_host.is_empty()||supply_host==buyer_host{
         return None;
     }
+    // A syndicated copy of one story has two URLs but remains one
+    // observation, even when syndicated by different news organizations.
+    let supply_story=supply["storyClusterId"].as_str().unwrap_or("");
+    let buyer_story=buyer["storyClusterId"].as_str().unwrap_or("");
+    if !supply_story.is_empty() && supply_story==buyer_story{return None;}
     let differences=a.iter().filter(|t|!b.contains(t)).count()
         +b.iter().filter(|t|!a.contains(t)).count();
     if differences==0{return None;}
@@ -203,6 +224,22 @@ mod tests{
             article("b","B",&["hardware"],"cost_rise")];
         assert!(discover(&data,12).is_empty());
     }
+    #[test] fn google_news_mirrors_do_not_count_as_independent_publishers(){
+        let a=json!({"url":"https://news.google.com/rss/articles/one",
+            "sourceName":"KR buyer news","publisherDomain":""});
+        let b=json!({"url":"https://news.google.com/rss/articles/two",
+            "sourceName":"CN supplier news","publisherDomain":""});
+        assert_eq!(source_host(&a),"");
+        assert_eq!(source_host(&b),"");
+        let reuters=json!({"url":"https://news.google.com/rss/articles/one",
+            "sourceName":"KR buyer news","publisherDomain":"www.reuters.com"});
+        assert_eq!(source_host(&reuters),"reuters.com");
+        let finance=json!({"url":"https://markets.reuters.com/article/one"});
+        assert_eq!(source_host(&finance),"reuters.com");
+        let other=json!({"url":"https://example.org/report"});
+        assert_eq!(source_host(&other),"example.org");
+    }
+
     #[test] fn two_feeds_from_same_publisher_are_not_independent_sources(){
         let a=article("a","Feed A",&["hardware"],"cost_drop");
         let mut b=article("b","Feed B",&["construction"],"cost_rise");
