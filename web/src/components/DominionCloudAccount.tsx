@@ -79,10 +79,8 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',hideMan
  }
  useEffect(()=>{if(managementTab==='providers'&&!catalog.length)void loadCatalog()},[managementTab])
  async function connectCatalog(){
-  if(!catalogKey.trim()){setCatalogMessage('API 키를 입력한 후 연결하세요.');return}
   const entry=catalog.find(p=>p.id===catalogId)
   if(!entry)return
-  if(!catalogKey.trim()){setCatalogMessage('API 키를 입력한 뒤 연결하세요. 업체와 모델 정보 검색은 키 없이 가능합니다.');return}
   setCatalogBusy(true);setCatalogMessage('')
   try{
    const baseUrl=entry.api.replace(/\/$/,'')
@@ -208,7 +206,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',hideMan
      <option value="">업체를 선택하세요</option>
      {visibleCatalog.map(p=><option key={p.id} value={p.id}>{p.name} ({p.models})</option>)}
     </select>
-    <div className="flex items-center gap-2 text-[12px]"><button type="button" className="rounded border px-2 py-1" disabled={providerPage===0} onClick={()=>setProviderPage(p=>Math.max(0,p-1))}>이전</button><span>{providerPage+1} / {providerPageCount}</span><button type="button" className="rounded border px-2 py-1" disabled={providerPage+1>=providerPageCount} onClick={()=>setProviderPage(p=>p+1)}>다음</button></div>
+    <div className="flex items-center gap-2 text-[12px]"><button type="button" className="rounded border px-2 py-1" disabled={providerPage===0} onClick={()=>{setProviderPage(p=>Math.max(0,p-1));setCatalogId('');setCatalogModels([]);setCatalogProviderId('')}}>이전</button><span>{providerPage+1} / {providerPageCount}</span><button type="button" className="rounded border px-2 py-1" disabled={providerPage+1>=providerPageCount} onClick={()=>{setProviderPage(p=>p+1);setCatalogId('');setCatalogModels([]);setCatalogProviderId('')}}>다음</button></div>
     <input type="password" autoComplete="off" aria-label="업체 API 키" value={catalogKey} onChange={e=>setCatalogKey(e.target.value)} placeholder="API 키" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
     <button type="button" disabled={catalogBusy||!catalogId} onClick={()=>void connectCatalog()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">연결 및 모델 조회</button>
    </div>}
