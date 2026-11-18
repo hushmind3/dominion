@@ -65,6 +65,14 @@ impl Snapshot{
     }
     pub fn finish_model(&mut self,store:&dyn Journal)->Result<(),String>{self.model_in_flight=false;store.save(self)}
     pub fn complete(&mut self,answer:String,store:&dyn Journal)->Result<(),String>{
+        // A stop or owner cancellation can race with the final verified
+        // checkpoint. Never turn a cancelled/failed run back into completed.
+        if store.cancelled(&self.native.id.to_string()){
+            return Err("실행이 중단되었습니다.".into());
+        }
+        if self.native.status!=RunStatus::Running {
+            return Err("실행 중인 작업만 완료 상태로 전환할 수 있습니다.".into());
+        }
         if !self.settled(){return Err("보류 중인 작업·승인·하위 작업을 건너뛰어 완료할 수 없습니다.".into());}
         self.native.status=RunStatus::Completed;self.native.answer=Some(answer);store.save(self)
     }
@@ -158,6 +166,22 @@ mod tests{
     impl Dispatcher for Tool{type Output=();fn execute<'a>(&'a self,_:&'a Action)->BoxFuture<'a,Result<DispatchResult<()>,String>>{Box::pin(async move{self.0.fetch_add(1,Ordering::SeqCst);Ok(DispatchResult{output:(),observation:json!({"written":true}),success:true})})}}
     fn run()->Snapshot{Snapshot::new(&uuid::Uuid::new_v4().to_string(),"create a file",8).unwrap()}
     fn action()->Action{Action{id:"c".into(),tool:"workspace_write".into(),arguments:json!({"path":"a","content":""}),depends_on:vec![]}}
+    #[test]
+    fn cancelled_native_run_cannot_be_revived_by_late_completion() {
+        struct CancelJournal;
+        impl Journal for CancelJournal {
+            fn save(&self,_:&Snapshot)->Result<(),String>{Ok(())}
+            fn cancelled(&self,_:&str)->bool{true}
+        }
+        let mut snapshot=run();
+        assert!(snapshot.complete("late".into(),&CancelJournal).is_err());
+        assert_eq!(snapshot.native.status,RunStatus::Running);
+        snapshot.native.status=RunStatus::Cancelled;
+        let journal=Memory{saved:Mutex::new(None),fail:false};
+        assert!(snapshot.complete("revive".into(),&journal).is_err());
+        assert_eq!(snapshot.native.status,RunStatus::Cancelled);
+    }
+
     #[test]
     fn pending_approval_and_unsettled_child_block_paid_calls_and_false_completion() {
         let journal=Memory{saved:Mutex::new(None),fail:false};
