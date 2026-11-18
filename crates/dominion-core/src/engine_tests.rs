@@ -54,6 +54,8 @@ struct Fixture {
     shortcut: bool,
     cancel_after_model: bool,
     confirmations: VecDeque<Flow>,
+    reconcile_on_receipt: bool,
+    reconcile_calls: usize,
 }
 impl Fixture {
     fn new() -> Self {
@@ -73,6 +75,8 @@ impl Fixture {
             shortcut: false,
             cancel_after_model: false,
             confirmations: VecDeque::new(),
+            reconcile_on_receipt: false,
+            reconcile_calls: 0,
         }
     }
     async fn drive(&mut self, rounds: usize) -> Result<(), String> {
@@ -205,6 +209,20 @@ impl Host for Fixture {
             Ok(Flow::Continue)
         })
     }
+    fn reconcile_verified<'a>(
+        &'a mut self,
+        ctx: &'a mut Context<'_>,
+    ) -> BoxFuture<'a, Result<Flow, String>> {
+        Box::pin(async move {
+            self.reconcile_calls += 1;
+            let accepted = self.reconcile_on_receipt
+                && ctx.snapshot.receipts.iter().any(|receipt| receipt.success);
+            if accepted {
+                self.trace.push("reconcile");
+            }
+            Ok(if accepted { Flow::Complete } else { Flow::Continue })
+        })
+    }
     fn exhausted(&mut self) -> Result<(), String> {
         Err("round budget exhausted".into())
     }
@@ -255,6 +273,47 @@ async fn driver_retries_failed_verification_and_completes_only_after_evidence() 
     assert_eq!(saved.receipts.len(), 1);
     assert!(saved.receipts[0].success);
     assert!(!saved.model_in_flight);
+}
+
+#[tokio::test]
+async fn kernel_settles_verified_receipt_without_reserving_final_model_round() {
+    let mut host = Fixture::new();
+    host.reconcile_on_receipt = true;
+    host.replies.push_back(ModelDecision::Tools);
+    host.drive(1).await.expect("verified tool result should finish in one round");
+    assert_eq!(host.models, 1);
+    assert_eq!(host.effects.load(Ordering::SeqCst), 1);
+    assert!(host.trace.contains(&"reconcile"));
+    let saved = host.store.saved.lock().unwrap();
+    assert_eq!(saved.native.status, hosted::Status::Completed);
+    assert_eq!(saved.native.steps, 1);
+    assert_eq!(saved.receipts.len(), 1);
+}
+
+#[tokio::test]
+async fn kernel_never_reconciles_an_uncertain_tool_intent() {
+    let mut host = Fixture::new();
+    host.reconcile_on_receipt = true;
+    {
+        let mut stored = host.store.saved.lock().unwrap();
+        stored.native.in_flight = Some(crate::domain::ToolCall {
+            id: "uncertain".into(),
+            name: "workspace_write".into(),
+            arguments: json!({"path":"x"}),
+        });
+        stored.receipts.push(crate::hosted::Receipt {
+            id: "earlier".into(),
+            tool: "workspace_write".into(),
+            arguments: json!({"path":"x"}),
+            success: true,
+            result: json!({"ok":true}),
+            step: 1,
+        });
+    }
+    assert!(host.drive(1).await.is_err());
+    assert_eq!(host.reconcile_calls, 0);
+    assert_eq!(host.models, 0);
+    assert_ne!(host.store.saved.lock().unwrap().native.status, hosted::Status::Completed);
 }
 
 #[tokio::test]
