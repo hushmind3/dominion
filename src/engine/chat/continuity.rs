@@ -316,8 +316,23 @@ pub(super) fn note_hint(state: &AppState, provider: &ProviderRef, wire: CacheWir
     }));
 }
 
+/// Workers AI documents session-affinity as the native cache routing hint.
+/// Its OpenAI-compatible endpoint is not guaranteed to accept the unrelated
+/// prompt_cache_key JSON field: never burn an HTTP 400 + retry probing it.
+fn cloudflare_route(state:&AppState,provider:&ProviderRef)->bool{
+    provider.base_url.to_ascii_lowercase().contains("cloudflare.com")
+        || state.store.get("provider",&provider.id)
+            .is_some_and(|record|record["integration"]=="cloudflare-workers-ai")
+}
+
 /// Both HTTP and WebSocket must send the same negotiated cache identity.
 pub(super) fn hinted_body(state: &AppState, provider: &ProviderRef, original: &Value, plan: &mut Value, wire: CacheWire) -> Value {
+    if matches!(wire,CacheWire::Key) && cloudflare_route(state,provider){
+        plan["cacheHint"]=json!("x-session-affinity");
+        plan["wireHintSent"]=json!(false);
+        plan["cacheHintAcceptance"]=Value::Null;
+        return original.clone();
+    }
     let known=state.store.get("provider_wire_feature", &feature_id(provider,wire));
     let disabled=known.as_ref().is_some_and(|record|record["accepted"]==false
         && record["expiresAt"].as_i64().is_some_and(|until|until>chrono::Utc::now().timestamp()));
@@ -341,8 +356,7 @@ pub(super) async fn send(
         .and_then(|record|record["integration"].as_str().map(str::to_string))
         .unwrap_or_default();
     let opencode_go=integration=="opencode-go";
-    let cloudflare=provider.base_url.to_ascii_lowercase().contains("cloudflare.com")
-        || integration=="cloudflare-workers-ai";
+    let cloudflare=cloudflare_route(state,provider);
     for attempt in 1..=2 {
         plan["httpRequests"]=json!(attempt);
         let mut request=builder.try_clone().ok_or("모델 요청을 복제할 수 없습니다.")?;
