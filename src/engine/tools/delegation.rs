@@ -210,7 +210,8 @@ mod profile_tests {
     use super::*;
     #[test]
     fn delegated_role_tool_matrix_restricts_mutations_and_verification_commands() {
-        let inspect=json!({"delegationProfile":"inspection","readOnly":true});
+        let inspect=json!({"delegationProfile":"inspection","readOnly":true,
+            "delegationWorkspace":{"path":"/tmp"}});
         let verify=json!({"delegationProfile":"verification","delegationWorkspace":{"path":"/tmp"}});
         let implement=json!({"delegationProfile":"implementation","delegationWorkspace":{"path":"/tmp"}});
         assert!(profile_tool_visible(&inspect, "workspace_read"));
