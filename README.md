@@ -29,6 +29,14 @@ DOMINION is an owner-controlled, model/provider-independent **Rust agent executi
 - `web/src`: the existing conversation, workspace, memory, providers, rooms, channels, plugins, developer tools, job state and operator controls.
 - `src/state.rs`, `src/engine/chat/runtime.rs`, `src/engine/rooms.rs`: reusable, timeout-scoped model HTTP clients, durable per-speaker latency observations, progress-aware room E2E coverage, and event-driven cancellation with a low-frequency cross-process reconciliation fallback instead of 50ms SQLite polling.
 
+### Progressive discovery for ordinary/room chat (sub3, 2026-11-18)
+
+The autonomous native SDK already has a bounded `dominion_tool_search` / `dominion_tool_call` receipt contract. The earlier chat room path showed only a small keyword-selected tool list, with no way for the SAME running turn to discover a different owner-connected capability. `src/engine/chat/runtime/capability.rs` now offers those same model-facing commands when the full catalog is large and the room/agent shortlist was reduced. Casual room conversation, tools-disabled turns and the deterministic single-file fast path do not expose the bridge; full-catalog ordinary chat retains its previous native tool presentation.
+
+A search reads the current OAuth/MCP owner-authorized catalog (no agent-created grant), ranks tools with the native SDK's existing Rust relevance function, and records exact names, bounded schemas and SHA-256 schema fingerprints through the original `execution_operation` journal. A subsequent call must point to a **completed search in the same active execution and session**, and the current tool permission, room/session tools-enabled state, source schema and JSON arguments are checked again. The bridge resolves to the actual tool before the **existing** `dominion_agent_sdk::dispatch_batch`, approval gate, effect WAL, error handling and budget settlement. It does not create another agent loop or allow new standalone executors.
+
+Tests cover no unwanted bridge on disabled/casual/single-file paths, no cross-execution receipt, schema-required fields, post-search read-only revocation, post-search room-tools-off and tampered schema evidence. All code remains confined to `dominion-sub3`. This is verified development-contract coverage, **not** measured frontier-model task success or a claim that chat and native jobs already share a single top-level turn loop.
+
 ### 2026 harness cost/selection convergence (sub3)
 
 - **No redundant acceptance reviewer model:** ordinary chat now uses deterministic host acceptance evidence as its retry instruction for the next *existing* model turn, rather than calling an additional paid `review_action` LLM for the same failed predicate. The host verification/receipt/approval gates are unchanged.
