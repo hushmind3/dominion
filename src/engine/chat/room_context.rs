@@ -397,15 +397,24 @@ pub(crate) fn compile(
         ]
         .iter()
         .any(|term| query.to_lowercase().contains(term));
-    // The shared read model covers every participant. Raw peer messages are
-    // task evidence, not a partial roster from which to infer absence.
-    let keep_speakers = if deep_context { 6 } else { 3 };
+    // 2026 role-conditioned routing: the room-wide roster stays in the
+    // shared frame, while raw peer speech competes for the *remaining* budget.
+    // Pin only the most recent peers, not six long replies on every turn.
+    // Every speaker's own last reply is protected independently below.
+    let candidate_speakers = if deep_context { 8 } else { 4 };
+    let pinned_speakers = if deep_context { 2 } else { 1 };
     let mut speaker_indices = current_speakers.values().copied().collect::<Vec<_>>();
     speaker_indices.sort_unstable();
-    let current_contributions = speaker_indices
+    let current_speaker_candidates = speaker_indices
         .iter()
         .rev()
-        .take(keep_speakers)
+        .take(candidate_speakers)
+        .copied()
+        .collect::<HashSet<_>>();
+    let pinned_current_speakers = speaker_indices
+        .iter()
+        .rev()
+        .take(pinned_speakers)
         .copied()
         .collect::<HashSet<_>>();
     let mut candidates = Vec::new();
@@ -419,7 +428,7 @@ pub(crate) fn compile(
         let mut history = vec![row.clone()];
         let order = index;
         let required = index == source
-            || current_contributions.contains(&index)
+            || pinned_current_speakers.contains(&index)
             || Some(index) == previous_owner
             || Some(index) == previous_self
             || Some(index) == previous_self_source
@@ -500,6 +509,7 @@ pub(crate) fn compile(
         .filter(|i| {
             !candidates[*i].required
                 && (scores[*i] > 0.0
+                    || current_speaker_candidates.contains(&candidates[*i].order)
                     || candidates[*i].priority
                         && candidates[*i]
                             .evidence
@@ -509,7 +519,14 @@ pub(crate) fn compile(
         .collect::<Vec<_>>();
     remaining.sort_by(|a, b| {
         let value = |i: usize| {
-            (scores[i] + f64::from(candidates[i].priority))
+            // A modest recency bonus preserves turn coordination without
+            // allowing unrelated peer text to bypass the token budget.
+            let peer_bonus = if current_speaker_candidates.contains(&candidates[i].order) {
+                0.75
+            } else {
+                0.0
+            };
+            (scores[i] + f64::from(candidates[i].priority) + peer_bonus)
                 / ((candidates[i].cost.max(1) as f64).sqrt())
         };
         value(*b)
@@ -612,6 +629,9 @@ pub(crate) fn compile(
         "historyTokens":estimate(&json!(history).to_string()).saturating_sub(memory_tokens+owner_state_tokens+shared_tokens),
         "systemTokens":estimate(&prompt).saturating_sub(persona_tokens),"toolSchemaTokens":schema_tokens,"totalInputTokens":input_estimate(&messages,tools),
         "previousSelfMessageId":previous_self.map(|index|all[index]["id"].clone()),
+        "peerCandidates":current_speaker_candidates.len(),
+        "peerPinned":pinned_current_speakers.len(),
+        "peerSelected":selected_history.iter().filter(|index|current_speaker_candidates.contains(&candidates[**index].order)).count(),
         "selectedMessageIds":rows.iter().map(|row|row["id"].clone()).collect::<Vec<_>>(),"availableMessages":all.len(),"exactDuplicatesExcluded":rejected});
     items.push(json!({"kind":"system_prompt_final","chars":prompt.chars().count(),"digest":memory::stable_id(&[&prompt])}));
     items.push(json!({"kind":"room_context","selection":"bm25-cost-v1","accounting":accounting}));
@@ -950,6 +970,40 @@ mod tests {
         assert!(json!(compiled.history).to_string().contains("각자 선택한 식별자"));
         assert!(compiled.system.prompt.contains("PERSONA_MUST_SURVIVE"));
         assert!(!compiled.system.prompt.contains("날짜:"));
+        let cleanup_dir = state.config.data_dir.clone();
+        drop(state);
+        std::fs::remove_dir_all(cleanup_dir).unwrap();
+    }
+
+    #[test]
+    fn nine_speaker_discussion_admits_peer_context_under_budget() {
+        let state = state();
+        state.store.put("room", &json!({"id":"r","contextBudgetTokens":2400}));
+        message(&state, "current", "user", "구조를 분석하고 결과를 검토해라");
+        for index in 0..9 {
+            state.store.write_message(&json!({
+                "id": format!("peer-long-{index}"),
+                "session_id": "room:r", "role": "assistant",
+                "agent_id": format!("peer-{index}"),
+                "content": format!("peer {index} {}", "unrelatedcontext".repeat(100)),
+                "metadata": {"replyToMessageId":"current"}
+            })).unwrap();
+        }
+        let request = TurnRequest::from_value(&json!({
+            "input":"구조를 분석하고 결과를 검토해라",
+            "agentId":"another-agent","toolsEnabled":false
+        })).unwrap();
+        let compiled = compile(&state, &request, "room:r", "current", &[], &[]).unwrap();
+        assert_eq!(compiled.accounting["peerCandidates"], 8);
+        assert_eq!(compiled.accounting["peerPinned"], 2);
+        let selected = compiled.accounting["selectedMessageIds"].as_array().unwrap();
+        assert!(selected.iter().any(|id|id == "peer-long-8"));
+        assert!(selected.iter().any(|id|id == "peer-long-7"));
+        assert!(selected.len() < 10, "all nine large replies must not be mandatory");
+        assert!(compiled.accounting["requiredInputTokens"].as_u64().unwrap()
+            < 2400, "budgeted context must not be overwhelmed by raw peer replies");
+        assert_eq!(state.store.messages("room:r").len(), 10,
+            "routing must never delete the durable transcript");
         let cleanup_dir = state.config.data_dir.clone();
         drop(state);
         std::fs::remove_dir_all(cleanup_dir).unwrap();
