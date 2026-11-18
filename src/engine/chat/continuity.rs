@@ -173,6 +173,17 @@ pub(crate) fn project(
             }
         }
     }
+    // Distinguish host-side history reuse from provider-side cache reads.
+    // These are estimates of the serialized model-visible history, not
+    // billable token deltas. Server cache hits are measured from usage data.
+    let estimate_frames = |records: &[Value]| -> usize {
+        super::room_context::estimate(&json!(records.iter()
+            .map(|record| &record["message"]).collect::<Vec<_>>()).to_string())
+    };
+    let estimated_reused_history_tokens = if reused == 0 { 0 }
+        else { estimate_frames(&frames[..reused]) };
+    let estimated_new_history_tokens = if reused >= frames.len() { 0 }
+        else { estimate_frames(&frames[reused..]) };
     let mut projected = vec![wire_message(&messages[0])];
     projected.extend(frames.iter().map(|frame|frame["message"].clone()));
     plan["workingView"] = json!({
@@ -182,6 +193,9 @@ pub(crate) fn project(
         "reclaimedStaleRoomSnapshots":stale_snapshots,
         "inputDigest":stable_id(&[&json!(projected).to_string()]),
         "estimatedInputTokens":super::room_context::input_estimate(&projected, tools),
+        "estimatedReusedHistoryTokens":estimated_reused_history_tokens,
+        "estimatedNewHistoryTokens":estimated_new_history_tokens,
+        "historyEstimateKind":"host-projection-not-provider-cache-or-billing",
     });
     (projected, Some(Projection { frames, dependencies, signature, epoch }))
 }
@@ -654,11 +668,18 @@ mod tests {
         assert_eq!(second_wire.iter().filter(|row|row["content"]=="same words").count(),2);
         assert_eq!(second_plan["workingView"]["reusedFrames"],3);
         assert_eq!(second_plan["workingView"]["appendedFrames"],1);
+        assert!(second_plan["workingView"]["estimatedReusedHistoryTokens"]
+            .as_u64().is_some_and(|n|n>0));
+        assert!(second_plan["workingView"]["estimatedNewHistoryTokens"]
+            .as_u64().is_some_and(|n|n>0));
+        assert_eq!(second_plan["workingView"]["historyEstimateKind"],
+            "host-projection-not-provider-cache-or-billing");
         // A changed persona invalidates the prefix without dropping the fresh
         // selected evidence, and budget rotation never cuts mandatory input.
         let mut edited=second.clone();edited[0]["content"]=json!("edited identity");
         let (rebased,_)=project(&state,&changed,&edited,&[],"room:test",&mut second_plan);
         assert_eq!(second_plan["workingView"]["rebaseReason"],"contract_changed");
+        assert_eq!(second_plan["workingView"]["estimatedReusedHistoryTokens"],0);
         assert_eq!(rebased.len(),edited.len());
         state.store.put("room",&json!({"id":"test","contextBudgetTokens":1}));
         let (bounded,_)=project(&state,&changed,&second,&[],"room:test",&mut second_plan);
