@@ -46,6 +46,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Harness and product contract tests (dev profile only)
         run: |
+          node scripts/check-lean-product.mjs
           test ! -d crates/harness
           ! grep -q 'dominion-harness' Cargo.toml
           ! grep -q 'dominion_harness::' src/api/sdk.rs
