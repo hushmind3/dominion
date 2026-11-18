@@ -108,6 +108,25 @@ pub(super) fn plan_chain(chain: &[(String, String)], incoming: &[(String, String
     }
 }
 
+/// Diagnostic only: a changed context window must never be silently reused.
+/// Distinguish eviction of already-sent leading history from an edited prefix
+/// without claiming that every such eviction was caused by a particular policy.
+fn rebase_reason(chain:&[(String,String)],incoming:&[(String,String)]) -> &'static str {
+    if chain.is_empty() { return "new_chain"; }
+    if incoming.is_empty() { return "empty_input"; }
+    if chain.len()>=incoming.len() && chain.starts_with(incoming) {
+        return "no_new_items";
+    }
+    // An earlier prefix was omitted while the retained chronological suffix
+    // is still byte-identical. Reusing the remote prefix is NOT safe without a
+    // distinct context-epoch policy; this is recorded for targeted optimization.
+    let overlap=(1..=chain.len().min(incoming.len())).rev().find(|size|
+        chain[chain.len()-size..]==incoming[..*size]);
+    if overlap.is_some() { return "leading_window_evicted"; }
+    if chain.first()!=incoming.first() {return "prefix_changed"; }
+    "context_rewritten_or_reordered"
+}
+
 /// Assistant items the server added to the chain. The next request rebuilds
 /// these from persisted messages, so they must be part of the comparison base.
 fn assistant_items(response: &Value, fallback_text: &str) -> Vec<Value> {
@@ -308,6 +327,11 @@ pub(super) async fn stream(
         .map(item_signature)
         .collect::<Vec<(String, String)>>();
     let plan = plan_chain(&guard.items, &incoming);
+    let rebase = if plan == Plan::Full {
+        rebase_reason(&guard.items, &incoming)
+    } else {
+        "none"
+    };
     match exchange(
         state,
         provider,
@@ -334,6 +358,7 @@ pub(super) async fn stream(
                 transport: json!({
                     "wire":"websocket",
                     "mode":if delta_items == 0 {"full"} else {"delta"},
+                    "rebaseReason":if delta_items == 0 {rebase} else {"none"},
                     "deltaItems":input.len().saturating_sub(delta_items),
                     "chainReusedItems":delta_items,
                     "chainItems":guard.items.len(),
@@ -386,6 +411,7 @@ pub(super) async fn stream(
                         transport: json!({
                             "wire":"websocket",
                             "mode":"full-after-reconnect",
+                            "rebaseReason":"transport_reconnected",
                             "deltaItems":input.len(),
                             "chainReusedItems":0,
                             "chainItems":guard.items.len(),
@@ -697,6 +723,27 @@ mod tests {
             item_signature(&item("user", "next")),
         ];
         assert_eq!(plan_chain(&chain, &incoming), Plan::Full);
+    }
+
+    #[test]
+    fn rebase_diagnostics_separate_window_eviction_from_modified_context() {
+        let previous=vec![
+            ("user".to_string(),"old".to_string()),
+            ("assistant".to_string(),"answer".to_string()),
+            ("user".to_string(),"current".to_string()),
+        ];
+        let shifted=vec![
+            ("assistant".to_string(),"answer".to_string()),
+            ("user".to_string(),"current".to_string()),
+            ("user".to_string(),"next".to_string()),
+        ];
+        assert_eq!(plan_chain(&previous,&shifted),Plan::Full,
+            "an evicted prefix cannot be silently treated as a safe delta");
+        assert_eq!(rebase_reason(&previous,&shifted),"leading_window_evicted");
+        assert_eq!(rebase_reason(&previous,&[
+            ("user".into(),"owner changed".into()),("assistant".into(),"answer".into()),
+            ("user".into(),"current".into()),("user".into(),"next".into())
+        ]),"prefix_changed");
     }
 
     #[test]
