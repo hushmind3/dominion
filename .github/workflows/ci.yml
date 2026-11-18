@@ -54,6 +54,8 @@ jobs:
         run: cargo test --locked --bin dominion-rust engine::adaptation_loop::selection_tests
       - name: Frozen acceptance obligation graph (dev profile)
         run: cargo test --locked --bin dominion-rust engine::decompose::tests
+      - name: Source-evidence memory reranking (dev profile)
+        run: cargo test --locked --bin dominion-rust lineage_rerank_prefers_real_tool_receipts
       - name: Algorithm activation and retired-kernel regressions (dev profile)
         run: cargo test --locked --bin dominion-rust engine::algorithms::tests
       - name: Policy experiment acceptance regressions (dev profile)

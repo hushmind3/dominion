@@ -49,7 +49,7 @@ pub fn executable_kernels(kind: &str) -> &'static [&'static str] {
         "task.decomposition" => &["acceptance-lineage-dag-2026"],
         "execution.budget" => &["standard", "extended", "lean"],
         "memory.retrieval" => &["lexical", "failure-first", "balanced"],
-        "memory.rerank" => &["none", "bm25", "bm25-importance"],
+        "memory.rerank" => &["evidence-lineage-2026"],
         "memory.importance" => &["recency-uses", "fixed", "evidence-weighted"],
         "memory.forgetting" => &["decay", "never"],
         "memory.compaction" => &["exact", "never"],
@@ -338,24 +338,10 @@ pub fn builtins() -> Vec<Value> {
         ),
         builtin(
             "memory.rerank",
-            "none",
-            "none",
-            "기존 검색 점수를 그대로 사용한다.",
-            json!({}),
-        ),
-        builtin(
-            "memory.rerank",
-            "bm25",
-            "bm25",
-            "BM25 문서 빈도·길이 정규화로 재랭킹한다.",
-            json!({"k1": 1.2, "b": 0.75}),
-        ),
-        builtin(
-            "memory.rerank",
-            "bm25-importance",
-            "bm25-importance",
-            "BM25에 저장 중요도와 사용 신호를 더한다.",
-            json!({"k1": 1.2, "b": 0.75}),
+            "evidence-lineage-2026",
+            "evidence-lineage-2026",
+            "Prioritize genuine native owner/tool message evidence and contested memory status before lexical tie-breaks.",
+            json!({"source":"native_message","missingProvenance":"unverified"}),
         ),
         builtin(
             "memory.compression",
@@ -1729,43 +1715,37 @@ mod tests {
     }
 
     #[test]
-    fn activation_requires_evaluation_evidence_unless_forced() {
-        let (state, dir) = state();
+    fn evidence_lineage_requires_verified_promotion_and_archives_bm25() {
+        let (state,dir)=state();
         seed(&state);
-        let record = register(
-            &state,
-            &json!({
-                "kind": "memory.rerank",
-                "name": "bm25-candidate",
-                "variant": "bm25",
-                "implementation": "bm25"
-            }),
-        )
-        .unwrap();
-        let id = record["id"].as_str().unwrap();
-        assert!(activate_checked(&state, id, false).is_err());
-        state.store.put(
-            "algorithm_eval",
-            &json!({
-                "id": "eval-1",
-                "dimensions": [
-                    {"kind": "memory.rerank", "winner": "bm25", "recommendation": "promote"}
-                ]
-            }),
-        );
-        assert!(activate_checked(&state, id, false).is_ok());
-        let other = register(
-            &state,
-            &json!({
-                "kind": "memory.rerank",
-                "name": "none-manual",
-                "variant": "none",
-                "implementation": "none"
-            }),
-        )
-        .unwrap();
-        assert!(activate_checked(&state, other["id"].as_str().unwrap(), true).is_ok());
-        let _ = std::fs::remove_dir_all(dir);
+        let candidate=register(&state,&json!({
+            "kind":"memory.rerank","name":"source-verified-candidate",
+            "implementation":"evidence-lineage-2026",
+            "parameters":{"purpose":"owner-evaluation"}
+        })).unwrap();
+        let id=candidate["id"].as_str().unwrap();
+        assert!(activate_checked(&state,id,false).is_err());
+        state.store.put("algorithm_eval",&json!({
+            "id":"proof-eval-1","dimensions":[
+                {"kind":"memory.rerank","winner":"evidence-lineage-2026",
+                 "recommendation":"promote"}
+            ]
+        }));
+        assert!(activate_checked(&state,id,false).is_ok());
+        assert_eq!(active(&state,"memory.rerank").unwrap()["id"],candidate["id"]);
+        assert!(register(&state,&json!({
+            "kind":"memory.rerank","name":"legacy-bm25","implementation":"bm25"
+        })).is_err());
+        state.store.put("algorithm",&json!({
+            "id":"old-bm25","kind":"memory.rerank",
+            "implementation":"bm25","name":"archived-bm25","status":"active"
+        }));
+        assert!(activate_checked(&state,"old-bm25",true).is_err());
+        assert!(list(&state)["kinds"].as_array().unwrap().iter()
+            .find(|row|row["kind"]=="memory.rerank").unwrap()
+            ["algorithms"].as_array().unwrap().iter()
+            .any(|row|row["id"]=="old-bm25" && row["retired"]==true));
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]

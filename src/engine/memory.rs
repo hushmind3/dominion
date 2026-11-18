@@ -324,8 +324,9 @@ pub fn retrieve(store: &Store, scope: &MemoryScope, query: &str, limit: usize) -
     retrieve_ranked(store, scope, query, limit, &algorithm)
 }
 
-/// Uses the exact kernel selected by the agent's UCB at the start of this turn.
-/// The compatibility wrapper above retains explicit global activation.
+/// Legacy store-only entrypoint. The runtime context path selects the
+/// evidence-lineage kernel through the owner's active algorithm registry.
+
 fn retrieve_ranked(
     store: &Store, scope: &MemoryScope, query: &str, limit: usize, algorithm: &Value,
 ) -> Vec<Value> {
@@ -369,6 +370,37 @@ pub(crate) fn bm25_scores(
             }
             total
         })
+}
+
+/// Lineage tier is derived from actual persisted owner/tool messages, never
+/// from model-reported confidence or a claimed source ID. A source disagreement
+/// preserves the memory for review but cannot grant it a proof advantage.
+fn native_lineage_tier(store: &Store, cache: &mut RecallCache, record: &Value) -> u8 {
+    if record["counterexampleIds"].as_array().is_some_and(|ids|!ids.is_empty())
+        || record["verificationStatus"]=="refuted" {
+        return 0;
+    }
+    let Some(ids)=record["sourceMessageIds"].as_array()
+        .filter(|ids|!ids.is_empty() && ids.len()<=32) else {
+        return if record["source"]=="user" {1} else {0};
+    };
+    let mut has_tool_receipt=false;
+    for id in ids {
+        let Some(id)=id.as_str() else {return 0};
+        let Some(message)=cache.message(store,id) else {return 0};
+        if record["sessionId"].as_str().is_some_and(|session|
+            message["session_id"].as_str()!=Some(session)) {
+            return 0;
+        }
+        let role=message["role"].as_str().unwrap_or("");
+        if role=="tool" {
+            has_tool_receipt=true;
+        } else if role!="user" || message["metadata"]["authorKind"]!="owner"
+            || message["metadata"]["origin"].is_object() {
+            return 0;
+        }
+    }
+    if has_tool_receipt {3} else {2}
 }
 
 fn retrieve_ranked_with_rerank(
@@ -476,10 +508,11 @@ fn retrieve_ranked_with_rerank(
             rerank["parameters"]["b"].as_f64().unwrap_or(0.75),
         )
     });
+    let evidence_lineage = rerank_strategy == "evidence-lineage-2026";
     let mut scored = records
         .into_iter()
         .enumerate()
-        .filter_map(|(record_index, record)| {
+        .filter_map(|(record_index, mut record)| {
             let text = record["text"].as_str()?;
             let extracted;
             let memory_terms = match &corpus {
@@ -529,23 +562,38 @@ fn retrieve_ranked_with_rerank(
             } else {
                 relevance * 10.0 + if phrase { 4.0 } else { 0.0 } + importance + bonus
             };
-            Some((score, record))
+            let provenance_tier = if evidence_lineage {
+                native_lineage_tier(store,&mut cache,&record)
+            } else {0};
+            if evidence_lineage {
+                record["retrievalEvidence"]=json!({
+                    "basis":"persisted_native_message_lineage",
+                    "tier":provenance_tier,
+                    "unverified":provenance_tier==0,
+                    "counterexamples":record["counterexampleIds"].as_array()
+                        .map(Vec::len).unwrap_or(0),
+                });
+            }
+            Some((score, provenance_tier, phrase, matched, record))
         })
         .collect::<Vec<_>>();
     scored.sort_by(|a, b| {
-        b.0.total_cmp(&a.0)
-            .then_with(|| {
-                b.1["createdAt"]
-                    .as_str()
-                    .unwrap_or("")
-                    .cmp(a.1["createdAt"].as_str().unwrap_or(""))
-            })
-            .then_with(|| a.1["id"].as_str().cmp(&b.1["id"].as_str()))
+        (if evidence_lineage {
+            b.1.cmp(&a.1)
+                .then_with(||b.2.cmp(&a.2))
+                .then_with(||b.3.cmp(&a.3))
+        } else {
+            std::cmp::Ordering::Equal
+        })
+        .then_with(||b.0.total_cmp(&a.0))
+        .then_with(||b.4["createdAt"].as_str().unwrap_or("")
+            .cmp(a.4["createdAt"].as_str().unwrap_or("")))
+        .then_with(||a.4["id"].as_str().cmp(&b.4["id"].as_str()))
     });
     let mut seen = HashSet::new();
     scored
         .into_iter()
-        .filter_map(|(_, record)| {
+        .filter_map(|(_, _, _, _, record)| {
             let key = format!(
                 "{}:{}",
                 record["sourceAuthorKey"].as_str().unwrap_or("owner"),
@@ -2564,6 +2612,44 @@ mod regression_memory_visibility_tests {
             assert!(restored["lastUsedAt"].is_string());
         }
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn lineage_rerank_prefers_real_tool_receipts_and_downgrades_fabricated_sources() {
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        let scope=MemoryScope{
+            session_id:"s".to_string(),agent_id:Some("a".to_string()),
+            partition_key:"s".to_string(),
+        };
+        let receipt=store.write_message(&json!({
+            "session_id":"s","role":"tool","content":"database migration rollback verified",
+            "metadata":{"origin":"native_tool"}
+        })).unwrap();
+        let source_id=receipt["id"].as_str().unwrap();
+        for (id,sources,counterexamples) in [
+            ("real",json!([source_id]),json!([])),
+            ("fake",json!(["invented-receipt"]),json!([])),
+            ("refuted",json!([source_id]),json!(["counterexample-1"])),
+        ] {
+            store.put("memory",&json!({
+                "id":id,"sessionId":"s","agentId":"a","partitionKey":"s",
+                "scope":"agent","status":"active","type":"fact",
+                "text":format!("database migration rollback {id}"),
+                "sourceMessageIds":sources,"counterexampleIds":counterexamples,
+                "importance":0.5,
+            }));
+        }
+        let importance=json!({"implementation":"fixed"});
+        let algorithm=json!({"implementation":"evidence-lineage-2026"});
+        let result=retrieve_ranked_with_rerank(
+            &store,&scope,"database migration rollback",3,&importance,&algorithm
+        );
+        assert_eq!(result[0]["id"],"real");
+        assert_eq!(result[0]["retrievalEvidence"]["tier"],3);
+        assert!(result.iter().any(|row|row["id"]=="fake"
+            && row["retrievalEvidence"]["tier"]==0));
+        assert!(result.iter().any(|row|row["id"]=="refuted"
+            && row["retrievalEvidence"]["tier"]==0));
     }
 
     #[test]

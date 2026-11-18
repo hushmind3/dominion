@@ -108,6 +108,23 @@ Sources inspected:
 - Airbnb `agent_harness_optimizer/optimizers/prism/loop.py` and
   `framework/acceptance.py`
 
+## 2026 native-provenance memory reranking
+
+The live `memory.rerank` registry now exposes
+`evidence-lineage-2026` rather than the historical BM25 kernels. During
+actual memory retrieval, it checks the persisted native owner/tool message
+references of each candidate within the same session, flags counterfeit or
+missing source IDs as unverified, and deprioritizes contradicted memories.
+Its order is a constraint-aware evidence tier, then lexical coverage,
+exact-phrase evidence, and the existing relevance/importance tie breaker;
+this is NOT a new invented lexical scorer. No paid model or background pass
+is required. Existing BM25 functions, archived records and direct evaluation
+fixtures remain for historical comparisons; old BM25 kernels cannot be newly
+registered or reactivated through the public algorithm API.
+
+This implementation was motivated by the 2026 provenance/trace validation
+research but has no externally validated hold-out completion gain yet.
+
 ## 2026 frozen-acceptance obligation graph
 
 The production `task.decomposition` selection now chooses the bounded,
