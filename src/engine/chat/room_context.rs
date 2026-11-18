@@ -239,14 +239,25 @@ fn evidence(
         // be read later with the permission-scoped skill_read native tool.
         let id=record["id"].as_str().unwrap_or("");
         let name=record["name"].as_str().unwrap_or("");
-        let description=record["description"].as_str()
-            .filter(|s|!s.trim().is_empty())
-            .unwrap_or_else(||record["instructions"].as_str().unwrap_or(""))
-            .chars().take(120).collect::<String>();
+        let can_read=request.tools_enabled && request.tools_execution_enabled;
+        let description=if can_read {
+            record["description"].as_str()
+                .filter(|s|!s.trim().is_empty())
+                .unwrap_or_else(||record["instructions"].as_str().unwrap_or(""))
+                .chars().take(120).collect::<String>()
+        }else{
+            record["instructions"].as_str()
+                .or_else(||record["description"].as_str()).unwrap_or("")
+                .chars().take(700).collect::<String>()
+        };
         add_evidence(
             candidates,
             json!({"kind":"skill","id":id,
-                "text":format!("[{id}] {name}: {description} (full instructions: skill_read)")}),
+                "text":if can_read {
+                    format!("[{id}] {name}: {description} (full instructions: skill_read)")
+                }else{
+                    format!("[{id}] {name}: {description} (tools unavailable; bounded instructions)")
+                }}),
             false,
         );
     }
