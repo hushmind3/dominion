@@ -115,6 +115,12 @@ jobs:
           cargo test --locked --bin dominion-rust codex_ws_registers_full_persona_once_and_reuses_its_response_chain
           cargo test --locked --bin dominion-rust complete_websocket_exchange_sends_static_persona_only_on_first_response
           cargo test --locked --bin dominion-rust rejected_developer_role_requires_full_instruction_fallback_not_silent_omission
+      - name: OpenCode Go headers, stable prompt prefix and Hermes rolling cache (dev profile)
+        run: |
+          cargo test --locked --bin dominion-rust opencode_go_auxiliary_requests_keep_affinity_across_calls_and_headless_jobs
+          cargo test --locked --bin dominion-rust opencode_go_direct_sends_the_stable_session_header
+          cargo test --locked --bin dominion-rust anthro_cache_reuses_stable_system_tools_and_completed_suffix_with_four_markers
+          cargo test --locked --bin dominion-rust runtime_clock_is_a_volatile_suffix_not_part_of_the_four_kiloton_static_persona
       - name: Room shared-prefix caching and Cloudflare affinity (dev profile)
         run: |
           cargo test --locked --bin dominion-rust shared_room_owner_rules_precede_agent_persona_with_no_identity_loss
