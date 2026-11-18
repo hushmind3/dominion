@@ -771,7 +771,11 @@ mod tests {
             let mut changed_room=room.clone();changed_room["topic"]=json!("different topic");
             changed_room["agentIds"]=json!([id]);
             let changed=core(&state,&request,&changed_room,"").0;
-            assert!(changed.starts_with(&context::identity_prefix(&state,&request).0));
+            let changed_shared=core(&state,&TurnRequest::from_value(
+                &json!({"input":"출첵","toolsEnabled":false})).unwrap(),
+                &changed_room,"").0;
+            assert!(changed.starts_with(&changed_shared));
+            assert_ne!(common,changed_shared,"changing a room must invalidate its shared prefix");
         }
         assert!(!asks_room_origin("매번 처음 보냐"));
         assert!(!asks_room_origin("처음부터 다시 시작하지 마"));
