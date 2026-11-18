@@ -321,3 +321,15 @@ Rust 커널의 구조 검사와 컴파일 성공은 DB 조회량·불용 호출�
 - 그룹의 `rooms.rs`는 각 발언의 원본 `metadata.executionId`를 이용해 실행 기록을 조회합니다. `outputs[].modelAccounting`에 참가자별 실제/추정 사용량 여부, 입력·출력·캐시 토큰, 모델·도구 호출 횟수 및 추정 시스템·페르소나·기억·공유 상태·이력·도구 스키마를 구분해 저장합니다. **프롬프트 구성 추정치와 Provider 보고 토큰을 별개 값**으로 보관하며, 토큰 수가 실제로 감소했다고 주장하지 않습니다.
 
 개발 CI에는 `cargo test --locked --bin dominion-benchmark`의 제한시간 취소·SSE 오류 분류 특정 회귀와 `dominion-rust` 그룹 토큰·DB 쿼리 회귀를 추가했습니다. 실측 ZIP 원본과 동일한 모델의 재시험이 없는 상태이므로 메인의 기존 **63/100** 점수·**1/3** 완수 기록을 임의로 변경하지 않습니다.
+
+## 9인 그룹 누적 토큰·작업 문맥 경로 복구 (2026-11-18)
+
+9인 그룹의 3개 주인 요청에서 메인은 실제 모델 실측 기준 총 74,045토큰·30개 메시지로 가장 낮은 그룹 입력 증가를 보였지만, 입력 누적을 완전히 통제한 것은 아닙니다. `room_context::compile`은 이미 주인 원문, 참가자별 최근 발언, 본인의 마지막 발언·원문, 확정된 주인 상태, 출처가 확인된 관련 근거를 결정적으로 선별합니다. 이 단계는 별도 모델 호출을 요구하지 않고 원본 전체 대화를 SQLite에 보존합니다.
+
+조사 중 **도구 정의의 고정 비용 때문에 `requiredOverBudget=true`가 발생한 그룹 작업에서, `native-work-context`로 넘어가면 일반 채팅 `history()`를 다시 조회하는 실행 분기**를 발견했습니다. 기존에는 이 분기가 관련없는 동료의 오래된 발언을 재전송하거나 현재 주인 메시지보다 뒤의 기록을 선택할 가능성이 있었습니다. 지금은 그룹 작업이 네이티브 도구·절차 프롬프트를 유지하면서, 대화 부분만 주인 메시지 커서에 고정된 `room_context::compile`의 선별 이력을 사용합니다. 도구 권한·모델 라우팅·SDK·기존 GUI·모델 요청 계약을 변경하지 않습니다.
+
+`execution.inputContext`에는 `conversationSelection=room-selective-v1`, `selectedMessageIds`, `availableMessages`, `sharedStateTokens`, `ownerStateTokens`와 기존 토큰 추정 정보를 남깁니다. 과거 작업·사용자 지침·참가자별 전용 기억·직전 본인 답변 및 도구 호출/결과의 연결은 보존합니다.
+
+`nine_participants_three_owner_turns_complete_thirty_messages_with_selective_work_context` 통합 테스트는 모의 OpenAI 호환 SSE 제공자 27회와 그룹 주인 메시지 3개를 사용해 각 9명 전원의 응답, 모든 그룹 작업의 `completed` 판정, 27건의 네이티브 실행 기록, 3번째 턴의 오래된 1번째 턴 동료 발언 제거와 직전 본인 답변 보존까지 확인합니다. GitHub Actions 개발용 Rust CI에서 통과했습니다.
+
+이번 변경의 모델 품질 및 유료 API 토큰 절약량은 동일한 9인·3턴·동일 제공자·동일 작업으로 재실측하기 전까지 주장하지 않습니다. 2026년의 Shared Selective Persistent Memory (arXiv:2607.09493) 및 ContextWeaver (arXiv:2604.23069)는 중복 원문 제거와 출처/의존 보존을 함께 다루므로 설계 검토에 참고했습니다. 기존 엔진의 메모리 선택기를 또 하나 복제하거나 모델 요약 라운드를 추가하지 않았습니다.
