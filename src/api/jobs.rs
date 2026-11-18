@@ -29,6 +29,11 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
             // It grants no tool, model or approval permission.
             if input["clientSurface"]=="native_agent_panel" {
                 value["clientSurface"]=json!("native_agent_panel");
+                // Compatibility surface is presentation-only. It cannot
+                // grant tool authority or create a second execution kernel.
+                if input["harnessCompat"]==true {
+                    value["harnessCompat"]=json!(true);
+                }
             }
             for key in ["agentId","providerId","model","reasoningEffort"]{if let Some(v)=input[key].as_str().filter(|s|!s.is_empty()){value[key]=json!(v);}}
             if let Some(v)=input["thinking"].as_bool(){value["thinking"]=json!(v);}
