@@ -56,7 +56,7 @@ pub fn definitions() -> Vec<Value> {
         tool("http_fetch", "Fetch a URL and return its readable text content", object(json!({"url": text("HTTP or HTTPS URL")}), vec!["url"])),
         tool("memory_store", "Save a grounded memory for this agent. Quote the user's exact words; invented facts are rejected. Shared memories are managed by the user.", object(json!({"text": text("Fact to remember, maximum 1600 characters"), "evidenceQuote": text("Exact quote from the current user message supporting the fact"), "sourceMessageId": text("Optional earlier source message ID"), "type": json!({"type":"string","enum":["fact","preference","decision","procedure","lesson"]}), "key": text("Optional stable fact key; a new value replaces the previous value for this key"), "scope": json!({"type":"string","enum":["agent"]})}), vec!["text", "evidenceQuote"])),
         tool("memory_search", "Find saved knowledge relevant to a topic", object(json!({"query": text("Search query")}), vec!["query"])),
-        tool("skill_read", "Read the full instructions of one enabled skill from the skill index, using its exact ID; do not guess instructions from the description", object(json!({"skillId": text("Exact enabled skill ID shown in the skill index")}), vec!["skillId"])),
+        tool("skill_read", "Read a page of the full instructions of one enabled skill. Use nextOffset to continue if hasMore=true.", object(json!({"skillId": text("Exact enabled skill ID from the index"), "offset":json!({"type":"integer","minimum":0,"description":"Optional Unicode character offset; start with 0, then use nextOffset"})}), vec!["skillId"])),
         tool("skill_propose", "Draft a reusable skill for user review", object(json!({"name": text("Skill name"), "instructions": text("Reusable instructions")}), vec!["name", "instructions"])),
         tool("delegate_task", "Delegate a self-contained task to another agent and optionally wait for its result", object(json!({
             "agentId": text("Target agent id"),
@@ -454,11 +454,20 @@ pub async fn execute(
                 .ok_or("해당 세션에서 읽을 수 있는 활성 스킬이 아닙니다.")?;
             let content=record["instructions"].as_str().unwrap_or("");
             if content.is_empty(){return Err("스킬에 지침 본문이 없습니다.".into());}
-            // Bound read payload independently of long untrusted skill text.
-            // No modification, proposal, or network call is performed.
+            // Fixed-size, lossless pagination: a long skill can be read to
+            // completion without injecting the whole body into every turn.
+            // Character offsets avoid splitting UTF-8. The DB record stays
+            // unchanged; draft, disabled and foreign skills remain private.
+            let total=content.chars().count();
+            let offset=args["offset"].as_u64().unwrap_or(0).min(usize::MAX as u64) as usize;
+            if offset>=total && offset!=0{
+                return Err("스킬 읽기 시작 위치가 본문 범위를 벗어났습니다.".into());
+            }
+            let next=offset.saturating_add(12_000).min(total);
             Ok(json!({"id":id,"name":record["name"],
-                "instructions":content.chars().take(12_000).collect::<String>(),
-                "truncated":content.chars().count()>12_000,
+                "instructions":content.chars().skip(offset).take(next-offset).collect::<String>(),
+                "offset":offset,"nextOffset":next,"totalChars":total,
+                "hasMore":next<total,"truncated":next<total,
                 "readOnly":true}))
         }
         "skill_propose" => {
@@ -1765,6 +1774,9 @@ mod tests {
         state.store.put("skill",&json!({"id":"draft","name":"Unapproved",
             "status":"draft","enabled":true,"scope":"global",
             "instructions":"Do not disclose this draft"}));
+        state.store.put("skill",&json!({"id":"long","name":"Long approved",
+            "status":"active","enabled":true,"scope":"global",
+            "instructions":format!("{}끝", "가".repeat(12_000))}));
         state.store.put("skill",&json!({"id":"private","name":"Private",
             "status":"active","enabled":true,"scope":"agent","agentId":"someone-else",
             "instructions":"Private body"}));
@@ -1776,6 +1788,18 @@ mod tests {
         assert_eq!(read["instructions"],
             "Long exact instructions that the prompt index omits");
         assert_eq!(read["readOnly"],true);
+        let first=execute(&ctx,"skill_read",&json!({"skillId":"long"}),"r").await.unwrap();
+        assert_eq!(first["offset"],0);
+        assert_eq!(first["nextOffset"],12_000);
+        assert_eq!(first["hasMore"],true);
+        assert_eq!(first["instructions"].as_str().unwrap().chars().count(),12_000);
+        let second=execute(&ctx,"skill_read",
+            &json!({"skillId":"long","offset":first["nextOffset"]}),"r").await.unwrap();
+        assert_eq!(second["instructions"],"끝");
+        assert_eq!(second["hasMore"],false);
+        assert_eq!(second["totalChars"],12_001);
+        assert!(execute(&ctx,"skill_read",
+            &json!({"skillId":"long","offset":12_002}),"r").await.is_err());
         assert!(execute(&ctx,"skill_read",&json!({"skillId":"draft"}),"r").await.is_err());
         assert!(execute(&ctx,"skill_read",&json!({"skillId":"private"}),"r").await.is_err());
         assert!(execute(&ctx,"skill_read",&json!({"skillId":"missing"}),"r").await.is_err());
