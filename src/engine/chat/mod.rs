@@ -79,6 +79,8 @@ const HISTORY_LIMIT: usize = 40;
 #[derive(Clone, Debug)]
 pub struct TurnRequest {
     pub session_id: Option<String>,
+    /// Optional browser turn correlation token, never a model instruction.
+    pub request_id: Option<String>,
     pub input: String,
     pub attachment_ids: Vec<String>,
     pub agent_id: Option<String>,
@@ -128,6 +130,11 @@ impl TurnRequest {
         };
         Ok(Self {
             session_id: string("sessionId"),
+            request_id: match string("requestId") {
+                Some(value) if uuid::Uuid::parse_str(&value).is_ok() => Some(value),
+                Some(_) => return Err("채팅 요청 ID 형식이 올바르지 않습니다.".into()),
+                None => None,
+            },
             input: text,
             attachment_ids,
             agent_id: string("agentId"),
