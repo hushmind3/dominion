@@ -74,10 +74,12 @@ fn rank(def:&Value,query:&str,words:&HashSet<String>)->i32{
 pub(super) fn project(definitions:Vec<Value>,query:&str)->Vec<Value>{
     if definitions.len()<=THRESHOLD{return definitions;}
     let needed=words(query);
+    // Retain eight high-value primitives and let four slots respond to the
+    // actual task. A fixed 12-tool core would hide an explicitly requested
+    // connector on the first model step and waste a discovery round.
     let essentials=[
         "workspace_list","workspace_read","workspace_read_range","code_search",
-        "workspace_replace","workspace_replace_range","workspace_write",
-        "workspace_apply_patch","shell_exec","terminal_exec","web_search","http_fetch"
+        "workspace_write","workspace_apply_patch","shell_exec","web_search"
     ];
     let mut candidates=definitions.into_iter()
         .filter(|definition|!name(definition).is_empty())
@@ -223,6 +225,9 @@ mod tests{
         assert!(!a.iter().any(|item|name(item)==SEARCH));
         assert!(a.iter().any(|item|name(item)=="workspace_write"));
         assert!(!a.iter().any(|item|name(item)=="mcp__archive_publish"));
+        let mail=project(original.clone(),"Search email messages");
+        assert!(mail.iter().any(|item|name(item)=="mcp__mail_search"),
+            "directly requested connected capabilities must not require a paid rediscovery step");
         assert!(serde_json::to_vec(&a).unwrap().len()*2
             <serde_json::to_vec(&original).unwrap().len());
     }
