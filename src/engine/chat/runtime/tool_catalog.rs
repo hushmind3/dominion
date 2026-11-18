@@ -94,24 +94,8 @@ fn room_tool_request(input: &str) -> bool {
 }
 
 pub(super) fn recent_room_tools(state: &AppState, session_id: &str) -> std::collections::HashSet<String> {
-    state
-        .store
-        .messages(session_id)
-        .into_iter()
-        .rev()
-        .take(30)
-        .flat_map(|message| {
-            message["tool_calls"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default()
-        })
-        .filter_map(|call| {
-            call["function"]["name"]
-                .as_str()
-                .map(|name| name.to_lowercase())
-        })
-        .collect()
+    // Session-scoped index lookup: no full-transcript JSON load on every turn.
+    state.store.recent_message_tool_names(session_id, 30).unwrap_or_default()
 }
 
 pub(super) fn select_room_tools(
@@ -203,7 +187,24 @@ pub(super) fn select_room_tools(
     scored.sort_by(|a, b| b.0.cmp(&a.0));
     if scored.is_empty() {
         if acceptance {
-            return definitions;
+            // A requested action with no lexical match still needs a way to
+            // inspect and execute. Sending every MCP schema instead can crowd
+            // the provider's context before the first useful tool call.
+            let fallback = [
+                "workspace_list", "workspace_read", "workspace_write",
+                "shell_exec", "web_search", "delegate_task",
+                "task_status", "task_result",
+            ];
+            let selected = fallback
+                .iter()
+                .filter_map(|name| definitions.iter().find(|definition| tool_name(definition) == *name))
+                .cloned()
+                .collect::<Vec<_>>();
+            return if selected.is_empty() {
+                definitions.into_iter().take(8).collect()
+            } else {
+                selected
+            };
         }
         return definitions
             .into_iter()
