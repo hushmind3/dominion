@@ -113,10 +113,15 @@ fn knowledge_context(state:&AppState,campaign:&Value) -> String {
     }
     let recent=state.store.money_fact_recent(120).unwrap_or_default();
     let facts=crate::engine::money_retrieval::select(&rankings,&recent,22);
+    render_knowledge_facts(facts)
+}
+
+/// Compact human-readable evidence projection. Indexed original articles stay
+/// accessible through Money search; a similar URL is NOT a second verification.
+fn render_knowledge_facts(facts:Vec<Value>)->String {
     facts.into_iter().map(|f|{
-        // A single related URL is enough to preserve the retrieval trail in
-        // a small-model context; the full bounded lineage remains in the
-        // deterministic retrieval record for inspection.
+        // Bound the extra evidence to one URI per selected fact to protect
+        // small-model context. Retrieval carries up to two related references.
         let similar=f["similarSourceEvidence"].as_array()
             .and_then(|sources|sources.first())
             .map(|source|format!(" | 유사원문(독립검증 아님)={}",
@@ -875,6 +880,21 @@ mod tests{
     }
     #[test] fn schedule_modes_are_diverse(){
         assert_eq!((0..6).map(exploration_mode).collect::<Vec<_>>(),vec!["signals","discover","cross","signals","cross","challenge"]);
+    }
+    #[test] fn model_context_keeps_a_bounded_related_url_without_claiming_confirmation(){
+        let rows=vec![json!({"id":"a","claim":"Power module market observation",
+            "url":"https://one.example/report",
+            "verification":"observed_headline_not_verified_claim",
+            "similarSourceEvidence":[{"id":"b","url":"https://two.example/report"},
+                {"id":"c","url":"https://three.example/report"}],
+            "similarityStatus":"lexical_overlap_not_independent_confirmation"})];
+        let prompt=render_knowledge_facts(rows);
+        assert!(prompt.contains("https://one.example/report"));
+        assert!(prompt.contains("https://two.example/report"));
+        assert!(prompt.contains("독립검증 아님"));
+        assert!(!prompt.contains("https://three.example/report"),
+            "the model should receive only one secondary link per evidence row");
+        assert!(prompt.len()<500);
     }
     #[test] fn persistent_knowledge_recall_is_indexed_and_deduplicated(){
         let store=crate::db::Store::open(std::path::Path::new(":memory:")).unwrap();
