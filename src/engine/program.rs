@@ -403,6 +403,16 @@ fn touches_completed(node: &Value, completed: &std::collections::BTreeSet<String
 
 /// Walk the original tree so an existing nested node can actually be repaired.
 /// A replacement for a nonexistent ID is rejected, not silently "accepted".
+/// Owner/program acceptance predicates form a protected semantic contract.
+/// Replacing their node or a containing branch can turn a failed verification
+/// into an always-true or unreachable check without fixing the artifact.
+fn subtree_contains_verifier(node:&Value)->bool {
+    if node["type"]=="verify" {return true;}
+    ["nodes","then","else","body"].iter().any(|field|
+        node[*field].as_array().is_some_and(|children|
+            children.iter().any(subtree_contains_verifier)))
+}
+
 fn rewrite_pending_node(
     node: &Value,
     replacements: &std::collections::BTreeMap<String, Value>,
@@ -416,6 +426,11 @@ fn rewrite_pending_node(
             .is_some_and(|prefix| prefix.ends_with(':')))
     });
     if let Some(replacement) = replacements.get(id) {
+        if subtree_contains_verifier(node) {
+            return Err(format!(
+                "cannot replace node {id}: verifier predicates and their control-flow container are immutable"
+            ));
+        }
         if completed_ancestor || touches_completed(node, completed) {
             return Err(format!(
                 "cannot replace node {id}: it or a descendant has completed durable effects"
@@ -737,6 +752,36 @@ pub fn checkpoint_skip_completed(checkpoint: &Value, node_id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repair_cannot_weaken_original_verifier_or_hide_it_inside_new_control_flow() {
+        let original=json!({"revision":"v","nodes":[
+            {"type":"sequence","id":"gate","nodes":[
+                {"type":"observe","id":"input"},
+                {"type":"verify","id":"accept","checks":[
+                    {"predicate":{"op":"equals","left":{"from":"input"},"right":true}}
+                ]}
+            ]}
+        ]});
+        let cp=new_checkpoint(&original);
+        let proposal=|node:Value|json!({
+            "baseRevision":"v","reason":"test adversarial verifier mutation",
+            "replacePendingNodes":[node],"addNodes":[]});
+        let fake_check=json!({"type":"verify","id":"accept",
+            "checks":[{"predicate":{"op":"constant","value":true}}]});
+        let removed_parent=json!({"type":"observe","id":"gate"});
+        for attack in [fake_check,removed_parent]{
+            let err=apply_revision_proposal(
+                &original,&cp,&proposal(attack),&[],64,"replace"
+            ).unwrap_err();
+            assert!(err.contains("verifier predicates"),"{err}");
+        }
+        let safe=json!({"baseRevision":"v","reason":"add read-only evidence",
+            "addNodes":[{"type":"call_tool","id":"inspect",
+                "tool":"workspace_read","inputs":{"path":"out.txt"}}]});
+        assert!(apply_revision_proposal(&original,&cp,&safe,
+            &["workspace_read".into()],64,"replace").is_ok());
+    }
 
     #[test]
     fn bounded_repair_portfolio_filters_untrusted_tool_and_picks_dominated_plan(){
