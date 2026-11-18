@@ -297,7 +297,9 @@ pub(super) async fn run_turn_body(
         simple_creation_target.is_some(),explicitly_scoped);
     if progressive_enabled {
         tool_definitions=capability::project(tool_definitions,&request.input);
-        tool_definitions.push(capability::definition());
+        // Keep the search schema first even when provider tool budgets trim
+        // large optional declarations later in the same turn.
+        tool_definitions.insert(0,capability::definition());
         if let Some(mut execution)=state.store.get("execution",execution_id){
             execution["progressiveToolDiscovery"]=json!(true);
             state.store.put("execution",&execution)
@@ -1374,6 +1376,25 @@ pub(super) async fn run_turn_body(
             // Calls already settled as part of a prior contiguous parallel
             // group must not be proposed, charged or executed a second time.
             if parallel_done.contains(&call.id) {continue;}
+            // Model-origin tool calls have only the authority advertised
+            // in this exact provider request. This also enforces explicit
+            // core tool selection and prevents guessing hidden MCP names.
+            if !super::super::tool_projection::advertised_tool(&round_tools,&call.name){
+                let error=format!(
+                    "도구 {}는 이번 모델 요청에 제공되지 않았습니다. 필요한 도구는 dominion_tool_search로 탐색하세요.",
+                    call.name);
+                record_soft_tool_error(
+                    state,tx,session_id,request,execution_id,
+                    &call.name,&call.id,&error,metrics,
+                );
+                messages.push(json!({
+                    "role":"tool","tool_call_id":call.id,
+                    "content":json!({"error":error,"toolNotAdvertised":true}).to_string()
+                }));
+                crate::engine::algorithms::mark_signal(
+                    state,execution_id,"tool.selection",false);
+                continue;
+            }
             // A disconnected SSE client must not stop work already promised by
             // the model; explicit cancel and budgets remain the stop signals.
             if !budget.charge_proposal() {
