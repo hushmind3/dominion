@@ -1128,14 +1128,27 @@ fn mention_boundary(ch: Option<char>) -> bool {
     ch.is_none_or(|ch| !ch.is_alphanumeric() && !matches!(ch, '_' | '-' | '.'))
 }
 fn bare_mention_follows(after: &str) -> bool {
-    if mention_boundary(after.chars().next()) {
-        return true;
-    }
+    // A bare name followed by a number/punctuation is evidence in an example,
+    // not an instruction to silence the rest of the room.
     const PARTICLES: &[&str] = &[
         "야", "아", "님", "씨", "에게", "한테", "께", "가", "이", "는", "은", "도", "랑",
         "와", "과", "의",
     ];
-    PARTICLES.iter().any(|particle| after.starts_with(particle))
+    if PARTICLES.iter().any(|particle| after.starts_with(particle)) {
+        return true;
+    }
+    // Allow direct natural-language imperatives without requiring @ syntax.
+    let tail = after.trim_start();
+    tail.len() < after.len() && [
+        "답해", "답변", "말해", "설명", "검토", "확인", "조사", "분석", "정리",
+        "실행", "시작", "가져와", "보여",
+    ].iter().any(|verb| tail.starts_with(verb))
+}
+fn at_mention_ends(after: &str) -> bool {
+    mention_boundary(after.chars().next()) ||
+        ["만", "에게", "한테", "께", "는", "은", "가", "이", "도", "야", "아"]
+            .iter().any(|particle| after.starts_with(particle)
+                && mention_boundary(after[particle.len()..].chars().next()))
 }
 /// Optional silence: a member may decline its turn instead of speaking.
 fn is_silence(content: &str) -> bool {
@@ -1181,7 +1194,7 @@ fn mentioned_agents_with_intent(
             let marker = format!("@{alias}");
             for (position, _) in text.match_indices(&marker) {
                 if mention_boundary(text[..position].chars().next_back())
-                    && mention_boundary(text[position + marker.len()..].chars().next())
+                    && at_mention_ends(&text[position + marker.len()..])
                 {
                     matches.push((position, marker.len(), order, id.clone(), alias.clone()));
                     explicitly_addressed = true;
@@ -1198,6 +1211,12 @@ fn mentioned_agents_with_intent(
                     continue;
                 }
                 if !mention_boundary(text[..position].chars().next_back()) {
+                    continue;
+                }
+                // Quoted names are data; only explicit @ mentions in quoted
+                // prose can be treated as targets by callers.
+                if text[..position].chars().next_back().is_some_and(|ch|
+                    matches!(ch, '"' | '\'' | '“' | '‘' | '「' | '『')) {
                     continue;
                 }
                 let after = &text[position + alias.len()..];
@@ -1375,6 +1394,12 @@ mod tests {
             mentioned_agents(&state, &roster, "아인즈와 알베도가 확인해").unwrap(),
             vec!["a".to_string(), "b".to_string()]
         );
+        assert!(mentioned_agents(&state, &roster,
+            "숫자 예시: 샤르티아 77").unwrap().is_empty());
+        assert!(mentioned_agents(&state, &roster,
+            "예시: “샤르티아야 답해”는 호출 명령이 아닙니다.").unwrap().is_empty());
+        assert_eq!(mentioned_agents(&state, &roster,
+            "@샤르티아만 답해").unwrap(),vec!["s".to_string()]);
         let _ = std::fs::remove_dir_all(dir);
     }
 
