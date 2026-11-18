@@ -41,6 +41,11 @@ jobs:
           cargo test --lib engine::chat::tool_schedule::tests
           # Evidence-delta completion gate is used by ordinary chat, not only SDK jobs.
           cargo test --lib engine::chat::runtime::action_review::tests
+          # Shared room execution: cancelled epoch versus fresh owner, and
+          # provider-wire input costs per participating agent.
+          cargo test --lib engine::chat::room_context::tests::wire_profile_attributes_selected_messages_without_retaining_raw_text
+          cargo test --lib engine::rooms::tests::fresh_owner_job_after_stop_uses_new_epoch_and_gets_a_real_reply
+          cargo test --lib engine::rooms::tests::nine_participants_share_one_owner_message_and_all_speak
           cargo test --lib engine::verification::verified_patch_tests
           cargo test --lib engine::autonomy::tests::verifier_
           cargo test --lib engine::jobs::tests
