@@ -298,6 +298,47 @@ pub(super) fn select_tool_definitions(
         .collect()
 }
 
+
+/// Provider-visible progressive disclosure. The native dispatcher retains the
+/// full, owner-enabled catalog; the provider sees a bounded shortlist and
+/// stable discovery/search tools, never hundreds of MCP parameter schemas.
+pub(super) fn progressive_tools(definitions: Vec<Value>, query: &str) -> Vec<Value> {
+    if definitions.is_empty() { return definitions; }
+    let mut selected = crate::engine::capability::definitions();
+    let mut seen = selected.iter().map(tool_name)
+        .map(str::to_string).collect::<std::collections::HashSet<_>>();
+    let full = definitions.into_iter().filter(|definition|
+        !matches!(tool_name(definition),"dominion_tool_search"|"dominion_tool_call")
+    ).collect::<Vec<_>>();
+    let picked = if full.len() <= 18 {
+        full.clone()
+    } else {
+        let mut short=Vec::new();
+        // Basic navigation and evidence remain visible even with many MCPs.
+        for name in ["workspace_list","workspace_read","workspace_read_range",
+            "code_search","shell_exec","web_search","delegate_task"] {
+            if let Some(definition)=full.iter().find(|d|tool_name(d)==name) {
+                short.push(definition.clone());
+            }
+        }
+        for definition in select_room_tools(
+            full.clone(),query,&std::collections::HashSet::new(),true
+        ) {
+            if !short.iter().any(|item|tool_name(item)==tool_name(&definition)) {
+                short.push(definition);
+            }
+            if short.len()>=14 {break;}
+        }
+        short
+    };
+    for definition in picked {
+        if seen.insert(tool_name(&definition).to_string()) {
+            selected.push(definition);
+        }
+    }
+    selected
+}
+
 pub(super) fn trim_tool_definitions(definitions: Vec<Value>, budget: usize) -> Vec<Value> {
     let mut kept = Vec::new();
     let mut used = 0usize;
