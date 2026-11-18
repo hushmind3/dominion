@@ -85,6 +85,10 @@ async fn read_tail<R:AsyncRead+Unpin>(mut stream:R,limit:usize)->(String,bool){
     }
     (String::from_utf8_lossy(&retained).into_owned(),truncated)
 }
+fn has_failed_turn(stdout:&str)->bool{
+    stdout.lines().any(|line|serde_json::from_str::<Value>(line)
+        .ok().is_some_and(|value|value["type"]=="turn.failed"))
+}
 fn agent_answer(stdout:&str)->Option<String>{
     if let Ok(value)=serde_json::from_str::<Value>(stdout){
         if let Some(result)=value["result"].as_str(){return Some(result.to_string());}
@@ -154,8 +158,8 @@ async fn execute_adapter(
     let pid=child.id();
     let stdout=child.stdout.take().ok_or("harness has no stdout")?;
     let stderr=child.stderr.take().ok_or("harness has no stderr")?;
-    let stdout_reader=tokio::spawn(read_tail(stdout,MAX_STDOUT));
-    let stderr_reader=tokio::spawn(read_tail(stderr,MAX_STDERR));
+    let mut stdout_reader=tokio::spawn(read_tail(stdout,MAX_STDOUT));
+    let mut stderr_reader=tokio::spawn(read_tail(stderr,MAX_STDERR));
     if let Some(mut stdin)=child.stdin.take(){
         if stdin.write_all(prompt.as_bytes()).await.is_err(){
             terminate(&mut child,pid).await;
@@ -185,8 +189,34 @@ async fn execute_adapter(
             _=ctx.state.cancel_notify.notified()=>{}
         }
     };
-    let (stdout,outputTruncated)=stdout_reader.await.map_err(|e|e.to_string())?;
-    let (stderr,errorsTruncated)=stderr_reader.await.map_err(|e|e.to_string())?;
+    let stdout_result=tokio::time::timeout(
+        Duration::from_secs(3),&mut stdout_reader,
+    ).await;
+    let (stdout,outputTruncated)=match stdout_result {
+        Ok(Ok(output))=>output,
+        _=>{
+            stop_descendants(pid);
+            stdout_reader.abort();
+            stderr_reader.abort();
+            return Ok(json!({"harnessId":spec.id,
+                "error":"external harness output streams did not close",
+                "outcomeUnknown":true,"requiresInspection":true}));
+        }
+    };
+    let stderr_result=tokio::time::timeout(
+        Duration::from_secs(3),&mut stderr_reader,
+    ).await;
+    let (stderr,errorsTruncated)=match stderr_result{
+        Ok(Ok(output))=>output,
+        _=>{
+            stop_descendants(pid);
+            stderr_reader.abort();
+            return Ok(json!({"harnessId":spec.id,
+                "error":"external harness stderr did not close",
+                "outcomeUnknown":true,"requiresInspection":true}));
+        }
+    };
+    let verifiedExit=status.success() && !outputTruncated && !has_failed_turn(&stdout);
     let answer=agent_answer(&stdout).unwrap_or_else(||
         stdout.chars().rev().take(12000).collect::<String>()
             .chars().rev().collect::<String>());
@@ -194,16 +224,17 @@ async fn execute_adapter(
         "harnessId":spec.id,
         "runtime":"external_process",
         "exitCode":status.code(),
-        "completed":status.success(),
+        "completed":verifiedExit,
         "answer":answer,
         "stdoutTruncated":outputTruncated,
         "stderrTruncated":errorsTruncated,
         "stderr":stderr.chars().take(2500).collect::<String>(),
         "elapsedMs":started.elapsed().as_millis() as u64,
-        "error":if status.success(){Value::Null}else{
-            json!("external harness exited without success; inspect its own task log")
+        "error":if verifiedExit{Value::Null}else{
+            json!("external harness failed or output was truncated; inspect external state before retry")
         },
-        "outcomeUnknown":false,
+        "outcomeUnknown":!verifiedExit,
+        "requiresInspection":!verifiedExit,
         "externalPermissions":"governed by installed harness; DOMINION approval is an outer gate",
     }))
 }
@@ -247,6 +278,8 @@ mod tests {
         assert_eq!(agent_answer(jsonl).as_deref(),Some("final"));
         assert_eq!(agent_answer(r#"{"result":"ok"}"#).as_deref(),Some("ok"));
         assert!(agent_answer("{\"type\":\"turn.failed\"}\n").is_none());
+        assert!(has_failed_turn("{\"type\":\"turn.failed\"}\n"));
+        assert!(!has_failed_turn(jsonl));
     }
     #[cfg(unix)]
     #[tokio::test]
