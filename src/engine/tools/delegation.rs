@@ -176,6 +176,12 @@ pub(super) fn task_payload(ctx: &ToolContext<'_>, args: &Value, with_result: boo
 /// existing tool set. Verification can run a narrowly specified Cargo test
 /// command inside the mandatory isolated worktree and sandbox.
 pub(crate) fn profile_tool_visible(session: &Value, name: &str) -> bool {
+    if matches!(session["delegationProfile"].as_str(),
+        Some("inspection" | "implementation" | "verification"))
+        && !session["delegationWorkspace"].is_object()
+    {
+        return false;
+    }
     match session["delegationProfile"].as_str().unwrap_or("general") {
         "inspection" => observational(name),
         "verification" => observational(name) || name == "terminal_exec",
@@ -188,9 +194,9 @@ pub(crate) fn profile_tool_allowed(session: &Value, name: &str, args: &Value) ->
     if !profile_tool_visible(session, name) { return false; }
     if session["delegationProfile"] == "verification" && name == "terminal_exec" {
         let program = args["command"].as_str().unwrap_or("");
-        let basename = Path::new(program).file_name()
-            .and_then(|name| name.to_str()).unwrap_or("");
-        let command_allowed = matches!(basename, "cargo" | "cargo.exe");
+        // An arbitrary /workspace/cargo executable is not a trusted test
+        // runner just because its basename matches the real Cargo command.
+        let command_allowed = matches!(program, "cargo" | "cargo.exe");
         let arguments = args["args"].as_array();
         let subcommand = arguments.and_then(|args| args.first())
             .and_then(Value::as_str);
@@ -221,6 +227,11 @@ mod profile_tests {
             &json!({"command":"sh","args":["-c","touch example"]})));
         assert!(profile_tool_visible(&implement, "workspace_replace"));
         assert!(profile_tool_visible(&implement, "delegate_task"));
+        assert!(!profile_tool_visible(
+            &json!({"delegationProfile":"implementation"}), "workspace_write"
+        ),"task role without an isolated workspace is never admitted");
+        assert!(!profile_tool_allowed(&verify, "terminal_exec",
+            &json!({"command":"/tmp/cargo","args":["test"]})));
         assert!(profile_tool_visible(&json!({}), "workspace_write"));
     }
 }
