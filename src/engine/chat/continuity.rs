@@ -28,7 +28,7 @@ fn evidence_digest(kind: &str, record: &Value) -> String {
     if kind=="room_state" {
         meaning.insert("facts".into(),json!(record["facts"].as_array().into_iter().flatten()
             .filter(|fact|fact["status"]=="active")
-            .map(|fact|json!({"id":fact["id"],"kind":fact["kind"],"text":fact["text"],"sourceMessageId":fact["sourceMessageId"]}))
+            .map(|fact|json!({"id":fact["id"],"kind":fact["kind"],"text":fact["text"],"sourceMessageId":fact["sourceMessageId"],"verifiedLocalOwner":fact["verifiedLocalOwner"]}))
             .collect::<Vec<_>>()));
     }
     for field in ["text","content","instructions","description","name","lesson","avoid","request",
@@ -57,13 +57,21 @@ fn active_owner_facts(record: &Value) -> Vec<Value> {
         .filter(|fact| fact["status"] == "active")
         .map(|fact| json!({
             "id":fact["id"],"kind":fact["kind"],"text":fact["text"],
-            "sourceMessageId":fact["sourceMessageId"]
+            "sourceMessageId":fact["sourceMessageId"],"verifiedLocalOwner":fact["verifiedLocalOwner"]
         }))
         .collect()
 }
 
+fn owner_fact_metadata_digest(record: &Value) -> String {
+    let mut metadata = record.clone();
+    metadata["facts"] = json!([]);
+    evidence_digest("room_state", &metadata)
+}
+
 fn owner_fact_prefix_still_valid(dependency: &Value, record: &Value) -> bool {
-    if dependency["kind"] != "room_state" { return false; }
+    if dependency["kind"] != "room_state"
+        || dependency["metadataDigest"] != owner_fact_metadata_digest(record)
+    { return false; }
     let Some(previous) = dependency["activeFacts"].as_array() else { return false; };
     let current = active_owner_facts(record);
     previous.iter().all(|old| current.contains(old))
@@ -81,6 +89,7 @@ pub(crate) fn dependencies(state: &AppState, items: &[Value]) -> Vec<Value> {
         let mut dependency=json!({"kind":kind,"id":id,"digest":evidence_digest(kind, &record)});
         if kind == "room_state" {
             dependency["activeFacts"] = json!(active_owner_facts(&record));
+            dependency["metadataDigest"] = json!(owner_fact_metadata_digest(&record));
         }
         Some(dependency)
     }).collect()
@@ -697,8 +706,7 @@ mod tests {
         state.store.put("session",&json!({"id":"room:r","roomId":"r"}));
         state.store.put("room",&json!({"id":"r","contextBudgetTokens":12000}));
         state.store.put("room_state",&json!({"id":"owner-record","facts":[
-            {"id":"fact-a","status":"active","text":"alpha fact","sourceMessageId":"owner1"},
-            {"id":"fact-b","status":"active","text":"beta fact","sourceMessageId":"owner2"}
+            {"id":"fact-a","status":"active","text":"alpha fact","sourceMessageId":"owner1"}
         ]}));
         let request=TurnRequest::from_value(&json!({"input":"remember","agentId":"a"})).unwrap();
         let provider=route();
@@ -719,6 +727,13 @@ mod tests {
             "role":"assistant","content":"I heard alpha","metadata":{"replyToMessageId":"owner1"}})).unwrap();
         commit(&state,&first,&answer);
         commit_projection(&state,&first,&answer,pending.unwrap());
+        // A genuinely new confirmed fact must be appendable too, not only a
+        // different lexical subset of an unchanged state record.
+        let mut augmented=state.store.get("room_state","owner-record").unwrap();
+        augmented["facts"].as_array_mut().unwrap().push(json!({
+            "id":"fact-b","status":"active","text":"beta fact","sourceMessageId":"owner2"
+        }));
+        state.store.put("room_state",&augmented);
         let mut second=prepare(&state,&provider,&request,"room:r","stable owner identity",&json!({})).unwrap();
         let (second_wire,pending)=project(&state,&provider,&messages("owner2",beta),&[],"room:r",&mut second);
         assert!(second["workingView"]["rebaseReason"].is_null(),"{second}");
