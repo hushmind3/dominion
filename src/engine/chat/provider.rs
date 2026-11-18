@@ -2143,9 +2143,10 @@ mod tests {
         let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address=listener.local_addr().unwrap();
         let requests=Arc::new(Mutex::new(Vec::new()));
+        let requests_for_server=requests.clone();
         let server=tokio::spawn(async move{
             axum::serve(listener,Router::new().route("/chat/completions",post(completion))
-                .with_state(requests.clone())).await.unwrap();
+                .with_state(requests_for_server)).await.unwrap();
         });
         // A fresh Rust AppState stores the actual user/provider record. The
         // native llama.cpp description is emitted by DOMINION's model loader.
@@ -2184,8 +2185,14 @@ mod tests {
             row["localPrefixCacheBackend"]=="llama.cpp"));
         // Inspect what the mock server received rather than testing only
         // our helper's input object.
-        let seen=state.store.all("provider");
-        assert_eq!(seen.len(),1);
+        let sent=requests.lock().unwrap();
+        assert_eq!(sent.len(),1);
+        assert_eq!(sent[0]["cache_prompt"],true);
+        assert!(sent[0].get("prompt_cache_key").is_none(),
+            "server-native KV reuse does not accept the unrelated OpenAI cache hint");
+        assert_eq!(sent[0]["messages"][0]["content"],"FOUR_THOUSAND_TOKEN_CHARTER");
+        assert_eq!(sent[0]["messages"].last().unwrap()["content"],"increment 1");
+        drop(sent);
         server.abort();
         crate::test_support::cleanup_dir(root);
     }
