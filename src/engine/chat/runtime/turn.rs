@@ -261,21 +261,21 @@ pub(super) async fn run_turn_body(
         let compiled = super::super::room_context::compile(
             state, request, session_id, source, &tool_definitions, &strategy_candidates,
         )?;
-        // A tool task needs room for its applicable procedures and evidence.
-        // When fixed identity + selected native schemas exhaust the proposed
-        // conversational budget, keep the established work-context policy.
-        let work_needs_context = !tool_definitions.is_empty()
-            && compiled.accounting["requiredOverBudget"] == true;
-        if work_needs_context {
+        // Required owner instructions, own answer, recent speakers and
+        // trusted-source evidence are ALREADY pinned by room_context::compile,
+        // even when they exceed the room's SOFT conversational target.
+        // Falling back to context::history would replace the bounded room
+        // view with up to 16 raw messages + a separate larger system prompt.
+        // That regressed the 9-speaker multi-turn context-cost benchmark.
+        // Preserve the compiled content and expose target overruns to judges.
+        if compiled.accounting["requiredOverBudget"] == true {
             if let Some(mut execution) = state.store.get("execution", execution_id) {
-                execution["contextPolicy"] = json!("native-work-context");
-                execution["contextPolicyReason"] = json!("fixed work context exceeds the conversational target; preserve procedures and evidence");
+                execution["contextPolicy"] = json!("room-required-evidence-over-soft-target");
+                execution["contextPolicyReason"] = json!("preserve required owner/agent/speaker evidence without expanding into legacy room history");
                 state.store.put("execution", &execution);
             }
-            None
-        } else {
-            Some(compiled)
         }
+        Some(compiled)
     } else {
         None
     };
@@ -787,8 +787,10 @@ pub(super) async fn run_turn_body(
             round_tools = trim_tool_definitions(round_tools, budget);
         }
         let wire_messages = messages.clone();
+        let call_components = is_room.then(||super::super::room_context::input_components(&wire_messages,&round_tools));
         if is_room {
             if let Some(mut execution) = state.store.get("execution", execution_id) {
+                execution["inputContext"]["lastPreparedComponents"] = json!(call_components);
                 execution["inputContext"]["preparedInputTokensEstimate"] = json!(super::super::room_context::input_estimate(&wire_messages,&round_tools));
                 execution["inputContext"]["preProviderDigest"] = json!(crate::engine::memory::stable_id(&[&json!({"messages":wire_messages,"tools":round_tools}).to_string()]));
                 state.store.put("execution", &execution);
@@ -908,6 +910,27 @@ pub(super) async fn run_turn_body(
         total_tokens=model_token_budget.charged();
         if is_room {
             if let Some(mut execution)=state.store.get("execution",execution_id) {
+                let mut samples=execution["inputContext"]["modelCallComponents"]
+                    .as_array().cloned().unwrap_or_default();
+                samples.push(json!({
+                    "round":round+1,
+                    "agentId":request.agent_id,
+                    "prepared":call_components,
+                    "projectedInputTokensEstimate":metadata["continuity"]["workingView"]["estimatedInputTokens"],
+                    "projectionRebaseReason":metadata["continuity"]["workingView"]["rebaseReason"],
+                    "projectionReusedFrames":metadata["continuity"]["workingView"]["reusedFrames"],
+                    "providerId":provider.id,"model":provider.model,
+                    "providerPromptTokens":call_prompt,
+                    "providerOutputTokens":call_completion,
+                    "providerCacheReadTokens":if completion.usage_exact {
+                        json!(completion.cached_prompt_tokens)
+                    }else{Value::Null},
+                    "providerUsageExact":completion.usage_exact
+                }));
+                // Per-call scalar estimates only; never persist full prompts,
+                // raw model tokens, or another shadow transcript here.
+                if samples.len()>MAX_ROUNDS {samples.drain(..samples.len()-MAX_ROUNDS);}
+                execution["inputContext"]["modelCallComponents"]=json!(samples);
                 execution["inputContext"]["providerPromptTokens"]=json!(prompt_tokens_total);
                 execution["inputContext"]["providerCachedPromptTokens"]=if cache_reporting_complete {json!(cached_prompt_tokens_total)} else {Value::Null};
                 execution["inputContext"]["providerNewPromptTokens"]=if cache_reporting_complete {json!(prompt_tokens_total.saturating_sub(cached_prompt_tokens_total))} else {Value::Null};
