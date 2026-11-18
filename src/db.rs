@@ -206,7 +206,11 @@ impl Store {
                  WHERE kind='execution';
              CREATE INDEX IF NOT EXISTS idx_native_job_route_completed
                  ON records(json_extract(data,'$.nativeRoute.binding'))
-                 WHERE kind='job' AND json_extract(data,'$.status')='completed';",
+                 WHERE kind='job' AND json_extract(data,'$.status')='completed';
+             -- Indexed executable policy lookup, not full history/stat scans.
+             CREATE INDEX IF NOT EXISTS idx_algorithm_kind_lookup
+                 ON records(json_extract(data,'$.kind'),id)
+                 WHERE kind='algorithm';",
         )?;
         // Additive Money indexes and FTS, without replacing sub3's schema.
         conn.execute_batch(include_str!("db/money_schema.sql"))?;
@@ -246,6 +250,20 @@ impl Store {
             Err(_) => return Vec::new(),
         };
         rows.filter_map(|row| row.ok()).collect()
+    }
+
+    /// Indexed look-up of one executable kernel domain.
+    /// The full historical counters are retained for diagnostics, not for
+    /// automatic UCB-like exploration.
+    pub fn algorithms_for_kind(&self, kind: &str) -> Result<Vec<Value>, String> {
+        let conn = self.conn.lock().map_err(|error| error.to_string())?;
+        let mut stmt = conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records INDEXED BY idx_algorithm_kind_lookup
+             WHERE kind='algorithm' AND json_extract(data,'$.kind')=?1 ORDER BY id"
+        ).map_err(|error| error.to_string())?;
+        let rows = stmt.query_map([kind], record_from_row)
+            .map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|error| error.to_string())
     }
 
     /// Indexed SQLite aggregation of settled, provider-reported cache usage.
