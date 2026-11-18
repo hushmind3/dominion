@@ -2007,6 +2007,16 @@ pub(super) async fn run_turn_body(
     }
     // Attach the usage to the message so every client can show what the turn
     // cost without a second lookup.
+    // Reject a late provider completion after Stop, even if its final delta
+    // raced the supervisor's polling tick. Never persist a new successful
+    // assistant reply from a cancelled browser epoch.
+    if state.is_cancelled(session_id)
+        || state.cancellation_generation(session_id)!=generation
+        || super::super::transport::request_cancelled(
+            state,session_id,request.request_id.as_deref())
+    {
+        return Err("실행이 중단되었습니다.".into());
+    }
     metadata["usage"] = json!({
         "promptTokens": prompt_tokens_total,
         "cachedPromptTokens": if cache_reporting_complete { json!(cached_prompt_tokens_total) } else { Value::Null },
