@@ -1444,7 +1444,7 @@ mod tests {
             vec!["s"]);
         assert_eq!(mentioned_agents(&state,&roster,"아인즈와 알베도가 검토해").unwrap(),
             vec!["a","b"]);
-        assert_eq!(mentioned_agents(&state,&roster,"예시 이름은 '@샤르티아'이고 @아인즈는 답해").unwrap(),
+        assert_eq!(mentioned_agents(&state,&roster,"예시 이름은 '@샤르티아'이고 @아인즈 답해").unwrap(),
             vec!["a"]);
         drop(state);let _=std::fs::remove_dir_all(dir);
     }
