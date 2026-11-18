@@ -197,6 +197,17 @@ fn preserve_observations(signals:Vec<Value>,history:&[Value])->(Vec<Value>,usize
     (preserved,duplicate_urls)
 }
 
+/// A newly observed supplier/buyer signal must participate in this cycle's
+/// hypothesis search. The old path only researched the previous 240 archive
+/// rows and delayed discovery until the following scheduled scan.
+fn research_window(fresh:&[Value],history:&[Value])->Vec<Value>{
+    let mut ids=std::collections::HashSet::<String>::new();
+    fresh.iter().chain(history).filter(|row|{
+        row["id"].as_str().is_some_and(|id|!id.is_empty()
+            && ids.insert(id.to_string()))
+    }).take(120).cloned().collect()
+}
+
 fn needs_article_fetch(item:&Value,stored:Option<&Value>)->bool{
     if item["url"].as_str().is_none_or(|url|!url.starts_with("https://")&&!url.starts_with("http://")){
         return false;
@@ -261,7 +272,8 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
         .filter(|row|row["storyRelationship"]==
             "matching_headline_requires_independent_source_review").count();
     let added=context.state.store.money_ingest_signals(&signals)?;
-    let hypotheses=crate::engine::money_mechanism::discover(&history,30);
+    let active=research_window(&signals,&history);
+    let hypotheses=crate::engine::money_mechanism::discover(&active,30);
     let linked=context.state.store.money_store_tensions(&hypotheses)?;
     let summary=json!({"id":format!("market:{}",context.job_id),
         "jobId":context.job_id,"found":found,"new":added,"newCrossMarketQuestions":linked,
@@ -342,6 +354,18 @@ mod tests{
         assert_eq!(observations.len(),1);
         assert_eq!(observations[0]["independentConfirmation"],false);
     }
+    #[test] fn current_cycle_is_researched_before_old_archive_and_without_duplicate_ids(){
+        let fresh=vec![json!({"id":"new-buyer","title":"New buyer request"}),
+            json!({"id":"old-supplier","title":"Enriched supplier price"})];
+        let archive=vec![json!({"id":"old-supplier","title":"Stale supplier price"}),
+            json!({"id":"older","title":"Old public signal"})];
+        let working=research_window(&fresh,&archive);
+        assert_eq!(working.len(),3);
+        assert_eq!(working[0]["id"],"new-buyer");
+        assert_eq!(working[1]["title"],"Enriched supplier price");
+        assert_eq!(working[2]["id"],"older");
+    }
+
     #[test] fn fetched_sources_are_skipped_but_headlines_can_be_enriched(){
         let item=json!({"url":"https://example.org/story"});
         assert!(needs_article_fetch(&item,None));
