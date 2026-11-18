@@ -36,6 +36,30 @@ use super::*;
     }
 
     #[test]
+    fn external_harness_is_reachable_only_when_delegation_is_in_core(){
+        let defs=vec![
+            json!({"type":"function","function":{"name":"workspace_read",
+                "description":"read","parameters":{"type":"object"}}}),
+            json!({"type":"function","function":{"name":"delegate_task",
+                "description":"delegate","parameters":{"type":"object"}}}),
+            json!({"type":"function","function":{"name":"external_harness_run",
+                "description":"externally delegated coding harness","parameters":{"type":"object"}}}),
+        ];
+        let normal=select_tool_definitions(defs.clone(),"code task",
+            &json!({"implementation":"core"}));
+        assert!(normal.iter().any(|tool|tool_name(tool)=="external_harness_run"));
+        let explicit=select_tool_definitions(defs.clone(),"code task",
+            &json!({"implementation":"core",
+                "parameters":{"tools":["workspace_read"]}}));
+        assert!(!explicit.iter().any(|tool|tool_name(tool)=="external_harness_run"));
+        let disabled=defs.into_iter().filter(|tool|tool_name(tool)!="external_harness_run")
+            .collect::<Vec<_>>();
+        let normal=select_tool_definitions(disabled,"delegate",
+            &json!({"implementation":"core"}));
+        assert!(!normal.iter().any(|tool|tool_name(tool)=="external_harness_run"));
+    }
+
+    #[test]
     fn core_coding_tool_selection_advertises_native_multi_file_patch(){
         let definitions=vec![
             json!({"function":{"name":"workspace_read"}}),
