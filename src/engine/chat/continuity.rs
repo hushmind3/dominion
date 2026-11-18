@@ -214,12 +214,16 @@ pub(crate) fn prepare(
     // Workers AI routes a stable affinity to the same model instance.
     // Room speakers may reuse the SAME stable room-level prefix while their
     // existing per-agent cache keys and conversation cursors stay isolated.
-    let session_affinity = state.store.get("session",session_id)
-        .and_then(|session|session["roomId"].as_str().map(str::to_string))
-        .map(|room_id|stable_id(&[
-            "cloudflare-room-affinity-v1",&room_id,&provider.id,&provider.base_url,
-            &provider.model,provider.account_id.as_deref().unwrap_or(""),
-        ])).unwrap_or_else(||affinity.clone());
+    let session_affinity = if state.store.get("session",session_id)
+        .is_some_and(|session|session["roomId"].is_string()){
+        // All speakers in ONE conversation reuse the route; a room reset
+        // creates a new session and therefore a fresh cache affinity.
+        stable_id(&[
+            "cloudflare-room-session-affinity-v1",session_id,&provider.id,
+            &provider.base_url,&provider.model,
+            provider.account_id.as_deref().unwrap_or(""),
+        ])
+    }else{affinity.clone()};
     let previous = state.store.get("model_conversation", &id);
     let same_prefix = previous.as_ref().is_some_and(|record|record["prefixDigest"] == prefix);
     let mut record = previous.unwrap_or_else(||json!({
