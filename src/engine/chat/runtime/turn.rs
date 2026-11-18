@@ -203,6 +203,7 @@ pub(super) async fn run_turn_body(
     if request.tools_enabled && request.tools_execution_enabled {
         tool_definitions.extend(mcp::definitions(state).await);
     }
+    let full_catalog_size=tool_definitions.len();
     let is_room = session["roomId"].is_string();
     if is_room && request.tools_enabled && request.tools_execution_enabled {
         let recent = recent_room_tools(state, session_id);
@@ -240,6 +241,20 @@ pub(super) async fn run_turn_body(
             execution["contextPolicy"] = json!("single-file-creation");
             state.store.put("execution", &execution);
         }
+    }
+    // The compact bridge is a presentation of the ORIGINAL owner-connected
+    // catalog, not a new executor or permission source. Casual rooms and
+    // deterministic single-file paths must not acquire hidden tools.
+    let bridge_enabled=capability::should_expose(
+        full_catalog_size,tool_definitions.len(),
+        !is_room || acceptance.is_some() || room_tool_request(&request.input),
+        request.tools_enabled && request.tools_execution_enabled,
+        simple_creation_target.is_some(),
+    );
+    if bridge_enabled {
+        let mut visible=capability::definitions();
+        visible.extend(tool_definitions);
+        tool_definitions=visible;
     }
     let compiled = if is_room {
         let source = source_message_id.or(reply_to.as_deref()).ok_or("응답할 원문이 없습니다.")?;
@@ -1148,7 +1163,39 @@ pub(super) async fn run_turn_body(
             .unwrap_or("as-written");
         // Native provider calls retain their declared order. Effects are barriers;
         // the shared Rust kernel only batches adjacent independent observations.
-        let round_calls = completion.tool_calls.clone();
+        // A bridge call never executes as a separate tool runner. Resolve it
+        // against a SAME-RUN search receipt and the live tool schema, then
+        // feed the REAL tool into the current kernel dispatcher/approval WAL.
+        let mut round_calls = completion.tool_calls.clone();
+        let offered_search=round_tools.iter().any(|tool|
+            tool_name(tool)==capability::SEARCH);
+        let offered_call=round_tools.iter().any(|tool|
+            tool_name(tool)==capability::CALL);
+        for call in &mut round_calls {
+            if call.name==capability::CALL {
+                let result=if !offered_call {
+                    Err("Tool invocation bridge was not offered in this model round".into())
+                } else {
+                    match serde_json::from_str::<Value>(&call.arguments) {
+                        Ok(payload)=>capability::resolve(
+                            state,session_id,execution_id,&payload).await,
+                        Err(error)=>Err(format!("Invalid discovery arguments: {error}")),
+                    }
+                };
+                match result {
+                    Ok((name,args))=>{
+                        call.name=name;
+                        call.arguments=args.to_string();
+                    }
+                    Err(error)=>{
+                        call.arguments=json!({"_discoveryError":error}).to_string();
+                    }
+                }
+            } else if call.name==capability::SEARCH && !offered_search {
+                call.arguments=json!({"_discoveryError":
+                    "Tool search was not offered in this model round"}).to_string();
+            }
+        }
         if ordering_kernel == "read-first" && round_calls.iter().any(|call| !tool_is_read_only(&call.name)) {
             crate::engine::algorithms::mark_unrated(
                 state, execution_id, "execution.ordering", "effect ordering barrier preserved",
@@ -1195,6 +1242,17 @@ pub(super) async fn run_turn_body(
                     continue;
                 }
             };
+            if matches!(call.name.as_str(),capability::SEARCH|capability::CALL)
+                && arguments["_discoveryError"].is_string() {
+                let error=arguments["_discoveryError"].as_str().unwrap_or("Invalid tool discovery");
+                record_soft_tool_error(state,tx,session_id,request,execution_id,
+                    &call.name,&call.id,error,metrics);
+                messages.push(json!({
+                    "role":"tool","tool_call_id":call.id,
+                    "content":json!({"error":error,"discoveryRejected":true}).to_string()
+                }));
+                continue;
+            }
             let completed_operations = state.store.execution_operations_recent(execution_id)?
                 .into_iter()
                 .filter(|operation| operation["status"].as_str() == Some("completed"))
