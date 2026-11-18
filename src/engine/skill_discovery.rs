@@ -65,7 +65,7 @@ fn relevance(skill:&Value,query:&str)->i32{
     score
 }
 
-fn select(skills:Vec<Value>,scope:&MemoryScope,query:&str,limit:usize)->Vec<Value>{
+pub(crate) fn select(skills:Vec<Value>,scope:&MemoryScope,query:&str,limit:usize)->Vec<Value>{
     let mut rows=skills.into_iter().filter(|s|eligible(s,scope))
         .filter_map(|skill|{
             let score=relevance(&skill,query);
