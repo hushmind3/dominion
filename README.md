@@ -74,6 +74,33 @@ code changes use ordinary inspect → edit → test → verify tasks.
 For execution recovery, provenance and acceptance invariants, see
 [the detailed harness contract](docs/HARNESS.md).
 
+### Group-room recall without resending confirmed facts
+
+Room turns use a **proof-carrying append-only working view** in
+[`continuity.rs`](src/engine/chat/continuity.rs). The current question may
+select a different subset of existing owner-confirmed facts. When those facts
+are still valid in the persisted `room_state` evidence ledger, the runtime
+keeps the previous prefix and sends only the newly selected verbatim fact
+lines. Adding a genuine new owner fact is also appendable if every previously
+visible fact is unchanged. **Corrections, supersession, revoked evidence,
+scope changes, modified system instructions, and history-budget rotation**
+force a fresh source-scoped projection instead of silently reusing stale text.
+
+This also applies to **tool-heavy group work**: the native-work fallback
+carries the room owner-state provenance, and legacy projections without a
+verified revision proof are rebuilt once. Original owner messages and tool
+receipts remain in SQLite; the optimization changes the model-visible
+projection, not durable memory. The
+[`owner_fact_selection_reuses_prefix_and_appends_missing_facts_until_real_revision`]
+(src/engine/chat/continuity.rs) regression verifies append-only reuse,
+deduplication and correction invalidation.
+
+**Measurement boundary:** a reusable prefix is not proof of a provider cache
+hit. Per-execution `providerPromptTokens`, `providerCachedPromptTokens`
+and `providerNewPromptTokens` are populated only from usable provider
+accounting. Real-model nine-speaker / 100-turn memory accuracy and new-token
+reduction must be measured separately.
+
 ## Development vs release validation
 
 Normal Rust source pushes run only scoped, default-profile kernel/job/Money regression tests on macOS via `.github/workflows/ci.yml`. They do **not** trigger frontend builds, `cargo build/check`, release-profile builds, installer packaging, or the Windows/macOS release matrix. The separate `.github/workflows/release.yml` performs those full checks only for version tags or an explicit manual release request. Passing scoped tests does not imply that a distributable desktop release has been validated.
