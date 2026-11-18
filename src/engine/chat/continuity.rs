@@ -73,6 +73,20 @@ fn frame_key(message: &Value, source: &str, index: usize) -> String {
         .unwrap_or_else(|| format!("transient-{}", stable_id(&[source, &index.to_string(), &wire_message(message).to_string()])))
 }
 
+/// Extend a committed provider view with truly unseen source frames.
+/// A later compact reference to a peer reply is redundant if the exact
+/// full source frame is already carried in this participant's prefix.
+/// A rebase starts from an empty view and therefore keeps that reference.
+fn append_unseen_frames(frames:&mut Vec<Value>,fresh:&[Value]){
+    let seen=frames.iter().filter_map(|frame|frame["key"].as_str().map(str::to_string))
+        .collect::<std::collections::HashSet<_>>();
+    frames.extend(fresh.iter().filter(|frame|{
+        let key=frame["key"].as_str().unwrap_or("");
+        !seen.contains(key) && !key.strip_prefix("room-peer-index:")
+            .is_some_and(|source|seen.contains(source))
+    }).cloned());
+}
+
 /// Enlarged history is beneficial only after this exact provider route
 /// has a committed, successful WS response. When Codex fell back to HTTP,
 /// its returned transport is "http" and the next turn keeps the room's
@@ -162,19 +176,7 @@ pub(crate) fn project(
     }
     let mut reused = frames.len();
     if reason.is_none() {
-        let seen = frames.iter().filter_map(|frame|frame["key"].as_str().map(str::to_string))
-            .collect::<std::collections::HashSet<_>>();
-        frames.extend(fresh.iter().filter(|frame|{
-            let key=frame["key"].as_str().unwrap_or("");
-            if seen.contains(key){return false;}
-            // If the full, immutable peer reply is already in this provider's
-            // preserved conversation prefix, appending its short source index
-            // would pay new tokens to repeat content the model already has.
-            // On an actual rebase the index remains in fresh and can be read
-            // on demand via the scoped room tool.
-            !key.strip_prefix("room-peer-index:")
-                .is_some_and(|source|seen.contains(source))
-        }).cloned());
+        append_unseen_frames(&mut frames,&fresh);
         let session = state.store.get("session", session_id).unwrap_or(Value::Null);
         let room = session["roomId"].as_str().and_then(|id|state.store.get("room", id));
         // This is a *history* allowance in addition to mandatory identity, not
@@ -213,6 +215,11 @@ pub(crate) fn project(
         "retainedHistoryEstimatedTokens":super::room_context::input_estimate(
             &frames.iter().map(|f|f["message"].clone()).collect::<Vec<_>>(),&[]),
         "historyAllowanceTokens":plan["workingViewBudgetTokens"],
+        // Estimator for the newly appended transcript slice; this is NOT
+        // provider-billed uncached prompt tokens or proof of a cache hit.
+        "newHistoryEstimatedTokens":super::room_context::input_estimate(
+            &frames[reused.min(frames.len())..].iter()
+                .map(|f|f["message"].clone()).collect::<Vec<_>>(),&[]),
     });
     (projected, Some(Projection { frames, dependencies, signature, epoch }))
 }
@@ -476,15 +483,14 @@ mod tests {
         }})];
         let fresh=vec![json!({"key":"room-peer-index:peer-original",
             "message":{"role":"user","content":"brief id peer-original"}})];
-        let seen=previous.iter().filter_map(|frame|frame["key"].as_str().map(str::to_string))
-            .collect::<std::collections::HashSet<_>>();
-        let append=fresh.iter().filter(|frame|{
-            let key=frame["key"].as_str().unwrap_or("");
-            !seen.contains(key) && !key.strip_prefix("room-peer-index:")
-                .is_some_and(|source|seen.contains(source))
-        }).cloned().collect::<Vec<_>>();
-        assert!(append.is_empty());
-        assert_eq!(fresh.len(),1,"a true rebase can restore the source index");
+        let mut carried=previous.clone();
+        append_unseen_frames(&mut carried,&fresh);
+        assert_eq!(carried.len(),1,"cannot repeat an already available exact source");
+        let mut rebased=Vec::new();
+        append_unseen_frames(&mut rebased,&fresh);
+        assert_eq!(rebased,fresh,"a true rebase restores the source index");
+        append_unseen_frames(&mut rebased,&fresh);
+        assert_eq!(rebased.len(),1,"same index ID is not appended twice");
     }
 
     #[test]
