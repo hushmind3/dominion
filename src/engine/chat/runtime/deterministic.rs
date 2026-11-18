@@ -331,6 +331,9 @@ mod tests {
         let recorded = state.store.execution_operations("frozen-run").unwrap();
         assert_eq!(recorded.len(), 2);
         assert!(recorded.iter().any(|op| op["id"] == write_op["id"]));
+        // No assistant tool_calls frame exists in a model-free shortcut.
+        // Persisting bare tool responses would break the next provider turn.
+        assert!(state.store.messages("frozen-session").is_empty());
         let _ = std::fs::remove_dir_all(root);
     }
 
