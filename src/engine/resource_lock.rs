@@ -16,7 +16,7 @@ fn key(workspace:&Path,name:&str,args:&Value)->Option<String>{
     let prefix=canonical.to_string_lossy();
     match name{
         "workspace_write"|"workspace_replace"|"workspace_replace_range"|
-        "workspace_apply_patch"|"shell_exec"|"terminal_exec" =>
+        "workspace_apply_patch"|"shell_exec"|"terminal_exec"|"external_harness_run" =>
             Some(format!("workspace:{prefix}")),
         "file_write"=>{
             let target=args["path"].as_str()?;
@@ -81,6 +81,8 @@ mod tests{
         let ws=std::path::Path::new("/tmp/dominion");
         assert_eq!(key(ws,"workspace_write",&Value::Null),
             key(ws,"shell_exec",&Value::Null));
+        assert_eq!(key(ws,"external_harness_run",&Value::Null),
+            key(ws,"workspace_write",&Value::Null));
         assert_ne!(key(ws,"workspace_write",&Value::Null),
             key(ws,"browser_control",&Value::Null));
         assert!(key(ws,"web_search",&Value::Null).is_none());
