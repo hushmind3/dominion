@@ -471,8 +471,15 @@ pub(super) fn render_history(
                         .is_some_and(|id|call_ids.contains(id)));
                 if valid {
                     let mut assistant = json!({"role":"assistant","content":content,"tool_calls":calls});
-                    if let Some(reasoning) = stored_reasoning(message) {
-                        assistant["reasoning_content"] = json!(reasoning);
+                    // A room shares committed conclusions and tool receipts,
+                    // not a previous speaker's private chain-of-thought. The
+                    // complete reasoning remains in the SQLite message, but
+                    // replaying it to a new model round inflates prompt tokens
+                    // and can bias peers toward stale unverified thoughts.
+                    if !is_room {
+                        if let Some(reasoning) = stored_reasoning(message) {
+                            assistant["reasoning_content"] = json!(reasoning);
+                        }
                     }
                     out.push(assistant);
                     out.extend(ordered_results.iter().map(|row| {
@@ -494,8 +501,10 @@ pub(super) fn render_history(
                 }
             } else if !content.trim().is_empty() {
                 let mut assistant = json!({"role":"assistant","content":content});
-                if let Some(reasoning) = stored_reasoning(message) {
-                    assistant["reasoning_content"] = json!(reasoning);
+                if !is_room {
+                    if let Some(reasoning) = stored_reasoning(message) {
+                        assistant["reasoning_content"] = json!(reasoning);
+                    }
                 }
                 out.push(assistant);
             }
