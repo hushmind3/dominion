@@ -71,7 +71,10 @@ async function freeProxy(request, env, user) {
   const body = await maxBody(request);
   const model = freeModels(env).find(x => x.id === body.model);
   if (!model || !env.UPSTREAM_API_KEY || !env.UPSTREAM_URL) return err('Free model not available', 503);
-  if (body.stream === true || body.tools !== undefined || body.tool_choice !== undefined || body.n !== undefined || body.response_format !== undefined)\n    return err('Free model currently supports text-only non-streaming requests');\n  if (!Array.isArray(body.messages) || !body.messages.length ||\n      JSON.stringify(body.messages).length > 50000 ||
+  if (body.stream === true || body.tools !== undefined || body.tool_choice !== undefined || body.n !== undefined || body.response_format !== undefined)
+    return err('Free model currently supports text-only non-streaming requests');
+  if (!Array.isArray(body.messages) || !body.messages.length ||
+      JSON.stringify(body.messages).length > 50000 ||
       (body.max_tokens !== undefined && (!Number.isSafeInteger(body.max_tokens) || body.max_tokens < 1)))
     return err('Invalid or oversized messages');
   const limit = Math.max(1, Math.min(1000, Number(env.FREE_DAILY_LIMIT || 20)));
