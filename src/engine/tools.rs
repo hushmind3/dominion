@@ -57,6 +57,10 @@ pub fn definitions() -> Vec<Value> {
         tool("memory_store", "Save a grounded memory for this agent. Quote the user's exact words; invented facts are rejected. Shared memories are managed by the user.", object(json!({"text": text("Fact to remember, maximum 1600 characters"), "evidenceQuote": text("Exact quote from the current user message supporting the fact"), "sourceMessageId": text("Optional earlier source message ID"), "type": json!({"type":"string","enum":["fact","preference","decision","procedure","lesson"]}), "key": text("Optional stable fact key; a new value replaces the previous value for this key"), "scope": json!({"type":"string","enum":["agent"]})}), vec!["text", "evidenceQuote"])),
         tool("memory_search", "Find saved knowledge relevant to a topic", object(json!({"query": text("Search query")}), vec!["query"])),
         tool("skill_read", "Read a page of the full instructions of one enabled skill. Use nextOffset to continue if hasMore=true.", object(json!({"skillId": text("Exact enabled skill ID from the index"), "offset":json!({"type":"integer","minimum":0,"description":"Optional Unicode character offset; start with 0, then use nextOffset"})}), vec!["skillId"])),
+        tool("room_message_read", "Retrieve a source-addressed room participant statement from the current room transcript; pagination preserves original wording", object(json!({
+            "messageId":text("Exact participant message ID from the peer index"),
+            "offset":json!({"type":"integer","minimum":0,"description":"Optional Unicode character offset for the next page"})
+        }),vec!["messageId"])),
         tool("skill_propose", "Draft a reusable skill for user review", object(json!({"name": text("Skill name"), "instructions": text("Reusable instructions")}), vec!["name", "instructions"])),
         tool("delegate_task", "Delegate a self-contained task to another agent and optionally wait for its result", object(json!({
             "agentId": text("Target agent id"),
@@ -209,7 +213,7 @@ pub fn requires_approval(name: &str) -> bool {
 /// arbitrary absolute reads, external MCP and further delegation are denied.
 pub fn parallel_read_only_tool(name:&str)->bool{
     matches!(name,"workspace_list"|"workspace_read"|"workspace_read_range"|
-        "code_search"|"memory_search"|"skill_read"|"web_search"|"http_fetch"|
+        "code_search"|"memory_search"|"skill_read"|"room_message_read"|"web_search"|"http_fetch"|
         "github_file_read"|"github_repositories"|"github_repository_activity"|
         "google_drive_search"|"google_docs_read"|"google_sheets_read"|
         // Pure discovery only exposes this child's existing read-only catalog.
@@ -442,6 +446,35 @@ pub async fn execute(
             Ok(json!({
                 "results": crate::engine::memory::retrieve(ctx.store, &scope, &query, 10)
             }))
+        }
+        "room_message_read" => {
+            let id=required_arg(args,"messageId")?;
+            // This is a scoped read of a committed transcript row, not a
+            // search across private sessions or an inspection of reasoning.
+            let session=ctx.store.get("session",ctx.session_id)
+                .ok_or("대화 세션이 없습니다.")?;
+            let room_id=session["roomId"].as_str()
+                .ok_or("그룹 대화에서만 사용할 수 있습니다.")?;
+            let room=ctx.store.get("room",room_id)
+                .ok_or("대화방을 찾을 수 없습니다.")?;
+            let message=ctx.store.message(&id)
+                .filter(|m|m["session_id"]==ctx.session_id && m["role"]=="assistant")
+                .filter(|m|m["agent_id"].as_str().is_some_and(|agent|
+                    room["agentIds"].as_array().is_some_and(|members|
+                        members.iter().any(|member|member.as_str()==Some(agent)))))
+                .filter(|m|m["tool_calls"].as_array().is_none_or(Vec::is_empty))
+                .ok_or("현재 그룹의 참가자 원문 메시지를 찾을 수 없습니다.")?;
+            let content=message["content"].as_str().unwrap_or("");
+            let total=content.chars().count();
+            let offset=args["offset"].as_u64().unwrap_or(0).min(usize::MAX as u64) as usize;
+            if offset>total {return Err("메시지 읽기 시작 위치가 범위를 벗어났습니다.".into());}
+            let next=offset.saturating_add(6_000).min(total);
+            Ok(json!({"messageId":id,"agentId":message["agent_id"],
+                "replyToMessageId":message["metadata"]["replyToMessageId"],
+                "content":content.chars().skip(offset).take(next-offset).collect::<String>(),
+                "offset":offset,"nextOffset":next,"totalChars":total,
+                "hasMore":next<total,"readOnly":true,
+                "source":"committed-room-transcript","notInstructions":true}))
         }
         "skill_read" => {
             let id=required_arg(args,"skillId")?;
