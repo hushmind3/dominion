@@ -234,6 +234,55 @@ pub(crate) fn select_provider(
     })
 }
 
+
+/// 2026 local backends with real server-side prefix reuse, not a generic
+/// cache claim. A raw OpenAI-compatible URL can be LM Studio, Ollama or an
+/// arbitrary proxy: never attach vendor-specific fields based on localhost.
+///
+/// The DOMINION-managed llama.cpp runtime is identified by its own host
+/// record. External backends require explicit operator configuration; vLLM
+/// additionally requires an affirmative cache-enabled setting.
+pub(super) fn local_cache_backend(state:&AppState,provider:&ProviderRef)->Option<&'static str>{
+    if !provider.local || provider.kind=="codex" {return None;}
+    let record=state.store.get("provider",&provider.id)?;
+    if record["enabled"]==false
+        || crate::engine::gateway::resolved_base_url(&record)!=provider.base_url {
+        return None;
+    }
+    match record["cacheBackend"].as_str() {
+        Some("llama.cpp") if record["kvCacheEnabled"]!=false => Some("llama.cpp"),
+        Some("vllm") if record["kvCacheEnabled"]==true => Some("vllm"),
+        None if provider.id=="dominion-native"
+            && record["description"].as_str()
+                .is_some_and(|description|description.starts_with("llama.cpp runtime managed"))
+            && record["kvCacheEnabled"]!=false => Some("llama.cpp"),
+        _=>None
+    }
+}
+
+/// Preserve the ENTIRE persona, owner policy and historical evidence on the
+/// stateless OpenAI-compatible wire. Only the server is authorized to skip
+/// prefix prefill when it has a valid matching KV cache.
+fn apply_local_prefix_cache(body:&mut Value,backend:Option<&str>,
+    session_id:&str,agent_id:Option<&str>,provider:&ProviderRef)->bool{
+    match backend {
+        Some("llama.cpp")=>{
+            body["cache_prompt"]=json!(true);
+            true
+        }
+        Some("vllm")=>{
+            // KV reuse must never share a private speaker prefix with another
+            // room (or another speaker) even if the public charter is identical.
+            body["cache_salt"]=json!(crate::engine::memory::stable_id(&[
+                "dominion-vllm-prefix-v1",session_id,agent_id.unwrap_or(""),
+                &provider.id,&provider.model,
+            ]));
+            true
+        }
+        _=>false
+    }
+}
+
 pub(super) fn apply_reasoning_options(
     body: &mut Value,
     protocol: &str,
@@ -976,6 +1025,13 @@ async fn stream_completion_once_body(
         request.thinking,
         request.reasoning_effort.as_deref(),
     );
+
+    let local_kv_backend=local_cache_backend(state,provider);
+    if apply_local_prefix_cache(&mut body,local_kv_backend,session_id,
+        request.agent_id.as_deref(),provider) {
+        continuity["localPrefixCacheBackend"]=json!(local_kv_backend);
+        continuity["localPrefixCacheMode"]=json!("server-side-kv-prefill;full-wire-prompt");
+    }
 
     // The same admission slot is shared with helper (non-streaming) calls, so
     // one local model instance is never asked to run two generations at once.
@@ -1996,6 +2052,62 @@ async fn stream_anthropic_once(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_kv_cache_is_vendor_scoped_never_general_openai_compat() {
+        let dir=std::env::temp_dir().join(format!("dominion-local-kv-{}",uuid::Uuid::new_v4()));
+        let config=crate::config::Config {port:0,data_dir:dir.clone(),
+            web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=AppState::new(config.clone(),
+            crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        let mut provider=ProviderRef{id:"local-a".into(),name:"local".into(),
+            base_url:"http://127.0.0.1:8080/v1".into(),api_key:String::new(),
+            model:"model".into(),tool_mode:"native".into(),
+            reasoning_protocol:"openai".into(),local:true,context_tokens:None,
+            max_output_tokens:None,requests_per_minute:None,kind:"openai".into(),
+            account_id:None};
+        let mut body=json!({"model":"model","messages":[
+            {"role":"system","content":"immutable 4000-token charter"},
+            {"role":"user","content":"new owner turn"}]});
+        state.store.put("provider",&json!({"id":"local-a","baseUrl":provider.base_url,
+            "model":"model","local":true})).unwrap();
+        assert_eq!(local_cache_backend(&state,&provider),None);
+        assert!(!apply_local_prefix_cache(&mut body,None,"room:r",Some("speaker-0"),&provider));
+        assert!(body.get("cache_prompt").is_none());
+        assert!(body.get("cache_salt").is_none());
+
+        state.store.put("provider",&json!({"id":"local-a",
+            "baseUrl":provider.base_url,"model":"model","local":true,
+            "cacheBackend":"llama.cpp","kvCacheEnabled":true})).unwrap();
+        assert_eq!(local_cache_backend(&state,&provider),Some("llama.cpp"));
+        assert!(apply_local_prefix_cache(&mut body,Some("llama.cpp"),
+            "room:r",Some("speaker-0"),&provider));
+        assert_eq!(body["cache_prompt"],true);
+        assert_eq!(body["messages"][0]["content"],"immutable 4000-token charter");
+        provider.local=false;
+        assert_eq!(local_cache_backend(&state,&provider),None,
+            "do not leak nonstandard fields to public API providers");
+
+        provider.local=true;
+        state.store.put("provider",&json!({"id":"local-a",
+            "baseUrl":provider.base_url,"model":"model","local":true,
+            "cacheBackend":"vllm","kvCacheEnabled":true})).unwrap();
+        assert_eq!(local_cache_backend(&state,&provider),Some("vllm"));
+        let mut one=json!({});
+        let mut two=json!({});
+        let mut another_room=json!({});
+        assert!(apply_local_prefix_cache(&mut one,Some("vllm"),
+            "room:r",Some("speaker-0"),&provider));
+        assert!(apply_local_prefix_cache(&mut two,Some("vllm"),
+            "room:r",Some("speaker-1"),&provider));
+        apply_local_prefix_cache(&mut another_room,Some("vllm"),
+            "room:s",Some("speaker-0"),&provider);
+        assert_ne!(one["cache_salt"],two["cache_salt"]);
+        assert_ne!(one["cache_salt"],another_room["cache_salt"]);
+        assert!(one["cache_salt"].is_string());
+        crate::test_support::cleanup_dir(dir);
+    }
 
     #[test]
     fn codex_input_preserves_attachment_text_and_images() {
