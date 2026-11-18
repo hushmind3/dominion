@@ -77,6 +77,26 @@ pub(super) struct MainTurn<'a> {
     pub(super) completed_operations: Vec<Value>,
 }
 
+/// A last-turn receipt may be committed after the final tool batch even when
+/// no model round remains to describe it. Only the frozen owner-bound checks and
+/// durable completed operations can recover that outcome. A file existing by
+/// itself, or an assistant claim, never counts as sufficient evidence.
+fn terminal_acceptance_receipt(
+    state: &AppState,
+    session_id: &str,
+    source_id: Option<&str>,
+    execution_id: &str,
+    acceptance: Option<&(String, Value)>,
+) -> Option<usize> {
+    let (goal, checks) = acceptance?;
+    let source_id = source_id?;
+    let evidence = evidence_for_source(state, session_id, source_id, execution_id);
+    if evidence.is_empty() || !verification::check_acceptance(state, goal, checks, &evidence).is_empty() {
+        return None;
+    }
+    Some(evidence.len())
+}
+
 impl Host for MainTurn<'_> {
     type Reply = (
         crate::engine::chat::Completion,
@@ -1572,6 +1592,23 @@ impl Host for MainTurn<'_> {
         })
     }
     fn exhausted(&mut self) -> Result<(), String> {
+        // The final model round may finish an effectful tool call with no paid
+        // round left to emit the completion prose. Re-read persisted receipts
+        // rather than paying a ninth call or treating a mere file as success.
+        if !self.acceptance_passed && !self.owner_changed()? {
+            if let Some(receipts) = terminal_acceptance_receipt(
+                self.state, self.session_id, self.reply_to.as_deref(),
+                self.execution_id, self.acceptance.as_ref(),
+            ) {
+                self.acceptance_passed = true;
+                self.metadata["completionSource"] = json!("terminal_verified_receipts");
+                self.state.store.audit("acceptance.terminal_verified", json!({
+                    "executionId": self.execution_id,
+                    "sessionId": self.session_id,
+                    "verifiedReceiptCount": receipts,
+                }));
+            }
+        }
         if !self.acceptance_passed {
             return Err(format!(
                 "모델 반복 제한({}회)에 도달하여 실행을 마치지 못했습니다.",
@@ -1861,5 +1898,52 @@ impl MainTurn<'_> {
             self.state.store.put("execution", &execution);
         }
         Ok(Some(saved))
+    }
+}
+
+#[cfg(test)]
+mod terminal_receipt_tests {
+    use super::*;
+    use crate::{config::Config, db::Store, vault::Vault};
+
+    #[test]
+    fn terminal_receipt_requires_exact_goal_and_durable_effect() {
+        let root = std::env::temp_dir().join(format!(
+            "dominion-terminal-receipt-{}", uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let config = Config {
+            port: 0, data_dir: root.clone(), web_dir: root.join("web"),
+            workspace: root.clone(),
+        };
+        let store = Store::open(&config.db_path()).unwrap();
+        let vault = Vault::open(&config.key_path());
+        let state = AppState::new(config, store, vault);
+        std::fs::write(root.join("done.txt"), "verified").unwrap();
+        let accepted = Some((
+            "write done.txt with verified".to_owned(),
+            json!([{"type":"file_equals","path":"done.txt","content":"verified"}]),
+        ));
+        // An already-existing artifact cannot silently complete a failed job.
+        assert_eq!(terminal_acceptance_receipt(
+            &state, "s", Some("owner"), "execution-1", accepted.as_ref(),
+        ), None);
+        state.store.put("execution_operation", &json!({
+            "id":"write-1","runId":"execution-1","status":"completed",
+            "tool":"workspace_write",
+            "arguments":{"path":"done.txt","content":"verified"},
+            "result":{"success":true},
+        }));
+        assert_eq!(terminal_acceptance_receipt(
+            &state, "s", Some("owner"), "execution-1", accepted.as_ref(),
+        ), Some(1));
+        let wrong_content = Some((
+            "write done.txt with something else".to_owned(),
+            json!([{"type":"file_equals","path":"done.txt","content":"wrong"}]),
+        ));
+        assert_eq!(terminal_acceptance_receipt(
+            &state, "s", Some("owner"), "execution-1", wrong_content.as_ref(),
+        ), None);
+        let _ = std::fs::remove_dir_all(root);
     }
 }
