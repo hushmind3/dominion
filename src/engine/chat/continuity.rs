@@ -505,6 +505,11 @@ mod tests {
         for (agent,session) in [("a","room:one"),("b","room:one"),("a","room:two"),("a","private:one")]{
             let request=TurnRequest::from_value(&json!({"agentId":agent,"input":"hello"})).unwrap();
             let mut plan=prepare(&state,&provider,&request,session,"static-room-prefix",&json!({})).unwrap();
+            let original=json!({"model":"test","messages":[{"role":"user","content":"hello"}]});
+            let hinted=hinted_body(&state,&provider,&original,&mut plan,CacheWire::Key);
+            assert_eq!(hinted,original,"Cloudflare must not receive an unsupported cache-key JSON probe");
+            assert_eq!(plan["cacheHint"],"x-session-affinity");
+            assert_eq!(plan["wireHintSent"],false);
             let res=send(&state,&provider,reqwest::Client::new().post(format!("http://{addr}/test")),
                 &json!({"model":"test","messages":[{"role":"user","content":"hello"}]}),
                 &mut plan,CacheWire::Key).await.unwrap();
