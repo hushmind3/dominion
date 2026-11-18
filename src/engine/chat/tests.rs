@@ -594,3 +594,73 @@ async fn chat_progressively_discovers_and_executes_hidden_read_tool() {
     server.abort();
     let _=std::fs::remove_dir_all(&state.config.data_dir);
 }
+
+
+#[tokio::test]
+async fn room_model_call_records_component_breakdown_and_exact_provider_usage() {
+    use axum::{extract::State, routing::post, Json, Router};
+    use axum::response::IntoResponse;
+    use std::sync::{Arc,Mutex};
+    let posted=Arc::new(Mutex::new(Vec::<Value>::new()));
+    async fn model(State(posted):State<Arc<Mutex<Vec<Value>>>>,
+        Json(body):Json<Value>)->axum::response::Response {
+        posted.lock().unwrap().push(body);
+        let response=format!("data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+            json!({"choices":[{"index":0,"delta":{"content":"발언 완료"}}]}),
+            json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],
+                "usage":{"prompt_tokens":410,"completion_tokens":23,
+                    "total_tokens":433,"prompt_tokens_details":{"cached_tokens":110}}}));
+        ([(axum::http::header::CONTENT_TYPE,"text/event-stream")],response).into_response()
+    }
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr=listener.local_addr().unwrap();
+    let app=Router::new().route("/chat/completions",post(model))
+        .with_state(posted.clone());
+    let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap()});
+    let state=temp_state();
+    state.store.put("provider",&json!({"id":"room-provider","kind":"openai",
+        "model":"room-fixture","baseUrl":format!("http://{addr}"),
+        "enabled":true})).unwrap();
+    state.store.put("agent",&json!({"id":"speaker","name":"테스터",
+        "systemPrompt":"참가자 고유 지침은 보존한다"})).unwrap();
+    state.store.put("room",&json!({"id":"room-context",
+        "agentIds":["speaker"],"contextBudgetTokens":1,"toolsEnabled":false})).unwrap();
+    state.store.put("session",&json!({"id":"room:context",
+        "roomId":"room-context","providerId":"room-provider",
+        "agentId":"speaker"})).unwrap();
+    state.store.write_message(&json!({"id":"source-room",
+        "session_id":"room:context","role":"user","agent_id":null,
+        "content":"이전 대화를 이어 한 문장으로 말해줘",
+        "metadata":{"authorKind":"owner"}})).unwrap();
+    let request=TurnRequest::from_value(&json!({
+        "sessionId":"room:context","agentId":"speaker",
+        "providerId":"room-provider","input":"이전 대화를 이어 한 문장으로 말해줘",
+        "toolsEnabled":false,"toolsExecutionEnabled":false,
+        "autoLearning":false
+    })).unwrap();
+    let (tx,_rx)=tokio::sync::mpsc::unbounded_channel();
+    let saved=tokio::time::timeout(Duration::from_secs(10),
+        run_room_turn(&state,&request,&tx,"source-room"))
+        .await.unwrap().unwrap().unwrap();
+    assert_eq!(saved["content"],"발언 완료");
+    assert_eq!(posted.lock().unwrap().len(),1);
+    let execution=state.store.all("execution").into_iter().find(|execution|
+        execution["sessionId"]=="room:context").unwrap();
+    assert_eq!(execution["contextPolicy"],"room-required-evidence-over-soft-target");
+    let breakdown=&execution["inputContext"]["modelCallComponents"][0];
+    assert_eq!(breakdown["round"],1);
+    assert_eq!(breakdown["providerPromptTokens"],410);
+    assert_eq!(breakdown["providerOutputTokens"],23);
+    assert_eq!(breakdown["providerCacheReadTokens"],110);
+    assert_eq!(breakdown["providerUsageExact"],true);
+    assert!(breakdown["prepared"]["systemTokens"].as_u64().unwrap()>0);
+    assert!(breakdown["prepared"]["sharedRoomStateTokens"].as_u64().unwrap()>0);
+    assert!(breakdown["prepared"]["ownerTurnTokens"].as_u64().unwrap()>0);
+    assert!(breakdown["prepared"]["estimatedInputTokens"].as_u64().unwrap()>0);
+    let serialized=breakdown.to_string();
+    assert!(!serialized.contains("이전 대화를 이어 한 문장으로 말해줘"),
+        "private owner instruction must not enter the token accounting ledger");
+    assert!(!serialized.contains("참가자 고유 지침은 보존한다"));
+    server.abort();
+    crate::test_support::cleanup_dir(&state.config.data_dir);
+}
