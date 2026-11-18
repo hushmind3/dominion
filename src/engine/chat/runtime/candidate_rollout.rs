@@ -87,6 +87,43 @@ fn count_and_collect(nodes:&[Value],paths:&mut BTreeSet<PathBuf>,
     }
     Ok(())
 }
+/// A candidate may fall back to preflight-only selection ONLY if no
+/// preflight-qualified candidate has a local-only, bounded execution plan.
+/// A failed local rollout must never silently bypass independent testing.
+fn sandboxable(variant:&Value)->bool{
+    let Some(nodes)=variant["revision"]["nodes"].as_array() else{return false};
+    let Some(postflights)=variant["postflights"].as_array() else{return false};
+    if postflights.is_empty() || postflights.len()>3{return false;}
+    let mut paths=BTreeSet::new();let mut visits=0usize;let mut calls=0usize;
+    if count_and_collect(nodes,&mut paths,&mut visits,&mut calls).is_err(){return false;}
+    for post in postflights{
+        if !matches!(post["tool"].as_str(),Some("workspace_read"|"workspace_read_range")){return false;}
+        let Some(path)=post["inputs"]["path"].as_str() else{return false};
+        let Ok(path)=permitted_path(path) else{return false};
+        paths.insert(path);
+    }
+    paths.len()<=MAX_FILES
+}
+fn annotate_native_cas(revision:&mut Value, baseline:&Value)->Result<(),String>{
+    let nodes=revision["nodes"].as_array_mut().ok_or("revision nodes absent")?;
+    for node in nodes {
+        if node["type"]!="call_tool"{continue;}
+        let tool=node["tool"].as_str().unwrap_or("");
+        if !matches!(tool,"workspace_write"|"workspace_replace"|"workspace_replace_range"){continue;}
+        let path=node["inputs"]["path"].as_str().ok_or("write lacks path")?;
+        let hash=&baseline[path];
+        if let Some(digest)=hash.as_str(){
+            node["inputs"]["expectedSha256"]=json!(digest);
+            node["inputs"].as_object_mut().map(|o|o.remove("requireAbsent"));
+        }else if hash.is_null() && tool=="workspace_write" {
+            node["inputs"]["requireAbsent"]=json!(true);
+            node["inputs"].as_object_mut().map(|o|o.remove("expectedSha256"));
+        }else{
+            return Err("cannot promote replace on a non-existent snapshot path".into());
+        }
+    }
+    Ok(())
+}
 fn file_digest(path:&Path)->Result<Option<String>,String>{
     match std::fs::symlink_metadata(path){
         Ok(meta)=>{
@@ -142,7 +179,14 @@ pub(super) fn baseline_matches(workspace:&Path,baseline:&Value)->Result<bool,Str
     let Some(entries)=baseline.as_object() else{return Err("invalid rollout baseline".into());};
     for (path,digest) in entries {
         let relative=permitted_path(path)?;
-        let actual=file_digest(&workspace.join(relative))?;
+        let joined=workspace.join(&relative);
+        let mut ancestor=joined.parent();
+        while let Some(folder)=ancestor {
+            if folder==workspace {break;}
+            if folder.is_symlink(){return Err("snapshot parent became a symlink".into());}
+            ancestor=folder.parent();
+        }
+        let actual=file_digest(&joined)?;
         if actual.as_deref()!=digest.as_str(){return Ok(false);}
     }
     Ok(true)
@@ -299,21 +343,17 @@ pub(super) async fn evaluate(
     budget:&mut super::budget::BudgetLedger,
 )->Result<Option<(Value,Value)>,String>{
     let eligible_variants=variants.iter()
-        .filter(|v|eligible(v,observations)).take(MAX_CANDIDATES)
-        .collect::<Vec<_>>();
+        .filter(|v|eligible(v,observations) && sandboxable(v))
+        .take(MAX_CANDIDATES).collect::<Vec<_>>();
     if eligible_variants.is_empty(){return Ok(None);}
     let mut results=Vec::new();
-    let mut safe_trial_seen=false;
     for variant in eligible_variants{
         if ctx.state.is_cancelled(ctx.session_id)
             || ctx.state.cancellation_generation(ctx.session_id)!=ctx.generation {
             return Err("candidate comparison was cancelled".into());
         }
         match run_one(ctx,variant,checkpoint,budget).await {
-            Ok(row)=>{
-                safe_trial_seen=true;
-                results.push(row);
-            }
+            Ok(row)=>{results.push(row);}
             Err(error)=>{
                 // Ineligible local tools are not equivalent to a tested
                 // failure; record the distinction without running them.
@@ -323,7 +363,6 @@ pub(super) async fn evaluate(
             }
         }
     }
-    if !safe_trial_seen{return Ok(None);}
     let mut ranked=results.iter().filter(|row|row["verified"]==true)
         .collect::<Vec<_>>();
     ranked.sort_by(|a,b|{
@@ -342,6 +381,9 @@ pub(super) async fn evaluate(
     let mut revised=selected["revision"].clone();
     revised["repairPostflights"]=selected["postflights"].clone();
     revised["repairPromotionBaseline"]=winner["baseline"].clone();
+    // Source-byte compare-and-write is performed again inside the native
+    // workspace gateway under its existing per-file lock, not just here.
+    annotate_native_cas(&mut revised,&winner["baseline"])?;
     let audit=json!({
         "schema":"dominion.real-candidate-rollout.2026.v1",
         "selected":id,"selectedVerified":true,
@@ -371,6 +413,30 @@ mod tests{
         let mut paths=BTreeSet::new();let mut visits=0;let mut calls=0;
         assert!(count_and_collect(&[json!({"type":"call_tool","tool":"shell_exec",
             "inputs":{"command":"echo hello"}})],&mut paths,&mut visits,&mut calls).is_err());
+    }
+    #[test]
+    fn promoted_candidate_carries_atomic_original_version_constraints(){
+        let mut revised=json!({"nodes":[
+            {"id":"read","type":"call_tool","tool":"workspace_read",
+                "inputs":{"path":"src/a.rs"}},
+            {"id":"fix","type":"call_tool","tool":"workspace_write",
+                "inputs":{"path":"src/a.rs","content":"new"}},
+            {"id":"create","type":"call_tool","tool":"workspace_write",
+                "inputs":{"path":"src/new.rs","content":"new"}}
+        ]});
+        let baseline=json!({"src/a.rs":"trusted-sha","src/new.rs":null});
+        annotate_native_cas(&mut revised,&baseline).unwrap();
+        assert_eq!(revised["nodes"][1]["inputs"]["expectedSha256"],"trusted-sha");
+        assert_eq!(revised["nodes"][2]["inputs"]["requireAbsent"],true);
+        assert!(!revised["nodes"][2]["inputs"]["expectedSha256"].is_string());
+    }
+    #[test]
+    fn unsupported_external_tool_cannot_be_reported_as_isolated_trial(){
+        let candidate=json!({"revision":{"nodes":[
+            {"id":"cmd","type":"call_tool","tool":"shell_exec",
+             "inputs":{"command":"cargo test"}}
+        ]},"postflights":[{"tool":"workspace_read","inputs":{"path":"src/lib.rs"}}]});
+        assert!(!sandboxable(&candidate));
     }
     #[test]
     fn independent_file_snapshots_and_stale_parent_detection(){
