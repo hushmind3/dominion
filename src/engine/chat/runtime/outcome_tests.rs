@@ -96,6 +96,8 @@ use super::*;
         let session = json!({"id":"s1","roomId":null});
         let request = TurnRequest {
             session_id: Some("s1".into()),
+
+            request_id: None,
             input: "fallback.txt 파일을 만들어줘".into(),
             attachment_ids: Vec::new(),
             agent_id: None,
@@ -177,7 +179,9 @@ use super::*;
         }));
         let session = json!({"id":"s1"});
         let request = TurnRequest {
-            session_id: Some("s1".into()), input: "반복 작성".into(),
+            session_id: Some("s1".into()),
+
+            request_id: None, input: "반복 작성".into(),
             attachment_ids: Vec::new(), agent_id: None, provider_id: None,
             model: None, tools_enabled: true, tools_execution_enabled: true,
             thinking: None, reasoning_effort: None, reasoning_language: None,
@@ -234,6 +238,8 @@ use super::*;
         let session = json!({"id":"s1"});
         let request = TurnRequest {
             session_id: Some("s1".into()),
+
+            request_id: None,
             input: "실패 프로그램".into(),
             attachment_ids: Vec::new(),
             agent_id: None,
@@ -298,6 +304,8 @@ use super::*;
         );
         let request = TurnRequest {
             session_id: Some("session-1".into()),
+
+            request_id: None,
             input: "bench 작업".into(),
             attachment_ids: Vec::new(),
             agent_id: None,
