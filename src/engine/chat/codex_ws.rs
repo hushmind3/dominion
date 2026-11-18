@@ -121,7 +121,7 @@ fn rebase_reason(chain:&[(String,String)],incoming:&[(String,String)]) -> &'stat
     // is still byte-identical. Reusing the remote prefix is NOT safe without a
     // distinct context-epoch policy; this is recorded for targeted optimization.
     let overlap=(1..=chain.len().min(incoming.len())).rev().find(|size|
-        chain[chain.len()-size..]==incoming[..*size]);
+        chain[chain.len()-*size..]==incoming[..*size]);
     if overlap.is_some() { return "leading_window_evicted"; }
     if chain.first()!=incoming.first() {return "prefix_changed"; }
     "context_rewritten_or_reordered"
@@ -358,7 +358,9 @@ pub(super) async fn stream(
                 transport: json!({
                     "wire":"websocket",
                     "mode":if delta_items == 0 {"full"} else {"delta"},
-                    "rebaseReason":if delta_items == 0 {rebase} else {"none"},
+                    "rebaseReason":if delta_items == 0 {
+                        if rebase == "none" {"transport_recycled"} else {rebase}
+                    } else {"none"},
                     "deltaItems":input.len().saturating_sub(delta_items),
                     "chainReusedItems":delta_items,
                     "chainItems":guard.items.len(),
