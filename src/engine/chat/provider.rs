@@ -1134,6 +1134,26 @@ async fn stream_completion_once_body(
                     completion.usage_exact = true;
                 }
             }
+            // 2026 llama.cpp reports actual server-side KV prefix reuse as
+            // timings.cache_n, even when an OpenAI-compatible stream omits
+            // prompt_tokens_details.cached_tokens. Only trust this vendor
+            // extension for a persisted, recognized llama.cpp backend.
+            if local_kv_backend == Some("llama.cpp") {
+                if let Some(cached) = piece.pointer("/timings/cache_n").and_then(Value::as_u64) {
+                    completion.cached_prompt_tokens = Some(cached);
+                    if !completion.usage_exact {
+                        if let (Some(fresh), Some(generated)) = (
+                            piece.pointer("/timings/prompt_n").and_then(Value::as_u64),
+                            piece.pointer("/timings/predicted_n").and_then(Value::as_u64),
+                        ) {
+                            completion.prompt_tokens = fresh.saturating_add(cached);
+                            completion.completion_tokens = generated;
+                            completion.usage = completion.prompt_tokens.saturating_add(generated);
+                            completion.usage_exact = true;
+                        }
+                    }
+                }
+            }
             if let Some(reason) = piece["choices"][0]["finish_reason"].as_str() {
                 if reason == "content_filter" {
                     return Err("모델 응답이 콘텐츠 필터로 중단되었습니다.".into());
@@ -2136,8 +2156,8 @@ mod tests {
             requests.lock().unwrap().push(body);
             let wire=format!("data: {}\n\ndata: [DONE]\n\n",
                 json!({"choices":[{"delta":{"content":"confirmed"},"finish_reason":"stop"}],
-                    "usage":{"prompt_tokens":4096,"completion_tokens":5,
-                        "prompt_tokens_details":{"cached_tokens":4000}}}));
+                    "usage":{"prompt_tokens":4096,"completion_tokens":5},
+                    "timings":{"cache_n":4000,"prompt_n":96,"predicted_n":5}}));
             ([(axum::http::header::CONTENT_TYPE,"text/event-stream")],wire).into_response()
         }
         let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2180,7 +2200,9 @@ mod tests {
         let completion=stream_completion_once(&state,&reqwest::Client::new(),
             &route,&messages,&[],&request,"room:cache",&tx,false).await.unwrap();
         assert_eq!(completion.cached_prompt_tokens,Some(4000),
-            "real provider-reported cached tokens must survive settlement");
+            "llama.cpp timings.cache_n must survive streaming usage settlement");
+        assert_eq!(completion.prompt_tokens,4096);
+        assert!(completion.usage_exact);
         assert!(completion.continuity.as_ref().is_some_and(|row|
             row["localPrefixCacheBackend"]=="llama.cpp"));
         // Inspect what the mock server received rather than testing only
