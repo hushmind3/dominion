@@ -110,9 +110,19 @@ impl AppState {
                 serde_json::json!({"sessionId":session_id}),
             );
         }
-        // Cancellation survives a restart and cannot be cleared for old queued
-        // work merely because the user starts a fresh foreground turn.
-        for job in self.store.all("job") {
+        // Cancellation survives a restart. Inspect only live jobs through the
+        // status index, not years of completed jobs and historical payloads.
+        let active_jobs = match self.store.active_jobs() {
+            Ok(jobs) => jobs,
+            Err(error) => {
+                self.store.audit(
+                    "session.cancel_active_jobs_read_failed",
+                    serde_json::json!({"sessionId":session_id,"error":error}),
+                );
+                Vec::new()
+            }
+        };
+        for job in active_jobs {
             let matches = [
                 "/sessionId",
                 "/input/sessionId",
@@ -131,10 +141,20 @@ impl AppState {
             }
         }
         if newly_cancelled {
-            for child in self.store.all("session").into_iter().filter(|s|s["delegated"]==true&&s["parentSessionId"]==session_id){
-                if let Some(id)=child["id"].as_str(){
+            let children = match self.store.delegated_child_sessions(session_id) {
+                Ok(children) => children,
+                Err(error) => {
+                    self.store.audit(
+                        "session.cancel_children_read_failed",
+                        serde_json::json!({"sessionId":session_id,"error":error}),
+                    );
+                    Vec::new()
+                }
+            };
+            for child in children {
+                if let Some(id) = child["id"].as_str() {
                     self.cancel_session(id);
-                    crate::engine::execution_budget::close_unstarted_child(self,id);
+                    crate::engine::execution_budget::close_unstarted_child(self, id);
                 }
             }
         }
@@ -215,6 +235,37 @@ mod tests {
         let store = Store::open(&cfg.db_path()).unwrap();
         let vault = Vault::open(&cfg.key_path());
         (AppState::new(cfg, store, vault), dir)
+    }
+
+    #[test]
+    fn cancel_session_targets_only_active_matching_jobs_and_delegated_children() {
+        let (state, dir) = temp_state();
+        state.store.put("session", &serde_json::json!({
+            "id":"child","delegated":true,"parentSessionId":"root"
+        }));
+        state.store.put("session", &serde_json::json!({
+            "id":"unrelated","delegated":true,"parentSessionId":"other"
+        }));
+        for (id, session_id, status) in [
+            ("active-root", "root", "queued"),
+            ("completed-root", "root", "completed"),
+            ("active-child", "child", "running"),
+            ("active-unrelated", "other", "queued"),
+        ] {
+            state.store.put("job", &serde_json::json!({
+                "id":id,"sessionId":session_id,"status":status,
+                "queuedAt":"2026-11-18T00:00:00Z"
+            }));
+        }
+        state.cancel_session("root");
+        assert_eq!(state.store.get("job","active-root").unwrap()["status"], "cancelled");
+        assert_eq!(state.store.get("job","active-child").unwrap()["status"], "cancelled");
+        assert_eq!(state.store.get("job","completed-root").unwrap()["status"], "completed");
+        assert_eq!(state.store.get("job","active-unrelated").unwrap()["status"], "queued");
+        assert!(state.is_cancelled("root"));
+        assert!(state.is_cancelled("child"));
+        assert!(!state.is_cancelled("other"));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
