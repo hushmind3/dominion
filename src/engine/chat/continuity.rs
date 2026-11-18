@@ -620,7 +620,11 @@ fn apply_anthropic_checkpoints(body: &mut Value) -> bool {
             if marked>=4 { break; }
             // The most recent owner prompt can change at any moment; only
             // checkpoint completed assistant/tool transactions behind it.
-            if index==last_index && message["role"]=="user" {continue;}
+            let trailing_tool_result=message["content"].as_array()
+                .is_some_and(|parts|parts.iter().any(|part|part["type"]=="tool_result"));
+            if index==last_index && message["role"]=="user" && !trailing_tool_result {
+                continue;
+            }
             let Some(blocks)=message["content"].as_array_mut() else {continue};
             let Some(last)=blocks.last_mut().filter(|part|part.is_object()) else {continue};
             last["cache_control"]=marker.clone();
@@ -1355,6 +1359,13 @@ mod tests {
             {"role":"user","content":[{"type":"text","text":"first"}]}]});
         assert!(apply_anthropic_checkpoints(&mut simple));
         assert_eq!(simple.to_string().matches("cache_control").count(),1);
+        let mut completed_tool=json!({"system":"STABLE","messages":[
+            {"role":"assistant","content":[{"type":"tool_use","id":"c1","name":"read","input":{}}]},
+            {"role":"user","content":[{"type":"tool_result","tool_use_id":"c1","content":"done"}]}
+        ]});
+        assert!(apply_anthropic_checkpoints(&mut completed_tool));
+        assert!(completed_tool["messages"][1]["content"][0]["cache_control"].is_object(),
+            "last native tool result is a completed transaction, not a new owner prompt");
     }
 
     #[test]
