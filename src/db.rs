@@ -1543,6 +1543,29 @@ mod tests {
     }
 
     #[test]
+    fn one_kind_algorithm_lookup_uses_partial_expression_index() {
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        for n in 0..150 {
+            let kind=if n%10==0 {"adaptation.selection"}else{"memory.rerank"};
+            store.put("algorithm",&json!({"id":format!("policy-{n:03}"),
+                "kind":kind,"implementation":"test","status":"available"
+            })).unwrap();
+        }
+        store.put("algorithm_stat",&json!({"id":"historical-noise",
+            "kind":"adaptation.selection","uses":9999999})).unwrap();
+        let rows=store.algorithms_for_kind("adaptation.selection").unwrap();
+        assert_eq!(rows.len(),15);
+        assert!(rows.iter().all(|row|row["kind"]=="adaptation.selection"));
+        let conn=store.conn.lock().unwrap();
+        let plan:String=conn.query_row(
+            "EXPLAIN QUERY PLAN SELECT data,id,created_at,updated_at
+             FROM records INDEXED BY idx_algorithm_kind_lookup
+             WHERE kind='algorithm' AND json_extract(data,'$.kind')=?1 ORDER BY id",
+            ["adaptation.selection"],|row|row.get(3)).unwrap();
+        assert!(plan.contains("idx_algorithm_kind_lookup"),"{plan}");
+    }
+
+    #[test]
     fn native_route_usage_is_indexed_precise_and_excludes_invalid_jobs() {
         let (store,dir)=temp_store();
         for i in 0..150 {
