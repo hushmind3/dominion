@@ -263,10 +263,18 @@ pub(super) fn select_tool_definitions(
                 .map(|name| name.to_string())
                 .collect::<std::collections::BTreeSet<_>>()
         });
+    // An operator-configured external harness is one *delegation target*,
+    // not a second engine. Keep it alongside native delegation when the
+    // selected core allows that category. No configured adapter: no schema.
+    let delegated=|name:&str|name=="external_harness_run"
+        && core.contains("delegate_task");
     if strategy == "core" {
         return definitions
             .into_iter()
-            .filter(|definition| core.contains(tool_name(definition)))
+            .filter(|definition| {
+                let name=tool_name(definition);
+                core.contains(name) || delegated(name)
+            })
             .collect();
     }
     // query-relevant: always keep the core set, add the best matches.
@@ -301,7 +309,7 @@ pub(super) fn select_tool_definitions(
     definitions
         .into_iter()
         .filter(|definition| {
-            core.contains(tool_name(definition))
+            core.contains(tool_name(definition)) || delegated(tool_name(definition))
                 || keep_extra
                     .iter()
                     .any(|extra| tool_name(extra) == tool_name(definition))
