@@ -21,7 +21,7 @@ type CatalogResponse={providers:CatalogProvider[];cached?:boolean;error?:string}
 type FreeCatalogModel={id:string;free?:boolean|null;freeStatus?:string;freeSource?:string}
 type FreeCatalogProvider={providerId:string;providerName:string;reachable:boolean;error?:string;models:FreeCatalogModel[]}
 type FreeCatalog={status?:string;updatedAt?:string;providers:FreeCatalogProvider[];counts?:{free:number;paid:number;unknown:number}}
-type Tab='providers'|'free'|'catalog'|'local'|'oauth'
+type Tab='providers'|'cloud'|'connect'|'free'|'catalog'|'local'|'oauth'
 
 const opencodeGoPreset:ProviderPreset={name:'OpenCode Go',baseUrl:'https://opencode.ai/inference/go/openai/v1',kind:'openai',local:false,category:'cloud',integration:'opencode-go'}
 
@@ -326,6 +326,8 @@ export function ModelHub(){
  const catalogVisible=useMemo(()=>{const term=query.trim().toLowerCase();const unique=new Map<string,CatalogProvider>();for(const p of catalog.value.providers){const key=p.api.replace(/\/$/,'').toLowerCase();const old=unique.get(key);if(!old||p.models>old.models)unique.set(key,p)}return [...unique.values()].filter(p=>!term||(p.name+' '+p.id+' '+p.api).toLowerCase().includes(term)).sort((a,b)=>catalogSort==='models'?b.models-a.models||a.name.localeCompare(b.name):a.name.localeCompare(b.name))},[catalog.value.providers,query,catalogSort])
  const tabs:Array<{id:Tab;label:string;count?:number}>= [
   {id:'providers',label:'내 모델',count:providers.value.filter(p=>!p.local).length},
+  {id:'cloud',label:'DOMINION Cloud'},
+  {id:'connect',label:'업체 연결'},
   {id:'free',label:'무료 모델',count:freeCatalog.value.counts?.free||0},
   {id:'catalog',label:'업체 탐색'},
   {id:'local',label:'로컬',count:providers.value.filter(p=>p.local).length},
@@ -338,8 +340,8 @@ export function ModelHub(){
    <Button type="button" onClick={()=>open()} className="inline-flex h-8 items-center gap-2 rounded-lg border border-[#E1D9CC] bg-white px-3 text-[11px] font-semibold text-[#3A342D] hover:bg-[#FAF7F1]"><Plus size={14}/> {t('models.apiAdd')}</Button>
   </header>
   <div className="mb-4 flex flex-wrap items-center gap-2">
-   <div className="flex flex-wrap gap-2 rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] p-1.5">
-    {tabs.map(item=><Button variant="bare" key={item.id} type="button" onClick={()=>{setTab(item.id);setCategory('all')}} className={'inline-flex min-h-10 items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-[13px] font-semibold transition-colors '+(tab===item.id?'bg-[#C96442] text-white':'text-[#6F675D] hover:bg-[#F3EEE5]')}>{item.label}{item.count!==undefined&&<span className={'rounded px-1.5 py-0.5 text-[10px] '+(tab===item.id?'bg-white/20':'bg-[#F0EAE0] text-[#8A8176]')}>{item.count}</span>}</Button>)}
+   <div className="flex flex-wrap gap-1 rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] p-1">
+    {tabs.map(item=><Button variant="bare" key={item.id} type="button" onClick={()=>{setTab(item.id);setCategory('all')}} className={'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-colors '+(tab===item.id?'bg-[#C96442] text-white':'text-[#6F675D] hover:bg-[#F3EEE5]')}>{item.label}{item.count!==undefined&&<span className={'rounded px-1.5 py-0.5 text-[10px] '+(tab===item.id?'bg-white/20':'bg-[#F0EAE0] text-[#8A8176]')}>{item.count}</span>}</Button>)}
    </div>
    {(tab==='providers'||tab==='local')&&<><div className="relative min-w-[180px] flex-1 sm:max-w-[280px]"><Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#A79C8E]"/><TextInput value={query} onChange={e=>setQuery(e.target.value)} placeholder={t('models.providerSearch')} className="!pl-8 !text-[12px]"/></div>
     {tab==='providers'&&<div className="flex flex-wrap gap-1">{(['all','free','cloud'] as const).map(value=><Button variant="bare" key={value} type="button" onClick={()=>setCategory(value)} className={'rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold '+(category===value?'border-[#C96442] bg-[#FBF1EC] text-[#A94E30]':'border-[#E7E0D5] bg-white text-[#7C7469]')}>{t(value==='all'?'models.filter.all':value==='free'?'models.filter.free':'models.filter.cloud')}</Button>)}</div>}</>}
@@ -359,7 +361,7 @@ export function ModelHub(){
    <p className="mb-3 text-[12px] text-[#7C7469]">무료 여부는 제공 업체의 조회 결과를 기준으로 표시합니다. 실제 사용은 해당 업체 연결 상태에 따라 달라집니다.</p>
    {freeCatalog.value.providers.length===0?<p className="text-[12px] text-[#8A8176]">조회된 모델이 없습니다. 위의 새로고침으로 확인하세요.</p>:<div className="grid gap-2 sm:grid-cols-2">{freeCatalog.value.providers.map(provider=><div key={provider.providerId} className="rounded-xl border border-[#EFE9DF] bg-[#FAF7F1] p-3"><div className="flex items-center justify-between gap-2"><strong className="text-[12px] text-[#3A342D]">{provider.providerName}</strong><span className={'text-[10px] '+(provider.reachable?'text-emerald-700':'text-rose-600')}>{provider.reachable?'조회됨':'연결 실패'}</span></div>{provider.error&&<p className="mt-1 text-[11px] text-rose-600">{provider.error}</p>}<div className="mt-2 max-h-40 space-y-1 overflow-auto">{provider.models.filter(model=>model.free===true).map(model=><p key={model.id} className="break-all text-[11px] text-[#6F675D]">{model.id}</p>)}{!provider.models.some(model=>model.free===true)&&<p className="text-[11px] text-[#8A8176]">무료로 분류된 모델 없음</p>}</div></div>)}</div>}
   </section>}
-  {tab==='providers'&&<div className="mb-4"><DominionCloudAccount onProviderAdded={providers.reload}/></div>}
+  {(tab==='cloud'||tab==='connect')&&<div className="mb-4"><DominionCloudAccount key={tab} initialTab={tab==='connect'?'providers':'cloud'} onProviderAdded={providers.reload}/></div>}
    {tab==='catalog'&&<section className="rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-5 shadow-[0_1px_2px_rgba(36,33,29,.04)]">
    <div className="mb-3 flex flex-wrap items-start justify-between gap-2"><div><h2 className="m-0 text-[16px] font-bold text-[#24211D]">{t('models.catalog.title')}</h2><p className="mt-1 text-[12px] text-[#7C7469]">{t('models.catalog.desc')}</p></div><Button type="button" variant="ghost" size="sm" disabled={catalog.loading} onClick={()=>void catalog.reload()}>{catalog.loading?<RefreshCw size={13} className="animate-spin"/>:<RefreshCw size={13}/>} {t('models.catalog.refresh')}</Button></div>
    <div className="mb-2 flex flex-wrap items-center gap-2"><TextInput value={query} onChange={e=>{setQuery(e.target.value);setCatalogLimit(60)}} placeholder={t('models.providerSearch')} className="min-w-[180px] flex-1 !text-[12px]"/><SelectInput aria-label="업체 정렬" value={catalogSort} onChange={e=>setCatalogSort(e.target.value as 'name'|'models')} className="!w-auto !text-[12px]"><option value="name">업체 이름순</option><option value="models">모델 많은 순</option></SelectInput><span className="text-[11px] text-[#7C7469]">{catalogVisible.length}개 업체 · 중복 주소 제외</span></div>
