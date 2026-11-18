@@ -64,6 +64,10 @@ jobs:
           cargo test --lib engine::adaptation::repair_tournament::tests
           cargo test --lib engine::adaptation_loop::selection_tests
           cargo test --lib engine::chat::runtime::candidate_rollout::tests
+          # One native owner, optional external CLI adapter; no bundled runtime.
+          cargo test --lib engine::tools::external_harness::tests
+          cargo test --lib engine::resource_lock::tests
+          cargo test --lib engine::effect::tests::external_harness_is_always_effectful
           cargo test --lib engine::chat::runtime::program::repair_completion_tests
           cargo test --lib engine::chat::runtime::program::review_settlement_tests
           cargo test --lib engine::chat::outcome::program_review_outcome_tests
