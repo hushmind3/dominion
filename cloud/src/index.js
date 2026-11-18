@@ -61,16 +61,20 @@ async function login(request, env) {
   return json({ token, expires_in: 7 * 86400, account_id: id });
 }
 
+const builtinModels = [
+  { id: '@cf/meta/llama-3.1-8b-instruct-fast', name: 'Llama 3.1 8B Fast', free: true, backend: 'workers-ai' },
+  { id: '@cf/meta/llama-3.2-3b-instruct', name: 'Llama 3.2 3B', free: true, backend: 'workers-ai' }
+];
 function freeModels(env) {
   try {
     const items = JSON.parse(env.FREE_MODELS_JSON || '[]');
-    return Array.isArray(items) ? items.filter(x => typeof x.id === 'string' && /^[a-zA-Z0-9._:/-]{1,120}$/.test(x.id)) : [];
+    return [...(env.AI ? builtinModels : []), ...(Array.isArray(items) ? items.filter(x => typeof x.id === 'string' && /^[a-zA-Z0-9._:/-]{1,120}$/.test(x.id)) : [])];
   } catch { return []; }
 }
 async function freeProxy(request, env, user) {
   const body = await maxBody(request);
   const model = freeModels(env).find(x => x.id === body.model);
-  if (!model || !env.UPSTREAM_API_KEY || !env.UPSTREAM_URL) return err('Free model not available', 503);
+  if (!model || (model.backend !== 'workers-ai' && (!env.UPSTREAM_API_KEY || !env.UPSTREAM_URL))) return err('Free model not available', 503);
   if (body.stream === true || body.tools !== undefined || body.tool_choice !== undefined || body.n !== undefined || body.response_format !== undefined)
     return err('Free model currently supports text-only non-streaming requests');
   if (!Array.isArray(body.messages) || !body.messages.length ||
@@ -83,6 +87,13 @@ async function freeProxy(request, env, user) {
   const updated = await env.DB.prepare('INSERT INTO free_quota(account_day,used) VALUES(?,1) ON CONFLICT(account_day) DO UPDATE SET used=used+1 WHERE used<? RETURNING used')
     .bind(key, limit).first();
   if (!updated) return err('Daily free quota exhausted', 429);
+  if (model.backend === 'workers-ai') {
+    try {
+      const answer = await env.AI.run(model.id, { messages: body.messages, max_tokens: Math.min(1024, body.max_tokens || 512) });
+      const content = typeof answer?.response === 'string' ? answer.response : '';
+      return json({ id: crypto.randomUUID(), object: 'chat.completion', model: model.id, choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }], usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } }, 200, { 'x-dominion-free-remaining': String(Math.max(0, limit - updated.used)) });
+    } catch { return err('Workers AI inference unavailable', 502); }
+  }
   const upstream = await fetch(env.UPSTREAM_URL.replace(/\/$/, '') + '/chat/completions', {
     method: 'POST',
     headers: { authorization: 'Bearer ' + env.UPSTREAM_API_KEY, 'content-type': 'application/json' },
@@ -159,7 +170,7 @@ export default {
     const headers = cors(origin, env);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
     if (origin && origin !== env.ALLOWED_ORIGIN) return err('Origin not allowed', 403);
-    if (new URL(request.url).pathname === '/health' && request.method === 'GET') return json({service:'DOMINION Cloud',status:'online',login_configured:Boolean(env.GOOGLE_CLIENT_ID),models_configured:Boolean(env.UPSTREAM_API_KEY && freeModels(env).length)});
+    if (new URL(request.url).pathname === '/health' && request.method === 'GET') return json({service:'DOMINION Cloud',status:'online',login_configured:Boolean(env.GOOGLE_CLIENT_ID),models_configured:Boolean(freeModels(env).length)});
     if (!env.DB || !env.GOOGLE_CLIENT_ID || !env.ALLOWED_ORIGIN) return err('Service not configured', 503);
     try {
       const path = new URL(request.url).pathname;
@@ -167,7 +178,7 @@ export default {
       if (path === '/v1/auth/google' && request.method === 'POST') response = await login(request, env);
       else if (path === '/v1/models' && request.method === 'GET') {
         const user = await account(request, env);
-        response = user ? json({ data: freeModels(env).map(x => ({ id: x.id, object: 'model', free: true })) }) : err('Unauthorized', 401);
+        response = user ? json({ data: freeModels(env).map(x => ({ id: x.id, name: x.name || x.id, object: 'model', free: true })) }) : err('Unauthorized', 401);
       }
       else if (path === '/v1/me' && request.method === 'GET') {
         const user = await account(request, env);
