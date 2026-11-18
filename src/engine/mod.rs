@@ -79,6 +79,7 @@ pub mod room_knowledge;
 pub mod room_state;
 pub mod run_state;
 pub mod skills;
+pub mod skill_discovery;
 pub mod telegram;
 pub mod tools;
 pub mod vault_rotation;
