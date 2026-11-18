@@ -300,3 +300,13 @@ Rust 커널의 구조 검사와 컴파일 성공은 DB 조회량·불용 호출�
 - `Reconcile`: 해당 출력 자원에 결과 미확정 외부 변경 영수증이 있으면 비용과 관계없이 자동 재시도를 중단합니다. 실행 효과 확인 없이 재실행하지 않습니다.
 
 실제 파일 바이트, SQLite 영수증과 작업 진척 기록을 묶은 `acceptance_repair_tests`를 개발 Rust CI에 등록했으며, 구조 검사는 무조건적 보조 검토 호출 또는 확인되지 않은 외부 효과에 대한 자동 재시도 경로가 되살아나면 실패합니다. **CI는 분기·증거·중단 계약의 회귀를 확인합니다. 실제 프런티어급 모델의 작업 완수율, 평균 모델 호출·토큰·시간 절약률은 아직 측정하지 않았습니다.**
+
+## 역할별 위임·인덱스 기반 결과 조회 (2026-11-18)
+
+기존 `delegate_task → jobs::run_prompt → run_quiet → dominion-core::Engine::drive`가 모든 자식 작업의 유일한 실행 경로입니다. 메인에 이미 구현된 계층형 토큰/금액 예산 예약·정산과 격리 Git 워크트리·승인·도구 효과 영수증을 재사용합니다. 별도 서브에이전트 모델 루프나 독립 저장소는 만들지 않습니다.
+
+`delegate_task`의 선택적 `profile`은 `general`(기존 동작), `inspection`(관측·읽기 전용), `implementation`(격리 워크트리 내 코드 변경), `verification`(관측과 승인된 `cargo test` 실행만)입니다. 명시적인 역할 작업에는 `isolatedWorktree=true`가 필수입니다. 역할은 자식 세션·작업 레코드에 기록되며, 모델 프롬프트만으로 도구를 제한하지 않습니다. 일반 도구 목록, 점진적 도구 검색·실행, 공통 실행 어댑터의 승인 전 게이트, 실제 Rust 도구 실행기에서 동일한 제한을 적용합니다. 실행기의 기본 사용자 승인·샌드박스와 부모보다 좁은 권한은 유지됩니다.
+
+`task_result`는 모든 과거 `execution_operation`을 역직렬화하던 경로를 제거하고 `idx_completed_operation_session_recent` 인덱스로 **해당 자식 세션의 최신 성공 영수증 최대 20건만** 읽습니다. SQLite `EXPLAIN QUERY PLAN` 회귀는 실제 인덱스 선택을 확인합니다. `delegate_task(wait=true)`는 250ms 주기 DB 폴링 대신 특정 자식의 durable `job` 이벤트를 우선 대기하며, 이벤트 유실·취소를 위한 3초 이하 유한 간격 상태 재확인을 사용합니다.
+
+관련 개발용 회귀: `db::tests::delegated_results_use_recent_index_without_loading_unrelated_history`, `engine::tools::delegation::profile_tests`, `engine::capability::tests::verification_profile_discovery_cannot_bypass_test_only_command_gate`. 아키텍처 검사는 간접 기록 전체 조회·역할 게이트 누락을 차단합니다. 개발용 Rust CI와 별도로 실제 모델의 위임 성공률·작업당 토큰·시간·총비용은 아직 통제 실험을 진행하지 않았습니다.
