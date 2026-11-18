@@ -793,7 +793,7 @@ pub(super) async fn run_turn_body(
                                 .map(str::to_string)
                         });
                     program_finished = program_execution_settled(status.as_deref());
-                    if status.as_deref()==Some("needs_review") {
+                    if program_blocks_followup_tools(status.as_deref()) {
                         // The durable ProgramIR run stopped because verification
                         // was unknown/failed. Do NOT let the ordinary model tool
                         // loop silently start another side-effecting repair.
