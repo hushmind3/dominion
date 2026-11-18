@@ -132,6 +132,7 @@ pub(super) async fn run_turn_body(
         state.store.put("execution", &execution).ok_or("검증 조건을 저장할 수 없습니다.")?;
     }
     let mut acceptance_retries = 0usize;
+    let mut last_repair_signature:Option<String> = None;
     let mut procedure_repairs = 0usize;
     let recovery_policy = crate::engine::policy::active(state, "recovery");
     let program_policy = crate::engine::policy::active(state, "execution");
@@ -1191,13 +1192,42 @@ pub(super) async fn run_turn_body(
                     .map(|source| evidence_for_source(state, session_id, source, execution_id))
                     .unwrap_or_default();
                 let mut gaps = verification::check_acceptance(state, acceptance_text, checks, &evidence);
+                // Use the durable execution journal, not a model narrative, to
+                // diagnose terminal failure and decide whether another attempt
+                // can actually add evidence. The reviewer is advisory only.
+                let journal=state.store.execution_operations(execution_id)?;
+                if unresolved_mutation(&journal){
+                    state.store.audit("acceptance.effect_requires_review",json!({
+                        "executionId":execution_id,"sessionId":session_id,
+                        "reason":"unresolved non-idempotent tool effect",
+                    }));
+                    return Err("외부 변경의 결과가 확정되지 않았습니다. 중복 실행 대신 현재 상태를 확인한 후 재개해야 합니다.".into());
+                }
+                let repair_fingerprint=repair_signature(&gaps,&journal);
+                if !gaps.is_empty() && acceptance_retries>0
+                    && last_repair_signature.as_deref()==Some(&repair_fingerprint){
+                    state.store.audit("acceptance.stalled",json!({
+                        "executionId":execution_id,"sessionId":session_id,
+                        "attempt":acceptance_retries,
+                        "reason":"unchanged gaps and tool outcomes",
+                    }));
+                    return Err(format!(
+                        "동일한 검증 실패와 도구 결과가 반복되어 추가 모델 호출을 중단했습니다: {}",
+                        gaps.iter().take(5).map(|gap|gap.chars().take(150)
+                            .collect::<String>()).collect::<Vec<_>>().join("; ")
+                    ));
+                }
                 let mut next_action = String::new();
                 if !gaps.is_empty() {
                     // Independent reviewer: deterministic checks still win, but
                     // the reviewer supplies a concrete repair strategy.
                     let precise_replacement = checks.as_array().is_some_and(|checks|
                         checks.iter().any(|check| check["type"] == "file_replace_exact"));
-                    let review = if precise_replacement {
+                    // If the model did not perform a successful tool call,
+                    // the verifier already knows the missing work. Do not pay
+                    // a second model to paraphrase that identical failure.
+                    let review = if precise_replacement
+                        ||!review_worth_calling(&evidence,acceptance_retries>0){
                         None
                     } else {
                         review_action(state, request, acceptance_text, &final_content, &evidence, &gaps).await
@@ -1249,6 +1279,7 @@ pub(super) async fn run_turn_body(
                         && budget.can_execute_tool()
                     {
                         acceptance_retries += 1;
+                        last_repair_signature=Some(repair_fingerprint);
                         let _ = tx.send(json!({
                             "type": "acceptance_retry",
                             "attempt": acceptance_retries,
@@ -1263,16 +1294,25 @@ pub(super) async fn run_turn_body(
                                 "gaps": gaps,
                             }),
                         );
+                        let observed_error=journal.iter().rev().filter(|row|
+                            row["status"]=="failed").find_map(|row|
+                            row["result"]["error"].as_str().map(|s|
+                                s.chars().take(300).collect::<String>()));
+                        let class=crate::engine::agent_kernel::failure::classify(
+                            &gaps,observed_error.as_deref());
+                        let guidance=if next_action.trim().is_empty(){
+                            class.next_step().to_string()
+                        }else{
+                            format!("{}\n구체적 다음 행동: {}",class.next_step(),
+                                next_action.chars().take(350).collect::<String>())
+                        };
                         messages.push(json!({
                             "role": "user",
                             "content": format!(
-                                "자동 검증/리뷰 결과 아직 완료되지 않았습니다:\n- {}\n\n{}\n말로만 완료하지 말고, 지금 실제 도구를 호출해 빠진 작업을 수행한 뒤 결과를 확인하세요.",
-                                gaps.join("\n- "),
-                                if next_action.trim().is_empty() {
-                                    "전략을 바꿔 다시 시도하세요.".to_string()
-                                } else {
-                                    format!("다음 전략: {next_action}")
-                                }
+                                "자동 검증 결과 아직 완료되지 않았습니다:\n- {}\n\n{}\n말로만 완료하지 말고, 실패 원인을 바꾸는 실제 도구를 호출한 뒤 결과를 검증하세요.",
+                                gaps.iter().take(8).map(|g|g.chars().take(280)
+                                    .collect::<String>()).collect::<Vec<_>>().join("\n- "),
+                                guidance
                             )
                         }));
                         continue;
