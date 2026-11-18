@@ -115,6 +115,8 @@ jobs:
           cargo test --locked --bin dominion-rust shared_room_owner_rules_precede_agent_persona_with_no_identity_loss
           cargo test --locked --bin dominion-rust identity_has_a_shared_stable_prefix_without_changing_owner_personas
           cargo test --locked --bin dominion-rust owner_fact_selection_reuses_prefix_and_appends_missing_facts_until_real_revision
+          cargo test --locked --bin dominion-rust room_selector_budget_is_not_the_accumulated_cache_prefix_budget
+          cargo test --locked --bin dominion-rust budget_rotation_carries_only_valid_owner_facts_not_old_transcript
           cargo test --locked --bin dominion-rust nine_speaker_status_reuses_visible_digest_across_identical_completed_rounds
           cargo test --locked --bin dominion-rust room_status_reuses_content_key_then_rotates_on_changed_status_without_losing_owner_facts
           cargo test --locked --bin dominion-rust cloudflare_room_affinity_is_shared_by_nine_speakers_without_reusing_their_cursors
