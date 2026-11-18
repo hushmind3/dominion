@@ -793,6 +793,17 @@ pub(super) async fn run_turn_body(
                                 .map(str::to_string)
                         });
                     program_finished = program_execution_settled(status.as_deref());
+                    if status.as_deref()==Some("needs_review") {
+                        // The durable ProgramIR run stopped because verification
+                        // was unknown/failed. Do NOT let the ordinary model tool
+                        // loop silently start another side-effecting repair.
+                        // The next provider call may only explain the result.
+                        force_final=true;
+                        messages.push(json!({
+                            "role":"system",
+                            "content":"프로그램 실행이 needs_review 상태로 종료되었습니다. 이미 일어난 외부 효과는 유지되고, 추가 도구 호출은 자동 실행하지 않습니다. 검증 실패 원인과 확인이 필요한 사항만 보고하세요."
+                        }));
+                    }
                 }
             }
         }
