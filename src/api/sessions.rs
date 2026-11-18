@@ -122,11 +122,27 @@ pub async fn cancel_session(State(state): State<AppState>, Path(id): Path<String
             && execution.get("status").and_then(|value| value.as_str()) == Some("running")
     });
     state.cancel_session(&id);
+    // The acknowledgement must mean more than "a flag was written".
+    // Wait for the chat turn to release its same-session lock AND durable
+    // execution to reach a terminal state. Otherwise a new send races the
+    // previous provider HTTP request and returns "Session already running".
+    // Do not hold a mutex or SQLite transaction across this async wait.
+    let settled = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            let active = state.active.lock().unwrap().contains(&id);
+            let unfinished = state.store.all("execution").iter().any(|execution| {
+                execution["sessionId"].as_str() == Some(id.as_str())
+                    && execution["status"] == "running"
+            });
+            if !active && !unfinished { break; }
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        }
+    }).await.is_ok();
     state.store.audit(
         "session.cancel",
-        json!({ "sessionId": id, "running": running }),
+        json!({ "sessionId": id, "running": running, "settled": settled }),
     );
-    Json(json!({ "cancelled": running }))
+    Json(json!({ "cancelled": running, "settled": settled }))
 }
 
 pub async fn compact_session(
