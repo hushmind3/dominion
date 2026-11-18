@@ -233,23 +233,23 @@ fn context_block_with_manifest(
                     .unwrap_or("")
                     .chars().take(700).collect::<String>()
             };
-            items.push(json!({
-                "kind": "skill",
-                "id": id,
-                "name": name,
-                "revision": crate::engine::memory::stable_id(&[
-                    skill["id"].as_str().unwrap_or(""),
-                    skill["instructions"].as_str().unwrap_or(""),
-                    skill["updatedAt"].as_str().unwrap_or(""),
-                ]),
-            }));
-            Some((name, id, detail))
+            let revision = crate::engine::memory::stable_id(&[
+                skill["id"].as_str().unwrap_or(""),
+                skill["instructions"].as_str().unwrap_or(""),
+                skill["updatedAt"].as_str().unwrap_or(""),
+            ]);
+            Some((name, id, detail, revision))
         })
         .collect::<Vec<_>>();
     // Stable catalog ordering avoids spurious provider cache invalidations
     // when SQLite enumerates enabled skills in a different row order.
     skills.sort_by(|a,b|a.1.cmp(&b.1));
     skills.truncate(12);
+    // The watermark must describe what was actually sent. Unselected skills
+    // must not invalidate the provider's otherwise reusable prompt projection.
+    for (name,id,_,revision) in &skills {
+        items.push(json!({"kind":"skill","id":id,"name":name,"revision":revision}));
+    }
 
     let mut reliability = Vec::new();
     for stat in state.store.all("tool_stat") {
@@ -325,7 +325,7 @@ fn context_block_with_manifest(
         } else {
             block.push_str("\n\nEnabled skills (model-only excerpts):");
         }
-        for (name, id, detail) in &skills {
+        for (name, id, detail, _) in &skills {
             block.push_str(&format!("\n- {name} [id={id}]: {detail}"));
         }
     }
