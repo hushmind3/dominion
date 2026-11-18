@@ -1114,9 +1114,9 @@ mod tests {
         ]})).unwrap();
         let prior=vec![json!({"key":"owner-state:old",
             "message":{"role":"user",
-                "content":"[주인 확정 상태: 원문]\\n- [decision] IN_SCOPE\\n- [decision] FOREIGN\\n- [decision] FUTURE"}})];
+                "content":"[주인 확정 상태: 원문]\n- [decision] IN_SCOPE\n- [decision] FOREIGN\n- [decision] FUTURE"}})];
         let fresh=vec![json!({"key":"owner-state:current",
-            "message":{"role":"user","content":"[주인 확정 상태: 원문]\\n- [decision] CURRENT"}})];
+            "message":{"role":"user","content":"[주인 확정 상태: 원문]\n- [decision] CURRENT"}})];
         let prior_deps=vec![json!({"kind":"room_state","id":own_id,
             "activeFacts":[],"metadataDigest":"proof"})];
         let mut first=fresh.clone();
