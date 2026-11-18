@@ -71,8 +71,7 @@ async function freeProxy(request, env, user) {
   const body = await maxBody(request);
   const model = freeModels(env).find(x => x.id === body.model);
   if (!model || !env.UPSTREAM_API_KEY || !env.UPSTREAM_URL) return err('Free model not available', 503);
-  if (!Array.isArray(body.messages) || !body.messages.length ||
-      JSON.stringify(body.messages).length > 50000 ||
+  if (body.stream === true || body.tools !== undefined || body.tool_choice !== undefined || body.n !== undefined || body.response_format !== undefined)\n    return err('Free model currently supports text-only non-streaming requests');\n  if (!Array.isArray(body.messages) || !body.messages.length ||\n      JSON.stringify(body.messages).length > 50000 ||
       (body.max_tokens !== undefined && (!Number.isSafeInteger(body.max_tokens) || body.max_tokens < 1)))
     return err('Invalid or oversized messages');
   const limit = Math.max(1, Math.min(1000, Number(env.FREE_DAILY_LIMIT || 20)));
@@ -81,10 +80,10 @@ async function freeProxy(request, env, user) {
   const updated = await env.DB.prepare('INSERT INTO free_quota(account_day,used) VALUES(?,1) ON CONFLICT(account_day) DO UPDATE SET used=used+1 WHERE used<? RETURNING used')
     .bind(key, limit).first();
   if (!updated) return err('Daily free quota exhausted', 429);
-  const upstream = await fetch(env.UPSTREAM_URL.replace(/\\/$/, '') + '/chat/completions', {
+  const upstream = await fetch(env.UPSTREAM_URL.replace(/\/$/, '') + '/chat/completions', {
     method: 'POST',
     headers: { authorization: 'Bearer ' + env.UPSTREAM_API_KEY, 'content-type': 'application/json' },
-    body: JSON.stringify({ ...body, model: model.upstream_model || model.id, max_tokens: Math.min(2048, body.max_tokens || 1024) }),
+    body: JSON.stringify({ model: model.upstream_model || model.id, messages: body.messages, stream: false, max_tokens: Math.min(2048, body.max_tokens || 1024) }),
     signal: AbortSignal.timeout(90000)
   });
   if (!upstream.ok) return err('Free model provider unavailable', 502);
