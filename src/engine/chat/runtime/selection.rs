@@ -182,21 +182,9 @@ pub(super) fn select_room_tools(
         .filter_map(|(index, definition)| {
             let name = tool_name(definition);
             let name_lower = name.to_lowercase();
-            let haystack = serde_json::to_string(definition)
-                .unwrap_or_default()
-                .to_lowercase();
-            let mut score = 0i32;
-            if lower.contains(&name_lower) {
-                score += 30;
-            }
-            for token in lower
-                .split(|ch: char| !ch.is_alphanumeric())
-                .filter(|token| token.chars().count() > 1)
-            {
-                if haystack.contains(token) {
-                    score += 2;
-                }
-            }
+            let description=definition["function"]["description"].as_str()
+                .or_else(||definition["description"].as_str()).unwrap_or("");
+            let mut score=dominion_agent_sdk::tool_relevance(name,description,query);
             for (terms, tools) in groups {
                 if terms.iter().any(|term| lower.contains(term))
                     && tools.contains(&name_lower.as_str())
@@ -268,25 +256,20 @@ pub(super) fn select_tool_definitions(
             .filter(|definition| core.contains(tool_name(definition)))
             .collect();
     }
-    // query-relevant: always keep the core set, add the best matches.
-    let tokens = query
-        .to_lowercase()
-        .split(|ch: char| !ch.is_alphanumeric())
-        .filter(|token| token.chars().count() > 1)
-        .map(str::to_string)
-        .collect::<Vec<_>>();
+    // Query-relevant: reuse the SDK's bounded intent signal over tool
+    // NAME/DESCRIPTION, not arbitrary JSON parameter text. The owner tool
+    // catalog and configured core set remain authoritative.
     let extra = algorithm["parameters"]["extra"].as_u64().unwrap_or(8) as usize;
     let mut matched = definitions
         .iter().enumerate()
         .filter(|(_,definition)| !core.contains(tool_name(definition)))
         .map(|(index,definition)| {
-            let haystack = serde_json::to_string(definition)
-                .unwrap_or_default()
-                .to_lowercase();
-            let score = tokens
-                .iter()
-                .filter(|token| haystack.contains(token.as_str()))
-                .count();
+            let score=dominion_agent_sdk::tool_relevance(
+                tool_name(definition),
+                definition["function"]["description"].as_str()
+                    .or_else(||definition["description"].as_str()).unwrap_or(""),
+                query,
+            );
             (score, index)
         })
         .filter(|(score, _)| *score > 0)
