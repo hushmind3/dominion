@@ -415,7 +415,7 @@ mod tests {
                 a.feed(Packet::Data(json!({"choices":[{"index":0,
                     "delta":{"tool_calls":[{"index":0,"id":"tool-1",
                         "function":{"name":"workspace_read",
-                            "arguments":"{\\\"path\\\":\\\"a.txt\\\"}"}}]}}]}))).unwrap();
+                            "arguments":json!({"path":"a.txt"}).to_string()}}]}}]}))).unwrap();
             }else{
                 a.feed(Packet::Data(json!({"choices":[{"index":0,
                     "delta":{"content":"BENCH_OK"}}]}))).unwrap();
@@ -472,7 +472,7 @@ mod tests {
             json!({"choices":[{"index":0,"finish_reason":"stop","delta":{}}]}),
             json!({"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":5}}),
         ]{wire.extend(encode(item));}
-        wire.extend(b"data: [DONE]\\r\\n\\r\\n");
+        wire.extend(b"data: [DONE]\r\n\r\n");
         let mut decoder=SseDecoder::default();
         let mut assembler=Assembler::new(Wire::Chat);
         let mut seen=String::new();
