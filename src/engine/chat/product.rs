@@ -1635,7 +1635,8 @@ impl Host for MainTurn<'_> {
             } else {
                 format!("실제 도구 실행 {receipts}건을 확인하고 검증 조건 {checked}개를 충족했습니다. 확인된 파일: {}.",paths.join(", "))
             };
-            let _ = self.tx.send(json!({"type":"text","text":self.final_content}));
+            // Publish only after the owner revision has been confirmed and
+            // the final assistant message is durable in save().
             self.metadata["completionSource"] = json!("kernel_verified_checkpoint");
             self.state.store.audit("acceptance.kernel_reconciled", json!({
                 "executionId": self.execution_id,
@@ -1998,6 +1999,9 @@ impl MainTurn<'_> {
             }))
             .ok_or("최종 응답을 저장할 수 없습니다.")?;
         self.state.bus.message(&saved);
+        if self.metadata["completionSource"] == "kernel_verified_checkpoint" {
+            let _ = self.tx.send(json!({"type":"text","text":self.final_content}));
+        }
         crate::engine::chat::continuity::commit(self.state, &self.metadata["continuity"], &saved);
         if let Some(projection) = self.continuation_projection.take() {
             crate::engine::chat::continuity::commit_projection(
@@ -2060,6 +2064,11 @@ mod terminal_receipt_tests {
         assert_eq!(terminal_acceptance_receipt(
             &state, "s", Some("owner"), "execution-read-only", accepted.as_ref(),
         ), None, "a read-only observation cannot prove an actionable write");
+        let no_concrete_checks = Some(("write something".to_owned(), json!([])));
+        assert_eq!(terminal_acceptance_receipt(
+            &state, "s", Some("owner"), "execution-1",
+            no_concrete_checks.as_ref(),
+        ), None, "an effect without explicit postconditions is not a verified result");
         let wrong_content = Some((
             "write done.txt with something else".to_owned(),
             json!([{"type":"file_equals","path":"done.txt","content":"wrong"}]),
