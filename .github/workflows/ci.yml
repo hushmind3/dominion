@@ -67,5 +67,7 @@ jobs:
           cargo test --lib engine::chat::runtime::program::review_settlement_tests
           cargo test --lib engine::chat::outcome::program_review_outcome_tests
           cargo test --lib db::tests::bounded_provenance_query_observes_only_requested_run_and_order
-          cargo test --lib engine::algorithms::tests::confounded_task_success_does_not_award_multiple_ucb_kernels
-          cargo test --lib engine::algorithms::tests::direct_failed_domain_signal_overrides_shared_task_success
+          # Execute the entire policy-selection suite; explicit owner activation
+          # and preserved historical evidence must not regress.
+          cargo test --lib engine::algorithms::tests
+          cargo test --lib db::tests::algorithm_kind_query_is_indexed_and_excludes_unrelated_live_policies
