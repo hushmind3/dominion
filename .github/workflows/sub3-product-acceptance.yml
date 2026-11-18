@@ -70,6 +70,9 @@ jobs:
           cargo test --bin dominion-rust planning_cost_tests
           cargo test --bin dominion-rust shared_sdk_relevance_ignores_tool_parameter_payload
           cargo test --bin dominion-rust engine::chat::tests
+          # Chained developer persona must appear exactly once on the WS wire.
+          cargo test --bin dominion-rust engine::chat::codex_ws::tests
+          cargo test --bin dominion-rust room_catalog_cache_tests
           cargo test --bin dominion-rust cancel_api_interrupts_silent_http_generation_and_allows_same_session_retry
           cargo test --bin dominion-rust engine::chat::runtime::cancellation_watch_tests
           cargo test --bin dominion-rust engine::chat::room_context::tests
