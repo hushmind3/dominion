@@ -158,6 +158,10 @@ pub async fn resolve(
     let definition=all.iter().find(|definition|tool_name(definition)==name)
         .ok_or("도구가 더 이상 연결돼 있지 않거나 현재 세션에서 허용되지 않습니다.")?;
     let arguments=Value::Object(arguments.clone());
+    let session=state.store.get("session",session_id).unwrap_or(Value::Null);
+    if !tools::profile_tool_allowed(&session,name,&arguments) {
+        return Err("검색된 도구라도 현재 위임 역할에 허용되지 않는 명령입니다.".into());
+    }
     dominion_core::tool_schema::admit(
         &dominion_core::domain::ToolCall{
             id:"discovered-call".into(),name:name.to_string(),arguments:arguments.clone()
@@ -197,6 +201,33 @@ mod tests {
         assert!(resolve(&state,"owner","run-a",&json!({"name":"workspace_write","arguments":{"path":"p","content":"x"}})).await.is_err());
         let _=std::fs::remove_dir_all(dir);
     }
+    #[tokio::test]
+    async fn verification_profile_discovery_cannot_bypass_test_only_command_gate() {
+        let (state,dir)=state();
+        state.store.put("session",&json!({
+            "id":"verifier","delegated":true,"delegationProfile":"verification",
+            "delegationWorkspace":{"path":"subagent"}
+        })).unwrap();
+        state.store.put("execution",&json!({"id":"verify-run","sessionId":"verifier"})).unwrap();
+        let results=search(&state,"verifier",
+            &json!({"query":"terminal_exec","limit":1})).await.unwrap();
+        assert_eq!(results["matches"][0]["name"],"terminal_exec");
+        state.store.put("execution_operation",&json!({
+            "id":"verify-search","runId":"verify-run","sessionId":"verifier",
+            "origin":"model","status":"completed","tool":SEARCH,"result":results
+        })).unwrap();
+        let run=json!({"name":"terminal_exec",
+            "arguments":{"command":"cargo","args":["run","--bin","script"]}});
+        assert!(resolve(&state,"verifier","verify-run",&run).await.is_err());
+        let test=json!({"name":"terminal_exec",
+            "arguments":{"command":"cargo","args":["test","--locked"]}});
+        assert!(resolve(&state,"verifier","verify-run",&test).await.is_ok());
+        let write=json!({"name":"workspace_write",
+            "arguments":{"path":"src/lib.rs","content":"malicious"}});
+        assert!(resolve(&state,"verifier","verify-run",&write).await.is_err());
+        let _=std::fs::remove_dir_all(dir);
+    }
+
     #[tokio::test]
     async fn read_only_session_never_discovers_mutating_tools(){
         let (state,dir)=state();
