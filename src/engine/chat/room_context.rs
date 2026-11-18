@@ -25,6 +25,41 @@ pub(super) fn input_estimate(messages: &[Value], tools: &[Value]) -> usize {
     estimate(&json!({"messages":messages,"tools":tools}).to_string())
 }
 
+/// Per-round projection of the *actual prepared native chat envelope*.
+/// This is an estimator, not provider token accounting: the selected provider
+/// may apply its own template, caching and schema conversions later. It keeps
+/// only numeric component costs and never persists private prompt contents.
+pub(super) fn wire_profile(messages: &[Value], tools: &[Value]) -> Value {
+    let mut parts = std::collections::BTreeMap::<String, usize>::new();
+    for message in messages {
+        let role = message["role"].as_str().unwrap_or("");
+        let frame = message["_dominion_frame"].as_str().unwrap_or("");
+        let kind = if frame.starts_with("room-shared:") { "sharedRoomState" }
+            else if frame.starts_with("owner-state:") { "ownerState" }
+            else if frame.starts_with("evidence:") { "retrievedEvidence" }
+            else if role == "system" { "systemAndPersona" }
+            else if role == "tool" { "toolResults" }
+            else if role == "assistant" { "peerAndSelfHistory" }
+            else if role == "user" { "ownerAndHistory" }
+            else { "other" };
+        *parts.entry(kind.to_string()).or_default() += estimate(&message.to_string());
+    }
+    let schemas = if tools.is_empty() { 0 } else { estimate(&json!(tools).to_string()) };
+    parts.insert("toolSchemas".into(), schemas);
+    let total = input_estimate(messages, tools);
+    let sum: usize = parts.values().sum();
+    parts.insert("serializationEnvelope".into(), total.saturating_sub(sum));
+    json!({
+        "estimated": true,
+        "estimator": "ascii-four-unicode-one-v1",
+        "scope": "pre-provider-adapter-native-wire",
+        "totalEstimatedTokens": total,
+        "components": parts,
+        "messages": messages.len(),
+        "toolDefinitions": tools.len()
+    })
+}
+
 struct Candidate {
     history: Vec<Value>,
     evidence: Option<Value>,
@@ -676,6 +711,32 @@ mod tests {
 
     fn message(state: &AppState, id: &str, role: &str, content: &str) {
         state.store.write_message(&json!({"id":id,"session_id":"room:r","role":role,"content":content,"agent_id":if role=="user"{Value::Null}else{json!("a")},"metadata":{"authorKind":if role=="user"{"owner"}else{"agent"}}})).unwrap();
+    }
+
+    #[test]
+    fn wire_profile_attributes_selected_messages_without_retaining_raw_text() {
+        let messages=vec![
+            json!({"role":"system","content":"private instructions"}),
+            json!({"role":"user","_dominion_frame":"room-shared:owner-1","content":"shared secret"}),
+            json!({"role":"user","_dominion_frame":"owner-state:1","content":"owner state"}),
+            json!({"role":"assistant","content":"peer answer"}),
+            json!({"role":"tool","content":"sensitive tool output"}),
+        ];
+        let tools=vec![json!({"type":"function","function":{"name":"workspace_read"}})];
+        let profile=wire_profile(&messages,&tools);
+        assert_eq!(profile["estimated"],true);
+        assert_eq!(profile["messages"],5);
+        assert_eq!(profile["toolDefinitions"],1);
+        assert!(profile["components"]["systemAndPersona"].as_u64().unwrap()>0);
+        assert!(profile["components"]["sharedRoomState"].as_u64().unwrap()>0);
+        assert!(profile["components"]["ownerState"].as_u64().unwrap()>0);
+        assert!(profile["components"]["peerAndSelfHistory"].as_u64().unwrap()>0);
+        assert!(profile["components"]["toolResults"].as_u64().unwrap()>0);
+        assert!(profile["components"]["toolSchemas"].as_u64().unwrap()>0);
+        let serialized=profile.to_string();
+        for secret in ["private instructions","shared secret","sensitive tool output"] {
+            assert!(!serialized.contains(secret));
+        }
     }
 
     #[test]
