@@ -1,0 +1,12 @@
+name = "dominion-cloud"
+main = "src/index.js"
+compatibility_date = "2026-11-18"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "dominion-cloud"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+# Set GOOGLE_CLIENT_ID and ALLOWED_ORIGIN in the Cloudflare dashboard.
+# Set SESSION_SECRET and UPSTREAM_API_KEY using wrangler secret put.
+# No upstream inference is enabled until the model and prices are configured.
