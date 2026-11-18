@@ -1756,6 +1756,11 @@ impl MainTurn<'_> {
                 ||(replaced&&(text.starts_with("Internal execution plan.")||text.starts_with("Engine-owned task decomposition.")))))
         });
         if self.session["delegationWorkspace"].is_object(){self.tool_definitions.retain(|tool|!tool_name(tool).starts_with("mcp__")&&!matches!(tool_name(tool),"github_api"|"github_repositories"|"github_file_read"|"github_file_update"|"github_file_replace"|"browser_control"));}
+        if self.simple_creation_target.is_none() && !self.tool_definitions.is_empty() {
+            self.tool_definitions = tool_catalog::progressive_tools(
+                std::mem::take(&mut self.tool_definitions), &goal,
+            );
+        }
         self.owner_revision = revision;
         self.state.store.audit("job.owner_revision_applied",json!({"executionId":self.execution_id,"revision":revision,"mode":if replaced{"replace"}else{"append"}}));
         Ok(())
