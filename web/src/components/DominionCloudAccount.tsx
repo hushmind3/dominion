@@ -2,7 +2,7 @@ import {useEffect,useRef,useState} from 'react'
 import {get,post} from '../api'
 
 type GoogleResponse={credential:string}
-type GoogleIdentity={accounts:{id:{initialize:(config:{client_id:string;callback:(response:GoogleResponse)=>void})=>void;renderButton:(element:HTMLElement,options:Record<string,unknown>)=>void;disableAutoSelect?:()=>void;disableAutoSelect?:()=>void;disableAutoSelect?:()=>void}}}
+type GoogleIdentity={accounts:{id:{disableAutoSelect?:()=>void;initialize:(config:{client_id:string;callback:(response:GoogleResponse)=>void})=>void;renderButton:(element:HTMLElement,options:Record<string,unknown>)=>void;disableAutoSelect?:()=>void;disableAutoSelect?:()=>void;disableAutoSelect?:()=>void}}}
 declare global {interface Window {google?:GoogleIdentity}}
 type Model={id:string;name?:string;free:boolean;provider?:string;input_micro_krw?:number;output_micro_krw?:number}
 type CatalogProvider={id:string;name:string;api:string;models:number;doc?:string}
@@ -12,6 +12,7 @@ const clientId=import.meta.env.VITE_DOMINION_GOOGLE_CLIENT_ID||''
 export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Promise<unknown>}) {
  const button=useRef<HTMLDivElement>(null)
  const [token,setToken]=useState('')
+ const [activeTab,setActiveTab]=useState<'cloud'|'providers'>('cloud')
  const [models,setModels]=useState<Model[]>([])
  const [selected,setSelected]=useState('')
  const [modelSearch,setModelSearch]=useState('')
@@ -88,6 +89,7 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
   }catch(e){setCatalogMessage((e as Error).message)}finally{setCatalogBusy(false)}
  }
  async function connectCatalog(){
+  if(!catalogKey.trim()){setCatalogMessage('API 키를 입력한 후 연결하세요.');return}
   const entry=catalog.find(p=>p.id===catalogId)
   if(!entry)return
   if(!catalogKey.trim()){setCatalogMessage('API 키를 입력한 뒤 연결하세요. 업체와 모델 정보 검색은 키 없이 가능합니다.');return}
