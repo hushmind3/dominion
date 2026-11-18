@@ -78,6 +78,7 @@ export function ModelHub(){
  const [modal,setModal]=useState(false),[presetMode,setPresetMode]=useState(false)
  const [edit,setEdit]=useState<Provider|null>(null)
  const [tab,setTab]=useState<Tab>('providers'),[category,setCategory]=useState<'all'|PresetCategory>('all'),[query,setQuery]=useState('')
+ const [catalogSort,setCatalogSort]=useState<'name'|'models'>('name'),[catalogLimit,setCatalogLimit]=useState(60)
  const catalog=useRemote<CatalogResponse>(tab==='catalog'?'/api/providers/catalog':null,{providers:[]})
  const [loginPending,setLoginPending]=useState(false),[loginUrl,setLoginUrl]=useState(''),[loginMessage,setLoginMessage]=useState(''),[deviceCode,setDeviceCode]=useState<{userCode:string;verificationUrl:string}|null>(null)
  const freeCatalog=useRemote<FreeCatalog>('/api/providers/free-catalog',{providers:[]})
@@ -320,6 +321,7 @@ export function ModelHub(){
   const term=query.trim().toLowerCase()
   return !term||(p.name+' '+p.baseUrl).toLowerCase().includes(term)
  }),[providers.value,query])
+ const catalogVisible=useMemo(()=>{const term=query.trim().toLowerCase();const unique=new Map<string,CatalogProvider>();for(const p of catalog.value.providers){const key=p.api.replace(/\/$/,'').toLowerCase();const old=unique.get(key);if(!old||p.models>old.models)unique.set(key,p)}return [...unique.values()].filter(p=>!term||(p.name+' '+p.id+' '+p.api).toLowerCase().includes(term)).sort((a,b)=>catalogSort==='models'?b.models-a.models||a.name.localeCompare(b.name):a.name.localeCompare(b.name))},[catalog.value.providers,query,catalogSort])
  const tabs:Array<{id:Tab;label:string;count?:number}>= [
   {id:'providers',label:t('models.tab.providers'),count:providers.value.length},
   {id:'catalog',label:t('models.tab.catalog')},
@@ -351,10 +353,11 @@ export function ModelHub(){
   </section>
   {tab==='catalog'&&<section className="rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-5 shadow-[0_1px_2px_rgba(36,33,29,.04)]">
    <div className="mb-3 flex flex-wrap items-start justify-between gap-2"><div><h2 className="m-0 text-[16px] font-bold text-[#24211D]">{t('models.catalog.title')}</h2><p className="mt-1 text-[12px] text-[#7C7469]">{t('models.catalog.desc')}</p></div><Button type="button" variant="ghost" size="sm" disabled={catalog.loading} onClick={()=>void catalog.reload()}>{catalog.loading?<RefreshCw size={13} className="animate-spin"/>:<RefreshCw size={13}/>} {t('models.catalog.refresh')}</Button></div>
-   <div className="mb-2"><TextInput value={query} onChange={e=>setQuery(e.target.value)} placeholder={t('models.providerSearch')} className="!text-[12px]"/></div>
+   <div className="mb-2 flex flex-wrap items-center gap-2"><TextInput value={query} onChange={e=>{setQuery(e.target.value);setCatalogLimit(60)}} placeholder={t('models.providerSearch')} className="min-w-[180px] flex-1 !text-[12px]"/><SelectInput aria-label="업체 정렬" value={catalogSort} onChange={e=>setCatalogSort(e.target.value as 'name'|'models')} className="!w-auto !text-[12px]"><option value="name">업체 이름순</option><option value="models">모델 많은 순</option></SelectInput><span className="text-[11px] text-[#7C7469]">{catalogVisible.length}개 업체 · 중복 주소 제외</span></div>
    {catalog.error&&<Notice message={catalog.error}/>}
    {catalog.loading&&<p className="py-4 text-center text-[11px] text-[#9C9388]">{t('models.catalog.loading')}</p>}
-   <div className="grid max-h-[420px] grid-cols-1 gap-2 overflow-auto sm:grid-cols-2 xl:grid-cols-3">{catalog.value.providers.filter(p=>{const term=query.trim().toLowerCase();return !term||(p.name+' '+p.api).toLowerCase().includes(term)}).slice(0,60).map(p=><div key={p.id} className="flex min-w-0 items-center justify-between gap-2 rounded-xl border border-[#EFE9DF] bg-[#FAF7F1] px-3 py-2.5"><div className="min-w-0"><strong className="block truncate text-[12px] text-[#3A342D]">{p.name}</strong><small className="block truncate text-[10px] text-[#A79C8E]">{p.api.replace(/^https?:\/\//,'')} · {t('models.catalog.modelCount',{count:p.models})}</small></div><Button type="button" size="sm" variant="secondary" onClick={()=>openPreset({name:p.name,baseUrl:p.api,kind:p.id.includes('anthropic')||p.api.includes('anthropic')?'anthropic':p.id.includes('ollama')?'ollama':'openai',local:false,category:'cloud'})}>{t('models.register')}</Button></div>)}</div>
+   <div className="grid max-h-[420px] grid-cols-1 gap-2 overflow-auto sm:grid-cols-2 xl:grid-cols-3">{catalogVisible.slice(0,catalogLimit).map(p=><div key={p.id} className="flex min-w-0 items-center justify-between gap-2 rounded-xl border border-[#EFE9DF] bg-[#FAF7F1] px-3 py-2.5"><div className="min-w-0"><strong className="block truncate text-[12px] text-[#3A342D]">{p.name}</strong><small className="block truncate text-[10px] text-[#A79C8E]">{p.api.replace(/^https?:\/\//,'')} · {t('models.catalog.modelCount',{count:p.models})}</small></div><Button type="button" size="sm" variant="secondary" onClick={()=>openPreset({name:p.name,baseUrl:p.api,kind:p.id.includes('anthropic')||p.api.includes('anthropic')?'anthropic':p.id.includes('ollama')?'ollama':'openai',local:false,category:'cloud'})}>{t('models.register')}</Button></div>)}</div>
+   {catalogVisible.length>catalogLimit&&<div className="mt-3 text-center"><Button type="button" variant="secondary" onClick={()=>setCatalogLimit(n=>n+60)}>업체 더 보기 ({catalogVisible.length-catalogLimit}개 남음)</Button></div>}
   </section>}
 
   {tab==='oauth'&&<section className="rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-5 shadow-[0_1px_2px_rgba(36,33,29,.04)]">
