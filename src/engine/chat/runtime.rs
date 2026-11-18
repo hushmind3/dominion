@@ -828,6 +828,10 @@ async fn run_turn_body(
 
     if session["delegationWorkspace"].is_object(){tool_definitions.retain(|tool|!tool_name(tool).starts_with("mcp__")&&!matches!(tool_name(tool),"github_api"|"github_repositories"|"github_file_read"|"github_file_update"|"github_file_replace"|"browser_control"));}
     if session["readOnly"]==true {tool_definitions.retain(|tool|tools::observational(tool_name(tool)));}
+    if request.tools_enabled && request.tools_execution_enabled
+        && simple_creation_target.is_none() && !tool_definitions.is_empty() {
+        tool_definitions = tool_catalog::progressive_tools(tool_definitions, &request.input);
+    }
     let discovered_tool_names = tool_definitions
         .iter()
         .filter_map(|definition| {
