@@ -306,9 +306,12 @@ pub(super) async fn dispatch_tool_call(
         dominion_core::hosted::Journal::save(&native_journal,&frame)?;Some(frame)
     }else{None};
 
-    // Record what the effect would be before asking for approval or running it.
-    // Only mutating calls need the session history scan.
-    let mut effect_operations = if crate::engine::effect::is_effectful(&call.name, &arguments) {
+    // Profile admission happens before approval or mutation-history queries.
+    // A child may discover a tool but cannot use that to expand its role.
+    let role_admitted = tools::profile_tool_allowed(session, &call.name, &arguments);
+    // Only admitted mutating calls need the session history scan.
+    let mut effect_operations = if role_admitted
+        && crate::engine::effect::is_effectful(&call.name, &arguments) {
         state.store.session_execution_operations(session_id)?
     } else {
         Vec::new()
@@ -331,7 +334,7 @@ pub(super) async fn dispatch_tool_call(
         tools::requires_approval(&call.name)
     };
     let operation_id = format!("{execution_id}:{round}:{call_index}:{}", call.id);
-    let mut allowed = if effect_block.is_some() {
+    let mut allowed = if !role_admitted || effect_block.is_some() {
         false
     } else if needs_approval {
         request_approval(
@@ -392,7 +395,12 @@ pub(super) async fn dispatch_tool_call(
         )
         .ok_or("도구 실행 시작을 저장할 수 없습니다.")?;
     let mut file_observation = None;
-    let (result, ok) = if let Some(prior) = &effect_block {
+    let (result, ok) = if !role_admitted {
+        let error="위임 역할에 허용되지 않는 도구 또는 명령입니다.";
+        let _=tx.send(json!({"type":"tool_error","name":call.name,
+            "id":call.id,"error":error}));
+        (json!({"error":error,"delegationProfileDenied":true}),false)
+    } else if let Some(prior) = &effect_block {
         // The previous attempt has no confirmed outcome. Sending the same
         // non-idempotent change again would risk a duplicate external effect.
         let prior_state = prior["effectState"].as_str().unwrap_or("unknown");
