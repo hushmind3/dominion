@@ -1097,6 +1097,84 @@ mod tests {
     }
 
     #[test]
+    fn nine_speaker_hundred_turn_projection_keeps_memory_and_reuses_prefixes() {
+        let root=std::env::temp_dir().join(format!("dominion-nine-hundred-{}",uuid::Uuid::new_v4()));
+        let state=state(&root);
+        state.store.put("session",&json!({"id":"room:long","roomId":"long"})).unwrap();
+        state.store.put("room",&json!({"id":"long",
+            "contextBudgetTokens":1400,"workingViewBudgetTokens":12000})).unwrap();
+        let provider=route();
+        let mut prior=std::collections::HashMap::<String,String>::new();
+        let mut reused_calls=0usize;
+        let mut rotated_calls=0usize;
+        let mut projected_new=0usize;
+        let mut rebuilt_full=0usize;
+        for turn in 0..100 {
+            let source=format!("owner-{turn}");
+            state.store.write_message(&json!({"id":source,"session_id":"room:long",
+                "role":"user","content":format!("owner work item {turn}"),
+                "metadata":{"authorKind":"owner"}})).unwrap();
+            for index in 0..9 {
+                let agent=format!("agent-{index}");
+                let request=TurnRequest::from_value(&json!({"input":format!("owner work item {turn}"),
+                    "agentId":agent})).unwrap();
+                let identity=format!("stable owner and group persona {agent}");
+                let status=if turn==0 {"no prior group round"}else{"nine responses received"};
+                let mut fresh=vec![
+                    json!({"role":"system","content":identity,
+                        "_dominion_source":source,"_dominion_dependencies":[]}),
+                    json!({"role":"user","content":status,
+                        "_dominion_frame":format!("room-shared:{}",stable_id(&[status]))}),
+                    json!({"role":"user",
+                        "content":"[주인 확정 상태: 원문]\n- [decision] KEEP_DEPLOYMENT_9000",
+                        "_dominion_frame":"owner-state:stable"}),
+                ];
+                if let Some(reply_id)=prior.get(&agent) {
+                    fresh.push(json!({"role":"assistant",
+                        "content":format!("self answer {}",turn-1),
+                        "_dominion_frame":reply_id}));
+                }
+                fresh.push(json!({"role":"user","content":format!("owner work item {turn}"),
+                    "_dominion_frame":source}));
+                rebuilt_full+=super::room_context::input_estimate(
+                    &fresh.iter().map(wire_message).collect::<Vec<_>>(),&[]);
+                let mut plan=prepare(&state,&provider,&request,"room:long",&identity,&json!({})).unwrap();
+                let (wire,pending)=project(&state,&provider,&fresh,&[],"room:long",&mut plan);
+                let reason=&plan["workingView"]["rebaseReason"];
+                if reason.is_null(){reused_calls+=1;}
+                if reason=="room_snapshot_rotated"{rotated_calls+=1;}
+                projected_new+=plan["workingView"]["estimatedNewHistoryTokens"]
+                    .as_u64().unwrap_or(0) as usize;
+                assert!(wire.iter().any(|row|row["content"]=="[주인 확정 상태: 원문]\n- [decision] KEEP_DEPLOYMENT_9000"));
+                assert!(wire.iter().any(|row|row["content"]==format!("owner work item {turn}")));
+                assert_eq!(wire.iter().filter(|row|
+                    row["content"]=="nine responses received").count(),usize::from(turn>0));
+                if turn>0 {
+                    assert!(wire.iter().any(|row|row["content"]==format!("self answer {}",turn-1)));
+                }
+                let id=format!("reply-{turn}-{index}");
+                let saved=state.store.write_message(&json!({"id":id,"session_id":"room:long",
+                    "role":"assistant","agent_id":agent,
+                    "content":format!("self answer {turn}"),
+                    "metadata":{"replyToMessageId":source}})).unwrap();
+                commit(&state,&plan,&saved);
+                commit_projection(&state,&plan,&saved,pending.unwrap());
+                prior.insert(agent,id);
+            }
+        }
+        assert_eq!(prior.len(),9);
+        assert_eq!(rotated_calls,9,
+            "one changed shared status per agent, not once every owner turn");
+        assert!(reused_calls>500,
+            "working views should keep their provider prefix between bounded epochs: {reused_calls}");
+        assert!(projected_new<rebuilt_full,
+            "host-estimated new history should be cheaper than cold full reconstruction: {projected_new}/{rebuilt_full}");
+        assert_eq!(state.store.messages("room:long").len(),100*10,
+            "all owner and nine speaker original records remain durable");
+        crate::test_support::cleanup_dir(root);
+    }
+
+    #[test]
     fn budget_carry_rejects_foreign_and_future_room_facts() {
         let root=std::env::temp_dir().join(format!("dominion-owner-scope-{}",uuid::Uuid::new_v4()));
         let state=state(&root);
