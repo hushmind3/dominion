@@ -129,11 +129,16 @@ pub(super) async fn attempt_model_adaptation(
     let mut last_error = String::new();
     for attempt in 0..2 {
         if !budget.charge_round() { return Err("adaptation model budget exhausted".into()); }
-        metrics.lock().unwrap().model_calls += 1;
+        {
+            let mut counters=metrics.lock().unwrap();
+            counters.model_calls+=1;
+            counters.auxiliary_calls+=1;
+        }
         let mut native=load_native_checkpoint(state,execution_id,&request.input)?;
         let journal=ChatKernelJournal{state,execution_id,session_id,generation:state.cancellation_generation(session_id)};
         let raw = dominion_core::engine::model_call(&mut native,&journal,"adaptation",
-            llm::complete_for_session(state,&provider_id,&model,&system,&attempt_prompt,session_id))
+            llm::complete_for_execution(state,&provider_id,&model,&system,&attempt_prompt,
+                Some(session_id),execution_id,"adaptation"))
             .await??;
         let candidate = crate::engine::adaptation_loop::parse_adaptation(&raw);
         match candidate {
@@ -287,7 +292,11 @@ pub(super) async fn attempt_model_adaptation(
     // experiment as evidence. If the budget is gone, the existing interventions
     // remain available and are filtered by actual contradictions.
     if observations && budget.charge_round() {
-        metrics.lock().unwrap().model_calls += 1;
+        {
+            let mut counters=metrics.lock().unwrap();
+            counters.model_calls+=1;
+            counters.auxiliary_calls+=1;
+        }
         let compose_system = "You are the DOMINION evidence-based repair composer. \
             Observations are tool receipts, not success claims. Use the observed \
             diagnostics and surviving causal hypotheses to revise only the proposed \
@@ -308,9 +317,9 @@ pub(super) async fn attempt_model_adaptation(
         };
         let proposed = dominion_core::engine::model_call(
             &mut native, &journal, "adaptation_compose",
-            llm::complete_for_session(
+            llm::complete_for_execution(
                 state, &provider_id, &model, compose_system,
-                &compose_prompt, session_id,
+                &compose_prompt, Some(session_id), execution_id, "adaptation_compose",
             ),
         ).await;
         let proposed = match proposed {
