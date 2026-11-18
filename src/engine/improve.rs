@@ -68,7 +68,9 @@ pub fn propose(
     // accumulating duplicates.
     let mut supersedes: Option<String> = None;
     if kind == "strategy" {
-        for existing in state.store.all("improvement") {
+        for existing in state.store.active_improvements_for_scope(
+            &scope.partition_key, scope.agent_id.as_deref(),
+        ).ok()? {
             if existing["kind"].as_str() != Some("strategy")
                 || existing["id"].as_str() == Some(id.as_str())
                 || !visible(&existing, scope)
@@ -273,7 +275,7 @@ fn visible(record: &Value, scope: &MemoryScope) -> bool {
 fn baseline_success(state: &AppState, scope: &MemoryScope) -> f64 {
     let mut total = 0u64;
     let mut success = 0u64;
-    for execution in state.store.all("execution").into_iter().rev().take(40) {
+    for execution in state.store.try_recent_records("execution", 40).unwrap_or_default() {
         let Some(session_id) = execution["sessionId"].as_str() else {
             continue;
         };
@@ -341,9 +343,10 @@ pub fn active_values_with_execution(
     scope: &MemoryScope,
     execution_id: Option<&str>,
 ) -> Vec<Value> {
-    let mut candidates = state
+    let eligible = state
         .store
-        .all("improvement")
+        .active_improvements_for_scope(&scope.partition_key, scope.agent_id.as_deref())
+        .unwrap_or_default()
         .into_iter()
         .filter(|improvement| {
             matches!(
@@ -357,15 +360,16 @@ pub fn active_values_with_execution(
                     || improvement["id"]
                         .as_str()
                         .is_some_and(|id| in_canary_bucket(&scope.session_id, id)))
-        })
+        }).collect::<Vec<_>>();
+    if eligible.is_empty() { return Vec::new(); }
+    // One kernel choice and one durable usage record per run, rather than
+    // repeating DB selection for each candidate strategy in the same turn.
+    let algorithm = crate::engine::algorithms::choose_for_agent(
+        state, "strategy.selection", scope.agent_id.as_deref(), execution_id,
+    );
+    let mut candidates = eligible.into_iter()
         .map(|mut improvement| {
             let mut estimate = strategy_estimate(&improvement);
-            let algorithm = crate::engine::algorithms::choose_for_agent(
-                state,
-                "strategy.selection",
-                scope.agent_id.as_deref(),
-                execution_id,
-            );
             let penalty = |name: &str, fallback: f64| {
                 algorithm
                     .as_ref()
@@ -417,11 +421,11 @@ pub fn active_values_with_execution(
     let mut selected = candidates.iter().take(6).cloned().collect::<Vec<_>>();
     // Exploration: if a high-uncertainty strategy was left out, spend one
     // slot on it instead of always exploiting the current leaders.
-    let explore_enabled = crate::engine::algorithms::variant_for_agent(
-        state,
-        "strategy.selection",
-        scope.agent_id.as_deref(),
-    ) != "exploit-only";
+    let explore_enabled = algorithm.as_ref()
+        .and_then(|item| item["implementation"].as_str().or_else(|| item["variant"].as_str()))
+        .map(str::to_string)
+        .unwrap_or_else(|| crate::engine::algorithms::variant(state, "strategy.selection"))
+        != "exploit-only";
     if explore_enabled {
     if let Some(explore) = candidates
         .iter()
@@ -1063,6 +1067,62 @@ mod tests {
             "appliedImprovementIds":[]});
         assert!(execution_updates(&state,&without).unwrap().is_empty());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn recent_baseline_ignores_oldest_forty_runs() {
+        let (state, dir) = state();
+        for i in 0..45 {
+            state.store.put("execution", &json!({
+                "id":format!("old-{i}"),"sessionId":"s","agentId":"a",
+                "status":"failed"
+            })).unwrap();
+        }
+        for i in 0..5 {
+            state.store.put("execution", &json!({
+                "id":format!("new-{i}"),"sessionId":"s","agentId":"a",
+                "status":"completed"
+            })).unwrap();
+        }
+        let scope=MemoryScope::for_session(&state.store,"s",Some("a"));
+        // newest first: five recent successes and fifteen failures, rather
+        // than the oldest forty failures returned by the legacy .rev() scan.
+        assert!((baseline_success(&state,&scope)-0.25).abs()<1e-9);
+        assert_eq!(state.store.try_recent_records("execution", 0).unwrap().len(),0);
+        assert_eq!(state.store.try_recent_records("execution", 8).unwrap().len(),8);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn active_strategy_selection_excludes_retired_and_unrelated_scopes() {
+        let (state, dir) = state();
+        let scope=MemoryScope::for_session(&state.store,"s",Some("a"));
+        for (id,status,kind,visibility,agent) in [
+            ("shared-active","adopted","strategy","shared","a"),
+            ("global-active","validated","tool_policy","global","b"),
+            ("other-agent","adopted","strategy","agent","b"),
+            ("rejected","rejected","strategy","shared","a"),
+            ("retired","rolled_back","strategy","shared","a"),
+            ("harness-kind","adopted","harness","shared","a"),
+        ]{
+            state.store.put("improvement",&json!({
+                "id":id,"status":status,"kind":kind,"scope":visibility,
+                "agentId":agent,"partitionKey":scope.partition_key,
+                "scoreVersion":2,"text":"verified guideline"
+            })).unwrap();
+        }
+        let found=state.store.active_improvements_for_scope(
+            &scope.partition_key,scope.agent_id.as_deref()
+        ).unwrap().into_iter().filter_map(|row|row["id"].as_str().map(str::to_string))
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(found.len(),2,"only active visible strategies reach prompt selection");
+        assert!(found.contains("shared-active"));
+        assert!(found.contains("global-active"));
+        let selected=active_values_with_execution(&state,&scope,Some("current-run"))
+            .into_iter().filter_map(|row|row["id"].as_str().map(str::to_string))
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(selected,found);
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]
