@@ -189,16 +189,32 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   if(!turn||turn.cancelling)return;
   turn.cancelling=true;
   setStopping(true);setError('');setCommandInfo(t('chat.stopPending'));
+  let accepted=false;
   try{
    if(turn.sessionId){
-    // The server persists the per-turn tombstone BEFORE cancelling its
-    // session epoch; cancellation wins even when the POST arrives late.
+    // Persist the stop tombstone first, independently of SSE abort.
+    const path='/api/sessions/'+encodeURIComponent(turn.sessionId);
     const result=await post<{cancelled:boolean;requestRecorded:boolean}>(
-     '/api/sessions/'+encodeURIComponent(turn.sessionId)+'/cancel',
-     {requestId:turn.requestId});
+     path+'/cancel',{requestId:turn.requestId});
     if(!result.requestRecorded)throw Error(t('chat.stopFailed'));
+    accepted=true;
+    turn.controller.abort();
+    // A completed cancelled HTTP stream is not proof that an in-flight
+    // external effect has settled. The native supervisor may drain it for
+    // up to 60s and mark unknown outcomes in SQLite. Resend is disabled
+    // until the durable execution record AND active session are terminal.
+    const deadline=Date.now()+75_000;
+    while(true){
+     const status=await get<{stopped:boolean}>(path+'/cancel-status');
+     if(status.stopped)break;
+     if(Date.now()>deadline)throw Error(t('chat.stopStillRunning'));
+     await new Promise<void>(resolve=>setTimeout(resolve,250));
+    }
+   }else{
+    // No server-side session exists yet; abort before chat POST begins.
+    turn.controller.abort();
+    accepted=true;
    }
-   turn.controller.abort();
    if(activeTurn.current===turn){
     activeTurn.current=null;stream.current=null;
     setBusy(false);setStopping(false);setLiveApproval(null);
@@ -211,9 +227,11 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    if(activeTurn.current===turn){
     setStopping(false);setError(translateError((err as Error).message));
     setCommandInfo('');
-    // A stream may have ended while /cancel was unavailable. Do not
-    // leave the send button stuck once that stream is truly gone.
-    if(turn.completed){activeTurn.current=null;stream.current=null;setBusy(false);refresh();}
+    // Only natural stream completion with no accepted Stop can release
+    // this turn without the server-side settlement confirmation.
+    if(!accepted&&turn.completed){
+     activeTurn.current=null;stream.current=null;setBusy(false);refresh();
+    }
    }
   }
  };
