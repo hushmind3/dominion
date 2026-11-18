@@ -53,7 +53,16 @@ fn schema_sha(schema:&Value)->String {
     format!("{:x}",Sha256::digest(schema.to_string().as_bytes()))
 }
 async fn authorized_catalog(state:&AppState,session_id:&str)->Vec<Value>{
-    let session=state.store.get("session",session_id).unwrap_or(Value::Null);
+    let Some(session)=state.store.get("session",session_id) else {return Vec::new()};
+    // Re-read owner tool controls even for a previously discovered capability:
+    // a room/session switched to tools-off must not keep an old grant alive.
+    if session["toolsEnabled"]==false {return Vec::new()}
+    if let Some(room_id)=session["roomId"].as_str(){
+        if state.store.get("room",room_id)
+            .is_some_and(|room|room["toolsEnabled"]==false){
+            return Vec::new()
+        }
+    }
     let mut catalog=tools::definitions_for(state);
     catalog.extend(mcp::definitions(state).await);
     let mut seen=HashSet::new();
@@ -203,6 +212,46 @@ mod tests {
         state.store.patch_if("execution","run-a","status",&json!("running"),
             &json!({"status":"completed"})).unwrap();
         assert!(resolve(&state,"owner","run-a",&good).await.is_err());
+        drop(state);
+        let _=std::fs::remove_dir_all(root);
+    }
+    #[tokio::test]
+    async fn disabling_room_tools_revokes_a_previously_discovered_capability(){
+        let (state,root)=state();
+        state.store.put("room",&json!({"id":"room-one","toolsEnabled":true})).unwrap();
+        state.store.put("session",&json!({"id":"owner","roomId":"room-one"})).unwrap();
+        state.store.put("execution",&json!({"id":"run","sessionId":"owner","status":"running"})).unwrap();
+        let matches=search(&state,"owner",&json!({"query":"workspace read","limit":8})).await.unwrap();
+        assert!(matches["matches"].as_array().unwrap().iter().any(|r|r["name"]=="workspace_read"));
+        state.store.put("execution_operation",&json!({
+            "id":"granted","runId":"run","sessionId":"owner","status":"completed",
+            "origin":"model","tool":SEARCH,"result":matches
+        })).unwrap();
+        let args=json!({"name":"workspace_read","arguments":{"path":"README.md"}});
+        assert!(resolve(&state,"owner","run",&args).await.is_ok());
+        state.store.put("room",&json!({"id":"room-one","toolsEnabled":false})).unwrap();
+        assert!(search(&state,"owner",&json!({"query":"workspace read"}))
+            .await.unwrap()["matches"].as_array().unwrap().is_empty());
+        assert!(resolve(&state,"owner","run",&args).await.is_err());
+        drop(state);
+        let _=std::fs::remove_dir_all(root);
+    }
+    #[tokio::test]
+    async fn schema_digest_cannot_be_forged_to_skip_live_tool_admission(){
+        let (state,root)=state();
+        state.store.put("session",&json!({"id":"owner"})).unwrap();
+        state.store.put("execution",&json!({"id":"run","sessionId":"owner","status":"running"})).unwrap();
+        let mut matches=search(&state,"owner",&json!({"query":"workspace read","limit":8})).await.unwrap();
+        for entry in matches["matches"].as_array_mut().unwrap(){
+            entry["schemaSha256"]=json!("untrusted-old-schema");
+        }
+        state.store.put("execution_operation",&json!({
+            "id":"forged","runId":"run","sessionId":"owner","status":"completed",
+            "origin":"model","tool":SEARCH,"result":matches
+        })).unwrap();
+        assert!(resolve(&state,"owner","run",&json!({
+            "name":"workspace_read","arguments":{"path":"README.md"}
+        })).await.is_err());
         drop(state);
         let _=std::fs::remove_dir_all(root);
     }
