@@ -76,6 +76,22 @@ function freeModels(env) {
   const all = [...(env.AI ? builtinModels : []), ...allowed];
   return [...new Map(all.map(x => [x.id, x])).values()];
 }
+async function upstreamFreeCatalog(env) {
+  if (!env.UPSTREAM_API_KEY || !env.UPSTREAM_URL || !env.UPSTREAM_FREE_DISCOVERY) return [];
+  const url = env.UPSTREAM_URL.replace(/\/$/, '') + '/models';
+  try {
+    const response = await fetch(url, {
+      headers: { authorization: 'Bearer ' + env.UPSTREAM_API_KEY },
+      signal: AbortSignal.timeout(12000)
+    });
+    if (!response.ok) return [];
+    const catalog = await response.json();
+    if (!Array.isArray(catalog.data)) return [];
+    return catalog.data.filter(m => typeof m.id === 'string' && m.id.endsWith(':free') &&
+      m.pricing && Number(m.pricing.prompt) === 0 && Number(m.pricing.completion) === 0)
+      .slice(0, 300).map(m => ({ id: m.id, name: m.name || m.id, free: true, backend: 'upstream' }));
+  } catch { return []; }
+}
 // Worker-isolate cache reduces catalog traffic. Expired snapshots are retained
 // for transient upstream failures; the scheduled handler refreshes proactively.
 let catalogCache = { expires: 0, models: [], refreshedAt: 0, upstreamVerifiedAt: 0 };
