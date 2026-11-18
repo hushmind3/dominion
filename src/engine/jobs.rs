@@ -727,7 +727,7 @@ pub(crate) async fn run_prompt(context:&JobContext,job:&Value)->Result<Value,Str
  let resumed_instruction=resume_owner_instruction(job,&prompt)?
    .unwrap_or_else(||prompt.clone());
  let request=TurnRequest{
-   session_id:Some(session_id.clone()),
+   session_id:Some(session_id.clone()),request_id:None,
    input:resumed_instruction,
    agent_id:input["agentId"].as_str().map(str::to_owned),
    provider_id:input["providerId"].as_str().map(str::to_owned),
@@ -790,6 +790,7 @@ async fn run_resume(context: &JobContext, job: &Value) -> Result<Value, String> 
     context.checkpoint(json!({"sessionId":session_id,"promptState":{"inFlight":true}}))?;
     let request = TurnRequest {
         session_id: Some(session_id.clone()),
+        request_id: None,
         input: prompt,
         attachment_ids: Vec::new(),
         agent_id: input["agentId"].as_str().map(str::to_string),
