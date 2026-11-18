@@ -460,6 +460,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cloudflare_wire_affinity_is_room_stable_and_is_not_sent_to_other_providers() {
+        use axum::{extract::State,http::HeaderMap,routing::post,Json,Router};
+        use std::sync::{Arc,Mutex};
+        type Seen=Arc<Mutex<Vec<Option<String>>>>;
+        async fn endpoint(State(seen):State<Seen>,headers:HeaderMap,
+            Json(_body):Json<Value>)->Json<Value>{
+            seen.lock().unwrap().push(headers.get("x-session-affinity")
+                .and_then(|value|value.to_str().ok()).map(str::to_string));
+            Json(json!({"ok":true}))
+        }
+        let seen:Seen=Arc::new(Mutex::new(Vec::new()));
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr=listener.local_addr().unwrap();
+        let app=Router::new().route("/test",post(endpoint)).with_state(seen.clone());
+        let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap()});
+        let root=std::env::temp_dir().join(format!("dominion-cloudflare-affinity-{}",uuid::Uuid::new_v4()));
+        let state=state(&root);
+        for (id,room) in [("room:one","one"),("room:two","two")]{
+            state.store.put("session",&json!({"id":id,"roomId":room})).unwrap();
+        }
+        let mut provider=route();
+        provider.kind="openai".into();
+        provider.base_url="https://api.cloudflare.com/client/v4/accounts/acct/ai/v1".into();
+        let mut plans=Vec::new();
+        for (agent,session) in [("a","room:one"),("b","room:one"),("a","room:two"),("a","private:one")]{
+            let request=TurnRequest::from_value(&json!({"agentId":agent,"input":"hello"})).unwrap();
+            let mut plan=prepare(&state,&provider,&request,session,"static-room-prefix",&json!({})).unwrap();
+            let res=send(&state,&provider,reqwest::Client::new().post(format!("http://{addr}/test")),
+                &json!({"model":"test","messages":[{"role":"user","content":"hello"}]}),
+                &mut plan,CacheWire::Key).await.unwrap();
+            assert!(res.status().is_success());
+            assert_eq!(plan["providerSessionAffinitySent"],true);
+            plans.push(plan);
+        }
+        assert_eq!(plans[0]["sessionAffinityId"],plans[1]["sessionAffinityId"]);
+        assert_ne!(plans[0]["cacheKey"],plans[1]["cacheKey"],
+            "Distinct speakers must retain separate cache-key/history scopes");
+        assert_ne!(plans[0]["sessionAffinityId"],plans[2]["sessionAffinityId"]);
+        assert_ne!(plans[0]["sessionAffinityId"],plans[3]["sessionAffinityId"]);
+        let mut ordinary=route();ordinary.kind="openai".into();
+        let request=TurnRequest::from_value(&json!({"agentId":"a","input":"hello"})).unwrap();
+        let mut plan=prepare(&state,&ordinary,&request,"private:one","identity",&json!({})).unwrap();
+        send(&state,&ordinary,reqwest::Client::new().post(format!("http://{addr}/test")),
+            &json!({"model":"test","messages":[{"role":"user","content":"hello"}]}),
+            &mut plan,CacheWire::Key).await.unwrap();
+        assert!(plan["providerSessionAffinitySent"].is_null());
+        let got=seen.lock().unwrap();
+        assert_eq!(got.len(),5);
+        assert_eq!(got[0],got[1]);
+        assert_ne!(got[0],got[2]);
+        assert_ne!(got[0],got[3]);
+        assert_eq!(got[4],None,"Don't send Cloudflare-only headers to unrelated providers");
+        drop(got);
+        server.abort();
+        crate::test_support::cleanup_dir(root);
+    }
+
+    #[tokio::test]
     async fn stable_participant_header_survives_cache_hint_negotiation() {
         use axum::{extract::State,http::HeaderMap,routing::post,Json,Router};
         use std::sync::{Arc,Mutex};
