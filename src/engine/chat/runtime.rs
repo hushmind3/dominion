@@ -70,7 +70,16 @@ pub async fn run_turn(
     request: &TurnRequest,
     tx: &UnboundedSender<Value>,
 ) -> Result<Option<Value>, String> {
-    run_turn_with_policy(state, request, tx, true, true, None).await
+    run_turn_with_policy(state, request, tx, true, true, None, None).await
+}
+
+/// HTTP chat admission owns a durable epoch snapshot. A stop before the
+/// spawned native turn begins wins without resuming the older request.
+pub(crate) async fn run_turn_http(
+    state: &AppState, request: &TurnRequest, tx: &UnboundedSender<Value>,
+    accepted_cancel_generation: Option<u64>,
+) -> Result<Option<Value>, String> {
+    run_turn_with_policy(state, request, tx, true, true, None, accepted_cancel_generation).await
 }
 
 pub async fn run_turn_background(
@@ -78,7 +87,7 @@ pub async fn run_turn_background(
     request: &TurnRequest,
     tx: &UnboundedSender<Value>,
 ) -> Result<Option<Value>, String> {
-    run_turn_with_policy(state, request, tx, false, true, None).await
+    run_turn_with_policy(state, request, tx, false, true, None, None).await
 }
 
 /// Resume path for a rejected/woken run: the original owner message is already
@@ -88,7 +97,7 @@ pub async fn run_turn_resume(
     request: &TurnRequest,
     tx: &UnboundedSender<Value>,
 ) -> Result<Option<Value>, String> {
-    run_turn_with_policy(state, request, tx, false, false, None).await
+    run_turn_with_policy(state, request, tx, false, false, None, None).await
 }
 
 // Shared room input is already durably stored by the owner-message API.
@@ -99,7 +108,7 @@ pub async fn run_room_turn(
     tx: &UnboundedSender<Value>,
     source_message_id: &str,
 ) -> Result<Option<Value>, String> {
-    run_turn_with_policy(state, request, tx, false, false, Some(source_message_id)).await
+    run_turn_with_policy(state, request, tx, false, false, Some(source_message_id), None).await
 }
 
 async fn run_turn_with_policy(
@@ -109,6 +118,7 @@ async fn run_turn_with_policy(
     reset_cancel: bool,
     record_input: bool,
     source_message_id: Option<&str>,
+    accepted_cancel_generation: Option<u64>,
 ) -> Result<Option<Value>, String> {
     let session = ensure_session(state, request)?;
     if record_input && session["roomId"].is_string() {
@@ -147,7 +157,16 @@ async fn run_turn_with_policy(
     let _lease = crate::engine::lease::LeaseGuard::acquire(state, &session_id)
         .ok_or("다른 엔진 프로세스가 이 세션을 실행 중입니다.")?;
     if reset_cancel {
-        state.clear_cancel(&session_id);
+        if let Some(generation) = accepted_cancel_generation {
+            // The HTTP API captured the epoch before launching this task.
+            // A STOP that wins the scheduling race must never be cleared by
+            // the ordinary new-turn reset.
+            if !state.resume_session_if_generation(&session_id, generation) {
+                return Err("실행이 중단되었습니다.".into());
+            }
+        } else {
+            state.clear_cancel(&session_id);
+        }
     }
     if state.is_cancelled(&session_id) {
         return Err("실행이 중단되었습니다.".into());
