@@ -1610,6 +1610,29 @@ impl Host for MainTurn<'_> {
             }
         }
         if !self.acceptance_passed {
+            // Preserve the actual missing obligations. External benchmark
+            // artifacts can exist even when another frozen requirement failed.
+            // This evidence is diagnostic only: it cannot waive the checks.
+            if let Some((goal, checks)) = &self.acceptance {
+                let evidence = self.reply_to.as_deref().map(|source| {
+                    evidence_for_source(self.state, self.session_id, source, self.execution_id)
+                }).unwrap_or_default();
+                let gaps = verification::check_acceptance(self.state, goal, checks, &evidence);
+                let diagnostic = json!({
+                    "reason": "model_rounds_exhausted",
+                    "maxRounds": self.max_rounds,
+                    "receiptCount": evidence.len(),
+                    "missingObligations": gaps,
+                });
+                if let Some(mut execution) = self.state.store.get("execution", self.execution_id) {
+                    execution["terminalReview"] = diagnostic.clone();
+                    self.state.store.put("execution", &execution)
+                        .ok_or("종료 검증 진단을 저장할 수 없습니다.")?;
+                }
+                self.state.store.audit("acceptance.terminal_incomplete", json!({
+                    "executionId":self.execution_id,"review":diagnostic
+                }));
+            }
             return Err(format!(
                 "모델 반복 제한({}회)에 도달하여 실행을 마치지 못했습니다.",
                 self.max_rounds
@@ -1937,6 +1960,15 @@ mod terminal_receipt_tests {
         assert_eq!(terminal_acceptance_receipt(
             &state, "s", Some("owner"), "execution-1", accepted.as_ref(),
         ), Some(1));
+        state.store.put("execution_operation", &json!({
+            "id":"read-2","runId":"execution-read-only","status":"completed",
+            "tool":"workspace_read",
+            "arguments":{"path":"done.txt"},
+            "result":{"content":"verified"},
+        }));
+        assert_eq!(terminal_acceptance_receipt(
+            &state, "s", Some("owner"), "execution-read-only", accepted.as_ref(),
+        ), None, "a read-only observation cannot prove an actionable write");
         let wrong_content = Some((
             "write done.txt with something else".to_owned(),
             json!([{"type":"file_equals","path":"done.txt","content":"wrong"}]),
