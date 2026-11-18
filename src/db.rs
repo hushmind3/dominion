@@ -180,6 +180,9 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_algorithm_usage_execution
                  ON records(json_extract(data,'$.executionId'))
                  WHERE kind='algorithm_usage';
+             CREATE INDEX IF NOT EXISTS idx_aux_model_call_execution
+                 ON records(json_extract(data,'$.executionId'))
+                 WHERE kind='aux_model_call';
              CREATE INDEX IF NOT EXISTS idx_algorithm_kind
                  ON records(json_extract(data,'$.kind'))
                  WHERE kind='algorithm';
@@ -603,6 +606,21 @@ impl Store {
             |row|row.get::<_,i64>(0)
         ).map_err(|e|e.to_string())?;
         Ok(used.max(0) as u64)
+    }
+
+    /// Only this execution's auxiliary model receipts, including retries.
+    /// An unknown/in-flight receipt is returned, never treated as zero usage.
+    pub fn auxiliary_model_calls(&self, execution_id: &str) -> Result<Vec<Value>, String> {
+        let conn = self.conn.lock().map_err(|error| error.to_string())?;
+        let mut statement = conn.prepare(
+            "SELECT data, id, created_at, updated_at FROM records
+             WHERE kind='aux_model_call'
+               AND json_extract(data,'$.executionId')=?1
+             ORDER BY created_at ASC, id",
+        ).map_err(|error| error.to_string())?;
+        let rows = statement.query_map([execution_id], record_from_row)
+            .map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|error|error.to_string())
     }
 
     pub fn execution_operations(&self, run_id: &str) -> Result<Vec<Value>, String> {
@@ -2353,6 +2371,24 @@ mod tests {
         ).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
         assert!(plans.iter().any(|p|p.contains("idx_improvement_active_v2")),
             "active strategy search must use its partial index: {plans:?}");
+    }
+
+    #[test]
+    fn auxiliary_model_receipts_are_scoped_to_one_execution() {
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        for (id,execution,phase) in [
+            ("a-0","run-a","planning"),("a-1","run-a","planning"),
+            ("b-0","run-b","acceptance_review"),
+        ] {
+            store.put("aux_model_call",&json!({
+                "id":id,"executionId":execution,"logicalId":"plan-1",
+                "phase":phase,"status":"completed","totalTokens":100
+            })).unwrap();
+        }
+        let rows=store.auxiliary_model_calls("run-a").unwrap();
+        assert_eq!(rows.len(),2);
+        assert!(rows.iter().all(|row|row["executionId"]=="run-a"));
+        assert!(store.auxiliary_model_calls("missing").unwrap().is_empty());
     }
 
     #[test]
