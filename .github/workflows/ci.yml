@@ -89,6 +89,9 @@ jobs:
           cargo test --lib engine::chat::capability::tests::local_docs_paths_do_not_rank_cloud_schemas_in_native_discovery
           cargo test --lib engine::tools::tests::room_source_reader_preserves_full_peer_history_and_private_scope
           cargo test --lib engine::chat::continuity::tests::indexed_peer_never_duplicates_a_full_reply_in_committed_prefix
+          cargo test --lib engine::chat::continuity::tests::semantically_stable_room_state_reuses_one_frame_and_changed_state_rotates
+          cargo test --lib engine::room_state::tests::shared_room_state_is_roster_driven_and_not_a_partial_speaker_window
+          cargo test --lib engine::rooms::tests::routing_modes_respect_owner_selection_ids_and_real_mentions
           # The model-route and participant continuation pointers must commit
           # atomically; stale peer or obsolete-prefix replies cannot rewind them.
           cargo test --lib engine::chat::continuity::tests::stale_cross_route_completion_does_not_half_commit_model_cursor

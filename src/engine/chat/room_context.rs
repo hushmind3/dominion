@@ -520,7 +520,14 @@ pub(crate) fn compile(
     let query = all[source]["content"].as_str().unwrap_or("");
     let (prompt, persona_tokens, mut items) = core(state, request, &room, query);
     let shared=crate::engine::room_state::conversation_context(state,&room,session_id,source_id,&all[..source]);
-    let shared_frame=json!({"role":"user","_dominion_frame":format!("room-shared:{source_id}"),"content":shared["text"]});
+    // Frame identity tracks *visible semantic state*, not a new owner
+    // message ID. Exact source IDs/participant receipts remain in SQLite.
+    let shared_text_digest=shared["textDigest"].as_str()
+        .map(str::to_string)
+        .unwrap_or_else(||memory::stable_id(&[shared["text"].as_str().unwrap_or("")]));
+    let shared_frame=json!({"role":"user",
+        "_dominion_frame":format!("room-shared:{shared_text_digest}"),
+        "content":shared["text"]});
     let shared_tokens=estimate(&shared_frame.to_string());
     items.push(json!({"kind":"room_shared_context","digest":shared["digest"],"sourceMessageId":source_id}));
     let owner_state=crate::engine::room_state::context_snapshot_at(state,room_id,query,&all[..=source]).map(|(id,block)|{

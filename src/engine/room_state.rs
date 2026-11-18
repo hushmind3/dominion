@@ -57,18 +57,26 @@ pub(crate) fn conversation_context(
             "repliedToPreviousRequest":previous_replies.contains_key(id),
             "executionId":execution.as_ref().map(|e|&e["id"]),"toolCalls":tool_calls}));
     }
-    let mut text=String::from("[방 공통 상태: 현재 요청 시점까지의 전체 원문 기록에서 엔진이 계산함]\n");
+    // Audit identity (source IDs, participant receipts) stays in the durable
+    // snapshot below. Model-visible status depends only on semantic results.
+    // Repeating owner requests with the same room outcome must not turn an
+    // unchanged prefix into a newly billable observation per participant.
+    let mut text=String::from("[방 공통 상태: 확정된 이전 응답과 실행 기록 기준] ");
     if previous.is_some() {
-        // The actual prior owner message is already selected verbatim by the
-        // compiler. Keep its reference here rather than repeat its body.
-        text.push_str(&format!("직전 요청의 응답 기록: {}/{}명. 응답함: {}. 응답 기록 없음: {}.\n",
-            responded.len(),members.len(),responded.join(", "),if missing.is_empty(){"없음".into()}else{missing.join(", ")}));
-    }else{text.push_str("이 방의 첫 주인 요청이며 이전 응답 기록은 없음.\n");}
-    text.push_str(&format!("기준 요청: {source_id}. 직전 요청: {}.\n",previous_id.unwrap_or("없음")));
-    if !observed_work.is_empty(){text.push_str(&format!("관측된 작업: {}.\n",observed_work.join("; ")));}
-    text.push_str("이후 대화는 선택된 발췌다. 발췌에 안 보인다는 이유로 미응답·부재로 판단하지 말 것. 발언과 실제 도구 실행 결과는 구분할 것.");
+        text.push_str(&format!("직전 요청 응답 {}/{}명. 미응답: {}.",
+            responded.len(),members.len(),
+            if missing.is_empty(){"없음".into()}else{missing.join(", ")}));
+    }else{
+        text.push_str("첫 주인 요청. 이전 응답 없음.");
+    }
+    if !observed_work.is_empty(){
+        text.push_str(&format!(" 관측된 작업: {}.",observed_work.join("; ")));
+    }
+    text.push_str(" 동료 원문과 출처 ID는 별도 보존됨. 선택된 발췌만 보고 불참을 추론하지 말 것.");
+    let text_digest=memory::stable_id(&[&text]);
     let snapshot=json!({"sessionId":session_id,"sourceMessageId":source_id,"memberIds":members,
         "previousOwnerMessageId":previous_id,"participants":participants,"text":text,
+        "textDigest":text_digest,
         "digest":memory::stable_id(&[&json!([source_id,previous_id,&participants]).to_string()])});
     if let Some(id)=room["id"].as_str(){
         state.store.patch_if("room",id,"id",&json!(id),&json!({"sharedContext":snapshot}));
@@ -448,6 +456,13 @@ mod tests {
             assert_eq!(shared["participants"][0]["lastReplyMessageId"],"reply-0");
             let reloaded=state.store.get("room",&room_id).unwrap();
             assert_eq!(conversation_context(&state,&reloaded,&sid,"owner-2",&history),shared);
+            // Same semantic room outcome across distinct owner source IDs is
+            // one cacheable model observation, not two independent receipts.
+            let equivalent=conversation_context(&state,&reloaded,&sid,"owner-3",&history);
+            assert_ne!(equivalent["digest"],shared["digest"]);
+            assert_eq!(equivalent["textDigest"],shared["textDigest"]);
+            assert_eq!(equivalent["text"],shared["text"]);
+            assert!(!equivalent["text"].as_str().unwrap().contains("owner-2"));
             let next=conversation_context(&state,&reloaded,&sid,"owner-3",&[history.clone(),vec![
                 json!({"id":"owner-2","session_id":sid,"role":"user","content":"another request"}),
                 json!({"id":"new-reply","session_id":sid,"role":"assistant","agent_id":members[0],

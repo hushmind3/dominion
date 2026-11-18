@@ -49,6 +49,8 @@
 
 **Durable conversation correctness (sub2):** Provider-route and participant continuation cursors are advanced together by one SQLite compare-and-swap transaction. Late concurrent replies and obsolete persona prefixes cannot partially overwrite persisted continuity; regression tests cover both cases. Source: `src/engine/chat/continuity.rs` and `src/db.rs`. This is a source-level correctness change; live provider behavior remains separately measured.
 
+**Sub2 2026-11-19 room-cache update:** The room-wide status frame now uses its semantic content digest instead of the owner's message ID; unchanged observations reuse the frame, changed observations rotate the old snapshot. Owner message IDs and exact peer receipts remain persisted. Bare speaker names inside illustrative text no longer route the whole room to one participant; direct addressing requires an explicit vocative/recipient particle or `@name`. Live token savings have not been independently benchmarked for this revision.
+
 **Product scope:** The built-in video/audio rendering pipeline and autonomous generational RSI campaigns were retired **on this branch**. Media generation can be invoked through user-configured MCP/Connections. Historical SQLite rows, chat, archived jobs and existing media files remain readable; there is no background self-modifying-core campaign.
 
 ## Quick start

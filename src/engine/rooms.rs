@@ -1147,14 +1147,13 @@ fn mention_boundary(ch: Option<char>) -> bool {
     ch.is_none_or(|ch| !ch.is_alphanumeric() && !matches!(ch, '_' | '-' | '.'))
 }
 fn bare_mention_follows(after: &str) -> bool {
-    if mention_boundary(after.chars().next()) {
-        return true;
-    }
-    const PARTICLES: &[&str] = &[
-        "야", "아", "님", "씨", "에게", "한테", "께", "가", "이", "는", "은", "도", "랑",
-        "와", "과", "의",
-    ];
-    PARTICLES.iter().any(|particle| after.starts_with(particle))
+    // A speaker's name appearing in an example, table, transcript or normal
+    // descriptive sentence is NOT routing intent. Only an explicit vocative
+    // or address particle is a natural-language direct call. @name remains
+    // the unambiguous override for every supported routing mode.
+    const ADDRESS: &[&str] = &["야", "아", "님께", "님", "씨", "에게", "한테", "께"];
+    ADDRESS.iter().any(|particle| after.strip_prefix(particle)
+        .is_some_and(|suffix|mention_boundary(suffix.chars().next())))
 }
 /// Optional silence: a member may decline its turn instead of speaking.
 fn is_silence(content: &str) -> bool {
@@ -1566,6 +1565,10 @@ mod tests {
             vec!["c"]
         );
         config["routingMode"] = json!("mentioned");
+        assert!(plan_speakers(&state, &config, "예시로 나루 13, 다온 77을 적어주세요", None)
+            .unwrap().is_empty(),"quoted/example names are data, not direct address");
+        assert_eq!(plan_speakers(&state, &config, "나루야 답해", None).unwrap(),vec!["b"]);
+        assert_eq!(plan_speakers(&state, &config, "가람에게 질문할게", None).unwrap(),vec!["a"]);
         assert!(plan_speakers(&state, &config, "안녕", None)
             .unwrap()
             .is_empty());

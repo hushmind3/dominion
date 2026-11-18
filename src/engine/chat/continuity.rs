@@ -174,6 +174,17 @@ pub(crate) fn project(
         .any(|old| old["key"] == new["key"] && old["message"] != new["message"])) {
         reason = Some("source_changed");
     }
+    // A changed room-wide observation supersedes the old one. The previous
+    // response count or work status is historical, not a second current fact.
+    // Rotate the snapshot on this boundary, while stable observations reuse
+    // their exact prior frame (and remain prefix-cache candidates).
+    let current_shared=fresh.iter().filter_map(|frame|frame["key"].as_str())
+        .find(|key|key.starts_with("room-shared:"));
+    if reason.is_none() && current_shared.is_some_and(|current| frames.iter()
+        .any(|frame|frame["key"].as_str().is_some_and(|old|
+            old.starts_with("room-shared:") && old!=current))) {
+        reason=Some("room_snapshot_rotated");
+    }
     let mut reused = frames.len();
     if reason.is_none() {
         append_unseen_frames(&mut frames,&fresh);
@@ -541,6 +552,41 @@ mod tests {
             &json!({"previousRouteReplyMessageId":"unknown"})));
         assert!(!has_confirmed_ws_history(&state,&json!({})));
         drop(state);std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn semantically_stable_room_state_reuses_one_frame_and_changed_state_rotates(){
+        let root=std::env::temp_dir().join(format!("dominion-room-status-cache-{}",uuid::Uuid::new_v4()));
+        let state=state(&root);
+        state.store.put("session",&json!({"id":"room:r","roomId":"r"}));
+        state.store.put("room",&json!({"id":"r","contextBudgetTokens":8_000}));
+        let mut provider=route(); provider.kind="openai".into();
+        let request=TurnRequest::from_value(&json!({"input":"repeat","agentId":"agent"})).unwrap();
+        let system=|source:&str|json!({"role":"system","content":"same identity","_dominion_source":source});
+        let shared=|version:&str|json!({"role":"user","content":format!("confirmed room state {version}"),
+            "_dominion_frame":format!("room-shared:{version}")});
+        let owner=|source:&str|json!({"role":"user","content":"owner request",
+            "_dominion_frame":source});
+        let first=vec![system("owner-1"),shared("stable"),owner("owner-1")];
+        let mut first_plan=prepare(&state,&provider,&request,"room:r","same identity",&json!({})).unwrap();
+        let (_,projection)=project(&state,&provider,&first,&[],"room:r",&mut first_plan);
+        let saved=state.store.write_message(&json!({"session_id":"room:r","agent_id":"agent",
+            "role":"assistant","content":"I remember the previous turn",
+            "metadata":{"replyToMessageId":"owner-1"}})).unwrap();
+        commit(&state,&first_plan,&saved);
+        commit_projection(&state,&first_plan,&saved,projection.unwrap());
+        let second=vec![system("owner-2"),shared("stable"),owner("owner-2")];
+        let mut second_plan=prepare(&state,&provider,&request,"room:r","same identity",&json!({})).unwrap();
+        let (stable_wire,_)=project(&state,&provider,&second,&[],"room:r",&mut second_plan);
+        assert!(second_plan["workingView"]["rebaseReason"].is_null());
+        assert_eq!(stable_wire.iter().filter(|m|m["content"]=="confirmed room state stable").count(),1);
+        assert!(stable_wire.to_string().contains("I remember the previous turn"));
+        let changed=vec![system("owner-2"),shared("changed"),owner("owner-2")];
+        let (changed_wire,_)=project(&state,&provider,&changed,&[],"room:r",&mut second_plan);
+        assert_eq!(second_plan["workingView"]["rebaseReason"],"room_snapshot_rotated");
+        assert_eq!(changed_wire.iter().filter(|m|m["content"]=="confirmed room state changed").count(),1);
+        assert!(!changed_wire.to_string().contains("confirmed room state stable"));
+        drop(state); std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
