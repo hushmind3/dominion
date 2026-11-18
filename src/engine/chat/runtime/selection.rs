@@ -213,7 +213,13 @@ pub(super) fn select_room_tools(
             })
             .collect();
     }
+    // Rank for membership, then return the permitted schemas in their
+    // stable host catalogue order. Query/recent-tool scores can change on
+    // every owner turn without changing the selected tool SET. Returning
+    // score order would rewrite the provider's leading tool schema prefix
+    // and unnecessarily invalidate every speaker's cached working view.
     scored.truncate(8);
+    scored.sort_unstable_by_key(|(_, index)|*index);
     let mut available=definitions.into_iter().map(Some).collect::<Vec<_>>();
     scored.into_iter().filter_map(|(_,index)|available[index].take()).collect()
 }
@@ -302,3 +308,27 @@ pub(super) fn trim_tool_definitions(definitions: Vec<Value>, budget: usize) -> V
     kept
 }
 
+
+#[cfg(test)]
+mod room_catalog_cache_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn room_tool_catalog_order_stays_stable_across_relevance_changes() {
+        let tools=["shell_exec","workspace_write","workspace_read"]
+            .into_iter().map(|name|json!({
+                "type":"function","function":{"name":name,"description":name,
+                    "parameters":{"type":"object","properties":{}}}
+            })).collect::<Vec<_>>();
+        let recent=["shell_exec","workspace_write","workspace_read"]
+            .into_iter().map(str::to_string).collect();
+        let read=select_room_tools(tools.clone(),"read file",&recent,false);
+        let write=select_room_tools(tools.clone(),"write file",&recent,false);
+        let names=|list:&[Value]|list.iter().map(tool_name).collect::<Vec<_>>();
+        assert_eq!(names(&read),vec!["shell_exec","workspace_write","workspace_read"]);
+        assert_eq!(names(&write),names(&read),
+            "relevance reranking alone must not change the model tool schema prefix");
+        assert_eq!(names(&read),names(&tools));
+    }
+}
