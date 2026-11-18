@@ -194,13 +194,21 @@ fn evidence(
     for record in state.store.all("skill").into_iter().filter(|record| {
         memory::visible(record, &scope) && record["enabled"] != false && record["status"] != "draft"
     }) {
-        let text = record["instructions"]
-            .as_str()
-            .or_else(|| record["description"].as_str())
-            .unwrap_or("");
+        // Keep a small, provenance-bound index in the room context. The full
+        // enabled skill stays in SQLite until skill_view(id) is invoked.
+        // Model-only rooms cannot call tools and retain the legacy excerpt.
+        let text = if request.tools_enabled && request.tools_execution_enabled {
+            record["description"].as_str()
+                .or_else(|| record["instructions"].as_str())
+                .unwrap_or("").chars().take(180).collect::<String>()
+        } else {
+            record["instructions"].as_str()
+                .or_else(|| record["description"].as_str())
+                .unwrap_or("").chars().take(700).collect::<String>()
+        };
         add_evidence(
             candidates,
-            json!({"kind":"skill","id":record["id"],"text":format!("{}\n{}",record["name"].as_str().unwrap_or(""),text)}),
+            json!({"kind":"skill","id":record["id"],"text":format!("{} [skill_view id={}]\n{}",record["name"].as_str().unwrap_or(""),record["id"].as_str().unwrap_or(""),text)}),
             false,
         );
     }
