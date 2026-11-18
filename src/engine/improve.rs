@@ -586,20 +586,18 @@ pub fn execution_updates(
                 .collect::<std::collections::HashMap<_, _>>()
         })
         .unwrap_or_default();
-    let operations = state.store.try_all("execution_operation")?;
-    let applied_strategy_count = state
-        .store
-        .try_all("improvement")?
-        .iter()
-        .filter(|improvement| {
-            improvement["kind"].as_str() == Some("strategy")
-                && improvement["id"]
-                    .as_str()
-                    .is_some_and(|id| applied.contains(id))
-        })
-        .count();
+    // Finalization is scoped to one execution. The previous implementation
+    // deserialized every historical tool operation and scanned the complete
+    // improvement archive twice, even if this run applied no strategies.
+    if applied.is_empty() { return Ok(Vec::new()); }
+    let applied_ids = applied.iter().map(|id| (*id).to_string()).collect::<Vec<_>>();
+    let improvements = state.store.try_records_by_ids("improvement", &applied_ids)?;
+    let operations = state.store.execution_operations(run_id)?;
+    let applied_strategy_count = improvements.iter().filter(|improvement| {
+        improvement["kind"].as_str() == Some("strategy")
+    }).count();
     let mut updates = Vec::new();
-    for mut improvement in state.store.try_all("improvement")? {
+    for mut improvement in improvements {
         if improvement["scoreVersion"].as_u64().unwrap_or(1) < 2 {
             continue;
         }
@@ -1071,6 +1069,50 @@ mod tests {
             .store
             .put("session", &json!({"id":"s","agentId":"a"}));
         (state, dir)
+    }
+
+    #[test]
+    fn indexed_finalization_reads_only_applied_improvements_and_own_tool_receipts() {
+        let (state, dir) = state();
+        let selected = json!({
+            "id":"active-tool-policy","kind":"tool_policy","scope":"global",
+            "status":"adopted","scoreVersion":2,"tool":"workspace_read",
+            "uses":0,"successes":0,"failures":0,"appliedExecutionIds":[]
+        });
+        state.store.put("improvement", &selected).unwrap();
+        for i in 0..70 {
+            state.store.put("improvement", &json!({
+                "id":format!("unrelated-{i}"),"kind":"tool_policy",
+                "scope":"global","status":"adopted","scoreVersion":2,
+                "tool":"workspace_read","uses":0
+            })).unwrap();
+            state.store.put("execution_operation", &json!({
+                "id":format!("past-op-{i}"),"runId":"old-execution",
+                "tool":"workspace_read","status":"failed","opSeq":i
+            })).unwrap();
+        }
+        state.store.put("execution_operation", &json!({
+            "id":"current-op","runId":"current-execution","tool":"workspace_read",
+            "status":"completed","opSeq":1
+        })).unwrap();
+        let execution = json!({
+            "id":"current-execution","sessionId":"s","agentId":"a",
+            "taskOutcome":"succeeded","appliedImprovementIds":["active-tool-policy"]
+        });
+        let updates = execution_updates(&state, &execution).unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0]["id"], "active-tool-policy");
+        assert_eq!(updates[0]["uses"], 1, "old execution receipts must be excluded");
+        assert_eq!(updates[0]["successes"], 1);
+        assert_eq!(updates[0]["failures"], 0);
+        let exact = state.store.try_records_by_ids("improvement",
+            &["active-tool-policy".into(),"active-tool-policy".into(),"missing".into()]
+        ).unwrap();
+        assert_eq!(exact.len(), 1, "duplicates and missing ids must not fabricate updates");
+        let without = json!({"id":"empty-execution","sessionId":"s",
+            "appliedImprovementIds":[]});
+        assert!(execution_updates(&state,&without).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
