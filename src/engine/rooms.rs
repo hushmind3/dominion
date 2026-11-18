@@ -415,8 +415,13 @@ async fn run_locked(
     // BEFORE the first model call. Freeze compatibility room bindings in a
     // separate field, leaving owner text and permissions untouched.
     let mut room_binding=json!({
-        "roomSnapshot":room,"sessionId":session_id,"generation":generation
+        "sessionId":session_id,"generation":generation
     });
+    // The owner-message API already persists its immutable snapshot in input.
+    // Legacy /run jobs have none, so freeze it once here for safe resume.
+    if input.get("roomSnapshot").is_none(){
+        room_binding["roomSnapshot"]=room.clone();
+    }
     context.checkpoint(json!({"roomBinding":room_binding}))?;
 
     let source = owner_message(context, input, session_id, room_id)?;
@@ -1881,8 +1886,14 @@ mod tests {
         let next=save_owner_job(&state,"room-fresh","새 요청");
         let generation=next["input"]["generation"].as_u64().unwrap();
         assert!(generation>0);
+        let original_input=next["input"].clone();
         let completed=run(&run_context(&state,"room-fresh"),&next).await.unwrap();
         assert_eq!(completed["status"],"completed","{completed}");
+        let saved=state.store.get("job","room-fresh").unwrap();
+        assert_eq!(saved["input"],original_input,
+            "room checkpoints may not rewrite the owner's frozen request");
+        assert_eq!(saved["roomBinding"]["sessionId"],"room:r");
+        assert_eq!(saved["roomBinding"]["generation"],generation);
         assert_eq!(completed["turns"],1);
         assert_eq!(completed["outputs"][0]["content"],"새 메시지에 대한 답");
         assert_eq!(completed["outputs"][0]["modelCalls"],1);
