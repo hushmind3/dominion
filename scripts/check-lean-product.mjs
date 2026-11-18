@@ -110,5 +110,15 @@ assert.ok(legacyApi.includes('sdk_runs::create')&&legacyApi.includes('archiveOnl
 const nativeSdkApi=read('src/api/sdk_runs.rs');
 assert.ok(nativeSdkApi.includes('harnessCompat')&&nativeSdkApi.includes('allowedTools'),
  'Legacy API migration lost its narrower tool-authority boundary');
+const capabilityBridge=read('src/engine/chat/runtime/capability.rs');
+const chatTurn=read('src/engine/chat/runtime/turn.rs');
+const chatDispatch=read('src/engine/chat/runtime/dispatch.rs');
+assert.ok(capabilityBridge.includes('execution_operations(execution_id)')&&
+ capabilityBridge.includes('schemaSha256')&&
+ capabilityBridge.includes('dominion_agent_sdk::validate_arguments'),
+ 'Progressive discovery must keep same-run receipt, schema pinning and argument admission');
+assert.ok(chatTurn.includes('capability::resolve(')&&
+ chatDispatch.includes('capability::search(state,session_id,&arguments).await'),
+ 'Chat discovery must route through the existing execution and tool journal');
 console.log(JSON.stringify({leanProduct:true,legacyNoReplay:true,coreChat:true,
  rustSdk:true,toolsAndMcp:true,sourceFilesRemoved:absent.length},null,2));
