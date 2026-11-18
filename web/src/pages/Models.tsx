@@ -332,7 +332,6 @@ export function ModelHub(){
   {id:'catalog',label:'업체 탐색'},
   {id:'huggingface',label:'허깅페이스 모델 탐색'},
   {id:'local',label:'로컬',count:providers.value.filter(p=>p.local).length},
-  {id:'huggingface',label:'허깅페이스 모델 검색'},
   {id:'oauth',label:'계정 인증'},
  ]
  return <div className="mx-auto w-full max-w-[1200px] px-4 pt-2 pb-5 sm:px-6 lg:pt-3">
@@ -360,7 +359,7 @@ export function ModelHub(){
    <p className="mb-3 text-[12px] text-[#7C7469]">무료 여부는 제공 업체의 조회 결과를 기준으로 표시합니다. 실제 사용은 해당 업체 연결 상태에 따라 달라집니다.</p>
    {freeCatalog.value.providers.length===0?<p className="text-[12px] text-[#8A8176]">조회된 모델이 없습니다. 위의 새로고침으로 확인하세요.</p>:<div className="grid gap-2 sm:grid-cols-2">{freeCatalog.value.providers.map(provider=><div key={provider.providerId} className="rounded-xl border border-[#EFE9DF] bg-[#FAF7F1] p-3"><div className="flex items-center justify-between gap-2"><strong className="text-[12px] text-[#3A342D]">{provider.providerName}</strong><span className={'text-[10px] '+(provider.reachable?'text-emerald-700':'text-rose-600')}>{provider.reachable?'조회됨':'연결 실패'}</span></div>{provider.error&&<p className="mt-1 text-[11px] text-rose-600">{provider.error}</p>}<div className="mt-2 max-h-40 space-y-1 overflow-auto">{provider.models.filter(model=>model.free===true).map(model=><p key={model.id} className="break-all text-[11px] text-[#6F675D]">{model.id}</p>)}{!provider.models.some(model=>model.free===true)&&<p className="text-[11px] text-[#8A8176]">무료로 분류된 모델 없음</p>}</div></div>)}</div>}
   </section>}
-  {(tab==='cloud'||tab==='connect')&&<div className="mb-4"><DominionCloudAccount key={tab} initialTab={tab==='connect'?'providers':'cloud'} onProviderAdded={providers.reload}/></div>}
+  {(tab==='cloud'||tab==='connect')&&<div className="mb-4"><DominionCloudAccount key={tab} initialTab={tab==='connect'?'providers':'cloud'} hideManagementNavigation onProviderAdded={providers.reload}/></div>}
    {tab==='catalog'&&<section className="rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-5 shadow-[0_1px_2px_rgba(36,33,29,.04)]">
    <div className="mb-3 flex flex-wrap items-start justify-between gap-2"><div><h2 className="m-0 text-[16px] font-bold text-[#24211D]">{t('models.catalog.title')}</h2><p className="mt-1 text-[12px] text-[#7C7469]">{t('models.catalog.desc')}</p></div><Button type="button" variant="ghost" size="sm" disabled={catalog.loading} onClick={()=>void catalog.reload()}>{catalog.loading?<RefreshCw size={13} className="animate-spin"/>:<RefreshCw size={13}/>} {t('models.catalog.refresh')}</Button></div>
    <div className="mb-2 flex flex-wrap items-center gap-2"><TextInput value={query} onChange={e=>{setQuery(e.target.value);setCatalogLimit(60)}} placeholder={t('models.providerSearch')} className="min-w-[180px] flex-1 !text-[12px]"/><SelectInput aria-label="업체 정렬" value={catalogSort} onChange={e=>setCatalogSort(e.target.value as 'name'|'models')} className="!w-auto !text-[12px]"><option value="name">업체 이름순</option><option value="models">모델 많은 순</option></SelectInput><span className="text-[11px] text-[#7C7469]">{catalogVisible.length}개 업체 · 중복 주소 제외</span></div>
@@ -425,8 +424,7 @@ export function ModelHub(){
    {!visiblePresets.length&&<p className="py-8 text-center text-[12px] text-[#9C9388]">{t('models.noPreset')}</p>}
   </section>}
   {tab==='local'&&<div className="mt-5"><ModelExplorer initialView="installed"/></div>}
-  {tab==='huggingface'&&<div className="mt-5"><ModelExplorer key="huggingface-browser" initialView="search" hideNavigation/></div>}
-  {tab==='huggingface'&&<div className="mt-5"><ModelExplorer initialView="search"/></div>}
+  {tab==='huggingface'&&<div className="mt-2"><ModelExplorer key="huggingface-browser" initialView="search" hideNavigation/></div>}
 
   {removedName&&<p role="status" className="mb-4 mt-4 text-[12px] text-emerald-700">{t('models.dlg.disconnected',{name:removedName})}</p>}
   {!modal&&<div className="mt-4"><Notice message={error||providers.error}/></div>}
