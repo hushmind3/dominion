@@ -1167,33 +1167,16 @@ pub(super) async fn run_turn_body(
         // against a SAME-RUN search receipt and the live tool schema, then
         // feed the REAL tool into the current kernel dispatcher/approval WAL.
         let mut round_calls = completion.tool_calls.clone();
-        let offered_search=round_tools.iter().any(|tool|
-            tool_name(tool)==capability::SEARCH);
-        let offered_call=round_tools.iter().any(|tool|
-            tool_name(tool)==capability::CALL);
+        let offered=round_tools.iter().map(tool_name)
+            .filter(|name|!name.is_empty())
+            .map(str::to_string).collect::<std::collections::HashSet<_>>();
         for call in &mut round_calls {
-            if call.name==capability::CALL {
-                let result=if !offered_call {
-                    Err("Tool invocation bridge was not offered in this model round".into())
-                } else {
-                    match serde_json::from_str::<Value>(&call.arguments) {
-                        Ok(payload)=>capability::resolve(
-                            state,session_id,execution_id,&payload).await,
-                        Err(error)=>Err(format!("Invalid discovery arguments: {error}")),
-                    }
-                };
-                match result {
-                    Ok((name,args))=>{
-                        call.name=name;
-                        call.arguments=args.to_string();
-                    }
-                    Err(error)=>{
-                        call.arguments=json!({"_discoveryError":error}).to_string();
-                    }
-                }
-            } else if call.name==capability::SEARCH && !offered_search {
-                call.arguments=json!({"_discoveryError":
-                    "Tool search was not offered in this model round"}).to_string();
+            if let Err(error)=capability::bind_model_call(
+                state,session_id,execution_id,&offered,call
+            ).await {
+                // All model-invented names, not just discovery wrappers, are
+                // soft-rejected before reaching the effectful dispatcher.
+                call.arguments=json!({"_discoveryError":error}).to_string();
             }
         }
         if ordering_kernel == "read-first" && round_calls.iter().any(|call| !tool_is_read_only(&call.name)) {
@@ -1242,8 +1225,7 @@ pub(super) async fn run_turn_body(
                     continue;
                 }
             };
-            if matches!(call.name.as_str(),capability::SEARCH|capability::CALL)
-                && arguments["_discoveryError"].is_string() {
+            if arguments["_discoveryError"].is_string() {
                 let error=arguments["_discoveryError"].as_str().unwrap_or("Invalid tool discovery");
                 record_soft_tool_error(state,tx,session_id,request,execution_id,
                     &call.name,&call.id,error,metrics);
