@@ -520,6 +520,9 @@ fn aggregate(trials: &[Value], arm: &str, pairs: usize) -> Value {
         "compliance": compliant,
         "triggerCoverage": if applicable == 0 { Value::Null } else { json!(compliant as f64 / applicable as f64) },
         "tokens": tokens,
+        "tokensPerVerifiedCompletion":if success>0 {
+            json!(tokens as f64 / success as f64)
+        } else {Value::Null},
         "planQuality": round4(plan_quality),
         "planQualityIndependent": round4(independent_plan_quality),
         "p50Ms": percentile(&mut latencies.clone(), 0.50),
@@ -865,6 +868,21 @@ fn write_outputs(root: &Path, manifest: &Value, trials: &[Value]) -> Result<Valu
             manifest["randomizationSeed"].as_u64().unwrap_or(0),
         ),
         "trialCount": trials.len(),
+        "repairAB":manifest["repairAB"],
+        "repairEvidence":if manifest["repairAB"]==true {
+            json!({
+                "baselineTriggered":trials.iter().filter(|t|t["arm"]=="baseline" && t["repairTriggered"]==true).count(),
+                "treatmentTriggered":trials.iter().filter(|t|t["arm"]=="treatment" && t["repairTriggered"]==true).count(),
+                "baselineWithRevision":trials.iter().filter(|t|t["arm"]=="baseline"
+                    && t["programRevisionCount"].as_u64().is_some_and(|n|n>0)).count(),
+                "treatmentWithRevision":trials.iter().filter(|t|t["arm"]=="treatment"
+                    && t["programRevisionCount"].as_u64().is_some_and(|n|n>0)).count(),
+                "treatmentVerifiedPostflights":trials.iter().filter(|t|t["arm"]=="treatment"
+                    && t["repairPostflightReceipts"].as_array().is_some_and(|rows|
+                       !rows.is_empty() && rows.iter().all(|row|row["verdict"]=="true"))
+                ).count(),
+            })
+        } else {Value::Null},
     });
     write_json(&root.join("summary.json"), &summary)?;
     write_report(root, manifest, &summary)?;
@@ -1390,16 +1408,29 @@ async fn main() -> Result<(), String> {
                 .unwrap_or(false);
             let task_outcome = execution["taskOutcome"].as_str().unwrap_or("unknown");
             let operation_rows = operations.as_array().cloned().unwrap_or_default();
+            // The isolated repair benchmark is not a procedure-learning
+            // experiment. Require a genuine program repair attempt instead
+            // of treating an ordinary chat answer as experimental evidence.
+            let repair_triggered=cfg.repair_ab && (
+                execution["programCheckpoint"]["revisionHistory"]
+                    .as_array().is_some_and(|rows|!rows.is_empty())
+                || execution["programCheckpoint"]["programFailure"].is_object()
+            );
             let verified = audit_ok
                 && report_ok
                 && task_outcome == "succeeded"
-                && (policy_claim.is_some() || compliance);
-            let recorded_error = if error_class == "engine_error" && verified {
+                && (policy_claim.is_some() || cfg.repair_ab || compliance)
+                && (!cfg.repair_ab || repair_triggered);
+            let recorded_error = if cfg.repair_ab && !repair_triggered {
+                "repair_not_triggered"
+            } else if error_class == "engine_error" && verified {
                 ""
             } else {
                 error_class
             };
-            let status = if execution["id"].is_null()
+            let status = if cfg.repair_ab && !repair_triggered {
+                "invalid"
+            } else if execution["id"].is_null()
                 || matches!(recorded_error, "timeout" | "transport_error")
             {
                 "error"
@@ -1430,6 +1461,7 @@ async fn main() -> Result<(), String> {
                 "requiresCompliance": policy_claim.is_none() && !cfg.repair_ab,
                 "repairAB":cfg.repair_ab,
                 "repairArm":if cfg.repair_ab {json!(arm)} else {Value::Null},
+                "repairTriggered":repair_triggered,
                 "programCheckpointStatus":execution["programCheckpoint"]["status"],
                 "repairTournamentChoice":execution["revisedProgram"]["repairTournament"]["decision"]["chosen"],
                 "repairProbeReceipts":execution["revisedProgram"]["repairTournament"]["probeReceipts"],
