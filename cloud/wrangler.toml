@@ -18,3 +18,7 @@ database_id = "edc9c387-310e-4660-aac7-db53f9da5d17"
 
 [ai]
 binding = "AI"
+
+# Refresh the free-model catalog every fifteen minutes.
+[triggers]
+crons = ["*/15 * * * *"]
