@@ -2251,6 +2251,29 @@ mod tests {
     }
     #[cfg(unix)]
     #[tokio::test]
+    async fn native_runner_handles_stdin_and_bounds_stalled_input(){
+        let mut reader=tokio::process::Command::new("/bin/cat");
+        let (result,stdout_clipped,stderr_clipped)=run_command_with_input(
+            &mut reader,Duration::from_secs(3),b"task via stdin",
+        ).await.unwrap();
+        assert!(result.status.success());
+        assert_eq!(result.stdout,b"task via stdin");
+        assert!(!stdout_clipped && !stderr_clipped);
+        // The child refuses to consume stdin. A large write must not hang
+        // outside the native process supervisor's deadline.
+        let mut blocked=tokio::process::Command::new("/bin/sh");
+        blocked.args(["-c","sleep 2"]);
+        let huge=vec![b'x';2*1024*1024];
+        let started=std::time::Instant::now();
+        let err=run_command_with_input(
+            &mut blocked,Duration::from_millis(150),&huge,
+        ).await.unwrap_err();
+        assert!(err.contains("timed out"),"{err}");
+        assert!(started.elapsed()<Duration::from_secs(1));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn tool_command_preserves_output_exit_status_and_bounded_capture() {
         let mut command = tokio::process::Command::new("/bin/sh");
         command.args(["-c", "printf normal; printf warning >&2; exit 7"]);
