@@ -37,6 +37,8 @@ pub(super) fn wire_profile(messages: &[Value], tools: &[Value]) -> Value {
         let kind = if frame.starts_with("room-shared:") { "sharedRoomState" }
             else if frame.starts_with("owner-state:") { "ownerState" }
             else if frame.starts_with("evidence:") { "retrievedEvidence" }
+            else if frame.starts_with("room-peer-index:") { "peerSourceIndex" }
+            else if frame == "room-peer-brief" { "peerBrief" }
             else if role == "system" { "systemAndPersona" }
             else if role == "tool" { "toolResults" }
             else if role == "assistant" { "peerAndSelfHistory" }
@@ -814,6 +816,8 @@ pub(crate) fn compile(
         "peerIndexedMessageIds":indexed_peers.as_ref().map(|index|index.ids.clone()).unwrap_or_default(),
         "peerIndexEstimatedTokens":indexed_peers.as_ref().map(|index|index.estimated_tokens).unwrap_or(0),
         "peerIndexOriginalTokens":indexed_peers.as_ref().map(|index|index.original_tokens).unwrap_or(0),
+        "peerIndexEstimatedTokensSaved":indexed_peers.as_ref()
+            .map(|index|index.original_tokens.saturating_sub(index.estimated_tokens)).unwrap_or(0),
         "peerBriefMessageIds":peer_brief.as_ref().map(|brief|brief.ids.clone()).unwrap_or_default(),
         "peerBriefEstimatedTokensSaved":peer_brief.as_ref()
             .map(|brief|brief.full_estimated_tokens.saturating_sub(brief.brief_estimated_tokens)).unwrap_or(0),
@@ -891,6 +895,7 @@ mod tests {
     fn wire_profile_attributes_selected_messages_without_retaining_raw_text() {
         let messages=vec![
             json!({"role":"system","content":"private instructions"}),
+            json!({"role":"user","_dominion_frame":"room-peer-index:old-voice","content":"old indexed voice"}),
             json!({"role":"user","_dominion_frame":"room-shared:owner-1","content":"shared secret"}),
             json!({"role":"user","_dominion_frame":"owner-state:1","content":"owner state"}),
             json!({"role":"assistant","content":"peer answer"}),
@@ -903,6 +908,7 @@ mod tests {
         assert_eq!(profile["toolDefinitions"],1);
         assert!(profile["components"]["systemAndPersona"].as_u64().unwrap()>0);
         assert!(profile["components"]["sharedRoomState"].as_u64().unwrap()>0);
+        assert!(profile["components"]["peerSourceIndex"].as_u64().unwrap()>0);
         assert!(profile["components"]["ownerState"].as_u64().unwrap()>0);
         assert!(profile["components"]["peerAndSelfHistory"].as_u64().unwrap()>0);
         assert!(profile["components"]["toolResults"].as_u64().unwrap()>0);
