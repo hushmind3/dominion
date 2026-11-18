@@ -302,6 +302,62 @@ mod tests {
     use crate::vault::Vault;
 
     #[tokio::test]
+    async fn opencode_go_auxiliary_requests_keep_affinity_across_calls_and_headless_jobs() {
+        use axum::{extract::State,http::HeaderMap,routing::post,Json,Router};
+        use std::sync::{Arc,Mutex};
+        let seen=Arc::new(Mutex::new(Vec::<(String,String)>::new()));
+        let app=Router::new().route("/v1/chat/completions",
+            post(|State(seen):State<Arc<Mutex<Vec<(String,String)>>>>,
+                  headers:HeaderMap,Json(body):Json<Value>| async move {
+                let session=headers.get("x-opencode-session")
+                    .and_then(|value|value.to_str().ok()).unwrap_or("").to_string();
+                let model=body["model"].as_str().unwrap_or("").to_string();
+                seen.lock().unwrap().push((model,session.clone()));
+                if session.is_empty() && model=="deepseek-v4.1-flash" {
+                    return (axum::http::StatusCode::BAD_REQUEST,
+                        Json(json!({"error":{"type":"MissingSessionID"}})));
+                }
+                (axum::http::StatusCode::OK,Json(json!({
+                    "choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],
+                    "usage":{"prompt_tokens":100,"completion_tokens":1,"total_tokens":101}
+                })))
+            })
+        ).with_state(seen.clone());
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address=listener.local_addr().unwrap();
+        let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap()});
+        let state=state();
+        for (id,model,integration) in [
+            ("go","deepseek-v4.1-flash","opencode-go"),
+            ("plain","generic-model",""),
+        ] {
+            state.store.put("provider",&json!({"id":id,"name":id,
+                "baseUrl":format!("http://{address}/v1"),"model":model,
+                "integration":integration,"enabled":true})).unwrap();
+        }
+        for session in [Some("room:alpha"),Some("room:alpha"),Some("room:beta"),None,None] {
+            let result=complete_for_turn(&state,"go","deepseek-v4.1-flash",
+                "unchanged owner policy","helper question",session).await.unwrap();
+            assert_eq!(result,"ok");
+        }
+        let plain=complete_for_turn(&state,"plain","generic-model",
+            "system","question",Some("room:alpha")).await.unwrap();
+        assert_eq!(plain,"ok");
+        let rows=seen.lock().unwrap();
+        assert_eq!(rows.len(),6);
+        assert!(!rows[0].1.is_empty());
+        assert!(rows[0].1.starts_with("dominion-aux-"));
+        assert_eq!(rows[0].1,rows[1].1,"same room helper calls need stable cache routing");
+        assert_ne!(rows[0].1,rows[2].1,"distinct rooms must not share helper affinity");
+        assert!(!rows[3].1.is_empty(),"out-of-turn helpers must never omit the Go header");
+        assert_ne!(rows[3].1,rows[4].1,"unscoped one-shots cannot share a synthetic conversation");
+        assert_eq!(rows[5],("generic-model".to_string(),String::new()),
+            "generic providers must never receive OpenCode-specific headers");
+        drop(rows);
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn helper_retry_charges_both_attempts_to_the_same_native_execution() {
         use axum::{extract::State, routing::post, Json, Router};
         use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
