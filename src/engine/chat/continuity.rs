@@ -208,8 +208,15 @@ fn working_view_allowance(room: Option<&Value>, provider: &ProviderRef, fixed: u
             selection.saturating_mul(4).clamp(2_000, 12_000)
         });
     provider.context_tokens.map(|capacity| {
+        // A hardcoded 4k *default* output reserve previously consumed the
+        // entire 4k/8k local room window before a 4k charter could be cached.
+        // Respect an explicitly configured maxOutputTokens, otherwise reserve
+        // one eighth (256..4096) of the declared model window. The 4k system
+        // and tool schemas are still subtracted in `fixed` and NEVER evicted.
+        let output_reserve=provider.max_output_tokens
+            .unwrap_or_else(||(capacity/8).clamp(256,4096));
         epoch.min((capacity as usize)
-            .saturating_sub(provider.max_output_tokens.unwrap_or(4096) as usize)
+            .saturating_sub(output_reserve as usize)
             .saturating_sub(fixed))
     }).unwrap_or(epoch)
 }
@@ -1169,6 +1176,12 @@ mod tests {
         assert_eq!(working_view_allowance(Some(&customized),&provider,500,false),6500);
         assert_eq!(working_view_allowance(None,&provider,500,false),6500,
             "non-room context still honors model capacity and output reservation");
+        provider.context_tokens=Some(8192);
+        provider.max_output_tokens=None;
+        assert_eq!(working_view_allowance(Some(&room),&provider,4000,true),3168,
+            "8k local context minus 4k identity and 1k output must retain 3168 tokens of cacheable history");
+        assert_eq!(working_view_allowance(Some(&room),&provider,4000,false),2000,
+            "local backend without server KV reuse must keep the short epoch");
     }
 
     #[test]
