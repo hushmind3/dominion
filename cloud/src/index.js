@@ -1,0 +1,139 @@
+// DOMINION account gateway: no Nous credentials and no shared client-side API key.
+// Cloudflare Worker + D1. Credits are integer micro-KRW (one KRW = 1,000 units).
+const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), {
+  status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers }
+});
+const bytes = text => new TextEncoder().encode(text);
+const b64url = data => btoa(String.fromCharCode(...new Uint8Array(data))).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+const unb64 = text => Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - text.length % 4) % 4)), c => c.charCodeAt(0));
+const hash = async value => b64url(await crypto.subtle.digest('SHA-256', bytes(value)));
+const err = (message, status = 400) => json({ error: message }, status);
+const now = () => Math.floor(Date.now() / 1000);
+const maxBody = async (request, limit = 150000) => {
+  if (Number(request.headers.get('content-length') || 0) > limit) throw new Error('Request too large');
+  const text = await request.text();
+  if (text.length > limit) throw new Error('Request too large');
+  return JSON.parse(text);
+};
+function cors(origin, env) {
+  return origin && origin === env.ALLOWED_ORIGIN ? {
+    'access-control-allow-origin': origin,
+    'access-control-allow-methods': 'POST, GET, OPTIONS',
+    'access-control-allow-headers': 'content-type, authorization',
+    'access-control-max-age': '600',
+    vary: 'Origin'
+  } : {};
+}
+async function verifyGoogle(idToken, env) {
+  const parts = idToken.split('.');
+  if (parts.length !== 3) throw new Error('Invalid Google token');
+  const header = JSON.parse(new TextDecoder().decode(unb64(parts[0])));
+  const claims = JSON.parse(new TextDecoder().decode(unb64(parts[1])));
+  if (header.alg !== 'RS256' || !header.kid || claims.aud !== env.GOOGLE_CLIENT_ID ||
+      !['accounts.google.com', 'https://accounts.google.com'].includes(claims.iss) ||
+      !claims.sub || !Number.isSafeInteger(claims.exp) || claims.exp <= now() ||
+      !Number.isSafeInteger(claims.iat) || claims.iat > now() + 60) throw new Error('Invalid Google claims');
+  const res = await fetch('https://www.googleapis.com/oauth2/v3/certs');
+  if (!res.ok) throw new Error('Google keys unavailable');
+  const jwk = (await res.json()).keys.find(k => k.kid === header.kid && k.kty === 'RSA' && k.use === 'sig');
+  if (!jwk) throw new Error('Unknown Google signing key');
+  const key = await crypto.subtle.importKey('jwk', jwk, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
+  if (!await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, unb64(parts[2]), bytes(parts[0] + '.' + parts[1])))
+    throw new Error('Invalid Google signature');
+  return claims;
+}
+async function account(request, env) {
+  const token = /^Bearer ([A-Za-z0-9_-]{32,})$/.exec(request.headers.get('authorization') || '')?.[1];
+  if (!token) return null;
+  return env.DB.prepare('SELECT a.id, a.credits FROM sessions s JOIN accounts a ON a.id=s.account_id WHERE s.token_hash=? AND s.expires_at>?')
+    .bind(await hash(token), now()).first();
+}
+async function login(request, env) {
+  const { credential } = await maxBody(request);
+  if (typeof credential !== 'string' || credential.length > 10000) return err('Google credential required');
+  const google = await verifyGoogle(credential, env);
+  const id = 'google:' + google.sub;
+  await env.DB.prepare('INSERT INTO accounts (id,email,credits,created_at) VALUES (?,?,0,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email')
+    .bind(id, String(google.email || '').slice(0, 320), now()).run();
+  const token = b64url(crypto.getRandomValues(new Uint8Array(32)));
+  await env.DB.prepare('INSERT INTO sessions (token_hash,account_id,expires_at) VALUES (?,?,?)')
+    .bind(await hash(token), id, now() + 7 * 86400).run();
+  return json({ token, expires_in: 7 * 86400, account_id: id });
+}
+async function proxy(request, env, user) {
+  if (!env.UPSTREAM_API_KEY || !env.UPSTREAM_URL || !env.MODEL_ID ||
+      !env.PRICE_INPUT_MICRO_KRW || !env.PRICE_OUTPUT_MICRO_KRW) return err('Model service not configured', 503);
+  const body = await maxBody(request);
+  if (body.model !== env.MODEL_ID || !Array.isArray(body.messages) || !body.messages.length)
+    return err('Unsupported model or messages');
+  // Initial release: one configured model, no tools, no streaming. Fail closed.
+  if (body.stream || body.tools || body.tool_choice || body.n || body.response_format)
+    return err('Unsupported request options');
+  const maxTokens = Math.min(4096, Math.max(1, Number(body.max_tokens || 1024)));
+  if (!Number.isSafeInteger(maxTokens)) return err('Invalid max_tokens');
+  const inputPrice = Number(env.PRICE_INPUT_MICRO_KRW), outputPrice = Number(env.PRICE_OUTPUT_MICRO_KRW);
+  if (![inputPrice, outputPrice].every(n => Number.isSafeInteger(n) && n > 0)) return err('Invalid pricing configuration', 503);
+  const encoded = JSON.stringify(body.messages);
+  if (encoded.length > 100000) return err('Context too large');
+  // Conservative upper bound: charge for all input bytes as tokens, plus max output tokens.
+  const reserve = encoded.length * inputPrice + maxTokens * outputPrice;
+  if (!Number.isSafeInteger(reserve) || reserve > 1000000000) return err('Request exceeds limit');
+  const id = crypto.randomUUID();
+  const debited = await env.DB.prepare('UPDATE accounts SET credits=credits-? WHERE id=? AND credits>=? RETURNING credits')
+    .bind(reserve, user.id, reserve).first();
+  if (!debited) return err('Insufficient prepaid credits', 402);
+  await env.DB.prepare('INSERT INTO usage(id,account_id,model,reserved,status,created_at) VALUES(?,?,?,?,?,?)')
+    .bind(id, user.id, env.MODEL_ID, reserve, 'reserved', now()).run();
+  let charge = 0, status = 'failed', result;
+  try {
+    const upstream = await fetch(env.UPSTREAM_URL.replace(/\/$/, '') + '/chat/completions', {
+      method: 'POST',
+      headers: { authorization: 'Bearer ' + env.UPSTREAM_API_KEY, 'content-type': 'application/json' },
+      body: JSON.stringify({ model: env.MODEL_ID, messages: body.messages, max_tokens: maxTokens, stream: false }),
+      signal: AbortSignal.timeout(90000)
+    });
+    if (!upstream.ok) throw new Error('Upstream unavailable (' + upstream.status + ')');
+    result = await upstream.json();
+    const input = result.usage?.prompt_tokens, output = result.usage?.completion_tokens;
+    if (!Number.isSafeInteger(input) || !Number.isSafeInteger(output) || input < 0 || output < 0)
+      throw new Error('Upstream usage unavailable');
+    charge = Math.min(reserve, input * inputPrice + output * outputPrice);
+    if (!Number.isSafeInteger(charge)) throw new Error('Invalid usage');
+    status = 'completed';
+  } catch (e) {
+    result = { error: 'Model request failed', detail: String(e.message || e) };
+  } finally {
+    // Reconcile against the initial reservation; never allow a negative credit balance.
+    await env.DB.batch([
+      env.DB.prepare('UPDATE accounts SET credits=credits+? WHERE id=?').bind(reserve - charge, user.id),
+      env.DB.prepare('UPDATE usage SET charged=?,status=? WHERE id=?').bind(charge, status, id)
+    ]);
+  }
+  return json(result, status === 'completed' ? 200 : 502);
+}
+export default {
+  async fetch(request, env) {
+    const origin = request.headers.get('origin');
+    const headers = cors(origin, env);
+    if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
+    if (origin && origin !== env.ALLOWED_ORIGIN) return err('Origin not allowed', 403);
+    if (!env.DB || !env.GOOGLE_CLIENT_ID || !env.ALLOWED_ORIGIN) return err('Service not configured', 503);
+    try {
+      const path = new URL(request.url).pathname;
+      let response;
+      if (path === '/v1/auth/google' && request.method === 'POST') response = await login(request, env);
+      else if (path === '/v1/me' && request.method === 'GET') {
+        const user = await account(request, env);
+        response = user ? json({ account_id: user.id, credits_micro_krw: user.credits }) : err('Unauthorized', 401);
+      } else if (path === '/v1/chat/completions' && request.method === 'POST') {
+        const user = await account(request, env);
+        response = user ? await proxy(request, env, user) : err('Unauthorized', 401);
+      } else response = err('Not found', 404);
+      const out = new Response(response.body, response);
+      for (const [k, v] of Object.entries(headers)) out.headers.set(k, v);
+      return out;
+    } catch (e) {
+      return json({ error: 'Request rejected', detail: String(e.message || e) }, 400, headers);
+    }
+  }
+};
