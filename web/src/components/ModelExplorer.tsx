@@ -122,9 +122,12 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
  const gpuKind=runtime.capabilities?.gpu?.kind||''
  const gpuFit=gpuMemory>0&&option?.bytes?(gpuMemory>=memoryHeadroom?'comfortable':gpuMemory>=option.bytes?'tight':'partial'):'unknown'
  const compatibleOptions=detail?.options.filter(o=>(format==='all'||o.format===format)&&o.bytes>0)||[]
- const recommendedOption=compatibleOptions.filter(o=>availableMemory>0&&o.bytes*1.3<=availableMemory).sort((a,b)=>b.bytes-a.bytes)[0]
-  ||compatibleOptions.filter(o=>gpuMemory>0&&o.bytes*1.3<=gpuMemory).sort((a,b)=>b.bytes-a.bytes)[0]
-  ||null
+ // Prefer the largest variant fitting the reported GPU budget for GGUF, then RAM.
+ // MLX uses unified memory; do not interpret its GPU figure as separate VRAM.
+ const recommendedGpuOption=compatibleOptions.filter(o=>o.format==='gguf'&&gpuMemory>0&&o.bytes*1.3<=gpuMemory).sort((a,b)=>b.bytes-a.bytes)[0]
+ const recommendedRamOption=compatibleOptions.filter(o=>availableMemory>0&&o.bytes*1.3<=availableMemory).sort((a,b)=>b.bytes-a.bytes)[0]
+ const recommendedOption=recommendedGpuOption||recommendedRamOption||null
+ const recommendationBasis=recommendedGpuOption?'GPU 여유 메모리':recommendedRamOption?'시스템 여유 메모리':''
  const selectedJob=jobs.filter(j=>j.repo===detail?.id&&j.optionId===option?.id&&(j.revision||'main')===(detail?.revision||'main')&&['resolving','downloading','paused','failed','cancelled','completed'].includes(j.status)).sort((a,b)=>(b.startedAt||'').localeCompare(a.startedAt||''))[0]
  const installedId=selectedJob?.installedId??
   (selectedJob?.status==='completed'?selectedJob.optionId.split('/').at(-1):undefined)
@@ -252,7 +255,7 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
       <div className="col-span-2 rounded-lg bg-[#FAF7F1] p-2.5 sm:col-span-1"><div className="text-[10px] text-[#8A8176]">선택한 용량</div><strong className="text-[13px] text-[#3A342D]">{option?fmt(option.bytes):'선택 전'}</strong></div>
      </div>}
      {recommendedOption&&<div className="mt-2 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#CFE4D4] bg-[#F3FAF4] p-3">
-      <div className="min-w-0"><div className="text-[11px] font-semibold text-emerald-700">내 기기 추천 양자화</div><div className="mt-1 truncate text-[12px] font-semibold text-[#3A342D]">{recommendedOption.label} · {fmt(recommendedOption.bytes)}</div><p className="mt-1 text-[10px] text-[#6F806F]">현재 여유 메모리와 파일 용량 기준의 참고 추천입니다.</p></div>
+      <div className="min-w-0"><div className="text-[11px] font-semibold text-emerald-700">내 기기 추천 양자화</div><div className="mt-1 truncate text-[12px] font-semibold text-[#3A342D]">{recommendedOption.label} · {fmt(recommendedOption.bytes)}</div><p className="mt-1 text-[10px] text-[#6F806F]">{recommendationBasis} 기준 · 실행 시 컨텍스트와 엔진 추가 메모리가 필요할 수 있습니다.</p></div>
       <Button variant="bare" type="button" onClick={()=>setVariant(recommendedOption.id)} className="shrink-0 rounded-lg bg-emerald-700 px-3 py-2 text-[11px] font-semibold text-white">이 옵션 선택</Button>
      </div>}
      {option&&<div className="mt-2 rounded-xl border border-[#E7E0D5] bg-white p-3">
