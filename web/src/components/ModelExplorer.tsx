@@ -284,6 +284,6 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
     {runtime.setup?.error&&<p className="mt-2 text-rose-700">{translateError(runtime.setup.error)}</p>}
     {runtime.setup?.file&&<p className="mt-1 truncate text-[#9C9388]">{runtime.setup.file}</p>}
    </div>}
-  {runtime.status==='error'&&runtime.error&&<div className="border-t border-rose-100 bg-rose-50 px-4 py-2 text-[11px] text-rose-700">{translateError(runtime.error)}</div>}
+  {runtime.status==='error'&&runtime.error&&<div role="alert" className="flex flex-wrap items-center justify-between gap-3 border-t border-rose-100 bg-rose-50 px-4 py-3 text-[11px] text-rose-700"><div className="flex min-w-0 flex-1 items-start gap-2"><CircleAlert size={15} className="mt-0.5 shrink-0"/><div><strong className="block">모델 실행 실패</strong><p className="mt-1 break-words">{translateError(runtime.error)}</p><p className="mt-1 text-rose-600">메모리 부족이라면 더 작은 양자화를 선택하거나 다른 실행 엔진을 확인하세요.</p></div></div><div className="flex shrink-0 gap-2"><Button variant="bare" type="button" className={btn} onClick={()=>void refresh()}><RefreshCw size={13}/>상태 확인</Button>{activeModel&&<Button variant="bare" type="button" className={btn} disabled={Boolean(working)} onClick={()=>void load(activeModel.id)}><Play size={13}/>다시 실행</Button>}</div></div>}
  </section>
 }
