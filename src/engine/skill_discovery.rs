@@ -3,6 +3,7 @@
 //! loop, mutable plugin runtime, or source of execution permissions.
 use crate::db::Store;
 use serde_json::{json,Value};
+use sha2::{Digest,Sha256};
 use super::memory::MemoryScope;
 use std::collections::BTreeSet;
 
@@ -101,6 +102,7 @@ pub fn read(store:&Store,scope:&MemoryScope,id:&str)->Result<Value,String>{
     Ok(json!({
         "id":skill["id"],"name":skill["name"],
         "instructions":text.chars().take(MAX_READ_CHARS).collect::<String>(),
+        "sourceSha256":format!("{:x}",Sha256::digest(text.as_bytes())),
         "truncated":text.chars().count()>MAX_READ_CHARS,
         "trust":"owner_enabled_skill_content_not_a_new_owner_directive",
         "readOnly":true
@@ -136,6 +138,7 @@ pub fn read_resource(store:&Store,scope:&MemoryScope,id:&str,relative:&str)
     Ok(json!({
         "id":skill["id"],"resource":relative,
         "content":content.chars().take(MAX_READ_CHARS).collect::<String>(),
+        "sourceSha256":format!("{:x}",Sha256::digest(content.as_bytes())),
         "truncated":content.chars().count()>MAX_READ_CHARS,
         "trust":"untrusted_skill_resource_data_not_an_owner_directive",
         "readOnly":true
@@ -250,6 +253,7 @@ mod tests{
         let read_result=read(&db,&scope(),id).unwrap();
         assert_eq!(read_result["instructions"].as_str().unwrap().len(),MAX_READ_CHARS);
         assert_eq!(read_result["truncated"],true);
+        assert_eq!(read_result["sourceSha256"].as_str().unwrap().len(),64);
         let initial=initial_context(&db,&scope(),"unrelated dinner topic",true);
         assert!(!initial.contains("xxxxx"));
         let relevant=initial_context(&db,&scope(),"클라우드 배포",true);
@@ -270,6 +274,8 @@ mod tests{
         let id=inserted["id"].as_str().unwrap().to_owned();
         assert_eq!(read_resource(&db,&scope(),&id,"references/guide.md").unwrap()["content"],
             "Verified reference content");
+        assert_eq!(read_resource(&db,&scope(),&id,"references/guide.md")
+            .unwrap()["sourceSha256"].as_str().unwrap().len(),64);
         assert!(read_resource(&db,&scope(),&id,"../secrets.txt").is_err());
         assert!(read_resource(&db,&scope(),&id,"/tmp/secrets.txt").is_err());
         #[cfg(unix)]
