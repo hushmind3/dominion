@@ -97,8 +97,18 @@ fn clip(text:&str,cap:usize)->String {
         .into_iter().rev().collect::<String>();
     format!("{head}\n[earlier output truncated in model context; full receipt durable]\n{tail}")
 }
-fn prior_window<'a>(receipts:&'a [Receipt])->&'a [Receipt] {
-    &receipts[receipts.len().saturating_sub(12)..]
+/// A moving last-N transcript rewrites the *beginning* of the provider
+/// message prefix on every tool turn after N, defeating prompt-cache reuse.
+/// Keep a small immutable anchor from the first operations, plus the newest
+/// evidence. All omitted receipts remain searchable in the durable kernel
+/// journal, and current owner instructions stay in the final user message.
+fn prior_window(receipts:&[Receipt])->Vec<&Receipt> {
+    const WINDOW:usize=12;
+    const ANCHORS:usize=4;
+    if receipts.len()<=WINDOW { return receipts.iter().collect(); }
+    let mut visible=receipts[..ANCHORS].iter().collect::<Vec<_>>();
+    visible.extend(receipts[receipts.len()-(WINDOW-ANCHORS)..].iter());
+    visible
 }
 fn current_prompt(prompt:&str)->String {
     let Ok(mut json)=serde_json::from_str::<Value>(prompt) else {return prompt.into()};
@@ -766,6 +776,48 @@ mod tests {
             "a late provider response must not reopen the cancelled task");
     }
 
+    #[test]
+    fn long_native_receipt_history_keeps_immutable_cache_anchor_and_latest_evidence() {
+        let receipts=(0..25).map(|i|Receipt{
+            id:format!("receipt-{i}"),step:i+1,tool:"workspace_read".into(),
+            arguments:json!({"path":format!("src/{i}.rs")}),success:i!=8,
+            result:json!({"content":format!("record {i}")})
+        }).collect::<Vec<_>>();
+        let first=prior_window(&receipts[..20]);
+        let next=prior_window(&receipts[..21]);
+        let ids=|records:Vec<&Receipt>|records.iter().map(|r|r.id.as_str())
+            .collect::<Vec<_>>();
+        let before=ids(first);
+        let after=ids(next);
+        assert_eq!(before.len(),12);
+        assert_eq!(after.len(),12);
+        assert_eq!(&before[..4],&after[..4],
+            "old records must remain a byte-stable cache anchor");
+        assert_eq!(after[..4],["receipt-0","receipt-1","receipt-2","receipt-3"]);
+        assert_eq!(after.last().copied(),Some("receipt-20"));
+        assert!(!after.contains(&"receipt-8"),
+            "older receipts are retrieved by id, not retransmitted forever");
+        for wire in ["chat","anthropic","codex"] {
+            let messages=|count:usize|match wire {
+                "chat"=>chat_messages("same system","task",&receipts[..count]),
+                "anthropic"=>anthropic_messages("same system","task",&receipts[..count]),
+                _=>codex_input("task",&receipts[..count]),
+            };
+            let previous=messages(20);
+            let current=messages(21);
+            let anchored=1+4*2;
+            assert_eq!(&previous[..anchored],&current[..anchored],
+                "{wire} must preserve its provider-message prefix after sliding");
+            assert_eq!(current.len(),previous.len(),
+                "replace only older unpinned receipts, not the total budget");
+            assert!(current.to_string().contains("receipt-20"),
+                "{wire} must retain the most recent operation");
+        }
+        let retained=crate::engine::chat::estimate_text_tokens(&json!(chat_messages(
+            "same system","task",&receipts[..25])).to_string());
+        assert!(retained>0);
+        assert_eq!(receipts.len(),25,"the immutable journal remains intact");
+    }
     #[test]
     fn native_receipt_history_uses_paired_provider_roles() {
         let receipt=read();
