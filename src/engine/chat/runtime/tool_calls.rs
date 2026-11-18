@@ -39,7 +39,11 @@ pub(super) async fn dispatch_tool_call(
     // Record what the effect would be before asking for approval or running it.
     // Only mutating calls need the session history scan.
     let mut effect_operations = if crate::engine::effect::is_effectful(&call.name, &arguments) {
-        state.store.session_operations(session_id)?
+        let resource = crate::engine::effect::resource_key(&call.name, &arguments);
+        let effect_id = crate::engine::effect::effect_id(session_id, &call.name, &arguments);
+        state.store.related_effect_operations(
+            session_id, resource.as_deref(), effect_id.as_deref()
+        )?
     } else {
         Vec::new()
     };
@@ -280,7 +284,9 @@ pub(super) async fn dispatch_tool_call(
         && sealed["toolReceipt"]["verified"].as_bool() == Some(true)
     {
         if let Some(resource) = effect["resourceKey"].as_str() {
-            let operations=state.store.session_operations(session_id)?;
+            let operations=state.store.related_effect_operations(
+                session_id, Some(resource), None
+            )?;
             for updated in crate::engine::effect::mark_inspected(
                 &operations,
                 resource,
