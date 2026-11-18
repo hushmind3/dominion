@@ -672,19 +672,12 @@ fn task_payload(ctx: &ToolContext<'_>, args: &Value, with_result: bool) -> Resul
         .take(8000)
         .collect::<String>();
     let operations = ctx
-        .state
         .store
-        .all("execution_operation")
+        .recent_completed_session_operations(session_id, 20)?
         .into_iter()
-        .filter(|operation| {
-            operation["runId"].as_str().is_some()
-                && operation["sessionId"].as_str() == Some(session_id)
-                && operation["status"] == "completed"
-        })
         .map(|operation| {
             json!({"tool":operation["tool"],"arguments":operation["arguments"],"result":operation["result"]})
         })
-        .take(20)
         .collect::<Vec<_>>();
     payload["sessionId"] = json!(session_id);
     payload["content"] = json!(answer);
