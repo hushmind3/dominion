@@ -57,23 +57,29 @@ pub(crate) fn conversation_context(
             "repliedToPreviousRequest":previous_replies.contains_key(id),
             "executionId":execution.as_ref().map(|e|&e["id"]),"toolCalls":tool_calls}));
     }
-    let mut text=String::from("[방 공통 상태: 현재 요청 시점까지의 전체 원문 기록에서 엔진이 계산함]\n");
+    // This model-visible state describes the previous completed owner round,
+    // not the identity of the current message. Source IDs and per-speaker
+    // receipt IDs remain in the durable snapshot below. Keeping them out of
+    // model-visible text makes identical group outcomes share a stable cache
+    // prefix across consecutive owner turns, without losing provenance.
+    let mut text=String::from("[방 공통 상태: 저장된 원문 기준] ");
     if previous.is_some() {
-        // The actual prior owner message is already selected verbatim by the
-        // compiler. Keep its reference here rather than repeat its body.
-        // The roster is already in the byte-stable room system prefix.
-        // Listing every respondent repeats up to nine speaker names in
-        // EVERY model request; the count + missing set carries the same
-        // membership information (responded = roster - missing).
-        text.push_str(&format!("직전 요청의 응답 기록: {}/{}명. 응답 기록 없음: {}.\n",
-            responded.len(),members.len(),if missing.is_empty(){"없음".into()}else{missing.join(", ")}));
-    }else{text.push_str("이 방의 첫 주인 요청이며 이전 응답 기록은 없음.\n");}
-    text.push_str(&format!("기준 요청: {source_id}. 직전 요청: {}.\n",previous_id.unwrap_or("없음")));
-    if !observed_work.is_empty(){text.push_str(&format!("관측된 작업: {}.\n",observed_work.join("; ")));}
-    text.push_str("이후 대화는 선택된 발췌다. 발췌에 안 보인다는 이유로 미응답·부재로 판단하지 말 것. 발언과 실제 도구 실행 결과는 구분할 것.");
+        text.push_str(&format!("직전 요청 응답 {}/{}명. 미응답: {}.",
+            responded.len(),members.len(),
+            if missing.is_empty(){"없음".into()}else{missing.join(", ")}));
+    } else {
+        text.push_str("첫 주인 요청. 이전 응답 없음.");
+    }
+    if !observed_work.is_empty() {
+        text.push_str(&format!(" 확인된 작업: {}.",observed_work.join("; ")));
+    }
+    // Missing names are derived from the full member roster, not from the
+    // BM25-selected peer excerpts. No full roster or long boilerplate repeats.
+    let text_digest=memory::stable_id(&[&text]);
     let snapshot=json!({"sessionId":session_id,"sourceMessageId":source_id,"memberIds":members,
         "previousOwnerMessageId":previous_id,"participants":participants,"text":text,
-        "digest":memory::stable_id(&[&json!([source_id,previous_id,&participants]).to_string()])});
+        "digest":memory::stable_id(&[&json!([source_id,previous_id,&participants]).to_string()]),
+        "textDigest":text_digest});
     if let Some(id)=room["id"].as_str(){
         state.store.patch_if("room",id,"id",&json!(id),&json!({"sharedContext":snapshot}));
     }
@@ -467,6 +473,46 @@ mod tests {
             assert_ne!(next["digest"],shared["digest"]);
             let _=std::fs::remove_dir_all(dir);
         }
+    }
+
+    #[test]
+    fn identical_roster_outcomes_reuse_display_digest_but_keep_distinct_provenance() {
+        let (state,dir)=state();
+        let sid="room:r";
+        let room=json!({"id":"r","agentIds":["a","b"]});
+        state.store.put("room",&room).unwrap();
+        for id in ["a","b"] {
+            state.store.put("agent",&json!({"id":id,"name":id})).unwrap();
+        }
+        let first=vec![
+            owner("owner-1","첫 번째 요청"),
+            json!({"id":"a1","session_id":sid,"role":"assistant","agent_id":"a",
+                "content":"A1","metadata":{"replyToMessageId":"owner-1"}}),
+            json!({"id":"b1","session_id":sid,"role":"assistant","agent_id":"b",
+                "content":"B1","metadata":{"replyToMessageId":"owner-1"}})
+        ];
+        let one=conversation_context(&state,&room,sid,"owner-2",&first);
+        let mut second=first.clone();
+        second.push(owner("owner-2","두 번째 요청"));
+        second.push(json!({"id":"a2","session_id":sid,"role":"assistant","agent_id":"a",
+            "content":"A2","metadata":{"replyToMessageId":"owner-2"}}));
+        second.push(json!({"id":"b2","session_id":sid,"role":"assistant","agent_id":"b",
+            "content":"B2","metadata":{"replyToMessageId":"owner-2"}}));
+        let two=conversation_context(&state,&room,sid,"owner-3",&second);
+        assert_eq!(one["text"],two["text"],
+            "new source IDs must not inflate identical room-state instructions");
+        assert_eq!(one["textDigest"],two["textDigest"]);
+        assert_ne!(one["digest"],two["digest"],
+            "the authoritative snapshot still pins each owner cursor");
+        assert_ne!(one["sourceMessageId"],two["sourceMessageId"]);
+        assert!(!two["text"].as_str().unwrap().contains("owner-"),
+            "opaque owner IDs belong in stored provenance, not every model call");
+        second.pop();
+        let partial=conversation_context(&state,&room,sid,"owner-3",&second);
+        assert_ne!(partial["textDigest"],two["textDigest"],
+            "a newly missing speaker must change what the model receives");
+        assert!(partial["text"].as_str().unwrap().contains("b"));
+        crate::test_support::cleanup_dir(dir);
     }
 
     #[test]
