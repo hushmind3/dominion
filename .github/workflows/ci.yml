@@ -96,6 +96,8 @@ jobs:
         run: node scripts/check-runtime-architecture.mjs
       - name: Money domain and API regressions (dev profile)
         run: cargo test --locked --bin dominion-rust money_
+      - name: Nine-speaker three-turn work context and complete group delivery (dev profile)
+        run: cargo test --locked --bin dominion-rust nine_participants_three_owner_turns_complete_thirty_messages_with_selective_work_context
       - name: Benchmark timeout teardown and per-speaker cost evidence (dev profile)
         run: |
           cargo test --locked --bin dominion-benchmark timed_out_trial_cancels_server_turn_and_waits_for_terminal_state
