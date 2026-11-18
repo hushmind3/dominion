@@ -949,7 +949,7 @@ pub(super) async fn propose_program_revision(
         .iter()
         .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_string))
         .collect::<Vec<_>>();
-    let system = "You are the DOMINION program repair planner. A typed execution program failed. Propose a revision that only changes PENDING nodes. Output JSON only: {\"baseRevision\":\"...\",\"reason\":\"...\",\"evidenceIds\":[],\"replacePendingNodes\":[],\"addNodes\":[],\"dependencyChanges\":[],\"expectedObservations\":[]}. Nodes use the existing types (observe, call_tool, branch, sequence, parallel, loop, verify, delegate, model_decision). Completed node ids must not be replaced. call_tool nodes need id, tool, inputs, saveAs.";
+    let system = "You are DOMINION's evidence-bounded program repair proposer. An already executed typed Program IR failed. Return one JSON object with either the legacy single proposal or {\\\"candidates\\\":[proposal1,proposal2,proposal3]}. Each proposal must contain {\\\"baseRevision\\\":\\\"...\\\",\\\"reason\\\":\\\"...\\\",\\\"evidenceIds\\\":[],\\\"replacePendingNodes\\\":[],\\\"addNodes\\\":[],\\\"dependencyChanges\\\":[],\\\"expectedObservations\\\":[]}. Keep exactly the current revision and only change PENDING operations; never retry settled external effects. cite evidenceIds only if actually present in checkpoint.observationRefs or current failure.nodeId. Candidate plans may use observe, call_tool, branch, sequence, parallel, loop, verify, delegate and model_decision. Call_tool needs id,tool,inputs. Prefer independent repair routes rather than cosmetic variants. The harness will check tool permissions, dependency preservation, observed evidence and non-dominated side-effect risk; it may decline all repairs. Output JSON only. No invented success claims.";
     let prompt = format!(
         "Current program: {program}\nCheckpoint: {checkpoint}\nFailure observation: {failure}\nAvailable tools: {available:?}\nReturn only the JSON proposal."
     );
@@ -973,7 +973,7 @@ pub(super) async fn propose_program_revision(
     )
     .and_then(|algorithm| algorithm["parameters"]["mode"].as_str().map(str::to_string))
     .unwrap_or_else(|| "replace".into());
-    let revised = crate::engine::program::apply_revision_proposal(
+    let revised = crate::engine::program::adjudicate_revision_proposals(
         program, checkpoint, &proposal, &available, 64, &repair_mode,
     )?;
     Ok(Some(revised))
