@@ -49,6 +49,26 @@ fn evidence_digest(kind: &str, record: &Value) -> String {
     stable_id(&[&Value::Object(meaning).to_string()])
 }
 
+/// Exact active owner facts form a monotonic evidence ledger. A later owner
+/// fact is safe to append, whereas an edited/superseded old fact must invalidate
+/// the prefix, including when the lexical selector did not reselect it.
+fn active_owner_facts(record: &Value) -> Vec<Value> {
+    record["facts"].as_array().into_iter().flatten()
+        .filter(|fact| fact["status"] == "active")
+        .map(|fact| json!({
+            "id":fact["id"],"kind":fact["kind"],"text":fact["text"],
+            "sourceMessageId":fact["sourceMessageId"]
+        }))
+        .collect()
+}
+
+fn owner_fact_prefix_still_valid(dependency: &Value, record: &Value) -> bool {
+    if dependency["kind"] != "room_state" { return false; }
+    let Some(previous) = dependency["activeFacts"].as_array() else { return false; };
+    let current = active_owner_facts(record);
+    previous.iter().all(|old| current.contains(old))
+}
+
 pub(crate) fn dependencies(state: &AppState, items: &[Value]) -> Vec<Value> {
     items.iter().filter_map(|item| {
         let kind = match item["kind"].as_str()? {
@@ -58,7 +78,11 @@ pub(crate) fn dependencies(state: &AppState, items: &[Value]) -> Vec<Value> {
         };
         let id=item["id"].as_str()?;
         let record=state.store.get(kind,id)?;
-        Some(json!({"kind":kind,"id":id,"digest":evidence_digest(kind, &record)}))
+        let mut dependency=json!({"kind":kind,"id":id,"digest":evidence_digest(kind, &record)});
+        if kind == "room_state" {
+            dependency["activeFacts"] = json!(active_owner_facts(&record));
+        }
+        Some(dependency)
     }).collect()
 }
 
@@ -180,7 +204,8 @@ pub(crate) fn project(
                         "experience_rule"=>crate::engine::experience::rule_visible(&record,&scope),
                         _=>true,
                     };
-                    !visible || json!(evidence_digest(dependency["kind"].as_str().unwrap_or(""), &record)) != dependency["digest"]
+                    !visible || (json!(evidence_digest(dependency["kind"].as_str().unwrap_or(""), &record)) != dependency["digest"]
+                        && !owner_fact_prefix_still_valid(dependency, &record))
                 })
         }) { Some("context_evidence_changed") }
         else if participant["lastReplyMessageId"] != plan["participantBaseReplyMessageId"] { Some("concurrent_commit") }
@@ -223,7 +248,12 @@ pub(crate) fn project(
     if reason.is_some() { frames = fresh; dependencies=fresh_dependencies; reused = 0; epoch += 1; }
     else {
         for dependency in fresh_dependencies {
-            if !dependencies.iter().any(|old|old["kind"]==dependency["kind"] && old["id"]==dependency["id"]) {
+            if let Some(previous) = dependencies.iter_mut().find(|old|
+                old["kind"] == dependency["kind"] && old["id"] == dependency["id"]) {
+                // Refresh the evidence proof after a safe monotonic addition,
+                // so later revocation of the new fact also invalidates it.
+                *previous = dependency;
+            } else {
                 dependencies.push(dependency);
             }
         }
