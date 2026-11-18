@@ -17,7 +17,7 @@
 
 **DOMINION은 로컬 우선·오픈소스 AI 에이전트 작업 공간입니다.** Rust 엔진 1개가 모델 호출, 도구 실행, 승인, 취소, 영속 작업, 검증과 복구를 담당합니다. React 화면, HTTP API, Rust SDK, TypeScript SDK는 **같은 실행기를 사용하는 인터페이스**입니다.
 
-**이 문서는 2026년 11월 18일 기준 실험 브랜치 `dominion-sub2`의 소스 설명입니다.** 기본 `main` 브랜치 설명이나 상용 배포 완성 보증이 아닙니다. 별도 토큰 재판매 서비스 없이 사용자가 보유한 모델·API·로컬 추론 환경을 연결합니다.
+**이 문서는 2026년 11월 19일 기준 실험 브랜치 `dominion-sub2`의 소스 설명입니다.** 기본 `main` 브랜치 설명이나 상용 배포 완성 보증이 아닙니다. 별도 토큰 재판매 서비스 없이 사용자가 보유한 모델·API·로컬 추론 환경을 연결합니다.
 
 [빠른 설치](#-빠른-시작) · [기능](#-주요-기능) · [구조](#-실행-구조와-소스-경로) · [SDK/API](#-sdk와-api) · [검증과 한계](#-검증-상태와-알려진-한계)
 
@@ -41,7 +41,7 @@
 | **일반 채팅** | 실시간 스트리밍, 도구 호출, 권한 승인, 중단 버튼, SQLite 이력 | `web/src/pages/Chat.tsx`, `src/api/chat.rs`, `src/engine/chat/` |
 | **자율 작업** | 사용자 목표, 실행·검증·재시도, 체크포인트, `needs_review`, 목표 변경·취소·복구 | `src/engine/jobs.rs`, `autonomy.rs`, `verification.rs` |
 | **멀티에이전트 대화** | 개별 페르소나와 공동 사용자 확정 상태, 선별된 동료 발언, 참가자별 연속성 | `src/engine/rooms.rs`, `chat/room_context.rs` |
-| **컨텍스트 비용 절감** | 공통 고정 프리픽스, 대화 맥락 선별, Provider 캐시 계측, Codex WebSocket 증분 전송 | `chat/context.rs`, `continuity.rs`, `codex_ws.rs` |
+| **컨텍스트 비용 절감** | 공통 고정 프리픽스, 최신 파일 읽기의 예산 내 1회 원문 전달과 이후 압축, 맥락 선별, 캐시 계측, Codex WebSocket 증분 전송 | `chat/context.rs`, `trace_budget.rs`, `continuity.rs`, `codex_ws.rs` |
 | **도구·MCP·스킬** | Rust 도구 권한 검사, 필요한 도구 정의 발견, 스킬 목록 선제시 및 `skill_read` 지연 로딩 | `src/engine/tools.rs`, `chat/capability.rs` |
 | **머니 조사** | 원문·출처·가격/수요 신호·가설·보류 후보 보존, 사용자 검토·선택 | `src/engine/money/`, `src/api/money/` |
 | **외부 연결** | Telegram·Discord·GitHub·MCP 등 사용자가 설정한 인증/권한으로 연결 | `src/engine/telegram.rs`, `discord.rs`, `mcp.rs` |
