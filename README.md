@@ -83,6 +83,8 @@ Rust kernel implementers can import `dominion_sdk::harness::{Kernel, RunRequest,
 
 ## Context, Skills, and token accounting
 
+**Nine-speaker group optimization (sub3, 2026-11-18):** derived shared room status is now content-addressed instead of bound to the changing owner message ID. When nine agents have the same completed-response/work state across consecutive owner turns, their per-speaker working views retain an identical prefix rather than forcing a room-snapshot rebase. A new owner message, verified owner decision/correction, prior self response, relevant peer evidence, and their original SQLite provenance remain available. Different speaker/work outcomes still invalidate the stale snapshot; context capacity guards remain intact. **This reduces unnecessary cache-prefix churn, not proven provider-billed tokens.** [Design, regression cases and measurement plan](docs/SUB3-ROOM-CONTEXT-DELTA-2026-11-18.md).
+
 - The native agent provides bounded, task-relevant Skill disclosure; ordinary chat now reuses the same scoped Skill selection. Full instructions/resources can be retrieved through approved `skill_read`/`skill_resource_read` calls.
 - Long jobs retain original receipts in the durable journal and expose paginated read-only lookup. The model sees a bounded view without erasing the authoritative source.
 - WebSocket incremental send and stable cache prefixes **do not themselves prove provider cache hits or reduced billing**. Host-side reused/new history estimates and provider-reported prompt/cache usage must be compared separately.
