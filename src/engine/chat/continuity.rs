@@ -661,6 +661,69 @@ mod tests {
     }
 
     #[test]
+    fn owner_fact_selection_reuses_prefix_and_appends_missing_facts_until_real_revision() {
+        let root=std::env::temp_dir().join(format!("dominion-owner-delta-{}",uuid::Uuid::new_v4()));
+        let state=state(&root);
+        state.store.put("session",&json!({"id":"room:r","roomId":"r"}));
+        state.store.put("room",&json!({"id":"r","contextBudgetTokens":12000}));
+        state.store.put("room_state",&json!({"id":"owner-record","facts":[
+            {"id":"fact-a","status":"active","text":"alpha fact","sourceMessageId":"owner1"},
+            {"id":"fact-b","status":"active","text":"beta fact","sourceMessageId":"owner2"}
+        ]}));
+        let request=TurnRequest::from_value(&json!({"input":"remember","agentId":"a"})).unwrap();
+        let provider=route();
+        let messages=|source:&str, facts:&str| {
+            let deps=dependencies(&state,&[json!({"kind":"owner_state","id":"owner-record"})]);
+            vec![
+                json!({"role":"system","content":"stable owner identity","_dominion_source":source,"_dominion_dependencies":deps}),
+                json!({"role":"user","content":format!("[주인 확정 상태: 엔진 원문]\n{facts}"),
+                    "_dominion_frame":"owner-state:owner-record"}),
+                json!({"role":"user","content":format!("question {source}"),"_dominion_frame":source}),
+            ]
+        };
+        let alpha="- [decision] ALPHA_VERBATIM";
+        let beta="- [decision] BETA_VERBATIM";
+        let mut first=prepare(&state,&provider,&request,"room:r","stable owner identity",&json!({})).unwrap();
+        let (first_wire,pending)=project(&state,&provider,&messages("owner1",alpha),&[],"room:r",&mut first);
+        let answer=state.store.write_message(&json!({"session_id":"room:r","agent_id":"a",
+            "role":"assistant","content":"I heard alpha","metadata":{"replyToMessageId":"owner1"}})).unwrap();
+        commit(&state,&first,&answer);
+        commit_projection(&state,&first,&answer,pending.unwrap());
+        let mut second=prepare(&state,&provider,&request,"room:r","stable owner identity",&json!({})).unwrap();
+        let (second_wire,pending)=project(&state,&provider,&messages("owner2",beta),&[],"room:r",&mut second);
+        assert!(second["workingView"]["rebaseReason"].is_null(),"{second}");
+        assert_eq!(&second_wire[..first_wire.len()],first_wire.as_slice());
+        let full=serde_json::to_string(&second_wire).unwrap();
+        assert_eq!(full.matches("ALPHA_VERBATIM").count(),1);
+        assert_eq!(full.matches("BETA_VERBATIM").count(),1);
+        assert_eq!(second["workingView"]["appendedFrames"],2);
+        let answer=state.store.write_message(&json!({"session_id":"room:r","agent_id":"a",
+            "role":"assistant","content":"I heard beta","metadata":{"replyToMessageId":"owner2"}})).unwrap();
+        commit(&state,&second,&answer);
+        commit_projection(&state,&second,&answer,pending.unwrap());
+        let mut third=prepare(&state,&provider,&request,"room:r","stable owner identity",&json!({})).unwrap();
+        let (third_wire,_)=project(&state,&provider,&messages("owner3",alpha),&[],"room:r",&mut third);
+        assert!(third["workingView"]["rebaseReason"].is_null(),"{third}");
+        assert_eq!(third["workingView"]["appendedFrames"],1,
+            "already remembered owner facts must not be retransmitted");
+        assert_eq!(serde_json::to_string(&third_wire).unwrap().matches("ALPHA_VERBATIM").count(),1);
+        // Source evidence changes are a hard invalidation, not an append-only delta.
+        let mut edited=state.store.get("room_state","owner-record").unwrap();
+        edited["facts"][0]["status"]=json!("superseded");
+        edited["facts"].as_array_mut().unwrap().push(json!({
+            "id":"fact-c","status":"active","text":"corrected fact","sourceMessageId":"owner4"
+        }));
+        state.store.put("room_state",&edited);
+        let (replaced,_)=project(&state,&provider,&messages("owner4","- [correction] CORRECTED_ALPHA"),
+            &[],"room:r",&mut third);
+        assert_eq!(third["workingView"]["rebaseReason"],"context_evidence_changed");
+        assert!(!serde_json::to_string(&replaced).unwrap().contains("ALPHA_VERBATIM"));
+        assert!(serde_json::to_string(&replaced).unwrap().contains("CORRECTED_ALPHA"));
+        drop(state);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn committed_working_view_keeps_wire_prefix_when_selection_slides_and_routes_change() {
         let root=std::env::temp_dir().join(format!("dominion-projection-{}",uuid::Uuid::new_v4()));
         let state=state(&root);
