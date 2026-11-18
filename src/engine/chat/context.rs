@@ -24,6 +24,44 @@ pub(super) fn identity_prefix(state:&AppState,request:&TurnRequest)->(String,Vec
     (text,items)
 }
 
+/// Room-wide immutable cache prefix: generic identity and owner policy only.
+/// Unlike identity_prefix, no participant persona or current query is included.
+/// The caller appends the stable room charter before each agent's persona.
+pub(super) fn room_shared_identity_prefix(state:&AppState)->(String,Vec<Value>){
+    let mut text=String::from("DOMINION 지속 에이전트. 정체성과 개인 경험은 에이전트 ID에 속하며 대화 장소가 바뀌어도 유지한다. 실제 권한과 도구는 현재 실행 경계에 따른다.");
+    let mut items=Vec::new();
+    if let Some(settings)=state.store.get("assistant_settings","global")
+        .filter(|settings|settings["enabled"]!=false){
+        if let Some(instructions)=settings["instructions"].as_str().filter(|s|!s.trim().is_empty()){
+            text.push_str("\n주인 지시(페르소나보다 우선):\n");
+            text.push_str(instructions);
+            items.push(json!({"kind":"owner_instructions",
+                "digest":crate::engine::memory::stable_id(&[instructions])}));
+        }
+    }
+    (text,items)
+}
+
+/// Participant-specific stable tail. No other agent's persona is exposed.
+pub(super) fn room_agent_identity_suffix(
+    state:&AppState,request:&TurnRequest
+)->(String,Vec<Value>){
+    let mut tail=String::new();
+    let mut items=Vec::new();
+    if let Some(agent)=request.agent_id.as_deref()
+        .and_then(|id|state.store.get("agent",id)){
+        tail.push_str(&format!("\n활성 에이전트: {} (id: {}).",
+            agent["name"].as_str().unwrap_or(""),
+            agent["id"].as_str().unwrap_or("")));
+        if let Some(persona)=agent["systemPrompt"].as_str().filter(|s|!s.trim().is_empty()){
+            tail.push_str("\n에이전트 지침:\n");tail.push_str(persona);
+            items.push(json!({"kind":"persona","id":agent["id"],
+                "digest":crate::engine::memory::stable_id(&[persona])}));
+        }
+    }
+    (tail,items)
+}
+
 #[allow(dead_code)] // compatibility wrapper for tests and old callers
 pub(super) fn system_prompt(
     state: &AppState,
