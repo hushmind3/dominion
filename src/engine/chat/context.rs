@@ -3,10 +3,14 @@ use super::{TurnRequest, HISTORY_LIMIT};
 use crate::state::AppState;
 use serde_json::{json, Value};
 
-/// One identity prefix per bot, shared by private chat, rooms and channels.
-/// Conversation-specific instructions follow this prefix, never precede it.
-pub(super) fn identity_prefix(state:&AppState,request:&TurnRequest)->(String,Vec<Value>){
-    let mut text=String::from("DOMINION 지속 에이전트. 정체성과 개인 경험은 에이전트 ID에 속하며 대화 장소가 바뀌어도 유지한다. 실제 권한과 도구는 현재 실행 경계에 따른다.");
+/// Private chat retains its established identity order for compatibility.
+/// Group rooms use the SAME instruction fragments, but put the shared owner
+/// contract before the persona to maximize cross-participant prefix reuse.
+const DOMINION_IDENTITY: &str =
+    "DOMINION 지속 에이전트. 정체성과 개인 경험은 에이전트 ID에 속하며 대화 장소가 바뀌어도 유지한다. 실제 권한과 도구는 현재 실행 경계에 따른다.";
+
+fn persona_identity(state:&AppState,request:&TurnRequest)->(String,Vec<Value>){
+    let mut text=String::new();
     let mut items=Vec::new();
     if let Some(agent)=request.agent_id.as_deref().and_then(|id|state.store.get("agent",id)) {
         text.push_str(&format!("\n활성 에이전트: {} (id: {}).",agent["name"].as_str().unwrap_or(""),agent["id"].as_str().unwrap_or("")));
@@ -15,6 +19,12 @@ pub(super) fn identity_prefix(state:&AppState,request:&TurnRequest)->(String,Vec
             items.push(json!({"kind":"persona","id":agent["id"],"digest":crate::engine::memory::stable_id(&[persona])}));
         }
     }
+    (text,items)
+}
+
+fn owner_identity(state:&AppState)->(String,Vec<Value>){
+    let mut text=String::new();
+    let mut items=Vec::new();
     if let Some(settings)=state.store.get("assistant_settings","global").filter(|s|s["enabled"]!=false) {
         if let Some(instructions)=settings["instructions"].as_str().filter(|s|!s.trim().is_empty()) {
             text.push_str("\n주인 지시(페르소나보다 우선):\n");text.push_str(instructions);
@@ -22,6 +32,30 @@ pub(super) fn identity_prefix(state:&AppState,request:&TurnRequest)->(String,Vec
         }
     }
     (text,items)
+}
+
+/// The established private chat prefix does not change: persona then owner.
+pub(super) fn identity_prefix(state:&AppState,request:&TurnRequest)->(String,Vec<Value>){
+    let mut text=String::from(DOMINION_IDENTITY);
+    let (persona,mut items)=persona_identity(state,request);
+    let (owner,owner_items)=owner_identity(state);
+    text.push_str(&persona);
+    text.push_str(&owner);
+    items.extend(owner_items);
+    (text,items)
+}
+
+/// Shared cacheable room contract precedes all nine participant personas.
+pub(super) fn shared_room_identity(state:&AppState)->(String,Vec<Value>){
+    let (owner,items)=owner_identity(state);
+    let mut text=String::from(DOMINION_IDENTITY);
+    text.push_str(&owner);
+    (text,items)
+}
+
+/// Participant identity is appended only after the shared room contract.
+pub(super) fn room_persona_identity(state:&AppState,request:&TurnRequest)->(String,Vec<Value>){
+    persona_identity(state,request)
 }
 
 #[allow(dead_code)] // compatibility wrapper for tests and old callers
