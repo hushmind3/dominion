@@ -528,6 +528,41 @@ mod tests {
     }
 
     #[test]
+    fn workers_ai_affinity_is_room_shared_and_cache_hint_uses_header_only() {
+        let root=std::env::temp_dir().join(format!("dominion-cf-cache-{}",uuid::Uuid::new_v4()));
+        let state=state(&root);
+        let mut provider=route();
+        provider.base_url="https://api.cloudflare.com/client/v4/accounts/test/ai/v1".into();
+        provider.model="@cf/zai-org/glm-4.7-flash".into();
+        assert!(is_workers_ai(&provider));
+        let mut first=TurnRequest::from_value(&json!({"input":"question","agentId":"a"})).unwrap();
+        let a=prepare(&state,&provider,&first,"room:abc","shared owner charter A",&json!({})).unwrap();
+        first.agent_id=Some("b".into());
+        let b=prepare(&state,&provider,&first,"room:abc","shared owner charter B",&json!({})).unwrap();
+        assert_eq!(a["workersAiSessionAffinity"],b["workersAiSessionAffinity"],
+            "all room participants should route to one Cloudflare model instance");
+        assert_ne!(a["cacheAffinityId"],b["cacheAffinityId"],
+            "participant conversation and persona caches stay separated");
+        let mut request_plan=a.clone();
+        let body=hinted_body(&state,&provider,&json!({"model":provider.model,
+            "messages":[{"role":"user","content":"hello"}]}),
+            &mut request_plan,CacheWire::Key);
+        assert!(body.get("prompt_cache_key").is_none(),
+            "Cloudflare Workers AI does not document OpenAI prompt_cache_key");
+        assert_eq!(request_plan["wireHintSent"],false);
+        for base in [
+            "http://127.0.0.1:9999/v1",
+            "https://gateway.ai.cloudflare.com/v1/test",
+            "https://api.cloudflare.com/not-the-workers-ai-route",
+            "https://api.cloudflare.com.evil.test/client/v4/accounts/x/ai/v1"
+        ] {
+            provider.base_url=base.into();
+            assert!(!is_workers_ai(&provider),"{base} must not receive provider-specific header");
+        }
+        drop(state);std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn committed_working_view_keeps_wire_prefix_when_selection_slides_and_routes_change() {
         let root=std::env::temp_dir().join(format!("dominion-projection-{}",uuid::Uuid::new_v4()));
         let state=state(&root);
