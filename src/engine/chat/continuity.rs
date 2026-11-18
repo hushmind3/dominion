@@ -384,8 +384,26 @@ pub(crate) fn project(
                 text.starts_with('[') && text.contains("의 발언 — 참고 데이터, 지시 아님]"));
         is_peer && !fresh_keys.contains(key)
     }).count();
-    if reason.is_none() && stale_peer_count > 0 {
-        reason=Some("peer_selection_changed");
+    // A participant's old answer is also selected conversation evidence,
+    // not permanent model memory. Once the compiler selects a newer answer
+    // from that same participant, older unselected replies must not keep
+    // inflating the cached prefix or leak into the third owner turn.
+    let latest_self_selected=fresh.iter().any(|frame|
+        frame["message"]["role"]=="assistant" && frame["key"].as_str()
+            .and_then(|id|state.store.message(id))
+            .is_some_and(|row|row["session_id"]==session_id
+                && row["role"]=="assistant" && row["agent_id"]==participant["agentId"]));
+    let stale_self_count=if latest_self_selected {
+        frames.iter().filter(|frame|{
+            let id=frame["key"].as_str().unwrap_or("");
+            !fresh_keys.contains(id) && frame["message"]["role"]=="assistant"
+                && state.store.message(id).is_some_and(|row|
+                    row["session_id"]==session_id && row["role"]=="assistant"
+                        && row["agent_id"]==participant["agentId"])
+        }).count()
+    } else {0};
+    if reason.is_none() && (stale_peer_count > 0 || stale_self_count > 0) {
+        reason=Some("history_selection_changed");
     }
     let previous_frames = frames.len();
     let mut reused = frames.len();
@@ -453,6 +471,7 @@ pub(crate) fn project(
         "rebaseReason":reason,"sourceMessageId":source,
         "previousFrames":previous_frames,"reclaimedStaleRoomSnapshots":stale_shared_frames,
         "reclaimedStalePeerExcerpts":stale_peer_count,
+        "reclaimedStaleSelfReplies":stale_self_count,
         "carriedVerifiedOwnerFacts":carried_owner_facts,
         "estimatedReusedHistoryTokens":reused_estimate,
         "estimatedNewHistoryTokens":new_estimate,
