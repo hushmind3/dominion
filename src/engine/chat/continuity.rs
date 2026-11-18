@@ -191,12 +191,18 @@ fn working_view_allowance(room: Option<&Value>, provider: &ProviderRef, fixed: u
     }
     let selection = room.and_then(|room|room["contextBudgetTokens"].as_u64())
         .unwrap_or(2_000) as usize;
-    // Explicit epoch tuning is independent of the conversational selector.
-    // Default to four request selections per epoch, bounded against runaway
-    // accumulation and the remaining provider context after output reserve.
+    // A local route with no reliable provider cache-read telemetry would
+    // reprocess a large accumulated prefix as NEW input on every call.
+    // Keep its default epoch at the relevant per-turn selection allowance.
+    // Remote/cacheable routes amortize a longer prefix across model calls.
+    // Owner-configured workingViewBudgetTokens takes precedence in both cases.
     let epoch = room.and_then(|room|room["workingViewBudgetTokens"].as_u64())
         .map(|value|value as usize)
-        .unwrap_or_else(||selection.saturating_mul(4).clamp(2_000, 12_000));
+        .unwrap_or_else(||if provider.local {
+            selection.max(128)
+        }else{
+            selection.saturating_mul(4).clamp(2_000, 12_000)
+        });
     provider.context_tokens.map(|capacity| {
         epoch.min((capacity as usize)
             .saturating_sub(provider.max_output_tokens.unwrap_or(4096) as usize)
@@ -1128,6 +1134,23 @@ mod tests {
             .is_some_and(|key|key.starts_with("owner-state:"))).count(),1);
         assert!(frames.len()<=12,"16 turns should not grow the durable working view without bound");
         crate::test_support::cleanup_dir(root);
+    }
+
+    #[test]
+    fn local_without_reported_cache_uses_small_default_epoch_but_respects_owner_setting() {
+        let mut provider=route();
+        let room=json!({"contextBudgetTokens":2000});
+        assert_eq!(working_view_allowance(Some(&room),&provider,0),8000);
+        provider.local=true;
+        assert_eq!(working_view_allowance(Some(&room),&provider,0),2000,
+            "avoid reprocessing four full selections on an unverified local KV cache");
+        let customized=json!({"contextBudgetTokens":2000,"workingViewBudgetTokens":10000});
+        assert_eq!(working_view_allowance(Some(&customized),&provider,0),10000);
+        provider.context_tokens=Some(8000);
+        provider.max_output_tokens=Some(1000);
+        assert_eq!(working_view_allowance(Some(&customized),&provider,500),6500);
+        assert_eq!(working_view_allowance(None,&provider,500),6500,
+            "non-room context still honors model capacity and output reservation");
     }
 
     #[test]
