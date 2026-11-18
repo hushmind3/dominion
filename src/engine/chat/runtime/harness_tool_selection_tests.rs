@@ -25,6 +25,29 @@
     }
 
     #[test]
+    fn shared_sdk_relevance_ignores_tool_parameter_payload_and_preserves_owner_catalog(){
+        let catalog=vec![
+            json!({"type":"function","function":{
+                "name":"mcp__archive_unrelated","description":"Archives movies",
+                "parameters":{"type":"object","properties":{
+                    "credential":{"type":"string","description":"github issue"}}}}}),
+            json!({"type":"function","function":{
+                "name":"github_work_read","description":"Find Github issues and PRs",
+                "parameters":{"type":"object","properties":{}}}}),
+            json!({"type":"function","function":{
+                "name":"workspace_read","description":"Read a workspace file",
+                "parameters":{"type":"object","properties":{}}}})
+        ];
+        let chosen=select_tool_definitions(catalog.clone(),"github issue",
+            &json!({"implementation":"query-relevant","parameters":{"extra":1}}));
+        assert!(chosen.iter().any(|d|tool_name(d)=="github_work_read"));
+        assert!(!chosen.iter().any(|d|tool_name(d)=="mcp__archive_unrelated"));
+        let room=select_room_tools(catalog,"github issue",&std::collections::HashSet::new(),false);
+        assert!(room.iter().any(|d|tool_name(d)=="github_work_read"));
+        assert!(!room.iter().any(|d|tool_name(d)=="mcp__archive_unrelated"));
+    }
+
+    #[test]
     fn room_tool_selection_is_zero_for_casual_and_exact_for_actions() {
         let definitions = vec![
             json!({"type":"function","function":{"name":"workspace_read","description":"Read a workspace file"}}),
