@@ -1,85 +1,124 @@
-# DOMINION — Rust Autonomous Agent Platform
+# DOMINION — Rust agent execution platform
 
-DOMINION is an owner-controlled, model/provider-independent **Rust agent execution platform**. Write code, search, work with files, delegate tasks, run tests, inspect external services, and verify outcomes through a single durable execution boundary.
+[한국어 안내](README.ko.md) · [Architecture](docs/HARNESS.md) · [Rust SDK](sdk/rust/README.md) · [TypeScript SDK](sdk/typescript/README.md) · [Source audit (2026-11-18)](docs/SUB3-SOURCE-AUDIT-2026-11-18.md)
 
-**Product scope:** native text/agent interaction, memory, files, long-running work, groups, MCP, plugins, browser, OAuth/connected channels, local models and external APIs. **Not included:** built-in video/audio production engines, autonomous RSI generations, automatic core edits/promotions, self-experiment schedulers. Media generation may be connected later through owner-authorized external MCP tools/plugins—DOMINION does not bundle a renderer, weight installer or automatic uploader.
+DOMINION is a local-first AI workspace and **owner-controlled Rust agent execution system**. It connects configured local or remote models to coding tasks, files, shell commands, web/MCP tools, conversation memory, durable job records, approvals, cancellation, and evidence-based verification.
 
-## Core architecture
+> **Branch:** This document describes `dominion-sub3`, not a released binary or the current `main` branch. Implemented source, focused test evidence, and verified product performance are different things. A real model/provider must be configured to run agent tasks.
 
-- `crates/dominion-agent-sdk`: deterministic kernel and job snapshots; budgets, collision-safe discovery of authorized tools, fixed provider schema prefix, bounded JSON argument validation, checkpoints, verification, cancellation, and crash/approval recovery. Old receipt results and arguments are accessible through bounded, read-only pages instead of repeated host calls.
-  - The dependency scheduler rejects failed/skipped historical receipts as prerequisites before dispatch. Offline decision replay checks ordinary tool names, arguments, and successful prerequisite receipts; replay never re-executes a model or side effect.
-- `src/engine/native_agent.rs`: product adapter binding real model providers, workspace, host tools, MCP, authorization and stored job receipts to the Rust SDK. Native jobs pin tool-name/schema/read-only contracts and acceptance requirements before the first model/tool call; changed authority on restart requires review.
-- `src/engine/native_evidence.rs`: shared host-only verification path policy, bounded SHA-256 artifact witnesses and owner-criterion projection from kernel-derived checks. Both native execution and read-only forensic replay use this single path/snapshot implementation. The final native run now seals owner and kernel witnesses in one checkpoint and avoids duplicate file reads when the kernel's acceptance includes the owner criteria.
-- `src/engine/chat/runtime.rs`: existing streaming chat/room history, context selection and native Rust tool dispatcher; user-requested edits remain testable, with acceptance checks. No autonomous RSI policy/campaign branch.
-- **Evidence-gated chat Program IR:** `src/engine/program.rs` and `src/engine/chat/runtime/program.rs` share three-valued predicate verdicts, then block on failed/unknown verification instead of marking it completed. A repair can replace real pending nested nodes but not historical/scoped completed effects; all nested calls pass tool-authority, dependency and total-node-budget checks. Failure propagates through branch, sequence, loop and concurrent parallel frames. Mutation epochs invalidate earlier checks; concurrent writes plus verification must be rechecked after joining.
-- **Durable revised-IR recovery:** a paused/interrupted chat Program restores the exact persisted revised executable and does not replay a previous base plan after a failed lookup. In-flight operation IDs halt recovery until reconciliation. The repaired executable and checkpoint are committed together; approved interrupted execution transfer consumes the old approval and updates the new run under one multi-field SQLite compare-and-write transaction. Recovery regression cases cover missing revision, pending external effects and single-use cross-execution restoration.
-- **Causal failure adaptation:** `src/engine/adaptation_loop.rs` selects among live hypotheses using contradictory predictions on actually checkable observation slots, not the number of hypothesis IDs an intervention names. Read-only diagnostics get preference when the cause is uncertain; cost, refuted causes and observed preconditions still matter. `src/engine/chat/runtime/adaptation.rs` records the selected action's before/after host path-state evidence, and unverified tool-success echoes do not count as successful repair outcomes. No extra optimizer loop or model call was added.
-- `src/engine/plugins.rs`, `src/engine/money*.rs` and `src/db/money.rs`: optional Money research toolset. It uses the existing Rust job worker, native SDK and a namespaced schema in the **same** SQLite database; opening DOMINION never starts a second Money runtime.
-- Native host checkpoints are fenced by the RUNNING state, original worker attempt and absence of an owner cancellation flag in one SQLite critical section. Late completions and stale retries cannot turn cancelled or completed jobs back into active jobs; domain plugins share this invariant.
-- **2026 evidence-gated kernel selection:** The live `algorithms.rs::choose_for_agent` no longer uses UCB1, exploration bonuses, or cross-task unpaired success counters to switch policy. An explicitly activated executable kernel is primary; validated alternatives and built-in fallbacks never override it. Historical outcome statistics remain available only to diagnostics, and first-use SQLite attribution pins a run to its exact revision across retries. Per-kind indexed SQLite lookup avoids scanning the full growing algorithm archive. The request-scoped decomposition differential check keeps its existing structural accuracy constraints, now with a bounded token-coverage requirement.
-- **Failure-aware Rust SDK:** classifies the latest confirmed failed receipt into compiler, test, missing path, permission, invalid schema or transport categories; carries the exact receipt ID and one bounded unverified inspection hint into the next model call. Progressive tool disclosure favors at most two existing read-only diagnosis tools without adding approvals, model calls or a second agent loop. A subsequent successful repair supersedes stale hints. Deterministic receipt and SDK integration tests cover this path.
-- **SDK status scalability:** the GUI/SDK pending-approval projection queries only current pending approvals per run/session, while restart/resume eligibility uses one indexed run-specific uncertain-operation EXISTS. Viewing many historical runs no longer re-reads every approval/tool receipt for each card; database failures fail closed for resume.
-- **Crash ownership fence:** the shared recovery writer compares both worker attempt and cancellation flag with the initial RUNNING snapshot under an IMMEDIATE SQLite transaction; a re-claimed task cannot be rolled back by a stale recovery. API cancellation is persisted before any associated session cancellation is emitted, and SDK resume notifies the normal worker directly.
-- **Restart recovery:** `engine::jobs::recover` reads only indexed queued/running jobs and running executions/tool receipts. Unresolved effects are indexed once by session (including legacy execution-linked receipts) rather than rescanning the entire tool journal for each job. Recovery is a compare-and-patch transition; user cancellation survives restart without replay. Historical records are left intact. Same worker/SDK and no second runtime.
-- A native SDK final assistant message uses the same running/attempt/cancellation fence while writing the existing session messages table. A late answer cannot be inserted after owner cancellation or a newer retry, and repeated writes return the original message.
-- `src/engine/jobs.rs` and `src/db.rs`: SQLite job/operation journal, indexed active-queue selection, Tokio Notify worker wakeups, durable CAS and legacy effect recovery. Terminal success/failure audit is emitted only after the terminal checkpoint is persisted; concurrent owner cancellation cannot silently become a completed job. Idle reconciliation runs every 5 seconds; completed historic jobs are retained without being polled on each turn.
-- `src/engine/mcp.rs`, `src/engine/skills.rs`, `src/api/extensions.rs`: explicit external MCP server/tool manifests and skill/plugin import; reviewed tools are verified against their pinned manifest at execution.
-- **Progressive 2026 Skills:** `src/engine/skill_discovery.rs` provides `skill_search` (scoped metadata), `skill_read` (bounded Skill instructions), and `skill_resource_read` (bounded UTF-8 references with traversal/symlink protection) over the EXISTING Rust host tool registry. Native jobs no longer blindly preload the first three enabled Skills: at most two task-relevant procedures are preloaded, and other enabled Skills are retrieved when needed. Active/draft/revoked status, agent/session/channel isolation, source trust labeling and ordinary tool permissions are rechecked when reading. No second executor, always-on scan, model routing call or script runner is added. This follows the 2026 Goose Skills and Microsoft Agent Framework progressive-disclosure contract, not their vendor runtimes.
-- `sdk/typescript`, `sdk/rust`, `packages/sdk-typescript`: API clients for the same native Rust product/harness; no replicated agent planning loop.
-- `web/src`: the existing conversation, workspace, memory, providers, rooms, channels, plugins, developer tools, job state and operator controls.
-- `src/state.rs`, `src/engine/chat/runtime.rs`, `src/engine/rooms.rs`: reusable, timeout-scoped model HTTP clients, durable per-speaker latency observations, progress-aware room E2E coverage, and event-driven cancellation with a low-frequency cross-process reconciliation fallback instead of 50ms SQLite polling.
+## Try it locally
 
-### Progressive discovery for ordinary/room chat (sub3, 2026-11-18)
+Prerequisites: Rust stable toolchain, Node.js **24.12+** and npm for the web UI. The desktop packaging targets **macOS and Windows**; local development needs a compatible Rust toolchain and OS dependencies.
 
-The autonomous native SDK already has a bounded `dominion_tool_search` / `dominion_tool_call` receipt contract. The earlier chat room path showed only a small keyword-selected tool list, with no way for the SAME running turn to discover a different owner-connected capability. `src/engine/chat/runtime/capability.rs` now offers those same model-facing commands when the full catalog is large and the room/agent shortlist was reduced. Casual room conversation, tools-disabled turns and the deterministic single-file fast path do not expose the bridge; full-catalog ordinary chat retains its previous native tool presentation.
+```sh
+git clone https://github.com/hushmind3/dominion-rust.git
+cd dominion-rust
+git switch dominion-sub3
+npm ci --prefix web
+npm run build --prefix web
+cargo run -- --open
+```
 
-A search reads the current OAuth/MCP owner-authorized catalog (no agent-created grant), ranks tools with the native SDK's existing Rust relevance function, and records exact names, bounded schemas and SHA-256 schema fingerprints through the original `execution_operation` journal. A subsequent call must point to a **completed search in the same active execution and session**, and the current tool permission, room/session tools-enabled state, source schema and JSON arguments are checked again. The bridge resolves to the actual tool before the **existing** `dominion_agent_sdk::dispatch_batch`, approval gate, effect WAL, error handling and budget settlement. It does not create another agent loop or allow new standalone executors.
+By default, the Rust process serves the built React UI at **http://127.0.0.1:4317** on loopback. The frontend build is required for this combined-server launch. Configure a model/provider and the tools you authorize in the UI before starting an agent job.
 
-Tests cover no unwanted bridge on disabled/casual/single-file paths, no cross-execution receipt, schema-required fields, post-search read-only revocation, post-search room-tools-off and tampered schema evidence. All code remains confined to `dominion-sub3`. This is verified development-contract coverage, **not** measured frontier-model task success or a claim that chat and native jobs already share a single top-level turn loop.
+Optional environment settings: `DOMINION_PORT` (default `4317`), `DOMINION_DATA` (default `runtime`), `DOMINION_WEB` (default `web/dist`), and `DOMINION_WORKSPACE` (default current working directory). Runtime data includes `runtime/dominion.sqlite` and encrypted-credential vault material. **Back up the runtime directory** before experimenting with changes or migrations; never commit it.
 
-### 2026 harness cost/selection convergence (sub3)
+For frontend development, use `npm run dev --prefix web` alongside the Rust server; for desktop builds, see `scripts/build-desktop.mjs` and `src-tauri/`. The development launch above is **not** an installer or a signed release.
 
-- **No redundant acceptance reviewer model:** ordinary chat now uses deterministic host acceptance evidence as its retry instruction for the next *existing* model turn, rather than calling an additional paid `review_action` LLM for the same failed predicate. The host verification/receipt/approval gates are unchanged.
-- **Bounded preplanning:** short single-step work no longer creates a separate model plan because inference returned zero checks; composite, owner-policy-requested, or multi-criterion tasks can still use the original planner. A provider planning *attempt* counts toward the chat model-call metric, even when it fails. Disabled tool execution never requests paid planning.
-- **One Rust intent scorer:** room and ordinary-chat candidate ranking now reuse the native SDK's `dominion_agent_sdk::tool_relevance` over tool names and descriptions. Neither chat path serializes every large JSON argument schema to decide relevance. The independent host approval and tool policy remain authoritative; this is a shared **selection signal**, not a duplicate executor or claim of full provider-level `dominion_tool_search` parity.
-- **Boundaries:** chat streaming still has its own turn lifecycle and `harness_assisted` procedures, retained to preserve compatible room/session behavior. The native SDK remains the autonomous job kernel. Further unification needs matching-workload end-to-end testing.
+## What is implemented
 
-Research basis: [2026 empirical study of 176 harness configurations](https://arxiv.org/abs/2609.20804) and [2026 NanoHarness controlled component ablation](https://arxiv.org/abs/2609.32459). Neither paper measures this repository; predicted savings are **one review call per failed acceptance check** and **one plan call on affected simple tasks**, not a measured win-rate or total-token reduction.
+| Area | Source-backed scope |
+| --- | --- |
+| Autonomous jobs | Rust `dominion-agent-sdk::Kernel`, host adapters for model/tool execution, bounded planning, durable receipts, owner approvals, cancellation, verification, and guarded continuation. |
+| Interactive chat and rooms | Existing streaming chat/room runtime, provider adapters, history/context selection, independent speaker state, and room collaboration. **This remains a distinct top-level execution path from native jobs.** |
+| Providers and costs | Configurable local/remote model routes, native function calls where supported, usage records, selected provider cache hints, and Codex WebSocket incremental history where its connection/prefix survives. |
+| Tools | Workspace/file/shell actions, selected browser/web and connected-service tools, MCP manifests, scoped Skills and progressively discovered tool schemas. Tools do not receive authority just because a model mentions their names. |
+| Memory and recovery | SQLite-backed sessions, correction/learning records, bounded retrieval of past job receipts, cancellation and review of uncertain prior effects. |
+| Money (optional) | Source collection, archived original evidence and revisions, hypothesis ranking, review/defer/revisit, and owner-approved implementation through the existing Rust job queue. It is **research support**, not verified revenue. |
+| Client integrations | `sdk/rust` re-exports the kernel and provides an HTTP client; `sdk/typescript` is the primary typed HTTP/SSE client; `packages/sdk-typescript` supports the older `/api/harness/runs` contract. |
 
-## No unattended self-modification
+### One native job kernel, two product entry paths
 
-Historical campaign, media and experiment records are **not deleted from existing local SQLite databases**. Retired queued jobs are cancelled; a retired job found running after restart is marked for review, never re-executed. The worker refuses any newly submitted retired job kind. No core auto-adoption, generation runner, media studio or research-lab CLI remains. The dormant `improve::schedule_experiments` creator and its unused regression fixture were also removed on the sub3 branch; existing manually supplied experiment results, owner review routes and historical SQLite records remain unchanged.
+```text
+React work panel / TypeScript SDK / Rust HTTP client
+                  │
+             /api/jobs or /api/sdk/runs
+                  │
+         SQLite job queue + native_agent
+                  │
+      crates/dominion-agent-sdk::Kernel
+       ├─ provider and model adapters
+       ├─ approved workspace/MCP/host tools
+       ├─ receipts, acceptance, checkpoints
+       └─ cancellation, approval, recovery
 
-Chat and UI default `autoLearning` to false, and former five-minute background distillation/growth sweeps and post-chat policy experiment scheduling are disabled. User corrections, prior results, task failures, verified experiences and reusable procedures remain available. Existing explicitly owner-directed tasks—including code editing, tests and verification—continue to work.
+Interactive chat / rooms → /api/chat and room routes
+                         → src/engine/chat/runtime/
+                         → its existing streaming turn lifecycle
+```
 
-## API and developer workflows
+The **new** `/api/harness/runs` compatibility requests are translated into the same native job kernel with the narrower legacy workspace/shell authority. Old standalone `sdk_run`/FileJournal records remain **read-only archives**; their uncertain operations are not silently replayed. See [HARNESS.md](docs/HARNESS.md).
 
-- `POST /api/chat`, `GET/POST /api/jobs` and `/api/jobs/:id/*` for native jobs; explicit approval and recovery endpoints under `/api/sdk/runs/:id/*` and `/api/harness/runs/:id/*`. The legacy `/api/harness/runs` path now creates **the same native job-backed Rust kernel** as `/api/sdk/runs`, with its old workspace-only/shell capability boundary and separate history view. Historical `sdk_run` / FileJournal records remain inspectable as **read-only archives**, while old runner approval/resume/reconciliation endpoints return a conflict rather than replay an uncertain effect. The retired `dominion-harness` workspace crate and CLI were deleted; only the native Rust job-backed kernel runs new SDK/harness API tasks. Chat remains a distinct earlier runtime; full chat migration and external ACP adapters are separate work.
-- `GET /api/sdk/runs/:id/replay` and `POST /api/sdk/runs/:id/compare` reconstruct already recorded decisions, receipts and cost records **read-only**, never invoking paid tools or promoting a revision.
-- `POST /api/sdk/runs/:id/adjudicate` accepts `{ "candidateRunIds": ["run-b", "run-c"] }` for bounded, read-only evidence-lineage adjudication across existing executions. The algorithm requires identical owner-scope initial artifact witnesses, frozen tools/model/limits, matching observed common prefixes, consistent host journals, and confirms a changed action's durable preimage/postimage against the final kernel acceptance artifact. It never invokes a model, repeats a tool or claims an executed causal intervention. Incomplete evidence is ungradable.
-- The same endpoint also returns an **evidence-qualified multi-objective portfolio** over comparable historical runs: independently observed acceptance first; then PRISM-style non-dominated tradeoffs across evidence completeness, observed failed receipts, recorded token usage, elapsed time and owner-configured KRW cost. Missing prices or elapsed time cannot dominate verified runs. This combines Harness² execution contrast, VeriHarness provenance discipline, PRISM's multi-objective selection and the existing DeepSeek-like bounded native SDK permission/dispatch guards. The result is advisory only; this endpoint does **not** execute new candidate probes, establish holdout reliability or auto-promote a candidate.
-- `/api/mcp/catalog`, `/api/mcp/discover`, `/api/tools`, `/api/skill-catalog` and `/api/channels` expose owner-configured integrations. A connected MCP may later handle third-party media generation.
-- `/api/sessions`, `/api/memory/overview`, `/api/providers`, `/api/rooms` retain existing conversation and collaboration surfaces.
-- Money is a switchable decision-support module, not a mandatory profit-ranking policy. `GET /api/money/archive?status=deferred&q=...&offset=...` searches all archived hypotheses (including deferred/rejected), `POST /api/money/candidates/:id/review` records explicit human reasons in an append-only `money_review` journal, and `GET /api/money/candidates/:id/reviews` retrieves the decision trail. `GET /api/money/source?url=...` returns archived source content, original timestamps, revisions and related-headline metadata without a model call. The same SQLite Store and normal Rust SDK job executor remain authoritative.
-- `GET/POST /api/money/find`, `GET /api/money/stats`, `POST /api/money/candidates/:id` and `/api/money/campaigns/:id/*` are optional domain operations. Explicit implementation uses `POST /api/money/candidates/:id/implement` (`approved=true`, selected agent and bounded token budget) and `GET /api/money/candidates/:id/implementation` for persisted status. Approval and its ordinary Rust SDK prompt job commit atomically to the **same SQLite transaction**, so retries, concurrency, editing and process restart cannot detach the job. `/api/jobs/:id/cancel` handles cancellation; there is no second Money scheduler or database.
+## APIs and SDKs
 
-### Browser account login without user API keys
+- **Jobs:** `GET/POST /api/jobs`, `GET /api/jobs/:id`, `POST /api/jobs/:id/cancel`, `POST /api/jobs/:id/directive`. Jobs can carry explicit acceptance checks and approved tool limits.
+- **Native work panel:** `GET/POST /api/sdk/runs` and `/api/sdk/runs/:id/{approve,cancel,resume,reconcile,steer}`. Read-only evidence tools: `GET /api/sdk/runs/:id/replay`, `POST /api/sdk/runs/:id/compare` and `POST /api/sdk/runs/:id/adjudicate`.
+- **Chat and data:** `POST /api/chat`, `/api/sessions`, `/api/providers`, `/api/rooms`, `/api/memory/overview`, `/api/mcp/catalog`, `/api/skill-catalog`.
+- **Money:** `GET/POST /api/money/find`, `GET /api/money/archive`, `GET /api/money/source`, `POST /api/money/candidates/:id/review` and `POST /api/money/candidates/:id/implement`. Implementation requires explicit authorization.
+- **Compatibility:** `/api/harness/runs` supports new native-backed jobs and archive-only legacy reads, with a restricted capability contract.
 
-In **Connections → Accounts**, select GitHub or Google. The product uses a deployment-registered OAuth app when configured. Otherwise it can use the already installed **official GitHub CLI** or **Google Workspace CLI** to open a browser login and adopt the provider's authorized grant into the encrypted vault. End users are not asked to input Client ID, Client Secret, access token or API key. Connected actions reuse the same approved Rust SDK/chat execution path.
+```ts
+// sdk/typescript/src/index.ts — transport client, not an agent loop
+import { Dominion } from './sdk/typescript/src/index'
+const api = new Dominion({ baseUrl: 'http://127.0.0.1:4317' })
+const run = await api.nativeRuns.start({
+  instruction: 'Inspect this workspace and report test failures',
+  verifyCommand: 'cargo test',
+})
+const status = await api.nativeRuns.get(run.id)
+// Check status, permissions, and any pending approval before continuation.
+```
 
-A real provider-registered OAuth client must exist either in the product deployment or the official CLI. Google Workspace CLI may require one-time Google Cloud project setup; no program can bypass provider consent or fabricate a Google app identity. See docs/CONNECTED-ACCOUNTS-2026-11-17.md.
+Rust kernel implementers can import `dominion_sdk::harness::{Kernel, RunRequest, Model, Tools, Evidence, Journal}` via the workspace `sdk/rust` crate. The host supplies the actual model, tool authorization, evidence checks and durable journal; the Rust kernel owns the bounded plan/execute/verify cycle. See [Rust SDK](sdk/rust/README.md).
 
+## Context, Skills, and token accounting
 
-### Development tests and release verification
+- The native agent provides bounded, task-relevant Skill disclosure; ordinary chat now reuses the same scoped Skill selection. Full instructions/resources can be retrieved through approved `skill_read`/`skill_resource_read` calls.
+- Long jobs retain original receipts in the durable journal and expose paginated read-only lookup. The model sees a bounded view without erasing the authoritative source.
+- WebSocket incremental send and stable cache prefixes **do not themselves prove provider cache hits or reduced billing**. Host-side reused/new history estimates and provider-reported prompt/cache usage must be compared separately.
+- An older nine-agent 100-turn run measured **18.15%** cached prompt tokens and **621 history-budget rebases** on **2026-11-09**. It is a historical baseline, **not a current-branch benchmark**. Details: [context audit](docs/SUB3-CACHE-CONTEXT-2026-11-18.md).
 
-Normal development runs only **relevant Rust tests in the dev profile**, such as `cargo test --bin dominion-rust engine::money`, `cargo test --bin dominion-rust api::money`, and `cargo test -p dominion-agent-sdk --lib`. Branch-push workflows contain only scoped `cargo test` commands; they do not call `cargo build`, `cargo check`, `--release`, `npm`, Node scripts, frontend builds, or platform-wide test matrices. Each development workflow has a single macOS Rust runner; Linux is not used.
+2026 references: [Claude prompt caching](https://claude.com/blog/lessons-from-building-claude-code-prompt-caching-is-everything) and [deferred tool loading](https://claude.com/blog/reducing-cost-and-improving-performance-with-claude-platform). These describe upstream mechanisms, not DOMINION performance measurements.
 
-Full Windows/macOS verification, frontend/TypeScript checks, release compilation, packaging, and installer checks are **release-stage only**. The full `.github/workflows/ci.yml` gate is manual (`workflow_dispatch`), and `.github/workflows/release.yml` is restricted to manual releases or version tags. A green Rust development test is not represented as a release build.
+## Product boundaries and data preservation
 
-[Room latency / recovery regression contract](docs/SUB3-ROOM-LATENCY-2026-11-17.md) · [Lean product source/behavior contract](docs/SUB3-LEAN-COMPLEXITY-2026-11-16.md) · [Agent/host replay provenance](docs/SUB3-JUDGE-READY-2026-11-16.md).
+The standalone RSI generation/campaign/core-auto-promotion engine and built-in video/audio production pipeline have been retired on this branch. External media tools may be connected through user-approved MCP/plugins. **Manual memory review, agent-growth records and stored improvement history remain**; they are not standalone RSI execution engines. Historical SQLite records and already generated user files are not deleted.
 
-Licensed Apache-2.0.
+Connections to GitHub/Google may use a configured OAuth application or an authorized official CLI flow. Provider consent/configuration is still required; credentials are not bundled. See [connected accounts](docs/CONNECTED-ACCOUNTS-2026-11-17.md).
 
-- **Bounded candidate repair adjudication (2026 Harness² / PRISM combination):** The chat Program IR accepts either a legacy repair proposal or up to three proposals in one model response, validates each through the actual authorization, write-ahead idempotency, tree-depth and dependency checker, rejects invented host evidence IDs, and selects only a uniquely non-dominated executable-cost/risk plan. If risk dimensions conflict, it abstains rather than auto-playing an unverified experiment. This never claims a candidate was executed or caused task success.
+## Development verification
 
-- **Verifiable recovery order:** When a Program verifier is refuted, the repair candidate must insert a genuinely executable intervention before that exact pending verifier using `addNodes[].insertBefore`; merely appending code after a failed gate cannot complete the task. Existing verifier predicates and their containing control-flow are immutable during repair, preventing score inflation by weakening acceptance criteria. Both single and multiple proposals reject invented checkpoint evidence references, and the selected proposal's admission record is retained in `revisionHistory`.
+Routine changes: run *focused Rust development-profile tests*, not a blanket release build.
+
+```sh
+cargo test -p dominion-agent-sdk --lib
+cargo test --bin dominion-rust engine::chat::context::tests
+cargo test --bin dominion-rust engine::skill_discovery::tests
+cargo test --bin dominion-rust api::sdk::tests
+```
+
+Frontend/API checks and full Windows/macOS builds are **release-stage** checks:
+
+```sh
+npm run typecheck --prefix web
+npm run build --prefix web
+node scripts/check-lean-product.mjs
+```
+
+`.github/workflows/ci.yml` is manually dispatched for the full gate; the scoped `sub3-*` workflows run targeted Rust tests. The workflows and historical green checks are **not proof that the newest commit passed**. At the time of this documentation update, the latest README/context changes have **not** been compiled or exercised with a paid/live model in this environment.
+
+Current limitations: interactive chat and the native work kernel are not yet a single lifecycle; independent commercial-grade long-horizon task success, full release validation, and reproducible provider-billed cache gains are still unmeasured. Avoid treating source existence or scripted-model fixtures as competitive benchmark wins.
+
+For a file-by-file boundary and documentation discrepancy register, read [the 2026-11-18 source audit](docs/SUB3-SOURCE-AUDIT-2026-11-18.md). Historical detailed research remains in `docs/`; verify its date and scope before applying it to the current branch.
+
+Apache-2.0 — see [LICENSE](LICENSE).
