@@ -782,6 +782,72 @@ mod tests {
     }
 
     #[test]
+    fn nine_speaker_three_turns_keep_owner_and_self_while_bounding_repeated_transcripts() {
+        let state=state();
+        let ids=(0..9).map(|i|format!("agent-{i}")).collect::<Vec<_>>();
+        state.store.put("room",&json!({
+            "id":"r","contextBudgetTokens":1300,"agentIds":ids
+        })).unwrap();
+        for id in &ids {
+            state.store.put("agent",&json!({
+                "id":id,"name":id,"systemPrompt":format!("Persona {id}")
+            })).unwrap();
+        }
+        // A large tool schema makes the soft target insufficient. The caller
+        // must keep this bounded, source-pinned projection rather than fall
+        // back to unbounded legacy room history.
+        let tools=vec![json!({"type":"function","function":{
+            "name":"workspace_read","description":"Read a workspace file",
+            "parameters":{"type":"object","properties":{
+                "path":{"type":"string","description":"Relative path"}}}
+        }})];
+        let mut cost_per_turn=Vec::new();
+        for turn in 0..3 {
+            let source=format!("owner-{turn}");
+            message(&state,&source,"user",&format!("이번 {turn}턴: 각자의 답을 유지하고 계속해라"));
+            let mut costs=Vec::new();
+            for (index,id) in ids.iter().enumerate() {
+                let request=TurnRequest::from_value(&json!({
+                    "agentId":id,"input":format!("이번 {turn}턴: 각자의 답을 유지하고 계속해라"),
+                    "toolsEnabled":true
+                })).unwrap();
+                let compiled=compile(&state,&request,"room:r",&source,&tools,&[]).unwrap();
+                let selected=compiled.accounting["selectedMessageIds"].as_array().unwrap();
+                assert!(selected.iter().any(|s|s==&source));
+                assert!(compiled.history.iter().any(|row|row["_dominion_frame"]==
+                    format!("room-shared:{source}")));
+                assert!(!compiled.system.prompt.contains("LEAKED_NEXT_TURN"));
+                if turn>0 {
+                    let previous=format!("agent-{index}-turn-{}",turn-1);
+                    assert_eq!(compiled.accounting["previousSelfMessageId"],previous);
+                }
+                let mut wire=vec![json!({"role":"system","content":compiled.system.prompt})];
+                wire.extend(compiled.history);
+                let components=input_components(&wire,&tools);
+                assert_eq!(components["estimatedInputTokens"],input_estimate(&wire,&tools));
+                assert!(components["sharedRoomStateTokens"].as_u64().unwrap()>0);
+                assert!(components["toolSchemaTokens"].as_u64().unwrap()>0);
+                costs.push(components["estimatedInputTokens"].as_u64().unwrap());
+                state.store.write_message(&json!({
+                    "id":format!("agent-{index}-turn-{turn}"),"session_id":"room:r",
+                    "role":"assistant","agent_id":id,"content":format!(
+                        "Agent {id} said a bounded answer for owner turn {turn}"),
+                    "metadata":{"authorKind":"agent","replyToMessageId":source}
+                })).unwrap();
+            }
+            cost_per_turn.push(costs);
+        }
+        assert_eq!(state.store.messages("room:r").len(),30);
+        // The third turn may carry useful extra evidence; its growth must
+        // remain bounded rather than replay every past speaker every time.
+        let first=cost_per_turn[0].iter().sum::<u64>();
+        let third=cost_per_turn[2].iter().sum::<u64>();
+        assert!(third<first.saturating_mul(3),
+            "three-turn input inflated without bound: first={first} third={third}");
+        crate::test_support::cleanup_dir(&state.config.data_dir);
+    }
+
+    #[test]
     fn compiler_recalls_old_corrections_and_preserves_identity_without_a_model() {
         let state = state();
         message(&state, "old", "user", "배포 포트는 8000이다.");
