@@ -243,7 +243,8 @@ async fn run_one(
     let area=TrialArea::create()?;
     let workspace=area.workspace();
     let baseline=clone_dependencies(&ctx.state.config.workspace,&workspace,&paths)?;
-    let store=crate::db::Store::open(&area.root.join("data/dominion.sqlite"))?;
+    let store=crate::db::Store::open(&area.root.join("data/dominion.sqlite"))
+        .map_err(|error|error.to_string())?;
     let mut sandbox=ctx.state.clone();
     sandbox.config.workspace=workspace.clone();
     sandbox.config.data_dir=area.root.join("data");
