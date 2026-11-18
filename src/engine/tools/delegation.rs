@@ -78,6 +78,9 @@ pub(super) async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Valu
         if prepared.is_object(){let _=crate::engine::delegation_worktree::discard_prepared(&prepared).await;}
         return Err(error);
     }
+    // Subscribe before scheduling: a very fast child can finish before the
+    // parent starts waiting. Durable SQLite state remains the final authority.
+    let mut events = ctx.state.bus.subscribe();
     crate::engine::jobs::start_now(ctx.state.clone(), job_id.clone());
 
     if !wait {
@@ -105,7 +108,33 @@ pub(super) async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Valu
                 "hint": "아직 실행 중입니다. task_result로 나중에 확인하세요."
             }));
         }
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        // Wait for this child's durable job state instead of polling SQLite
+        // four times a second. The bounded fallback covers lag/restarts and
+        // parent cancellation when no child event is emitted.
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        wait_for_child_signal(&mut events, &job_id,
+            remaining.min(std::time::Duration::from_secs(3))).await;
+    }
+}
+
+async fn wait_for_child_signal(
+    events: &mut tokio::sync::broadcast::Receiver<Value>,
+    job_id: &str,
+    max_wait: std::time::Duration,
+) {
+    let deadline = tokio::time::Instant::now() + max_wait;
+    loop {
+        tokio::select! {
+            biased;
+            _ = tokio::time::sleep_until(deadline) => break,
+            event = events.recv() => match event {
+                Ok(event) if event["type"]=="record"
+                    && event["kind"]=="job"
+                    && event["record"]["id"].as_str()==Some(job_id) => break,
+                Ok(_) => {}, // unrelated room, tool and job events don't force DB work
+                Err(_) => break, // lagged/closed => verify the durable job row
+            }
+        }
     }
 }
 
@@ -208,6 +237,27 @@ pub(crate) fn profile_tool_allowed(session: &Value, name: &str, args: &Value) ->
 #[cfg(test)]
 mod profile_tests {
     use super::*;
+    #[tokio::test]
+    async fn child_wait_observes_only_its_job_and_falls_back_after_timeout() {
+        let (sender,mut receiver)=tokio::sync::broadcast::channel(16);
+        let waiting=tokio::spawn(async move {
+            wait_for_child_signal(&mut receiver,"child-a",
+                std::time::Duration::from_secs(2)).await;
+        });
+        sender.send(json!({"type":"record","kind":"job",
+            "record":{"id":"other-child","status":"completed"}})).unwrap();
+        tokio::task::yield_now().await;
+        assert!(!waiting.is_finished(),"unrelated child cannot wake parent polling");
+        sender.send(json!({"type":"record","kind":"job",
+            "record":{"id":"child-a","status":"completed"}})).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1),waiting)
+            .await.expect("matching job should wake immediately").unwrap();
+        let (_sender,mut rx)=tokio::sync::broadcast::channel(4);
+        tokio::time::timeout(std::time::Duration::from_millis(100),
+            wait_for_child_signal(&mut rx,"absent",
+                std::time::Duration::from_millis(5))).await.unwrap();
+    }
+
     #[test]
     fn delegated_role_tool_matrix_restricts_mutations_and_verification_commands() {
         let inspect=json!({"delegationProfile":"inspection","readOnly":true,
