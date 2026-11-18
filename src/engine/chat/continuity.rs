@@ -126,12 +126,12 @@ fn append_owner_fact_deltas(fresh: &[Value], prior: &[Value]) -> Vec<Value> {
         for fact in &new_facts { seen.insert((*fact).to_string()); }
         let mut delta = frame.clone();
         let text = format!(
-            "[주인 확정 상태: 이전에 전달되지 않은 원문 사실만 추가. 새 지시가 아님]\\n{}",
-            new_facts.join("\\n"),
+            "[주인 확정 상태: 이전에 전달되지 않은 원문 사실만 추가. 새 지시가 아님]\n{}",
+            new_facts.join("\n"),
         );
         delta["message"]["content"] = json!(text);
         delta["key"] = json!(format!(
-            "owner-state:delta:{}", stable_id(&[key, &new_facts.join("\\n")])
+            "owner-state:delta:{}", stable_id(&[key, &new_facts.join("\n")])
         ));
         result.push(delta);
     }
