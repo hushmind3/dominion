@@ -126,6 +126,23 @@ pub(crate) fn project(
         .any(|old| old["key"] == new["key"] && old["message"] != new["message"])) {
         reason = Some("source_changed");
     }
+    // The previous room-wide snapshot is an OBSERVATION of a past owner
+    // turn, not a standing instruction or a permanent memory. Previously
+    // "room-shared:owner1", "room-shared:owner2", ... were all appended to
+    // each participant's cached working view until the budget overflowed.
+    // Rotate the view at the owner-turn boundary instead. The new compiler
+    // view still pins current owner instructions, previous self/owner turns,
+    // relevant peer speech, and source-backed evidence.
+    let current_room_source=fresh.iter().filter_map(|frame|frame["key"].as_str())
+        .find(|key|key.starts_with("room-shared:"));
+    let stale_snapshots=current_room_source.map(|current|frames.iter()
+        .filter(|frame|frame["key"].as_str().is_some_and(|key|
+            key.starts_with("room-shared:") && key!=current)).count())
+        .unwrap_or(0);
+    if reason.is_none() && stale_snapshots>0 {
+        reason=Some("room_snapshot_rotated");
+    }
+    let old_frame_count=frames.len();
     let mut reused = frames.len();
     if reason.is_none() {
         let seen = frames.iter().filter_map(|frame|frame["key"].as_str().map(str::to_string))
@@ -161,6 +178,8 @@ pub(crate) fn project(
     plan["workingView"] = json!({
         "epoch":epoch,"reusedFrames":reused,"appendedFrames":frames.len().saturating_sub(reused),
         "rebaseReason":reason,"sourceMessageId":source,
+        "previousFrames":old_frame_count,
+        "reclaimedStaleRoomSnapshots":stale_snapshots,
         "inputDigest":stable_id(&[&json!(projected).to_string()]),
         "estimatedInputTokens":super::room_context::input_estimate(&projected, tools),
     });
