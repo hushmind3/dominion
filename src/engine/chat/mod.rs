@@ -18,6 +18,7 @@ mod transport;
 
 pub use protocol::parse_text_tool_calls;
 pub use runtime::{run_room_turn, run_turn, run_turn_background, run_turn_resume};
+pub(crate) use transport::run_with_http_epoch;
 
 /// The coordinator owns the fixture and assertions. Only aliases to the real
 /// runtime functions cross this boundary; candidate-owned test helpers cannot
