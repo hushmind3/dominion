@@ -73,6 +73,10 @@ jobs:
           # Chained developer persona must appear exactly once on the WS wire.
           cargo test --bin dominion-rust engine::chat::codex_ws::tests
           cargo test --bin dominion-rust room_catalog_cache_tests
+          # Real local mock SSE wire: no repeated prefill for known KV backends,
+          # with full owner/persona context preserved on the stateless wire.
+          cargo test --bin dominion-rust local_kv_cache_is_vendor_scoped_never_general_openai_compat
+          cargo test --bin dominion-rust managed_llama_server_uses_real_chat_wire_prefix_kv_cache
           cargo test --bin dominion-rust cancel_api_interrupts_silent_http_generation_and_allows_same_session_retry
           cargo test --bin dominion-rust engine::chat::runtime::cancellation_watch_tests
           cargo test --bin dominion-rust engine::chat::room_context::tests
