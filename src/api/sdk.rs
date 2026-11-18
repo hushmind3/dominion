@@ -1,7 +1,7 @@
 //! Native Rust SDK entrypoints: the GUI and external clients execute the
 //! same Dominion-owned agent kernel. Runs are durable, inspectable and resumable.
 use crate::{engine::gateway, state::AppState};
-use axum::{extract::{Path, State}, http::StatusCode, response::{IntoResponse, Response}, Json};
+use axum::{body::to_bytes, extract::{Path, State}, http::StatusCode, response::{IntoResponse, Response}, Json};
 use dominion_harness::{
     openai::OpenAiProvider,
     sdk::{AgentSdk, CommandVerifier, FileJournal, RunStatus, Session},
@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex, OnceLock};
 
-use super::response::error;
+use super::{response::error, sdk_runs};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -75,15 +75,53 @@ fn public_view(state: &AppState, record: Value) -> Value {
     result
 }
 
+// Existing sdk_run checkpoints still belong to the old harness and may be
+// inspected or reconciled through their original protocol. New requests use
+// only the native job kernel, with a view marker rather than a parallel loop.
+fn native_job(state:&AppState,id:&str)->Option<Value> {
+    state.store.get("job",id).filter(|job|
+        job["kind"]=="prompt"
+            && job["input"]["clientSurface"]=="native_agent_panel"
+            && job["input"]["harnessCompat"]==true)
+}
+fn native_view(state:&AppState,job:&Value)->Value {
+    let mut view=sdk_runs::project(state,job);
+    view["providerId"]=job["input"]["providerId"].clone();
+    view["model"]=job["input"]["model"].clone();
+    view["maxRounds"]=job["input"]["limits"]["maxSteps"].clone();
+    view["verifyCommand"]=job["input"]["checks"].as_array()
+        .and_then(|checks|checks.iter().find_map(|check|
+            (check["type"]=="tool_succeeded" && check["tool"]=="shell_exec")
+                .then(||check["contains"].clone())))
+        .unwrap_or(Value::Null);
+    view
+}
+fn native_reply(state:&AppState,id:&str,response:Response)->Response {
+    if response.status().is_success() {
+        if let Some(job)=native_job(state,id) {
+            return Json(native_view(state,&job)).into_response();
+        }
+    }
+    response
+}
 pub async fn list(State(state): State<AppState>) -> Json<Value> {
-    let runs = state.store.all("sdk_run").into_iter().take(30)
-        .map(|record| public_view(&state, record)).collect::<Vec<_>>();
+    let mut runs=state.store.all("job").into_iter()
+        .filter(|job|job["kind"]=="prompt"
+            && job["input"]["clientSurface"]=="native_agent_panel"
+            && job["input"]["harnessCompat"]==true)
+        .map(|job|native_view(&state,&job)).collect::<Vec<_>>();
+    runs.extend(state.store.all("sdk_run").into_iter()
+        .map(|record|public_view(&state,record)));
+    runs.truncate(30);
     Json(json!(runs))
 }
 pub async fn one(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    match state.store.get("sdk_run", &id) {
-        Some(record) => Json(public_view(&state, record)).into_response(),
-        None => error(StatusCode::NOT_FOUND, "작업을 찾을 수 없습니다."),
+    if let Some(record)=state.store.get("sdk_run",&id) {
+        return Json(public_view(&state,record)).into_response();
+    }
+    match native_job(&state,&id) {
+        Some(job)=>Json(native_view(&state,&job)).into_response(),
+        None=>error(StatusCode::NOT_FOUND,"작업을 찾을 수 없습니다.")
     }
 }
 
@@ -100,23 +138,35 @@ pub async fn start(State(state): State<AppState>, Json(input): Json<Start>) -> R
         Ok(route) => route,
         Err(message) => return error(StatusCode::BAD_REQUEST, &message),
     };
-    if matches!(route.kind.as_str(), "cli" | "anthropic") {
-        return error(StatusCode::BAD_REQUEST,
-            "현재 Rust SDK 실행기는 OpenAI 호환 호출을 지원합니다. 호환 모델을 선택하세요.");
-    }
-    let id = uuid::Uuid::new_v4().to_string();
-    let record = json!({
-        "id":id,"status":"queued","instruction":input.instruction,
-        "providerId":route.id,"model":route.model,
+    // Keep the stable /api/harness/runs entrypoint but enqueue the SAME
+    // Rust SDK kernel used by /api/sdk/runs. This route no longer starts
+    // dominion_harness::AgentSdk for newly submitted tasks.
+    let response=sdk_runs::create(State(state.clone()),Json(json!({
+        "instruction":input.instruction,
+        "providerId":route.id,
+        "model":route.model,
         "verifyCommand":input.verify_command,
         "maxRounds":input.max_rounds.unwrap_or(24).clamp(1,80),
-    });
-    let Some(saved) = state.store.put("sdk_run", &record) else {
-        return error(StatusCode::INTERNAL_SERVER_ERROR, "작업을 저장하지 못했습니다.");
+        "harnessCompat":true
+    }))).await;
+    if !response.status().is_success() {return response;}
+    let bytes=match to_bytes(response.into_body(),1024*1024).await {
+        Ok(bytes)=>bytes,
+        Err(_)=>return error(StatusCode::INTERNAL_SERVER_ERROR,
+            "작업 생성 응답을 읽지 못했습니다.")
     };
-    match launch(state.clone(), id, None) {
-        Ok(()) => (StatusCode::ACCEPTED, Json(public_view(&state, saved))).into_response(),
-        Err(message) => error(StatusCode::CONFLICT, &message),
+    let view:Value=match serde_json::from_slice(&bytes) {
+        Ok(view)=>view,
+        Err(_)=>return error(StatusCode::INTERNAL_SERVER_ERROR,
+            "작업 생성 응답 형식이 올바르지 않습니다.")
+    };
+    let Some(id)=view["id"].as_str() else {
+        return error(StatusCode::INTERNAL_SERVER_ERROR,"새 작업 ID가 없습니다.");
+    };
+    match native_job(&state,id) {
+        Some(job)=>(StatusCode::ACCEPTED,Json(native_view(&state,&job))).into_response(),
+        None=>error(StatusCode::INTERNAL_SERVER_ERROR,
+            "생성된 네이티브 작업을 찾지 못했습니다.")
     }
 }
 
@@ -227,6 +277,10 @@ async fn execute(state: AppState, id: String, approved: Option<String>) -> Resul
 }
 
 pub async fn resume(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    if native_job(&state,&id).is_some() {
+        let response=sdk_runs::resume(State(state.clone()),Path(id.clone())).await;
+        return native_reply(&state,&id,response);
+    }
     let Some(record) = state.store.get("sdk_run", &id) else {
         return error(StatusCode::NOT_FOUND, "작업이 없습니다.");
     };
@@ -243,6 +297,11 @@ pub async fn resume(State(state): State<AppState>, Path(id): Path<String>) -> Re
 }
 
 pub async fn approve(State(state): State<AppState>, Path(id): Path<String>, Json(input): Json<Approve>) -> Response {
+    if native_job(&state,&id).is_some() {
+        let response=sdk_runs::approve(State(state.clone()),Path(id.clone()),
+            Json(json!({"callId":input.call_id}))).await;
+        return native_reply(&state,&id,response);
+    }
     let Some(record) = state.store.get("sdk_run", &id) else {
         return error(StatusCode::NOT_FOUND, "작업이 없습니다.");
     };
@@ -268,6 +327,11 @@ pub async fn reconcile(
     Path(id): Path<String>,
     Json(input): Json<ReconcileInput>,
 ) -> Response {
+    if native_job(&state,&id).is_some() {
+        let response=sdk_runs::reconcile(State(state.clone()),Path(id.clone()),
+            Json(json!({"applied":input.applied,"details":input.details}))).await;
+        return native_reply(&state,&id,response);
+    }
     let details = input.details.trim();
     if details.is_empty() || details.len() > 8192 {
         return error(StatusCode::BAD_REQUEST, "실제 확인한 결과를 1~8192자로 입력하세요.");
@@ -308,6 +372,10 @@ pub async fn reconcile(
 }
 
 pub async fn cancel(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    if native_job(&state,&id).is_some() {
+        let response=sdk_runs::cancel(State(state.clone()),Path(id.clone())).await;
+        return native_reply(&state,&id,response);
+    }
     let Some(mut record) = state.store.get("sdk_run", &id) else {
         return error(StatusCode::NOT_FOUND, "작업이 없습니다.");
     };
@@ -369,13 +437,19 @@ mod parity_tests {
         let payload=to_bytes(response.into_body(),1024*1024).await.unwrap();
         let view:Value=serde_json::from_slice(&payload).unwrap();
         let id=view["id"].as_str().unwrap().to_string();
-        let record=state.store.get("sdk_run",&id).expect("real Rust harness record");
-        assert_eq!(record["maxRounds"],3);
-        assert_eq!(record["model"],"test-model");
-        assert_eq!(record["instruction"],"Inspect a file and verify it");
+        let record=state.store.get("job",&id).expect("native job-backed harness record");
+        assert_eq!(record["input"]["harnessCompat"],true);
+        assert_eq!(record["input"]["limits"]["maxSteps"],3);
+        assert_eq!(record["input"]["model"],"test-model");
+        assert_eq!(record["input"]["prompt"],"Inspect a file and verify it");
+        assert!(state.store.get("sdk_run",&id).is_none(),
+            "new entry must not create a second SDK-run checkpoint");
         let detail=one(State(state.clone()),Path(id.clone())).await;
         assert_eq!(detail.status(),StatusCode::OK);
-        state.cancel_session(&format!("sdk:{id}"));
+        assert_eq!(list(State(state.clone())).await.0.as_array().unwrap().len(),1);
+        if let Some(session)=record["sessionId"].as_str() {
+            state.cancel_session(session);
+        }
         let _=std::fs::remove_dir_all(root);
     }
 }
