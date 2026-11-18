@@ -876,14 +876,14 @@ fn write_outputs(root: &Path, manifest: &Value, trials: &[Value]) -> Result<Valu
         "repairAB":manifest["repairAB"],
         "repairEvidence":if manifest["repairAB"]==true {
             json!({
-                "baselineTriggered":trials.iter().filter(|t|t["arm"]=="baseline" && t["repairTriggered"]==true).count(),
-                "treatmentTriggered":trials.iter().filter(|t|t["arm"]=="treatment" && t["repairTriggered"]==true).count(),
+                "baselineTriggered":trials.iter().filter(|t|t["arm"]=="baseline" && t["repair"]["triggered"]==true).count(),
+                "treatmentTriggered":trials.iter().filter(|t|t["arm"]=="treatment" && t["repair"]["triggered"]==true).count(),
                 "baselineWithRevision":trials.iter().filter(|t|t["arm"]=="baseline"
-                    && t["programRevisionCount"].as_u64().is_some_and(|n|n>0)).count(),
+                    && t["repair"]["revisionCount"].as_u64().is_some_and(|n|n>0)).count(),
                 "treatmentWithRevision":trials.iter().filter(|t|t["arm"]=="treatment"
-                    && t["programRevisionCount"].as_u64().is_some_and(|n|n>0)).count(),
+                    && t["repair"]["revisionCount"].as_u64().is_some_and(|n|n>0)).count(),
                 "treatmentVerifiedPostflights":trials.iter().filter(|t|t["arm"]=="treatment"
-                    && t["repairPostflightReceipts"].as_array().is_some_and(|rows|
+                    && t["repair"]["postflightReceipts"].as_array().is_some_and(|rows|
                        !rows.is_empty() && rows.iter().all(|row|row["verdict"]=="true"))
                 ).count(),
             })
@@ -1456,7 +1456,7 @@ async fn main() -> Result<(), String> {
             } else {
                 "completed"
             };
-            let trial = json!({
+            let mut trial = json!({
                 "schemaVersion": SCHEMA_VERSION,
                 "experimentId": experiment_id,
                 "trialId": id,
@@ -1478,14 +1478,6 @@ async fn main() -> Result<(), String> {
                 "auditOk": audit_ok,
                 "reportOk": report_ok,
                 "requiresCompliance": policy_claim.is_none() && !cfg.repair_ab,
-                "repairAB":cfg.repair_ab,
-                "repairArm":if cfg.repair_ab {json!(arm)} else {Value::Null},
-                "repairTriggered":repair_triggered,
-                "programCheckpointStatus":execution["programCheckpoint"]["status"],
-                "repairTournamentChoice":execution["revisedProgram"]["repairTournament"]["decision"]["chosen"],
-                "repairProbeReceipts":execution["revisedProgram"]["repairTournament"]["probeReceipts"],
-                "repairPostflightReceipts":execution["programCheckpoint"]["repairPostflightReceipts"],
-                "programRevisionCount":execution["programCheckpoint"]["revisionHistory"].as_array().map(Vec::len),
                 "planQuality": execution["planQuality"]["total"]
                     .as_f64()
                     .unwrap_or(0.0),
@@ -1502,19 +1494,6 @@ async fn main() -> Result<(), String> {
                 "preStateHash": pre_hash,
                 "postStateHash": fixture_digest(&root, &cfg.fixture),
                 "tokens": observed_tokens,
-                "tokenSource": if session_usage["calls"].as_u64().unwrap_or(0)>0 {
-                    "session_usage_all_model_calls"
-                }else{"missing_usage"},
-                "modelUsage": {
-                    "recordedCalls":session_usage["calls"],
-                    "promptTokens":session_usage["promptTokens"],
-                    "completionTokens":session_usage["completionTokens"],
-                    "cachedPromptTokens":session_usage["cachedPromptTokens"],
-                    "estimatedCalls":session_usage["estimatedCalls"],
-                    "pricedCalls":session_usage["pricedCalls"],
-                    "unpricedCalls":session_usage["unpricedCalls"],
-                    "configuredCostUsd":session_usage["configuredCostUsd"],
-                },
                 "toolCalls": execution["toolCalls"],
                 "modelCalls": execution["modelCalls"],
                 "streamChars": stream.chars().count(),
@@ -1529,6 +1508,31 @@ async fn main() -> Result<(), String> {
                     "rootOutcome": task["rootOutcome"],
                     "attempts": task["attempts"].as_array().map(Vec::len),
                 },
+            });
+            // Keep repair-specific evidence outside the already large native
+            // trial macro; this is a separately versionable observation.
+            if cfg.repair_ab {
+                trial["repair"]=json!({
+                    "arm":arm,"triggered":repair_triggered,
+                    "checkpointStatus":execution["programCheckpoint"]["status"],
+                    "tournamentChoice":execution["revisedProgram"]["repairTournament"]["decision"]["chosen"],
+                    "probeReceipts":execution["revisedProgram"]["repairTournament"]["probeReceipts"],
+                    "postflightReceipts":execution["programCheckpoint"]["repairPostflightReceipts"],
+                    "revisionCount":execution["programCheckpoint"]["revisionHistory"].as_array().map(Vec::len),
+                });
+            }
+            trial["tokenSource"]=json!(if session_usage["calls"].as_u64().unwrap_or(0)>0 {
+                "session_usage_all_model_calls"
+            }else{"missing_usage"});
+            trial["modelUsage"]=json!({
+                "recordedCalls":session_usage["calls"],
+                "promptTokens":session_usage["promptTokens"],
+                "completionTokens":session_usage["completionTokens"],
+                "cachedPromptTokens":session_usage["cachedPromptTokens"],
+                "estimatedCalls":session_usage["estimatedCalls"],
+                "pricedCalls":session_usage["pricedCalls"],
+                "unpricedCalls":session_usage["unpricedCalls"],
+                "configuredCostUsd":session_usage["configuredCostUsd"],
             });
             let directory = root.join("artifacts").join(id.replace(':', "_"));
             std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
