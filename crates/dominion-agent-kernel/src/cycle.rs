@@ -84,9 +84,13 @@ impl Cycle {
                 Decision::Repair
             }else{Decision::Review};
         }
-        // This terminal budget gate wins even when new owner steering
-        // arrives during the provider call.
-        if observation.token_budget_exhausted {
+        // The budget limits *additional model calls*, not the final result
+        // already proven by the same turn. A verifier success at the exact
+        // spending boundary must survive; otherwise correct artifacts become
+        // needs_review merely because they consumed their granted tokens.
+        // Owner revision and genuinely unknown effects already prevent Accept
+        // above and must remain authoritative.
+        if observation.token_budget_exhausted && decision==Decision::Repair {
             decision=Decision::Review;
         }
         Assessment{decision,stalled,unknown_effect}
@@ -176,6 +180,31 @@ mod tests{
         assert!(prompt.contains("Repair src/lib.rs"));
         assert!(!prompt.contains("컴파일 오류입니다"));
     }
+    #[test]
+    fn verified_file_completion_survives_token_budget_limit(){
+        let mut cycle=policy(3);
+        assert_eq!(cycle.next_attempt(),Some(0));
+        let empty=Vec::<String>::new();
+        let success=Observation{
+            token_budget_exhausted:true,
+            ..observation(&empty,&[])
+        };
+        assert_eq!(cycle.assess(&success).decision,Decision::Accept,
+            "a verified success is not an extra model call");
+        let unresolved=vec!["file receipt missing".into()];
+        let unverified=Observation{gaps:&unresolved,..success};
+        assert_eq!(cycle.assess(&unverified).decision,Decision::Review,
+            "budget exhaustion cannot authorize another repair");
+        let owner_replaced=Observation{owner_changed:true,..success};
+        assert_eq!(cycle.assess(&owner_replaced).decision,Decision::Review,
+            "old verified result cannot settle a new user goal");
+        let unknown=vec![json!({"tool":"mcp__remote_write",
+            "result":{"outcomeUnknown":true}})];
+        let unsafe_completion=Observation{accumulated_evidence:&unknown,..success};
+        assert_eq!(cycle.assess(&unsafe_completion).decision,Decision::Review,
+            "unsettled effects cannot be bypassed by a verified local file");
+    }
+
     #[test]
     fn token_cap_and_exhausted_retries_cannot_start_more_work(){
         let mut cycle=policy(1);
