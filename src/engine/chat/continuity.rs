@@ -55,10 +55,13 @@ fn evidence_digest(kind: &str, record: &Value) -> String {
 fn active_owner_facts(record: &Value) -> Vec<Value> {
     record["facts"].as_array().into_iter().flatten()
         .filter(|fact| fact["status"] == "active")
-        .map(|fact| json!({
+        // Only revision fingerprints are persisted in the participant cache.
+        // Exact wording remains in room_state and the transcript, not another
+        // 9-way copy of every potentially long owner instruction.
+        .map(|fact| json!(stable_id(&[&json!({
             "id":fact["id"],"kind":fact["kind"],"text":fact["text"],
             "sourceMessageId":fact["sourceMessageId"],"verifiedLocalOwner":fact["verifiedLocalOwner"]
-        }))
+        }).to_string()])))
         .collect()
 }
 
