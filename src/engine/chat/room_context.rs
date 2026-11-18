@@ -234,13 +234,19 @@ fn evidence(
     for record in state.store.all("skill").into_iter().filter(|record| {
         memory::visible(record, &scope) && record["enabled"] != false && record["status"] != "draft"
     }) {
-        let text = record["instructions"]
-            .as_str()
-            .or_else(|| record["description"].as_str())
-            .unwrap_or("");
+        // A room participant sees a compact skill index; detailed instructions
+        // are fetched only when relevant. Keep the skill's real ID so it can
+        // be read later with the permission-scoped skill_read native tool.
+        let id=record["id"].as_str().unwrap_or("");
+        let name=record["name"].as_str().unwrap_or("");
+        let description=record["description"].as_str()
+            .filter(|s|!s.trim().is_empty())
+            .unwrap_or_else(||record["instructions"].as_str().unwrap_or(""))
+            .chars().take(120).collect::<String>();
         add_evidence(
             candidates,
-            json!({"kind":"skill","id":record["id"],"text":format!("{}\n{}",record["name"].as_str().unwrap_or(""),text)}),
+            json!({"kind":"skill","id":id,
+                "text":format!("[{id}] {name}: {description} (full instructions: skill_read)")}),
             false,
         );
     }
