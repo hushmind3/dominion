@@ -121,6 +121,9 @@ pub(crate) fn project(
         let key = frame_key(message, source, index);
         json!({"key":key,"message":body})
     }).collect::<Vec<_>>();
+    // Compute once before the rebase branch moves 'fresh' into frames.
+    let fresh_history_estimated_tokens=super::room_context::input_estimate(
+        &fresh.iter().map(|f|f["message"].clone()).collect::<Vec<_>>(),&[]);
     let mut frames = previous["frames"].as_array().cloned().unwrap_or_default();
     let mut reason = if frames.is_empty() { Some("initial") }
         else if previous["signature"] != signature { Some("contract_changed") }
@@ -184,8 +187,7 @@ pub(crate) fn project(
         "rebaseReason":reason,"sourceMessageId":source,
         "inputDigest":stable_id(&[&json!(projected).to_string()]),
         "estimatedInputTokens":super::room_context::input_estimate(&projected, tools),
-        "freshHistoryEstimatedTokens":super::room_context::input_estimate(
-            &fresh.iter().map(|f|f["message"].clone()).collect::<Vec<_>>(),&[]),
+        "freshHistoryEstimatedTokens":fresh_history_estimated_tokens,
         "retainedHistoryEstimatedTokens":super::room_context::input_estimate(
             &frames.iter().map(|f|f["message"].clone()).collect::<Vec<_>>(),&[]),
         "historyAllowanceTokens":plan["workingViewBudgetTokens"],
