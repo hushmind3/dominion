@@ -278,3 +278,15 @@ HTTP MCP의 `text/event-stream` 응답은 전체 연결 종료를 기다리지 �
 관련 Rust 회귀는 `cargo test --locked --bin dominion-rust engine::mcp::tests`이고 개발 CI의 별도 단계로 등록됐습니다. 테스트는 응답을 보낸 뒤 서버가 연결을 닫지 않는 SSE, 무관한 ID, 하트비트, 독립 MCP 서버의 동시 목록 조회 및 결과 순서 보존을 대상으로 합니다. 2026-07-28 MCP의 신규 핸드셰이크 없는 `_meta`·필수 HTTP 헤더·`x-mcp-header` 전면 지원은 이번 변경 범위 밖입니다. 기존 클라이언트의 초기화 절차는 유지되므로 이 개선을 2026년 최신 MCP 프로토콜 전체 지원으로 표현하지 않습니다.
 
 참조: [MCP 2026-07-28 Streamable HTTP 규격](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2026-07-28/basic/transports/streamable-http.mdx), [Goose 확장 관리](https://github.com/aaif-goose/goose/blob/main/documentation/docs/mcp/extension-manager-mcp.md), [DeepSeek Harness의 Cordis 구조](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md). 외부 프로젝트의 실행기를 합치지 않고 기존 Rust 도구 경계를 개선했습니다.
+
+## 실행 경로 전수 점검: 간접 DB 스캔·미사용 실험 루프 정리 (2026-11-18)
+
+Rust 커널의 구조 검사와 컴파일 성공은 DB 조회량·불용 호출·중복 상태 책임의 부재를 보증하지 않습니다. 메인 런타임의 `finalization.rs → improve::execution_updates`와 `improve::active_values_with_execution` 실제 호출 경로를 추적해 아래 잔재를 제거했습니다.
+
+- **종료 처리:** 모든 과거 `execution_operation` 조회 및 `improvement` 2회 전체 조회를 없애고 `Store::execution_operations(run_id)`와 `Store::try_records_by_ids("improvement", applied_ids)`로 전환했습니다. 적용 개선안 ID가 없으면 즉시 반환합니다. 이전 실행의 도구 영수증이 현재 작업의 통계에 포함되지 않는 회귀를 추가했습니다.
+- **전략 검색:** 매 대화에서 비활성·다른 에이전트의 개선안까지 전체 역직렬화하던 경로를 `active_improvements_for_scope`의 SQL 필터와 부분 인덱스로 변경했습니다. 작업의 전략 선택 커널 조회도 후보마다 반복하지 않고 1회 수행합니다.
+- **최근 기준선:** `all("execution").rev().take(40)`가 최신이 아니라 오래된 실행을 선택하던 오류를 수정했습니다. 이제 SQLite 인덱스로 최근 40건만 결정적 순서로 조회합니다.
+- **중복/퇴역:** 호출자가 없는 `run_quiet_with_stats` 래퍼, 이중 read-only 도구 필터, 실행 불가능한 `schedule_experiments` 생산자, 이전 H8 자동 실험 스케줄러의 등록·부팅·소스 파일을 제거했습니다. 이전 실험·RSI·영상의 읽기 전용 기록 조회와 수동 평가 API는 데이터 호환을 위해 유지합니다.
+- **재발 방지:** `scripts/check-runtime-architecture.mjs`는 이제 `finalization.rs`뿐 아니라 `improve::execution_updates`의 간접 전체 테이블 조회, 전략 선택의 전체 스캔·후보별 커널 호출, 퇴역 스케줄러 재도입도 검사합니다. 개발 CI에 `engine::improve::tests`를 별도 추가했습니다.
+
+이는 구조 및 SQL 조회 범위의 개선입니다. 실제 모델 작업의 완료당 토큰·시간·총비용 감소 수치는 별도 비교 전까지 주장하지 않습니다. 기존 학습·사용자 교정·작업 실행·SDK·API·DB 파일은 교체하지 않았습니다.
