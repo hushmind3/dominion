@@ -129,7 +129,7 @@ mod lazy_skill_tests {
         let state=crate::state::AppState::new(config,store,vault);
         state.store.put("skill",&json!({"id":"enabled-skill","scope":"global",
             "name":"Current research","description":"Short catalog description",
-            "instructions":"Heading\\nSECRET-SKILL-INSTRUCTION\\nFinish",
+            "instructions":"Heading\nSECRET-SKILL-INSTRUCTION\nFinish",
             "enabled":true,"status":"active"}));
         state.store.put("skill",&json!({"id":"draft-skill","scope":"global",
             "name":"Draft","instructions":"Do not load","enabled":true,"status":"draft"}));
