@@ -114,6 +114,7 @@ jobs:
         run: |
           cargo test --locked --bin dominion-rust shared_room_owner_rules_precede_agent_persona_with_no_identity_loss
           cargo test --locked --bin dominion-rust identity_has_a_shared_stable_prefix_without_changing_owner_personas
+          cargo test --locked --bin dominion-rust owner_fact_selection_reuses_prefix_and_appends_missing_facts_until_real_revision
           cargo test --locked --bin dominion-rust cloudflare_room_affinity_is_shared_by_nine_speakers_without_reusing_their_cursors
           cargo test --locked --bin dominion-rust provider_cache_counts_are_optional_and_never_invent_zero_hits
       - name: Benchmark timeout teardown and per-speaker cost evidence (dev profile)
