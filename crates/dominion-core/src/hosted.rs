@@ -35,26 +35,37 @@ impl Snapshot{
         native.status=RunStatus::Running;
         Ok(Self{native,model_calls:0,charged_tokens:0,step:0,receipts:vec![],model_in_flight:false})
     }
+    /// One source of truth for terminal readiness. Pending approvals and
+    /// delegated children are unsettled even when no tool is currently in
+    /// flight; they may not be bypassed by a budget/receipt shortcut.
+    pub fn settled(&self) -> bool {
+        !self.model_in_flight
+            && self.native.in_flight.is_none()
+            && self.native.read_batch_in_flight.is_empty()
+            && self.native.queued_calls.is_empty()
+            && self.native.pending_approval.is_none()
+            && !self.native.cancel_after_tool
+            && !self.native.waiting_for_children
+    }
     /// A new model decision cannot overtake an uncertain tool or paid call.
     pub fn next_round(&mut self,budget:&mut BudgetLedger,store:&dyn Journal)->Result<Option<usize>,String>{
         if store.cancelled(&self.native.id.to_string()){return Err("실행이 중단되었습니다.".into());}
         if self.native.terminal(){return Ok(None);}
-        if self.model_in_flight || self.native.in_flight.is_some() || !self.native.read_batch_in_flight.is_empty(){
-            return Err("결과가 불명확한 실행을 먼저 확인해야 합니다.".into());
+        if !self.settled() {
+            return Err("보류 중인 도구·승인·하위 작업의 결과를 먼저 확인해야 합니다.".into());
         }
-        if !self.native.queued_calls.is_empty(){return Err("대기 중인 도구를 처리하기 전에 모델을 다시 호출할 수 없습니다.".into());}
         let round=budget.next_round();
         if let Some(round)=round{self.step=round+1;self.native.steps=round+1;store.save(self)?;}
         Ok(round)
     }
     pub fn begin_model(&mut self,store:&dyn Journal)->Result<(),String>{
-        if self.model_in_flight||self.native.in_flight.is_some()||!self.native.read_batch_in_flight.is_empty(){return Err("이전 실행 결과가 확인되지 않았습니다.".into());}
+        if !self.settled(){return Err("이전 실행·승인·하위 작업 결과가 확인되지 않았습니다.".into());}
         if store.cancelled(&self.native.id.to_string()){return Err("실행이 중단되었습니다.".into());}
         self.model_in_flight=true;self.model_calls+=1;store.save(self)
     }
     pub fn finish_model(&mut self,store:&dyn Journal)->Result<(),String>{self.model_in_flight=false;store.save(self)}
     pub fn complete(&mut self,answer:String,store:&dyn Journal)->Result<(),String>{
-        if self.model_in_flight||self.native.in_flight.is_some()||!self.native.read_batch_in_flight.is_empty()||!self.native.queued_calls.is_empty(){return Err("진행 중인 작업의 결과 없이 완료할 수 없습니다.".into());}
+        if !self.settled(){return Err("보류 중인 작업·승인·하위 작업을 건너뛰어 완료할 수 없습니다.".into());}
         self.native.status=RunStatus::Completed;self.native.answer=Some(answer);store.save(self)
     }
 }
@@ -92,7 +103,7 @@ fn succeeded(value:&Value)->bool{
 pub async fn dispatch_batch<D:Dispatcher>(snapshot:&mut Snapshot,actions:&[Action],dispatcher:&D,store:&dyn Journal)->Result<Vec<Result<D::Output,String>>,String>{
     if snapshot.native.status!=RunStatus::Running||snapshot.model_in_flight{return Err("현재 실행 상태에서 도구를 시작할 수 없습니다.".into());}
     if store.cancelled(&snapshot.native.id.to_string()){return Err("실행이 중단되었습니다.".into());}
-    if snapshot.native.in_flight.is_some()||!snapshot.native.read_batch_in_flight.is_empty()||!snapshot.native.queued_calls.is_empty(){return Err("이전 도구의 결과를 먼저 확인해야 합니다.".into());}
+    if !snapshot.settled(){return Err("이전 도구·승인·하위 작업의 결과를 먼저 확인해야 합니다.".into());}
     let calls=actions.iter().map(|a|ToolCall{id:a.id.clone(),name:a.tool.clone(),arguments:a.arguments.clone()}).collect::<Vec<_>>();
     journal::validate_new_calls(&snapshot.native,&calls)?;
     let definitions=if snapshot.native.advertised_tools.is_empty(){dispatcher.definitions()}else{snapshot.native.advertised_tools.clone()};
@@ -147,6 +158,29 @@ mod tests{
     impl Dispatcher for Tool{type Output=();fn execute<'a>(&'a self,_:&'a Action)->BoxFuture<'a,Result<DispatchResult<()>,String>>{Box::pin(async move{self.0.fetch_add(1,Ordering::SeqCst);Ok(DispatchResult{output:(),observation:json!({"written":true}),success:true})})}}
     fn run()->Snapshot{Snapshot::new(&uuid::Uuid::new_v4().to_string(),"create a file",8).unwrap()}
     fn action()->Action{Action{id:"c".into(),tool:"workspace_write".into(),arguments:json!({"path":"a","content":""}),depends_on:vec![]}}
+    #[test]
+    fn pending_approval_and_unsettled_child_block_paid_calls_and_false_completion() {
+        let journal=Memory{saved:Mutex::new(None),fail:false};
+        let mut snapshot=run();
+        snapshot.native.pending_approval=Some(ToolCall{
+            id:"approve".into(),name:"workspace_write".into(),
+            arguments:json!({"path":"x"})
+        });
+        assert!(!snapshot.settled());
+        let mut budget=BudgetLedger::new(8,8,std::time::Duration::from_secs(60));
+        assert!(snapshot.next_round(&mut budget,&journal).is_err());
+        assert!(snapshot.begin_model(&journal).is_err());
+        assert!(snapshot.complete("false".into(),&journal).is_err());
+        snapshot.native.pending_approval=None;
+        snapshot.native.waiting_for_children=true;
+        assert!(!snapshot.settled());
+        assert!(snapshot.next_round(&mut budget,&journal).is_err());
+        assert!(snapshot.complete("false".into(),&journal).is_err());
+        snapshot.native.waiting_for_children=false;
+        assert!(snapshot.settled());
+        assert_eq!(snapshot.next_round(&mut budget,&journal).unwrap(),Some(0));
+    }
+
     #[tokio::test]
     async fn failed_write_ahead_storage_prevents_dispatch(){let mut s=run();let d=Tool(AtomicUsize::new(0));let j=Memory{saved:Mutex::new(None),fail:true};assert!(dispatch_batch(&mut s,&[action()],&d,&j).await.is_err());assert_eq!(d.0.load(Ordering::SeqCst),0);}
 
