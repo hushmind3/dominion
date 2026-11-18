@@ -819,6 +819,7 @@ mod tests {
                 "path":{"type":"string","description":"Relative path"}}}
         }})];
         let mut cost_per_turn=Vec::new();
+        let mut shared_keys=Vec::new();
         for turn in 0..3 {
             let source=format!("owner-{turn}");
             message(&state,&source,"user",&format!("이번 {turn}턴: 각자의 답을 유지하고 계속해라"));
@@ -831,8 +832,9 @@ mod tests {
                 let compiled=compile(&state,&request,"room:r",&source,&tools,&[]).unwrap();
                 let selected=compiled.accounting["selectedMessageIds"].as_array().unwrap();
                 assert!(selected.iter().any(|s|s.as_str()==Some(source.as_str())));
-                assert!(compiled.history.iter().any(|row|row["_dominion_frame"].as_str()
-                    .is_some_and(|frame|frame.starts_with("room-shared:"))));
+                let shared=compiled.history.iter().find(|row|row["_dominion_frame"].as_str()
+                    .is_some_and(|frame|frame.starts_with("room-shared:"))).unwrap();
+                if index==0 { shared_keys.push(shared["_dominion_frame"].clone()); }
                 assert_eq!(compiled.accounting["sharedTextDigest"].as_str().map(str::len),
                     Some(32),"stable_id emits two 64-bit hexadecimal components");
                 assert!(!compiled.system.prompt.contains("LEAKED_NEXT_TURN"));
@@ -857,6 +859,11 @@ mod tests {
             cost_per_turn.push(costs);
         }
         assert_eq!(state.store.messages("room:r").len(),30);
+        assert_eq!(shared_keys.len(),3);
+        assert_ne!(shared_keys[0],shared_keys[1],
+            "first owner turn and all-responded round have different status");
+        assert_eq!(shared_keys[1],shared_keys[2],
+            "all nine answered both rounds; identical model-visible status reuses its key");
         // The third turn may carry useful extra evidence; its growth must
         // remain bounded rather than replay every past speaker every time.
         let first=cost_per_turn[0].iter().sum::<u64>();
