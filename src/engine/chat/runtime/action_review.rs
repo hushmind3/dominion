@@ -188,7 +188,7 @@ mod tests{
         y["startedAt"]=json!("later");
         let gaps=vec!["missing output file".to_string()];
         assert_eq!(repair_signature(&gaps,&[x.clone()]),
-            repair_signature(&gaps,&[x,y.clone()]));
+            repair_signature(&gaps,&[x.clone(),y.clone()]));
         y["result"]["content"]=json!("new information");
         assert_ne!(repair_signature(&gaps,&[x]),repair_signature(&gaps,&[y]));
     }
