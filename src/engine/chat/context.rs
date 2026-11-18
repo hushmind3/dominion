@@ -628,6 +628,33 @@ mod tests {
     }
 
     #[test]
+    fn skill_manifest_is_compact_sorted_and_never_embeds_full_instructions(){
+        let (state,dir)=state();
+        state.store.put("session",&json!({"id":"s"}));
+        let secret="SKILL_INSTRUCTIONS_UNIQUE_TAIL";
+        state.store.put("skill",&json!({"id":"z-2","name":"Zulu",
+            "status":"active","enabled":true,"scope":"global",
+            "description":"For workspace review",
+            "instructions":format!("{}{}", "L".repeat(2400),secret)}));
+        state.store.put("skill",&json!({"id":"a-1","name":"Alpha",
+            "status":"active","enabled":true,"scope":"global",
+            "description":"For documentation",
+            "instructions":"Do not hallucinate missing files"}));
+        let (block,items,_)=context_block_with_manifest(
+            &state,"s",None,"workspace review",None,None).unwrap();
+        let a=block.find("[a-1] Alpha").unwrap();
+        let z=block.find("[z-2] Zulu").unwrap();
+        assert!(a<z,"skill manifest must be stable, not insertion-ordered");
+        assert!(block.contains("skill_read"));
+        assert!(!block.contains(secret));
+        assert!(!block.contains(&"L".repeat(700)));
+        assert!(block.chars().count()<1100,
+            "long skill instructions must be loaded on demand");
+        assert_eq!(items.iter().filter(|x|x["kind"]=="skill").count(),2);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn durable_parallel_result_history_reorders_by_model_call_ids_not_completion_time(){
         let (state,dir)=state();
         state.store.put("session",&json!({"id":"s","title":"ordered results"}));
