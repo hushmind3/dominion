@@ -25,12 +25,18 @@ pub fn evidence(source:&Value,claim:&str,kind:&str)->Value{
     }else{"not_in_stored_title"};
     let url=source["url"].as_str().unwrap_or("")
         .chars().take(1500).collect::<String>();
+    let aggregator_url=reqwest::Url::parse(&url).ok()
+        .and_then(|parsed|parsed.host_str().map(str::to_string))
+        .is_some_and(|host|host=="news.google.com"||host=="google.com");
     json!({
         "claim":claim,"url":url,"kind":kind,
         "sourceArchive":"money_signal",
         "sourceId":source["id"],"sourceRevision":revision(source),
         "quoteMatchStatus":match_status,
-        "sourceTextStatus":if source["contentStatus"]=="page_fetched"
+        "sourceTextStatus":if aggregator_url
+            && source["articleExcerpt"].as_str().is_some_and(|text|!text.is_empty()){
+            "archived_aggregator_excerpt_not_primary_source"
+        }else if source["contentStatus"]=="page_fetched"
             && source["articleExcerpt"].as_str().is_some_and(|text|!text.is_empty()){
             "archived_page_excerpt"
         }else{"headline_or_description_only"},
@@ -63,6 +69,22 @@ mod tests{
         let invented=evidence(&source,"A completed 500M sale","buyer_side_observation");
         assert_eq!(invented["quoteMatchStatus"],"not_in_stored_title");
     }
+    #[test]
+    fn historical_google_news_html_is_not_falsely_a_primary_source(){
+        let source=json!({"id":"aggregator","url":"https://news.google.com/rss/articles/x",
+            "title":"Buyer procurement report","articleExcerpt":"<html>Google News listing</html>",
+            "contentStatus":"page_fetched","publisherDomain":"reuters.com"});
+        let record=evidence(&source,"Buyer procurement report","buyer_side_observation");
+        assert_eq!(record["quoteMatchStatus"],"stored_title_exact");
+        assert_eq!(record["sourceTextStatus"],
+            "archived_aggregator_excerpt_not_primary_source");
+        assert_eq!(record["transactionVerification"],"unknown");
+        let mut actual=source;
+        actual["url"]=json!("https://reuters.com/business/report");
+        assert_eq!(evidence(&actual,"Buyer procurement report","buyer_side_observation")
+            ["sourceTextStatus"],"archived_page_excerpt");
+    }
+
     #[test]
     fn page_enrichment_changes_content_revision_without_overwriting_old_claim(){
         let mut source=json!({"id":"source-a",
