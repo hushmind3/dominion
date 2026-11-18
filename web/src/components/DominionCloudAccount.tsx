@@ -98,6 +98,25 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
    setCatalogMessage('모델이 채팅에 등록됐습니다.')
   }catch(e){setCatalogMessage((e as Error).message)}finally{setCatalogBusy(false)}
  }
+ async function importCatalogModels(){
+  const entry=catalog.find(p=>p.id===catalogId)
+  if(!entry||!catalogProviderId||!catalogModels.length)return
+  setCatalogBusy(true);setCatalogMessage('모델 일괄 등록 중…')
+  try{
+   const baseUrl=entry.api.replace(/\/$/,'')
+   const providers=await get<Array<{id:string;baseUrl:string;model?:string}>>('/api/providers')
+   const known=new Set(providers.filter(p=>p.baseUrl.replace(/\/$/,'')===baseUrl).map(p=>p.model))
+   const blank=providers.find(p=>p.id===catalogProviderId&&!p.model)
+   let added=0
+   for(const m of catalogModels){
+    if(!m.id||known.has(m.id))continue
+    await post('/api/providers',{id:blank&&added===0?blank.id:undefined,name:entry.name+' · '+m.id,baseUrl,kind:'openai',apiKey:catalogKey.trim()||undefined,credentialSourceId:catalogKey.trim()?undefined:catalogProviderId,model:m.id,enabled:true,local:false,toolMode:'auto'})
+    known.add(m.id);added++
+   }
+   await onProviderAdded()
+   setCatalogMessage('전체 '+catalogModels.length+'개 중 신규 '+added+'개 등록 · 중복 제외')
+  }catch(e){setCatalogMessage((e as Error).message)}finally{setCatalogBusy(false)}
+ }
  async function importOpenRouterFree(){
   if(!routerKey.trim())return
   setRouterBusy(true);setRouterMessage('무료 모델 조회 중…')
@@ -162,6 +181,7 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
    {catalogModels.length>0&&<div className="mt-2 flex flex-wrap gap-2">
     <select aria-label="연결된 업체 모델" value={catalogModel} onChange={e=>setCatalogModel(e.target.value)} className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]">{catalogModels.map(m=><option key={m.id} value={m.id}>{m.name||m.id}</option>)}</select>
     <button type="button" disabled={catalogBusy||!catalogModel} onClick={()=>void saveCatalogModel()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">채팅에 등록</button>
+    <button type="button" disabled={catalogBusy||!catalogProviderId} onClick={()=>void importCatalogModels()} className="rounded-lg border px-3 py-2 text-[12px] disabled:opacity-50">조회된 모델 전체 등록</button>
    </div>}
    {catalogMessage&&<p role="status" className="mt-2 text-[12px] text-[#7C7469]">{catalogMessage}</p>}
   </div>
