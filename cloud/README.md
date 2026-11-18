@@ -102,3 +102,9 @@ unrestricted resale of provider free-tier capacity without permission.
 Apply `cloud/schema.sql` to D1 before calling free models; `free_quota`
 is required. Configure `FREE_DAILY_LIMIT` conservatively. This code has not
 been deployed or verified end-to-end with real Google/Cloudflare credentials.
+
+## Provisioned Cloudflare endpoint (2026-11-18)
+
+Worker URL: `https://dominion-cloud.dominion-hushmind.workers.dev`
+D1 database: `dominion-cloud` (APAC), ID `edc9c387-310e-4660-aac7-db53f9da5d17`.
+Worker uploaded and workers.dev route enabled. The endpoint returns HTTP 503 until a real Google OAuth web client ID, allowed frontend origin and upstream model API credentials are configured. Do not place credentials in GitHub. Do not advertise free inference until an upstream key and working login are tested.
