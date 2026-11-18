@@ -30,7 +30,17 @@ fn pair_axis(a:&Value,b:&Value,axis:&str,common:&str)->Option<(f64,String,String
     let changed_a=words(a,"changeTags");let changed_b=words(b,"changeTags");
     let region_a=field(a,"marketRegion");let region_b=field(b,"marketRegion");
     let kind_a=field(a,"sourceKind");let kind_b=field(b,"sourceKind");
-    let different_sources=field(a,"sourceName")!=field(b,"sourceName");
+    // Different RSS search channels are not independent publishers. Match
+    // the same source-identity rules as Money mechanism search and reject
+    // exact story mirrors even when URLs or feed section names differ.
+    let publisher_a=crate::engine::money_mechanism::source_host(a);
+    let publisher_b=crate::engine::money_mechanism::source_host(b);
+    let story_a=field(a,"storyClusterId");
+    let story_b=field(b,"storyClusterId");
+    let different_sources=!publisher_a.is_empty()
+        && !publisher_b.is_empty() && publisher_a!=publisher_b
+        && field(a,"url")!=field(b,"url")
+        && (story_a.is_empty()||story_b.is_empty()||story_a!=story_b);
     let directed=|which:&[String],term:&str|which.iter().any(|value|value==term);
     match axis {
         "regional" if region_a!=region_b
@@ -73,6 +83,12 @@ pub fn discover(records:&[Value],max_results:usize)->Vec<Value>{
         for b in records.iter().skip(i+1){
             if field(a,"sourceName")==field(b,"sourceName")
                 ||field(a,"url")==field(b,"url"){continue;}
+            let publisher_a=crate::engine::money_mechanism::source_host(a);
+            let publisher_b=crate::engine::money_mechanism::source_host(b);
+            if publisher_a.is_empty() || publisher_b.is_empty()
+                ||publisher_a==publisher_b{continue;}
+            let story_a=field(a,"storyClusterId");
+            if !story_a.is_empty() && story_a==field(b,"storyClusterId"){continue;}
             let topics_a=words(a,"topics");let topics_b=words(b,"topics");
             let common=topics_a.iter().find(|t|topics_b.contains(t));
             let Some(common)=common else{continue;};
@@ -84,6 +100,8 @@ pub fn discover(records:&[Value],max_results:usize)->Vec<Value>{
                     "sourceA":field(a,"id"),"sourceB":field(b,"id"),
                     "urlA":field(a,"url"),"urlB":field(b,"url"),
                     "sourceNameA":field(a,"sourceName"),"sourceNameB":field(b,"sourceName"),
+                    "publisherA":publisher_a,"publisherB":publisher_b,
+                    "sourceIndependence":"distinct_publisher_domains_not_independent_reporting_proven",
                     "regionA":field(a,"marketRegion"),"regionB":field(b,"marketRegion"),
                     "kindA":field(a,"sourceKind"),"kindB":field(b,"sourceKind"),
                     "titleA":field(a,"title"),"titleB":field(b,"title"),
@@ -132,6 +150,11 @@ pub fn validate_pair(pair:&Value,record:&Value,source_a:&Value,source_b:&Value)-
         ||field(record,"urlB")!=field(source_b,"url"){
         return Err("paired URL provenance changed".into());
     }
+    let origin_a=crate::engine::money_mechanism::source_host(source_a);
+    let origin_b=crate::engine::money_mechanism::source_host(source_b);
+    if origin_a.is_empty()||origin_b.is_empty()||origin_a==origin_b{
+        return Err("paired source origins are not independent publishers".into());
+    }
     let overlap=words(source_a,"topics").into_iter()
         .any(|tag|words(source_b,"topics").contains(&tag));
     if !overlap{return Err("source topics are not comparable".into());}
@@ -152,7 +175,9 @@ pub fn briefing(pairs:&[Value],limit:usize)->String{
 mod tests{
     use super::*;
     fn signal(id:&str,region:&str,source:&str,kind:&str)->Value{
-        json!({"id":id,"url":format!("https://example.org/{id}"),
+        let host=source.chars().filter(|ch|ch.is_ascii_alphanumeric())
+            .collect::<String>().to_ascii_lowercase();
+        json!({"id":id,"url":format!("https://{host}.test/{id}"),
             "sourceName":source,"title":format!("비용 관련 {id}"),
             "marketRegion":region,"sourceKind":kind,
             "topics":["hardware","software"],"changeTags":["launch"],
@@ -175,6 +200,24 @@ mod tests{
         let fake=json!({"id":r["id"],"axis":"regional","sourceA":"fake","sourceB":"2"});
         assert!(validate_pair(&fake,&r,&a,&b).is_err());
     }
+    #[test] fn duplicate_syndicated_stories_cannot_create_two_source_market_hypotheses(){
+        let mut a=signal("1","CN","Chinese seller","news");
+        let mut b=signal("2","KR","Korean buyer","news");
+        a["storyClusterId"]=json!("shared-title");
+        b["storyClusterId"]=json!("shared-title");
+        assert!(discover(&[a.clone(),b.clone()],12).is_empty());
+        b["storyClusterId"]=json!("different-title");
+        assert!(!discover(&[a.clone(),b.clone()],12).is_empty());
+        b["publisherDomain"]=json!("news.google.com");
+        assert!(discover(&[a,b],12).is_empty());
+    }
+    #[test] fn two_rss_channels_for_one_publisher_are_not_independent(){
+        let a=signal("a","CN","Market news feed","news");
+        let mut b=signal("b","KR","Market buyer feed","news");
+        b["publisherDomain"]=json!("www.marketnewsfeed.test");
+        assert!(discover(&[a,b],12).is_empty());
+    }
+
     #[test] fn temporal_comparison_requires_dated_independent_observations(){
         let a=signal("1","CN","A","news");
         let mut b=signal("2","CN","B","news");
