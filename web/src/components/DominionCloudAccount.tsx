@@ -9,7 +9,7 @@ type CatalogProvider={id:string;name:string;api:string;models:number;doc?:string
 type RemoteModel={id:string;name?:string}
 const cloudUrl=(import.meta.env.VITE_DOMINION_CLOUD_URL||'').replace(/\/$/,'')
 const clientId=import.meta.env.VITE_DOMINION_GOOGLE_CLIENT_ID||''
-export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Promise<unknown>}) {
+export function DominionCloudAccount({onProviderAdded,initialTab='cloud'}:{onProviderAdded:()=>Promise<unknown>;initialTab?:'cloud'|'providers'}) {
  const button=useRef<HTMLDivElement>(null)
  const [token,setToken]=useState('')
  const [models,setModels]=useState<Model[]>([])
@@ -18,7 +18,7 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
  const [modelFilter,setModelFilter]=useState<'all'|'free'|'paid'>('all')
  const [connectionTab,setConnectionTab]=useState<'providers'|'openrouter'>('providers')
  const [providerSort,setProviderSort]=useState<'name'|'models'>('name')
- const [managementTab,setManagementTab]=useState<'cloud'|'providers'>('cloud')
+ const [managementTab,setManagementTab]=useState<'cloud'|'providers'>(initialTab)
  const [providerPage,setProviderPage]=useState(0)
  const [providerMinModels,setProviderMinModels]=useState(false)
  const [busy,setBusy]=useState(false)
