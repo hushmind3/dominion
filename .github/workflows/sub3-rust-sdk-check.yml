@@ -9,6 +9,12 @@ on:
       - 'src/api/jobs.rs'
       - 'src/api/sdk_runs.rs'
       - 'src/engine/native_agent.rs'
+      - 'src/engine/skill_discovery.rs'
+      - 'src/engine/mod.rs'
+      - 'src/engine/skills.rs'
+      - 'src/api/sdk.rs'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - 'src/engine/algorithms.rs'
       - 'src/engine/native_model.rs'
       - 'src/engine/native_cache.rs'
@@ -54,3 +60,5 @@ jobs:
           cargo test --bin dominion-rust engine::program::tests
           cargo test --bin dominion-rust db::tests
           cargo test --bin dominion-rust engine::native_agent::tests
+          cargo test --bin dominion-rust engine::skill_discovery::tests
+          cargo test --bin dominion-rust api::sdk::tests
