@@ -79,6 +79,35 @@ fn novel_successful_evidence(previous:&[Value],latest:&[Value])->usize{
     }).count()
 }
 
+/// Seal the inner autonomy state before the outer job transitions to its
+/// terminal status. Without this, a task whose file exists but whose verifier
+/// returns needs_review misleadingly retains autonomousState.status=running.
+/// Keep the exact unresolved checks and model/tool evidence; this does not
+/// promote a review to success or discard potentially uncertain effects.
+fn terminal_checkpoint(
+    ctx:&JobContext,
+    status:&str,
+    attempt:usize,
+    checks:&Value,
+    gaps:&[String],
+    receipts:&[Value],
+    last_error:Option<&str>,
+    evidence:&[Value],
+    verified:bool,
+)->Result<(),String>{
+    ctx.checkpoint(json!({"autonomousState":{
+        "status":status,
+        "phase":if status=="completed"{"completed"}else{"needs_review"},
+        "attempt":attempt,
+        "verification":checks,
+        "unmetChecks":gaps,
+        "lastError":last_error.map(|error|narrow(error,1000)),
+        "unsettledEffects":side_effect_unknown(evidence),
+        "verificationPassed":verified,
+        "receipts":receipts
+    }}))
+}
+
 /// Called by the existing durable prompt worker. The job stays one operation;
 /// all intermediate rounds share its session, cancellation and audit records.
 pub async fn execute(
@@ -299,17 +328,22 @@ pub async fn execute(
         }}))?;
         match decision {
             Decision::Accept => {
+                let verified=gaps.is_empty() && (has_checks || (local_proof && tested));
+                terminal_checkpoint(ctx,"completed",attempt+1,&checks,&gaps,
+                    &receipts,latest_error.as_deref(),&all_evidence,verified)?;
                 return Ok(json!({
                     "sessionId":session_id,"messageId":last_message,
                     "status":"completed","attempts":attempt+1,
                     "steeringRevision":steering_before,
                     "verification":if has_checks{"predicate"}else if local_code_change{"post_edit_test"}else if all_evidence.is_empty(){"answer_only"}else{"tool_evidence"},
-                    "verified":gaps.is_empty() && (has_checks || (local_proof && tested)),
+                    "verified":verified,
                     "proof":{"workspaceMutation":local_proof,"postEditTest":tested},
                     "receipts":receipts,
                 }));
             }
             Decision::Review => {
+                terminal_checkpoint(ctx,"needs_review",attempt+1,&checks,&gaps,
+                    &receipts,latest_error.as_deref(),&all_evidence,false)?;
                 return Ok(json!({
                     "status":"needs_review","sessionId":session_id,"messageId":last_message,
                     "reason":if side_effect_unknown(&all_evidence) {
