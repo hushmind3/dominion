@@ -297,18 +297,24 @@ pub(super) async fn dispatch_tool_call(
     // window when assembling the next provider request; local and cloud
     // models are treated according to declared capacity, not arbitrary modes.
     let tool_content = result.to_string();
-    let saved = state
-        .store
-        .write_message(&json!({
-            "session_id": session_id,
-            "role": "tool",
-            "content": tool_content,
-            "tool_call_id": call.id,
-            "agent_id": request.agent_id,
-            "metadata": {"authorKind":"tool","roomId":session.get("roomId"),"executionId":execution_id},
-        }))
-        .ok_or("도구 결과 메시지를 저장할 수 없습니다.")?;
-    state.bus.message(&saved);
+    // Frozen, model-free operations have no corresponding assistant
+    // tool_calls envelope. Keep their full receipts in execution_operation,
+    // but do not append orphan role=tool messages to provider chat history.
+    // All model-issued and ProgramIR tools retain the existing persistence.
+    if origin != "deterministic_shortcut" {
+        let saved = state
+            .store
+            .write_message(&json!({
+                "session_id": session_id,
+                "role": "tool",
+                "content": tool_content,
+                "tool_call_id": call.id,
+                "agent_id": request.agent_id,
+                "metadata": {"authorKind":"tool","roomId":session.get("roomId"),"executionId":execution_id},
+            }))
+            .ok_or("도구 결과 메시지를 저장할 수 없습니다.")?;
+        state.bus.message(&saved);
+    }
     Ok((result, ok, tool_content))
 }
 
