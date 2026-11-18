@@ -200,7 +200,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     setBusy(false);setLive('');setThought('');setLiveApproval(null);
     setToolStatus('');setTurnSession(undefined);setSavedMessageId(undefined);
    }
-   refresh('/api/sessions','/api/sessions/'+encodeURIComponent(id)+'/messages','/api/sessions/'+encodeURIComponent(id)+'/usage');
+   refresh('/api/sessions','/api/approvals','/api/sessions/'+encodeURIComponent(id)+'/messages','/api/sessions/'+encodeURIComponent(id)+'/usage');
    setCommandInfo(outcome.cancelled||controller?t('chat.stopped'):t('chat.cmd.nothingRunning'));
   }catch(e){
    setError(translateError((e as Error).message));
@@ -427,7 +427,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
       <div className="ml-auto flex items-center gap-2">
        <span className="hidden text-[10px] text-[#9C9388] sm:inline">{t('chat.enterHint')}</span>
        {busy?<Button className="conversation-composer-send !bg-rose-600 hover:!bg-rose-700" type="button" onClick={()=>void stopChat()} disabled={stopping} title={stopping?t('chat.stopping'):t('chat.stop')} aria-label={stopping?t('chat.stopping'):t('chat.stop')}>{stopping?<LoaderCircle size={18} className="animate-spin"/>:<Square size={18} fill="currentColor"/>}</Button>
-       :<Button className="conversation-composer-send" disabled={Boolean(selectedSession?.roomId)||(Boolean(current)&&sessions.loading)||!input.trim()} type="submit" title={t('chat.send')}>{<ArrowUp size={19}/>}</Button>}
+       :<Button className="conversation-composer-send" disabled={stopping||Boolean(selectedSession?.roomId)||(Boolean(current)&&sessions.loading)||!input.trim()} type="submit" title={t('chat.send')}><ArrowUp size={19}/></Button>}
       </div>
      </div>
     </form></div>
