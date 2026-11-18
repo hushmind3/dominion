@@ -81,6 +81,19 @@ fn note(messages:&[Value],start:usize,end:usize)->Value{
     })
 }
 
+/// The newest completed source read is the observation the model is about to
+/// consume. Compressing it *before the first follow-up* makes a source edit
+/// guess from an excerpt even when the tool budget can hold the exact bytes.
+/// Keep only this terminal read full; older reads and all large write inputs
+/// retain the usual bounded representation on subsequent model rounds.
+fn current_source_read(messages:&[Value],span:&Span)->bool{
+    if span.end!=messages.len(){return false;}
+    let Some(calls)=messages[span.start]["tool_calls"].as_array() else{return false;};
+    !calls.is_empty() && calls.iter().all(|call|matches!(
+        call["function"]["name"].as_str(),Some("workspace_read"|"file_read")
+    ))
+}
+
 /// Budget only tool-derived frame bytes, never owner instructions, stable
 /// system prompts or ordinary conversation text. The newest valid frames
 /// get first claim to the budget; oldest oversized frames become short notes.
@@ -105,8 +118,9 @@ pub(super) fn bounded_tool_trace(messages:&[Value],budget_bytes:usize)->Vec<Valu
     let mut remaining=budget_bytes.max(1024);
     for span in spans.iter_mut().rev(){
         if span.mode==0{continue;}
-        if span.frame_bytes<=MAX_INLINE_FRAME_BYTES
-            && span.frame_bytes<=remaining{
+        if span.frame_bytes<=remaining
+            && (span.frame_bytes<=MAX_INLINE_FRAME_BYTES
+                || current_source_read(messages,span)){
             remaining-=span.frame_bytes;
             continue;
         }
@@ -187,6 +201,40 @@ mod tests{
             && row["content"]=="NEW_CURRENT_RESULT"));
         assert!(wire.iter().any(|row|row["content"]=="new owner instruction"));
         assert!(serde_json::to_string(&wire).unwrap().len()<serde_json::to_string(&messages).unwrap().len()/2);
+    }
+    #[test]
+    fn latest_large_source_read_is_available_for_exact_edit_before_later_compaction(){
+        // 2026 harness property: a source read can be >16 KiB while still
+        // fitting the already-approved per-round wire budget.
+        let source="pub fn exact_source_line() { println!(\\\"code\\\"); }\\n".repeat(550);
+        let mut transcript=vec![json!({"role":"system","content":"stable"}),
+            json!({"role":"user","content":"inspect and edit the function"})];
+        transcript.extend(pair("read-1","workspace_read",r#"{"path":"src/agent.rs"}"#,&source));
+        assert!(transcript.iter().map(|row|row.to_string().len()).sum::<usize>()<40_000);
+        assert!(source.len()>MAX_INLINE_FRAME_BYTES);
+        let immediate=bounded_tool_trace(&transcript,40_000);
+        assert_eq!(immediate,transcript,"first provider follow-up needs the exact tool result");
+        transcript.push(json!({"role":"assistant","content":"I have consumed the source"}));
+        let subsequent=bounded_tool_trace(&transcript,40_000);
+        assert_eq!(subsequent.len(),4);
+        assert_eq!(subsequent[2]["_dominion_trace_compacted"],true);
+        assert!(!subsequent.to_string().contains(&source[..500]));
+        assert!(subsequent.to_string().len()<transcript.to_string().len()/3);
+        // A narrow route cannot opt in to unlimited source replay.
+        let constrained=bounded_tool_trace(&transcript[..3],8_000);
+        assert_eq!(constrained[2]["_dominion_trace_compacted"],true);
+    }
+    #[test]
+    fn large_current_write_arguments_remain_compacted_even_with_wire_headroom(){
+        let private="LARGE_WRITE_CONTENT_".repeat(1100);
+        let args=json!({"path":"src/agent.rs","content":private}).to_string();
+        let mut transcript=vec![json!({"role":"user","content":"update file"})];
+        transcript.extend(pair("write-1","workspace_write",&args,r#"{"ok":true}"#));
+        assert!(transcript.iter().map(|row|row.to_string().len()).sum::<usize>()<40_000);
+        let wire=bounded_tool_trace(&transcript,40_000);
+        assert_eq!(wire.len(),2);
+        assert_eq!(wire[1]["_dominion_trace_compacted"],true);
+        assert!(!wire.to_string().contains("LARGE_WRITE_CONTENT_LARGE_WRITE_CONTENT_"));
     }
     #[test]
     fn incomplete_or_duplicated_tool_frames_are_never_rewritten(){
