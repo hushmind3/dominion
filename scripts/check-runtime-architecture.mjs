@@ -189,6 +189,25 @@ if(!finalizationSource.includes('pub(super) fn acceptance_repair(')||
    !adapter.includes('repair != AcceptanceRepair::Reviewer')||
    !adapter.includes('if can_retry {'))
   throw Error('Verifier-grounded repair escalation or uncertain-effect stop was bypassed')
+// Delegated work must reuse the shared budget and journal. Historical
+// child results are bounded in SQLite, never fetched from the entire archive.
+const delegateSource=readFileSync(path.join(root,'src/engine/tools/delegation.rs'),'utf8')
+const toolSource=readFileSync(path.join(root,'src/engine/tools.rs'),'utf8')
+const capabilitySource=readFileSync(path.join(root,'src/engine/capability.rs'),'utf8')
+const dispatchSource=readFileSync(path.join(root,'src/engine/chat/runtime/tool_dispatch.rs'),'utf8')
+const delegatedResult=delegateSource.match(/pub\(super\) fn task_payload\([\s\S]*?\n\}/)?.[0]
+if(!delegatedResult||
+   /\.all\("execution_operation"\)|\.session_execution_operations\(/.test(delegatedResult)||
+   !delegatedResult.includes('recent_completed_session_operations(session_id, 20)')||
+   !store.includes('idx_completed_operation_session_recent'))
+  throw Error('Delegated result again loads the historical operation archive')
+if(!toolSource.includes('pub(crate) use delegation::{profile_tool_allowed, profile_tool_visible}')||
+   !delegateSource.includes('pub(crate) fn profile_tool_allowed(')||
+   !runtime.includes('profile_tool_visible(&session,tool_name(tool))')||
+   !capabilitySource.includes('profile_tool_allowed(&session,name,&arguments)')||
+   !dispatchSource.includes('let role_admitted = tools::profile_tool_allowed(session, &call.name, &arguments);')||
+   !dispatchSource.includes('if !role_admitted || effect_block.is_some()'))
+  throw Error('Task-role tool admission can be bypassed by catalog/discovery/approval')
 const frontend=readFileSync(path.join(root,'web/src/App.tsx'),'utf8')+readFileSync(path.join(root,'web/src/components/WorkspaceShell.tsx'),'utf8')
 if(/VideoPage|SelfImprovementPage|id:'(?:video|rsi)'/.test(frontend))throw Error('Retired UI is reachable')
 if(existsSync(path.join(root,'web/src/components/ImprovementNotice.tsx')))throw Error('Retired RSI prompt widget remains')
