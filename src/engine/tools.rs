@@ -990,7 +990,7 @@ async fn replace_text(
         }));
     }
     let updated = text.replacen(old_text, new_text, 1);
-    let mut result = checked_write(ctx, path, &updated, run_id, true, expected_sha256).await?;
+    let mut result = checked_write(ctx, path, &updated, run_id, true, expected_sha256, false).await?;
     result["replaced"] = json!(true);
     result["replacedChars"] = json!(old_text.chars().count());
     if result["written"] == true { result["postSha256"] = json!(format!("{:x}",Sha256::digest(updated.as_bytes()))); }
@@ -1042,7 +1042,7 @@ async fn replace_range(
     if updated == source {
         return Ok(json!({"path":path.to_string_lossy(), "written":false, "unchanged":true}));
     }
-    let mut result = checked_write(ctx, path, &updated, run_id, true, Some(expected_sha256)).await?;
+    let mut result = checked_write(ctx, path, &updated, run_id, true, Some(expected_sha256), false).await?;
     if result["written"] == true {
         result["replaced"] = json!(true);
         result["replacedLines"] = json!(end-start+1);
@@ -1764,7 +1764,7 @@ mod tests {
             tools_enabled: true,
             tools_execution_enabled: true,
         };
-        let written = checked_write(&ctx, &path, "two", "run", false, Some(&expected))
+        let written = checked_write(&ctx, &path, "two", "run", false, Some(&expected), false)
             .await
             .unwrap();
         assert_eq!(written["written"], true);
@@ -1772,7 +1772,7 @@ mod tests {
 
         // The same frozen version must not overwrite a later change.
         std::fs::write(&path, "external change").unwrap();
-        let stale = checked_write(&ctx, &path, "three", "run", false, Some(&expected))
+        let stale = checked_write(&ctx, &path, "three", "run", false, Some(&expected), false)
             .await
             .unwrap();
         assert_eq!(stale["staleVersion"], true, "{stale}");
