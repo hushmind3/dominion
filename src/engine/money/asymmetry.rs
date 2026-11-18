@@ -81,8 +81,7 @@ pub fn discover(records:&[Value],max_results:usize)->Vec<Value>{
     let mut seen=HashSet::new();
     for (i,a) in records.iter().enumerate(){
         for b in records.iter().skip(i+1){
-            if field(a,"sourceName")==field(b,"sourceName")
-                ||field(a,"url")==field(b,"url"){continue;}
+            if field(a,"url")==field(b,"url"){continue;}
             let publisher_a=crate::engine::money_mechanism::source_host(a);
             let publisher_b=crate::engine::money_mechanism::source_host(b);
             if publisher_a.is_empty() || publisher_b.is_empty()
@@ -211,6 +210,16 @@ mod tests{
         b["publisherDomain"]=json!("news.google.com");
         assert!(discover(&[a,b],12).is_empty());
     }
+    #[test] fn two_publishers_inside_one_rss_search_feed_are_comparable(){
+        let mut a=signal("a","CN","Same search feed","news");
+        let mut b=signal("b","KR","Same search feed","news");
+        a["publisherDomain"]=json!("real-publisher-cn.example");
+        b["publisherDomain"]=json!("real-publisher-kr.example");
+        assert_eq!(discover(&[a.clone(),b.clone()],8).len(),1);
+        b["publisherDomain"]=json!("real-publisher-cn.example");
+        assert!(discover(&[a,b],8).is_empty());
+    }
+
     #[test] fn two_rss_channels_for_one_publisher_are_not_independent(){
         let a=signal("a","CN","Market news feed","news");
         let mut b=signal("b","KR","Market buyer feed","news");
