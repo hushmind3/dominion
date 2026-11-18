@@ -59,8 +59,18 @@ fn relation(from_kind:&str,from:&str,to_kind:&str,to:&str,predicate:&str,
 /// Lexical observations are not trusted economic measurements. In particular,
 /// a news mention spike must never be relabelled as real customer demand.
 pub fn signal_facets(row:&Value)->Value{
+    // Legacy Google News HTML was sometimes stored with page_fetched even
+    // though the underlying publisher article was never retrieved. Preserve
+    // that archive for audit but do not turn aggregator page contents into
+    // economic change tags or a buyer-intent observation.
+    let aggregator=row["url"].as_str()
+        .and_then(|raw|reqwest::Url::parse(raw).ok())
+        .and_then(|parsed|parsed.host_str().map(str::to_string))
+        .is_some_and(|host|host=="news.google.com"||host=="google.com");
+    let excerpt=if aggregator{String::new()}
+        else{bound(&row["articleExcerpt"],1100)};
     let text=format!("{} {} {}",bound(&row["title"],350),bound(&row["description"],700),
-        bound(&row["articleExcerpt"],1100)).to_lowercase();
+        excerpt).to_lowercase();
     let topics=TOPICS.iter().filter_map(|(tag,terms)|has(&text,terms).then_some(*tag))
         .take(8).collect::<Vec<_>>();
     let changes=CHANGES.iter().filter_map(|(tag,terms)|has(&text,terms).then_some(*tag))
@@ -166,6 +176,24 @@ mod tests{
         assert!(signal_facets(&result)["demandValidated"]==false);
         assert!(!signal_edges(&result).is_empty());
     }
+    #[test] fn historical_google_news_html_never_creates_false_buyer_or_cost_signals(){
+        let mut mirrored=json!({
+            "id":"mirrored-news",
+            "url":"https://news.google.com/rss/articles/legacy",
+            "title":"AI robot market update",
+            "description":"General sector coverage",
+            "articleExcerpt":"Procurement notice: RFQ for 100000 robots; cost cuts price hike",
+            "contentStatus":"page_fetched"});
+        let observed=signal_facets(&mirrored);
+        assert!(observed["topics"].as_array().unwrap().contains(&json!("hardware")));
+        assert!(observed["changeTags"].as_array().unwrap().is_empty(),
+            "aggregator-only HTML must not create market events");
+        mirrored["url"]=json!("https://original-publisher.example/report");
+        let actual=signal_facets(&mirrored);
+        assert!(actual["changeTags"].as_array().unwrap().contains(&json!("buyer_request")));
+        assert!(actual["changeTags"].as_array().unwrap().contains(&json!("cost_drop")));
+    }
+
     #[test] fn only_allowlisted_model_edges_and_source_provenance(){
         let c=json!({"id":"candidate-1","offer":"센서 모듈","customer":"건설 현장",
             "links":[{"from":"센서","to":"계측기","relation":"substitutes"},
