@@ -181,9 +181,19 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
     let mut input=json!({"prompt":instruction,"toolsEnabled":true,
         "toolsExecutionEnabled":true,"providerId":id,
         "clientSurface":"native_agent_panel"});
-    // A legacy /api/harness/runs caller now uses this SAME job-backed
-    // native kernel; keep only a view marker for API history partitioning.
-    if body["harnessCompat"]==true {input["harnessCompat"]=json!(true);}
+    // Preserve the old /api/harness/runs authority footprint while moving
+    // its new tasks into the native job kernel. The former API exposed only
+    // workspace file operations and a shell; do not silently grant MCP,
+    // browser, remote account, network or arbitrary filesystem capabilities.
+    if body["harnessCompat"]==true {
+        input["harnessCompat"]=json!(true);
+        input["allowedTools"]=json!([
+            "workspace_list","workspace_read","workspace_read_range",
+            "workspace_replace","workspace_replace_range",
+            "workspace_write","shell_exec"
+        ]);
+        input["maxToolCalls"]=json!(160);
+    }
     // Main's public run contract also accepts an explicit model and a
     // round budget. Apply both to the actual Rust job, never just echo them.
     if let Some(model)=body["model"].as_str().filter(|model|!model.trim().is_empty()){
