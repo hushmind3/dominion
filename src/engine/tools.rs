@@ -1,5 +1,7 @@
 #[path = "tools_patch.rs"]
 mod patch;
+#[path = "tools_external_harness.rs"]
+mod external_harness;
 
 use crate::db::Store;
 use serde_json::{json, Value};
@@ -34,7 +36,7 @@ pub fn definitions() -> Vec<Value> {
     };
     let text = |description: &str| json!({ "type": "string", "description": description });
 
-    vec![
+    let mut defs=vec![
         tool("workspace_list", "List files and folders in the workspace", object(json!({"path": text("Relative folder path")}), vec![])),
         tool("workspace_read", "Read a UTF-8 file from the workspace", object(json!({"path": text("Relative file path")}), vec!["path"])),
         tool("workspace_read_range", "Read only a line range from a workspace file. Use the line numbers from the repository index instead of reading a large file end to end.", object(json!({"path": text("Relative file path"), "startLine": json!({"type":"integer","minimum":1}), "endLine": json!({"type":"integer","minimum":1, "description":"Inclusive end line; at most 400 lines are returned"})}), vec!["path","startLine"])),
@@ -131,7 +133,19 @@ pub fn definitions() -> Vec<Value> {
             "expectedSha":text("Exact prior SHA returned by github_file_read, required for existing files")
         }),vec!["owner","repo","path","content","message"])),
         tool("github_api", "Call the GitHub REST API as the connected account. Write methods require approval (approval required)", object(json!({"method": json!({"type": "string", "enum": ["GET", "POST", "PATCH", "PUT", "DELETE"]}), "path": text("GitHub API path beginning with /"), "body": json!({"type": "object"})}), vec!["method", "path"])),
-    ]
+    ];
+    // No installed external harness is packaged or started by DOMINION.
+    // With no owner-configured adapter, even its tool schema is absent.
+    if external_harness::configured(){
+        defs.push(tool("external_harness_run",
+            "Delegate one independent task to an owner-configured, separately installed coding harness; approval required. DOMINION keeps one Rust execution/receipt owner.",
+            object(json!({
+                "harnessId":text("Configured external runtime id (e.g. codex, claude, hermes)"),
+                "prompt":text("Self-contained delegated task with expected result"),
+                "timeoutSeconds":json!({"type":"integer","minimum":5,"maximum":600}),
+            }),vec!["harnessId","prompt"])));
+    }
+    defs
 }
 
 fn tool(name: &str, description: &str, parameters: Value) -> Value {
@@ -174,6 +188,7 @@ pub fn requires_approval(name: &str) -> bool {
             | "file_write"
             | "shell_exec"
             | "terminal_exec"
+            | "external_harness_run"
             | "github_api"
             | "github_file_commit"
             | "github_issue_create"
@@ -202,8 +217,8 @@ pub fn ui_tool_allowed(policy:&Value,name:&str)->bool{
     if name.starts_with("skill_") && policy["skillsEnabled"]==false{return false;}
     if name.starts_with("mcp__") && policy["mcpEnabled"]!=true{return false;}
     if matches!(name,"web_search"|"http_fetch") && policy["webEnabled"]!=true{return false;}
-    if matches!(name,"delegate_task"|"delegate_parallel"|"task_status"|"task_result")
-        && policy["subagentsEnabled"]!=true{return false;}
+    if matches!(name,"delegate_task"|"delegate_parallel"|"task_status"|"task_result"|
+        "external_harness_run") && policy["subagentsEnabled"]!=true{return false;}
     true
 }
 
@@ -448,6 +463,7 @@ pub async fn execute(
             Ok(json!({ "proposed": true, "skill": record }))
         }
         "delegate_task" => delegate(ctx, args).await,
+        "external_harness_run" => external_harness::run(ctx,args).await,
         "delegate_parallel" => delegate_parallel(ctx,args).await,
         "task_status" => task_payload(ctx, args, false),
         "task_result" => task_payload(ctx, args, true),
@@ -2110,6 +2126,8 @@ mod tests {
             );
         }
         assert!(requires_approval("shell_exec"));
+        assert!(requires_approval("external_harness_run"));
+        assert!(!parallel_read_only_tool("external_harness_run"));
         assert!(!requires_approval("workspace_read"));
         assert!(names.iter().any(|name|name=="delegate_parallel"));
         assert!(names.iter().any(|name|name=="workspace_apply_patch"));
@@ -2126,6 +2144,8 @@ mod tests {
         assert!(!ui_tool_allowed(&policy,"mcp__service__tool"));
         assert!(!ui_tool_allowed(&policy,"web_search"));
         assert!(!ui_tool_allowed(&policy,"delegate_parallel"));
+        assert!(!ui_tool_allowed(&policy,"external_harness_run"));
+        assert!(ui_tool_allowed(&json!({"subagentsEnabled":true}),"external_harness_run"));
         assert!(!ui_tool_allowed(&json!({"skillsEnabled":false}),"skill_propose"));
         assert!(!ui_tool_allowed(&json!({"skillsEnabled":true}),"rsi_system_plan"));
         assert!(ui_tool_allowed(&json!({"skillsEnabled":true}),"workspace_apply_patch"));
