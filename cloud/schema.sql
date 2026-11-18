@@ -19,3 +19,5 @@ CREATE TABLE IF NOT EXISTS usage (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS usage_account ON usage(account_id, created_at);
+
+CREATE TABLE IF NOT EXISTS free_quota (account_day TEXT PRIMARY KEY, used INTEGER NOT NULL DEFAULT 0);
