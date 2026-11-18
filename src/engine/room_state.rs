@@ -61,8 +61,12 @@ pub(crate) fn conversation_context(
     if previous.is_some() {
         // The actual prior owner message is already selected verbatim by the
         // compiler. Keep its reference here rather than repeat its body.
-        text.push_str(&format!("직전 요청의 응답 기록: {}/{}명. 응답함: {}. 응답 기록 없음: {}.\n",
-            responded.len(),members.len(),responded.join(", "),if missing.is_empty(){"없음".into()}else{missing.join(", ")}));
+        // The roster is already in the byte-stable room system prefix.
+        // Listing every respondent repeats up to nine speaker names in
+        // EVERY model request; the count + missing set carries the same
+        // membership information (responded = roster - missing).
+        text.push_str(&format!("직전 요청의 응답 기록: {}/{}명. 응답 기록 없음: {}.\n",
+            responded.len(),members.len(),if missing.is_empty(){"없음".into()}else{missing.join(", ")}));
     }else{text.push_str("이 방의 첫 주인 요청이며 이전 응답 기록은 없음.\n");}
     text.push_str(&format!("기준 요청: {source_id}. 직전 요청: {}.\n",previous_id.unwrap_or("없음")));
     if !observed_work.is_empty(){text.push_str(&format!("관측된 작업: {}.\n",observed_work.join("; ")));}
