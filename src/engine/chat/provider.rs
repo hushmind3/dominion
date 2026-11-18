@@ -2191,7 +2191,7 @@ mod tests {
         assert!(sent[0].get("prompt_cache_key").is_none(),
             "server-native KV reuse does not accept the unrelated OpenAI cache hint");
         assert_eq!(sent[0]["messages"][0]["content"],"FOUR_THOUSAND_TOKEN_CHARTER");
-        assert_eq!(sent[0]["messages"].last().unwrap()["content"],"increment 1");
+        assert_eq!(sent[0]["messages"].as_array().unwrap().last().unwrap()["content"],"increment 1");
         drop(sent);
         server.abort();
         crate::test_support::cleanup_dir(root);
