@@ -99,9 +99,9 @@ async function freeProxy(request, env, user) {
           id: completionId, object: 'chat.completion.chunk', created: now(), model: model.id,
           choices: [{ index: 0, delta, finish_reason }]
         });
-        const payload = 'data: ' + JSON.stringify(chunk({ role: 'assistant', content })) + '\\n\\n'
-          + 'data: ' + JSON.stringify(chunk({}, 'stop')) + '\\n\\n'
-          + 'data: [DONE]\\n\\n';
+        const payload = 'data: ' + JSON.stringify(chunk({ role: 'assistant', content })) + '\n\n'
+          + 'data: ' + JSON.stringify(chunk({}, 'stop')) + '\n\n'
+          + 'data: [DONE]\n\n';
         return new Response(payload, { status: 200, headers: {
           'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', ...quotaHeaders
         } });
