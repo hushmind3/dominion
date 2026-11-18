@@ -5,6 +5,8 @@ type GoogleResponse={credential:string}
 type GoogleIdentity={accounts:{id:{initialize:(config:{client_id:string;callback:(response:GoogleResponse)=>void})=>void;renderButton:(element:HTMLElement,options:Record<string,unknown>)=>void}}}
 declare global {interface Window {google?:GoogleIdentity}}
 type Model={id:string;free:boolean}
+type CatalogProvider={id:string;name:string;api:string;models:number;doc?:string}
+type RemoteModel={id:string;name?:string}
 const cloudUrl=(import.meta.env.VITE_DOMINION_CLOUD_URL||'').replace(/\/$/,'')
 const clientId=import.meta.env.VITE_DOMINION_GOOGLE_CLIENT_ID||''
 export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Promise<unknown>}) {
@@ -14,6 +16,15 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
  const [selected,setSelected]=useState('')
  const [busy,setBusy]=useState(false)
  const [message,setMessage]=useState('')
+ const [catalog,setCatalog]=useState<CatalogProvider[]>([])
+ const [catalogSearch,setCatalogSearch]=useState('')
+ const [catalogId,setCatalogId]=useState('')
+ const [catalogKey,setCatalogKey]=useState('')
+ const [catalogModel,setCatalogModel]=useState('')
+ const [catalogModels,setCatalogModels]=useState<RemoteModel[]>([])
+ const [catalogProviderId,setCatalogProviderId]=useState('')
+ const [catalogBusy,setCatalogBusy]=useState(false)
+ const [catalogMessage,setCatalogMessage]=useState('')
  const [routerKey,setRouterKey]=useState('')
  const [routerBusy,setRouterBusy]=useState(false)
  const [routerMessage,setRouterMessage]=useState('')
@@ -47,6 +58,46 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
   document.head.appendChild(script)
   return()=>{active=false;script.remove()}
  },[])
+ async function loadCatalog(){
+  setCatalogBusy(true)
+  try{
+   const data=await get<{providers:CatalogProvider[];error?:string}>('/api/providers/catalog')
+   setCatalog(data.providers||[])
+   setCatalogMessage(data.error||'업체 '+(data.providers||[]).length+'개를 불러왔습니다.')
+  }catch(e){setCatalogMessage((e as Error).message)}finally{setCatalogBusy(false)}
+ }
+ async function connectCatalog(){
+  const entry=catalog.find(p=>p.id===catalogId)
+  if(!entry)return
+  setCatalogBusy(true);setCatalogMessage('')
+  try{
+   const baseUrl=entry.api.replace(/\/$/,'')
+   const existing=await get<Array<{id:string;baseUrl:string;model?:string}>>('/api/providers')
+   const same=existing.find(p=>p.baseUrl.replace(/\/$/,'')===baseUrl)
+   const provider=same||await post<{id:string}>('/api/providers',{name:entry.name,baseUrl,kind:'openai',apiKey:catalogKey.trim(),enabled:true,local:false,toolMode:'auto'})
+   setCatalogProviderId(provider.id)
+   const models=await get<RemoteModel[]>('/api/providers/'+encodeURIComponent(provider.id)+'/models')
+   setCatalogModels(models)
+   setCatalogModel(models[0]?.id||'')
+   setCatalogMessage(models.length+'개 모델 조회 완료. 원하는 모델을 선택해 등록하세요.')
+   await onProviderAdded()
+  }catch(e){setCatalogMessage((e as Error).message)}finally{setCatalogBusy(false)}
+ }
+ async function saveCatalogModel(){
+  const entry=catalog.find(p=>p.id===catalogId)
+  if(!entry||!catalogModel||!catalogProviderId)return
+  setCatalogBusy(true)
+  try{
+   const baseUrl=entry.api.replace(/\/$/,'')
+   const providers=await get<Array<{id:string;baseUrl:string;model?:string}>>('/api/providers')
+   const same=providers.find(p=>p.baseUrl.replace(/\/$/,'')===baseUrl&&p.model===catalogModel)
+   if(same){setCatalogMessage('이미 등록된 모델입니다.');return}
+   const reusable=providers.find(p=>p.id===catalogProviderId&&!p.model)
+   await post('/api/providers',{id:reusable?.id,name:entry.name+' · '+catalogModel,baseUrl,kind:'openai',apiKey:catalogKey.trim()||undefined,model:catalogModel,enabled:true,local:false,toolMode:'auto'})
+   await onProviderAdded()
+   setCatalogMessage('모델이 채팅에 등록됐습니다.')
+  }catch(e){setCatalogMessage((e as Error).message)}finally{setCatalogBusy(false)}
+ }
  async function importOpenRouterFree(){
   if(!routerKey.trim())return
   setRouterBusy(true);setRouterMessage('무료 모델 조회 중…')
@@ -97,6 +148,27 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
    <button type="button" disabled={busy||!selected} onClick={()=>void register()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">모델 등록</button>
   </div>}
   {message&&<p role="status" className="mt-2 text-[12px] text-[#7C7469]">{message}</p>}
+  <div className="mt-4 border-t border-[#E7E0D5] pt-4">
+   <strong className="text-[13px]">AI 업체 통합 연결 · models.dev</strong>
+   <p className="mt-1 text-[12px] text-[#7C7469]">업체 검색 → API 키 연결 → 실제 모델 조회 → 채팅 등록</p>
+   <div className="mt-2 flex flex-wrap gap-2">
+    <button type="button" disabled={catalogBusy} onClick={()=>void loadCatalog()} className="rounded-lg border px-3 py-2 text-[12px]">업체 목록 불러오기</button>
+    <input aria-label="AI 업체 검색" value={catalogSearch} onChange={e=>setCatalogSearch(e.target.value)} placeholder="업체 검색" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
+   </div>
+   {catalog.length>0&&<div className="mt-2 flex flex-wrap gap-2">
+    <select aria-label="AI 업체 선택" value={catalogId} onChange={e=>{setCatalogId(e.target.value);setCatalogModels([]);setCatalogProviderId('')}} className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]">
+     <option value="">업체를 선택하세요</option>
+     {catalog.filter(p=>(p.name+' '+p.id).toLowerCase().includes(catalogSearch.toLowerCase())).map(p=><option key={p.id} value={p.id}>{p.name} ({p.models})</option>)}
+    </select>
+    <input type="password" autoComplete="off" aria-label="업체 API 키" value={catalogKey} onChange={e=>setCatalogKey(e.target.value)} placeholder="API 키" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
+    <button type="button" disabled={catalogBusy||!catalogId} onClick={()=>void connectCatalog()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">연결 및 모델 조회</button>
+   </div>}
+   {catalogModels.length>0&&<div className="mt-2 flex flex-wrap gap-2">
+    <select aria-label="연결된 업체 모델" value={catalogModel} onChange={e=>setCatalogModel(e.target.value)} className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]">{catalogModels.map(m=><option key={m.id} value={m.id}>{m.name||m.id}</option>)}</select>
+    <button type="button" disabled={catalogBusy||!catalogModel} onClick={()=>void saveCatalogModel()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">채팅에 등록</button>
+   </div>}
+   {catalogMessage&&<p role="status" className="mt-2 text-[12px] text-[#7C7469]">{catalogMessage}</p>}
+  </div>
   <div className="mt-4 border-t border-[#E7E0D5] pt-4">
    <strong className="text-[13px]">OpenRouter 무료 모델 일괄 등록</strong>
    <p className="mt-1 text-[12px] text-[#7C7469]">OpenRouter API 키로 최신 무료 텍스트 모델을 가져옵니다.</p>
