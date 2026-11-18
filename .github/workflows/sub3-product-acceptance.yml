@@ -64,6 +64,7 @@ jobs:
           cargo test --bin dominion-rust planning_cost_tests
           cargo test --bin dominion-rust shared_sdk_relevance_ignores_tool_parameter_payload
           cargo test --bin dominion-rust engine::chat::tests
+          cargo test --bin dominion-rust engine::chat::room_context::tests
           cargo test --bin dominion-rust engine::verification
           cargo test --bin dominion-rust engine::native_adjudication::tests
           cargo test --bin dominion-rust db::tests
