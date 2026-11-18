@@ -58,11 +58,12 @@ pub(super) async fn deterministic_tool(
         arguments: arguments.to_string(),
     };
     let operation_id = format!("{execution_id}:0:{call_index}:{}", call.id);
+    let session = state.store.get("session", session_id)
+        .ok_or("결정적 도구 실행의 세션을 찾을 수 없습니다.")?;
     let (result, _accepted, _content) = dispatch_tool_call(
         state,
         tx,
-        &state.store.get("session", session_id)
-            .ok_or("결정적 도구 실행의 세션을 찾을 수 없습니다.")?,
+        &session,
         request,
         session_id,
         execution_id,
@@ -257,3 +258,97 @@ pub(super) async fn run_frozen_replacements(
     Ok(Some(saved))
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{config::Config, db::Store, vault::Vault};
+
+    fn fixture(read_only: bool) -> (AppState, std::path::PathBuf, TurnRequest) {
+        let root = std::env::temp_dir()
+            .join(format!("dominion-frozen-gateway-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("create fixture");
+        let config = Config {
+            port: 0,
+            data_dir: root.clone(),
+            web_dir: root.join("web"),
+            workspace: root.clone(),
+        };
+        let store = Store::open(&config.db_path()).expect("open store");
+        let vault = Vault::open(&config.key_path());
+        let state = AppState::new(config, store, vault);
+        state.store.put("session", &json!({
+            "id": "frozen-session",
+            "parallelReadOnly": read_only
+        })).expect("persist session");
+        state.store.put("execution", &json!({
+            "id": "frozen-run",
+            "sessionId": "frozen-session",
+            "taskId": "frozen-task",
+            "status": "running"
+        })).expect("persist run");
+        state.store.put("policy", &json!({
+            "id": "default",
+            "autoApproveAll": true
+        })).expect("persist fixture approvals");
+        let request = TurnRequest::from_value(&json!({
+            "input": "Perform a frozen exact file replacement.",
+            "sessionId": "frozen-session",
+            "toolsEnabled": true,
+            "toolsExecutionEnabled": true
+        })).expect("valid request");
+        (state, root, request)
+    }
+
+    #[tokio::test]
+    async fn frozen_read_write_reuse_native_receipts_and_effect_verification() {
+        let (state, root, request) = fixture(false);
+        let path = root.join("contract.txt");
+        std::fs::write(&path, "before").unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let metrics = std::sync::Mutex::new(Metrics::default());
+        let (read, read_op) = deterministic_tool(
+            &state, &request, &tx, "frozen-session", "frozen-run",
+            "file_read", &json!({"path": path}), 1, &metrics,
+        ).await.expect("native read");
+        assert_eq!(read["content"], "before");
+        assert_eq!(read_op["origin"], "deterministic_shortcut");
+        assert_eq!(read_op["toolReceipt"]["tool"], "file_read");
+        assert_eq!(read_op["status"], "completed");
+        let source_hash = format!("{:x}", Sha256::digest(b"before"));
+        let (write, write_op) = deterministic_tool(
+            &state, &request, &tx, "frozen-session", "frozen-run",
+            "file_write", &json!({
+                "path": path, "content": "after", "expectedSha256": source_hash
+            }), 2, &metrics,
+        ).await.expect("native conditional write");
+        assert!(tool_succeeded(&write), "{write}");
+        assert_eq!(write_op["origin"], "deterministic_shortcut");
+        assert_eq!(write_op["status"], "completed");
+        assert_eq!(write_op["effectState"], "verified", "{write_op}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "after");
+        assert_eq!(metrics.lock().unwrap().tool_calls, 2);
+        let recorded = state.store.execution_operations("frozen-run").unwrap();
+        assert_eq!(recorded.len(), 2);
+        assert!(recorded.iter().any(|op| op["id"] == write_op["id"]));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn frozen_shortcut_cannot_mutate_a_read_only_child() {
+        let (state, root, request) = fixture(true);
+        let path = root.join("must-not-appear.txt");
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let metrics = std::sync::Mutex::new(Metrics::default());
+        let (result, operation) = deterministic_tool(
+            &state, &request, &tx, "frozen-session", "frozen-run",
+            "file_write", &json!({"path": path, "content": "not allowed"}),
+            1, &metrics,
+        ).await.expect("denial must be a durable tool result");
+        assert!(!tool_succeeded(&result), "{result}");
+        assert_eq!(operation["status"], "failed");
+        assert_eq!(operation["origin"], "deterministic_shortcut");
+        assert!(!path.exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+}
