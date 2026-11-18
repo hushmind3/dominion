@@ -1068,7 +1068,7 @@ pub fn choose_decomposition_for_agent(
         // multiple ordered actions. A vague increase in heuristic score alone
         // must not replace a user's approved selection.
         let full_clause_coverage=decomposition["quality"]["coverage"]
-            .as_f64().is_some_and(|coverage|coverage>=0.95);
+            .as_f64().is_some_and(|coverage|coverage>=0.75);
         if ordered && full_clause_coverage && step_count > 1
             && score > best_score + 0.05 {
             best_score = score;
