@@ -1582,9 +1582,8 @@ impl Host for MainTurn<'_> {
                             // exchange from the durable transcript before adding
                             // this host-generated summary to the working view.
                             self.continuation_projection = None;
-                            let _ = self
-                                .tx
-                                .send(json!({"type":"text","text":self.final_content}));
+                            // Do not stream completion before the owner
+                            // revision gate and durable assistant save succeed.
                             return Ok(Flow::Complete);
                         }
                     }
@@ -2003,7 +2002,8 @@ impl MainTurn<'_> {
             }))
             .ok_or("최종 응답을 저장할 수 없습니다.")?;
         self.state.bus.message(&saved);
-        if self.metadata["completionSource"] == "kernel_verified_checkpoint" {
+        if matches!(self.metadata["completionSource"].as_str(),
+            Some("kernel_verified_checkpoint" | "verified_artifact")) {
             let _ = self.tx.send(json!({"type":"text","text":self.final_content}));
         }
         crate::engine::chat::continuity::commit(self.state, &self.metadata["continuity"], &saved);
