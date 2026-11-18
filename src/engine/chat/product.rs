@@ -660,14 +660,27 @@ impl Host for MainTurn<'_> {
                 let mut next_action = progress["nextAction"]
                     .as_str().unwrap_or("").to_string();
                 if !gaps.is_empty() {
-                    // Independent reviewer: deterministic checks still win, but
-                    // the reviewer supplies a concrete repair strategy.
-                    let precise_replacement = checks.as_array().is_some_and(|checks| {
-                        checks
-                            .iter()
-                            .any(|check| check["type"] == "file_replace_exact")
-                    });
-                    let review = if precise_replacement {
+                    let can_retry = self.request.tools_enabled
+                        && self.request.tools_execution_enabled
+                        && self.acceptance_retries < self.max_acceptance_retries
+                        && round + 1 < self.max_rounds
+                        && self.budget.can_execute_tool();
+                    let repair = acceptance_repair(&progress, checks, can_retry);
+                    self.state.store.audit("acceptance.repair_strategy", json!({
+                        "executionId":self.execution_id,"round":round,
+                        "strategy":format!("{repair:?}"),"canRetry":can_retry,
+                        "stagnantRounds":progress["stagnantRounds"]
+                    }));
+                    if repair == AcceptanceRepair::Reconcile {
+                        return Err(
+                            "검증 대상에 결과가 확정되지 않은 외부 변경이 있습니다. \
+                             기존 실행의 실제 효과를 먼저 확인·조정해야 하므로 자동 재시도를 중단합니다.".into()
+                        );
+                    }
+                    // Prefer a verifier-derived, receipt-scoped next action.
+                    // Pay for independent model review only when there is
+                    // actual retry budget and no fresh typed repair frontier.
+                    let review = if repair != AcceptanceRepair::Reviewer {
                         None
                     } else {
                         {
@@ -746,10 +759,7 @@ impl Host for MainTurn<'_> {
                             gaps.join("; ")
                         ));
                     }
-                    if self.acceptance_retries < self.max_acceptance_retries
-                        && round + 1 < self.max_rounds
-                        && self.budget.can_execute_tool()
-                    {
+                    if can_retry {
                         self.acceptance_retries += 1;
                         let _ = self.tx.send(json!({
                             "type": "acceptance_retry",
