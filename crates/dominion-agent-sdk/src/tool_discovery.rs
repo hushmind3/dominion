@@ -75,20 +75,26 @@ fn enrich(text:&str)->String {
  ] {if lower.contains(need){s.push_str(aliases)}}
  s
 }
-fn score(spec:&ToolSpec, query:&str)->i32{
+/// Model-independent relevance signal reused by native SDK and chat.
+/// This is a ranking hint ONLY; it never changes owner tool authorization,
+/// host approval, schema admission or durable effect execution.
+pub fn tool_relevance(name:&str,description:&str,query:&str)->i32{
  let query=enrich(query);
  let tokens=words(&query);
- let name=spec.name.to_lowercase();
+ let name=name.to_lowercase();
  let name_words=words(&name);
- let desc=spec.description.to_lowercase();
+ let desc=description.to_lowercase();
  let mut s=0;
- if query.contains(&name){s+=32}
+ if !name.is_empty() && query.contains(&name){s+=32}
  for token in tokens {
   if name_words.contains(&token){s+=12}
   else if name.contains(&token){s+=7}
   else if desc.contains(&token){s+=2}
  }
  s
+}
+fn score(spec:&ToolSpec, query:&str)->i32{
+ tool_relevance(&spec.name,&spec.description,query)
 }
 fn ranked(catalog:&HashMap<String,ToolSpec>,query:&str)->Vec<String>{
  let mut candidates=catalog.values()
