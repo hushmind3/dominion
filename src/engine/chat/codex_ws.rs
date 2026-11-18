@@ -534,6 +534,19 @@ async fn exchange(
     }
 }
 
+/// If a Codex-compatible gateway rejects a developer INPUT role before
+/// generation, the caller must fall back to the original full-instructions
+/// HTTP request. The optimization must never make Codex unusable.
+fn rejects_persistent_developer(error: &Value) -> bool {
+    let detail = error.get("error").unwrap_or(error);
+    let param=detail["param"].as_str().unwrap_or("").to_ascii_lowercase();
+    let message=detail["message"].as_str().unwrap_or("").to_ascii_lowercase();
+    (param.starts_with("input") && param.contains("role") && message.contains("developer"))
+        || (message.contains("developer") && message.contains("role")
+            && (message.contains("unsupported") || message.contains("invalid")
+                || message.contains("not permitted") || message.contains("not allowed")))
+}
+
 async fn receive_completion(
     state: &AppState,
     socket: &mut Socket,
@@ -675,6 +688,11 @@ async fn receive_completion(
                     &piece["response"].to_string(), "prompt_cache_key") {
                     return Err(WsError::HintRejected("Codex 캐시 힌트가 지원되지 않습니다.".into()));
                 }
+                if rejects_persistent_developer(&piece["response"]) {
+                    return Err(WsError::Fallback(
+                        "Codex WebSocket developer-input role rejected; restore complete HTTP instructions".into()
+                    ));
+                }
                 return Err(WsError::Fatal(
                     super::provider::codex_terminal_error(&piece).unwrap(),
                 ));
@@ -687,6 +705,11 @@ async fn receive_completion(
                 let code = piece["error"]["code"].as_str().unwrap_or("");
                 let param = piece["error"]["param"].as_str().unwrap_or("");
                 let message = piece["error"]["message"].as_str().unwrap_or("알 수 없는 오류");
+                if rejects_persistent_developer(&piece) {
+                    return Err(WsError::Fallback(
+                        "Codex WebSocket developer-input role rejected; restore complete HTTP instructions".into()
+                    ));
+                }
                 if code == "previous_response_not_found" || param == "previous_response_id" {
                     return Err(WsError::Fallback(format!(
                         "Codex 이전 응답 없음: {message}"
@@ -873,6 +896,20 @@ mod tests {
             }
         });
         (provider, rx, server)
+    }
+
+    #[test]
+    fn rejected_developer_role_requires_full_instruction_fallback_not_silent_omission() {
+        assert!(rejects_persistent_developer(&json!({"error":{
+            "param":"input[0].role",
+            "message":"developer role is not supported"
+        }})));
+        assert!(rejects_persistent_developer(&json!({"response":{"error":{
+            "param":"input[0].role","message":"developer role invalid"
+        }}})["response"]));
+        assert!(!rejects_persistent_developer(&json!({"error":{
+            "param":"prompt_cache_key","message":"unsupported parameter"
+        }})));
     }
 
     #[tokio::test]
