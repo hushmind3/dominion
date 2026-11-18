@@ -1501,18 +1501,39 @@ pub(super) async fn propose_program_revision(
             }
         }
     }
-    let (mut revised, audit) = crate::engine::adaptation::repair_tournament::select(
-        &candidates, &observations,
-    )?;
+    // New, 2026 task-local candidate execution: eligible local revisions
+    // are applied independently by the same ProgramIR interpreter inside
+    // separate bounded workspace/SQLite snapshots. Selection is based on
+    // ACTUAL postconditions, not merely predicted read-only preflights.
+    // External tools or unisolatable candidates keep the prior safe gateway
+    // behavior; no unverified sandbox result is presented as a success.
+    let isolated=candidate_rollout::evaluate(
+        ctx,&candidates,&observations,checkpoint,budget,
+    ).await?;
+    let (mut revised, audit)=match isolated {
+        Some((revision,decision))=>(revision,decision),
+        None=>crate::engine::adaptation::repair_tournament::select(
+            &candidates,&observations,
+        )?,
+    };
     // Preserve the contrastive decision and native probe call IDs inside the
     // revised program's existing durable execution record. Raw probe outputs
     // remain in execution_operation, never in the audit summary.
+    if revised["repairPromotionBaseline"].is_object()
+        && !candidate_rollout::baseline_matches(
+            &ctx.state.config.workspace,&revised["repairPromotionBaseline"],
+        )? {
+        return Err("candidate source changed since isolated execution; live promotion withheld".into());
+    }
     let called=observations.as_object().into_iter().flat_map(|map|map.iter())
         .map(|(id,value)|json!({"candidateId":id,"callId":value["callId"],
             "status":value["status"]})).collect::<Vec<_>>();
     revised["repairTournament"] = json!({
         "decision":audit,"probeReceipts":called,
         "failureTraceFocus":trace["focus"],
+        "isolation":if revised["repairSandboxEvidence"].is_object() {
+            "native_workspace_sqlite_rollout"
+        } else {"preflight_only_no_isolated_execution"},
         "benchmarkRepairArm":if legacy_benchmark_arm {"baseline"} else {"treatment_or_production"},
     });
     Ok(Some(revised))
