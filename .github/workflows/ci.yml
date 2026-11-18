@@ -14,6 +14,11 @@ on:
       - 'scripts/check-runtime-architecture.mjs'
       - 'web/src/pages/Chat.tsx'
       - 'web/src/components/ModelPicker.tsx'
+      - 'web/src/pages/Models.tsx'
+      - 'web/src/components/ModelExplorer.tsx'
+      - 'web/src/components/DominionCloudAccount.tsx'
+      - 'web/src/utils/modelHardware.ts'
+      - 'web/tests/model-hardware.test.mjs'
       - 'web/src/utils/modelFree.ts'
       - 'web/tests/model-free.test.mjs'
       - 'web/src/i18n/**'
@@ -30,6 +35,11 @@ on:
       - 'scripts/check-runtime-architecture.mjs'
       - 'web/src/pages/Chat.tsx'
       - 'web/src/components/ModelPicker.tsx'
+      - 'web/src/pages/Models.tsx'
+      - 'web/src/components/ModelExplorer.tsx'
+      - 'web/src/components/DominionCloudAccount.tsx'
+      - 'web/src/utils/modelHardware.ts'
+      - 'web/tests/model-hardware.test.mjs'
       - 'web/src/utils/modelFree.ts'
       - 'web/tests/model-free.test.mjs'
       - 'web/src/i18n/**'
@@ -148,7 +158,7 @@ jobs:
       - name: Shared SDK run and retry regressions (dev profile)
         run: cargo test --locked --bin dominion-rust api::sdk::view_tests
 
-  chat-ui-contract:
+  chat-and-model-ui-contract:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -160,9 +170,10 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - name: Install frontend dependencies
         run: npm ci --prefix web --no-audit --no-fund
-      - name: Chat model picker, stop contract and frontend typecheck
+      - name: Chat and model menu contracts, typecheck and production build
         run: |
           node --experimental-strip-types --test web/tests/model-free.test.mjs
+          node --experimental-strip-types --test web/tests/model-hardware.test.mjs
           node --test web/tests/chat-stop-contract.test.mjs
           npm run typecheck --prefix web
           npm run build --prefix web
