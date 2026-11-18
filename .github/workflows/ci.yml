@@ -64,6 +64,8 @@ jobs:
         run: cargo test --locked --bin dominion-rust engine::recovery::tests::acceptance_feedback
       - name: Causal diagnostic native tool receipt (dev profile)
         run: cargo test --locked --bin dominion-rust causal_diagnostic_uses_real_tool_receipt
+      - name: Receipt-grounded acceptance repair escalation (dev profile)
+        run: cargo test --locked --bin dominion-rust acceptance_repair_tests
       - name: 2026 obligation-to-receipt lineage and local repair (dev profile)
         run: cargo test --locked --bin dominion-rust engine::obligation_repair::tests
       - name: 2026 composite repair acceptance gate (dev profile)
