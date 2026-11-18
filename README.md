@@ -34,23 +34,45 @@
 
 ---
 
-## Native Rust execution core
+## Native Rust execution harness (2026)
 
-Old UCB1 exploration and weighted tool-failure repair selection have been
-retired. The 2026 repair path combines bounded diagnostic observations, native
-permission/cancellation/effect receipts and frozen postcondition no-regression
-acceptance. User-activated kernels retain priority; historical algorithm
-records remain available through the read-only API.
+DOMINION does **not** use a lexical retrieval score as its agent controller.
+The [`dominion-core` Rust engine](crates/dominion-core/src/engine.rs) owns the
+bounded **initialize → plan (when needed) → model → tool admission/execution →
+verification → completion** loop. The product adapter in
+[`src/engine/chat/product.rs`](src/engine/chat/product.rs) connects that loop
+to the actual provider, user instruction, workspace, approvals, SQLite
+receipts and frozen acceptance conditions.
 
-The product embeds [`dominion-core`](crates/dominion-core/README.md), adapted from `dominion-sub4`, behind the existing SQLite store, React frontend and provider/tool adapters. Chat, rooms, jobs, workflows and the Home autonomous-work panel use the same product execution path. `/api/sdk/runs` uses that same execution path and SQLite journal. See [the execution contract](docs/HARNESS.md).
+| Execution layer | Actual implementation |
+| --- | --- |
+| **Kernel / safety** | [Shared driver](crates/dominion-core/src/engine.rs), [native snapshots and tool intents](crates/dominion-core/src/hosted.rs), [shared budgets](crates/dominion-core/src/budget.rs); cancellation, outstanding approval or unresolved tool/child effects block false completion. |
+| **Planning / control** | [Versioned executable algorithms](src/engine/algorithms.rs), including `acceptance-lineage-dag-2026` for task decomposition, selection of applicable strategies and budget-aware tool use. Algorithm records select real Rust kernels; old experimental records are not an autonomous self-modifying engine. |
+| **Verification / repair** | [Frozen postcondition verifier](src/engine/verification.rs), [resource-scoped obligation frontier](src/engine/obligation_repair.rs), [receipt-based recovery](src/engine/recovery.rs) and [bounded causal diagnostics](src/engine/adaptation/diagnostics.rs). Completed mutations are not blindly replayed. |
+| **Memory / context** | [Evidence-lineage memory reranking](src/engine/memory.rs), [owner-confirmed room state](src/engine/room_state.rs), [source-aware room compilation](src/engine/chat/room_context.rs), and [lazy skill inspection](src/engine/tools.rs). Lexical search is a candidate retrieval component, **not the harness policy**. |
+| **Provider / token reuse** | [Provider-specific request assembly](src/engine/chat/provider.rs), [Codex incremental WebSocket](src/engine/chat/codex_ws.rs) and [continuity policy](src/engine/chat/continuity.rs). History eviction and owner edits may require a safe full rebase; transport byte estimates and provider-billed cache tokens are recorded separately. |
 
-Background SDK, job, and Discord turns drain transient events without retaining an additional in-memory copy of tool arguments and results. Durable tool receipts and opt-in evidence collection are unchanged.
+**Verified-checkpoint completion:** after real tool effects satisfy every frozen
+postcondition, the kernel can finish without buying an extra model round.
+That shortcut requires attributable persisted receipts, no unresolved effects,
+a current owner revision and cleared standing procedures. The final response
+is published only after its durable message write. This is not a blanket claim
+that every successful tool call completes a task.
 
-Existing product data and authentication remain in SQLite and its credential vault. Tool intent, receipts and uncertain-effect recovery use the native Rust state machine; cancelled sequential tool batches now record aborted-before-dispatch tool receipts rather than silently dropping queued call IDs. Recovery treats opaque MCP actions and completed or failed external mutations conservatively: whole-turn replay is withheld pending review, while recognized read-only operations remain replayable. Execution cancellation persists both the terminal status and phase, and phase updates use conditional SQLite patches instead of overwriting concurrent evidence. Product-specific approval and verification policies remain in the main application. These source-level changes do not establish real-model quality gains or general self-improvement.
+**Current limitations:** the 2026-11-09 nine-agent / 100-owner-turn benchmark
+[`ROOM-100-TURN-LUNA`](benchmark/ROOM-100-TURN-LUNA-2026-11-09.json)
+reported 18.15% provider cache reuse and failed long-range recall on its
+older experimental branch. Recent code changes have **not** yet established
+a new cache hit rate, recall improvement, cost saving or live-model success
+rate. Source-level changes and mocked regressions should never be described
+as an end-to-end performance result.
 
-### Durable worker checkpoint safety
-
-Queued and running job checkpoints now commit under one SQLite transaction that checks both the live job status and cancellation intent. A worker finishing after cancellation or an earlier terminal result cannot rewrite that record. This does not add a second execution engine or extra DB lookup. The regression test covers completed, failed, cancelled, review-required, and cancellation-requested jobs. CI runs release workspace tests on Windows and macOS only, per current product targets.
+The existing React UI, product SQLite data, OAuth credentials and external
+MCP contracts are preserved. Native video/audio creation and perpetual RSI
+campaigns have been retired; existing records remain readable, while requested
+code changes use ordinary inspect → edit → test → verify tasks.
+For execution recovery, provenance and acceptance invariants, see
+[the detailed harness contract](docs/HARNESS.md).
 
 ## Development vs release validation
 
