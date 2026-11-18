@@ -26,8 +26,11 @@ pub fn trace(snapshot:&Snapshot)->Value{
  let mut issues=Vec::<String>::new();
  let mut seen=BTreeSet::new();
  let mut by_id=BTreeMap::new();
+ // Receipt order, not just final success, proves that a prerequisite
+ // completed before a dependent side effect was observed.
+ let mut receipt_order=BTreeMap::new();
  let mut last_step=0usize;
- for receipt in &snapshot.receipts{
+ for (position,receipt) in snapshot.receipts.iter().enumerate(){
   if receipt.id.is_empty()||!seen.insert(&receipt.id){
    issues.push(format!("Duplicate or empty receipt id: {}",receipt.id));
   }
@@ -36,6 +39,7 @@ pub fn trace(snapshot:&Snapshot)->Value{
   }
   last_step=receipt.step;
   by_id.insert(receipt.id.as_str(),receipt);
+  receipt_order.insert(receipt.id.as_str(),position);
  }
  let mut actions=Vec::new();
  let mut planned=BTreeSet::new();
@@ -63,9 +67,13 @@ pub fn trace(snapshot:&Snapshot)->Value{
       issues.push(format!("Action arguments mismatch for {}",action.id));
      }
     }
-    if r.success && action.depends_on.iter().any(|dependency|
-     !by_id.get(dependency.as_str()).is_some_and(|prior|prior.success)) {
-     issues.push(format!("Succeeded action has an unsatisfied dependency: {}",action.id));
+    let current_position=receipt_order.get(action.id.as_str()).copied();
+    if r.success && action.depends_on.iter().any(|dependency| {
+     !by_id.get(dependency.as_str()).is_some_and(|prior|prior.success)
+      || !receipt_order.get(dependency.as_str()).is_some_and(|position|
+       current_position.is_some_and(|current|*position<current))
+    }) {
+     issues.push(format!("Succeeded action has an unsatisfied or later dependency: {}",action.id));
     }
    }
    actions.push(json!({"turn":turn+1,"id":action.id,
@@ -172,6 +180,34 @@ mod tests{
   s.receipts[1].result=json!({"skipped":true});
   assert_eq!(trace(&s)["traceConsistent"],true,
    "a skipped dependent action is a consistent failure record");
+ }
+ #[test]
+ fn later_success_cannot_retroactively_authorize_earlier_side_effect(){
+  let req=RunRequest{id:"ordered-dependency".into(),instruction:"inspect then edit".into(),
+   owner_instructions:String::new(),strategy:Strategy::Balanced,
+   limits:Limits::default(),allowed_tools:vec![],checks:vec![],
+   require_evidence:true};
+  let mut s=Snapshot::from_request(&req);
+  s.step=2;
+  s.decision_tape.push(Decision{plan:vec![],answer:None,actions:vec![
+   Action{id:"inspect".into(),tool:"workspace_read".into(),
+    arguments:json!({"path":"file"}),depends_on:vec![]},
+   Action{id:"edit".into(),tool:"workspace_write".into(),
+    arguments:json!({"path":"file"}),depends_on:vec!["inspect".into()]},
+  ]});
+  let inspect=Receipt{id:"inspect".into(),tool:"workspace_read".into(),
+   arguments:json!({"path":"file"}),success:true,result:json!({}),step:2};
+  let edit=Receipt{id:"edit".into(),tool:"workspace_write".into(),
+   arguments:json!({"path":"file"}),success:true,result:json!({}),step:2};
+  // Even within the same step, an earlier effect cannot depend on a
+  // successful receipt which was only observed afterwards.
+  s.receipts=vec![edit.clone(),inspect.clone()];
+  let invalid=trace(&s);
+  assert_eq!(invalid["traceConsistent"],false);
+  assert!(invalid["issues"].as_array().unwrap().iter()
+   .any(|issue|issue.as_str().unwrap_or("").contains("later dependency")));
+  s.receipts=vec![inspect,edit];
+  assert_eq!(trace(&s)["traceConsistent"],true);
  }
  #[test]
  fn only_kernel_verification_receipts_may_be_unplanned(){
