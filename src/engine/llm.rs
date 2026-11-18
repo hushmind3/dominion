@@ -285,6 +285,49 @@ mod tests {
     use crate::db::Store;
     use crate::vault::Vault;
 
+    #[tokio::test]
+    async fn helper_retry_charges_both_attempts_to_the_same_native_execution() {
+        use axum::{extract::State, routing::post, Json, Router};
+        use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
+        let invocations=Arc::new(AtomicUsize::new(0));
+        let api=Router::new().route("/v1/chat/completions",
+            post(|State(counter):State<Arc<AtomicUsize>>,Json(_):Json<Value>| async move {
+                let nth=counter.fetch_add(1,Ordering::SeqCst);
+                let content=if nth==0 { "" } else { "Plan: inspect, modify, verify" };
+                Json(json!({
+                    "choices":[{"message":{"content":content},
+                        "finish_reason":if nth==0{"length"}else{"stop"}}],
+                    "usage":{"prompt_tokens":10+nth,"completion_tokens":5+nth,
+                        "total_tokens":15+2*nth}
+                }))
+            })
+        ).with_state(invocations.clone());
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr=listener.local_addr().unwrap();
+        let server=tokio::spawn(async move {axum::serve(listener,api).await.unwrap()});
+        let state=state();
+        state.store.put("provider",&json!({
+            "id":"meter-provider","name":"Meter","baseUrl":format!("http://{addr}/v1"),
+            "model":"test-model","enabled":true
+        })).unwrap();
+        let output=complete_for_execution(&state,"meter-provider","test-model",
+            "You are a planner","Make a plan",None,"run-1","planning")
+            .await.unwrap();
+        assert_eq!(output,"Plan: inspect, modify, verify");
+        assert_eq!(invocations.load(Ordering::SeqCst),2);
+        let rows=state.store.auxiliary_model_calls("run-1").unwrap();
+        assert_eq!(rows.len(),2);
+        assert_eq!(rows[0]["logicalId"],rows[1]["logicalId"]);
+        let accounting=summarize_auxiliary_model_calls(&rows,1,1,50,false);
+        assert_eq!(accounting["auxiliaryUpstreamAttempts"],2);
+        assert_eq!(accounting["auxiliaryLogicalCalls"],1);
+        assert_eq!(accounting["auxiliaryObservedTokens"],32);
+        assert_eq!(accounting["observedTotalTokens"],82);
+        assert_eq!(accounting["usageComplete"],true);
+        assert_eq!(accounting["usageEstimated"],false);
+        server.abort();
+    }
+
     fn state() -> AppState {
         let dir = std::env::temp_dir().join(format!("dominion-llm-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
