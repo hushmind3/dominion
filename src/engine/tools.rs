@@ -2,6 +2,12 @@
 mod github_repositories;
 #[path = "tools/github_replace.rs"]
 mod github_replace;
+#[path = "tools/delegation.rs"]
+mod delegation;
+use delegation::{delegate, task_payload};
+#[cfg(test)]
+use delegation::delegation_depth;
+pub(crate) use delegation::{profile_tool_allowed, profile_tool_visible};
 use crate::db::Store;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -62,7 +68,9 @@ pub fn definitions() -> Vec<Value> {
             "timeoutSeconds": json!({"type":"number","description":"5-300 seconds"}),
             "budget": json!({"type":"integer","minimum":1,"description":"Child allowance in the parent budget unit (tokens or USD micros)"}),
             "readOnly":json!({"type":"boolean","description":"Constrain the worker to observational tools"}),
-            "isolatedWorktree":json!({"type":"boolean","description":"Use an independent Git worktree and enforced shell sandbox; integrate explicitly with task_integrate"})
+            "isolatedWorktree":json!({"type":"boolean","description":"Use an independent Git worktree and enforced shell sandbox; integrate explicitly with task_integrate"}),
+            "profile": json!({"type":"string","enum":["general","inspection","implementation","verification"],
+                "description":"2026 role-scoped child task: inspection is read-only; implementation and verification require isolatedWorktree; verification admits only a sandboxed Cargo test runner and observational tools"})
         }), vec!["agentId", "prompt"])),
         tool("task_integrate","Integrate a completed isolated child patch into this parent workspace (approval required)",object(json!({"jobId":text("Completed child job id")}),vec!["jobId"])),
         tool("task_status", "Check a delegated task's status", object(json!({"jobId": text("Job id")}), vec!["jobId"])),
@@ -155,8 +163,11 @@ pub async fn execute(
     args: &Value,
     run_id: &str,
 ) -> Result<Value, String> {
-    if ctx.store.get("session",ctx.session_id).is_some_and(|s|s["readOnly"]==true)
-        && !observational(name) {
+    let session = ctx.store.get("session",ctx.session_id).unwrap_or(Value::Null);
+    if !profile_tool_allowed(&session,name,args) {
+        return Err("위임 역할에 허용되지 않는 도구 또는 명령입니다.".into());
+    }
+    if session["readOnly"]==true && !observational(name) {
         return Err("읽기 전용 위임 작업에는 이 도구를 실행할 권한이 없습니다.".into());
     }
     let parent_isolated=ctx.store.get("session",ctx.session_id).is_some_and(|s|s["delegationWorkspace"].is_object());
@@ -526,163 +537,6 @@ async fn github_file_update(ctx:&ToolContext<'_>,args:&Value)->Result<Value,Stri
     Ok(json!({"commitSha":commit_sha,"fileSha":file_sha,
         "path":args["path"],"branch":args["branch"],"verified":true,
         "remoteReadBack":true}))
-}
-
-const MAX_DELEGATION_DEPTH: usize = 4;
-
-/// Number of delegated sessions between the owner-facing session and this one.
-/// A chain cannot loop forever, so a cycle is cut defensively.
-fn delegation_depth(store: &Store, session_id: &str) -> usize {
-    let mut depth = 0;
-    let mut seen = std::collections::HashSet::new();
-    let mut current = Some(session_id.to_string());
-    while let Some(id) = current {
-        if !seen.insert(id.clone()) {
-            break;
-        }
-        let Some(session) = store.get("session", &id) else {
-            break;
-        };
-        if session["delegated"].as_bool() == Some(true) {
-            depth += 1;
-        }
-        current = session["parentSessionId"].as_str().map(str::to_string);
-    }
-    depth
-}
-
-async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Value, String> {
-    let agent_id = required_arg(args, "agentId")?;
-    // A delegated worker cannot delegate beyond a bounded depth. This keeps a
-    // runaway chain from consuming unbounded workers.
-    if delegation_depth(ctx.store, ctx.session_id) >= MAX_DELEGATION_DEPTH {
-        return Err(format!(
-            "위임 깊이 제한({MAX_DELEGATION_DEPTH})에 도달했습니다. 상위 작업으로 결과를 모아 처리하세요."
-        ));
-    }
-    let prompt = required_arg(args, "prompt")?;
-    let agent = ctx
-        .state
-        .store
-        .get("agent", &agent_id)
-        .ok_or_else(|| format!("위임 대상 에이전트를 찾을 수 없습니다: {agent_id}"))?;
-    let wait = args["wait"].as_bool().unwrap_or(true);
-    let timeout = args["timeoutSeconds"]
-        .as_u64()
-        .unwrap_or(90)
-        .clamp(5, 300);
-
-    let session_id=uuid::Uuid::new_v4().to_string();
-    let job_id=uuid::Uuid::new_v4().to_string();
-    let mut session=json!({"id":session_id,"workspaceDir":ctx.workspace.canonicalize().map_err(|e|e.to_string())?,"title":format!("Delegate · {}",prompt.chars().take(36).collect::<String>()),
-        "agentId":agent_id,"providerId":agent["providerId"],"model":agent["model"],
-        "parentSessionId":ctx.session_id,"delegated":true,"readOnly":args["readOnly"]==true});
-    if crate::engine::sandbox::required(ctx.state,ctx.session_id){session["shellSandbox"]=json!("required");}
-    if args["isolatedWorktree"]==true {
-        session["delegationWorkspace"]=crate::engine::delegation_worktree::prepare(ctx.state,ctx.workspace,&job_id).await?;
-        session["shellSandbox"]=json!("required");
-    }
-    let job=json!({"id":job_id,"kind":"prompt","status":"queued","queuedAt":chrono::Utc::now().to_rfc3339(),
-        "attempts":0,"stepIndex":0,"stepTotal":0,"events":[],"input":{
-            "prompt":prompt,"agentId":agent_id,"providerId":agent["providerId"],"model":agent["model"],
-            "sessionId":session_id,"toolsEnabled":ctx.tools_enabled&&ctx.tools_execution_enabled,
-            "toolsExecutionEnabled":ctx.tools_execution_enabled,"parentSessionId":ctx.session_id,
-            "parentAgentId":ctx.agent_id,"delegation":true}});
-    let prepared=session["delegationWorkspace"].clone();
-    if let Err(error)=crate::engine::execution_budget::enqueue_child(ctx.state,ctx.session_id,session,job,args["budget"].as_u64()){
-        if prepared.is_object(){let _=crate::engine::delegation_worktree::discard_prepared(&prepared).await;}
-        return Err(error);
-    }
-    crate::engine::jobs::start_now(ctx.state.clone(), job_id.clone());
-
-    if !wait {
-        return Ok(json!({
-            "jobId": job_id, "status": "queued", "sessionId": session_id,
-            "hint": "task_status 또는 task_result로 확인하세요."
-        }));
-    }
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
-    loop {
-        if ctx.state.is_cancelled(ctx.session_id) {
-            ctx.state.cancel_session(&session_id);
-            return Err("부모 실행과 위임 작업이 함께 중단되었습니다.".into());
-        }
-        let Some(current) = ctx.state.store.get("job", &job_id) else {
-            return Err("위임 작업 기록이 사라졌습니다.".into());
-        };
-        let status = current["status"].as_str().unwrap_or("");
-        if matches!(status, "completed" | "failed" | "cancelled" | "needs_review") {
-            return task_payload(ctx, &json!({"jobId": job_id}), true);
-        }
-        if std::time::Instant::now() >= deadline {
-            return Ok(json!({
-                "jobId": job_id, "status": status, "sessionId": session_id,
-                "hint": "아직 실행 중입니다. task_result로 나중에 확인하세요."
-            }));
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-    }
-}
-
-fn task_payload(ctx: &ToolContext<'_>, args: &Value, with_result: bool) -> Result<Value, String> {
-    let job_id = required_arg(args, "jobId")?;
-    let job = ctx
-        .state
-        .store
-        .get("job", &job_id)
-        .ok_or_else(|| format!("작업을 찾을 수 없습니다: {job_id}"))?;
-    // A job result is visible only to the session that created it or to the
-    // parent session that delegated it.
-    let owned = job["input"]["sessionId"].as_str() == Some(ctx.session_id)
-        || job["input"]["parentSessionId"].as_str() == Some(ctx.session_id);
-    if !owned {
-        return Err("이 작업에 접근할 권한이 없습니다.".into());
-    }
-    let status = job["status"].as_str().unwrap_or("unknown");
-    let mut payload = json!({
-        "jobId": job_id,
-        "kind": job["kind"],
-        "status": status,
-        "stepIndex": job["stepIndex"],
-        "stepTotal": job["stepTotal"],
-        "error": job["error"],
-        "result": job["result"],
-        "workspace":job["delegationWorkspace"],
-        "patchSha256":job["delegationPatchSha256"],
-        "budget":job["input"]["delegationBudget"],
-    });
-    if !with_result || !matches!(status, "completed" | "failed" | "needs_review") {
-        return Ok(payload);
-    }
-    let Some(session_id) = job
-        .pointer("/result/sessionId")
-        .and_then(Value::as_str)
-        .or_else(|| job["sessionId"].as_str())
-    else {
-        return Ok(payload);
-    };
-    let messages = ctx.state.store.messages(session_id);
-    let answer = messages
-        .iter()
-        .rev()
-        .find(|message| message["role"] == "assistant")
-        .and_then(|message| message["content"].as_str())
-        .unwrap_or("")
-        .chars()
-        .take(8000)
-        .collect::<String>();
-    let operations = ctx
-        .store
-        .recent_completed_session_operations(session_id, 20)?
-        .into_iter()
-        .map(|operation| {
-            json!({"tool":operation["tool"],"arguments":operation["arguments"],"result":operation["result"]})
-        })
-        .collect::<Vec<_>>();
-    payload["sessionId"] = json!(session_id);
-    payload["content"] = json!(answer);
-    payload["operations"] = json!(operations);
-    Ok(payload)
 }
 
 fn required_arg(args: &Value, key: &str) -> Result<String, String> {
