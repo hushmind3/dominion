@@ -73,7 +73,7 @@ fn safe_native_resume(state:&AppState,job:&Value)->bool{
         && job["id"].as_str().is_some_and(|id|
             state.store.run_has_uncertain_operation(id).is_ok_and(|unknown|!unknown))
 }
-fn project(state:&AppState,job:&Value)->Value{
+pub(crate) fn project(state:&AppState,job:&Value)->Value{
     let snapshot=&job["nativeState"];
     let result=&job["result"];
     let awaiting=pending(state,job);
@@ -153,7 +153,8 @@ pub async fn list(State(state):State<AppState>)->Json<Value>{
         // Other menus may create prompt jobs; do not show unrelated chat,
         // workflow, automation or private-source work in this UI panel.
         .filter(|j|j["kind"]=="prompt"
-            && j["input"]["clientSurface"]=="native_agent_panel")
+            && j["input"]["clientSurface"]=="native_agent_panel"
+            && j["input"]["harnessCompat"]!=true)
         .collect::<Vec<_>>();
     rows.sort_by(|a,b|b["queuedAt"].as_str().unwrap_or("")
         .cmp(a["queuedAt"].as_str().unwrap_or("")));
@@ -180,6 +181,9 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
     let mut input=json!({"prompt":instruction,"toolsEnabled":true,
         "toolsExecutionEnabled":true,"providerId":id,
         "clientSurface":"native_agent_panel"});
+    // A legacy /api/harness/runs caller now uses this SAME job-backed
+    // native kernel; keep only a view marker for API history partitioning.
+    if body["harnessCompat"]==true {input["harnessCompat"]=json!(true);}
     // Main's public run contract also accepts an explicit model and a
     // round budget. Apply both to the actual Rust job, never just echo them.
     if let Some(model)=body["model"].as_str().filter(|model|!model.trim().is_empty()){
