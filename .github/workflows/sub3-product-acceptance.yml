@@ -12,6 +12,11 @@ on:
       - 'src/api/mod.rs'
       - 'tests/e2e.rs'
       - 'src/engine/chat/**'
+      - 'src/api/sessions.rs'
+      - 'src/api/chat.rs'
+      - 'src/state.rs'
+      - 'web/src/pages/Chat.tsx'
+      - 'web/src/i18n/**'
       - 'scripts/check-lean-product.mjs'
       - 'src/engine/verification.rs'
       - 'src/db.rs'
@@ -64,6 +69,8 @@ jobs:
           cargo test --bin dominion-rust planning_cost_tests
           cargo test --bin dominion-rust shared_sdk_relevance_ignores_tool_parameter_payload
           cargo test --bin dominion-rust engine::chat::tests
+          cargo test --bin dominion-rust cancel_api_interrupts_silent_http_generation_and_allows_same_session_retry
+          cargo test --bin dominion-rust engine::chat::runtime::cancellation_watch_tests
           cargo test --bin dominion-rust engine::chat::room_context::tests
           cargo test --bin dominion-rust engine::verification
           cargo test --bin dominion-rust engine::native_adjudication::tests
@@ -81,3 +88,19 @@ jobs:
           cargo test --bin dominion-rust engine::native_agent::tests
           cargo test --bin dominion-rust api::sdk::tests
           cargo test --test e2e native_job_prompt_runs -- --test-threads=1
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Chat stop UI type safety and production compilation
+        run: |
+          npm ci --prefix web --no-audit --no-fund
+          npm run typecheck --prefix web
+          npm run build --prefix web
