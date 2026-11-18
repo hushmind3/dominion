@@ -6,7 +6,7 @@ import {OwnerAvatar,useOwnerProfile} from '../components/OwnerProfile'
 import {createPortal} from 'react-dom'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
 import {FormEvent,useEffect,useMemo,useRef,useState,type KeyboardEvent} from 'react'
-import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,Cpu,CornerDownLeft,HardDrive,Menu,Settings,List,LoaderCircle,MessageCircle,MoreHorizontal,Plus,Power,RefreshCw,ShieldAlert,ShieldCheck,Sparkles,TerminalSquare,Trash2,X} from 'lucide-react'
+import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,Cpu,CornerDownLeft,HardDrive,Menu,Settings,List,LoaderCircle,MessageCircle,MoreHorizontal,Plus,Power,RefreshCw,ShieldAlert,ShieldCheck,Sparkles,Square,TerminalSquare,Trash2,X} from 'lucide-react'
 import {Agent,Approval,ChatMessage,ChatSession,Provider,get,post,resolveApproval,streamChat,koreanReasoningEnabled} from '../api'
 import {Action,Empty,Notice,StateTag,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommandLabel,slashCommands,type SlashChoice} from '../components/SlashMenu'
@@ -68,13 +68,17 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const job=useJob<LearningJob>(learningJob?'/api/jobs/'+encodeURIComponent(learningJob.id):null);
  const approval=(liveApproval?.sessionId===current?liveApproval:null)||
   approvals.value.find(item=>item.sessionId===current&&item.status==='pending');
- const [error,setError]=useState(''),[busy,setBusy]=useState(false),[live,setLive]=useState(''),[thought,setThought]=useState(''),[thinking,setThinking]=useState(false),[reasoningKo,setReasoningKo]=useState(koreanReasoningEnabled),[showReasoning,setShowReasoning]=useState(true),[showSettings,setShowSettings]=useState(false),[toolsEnabled,setToolsEnabled]=useState(true),[thinkingEnabled,setThinkingEnabled]=useState(true),[reasoningEffort,setReasoningEffort]=useState(''),[autoLearn,setAutoLearn]=useState(false),[showHistory,setShowHistory]=useState(()=>{try{if(window.innerWidth<768)return false;return localStorage.getItem('dominion.chat.sidebar')!=='0'}catch{return true}}),[toolStatus,setToolStatus]=useState('');
+ const [error,setError]=useState(''),[busy,setBusy]=useState(false),[stopping,setStopping]=useState(false),[live,setLive]=useState(''),[thought,setThought]=useState(''),[thinking,setThinking]=useState(false),[reasoningKo,setReasoningKo]=useState(koreanReasoningEnabled),[showReasoning,setShowReasoning]=useState(true),[showSettings,setShowSettings]=useState(false),[toolsEnabled,setToolsEnabled]=useState(true),[thinkingEnabled,setThinkingEnabled]=useState(true),[reasoningEffort,setReasoningEffort]=useState(''),[autoLearn,setAutoLearn]=useState(false),[showHistory,setShowHistory]=useState(()=>{try{if(window.innerWidth<768)return false;return localStorage.getItem('dominion.chat.sidebar')!=='0'}catch{return true}}),[toolStatus,setToolStatus]=useState('');
  useEffect(()=>{setReasoningEffort('');setThinkingEnabled(true)},[providerId,model,agentId,current]);
  const [permissionOpen,setPermissionOpen]=useState(false);
  const [modelMenu,setModelMenu]=useState(false),[installed,setInstalled]=useState<InstalledModel[]>([]),[modelsLoading,setModelsLoading]=useState(false),[runtime,setRuntime]=useState<Runtime>({status:'idle'}),[modelBusy,setModelBusy]=useState(''),[unloading,setUnloading]=useState(false),[learning,setLearning]=useState(false),[menuError,setMenuError]=useState('');
  const [slashOpen,setSlashOpen]=useState(false),[slashActive,setSlashActive]=useState(0),[commandInfo,setCommandInfo]=useState('');
  const inputRef=useRef<HTMLTextAreaElement>(null);
  const stream=useRef<AbortController|null>(null);
+ const activeTurn=useRef<{
+  controller:AbortController;requestId:string;sessionId?:string;
+  cancelling:boolean;completed:boolean;saved:boolean
+ }|null>(null);
  const view=useRef(current);
  view.current=current;
  const viewingTurn=turnSession===current&&(!savedMessageId||!messages.some(message=>message.id===savedMessageId));
@@ -84,7 +88,15 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  useEffect(()=>{if(!current){setServerUsage(0);return}let alive=true;get<{totalTokens?:number}>('/api/sessions/'+encodeURIComponent(current)+'/usage').then(usage=>{if(alive)setServerUsage(Number(usage.totalTokens)||0)}).catch(()=>{});return()=>{alive=false}},[current,usageRevision])
  const {scrollRef,onScroll,jumpDown}=useTranscriptScroll(current,transcriptRevision);
  const modelPanel=useAnchoredPanel(modelMenu,()=>setModelMenu(false),380);
- useEffect(()=>()=>stream.current?.abort(),[]);
+ useEffect(()=>()=>{const turn=activeTurn.current;
+  if(turn&&!turn.completed){
+   // Merely closing the SSE reader cannot stop a detached Rust inference.
+   // Cancellation uses an independent request (never the stream's signal).
+   if(turn.sessionId)void post('/api/sessions/'+encodeURIComponent(turn.sessionId)+'/cancel',
+    {requestId:turn.requestId}).catch(()=>{});
+   turn.controller.abort();
+  }
+ },[]);
  useEffect(()=>{if(window.innerWidth<768)return;try{localStorage.setItem('dominion.chat.sidebar',showHistory?'1':'0')}catch{}},[showHistory]);
  useEffect(()=>{
   if(!active)return;
@@ -172,6 +184,39 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   if(window.innerWidth<768)setShowHistory(false);
   inputRef.current?.focus({preventScroll:true});
  };
+ const stopChat=async()=>{
+  const turn=activeTurn.current;
+  if(!turn||turn.cancelling)return;
+  turn.cancelling=true;
+  setStopping(true);setError('');setCommandInfo(t('chat.stopPending'));
+  try{
+   if(turn.sessionId){
+    // The server persists the per-turn tombstone BEFORE cancelling its
+    // session epoch; cancellation wins even when the POST arrives late.
+    const result=await post<{cancelled:boolean;requestRecorded:boolean}>(
+     '/api/sessions/'+encodeURIComponent(turn.sessionId)+'/cancel',
+     {requestId:turn.requestId});
+    if(!result.requestRecorded)throw Error(t('chat.stopFailed'));
+   }
+   turn.controller.abort();
+   if(activeTurn.current===turn){
+    activeTurn.current=null;stream.current=null;
+    setBusy(false);setStopping(false);setLiveApproval(null);
+    setLive('');setThought('');setToolStatus('');setSavedMessageId(undefined);
+    setCommandInfo(t('chat.cmd.stopRequested'));
+    refresh();
+   }
+  }catch(err){
+   turn.cancelling=false;
+   if(activeTurn.current===turn){
+    setStopping(false);setError(translateError((err as Error).message));
+    setCommandInfo('');
+    // A stream may have ended while /cancel was unavailable. Do not
+    // leave the send button stuck once that stream is truly gone.
+    if(turn.completed){activeTurn.current=null;stream.current=null;setBusy(false);refresh();}
+   }
+  }
+ };
  const executeCommand=async(text:string)=>{
   const found=text.trim().match(/^\/([a-zA-Z]+)(?:\s+([\s\S]*))?$/);
   if(!found){setError(t('chat.cmd.invalid'));return;}
@@ -198,8 +243,9 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    }
    if(name==='help'){setCommandInfo(slashCommands.map(x=>x.command+' · '+slashCommandLabel(x,loc).name).join('\n'));return;}
    if(name==='stop'){
+    if(activeTurn.current){await stopChat();return;}
     if(!current)throw Error(t('chat.cmd.noSessionStop'));
-    const answer=await post<{cancelled:boolean}>('/api/sessions/'+current+'/cancel',{});
+    const answer=await post<{cancelled:boolean}>('/api/sessions/'+encodeURIComponent(current)+'/cancel',{});
     setCommandInfo(answer.cancelled?t('chat.cmd.stopRequested'):t('chat.cmd.nothingRunning'));return;
    }
    if(name==='status'){
@@ -261,9 +307,13 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   if(!providerId){setError(t('chat.err.connectApi'));return;}
   if(!model){setError(t('chat.err.pickModel'));return;}
   const controller=new AbortController();
-  stream.current=controller;
+  const turn={
+   controller,requestId:crypto.randomUUID(),sessionId:current,
+   cancelling:false,completed:false,saved:false
+  };
+  activeTurn.current=turn;stream.current=controller;
   setTurnSession(current);setSavedMessageId(undefined);
-  setBusy(true);setError('');setCommandInfo('');setLive('');setThought('');setSlashOpen(false);setToolStatus('');
+  setBusy(true);setStopping(false);setError('');setCommandInfo('');setLive('');setThought('');setSlashOpen(false);setToolStatus('');
   jumpDown();
   let id=current;
   let saved=false;
@@ -272,6 +322,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     const session=await post<ChatSession>('/api/sessions',{title:t('chat.sessionTitle'),agentId,providerId:manual?.providerId,model:manual?.model});
     if(controller.signal.aborted)return;
     id=session.id;
+    turn.sessionId=id;
     if(view.current===current){
      onSession(id);setTurnSession(id);
      if(agentId)setAgentChoice({id:agentId,scope:id});
@@ -282,11 +333,12 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    setInput(previous=>previous.trim()===text?'':previous);
    if(inputRef.current)inputRef.current.style.height='';
    await streamChat({
-    sessionId:id,agentId,providerId:manual?.providerId,model:manual?.model,input:text,
+    sessionId:id,requestId:turn.requestId,agentId,providerId:manual?.providerId,model:manual?.model,input:text,
     toolsEnabled,toolsExecutionEnabled:toolsEnabled,autoLearning:autoLearn,
     reasoningLanguage:reasoningKo?'ko':'original',reasoningEffort:reasoningEffort||undefined,thinking:selectedProvider?.kind==='codex'?(reasoningEffort==='none'?false:canDisableThinking?thinkingEnabled:undefined):thinkingEnabled,
    },event=>{
-    if(event.type==='assistant_saved'){saved=true;setSavedMessageId(event.messageId);refresh();}
+    if(activeTurn.current!==turn||turn.cancelling||controller.signal.aborted)return;
+    if(event.type==='assistant_saved'){saved=true;turn.saved=true;setSavedMessageId(event.messageId);refresh();}
     if(event.type==='text')setLive(old=>old+event.text);
     if(event.type==='reasoning')setThought(old=>old+event.text);
     if(event.type==='approval'){setLiveApproval({id:event.id,tool:event.tool,args:event.args,sessionId:id!,status:'pending'});void approvals.reload();}
@@ -299,10 +351,10 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   }catch(e){
    if(!controller.signal.aborted&&view.current===id)setError(translateError((e as Error).message));
   }finally{
-   stream.current=null;
-   if(!controller.signal.aborted){
-    refresh();
-    setBusy(false);setLiveApproval(null);setToolStatus('');
+   turn.completed=true;
+   if(activeTurn.current===turn&&!turn.cancelling){
+    activeTurn.current=null;stream.current=null;
+    refresh();setBusy(false);setStopping(false);setLiveApproval(null);setToolStatus('');
     if(!saved){setLive('');setThought('');}
    }
   }
@@ -391,7 +443,8 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
       </div>
       <div className="ml-auto flex items-center gap-2">
        <span className="hidden text-[10px] text-[#9C9388] sm:inline">{t('chat.enterHint')}</span>
-       <Button className="conversation-composer-send" disabled={busy||Boolean(selectedSession?.roomId)||(Boolean(current)&&sessions.loading)||!input.trim()} type="submit" title={t('chat.send')}>{busy?<LoaderCircle size={18} className="animate-spin"/>:<ArrowUp size={19}/>}</Button>
+       {busy?<Button className="conversation-composer-send" type="button" disabled={stopping} onClick={()=>void stopChat()} title={stopping?t('chat.stopPending'):t('chat.stop')} aria-label={stopping?t('chat.stopPending'):t('chat.stop')} aria-busy={stopping}>{stopping?<LoaderCircle size={18} className="animate-spin"/>:<Square size={17} fill="currentColor"/>}</Button>
+        :<Button className="conversation-composer-send" disabled={Boolean(selectedSession?.roomId)||(Boolean(current)&&sessions.loading)||!input.trim()} type="submit" title={t('chat.send')}><ArrowUp size={19}/></Button>}
       </div>
      </div>
     </form></div>
