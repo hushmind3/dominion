@@ -186,7 +186,7 @@ pub(super) fn promote(
         let Some(found)=match_item["name"].as_str().and_then(|key|lookup.get(key))
             else{continue;};
         if already.insert(name(found).to_string()){
-            visible.push((*found).clone());
+            visible.push((**found).clone());
             added+=1;
         }
     }
