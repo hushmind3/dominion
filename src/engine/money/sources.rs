@@ -150,7 +150,8 @@ fn parse(feed:&str,source:&str)->Vec<Value>{
         let normalized=normalized_title(&title);
         Some(crate::engine::money_intelligence::enrich_signal(json!({
             "id":digest(&url),"title":title,"url":url,
-            "sourceName":source,"publisherName":publisher_name,
+            "sourceName":source,"observedFeeds":[source],
+            "publisherName":publisher_name,
             "publisherDomain":publisher_domain,
             "storyClusterId":digest(&normalized),
             "storyRelationship":"unassessed",
