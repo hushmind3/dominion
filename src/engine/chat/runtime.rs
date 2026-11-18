@@ -703,8 +703,23 @@ async fn run_turn_body(
         };
         (prompt_context, history_messages)
     };
+    // Tool-heavy rooms may use the general native-work prompt with a
+    // source-scoped room history. The owner-state evidence still needs a
+    // dependency proof or its immutable cached prefix could survive a later
+    // correction without being invalidated.
+    let mut provenance_items = prompt_context.items.clone();
+    if is_room {
+        for row in &history_messages {
+            let Some(id) = row["_dominion_frame"].as_str()
+                .and_then(|key| key.strip_prefix("owner-state:")) else { continue };
+            if !provenance_items.iter().any(|item|
+                item["kind"] == "owner_state" && item["id"] == id) {
+                provenance_items.push(json!({"kind":"owner_state","id":id}));
+            }
+        }
+    }
     let mut messages = vec![json!({"role":"system","content":prompt_context.prompt,"_dominion_source":reply_to,
-        "_dominion_dependencies":super::continuity::dependencies(state,&prompt_context.items)})];
+        "_dominion_dependencies":super::continuity::dependencies(state,&provenance_items)})];
     if is_room {
         if let Some(mut execution) = state.store.get("execution", execution_id) {
             if execution["inputContext"].is_null() {
@@ -733,7 +748,7 @@ async fn run_turn_body(
         }
     }
     let context_overflow = false;
-    let mut context_items = prompt_context.items.clone();
+    let mut context_items = provenance_items;
     // The profile is trusted child-session metadata, not a model-generated
     // role claim. Admission is enforced separately by the tool gateway.
     if let Some(profile) = session["delegationProfile"].as_str() {
