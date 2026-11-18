@@ -64,7 +64,7 @@ async fn authorized_catalog(state:&AppState,session_id:&str)->Vec<Value>{
             && seen.insert(name.to_string())
     }).collect()
 }
-fn rank(catalog:&[Value],query:&str,limit:usize)->Vec<&Value>{
+fn rank<'a>(catalog:&'a [Value],query:&str,limit:usize)->Vec<&'a Value>{
     let mut candidates=catalog.iter().filter_map(|definition|{
         let name=tool_name(definition);
         let description=definition["function"]["description"].as_str().unwrap_or("");
