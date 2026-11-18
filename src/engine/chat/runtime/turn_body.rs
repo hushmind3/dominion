@@ -1379,6 +1379,19 @@ pub(super) async fn run_turn_body(
             // Model-origin tool calls have only the authority advertised
             // in this exact provider request. This also enforces explicit
             // core tool selection and prevents guessing hidden MCP names.
+            // A disconnected SSE client must not stop work already promised by
+            // the model; explicit cancel and budgets remain the stop signals.
+            if !budget.charge_proposal() {
+                return Err(format!(
+                    "도구 제안 예산({}회)을 초과했습니다.",
+                    max_tools.saturating_mul(2)
+                ));
+            }
+            if state.is_cancelled(session_id)
+                || state.cancellation_generation(session_id) != generation
+            {
+                return Err("실행이 중단되었습니다.".into());
+            }
             if !super::super::tool_projection::advertised_tool(&round_tools,&call.name){
                 let error=format!(
                     "도구 {}는 이번 모델 요청에 제공되지 않았습니다. 필요한 도구는 dominion_tool_search로 탐색하세요.",
@@ -1394,19 +1407,6 @@ pub(super) async fn run_turn_body(
                 crate::engine::algorithms::mark_signal(
                     state,execution_id,"tool.selection",false);
                 continue;
-            }
-            // A disconnected SSE client must not stop work already promised by
-            // the model; explicit cancel and budgets remain the stop signals.
-            if !budget.charge_proposal() {
-                return Err(format!(
-                    "도구 제안 예산({}회)을 초과했습니다.",
-                    max_tools.saturating_mul(2)
-                ));
-            }
-            if state.is_cancelled(session_id)
-                || state.cancellation_generation(session_id) != generation
-            {
-                return Err("실행이 중단되었습니다.".into());
             }
             // Only adjacent read-only calls are concurrency-safe; an earlier
             // mutation is an exclusive barrier. Each read group is bounded to
