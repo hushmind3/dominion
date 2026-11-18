@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/harness", "crates/dominion-agent-sdk", "sdk/rust"]
+members = [".", "crates/dominion-agent-sdk", "sdk/rust"]
 
 [package]
 name = "dominion-rust"
@@ -10,7 +10,6 @@ license = "Apache-2.0"
 [dependencies]
 dominion-sdk = { path = "sdk/rust" }
 dominion-agent-sdk = { path = "crates/dominion-agent-sdk" }
-dominion-harness = { path = "crates/harness" }
 axum = "0.7"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
