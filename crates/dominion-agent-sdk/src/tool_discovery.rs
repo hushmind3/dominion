@@ -311,6 +311,16 @@ mod tests{
   assert!(inspected.iter().any(|tool|tool.name=="workspace_read_range"));
  }
  #[test]
+ fn native_and_chat_share_only_the_metadata_ranking_not_permissions(){
+  let c=catalog();
+  let target=c.get("workspace_read_range").unwrap();
+  assert_eq!(score(target,"Inspect code"),
+   tool_relevance(&target.name,&target.description,"Inspect code"));
+  assert!(tool_relevance("workspace_read_range","Read workspace code",
+   "Inspect code")>tool_relevance("unrelated_end","Movie upload","Inspect code"));
+  assert_eq!(tool_relevance("","", "Inspect code"),0);
+ }
+ #[test]
  fn small_catalog_stays_fully_visible_without_new_discovery_rounds(){
   let mut c=HashMap::new();
   for key in ["read","write"] {
