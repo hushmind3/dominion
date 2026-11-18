@@ -29,15 +29,31 @@ fn add_explicit_verifier(checks: &mut Value, command: Option<&str>) -> Result<()
         return Err("검증 명령은 최대 2048자입니다.".into());
     }
     let items = checks.as_array_mut().ok_or("검증 조건이 배열이 아닙니다.")?;
-    if items.len() >= 20 {
-        return Err("검증 조건은 최대 20개입니다.".into());
-    }
     if !items.iter().any(|check| {
         check["type"] == "command_succeeded" && check["command"] == command
     }) {
+        if items.len() >= 20 {
+            return Err("검증 조건은 최대 20개입니다.".into());
+        }
         items.push(json!({"type":"command_succeeded","command":command}));
     }
     Ok(())
+}
+
+/// Prefer a frozen, owner-supplied verification contract when present.
+/// Inferred filenames are a useful fallback, but natural-language prompts
+/// can mention reference files which are not outputs. Do not silently add
+/// speculative regex targets on top of explicit owner acceptance checks.
+/// The exact owner contract is baseline-stamped before the first tool call.
+fn acceptance_contract(
+    state:&crate::state::AppState,goal:&str,input:&Value,
+)->Result<Value,String>{
+    if let Some(criteria)=input.get("successCriteria"){
+        verification::validate_criteria(criteria)?;
+        let checks=criteria.as_array().cloned().unwrap_or_default();
+        return Ok(verification::baseline_checks(state,checks));
+    }
+    Ok(verification::prepare_acceptance_checks(state,goal))
 }
 
 /// A passing build/test from before the most recent workspace edit is stale.
@@ -122,7 +138,7 @@ pub async fn execute(
     input:&Value,
 )->Result<Value,String> {
     let config=CycleConfig::from_input(input);
-    let mut checks=verification::prepare_acceptance_checks(&ctx.state,goal);
+    let mut checks=acceptance_contract(&ctx.state,goal,input)?;
     let verify_command=input["verifyCommand"].as_str().filter(|command|!command.trim().is_empty());
     add_explicit_verifier(&mut checks, verify_command)?;
     let mut has_checks=checks.as_array().is_some_and(|v|!v.is_empty());
@@ -371,6 +387,39 @@ pub async fn execute(
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]
+    fn frozen_owner_acceptance_contract_overrides_ambiguous_path_inference(){
+        use crate::{config::Config,db::Store,state::AppState,vault::Vault};
+        let dir=std::env::temp_dir().join(format!("dominion-checks-{}",uuid::Uuid::new_v4()));
+        let config=Config{port:0,data_dir:dir.join("data"),web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()));
+        std::fs::write(dir.join("reference.txt"),"READ ONLY").unwrap();
+        let instruction="Read reference.txt and write output.txt";
+        let inferred=verification::prepare_acceptance_checks(&state,instruction);
+        assert!(!inferred.as_array().unwrap().is_empty());
+        let explicit=json!({"successCriteria":[
+            {"type":"file_equals","path":"output.txt","content":"EXPECTED"}
+        ]});
+        let checks=acceptance_contract(&state,instruction,&explicit).unwrap();
+        assert_eq!(checks.as_array().unwrap().len(),1);
+        assert_eq!(checks[0]["path"],"output.txt");
+        assert_eq!(checks[0]["type"],"file_equals");
+        assert!(!checks.to_string().contains("reference.txt"));
+        assert!(!verification::check_acceptance(&state,instruction,&checks,&[]).is_empty());
+        let invalid=json!({"successCriteria":[{"type":"file_equals","path":"x.txt"}]});
+        assert!(acceptance_contract(&state,instruction,&invalid).is_err());
+        // An existing optional verifyCommand is not a 21st criterion:
+        // it must be recognized without consuming the frozen 20-check limit.
+        let mut twenty=json!(vec![
+            json!({"type":"command_succeeded","command":"cargo test"});20
+        ]);
+        assert!(add_explicit_verifier(&mut twenty,Some("cargo test")).is_ok());
+        assert_eq!(twenty.as_array().unwrap().len(),20);
+        assert!(add_explicit_verifier(&mut twenty,Some("cargo check")).is_err());
+        let _=std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn verifier_terminal_checkpoint_records_review_without_promoting_file_success() {
         use crate::{config::Config,db::Store,state::AppState,vault::Vault};
