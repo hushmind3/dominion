@@ -161,7 +161,7 @@ async function freeProxy(request, env, user) {
   }
   let upstream;
   try {
-    upstream = await fetch(env.UPSTREAM_URL.replace(/\/$/, '') + '/chat/completions', {
+    upstream = await fetch(modelEndpoint.replace(/\/$/, '') + '/chat/completions', {
       method: 'POST',
       headers: { authorization: 'Bearer ' + env.UPSTREAM_API_KEY, 'content-type': 'application/json' },
       body: JSON.stringify({ model: model.upstream_model || model.id, messages: body.messages, stream: body.stream === true, max_tokens: Math.min(2048, body.max_tokens || 1024) }),
@@ -179,18 +179,43 @@ async function freeProxy(request, env, user) {
   return new Response(upstream.body, { status: upstream.status, headers });
 }
 
+// Operator-managed provider registry. Keys stay in Worker secrets, never in /v1/models.
+function paidModels(env) {
+  let configs;
+  try { configs = JSON.parse(env.PAID_MODELS_JSON || '[]'); } catch { return []; }
+  if (!Array.isArray(configs)) return [];
+  const providers = {
+    openai: { url: 'https://api.openai.com/v1', key: env.OPENAI_API_KEY },
+    deepseek: { url: 'https://api.deepseek.com/v1', key: env.DEEPSEEK_API_KEY },
+    groq: { url: 'https://api.groq.com/openai/v1', key: env.GROQ_API_KEY },
+    together: { url: 'https://api.together.xyz/v1', key: env.TOGETHER_API_KEY },
+    mistral: { url: 'https://api.mistral.ai/v1', key: env.MISTRAL_API_KEY }
+  };
+  return configs.filter(m => m && typeof m.id === 'string' && /^[a-zA-Z0-9._:/-]{1,120}$/.test(m.id) &&
+    typeof m.provider === 'string' && providers[m.provider]?.key &&
+    Number.isSafeInteger(m.input_micro_krw) && m.input_micro_krw > 0 &&
+    Number.isSafeInteger(m.output_micro_krw) && m.output_micro_krw > 0)
+    .slice(0, 300).map(m => ({ ...m, name: m.name || m.id, free: false, backend: m.provider,
+      endpoint: providers[m.provider].url, apiKey: providers[m.provider].key,
+      upstream_model: m.upstream_model || m.id }));
+}
 async function proxy(request, env, user) {
-  if (!env.UPSTREAM_API_KEY || !env.UPSTREAM_URL || !env.MODEL_ID ||
-      !env.PRICE_INPUT_MICRO_KRW || !env.PRICE_OUTPUT_MICRO_KRW) return err('Model service not configured', 503);
   const body = await maxBody(request);
-  if (body.model !== env.MODEL_ID || !Array.isArray(body.messages) || !body.messages.length)
+  const selected = paidModels(env).find(m => m.id === body.model);
+  const legacy = body.model === env.MODEL_ID && env.UPSTREAM_API_KEY && env.UPSTREAM_URL && env.PRICE_INPUT_MICRO_KRW && env.PRICE_OUTPUT_MICRO_KRW;
+  if (!selected && !legacy) return err('Paid model not enabled by operator', 403);
+  const modelId = selected?.id || env.MODEL_ID;
+  const modelEndpoint = selected?.endpoint || env.UPSTREAM_URL;
+  const modelKey = selected?.apiKey || env.UPSTREAM_API_KEY;
+  const upstreamModel = selected?.upstream_model || env.MODEL_ID;
+  if (!Array.isArray(body.messages) || !body.messages.length)
     return err('Unsupported model or messages');
   // Initial release: one configured model, no tools, no streaming. Fail closed.
   if (body.stream || body.tools || body.tool_choice || body.n || body.response_format)
     return err('Unsupported request options');
   const maxTokens = Math.min(4096, Math.max(1, Number(body.max_tokens || 1024)));
   if (!Number.isSafeInteger(maxTokens)) return err('Invalid max_tokens');
-  const inputPrice = Number(env.PRICE_INPUT_MICRO_KRW), outputPrice = Number(env.PRICE_OUTPUT_MICRO_KRW);
+  const inputPrice = Number(selected?.input_micro_krw ?? env.PRICE_INPUT_MICRO_KRW), outputPrice = Number(selected?.output_micro_krw ?? env.PRICE_OUTPUT_MICRO_KRW);
   if (![inputPrice, outputPrice].every(n => Number.isSafeInteger(n) && n > 0)) return err('Invalid pricing configuration', 503);
   const encoded = JSON.stringify(body.messages);
   if (encoded.length > 100000) return err('Context too large');
@@ -215,13 +240,13 @@ async function proxy(request, env, user) {
     .bind(reserve, user.id, reserve).first();
   if (!debited) return err('Insufficient prepaid credits', 402);
   await env.DB.prepare('INSERT INTO usage(id,account_id,model,reserved,status,created_at) VALUES(?,?,?,?,?,?)')
-    .bind(id, user.id, env.MODEL_ID, reserve, 'reserved', now()).run();
+    .bind(id, user.id, modelId, reserve, 'reserved', now()).run();
   let charge = 0, status = 'failed', result;
   try {
     const upstream = await fetch(env.UPSTREAM_URL.replace(/\/$/, '') + '/chat/completions', {
       method: 'POST',
-      headers: { authorization: 'Bearer ' + env.UPSTREAM_API_KEY, 'content-type': 'application/json' },
-      body: JSON.stringify({ model: env.MODEL_ID, messages: body.messages, max_tokens: maxTokens, stream: false }),
+      headers: { authorization: 'Bearer ' + modelKey, 'content-type': 'application/json' },
+      body: JSON.stringify({ model: upstreamModel, messages: body.messages, max_tokens: maxTokens, stream: false }),
       signal: AbortSignal.timeout(90000)
     });
     if (!upstream.ok) throw new Error('Upstream unavailable (' + upstream.status + ')');
@@ -278,7 +303,7 @@ export default {
       if (path === '/v1/auth/google' && request.method === 'POST') response = await login(request, env);
       else if (path === '/v1/models' && request.method === 'GET') {
         const user = await account(request, env);
-        response = user ? json({ data: [{ id: 'dominion/free-auto', name: 'DOMINION Free Auto', object: 'model', free: true }, ...(await availableModels(env)).map(x => ({ id: x.id, name: x.name || x.id, object: 'model', free: true }))] }) : err('Unauthorized', 401);
+        response = user ? json({ data: [{ id: 'dominion/free-auto', name: 'DOMINION Free Auto', object: 'model', free: true }, ...(await availableModels(env)).map(x => ({ id: x.id, name: x.name || x.id, object: 'model', free: true })), ...paidModels(env).map(x => ({ id: x.id, name: x.name, object: 'model', free: false, provider: x.provider, input_micro_krw: x.input_micro_krw, output_micro_krw: x.output_micro_krw }))] }) : err('Unauthorized', 401);
       }
       else if (path === '/v1/me' && request.method === 'GET') {
         const user = await account(request, env);
