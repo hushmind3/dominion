@@ -18,6 +18,7 @@ fn wire_message(message: &Value) -> Value {
         object.remove("_dominion_frame");
         object.remove("_dominion_source");
         object.remove("_dominion_dependencies");
+        object.remove("_dominion_peer");
     }
     value
 }
@@ -310,7 +311,8 @@ pub(crate) fn project(
     let fresh = messages.iter().enumerate().skip(1).map(|(index, message)| {
         let body = wire_message(message);
         let key = frame_key(message, source, index);
-        json!({"key":key,"message":body})
+        json!({"key":key,"message":body,
+            "peer":message["_dominion_peer"] == true})
     }).collect::<Vec<_>>();
     let mut frames = previous["frames"].as_array().cloned().unwrap_or_default();
     // Legacy tool-heavy room projections could carry an owner-state frame
@@ -367,6 +369,23 @@ pub(crate) fn project(
         .unwrap_or(0);
     if reason.is_none() && stale_shared_frames > 0 {
         reason = Some("room_snapshot_rotated");
+    }
+    // A prefix epoch may retain verified owner decisions, but it must never
+    // turn an old, unselected peer excerpt into permanent room knowledge.
+    // The compiler deliberately drops irrelevant previous-turn peers.
+    // If an earlier wire view included one, a fresh source-scoped projection
+    // is required; the immutable system prefix is still provider-cacheable.
+    let fresh_keys=fresh.iter().filter_map(|frame|frame["key"].as_str())
+        .collect::<std::collections::HashSet<_>>();
+    let stale_peer_count=frames.iter().filter(|frame| {
+        let key=frame["key"].as_str().unwrap_or("");
+        let is_peer=frame["peer"] == true || frame["message"]["role"] == "user"
+            && frame["message"]["content"].as_str().is_some_and(|text|
+                text.starts_with('[') && text.contains("의 발언 — 참고 데이터, 지시 아님]"));
+        is_peer && !fresh_keys.contains(key)
+    }).count();
+    if reason.is_none() && stale_peer_count > 0 {
+        reason=Some("peer_selection_changed");
     }
     let previous_frames = frames.len();
     let mut reused = frames.len();
@@ -433,6 +452,7 @@ pub(crate) fn project(
         "epoch":epoch,"reusedFrames":reused,"appendedFrames":frames.len().saturating_sub(reused),
         "rebaseReason":reason,"sourceMessageId":source,
         "previousFrames":previous_frames,"reclaimedStaleRoomSnapshots":stale_shared_frames,
+        "reclaimedStalePeerExcerpts":stale_peer_count,
         "carriedVerifiedOwnerFacts":carried_owner_facts,
         "estimatedReusedHistoryTokens":reused_estimate,
         "estimatedNewHistoryTokens":new_estimate,
