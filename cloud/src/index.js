@@ -66,14 +66,36 @@ const builtinModels = [
   { id: '@cf/meta/llama-3.2-3b-instruct', name: 'Llama 3.2 3B', free: true, backend: 'workers-ai' }
 ];
 function freeModels(env) {
+  let extras = [];
   try {
     const items = JSON.parse(env.FREE_MODELS_JSON || '[]');
-    return [...(env.AI ? builtinModels : []), ...(Array.isArray(items) ? items.filter(x => typeof x.id === 'string' && /^[a-zA-Z0-9._:/-]{1,120}$/.test(x.id)) : [])];
+    if (Array.isArray(items)) extras = items.filter(x => typeof x.id === 'string' && /^[a-zA-Z0-9._:/-]{1,120}$/.test(x.id));
+  } catch { /* Invalid optional catalog must not hide built-in models. */ }
+  const upstreamEnabled = Boolean(env.UPSTREAM_API_KEY && env.UPSTREAM_URL);
+  const allowed = extras.filter(x => x.backend === 'workers-ai' ? Boolean(env.AI) : upstreamEnabled);
+  const all = [...(env.AI ? builtinModels : []), ...allowed];
+  return [...new Map(all.map(x => [x.id, x])).values()];
+}
+async function upstreamFreeCatalog(env) {
+  if (!env.UPSTREAM_API_KEY || !env.UPSTREAM_URL || !env.UPSTREAM_FREE_DISCOVERY) return [];
+  const url = env.UPSTREAM_URL.replace(/\\/$/, '') + '/models';
+  try {
+    const res = await fetch(url, { headers: { authorization: 'Bearer ' + env.UPSTREAM_API_KEY }, signal: AbortSignal.timeout(12000) });
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (!Array.isArray(data.data)) return [];
+    return data.data.filter(m => typeof m.id === 'string' && m.id.endsWith(':free') &&
+      m.pricing && Number(m.pricing.prompt) === 0 && Number(m.pricing.completion) === 0)
+      .slice(0, 300).map(m => ({ id: m.id, name: m.name || m.id, free: true, backend: 'upstream' }));
   } catch { return []; }
+}
+async function availableModels(env) {
+  const upstream = await upstreamFreeCatalog(env);
+  return [...new Map([...freeModels(env), ...upstream].map(m => [m.id, m])).values()];
 }
 async function freeProxy(request, env, user) {
   const body = await maxBody(request);
-  const model = freeModels(env).find(x => x.id === body.model);
+  const model = (await availableModels(env)).find(x => x.id === body.model);
   if (!model || (model.backend !== 'workers-ai' && (!env.UPSTREAM_API_KEY || !env.UPSTREAM_URL))) return err('Free model not available', 503);
   // Chat clients may request streaming and advertise tools by default.
   // Free text models do not execute tools; compatibility mode ignores tool schemas.
@@ -176,7 +198,7 @@ async function routeCompletion(request, env, user) {
   const raw = await request.clone().text();
   let body;
   try { body = JSON.parse(raw); } catch { return err('Invalid JSON'); }
-  if (freeModels(env).some(x => x.id === body.model)) return freeProxy(request, env, user);
+  if ((await availableModels(env)).some(x => x.id === body.model)) return freeProxy(request, env, user);
   return proxy(request, env, user);
 }
 export default {
@@ -193,7 +215,7 @@ export default {
       if (path === '/v1/auth/google' && request.method === 'POST') response = await login(request, env);
       else if (path === '/v1/models' && request.method === 'GET') {
         const user = await account(request, env);
-        response = user ? json({ data: freeModels(env).map(x => ({ id: x.id, name: x.name || x.id, object: 'model', free: true })) }) : err('Unauthorized', 401);
+        response = user ? json({ data: (await availableModels(env)).map(x => ({ id: x.id, name: x.name || x.id, object: 'model', free: true })) }) : err('Unauthorized', 401);
       }
       else if (path === '/v1/me' && request.method === 'GET') {
         const user = await account(request, env);
