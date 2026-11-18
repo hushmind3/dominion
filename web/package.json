@@ -1,6 +1,6 @@
 {
   "name": "dominion",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "private": true,
   "type": "module",
   "description": "DOMINION React/Vite frontend for the native Rust engine",
