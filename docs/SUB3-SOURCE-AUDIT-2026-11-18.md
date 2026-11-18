@@ -37,6 +37,27 @@
 - **Background work is not zero.** `src/bootstrap.rs` starts the shared job worker, maintenance backups, configured channel connectors and a delayed periodic provider-catalog refresh. Avoid implying that removing RSI/media also disabled all idle work; measure CPU/DB/network separately.
 - **Unverified recent source edits.** The recently added chat Skill relevance test and continuity token estimate test have been committed with `[skip ci]`; no local Cargo toolchain was available in this editing environment. These commits **must not inherit** the green status of earlier, unrelated GitHub test runs.
 
+## Additional static readback: size and unfinished-code markers
+
+Representative critical-path files were fetched and inspected after the documentation rewrite, including DB/jobs, chat provider/turn transport, host tool/MCP/provider adapters, native evidence/replay, algorithm/Program IR, Money collection and storage, public SDK entrypoints, API router, and mounted React pages. Selected source file lengths are:
+
+| File | Lines |
+| --- | ---: |
+| `src/engine/chat/provider.rs` | 2,641 |
+| `src/engine/algorithms.rs` | 2,482 |
+| `src/db.rs` | 2,096 |
+| `src/engine/tools.rs` | 1,964 |
+| `src/engine/chat/runtime/turn.rs` | 1,707 |
+| `src/engine/native_model.rs` | 1,281 |
+| `src/engine/program.rs` | 1,182 |
+| `crates/dominion-agent-sdk/src/lib.rs` | 1,084 |
+| `src/engine/jobs.rs` | 1,094 |
+| `web/src/pages/Money.tsx` | 474 |
+
+These are **change-risk concentration signals**, not automatic defects or evidence that a file must be split now. Direct keyword scanning of the examined key files returned no `todo!()`, `unimplemented!()`, or explicit `FIXME`/`TODO` markers. This does not prove absence of runtime bugs or incomplete behavior in unexamined code.
+
+Post-edit GitHub readback also checked the revised root English/Korean, Rust SDK and legacy TypeScript README text for balanced fenced code blocks and local markdown links. **No missing relative-link targets appeared** at that branch snapshot; README updates were saved on the intended branch. The container has Node 22 but no `cargo`/`rustc`, so `scripts/check-lean-product.mjs` and Rust tests were **not** executed against a full local checkout in this session.
+
 ## Focused verification after source cleanup
 
 ```sh
