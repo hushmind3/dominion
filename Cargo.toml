@@ -5,7 +5,7 @@ members = [".", "crates/dominion-core"]
 name = "dominion-rust"
 version = "0.4.3"
 edition = "2021"
-license = "Apache-2.0"
+license = "MIT"
 
 [dependencies]
 dominion-core = { path = "crates/dominion-core" }
