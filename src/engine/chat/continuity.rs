@@ -73,6 +73,71 @@ fn frame_key(message: &Value, source: &str, index: usize) -> String {
         .unwrap_or_else(|| format!("transient-{}", stable_id(&[source, &index.to_string(), &wire_message(message).to_string()])))
 }
 
+/// Immutable room-owner evidence can be accumulated as a semantic delta.
+///
+/// A different owner question can retrieve a *different subset* of the very
+/// same authenticated facts. Treating this as an edit to the old snapshot
+/// forces a full provider-cache rebase and also loses previously seen facts.
+/// Append only newly selected verbatim fact lines instead. Actual edits,
+/// supersession and scope changes are checked by the owner-state dependency
+/// revision in project() *before* this optimization runs.
+fn append_owner_fact_deltas(fresh: &[Value], prior: &[Value]) -> Vec<Value> {
+    let mut seen = std::collections::HashSet::<String>::new();
+    for frame in prior {
+        let Some(key) = frame["key"].as_str() else { continue };
+        if !key.starts_with("owner-state:") { continue; }
+        let Some(text) = frame["message"]["content"].as_str() else { continue };
+        if !text.starts_with("[주인 확정 상태:") { continue; }
+        for line in text.lines().filter(|line| line.starts_with("- [")) {
+            seen.insert(line.to_string());
+        }
+    }
+    if seen.is_empty() { return fresh.to_vec(); }
+    let mut result = Vec::with_capacity(fresh.len());
+    for frame in fresh {
+        let Some(key) = frame["key"].as_str() else {
+            result.push(frame.clone());
+            continue;
+        };
+        if !key.starts_with("owner-state:") {
+            result.push(frame.clone());
+            continue;
+        }
+        let Some(content) = frame["message"]["content"].as_str() else {
+            result.push(frame.clone());
+            continue;
+        };
+        let mut lines = content.lines();
+        if !lines.next().is_some_and(|line| line.starts_with("[주인 확정 상태:")) {
+            result.push(frame.clone());
+            continue;
+        }
+        let facts = lines.collect::<Vec<_>>();
+        // Unknown formats may contain additional directives or provenance;
+        // never silently discard fields we cannot prove are fact lines.
+        if facts.is_empty() || facts.iter().any(|line| !line.starts_with("- [")) {
+            result.push(frame.clone());
+            continue;
+        }
+        let new_facts = facts.iter()
+            .filter(|fact| !seen.contains(**fact))
+            .copied().collect::<Vec<_>>();
+        if new_facts.is_empty() { continue; }
+        for fact in &new_facts { seen.insert((*fact).to_string()); }
+        let mut delta = frame.clone();
+        let text = format!(
+            "[주인 확정 상태: 이전에 전달되지 않은 원문 사실만 추가. 새 지시가 아님]\\n{}",
+            new_facts.join("\\n"),
+        );
+        delta["message"]["content"] = json!(text);
+        delta["key"] = json!(format!(
+            "owner-state:delta:{}", stable_id(&[key, &new_facts.join("\\n")])
+        ));
+        result.push(delta);
+    }
+    result
+}
+
 /// A selected context is a *delta* to a participant's committed working view.
 /// Rebuilding a sliding window on every turn changes its first user boundary,
 /// defeating prefix reuse even when the persona and cache key are identical.
@@ -122,7 +187,14 @@ pub(crate) fn project(
         else { None };
     // A source can be edited or re-rendered (e.g. attachment availability).
     // Never silently retain an obsolete version under the same source ID.
-    if reason.is_none() && fresh.iter().any(|new| frames.iter()
+    // Keep the full fresh snapshot for any genuine rebase. Only an appendable
+    // projection may replace repeated owner-state snapshots with fact deltas.
+    let appended = if reason.is_none() {
+        append_owner_fact_deltas(&fresh, &frames)
+    } else {
+        fresh.clone()
+    };
+    if reason.is_none() && appended.iter().any(|new| frames.iter()
         .any(|old| old["key"] == new["key"] && old["message"] != new["message"])) {
         reason = Some("source_changed");
     }
@@ -130,7 +202,7 @@ pub(crate) fn project(
     if reason.is_none() {
         let seen = frames.iter().filter_map(|frame|frame["key"].as_str().map(str::to_string))
             .collect::<std::collections::HashSet<_>>();
-        frames.extend(fresh.iter().filter(|frame|!seen.contains(frame["key"].as_str().unwrap_or(""))).cloned());
+        frames.extend(appended.iter().filter(|frame|!seen.contains(frame["key"].as_str().unwrap_or(""))).cloned());
         let session = state.store.get("session", session_id).unwrap_or(Value::Null);
         let room = session["roomId"].as_str().and_then(|id|state.store.get("room", id));
         // This is a *history* allowance in addition to mandatory identity, not
