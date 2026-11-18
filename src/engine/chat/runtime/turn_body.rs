@@ -1534,9 +1534,11 @@ pub(super) async fn run_turn_body(
                     )
                 }));
             }
+            // Read-before-write applies to direct local mutations. External
+            // agent delegation has its own owner approval and effect ledger.
             let mutating_call = matches!(
                 call.name.as_str(),
-                "workspace_write" | "workspace_replace" | "workspace_replace_range" | "workspace_apply_patch" | "file_write" | "shell_exec" | "terminal_exec" | "external_harness_run"
+                "workspace_write" | "workspace_replace" | "workspace_replace_range" | "workspace_apply_patch" | "file_write" | "shell_exec" | "terminal_exec"
             );
             let has_prior_read = completed_operations.iter().any(|operation| {
                 matches!(
@@ -1691,7 +1693,7 @@ pub(super) async fn run_turn_body(
                 failed_calls.remove(&call_key);
                 if matches!(
                     call.name.as_str(),
-                    "workspace_write" | "workspace_replace" | "workspace_replace_range" | "workspace_apply_patch" | "file_write" | "shell_exec" | "terminal_exec" | "external_harness_run" | "github_api" | "github_file_commit" | "delegate_task" | "external_harness_run"
+                    "workspace_write" | "workspace_replace" | "workspace_replace_range" | "workspace_apply_patch" | "file_write" | "shell_exec" | "terminal_exec" | "external_harness_run" | "github_api" | "github_file_commit" | "delegate_task"
                 ) {
                     environment_version += 1;
                 }
@@ -1736,7 +1738,7 @@ pub(super) async fn run_turn_body(
                         if tool_succeeded(result)
                             && matches!(
                                 selected["tool"].as_str(),
-                                Some("workspace_write" | "workspace_replace" | "workspace_replace_range" | "workspace_apply_patch" | "file_write" | "shell_exec" | "terminal_exec" | "external_harness_run" | "github_api" | "github_file_commit" | "delegate_task" | "external_harness_run")
+                                Some("workspace_write" | "workspace_replace" | "workspace_replace_range" | "workspace_apply_patch" | "file_write" | "shell_exec" | "terminal_exec" | "external_harness_run" | "github_api" | "github_file_commit" | "delegate_task")
                             )
                         {
                             environment_version += 1;
