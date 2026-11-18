@@ -365,6 +365,9 @@ pub(super) fn cached_prompt_tokens(usage: &Value) -> Option<u64> {
     usage.pointer("/prompt_tokens_details/cached_tokens").and_then(Value::as_u64)
         .or_else(|| usage.pointer("/input_tokens_details/cached_tokens").and_then(Value::as_u64))
         .or_else(|| usage["prompt_cache_hit_tokens"].as_u64())
+        .or_else(|| usage["cached_tokens"].as_u64())
+        .or_else(|| usage["cached_input_tokens"].as_u64())
+        .or_else(|| usage["cache_read_input_tokens"].as_u64())
 }
 
 fn escaped_content_chars(text: &str) -> usize {
@@ -1922,3 +1925,18 @@ async fn stream_anthropic_once(
 #[cfg(test)]
 #[path = "provider/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod cache_accounting_tests {
+    use super::*;
+    #[test]
+    fn provider_cache_counts_are_optional_and_never_invent_zero_hits() {
+        assert_eq!(cached_prompt_tokens(&json!({})),None);
+        assert_eq!(cached_prompt_tokens(&json!({"prompt_tokens":1200})),None);
+        assert_eq!(cached_prompt_tokens(&json!({"cached_tokens":512})),Some(512));
+        assert_eq!(cached_prompt_tokens(&json!({"cache_read_input_tokens":256})),Some(256));
+        assert_eq!(cached_prompt_tokens(&json!({"prompt_tokens_details":{"cached_tokens":0}})),Some(0));
+        assert_eq!(cached_prompt_tokens(&json!({"prompt_tokens_details":{"cached_tokens":1024},
+            "cached_tokens":900})),Some(1024));
+    }
+}
