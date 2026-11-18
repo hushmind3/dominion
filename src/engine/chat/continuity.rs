@@ -195,8 +195,11 @@ fn working_view_allowance(room: Option<&Value>, provider: &ProviderRef, fixed: u
     // Explicit epoch tuning is independent of the conversational selector.
     // Default to four request selections per epoch, bounded against runaway
     // accumulation and the remaining provider context after output reserve.
-    let epoch = room.and_then(|room|room["workingViewBudgetTokens"].as_u64())
-        .map(|value|value as usize)
+    let epoch = room["workingViewBudgetTokens"].as_u64()
+        // An unbounded owner-supplied epoch can exceed unknown/local model
+        // context windows and accumulate huge prompts. Even explicit tuning
+        // must have a fixed fail-safe cap; known provider limits apply below.
+        .map(|value|value.clamp(1,40_000) as usize)
         .unwrap_or_else(||selection.saturating_mul(4).clamp(2_000, 12_000));
     provider.context_tokens.map(|capacity| {
         epoch.min((capacity as usize)
@@ -1026,6 +1029,10 @@ mod tests {
         assert!(next["workingView"]["estimatedInputTokens"].as_u64().unwrap()>2_000);
         assert_eq!(working_view_allowance(
             state.store.get("room","r").as_ref(),&provider,0),8_000);
+        assert_eq!(working_view_allowance(
+            Some(&json!({"contextBudgetTokens":2_000,
+                "workingViewBudgetTokens":u64::MAX})),&provider,0),40_000,
+            "owner overrides must not create unbounded prefix accumulation");
         let mut small=provider.clone();
         small.context_tokens=Some(4_200);
         small.max_output_tokens=Some(1_000);
