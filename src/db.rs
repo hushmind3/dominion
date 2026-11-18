@@ -215,6 +215,9 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_sdk_run_source
                  ON records(json_extract(data,'$.source.kind'),created_at DESC)
                  WHERE kind='sdk_run';
+             CREATE INDEX IF NOT EXISTS idx_delegated_session_parent
+                 ON records(json_extract(data,'$.parentSessionId'))
+                 WHERE kind='session' AND json_extract(data,'$.delegated')=1;
              CREATE INDEX IF NOT EXISTS idx_sdk_native_frame_execution
                  ON records(json_extract(data,'$.parentExecutionId'))
                  WHERE kind='native_frame';
@@ -296,6 +299,23 @@ impl Store {
             ORDER BY json_extract(data,'$.queuedAt'),id").map_err(|e|e.to_string())?;
         let rows=stmt.query_map([],record_from_row).map_err(|e|e.to_string())?;
         rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    /// Delegate cancellation must not parse all historical sessions.
+    /// Filter child relationships in SQLite with the partial parent index.
+    pub fn delegated_child_sessions(&self, parent_session_id: &str) -> Result<Vec<Value>, String> {
+        let conn = self.conn.lock().map_err(|error| error.to_string())?;
+        let mut statement = conn
+            .prepare(
+                "SELECT data,id,created_at,updated_at FROM records
+                 WHERE kind='session' AND json_extract(data,'$.delegated')=1
+                   AND json_extract(data,'$.parentSessionId')=?1",
+            )
+            .map_err(|error| error.to_string())?;
+        let rows = statement
+            .query_map([parent_session_id], record_from_row)
+            .map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
     }
 
     /// Recovery only deserializes work that was still running at restart.
@@ -1654,6 +1674,30 @@ mod tests {
             [], |row| row.get(3)
         ).unwrap();
         assert!(plan.contains("idx_messages_session"), "{plan}");
+    }
+
+    #[test]
+    fn delegated_child_session_lookup_uses_parent_index() {
+        let store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        for (id, parent, delegated) in [
+            ("owned", "root", true),
+            ("other", "foreign", true),
+            ("manual", "root", false),
+        ] {
+            store.put("session", &json!({
+                "id":id, "parentSessionId":parent, "delegated":delegated
+            })).unwrap();
+        }
+        let children = store.delegated_child_sessions("root").unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0]["id"], "owned");
+        let plan: String = store.conn.lock().unwrap().query_row(
+            "EXPLAIN QUERY PLAN SELECT data FROM records
+             WHERE kind='session' AND json_extract(data,'$.delegated')=1
+               AND json_extract(data,'$.parentSessionId')='root'",
+            [], |row| row.get(3)
+        ).unwrap();
+        assert!(plan.contains("idx_delegated_session_parent"), "{plan}");
     }
 
     #[test]
