@@ -149,6 +149,38 @@ do not constitute a new 9-person real-provider benchmark or prove billable
 uncached-token reductions; per-call provider usage remains the measurement
 source.
 
+### Stateful fixed-persona transport vs provider prefix caching (2026-11-18)
+
+**The two mechanisms are not interchangeable.** Ordinary OpenAI-compatible
+`/chat/completions` (including OpenCode Go / DeepSeek V4 Flash) is an
+explicit-history protocol. DOMINION must include the stable owner contract
+and each participant persona in every request body to preserve instruction
+authority; the provider may reuse the unchanged prefix in its KV/prompt
+cache. `x-opencode-session` improves affinity, **not** a guarantee that
+the server will reconstruct omitted messages. No client-side "do not send
+the system prompt after turn 1" shortcut is applied to stateless providers.
+
+**Stateful Codex Responses WebSocket:** DOMINION now puts the complete fixed
+persona+owner contract into a high-priority `developer` input item on the
+first request. Unlike top-level `instructions`, previous Responses input
+items are inherited by `previous_response_id`. The WebSocket sends only
+the new suffix when the exact predecessor chain is verified, using a small
+unchanged top-level instruction. A socket reconnect, prompt edit, changed
+tool contract, history rotation or HTTP fallback **resends full context**.
+The HTTP fallback continues using the original full `instructions`.
+`incrementalTransport.personaWireTokensEstimate` records the host-side
+wire savings; provider input/cache usage is independently accounted for.
+Transport omission is **not** proof that the inherited context avoids
+provider-side token counting or billing.
+
+Previously an enlarged room working-view budget could replay irrelevant
+first-turn peer speech during turn three. Rendered peer excerpts are now
+tagged as ephemeral on the host (never on the provider wire); changing
+peer evidence forces a fresh selected-context projection instead of
+accumulating obsolete quotes. The 9-speaker/3-owner-turn native-work
+integration test and an actual WebSocket fixture checking the second
+`response.create` JSON body guard this behavior.
+
 ## Development vs release validation
 
 Normal Rust source pushes run only scoped, default-profile kernel/job/Money regression tests on macOS via `.github/workflows/ci.yml`. They do **not** trigger frontend builds, `cargo build/check`, release-profile builds, installer packaging, or the Windows/macOS release matrix. The separate `.github/workflows/release.yml` performs those full checks only for version tags or an explicit manual release request. Passing scoped tests does not imply that a distributable desktop release has been validated.
