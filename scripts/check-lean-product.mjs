@@ -13,7 +13,8 @@ const absent=[
  'web/src/components/VideoAutopilot.tsx','web/src/components/VideoHubBrowser.tsx',
  'web/src/components/VideoModelInstall.tsx','web/scripts/video-studio-smoke.mjs',
  'src/api/benchmark.rs','src/api/experiments.rs','src/engine/scheduler.rs',
- 'scripts/rsi-lab.mjs','scripts/rsi-measure.mjs'
+ 'scripts/rsi-lab.mjs','scripts/rsi-measure.mjs',
+ 'crates/harness'
 ];
 for(const p of absent)assert.ok(!exists(p),'Retired built-in product feature still exists: '+p);
 for(const p of fs.readdirSync('src/engine').filter(p=>/^rsi.*\.rs$/.test(p))){
@@ -99,5 +100,15 @@ assert.ok(ts.includes('readonly nativeRuns=')&&ts.includes('readonly jobs='),
  'Native TypeScript client no longer routes to retained Rust agent');
 const cargo=read('Cargo.toml');
 assert.ok(!/^resvg\s*=/m.test(cargo),'Unused video raster renderer still in root Cargo dependencies');
+assert.ok(!cargo.includes('dominion-harness')&&!cargo.includes('crates/harness'),
+ 'The retired parallel Rust harness returned to the product workspace');
+const legacyApi=read('src/api/sdk.rs');
+assert.ok(!legacyApi.includes('dominion_harness::')&&!legacyApi.includes('AgentSdk::run'),
+ 'The old SDK execution loop returned to the live compatibility API');
+assert.ok(legacyApi.includes('sdk_runs::create')&&legacyApi.includes('archiveOnly'),
+ 'Legacy API must reuse the native runner and keep historical records inspectable');
+const nativeSdkApi=read('src/api/sdk_runs.rs');
+assert.ok(nativeSdkApi.includes('harnessCompat')&&nativeSdkApi.includes('allowedTools'),
+ 'Legacy API migration lost its narrower tool-authority boundary');
 console.log(JSON.stringify({leanProduct:true,legacyNoReplay:true,coreChat:true,
  rustSdk:true,toolsAndMcp:true,sourceFilesRemoved:absent.length},null,2));
