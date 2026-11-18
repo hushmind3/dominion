@@ -406,6 +406,8 @@ pub(super) fn cached_prompt_tokens(usage: &Value) -> Option<u64> {
     usage.pointer("/prompt_tokens_details/cached_tokens").and_then(Value::as_u64)
         .or_else(|| usage.pointer("/input_tokens_details/cached_tokens").and_then(Value::as_u64))
         .or_else(|| usage["prompt_cache_hit_tokens"].as_u64())
+        .or_else(|| usage["cached_input_tokens"].as_u64())
+        .or_else(|| usage["cached_tokens"].as_u64())
 }
 
 fn escaped_content_chars(text: &str) -> usize {
@@ -1995,6 +1997,8 @@ mod tests {
         assert_eq!(cached_prompt_tokens(&json!({"prompt_tokens_details":{"cached_tokens":4032}})),Some(4032));
         assert_eq!(cached_prompt_tokens(&json!({"prompt_cache_hit_tokens":1280})),Some(1280));
         assert_eq!(cached_prompt_tokens(&json!({"input_tokens_details":{"cached_tokens":512}})),Some(512));
+        assert_eq!(cached_prompt_tokens(&json!({"cached_input_tokens":1024})),Some(1024));
+        assert_eq!(cached_prompt_tokens(&json!({"cached_tokens":768})),Some(768));
         assert_eq!(cached_prompt_tokens(&json!({"prompt_tokens":4049})),None);
         assert_eq!(cached_prompt_tokens(&json!({"prompt_tokens_details":{"cached_tokens":0}})),Some(0));
     }
