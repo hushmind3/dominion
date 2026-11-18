@@ -40,6 +40,12 @@ jobs:
         run: cargo test --locked -p dominion-core --lib
       - name: Durable job and cancellation regressions (dev profile)
         run: cargo test --locked --bin dominion-rust engine::jobs::tests
+      - name: Progressive capability catalog and session-scope regressions (dev profile)
+        run: cargo test --locked --bin dominion-rust engine::capability::tests
+      - name: Bounded model-visible tool selection regressions (dev profile)
+        run: cargo test --locked --bin dominion-rust engine::chat::runtime::tests::harness_tool_selection_tests
+      - name: Discovered tool uses the existing native gateway (dev profile)
+        run: cargo test --locked --bin dominion-rust discovered_read_uses_the_existing_real_tool_gateway
       - name: Causal diagnosis regressions (dev profile)
         run: cargo test --locked --bin dominion-rust engine::adaptation::diagnostics::tests
       - name: Acceptance progress regressions (dev profile)
