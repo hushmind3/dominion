@@ -32,7 +32,7 @@ export function selectSmaller<T extends ModelCandidate>(options:readonly T[],cur
 export function classifyRuntimeFailure(error:string):RuntimeFailure{
  const message=error.toLowerCase()
  if(/out.of.memory|\boom\b|memory|메모리|allocat|cuda.*alloc|not enough resources/i.test(message))return 'memory'
- if(/not.found|no.such.file|missing.file|corrupt|invalid.gguf|checksum|파일.*없|파일.*찾을 수 없|손상|불완전|safetensors|tokenizer|찾을 수 없습니다.*모델|모델.*찾을 수 없습니다/i.test(message))return 'file'
+ if(/not.found|no.such.file|missing.file|corrupt|invalid.gguf|checksum|파일.*없|파일.*찾을 수 없|손상|불완전|완전하지|safetensors|tokenizer|찾을 수 없습니다.*모델|모델.*찾을 수 없습니다/i.test(message))return 'file'
  if(/backend|engine|executable|llama[.-]?(?:cpp|server)|mlx.*실행기|not.installed|설치.*안|spawn|실행기.*필요|실행기.*없/i.test(message))return 'engine'
  return 'other'
 }
