@@ -2,7 +2,7 @@ import {useEffect,useRef,useState} from 'react'
 import {get,post} from '../api'
 
 type GoogleResponse={credential:string}
-type GoogleIdentity={accounts:{id:{initialize:(config:{client_id:string;callback:(response:GoogleResponse)=>void})=>void;renderButton:(element:HTMLElement,options:Record<string,unknown>)=>void;disableAutoSelect?:()=>void;disableAutoSelect?:()=>void}}}
+type GoogleIdentity={accounts:{id:{initialize:(config:{client_id:string;callback:(response:GoogleResponse)=>void})=>void;renderButton:(element:HTMLElement,options:Record<string,unknown>)=>void;disableAutoSelect?:()=>void;disableAutoSelect?:()=>void;disableAutoSelect?:()=>void}}}
 declare global {interface Window {google?:GoogleIdentity}}
 type Model={id:string;name?:string;free:boolean;provider?:string;input_micro_krw?:number;output_micro_krw?:number}
 type CatalogProvider={id:string;name:string;api:string;models:number;doc?:string}
@@ -17,6 +17,8 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
  const [modelSearch,setModelSearch]=useState('')
  const [modelFilter,setModelFilter]=useState<'all'|'free'|'paid'>('all')
  const [showAdvanced,setShowAdvanced]=useState(false)
+ const [connectionTab,setConnectionTab]=useState<'providers'|'openrouter'>('providers')
+ const [catalogSort,setCatalogSort]=useState<'name'|'models'>('name')
  const [activeTab,setActiveTab]=useState<'cloud'|'providers'>('cloud')
  const [providerSort,setProviderSort]=useState<'name'|'models'>('name')
  const [advancedTab,setAdvancedTab]=useState<'providers'|'router'>('providers')
@@ -88,6 +90,7 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
  async function connectCatalog(){
   const entry=catalog.find(p=>p.id===catalogId)
   if(!entry)return
+  if(!catalogKey.trim()){setCatalogMessage('API 키를 입력한 뒤 연결하세요. 업체와 모델 정보 검색은 키 없이 가능합니다.');return}
   setCatalogBusy(true);setCatalogMessage('')
   try{
    const baseUrl=entry.api.replace(/\/$/,'')
@@ -198,10 +201,12 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
    <button type="button" role="tab" aria-selected={cloudTab==='providers'} onClick={()=>{setCloudTab('providers');setShowAdvanced(true);if(!catalog.length)void loadCatalog()}} className={'rounded-lg px-3 py-2 text-[12px] '+(cloudTab==='providers'?'bg-[#C96442] text-white':'border')}>AI 업체 탐색·연결</button>
   </div>
   {cloudTab==='providers'&&showAdvanced&&<div className="mt-4 border-t border-[#E7E0D5] pt-4">
-   <strong className="text-[13px]">AI 업체 통합 연결 · models.dev</strong>
+   <div className="flex flex-wrap gap-2"><button type="button" aria-pressed={connectionTab==='providers'} onClick={()=>setConnectionTab('providers')} className={'rounded-lg border px-3 py-2 text-[12px] '+(connectionTab==='providers'?'bg-[#EEE5D8] font-semibold':'')}>업체 탐색·연결</button><button type="button" aria-pressed={connectionTab==='openrouter'} onClick={()=>setConnectionTab('openrouter')} className={'rounded-lg border px-3 py-2 text-[12px] '+(connectionTab==='openrouter'?'bg-[#EEE5D8] font-semibold':'')}>OpenRouter 무료 모델</button></div>
+   {connectionTab==='providers'&&<div className="mt-3"><strong className="text-[13px]">AI 업체 통합 연결 · models.dev</strong>
    <p className="mt-1 text-[12px] text-[#7C7469]">업체 검색 → API 키 연결 → 모델 조회 → 채팅 등록 · 공개 모델 목록과 실제 사용 권한은 다를 수 있습니다.</p>
    <div className="mt-2 flex flex-wrap gap-2">
     <button type="button" disabled={catalogBusy} onClick={()=>void loadCatalog()} className="rounded-lg border px-3 py-2 text-[12px]">업체 목록 불러오기</button>
+    <select aria-label="업체 정렬" value={catalogSort} onChange={e=>setCatalogSort(e.target.value as 'name'|'models')} className="rounded-lg border px-3 py-2 text-[12px]"><option value="name">이름순</option><option value="models">모델 많은 순</option></select>
     <select aria-label="업체 정렬" value={catalogSort} onChange={e=>setCatalogSort(e.target.value as 'name'|'models')} className="rounded-lg border px-3 py-2 text-[12px]"><option value="name">이름순</option><option value="models">모델 많은 순</option></select>
     <input aria-label="AI 업체 검색" value={catalogSearch} onChange={e=>{setCatalogSearch(e.target.value);setProviderPage(0)}} placeholder="업체 이름 검색" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
     <select aria-label="업체 정렬" value={providerSort} onChange={e=>setProviderSort(e.target.value as 'name'|'models')} className="rounded-lg border px-3 py-2 text-[12px]"><option value="name">이름순</option><option value="models">모델 많은 순</option></select>
@@ -228,6 +233,7 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
    {catalog.length>0&&<p className="mt-2 text-[12px] text-[#7C7469]">검색 결과 {catalog.filter(p=>(p.name+' '+p.id).toLowerCase().includes(catalogSearch.toLowerCase())).length}개 / 전체 {catalog.length}개 업체 · 중복 ID 제외</p>}
    <p className="mt-2 text-[12px] text-[#7C7469]">업체 목록의 모델 수는 공개 카탈로그 기준입니다. 실제 사용에는 API 키 또는 기존 연결이 필요합니다.</p>
    {catalogMessage&&<p role="status" className="mt-2 text-[12px] text-[#7C7469]">{catalogMessage}</p>}
+   </div>}
   </div>
   {cloudTab==='providers'&&showAdvanced&&<div className="mt-4 border-t border-[#E7E0D5] pt-4">
    <strong className="text-[13px]">OpenRouter 무료 모델 일괄 등록</strong>
