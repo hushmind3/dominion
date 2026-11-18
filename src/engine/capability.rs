@@ -36,6 +36,7 @@ fn tool_name(definition:&Value)->&str {
 fn enabled_in_session(state:&AppState,session_id:&str,name:&str)->bool {
     if name.is_empty() || name==SEARCH || name==CALL {return false;}
     let session=state.store.get("session",session_id).unwrap_or(Value::Null);
+    if !tools::profile_tool_visible(&session,name) {return false;}
     if session["readOnly"]==true && !tools::observational(name) {return false;}
     if session["delegationWorkspace"].is_object() &&
         (name.starts_with("mcp__") || matches!(name,
