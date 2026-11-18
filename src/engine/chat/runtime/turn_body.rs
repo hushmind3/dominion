@@ -896,6 +896,37 @@ pub(super) async fn run_turn_body(
         // to rescan repeatedly on each paid model round.
         let round_input_tokens =
             super::room_context::input_estimate(&wire_messages,&round_tools) as u64;
+        if is_room {
+            // Snapshot only numeric component estimates of the exact native
+            // message+tool bundle selected for THIS provider call. A provider
+            // can later transform this envelope, so exact billed token usage
+            // stays a separate field from this pre-adapter projection.
+            let component_profile=super::room_context::wire_profile(
+                &wire_messages,&round_tools);
+            if let Some(mut execution)=state.store.get("execution",execution_id){
+                if !execution["inputContext"].is_object(){
+                    execution["inputContext"]=json!({});
+                }
+                if !execution["inputContext"]["wireRounds"].is_array(){
+                    execution["inputContext"]["wireRounds"]=json!([]);
+                }
+                if let Some(samples)=execution["inputContext"]["wireRounds"].as_array_mut(){
+                    if samples.len()<24 {
+                        samples.push(json!({
+                            "round":round+1,
+                            "providerId":provider.id,
+                            "model":provider.model,
+                            "breakdown":component_profile,
+                        }));
+                    }
+                }
+                if state.store.put("execution",&execution).is_none(){
+                    state.store.audit("room.wire_profile_save_failed",json!({
+                        "executionId":execution_id,"round":round+1
+                    }));
+                }
+            }
+        }
         // A live Home SDK task consults the same persisted usage snapshot for
         // both call count and token admission. Ordinary chats pay no query.
         let sdk_usage = if session["sdkUiPolicy"]["maxTotalTokens"].as_u64().is_some()
