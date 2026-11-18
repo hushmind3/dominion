@@ -78,7 +78,7 @@ function freeModels(env) {
 }
 async function upstreamFreeCatalog(env) {
   if (!env.UPSTREAM_API_KEY || !env.UPSTREAM_URL || !env.UPSTREAM_FREE_DISCOVERY) return [];
-  const url = env.UPSTREAM_URL.replace(/\\/$/, '') + '/models';
+  const url = env.UPSTREAM_URL.replace(/\/$/, '') + '/models';
   try {
     const res = await fetch(url, { headers: { authorization: 'Bearer ' + env.UPSTREAM_API_KEY }, signal: AbortSignal.timeout(12000) });
     if (!res.ok) return [];
