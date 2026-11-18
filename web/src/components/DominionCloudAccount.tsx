@@ -12,7 +12,6 @@ const clientId=import.meta.env.VITE_DOMINION_GOOGLE_CLIENT_ID||''
 export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Promise<unknown>}) {
  const button=useRef<HTMLDivElement>(null)
  const [token,setToken]=useState('')
- const [activeTab,setActiveTab]=useState<'cloud'|'providers'>('cloud')
  const [models,setModels]=useState<Model[]>([])
  const [selected,setSelected]=useState('')
  const [modelSearch,setModelSearch]=useState('')
@@ -21,7 +20,6 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
  const [connectionTab,setConnectionTab]=useState<'providers'|'openrouter'>('providers')
  const [catalogSort,setCatalogSort]=useState<'name'|'models'>('name')
  const [providerSort,setProviderSort]=useState<'name'|'models'>('name')
- const [advancedTab,setAdvancedTab]=useState<'providers'|'router'>('providers')
  const [managementTab,setManagementTab]=useState<'cloud'|'providers'>('cloud')
  const [providerPage,setProviderPage]=useState(0)
  const [cloudTab,setCloudTab]=useState<'models'|'providers'>('models')
@@ -203,7 +201,6 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
    <p className="mt-1 text-[12px] text-[#7C7469]">업체 검색 → API 키 연결 → 모델 조회 → 채팅 등록 · 공개 모델 목록과 실제 사용 권한은 다를 수 있습니다.</p>
    <div className="mt-2 flex flex-wrap gap-2">
     <button type="button" disabled={catalogBusy} onClick={()=>void loadCatalog()} className="rounded-lg border px-3 py-2 text-[12px]">업체 목록 불러오기</button>
-    <select aria-label="업체 정렬" value={catalogSort} onChange={e=>setCatalogSort(e.target.value as 'name'|'models')} className="rounded-lg border px-3 py-2 text-[12px]"><option value="name">이름순</option><option value="models">모델 많은 순</option></select>
     <select aria-label="업체 정렬" value={catalogSort} onChange={e=>setCatalogSort(e.target.value as 'name'|'models')} className="rounded-lg border px-3 py-2 text-[12px]"><option value="name">이름순</option><option value="models">모델 많은 순</option></select>
     <input aria-label="AI 업체 검색" value={catalogSearch} onChange={e=>{setCatalogSearch(e.target.value);setProviderPage(0)}} placeholder="업체 이름 검색" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
     <select aria-label="업체 정렬" value={providerSort} onChange={e=>setProviderSort(e.target.value as 'name'|'models')} className="rounded-lg border px-3 py-2 text-[12px]"><option value="name">이름순</option><option value="models">모델 많은 순</option></select>
