@@ -44,6 +44,11 @@ jobs:
           cargo test --lib engine::chat::tool_schedule::tests
           # Evidence-delta completion gate is used by ordinary chat, not only SDK jobs.
           cargo test --lib engine::chat::runtime::action_review::tests
+          # Sub2 agent kernel: terminal budget is an admission limit, not a
+          # retroactive failure of already verified artifacts.
+          cargo test --lib engine::autonomy::tests::frozen_owner_acceptance_contract_overrides_ambiguous_path_inference
+          cargo test --lib api::jobs::harness_contract_tests
+          cargo test -p dominion-agent-kernel --lib
           # Stop is a server-side cancellation, not a browser-only SSE abort.
           cargo test --lib engine::chat::tests::browser_stop_tombstone_precedes_late_chat_post_without_creating_messages
           cargo test --lib engine::chat::tests::browser_stop_preempts_model_with_no_output_and_next_turn_succeeds
