@@ -6,10 +6,12 @@
 //! the socket per participant session, tracks which input items the remote
 //! chain already holds, and sends only the new suffix on later calls.
 //!
-//! `instructions` are not inherited through `previous_response_id` (measured:
-//! a directive absent from the continuation request is not applied), so the
-//! full identity/persona prefix is re-sent on every call. Only accumulated
-//! transcript items are reduced.
+//! Top-level `instructions` are not inherited through `previous_response_id`.
+//! The Codex WebSocket adapter now places the complete fixed identity/persona
+//! once in a high-priority developer INPUT item. Chained Responses inherit
+//! that item, so a matching connection carries only subsequent input deltas.
+//! An edit, truncation, disconnect or HTTP fallback sends complete context;
+//! cached/billed input still depends on the provider's own token accounting.
 use super::{Completion, ProviderRef};
 use crate::state::AppState;
 use futures_util::{SinkExt, StreamExt};
@@ -872,6 +874,48 @@ mod tests {
         assert_eq!(requests.recv().await.unwrap()["prompt_cache_key"],"stable-key");
         assert!(requests.try_recv().is_err(),"do not open another socket to send the same rejected hint");
         server.abort();drop(state);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn complete_websocket_exchange_sends_static_persona_only_on_first_response() {
+        let (state, root) = test_state();
+        let (provider, mut requests, server) = fixture(vec![
+            json!({"type":"response.output_text.delta","delta":"reply"}),
+            json!({"type":"response.completed","response":{"id":"response-one","output":[]}}),
+        ]).await;
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let persona="STATIC_OWNER_PERSONA_".to_owned()+"A".repeat(16_000).as_str();
+        let fixed=json!({"role":"developer",
+            "content":[{"type":"input_text","text":persona}]});
+        let question=item("user","question-one");
+        let base=json!({"model":"fixture","instructions":"Follow developer guidance.",
+            "stream":true,"store":false});
+        let initial=vec![fixed.clone(),question.clone()];
+        let first=stream(&state,&provider,"fixture","fixture","room-speaker",
+            &base,initial.clone(),"room-speaker",&tx).await.unwrap();
+        assert_eq!(first.transport["mode"],"full");
+        let sent_one=requests.recv().await.unwrap();
+        assert_eq!(sent_one["input"],json!(initial));
+        assert!(sent_one.get("previous_response_id").is_none());
+        let old=json!(sent_one["input"]).to_string();
+        assert!(old.contains("STATIC_OWNER_PERSONA_"));
+        let next=vec![fixed,item("user","question-one"),item("assistant","reply"),
+            item("user","question-two")];
+        let second=stream(&state,&provider,"fixture","fixture","room-speaker",
+            &base,next.clone(),"room-speaker",&tx).await.unwrap();
+        let sent_two=requests.recv().await.unwrap();
+        assert_eq!(sent_two["previous_response_id"],"response-one");
+        assert_eq!(sent_two["input"],json!([next[3]]),
+            "second request wire must carry only the new question");
+        assert!(!sent_two.to_string().contains("STATIC_OWNER_PERSONA_"),
+            "fixed 4k persona must be inherited, not retransmitted");
+        assert_eq!(second.transport["mode"],"delta");
+        assert!(second.transport["sentInputTokens"].as_u64().unwrap()
+            < second.transport["fullInputTokens"].as_u64().unwrap());
+        forget(&registry_key(&provider,"fixture","room-speaker"));
+        server.abort();
+        drop(state);
         std::fs::remove_dir_all(root).unwrap();
     }
 
