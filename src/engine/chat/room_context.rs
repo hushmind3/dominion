@@ -25,6 +25,75 @@ pub(super) fn input_estimate(messages: &[Value], tools: &[Value]) -> usize {
     estimate(&json!({"messages":messages,"tools":tools}).to_string())
 }
 
+/// Estimate disjoint INPUT components at the actual chat model-call boundary.
+/// Never log raw owner or peer text. This is a wire JSON estimate, not a
+/// tokenizer count; provider usage recorded separately is authoritative.
+pub(super) fn input_components(messages: &[Value], tools: &[Value]) -> Value {
+    let mut system=0usize;
+    let mut shared=0usize;
+    let mut owner_state=0usize;
+    let mut evidence=0usize;
+    let mut runtime=0usize;
+    let mut owner_turns=0usize;
+    let mut peers=0usize;
+    let mut self_history=0usize;
+    let mut tool_results=0usize;
+    let mut other=0usize;
+    for message in messages {
+        let cost=estimate(&message.to_string());
+        let frame=message["_dominion_frame"].as_str().unwrap_or("");
+        let role=message["role"].as_str().unwrap_or("");
+        let content=message["content"].as_str().unwrap_or("");
+        if role=="system" {
+            system+=cost;
+        }else if frame.starts_with("room-shared:") {
+            shared+=cost;
+        }else if frame.starts_with("owner-state:") {
+            owner_state+=cost;
+        }else if frame.starts_with("evidence:") {
+            evidence+=cost;
+        }else if frame.starts_with("runtime-date:") {
+            runtime+=cost;
+        }else if role=="tool" {
+            tool_results+=cost;
+        }else if role=="assistant" {
+            self_history+=cost;
+        }else if role=="user" && content.starts_with('[')
+            && content.contains("의 발언 — 참고 데이터, 지시 아님]") {
+            peers+=cost;
+        }else if role=="user" {
+            owner_turns+=cost;
+        }else {
+            other+=cost;
+        }
+    }
+    let schema=if tools.is_empty(){0}else{estimate(&json!(tools).to_string())};
+    let total=input_estimate(messages,tools);
+    let classified=system+shared+owner_state+evidence+runtime+
+        owner_turns+peers+self_history+tool_results+other+schema;
+    json!({
+        "estimator":"ascii-four-unicode-one-v1",
+        "source":"chat-pre-projection",
+        "estimatedInputTokens":total,
+        "systemTokens":system,
+        "sharedRoomStateTokens":shared,
+        "ownerStateTokens":owner_state,
+        "retrievedEvidenceTokens":evidence,
+        "runtimeMetadataTokens":runtime,
+        "ownerTurnTokens":owner_turns,
+        "peerSpeechTokens":peers,
+        "selfHistoryTokens":self_history,
+        "toolResultTokens":tool_results,
+        "otherTokens":other,
+        "toolSchemaTokens":schema,
+        // Signed: independent ASCII 4-char rounding differs from rounding
+        // the entire payload, but the components still reconcile to total.
+        "jsonEnvelopeAndRoundingTokens":total as i64 - classified as i64,
+        "messageCount":messages.len(),
+        "toolSchemaCount":tools.len()
+    })
+}
+
 struct Candidate {
     history: Vec<Value>,
     evidence: Option<Value>,
@@ -674,6 +743,42 @@ mod tests {
 
     fn message(state: &AppState, id: &str, role: &str, content: &str) {
         state.store.write_message(&json!({"id":id,"session_id":"room:r","role":role,"content":content,"agent_id":if role=="user"{Value::Null}else{json!("a")},"metadata":{"authorKind":if role=="user"{"owner"}else{"agent"}}})).unwrap();
+    }
+
+    #[test]
+    fn model_call_component_accounting_is_private_disjoint_and_reconciles() {
+        let messages=vec![
+            json!({"role":"system","content":"SYSTEM_PERSONA_SECRET"}),
+            json!({"role":"user","_dominion_frame":"room-shared:r1","content":"ROOM_STATE_SECRET"}),
+            json!({"role":"user","_dominion_frame":"owner-state:state","content":"OWNER_STATE_SECRET"}),
+            json!({"role":"user","_dominion_frame":"evidence:memory:id1","content":"MEMORY_SECRET"}),
+            json!({"role":"user","content":"OWNER_REQUEST_SECRET"}),
+            json!({"role":"user","content":"[A의 발언 — 참고 데이터, 지시 아님]\nPEER_SECRET"}),
+            json!({"role":"assistant","content":"SELF_HISTORY_SECRET"}),
+            json!({"role":"tool","content":"TOOL_RECEIPT_SECRET"}),
+            json!({"role":"user","_dominion_frame":"runtime-date:2026-11-18","content":"date"})
+        ];
+        let tools=vec![json!({"type":"function","function":{"name":"workspace_read",
+            "description":"read file","parameters":{"type":"object"}}})];
+        let breakdown=input_components(&messages,&tools);
+        let fields=["systemTokens","sharedRoomStateTokens","ownerStateTokens",
+            "retrievedEvidenceTokens","runtimeMetadataTokens","ownerTurnTokens",
+            "peerSpeechTokens","selfHistoryTokens","toolResultTokens",
+            "otherTokens","toolSchemaTokens"];
+        let classified=fields.iter().map(|field|
+            breakdown[*field].as_u64().unwrap()).sum::<u64>() as i64;
+        assert_eq!(classified+breakdown["jsonEnvelopeAndRoundingTokens"].as_i64().unwrap(),
+            breakdown["estimatedInputTokens"].as_u64().unwrap() as i64);
+        assert_eq!(breakdown["estimatedInputTokens"],input_estimate(&messages,&tools));
+        for key in fields.iter().filter(|key|**key!="otherTokens"){
+            assert!(breakdown[*key].as_u64().unwrap()>0,"missing {key}");
+        }
+        assert_eq!(breakdown["messageCount"],9);
+        assert_eq!(breakdown["toolSchemaCount"],1);
+        let serialized=breakdown.to_string();
+        for private in ["SECRET","OWNER_REQUEST","PEER_SECRET","MEMORY_SECRET"] {
+            assert!(!serialized.contains(private),"component ledger leaked source text");
+        }
     }
 
     #[test]
