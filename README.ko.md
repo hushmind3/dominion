@@ -26,30 +26,37 @@
 
 ---
 
-## 공통 Rust 실행 코어
+## 🔧 2026 Rust 하네스 · 실행 알고리즘
 
-핵심 실행 엔진과 SDK는 [`crates/dominion-core`](crates/dominion-core/README.md)입니다. 서브4의 상태머신·도구 실행 기록·복구·스키마 검증을 기존 SQLite와 제품 어댑터에 연결했습니다. 채팅·그룹·작업·워크플로·홈 자동 작업이 공통 실행 경로를 사용하며, TypeScript는 선택적 HTTP 클라이언트입니다.
+DOMINION의 에이전트 실행기는 **BM25 검색기가 아니라 독립 Rust 하네스**입니다.
+[`dominion-core`](crates/dominion-core/src/engine.rs)가
+**초기화 → 필요 시 계획 → 모델 호출 → 도구 승인·실행 → 실제 결과 검증 → 종료**
+순서를 관리합니다. [채팅 어댑터](src/engine/chat/product.rs)는 이 실행기에
+사용자 지시·모델 제공자·작업공간·SQLite 실행 기록을 연결합니다.
 
-백그라운드 SDK·작업·Discord 실행은 일시적인 도구 이벤트를 소비만 하며, 사용하지 않는 인수·결과를 메모리에 추가 축적하지 않습니다. 영속 실행 증거와 명시적 증거 수집 경로는 유지됩니다.
+| 계층 | 저장소에서 실제 확인할 수 있는 코드 |
+| --- | --- |
+| **실행 커널** | [단일 실행 루프](crates/dominion-core/src/engine.rs), [도구 의도·결과 기록](crates/dominion-core/src/hosted.rs), [공유 예산](crates/dominion-core/src/budget.rs). 미승인 작업·미확정 외부 효과·취소·미완료 하위 작업은 완료 조건을 통과할 수 없습니다. |
+| **계획·판단** | [알고리즘 레지스트리](src/engine/algorithms.rs)에 실제 실행 가능한 커널을 버전별로 등록합니다. 작업 분해에는 `acceptance-lineage-dag-2026`을 사용하며, 구형 RSI 자동 소스 수정·자동 채택 루프는 운영하지 않습니다. |
+| **검증·복구** | [완료 조건 검증](src/engine/verification.rs), [미충족 조건의 자원별 의무 계보](src/engine/obligation_repair.rs), [영수증 기반 복구](src/engine/recovery.rs), [제한된 인과 진단](src/engine/adaptation/diagnostics.rs). 성공했다는 모델의 말만으로는 작업을 완료 처리하지 않습니다. |
+| **기억·문맥** | [출처·증거 기반 기억 재정렬](src/engine/memory.rs)의 `evidence-lineage-2026`, [사용자 확정 상태](src/engine/room_state.rs), [그룹 문맥 선택](src/engine/chat/room_context.rs), [필요 시 스킬 원문 조회](src/engine/tools.rs). BM25는 검색 후보를 고르는 보조 수단이며 하네스의 판단·복구 정책이 아닙니다. |
+| **토큰·연속성** | [제공자 요청 조립](src/engine/chat/provider.rs), [Codex 증분 WebSocket](src/engine/chat/codex_ws.rs), [문맥 연속성 정책](src/engine/chat/continuity.rs). 전송 토큰 추정치와 제공자 캐시 적중·신규 입력 토큰은 별도로 기록합니다. |
 
-기억 재정렬의 실행 정책도 과거 BM25 선택 대신 실제 저장된
-도구·사용자 메시지 출처를 검증하는 `evidence-lineage-2026`을 사용합니다.
-근거가 없는 출처 문자열은 점수 상승의 근거가 되지 않습니다.
+**검증 후 종료:** 실제 도구 실행 기록으로 완료 조건을 충족하면 마지막
+보고만을 위한 모델 호출 없이 종료할 수 있습니다. 기존 작업의 외부 효과가
+불명확하거나 사용자 지시가 갱신됐다면 이 경로를 통과하지 못합니다.
+성공 메시지는 최종 실행 결과가 영속 저장된 뒤에 전송합니다.
 
-작업 분해의 기본 실행 알고리즘을 2026년 근거 기반 완료조건 DAG로
-교체했습니다. 기존 단어·절 분리 알고리즘은 이력 조회용으로만 보존하며,
-완료 근거가 없는 문장 분해 점수로 실행 성공을 기록하지 않습니다.
+**검증 범위:** [2026년 11월 9일 9인·100턴 실험](benchmark/ROOM-100-TURN-LUNA-2026-11-09.json)에서는
+제공자 캐시 적중률 18.15%와 장기 기억 회상 실패가 측정됐습니다.
+실험 당시 브랜치와 지금의 메인은 다릅니다. 최신 코드의 토큰 절감률,
+실모델 작업 성공률·기억 향상 효과는 새 벤치마크로 검증해야 합니다.
+개발용 Rust 회귀 테스트와 정식 릴리스 검증도 구분합니다.
 
-기존 UCB1 자동 탐색과 가중합 실패 복구 경로는 제거했습니다.
-실행과 연결되지 않은 구형 정책 후보 자동 생성·메타 최적화 루프도
-정리했습니다. 과거 실험 기록과 독립 검증을 통한 정책 승격은 보존합니다.
-현재 복구 경로는 진단 증거·Rust 도구 승인/취소·실행 기록과
-동결된 완료 조건을 함께 사용합니다. 폐기된 알고리즘·RSI·영상 기록은
-조회 호환성을 위해 보존합니다.
-
-기존 프론트·모델 인증·도구 승인·제품 데이터는 유지합니다. 이전 독립 실행기·CLI·워크스페이스 패키지는 삭제했습니다. 경로와 검증 범위는 [Rust 하네스 문서](docs/HARNESS.md)에 정리했습니다.
-
-[TypeScript SDK](packages/sdk-typescript/README.md)의 `waitForRun`은 완료·승인·수동 복구 상태를 구별하고, `waitForVerifiedRun`은 실제 검증 증거가 있는 `taskOutcome: "succeeded"`만 성공으로 처리합니다. 모델이 답변을 생성했다는 사실과 작업 산출물 검증은 구별됩니다. SDK 작업과 사용자 지정 예산·작업공간 설정은 하나의 SQLite 트랜잭션에 기록됩니다.
+기존 React UI, SQLite 기록, 계정 인증, MCP 계약은 유지합니다.
+내장 영상·오디오 제작과 상시 RSI 캠페인은 종료했으며 과거 기록의 조회는
+유지합니다. 상세 설계와 복구 규칙은 [하네스 계약](docs/HARNESS.md),
+SDK 사용법은 [TypeScript SDK](packages/sdk-typescript/README.md)에 있습니다.
 
 ## 📸 DOMINION 미리보기
 
@@ -165,7 +172,9 @@ DOMINION은 기능 수보다 **실제 작업 성공률과 안정적인 실행 �
 - **[Pull Requests](https://github.com/hushmind3/dominion-rust/pulls)** — Rust 하네스, UI, 모델 연결, 채널 드라이버, 문서 등 개선을 환영합니다.
 - 실제 화면을 보여주는 스크린샷과 재현 가능한 테스트도 프로젝트를 개선하는 데 도움이 됩니다.
 
-계정 연동: [Google·GitHub 계정 연결 및 배포 설정](docs/ACCOUNT-CONNECTIONS.md) — 일반 사용자는 **연결 채널 → 계정 연결**에서 로그인 버튼을 사용합니다.\n\n더 깊은 구현 자료: [엔진 설명](ENGINE.md) · [문서 목차](docs/INDEX.md) · [하네스 계약](docs/HARNESS.md) · [이전 상세 README 보관본](docs/README-TECHNICAL-SNAPSHOT-2026-11-14.md)
+계정 연동: [Google·GitHub 계정 연결 및 배포 설정](docs/ACCOUNT-CONNECTIONS.md) — 일반 사용자는 **연결 채널 → 계정 연결**에서 로그인 버튼을 사용합니다.
+
+더 깊은 구현 자료: [엔진 설명](ENGINE.md) · [문서 목차](docs/INDEX.md) · [하네스 계약](docs/HARNESS.md) · [이전 상세 README 보관본](docs/README-TECHNICAL-SNAPSHOT-2026-11-14.md)
 
 ## English
 
