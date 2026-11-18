@@ -115,6 +115,40 @@ pub fn definitions() -> Vec<Value> {
 }
 
 #[cfg(test)]
+mod lazy_skill_tests {
+    use super::*;
+    use crate::{config::Config, db::Store, vault::Vault};
+
+    #[tokio::test]
+    async fn enabled_skill_reads_by_id_without_leaking_disabled_or_draft_skills() {
+        let dir=std::env::temp_dir().join(format!("dominion-skill-view-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=Config{port:0,data_dir:dir.clone(),web_dir:dir.join("web"),workspace:dir.clone()};
+        let store=Store::open(&config.db_path()).unwrap();
+        let vault=Vault::open(&config.key_path());
+        let state=crate::state::AppState::new(config,store,vault);
+        state.store.put("skill",&json!({"id":"enabled-skill","scope":"global",
+            "name":"Current research","description":"Short catalog description",
+            "instructions":"Heading\\nSECRET-SKILL-INSTRUCTION\\nFinish",
+            "enabled":true,"status":"active"}));
+        state.store.put("skill",&json!({"id":"draft-skill","scope":"global",
+            "name":"Draft","instructions":"Do not load","enabled":true,"status":"draft"}));
+        let ctx=ToolContext{
+            workspace:&dir,store:&state.store,state:&state,
+            session_id:"test-session",agent_id:None,
+            tools_enabled:true,tools_execution_enabled:true,
+        };
+        let result=execute(&ctx,"skill_view",&json!({"id":"enabled-skill","startLine":2,"maxLines":1}),"run").await.unwrap();
+        assert_eq!(result["content"],"SECRET-SKILL-INSTRUCTION");
+        assert_eq!(result["totalLines"],3);
+        assert_eq!(result["hasMore"],true);
+        assert!(execute(&ctx,"skill_view",&json!({"id":"draft-skill"}),"run").await.is_err());
+        assert!(execute(&ctx,"skill_view",&json!({"id":"nonexistent"}),"run").await.is_err());
+        let _=std::fs::remove_dir_all(dir);
+    }
+}
+
+#[cfg(test)]
 mod retired_tools_tests {
     use super::*;
     #[test]
