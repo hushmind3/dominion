@@ -29,6 +29,15 @@ DOMINION is an owner-controlled, model/provider-independent **Rust agent executi
 - `web/src`: the existing conversation, workspace, memory, providers, rooms, channels, plugins, developer tools, job state and operator controls.
 - `src/state.rs`, `src/engine/chat/runtime.rs`, `src/engine/rooms.rs`: reusable, timeout-scoped model HTTP clients, durable per-speaker latency observations, progress-aware room E2E coverage, and event-driven cancellation with a low-frequency cross-process reconciliation fallback instead of 50ms SQLite polling.
 
+### 2026 harness cost/selection convergence (sub3)
+
+- **No redundant acceptance reviewer model:** ordinary chat now uses deterministic host acceptance evidence as its retry instruction for the next *existing* model turn, rather than calling an additional paid `review_action` LLM for the same failed predicate. The host verification/receipt/approval gates are unchanged.
+- **Bounded preplanning:** short single-step work no longer creates a separate model plan because inference returned zero checks; composite, owner-policy-requested, or multi-criterion tasks can still use the original planner. A provider planning *attempt* counts toward the chat model-call metric, even when it fails. Disabled tool execution never requests paid planning.
+- **One Rust intent scorer:** room and ordinary-chat candidate ranking now reuse the native SDK's `dominion_agent_sdk::tool_relevance` over tool names and descriptions. Neither chat path serializes every large JSON argument schema to decide relevance. The independent host approval and tool policy remain authoritative; this is a shared **selection signal**, not a duplicate executor or claim of full provider-level `dominion_tool_search` parity.
+- **Boundaries:** chat streaming still has its own turn lifecycle and `harness_assisted` procedures, retained to preserve compatible room/session behavior. The native SDK remains the autonomous job kernel. Further unification needs matching-workload end-to-end testing.
+
+Research basis: [2026 empirical study of 176 harness configurations](https://arxiv.org/abs/2609.20804) and [2026 NanoHarness controlled component ablation](https://arxiv.org/abs/2609.32459). Neither paper measures this repository; predicted savings are **one review call per failed acceptance check** and **one plan call on affected simple tasks**, not a measured win-rate or total-token reduction.
+
 ## No unattended self-modification
 
 Historical campaign, media and experiment records are **not deleted from existing local SQLite databases**. Retired queued jobs are cancelled; a retired job found running after restart is marked for review, never re-executed. The worker refuses any newly submitted retired job kind. No core auto-adoption, generation runner, media studio or research-lab CLI remains. The dormant `improve::schedule_experiments` creator and its unused regression fixture were also removed on the sub3 branch; existing manually supplied experiment results, owner review routes and historical SQLite records remain unchanged.
