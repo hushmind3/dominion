@@ -1411,63 +1411,53 @@ async fn main() -> Result<(), String> {
             } else {
                 "completed"
             };
-            let trial = json!({
-                "schemaVersion": SCHEMA_VERSION,
-                "experimentId": experiment_id,
-                "trialId": id,
-                "pair": pair,
-                "arm": arm,
-                "replicate": 0,
-                "status": status,
-                "errorClass": recorded_error,
-                "error": if recorded_error.is_empty() { "" } else { recorded_error },
+            let operation_summary = operation_rows.iter().map(|operation| json!({
+                "tool":operation["tool"],"status":operation["status"],
+                "origin":operation["origin"],"opSeq":operation["opSeq"],
+            })).collect::<Vec<_>>();
+            // Keeping separate data/assessment structures avoids a giant
+            // nested json! macro. The eval binary is compiled in dev CI,
+            // including its timeout and cancellation paths.
+            let mut trial = json!({
+                "schemaVersion":SCHEMA_VERSION,
+                "experimentId":experiment_id,"trialId":id,"pair":pair,
+                "arm":arm,"replicate":0,"status":status,
+                "errorClass":recorded_error,
+                "error":if recorded_error.is_empty(){""}else{recorded_error},
                 "cancellation":cancellation,
-                "startedAt": started_at,
-                "finishedAt": chrono::Utc::now().to_rfc3339(),
-                "elapsedMs": elapsed,
-                "sessionId": session_id,
-                "taskId": task_id,
-                "executionId": execution["id"],
-                "taskOutcome": task_outcome,
-                "compliance": compliance,
-                "applicable": applicable,
-                "auditOk": audit_ok,
-                "reportOk": report_ok,
-                "requiresCompliance": policy_claim.is_none(),
-                "planQuality": execution["planQuality"]["total"]
-                    .as_f64()
-                    .unwrap_or(0.0),
-                "planQualityIndependent": execution["planQualityIndependent"]["total"]
-                    .as_f64()
-                    .unwrap_or(0.0),
-                "planText": execution["plan"]
-                    .as_str()
-                    .map(|text| text.chars().take(4_000).collect::<String>())
-                    .unwrap_or_default(),
-                "planSteps": execution["planQuality"]["steps"]
-                    .as_u64()
-                    .unwrap_or(0),
-                "taskPrompt": cfg.fixture.task,
-                "preStateHash": pre_hash,
-                "postStateHash": fixture_digest(&root, &cfg.fixture),
-                "tokens": execution["tokens"],
-                "modelAccounting": execution["modelAccounting"],
-                "inputContext": execution["inputContext"],
-                "toolCalls": execution["toolCalls"],
-                "modelCalls": execution["modelCalls"],
-                "streamChars": stream.chars().count(),
-                "artifacts": {"audit": audit, "report": report},
-                "operations": operation_rows.iter().map(|operation| json!({
-                    "tool": operation["tool"],
-                    "status": operation["status"],
-                    "origin": operation["origin"],
-                    "opSeq": operation["opSeq"],
-                })).collect::<Vec<_>>(),
-                "taskState": {
-                    "rootOutcome": task["rootOutcome"],
-                    "attempts": task["attempts"].as_array().map(Vec::len),
-                },
+                "startedAt":started_at,
+                "finishedAt":chrono::Utc::now().to_rfc3339(),
+                "elapsedMs":elapsed,
+                "sessionId":session_id,"taskId":task_id,
+                "executionId":execution["id"],"taskOutcome":task_outcome,
+                "compliance":compliance,"applicable":applicable,
             });
+            let assessment = json!({
+                "auditOk":audit_ok,"reportOk":report_ok,
+                "requiresCompliance":policy_claim.is_none(),
+                "planQuality":execution["planQuality"]["total"].as_f64().unwrap_or(0.0),
+                "planQualityIndependent":execution["planQualityIndependent"]["total"]
+                    .as_f64().unwrap_or(0.0),
+                "planText":execution["plan"].as_str()
+                    .map(|text|text.chars().take(4_000).collect::<String>())
+                    .unwrap_or_default(),
+                "planSteps":execution["planQuality"]["steps"].as_u64().unwrap_or(0),
+                "taskPrompt":cfg.fixture.task,
+                "preStateHash":pre_hash,"postStateHash":fixture_digest(&root,&cfg.fixture),
+                "tokens":execution["tokens"],
+                "modelAccounting":execution["modelAccounting"],
+                "inputContext":execution["inputContext"],
+                "toolCalls":execution["toolCalls"],"modelCalls":execution["modelCalls"],
+                "streamChars":stream.chars().count(),
+                "artifacts":{"audit":audit,"report":report},
+                "operations":operation_summary,
+                "taskState":{
+                    "rootOutcome":task["rootOutcome"],
+                    "attempts":task["attempts"].as_array().map(Vec::len)
+                }
+            });
+            trial.as_object_mut().expect("trial is an object")
+                .extend(assessment.as_object().expect("assessment is an object").clone());
             let directory = root.join("artifacts").join(id.replace(':', "_"));
             std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
             write_json(&directory.join("trial.json"), &trial)?;
