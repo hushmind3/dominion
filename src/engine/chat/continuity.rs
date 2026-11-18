@@ -126,13 +126,13 @@ pub(crate) fn project(
         .any(|old| old["key"] == new["key"] && old["message"] != new["message"])) {
         reason = Some("source_changed");
     }
-    // The previous room-wide snapshot is an OBSERVATION of a past owner
-    // turn, not a standing instruction or a permanent memory. Previously
-    // "room-shared:owner1", "room-shared:owner2", ... were all appended to
-    // each participant's cached working view until the budget overflowed.
-    // Rotate the view at the owner-turn boundary instead. The new compiler
-    // view still pins current owner instructions, previous self/owner turns,
-    // relevant peer speech, and source-backed evidence.
+    // The room snapshot is an observation, not a standing instruction.
+    // room_context now keys equal model-visible status by CONTENT, not by
+    // owner message ID. Reuse an unchanged snapshot as a real cached prefix;
+    // a changed speaker/response/work status has a different key and forces
+    // a fresh bounded context. Never accumulate stale snapshot versions.
+    // Owner text, corrections, own answer and relevant peer evidence stay in
+    // the fresh compiler view, not in this derived status key.
     let current_room_source=fresh.iter().filter_map(|frame|frame["key"].as_str())
         .find(|key|key.starts_with("room-shared:"));
     let stale_snapshots=current_room_source.map(|current|frames.iter()
@@ -691,6 +691,83 @@ mod tests {
         restored.store.put("room",&json!({"id":"test","contextBudgetTokens":2000}));
         let (after_restart,_)=project(&restored,&provider,&second,&[],"room:test",&mut resumed);
         assert_eq!(after_restart,second_wire);
+        crate::test_support::cleanup_dir(root);
+    }
+
+    #[test]
+    fn identical_room_status_reuses_prefix_but_changed_status_rebases_without_erasing_memory() {
+        let root=std::env::temp_dir().join(format!("dominion-room-semantic-delta-{}",uuid::Uuid::new_v4()));
+        let state=state(&root);
+        state.store.put("session",&json!({"id":"room:semantic","roomId":"semantic"})).unwrap();
+        state.store.put("room",&json!({"id":"semantic","contextBudgetTokens":12000})).unwrap();
+        let request=TurnRequest::from_value(&json!({"input":"continue","agentId":"a"})).unwrap();
+        let provider=route();
+        let make=|owner:&str,status:&str,self_reply:Option<&str>| {
+            let mut frames=vec![
+                json!({"role":"system","content":"stable owner instructions and persona",
+                    "_dominion_source":owner,"_dominion_dependencies":[]}),
+                json!({"role":"user","content":status,
+                    "_dominion_frame":format!("room-shared:{}",stable_id(&[status]))}),
+                json!({"role":"user","content":"FIXED_OWNER_DECISION_9000",
+                    "_dominion_frame":"owner-state:stable-decision"})
+            ];
+            if let Some(id)=self_reply {
+                frames.push(json!({"role":"assistant","content":"previous self conclusion",
+                    "_dominion_frame":id}));
+            }
+            frames.push(json!({"role":"user","content":format!("current owner {owner}"),
+                "_dominion_frame":owner}));
+            frames
+        };
+        let first=make("owner-1","all 9 replies received",None);
+        let mut one=prepare(&state,&provider,&request,"room:semantic",
+            "stable owner instructions and persona",&json!({})).unwrap();
+        let (first_wire,pending)=project(&state,&provider,&first,&[],"room:semantic",&mut one);
+        let saved=state.store.write_message(&json!({"id":"reply-1",
+            "session_id":"room:semantic","agent_id":"a","role":"assistant",
+            "content":"previous self conclusion",
+            "metadata":{"replyToMessageId":"owner-1"}})).unwrap();
+        commit(&state,&one,&saved);
+        commit_projection(&state,&one,&saved,pending.unwrap());
+
+        let second=make("owner-2","all 9 replies received",Some("reply-1"));
+        let mut two=prepare(&state,&provider,&request,"room:semantic",
+            "stable owner instructions and persona",&json!({})).unwrap();
+        let (second_wire,pending)=project(&state,&provider,&second,&[],"room:semantic",&mut two);
+        assert!(two["workingView"]["rebaseReason"].is_null());
+        assert_eq!(two["workingView"]["reclaimedStaleRoomSnapshots"],0);
+        assert_eq!(&second_wire[..first_wire.len()],first_wire.as_slice(),
+            "unchanged room outcome must preserve the existing wire prefix");
+        assert_eq!(second_wire.iter().filter(|row|
+            row["content"]=="all 9 replies received").count(),1,
+            "do not resend the same status nine times or once per owner cursor");
+        assert!(second_wire.iter().any(|row|row["content"]=="FIXED_OWNER_DECISION_9000"));
+        assert!(second_wire.iter().any(|row|row["content"]=="current owner owner-2"));
+        assert!(two["workingView"]["estimatedReusedHistoryTokens"].as_u64()
+            .is_some_and(|tokens|tokens>0));
+        assert!(two["workingView"]["estimatedNewHistoryTokens"].as_u64()
+            .is_some_and(|tokens|tokens>0));
+        let reply_two=state.store.write_message(&json!({"id":"reply-2",
+            "session_id":"room:semantic","agent_id":"a","role":"assistant",
+            "content":"previous self conclusion",
+            "metadata":{"replyToMessageId":"owner-2"}})).unwrap();
+        commit(&state,&two,&reply_two);
+        commit_projection(&state,&two,&reply_two,pending.unwrap());
+
+        let third=make("owner-3","one speaker now missing",Some("reply-2"));
+        let mut three=prepare(&state,&provider,&request,"room:semantic",
+            "stable owner instructions and persona",&json!({})).unwrap();
+        let (third_wire,_)=project(&state,&provider,&third,&[],"room:semantic",&mut three);
+        assert_eq!(three["workingView"]["rebaseReason"],"room_snapshot_rotated");
+        assert_eq!(three["workingView"]["reclaimedStaleRoomSnapshots"],1);
+        assert_eq!(three["workingView"]["estimatedReusedHistoryTokens"],0);
+        let current=json!(third_wire).to_string();
+        assert!(!current.contains("all 9 replies received"),
+            "stale outcome must not override newer room facts");
+        assert!(current.contains("one speaker now missing"));
+        assert!(current.contains("FIXED_OWNER_DECISION_9000"));
+        assert!(current.contains("previous self conclusion"));
+        assert!(current.contains("current owner owner-3"));
         crate::test_support::cleanup_dir(root);
     }
 
