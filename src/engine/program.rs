@@ -601,6 +601,131 @@ pub fn apply_revision_proposal(
     }))
 }
 
+/// Bounded Propose–Validate–Compare repair portfolio (2026 Harness²/PRISM
+/// integration). This is NOT an executed counterfactual: each model proposal
+/// must first survive the existing durable IR, authorized-tool, effect
+/// idempotency, dependency and write-ahead admission checks.
+///
+/// The selection is multi-objective and abstains on incomparable candidates:
+/// it never calls an LLM, guesses future success, or rewards predicted gains.
+pub fn adjudicate_revision_proposals(
+    program:&Value,checkpoint:&Value,response:&Value,
+    allowed_tools:&[String],max_nodes:usize,repair_mode:&str,
+)->Result<Value,String>{
+    let proposals=match response.get("candidates"){
+        Some(Value::Array(items)) if !items.is_empty()&&items.len()<=3=>items.clone(),
+        Some(_) => return Err("repair portfolio requires 1..3 candidate proposals".into()),
+        None=>vec![response.clone()],
+    };
+    // A singleton retains the original revision contract without fabricated
+    // comparative evidence. The new multi-candidate gate is opt-in.
+    if proposals.len()==1 {
+        return apply_revision_proposal(program,checkpoint,&proposals[0],
+            allowed_tools,max_nodes,repair_mode);
+    }
+    let mut admitted=Vec::<(usize,Value,usize,usize,usize)>::new();
+    let mut rejected=Vec::<Value>::new();
+    let observed=checkpoint["observationRefs"].as_object();
+    for (index,proposal) in proposals.iter().enumerate(){
+        let reference_ids=proposal["evidenceIds"].as_array()
+            .cloned().unwrap_or_default();
+        let valid_references=reference_ids.len()<=8&&reference_ids.iter().all(|id|{
+            let Some(id)=id.as_str() else{return false;};
+            observed.is_some_and(|refs|refs.contains_key(id))
+                || checkpoint["programFailure"]["nodeId"].as_str()==Some(id)
+        });
+        if !valid_references {
+            rejected.push(json!({"index":index,"reason":"missing_host_observation_reference"}));
+            continue;
+        }
+        let result=apply_revision_proposal(program,checkpoint,proposal,
+            allowed_tools,max_nodes,repair_mode);
+        let revised=match result {
+            Ok(revised)=>revised,
+            Err(reason)=>{
+                rejected.push(json!({"index":index,
+                    "reason":"rejected_by_durable_ir_or_tool_authority",
+                    "detail":reason.chars().take(240).collect::<String>()}));
+                continue;
+            }
+        };
+        // Count the actual proposed changed subtree, not model claims such as
+        // expectedProgress. An observation-only no-op cannot win a repair.
+        let mut mutated=0usize;
+        let mut calls=0usize;
+        let mut total=0usize;
+        let mut actionable=false;
+        fn inspect(node:&Value,mutated:&mut usize,calls:&mut usize,
+            total:&mut usize,actionable:&mut bool){
+            *total+=1;
+            match node["type"].as_str().unwrap_or("") {
+                "call_tool"=>{
+                    *calls+=1;*actionable=true;
+                    if !dominion_agent_sdk::runtime::builtin_is_read_only(
+                        node["tool"].as_str().unwrap_or("")){
+                        *mutated+=1;
+                    }
+                }
+                "delegate"|"model_decision"=>{
+                    *calls+=1;*mutated+=1;*actionable=true;
+                }
+                "verify"=>*actionable=true,
+                _=>{}
+            }
+            for field in ["nodes","then","else","body"] {
+                for child in node[field].as_array().into_iter().flatten(){
+                    inspect(child,mutated,calls,total,actionable);
+                }
+            }
+        }
+        for field in ["addNodes","replacePendingNodes"] {
+            for node in proposal[field].as_array().into_iter().flatten(){
+                inspect(node,&mut mutated,&mut calls,&mut total,&mut actionable);
+            }
+        }
+        if !actionable {
+            rejected.push(json!({"index":index,"reason":"no_executable_repair_action"}));
+            continue;
+        }
+        admitted.push((index,revised,mutated,calls,total));
+    }
+    if admitted.is_empty(){
+        return Err("no repair portfolio candidate passed independent admission".into());
+    }
+    // Pareto dominance on *only* observable executable costs: potential
+    // side-effect surfaces, tool/model calls, and changed-IR complexity.
+    // We intentionally exclude invented rewards, token estimates, and model
+    // confidence without a grounded second execution.
+    let frontier=admitted.iter().filter(|row|{
+        !admitted.iter().any(|other|{
+            other.0!=row.0
+                &&other.2<=row.2&&other.3<=row.3&&other.4<=row.4
+                &&(other.2<row.2||other.3<row.3||other.4<row.4)
+        })
+    }).collect::<Vec<_>>();
+    if frontier.len()!=1 {
+        return Err(format!(
+            "repair candidates remain incomparable ({} Pareto choices); human/model review required",
+            frontier.len()
+        ));
+    }
+    let selected=frontier[0];
+    let mut result=selected.1.clone();
+    result["revisionAdjudication"]=json!({
+        "protocol":"2026_bounded_evidence_qualified_repair",
+        "selectedCandidateIndex":selected.0,
+        "candidateCount":proposals.len(),
+        "admittedCount":admitted.len(),
+        "rejected":rejected,
+        "riskSurfaces":{"newPotentialMutations":selected.2,
+            "newToolAndModelCalls":selected.3,"changedNodes":selected.4},
+        "basis":"typed_ir_authorization_dependency_and_pareto_feasibility",
+        "candidateExecuted":false,
+        "successNotInferred":true,
+    });
+    Ok(result)
+}
+
 pub fn checkpoint_skip_completed(checkpoint: &Value, node_id: &str) -> bool {
     checkpoint["completedOperationIds"]
         .as_array()
@@ -612,6 +737,55 @@ pub fn checkpoint_skip_completed(checkpoint: &Value, node_id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_repair_portfolio_filters_untrusted_tool_and_picks_dominated_plan(){
+        let base=json!({"revision":"t","nodes":[{"type":"observe","id":"seen"}]});
+        let checkpoint=new_checkpoint(&base);
+        let one=|id:&str,tool:&str|json!({"baseRevision":"t","reason":"repair",
+            "evidenceIds":[],"addNodes":[{"type":"call_tool","id":id,
+                "tool":tool,"inputs":{"path":"out.txt"}}]});
+        let response=json!({"candidates":[
+            one("unsafe","admin_delete_all"),
+            one("write","workspace_write"),
+            one("read","workspace_read")]});
+        let tools=vec!["workspace_write".to_string(),"workspace_read".to_string()];
+        let revised=adjudicate_revision_proposals(
+            &base,&checkpoint,&response,&tools,64,"replace").unwrap();
+        assert_eq!(revised["nodes"][1]["id"],"read");
+        assert_eq!(revised["revisionAdjudication"]["admittedCount"],2);
+        assert_eq!(revised["revisionAdjudication"]["candidateExecuted"],false);
+        assert!(revised["revisionAdjudication"]["successNotInferred"]==true);
+    }
+
+    #[test]
+    fn repair_portfolio_abstains_on_non_dominated_tradeoffs_and_fake_evidence(){
+        let base=json!({"revision":"t","nodes":[{"type":"observe","id":"seen"}]});
+        let checkpoint=new_checkpoint(&base);
+        let two=json!({"baseRevision":"t","reason":"two read probes",
+            "evidenceIds":[],"addNodes":[
+                {"type":"call_tool","id":"a","tool":"workspace_read","inputs":{"path":"a"}},
+                {"type":"call_tool","id":"b","tool":"workspace_read","inputs":{"path":"b"}}
+            ]});
+        let one=json!({"baseRevision":"t","reason":"one effect",
+            "evidenceIds":[],"addNodes":[
+                {"type":"call_tool","id":"write","tool":"workspace_write",
+                    "inputs":{"path":"a","content":"x"}}
+            ]});
+        let tools=vec!["workspace_read".into(),"workspace_write".into()];
+        let response=json!({"candidates":[two,one]});
+        assert!(adjudicate_revision_proposals(
+            &base,&checkpoint,&response,&tools,64,"replace").unwrap_err()
+            .contains("incomparable"));
+        let made_up=json!({"baseRevision":"t","reason":"fabricated trace",
+            "evidenceIds":["nonexistent"],"addNodes":[
+                {"type":"call_tool","id":"fake","tool":"workspace_read",
+                    "inputs":{"path":"a"}}]});
+        let response=json!({"candidates":[made_up.clone(),made_up]});
+        assert!(adjudicate_revision_proposals(
+            &base,&checkpoint,&response,&tools,64,"replace").unwrap_err()
+            .contains("independent admission"));
+    }
 
     fn program() -> Value {
         json!({
