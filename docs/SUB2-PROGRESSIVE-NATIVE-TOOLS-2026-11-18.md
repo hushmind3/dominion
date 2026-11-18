@@ -34,7 +34,7 @@ owner chat / SDK prompt job / room turn
 ```
 
 - The default projection is enabled only when more than 18 permitted tools exist. Small catalogs, user-selected `core` or `query-relevant` strategies, tools-disabled turns and deterministic single-file creation retain their previous behavior.
-- The nine? No: the core has **eight** essential native schemas; the remaining four slots are request-relevant. Search is additional, deliberately first in the provider declaration order so schema-budget trimming does not silently evict it.
+- The core has **eight** essential native schemas; the remaining four slots are request-relevant. Search is additional, deliberately first in the provider declaration order so schema-budget trimming does not silently evict it.
 - The search query is at most 256 characters; each search returns at most eight concrete matches. At most 20 provider-visible schemas (including search) can accumulate in one turn. Duplicated names do not consume slots.
 - The exact result uses native tools' existing JSON schema, preserving provider/runtime argument contracts. No new permission table, host/tool bridge, model router, data store, worker, SDK endpoint or background process exists.
 - Current session policy and account connection filtering apply to the search catalog. Read-only parallel child sessions cannot discover writes, shells or MCP. Results from a newly connected service cannot exceed the catalog frozen after initial account/user filtering; real execution also rechecks policy at dispatch.
