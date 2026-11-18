@@ -740,6 +740,72 @@ mod tests {
     }
 
     #[test]
+    fn room_status_reuses_content_key_then_rotates_on_changed_status_without_losing_owner_facts() {
+        let root=std::env::temp_dir().join(format!("dominion-room-snapshot-{}",uuid::Uuid::new_v4()));
+        let state=state(&root);
+        state.store.put("session",&json!({"id":"room:r","roomId":"r"})).unwrap();
+        state.store.put("room",&json!({"id":"r","contextBudgetTokens":12000})).unwrap();
+        state.store.put("room_state",&json!({"id":"state-1","facts":[
+            {"id":"fact","status":"active","kind":"decision","text":"KEEP_OWNER_DECISION",
+                "sourceMessageId":"o1","verifiedLocalOwner":true}
+        ]})).unwrap();
+        let request=TurnRequest::from_value(&json!({"input":"follow up","agentId":"a"})).unwrap();
+        let provider=route();
+        let messages=|source:&str,status:&str,prior_self:Option<&Value>| {
+            let deps=dependencies(&state,&[json!({"kind":"owner_state","id":"state-1"})]);
+            let mut rows=vec![
+                json!({"role":"system","content":"stable identity","_dominion_source":source,
+                    "_dominion_dependencies":deps}),
+                json!({"role":"user","content":"[주인 확정 상태: 원문]\n- [decision] KEEP_OWNER_DECISION",
+                    "_dominion_frame":"owner-state:state-1"}),
+                json!({"role":"user","content":status,
+                    "_dominion_frame":format!("room-shared:{}",stable_id(&[status]))}),
+            ];
+            if let Some(saved)=prior_self {
+                rows.push(json!({"role":"assistant","content":saved["content"],
+                    "_dominion_frame":saved["id"]}));
+            }
+            rows.push(json!({"role":"user","content":format!("owner request {source}"),
+                "_dominion_frame":source}));
+            rows
+        };
+        let complete="[방 공통 상태] 직전 요청 응답 9/9명. 미응답 없음.";
+        let changed="[방 공통 상태] 직전 요청 응답 8/9명. 미응답 Speaker 8.";
+        let mut first=prepare(&state,&provider,&request,"room:r","stable identity",&json!({})).unwrap();
+        let (one,pending)=project(&state,&provider,&messages("o1",complete,None),&[],"room:r",&mut first);
+        let first_reply=state.store.write_message(&json!({"session_id":"room:r",
+            "role":"assistant","agent_id":"a","content":"FIRST_SELF_REPLY",
+            "metadata":{"replyToMessageId":"o1"}})).unwrap();
+        commit(&state,&first,&first_reply);
+        commit_projection(&state,&first,&first_reply,pending.unwrap());
+        let mut second=prepare(&state,&provider,&request,"room:r","stable identity",&json!({})).unwrap();
+        let (two,pending)=project(&state,&provider,&messages("o2",complete,None),&[],"room:r",&mut second);
+        assert!(second["workingView"]["rebaseReason"].is_null(),"{second}");
+        assert_eq!(&two[..one.len()],one.as_slice(),
+            "equal room state must not rewrite the immutable owner and room prefix");
+        assert_eq!(serde_json::to_string(&two).unwrap().matches(complete).count(),1);
+        assert!(second["workingView"]["estimatedReusedHistoryTokens"].as_u64().unwrap()>0);
+        assert_eq!(second["workingView"]["reclaimedStaleRoomSnapshots"],0);
+        let second_reply=state.store.write_message(&json!({"session_id":"room:r",
+            "role":"assistant","agent_id":"a","content":"SECOND_SELF_REPLY",
+            "metadata":{"replyToMessageId":"o2"}})).unwrap();
+        commit(&state,&second,&second_reply);
+        commit_projection(&state,&second,&second_reply,pending.unwrap());
+        let mut third=prepare(&state,&provider,&request,"room:r","stable identity",&json!({})).unwrap();
+        let (three,_)=project(&state,&provider,&messages("o3",changed,Some(&second_reply)),&[],
+            "room:r",&mut third);
+        assert_eq!(third["workingView"]["rebaseReason"],"room_snapshot_rotated");
+        assert_eq!(third["workingView"]["reclaimedStaleRoomSnapshots"],1);
+        let text=serde_json::to_string(&three).unwrap();
+        assert!(!text.contains(complete),"obsolete room-wide status must be removed");
+        assert!(text.contains(changed));
+        assert!(text.contains("KEEP_OWNER_DECISION"));
+        assert!(text.contains("SECOND_SELF_REPLY"));
+        drop(state);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn owner_fact_selection_reuses_prefix_and_appends_missing_facts_until_real_revision() {
         let root=std::env::temp_dir().join(format!("dominion-owner-delta-{}",uuid::Uuid::new_v4()));
         let state=state(&root);
