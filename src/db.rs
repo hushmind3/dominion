@@ -183,13 +183,15 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_algorithm_kind
                  ON records(json_extract(data,'$.kind'))
                  WHERE kind='algorithm';
-             CREATE INDEX IF NOT EXISTS idx_improvement_active_scope
-                 ON records(json_extract(data,'$.partitionKey'),
+             DROP INDEX IF EXISTS idx_improvement_active_scope;
+             CREATE INDEX IF NOT EXISTS idx_improvement_active_v2
+                 ON records(kind, updated_at DESC,
+                            json_extract(data,'$.partitionKey'),
                             json_extract(data,'$.scope'),
-                            json_extract(data,'$.kind'),
                             json_extract(data,'$.agentId'))
                  WHERE kind='improvement'
-                   AND json_extract(data,'$.status') IN ('adopted','validated');
+                   AND json_extract(data,'$.status') IN ('adopted','validated')
+                   AND json_extract(data,'$.kind') IN ('strategy','tool_policy');
              CREATE INDEX IF NOT EXISTS idx_execution_task
                  ON records(json_extract(data,'$.taskId'))
                  WHERE kind='execution';
@@ -2321,6 +2323,36 @@ mod tests {
         assert!(sessions.contains("session-1"));
         assert_eq!(sessions.len(), 1);
         assert!(store.running_recovery_records("job").is_err());
+    }
+
+    #[test]
+    fn active_improvement_lookup_uses_partial_index_in_query_plan() {
+        let store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        store.put("improvement", &json!({"id":"active","kind":"strategy",
+            "scope":"shared","partitionKey":"p","status":"adopted"})).unwrap();
+        store.put("improvement", &json!({"id":"archived","kind":"strategy",
+            "scope":"shared","partitionKey":"p","status":"rejected"})).unwrap();
+        let selected=store.active_improvements_for_scope("p",Some("a")).unwrap();
+        assert_eq!(selected.len(),1);
+        assert_eq!(selected[0]["id"],"active");
+        let conn=store.conn.lock().unwrap();
+        let mut stmt=conn.prepare(
+            "EXPLAIN QUERY PLAN
+             SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='improvement'
+               AND json_extract(data,'$.status') IN ('adopted','validated')
+               AND json_extract(data,'$.kind') IN ('strategy','tool_policy')
+               AND (json_extract(data,'$.scope')='global'
+                    OR (json_extract(data,'$.partitionKey')=?1
+                        AND (json_extract(data,'$.scope')='shared'
+                             OR json_extract(data,'$.agentId') IS ?2)))
+             ORDER BY updated_at DESC,rowid DESC",
+        ).unwrap();
+        let plans=stmt.query_map(params!["p",Some("a")],
+            |row|row.get::<_,String>(3)
+        ).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
+        assert!(plans.iter().any(|p|p.contains("idx_improvement_active_v2")),
+            "active strategy search must use its partial index: {plans:?}");
     }
 
     #[test]
