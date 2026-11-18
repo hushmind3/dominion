@@ -497,6 +497,34 @@ impl Host for MainTurn<'_> {
             self.total_tokens += call_total;
             if self.is_room {
                 if let Some(mut execution) = self.state.store.get("execution", self.execution_id) {
+                    // Attribute provider-reported usage to each completed
+                    // speaker model call, not just the final accumulated turn.
+                    // A missing cache field stays unknown, never a fake zero.
+                    let cached = if completion.usage_exact {
+                        completion.cached_prompt_tokens.map(|value|value.min(call_prompt))
+                    } else { None };
+                    let mut calls=execution["inputContext"]["modelCallUsage"]
+                        .as_array().cloned().unwrap_or_default();
+                    calls.push(json!({
+                        "completedCallIndex":calls.len()+1,
+                        "providerId":self.provider.id,"model":self.provider.model,
+                        "promptTokens":completion.usage_exact.then_some(call_prompt),
+                        "cachedPromptTokens":cached,
+                        "newPromptTokens":cached.map(|value|call_prompt.saturating_sub(value)),
+                        "outputTokens":completion.usage_exact.then_some(call_completion),
+                        "estimatedPromptTokens":(!completion.usage_exact).then_some(call_prompt),
+                        "estimatedOutputTokens":(!completion.usage_exact).then_some(call_completion),
+                        "usageExact":completion.usage_exact,
+                        "workingView":{
+                            "rebaseReason":self.metadata["continuity"]["workingView"]["rebaseReason"],
+                            "reusedFrames":self.metadata["continuity"]["workingView"]["reusedFrames"],
+                            "appendedFrames":self.metadata["continuity"]["workingView"]["appendedFrames"],
+                            "estimatedReusedHistoryTokens":self.metadata["continuity"]["workingView"]["estimatedReusedHistoryTokens"],
+                            "estimatedNewHistoryTokens":self.metadata["continuity"]["workingView"]["estimatedNewHistoryTokens"]
+                        },
+                        "incrementalTransport":self.metadata["continuity"]["incrementalTransport"]
+                    }));
+                    execution["inputContext"]["modelCallUsage"]=json!(calls);
                     execution["inputContext"]["providerPromptTokens"] =
                         json!(self.prompt_tokens_total);
                     execution["inputContext"]["providerCachedPromptTokens"] =
