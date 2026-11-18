@@ -919,11 +919,18 @@ pub(super) async fn run_turn_body(
                     "projectedInputTokensEstimate":metadata["continuity"]["workingView"]["estimatedInputTokens"],
                     "projectionRebaseReason":metadata["continuity"]["workingView"]["rebaseReason"],
                     "projectionReusedFrames":metadata["continuity"]["workingView"]["reusedFrames"],
+                    "projectionEpoch":metadata["continuity"]["workingView"]["epoch"],
+                    "projectedReusedHistoryTokensEstimate":metadata["continuity"]["workingView"]["estimatedReusedHistoryTokens"],
+                    "projectedNewHistoryTokensEstimate":metadata["continuity"]["workingView"]["estimatedNewHistoryTokens"],
                     "providerId":provider.id,"model":provider.model,
                     "providerPromptTokens":call_prompt,
                     "providerOutputTokens":call_completion,
                     "providerCacheReadTokens":if completion.usage_exact {
                         json!(completion.cached_prompt_tokens)
+                    }else{Value::Null},
+                    "providerUncachedInputTokens":if completion.usage_exact {
+                        json!(completion.cached_prompt_tokens.map(|cached|
+                            call_prompt.saturating_sub(cached.min(call_prompt))))
                     }else{Value::Null},
                     "providerUsageExact":completion.usage_exact
                 }));
