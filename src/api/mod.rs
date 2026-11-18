@@ -114,9 +114,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/jobs/:id/cancel",post(jobs::cancel))
         .route("/api/jobs/:id/directive",post(jobs::directive))
         .route("/api/jobs/:id/steer",post(jobs::steer))
-        // Main @879dc23d frontend uses this stable view of the SAME Rust SDK jobs.
-        // Preserve main's independent Rust harness contract alongside the
-        // native-product job-backed SDK used by the existing GUI.
+        // Keep the historic API paths, not a second active harness for NEW jobs.
+        // Old FileJournal sessions retain their original recovery protocol.
+        // New /api/harness/runs requests share the native SDK job kernel.
         .route("/api/harness/runs",get(sdk::list).post(sdk::start))
         .route("/api/harness/runs/:id",get(sdk::one))
         .route("/api/harness/runs/:id/approve",post(sdk::approve))
