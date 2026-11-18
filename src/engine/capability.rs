@@ -277,7 +277,7 @@ mod tests {
             "id":"verifier","delegated":true,"delegationProfile":"verification",
             "delegationWorkspace":{"path":"subagent"}
         })).unwrap();
-        state.store.put("execution",&json!({"id":"verify-run","sessionId":"verifier"})).unwrap();
+        state.store.put("execution",&json!({"id":"verify-run","sessionId":"verifier","status":"running"})).unwrap();
         let results=search(&state,"verifier",
             &json!({"query":"terminal_exec","limit":1})).await.unwrap();
         assert_eq!(results["matches"][0]["name"],"terminal_exec");
