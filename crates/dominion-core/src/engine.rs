@@ -140,13 +140,9 @@ impl Engine {
         if ctx.snapshot.native.status != crate::domain::RunStatus::Running {
             return Err("실행 중인 네이티브 프레임만 진행할 수 있습니다.".into());
         }
-        if ctx.snapshot.model_in_flight
-            || ctx.snapshot.native.in_flight.is_some()
-            || !ctx.snapshot.native.read_batch_in_flight.is_empty()
-            || !ctx.snapshot.native.queued_calls.is_empty()
-        {
+        if !ctx.snapshot.settled() {
             return Err(
-                "이전 실행 결과를 확인하기 전에는 초기화나 모델 호출을 재개할 수 없습니다.".into(),
+                "이전 실행·승인·하위 작업의 결과를 확인하기 전에는 초기화나 모델 호출을 재개할 수 없습니다.".into(),
             );
         }
         ctx.journal.save(&ctx.snapshot)?;
@@ -174,10 +170,7 @@ impl Engine {
             // Reconcile before reserving the next model call, including when
             // the last paid round was used to perform the successful mutation.
             // In-flight tool/model intents can never be bypassed here.
-            if !ctx.snapshot.model_in_flight
-                && ctx.snapshot.native.in_flight.is_none()
-                && ctx.snapshot.native.read_batch_in_flight.is_empty()
-                && ctx.snapshot.native.queued_calls.is_empty()
+            if ctx.snapshot.settled()
                 && host.reconcile_verified(&mut ctx).await? == Flow::Complete
             {
                 if host.confirm_completion()? == Flow::Complete {
