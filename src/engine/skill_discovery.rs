@@ -17,8 +17,8 @@ fn eligible(skill:&Value,scope:&MemoryScope)->bool{
         return false;
     }
     if skill["agentId"].as_str().is_some_and(|id|scope.agent_id.as_deref()!=Some(id))
-        ||skill["sessionId"].as_str().is_some_and(|id|id!=scope.session_id)
-        ||skill["partitionKey"].as_str().is_some_and(|key|key!=scope.partition_key) {
+        ||skill["sessionId"].as_str().is_some_and(|id|id!=scope.session_id.as_str())
+        ||skill["partitionKey"].as_str().is_some_and(|key|key!=scope.partition_key.as_str()) {
         return false;
     }
     // Do not broadcast a local skill to an unrelated room or external channel.
@@ -177,6 +177,49 @@ mod tests{
         let mut shared=item;
         shared["shareWithChannels"]=json!(true);
         assert!(eligible(&shared,&s));
+    }
+    #[test]
+    fn real_store_progressively_discloses_only_live_enabled_scoped_skills(){
+        let db=Store::open(std::path::Path::new(":memory:")).unwrap();
+        for i in 0..6 {
+            db.put("skill",&item(&format!("d{i}"),"Video studio","audio editing"))
+                .unwrap();
+        }
+        let target=db.put("skill",&item("target","계약서 검토",
+            "Agreement clause and legal drafting")).unwrap();
+        let id=target["id"].as_str().unwrap().to_owned();
+        let scoped=scope();
+        let prompt=initial_context(&db,&scoped,"계약서 조항 검토",true);
+        assert!(prompt.contains("계약서 검토"));
+        assert!(!prompt.contains("Video studio"));
+        let matches=search(&db,&scoped,"계약서 조항",5).unwrap();
+        assert_eq!(matches["matches"].as_array().unwrap().len(),1);
+        assert_eq!(matches["matches"][0]["id"],id);
+        assert!(matches["matches"][0].get("instructions").is_none());
+        let content=read(&db,&scoped,&id).unwrap();
+        assert!(content["instructions"].as_str().unwrap().contains("계약서 검토"));
+        let mut turned_off=target;
+        turned_off["enabled"]=json!(false);
+        db.put("skill",&turned_off).unwrap();
+        assert!(read(&db,&scoped,&id).is_err());
+        assert!(search(&db,&scoped,"계약서 조항",5).unwrap()["matches"]
+            .as_array().unwrap().is_empty());
+    }
+    #[test]
+    fn large_skill_body_is_bounded_and_unrelated_skill_body_is_never_preloaded(){
+        let db=Store::open(std::path::Path::new(":memory:")).unwrap();
+        let mut huge=item("huge","클라우드 배포","AWS service runtime");
+        huge["instructions"]=json!("x".repeat(20_000));
+        let stored=db.put("skill",&huge).unwrap();
+        let id=stored["id"].as_str().unwrap();
+        let read_result=read(&db,&scope(),id).unwrap();
+        assert_eq!(read_result["instructions"].as_str().unwrap().len(),MAX_READ_CHARS);
+        assert_eq!(read_result["truncated"],true);
+        let initial=initial_context(&db,&scope(),"unrelated dinner topic",true);
+        assert!(!initial.contains("xxxxx"));
+        let relevant=initial_context(&db,&scope(),"클라우드 배포",true);
+        assert!(relevant.contains(&"x".repeat(MAX_PRELOAD_CHARS)));
+        assert!(!relevant.contains(&"x".repeat(MAX_PRELOAD_CHARS+1)));
     }
     #[test]
     fn ranking_and_tie_breaking_are_deterministic(){
