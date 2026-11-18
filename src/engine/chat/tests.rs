@@ -503,3 +503,94 @@ async fn ordinary_chat_runs_native_tools_through_the_imported_rust_kernel() {
     let _ = std::fs::remove_dir_all(&state.config.data_dir);
 }
 
+
+
+#[tokio::test]
+async fn chat_progressively_discovers_and_executes_hidden_read_tool() {
+    use axum::{extract::State, routing::post, Json, Router};
+    use axum::response::IntoResponse;
+    use std::sync::{Arc,Mutex};
+    let requests=Arc::new(Mutex::new(Vec::<Value>::new()));
+    async fn model(
+        State(requests):State<Arc<Mutex<Vec<Value>>>>,
+        Json(body):Json<Value>
+    )->axum::response::Response {
+        let step={
+            let mut recorded=requests.lock().unwrap();
+            recorded.push(body);
+            recorded.len()
+        };
+        let (delta,reason)=match step {
+            1 => (json!({"tool_calls":[{
+                "index":0,"id":"search-1","type":"function",
+                "function":{"name":"dominion_tool_search",
+                "arguments":json!({"query":"workspace read range","limit":8}).to_string()}
+            }]}),"tool_calls"),
+            2 => (json!({"tool_calls":[{
+                "index":0,"id":"read-1","type":"function",
+                "function":{"name":"dominion_tool_call",
+                "arguments":json!({"name":"workspace_read_range",
+                    "arguments":{"path":"a.txt","startLine":1}}).to_string()}
+            }]}),"tool_calls"),
+            _ => (json!({"content":"The first line was read using the discovered range tool."}),"stop"),
+        };
+        let response=format!(
+            "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+            json!({"choices":[{"delta":delta}]}),
+            json!({"choices":[{"delta":{},"finish_reason":reason}],
+                "usage":{"prompt_tokens":20,"completion_tokens":12,"total_tokens":32}})
+        );
+        ([(axum::http::header::CONTENT_TYPE,"text/event-stream")],response).into_response()
+    }
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr=listener.local_addr().unwrap();
+    let app=Router::new().route("/chat/completions",post(model)).with_state(requests.clone());
+    let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap()});
+    let state=temp_state();
+    std::fs::write(state.config.workspace.join("a.txt"),"alpha from range\nbeta").unwrap();
+    state.store.put("provider",&json!({
+        "id":"discovery-provider","kind":"openai","enabled":true,
+        "baseUrl":format!("http://{addr}"),"model":"mock-discovery"
+    })).unwrap();
+    state.store.put("session",&json!({
+        "id":"discovery-session","providerId":"discovery-provider"
+    })).unwrap();
+    crate::engine::algorithms::seed(&state);
+    let core=state.store.all("algorithm").into_iter().find(|a|
+        a["kind"]=="tool.discovery"&&a["implementation"]=="core").unwrap();
+    crate::engine::algorithms::activate(&state,core["id"].as_str().unwrap()).unwrap();
+    let request=TurnRequest::from_value(&json!({
+        "sessionId":"discovery-session",
+        "input":"Inspect the first line in a.txt with a range-read tool",
+        "autoLearning":false
+    })).unwrap();
+    let (tx,_rx)=tokio::sync::mpsc::unbounded_channel();
+    let result=tokio::time::timeout(Duration::from_secs(12),
+        run_turn(&state,&request,&tx)).await.unwrap().unwrap().unwrap();
+    assert!(result["content"].as_str().unwrap_or("").contains("first line"),"{result}");
+    let captured=requests.lock().unwrap();
+    assert_eq!(captured.len(),3,"tool discovery must complete in three model turns");
+    let first_tool_names=captured[0]["tools"].as_array().unwrap().iter()
+        .filter_map(|t|t["function"]["name"].as_str())
+        .collect::<Vec<_>>();
+    assert!(first_tool_names.contains(&"dominion_tool_search"));
+    assert!(first_tool_names.contains(&"dominion_tool_call"));
+    assert!(!first_tool_names.contains(&"workspace_read_range"));
+    let search_output=captured[1]["messages"].as_array().unwrap().iter()
+        .filter(|m|m["role"]=="tool")
+        .filter_map(|m|m["content"].as_str())
+        .any(|text|text.contains("workspace_read_range"));
+    assert!(search_output,"search must disclose the actual callable schema");
+    let real_observation=captured[2]["messages"].as_array().unwrap().iter()
+        .filter(|m|m["role"]=="tool")
+        .filter_map(|m|m["content"].as_str())
+        .any(|text|text.contains("alpha from range"));
+    assert!(real_observation,"the discovered tool must execute and yield real file evidence");
+    let ops=state.store.all("execution_operation");
+    assert!(ops.iter().any(|op|op["tool"]=="dominion_tool_search"&&op["status"]=="completed"));
+    assert!(ops.iter().any(|op|op["tool"]=="workspace_read_range"&&op["status"]=="completed"));
+    assert!(!ops.iter().any(|op|op["tool"]=="dominion_tool_call"));
+    drop(captured);
+    server.abort();
+    let _=std::fs::remove_dir_all(&state.config.data_dir);
+}
