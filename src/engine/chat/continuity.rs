@@ -675,6 +675,50 @@ fn cloudflare_worker_provider(provider:&ProviderRef)->bool {
         && url.path().contains("/ai/")
 }
 
+/// Only the first-party GPT-5.6+ API supports the 2026 explicit cache protocol.
+fn openai_explicit_prefix_supported(p:&ProviderRef)->bool {
+    if !p.kind.eq_ignore_ascii_case("openai"){return false;}
+    let Ok(url)=reqwest::Url::parse(&p.base_url) else{return false};
+    if url.scheme()!="https" || url.host_str()!=Some("api.openai.com")
+        || !url.path().starts_with("/v1") {return false;}
+    let model=p.model.to_ascii_lowercase();
+    let Some(version)=model.strip_prefix("gpt-") else{return false};
+    let mut parts=version.split('-').next().unwrap_or("").split('.');
+    let major=parts.next().and_then(|p|p.parse::<u32>().ok()).unwrap_or(0);
+    let minor=parts.next().and_then(|p|p.parse::<u32>().ok()).unwrap_or(0);
+    major>=6 || (major==5&&minor>=6)
+}
+fn explicit_feature_id(p:&ProviderRef)->String {
+    format!("wire-{}",stable_id(&["openai-explicit-prefix-2026",
+        &p.id,&p.base_url,&p.model,p.account_id.as_deref().unwrap_or("")]))
+}
+fn explicit_prefix_disabled(state:&AppState,p:&ProviderRef)->bool {
+    state.store.get("provider_wire_feature",&explicit_feature_id(p))
+        .is_some_and(|f|f["accepted"]==false
+            && f["expiresAt"].as_i64().is_some_and(|t|t>chrono::Utc::now().timestamp()))
+}
+/// Mark only the unchanged system prefix; a changing owner message must never
+/// generate a new paid cache write in the default implicit mode.
+fn mark_openai_explicit_prefix(body:&mut Value)->bool {
+    let Some(messages)=body["messages"].as_array_mut() else{return false};
+    let Some(first)=messages.first_mut() else{return false};
+    if !matches!(first["role"].as_str(),Some("system"|"developer")){return false;}
+    let Some(content)=first["content"].as_str().map(str::to_string) else{return false};
+    if super::room_context::estimate(&content)<1024{return false;}
+    first["content"]=json!([{"type":"text","text":content,
+        "prompt_cache_breakpoint":{"mode":"explicit"}}]);
+    body["prompt_cache_options"]=json!({"mode":"explicit"});
+    true
+}
+fn record_explicit_rejection(state:&AppState,p:&ProviderRef,status:u16){
+    state.store.put("provider_wire_feature",&json!({
+        "id":explicit_feature_id(p),"field":"prompt_cache_breakpoint",
+        "accepted":false,"httpStatus":status,
+        "observedAt":chrono::Utc::now().to_rfc3339(),
+        "expiresAt":chrono::Utc::now().timestamp()+86400
+    }));
+}
+
 fn opencode_go_provider(state:&AppState, provider:&ProviderRef)->bool {
     state.store.get("provider",&provider.id)
         .is_some_and(|record|record["integration"]=="opencode-go")
@@ -695,6 +739,11 @@ pub(super) fn hinted_body(state: &AppState, provider: &ProviderRef, original: &V
     // or route-dependent prompt mutation instead of improving cache hits.
     let opencode=opencode_go_provider(state,provider) && matches!(wire,CacheWire::Key);
     let hinted=!disabled && !cloudflare && !opencode && apply_hint(&mut body,plan,wire);
+    let explicit=hinted && matches!(wire,CacheWire::Key)
+        && openai_explicit_prefix_supported(provider)
+        && !explicit_prefix_disabled(state,provider)
+        && mark_openai_explicit_prefix(&mut body);
+    plan["explicitCacheBreakpointSent"]=json!(explicit);
     plan["cacheHint"]=json!(if cloudflare {"x-session-affinity"}
         else if opencode {"x-opencode-session"}else{wire.field()});
     plan["wireHintSent"]=json!(hinted);
@@ -733,10 +782,23 @@ pub(super) async fn send(
         if hinted && attempt==1 && matches!(status.as_u16(),400|422) {
             let headers=response.headers().clone();let version=response.version();
             let bytes=response.bytes().await.map_err(|e|e.to_string())?;
-            if rejects_hint(status,&String::from_utf8_lossy(&bytes),wire.field()) {
+            let error=String::from_utf8_lossy(&bytes);
+            if plan["explicitCacheBreakpointSent"]==true &&
+                (rejects_hint(status,&error,"prompt_cache_options")
+                    || rejects_hint(status,&error,"prompt_cache_breakpoint"))
+            {
+                record_explicit_rejection(state,provider,status.as_u16());
+                body=original.clone();
+                apply_hint(&mut body,plan,wire);
+                hinted=true;
+                plan["explicitCacheBreakpointSent"]=json!(false);
+                continue;
+            }
+            if rejects_hint(status,&error,wire.field()) {
                 note_hint(state,provider,wire,false,status.as_u16());
                 body=original.clone();hinted=false;
                 plan["wireHintSent"]=json!(false);plan["cacheHintAcceptance"]=json!(false);
+                plan["explicitCacheBreakpointSent"]=json!(false);
                 continue;
             }
             // Preserve unrelated errors and routing headers for the existing
@@ -819,6 +881,69 @@ mod tests {
         assert_eq!(resumed["previousReplyMessageId"],message["id"]);
         drop(restored);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn first_party_new_models_mark_only_stable_cache_prefix(){
+        let mut provider=route();
+        provider.kind="openai".into();
+        provider.base_url="https://api.openai.com/v1".into();
+        provider.model="gpt-5.6".into();
+        assert!(openai_explicit_prefix_supported(&provider));
+        let raw=json!({"messages":[{"role":"system","content":"STATIC_".repeat(900)},
+            {"role":"user","content":"turn one"}]});
+        let mut first=raw.clone();
+        assert!(mark_openai_explicit_prefix(&mut first));
+        assert_eq!(first["prompt_cache_options"]["mode"],"explicit");
+        assert_eq!(first["messages"][0]["content"][0]["text"],raw["messages"][0]["content"]);
+        assert_eq!(first["messages"][1],raw["messages"][1]);
+        let mut second=raw.clone();second["messages"][1]["content"]=json!("turn two");
+        assert!(mark_openai_explicit_prefix(&mut second));
+        assert_eq!(first["messages"][0],second["messages"][0]);
+        let mut short=json!({"messages":[{"role":"system","content":"brief"}]});
+        assert!(!mark_openai_explicit_prefix(&mut short));
+        assert!(short.get("prompt_cache_options").is_none());
+        for model in ["gpt-5.5","gpt-4.1","o3"]{
+            provider.model=model.into();
+            assert!(!openai_explicit_prefix_supported(&provider));
+        }
+        provider.model="gpt-6".into();
+        assert!(openai_explicit_prefix_supported(&provider));
+        provider.base_url="https://example.com/v1".into();
+        assert!(!openai_explicit_prefix_supported(&provider));
+        provider.base_url="https://api.openai.com.evil.test/v1".into();
+        assert!(!openai_explicit_prefix_supported(&provider));
+        provider.base_url="https://api.openai.com/v1".into();
+        provider.kind="cloudflare".into();
+        assert!(!openai_explicit_prefix_supported(&provider));
+    }
+
+    #[test]
+    fn explicit_cache_rejection_preserves_normal_key_and_scopes_to_model(){
+        let root=std::env::temp_dir().join(format!("dominion-explicit-prefix-{}",uuid::Uuid::new_v4()));
+        let state=state(&root);
+        let mut provider=route();
+        provider.kind="openai".into();
+        provider.base_url="https://api.openai.com/v1".into();
+        provider.model="gpt-5.6".into();
+        let mut plan=json!({"cacheKey":"stable-key"});
+        let raw=json!({"messages":[{"role":"system","content":"A".repeat(5000)},
+            {"role":"user","content":"volatile"}]});
+        let first=hinted_body(&state,&provider,&raw,&mut plan,CacheWire::Key);
+        assert_eq!(plan["explicitCacheBreakpointSent"],true);
+        assert_eq!(first["prompt_cache_key"],"stable-key");
+        assert_eq!(first["prompt_cache_options"]["mode"],"explicit");
+        record_explicit_rejection(&state,&provider,400);
+        let after=hinted_body(&state,&provider,&raw,&mut plan,CacheWire::Key);
+        assert_eq!(plan["explicitCacheBreakpointSent"],false);
+        assert!(after.get("prompt_cache_options").is_none());
+        assert_eq!(after["prompt_cache_key"],"stable-key");
+        let mut other=provider.clone();other.model="gpt-6".into();
+        assert!(!explicit_prefix_disabled(&state,&other));
+        assert!(rejects_hint(reqwest::StatusCode::BAD_REQUEST,
+            r#"{"error":{"param":"messages.0.content.0.prompt_cache_breakpoint","message":"not supported"}}"#,
+            "prompt_cache_breakpoint"));
+        drop(state);let _=std::fs::remove_dir_all(root);
     }
 
     #[test]
