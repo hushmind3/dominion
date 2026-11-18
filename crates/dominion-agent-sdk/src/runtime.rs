@@ -156,7 +156,7 @@ pub fn builtin_is_read_only(name:&str)->bool {
         "workspace_list" | "workspace_read" | "workspace_read_range" |
         "code_search" | "file_list" | "file_read" |
         "web_search" | "http_fetch" | "memory_search" |
-        "skill_search" | "skill_read" | "skill_resource_read" |
+        "skill_search" | "skill_read" | "skill_resource_read" | "dominion_tool_search" |
         "task_status" | "task_result" | "account_status"
         | "github_work_read" | "google_workspace_read"
     )
