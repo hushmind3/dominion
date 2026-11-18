@@ -1591,6 +1591,85 @@ impl Host for MainTurn<'_> {
             Ok(Flow::Continue)
         })
     }
+    fn reconcile_verified<'a>(
+        &'a mut self,
+        _ctx: &'a mut Context<'_>,
+    ) -> BoxFuture<'a, Result<Flow, String>> {
+        Box::pin(async move {
+            // No inferred success from a model sentence, a file that happened
+            // to exist, or an unfinished durable program.
+            if !self.force_final || !self.acceptance_passed
+                || !self.program_finished || self.owner_changed()?
+            {
+                return Ok(Flow::Continue);
+            }
+            let operations = self.state.store.execution_operations(self.execution_id)?;
+            if operations.iter().any(|op| {
+                op["outcomeUnknown"] == true
+                    || matches!(op["status"].as_str(), Some("running" | "interrupted"))
+            }) {
+                return Ok(Flow::Continue);
+            }
+            // Do not bypass standing procedures just because the concrete
+            // postconditions passed; the normal final verifier must see them.
+            let mut completed = operations.into_iter()
+                .filter(|op| op["status"] == "completed").collect::<Vec<_>>();
+            crate::engine::procedure::sort_operations(&mut completed);
+            if self.strategy_candidates.iter().any(|strategy| {
+                strategy["authority"] == "standing"
+                    && crate::engine::procedure::applies(
+                        strategy, &self.request.input, None, None,
+                    )
+                    && {
+                        let verdict = crate::engine::procedure::evaluate(
+                            strategy, &completed, &self.state.config.workspace,
+                        );
+                        verdict["verified"] == true && verdict["followed"] == false
+                    }
+            }) {
+                return Ok(Flow::Continue);
+            }
+            let Some(receipts) = terminal_acceptance_receipt(
+                self.state,
+                self.session_id,
+                self.reply_to.as_deref(),
+                self.execution_id,
+                self.acceptance.as_ref(),
+            ) else {
+                // A file or contract changed after the first check. Permit
+                // normal repair; never retain a stale passed flag.
+                self.acceptance_passed = false;
+                self.force_final = false;
+                return Ok(Flow::Continue);
+            };
+            let checks = self.acceptance.as_ref()
+                .and_then(|(_, checks)| checks.as_array());
+            let checked = checks.map_or(0, Vec::len);
+            if self.final_content.trim().is_empty() {
+                let paths = checks.into_iter().flatten()
+                    .filter_map(|check| check["path"].as_str())
+                    .filter(|path| !path.trim().is_empty())
+                    .take(8)
+                    .map(|path| format!("`{path}`"))
+                    .collect::<Vec<_>>();
+                self.final_content = if paths.is_empty() {
+                    format!("실제 도구 실행 {receipts}건을 확인하고 검증 조건 {checked}개를 충족했습니다.")
+                } else {
+                    format!("실제 도구 실행 {receipts}건을 확인하고 검증 조건 {checked}개를 충족했습니다. 확인된 파일: {}.",paths.join(", "))
+                };
+                let _ = self.tx.send(json!({"type":"text","text":self.final_content}));
+            }
+            self.metadata["completionSource"] = json!("kernel_verified_checkpoint");
+            self.state.store.audit("acceptance.kernel_reconciled", json!({
+                "executionId": self.execution_id,
+                "sessionId": self.session_id,
+                "receiptCount": receipts,
+                "obligationCount": checked,
+                "modelRoundSaved": true,
+            }));
+            Ok(Flow::Complete)
+        })
+    }
     fn exhausted(&mut self) -> Result<(), String> {
         // The final model round may finish an effectful tool call with no paid
         // round left to emit the completion prose. Re-read persisted receipts
