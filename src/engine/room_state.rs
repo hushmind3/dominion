@@ -450,6 +450,9 @@ mod tests {
             assert!(shared["participants"].as_array().unwrap().iter().all(|p|p["repliedToPreviousRequest"]==true));
             assert_eq!(shared["previousOwnerMessageId"],"owner-1");
             assert_eq!(shared["participants"][0]["lastReplyMessageId"],"reply-0");
+            assert!(shared["text"].as_str().unwrap().contains(&format!("{size}/{size}명")));
+            assert!(!shared["text"].as_str().unwrap().contains("응답함:"),
+                "full respondent roster is already in the shared system prefix");
             let reloaded=state.store.get("room",&room_id).unwrap();
             assert_eq!(conversation_context(&state,&reloaded,&sid,"owner-2",&history),shared);
             let next=conversation_context(&state,&reloaded,&sid,"owner-3",&[history.clone(),vec![
@@ -458,6 +461,9 @@ mod tests {
                     "content":"done","metadata":{"replyToMessageId":"owner-2"}})
             ]].concat());
             assert_eq!(next["participants"].as_array().unwrap().iter().filter(|p|p["repliedToPreviousRequest"]==true).count(),1);
+            assert!(next["text"].as_str().unwrap().contains("Member-1"),
+                "the only missing speaker names are still available");
+            assert!(!next["text"].as_str().unwrap().contains("응답함:"));
             assert_ne!(next["digest"],shared["digest"]);
             let _=std::fs::remove_dir_all(dir);
         }
