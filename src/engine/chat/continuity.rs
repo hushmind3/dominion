@@ -580,12 +580,12 @@ mod tests {
         let (stable_wire,_)=project(&state,&provider,&second,&[],"room:r",&mut second_plan);
         assert!(second_plan["workingView"]["rebaseReason"].is_null());
         assert_eq!(stable_wire.iter().filter(|m|m["content"]=="confirmed room state stable").count(),1);
-        assert!(stable_wire.to_string().contains("I remember the previous turn"));
+        assert!(json!(stable_wire).to_string().contains("I remember the previous turn"));
         let changed=vec![system("owner-2"),shared("changed"),owner("owner-2")];
         let (changed_wire,_)=project(&state,&provider,&changed,&[],"room:r",&mut second_plan);
         assert_eq!(second_plan["workingView"]["rebaseReason"],"room_snapshot_rotated");
         assert_eq!(changed_wire.iter().filter(|m|m["content"]=="confirmed room state changed").count(),1);
-        assert!(!changed_wire.to_string().contains("confirmed room state stable"));
+        assert!(!json!(changed_wire).to_string().contains("confirmed room state stable"));
         drop(state); std::fs::remove_dir_all(root).unwrap();
     }
 
