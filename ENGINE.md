@@ -1,3 +1,7 @@
+## Sub2 — progressive discovery reuses the existing native kernel (2026-11-18)
+
+`chat::capability` is an inert projection and search module, not a second agent loop. `run_turn_body` retains provider-round tool admission and search-to-next-round schema promotion; `dispatch_tool_call` owns search receipts and subsequent concrete native/MCP tool effects. The original SDK and room APIs enter through this same turn loop; the full user-allowed catalog is never a permission grant. See [typed execution/limits/tests](docs/SUB2-PROGRESSIVE-NATIVE-TOOLS-2026-11-18.md). Rust tests and real-model benchmarks have not been executed for this change.
+
 ## Sub2 — unified tool receipts and scoped effect admission (2026-11-18)
 
 The exact deterministic file replacement shortcut now delegates to the standard native `dispatch_tool_call`. No second permission/tool execution stack survives. Its operations keep full durable native receipts but never persist unmatched provider `role=tool` messages. `Store::related_effect_operations` uses separate session/resource and session/effect indexes to preserve complete related recovery state while excluding unrelated historical records from every effect admission/read-back. See [full change and test status](docs/SUB2-SCOPED-NATIVE-EFFECTS-2026-11-18.md).
