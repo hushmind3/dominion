@@ -1432,7 +1432,9 @@ pub(super) async fn propose_program_revision(
         && crate::engine::policy::active(ctx.state, "execution")
             .as_ref().is_some_and(|policy|
                 policy["parameters"]["benchmarkRepairArm"]=="baseline");
-    let system = if legacy_benchmark_arm {
+    let contrastive_repair = !legacy_benchmark_arm
+        && candidate_rollout::contrastive_enabled(ctx.state,ctx.session);
+    let system = if !contrastive_repair {
         "You are the DOMINION program repair planner. A typed execution program failed. Propose ONE concrete revision changing only PENDING nodes. Return JSON only: {\"baseRevision\":\"...\",\"reason\":\"...\",\"evidenceIds\":[\"program-failure\"],\"replacePendingNodes\":[],\"addNodes\":[],\"expectedObservations\":[]}. Do not replace completed IDs or replay confirmed effects. Use the current failed node and execution observations to repair the task."
             .to_string()
     } else {
@@ -1447,7 +1449,7 @@ pub(super) async fn propose_program_revision(
         failure["tool"].as_str().unwrap_or(""),
         &failure["observation"]["arguments"],
     );
-    let system = if legacy_benchmark_arm { system } else { format!(
+    let system = if !contrastive_repair { system } else { format!(
         "{system} Each candidateRevisions entry MUST include a READ-ONLY postflight and machine-checkable result predicate for the state AFTER revision execution. Unknown, false or denied cannot mark repair complete. Unrelated node rewrites are rejected. Independent preflights of compatible candidates may be combined."
     ) };
     let prompt = format!(
@@ -1475,8 +1477,8 @@ pub(super) async fn propose_program_revision(
     .unwrap_or_else(|| "replace".into());
     let mut grounded_failure=failure.clone();
     grounded_failure["trace"]=trace.clone();
-    if legacy_benchmark_arm && proposal["candidateRevisions"].is_array() {
-        return Err("baseline arm must emit exactly one legacy ProgramIR revision".into());
+    if !contrastive_repair && proposal["candidateRevisions"].is_array() {
+        return Err("single-repair kernel requires one ProgramIR revision; turn on contrastiveRepair explicitly for multiple candidates".into());
     }
     let candidates = crate::engine::adaptation::repair_tournament::prepare(
         &proposal, program, checkpoint, &grounded_failure, &available, &repair_mode,
@@ -1539,7 +1541,10 @@ pub(super) async fn propose_program_revision(
         "isolation":if revised["repairSandboxEvidence"].is_object() {
             "native_workspace_sqlite_rollout"
         } else {"preflight_only_no_isolated_execution"},
-        "benchmarkRepairArm":if legacy_benchmark_arm {"baseline"} else {"treatment_or_production"},
+        "repairMode":if contrastive_repair {"contrastive"} else {"single"},
+        "benchmarkRepairArm":if legacy_benchmark_arm {"baseline"} else if
+            std::env::var("DOMINION_BENCHMARK").as_deref()==Ok("1") {"treatment_or_other"}
+            else {"not_benchmark"},
     });
     Ok(Some(revised))
 }
