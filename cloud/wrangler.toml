@@ -33,3 +33,8 @@ binding = "AI"
 # Refresh the free-model catalog every fifteen minutes.
 [triggers]
 crons = ["*/15 * * * *"]
+
+# Hybrid routing: OPENROUTER_API_KEY is the single aggregator secret.
+# Add {"id":"openrouter/<model>","provider":"openrouter","upstream_model":"<provider/model>",
+# "input_micro_krw":<integer>,"output_micro_krw":<integer>} to PAID_MODELS_JSON.
+# Direct providers remain optional. Never place provider API keys in frontend variables.
