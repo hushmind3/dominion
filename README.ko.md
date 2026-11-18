@@ -9,7 +9,7 @@
 <p align="center">내 모델로 실제 작업을 수행하는 오픈소스 AI 에이전트 워크스페이스.</p>
 
 <p align="center">
-  <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-3B82F6" /></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-3B82F6" /></a>
   <img alt="Rust backend" src="https://img.shields.io/badge/engine-Rust-222222" />
   <img alt="React interface" src="https://img.shields.io/badge/UI-React-149ECA" />
   <img alt="Models" src="https://img.shields.io/badge/models-local%20%2B%20API-4F46E5" />
