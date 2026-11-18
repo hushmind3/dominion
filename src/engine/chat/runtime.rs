@@ -145,6 +145,14 @@ async fn run_turn_with_policy(
         .and_then(|value| value.as_str())
         .ok_or("Session has no id")?
         .to_string();
+    // Stop can reach the server before a delayed browser POST. Reject such
+    // stale turns BEFORE acquiring the session lock, so a fresh request is
+    // never starved by an already cancelled network arrival.
+    if super::transport::request_cancelled(
+        state,&session_id,request.request_id.as_deref()
+    ) {
+        return Err("실행이 중단되었습니다.".into());
+    }
     if !state.begin_session(&session_id) {
         return Err("Session is already running".into());
     }
