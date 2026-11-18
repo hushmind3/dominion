@@ -312,7 +312,7 @@ export function ModelHub(){
  const visiblePresets=useMemo(()=>providerPresets.filter(preset=>{
   if(tab==='local'&&preset.category!=='local')return false
   if(tab==='providers'&&preset.category==='local')return false
-  if(tab==='catalog'||tab==='oauth')return false
+  if(tab==='catalog'||tab==='huggingface'||tab==='oauth')return false
   if(tab==='providers'&&category!=='all'&&preset.category!==category)return false
   const term=query.trim().toLowerCase()
   return !term||(preset.name+' '+preset.baseUrl).toLowerCase().includes(term)
@@ -330,6 +330,7 @@ export function ModelHub(){
   {id:'connect',label:'업체 연결'},
   {id:'free',label:'무료 모델',count:freeCatalog.value.counts?.free||0},
   {id:'catalog',label:'업체 탐색'},
+  {id:'huggingface',label:'허깅페이스 모델 탐색'},
   {id:'local',label:'로컬',count:providers.value.filter(p=>p.local).length},
   {id:'huggingface',label:'허깅페이스 모델 검색'},
   {id:'oauth',label:'계정 인증'},
@@ -426,7 +427,8 @@ export function ModelHub(){
    <div className="grid max-h-[460px] grid-cols-1 gap-2 overflow-auto sm:grid-cols-2 xl:grid-cols-3">{visiblePresets.map(preset=>{const existing=providers.value.find(p=>sameProvider(p,preset));const needsKey=Boolean(existing&&!preset.free&&(!preset.local||preset.integration==='freellmapi')&&existing.hasKey===false);return <div key={preset.name} className="flex min-w-0 flex-col gap-2 rounded-xl border border-[#EFE9DF] bg-[#FAF7F1] px-3 py-3"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><strong className="block truncate text-[12px] text-[#3A342D]">{preset.name}</strong><small className="block truncate text-[10px] text-[#A79C8E]">{preset.baseUrl.replace(/^https?:\/\//,'')}</small></div><span className={'shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold '+(preset.category==='free'?'bg-emerald-50 text-emerald-700':preset.category==='local'?'bg-[#E9E1F5] text-[#6B4FA0]':'bg-[#EDE8DE] text-[#8A8176]')}>{preset.category==='free'&&preset.free?t('models.filter.free'):preset.category==='local'?t('models.filter.local'):t('models.filter.cloud')}</span></div><div className="flex items-center justify-between gap-2"><small className="min-w-0 truncate text-[10px] text-[#A79C8E]">{existing?(needsKey?t('models.needKey'):existing.enabled===false?t('models.off'):t('models.registered')):(preset.free?t('models.freeProvider'):preset.integration==='freellmapi'?t('models.integrationKey'):preset.local?t('models.local'):t('models.needKey'))}</small><Button variant={existing?'secondary':'primary'} onClick={()=>existing?open(existing):openPreset(preset)} className="!px-2.5 !py-1 !text-[11px]">{existing?(needsKey?t('models.keyInput'):t('models.settings')):t('models.register')}</Button></div></div>})}</div>
    {!visiblePresets.length&&<p className="py-8 text-center text-[12px] text-[#9C9388]">{t('models.noPreset')}</p>}
   </section>}
-  {tab==='local'&&<div className="mt-5"><ModelExplorer/></div>}
+  {tab==='local'&&<div className="mt-5"><ModelExplorer initialView="installed"/></div>}
+  {tab==='huggingface'&&<div className="mt-5"><ModelExplorer key="huggingface-browser" initialView="search"/></div>}
   {tab==='huggingface'&&<div className="mt-5"><ModelExplorer initialView="search"/></div>}
 
   {removedName&&<p role="status" className="mb-4 mt-4 text-[12px] text-emerald-700">{t('models.dlg.disconnected',{name:removedName})}</p>}
