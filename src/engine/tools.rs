@@ -210,7 +210,9 @@ pub fn parallel_read_only_tool(name:&str)->bool{
     matches!(name,"workspace_list"|"workspace_read"|"workspace_read_range"|
         "code_search"|"memory_search"|"web_search"|"http_fetch"|
         "github_file_read"|"github_repositories"|"github_repository_activity"|
-        "google_drive_search"|"google_docs_read"|"google_sheets_read")
+        "google_drive_search"|"google_docs_read"|"google_sheets_read"|
+        // Pure discovery only exposes this child's existing read-only catalog.
+        "dominion_tool_search")
 }
 
 /// The UI's optional capabilities are a persisted execution policy.
