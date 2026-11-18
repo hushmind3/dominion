@@ -116,22 +116,28 @@ pub async fn fork_session(State(state): State<AppState>, Path(id): Path<String>)
 
 // ---------------------------------------------------------------- approvals
 
+/// Wait for the native session guard to release after cancellation. A closed
+/// browser SSE connection alone is not proof that the model/tool turn stopped.
+/// When there is no active turn (including cancellation during initial POST
+/// scheduling), the request epoch still prevents that stale turn from starting.
 pub async fn cancel_session(State(state): State<AppState>, Path(id): Path<String>) -> Json<Value> {
-    let running = match state.store.has_running_execution_for_session(&id) {
-        Ok(running) => running,
-        Err(error) => {
-            // A failed liveness read is never permission to skip cancellation.
-            state.store.audit("session.cancel_status_read_failed",
-                json!({"sessionId":id,"error":error}));
-            false
-        }
-    };
+    let running = state.active.lock().unwrap().contains(&id)
+        || state.store.has_running_execution_for_session(&id).unwrap_or(false);
     state.cancel_session(&id);
-    state.store.audit(
-        "session.cancel",
-        json!({ "sessionId": id, "running": running }),
-    );
-    Json(json!({ "cancelled": running }))
+    let deadline=tokio::time::Instant::now()+std::time::Duration::from_secs(5);
+    let stopped=loop {
+        let active=state.active.lock().unwrap().contains(&id);
+        let persisted=state.store.has_running_execution_for_session(&id);
+        if !active && persisted == Ok(false) { break true; }
+        if tokio::time::Instant::now()>=deadline { break false; }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    };
+    let generation=state.cancellation_generation(&id);
+    state.store.audit("session.cancel",json!({
+        "sessionId":id,"running":running,"stopped":stopped,
+        "cancellationGeneration":generation
+    }));
+    Json(json!({"cancelled":running,"stopped":stopped,"cancellationGeneration":generation}))
 }
 
 pub async fn compact_session(
