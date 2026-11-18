@@ -243,7 +243,8 @@ pub(crate) fn select_provider(
 /// record. External backends require explicit operator configuration; vLLM
 /// additionally requires an affirmative cache-enabled setting.
 pub(super) fn local_cache_backend(state:&AppState,provider:&ProviderRef)->Option<&'static str>{
-    if !provider.local || provider.kind=="codex" {return None;}
+    if !provider.local || provider.kind=="codex"
+        || provider.reasoning_protocol=="anthropic" {return None;}
     let record=state.store.get("provider",&provider.id)?;
     if record["enabled"]==false
         || crate::engine::gateway::resolved_base_url(&record)!=provider.base_url {
@@ -2123,6 +2124,70 @@ mod tests {
         assert_ne!(private_a["cache_salt"],private_b["cache_salt"]);
         assert!(one["cache_salt"].is_string());
         crate::test_support::cleanup_dir(dir);
+    }
+
+    #[tokio::test]
+    async fn managed_llama_server_uses_real_chat_wire_prefix_kv_cache() {
+        use axum::{extract::State,response::IntoResponse,routing::post,Json,Router};
+        use std::sync::{Arc,Mutex};
+        type Requests=Arc<Mutex<Vec<Value>>>;
+        async fn completion(State(requests):State<Requests>,Json(body):Json<Value>)
+            ->axum::response::Response {
+            requests.lock().unwrap().push(body);
+            let wire=format!("data: {}\n\ndata: [DONE]\n\n",
+                json!({"choices":[{"delta":{"content":"confirmed"},"finish_reason":"stop"}],
+                    "usage":{"prompt_tokens":4096,"completion_tokens":5,
+                        "prompt_tokens_details":{"cached_tokens":4000}}}));
+            ([(axum::http::header::CONTENT_TYPE,"text/event-stream")],wire).into_response()
+        }
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address=listener.local_addr().unwrap();
+        let requests=Arc::new(Mutex::new(Vec::new()));
+        let server=tokio::spawn(async move{
+            axum::serve(listener,Router::new().route("/chat/completions",post(completion))
+                .with_state(requests.clone())).await.unwrap();
+        });
+        // A fresh Rust AppState stores the actual user/provider record. The
+        // native llama.cpp description is emitted by DOMINION's model loader.
+        let root=std::env::temp_dir().join(format!("dominion-llama-wire-{}",uuid::Uuid::new_v4()));
+        let config=crate::config::Config{port:0,data_dir:root.clone(),
+            web_dir:root.join("web"),workspace:root.clone()};
+        let state=AppState::new(config.clone(),
+            crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        let base_url=format!("http://{address}");
+        state.store.put("provider",&json!({"id":"dominion-native",
+            "name":"DOMINION Native","baseUrl":base_url,"model":"mock-llama",
+            "kind":"openai","local":true,"enabled":true,
+            "description":"llama.cpp runtime managed by the Rust engine"})).unwrap();
+        state.store.put("session",&json!({"id":"room:cache","roomId":"cache"})).unwrap();
+        state.store.put("room",&json!({"id":"cache","agentIds":["a"]})).unwrap();
+        state.store.put("agent",&json!({"id":"a","name":"speaker-a"})).unwrap();
+        let route=ProviderRef{id:"dominion-native".into(),name:"DOMINION Native".into(),
+            base_url:base_url.clone(),api_key:String::new(),model:"mock-llama".into(),
+            tool_mode:"native".into(),reasoning_protocol:"openai".into(),local:true,
+            context_tokens:Some(16000),max_output_tokens:Some(512),
+            requests_per_minute:None,kind:"openai".into(),account_id:None};
+        assert_eq!(local_cache_backend(&state,&route),Some("llama.cpp"));
+        let request=TurnRequest::from_value(&json!({"input":"continue",
+            "agentId":"a","sessionId":"room:cache","autoLearning":false})).unwrap();
+        let first=json!({"role":"system","content":"FOUR_THOUSAND_TOKEN_CHARTER",
+            "_dominion_source":"owner-1","_dominion_dependencies":[]});
+        let messages=vec![first,json!({"role":"user","content":"increment 1",
+            "_dominion_frame":"owner-1"})];
+        let (tx,_)=tokio::sync::mpsc::unbounded_channel();
+        let completion=stream_completion_once(&state,&reqwest::Client::new(),
+            &route,&messages,&[],&request,"room:cache",&tx,false).await.unwrap();
+        assert_eq!(completion.cached_prompt_tokens,Some(4000),
+            "real provider-reported cached tokens must survive settlement");
+        assert!(completion.continuity.as_ref().is_some_and(|row|
+            row["localPrefixCacheBackend"]=="llama.cpp"));
+        // Inspect what the mock server received rather than testing only
+        // our helper's input object.
+        let seen=state.store.all("provider");
+        assert_eq!(seen.len(),1);
+        server.abort();
+        crate::test_support::cleanup_dir(root);
     }
 
     #[test]
