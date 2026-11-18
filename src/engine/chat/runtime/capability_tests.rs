@@ -131,6 +131,11 @@ async fn discovery_rejects_foreign_execution_and_read_only_mutations(){
     assert!(!target.exists());
     assert!(capability::search(&state,"search-owner","search-run",
         &json!({"query":"", "limit":9})).await.is_err());
+    let mut settled=state.store.get("execution","search-run").unwrap();
+    settled["status"]=json!("completed");
+    state.store.put("execution",&settled).unwrap();
+    assert!(capability::search(&state,"search-owner","search-run",
+        &json!({"query":"workspace_read"})).await.is_err());
     let _=std::fs::remove_dir_all(root);
 }
 
