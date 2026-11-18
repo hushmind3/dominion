@@ -955,101 +955,41 @@ fn stat_id(agent: &str, kind: &str, revision: &str) -> String {
     )
 }
 
-/// UCB1 over the agent's own outcomes. The model is irrelevant; what improves
-/// is which judgment kernel this bot has actually had success with.
+/// Live algorithm policy is explicit activation, not a reward bandit.
+///
+/// Runtime outcomes remain durable *evidence for review*, never a reason to
+/// silently replace the owner-activated policy with an unverified candidate.
+/// Generated/validated/builtin alternatives require explicit activation;
+/// a kind with all kernels disabled must not re-enable a fallback kernel.
+/// Reads are indexed by kind and never scan global algorithm_stat on a turn.
 pub fn choose_for_agent(
     state: &AppState,
     kind: &str,
     agent_id: Option<&str>,
     execution_id: Option<&str>,
 ) -> Option<Value> {
-    seed(state);
-    let agent = agent_of(state, agent_id)?;
-    let candidates = state
-        .store
-        .all("algorithm")
-        .into_iter()
+    let mut records = state.store.algorithms_for_kind(kind).ok()?;
+    if records.is_empty() {
+        seed(state);
+        records = state.store.algorithms_for_kind(kind).ok()?;
+    }
+    let chosen = records.into_iter()
         .filter(|algorithm| {
             algorithm["kind"].as_str() == Some(kind)
-                // Builtins are trusted executable baselines. Generated/user
-                // candidates cannot enter live UCB exploration merely by
-                // being registered as "available": they require validation
-                // or explicit activation by the owner.
-                && (matches!(algorithm["status"].as_str(),
-                        Some("active" | "validated"))
-                    || (algorithm["status"].as_str() == Some("available")
-                        && algorithm["source"].as_str() == Some("builtin")))
+                && algorithm["status"] == "active"
                 && algorithm["implementation"]
                     .as_str()
                     .is_some_and(|implementation| kernel_exists(kind, implementation))
         })
-        .collect::<Vec<_>>();
-    if candidates.is_empty() {
-        return None;
-    }
-    let all_stats = state.store.all("algorithm_stat");
-    let stats = all_stats
-        .iter()
-        .filter(|stat| {
-            stat["agentId"].as_str() == Some(agent.as_str())
-                && stat["kind"].as_str() == Some(kind)
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    let global_stats = all_stats
-        .iter()
-        .filter(|stat| {
-            stat["agentId"].as_str() == Some("global")
-                && stat["kind"].as_str() == Some(kind)
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    let total = stats
-        .iter()
-        .map(|stat| stat["uses"].as_u64().unwrap_or(0))
-        .sum::<u64>() as f64;
-    let active_revision = active(state, kind)
-        .and_then(|algorithm| algorithm["revision"].as_str().map(str::to_string));
-    let chosen = candidates
-        .into_iter()
-        .max_by(|a, b| {
-            let score = |algorithm: &Value| {
-                let revision = algorithm["revision"].as_str().unwrap_or("");
-                let stat = stats
-                    .iter()
-                    .find(|stat| stat["revision"].as_str() == Some(revision))
-                    .or_else(|| {
-                        global_stats
-                            .iter()
-                            .find(|stat| stat["revision"].as_str() == Some(revision))
-                    });
-                let uses = stat
-                    .and_then(|stat| stat["uses"].as_u64())
-                    .unwrap_or(0) as f64;
-                let successes = stat
-                    .and_then(|stat| stat["successes"].as_u64())
-                    .unwrap_or(0) as f64;
-                let rate = if uses > 0.0 { successes / uses } else { 0.0 };
-                let exploration = if uses > 0.0 {
-                    (2.0 * (total + 1.0).ln() / uses).sqrt()
-                } else {
-                    1.5
-                };
-                let active_bonus = if active_revision
-                    .as_deref()
-                    == algorithm["revision"].as_str()
-                {
-                    0.05
-                } else {
-                    0.0
-                };
-                rate + exploration + active_bonus
-            };
-            score(a)
-                .partial_cmp(&score(b))
-                .unwrap_or(std::cmp::Ordering::Equal)
+        // The owner normally has one active revision per kind; if an imported
+        // historical DB has multiple active rows, prefer newest activation.
+        .max_by(|a,b| {
+            a["activatedAt"].as_str().unwrap_or("")
+                .cmp(b["activatedAt"].as_str().unwrap_or(""))
+                .then_with(||a["id"].as_str().cmp(&b["id"].as_str()))
         })?;
     if let Some(execution_id) = execution_id {
+        let agent = agent_of(state, agent_id)?;
         let usage_id = format!(
             "algorithm-usage-{}",
             crate::engine::memory::stable_id(&[execution_id, kind])
@@ -1063,6 +1003,7 @@ pub fn choose_for_agent(
                     "agentId": agent,
                     "kind": kind,
                     "revision": chosen["revision"],
+                    "selectionPolicy": "explicit_activation",
                     "status": "pending",
                     "createdAt": chrono::Utc::now().to_rfc3339(),
                 }),
@@ -1077,8 +1018,8 @@ pub fn choose_for_agent(
 /// Route genuinely multi-step goals to an executable decomposition kernel
 /// instead of leaving the active "single-step" default in charge of every new
 /// agent. Grade the *same owner request* with each eligible kernel first, while
-/// keeping the learned UCB decision for ties and simple requests. The selected
-/// kernel, not the ignored UCB suggestion, receives execution feedback.
+/// keeping the owner's active policy for ties and simple requests. The selected
+/// kernel, not an ignored alternative, receives execution feedback.
 pub fn choose_decomposition_for_agent(
     state: &AppState,
     agent_id: Option<&str>,
@@ -1103,9 +1044,9 @@ pub fn choose_decomposition_for_agent(
         let score = decomposition["qualityScore"].as_f64().unwrap_or(0.0);
         let ordered = decomposition["quality"]["orderPreserved"] == true;
         let step_count = decomposition["subtasks"].as_array().map(Vec::len).unwrap_or(0);
-        // Only override UCB when the alternative demonstrably extracts
+        // Only override an active baseline when the alternative demonstrably extracts
         // multiple ordered actions. A vague increase in heuristic score alone
-        // must not replace a user's learned selection.
+        // must not replace the selected active policy.
         if ordered && step_count > 1 && score > best_score + 0.05 {
             best_score = score;
             chosen = candidate;
@@ -1315,7 +1256,7 @@ fn usage_rating(usage: &Value, task_outcome: &str, competing:usize) -> Option<(b
         }
     }
     // Task-level outcomes cannot causally attribute credit among multiple
-    // active decisions. Preserve them as unrated rather than biasing UCB1.
+    // active decisions. Preserve them as unrated rather than contaminating observation statistics.
     if competing!=1{return None;}
     match task_outcome {
         "succeeded" => Some((true, "task_outcome_single_algorithm")),
@@ -1998,7 +1939,65 @@ mod tests {
     }
 
     #[test]
-    fn unverified_generated_algorithms_never_enter_live_ucb_until_promoted() {
+    fn owner_activation_survives_opposing_high_volume_history() {
+        let (state,dir)=state();
+        seed(&state);
+        let active=active(&state,"strategy.selection").unwrap();
+        let competing=state.store.algorithms_for_kind("strategy.selection")
+            .unwrap().into_iter()
+            .find(|row|row["id"]!=active["id"]).expect("alternative builtin");
+        state.store.put("algorithm_stat",&json!({
+            "id":"historical-biased-global","kind":"strategy.selection",
+            "agentId":"global","revision":competing["revision"],
+            "uses":1000000,"successes":1000000,"failures":0,
+        })).unwrap();
+        state.store.put("algorithm_stat",&json!({
+            "id":"historical-biased-agent","kind":"strategy.selection",
+            "agentId":"agent-a","revision":competing["revision"],
+            "uses":1000000,"successes":1000000,"failures":0,
+        })).unwrap();
+        let selected=choose_for_agent(&state,"strategy.selection",
+            Some("agent-a"),Some("explicit-selection")).unwrap();
+        assert_eq!(selected["id"],active["id"]);
+        let usage=state.store.get("algorithm_usage",&format!(
+            "algorithm-usage-{}",crate::engine::memory::stable_id(&[
+                "explicit-selection","strategy.selection"
+            ])
+        )).unwrap();
+        assert_eq!(usage["selectionPolicy"],"explicit_activation");
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn disabled_live_kind_does_not_autopromote_legacy_or_generated_candidates() {
+        let (state,dir)=state();
+        seed(&state);
+        for mut row in state.store.algorithms_for_kind("context.selection").unwrap(){
+            row["status"]=json!("disabled");
+            state.store.put("algorithm",&row).unwrap();
+        }
+        assert!(choose_for_agent(&state,"context.selection",None,None).is_none());
+        assert!(choose_for_agent(&state,"context.selection",Some("agent-a"),None).is_none());
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn agent_specific_history_cannot_override_owner_activated_revision() {
+        let (state,dir)=state();
+        seed(&state);
+        let before=active(&state,"memory.importance").unwrap();
+        let target=state.store.algorithms_for_kind("memory.importance")
+            .unwrap().into_iter()
+            .find(|row|row["id"]!=before["id"]).unwrap();
+        let activated=activate(&state,target["id"].as_str().unwrap()).unwrap();
+        let selected=choose_for_agent(&state,"memory.importance",
+            Some("agent-b"),Some("run-owner-activation")).unwrap();
+        assert_eq!(selected["id"],activated["id"]);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn unverified_generated_algorithms_never_enter_live_selection_until_activated() {
         let (state, dir) = state();
         seed(&state);
         let candidate = register(&state, &json!({
@@ -2164,7 +2163,7 @@ mod tests {
     }
 
     #[test]
-    fn confounded_task_success_does_not_award_multiple_ucb_kernels(){
+    fn confounded_task_success_does_not_credit_multiple_kernels(){
         let (state,dir)=state();
         seed(&state);
         let first=choose_for_agent(&state,"context.selection",
