@@ -355,6 +355,19 @@ fn is_workers_ai(provider:&ProviderRef)->bool{
         && (url.path().ends_with("/ai") || url.path().contains("/ai/"))
 }
 
+/// The official OpenCode Go endpoint requires one stable conversation header.
+/// An imported provider may omit its integration label. Recognize ONLY the
+/// exact HTTPS origin and /zen/go path, never a same-looking proxy.
+fn is_opencode_go(state:&AppState,provider:&ProviderRef)->bool{
+    if state.store.get("provider",&provider.id)
+        .is_some_and(|record|record["integration"]=="opencode-go"){
+        return true;
+    }
+    let Ok(url)=reqwest::Url::parse(&provider.base_url) else{return false};
+    url.scheme()=="https" && url.host_str()==Some("opencode.ai")
+        && (url.path()=="/zen/go" || url.path().starts_with("/zen/go/"))
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(super) enum CacheWire { Key, Ephemeral }
 
@@ -422,8 +435,7 @@ pub(super) async fn send(
 ) -> Result<reqwest::Response,String> {
     let mut body=hinted_body(state,provider,original,plan,wire);
     let mut hinted=plan["wireHintSent"]==true;
-    let opencode_go=state.store.get("provider",&provider.id)
-        .is_some_and(|record|record["integration"]=="opencode-go");
+    let opencode_go=is_opencode_go(state,provider);
     for attempt in 1..=2 {
         plan["httpRequests"]=json!(attempt);
         let mut request=builder.try_clone().ok_or("모델 요청을 복제할 수 없습니다.")?;
@@ -716,6 +728,28 @@ mod tests {
         assert_eq!(seen[0],seen[1]);assert_eq!(seen[1],seen[2]);
         assert_ne!(seen[2],seen[3],"another bot must have a separate route affinity");
         drop(seen);server.abort();let _=drop(state); std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn opencode_go_affinity_is_auto_detected_only_for_the_real_go_endpoint(){
+        let root=std::env::temp_dir().join(format!("dominion-go-route-{}",uuid::Uuid::new_v4()));
+        let state=state(&root);
+        let mut provider=route();
+        provider.base_url="https://opencode.ai/zen/go/v1".into();
+        assert!(is_opencode_go(&state,&provider),
+            "imported Go provider may lack the integration metadata");
+        provider.base_url="https://opencode.ai/zen/go".into();
+        assert!(is_opencode_go(&state,&provider));
+        for url in [
+            "https://opencode.ai.evil.example/zen/go/v1",
+            "http://opencode.ai/zen/go/v1",
+            "https://opencode.ai/zen/god/v1",
+            "https://example.test/zen/go/v1",
+        ]{
+            provider.base_url=url.into();
+            assert!(!is_opencode_go(&state,&provider),"{url}");
+        }
+        drop(state);std::fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]
