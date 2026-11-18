@@ -1865,9 +1865,11 @@ mod tests {
         let (state,dir)=state();
         seed(&state);
         let owner=active(&state,"tool.selection").unwrap();
-        let alternative=state.store.all("algorithm").into_iter()
-            .find(|row|row["kind"]=="tool.selection"
-                && row["id"]!=owner["id"]).unwrap();
+        let alternative=register(&state,&json!({
+            "kind":"tool.selection","name":"unverified-alternative",
+            "implementation":"block-write-without-read",
+            "parameters":{}
+        })).unwrap();
         state.store.put("algorithm_stat",&json!({
             "id":"pretend-success","agentId":"global","kind":"tool.selection",
             "revision":alternative["revision"],"uses":10000,
