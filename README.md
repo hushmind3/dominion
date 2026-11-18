@@ -181,6 +181,47 @@ accumulating obsolete quotes. The 9-speaker/3-owner-turn native-work
 integration test and an actual WebSocket fixture checking the second
 `response.create` JSON body guard this behavior.
 
+### 2026 OpenCode Go / Hermes-inspired prompt-cache correctness
+
+Source audit: [OpenCode Go integration](https://opencode.ai/docs/console/go/) requires
+a stable `x-opencode-session` for conversational requests; [Hermes
+2026 context/caching](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/developer-guide/context-compression-and-caching.md)
+keeps fixed prefixes intact and uses rolling Anthropic checkpoints.
+
+The **main OpenCode Go chat-completions route** now uses only its documented
+session-affinity header rather than an unadvertised OpenAI
+`prompt_cache_key` JSON field. The main participant's header is stable
+across turns and remains isolated from other participants.
+
+More importantly, **auxiliary model calls** were missing that header entirely:
+`engine/llm.rs` (planning, reviews, learning and standalone helpers) and
+`engine/compact.rs` (manual compaction) now pass opaque scoped affinity
+IDs through the shared `gateway::send_with_affinity` transport. Same-room
+helpers reuse an independent auxiliary affinity, different rooms do not
+share it, and headless one-shots get fresh opaque identifiers. Helpers do
+not evict the main participant's hot persona prefix by reusing its affinity.
+OpenCode Go 400 `MissingSessionID` is covered by a real mock-HTTP regression;
+other providers do not receive OpenCode-specific headers.
+
+The **stable non-room system prompt** no longer embeds the current calendar
+day; runtime date is a subsequent contextual message. Changing the day
+therefore does not invalidate an otherwise unchanged system/persona cache
+prefix. The Anthropic native path now uses a **four-checkpoint rolling
+cache plan**: one on the tool contract when present, one on the fixed
+system, and up to two on prior completed message/tool-result boundaries
+(three if there are no tools); a new owner prompt remains unmarked.
+Unsupported hint responses still fall back to the original undecorated
+request. These cache markers are request-local, not stored in SQLite.
+
+The documented Go DeepSeek V4.1 Flash route is an explicit-history
+`/chat/completions` API. A stateful backend cursor for that exact
+model is **not** proven by `x-opencode-session`, so DOMINION does not
+blindly omit its mandatory persona. Sending fewer bytes on a stateful
+Codex WebSocket chain and reducing provider-billed uncached input tokens
+are separate claims; only the provider's cache usage receipt verifies
+the latter. The earlier 9-speaker benchmark must be rerun to quantify
+changes in billed/cache-read/new input after these fixes.
+
 ## Development vs release validation
 
 Normal Rust source pushes run only scoped, default-profile kernel/job/Money regression tests on macOS via `.github/workflows/ci.yml`. They do **not** trigger frontend builds, `cargo build/check`, release-profile builds, installer packaging, or the Windows/macOS release matrix. The separate `.github/workflows/release.yml` performs those full checks only for version tags or an explicit manual release request. Passing scoped tests does not imply that a distributable desktop release has been validated.
