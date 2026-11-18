@@ -12,6 +12,10 @@ on:
       - 'Cargo.lock'
       - '.github/workflows/ci.yml'
       - 'scripts/check-runtime-architecture.mjs'
+      - 'web/src/pages/Chat.tsx'
+      - 'web/src/i18n/**'
+      - 'web/tests/chat-stop-contract.test.mjs'
+      - 'web/package*.json'
   pull_request:
     branches: [main]
     paths:
@@ -21,6 +25,10 @@ on:
       - 'Cargo.lock'
       - '.github/workflows/ci.yml'
       - 'scripts/check-runtime-architecture.mjs'
+      - 'web/src/pages/Chat.tsx'
+      - 'web/src/i18n/**'
+      - 'web/tests/chat-stop-contract.test.mjs'
+      - 'web/package*.json'
 
 permissions:
   contents: read
@@ -42,6 +50,10 @@ jobs:
         run: cargo test --locked -p dominion-core --lib
       - name: Durable job and cancellation regressions (dev profile)
         run: cargo test --locked --bin dominion-rust engine::jobs::tests
+      - name: Silent SSE chat stop, cancellation epoch and same-session resume (dev profile)
+        run: |
+          cargo test --locked --bin dominion-rust stop_before_native_turn_starts_does_not_clear_newer_cancellation
+          cargo test --locked --bin dominion-rust user_stop_preempts_silent_model_stream_and_next_turn_succeeds
       - name: Streamable HTTP MCP and concurrent capability discovery (dev profile)
         run: cargo test --locked --bin dominion-rust engine::mcp::tests
       - name: Execution-scoped auxiliary model receipts and token coverage (dev profile)
@@ -98,6 +110,12 @@ jobs:
         run: cargo test --locked --bin dominion-rust money_
       - name: Nine-speaker three-turn work context and complete group delivery (dev profile)
         run: cargo test --locked --bin dominion-rust nine_participants_three_owner_turns_complete_thirty_messages_with_selective_work_context
+      - name: Room shared-prefix caching and Cloudflare affinity (dev profile)
+        run: |
+          cargo test --locked --bin dominion-rust shared_room_owner_rules_precede_agent_persona_with_no_identity_loss
+          cargo test --locked --bin dominion-rust identity_has_a_shared_stable_prefix_without_changing_owner_personas
+          cargo test --locked --bin dominion-rust cloudflare_room_affinity_is_shared_by_nine_speakers_without_reusing_their_cursors
+          cargo test --locked --bin dominion-rust provider_cache_counts_are_optional_and_never_invent_zero_hits
       - name: Benchmark timeout teardown and per-speaker cost evidence (dev profile)
         run: |
           cargo test --locked --bin dominion-benchmark timed_out_trial_cancels_server_turn_and_waits_for_terminal_state
@@ -106,3 +124,21 @@ jobs:
           cargo test --locked --bin dominion-rust db::tests::session_running_probe_avoids_global_history_and_uses_session_index
       - name: Shared SDK run and retry regressions (dev profile)
         run: cargo test --locked --bin dominion-rust api::sdk::view_tests
+
+  chat-ui-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci --prefix web --no-audit --no-fund
+      - name: Chat stop wiring and frontend typecheck
+        run: |
+          node --test web/tests/chat-stop-contract.test.mjs
+          npm run typecheck --prefix web
+          npm run build --prefix web
