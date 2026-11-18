@@ -1855,6 +1855,7 @@ mod tests {
         state.cancel_session("room:r");
         let result = run(&run_context(&state, "j"), &job).await.unwrap();
         assert_eq!(result["status"], "cancelled");
+        assert_eq!(result["pauseReason"], "job_cancel_requested");
         assert_eq!(state.store.count("execution"), 0);
         let job=state.store.put("job",&json!({"id":"uncertain","status":"running","input":{"roomId":"r"},"roomState":{"sessionId":"room:r","inFlight":true}})).unwrap();
         let result = run(&run_context(&state, "uncertain"), &job).await.unwrap();
@@ -1862,6 +1863,32 @@ mod tests {
         assert_eq!(state.store.count("execution"), 0);
         drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
+    #[tokio::test]
+    async fn fresh_owner_job_after_stop_uses_new_epoch_and_gets_a_real_reply() {
+        let (state,dir)=test_state();
+        state.store.patch_if("room","r","id",&json!("r"),
+            &json!({"agentIds":["a"],"maxTurns":1}));
+        let (server,bodies)=provider(&state,vec![text_delta("새 메시지에 대한 답")],None).await;
+        let stale=save_owner_job(&state,"room-stale","지난 요청");
+        state.cancel_session("room:r");
+        let stopped_result=run(&run_context(&state,"room-stale"),&stale).await.unwrap();
+        assert_eq!(stopped_result["status"],"cancelled");
+        assert_eq!(stopped_result["turns"],0);
+        assert_eq!(bodies.lock().unwrap().len(),0);
+        let next=save_owner_job(&state,"room-fresh","새 요청");
+        let generation=next["input"]["generation"].as_u64().unwrap();
+        assert!(generation>0);
+        let completed=run(&run_context(&state,"room-fresh"),&next).await.unwrap();
+        assert_eq!(completed["status"],"completed","{completed}");
+        assert_eq!(completed["turns"],1);
+        assert_eq!(completed["outputs"][0]["content"],"새 메시지에 대한 답");
+        assert_eq!(completed["outputs"][0]["modelCalls"],1);
+        assert!(completed["outputs"][0]["usage"]["totalTokens"].as_u64().unwrap_or(0)>0);
+        assert_eq!(bodies.lock().unwrap().len(),1);
+        server.abort();
+        drop(state); std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[tokio::test]
     async fn opted_in_owner_command_executes_real_tools_with_frozen_policy_and_evidence() {
         let (state, dir) = test_state();
@@ -1980,6 +2007,19 @@ mod tests {
         let job = save_owner_job(&state, "nine", "다 같이 편하게 얘기해보자");
         let result = run(&run_context(&state, "nine"), &job).await.unwrap();
         assert_eq!(result["turns"], 9);
+        let outputs=result["outputs"].as_array().unwrap();
+        for output in outputs {
+            assert_eq!(output["modelCalls"],1);
+            assert_eq!(output["toolCallCount"],0);
+            assert_eq!(output["usage"]["estimated"],true,
+                "mocked providers report no exact token usage");
+            assert!(output["usage"]["totalTokens"].as_u64().unwrap_or(0)>0);
+            assert!(output["inputContext"]["breakdown"]["components"]
+                ["systemAndPersona"].as_u64().unwrap_or(0)>0);
+            assert!(output["inputContext"]["breakdown"]["totalEstimatedTokens"]
+                .as_u64().unwrap_or(0)>0);
+            assert_eq!(output["inputContext"]["breakdown"]["estimated"],true);
+        }
         let messages = state.store.messages("room:r");
         assert_eq!(
             messages
