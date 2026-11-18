@@ -1735,6 +1735,22 @@ mod tests {
     }
 
     #[test]
+    fn token_efficiency_requires_complete_session_model_usage_coverage(){
+        let verified=json!({
+            "arm":"treatment","status":"completed","auditOk":true,
+            "reportOk":true,"taskOutcome":"succeeded","compliance":false,
+            "requiresCompliance":false,"errorClass":"","tokens":480,
+            "tokenSource":"session_usage_all_model_calls"
+        });
+        let result=aggregate(&[verified.clone()],"treatment",1);
+        assert_eq!(result["tokensPerVerifiedCompletion"],480.0);
+        assert_eq!(result["tokenCoverage"]["observedSessions"],1);
+        let mut incomplete=verified;
+        incomplete["tokenSource"]=json!("missing_usage");
+        let limited=aggregate(&[incomplete],"treatment",1);
+        assert!(limited["tokensPerVerifiedCompletion"].is_null());
+    }
+    #[test]
     fn repair_ab_program_is_frozen_and_has_an_explicit_failure(){
         let program=repair_ab_program();
         assert_eq!(program["revision"],"bench-contrastive-repair-v1");
