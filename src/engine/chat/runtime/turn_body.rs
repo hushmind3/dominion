@@ -219,6 +219,18 @@ pub(super) async fn run_turn_body(
     // access; it must not be mistaken for a REST API bearer grant.
     tools::retain_connected_account_tools(state,&mut tool_definitions);
     let is_room = session["roomId"].is_string();
+    // Freeze a same-turn provider-catalog ceiling *after* connection
+    // filtering, then apply the same user and read-only restrictions that
+    // the native dispatcher enforces. Search may not promote outside this.
+    let mut discovery_catalog=tool_definitions.clone();
+    if session["parallelReadOnly"]==true || session["readOnly"]==true {
+        discovery_catalog.retain(|definition|
+            tools::parallel_read_only_tool(tool_name(definition)));
+    }
+    if session["sdkUiPolicy"].is_object() {
+        discovery_catalog.retain(|definition|
+            tools::ui_tool_allowed(&session["sdkUiPolicy"],tool_name(definition)));
+    }
     if is_room && request.tools_enabled && request.tools_execution_enabled {
         let recent = recent_room_tools(state, session_id);
         tool_definitions =
@@ -269,6 +281,27 @@ pub(super) async fn run_turn_body(
             // playground. Keep task-critical capabilities but do not spend
             // the first provider call listing every unrelated native tool.
             tool_definitions=select_panel_tool_definitions(tool_definitions,&request.input);
+        }
+    }
+    // Discovery is a view over the same owner-approved registry, never a
+    // new execution engine. Explicit core/query-relevant modes and single-
+    // file fast paths preserve their previous tool declarations unchanged.
+    let explicitly_scoped=!discovery.is_null()
+        && !matches!(
+            discovery["implementation"].as_str()
+                .or_else(|| discovery["variant"].as_str()),
+            None|Some("all")
+        );
+    let progressive_enabled=capability::should_enable(
+        discovery_catalog.len(),tool_definitions.len(),
+        simple_creation_target.is_some(),explicitly_scoped);
+    if progressive_enabled {
+        tool_definitions=capability::project(tool_definitions,&request.input);
+        tool_definitions.push(capability::definition());
+        if let Some(mut execution)=state.store.get("execution",execution_id){
+            execution["progressiveToolDiscovery"]=json!(true);
+            state.store.put("execution",&execution)
+                .ok_or("도구 탐색 설정을 실행 기록에 저장하지 못했습니다.")?;
         }
     }
     let compiled = if is_room {
@@ -1693,6 +1726,15 @@ pub(super) async fn run_turn_body(
             ordering_used = true;
             if !ok {
                 ordering_ok = false;
+            }
+            if call.name==capability::SEARCH && ok && progressive_enabled {
+                let added=capability::promote(
+                    &mut tool_definitions,&discovery_catalog,&result);
+                state.store.audit("tool.discovery_promoted",json!({
+                    "executionId":execution_id,"round":round,
+                    "addedSchemas":added,
+                    "visibleSchemas":tool_definitions.len(),
+                }));
             }
             crate::engine::algorithms::mark_signal(
                 state, execution_id, "tool.selection", ok,
