@@ -210,9 +210,26 @@ fn working_view_allowance(room: Option<&Value>, provider: &ProviderRef, fixed: u
 /// ledger. No old transcript/peer text, revoked decision, or foreign memory
 /// is promoted into the new snapshot.
 fn retain_verified_owner_facts(
-    state: &AppState, prior: &[Value], fresh: &mut Vec<Value>,
+    state: &AppState, session_id: &str, source_id: &str,
+    prior: &[Value], fresh: &mut Vec<Value>,
     prior_dependencies: &[Value], token_allowance: usize,
 ) -> usize {
+    let session=state.store.get("session",session_id).unwrap_or(Value::Null);
+    let Some(room_id)=session["roomId"].as_str() else{return 0;};
+    let expected_id=format!("room-state-{}",stable_id(&[room_id]));
+    // Only current-room owner ledger IDs already proven by this participant.
+    let has_proof=prior_dependencies.iter().any(|dep|
+        dep["kind"]=="room_state" && dep["id"]==expected_id
+            && dep["activeFacts"].is_array() && dep["metadataDigest"].is_string());
+    if !has_proof {return 0;}
+    let Some(record)=state.store.get("room_state",&expected_id) else{return 0;};
+    let history=state.store.messages(session_id);
+    let Some(cursor)=history.iter().position(|row|row["id"]==source_id)
+        else{return 0;};
+    let visible=history[..=cursor].iter()
+        .filter(|row|row["role"]=="user" && row["metadata"]["authorKind"]=="owner")
+        .filter_map(|row|row["id"].as_str().map(str::to_string))
+        .collect::<std::collections::HashSet<_>>();
     let mut present=std::collections::HashSet::<String>::new();
     for frame in fresh.iter() {
         if !frame["key"].as_str().is_some_and(|key|key.starts_with("owner-state:")) { continue; }
@@ -228,11 +245,13 @@ fn retain_verified_owner_facts(
     // Proofs were already validated by project(). Resolve only that
     // participant's room-state IDs: scanning all rooms can cross tenants and
     // gets slower as unrelated rooms accumulate.
-    let allowed=prior_dependencies.iter()
-        .filter(|dep|dep["kind"]=="room_state")
-        .filter_map(|dep|dep["id"].as_str().and_then(|id|state.store.get("room_state",id)))
-        .flat_map(|record|record["facts"].as_array().cloned().unwrap_or_default())
-        .filter(|fact|fact["status"]=="active")
+    let allowed=record["facts"].as_array().into_iter().flatten()
+        .filter(|fact| fact["verifiedLocalOwner"]==true
+            && fact["sourceMessageId"].as_str().is_some_and(|id|visible.contains(id))
+            && (fact["status"]=="active"
+                || (fact["status"]=="superseded"
+                    && fact["supersededBy"].as_str()
+                        .is_some_and(|id|!visible.contains(id)))))
         .filter_map(|fact| {
             let text=fact["text"].as_str()?.trim();
             if text.is_empty(){return None;}
@@ -395,7 +414,7 @@ pub(crate) fn project(
             let fixed=super::room_context::input_estimate(&[wire_message(&messages[0])],tools);
             let allowance=working_view_allowance(room.as_ref(),provider,fixed);
             carried_owner_facts=retain_verified_owner_facts(
-                state,&frames,&mut rebased,&dependencies,allowance);
+                state,session_id,source,&frames,&mut rebased,&dependencies,allowance);
         }
         frames=rebased;
         dependencies=fresh_dependencies;
@@ -1074,6 +1093,48 @@ mod tests {
         assert_eq!(frames.iter().filter(|frame|frame["key"].as_str()
             .is_some_and(|key|key.starts_with("owner-state:"))).count(),1);
         assert!(frames.len()<=12,"16 turns should not grow the durable working view without bound");
+        crate::test_support::cleanup_dir(root);
+    }
+
+    #[test]
+    fn budget_carry_rejects_foreign_and_future_room_facts() {
+        let root=std::env::temp_dir().join(format!("dominion-owner-scope-{}",uuid::Uuid::new_v4()));
+        let state=state(&root);
+        state.store.put("session",&json!({"id":"room:scope","roomId":"scope"})).unwrap();
+        state.store.put("room",&json!({"id":"scope"})).unwrap();
+        for id in ["old","now"] {
+            state.store.write_message(&json!({"id":id,"session_id":"room:scope",
+                "role":"user","content":id,"metadata":{"authorKind":"owner"}})).unwrap();
+        }
+        let own_id=format!("room-state-{}",stable_id(&["scope"]));
+        let foreign_id=format!("room-state-{}",stable_id(&["foreign"]));
+        state.store.put("room_state",&json!({"id":foreign_id,"facts":[
+            {"id":"b","kind":"decision","status":"active","text":"FOREIGN",
+                "verifiedLocalOwner":true,"sourceMessageId":"old"}
+        ]})).unwrap();
+        let prior=vec![json!({"key":"owner-state:old",
+            "message":{"role":"user",
+                "content":"[주인 확정 상태: 원문]\\n- [decision] IN_SCOPE\\n- [decision] FOREIGN\\n- [decision] FUTURE"}})];
+        let fresh=vec![json!({"key":"owner-state:current",
+            "message":{"role":"user","content":"[주인 확정 상태: 원문]\\n- [decision] CURRENT"}})];
+        let prior_deps=vec![json!({"kind":"room_state","id":own_id,
+            "activeFacts":[],"metadataDigest":"proof"})];
+        let mut first=fresh.clone();
+        assert_eq!(retain_verified_owner_facts(&state,"room:scope","now",
+            &prior,&mut first,&prior_deps,5000),0);
+        state.store.put("room_state",&json!({"id":own_id,"facts":[
+            {"id":"a","kind":"decision","status":"active","text":"IN_SCOPE",
+                "verifiedLocalOwner":true,"sourceMessageId":"old"},
+            {"id":"later","kind":"decision","status":"active","text":"FUTURE",
+                "verifiedLocalOwner":true,"sourceMessageId":"owner-future"}
+        ]})).unwrap();
+        let mut second=fresh.clone();
+        assert_eq!(retain_verified_owner_facts(&state,"room:scope","now",
+            &prior,&mut second,&prior_deps,5000),1);
+        let rendered=second.to_string();
+        assert!(rendered.contains("IN_SCOPE"));
+        assert!(!rendered.contains("FOREIGN"));
+        assert!(!rendered.contains("FUTURE"));
         crate::test_support::cleanup_dir(root);
     }
 
