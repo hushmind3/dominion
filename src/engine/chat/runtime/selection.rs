@@ -325,7 +325,7 @@ mod room_catalog_cache_tests {
             .into_iter().map(str::to_string).collect();
         let read=select_room_tools(tools.clone(),"read file",&recent,false);
         let write=select_room_tools(tools.clone(),"write file",&recent,false);
-        let names=|list:&[Value]|list.iter().map(tool_name).collect::<Vec<_>>();
+        let names=|list:&[Value]|list.iter().map(|tool|tool_name(tool).to_owned()).collect::<Vec<_>>();
         assert_eq!(names(&read),vec!["shell_exec","workspace_write","workspace_read"]);
         assert_eq!(names(&write),names(&read),
             "relevance reranking alone must not change the model tool schema prefix");
