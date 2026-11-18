@@ -601,6 +601,11 @@ async fn run_turn_body(
             state.store.put("execution", &execution);
         }
     }
+    // A tool-heavy room may need the full native tool/procedure prompt.
+    // Its *conversation* must still use the shared, provenance-scoped room
+    // selector: falling through to general chat history resends every peer's
+    // earlier turns and can expose later owner messages.
+    let mut scoped_room_history: Option<(Vec<Value>, Value)> = None;
     let compiled = if is_room {
         let source = source_message_id.or(reply_to.as_deref()).ok_or("응답할 원문이 없습니다.")?;
         let compiled = super::room_context::compile(
@@ -614,9 +619,10 @@ async fn run_turn_body(
         if work_needs_context {
             if let Some(mut execution) = state.store.get("execution", execution_id) {
                 execution["contextPolicy"] = json!("native-work-context");
-                execution["contextPolicyReason"] = json!("fixed work context exceeds the conversational target; preserve procedures and evidence");
+                execution["contextPolicyReason"] = json!("fixed work context exceeds conversational target; preserve native procedures while keeping source-scoped room history");
                 state.store.put("execution", &execution);
             }
+            scoped_room_history=Some((compiled.history, compiled.accounting));
             None
         } else {
             Some(compiled)
@@ -644,14 +650,20 @@ async fn run_turn_body(
             Some(&strategy_candidates),
             Some(execution_id),
         );
-        let history_messages = history(
-            state,
-            session_id,
-            request.agent_id.as_deref(),
-            provider.context_tokens.map(|tokens| {
-                ((tokens as usize).saturating_mul(3)).clamp(8_000, 400_000)
-            }),
-        )?;
+        let history_messages = if let Some((selected,_))=scoped_room_history.as_ref() {
+            // Source-bounded owner transcript, latest relevant peers, prior
+            // self response and referenced tool results are already rendered.
+            selected.clone()
+        } else {
+            history(
+                state,
+                session_id,
+                request.agent_id.as_deref(),
+                provider.context_tokens.map(|tokens| {
+                    ((tokens as usize).saturating_mul(3)).clamp(8_000, 400_000)
+                }),
+            )?
+        };
         (prompt_context, history_messages)
     };
     let mut messages = vec![json!({"role":"system","content":prompt_context.prompt,"_dominion_source":reply_to,
@@ -663,14 +675,21 @@ async fn run_turn_body(
                 let persona_tokens = super::room_context::estimate(persona.as_ref().and_then(|agent|agent["systemPrompt"].as_str()).unwrap_or(""));
                 let mut prepared = messages.clone();
                 prepared.extend(history_messages.clone());
+                let selection=scoped_room_history.as_ref().map(|(_,accounting)|accounting);
                 execution["inputContext"] = json!({
                     "policy":"native-work-context", "estimated":true, "contextModelCalls":0,
+                    "conversationSelection":if selection.is_some() {"room-selective-v1"}else{"general-history"},
                     "personaTokens":persona_tokens, "memoryTokens":null,
+                    "sharedStateTokens":selection.map(|a|a["sharedStateTokens"].clone()),
+                    "ownerStateTokens":selection.map(|a|a["ownerStateTokens"].clone()),
+                    "selectedMessageIds":selection.map(|a|a["selectedMessageIds"].clone()),
+                    "availableMessages":selection.map(|a|a["availableMessages"].clone()),
+                    "requiredOverBudget":selection.map(|a|a["requiredOverBudget"].clone()),
                     "historyTokens":super::room_context::estimate(&json!(history_messages).to_string()),
                     "systemTokens":super::room_context::estimate(&prompt_context.prompt).saturating_sub(persona_tokens),
                     "toolSchemaTokens":super::room_context::estimate(&json!(tool_definitions).to_string()),
                     "totalInputTokens":super::room_context::input_estimate(&prepared,&tool_definitions),
-                    "note":"legacy work prompt does not expose memory as a separate component"
+                    "note":"native tool/procedure prompt retains existing behavior; room history is selected by the owner-message cursor"
                 });
                 state.store.put("execution", &execution);
             }
