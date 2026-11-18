@@ -20,6 +20,8 @@ on:
       - 'src/engine/improve.rs'
       - 'src/engine/native_adjudication.rs'
       - 'src/engine/native_agent.rs'
+      - 'src/engine/native_model.rs'
+      - 'src/engine/native_stream.rs'
       - 'src/engine/skill_discovery.rs'
       - 'src/engine/mod.rs'
       - 'src/engine/tools.rs'
