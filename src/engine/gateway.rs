@@ -448,6 +448,17 @@ pub fn helper_go_affinity(route:&Route,body:&Value,session_id:Option<&str>)->Opt
     ]))
 }
 
+/// Bounded request-builder seam shared by retries and tests. Header values
+/// contain hashes only; the helper's user prompt and API key are not exposed.
+fn with_go_session_header(
+    builder:reqwest::RequestBuilder,route:&Route,body:&Value,
+    session_id:Option<&str>,
+)->reqwest::RequestBuilder{
+    if let Some(affinity)=helper_go_affinity(route,body,session_id){
+        builder.header("x-opencode-session",affinity)
+    }else{builder}
+}
+
 /// Planner, reviewer and compaction calls must carry the same stable
 /// OpenCode Go session-routing header contract as the native chat path.
 pub async fn send_with_session(
@@ -464,14 +475,11 @@ pub async fn send_with_session(
     )?;
     let permit = acquire(&route.base_url, route.local).await;
     let mut last_error = String::new();
-    let go_affinity=helper_go_affinity(route,body,session_id);
     for attempt in 0..2 {
-        let mut builder=benchmark_request(client.post(route.endpoint("/chat/completions")))
+        let builder=benchmark_request(client.post(route.endpoint("/chat/completions")))
             .header("Content-Type", "application/json")
             .header("Authorization", format!("Bearer {}", route.api_key));
-        if let Some(affinity)=go_affinity.as_deref(){
-            builder=builder.header("x-opencode-session",affinity);
-        }
+        let builder=with_go_session_header(builder,route,body,session_id);
         match builder
             .json(body)
             .timeout(timeout)
@@ -679,6 +687,13 @@ mod tests {
             {"role":"user","content":"first task"}
         ]});
         let first=helper_go_affinity(&go,&messages,Some("owner-session-1")).unwrap();
+        let request=with_go_session_header(
+            reqwest::Client::new().post("http://127.0.0.1:1/test"),
+            &go,&messages,Some("owner-session-1")).build().unwrap();
+        assert_eq!(request.headers().get("x-opencode-session")
+            .and_then(|value|value.to_str().ok()),Some(first.as_str()),
+            "helper calls must really set Go's transport header, not only compute a key");
+
         let second=helper_go_affinity(&go,&json!({"messages":[
             {"role":"system","content":"HELPER_STATIC_RULES"},
             {"role":"user","content":"different task"}
