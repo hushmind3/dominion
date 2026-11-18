@@ -9,7 +9,12 @@ database_id = "edc9c387-310e-4660-aac7-db53f9da5d17"
 
 # Set GOOGLE_CLIENT_ID and ALLOWED_ORIGIN in the Cloudflare dashboard.
 # Set SESSION_SECRET and UPSTREAM_API_KEY using wrangler secret put.
-# No upstream inference is enabled until the model and prices are configured.
+# Optional centralized free-model routing (no end-user provider account needed):
+# UPSTREAM_URL=https://openrouter.ai/api/v1 (set as Worker variable)
+# UPSTREAM_API_KEY=<operator-owned key> (set as Worker secret)
+# UPSTREAM_FREE_DISCOVERY=1 (set as Worker variable to discover verified :free models)
+# FREE_DAILY_LIMIT=20 (per DOMINION account; adjust for operating budget)
+# Paid upstream inference remains disabled until model and prices are configured.
 
 [ai]
 binding = "AI"
