@@ -2025,7 +2025,11 @@ mod tests {
         assert!(store.algorithms_for_kind("missing").unwrap().is_empty());
         let conn=store.conn.lock().unwrap();
         let plan:String=conn.query_row(
-            "EXPLAIN QUERY PLAN SELECT data FROM records
+            // With only three test rows SQLite legitimately prefers the
+            // primary index. Force the partial expression index here to
+            // verify its existence and usability; production retains the
+            // query planner's cost-based choice.
+            "EXPLAIN QUERY PLAN SELECT data FROM records INDEXED BY idx_algorithm_kind
              WHERE kind='algorithm'
                 AND json_extract(data,'$.kind')='memory.importance' ORDER BY id",
             [],|row|row.get(3),
