@@ -1749,6 +1749,40 @@ fn strip_html(html: &str) -> String {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn skill_read_requires_enabled_visible_skill_and_returns_original_body(){
+        use crate::{config::Config,db::Store,vault::Vault};
+        let dir=std::env::temp_dir().join(format!("dominion-skill-read-{}",uuid::Uuid::new_v4()));
+        let config=Config{port:0,data_dir:dir.join("data"),
+            web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=crate::state::AppState::new(config.clone(),
+            Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()));
+        state.store.put("session",&json!({"id":"s"}));
+        state.store.put("skill",&json!({"id":"approved","name":"Read-only playbook",
+            "status":"active","enabled":true,"scope":"global",
+            "instructions":"Long exact instructions that the prompt index omits"}));
+        state.store.put("skill",&json!({"id":"draft","name":"Unapproved",
+            "status":"draft","enabled":true,"scope":"global",
+            "instructions":"Do not disclose this draft"}));
+        state.store.put("skill",&json!({"id":"private","name":"Private",
+            "status":"active","enabled":true,"scope":"agent","agentId":"someone-else",
+            "instructions":"Private body"}));
+        let ctx=ToolContext{workspace:&dir,store:&state.store,state:&state,
+            session_id:"s",agent_id:Some("local"),
+            tools_enabled:true,tools_execution_enabled:true};
+        let read=execute(&ctx,"skill_read",
+            &json!({"skillId":"approved"}),"r").await.unwrap();
+        assert_eq!(read["instructions"],
+            "Long exact instructions that the prompt index omits");
+        assert_eq!(read["readOnly"],true);
+        assert!(execute(&ctx,"skill_read",&json!({"skillId":"draft"}),"r").await.is_err());
+        assert!(execute(&ctx,"skill_read",&json!({"skillId":"private"}),"r").await.is_err());
+        assert!(execute(&ctx,"skill_read",&json!({"skillId":"missing"}),"r").await.is_err());
+        assert!(ui_tool_allowed(&json!({"skillsEnabled":false}),"skill_read")==false);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn parallel_fanin_bounds_context_but_retains_job_retrieval_keys(){
         let original=json!({"jobId":"child-1","status":"completed",
