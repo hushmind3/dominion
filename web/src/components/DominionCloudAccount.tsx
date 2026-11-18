@@ -133,14 +133,10 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
    setMessage('모델이 등록됐습니다. 채팅에서 선택해 사용하세요.')
   }catch(error){setMessage((error as Error).message)}finally{setBusy(false)}
  }
- if(!cloudUrl||!clientId)return <section className="rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] p-4">
-  <strong className="text-[13px]">DOMINION Cloud</strong>
-  <p className="mt-1 text-[12px] text-[#7C7469]">구글 로그인 연결 대기 · 클라우드 주소와 구글 클라이언트 ID 설정 후 활성화됩니다.</p>
- </section>
  return <section className="rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] p-4">
   <strong className="text-[13px]">DOMINION Cloud · 구글 로그인</strong>
   <p className="mt-1 text-[12px] text-[#7C7469]">개인 API 키 없이 도미니언 계정으로 무료 모델을 연결합니다.</p>
-  <div className="mt-3" ref={button}/>
+  {cloudUrl&&clientId?<div className="mt-3" ref={button}/>:<p className="mt-2 text-[12px] text-[#7C7469]">DOMINION Cloud 로그인 미설정 · 다른 AI 업체는 아래에서 연결할 수 있습니다.</p>}
   {token&&<div className="mt-3 flex flex-wrap items-center gap-2">
    <select aria-label="도미니언 무료 모델" value={selected} onChange={e=>setSelected(e.target.value)} className="rounded-lg border px-3 py-2 text-[12px]">
     {models.map(model=><option key={model.id} value={model.id}>{model.id} · 무료</option>)}
