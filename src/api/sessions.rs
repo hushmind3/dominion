@@ -117,10 +117,15 @@ pub async fn fork_session(State(state): State<AppState>, Path(id): Path<String>)
 // ---------------------------------------------------------------- approvals
 
 pub async fn cancel_session(State(state): State<AppState>, Path(id): Path<String>) -> Json<Value> {
-    let running = state.store.all("execution").iter().any(|execution| {
-        execution.get("sessionId").and_then(|value| value.as_str()) == Some(id.as_str())
-            && execution.get("status").and_then(|value| value.as_str()) == Some("running")
-    });
+    let running = match state.store.has_running_execution_for_session(&id) {
+        Ok(running) => running,
+        Err(error) => {
+            // A failed liveness read is never permission to skip cancellation.
+            state.store.audit("session.cancel_status_read_failed",
+                json!({"sessionId":id,"error":error}));
+            false
+        }
+    };
     state.cancel_session(&id);
     state.store.audit(
         "session.cancel",
