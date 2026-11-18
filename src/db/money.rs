@@ -494,11 +494,16 @@ impl Store {
                     origins.insert(0,json!(first));
                     changed=true;
                 }
-                let latest=signal["sourceName"].as_str().unwrap_or("");
-                if !latest.is_empty() && origins.len()<12
-                    && !origins.iter().any(|entry|entry.as_str()==Some(latest)){
-                    origins.push(json!(latest));
-                    changed=true;
+                let candidates=signal["observedFeeds"].as_array().cloned()
+                    .unwrap_or_else(||vec![signal["sourceName"].clone()]);
+                for candidate in candidates{
+                    let Some(feed)=candidate.as_str().filter(|feed|!feed.is_empty())
+                        else{continue;};
+                    if origins.len()>=12{break;}
+                    if !origins.iter().any(|entry|entry.as_str()==Some(feed)){
+                        origins.push(json!(feed));
+                        changed=true;
+                    }
                 }
                 if changed {stored["observedFeeds"]=json!(origins);}
                 let old_len=stored["articleExcerpt"].as_str().unwrap_or("").chars().count();
@@ -1135,6 +1140,11 @@ mod dashboard_stats_tests {
         let again=store.get("money_signal","same-article").unwrap();
         assert_eq!(again["observedFeeds"].as_array().unwrap().len(),2);
         assert_eq!(again["title"],saved["title"]);
+        let third=json!({"id":"same-article","sourceName":"Google search channel C",
+            "observedFeeds":["Google search channel C","Google search channel D"]});
+        assert_eq!(store.money_ingest_signals(&[third]).unwrap(),0);
+        let final_record=store.get("money_signal","same-article").unwrap();
+        assert_eq!(final_record["observedFeeds"].as_array().unwrap().len(),4);
     }
 
     #[test]
