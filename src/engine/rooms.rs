@@ -700,6 +700,7 @@ async fn run_locked(
         }
         let evidence_count = message_evidence_count(state, &message);
         let elapsed_ms=speaker_started.elapsed().as_millis() as u64;
+        let accounting = speaker_model_accounting(state, &message);
         outputs.push(json!({
             "agentId":agent_id,
             "name":name,
@@ -708,6 +709,7 @@ async fn run_locked(
             "evidenceCount":evidence_count,
             "toolCalls":message["tool_calls"].clone(),
             "elapsedMs":elapsed_ms,
+            "modelAccounting":accounting,
         }));
         context.emit(json!({"type":"speaker_finished","roomId":room_id,
             "agentId":agent_id,"elapsedMs":elapsed_ms,"step":outputs.len(),
@@ -874,6 +876,49 @@ fn is_owner(message: &Value) -> bool {
 /// Evidence is not only the acceptance-check list. A tool operation that
 /// actually completed is evidence too; the previous count ignored it, so a
 /// successful tool-using turn could display `evidenceCount: 0`.
+/// Every speaker's report uses the exact execution that produced the
+/// message, not a room-wide cumulative session counter. Provider receipts
+/// and prompt composition estimates are intentionally kept separate.
+fn speaker_model_accounting(state: &AppState, message: &Value) -> Value {
+    let Some(execution_id)=message.pointer("/metadata/executionId").and_then(Value::as_str)
+        else {return json!({"available":false,"reason":"message_missing_execution_id"})};
+    let Some(execution)=state.store.get("execution",execution_id)
+        else {return json!({"available":false,"executionId":execution_id,
+            "reason":"execution_record_missing"})};
+    let input=&execution["inputContext"];
+    let usage=&message["metadata"]["usage"];
+    json!({
+        "available":true,"executionId":execution_id,
+        "status":execution["status"],"taskOutcome":execution["taskOutcome"],
+        "contextPolicy":execution["contextPolicy"],
+        "modelCalls":execution["modelCalls"],
+        "toolCalls":execution["toolCalls"],
+        "provider":{
+            "promptTokens":usage["promptTokens"],
+            "completionTokens":usage["completionTokens"],
+            "totalTokens":usage["totalTokens"],
+            "cachedPromptTokens":usage["cachedPromptTokens"],
+            "uncachedPromptTokens":usage["uncachedPromptTokens"],
+            "estimated":usage["estimated"],
+            "providerId":usage["providerId"],
+            "model":usage["model"]
+        },
+        "estimatedInputComponents":{
+            "persona":input["personaTokens"],
+            "system":input["systemTokens"],
+            "memory":input["memoryTokens"],
+            "ownerState":input["ownerStateTokens"],
+            "sharedState":input["sharedStateTokens"],
+            "history":input["historyTokens"],
+            "toolSchemas":input["toolSchemaTokens"],
+            "total":input["totalInputTokens"]
+        },
+        "projectedPromptTokensEstimate":input["projectedInputTokensEstimate"],
+        "providerExact":input["providerUsageExact"],
+        "estimatedComponentsNotProviderBill":true
+    })
+}
+
 fn message_evidence_count(state: &AppState, message: &Value) -> usize {
     let recorded = message["metadata"]["evidence"]
         .as_array()
@@ -1973,6 +2018,43 @@ mod tests {
             Err(tokio::sync::broadcast::error::TryRecvError::Empty)
         ));
         assert_eq!(room(&state), record);
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn speaker_accounting_joins_only_the_owning_execution_and_marks_estimates() {
+        let (state,dir)=test_state();
+        state.store.put("execution",&json!({
+            "id":"speaker-a-run","sessionId":"room:r","agentId":"a",
+            "status":"completed","taskOutcome":"answered_unverified",
+            "modelCalls":2,"toolCalls":1,
+            "inputContext":{"personaTokens":36,"systemTokens":150,
+                "sharedStateTokens":120,"memoryTokens":null,
+                "historyTokens":250,"toolSchemaTokens":0,
+                "totalInputTokens":556,"projectedInputTokensEstimate":540,
+                "providerUsageExact":true}
+        })).unwrap();
+        state.store.put("execution",&json!({
+            "id":"speaker-b-run","sessionId":"room:r","agentId":"b",
+            "modelCalls":9,"inputContext":{"totalInputTokens":9000}
+        })).unwrap();
+        let msg=json!({"id":"response-a","metadata":{
+            "executionId":"speaker-a-run","usage":{
+                "promptTokens":610,"completionTokens":42,
+                "totalTokens":652,"cachedPromptTokens":null,
+                "estimated":false,"providerId":"p","model":"m"
+            }
+        }});
+        let accounting=speaker_model_accounting(&state,&msg);
+        assert_eq!(accounting["executionId"],"speaker-a-run");
+        assert_eq!(accounting["modelCalls"],2);
+        assert_eq!(accounting["provider"]["promptTokens"],610);
+        assert_eq!(accounting["estimatedInputComponents"]["total"],556);
+        assert_eq!(accounting["estimatedInputComponents"]["memory"],Value::Null);
+        assert_eq!(accounting["provider"]["cachedPromptTokens"],Value::Null);
+        assert_eq!(accounting["providerExact"],true);
+        assert_eq!(speaker_model_accounting(&state,&json!({}))["available"],false);
         drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
