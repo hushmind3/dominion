@@ -72,7 +72,7 @@ fn rank(def:&Value,query:&str,words:&HashSet<String>)->i32{
 /// call is spent on discovery unless the model actually needs another tool.
 /// Existing tool permissions remain in the native dispatcher.
 pub(super) fn project(definitions:Vec<Value>,query:&str)->Vec<Value>{
-    if definitions.len()<=THRESHOLD{return definitions;}
+    if definitions.len()<=INITIAL{return definitions;}
     let needed=words(query);
     // Retain eight high-value primitives and let four slots respond to the
     // actual task. A fixed 12-tool core would hide an explicitly requested
@@ -258,5 +258,6 @@ mod tests{
         assert!(!should_enable(18,10,false,false));
         assert!(should_enable(90,10,false,false));
         assert_eq!(project(sample()[..5].to_vec(),"anything").len(),5);
+        assert_eq!(project(sample()[..14].to_vec(),"anything").len(),INITIAL);
     }
 }
