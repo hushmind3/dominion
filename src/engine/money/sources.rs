@@ -94,6 +94,44 @@ fn entries(feed:&str)->Vec<&str>{
     }
     output
 }
+/// RSS `source` is the publisher, not the RSS search channel.
+/// Google News often mirrors publisher articles under a news.google.com URL.
+/// Keep the distinction and never treat two search feeds as independent news.
+fn publisher_domain(item:&str,article_url:&str)->String{
+    let source_tag=item.find("<source ").and_then(|start|{
+        let rest=&item[start..];
+        rest.find('>').map(|end|&rest[..=end])
+    });
+    if let Some(tag)=source_tag{
+        for quote in ['"', '\'']{
+            let needle=format!("url={quote}");
+            if let Some(pos)=tag.find(&needle){
+                let part=&tag[pos+needle.len()..];
+                if let Some(end)=part.find(quote){
+                    let candidate=&part[..end];
+                    if let Ok(parsed)=reqwest::Url::parse(candidate){
+                        if matches!(parsed.scheme(),"http"|"https"){
+                            if let Some(host)=parsed.host_str(){
+                                return host.trim_start_matches("www.").to_ascii_lowercase();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if let Ok(parsed)=reqwest::Url::parse(article_url){
+        if let Some(host)=parsed.host_str(){
+            let host=host.trim_start_matches("www.").to_ascii_lowercase();
+            // A Google News feed URL is an aggregator, not a publisher.
+            if host!="news.google.com" && host!="google.com" {
+                return host;
+            }
+        }
+    }
+    String::new()
+}
+
 fn parse(feed:&str,source:&str)->Vec<Value>{
     let timestamp=chrono::Utc::now().to_rfc3339();
     entries(feed).into_iter().filter_map(|item|{
@@ -106,10 +144,20 @@ fn parse(feed:&str,source:&str)->Vec<Value>{
             .map(|x|clean_text(x,500)).unwrap_or_default();
         let published=element(item,"pubDate").or_else(||element(item,"published"))
             .or_else(||element(item,"updated")).map(|x|clean_text(x,100)).unwrap_or_default();
-        Some(crate::engine::money_intelligence::enrich_signal(json!({"id":digest(&url),"title":title,"url":url,"sourceName":source,
+        let publisher_name=element(item,"source")
+            .map(|value|clean_text(value,160)).unwrap_or_default();
+        let publisher_domain=publisher_domain(item,&url);
+        let normalized=normalized_title(&title);
+        Some(crate::engine::money_intelligence::enrich_signal(json!({
+            "id":digest(&url),"title":title,"url":url,
+            "sourceName":source,"publisherName":publisher_name,
+            "publisherDomain":publisher_domain,
+            "storyClusterId":digest(&normalized),
+            "storyRelationship":"unassessed",
             "description":desc,"publishedAt":published,
             "capturedAt":timestamp,"contentStatus":"headline_observed",
-            "articleExcerpt":"","verification":"unverified_market_observation"})))
+            "articleExcerpt":"","verification":"unverified_market_observation"
+        })))
     }).collect()
 }
 
@@ -117,13 +165,35 @@ fn normalized_title(title:&str)->String{
     title.to_lowercase().chars().filter(|c|c.is_alphanumeric()).collect()
 }
 
-/// The same story arrives from several feeds with different URLs. Drop the
-/// repeats before they reach the corpus so tokens are never spent on them.
-fn dedupe_titles(signals:Vec<Value>,history:&[Value])->Vec<Value>{
-    let mut seen=history.iter().filter_map(|s|s["title"].as_str())
-        .map(normalized_title).collect::<std::collections::HashSet<_>>();
-    signals.into_iter().filter(|s|s["title"].as_str()
-        .map(|title|seen.insert(normalized_title(title))).unwrap_or(false)).collect()
+/// De-duplicate the exact article URL within this fetch batch, not an entire
+/// story across publishers. Two distinct archived URLs may expose different
+/// corrections, dates or claims and must remain auditable. Repeated headlines
+/// get a stable cluster label, not "independent corroboration" credit.
+fn preserve_observations(signals:Vec<Value>,history:&[Value])->(Vec<Value>,usize){
+    let mut titles=history.iter()
+        .filter_map(|row|row["title"].as_str())
+        .map(normalized_title).filter(|name|!name.is_empty())
+        .collect::<std::collections::HashSet<_>>();
+    let mut urls=std::collections::HashSet::new();
+    let mut preserved=Vec::new();
+    let mut duplicate_urls=0;
+    for mut signal in signals{
+        let Some(url)=signal["url"].as_str().filter(|url|!url.is_empty()) else{continue;};
+        if !urls.insert(url.to_string()){
+            duplicate_urls+=1;
+            continue;
+        }
+        let normalized=normalized_title(signal["title"].as_str().unwrap_or(""));
+        if normalized.is_empty(){continue;}
+        let previously_seen=!titles.insert(normalized.clone());
+        signal["storyClusterId"]=json!(digest(&normalized));
+        signal["storyRelationship"]=json!(if previously_seen{
+            "matching_headline_requires_independent_source_review"
+        }else{"first_seen_headline_in_recent_window"});
+        signal["independentConfirmation"]=json!(false);
+        preserved.push(signal);
+    }
+    (preserved,duplicate_urls)
 }
 
 fn needs_article_fetch(item:&Value,stored:Option<&Value>)->bool{
@@ -142,9 +212,12 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
     let mut reports=Vec::new();
     let mut scraped=0;
     let mut scrape_attempts=0;
+    let mut attempted_article_urls=std::collections::HashSet::new();
+    let mut fetched_feeds=0;
     for (name,url) in chosen{
         match crate::engine::tools::http_fetch(url).await{
             Ok(body) if body["status"].as_u64()==Some(200)=>{
+                fetched_feeds+=1;
                 let mut items=parse(body["text"].as_str().unwrap_or(""),name);
                 let count=items.len();
                 for item in items.iter_mut(){
@@ -153,6 +226,7 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
                         .and_then(|id|context.state.store.get("money_signal",id));
                     if !needs_article_fetch(item,stored.as_ref()){continue;}
                     let Some(article_url)=item["url"].as_str().map(str::to_owned)else{continue;};
+                    if !attempted_article_urls.insert(article_url.clone()){continue;}
                     scrape_attempts+=1;
                     if let Ok(article)=crate::engine::tools::http_fetch(&article_url).await{
                         if article["status"].as_u64()==Some(200){
@@ -174,15 +248,23 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String>{
     }
     // New observations can connect with last month's old signals: perform
     // bounded cross-market matching after ingestion, without model tokens.
-    let history=context.state.store.money_recent_signals(240).unwrap_or_default();
-    let signals=dedupe_titles(signals,&history);
+    let history=context.state.store.money_recent_signals(240)?;
+    let (signals,duplicate_urls)=preserve_observations(signals,&history);
     let found=signals.len();
-    if found==0{return Err(format!("수집된 시장 자료가 없습니다: {}",json!(reports)));}
+    // A successful but empty feed is not a failed job. The owner still gets
+    // an auditable ingest report; only a complete feed-fetch failure is fatal.
+    if fetched_feeds==0{
+        return Err(format!("시장 원문 피드를 가져오지 못했습니다: {}",json!(reports)));
+    }
+    let repeated_headlines=signals.iter()
+        .filter(|row|row["storyRelationship"]==
+            "matching_headline_requires_independent_source_review").count();
     let added=context.state.store.money_ingest_signals(&signals)?;
     let hypotheses=crate::engine::money_mechanism::discover(&history,30);
     let linked=context.state.store.money_store_tensions(&hypotheses)?;
     let summary=json!({"id":format!("market:{}",context.job_id),
         "jobId":context.job_id,"found":found,"new":added,"newCrossMarketQuestions":linked,
+        "repeatedHeadlines":repeated_headlines,"duplicateUrlsDropped":duplicate_urls,
         "scrapedPages":scraped,"sources":reports,"capturedAt":chrono::Utc::now().to_rfc3339()});
     context.state.store.put("money_ingest_report",&summary)
         .ok_or("시장 수집 기록을 저장하지 못했습니다.")?;
@@ -215,15 +297,49 @@ mod tests{
         assert_eq!(items[0]["description"],"Lower manufacturing costs");
         assert_eq!(items[0]["id"],digest("https://example.com/article?id=4&region=KR"));
     }
-    #[test] fn repeated_headline_from_another_feed_is_dropped(){
+    #[test] fn identical_headlines_from_distinct_urls_preserve_both_archives(){
         let history=vec![json!({"title":"Supplier raises prices 20%"})];
         let batch=vec![
-            json!({"title":"supplier raises prices 20%!"}),
-            json!({"title":"New public buyer tender"}),
+            json!({"title":"supplier raises prices 20%!","url":"https://one.example/story"}),
+            json!({"title":"supplier raises prices 20%!","url":"https://two.example/story"}),
+            json!({"title":"New public buyer tender","url":"https://three.example/tender"}),
+            json!({"title":"New public buyer tender","url":"https://three.example/tender"}),
         ];
-        let kept=dedupe_titles(batch,&history);
-        assert_eq!(kept.len(),1);
-        assert_eq!(kept[0]["title"],"New public buyer tender");
+        let (kept,duplicate_urls)=preserve_observations(batch,&history);
+        assert_eq!(kept.len(),3);
+        assert_eq!(duplicate_urls,1);
+        assert_eq!(kept[0]["storyClusterId"],kept[1]["storyClusterId"]);
+        assert_eq!(kept[0]["independentConfirmation"],false);
+        assert_eq!(kept[1]["storyRelationship"],
+            "matching_headline_requires_independent_source_review");
+        assert_eq!(kept[2]["storyRelationship"],
+            "first_seen_headline_in_recent_window");
+    }
+
+    #[test] fn google_news_feeds_carry_publisher_identity_not_feed_identity(){
+        let rss=r#"<rss><channel><item><title>Supplier technology contract award</title>
+          <link>https://news.google.com/rss/articles/abc</link>
+          <source url="https://www.reuters.com/business">Reuters</source>
+          </item></channel></rss>"#;
+        let observed=parse(rss,"EU procurement search");
+        assert_eq!(observed.len(),1);
+        assert_eq!(observed[0]["publisherName"],"Reuters");
+        assert_eq!(observed[0]["publisherDomain"],"reuters.com");
+        assert_ne!(observed[0]["storyClusterId"],"");
+        let without=r#"<rss><item><title>Technology procurement announcement</title>
+          <link>https://news.google.com/rss/articles/unknown</link></item></rss>"#;
+        assert_eq!(parse(without,"Feed mirror")[0]["publisherDomain"],"");
+    }
+
+    #[test] fn recent_identical_headline_does_not_mask_a_new_source_url(){
+        let previous=vec![json!({"title":"Korean service request",
+            "url":"https://one.example/item"})];
+        let current=vec![json!({"title":"Korean service request",
+            "url":"https://other.example/item"})];
+        let (observations,duplicates)=preserve_observations(current,&previous);
+        assert_eq!(duplicates,0);
+        assert_eq!(observations.len(),1);
+        assert_eq!(observations[0]["independentConfirmation"],false);
     }
     #[test] fn fetched_sources_are_skipped_but_headlines_can_be_enriched(){
         let item=json!({"url":"https://example.org/story"});
