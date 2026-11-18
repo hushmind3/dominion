@@ -158,8 +158,24 @@ impl Assembler {
         }
         for choice in event["choices"].as_array().into_iter().flatten(){
             if choice["index"].as_u64().unwrap_or(0)!=0 {continue;}
-            if let Some(reason)=choice["finish_reason"].as_str(){
-                if self.chat_finish.is_some(){return Err("Duplicate Chat finish event".into());}
+            // OpenAI-compatible gateways can repeat the same terminal
+            // marker before [DONE] (often alongside the final usage packet).
+            // Treat only a NO-OP repetition as idempotent; never accept a
+            // conflicting stop reason or new text/tool bytes after finishing.
+            let reason=choice["finish_reason"].as_str();
+            if let Some(previous)=self.chat_finish.as_deref(){
+                if let Some(next)=reason {
+                    if next!=previous {
+                        return Err(format!("Conflicting Chat finish events: {previous} then {next}"));
+                    }
+                }
+                if choice["delta"]["content"].as_str().is_some_and(|content|!content.is_empty())
+                    || choice["delta"]["tool_calls"].as_array().is_some_and(|tools|!tools.is_empty()) {
+                    return Err("Chat delivered content or tool arguments after finish event".into());
+                }
+                continue;
+            }
+            if let Some(reason)=reason {
                 match reason {
                     "stop"|"tool_calls"=>{
                         self.chat_finish=Some(reason.into());
@@ -388,6 +404,89 @@ mod tests {
     use super::*;
     fn encode(value:Value)->Vec<u8> {
         format!("data: {}\r\n\r\n",value).into_bytes()
+    }
+    #[test]
+    fn native_chat_duplicate_finish_is_idempotent_until_done_and_preserves_usage() {
+        // Cloudflare/OpenAI-compatible streams may send a repeated stop or
+        // tool_calls marker before the final usage-only SSE and [DONE].
+        for reason in ["stop","tool_calls"] {
+            let mut a=Assembler::new(Wire::Chat);
+            if reason=="tool_calls" {
+                a.feed(Packet::Data(json!({"choices":[{"index":0,
+                    "delta":{"tool_calls":[{"index":0,"id":"tool-1",
+                        "function":{"name":"workspace_read",
+                            "arguments":"{\\\"path\\\":\\\"a.txt\\\"}"}}]}}]}))).unwrap();
+            }else{
+                a.feed(Packet::Data(json!({"choices":[{"index":0,
+                    "delta":{"content":"BENCH_OK"}}]}))).unwrap();
+            }
+            let terminal=json!({"choices":[{"index":0,"delta":{},
+                "finish_reason":reason}]});
+            let first=a.feed(Packet::Data(terminal.clone())).unwrap();
+            let again=a.feed(Packet::Data(terminal)).unwrap();
+            assert!(again.is_empty(),"duplicate terminal must not emit extra tool/text updates");
+            if reason=="tool_calls" {
+                assert_eq!(first.iter().filter(|u|matches!(u,Update::ToolStarted{..})).count(),1);
+            }
+            a.feed(Packet::Data(json!({"choices":[{"index":0,"delta":{},
+                "finish_reason":reason}],"usage":{"prompt_tokens":35,
+                    "completion_tokens":8,
+                    "prompt_tokens_details":{"cached_tokens":21}}}))).unwrap();
+            a.feed(Packet::Data(json!({"choices":[],"usage":{
+                "prompt_tokens":35,"completion_tokens":8}}))).unwrap();
+            // Completion is gated by the real [DONE] packet (checked below).
+            a.feed(Packet::Done).unwrap();
+            let result=a.finish().unwrap();
+            assert_eq!(result["usage"]["prompt_tokens"],35);
+            assert_eq!(result["usage"]["completion_tokens"],8);
+            assert_eq!(result["usage"]["prompt_tokens_details"]["cached_tokens"],21);
+            assert_eq!(result["choices"][0]["finish_reason"],reason);
+            if reason=="stop" {
+                assert_eq!(result["choices"][0]["message"]["content"],"BENCH_OK");
+            }else{
+                assert_eq!(result["choices"][0]["message"]["tool_calls"][0]["id"],"tool-1");
+            }
+        }
+    }
+    #[test]
+    fn native_chat_rejects_changed_finish_and_post_finish_mutation() {
+        for later in [
+            json!({"choices":[{"finish_reason":"tool_calls","delta":{}}]}),
+            json!({"choices":[{"delta":{"content":"additional text"}}]}),
+            json!({"choices":[{"delta":{"tool_calls":[{"index":0,
+                "function":{"arguments":"{}"}}]}}]}),
+        ] {
+            let mut a=Assembler::new(Wire::Chat);
+            a.feed(Packet::Data(json!({"choices":[{"finish_reason":"stop",
+                "delta":{}}]}))).unwrap();
+            assert!(a.feed(Packet::Data(later)).is_err(),
+                "a changed stop reason or trailing content must not be accepted");
+        }
+    }
+    #[test]
+    fn native_chat_duplicate_terminals_over_fragmented_sse_do_not_duplicate_content() {
+        let mut wire=Vec::new();
+        for item in [
+            json!({"choices":[{"index":0,"delta":{"content":"한글 BENCH_OK"}}]}),
+            json!({"choices":[{"index":0,"finish_reason":"stop","delta":{}}]}),
+            json!({"choices":[{"index":0,"finish_reason":"stop","delta":{}}]}),
+            json!({"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":5}}),
+        ]{wire.extend(encode(item));}
+        wire.extend(b"data: [DONE]\\r\\n\\r\\n");
+        let mut decoder=SseDecoder::default();
+        let mut assembler=Assembler::new(Wire::Chat);
+        let mut seen=String::new();
+        for part in wire.chunks(3){
+            for packet in decoder.push(part).unwrap(){
+                for update in assembler.feed(packet).unwrap(){
+                    if let Update::Text(delta)=update {seen.push_str(&delta)}
+                }
+            }
+        }
+        decoder.end().unwrap();
+        let result=assembler.finish().unwrap();
+        assert_eq!(seen,"한글 BENCH_OK");
+        assert_eq!(result["choices"][0]["message"]["content"],"한글 BENCH_OK");
     }
     #[test]
     fn native_sse_preserves_reported_cache_tokens_from_chat_and_anthropic() {
