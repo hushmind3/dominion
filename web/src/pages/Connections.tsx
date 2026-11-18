@@ -78,11 +78,12 @@ export function ConnectionsPage(){
   }catch(e){setOauthError((e as Error).message)}finally{setOauthSaving(false)}
  }
  const tabs=[{id:'channels',label:t('conn.tab.channels'),icon:RadioTower},{id:'quick-connect',label:t('conn.tab.quickConnect'),icon:Link2},{id:'accounts',label:t('conn.tab.accounts'),icon:KeyRound},{id:'market',label:'MCP 마켓',icon:Blocks},{id:'installed',label:t('ext.tab.installed'),icon:Server},{id:'skills',label:t('ext.tab.skills'),icon:BookOpenText},{id:'plugins',label:t('ext.tab.plugins'),icon:PackagePlus},{id:'capabilities',label:'역량 마켓',icon:Sparkles}] as const
+ const pageHeader=<div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><h1 className="m-0 text-[19px] font-bold text-[#24211D]">{t('conn.title')}</h1><p className="mt-1 text-[12px] text-[#7C7469]">{t('conn.description')}</p></div>{section==='channels'&&<Button type="button" variant="secondary" onClick={()=>{void registry.reload();void channels.reload()}}><Activity size={15}/> {t('conn.refresh')}</Button>}</div>
  const sectionTabs=<nav className="connection-tabs" aria-label="연결 및 확장 기능">{tabs.map(({id,label,icon:Icon})=><Button key={id} variant="bare" aria-current={section===id?'page':undefined} onClick={()=>setSection(id)}><Icon size={15}/>{label}</Button>)}</nav>
- if(section!=='channels'&&section!=='accounts'&&section!=='quick-connect')return <div className="mx-auto w-full max-w-[1320px] px-4 py-3 sm:px-6">{sectionTabs}{section==='capabilities'?<CapabilitiesPage navigate={page=>setSection(page==='extensions'?'market':'channels')}/>:<ExtensionsPage section={section} embedded/>}</div>
+ if(section!=='channels'&&section!=='accounts'&&section!=='quick-connect')return <div className="mx-auto w-full max-w-[1320px] px-4 py-3 sm:px-6">{pageHeader}{sectionTabs}{section==='capabilities'?<CapabilitiesPage navigate={page=>setSection(page==='extensions'?'market':'channels')}/>:<ExtensionsPage section={section} embedded/>}</div>
  return <div className="mx-auto w-full max-w-[1320px] px-4 py-3 sm:px-6">
+  {pageHeader}
   {sectionTabs}
-  <Headline eyebrow={t('ui.eyebrow.connections')} title={t('conn.title')} description={t('conn.description')} actions={<Action variant="secondary" onClick={()=>{void registry.reload();void channels.reload()}}><Activity size={16}/> {t('conn.refresh')}</Action>}/>
   {section==='quick-connect'&&<ConnectedAccounts/>}
   {section==='channels'&&<>
   <div className="mb-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
