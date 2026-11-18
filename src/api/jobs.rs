@@ -24,6 +24,22 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
                 };
                 value["workspaceDir"]=json!(selected.to_string_lossy().to_string());
             }
+            // Public owner-supplied frozen criteria are validated and copied;
+            // runtime-only receipt/baseline fields from the caller are never
+            // trusted. The native harness stamps current pre-edit baselines.
+            if let Some(criteria)=input.get("successCriteria"){
+                if let Err(message)=engine::verification::validate_criteria(criteria){
+                    return error(StatusCode::BAD_REQUEST,&message);
+                }
+                let sanitized=criteria.as_array().unwrap().iter().map(|entry|{
+                    let mut clean=json!({"type":entry["type"]});
+                    for key in ["path","contains","content","tool","command"]{
+                        if let Some(text)=entry[key].as_str(){clean[key]=json!(text);}
+                    }
+                    clean
+                }).collect::<Vec<_>>();
+                value["successCriteria"]=json!(sanitized);
+            }
             if let Some(command)=input.get("verifyCommand"){
                 let Some(command)=command.as_str().filter(|command|command.len()<=2048)else{
                     return error(StatusCode::BAD_REQUEST,"검증 명령은 최대 2048자 문자열입니다.");
