@@ -183,6 +183,9 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_operation_session
                  ON records(json_extract(data,'$.sessionId'))
                  WHERE kind='execution_operation';
+             CREATE INDEX IF NOT EXISTS idx_algorithm_kind
+                 ON records(json_extract(data,'$.kind'))
+                 WHERE kind='algorithm';
              CREATE INDEX IF NOT EXISTS idx_execution_task
                  ON records(json_extract(data,'$.taskId'))
                  WHERE kind='execution';",
@@ -225,6 +228,21 @@ impl Store {
             Err(_) => return Vec::new(),
         };
         rows.filter_map(|row| row.ok()).collect()
+    }
+
+    /// Hot-path domain-scoped algorithm lookup. Historical statistics and
+    /// unrelated kinds are not deserialized for every agent/tool decision.
+    /// The partial expression index preserves existing JSON record schema.
+    pub fn algorithms_for_kind(&self, kind: &str) -> Result<Vec<Value>, String> {
+        let conn=self.conn.lock().map_err(|error|error.to_string())?;
+        let mut statement=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='algorithm' AND json_extract(data,'$.kind')=?1
+             ORDER BY id",
+        ).map_err(|error|error.to_string())?;
+        let rows=statement.query_map([kind],record_from_row)
+            .map_err(|error|error.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|error|error.to_string())
     }
 
     /// Queue worker read: the indexed active subset, not every historical
@@ -1986,6 +2004,33 @@ mod tests {
                   AND json_extract(detail,'$.sessionId')='money-s'",
             [],|row|row.get(3)).unwrap();
         assert!(plan.contains("idx_audit_usage_session"),"{plan}");
+    }
+
+    #[test]
+    fn algorithm_kind_query_is_indexed_and_excludes_unrelated_live_policies(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        for (id,kind,status) in [
+            ("policy-a","memory.importance","active"),
+            ("policy-b","strategy.selection","active"),
+            ("policy-c","memory.importance","disabled"),
+        ] {
+            store.put("algorithm",&json!({
+                "id":id,"kind":kind,"status":status,
+                "implementation":"fixed",
+            })).unwrap();
+        }
+        let queried=store.algorithms_for_kind("memory.importance").unwrap();
+        assert_eq!(queried.len(),2);
+        assert!(queried.iter().all(|row|row["kind"]=="memory.importance"));
+        assert!(store.algorithms_for_kind("missing").unwrap().is_empty());
+        let conn=store.conn.lock().unwrap();
+        let plan:String=conn.query_row(
+            "EXPLAIN QUERY PLAN SELECT data FROM records
+             WHERE kind='algorithm'
+                AND json_extract(data,'$.kind')='memory.importance' ORDER BY id",
+            [],|row|row.get(3),
+        ).unwrap();
+        assert!(plan.contains("idx_algorithm_kind"),"{plan}");
     }
 
     #[test]
