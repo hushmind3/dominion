@@ -20,6 +20,16 @@ const MAX_CANDIDATES: usize=3;
 /// Expensive counterfactual work is an owner-selected capability, not the
 /// default execution loop. Reuses the existing algorithm/session policies;
 /// no new background worker or runtime state is created at startup.
+/// Choice of the heavier 2026 candidate comparison is independent of
+/// the default single-repair kernel. An owner can opt into contrastive
+/// probes without opting into local-file sandbox execution.
+pub(super) fn contrastive_enabled(state:&AppState,session:&Value)->bool{
+    enabled(state,session)
+        || session["sdkUiPolicy"]["contrastiveRepair"]==true
+        || crate::engine::algorithms::active(state,"program.repair")
+            .as_ref().is_some_and(|algorithm|
+                algorithm["parameters"]["contrastiveRepair"]==true)
+}
 pub(super) fn enabled(state:&AppState,session:&Value)->bool{
     if std::env::var("DOMINION_BENCHMARK").as_deref()==Ok("1")
         && crate::engine::policy::active(state,"execution").as_ref()
@@ -555,6 +565,10 @@ mod tests{
         let state=AppState::new(config.clone(),
             crate::db::Store::open(&config.db_path()).unwrap(),
             crate::vault::Vault::open(&config.key_path()));
+        assert!(!contrastive_enabled(&state,&json!({"id":"session-1"})));
+        assert!(contrastive_enabled(&state,&json!({"sdkUiPolicy":{"contrastiveRepair":true}})));
+        assert!(!enabled(&state,&json!({"sdkUiPolicy":{"contrastiveRepair":true}})));
+        assert!(contrastive_enabled(&state,&json!({"sdkUiPolicy":{"candidateRollout":true}})));
         assert!(!enabled(&state,&json!({"id":"session-1"})));
         assert!(enabled(&state,&json!({"id":"session-2",
             "sdkUiPolicy":{"candidateRollout":true}})));
