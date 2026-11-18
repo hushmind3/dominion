@@ -1494,80 +1494,179 @@ pub fn remove_installed(state: &AppState, id: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+fn windows_physical_memory() -> (u64, u64) {
+    #[repr(C)]
+    struct MemoryStatusEx {
+        length: u32,
+        memory_load: u32,
+        total_phys: u64,
+        avail_phys: u64,
+        total_page_file: u64,
+        avail_page_file: u64,
+        total_virtual: u64,
+        avail_virtual: u64,
+        avail_extended_virtual: u64,
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GlobalMemoryStatusEx(buffer: *mut MemoryStatusEx) -> i32;
+    }
+    let mut status = MemoryStatusEx {
+        length: std::mem::size_of::<MemoryStatusEx>() as u32,
+        memory_load: 0,
+        total_phys: 0,
+        avail_phys: 0,
+        total_page_file: 0,
+        avail_page_file: 0,
+        total_virtual: 0,
+        avail_virtual: 0,
+        avail_extended_virtual: 0,
+    };
+    if unsafe { GlobalMemoryStatusEx(&mut status) } != 0 {
+        (status.total_phys, status.avail_phys)
+    } else {
+        (0, 0)
+    }
+}
+
+fn meminfo_bytes(contents: &str, name: &str) -> u64 {
+    contents.lines().find_map(|line| {
+        line.strip_prefix(name)?.split_whitespace().next()?
+            .parse::<u64>().ok().map(|kb| kb.saturating_mul(1024))
+    }).unwrap_or(0)
+}
+
 fn total_memory() -> u64 {
-    // Cheapest portable-enough source; unknown stays 0 rather than guessing.
+    #[cfg(target_os = "windows")]
+    { return windows_physical_memory().0; }
     #[cfg(target_os = "macos")]
     {
         if let Ok(output) = std::process::Command::new("sysctl")
-            .args(["-n", "hw.memsize"])
-            .output()
+            .args(["-n", "hw.memsize"]).output()
         {
             if let Ok(text) = String::from_utf8(output.stdout) {
-                if let Ok(value) = text.trim().parse::<u64>() {
-                    return value;
-                }
+                if let Ok(value) = text.trim().parse::<u64>() { return value; }
             }
         }
     }
     #[cfg(target_os = "linux")]
     {
         if let Ok(text) = std::fs::read_to_string("/proc/meminfo") {
-            for line in text.lines() {
-                if let Some(rest) = line.strip_prefix("MemTotal:") {
-                    if let Some(kb) = rest
-                        .split_whitespace()
-                        .next()
-                        .and_then(|v| v.parse::<u64>().ok())
-                    {
-                        return kb * 1024;
+            return meminfo_bytes(&text, "MemTotal:");
+        }
+    }
+    0
+}
+
+fn available_memory() -> u64 {
+    #[cfg(target_os = "windows")]
+    { return windows_physical_memory().1; }
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(text) = std::fs::read_to_string("/proc/meminfo") {
+            return meminfo_bytes(&text, "MemAvailable:");
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = std::process::Command::new("vm_stat").output() {
+            if output.status.success() {
+                let text = String::from_utf8_lossy(&output.stdout);
+                let page_size = text.split("page size of").nth(1)
+                    .and_then(|tail| tail.split_whitespace().next())
+                    .and_then(|number| number.parse::<u64>().ok())
+                    .unwrap_or(4096);
+                let mut pages = 0u64;
+                for name in ["Pages free:", "Pages inactive:", "Pages speculative:"] {
+                    if let Some(line) = text.lines().find(|line| line.trim_start().starts_with(name)) {
+                        let value = line.trim().trim_start_matches(name).trim()
+                            .trim_end_matches('.').parse::<u64>().unwrap_or(0);
+                        pages = pages.saturating_add(value);
                     }
                 }
+                return pages.saturating_mul(page_size);
             }
         }
     }
     0
 }
 
+// Discrete NVIDIA VRAM only. Apple MLX/Metal shares system memory and must not
+// add a synthetic GPU budget to the system RAM estimate.
+fn gpu_memory_snapshot() -> Value {
+    #[cfg(target_os = "macos")]
+    { return Value::Null; }
+    #[cfg(not(target_os = "macos"))]
+    {
+        static CACHE: OnceLock<Mutex<(std::time::Instant, Value)>> = OnceLock::new();
+        let cache = CACHE.get_or_init(|| Mutex::new((
+            std::time::Instant::now() - Duration::from_secs(60), Value::Null
+        )));
+        let Ok(mut cache) = cache.lock() else { return Value::Null };
+        if cache.0.elapsed() < Duration::from_secs(30) { return cache.1.clone(); }
+        let value = std::process::Command::new("nvidia-smi")
+            .args(["--query-gpu=memory.free,name", "--format=csv,noheader,nounits"])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| {
+                let text = String::from_utf8_lossy(&output.stdout);
+                text.lines().filter_map(|line| {
+                    let (mb, name) = line.split_once(',')?;
+                    let free = mb.trim().parse::<u64>().ok()?.saturating_mul(1024 * 1024);
+                    (free > 0).then(|| (free, name.trim().to_string()))
+                }).max_by_key(|(free, _)| *free)
+            })
+            .flatten()
+            .map(|(free, name)| json!({"kind":format!("NVIDIA CUDA · {name}"), "free":free}))
+            .unwrap_or(Value::Null);
+        *cache = (std::time::Instant::now(), value.clone());
+        value
+    }
+}
+
 pub fn runtime_snapshot(state: &AppState) -> Value {
-    let mut guard = runtime().lock().unwrap();
-    if let Some(child) = guard.child.as_mut() {
-        match child.try_wait() {
-            Ok(Some(status)) => {
+    let (status, id, name, engine, backend, error, logs) = {
+        let mut guard = runtime().lock().unwrap();
+        if let Some(child) = guard.child.as_mut() {
+            if let Ok(Some(exit)) = child.try_wait() {
                 guard.status = "error".into();
-                guard.error = format!("{} 종료 (exit {status})", guard.engine);
+                guard.error = format!("{} 종료 (exit {exit})", guard.engine);
                 guard.child = None;
             }
-            _ => {}
         }
-    }
-    let logs = guard
-        .logs
-        .iter()
-        .rev()
-        .take(20)
-        .cloned()
-        .collect::<Vec<_>>();
+        (
+            guard.status.clone(), guard.id.clone(), guard.name.clone(),
+            guard.engine.clone(), guard.backend.clone(), guard.error.clone(),
+            guard.logs.iter().rev().take(20).cloned().collect::<Vec<_>>(),
+        )
+    };
+    // Hardware probes can spawn tools: do not hold the runtime lock while probing.
+    let free_memory = available_memory();
+    let total_memory = total_memory();
+    let gpu = gpu_memory_snapshot();
     json!({
-        "status": guard.status,
-        "id": guard.id,
-        "name": guard.name,
+        "status": status,
+        "id": id,
+        "name": name,
         "model": state.store.get("provider", PROVIDER_ID).and_then(|provider| provider["model"].as_str().map(str::to_owned)),
-        "engine": if guard.engine.is_empty() { "none" } else { guard.engine.as_str() },
-        "backend": guard.backend,
+        "engine": if engine.is_empty() { "none".to_string() } else { engine },
+        "backend": backend,
         "port": RUNTIME_PORT,
-        "error": guard.error,
+        "error": error,
         "logs": logs.into_iter().rev().collect::<Vec<_>>(),
         "setup": install_snapshot(),
         "capabilities": {
             "gguf": { "available": lms_bin().is_some() || llama_server_bin_for(state).is_some(), "backend": "llama.cpp", "installable": llama_installable(state), "path": llama_server_bin_for(state).map(|path| path.to_string_lossy().to_string()), "installMethod": if cfg!(target_os="macos") && brew_bin().is_some() { "homebrew" } else { "release" } },
             "mlx": mlx_runtime_snapshot(state),
             "memory": {
-                "total": total_memory(),
-                "free": 0,
+                "total": total_memory,
+                "free": free_memory,
                 "platform": std::env::consts::OS,
                 "arch": std::env::consts::ARCH,
             },
-            "gpu": null,
+            "gpu": gpu,
         }
     })
 }
@@ -1970,13 +2069,15 @@ fn push_log(line: String) {
     }
 }
 
-pub fn mark_load_failure(state: &AppState, message: &str) {
-    if runtime().lock().unwrap().status == "loading" {
-        unload(state);
-        let mut guard = runtime().lock().unwrap();
-        guard.status = "error".into();
-        guard.error = message.into();
-    }
+pub fn mark_load_failure(state: &AppState, id: &str, message: &str) {
+    if runtime().lock().unwrap().status == "loading" { unload(state); }
+    let mut guard = runtime().lock().unwrap();
+    // An early validation error must not discard an already running model.
+    if guard.status == "ready" { return; }
+    guard.status = "error".into();
+    guard.id = id.to_string();
+    guard.name = id.to_string();
+    guard.error = message.into();
 }
 
 pub fn unload(state: &AppState) -> Value {
