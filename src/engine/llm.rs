@@ -25,17 +25,23 @@ async fn try_complete(
             crate::engine::execution_budget::prepare_call(state,session,&route.id,&route.model,route.local,
                 crate::engine::chat::estimate_text_tokens(&format!("{system}{prompt}")),8192)?
         }else{(None,8192)};
+        let receipt=receipts::begin(state,execution,&invocation,0,&route.id,&route.model)?;
         let generated=crate::engine::cli_model::generate(source,&route.model,&[
             json!({"role":"system","content":system}),
             json!({"role":"user","content":prompt})
         ]).await;
         let text=match generated{Ok(text)=>text,Err(error)=>{
+            receipts::finish(state,receipt.as_deref(),"failed",gateway::Usage::default(),
+                false,Some(&error));
             crate::engine::execution_budget::finish_call(budget_call,false,Some(&error))?;return Err(error);
         }};
         let prompt_tokens=crate::engine::chat::estimate_text_tokens(&format!("{system}{prompt}"));
         let output_tokens=text.len().div_ceil(4) as u64;
         gateway::record_usage_tokens(state,&route.id,&route.model,false,"helper",session_id,
             prompt_tokens,output_tokens,prompt_tokens+output_tokens,true);
+        receipts::finish(state,receipt.as_deref(),"completed",gateway::Usage{
+            prompt_tokens,completion_tokens:output_tokens,total_tokens:prompt_tokens+output_tokens,
+        },true,None);
         crate::engine::execution_budget::finish_call(budget_call,true,None)?;
         return Ok(text);
     }
@@ -65,18 +71,25 @@ async fn try_complete(
                 crate::engine::chat::estimate_text_tokens(&format!("{system}{prompt}")),max_tokens)?
         }else{(None,max_tokens)};
         body["max_tokens"]=json!(output);
+        let receipt=receipts::begin(state,execution,&invocation,attempt,&route.id,&route.model)?;
         let sent=gateway::send(&route,&client,&body,Duration::from_secs(240)).await;
         let response=match sent {Ok(response)=>response,Err(error)=>{
+            receipts::finish(state,receipt.as_deref(),"failed",gateway::Usage::default(),
+                false,Some(&error));
             crate::engine::execution_budget::finish_call(budget_call,false,Some(&error))?;return Err(error);
         }};
         let response = response.response;
         if !response.status().is_success() {
             let error=format!("모델 호출 실패: HTTP {}",response.status());
+            receipts::finish(state,receipt.as_deref(),"failed",gateway::Usage::default(),
+                false,Some(&error));
             crate::engine::execution_budget::finish_call(budget_call,false,Some(&error))?;
             return Err(error);
         }
         let value:Value=match response.json().await {
             Ok(value)=>value,Err(error)=>{
+                receipts::finish(state,receipt.as_deref(),"failed",gateway::Usage::default(),
+                    false,Some(&error.to_string()));
                 if let Some(call)=budget_call{call.completed_without_usage()?;}
                 return Err(error.to_string());
             }
@@ -86,7 +99,13 @@ async fn try_complete(
             let input=crate::engine::chat::estimate_text_tokens(&format!("{system}{prompt}"));
             let output=value["choices"][0]["message"]["content"].as_str().unwrap_or("").len().div_ceil(4) as u64;
             gateway::record_usage_tokens(state,&route.id,&route.model,route.local,"helper",session_id,input,output,input+output,true);
-        }else{gateway::record_usage(state,&route,usage,"helper",session_id);}
+            receipts::finish(state,receipt.as_deref(),"completed",gateway::Usage{
+                prompt_tokens:input,completion_tokens:output,total_tokens:input+output,
+            },true,None);
+        }else{
+            gateway::record_usage(state,&route,usage,"helper",session_id);
+            receipts::finish(state,receipt.as_deref(),"completed",usage,false,None);
+        }
         crate::engine::execution_budget::finish_call(budget_call,true,None)?;
         let choice = value
             .get("choices")
