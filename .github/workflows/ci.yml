@@ -66,6 +66,8 @@ jobs:
           cargo test --lib engine::chat::runtime::candidate_rollout::tests
           # One native owner, optional external CLI adapter; no bundled runtime.
           cargo test --lib engine::tools::external_harness::tests
+          cargo test --lib engine::tools::tests::native_runner_handles_stdin_and_bounds_stalled_input
+          cargo test --lib engine::chat::runtime::harness_tool_selection_tests::external_harness_is_reachable_only_when_delegation_is_in_core
           cargo test --lib engine::resource_lock::tests
           cargo test --lib engine::effect::tests::external_harness_is_always_effectful
           cargo test --lib engine::chat::runtime::program::repair_completion_tests
