@@ -583,6 +583,29 @@ impl Store {
                 "INSERT OR IGNORE INTO records(kind,id,data) VALUES('money_event',?1,?2)",
                 params![id,event.to_string()]).map_err(|e|e.to_string())?;
             added+=written;
+            if written==0 {
+                // The event already exists. Backfill *attribution only* after
+                // a later publisher lookup; do not reset paired/evaluated
+                // status, duplicate the event, or erase the original quote.
+                let raw:Option<String>=tx.query_row(
+                    "SELECT data FROM records WHERE kind='money_event' AND id=?1",
+                    [id],|row|row.get(0)).optional().map_err(|e|e.to_string())?;
+                if let Some(raw)=raw{
+                    let mut stored:Value=serde_json::from_str(&raw)
+                        .map_err(|e|e.to_string())?;
+                    let mut corrected=false;
+                    for key in ["publisherName","publisherDomain","storyClusterId",
+                        "storyRelationship"]{
+                        let absent=stored[key].as_str().is_none_or(str::is_empty);
+                        let new=event[key].as_str().is_some_and(|text|!text.is_empty());
+                        if absent && new {
+                            stored[key]=event[key].clone();
+                            corrected=true;
+                        }
+                    }
+                    if corrected {upsert_tx(&tx,"money_event",&stored)?;}
+                }
+            }
         }
         for id in sources{
             let source:Option<String>=tx.query_row(
@@ -1145,6 +1168,32 @@ mod dashboard_stats_tests {
         assert_eq!(store.money_ingest_signals(&[third]).unwrap(),0);
         let final_record=store.get("money_signal","same-article").unwrap();
         assert_eq!(final_record["observedFeeds"].as_array().unwrap().len(),4);
+    }
+
+    #[test]
+    fn folded_event_attribution_backfill_preserves_prior_decision_and_event_id(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        store.money_ingest_signals(&[json!({
+            "id":"legacy-source","url":"https://news.google.com/rss/articles/one",
+            "title":"2026 Robot buyer request","description":"Original source",
+            "sourceName":"Legacy RSS","articleExcerpt":""
+        })]).unwrap();
+        let original=json!({"id":"event:legacy-source:buyer_request",
+            "sourceId":"legacy-source","status":"paired",
+            "title":"Original event text","publisherDomain":""});
+        let ids=vec!["legacy-source".to_string()];
+        assert_eq!(store.money_fold_sources(&ids,&[original]).unwrap(),1);
+        let updated=json!({"id":"event:legacy-source:buyer_request",
+            "sourceId":"legacy-source","status":"new",
+            "title":"Newer text must not replace the old quote",
+            "publisherDomain":"reuters.com","publisherName":"Reuters",
+            "storyClusterId":"cluster-1"});
+        assert_eq!(store.money_fold_sources(&ids,&[updated]).unwrap(),0);
+        let saved=store.get("money_event","event:legacy-source:buyer_request").unwrap();
+        assert_eq!(saved["status"],"paired");
+        assert_eq!(saved["title"],"Original event text");
+        assert_eq!(saved["publisherDomain"],"reuters.com");
+        assert_eq!(saved["storyClusterId"],"cluster-1");
     }
 
     #[test]
