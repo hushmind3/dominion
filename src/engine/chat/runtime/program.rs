@@ -1554,6 +1554,11 @@ pub(super) async fn propose_program_revision(
 pub(super) fn program_execution_settled(status:Option<&str>)->bool{
     matches!(status,Some("completed"|"needs_review"))
 }
+/// A review-required program may produce a final explanation but must not
+/// trigger another automatic model tool or mutation in the same turn.
+pub(super) fn program_blocks_followup_tools(status:Option<&str>)->bool{
+    status==Some("needs_review")
+}
 
 #[cfg(test)]
 mod review_settlement_tests {
@@ -1565,6 +1570,10 @@ mod review_settlement_tests {
         assert!(!program_execution_settled(Some("paused")));
         assert!(!program_execution_settled(Some("running")));
         assert!(!program_execution_settled(None));
+        assert!(program_blocks_followup_tools(Some("needs_review")));
+        for status in [None,Some("paused"),Some("running"),Some("completed")] {
+            assert!(!program_blocks_followup_tools(status));
+        }
     }
 }
 
