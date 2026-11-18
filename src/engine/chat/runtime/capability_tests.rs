@@ -92,12 +92,39 @@ async fn discovery_rejects_foreign_execution_and_read_only_mutations(){
     })).unwrap();
     assert!(capability::search(&state,"search-owner","other-run",
         &json!({"query":"workspace_read"})).await.is_err());
-    let results=capability::search(&state,"search-owner","search-run",
-        &json!({"query":"workspace_write read","limit":8}))
-        .await.expect("read-only discovery");
+    let (tx,_rx)=tokio::sync::mpsc::unbounded_channel();
+    let metrics=std::sync::Mutex::new(Metrics::default());
+    let request=TurnRequest::from_value(&json!({
+        "input":"Find a read-only tool",
+        "sessionId":"search-owner","toolsEnabled":true,
+        "toolsExecutionEnabled":true
+    })).unwrap();
+    let args=json!({"query":"workspace_write read","limit":8});
+    let call=ToolCall{id:"safe-search".into(),
+        name:capability::SEARCH.into(),arguments:args.to_string()};
+    // This must traverse the actual dispatcher, which checks the same
+    // read-only admission policy as an ordinary subagent tool.
+    let (results,ok,_)=dispatch_tool_call(
+        &state,&tx,&json!({"id":"search-owner"}),&request,
+        "search-owner","search-run",&call,args,&metrics,
+        1,0,0,false,"model",None,None,None,
+    ).await.expect("read-only discovery through native gate");
+    assert!(ok,"{results}");
     assert!(results["matches"].as_array().unwrap().iter().all(|result|
         result["name"]!="workspace_write"
         && result["name"]!="shell_exec"),"{results}");
+
+    let target=root.join("must-not-write.txt");
+    let write_args=json!({"path":"must-not-write.txt","content":"unsafe"});
+    let write=ToolCall{id:"unsafe-write".into(),
+        name:"workspace_write".into(),arguments:write_args.to_string()};
+    let (denied,allowed,_)=dispatch_tool_call(
+        &state,&tx,&json!({"id":"search-owner"}),&request,
+        "search-owner","search-run",&write,write_args,&metrics,
+        2,0,1,false,"model",None,None,None,
+    ).await.expect("native read-only rejection receipt");
+    assert!(!allowed,"{denied}");
+    assert!(!target.exists());
     assert!(capability::search(&state,"search-owner","search-run",
         &json!({"query":"", "limit":9})).await.is_err());
     let _=std::fs::remove_dir_all(root);
