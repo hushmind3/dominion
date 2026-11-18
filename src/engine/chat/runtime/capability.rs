@@ -123,6 +123,27 @@ pub(super) async fn search(
     }))
 }
 
+/// Admission for every provider-authored tool call. The model cannot
+/// synthesize a previously hidden native name to bypass progressive search.
+/// Bridge calls are re-bound to their underlying real tool while preserving
+/// the original provider call ID and message/receipt chain.
+pub(super) async fn bind_model_call(
+    state:&AppState,session_id:&str,execution_id:&str,
+    offered:&HashSet<String>,call:&mut ToolCall
+)->Result<(),String>{
+    if !offered.contains(&call.name){
+        return Err(format!("The tool '{}' was not offered in this model round. Discover it using dominion_tool_search.",call.name));
+    }
+    if call.name==CALL {
+        let payload=serde_json::from_str::<Value>(&call.arguments)
+            .map_err(|error|format!("Invalid discovery arguments: {error}"))?;
+        let (real_name,real_arguments)=resolve(state,session_id,execution_id,&payload).await?;
+        call.name=real_name;
+        call.arguments=real_arguments.to_string();
+    }
+    Ok(())
+}
+
 pub(super) async fn resolve(
     state:&AppState,session_id:&str,execution_id:&str,args:&Value
 )->Result<(String,Value),String>{
@@ -252,6 +273,31 @@ mod tests {
         assert!(resolve(&state,"owner","run",&json!({
             "name":"workspace_read","arguments":{"path":"README.md"}
         })).await.is_err());
+        drop(state);
+        let _=std::fs::remove_dir_all(root);
+    }
+    #[tokio::test]
+    async fn unseen_provider_tool_name_must_not_bypass_search_receipt(){
+        let (state,root)=state();
+        state.store.put("session",&json!({"id":"owner"})).unwrap();
+        state.store.put("execution",&json!({"id":"run","sessionId":"owner","status":"running"})).unwrap();
+        let offered=HashSet::from([SEARCH.to_string(),CALL.to_string()]);
+        let mut injected=ToolCall{id:"call-injected".into(),name:"workspace_write".into(),
+            arguments:json!({"path":"file.txt","content":"oops"}).to_string()};
+        assert!(bind_model_call(&state,"owner","run",&offered,&mut injected).await.is_err());
+        assert_eq!(injected.name,"workspace_write");
+        let mut bridge=ToolCall{id:"call-bridge".into(),name:CALL.into(),
+            arguments:json!({"name":"workspace_read","arguments":{"path":"file.txt"}}).to_string()};
+        assert!(bind_model_call(&state,"owner","run",&offered,&mut bridge).await.is_err());
+        let matches=search(&state,"owner",&json!({"query":"workspace read","limit":8})).await.unwrap();
+        state.store.put("execution_operation",&json!({
+            "id":"searched","runId":"run","sessionId":"owner","origin":"model",
+            "status":"completed","tool":SEARCH,"result":matches
+        })).unwrap();
+        assert!(bind_model_call(&state,"owner","run",&offered,&mut bridge).await.is_ok());
+        assert_eq!(bridge.name,"workspace_read");
+        assert_eq!(bridge.id,"call-bridge");
+        assert_eq!(serde_json::from_str::<Value>(&bridge.arguments).unwrap()["path"],"file.txt");
         drop(state);
         let _=std::fs::remove_dir_all(root);
     }
