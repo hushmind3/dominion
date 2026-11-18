@@ -203,17 +203,42 @@ impl Dominion {
     pub fn verify(&self,instruction:&str,checks:&Value,evidence:&[Value])->Vec<String>{
         engine::verification::check_acceptance(&self.state,instruction,checks,evidence)
     }
-    /// Read durable state after process restart; never resend a side-effecting turn.
+    /// Observe durable job completion without polling SQLite every 150ms.
+    /// Subscribe before the initial read to avoid missing the write that
+    /// races subscription. A bounded fallback handles restart/lagged events
+    /// and external writers which mutate SQLite without this process's Bus.
     pub async fn wait(&self,id:&str,timeout:Duration)->Result<Value,String>{
         let began=tokio::time::Instant::now();
-        loop {
+        let mut events=self.state.bus.subscribe();
+        loop{
             let job=self.job(id).ok_or("unknown job")?;
             if matches!(job["status"].as_str(),
-                Some("completed"|"failed"|"cancelled"|"needs_review")){return Ok(job);}
+                Some("completed"|"failed"|"cancelled"|"needs_review")){
+                return Ok(job);
+            }
             if timeout!=Duration::ZERO&&began.elapsed()>=timeout{
                 return Err("job wait timed out; job remains persisted".into());
             }
-            tokio::time::sleep(Duration::from_millis(150)).await;
+            let interval=Duration::from_secs(2);
+            let interval=if timeout==Duration::ZERO {interval}
+                else{interval.min(timeout.saturating_sub(began.elapsed()))};
+            // Ignore events for other jobs instead of reading SQLite after
+            // every unrelated chat/token/progress event on this shared bus.
+            let changed=async{
+                loop{
+                    match events.recv().await{
+                        Ok(event) if event["kind"]=="job"
+                            && event["record"]["id"].as_str()==Some(id)=>break,
+                        Ok(_)=>continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>break,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed)=>{
+                            tokio::time::sleep(Duration::from_secs(2)).await;
+                            break;
+                        }
+                    }
+                }
+            };
+            let _=tokio::time::timeout(interval,changed).await;
         }
     }
 }
@@ -273,6 +298,28 @@ mod tests {
         assert_eq!(sdk.archived_media_job(id).unwrap()["generationAvailable"],false);
         drop(sdk);let _=std::fs::remove_dir_all(dir);
     }
+    #[tokio::test]
+    async fn native_wait_wakes_on_matching_durable_event_and_stops_polling_idle_jobs(){
+        let (sdk,dir)=sdk();
+        let job=sdk.submit(Prompt::new("Wait event driven")).unwrap();
+        let id=job["id"].as_str().unwrap().to_string();
+        let reader=sdk.clone();
+        let job_id=id.clone();
+        let pending=tokio::spawn(async move{
+            reader.wait(&job_id,Duration::from_secs(3)).await.unwrap()
+        });
+        tokio::task::yield_now().await;
+        let saved=sdk.state.store.patch_if("job",&id,"status",&json!("queued"),
+            &json!({"status":"completed","result":{"source":"native-test"}})).unwrap();
+        sdk.state.bus.record("job",&saved);
+        let finished=tokio::time::timeout(Duration::from_secs(1),pending)
+            .await.expect("job event should wake wait without polling")
+            .unwrap();
+        assert_eq!(finished["status"],"completed");
+        assert_eq!(finished["result"]["source"],"native-test");
+        drop(sdk);let _=std::fs::remove_dir_all(dir);
+    }
+
     #[tokio::test]
     async fn direct_native_preview_and_event_subscription(){
         let (sdk,dir)=sdk();
