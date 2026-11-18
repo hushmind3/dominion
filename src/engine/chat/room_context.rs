@@ -345,7 +345,13 @@ pub(crate) fn compile(
     let query = all[source]["content"].as_str().unwrap_or("");
     let (prompt, persona_tokens, mut items) = core(state, request, &room, query);
     let shared=crate::engine::room_state::conversation_context(state,&room,session_id,source_id,&all[..source]);
-    let shared_frame=json!({"role":"user","_dominion_frame":format!("room-shared:{source_id}"),"content":shared["text"]});
+    // Provider-visible state is an observation, not a new owner request.
+    // The durable room snapshot retains source and receipt IDs; the frame
+    // identity tracks exact visible text instead of the changing owner cursor.
+    let shared_text_digest=shared["textDigest"].as_str()
+        .map(str::to_string)
+        .unwrap_or_else(||memory::stable_id(&[shared["text"].as_str().unwrap_or("")]));
+    let shared_frame=json!({"role":"user","_dominion_frame":format!("room-shared:{shared_text_digest}"),"content":shared["text"]});
     let shared_tokens=estimate(&shared_frame.to_string());
     items.push(json!({"kind":"room_shared_context","digest":shared["digest"],"sourceMessageId":source_id}));
     let owner_state=crate::engine::room_state::context_snapshot_at(state,room_id,query,&all[..=source]).map(|(id,block)|{
@@ -634,6 +640,7 @@ pub(crate) fn compile(
         "targetInputTokens":target,"requiredInputTokens":required_tokens,"requiredOverBudget":required_tokens>target,
         "personaTokens":persona_tokens,"memoryTokens":memory_tokens,"ownerStateTokens":owner_state_tokens,
         "sharedStateTokens":shared_tokens,"sharedStateDigest":shared["digest"],
+        "sharedTextDigest":shared_text_digest,
         "historyTokens":estimate(&json!(history).to_string()).saturating_sub(memory_tokens+owner_state_tokens+shared_tokens),
         "systemTokens":estimate(&prompt).saturating_sub(persona_tokens),"toolSchemaTokens":schema_tokens,"totalInputTokens":input_estimate(&messages,tools),
         "previousSelfMessageId":previous_self.map(|index|all[index]["id"].clone()),
@@ -876,7 +883,7 @@ mod tests {
             for id in &ids {
                 let request=TurnRequest::from_value(&json!({"input":"project convention","agentId":id,"toolsEnabled":false})).unwrap();
                 let compiled=compile(&state,&request,"room:r",&current,&[],&[]).unwrap();
-                let frame=compiled.history.iter().find(|row|row["_dominion_frame"]==format!("room-shared:{current}")).unwrap();
+                let frame=compiled.history.iter().find(|row|row["_dominion_frame"]==format!("room-shared:{}",compiled.accounting["sharedTextDigest"].as_str().unwrap())).unwrap();
                 if let Some(prior)=&shared {assert_eq!(&frame["content"],prior);}
                 else {shared=Some(frame["content"].clone());}
                 assert!(frame["content"].as_str().unwrap().contains(&format!("{count}/{count}")));
