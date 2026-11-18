@@ -114,6 +114,10 @@ export function ModelExplorer({initialView='installed'}:{initialView?:'installed
  const readmePlain=detail?cleanMarkdown(detail.readme):''
  const readmeSummary=detail?(detail.description||readmePlain.slice(0,600)):''
  const option=detail?.options.find(o=>o.id===variant)
+ const availableMemory=runtime.capabilities?.memory.free||0
+ const totalMemory=runtime.capabilities?.memory.total||0
+ const memoryHeadroom=option?.bytes?Math.ceil(option.bytes*1.3):0
+ const memoryFit=availableMemory>0&&memoryHeadroom>0?(availableMemory>=memoryHeadroom?'comfortable':availableMemory>=option!.bytes?'tight':'insufficient'):'unknown'
  const selectedJob=jobs.filter(j=>j.repo===detail?.id&&j.optionId===option?.id&&(j.revision||'main')===(detail?.revision||'main')&&['resolving','downloading','paused','failed','cancelled','completed'].includes(j.status)).sort((a,b)=>(b.startedAt||'').localeCompare(a.startedAt||''))[0]
  const installedId=selectedJob?.installedId??
   (selectedJob?.status==='completed'?selectedJob.optionId.split('/').at(-1):undefined)
@@ -239,6 +243,11 @@ export function ModelExplorer({initialView='installed'}:{initialView?:'installed
       <div className="rounded-lg bg-[#FAF7F1] p-2.5"><div className="text-[10px] text-[#8A8176]">최소 다운로드 용량</div><strong className="text-[13px] text-[#3A342D]">{detail.options.some(o=>(format==='all'||o.format===format)&&o.bytes>0)?fmt(Math.min(...detail.options.filter(o=>(format==='all'||o.format===format)&&o.bytes>0).map(o=>o.bytes))):'정보 없음'}</strong></div>
       <div className="rounded-lg bg-[#FAF7F1] p-2.5"><div className="text-[10px] text-[#8A8176]">선택한 양자화</div><strong className="text-[13px] text-[#3A342D]">{option?.quantization||option?.format.toUpperCase()||'선택 전'}</strong></div>
       <div className="col-span-2 rounded-lg bg-[#FAF7F1] p-2.5 sm:col-span-1"><div className="text-[10px] text-[#8A8176]">선택한 용량</div><strong className="text-[13px] text-[#3A342D]">{option?fmt(option.bytes):'선택 전'}</strong></div>
+     </div>}
+     {option&&<div className="mt-2 rounded-xl border border-[#E7E0D5] bg-white p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2"><strong className="text-[12px] text-[#3A342D]">내 기기 메모리 적합도</strong><span className={'rounded-full px-2 py-1 text-[11px] font-semibold '+(memoryFit==='comfortable'?'bg-emerald-50 text-emerald-700':memoryFit==='tight'?'bg-amber-50 text-amber-700':memoryFit==='insufficient'?'bg-red-50 text-red-700':'bg-[#F3EEE5] text-[#7C7469]')}>{memoryFit==='comfortable'?'여유 있음':memoryFit==='tight'?'빠듯함':memoryFit==='insufficient'?'메모리 부족 가능':'정보 확인 중'}</span></div>
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-[#7C7469]"><span>사용 가능 메모리: {availableMemory?fmt(availableMemory):'정보 없음'}</span><span>전체 메모리: {totalMemory?fmt(totalMemory):'정보 없음'}</span><span>예상 필요 용량: {fmt(memoryHeadroom)}</span></div>
+      <p className="mt-2 text-[10px] leading-4 text-[#8A8176]">파일 크기의 약 1.3배를 기준으로 한 참고치입니다. 실제 메모리 사용량은 실행 엔진, 컨텍스트 길이, GPU 메모리 및 캐시에 따라 달라집니다.</p>
      </div>}
      <div className="mt-2 max-h-56 overflow-auto rounded-xl border border-[#E7E0D5]">{detail.options.filter(o=>format==='all'||o.format===format).map(o=><Button variant="bare" type="button" key={o.id} onClick={()=>setVariant(o.id)} className={'flex w-full items-center gap-3 border-b border-[#EFE9DF] px-3.5 py-3.5 text-left last:border-0 '+(variant===o.id?'bg-[#F7E8E1]':'hover:bg-[#FAF7F1]')}><span className="rounded bg-[#F3EEE5] px-2 py-1 text-[10px] font-semibold text-[#7C7469]">{o.format.toUpperCase()}</span><span className="min-w-0 flex-1 text-[13px] font-semibold text-[#3A342D]">{o.label}<span className="ml-2 text-[10px] font-normal text-[#8A8176]">{o.quantization&&o.quantization!==o.label?o.quantization:''}{o.shards>1?' · '+t('models.ui.shardFiles',{count:o.shards}):''}</span></span><span className="text-[12px] text-[#5C544A]">{fmt(o.bytes)}</span>{variant===o.id&&<Check size={15} className="text-[#C96442]"/>}</Button>)}</div>
      {!detail.options.length&&<p className="mt-3 text-[12px] text-amber-700">{t('models.noGguf')}</p>}
