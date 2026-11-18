@@ -74,7 +74,7 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
    const baseUrl=entry.api.replace(/\/$/,'')
    const existing=await get<Array<{id:string;baseUrl:string;model?:string}>>('/api/providers')
    const same=existing.find(p=>p.baseUrl.replace(/\/$/,'')===baseUrl)
-   const provider=same||await post<{id:string}>('/api/providers',{name:entry.name,baseUrl,kind:'openai',apiKey:catalogKey.trim(),enabled:true,local:false,toolMode:'auto'})
+   const provider=same||await post<{id:string}>('/api/providers',{name:entry.name,baseUrl,kind:'openai',apiKey:catalogKey.trim()||undefined,enabled:true,local:false,toolMode:'auto'})
    setCatalogProviderId(provider.id)
    const models=await get<RemoteModel[]>('/api/providers/'+encodeURIComponent(provider.id)+'/models')
    setCatalogModels(models)
@@ -93,7 +93,7 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
    const same=providers.find(p=>p.baseUrl.replace(/\/$/,'')===baseUrl&&p.model===catalogModel)
    if(same){setCatalogMessage('이미 등록된 모델입니다.');return}
    const reusable=providers.find(p=>p.id===catalogProviderId&&!p.model)
-   await post('/api/providers',{id:reusable?.id,name:entry.name+' · '+catalogModel,baseUrl,kind:'openai',apiKey:catalogKey.trim()||undefined,model:catalogModel,enabled:true,local:false,toolMode:'auto'})
+   await post('/api/providers',{id:reusable?.id,name:entry.name+' · '+catalogModel,baseUrl,kind:'openai',apiKey:catalogKey.trim()||undefined,credentialSourceId:catalogKey.trim()?undefined:catalogProviderId,model:catalogModel,enabled:true,local:false,toolMode:'auto'})
    await onProviderAdded()
    setCatalogMessage('모델이 채팅에 등록됐습니다.')
   }catch(e){setCatalogMessage((e as Error).message)}finally{setCatalogBusy(false)}
