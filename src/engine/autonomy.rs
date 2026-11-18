@@ -102,7 +102,12 @@ fn terminal_checkpoint(
         "verification":checks,
         "unmetChecks":gaps,
         "lastError":last_error.map(|error|narrow(error,1000)),
-        "unsettledEffects":side_effect_unknown(evidence),
+        // A completed but non-idempotent external write may be unsafe to
+        // replay without having an unknown outcome. Keep the two separate.
+        "replayUnsafeEffects":side_effect_unknown(evidence),
+        "unknownToolOutcomes":evidence.iter().any(|item|
+            item["outcomeUnknown"]==true || item["result"]["outcomeUnknown"]==true
+            || item["effectUnknown"]==true || item["result"]["effectUnknown"]==true),
         "verificationPassed":verified,
         "receipts":receipts
     }}))
@@ -397,7 +402,8 @@ mod tests{
         assert_eq!(job["autonomousState"]["unmetChecks"],json!(gaps));
         assert_eq!(job["autonomousState"]["receipts"],json!(receipts));
         assert_eq!(job["autonomousState"]["lastError"],"late review needed");
-        assert_eq!(job["autonomousState"]["unsettledEffects"],true);
+        assert_eq!(job["autonomousState"]["replayUnsafeEffects"],true);
+        assert_eq!(job["autonomousState"]["unknownToolOutcomes"],false);
         assert_eq!(job["autonomousState"]["verificationPassed"],false);
         assert_eq!(job["input"]["prompt"],"change output.py");
 
