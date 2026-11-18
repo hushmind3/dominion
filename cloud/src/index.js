@@ -161,7 +161,7 @@ async function freeProxy(request, env, user) {
   }
   let upstream;
   try {
-    upstream = await fetch(modelEndpoint.replace(/\/$/, '') + '/chat/completions', {
+    upstream = await fetch(env.UPSTREAM_URL.replace(/\/$/, '') + '/chat/completions', {
       method: 'POST',
       headers: { authorization: 'Bearer ' + env.UPSTREAM_API_KEY, 'content-type': 'application/json' },
       body: JSON.stringify({ model: model.upstream_model || model.id, messages: body.messages, stream: body.stream === true, max_tokens: Math.min(2048, body.max_tokens || 1024) }),
@@ -243,7 +243,7 @@ async function proxy(request, env, user) {
     .bind(id, user.id, modelId, reserve, 'reserved', now()).run();
   let charge = 0, status = 'failed', result;
   try {
-    const upstream = await fetch(env.UPSTREAM_URL.replace(/\/$/, '') + '/chat/completions', {
+    const upstream = await fetch(modelEndpoint.replace(/\/$/, '') + '/chat/completions', {
       method: 'POST',
       headers: { authorization: 'Bearer ' + modelKey, 'content-type': 'application/json' },
       body: JSON.stringify({ model: upstreamModel, messages: body.messages, max_tokens: maxTokens, stream: false }),
