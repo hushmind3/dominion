@@ -1302,8 +1302,18 @@ impl Host for MainTurn<'_> {
             );
             if ok {
                 self.failed_calls.remove(&call_key);
+                // The model called the stable discovery bridge, but the native
+                // dispatcher executed and receipted the underlying real tool.
+                // An actual mutation must invalidate environment observations.
+                let executed_tool = if call.name == crate::engine::capability::CALL {
+                    serde_json::from_str::<Value>(&call.arguments).ok()
+                        .and_then(|args| args["name"].as_str().map(str::to_string))
+                        .unwrap_or_else(|| call.name.clone())
+                } else {
+                    call.name.clone()
+                };
                 if matches!(
-                    call.name.as_str(),
+                    executed_tool.as_str(),
                     "workspace_write"
                         | "workspace_replace"
                         | "workspace_replace_range"
