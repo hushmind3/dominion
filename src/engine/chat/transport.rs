@@ -4,6 +4,21 @@ use crate::state::AppState;
 use serde_json::{json, Value};
 use tokio::sync::mpsc::UnboundedSender;
 
+/// Per-turn stop tombstone prevents a cancellation that reached the server
+/// before the chat POST from being undone by normal session resume. The stop
+/// endpoint associates the UUID with the immutable session, so a request ID
+/// from another session cannot cancel this turn.
+pub(super) fn request_cancelled(
+    state: &AppState, session_id: &str, request_id: Option<&str>
+) -> bool {
+    request_id
+        .and_then(|id| state.store.get("chat_cancel_request", id))
+        .is_some_and(|record| {
+            record["sessionId"].as_str()==Some(session_id)
+                && record["cancelled"]==true
+        })
+}
+
 pub async fn run(state: AppState, input: Value, tx: UnboundedSender<Value>) {
     let session_hint = input
         .get("sessionId")
