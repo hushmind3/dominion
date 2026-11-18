@@ -60,6 +60,8 @@ mod outcome_tests;
 mod cancellation_drain_tests;
 #[cfg(test)]
 mod harness_tool_selection_tests;
+#[cfg(test)]
+mod capability_tests;
 
 /// Task contracts bound intent to 4096 characters. Keep the full model prompt
 /// intact but derive a bounded, content-unique value for the contract.
