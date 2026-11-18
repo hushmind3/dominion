@@ -1507,9 +1507,14 @@ pub(super) async fn propose_program_revision(
     // ACTUAL postconditions, not merely predicted read-only preflights.
     // External tools or unisolatable candidates keep the prior safe gateway
     // behavior; no unverified sandbox result is presented as a success.
-    let isolated=candidate_rollout::evaluate(
-        ctx,&candidates,&observations,checkpoint,budget,
-    ).await?;
+    let isolated=if candidate_rollout::enabled(ctx.state,ctx.session)
+        && !legacy_benchmark_arm {
+        candidate_rollout::evaluate(
+            ctx,&candidates,&observations,checkpoint,budget,
+        ).await?
+    } else {
+        None
+    };
     let (mut revised, audit)=match isolated {
         Some((revision,decision))=>(revision,decision),
         None=>crate::engine::adaptation::repair_tournament::select(
