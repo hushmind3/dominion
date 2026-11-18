@@ -264,17 +264,22 @@ pub(super) fn local_cache_backend(state:&AppState,provider:&ProviderRef)->Option
 /// stateless OpenAI-compatible wire. Only the server is authorized to skip
 /// prefix prefill when it has a valid matching KV cache.
 fn apply_local_prefix_cache(body:&mut Value,backend:Option<&str>,
-    session_id:&str,agent_id:Option<&str>,provider:&ProviderRef)->bool{
+    session_id:&str,agent_id:Option<&str>,shared_room_prefix:bool,
+    provider:&ProviderRef)->bool{
     match backend {
         Some("llama.cpp")=>{
             body["cache_prompt"]=json!(true);
             true
         }
         Some("vllm")=>{
-            // KV reuse must never share a private speaker prefix with another
-            // room (or another speaker) even if the public charter is identical.
+            // 2026 vLLM APC supports a per-request cache_salt. Members of
+            // the SAME verified room share the same public 4k charter and can
+            // reuse its KV blocks; their private persona/speech diverges
+            // naturally after that common prefix. Different rooms never
+            // share a salt. Private sessions remain speaker-isolated.
+            let participant=if shared_room_prefix {""}else{agent_id.unwrap_or("")};
             body["cache_salt"]=json!(crate::engine::memory::stable_id(&[
-                "dominion-vllm-prefix-v1",session_id,agent_id.unwrap_or(""),
+                "dominion-vllm-prefix-v2",session_id,participant,
                 &provider.id,&provider.model,
             ]));
             true
@@ -1027,8 +1032,10 @@ async fn stream_completion_once_body(
     );
 
     let local_kv_backend=local_cache_backend(state,provider);
+    let shared_room_prefix=state.store.get("session",session_id)
+        .is_some_and(|session|session["roomId"].is_string());
     if apply_local_prefix_cache(&mut body,local_kv_backend,session_id,
-        request.agent_id.as_deref(),provider) {
+        request.agent_id.as_deref(),shared_room_prefix,provider) {
         continuity["localPrefixCacheBackend"]=json!(local_kv_backend);
         continuity["localPrefixCacheMode"]=json!("server-side-kv-prefill;full-wire-prompt");
     }
@@ -2073,7 +2080,7 @@ mod tests {
         state.store.put("provider",&json!({"id":"local-a","baseUrl":provider.base_url,
             "model":"model","local":true})).unwrap();
         assert_eq!(local_cache_backend(&state,&provider),None);
-        assert!(!apply_local_prefix_cache(&mut body,None,"room:r",Some("speaker-0"),&provider));
+        assert!(!apply_local_prefix_cache(&mut body,None,"room:r",Some("speaker-0"),true,&provider));
         assert!(body.get("cache_prompt").is_none());
         assert!(body.get("cache_salt").is_none());
 
@@ -2082,7 +2089,7 @@ mod tests {
             "cacheBackend":"llama.cpp","kvCacheEnabled":true})).unwrap();
         assert_eq!(local_cache_backend(&state,&provider),Some("llama.cpp"));
         assert!(apply_local_prefix_cache(&mut body,Some("llama.cpp"),
-            "room:r",Some("speaker-0"),&provider));
+            "room:r",Some("speaker-0"),true,&provider));
         assert_eq!(body["cache_prompt"],true);
         assert_eq!(body["messages"][0]["content"],"immutable 4000-token charter");
         provider.local=false;
@@ -2098,13 +2105,22 @@ mod tests {
         let mut two=json!({});
         let mut another_room=json!({});
         assert!(apply_local_prefix_cache(&mut one,Some("vllm"),
-            "room:r",Some("speaker-0"),&provider));
+            "room:r",Some("speaker-0"),true,&provider));
         assert!(apply_local_prefix_cache(&mut two,Some("vllm"),
-            "room:r",Some("speaker-1"),&provider));
+            "room:r",Some("speaker-1"),true,&provider));
         apply_local_prefix_cache(&mut another_room,Some("vllm"),
-            "room:s",Some("speaker-0"),&provider);
-        assert_ne!(one["cache_salt"],two["cache_salt"]);
-        assert_ne!(one["cache_salt"],another_room["cache_salt"]);
+            "room:s",Some("speaker-0"),true,&provider);
+        assert_eq!(one["cache_salt"],two["cache_salt"],
+            "the same room can reuse its identical public 4k charter across nine speakers");
+        assert_ne!(one["cache_salt"],another_room["cache_salt"],
+            "never reuse another room's private prefix blocks");
+        let mut private_a=json!({});
+        let mut private_b=json!({});
+        apply_local_prefix_cache(&mut private_a,Some("vllm"),
+            "private:one",Some("speaker-0"),false,&provider);
+        apply_local_prefix_cache(&mut private_b,Some("vllm"),
+            "private:one",Some("speaker-1"),false,&provider);
+        assert_ne!(private_a["cache_salt"],private_b["cache_salt"]);
         assert!(one["cache_salt"].is_string());
         crate::test_support::cleanup_dir(dir);
     }
