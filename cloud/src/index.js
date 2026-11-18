@@ -185,6 +185,7 @@ function paidModels(env) {
   try { configs = JSON.parse(env.PAID_MODELS_JSON || '[]'); } catch { return []; }
   if (!Array.isArray(configs)) return [];
   const providers = {
+    openrouter: { url: 'https://openrouter.ai/api/v1', key: env.OPENROUTER_API_KEY },
     openai: { url: 'https://api.openai.com/v1', key: env.OPENAI_API_KEY },
     deepseek: { url: 'https://api.deepseek.com/v1', key: env.DEEPSEEK_API_KEY },
     groq: { url: 'https://api.groq.com/openai/v1', key: env.GROQ_API_KEY },
