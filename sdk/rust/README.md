@@ -37,7 +37,7 @@ Implement `Model` (model planning and optional native tool calls), `Tools` (defi
 ```rust
 use dominion_sdk::Dominion;
 
-# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+async fn inspect_server() -> Result<(), Box<dyn std::error::Error>> {
 let client = Dominion::local();
 let status: serde_json::Value = client.health().await?;
 let job = client.submit_prompt(
@@ -46,8 +46,8 @@ let job = client.submit_prompt(
 ).await?;
 let saved = client.get_job(&job.id).await?;
 println!("engine={status:?}, job={}", saved.status);
-# Ok(())
-# }
+    Ok(())
+}
 ```
 
 The real Rust client supports jobs, wait/cancel/steering, approvals, rooms, sessions, health, SSE chat, stored events and Money read/analysis methods, as defined in [`src/lib.rs`](src/lib.rs). Some calls need a configured model or permission. `with_admin_token` supports server installations that require an admin token.
