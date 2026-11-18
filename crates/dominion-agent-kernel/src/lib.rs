@@ -129,7 +129,7 @@ pub fn side_effect_unknown(evidence:&[Value])->bool {
         // a failed acceptance check. Only explicit native observational tools
         // and GET requests are replayable; unknown MCP tools remain gated.
         let known_read=matches!(tool,
-            "web_search"|"http_fetch"|"memory_search"|"skill_read"|"code_search"|
+            "web_search"|"http_fetch"|"memory_search"|"skill_read"|"room_message_read"|"code_search"|
             "workspace_read"|"workspace_read_range"|"workspace_list"|
             "workspace_search"|"file_read"|"file_list"|
             "task_status"|"task_result"|"account_status"|
@@ -231,6 +231,14 @@ pub fn owner_intent(original:&str,messages:&[Value])->OwnerIntent{
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn scoped_room_message_read_never_requires_non_idempotent_replay(){
+        let evidence=vec![json!({"tool":"room_message_read",
+            "arguments":{"messageId":"immutable-row","offset":0},
+            "result":{"source":"committed-room-transcript","readOnly":true}})];
+        assert!(!side_effect_unknown(&evidence));
+        assert!(!observed_unknown_outcome(&evidence));
+    }
     #[test]
     fn scoped_skill_read_is_not_an_unknown_remote_effect(){
         let observation=json!({"tool":"skill_read",
