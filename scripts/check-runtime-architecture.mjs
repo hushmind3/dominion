@@ -155,6 +155,32 @@ if(!store.includes('pub fn algorithm_usages_for_execution(')||
      .includes('state.store.algorithm_usages_for_execution(execution_id)'))
   throw Error('Algorithm finalization must use indexed run-level usage records')
 
+// Compare actual entry points and account for all extra model calls. A
+// preflight/helper loop must not hide provider cost outside the run journal.
+const helperSource=readFileSync(path.join(root,'src/engine/llm.rs'),'utf8')
+const auxiliaryReceiptSource=readFileSync(path.join(root,'src/engine/llm/receipts.rs'),'utf8')
+const finalizationSource=readFileSync(path.join(root,'src/engine/chat/runtime/finalization.rs'),'utf8')
+for(const file of ['src/engine/chat/runtime/finalization.rs',
+                   'src/engine/chat/runtime/adaptation.rs',
+                   'src/engine/chat/runtime/program.rs']){
+ const source=readFileSync(path.join(root,file),'utf8')
+ if(!source.includes('llm::complete_for_execution(')||
+    /llm::complete_for_(?:turn|session)\(/.test(source))
+   throw Error('Unattributed auxiliary provider call in: '+file)
+}
+if(!helperSource.includes('mod receipts;')||
+   !helperSource.includes('receipts::begin(')||
+   !helperSource.includes('receipts::finish(')||
+   !auxiliaryReceiptSource.includes('pub(crate) fn summarize(')||
+   !finalizationSource.includes('store.auxiliary_model_calls(execution_id)')||
+   !finalizationSource.includes('record["modelAccounting"]')||
+   !store.includes('idx_aux_model_call_execution'))
+  throw Error('Execution cost accounting no longer includes auxiliary upstream retries')
+if(!sdkApi.includes('engine::run_quiet(&state,&request).await')||
+   !runtime.includes('dominion_core::engine::Engine::drive(')||
+   !sdkApi.includes('record["modelAccounting"]=run["modelAccounting"].clone()'))
+  throw Error('SDK/chat execution or cost semantics diverged from common Rust core')
+
 const frontend=readFileSync(path.join(root,'web/src/App.tsx'),'utf8')+readFileSync(path.join(root,'web/src/components/WorkspaceShell.tsx'),'utf8')
 if(/VideoPage|SelfImprovementPage|id:'(?:video|rsi)'/.test(frontend))throw Error('Retired UI is reachable')
 if(existsSync(path.join(root,'web/src/components/ImprovementNotice.tsx')))throw Error('Retired RSI prompt widget remains')
