@@ -592,17 +592,48 @@ impl CacheWire {
     fn field(self) -> &'static str { match self { Self::Key=>"prompt_cache_key", Self::Ephemeral=>"cache_control" } }
 }
 
+/// Hermes-style (2026) cache checkpoints on a request-local Anthropic
+/// envelope: tool contract, immutable system, and up to two recent completed
+/// message boundaries (three without tools). Keep the current uncompleted user
+/// prompt unmarked: caching a one-off tail wastes a write and churns the KV
+/// prefix. Maximum four markers per Anthropic request. Nothing in SQLite
+/// is decorated; rejection falls back to the original unmarked envelope.
+fn apply_anthropic_checkpoints(body: &mut Value) -> bool {
+    let mut marked=0usize;
+    let marker=json!({"type":"ephemeral"});
+    if let Some(tools)=body["tools"].as_array_mut().filter(|tools|!tools.is_empty()) {
+        if let Some(last)=tools.last_mut() {
+            last["cache_control"]=marker.clone();
+            marked+=1;
+        }
+    }
+    if let Some(system)=body["system"].as_str().filter(|value|!value.is_empty()) {
+        body["system"]=json!([{"type":"text","text":system,"cache_control":marker}]);
+        marked+=1;
+    } else if let Some(last)=body["system"].as_array_mut().and_then(|parts|parts.last_mut()) {
+        last["cache_control"]=marker.clone();
+        marked+=1;
+    }
+    if let Some(messages)=body["messages"].as_array_mut() {
+        let last_index=messages.len().saturating_sub(1);
+        for (index,message) in messages.iter_mut().enumerate().rev() {
+            if marked>=4 { break; }
+            // The most recent owner prompt can change at any moment; only
+            // checkpoint completed assistant/tool transactions behind it.
+            if index==last_index && message["role"]=="user" {continue;}
+            let Some(blocks)=message["content"].as_array_mut() else {continue};
+            let Some(last)=blocks.last_mut().filter(|part|part.is_object()) else {continue};
+            last["cache_control"]=marker.clone();
+            marked+=1;
+        }
+    }
+    marked>0
+}
+
 fn apply_hint(body: &mut Value, plan: &Value, wire: CacheWire) -> bool {
     match wire {
         CacheWire::Key => { body["prompt_cache_key"]=plan["cacheKey"].clone(); true }
-        CacheWire::Ephemeral => {
-            if let Some(system)=body["system"].as_str().filter(|text| !text.is_empty()) {
-                body["system"]=json!([{"type":"text","text":system,"cache_control":{"type":"ephemeral"}}]);
-                true
-            } else if let Some(last)=body["system"].as_array_mut().and_then(|parts|parts.last_mut()) {
-                last["cache_control"]=json!({"type":"ephemeral"}); true
-            } else {false}
-        }
+        CacheWire::Ephemeral => apply_anthropic_checkpoints(body)
     }
 }
 
@@ -1280,6 +1311,37 @@ mod tests {
         assert!(!json!(revoked).to_string().contains("FACT_a"));
         drop(state);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn anthro_cache_reuses_stable_system_tools_and_completed_suffix_with_four_markers() {
+        let original=json!({"model":"anthropic","system":"STATIC_OWNER_PERSONA",
+            "tools":[{"name":"read","input_schema":{"type":"object"}},
+                     {"name":"write","input_schema":{"type":"object"}}],
+            "messages":[
+                {"role":"user","content":[{"type":"text","text":"first"}]},
+                {"role":"assistant","content":[{"type":"text","text":"reply one"}]},
+                {"role":"user","content":[{"type":"text","text":"second"}]},
+                {"role":"assistant","content":[{"type":"text","text":"reply two"}]},
+                {"role":"user","content":[{"type":"text","text":"latest request"}]}
+            ]});
+        let mut planned=original.clone();
+        assert!(apply_anthropic_checkpoints(&mut planned));
+        assert!(planned["system"][0]["cache_control"].is_object());
+        assert!(planned["tools"][1]["cache_control"].is_object());
+        assert!(planned["tools"][0]["cache_control"].is_null());
+        assert!(planned["messages"][4]["content"][0]["cache_control"].is_null(),
+            "do not waste a cache write on the changing latest owner request");
+        let count=planned.to_string().matches("cache_control").count();
+        assert_eq!(count,4,"Anthropic permits at most four cache breakpoints");
+        let mut rejected=planned.clone();
+        // No original/provider history mutation; retry must use original.
+        rejected=original.clone();
+        assert_eq!(rejected,original);
+        let mut simple=json!({"system":"STATIC","messages":[
+            {"role":"user","content":[{"type":"text","text":"first"}]}]});
+        assert!(apply_anthropic_checkpoints(&mut simple));
+        assert_eq!(simple.to_string().matches("cache_control").count(),1);
     }
 
     #[test]
