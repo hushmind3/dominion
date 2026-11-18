@@ -832,11 +832,16 @@ async fn propose_program_revision(
     let prompt = format!(
         "Current program: {program}\nCheckpoint: {checkpoint}\nFailure observation: {failure}\nAvailable tools: {available:?}\nReturn only the JSON proposal."
     );
-    ctx.metrics.lock().unwrap().model_calls += 1;
+    {
+        let mut counters=ctx.metrics.lock().unwrap();
+        counters.model_calls+=1;
+        counters.auxiliary_calls+=1;
+    }
     let mut native=load_native_checkpoint(ctx.state,ctx.execution_id,&ctx.request.input)?;
     let journal=ChatKernelJournal{state:ctx.state,execution_id:ctx.execution_id,session_id:ctx.session_id,generation:ctx.generation};
     let raw = dominion_core::engine::model_call(&mut native,&journal,"program_repair",
-        llm::complete_for_session(ctx.state,provider_id,model,&system,&prompt,ctx.session_id))
+        llm::complete_for_execution(ctx.state,provider_id,model,&system,&prompt,
+            Some(ctx.session_id),ctx.execution_id,"program_repair"))
         .await??;
     let proposal = crate::engine::program::parse_json_object(&raw)
         .ok_or("program revision response is not a JSON object")?;
