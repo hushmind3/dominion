@@ -19,6 +19,21 @@ async fn try_complete(
 ) -> Result<String, String> {
     let route = gateway::resolve(state, provider_id, Some(model))?;
     let invocation = uuid::Uuid::new_v4().to_string();
+    // An auxiliary request is not part of the participant's main prompt
+    // history. Give it an independent but stable relay affinity: this avoids
+    // evicting the hot 4k main persona prefix with one-off helper prompts.
+    // Out-of-turn calls still need a header (otherwise OpenCode Go returns
+    // MissingSessionID), so key those by the execution or current invocation.
+    let opencode_session=state.store.get("provider",&route.id)
+        .filter(|provider|provider["integration"]=="opencode-go")
+        .map(|_|{
+            let scope=session_id
+                .or_else(||execution.map(|(id,_)|id))
+                .unwrap_or(invocation.as_str());
+            format!("dominion-aux-{}",crate::engine::memory::stable_id(&[
+                "auxiliary-opencode-session-v1",scope,&route.id,&route.model,
+            ]))
+        });
     if route.kind=="cli"{
         let source=route.base_url.strip_prefix("cli://").ok_or("CLI 제공자 주소 오류")?;
         let (budget_call,_)=if let Some(session)=session_id{
@@ -72,7 +87,8 @@ async fn try_complete(
         }else{(None,max_tokens)};
         body["max_tokens"]=json!(output);
         let receipt=receipts::begin(state,execution,&invocation,attempt,&route.id,&route.model)?;
-        let sent=gateway::send(&route,&client,&body,Duration::from_secs(240)).await;
+        let sent=gateway::send_with_affinity(&route,&client,&body,
+            Duration::from_secs(240),opencode_session.as_deref()).await;
         let response=match sent {Ok(response)=>response,Err(error)=>{
             receipts::finish(state,receipt.as_deref(),"failed",gateway::Usage::default(),
                 false,Some(&error));
