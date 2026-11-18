@@ -1033,9 +1033,22 @@ pub fn choose_decomposition_for_agent(
     execution_id: Option<&str>,
     request: &str,
 ) -> Option<Value> {
+    if let Some(execution_id)=execution_id {
+        let id=format!("algorithm-usage-{}",
+            crate::engine::memory::stable_id(&[execution_id,"task.decomposition"]));
+        if let Some(saved)=state.store.get("algorithm_usage",&id) {
+            let rows=scoped_algorithms(state,"task.decomposition")?;
+            return rows.into_iter().find(|row|
+                row["revision"]==saved["revision"]
+                &&row["status"]!="disabled"
+                &&row["implementation"].as_str().is_some_and(|kernel|
+                    kernel_exists("task.decomposition",kernel)));
+        }
+    }
     let selected = choose_for_agent(state, "task.decomposition", agent_id, None)?;
     let baseline = crate::engine::decompose::decompose(request, &selected);
     let mut best_score = baseline["qualityScore"].as_f64().unwrap_or(0.0);
+    let selected_revision=selected["revision"].clone();
     let mut chosen = selected;
     let candidates = scoped_algorithms(state, "task.decomposition")?;
     for candidate in candidates {
@@ -1054,7 +1067,10 @@ pub fn choose_decomposition_for_agent(
         // Only override the activated kernel when the alternative demonstrably extracts
         // multiple ordered actions. A vague increase in heuristic score alone
         // must not replace a user's approved selection.
-        if ordered && step_count > 1 && score > best_score + 0.05 {
+        let full_clause_coverage=decomposition["quality"]["coverage"]
+            .as_f64().is_some_and(|coverage|coverage>=0.95);
+        if ordered && full_clause_coverage && step_count > 1
+            && score > best_score + 0.05 {
             best_score = score;
             chosen = candidate;
         }
@@ -1064,11 +1080,16 @@ pub fn choose_decomposition_for_agent(
         let id=format!("algorithm-usage-{}",
             crate::engine::memory::stable_id(&[execution_id,"task.decomposition"]));
         if state.store.get("algorithm_usage",&id).is_none() {
-            if let Some(saved)=state.store.put("algorithm_usage",&json!({
+            let basis=if chosen["revision"]==selected_revision {
+                "activated_policy_no_probe_gain"
+            }else{
+                "observed_ordered_covered_decomposition_gain"
+            };
+            if let Some(saved)=state.store.put_if_absent("algorithm_usage",&json!({
                 "id":id,"executionId":execution_id,"agentId":agent,
                 "kind":"task.decomposition","revision":chosen["revision"],
                 "status":"pending","selectionPolicy":"same-request-differential-probe-2026",
-                "selectionBasis":"observable_decomposition_gain",
+                "selectionBasis":basis,
                 "historicalStatUse":"diagnostics_only",
                 "createdAt":chrono::Utc::now().to_rfc3339()
             })) {
