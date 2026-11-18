@@ -60,6 +60,39 @@ async function login(request, env) {
     .bind(await hash(token), id, now() + 7 * 86400).run();
   return json({ token, expires_in: 7 * 86400, account_id: id });
 }
+
+function freeModels(env) {
+  try {
+    const items = JSON.parse(env.FREE_MODELS_JSON || '[]');
+    return Array.isArray(items) ? items.filter(x => typeof x.id === 'string' && /^[a-zA-Z0-9._:/-]{1,120}$/.test(x.id)) : [];
+  } catch { return []; }
+}
+async function freeProxy(request, env, user) {
+  const body = await maxBody(request);
+  const model = freeModels(env).find(x => x.id === body.model);
+  if (!model || !env.UPSTREAM_API_KEY || !env.UPSTREAM_URL) return err('Free model not available', 503);
+  if (!Array.isArray(body.messages) || !body.messages.length ||
+      JSON.stringify(body.messages).length > 50000 ||
+      (body.max_tokens !== undefined && (!Number.isSafeInteger(body.max_tokens) || body.max_tokens < 1)))
+    return err('Invalid or oversized messages');
+  const limit = Math.max(1, Math.min(1000, Number(env.FREE_DAILY_LIMIT || 20)));
+  const day = new Date().toISOString().slice(0, 10);
+  const key = user.id + ':' + day;
+  const updated = await env.DB.prepare('INSERT INTO free_quota(account_day,used) VALUES(?,1) ON CONFLICT(account_day) DO UPDATE SET used=used+1 WHERE used<? RETURNING used')
+    .bind(key, limit).first();
+  if (!updated) return err('Daily free quota exhausted', 429);
+  const upstream = await fetch(env.UPSTREAM_URL.replace(/\\/$/, '') + '/chat/completions', {
+    method: 'POST',
+    headers: { authorization: 'Bearer ' + env.UPSTREAM_API_KEY, 'content-type': 'application/json' },
+    body: JSON.stringify({ ...body, model: model.upstream_model || model.id, max_tokens: Math.min(2048, body.max_tokens || 1024) }),
+    signal: AbortSignal.timeout(90000)
+  });
+  if (!upstream.ok) return err('Free model provider unavailable', 502);
+  const headers = new Headers({ 'cache-control': 'no-store', 'x-dominion-free-remaining': String(Math.max(0, limit - updated.used)) });
+  headers.set('content-type', upstream.headers.get('content-type') || (body.stream ? 'text/event-stream' : 'application/json'));
+  return new Response(upstream.body, { status: upstream.status, headers });
+}
+
 async function proxy(request, env, user) {
   if (!env.UPSTREAM_API_KEY || !env.UPSTREAM_URL || !env.MODEL_ID ||
       !env.PRICE_INPUT_MICRO_KRW || !env.PRICE_OUTPUT_MICRO_KRW) return err('Model service not configured', 503);
@@ -111,6 +144,13 @@ async function proxy(request, env, user) {
   }
   return json(result, status === 'completed' ? 200 : 502);
 }
+async function routeCompletion(request, env, user) {
+  const raw = await request.clone().text();
+  let body;
+  try { body = JSON.parse(raw); } catch { return err('Invalid JSON'); }
+  if (freeModels(env).some(x => x.id === body.model)) return freeProxy(request, env, user);
+  return proxy(request, env, user);
+}
 export default {
   async fetch(request, env) {
     const origin = request.headers.get('origin');
@@ -122,12 +162,16 @@ export default {
       const path = new URL(request.url).pathname;
       let response;
       if (path === '/v1/auth/google' && request.method === 'POST') response = await login(request, env);
+      else if (path === '/v1/models' && request.method === 'GET') {
+        const user = await account(request, env);
+        response = user ? json({ data: freeModels(env).map(x => ({ id: x.id, object: 'model', free: true })) }) : err('Unauthorized', 401);
+      }
       else if (path === '/v1/me' && request.method === 'GET') {
         const user = await account(request, env);
         response = user ? json({ account_id: user.id, credits_micro_krw: user.credits }) : err('Unauthorized', 401);
       } else if (path === '/v1/chat/completions' && request.method === 'POST') {
         const user = await account(request, env);
-        response = user ? await proxy(request, env, user) : err('Unauthorized', 401);
+        response = user ? await routeCompletion(request, env, user) : err('Unauthorized', 401);
       } else response = err('Not found', 404);
       const out = new Response(response.body, response);
       for (const [k, v] of Object.entries(headers)) out.headers.set(k, v);
