@@ -1346,74 +1346,107 @@ impl Drop for ToolProcessGroup {
     }
 }
 
+/// Single native subprocess supervisor, shared by shell, terminal and
+/// optional external harness delegation. No second process manager.
 async fn read_command_output(
-    mut stream: impl tokio::io::AsyncRead + Unpin,
-) -> std::io::Result<Vec<u8>> {
+    mut stream:impl tokio::io::AsyncRead+Unpin,
+    tail:bool,
+)->std::io::Result<(Vec<u8>,bool)>{
     use tokio::io::AsyncReadExt;
-    // Keep enough UTF-8 bytes for 20,001 characters so output_payload can
-    // preserve its existing 20,000-character truncation indicator. Continue
-    // draining after this cap so a chatty child cannot fill a pipe or memory.
-    const MAX_RETAINED_BYTES: usize = 4 * 20_001;
-    let mut kept = Vec::new();
-    let mut buffer = [0u8; 8192];
-    loop {
-        let count = stream.read(&mut buffer).await?;
-        if count == 0 {
-            return Ok(kept);
+    const MAX_RETAINED_BYTES:usize=4*20_001;
+    let mut kept=Vec::new();
+    let mut buf=[0u8;8192];
+    let mut truncated=false;
+    loop{
+        let n=stream.read(&mut buf).await?;
+        if n==0{return Ok((kept,truncated));}
+        if tail {
+            let overflow=kept.len().saturating_add(n)
+                .saturating_sub(MAX_RETAINED_BYTES);
+            if overflow>0 {
+                truncated=true;
+                if overflow>=kept.len(){kept.clear();}
+                else{kept.drain(..overflow);}
+            }
+            kept.extend_from_slice(&buf[..n]);
+        }else{
+            let amount=n.min(MAX_RETAINED_BYTES.saturating_sub(kept.len()));
+            if amount<n{truncated=true;}
+            kept.extend_from_slice(&buf[..amount]);
         }
-        let retain = count.min(MAX_RETAINED_BYTES.saturating_sub(kept.len()));
-        kept.extend_from_slice(&buffer[..retain]);
     }
 }
-
-pub(crate) async fn run_command(
-    command: &mut tokio::process::Command,
-    limit: Duration,
-) -> Result<std::process::Output, String> {
+struct SupervisedOutput{
+    output:std::process::Output,
+    stdout_truncated:bool,
+    stderr_truncated:bool,
+}
+async fn run_command_supervised(
+    command:&mut tokio::process::Command,
+    limit:Duration,
+    input:Option<&[u8]>,
+)->Result<SupervisedOutput,String>{
+    use tokio::io::AsyncWriteExt;
     command
-        .stdin(std::process::Stdio::null())
+        .stdin(if input.is_some(){std::process::Stdio::piped()}else{
+            std::process::Stdio::null()
+        })
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
     #[cfg(unix)]
     command.process_group(0);
-    let mut child = command.spawn().map_err(|error| error.to_string())?;
+    let mut child=command.spawn().map_err(|error|error.to_string())?;
     #[cfg(unix)]
-    let mut group = ToolProcessGroup::new(child.id());
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or("Command stdout is not available")?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or("Command stderr is not available")?;
-    let outcome = tokio::time::timeout(limit, async {
-        let (status, stdout, stderr) = tokio::try_join!(
-            child.wait(),
-            read_command_output(stdout),
-            read_command_output(stderr)
+    let mut group=ToolProcessGroup::new(child.id());
+    let stdout=child.stdout.take().ok_or("Command stdout is not available")?;
+    let stderr=child.stderr.take().ok_or("Command stderr is not available")?;
+    let pipe=child.stdin.take();
+    let tail=input.is_some();
+    // The stdin write is part of the SAME timeout/cancellation boundary as
+    // child exit and pipe draining. A child refusing stdin cannot hang forever.
+    let writer=async move {
+        if let (Some(mut pipe),Some(bytes))=(pipe,input){
+            pipe.write_all(bytes).await?;
+            pipe.shutdown().await?;
+        }
+        Ok::<(),std::io::Error>(())
+    };
+    let outcome=tokio::time::timeout(limit,async{
+        let (status,stdout,stderr,())=tokio::try_join!(
+            child.wait(),read_command_output(stdout,tail),
+            read_command_output(stderr,tail),writer
         )?;
-        Ok::<_, std::io::Error>(std::process::Output {
-            status,
-            stdout,
-            stderr,
+        Ok::<_,std::io::Error>(SupervisedOutput{
+            output:std::process::Output{
+                status,stdout:stdout.0,stderr:stderr.0,
+            },
+            stdout_truncated:stdout.1,stderr_truncated:stderr.1,
         })
-    })
-    .await;
-    match outcome {
-        Ok(Ok(output)) => {
+    }).await;
+    match outcome{
+        Ok(Ok(output))=>{
             #[cfg(unix)]
             group.disarm();
             Ok(output)
-        }
-        Ok(Err(error)) => Err(error.to_string()),
-        Err(_) => Err(if limit.subsec_nanos() == 0 {
-            format!("Command timed out after {}s", limit.as_secs())
-        } else {
-            format!("Command timed out after {}ms", limit.as_millis())
-        }),
+        },
+        Ok(Err(error))=>Err(error.to_string()),
+        Err(_)=>Err(format!("Command timed out after {}ms",limit.as_millis())),
     }
+}
+pub(crate) async fn run_command(
+    command:&mut tokio::process::Command,
+    limit:Duration,
+)->Result<std::process::Output,String>{
+    run_command_supervised(command,limit,None).await.map(|result|result.output)
+}
+pub(crate) async fn run_command_with_input(
+    command:&mut tokio::process::Command,
+    limit:Duration,
+    input:&[u8],
+)->Result<(std::process::Output,bool,bool),String>{
+    let result=run_command_supervised(command,limit,Some(input)).await?;
+    Ok((result.output,result.stdout_truncated,result.stderr_truncated))
 }
 
 async fn shell(command: &str, cwd: &Path) -> Result<Value, String> {
