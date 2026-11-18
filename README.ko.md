@@ -198,7 +198,7 @@ SDK 사용법은 [TypeScript SDK](packages/sdk-typescript/README.md)에 있습�
 - **모델 종속을 줄입니다.** 한 모델·한 공급자만 사용하도록 강제하지 않습니다.
 - **실행 기록이 남습니다.** 답변뿐 아니라 도구 호출과 오류, 승인, 작업 상태도 추적합니다.
 - **로컬에서 운영할 수 있습니다.** SQLite 데이터와 기억은 기본적으로 로컬에 저장되며, 클라우드 모델 연결은 사용자가 선택합니다.
-- **직접 확장할 수 있습니다.** Apache-2.0 공개 소스와 Rust/React 구조를 제공합니다.
+- **직접 확장할 수 있습니다.** MIT 공개 소스와 Rust/React 구조를 제공합니다.
 
 ## ⚡ 빠른 시작
 
@@ -268,4 +268,4 @@ Bring your own API credentials or connect a local model, then use a Rust-native 
 
 **Getting started:** [Installation guide](docs/GETTING-STARTED.md) · [Engine internals](ENGINE.md) · [Issues](https://github.com/hushmind3/dominion-rust/issues) · [Pull requests](https://github.com/hushmind3/dominion-rust/pulls)
 
-**License:** [Apache License 2.0](LICENSE).
+**License:** [MIT License](LICENSE).
