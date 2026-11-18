@@ -136,6 +136,8 @@ struct BenchConfig {
     recalculate: bool,
     fixture: Fixture,
     holdout: bool,
+    /// Isolated paired test of legacy vs contrastive ProgramIR repair.
+    repair_ab: bool,
     /// When set, claim one queued experiment request from this production engine.
     claim_url: Option<String>,
     provider_base: String,
@@ -179,7 +181,15 @@ fn config() -> Result<BenchConfig, String> {
             .as_ref()
             .map(|path| !path.exists())
             .unwrap_or(true);
-    let fixture = fixture(&env_string("BENCH_FIXTURE", "audit_report"))?;
+    let repair_ab=std::env::var("BENCH_REPAIR_AB").as_deref()==Ok("1");
+    let fixture=fixture(&env_string("BENCH_FIXTURE",
+        if repair_ab {"update_config"} else {"audit_report"}))?;
+    if repair_ab && fixture.id!="update_config" {
+        return Err("BENCH_REPAIR_AB requires BENCH_FIXTURE=update_config".into());
+    }
+    if repair_ab && std::env::var("BENCH_CLAIM_URL").is_ok() {
+        return Err("repair A/B cannot claim production experiment requests".into());
+    }
     Ok(BenchConfig {
         mode,
         model: env_string("BENCH_MODEL", "qwen3:4b"),
@@ -190,6 +200,7 @@ fn config() -> Result<BenchConfig, String> {
         recalculate,
         fixture,
         holdout: std::env::var("BENCH_HOLDOUT").as_deref() == Ok("1"),
+        repair_ab,
         claim_url: std::env::var("BENCH_CLAIM_URL")
             .ok()
             .map(|value| value.trim().trim_end_matches('/').to_string())
@@ -382,6 +393,18 @@ fn assignment_order(seed: u64, pair: usize) -> [&'static str; 2] {
 
 fn trial_id(experiment_id: &str, pair: usize, arm: &str, replicate: usize) -> String {
     format!("{experiment_id}:p{pair}:{arm}:r{replicate}")
+}
+
+/// Frozen, identical intentionally failing ProgramIR for both benchmark arms.
+/// The target file does not exist until a genuine recovery writes it.
+fn repair_ab_program()->Value{
+    json!({"revision":"bench-contrastive-repair-v1","nodes":[
+        {"id":"repair_target","type":"call_tool","tool":"workspace_read",
+         "inputs":{"path":"bench/config.txt"},"saveAs":"target",
+         "onFailure":"revise"},
+        {"id":"confirm_target","type":"call_tool","tool":"workspace_read",
+         "inputs":{"path":"bench/config.txt"},"saveAs":"confirmation"}
+    ]})
 }
 
 fn arm_agent_name(arm: &str) -> &'static str {
@@ -1060,7 +1083,7 @@ async fn main() -> Result<(), String> {
         .unwrap_or_else(|| "harness 절차로 audit 후 report를 실행한다".to_string());
     let mut treatment_strategy_id: Option<String> = None;
     for arm in ["baseline", "treatment"] {
-        if policy_claim.is_some() {
+        if policy_claim.is_some() || cfg.repair_ab {
             break;
         }
         let seeded = post(
@@ -1115,7 +1138,9 @@ async fn main() -> Result<(), String> {
         json!({
         "schemaVersion": SCHEMA_VERSION,
         "experimentId": experiment_id,
-        "purpose": "controller_guard_effect",
+        "purpose": if cfg.repair_ab {"contrastive_repair_ab"} else {"controller_guard_effect"},
+        "repairAB":cfg.repair_ab,
+        "repairProgramSha256":if cfg.repair_ab {json!(sha256(repair_ab_program().to_string().as_bytes()))} else {Value::Null},
         "mode": cfg.mode,
         "engine": repo_digest(),
         "binary": {"path": binary.to_string_lossy(), "sha256": sha256_file(&binary)},
@@ -1206,6 +1231,20 @@ async fn main() -> Result<(), String> {
                 continue;
             }
             let started_at = chrono::Utc::now().to_rfc3339();
+            if cfg.repair_ab {
+                // A single disposable engine; each AB/BA assignment activates
+                // the same frozen program with only its repair selector varied.
+                let activated=post(
+                    &client,&format!("{base}/api/benchmark/policies/state"),
+                    json!({"slot":"execution",
+                        "name":format!("repair-ab-{arm}"),
+                        "parameters":{"program":repair_ab_program(),
+                            "benchmarkRepairArm":arm}}),
+                ).await?;
+                if activated["active"]["parameters"]["benchmarkRepairArm"]!=arm {
+                    return Err("benchmark arm policy did not activate".into());
+                }
+            }
             if let Some(claim) = &policy_claim {
                 let policy = &claim["policy"];
                 let payload = if arm == "treatment" {
@@ -1249,7 +1288,7 @@ async fn main() -> Result<(), String> {
                     "compliance": false,
                     "applicable": true,
                     "taskOutcome": "unknown",
-                    "requiresCompliance": policy_claim.is_none(),
+                    "requiresCompliance": policy_claim.is_none() && !cfg.repair_ab,
                     "planQuality": 0.0,
                     "planQualityIndependent": 0.0,
                     "planText": "",
@@ -1388,7 +1427,14 @@ async fn main() -> Result<(), String> {
                 "applicable": applicable,
                 "auditOk": audit_ok,
                 "reportOk": report_ok,
-                "requiresCompliance": policy_claim.is_none(),
+                "requiresCompliance": policy_claim.is_none() && !cfg.repair_ab,
+                "repairAB":cfg.repair_ab,
+                "repairArm":if cfg.repair_ab {json!(arm)} else {Value::Null},
+                "programCheckpointStatus":execution["programCheckpoint"]["status"],
+                "repairTournamentChoice":execution["revisedProgram"]["repairTournament"]["decision"]["chosen"],
+                "repairProbeReceipts":execution["revisedProgram"]["repairTournament"]["probeReceipts"],
+                "repairPostflightReceipts":execution["programCheckpoint"]["repairPostflightReceipts"],
+                "programRevisionCount":execution["programCheckpoint"]["revisionHistory"].as_array().map(Vec::len),
                 "planQuality": execution["planQuality"]["total"]
                     .as_f64()
                     .unwrap_or(0.0),
@@ -1624,6 +1670,17 @@ mod tests {
         assert!(!strict_success(&trial));
     }
 
+    #[test]
+    fn repair_ab_program_is_frozen_and_has_an_explicit_failure(){
+        let program=repair_ab_program();
+        assert_eq!(program["revision"],"bench-contrastive-repair-v1");
+        let nodes=program["nodes"].as_array().unwrap();
+        assert_eq!(nodes.len(),2);
+        assert_eq!(nodes[0]["onFailure"],"revise");
+        assert_eq!(nodes[0]["inputs"]["path"],"bench/config.txt");
+        assert_eq!(nodes[1]["inputs"]["path"],"bench/config.txt");
+        assert_eq!(repair_ab_program(),program);
+    }
     #[test]
     fn fixtures_are_declared_explicitly_and_tasks_differ() {
         let audit = fixture("audit_report").unwrap();
