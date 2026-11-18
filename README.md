@@ -69,6 +69,27 @@ approval and effect-journal gates still apply. Unit regressions cover search
 ranking, catalog-order stability, stale schemas, finished runs and room
 revocation; they do not establish an end-to-end model success or cost metric.
 
+### 2026 group-room routing and provider cache checkpoints
+
+The [room mention router](src/engine/rooms.rs) keeps plain example text,
+quoted names, inline-code samples, and quoted blocks separate from targeted
+speaker selection. Explicit `@agent` routing and direct vocatives still work.
+This prevents quoted participant names from silently shrinking a nine-speaker
+benchmark to one response.
+
+For first-party OpenAI GPT-5.6+ Chat Completions, the
+[provider continuity adapter](src/engine/chat/continuity/openai_explicit_cache.rs)
+adds an explicit cache breakpoint after a sufficiently large **unchanged system
+prefix**, using the existing stable prompt-cache key. Changing owner messages
+remain outside the breakpoint; old models, Cloudflare Workers AI, Codex and
+third-party OpenAI-compatible endpoints retain their established cache paths.
+A specific 400/422 rejection of the new optional fields reverts to the
+existing cache-key request and disables that explicit option temporarily for
+that provider route. This can improve **prefill/cache-write efficiency** but
+does not make separate model calls share internal conversational state.
+Previously measured token totals are not proof of provider cache reads.
+Provider-reported cached and new input tokens must be compared per speaker.
+
 **Verified-checkpoint completion:** after real tool effects satisfy every frozen
 postcondition, the kernel can finish without buying an extra model round.
 That shortcut requires attributable persisted receipts, no unresolved effects,
