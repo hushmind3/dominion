@@ -73,8 +73,8 @@ Now such a node remains pending; the failure's exact tool `callId` is durably re
 
 ## Native controlled A/B trial, not a new benchmark framework
 
-The pre-existing isolated AB/BA runner in \`src/bin/dominion-benchmark.rs\`
-now supports \`BENCH_REPAIR_AB=1\`. Both arms receive the **same frozen
+The pre-existing isolated AB/BA runner in `src/bin/dominion-benchmark.rs`
+now supports `BENCH_REPAIR_AB=1`. Both arms receive the **same frozen
 ProgramIR** and fixture, forcing one real read of a missing target file.
 The only benchmark-only difference is the repair planner contract:
 
@@ -82,7 +82,7 @@ The only benchmark-only difference is the repair planner contract:
 - treatment: up to 3 evidence-grounded candidates with native preflights and
   required post-execution readback.
 
-This selector is available **only** inside \`DOMINION_BENCHMARK=1\` disposable
+This selector is available **only** inside `DOMINION_BENCHMARK=1` disposable
 engines. Production always keeps the contrastive runtime. Both arms use the
 same model, provider, requested task, original program, tools, controller
 budget and file oracle; AB/BA trial order is persisted and alternated.
@@ -93,13 +93,13 @@ write the expected output.
 Run in an isolated checkout with a local OpenAI-compatible model server and
 debug/release binaries already built:
 
-\`\`\`sh
+```sh
 BENCH_REPAIR_AB=1 BENCH_MODE=real BENCH_PAIRS=12 \
  BENCH_FIXTURE=update_config BENCH_MODEL=qwen3:4b \
  BENCH_PROVIDER_BASE=http://127.0.0.1:11434/v1 \
  DOMINION_BIN=./target/release/dominion-rust \
  ./target/release/dominion-benchmark
-\`\`\`
+```
 
 The runner creates a disposable temporary workspace and engine. Results
 include individual native execution and operation receipts, the selected
@@ -114,7 +114,7 @@ This A/B tests the *incremental value of Dominion's contrastive repair* versus
 its earlier single-repair path. It is **NOT** a head-to-head comparison against
 stock Codex/Claude Code. A stock comparison requires separately recorded
 stock-harness runs on the exact same task/model/tool/budget constraints and
-independent output verification. The existing \`scripts/sub2-compare.mjs\`
+independent output verification. The existing `scripts/sub2-compare.mjs`
 can compare genuine verified exports under matching metadata, but no
 stock-harness winner is presumed.
 
