@@ -2054,6 +2054,46 @@ mod tests {
         server.abort();
         drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
+    #[tokio::test]
+    async fn nine_speakers_complete_three_owner_turns_without_false_completion() {
+        let (state,dir)=test_state();
+        let ids=(0..9).map(|n|format!("agent-{n}")).collect::<Vec<_>>();
+        for id in &ids {
+            state.store.put("agent",&json!({"id":id,"name":id,"providerId":"p","model":"test"}));
+        }
+        state.store.patch_if("room","r","id",&json!("r"),
+            &json!({"agentIds":ids,"routingMode":"discussion",
+                "rounds":1,"maxTurns":9,"autoLearning":false}));
+        let deltas=(0..27).map(|n|text_delta(&format!(
+            "speaker reply {n}: committed result for its owner turn"
+        ))).collect::<Vec<_>>();
+        let (server,bodies)=provider(&state,deltas,None).await;
+        for turn in 0..3 {
+            let job_id=format!("three-turn-job-{turn}");
+            let job=save_owner_job(&state,&job_id,&format!(
+                "All nine participants, discuss the next iteration {turn}"
+            ));
+            let result=run(&run_context(&state,&job_id),&job).await.unwrap();
+            assert_eq!(result["status"],"completed","{result}");
+            assert_eq!(result["turns"],9,"{result}");
+            assert_eq!(result["outputs"].as_array().unwrap().len(),9);
+            for output in result["outputs"].as_array().unwrap() {
+                assert!(output["executionId"].as_str().is_some());
+                assert!(output["usage"]["totalTokens"].as_u64().unwrap_or(0)>0);
+                assert_eq!(output["modelCalls"],1);
+            }
+        }
+        let messages=state.store.messages("room:r");
+        assert_eq!(messages.len(),30,
+            "3 immutable owner turns and 27 saved agent answers");
+        assert_eq!(messages.iter().filter(|row|row["role"]=="user").count(),3);
+        assert_eq!(messages.iter().filter(|row|row["role"]=="assistant").count(),27);
+        assert_eq!(bodies.lock().unwrap().len(),27,
+            "every agent answer needs a real provider call");
+        server.abort();
+        drop(state);std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn discussion_mentions_cannot_starve_the_remaining_first_speakers() {
         let mut pending = VecDeque::from(vec!["c".to_string()]);
