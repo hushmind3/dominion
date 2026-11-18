@@ -210,7 +210,7 @@ async function proxy(request, env, user) {
   const upstreamModel = selected?.upstream_model || env.MODEL_ID;
   if (!Array.isArray(body.messages) || !body.messages.length)
     return err('Unsupported model or messages');
-  // Initial release: one configured model, no tools, no streaming. Fail closed.
+  // Paid provider adapter: non-streaming text only until usage accounting supports streams.
   if (body.stream || body.tools || body.tool_choice || body.n || body.response_format)
     return err('Unsupported request options');
   const maxTokens = Math.min(4096, Math.max(1, Number(body.max_tokens || 1024)));
@@ -224,9 +224,11 @@ async function proxy(request, env, user) {
   if (!Number.isSafeInteger(reserve) || reserve > 1000000000) return err('Request exceeds limit');
   // Operator-side daily ceiling is independent of users' prepaid balances.
   // Count outstanding reservations; strict concurrency enforcement needs an atomic budget ledger.
-  const dailyBudget = Number(env.PAID_DAILY_BUDGET_MICRO_KRW || 0);
-  if (dailyBudget !== 0) {
-    if (!Number.isSafeInteger(dailyBudget) || dailyBudget < 0)
+  const dailyBudget = Number(env.PAID_DAILY_BUDGET_MICRO_KRW);
+  if (!env.PAID_DAILY_BUDGET_MICRO_KRW || !Number.isSafeInteger(dailyBudget) || dailyBudget <= 0)
+    return err('Operator daily paid budget must be configured', 503);
+  {
+    if (!Number.isSafeInteger(dailyBudget) || dailyBudget <= 0)
       return err('Invalid operator daily budget', 503);
     const dayStart = Math.floor(Date.now() / 86400000) * 86400;
     const spent = await env.DB.prepare(
