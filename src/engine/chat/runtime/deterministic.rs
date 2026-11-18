@@ -46,133 +46,41 @@ pub(super) async fn deterministic_tool(
     op_seq: u64,
     metrics: &std::sync::Mutex<Metrics>,
 ) -> Result<(Value, Value), String> {
-    let mut operations=state.store.session_operations(session_id)?;
-    operations.reverse();
-    let effect = crate::engine::effect::prepare(session_id, tool, arguments, &operations);
-    let operation_id = format!("{execution_id}:frozen:{op_seq}:{tool}");
-    let started_at = chrono::Utc::now().to_rfc3339();
-    let started = std::time::Instant::now();
-    let _ = tx.send(json!({"type":"tool_start","name":tool,"id":operation_id}));
-    let allowed = if tools::requires_approval(tool) {
-        request_approval(
-            state,
-            tx,
-            session_id,
-            tool,
-            arguments,
-            execution_id,
-            &operation_id,
-            None,
-        )
-        .await
-    } else {
-        true
+    // The zero-model optimization is an alternative decision source, NOT an
+    // alternative tool executor. Use exactly the same admission, normalization,
+    // approval lineage, effect receipt, audit, and error contract as model and
+    // ProgramIR calls. A persisted operation is the source of truth.
+    let call_index = usize::try_from(op_seq)
+        .map_err(|_| "deterministic tool sequence exceeds platform range")?;
+    let call = ToolCall {
+        id: format!("frozen-{op_seq}-{tool}"),
+        name: tool.to_string(),
+        arguments: arguments.to_string(),
     };
-    let initial_state = if allowed { "started" } else { "denied" };
-    state
-        .store
-        .put(
-            "execution_operation",
-            &json!({
-                "id": operation_id, "runId": execution_id, "sessionId": session_id,
-                "callId": operation_id, "tool": tool, "arguments": arguments,
-                "opSeq": op_seq, "origin": "deterministic_shortcut",
-                "effectId": effect["effectId"],
-                "resourceKey": effect["resourceKey"],
-                "requestDigest": effect["requestDigest"],
-                "beforeVersion": effect["beforeVersion"],
-                "effectState": initial_state,
-                "toolReceipt": {
-                    "effectId": effect["effectId"], "tool": tool,
-                    "requestDigest": effect["requestDigest"],
-                    "resourceKey": effect["resourceKey"],
-                    "status": initial_state, "verified": false,
-                    "verifier": {"kind": "pending", "revision": "effect-v1"},
-                    "beforeVersion": effect["beforeVersion"], "startedAt": started_at,
-                },
-                "status": "running", "startedAt": started_at,
-            }),
-        )
-        .ok_or("결정적 실행 시작을 저장할 수 없습니다.")?;
-    let (mut result, ok) = if allowed {
-        let context = ToolContext {
-            workspace: &state.config.workspace,
-            store: &state.store,
-            state,
-            session_id,
-            agent_id: request.agent_id.as_deref(),
-            tools_enabled: request.tools_enabled,
-            tools_execution_enabled: request.tools_execution_enabled,
-        };
-        match tools::execute(&context, tool, arguments, execution_id).await {
-            Ok(value) => {
-                let ok = tool_succeeded(&value);
-                (value, ok)
-            }
-            Err(error) => (json!({"error": error}), false),
-        }
-    } else {
-        (json!({"error":"Denied by the user"}), false)
-    };
-    // checked_write finds the last observed version on the operation record,
-    // not inside the tool result. Keep that contract identical to the normal
-    // dispatch path so the opt-in guard can see this read.
-    let file_observation = if matches!(
-        tool,
-        "workspace_read" | "workspace_read_range" | "file_read" | "workspace_replace" | "workspace_replace_range" | "workspace_write" | "workspace_apply_patch"
-    ) {
-        result
-            .as_object_mut()
-            .and_then(|value| value.remove("fileObservation"))
-    } else {
-        None
-    };
-    {
-        let mut counters = metrics.lock().unwrap();
-        counters.tool_calls += 1;
-        counters.tool_elapsed_ms += started.elapsed().as_millis() as u64;
-    }
-    let sealed = crate::engine::effect::seal(
-        &state.config.workspace,
-        tool,
-        arguments,
-        &result,
-        ok,
-        !allowed,
+    let operation_id = format!("{execution_id}:0:{call_index}:{}", call.id);
+    let (result, _accepted, _content) = dispatch_tool_call(
+        state,
+        tx,
+        &state.store.get("session", session_id)
+            .ok_or("결정적 도구 실행의 세션을 찾을 수 없습니다.")?,
+        request,
+        session_id,
+        execution_id,
+        &call,
+        arguments.clone(),
+        metrics,
+        op_seq,
+        0,
+        call_index,
         false,
-        &effect,
-    )
-    .await;
-    let operation = state
-        .store
-        .put(
-            "execution_operation",
-            &json!({
-                "id": operation_id, "runId": execution_id, "sessionId": session_id,
-                "callId": operation_id, "tool": tool, "arguments": arguments,
-                "result": result, "fileObservation": file_observation,
-                "opSeq": op_seq, "origin": "deterministic_shortcut",
-                "effectId": effect["effectId"],
-                "resourceKey": effect["resourceKey"],
-                "requestDigest": effect["requestDigest"],
-                "beforeVersion": effect["beforeVersion"],
-                "effectState": sealed["effectState"],
-                "observedVersion": sealed["observedVersion"],
-                "toolReceipt": sealed["toolReceipt"],
-                "status": if ok { "completed" } else { "failed" },
-                "startedAt": started_at,
-                "finishedAt": chrono::Utc::now().to_rfc3339(),
-            }),
-        )
-        .ok_or("결정적 실행 결과를 저장하지 못했습니다.")?;
-    state.bus.record("execution_operation", &operation);
-    let _ = tx.send(json!({
-        "type": if ok { "tool_end" } else { "tool_error" },
-        "name": tool,
-        "id": operation_id,
-        "result": operation["result"],
-    }));
-    Ok((operation["result"].clone(), operation))
+        "deterministic_shortcut",
+        None,
+        None,
+        None,
+    ).await?;
+    let operation = state.store.get("execution_operation", &operation_id)
+        .ok_or("결정적 도구 실행의 영속 영수증을 찾을 수 없습니다.")?;
+    Ok((result, operation))
 }
 
 /// Records what was already applied when a later write cannot proceed. The
