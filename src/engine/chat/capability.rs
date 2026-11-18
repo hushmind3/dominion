@@ -94,7 +94,8 @@ pub(super) fn project(definitions:Vec<Value>,query:&str)->Vec<Value>{
     for (index,definition) in candidates.drain(..).enumerate(){
         if selected.contains(&index){projected.push(definition);}
     }
-    projected.push(definition());
+    // Discovery is attached by the turn coordinator only when its complete
+    // execution policy has been frozen; projection itself grants nothing.
     projected
 }
 
@@ -218,8 +219,8 @@ mod tests{
         let a=project(original.clone(),"코드 수정 테스트");
         let b=project(original.clone(),"코드 수정 테스트");
         assert_eq!(a,b);
-        assert!(a.len()<=INITIAL+1);
-        assert!(a.iter().any(|item|name(item)==SEARCH));
+        assert!(a.len()<=INITIAL);
+        assert!(!a.iter().any(|item|name(item)==SEARCH));
         assert!(a.iter().any(|item|name(item)=="workspace_write"));
         assert!(!a.iter().any(|item|name(item)=="mcp__archive_publish"));
         assert!(serde_json::to_vec(&a).unwrap().len()*2
