@@ -115,11 +115,16 @@ pub(super) fn unresolved_mutation(operations:&[Value])->bool{
     operations.iter().any(|row|{
         let name=row["tool"].as_str().unwrap_or("");
         let args=&row["arguments"];
+        let effect_state=row["effectState"].as_str().unwrap_or("");
+        // mark_inspected deliberately keeps the historical outcomeUnknown
+        // flag for audit. It does clear the blind-retry barrier after a
+        // verified read; that inspected state must win over the old flag.
         crate::engine::effect::is_effectful(name,args)
+            && effect_state!="inspected"
             && (row["outcomeUnknown"]==true
                 ||row["result"]["outcomeUnknown"]==true
-                ||matches!(row["effectState"].as_str(),
-                    Some("effect_unknown"|"needs_review"|"started"|"prepared")))
+                ||matches!(effect_state,
+                    "effect_unknown"|"needs_review"|"started"|"prepared"))
     })
 }
 
@@ -197,7 +202,13 @@ mod tests{
         let remote=json!({"tool":"github_api","arguments":{"method":"POST",
             "path":"/repos/acme/demo/issues"},
             "status":"failed","effectState":"effect_unknown"});
-        assert!(unresolved_mutation(&[remote]));
+        assert!(unresolved_mutation(&[remote.clone()]));
+        let mut inspected=remote;
+        inspected["effectState"]=json!("inspected");
+        inspected["outcomeUnknown"]=json!(true);
+        inspected["result"]["outcomeUnknown"]=json!(true);
+        assert!(!unresolved_mutation(&[inspected]),
+            "an independently inspected effect keeps its audit uncertainty but may progress");
         let read=json!({"tool":"file_read","status":"interrupted",
             "outcomeUnknown":true,"arguments":{"path":"readme.txt"}});
         assert!(!unresolved_mutation(&[read]));
