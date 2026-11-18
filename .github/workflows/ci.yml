@@ -56,6 +56,11 @@ jobs:
           # Stable same-room prefix and Cloudflare Workers AI opt-in affinity.
           cargo test --lib engine::chat::room_context::tests::identity_has_a_shared_stable_prefix_without_changing_owner_personas
           cargo test --lib engine::chat::continuity::tests::workers_ai_affinity_is_room_shared_and_cache_hint_uses_header_only
+          # 2026-11-18 context efficiency: stable lazy skills and WebSocket
+          # continuation horizon, with HTTP/provider context limits unchanged.
+          cargo test --lib engine::chat::context::tests::skill_manifest_is_compact_sorted_and_never_embeds_full_instructions
+          cargo test --lib engine::tools::tests::skill_read_requires_enabled_visible_skill_and_returns_original_body
+          cargo test --lib engine::chat::continuity::tests::only_persistent_ws_enlarges_bounded_history_not_http_replay
           cargo test --lib engine::chat::provider::tests::cache_usage_distinguishes_hit_from_missing_telemetry
           # Shared room execution: cancelled epoch versus fresh owner, and
           # provider-wire input costs per participating agent.
