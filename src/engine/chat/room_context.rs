@@ -904,7 +904,7 @@ mod tests {
         let tools=vec![json!({"type":"function","function":{"name":"workspace_read"}})];
         let profile=wire_profile(&messages,&tools);
         assert_eq!(profile["estimated"],true);
-        assert_eq!(profile["messages"],5);
+        assert_eq!(profile["messages"],6,"includes one immutable peer source-index frame");
         assert_eq!(profile["toolDefinitions"],1);
         assert!(profile["components"]["systemAndPersona"].as_u64().unwrap()>0);
         assert!(profile["components"]["sharedRoomState"].as_u64().unwrap()>0);
