@@ -23,10 +23,18 @@ Branch: `dominion-sub3` only. The current owner direction **supersedes** the for
 
 `scripts/check-lean-product.mjs` asserts the **absence of removed source/routes/tools** and presence of retained core chat, memory, MCP, SDK, authorization, archived-job safety, indexed workers and nonmedia dependencies.
 
-`.github/workflows/ci.yml`: Linux, macOS, Windows compile and release tests; TypeScript GUI and SDK; lean architectural gate. `sub3-product-acceptance.yml` and `sub3-rust-sdk-check.yml`: real agent, chat, recover, immutable tool evidence, API and provider regressions. **A green workflow belongs only to the exact HEAD it tested.**
+`.github/workflows/ci.yml`: manually dispatched Windows/macOS release-stage verification, including the TypeScript GUI/SDK and lean architectural gate; Linux is not a target. Ordinary development tests are scoped Rust development-profile tests. `sub3-product-acceptance.yml` and `sub3-rust-sdk-check.yml`: real agent, chat, recover, immutable tool evidence, API and provider regressions. **A green workflow belongs only to the exact HEAD it tested.**
 
 Historical SQLite/job content is not deleted; existing audio/video files in a user's data directory are not removed by upgrading this source branch. They are simply no longer created by the built-in engine.
 
 ## Scope of future external media
 
 Media can be done via separately installed and authorized MCP or plugin tools. No paid media provider is hardcoded, no local weight download occurs at startup, and no media-only CPU or GPU worker exists in the Rust product.
+
+## 2026-11-18 — Bounded evidence retrieval without a second model loop
+
+- `crates/dominion-agent-sdk/src/context.rs`: nonempty durable receipt searches inspect JSON scalar leaves and field names with streaming, Unicode-aware literal matching instead of serializing every historical tool result and allocating a second lowercased full-log string. The authoritative receipt journal, pagination, read-by-ID, and capped previews are unchanged.
+- `src/engine/money_retrieval.rs`: selected facts still suppress highly similar duplicate headlines in the LLM context, but add up to two bounded provenance references and a count of related observations. `similarityStatus=lexical_overlap_not_independent_confirmation` prevents a title match being represented as verified independent reporting.
+- `src/engine/money.rs`: the research planner sees at most one additional related source URL per selected fact, explicitly labeled as a similar source rather than independent confirmation. Full individual original evidence remains in the indexed Money corpus.
+- Regression tests added for long nested multilingual receipt search, query boundaries, bounded duplicate provenance and planner-context citation limits. These tests were **added but not executed** in this editing session: `cargo`/`rustc` are unavailable in the current editing container, and full CI was intentionally deferred.
+- Expected improvement: lower transient allocations during receipt keyword search; no claims about benchmark speedups, real-model completion rate, or verified CI until measured with the same workload.
