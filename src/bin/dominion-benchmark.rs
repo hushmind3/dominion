@@ -405,7 +405,8 @@ fn classify_error(text: &str, elapsed_ms: u128, limit_ms: u128) -> &'static str 
     if text.contains("status\":\"error") || text.contains("\"type\":\"error") {
         return "stream_error";
     }
-    if text.starts_with("HTTP") || text.contains(": error sending request") {
+    if text.starts_with("HTTP") || text.starts_with("transport:")
+        || text.contains(": error sending request") {
         return "transport_error";
     }
     if text.contains("revision") || text.contains("계약") {
@@ -748,6 +749,41 @@ async fn chat(
         text = format!("HTTP {status}: {text}");
     }
     (text, started.elapsed().as_millis())
+}
+
+/// A dropped SSE response intentionally does not cancel DOMINION's work.
+/// The benchmark must explicitly stop its disposable session and confirm
+/// terminal execution state *before* changing the fixture for the next arm.
+async fn cancel_and_confirm_timed_out_trial(
+    client: &reqwest::Client, base: &str, session: &str,
+) -> Result<Value, String> {
+    let ack = post(client, &format!("{base}/api/sessions/{session}/cancel"), json!({}))
+        .await.map_err(|error|format!("benchmark cancellation not acknowledged: {error}"))?;
+    let deadline=Instant::now()+Duration::from_secs(12);
+    loop {
+        let executions=get(client,&format!("{base}/api/executions")).await
+            .map_err(|error|format!("cannot confirm stopped benchmark turn: {error}"))?;
+        let matching=executions.as_array().into_iter().flatten()
+            .filter(|row|row["sessionId"].as_str()==Some(session))
+            .collect::<Vec<_>>();
+        if !matching.is_empty() && matching.iter().all(|run|
+            run["status"].as_str().is_some_and(|status|
+                !matches!(status,"running"|"queued"))
+        ) {
+            return Ok(json!({
+                "requested":true,"acknowledged":ack["cancelled"],
+                "confirmed":true,
+                "executionIds":matching.iter()
+                    .filter_map(|row|row["id"].as_str()).collect::<Vec<_>>(),
+                "statuses":matching.iter().map(|row|&row["status"])
+                    .cloned().collect::<Vec<_>>()
+            }));
+        }
+        if Instant::now()>=deadline {
+            return Err(format!("benchmark session {session} did not reach a confirmed terminal state after cancellation; refusing next arm"));
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
 }
 
 fn file_artifact(root: &Path, relative: &str) -> Value {
@@ -1279,6 +1315,14 @@ async fn main() -> Result<(), String> {
             .await;
             let error_class =
                 classify_error(&stream, elapsed, (cfg.trial_timeout_secs as u128) * 1000);
+            // Keep the server-side turn alive for normal completed SSE work,
+            // but fail closed on a timed-out/transport-broken trial. The next
+            // arm must not race with tool writes from the previous arm.
+            let cancellation = if matches!(error_class,"timeout"|"transport_error") {
+                cancel_and_confirm_timed_out_trial(&client,&base,&session_id).await?
+            } else {
+                json!({"requested":false,"confirmed":true})
+            };
             let audit = file_artifact(&root, cfg.fixture.audit_path);
             let report = file_artifact(&root, cfg.fixture.report_path);
             let (audit_ok, report_ok) = if cfg.fixture.checks.is_empty() {
@@ -1377,6 +1421,7 @@ async fn main() -> Result<(), String> {
                 "status": status,
                 "errorClass": recorded_error,
                 "error": if recorded_error.is_empty() { "" } else { recorded_error },
+                "cancellation":cancellation,
                 "startedAt": started_at,
                 "finishedAt": chrono::Utc::now().to_rfc3339(),
                 "elapsedMs": elapsed,
@@ -1402,9 +1447,12 @@ async fn main() -> Result<(), String> {
                 "planSteps": execution["planQuality"]["steps"]
                     .as_u64()
                     .unwrap_or(0),
+                "taskPrompt": cfg.fixture.task,
                 "preStateHash": pre_hash,
                 "postStateHash": fixture_digest(&root, &cfg.fixture),
                 "tokens": execution["tokens"],
+                "modelAccounting": execution["modelAccounting"],
+                "inputContext": execution["inputContext"],
                 "toolCalls": execution["toolCalls"],
                 "modelCalls": execution["modelCalls"],
                 "streamChars": stream.chars().count(),
@@ -1557,6 +1605,41 @@ async fn main() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn timed_out_trial_cancels_server_turn_and_waits_for_terminal_state() {
+        use axum::{extract::{Path as AxumPath, State}, routing::{get as ax_get,post as ax_post},
+            Json as AxumJson, Router};
+        use std::sync::{Arc,atomic::{AtomicBool,AtomicUsize,Ordering}};
+        let cancelled=Arc::new(AtomicBool::new(false));
+        let polls=Arc::new(AtomicUsize::new(0));
+        let router=Router::new()
+            .route("/api/sessions/{id}/cancel",
+                ax_post(|AxumPath(id):AxumPath<String>,
+                    State(flags):State<(Arc<AtomicBool>,Arc<AtomicUsize>)>|async move {
+                    assert_eq!(id,"trial");
+                    flags.0.store(true,Ordering::SeqCst);
+                    AxumJson(json!({"cancelled":true}))
+                }))
+            .route("/api/executions",
+                ax_get(|State(flags):State<(Arc<AtomicBool>,Arc<AtomicUsize>)>|async move {
+                    let seen=flags.1.fetch_add(1,Ordering::SeqCst);
+                    AxumJson(json!([{"id":"e1","sessionId":"trial",
+                        "status":if flags.0.load(Ordering::SeqCst)&&seen>0{"cancelled"}else{"running"}}]))
+                }))
+            .with_state((cancelled.clone(),polls.clone()));
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address=listener.local_addr().unwrap();
+        let server=tokio::spawn(async move {axum::serve(listener,router).await.unwrap()});
+        let client=reqwest::Client::new();
+        let evidence=cancel_and_confirm_timed_out_trial(&client,&format!("http://{address}"),"trial")
+            .await.unwrap();
+        assert_eq!(evidence["requested"],true);
+        assert_eq!(evidence["confirmed"],true);
+        assert_eq!(evidence["statuses"][0],"cancelled");
+        assert!(polls.load(Ordering::SeqCst)>=2);
+        server.abort();
+    }
 
     #[test]
     fn timeouts_count_as_itt_failures() {
