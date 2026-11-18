@@ -1048,7 +1048,7 @@ mod tests {
                 json!({"role":"user","_dominion_frame":"owner-state:owner-record",
                     "content":format!("[주인 확정 상태: 원문]\n- [decision] {fact}")})];
             if old_peer {result.push(json!({"role":"user",
-                "content":format!("OLD_PEER_{}", "x".repeat(2_300)),
+                "content":format!("OLD_PEER_{}", "x".repeat(3_500)),
                 "_dominion_frame":"previous-peer"}));}
             result.push(json!({"role":"user","content":format!("Question {source}"),"_dominion_frame":source}));
             result
