@@ -419,6 +419,44 @@ pub async fn send(
     body: &Value,
     timeout: Duration,
 ) -> Result<GatewayResponse, String> {
+    send_with_session(route,client,body,timeout,None).await
+}
+
+/// Exact official OpenCode Go origins. Keep unrelated proxies and Zen
+/// paid/free routes out of the Go-specific conversation affinity contract.
+pub fn opencode_go_base_url(base_url:&str)->bool{
+    let Ok(url)=reqwest::Url::parse(base_url) else{return false};
+    url.scheme()=="https" && url.host_str()==Some("opencode.ai")
+        && ["/zen/go","/inference/go"].iter().any(|prefix|
+            url.path().strip_prefix(prefix)
+                .is_some_and(|suffix|suffix.is_empty() || suffix.starts_with('/')))
+}
+
+/// A helper planner/reviewer/compactor is a DIFFERENT model conversation
+/// from the owner's native tool loop. Its routing key is derived from the
+/// owning session and immutable helper system text, never raw user messages
+/// or credentials. Without a session, matching helper identities still
+/// receive a stable cache affinity.
+pub fn helper_go_affinity(route:&Route,body:&Value,session_id:Option<&str>)->Option<String>{
+    if !opencode_go_base_url(&route.base_url){return None;}
+    let system=body["messages"].as_array()
+        .and_then(|messages|messages.iter().find(|m|m["role"]=="system"))
+        .and_then(|message|message["content"].as_str()).unwrap_or("");
+    Some(crate::engine::memory::stable_id(&[
+        "go-helper-v1",&route.id,&route.base_url,&route.model,
+        session_id.unwrap_or("sessionless"),&crate::engine::memory::stable_id(&[system]),
+    ]))
+}
+
+/// Planner, reviewer and compaction calls must carry the same stable
+/// OpenCode Go session-routing header contract as the native chat path.
+pub async fn send_with_session(
+    route: &Route,
+    client: &reqwest::Client,
+    body: &Value,
+    timeout: Duration,
+    session_id: Option<&str>,
+) -> Result<GatewayResponse, String> {
     reserve_generation(
         &route.base_url,
         &route.model,
@@ -426,10 +464,15 @@ pub async fn send(
     )?;
     let permit = acquire(&route.base_url, route.local).await;
     let mut last_error = String::new();
+    let go_affinity=helper_go_affinity(route,body,session_id);
     for attempt in 0..2 {
-        match benchmark_request(client.post(route.endpoint("/chat/completions")))
+        let mut builder=benchmark_request(client.post(route.endpoint("/chat/completions")))
             .header("Content-Type", "application/json")
-            .header("Authorization", format!("Bearer {}", route.api_key))
+            .header("Authorization", format!("Bearer {}", route.api_key));
+        if let Some(affinity)=go_affinity.as_deref(){
+            builder=builder.header("x-opencode-session",affinity);
+        }
+        match builder
             .json(body)
             .timeout(timeout)
             .send()
@@ -618,6 +661,48 @@ mod tests {
         let store = Store::open(&config.db_path()).unwrap();
         let vault = Vault::open(&config.key_path());
         AppState::new(config, store, vault)
+    }
+
+    #[test]
+    fn helper_go_requests_have_stable_isolated_session_affinity(){
+        let route=|base_url:&str|Route{
+            id:"p".into(),name:"provider".into(),base_url:base_url.into(),
+            api_key:"SECRET".into(),model:"deepseek-v4.1-flash".into(),
+            kind:"openai".into(),tool_mode:"native".into(),
+            reasoning_protocol:"deepseek".into(),local:false,
+            disable_thinking:false,context_tokens:None,max_output_tokens:None,
+            requests_per_minute:None,account_id:None
+        };
+        let go=route("https://opencode.ai/inference/go/openai/v1");
+        let messages=json!({"messages":[
+            {"role":"system","content":"HELPER_STATIC_RULES"},
+            {"role":"user","content":"first task"}
+        ]});
+        let first=helper_go_affinity(&go,&messages,Some("owner-session-1")).unwrap();
+        let second=helper_go_affinity(&go,&json!({"messages":[
+            {"role":"system","content":"HELPER_STATIC_RULES"},
+            {"role":"user","content":"different task"}
+        ]}),Some("owner-session-1")).unwrap();
+        assert_eq!(first,second);
+        assert_ne!(first,helper_go_affinity(&go,&messages,Some("owner-session-2")).unwrap());
+        assert_ne!(first,helper_go_affinity(&go,&json!({"messages":[
+            {"role":"system","content":"DIFFERENT_HELPER"},
+            {"role":"user","content":"first task"}
+        ]}),Some("owner-session-1")).unwrap());
+        assert!(helper_go_affinity(&go,&messages,None).is_some(),
+            "sessionless helper calls still need a valid Go header");
+        assert!(!first.contains("SECRET"));
+        for url in [
+            "https://opencode.ai/zen/go/v1",
+            "https://opencode.ai/inference/go/v1"
+        ]{assert!(opencode_go_base_url(url));}
+        for url in [
+            "https://opencode.ai/zen/v1",
+            "https://opencode.ai/inference/good/v1",
+            "https://opencode.ai.evil.example/zen/go/v1",
+            "http://opencode.ai/zen/go/v1"
+        ]{assert!(!opencode_go_base_url(url));
+            assert!(helper_go_affinity(&route(url),&messages,Some("s")).is_none());}
     }
 
     #[test]

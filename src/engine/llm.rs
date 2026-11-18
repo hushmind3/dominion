@@ -48,7 +48,9 @@ async fn try_complete(
             body["think"] = json!(false);
             body["chat_template_kwargs"] = json!({"enable_thinking": false});
         }
-        let response = gateway::send(&route, &client, &body, Duration::from_secs(240)).await?;
+        let response = gateway::send_with_session(
+            &route, &client, &body, Duration::from_secs(240), session_id,
+        ).await?;
         let response = response.response;
         if !response.status().is_success() {
             return Err(format!("모델 호출 실패: HTTP {}", response.status()));

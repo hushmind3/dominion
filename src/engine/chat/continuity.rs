@@ -401,10 +401,7 @@ fn is_opencode_go(state:&AppState,provider:&ProviderRef)->bool{
         .is_some_and(|record|record["integration"]=="opencode-go"){
         return true;
     }
-    let Ok(url)=reqwest::Url::parse(&provider.base_url) else{return false};
-    url.scheme()=="https" && url.host_str()==Some("opencode.ai")
-        && ["/zen/go","/inference/go"].iter().any(|prefix|
-            url.path()==*prefix || url.path().starts_with(&format!("{prefix}/")))
+    crate::engine::gateway::opencode_go_base_url(&provider.base_url)
 }
 
 #[derive(Clone, Copy, Debug)]

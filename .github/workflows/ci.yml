@@ -58,6 +58,7 @@ jobs:
           cargo test --lib engine::chat::continuity::tests::workers_ai_affinity_is_room_shared_and_cache_hint_uses_header_only
           cargo test --lib engine::chat::continuity::tests::opencode_go_affinity_is_auto_detected_only_for_the_real_go_endpoint
           cargo test --lib engine::chat::continuity::tests::same_persona_and_canonical_tools_keep_prefix_diagnostics_stable
+          cargo test --lib engine::gateway::tests::helper_go_requests_have_stable_isolated_session_affinity
           # 2026-11-18 context efficiency: stable lazy skills and WebSocket
           # continuation horizon, with HTTP/provider context limits unchanged.
           cargo test --lib engine::chat::context::tests::skill_manifest_is_compact_sorted_and_never_embeds_full_instructions

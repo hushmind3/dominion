@@ -104,11 +104,12 @@ pub async fn run(
     });
 
     let client = reqwest::Client::new();
-    let response = crate::engine::gateway::send(
+    let response = crate::engine::gateway::send_with_session(
         &route,
         &client,
         &request,
         std::time::Duration::from_secs(180),
+        Some(session_id),
     )
     .await?;
     let response = response.response;
