@@ -2,6 +2,8 @@
 //! Provider resolution, capability ordering and local admission live in
 //! `engine::gateway`; this module only builds prompts and parses responses.
 use crate::engine::gateway;
+mod receipts;
+pub(crate) use receipts::summarize as summarize_auxiliary_model_calls;
 use crate::state::AppState;
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -13,8 +15,10 @@ async fn try_complete(
     system: &str,
     prompt: &str,
     session_id: Option<&str>,
+    execution: Option<(&str, &str)>,
 ) -> Result<String, String> {
     let route = gateway::resolve(state, provider_id, Some(model))?;
+    let invocation = uuid::Uuid::new_v4().to_string();
     if route.kind=="cli"{
         let source=route.base_url.strip_prefix("cli://").ok_or("CLI 제공자 주소 오류")?;
         let (budget_call,_)=if let Some(session)=session_id{
@@ -118,7 +122,7 @@ pub async fn complete(
     system: &str,
     prompt: &str,
 ) -> Result<String, String> {
-    try_complete(state, provider_id, model, system, prompt, None).await
+    try_complete(state, provider_id, model, system, prompt, None, None).await
 }
 
 /// Session-aware helper call used by room learning, reflection and planning so
@@ -138,6 +142,7 @@ pub async fn complete_for_session(
         system,
         prompt,
         Some(session_id),
+        None,
     )
     .await
 }
@@ -152,7 +157,23 @@ pub async fn complete_for_turn(
     prompt: &str,
     session_id: Option<&str>,
 ) -> Result<String, String> {
-    try_complete(state, provider_id, model, system, prompt, session_id).await
+    try_complete(state, provider_id, model, system, prompt, session_id, None).await
+}
+
+/// Measure an auxiliary phase against the native execution shared by chat, SDK and jobs.
+#[allow(clippy::too_many_arguments)]
+pub async fn complete_for_execution(
+    state: &AppState,
+    provider_id: &str,
+    model: &str,
+    system: &str,
+    prompt: &str,
+    session_id: Option<&str>,
+    execution_id: &str,
+    phase: &str,
+) -> Result<String, String> {
+    try_complete(state, provider_id, model, system, prompt, session_id,
+        Some((execution_id, phase))).await
 }
 
 /// A provider explicitly marked for learning is used as the teacher model,
@@ -227,6 +248,7 @@ async fn complete_with_fallback_inner(
             system,
             prompt,
             session_id,
+            None,
         )
         .await
         {
