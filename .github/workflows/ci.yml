@@ -39,6 +39,8 @@ jobs:
         run: |
           cargo test --lib engine::chat::trace_budget::tests
           cargo test --lib engine::chat::tool_schedule::tests
+          # Evidence-delta completion gate is used by ordinary chat, not only SDK jobs.
+          cargo test --lib engine::chat::runtime::action_review::tests
           cargo test --lib engine::verification::verified_patch_tests
           cargo test --lib engine::autonomy::tests::verifier_
           cargo test --lib engine::jobs::tests
