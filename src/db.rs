@@ -236,6 +236,10 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_operation_session
                  ON records(json_extract(data,'$.sessionId'), updated_at DESC)
                  WHERE kind='execution_operation';
+             CREATE INDEX IF NOT EXISTS idx_completed_operation_session_recent
+                 ON records(json_extract(data,'$.sessionId'), updated_at DESC, id DESC)
+                 WHERE kind='execution_operation'
+                   AND json_extract(data,'$.status')='completed';
              CREATE INDEX IF NOT EXISTS idx_operation_resource
                  ON records(json_extract(data,'$.resourceKey'))
                  WHERE kind='execution_operation';
@@ -578,6 +582,27 @@ impl Store {
         let rows=stmt.query_map([session_id],record_from_row)
             .map_err(|e|e.to_string())?;
         rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    /// Child task_results use the most recent successful tool receipts only.
+    /// Applying LIMIT in SQLite prevents each task poll from deserializing
+    /// every tool ever executed by this agent or even this child session.
+    pub fn recent_completed_session_operations(
+        &self, session_id: &str, limit: usize,
+    ) -> Result<Vec<Value>, String> {
+        if limit == 0 { return Ok(Vec::new()); }
+        let conn = self.conn.lock().map_err(|error| error.to_string())?;
+        let mut statement = conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='execution_operation'
+               AND json_extract(data,'$.status')='completed'
+               AND json_extract(data,'$.sessionId')=?1
+             ORDER BY updated_at DESC,id DESC LIMIT ?2",
+        ).map_err(|error| error.to_string())?;
+        let rows = statement.query_map(
+            params![session_id, limit.min(20) as i64], record_from_row
+        ).map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|error| error.to_string())
     }
 
     pub fn resource_execution_operations(&self, resource: &str) -> Result<Vec<Value>, String> {
@@ -2222,6 +2247,45 @@ mod tests {
         assert_eq!(store.sdk_used_model_calls("s-a","e2").unwrap(),3);
         assert_eq!(store.sdk_used_model_calls("s-a","missing").unwrap(),8);
         assert_eq!(store.sdk_used_model_calls("s-b","missing").unwrap(),90);
+    }
+
+    #[test]
+    fn delegated_results_use_recent_index_without_loading_unrelated_history() {
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        for n in 0..45 {
+            store.put("execution_operation",&json!({
+                "id":format!("child-{n:03}"),"runId":"child-run",
+                "sessionId":"child","status":"completed","opSeq":n,
+                "tool":"workspace_read","result":{"content":format!("output {n}")}
+            })).unwrap();
+            store.put("execution_operation",&json!({
+                "id":format!("other-{n:03}"),"runId":"other-run",
+                "sessionId":"stranger","status":"completed","opSeq":n,
+                "tool":"workspace_read","result":{"content":"not visible"}
+            })).unwrap();
+        }
+        store.put("execution_operation",&json!({
+            "id":"failed-999","sessionId":"child","status":"failed",
+            "result":{"content":"not successful"}
+        })).unwrap();
+        let recent=store.recent_completed_session_operations("child",20).unwrap();
+        assert_eq!(recent.len(),20);
+        assert_eq!(recent[0]["id"],"child-044");
+        assert_eq!(recent[19]["id"],"child-025");
+        assert!(recent.iter().all(|row|row["sessionId"]=="child"&&row["status"]=="completed"));
+        assert!(store.recent_completed_session_operations("child",0).unwrap().is_empty());
+        let conn=store.conn.lock().unwrap();
+        let plan=conn.prepare(
+            "EXPLAIN QUERY PLAN SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='execution_operation'
+               AND json_extract(data,'$.status')='completed'
+               AND json_extract(data,'$.sessionId')=?1
+             ORDER BY updated_at DESC,id DESC LIMIT ?2"
+        ).unwrap().query_map(params!["child",20i64],
+            |row|row.get::<_,String>(3)
+        ).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
+        assert!(plan.iter().any(|step|step.contains("idx_completed_operation_session_recent")),
+            "recent child results must use partial indexed reads: {plan:?}");
     }
 
     #[test]
