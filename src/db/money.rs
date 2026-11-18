@@ -486,6 +486,14 @@ impl Store {
                 }
                 let mut origins=stored["observedFeeds"].as_array().cloned()
                     .unwrap_or_default();
+                // Backfill the initial capture channel before appending this
+                // later observation; older database rows had no feed list.
+                let first=stored["sourceName"].as_str().unwrap_or("");
+                if !first.is_empty() && origins.len()<12
+                    && !origins.iter().any(|entry|entry.as_str()==Some(first)){
+                    origins.insert(0,json!(first));
+                    changed=true;
+                }
                 let latest=signal["sourceName"].as_str().unwrap_or("");
                 if !latest.is_empty() && origins.len()<12
                     && !origins.iter().any(|entry|entry.as_str()==Some(latest)){
