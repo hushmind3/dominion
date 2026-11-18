@@ -17,9 +17,9 @@ const compactNumber=(v=0)=>v>=1e6?(v/1e6).toFixed(1)+'M':v>=1e3?(v/1e3).toFixed(
 const cleanMarkdown=(value='')=>String(value).replace(/^---[\s\S]*?---/,'').replace(/```[\s\S]*?```/g,' ').replace(/\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)/g,' ').replace(/!\[[^\]]*\]\([^)]*\)/g,' ').replace(/\[([^\]]+)\]\([^)]*\)/g,'$1').replace(/^\s*\|.*$/gm,' ').replace(/^\s*[-:]{3,}\s*$/gm,' ').replace(/<[^>]+>/g,' ').replace(/^#{1,6}\s*/gm,'').replace(/[*_`>]/g,'').replace(/\n{3,}/g,'\n\n').trim()
 const updatedLabel=(value:string)=>value?new Date(value).toLocaleDateString():''
 const viewTabs=[{id:'installed',label:'models.tab.installed',icon:HardDrive},{id:'search',label:'models.tab.search',icon:Search},{id:'import',label:'models.tab.import',icon:FolderOpen}] as const
-export function ModelExplorer(){
+export function ModelExplorer({initialView='installed'}:{initialView?:'installed'|'search'|'import'}={}){
  useLocale()
- const [view,setView]=useState<'installed'|'search'|'import'>('installed')
+ const [view,setView]=useState<'installed'|'search'|'import'>(initialView)
  const [installed,setInstalled]=useState<Installed[]>([])
  const [jobs,setJobs]=useState<Job[]>([])
  const [runtime,setRuntime]=useState<Runtime>({status:'idle'})
