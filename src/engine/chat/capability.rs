@@ -61,9 +61,9 @@ fn rank(def:&Value,query:&str,words:&HashSet<String>)->i32{
     let mut score=0;
     if query.to_lowercase().contains(&label){score+=40;}
     for word in words{
-        if label.split(|ch:char|!ch.is_alphanumeric()).any(|part|part==word){score+=12;}
-        else if label.contains(word){score+=7;}
-        else if summary.contains(word){score+=2;}
+        if label.split(|ch:char|!ch.is_alphanumeric()).any(|part|part==word.as_str()){score+=12;}
+        else if label.contains(word.as_str()){score+=7;}
+        else if summary.contains(word.as_str()){score+=2;}
     }
     score
 }
