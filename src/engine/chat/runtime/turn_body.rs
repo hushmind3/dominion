@@ -219,6 +219,23 @@ pub(super) async fn run_turn_body(
     // login in our visible browser profile only grants browser_control UI
     // access; it must not be mistaken for a REST API bearer grant.
     tools::retain_connected_account_tools(state,&mut tool_definitions);
+    // Only advertise the lazy skill loader when at least one approved,
+    // visible skill exists for this participant. Its schema otherwise adds
+    // tokens to every unrelated call, even if no skill could be read.
+    let skill_loader=if request.tools_enabled && request.tools_execution_enabled
+        && (session["sdkUiPolicy"].is_null()
+            || session["sdkUiPolicy"]["skillsEnabled"]!=false){
+        let scope=crate::engine::memory::MemoryScope::for_session(
+            &state.store,session_id,request.agent_id.as_deref());
+        state.store.all("skill").into_iter().any(|skill|
+            skill["enabled"]!=false && skill["status"]!="draft"
+            && crate::engine::memory::visible(&skill,&scope))
+            .then(||tool_definitions.iter().find(|tool|tool_name(tool)=="skill_read").cloned())
+            .flatten()
+    }else{None};
+    if skill_loader.is_none(){
+        tool_definitions.retain(|tool|tool_name(tool)!="skill_read");
+    }
     let is_room = session["roomId"].is_string();
     // Freeze a same-turn provider-catalog ceiling *after* connection
     // filtering, then apply the same user and read-only restrictions that
@@ -305,6 +322,18 @@ pub(super) async fn run_turn_body(
             execution["progressiveToolDiscovery"]=json!(true);
             state.store.put("execution",&execution)
                 .ok_or("도구 탐색 설정을 실행 기록에 저장하지 못했습니다.")?;
+        }
+    }
+    // Selectors may omit the loader because the current owner message does
+    // not mention a skill by name. Keep this one read-only capability when
+    // the context index lists active skills, or lazy-loading would be a dead
+    // end. It still respects native SDK/owner policy and the single-file
+    // minimal-tool path.
+    if simple_creation_target.is_none() {
+        if let Some(loader)=skill_loader {
+            if !tool_definitions.iter().any(|tool|tool_name(tool)=="skill_read") {
+                tool_definitions.push(loader);
+            }
         }
     }
     let compiled = if is_room {
