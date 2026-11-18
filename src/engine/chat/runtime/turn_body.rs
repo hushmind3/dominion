@@ -1182,6 +1182,8 @@ pub(super) async fn run_turn_body(
                             metadata["continuity"]["incrementalTransport"]["instructionTokens"],
                         "personaResentOnWire":
                             metadata["continuity"]["incrementalTransport"]["personaResent"],
+                        "developerBootstrapSent":
+                            metadata["continuity"]["incrementalTransport"]["developerBootstrapSent"],
                         "cacheAffinitySamePrefix":
                             metadata["continuity"]["samePrefixAsPreviousRequest"],
                         "toolsAdvertised":round_tools.len(),

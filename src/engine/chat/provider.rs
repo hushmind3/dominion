@@ -1398,7 +1398,10 @@ fn codex_input(messages: &[Value]) -> (String, Vec<Value>) {
 /// in their order, allowing a matching chain to omit them on later calls.
 /// HTTP retains its original top-level instructions unchanged.
 fn codex_ws_bootstrap_input(messages:&[Value])->Vec<Value>{
-    let rows=messages.iter().map(|message|{
+    // A developer hint cannot interrupt a function_call / matching output
+    // pair. Keep the canonical tool ordering before converting roles.
+    let ordered=order_tool_exchanges(messages.to_vec());
+    let rows=ordered.iter().map(|message|{
         let mut item=message.clone();
         if item["role"]=="system"{item["role"]=json!("developer");}
         item
@@ -2386,6 +2389,21 @@ mod tests {
         assert_eq!(ws[1]["role"],"user");
         assert_eq!(ws[3]["role"],"developer");
         assert_eq!(ws[3]["content"][0]["text"],"verify patch");
+        let interleaved=vec![
+            json!({"role":"system","content":"PERSONA"}),
+            json!({"role":"assistant","tool_calls":[{
+                "id":"call-1","type":"function",
+                "function":{"name":"workspace_read","arguments":"{}"}
+            }]}),
+            json!({"role":"system","content":"CHECK RESULT"}),
+            json!({"role":"tool","tool_call_id":"call-1","content":"ok"}),
+        ];
+        let ordered=codex_ws_bootstrap_input(&interleaved);
+        assert_eq!(ordered[0]["role"],"developer");
+        assert_eq!(ordered[1]["type"],"function_call");
+        assert_eq!(ordered[2]["type"],"function_call_output");
+        assert_eq!(ordered[3]["role"],"developer");
+        assert_eq!(ordered[3]["content"][0]["text"],"CHECK RESULT");
         assert!(codex_ws_developer_unsupported("invalid role developer is not supported"));
         assert!(!codex_ws_developer_unsupported("model is unavailable"));
     }

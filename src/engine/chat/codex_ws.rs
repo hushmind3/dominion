@@ -337,6 +337,8 @@ pub(super) async fn stream(
                     "deltaItems":input.len().saturating_sub(delta_items),
                     "chainReusedItems":delta_items,
                     "chainItems":guard.items.len(),
+                    "developerBootstrapSent":input[delta_items..].iter()
+                        .any(|row|row["role"]=="developer"),
                     "sentInputTokens":super::room_context::estimate(&json!(&input[delta_items..]).to_string()),
                     "fullInputTokens":super::room_context::estimate(&json!(input).to_string()),
                     "instructionTokens":super::room_context::estimate(&json!(base["instructions"]).to_string()),
@@ -389,6 +391,8 @@ pub(super) async fn stream(
                             "deltaItems":input.len(),
                             "chainReusedItems":0,
                             "chainItems":guard.items.len(),
+                            "developerBootstrapSent":input.iter()
+                                .any(|row|row["role"]=="developer"),
                             "sentInputTokens":super::room_context::estimate(&json!(input).to_string()),
                             "fullInputTokens":super::room_context::estimate(&json!(input).to_string()),
                             "instructionTokens":super::room_context::estimate(&json!(base["instructions"]).to_string()),
@@ -844,6 +848,7 @@ mod tests {
         assert_eq!(first_wire["input"],json!(prefix));
         assert_eq!(first_wire["instructions"],base["instructions"]);
         assert_eq!(first.transport["chainReusedItems"],0);
+        assert_eq!(first.transport["developerBootstrapSent"],true);
         let second_input=vec![
             developer.clone(),owner.clone(),item("assistant","reply"),
             item("user","new task")
@@ -855,6 +860,7 @@ mod tests {
             "persona and old dialogue must not travel again");
         assert_eq!(second_wire["previous_response_id"],"resp-1");
         assert_eq!(second.transport["chainReusedItems"],3);
+        assert_eq!(second.transport["developerBootstrapSent"],false);
         let revised=vec![
             item("developer","COMMON_PERSONA_REVISED"),owner,
             item("assistant","reply"),item("user","new task")
@@ -866,6 +872,7 @@ mod tests {
             "persona revision must send a full new prefix");
         assert!(third_wire.get("previous_response_id").is_none());
         assert_eq!(third.transport["mode"],"full");
+        assert_eq!(third.transport["developerBootstrapSent"],true);
         forget(&registry_key(&provider,"fixture","session"));
         server.abort();drop(state);std::fs::remove_dir_all(root).unwrap();
     }
