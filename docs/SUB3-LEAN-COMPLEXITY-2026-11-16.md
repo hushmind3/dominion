@@ -96,3 +96,16 @@ The earlier cutover section above documents the transition **before** the final 
 - The stand-alone CLI instructions in the old HARNESS document were replaced with accurate live/archived API instructions.
 
 Verification guarantees are limited to the exact workflow/test scopes above. No release build, cost/latency comparison, external harness installation or main-branch modification is claimed.
+
+## 2026-11-18 — Match the current 79/100 judge gap: eliminate redundant inference
+
+The score comparison attached by the owner ranks `dominion-sub3` 79/100 and notes native/chat tool and model-call divergence. This change addresses **observed source-level duplicate work**, without adopting another harness or altering the existing Rust job kernel:
+
+1. `chat/runtime/planning.rs::needs_plan`: a request with no inferred acceptance criterion is not inherently multi-step. A separate paid preplan is now limited to genuinely long/composite work, three or more distinct acceptance checks, explicit owner policy, or decomposition that returned multiple steps. Single-step tasks still use the main model and tools.
+2. `chat/runtime/turn.rs`: deleted the *second paid semantic reviewer* `review_action()` on a deterministic acceptance failure. The same concrete gaps feed the existing repair turn, with exactly the same retry ceiling, tool admission, evidence checks, journal and owner approval. The old reviewer was not an independent host verifier and its output could not certify completion. Planning-call attempts count even on provider failure.
+3. `dominion-agent-sdk/src/tool_discovery.rs::tool_relevance`: native tool shortlist ranking and chat/room query-relevant ranking now share one Rust metadata scoring primitive. Chat no longer scans whole JSON tool schemas including argument descriptions for spurious matches. Relevance changes **visibility only**, not the full registered tool list or permissions; room-specific task gating/owner restrictions remain intact.
+4. Regression cases cover simple vs composite planning, native/chat relevance equivalence, and rejecting a parameter-description-only match. The scoped Rust development workflows test these boundaries.
+
+Limits: The general chat turn loop, `harness_assisted` procedures and native job kernel are **still** separate execution lifecycles. Chat does not yet implement the SDK's fixed-schema `dominion_tool_search` / `dominion_tool_call` bridge and cannot claim the same discovery freedom. No paid-model A/B experiment, end-to-end completion benchmark or full release CI is claimed. Model call reduction is inferred from removed code paths; actual token/latency/correctness outcomes require matched model+task+budget runs.
+
+External reference: https://arxiv.org/abs/2609.20804 (context/planning/action-space ablations) and https://arxiv.org/abs/2609.32459 (NanoHarness component ablations).
