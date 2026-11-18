@@ -83,3 +83,16 @@ Status: code and source-level tests committed; Rust compiler, tests and full CI 
 - `src/api/sdk_runs.rs` + `src/api/jobs.rs`: marker is passed only as UI/history scope, no second worker or authority.
 
 **Status:** committed, with GitHub file/head verification planned. Local Cargo/rustc is not installed here, so changed Rust tests and CI **were not executed**. No measured latency, token or completion-rate gain is claimed. This is a safe **new-HTTP-run cutover**, not total one-loop completion; retiring the legacy binary and unifying chat, external ACP runtimes or historical checkpoint formats requires separate verified migration work.
+
+## 2026-11-18 — Completed retirement of the redundant standalone Rust harness
+
+The earlier cutover section above documents the transition **before** the final cleanup; the following supersedes its references to preserving the old standalone runner.
+
+- Removed the entire `crates/harness/` package (independent `AgentSdk::run` loop, blocking OpenAI driver, tool registry, and CLI binary) from `dominion-sub3`. Root `Cargo.toml` and `Cargo.lock` no longer list it.
+- Replaced `src/api/sdk.rs` (formerly 474 lines) with a 260-line compatibility adapter. **New** `/api/harness/runs` calls route to the existing `dominion-agent-sdk::Kernel` worker. **Old** `sdk_run` and bounded FileJournal snapshots remain read-only; no legacy resume/approval/reconciliation attempts can redispatch potentially uncertain side effects.
+- Corrected the previously failing tool-discovery directive regression (`Inspect code` was not exposing a code-reading tool) and added architecture guards that reject restoration of the retired parallel crate/legacy API executor.
+- Targeted GitHub Actions runs at commits `74a3280` (Sub3 product Rust tests) and `0f643f7` (Sub3 Rust SDK tests) both completed successfully. They do not establish full release CI or verify later documentation-only commits.
+- **Remaining active design work:** streaming chat `src/engine/chat/runtime/turn.rs` has a separate interactive turn loop, and the optional `src/engine/chat/runtime/harness.rs` procedure runner executes owner-enabled `harness_assisted` strategies. These are active product semantics, **not** proven-dead code; deleting them without migrating chat continuity, owner policies and approval receipts would be an unverified behavior regression. Neither is claimed unified or removed here.
+- The stand-alone CLI instructions in the old HARNESS document were replaced with accurate live/archived API instructions.
+
+Verification guarantees are limited to the exact workflow/test scopes above. No release build, cost/latency comparison, external harness installation or main-branch modification is claimed.
