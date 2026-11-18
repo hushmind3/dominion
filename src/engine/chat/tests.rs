@@ -722,6 +722,8 @@ async fn cancel_api_interrupts_silent_http_generation_and_allows_same_session_re
     let response=crate::api::sessions::cancel_session(
         State(state.clone()),Path("cancel-ui".into())).await;
     assert_eq!(response.0["cancelled"],true);
+    assert_eq!(response.0["settled"],true,
+        "Cancellation endpoint must not release UI before the Rust run finalizes");
     let result=tokio::time::timeout(Duration::from_secs(2),task).await
         .expect("Cancelling must preempt a provider that never sends SSE")
         .unwrap();
