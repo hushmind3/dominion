@@ -211,6 +211,13 @@ pub(crate) fn prepare(
         &provider.reasoning_protocol, &identity,
     ]);
     let key = format!("dominion_{affinity}");
+    // Cloudflare Workers AI routes cache tensors by instance. All 9 agents
+    // in one room should visit the same model instance even though private
+    // conversation cursors and persona-specific cache keys remain separate.
+    let workers_affinity=stable_id(&[
+        "workers-ai-session-v1",session_id,&provider.id,&provider.base_url,
+        &provider.model,
+    ]);
     let previous = state.store.get("model_conversation", &id);
     let same_prefix = previous.as_ref().is_some_and(|record|record["prefixDigest"] == prefix);
     let mut record = previous.unwrap_or_else(||json!({
@@ -220,6 +227,7 @@ pub(crate) fn prepare(
     }));
     record["transportSessionId"] = json!(scope);
     record["cacheAffinityId"] = json!(affinity);
+    record["workersAiSessionAffinity"] = json!(workers_affinity);
     record["cacheKey"] = json!(key);
     record["prefixDigest"] = json!(prefix);
     record["lastRequestedAt"] = json!(chrono::Utc::now().to_rfc3339());
@@ -227,7 +235,9 @@ pub(crate) fn prepare(
         .ok_or("봇의 지속 대화 상태를 저장할 수 없습니다.")?;
     Ok(json!({
         "id":id,"participantId":participant_id,"transport":provider.kind,"mode":"prefix-reuse",
-        "transportSessionId":scope,"cacheAffinityId":affinity,"cacheKey":key,"prefixDigest":prefix,
+        "transportSessionId":scope,"cacheAffinityId":affinity,
+        "workersAiSessionAffinity":workers_affinity,
+        "cacheKey":key,"prefixDigest":prefix,
         "samePrefixAsPreviousRequest":same_prefix,
         "previousReplyMessageId":participant.get("lastReplyMessageId").unwrap_or(&record["lastReplyMessageId"]),
         "participantBaseReplyMessageId":participant["lastReplyMessageId"],
@@ -254,6 +264,16 @@ pub(crate) fn commit(state: &AppState, continuity: &Value, message: &Value) {
             "lastCompletedAt":chrono::Utc::now().to_rfc3339(),"lastRouteId":id,
         }));
     }
+}
+
+/// True only for the first-party Cloudflare Workers AI REST/compat route.
+/// An arbitrary local API proxy or another Cloudflare product must not receive
+/// a provider-specific header or unsupported JSON cache parameter.
+fn is_workers_ai(provider:&ProviderRef)->bool{
+    let Ok(url)=reqwest::Url::parse(&provider.base_url) else{return false};
+    url.scheme()=="https" && url.host_str()==Some("api.cloudflare.com")
+        && url.path().starts_with("/client/v4/accounts/")
+        && (url.path().ends_with("/ai") || url.path().contains("/ai/"))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -307,7 +327,8 @@ pub(super) fn hinted_body(state: &AppState, provider: &ProviderRef, original: &V
     let disabled=known.as_ref().is_some_and(|record|record["accepted"]==false
         && record["expiresAt"].as_i64().is_some_and(|until|until>chrono::Utc::now().timestamp()));
     let mut body=original.clone();
-    let hinted=!disabled && apply_hint(&mut body,plan,wire);
+    let hinted=!disabled && !(is_workers_ai(provider) && matches!(wire,CacheWire::Key))
+        && apply_hint(&mut body,plan,wire);
     plan["cacheHint"]=json!(wire.field());
     plan["wireHintSent"]=json!(hinted);
     plan["cacheHintAcceptance"]=if disabled {json!(false)} else {Value::Null};
@@ -327,6 +348,11 @@ pub(super) async fn send(
     for attempt in 1..=2 {
         plan["httpRequests"]=json!(attempt);
         let mut request=builder.try_clone().ok_or("모델 요청을 복제할 수 없습니다.")?;
+        if is_workers_ai(provider){
+            if let Some(affinity)=plan["workersAiSessionAffinity"].as_str(){
+                request=request.header("x-session-affinity",affinity);
+            }
+        }
         if let Some(id)=plan["cacheAffinityId"].as_str().or_else(||plan["transportSessionId"].as_str()) {
             request=request.header("x-dominion-conversation",id);
             // OpenCode Go's direct endpoint uses the same stable conversation
