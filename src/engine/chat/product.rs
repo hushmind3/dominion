@@ -89,6 +89,9 @@ fn terminal_acceptance_receipt(
     acceptance: Option<&(String, Value)>,
 ) -> Option<usize> {
     let (goal, checks) = acceptance?;
+    // An empty inferred contract only proves that some tool was run, not
+    // that the requested result is complete. It needs a model final review.
+    if checks.as_array().is_none_or(Vec::is_empty) { return None; }
     let source_id = source_id?;
     let evidence = evidence_for_source(state, session_id, source_id, execution_id);
     if evidence.is_empty() || !verification::check_acceptance(state, goal, checks, &evidence).is_empty() {
@@ -1596,37 +1599,11 @@ impl Host for MainTurn<'_> {
         _ctx: &'a mut Context<'_>,
     ) -> BoxFuture<'a, Result<Flow, String>> {
         Box::pin(async move {
-            // No inferred success from a model sentence, a file that happened
-            // to exist, or an unfinished durable program.
+            // Durable, owner-bound evidence is the only path to a
+            // zero-model-call terminal transition.
             if !self.force_final || !self.acceptance_passed
-                || !self.program_finished || self.owner_changed()?
+                || !self.closure_admitted()?
             {
-                return Ok(Flow::Continue);
-            }
-            let operations = self.state.store.execution_operations(self.execution_id)?;
-            if operations.iter().any(|op| {
-                op["outcomeUnknown"] == true
-                    || matches!(op["status"].as_str(), Some("running" | "interrupted"))
-            }) {
-                return Ok(Flow::Continue);
-            }
-            // Do not bypass standing procedures just because the concrete
-            // postconditions passed; the normal final verifier must see them.
-            let mut completed = operations.into_iter()
-                .filter(|op| op["status"] == "completed").collect::<Vec<_>>();
-            crate::engine::procedure::sort_operations(&mut completed);
-            if self.strategy_candidates.iter().any(|strategy| {
-                strategy["authority"] == "standing"
-                    && crate::engine::procedure::applies(
-                        strategy, &self.request.input, None, None,
-                    )
-                    && {
-                        let verdict = crate::engine::procedure::evaluate(
-                            strategy, &completed, &self.state.config.workspace,
-                        );
-                        verdict["verified"] == true && verdict["followed"] == false
-                    }
-            }) {
                 return Ok(Flow::Continue);
             }
             let Some(receipts) = terminal_acceptance_receipt(
@@ -1645,20 +1622,20 @@ impl Host for MainTurn<'_> {
             let checks = self.acceptance.as_ref()
                 .and_then(|(_, checks)| checks.as_array());
             let checked = checks.map_or(0, Vec::len);
-            if self.final_content.trim().is_empty() {
-                let paths = checks.into_iter().flatten()
-                    .filter_map(|check| check["path"].as_str())
-                    .filter(|path| !path.trim().is_empty())
-                    .take(8)
-                    .map(|path| format!("`{path}`"))
-                    .collect::<Vec<_>>();
-                self.final_content = if paths.is_empty() {
-                    format!("실제 도구 실행 {receipts}건을 확인하고 검증 조건 {checked}개를 충족했습니다.")
-                } else {
-                    format!("실제 도구 실행 {receipts}건을 확인하고 검증 조건 {checked}개를 충족했습니다. 확인된 파일: {}.",paths.join(", "))
-                };
-                let _ = self.tx.send(json!({"type":"text","text":self.final_content}));
-            }
+            // An earlier provisional reply can be stale after a repair.
+            // Final text must come from this latest verified checkpoint.
+            let paths = checks.into_iter().flatten()
+                .filter_map(|check| check["path"].as_str())
+                .filter(|path| !path.trim().is_empty())
+                .take(8)
+                .map(|path| format!("`{path}`"))
+                .collect::<Vec<_>>();
+            self.final_content = if paths.is_empty() {
+                format!("실제 도구 실행 {receipts}건을 확인하고 검증 조건 {checked}개를 충족했습니다.")
+            } else {
+                format!("실제 도구 실행 {receipts}건을 확인하고 검증 조건 {checked}개를 충족했습니다. 확인된 파일: {}.",paths.join(", "))
+            };
+            let _ = self.tx.send(json!({"type":"text","text":self.final_content}));
             self.metadata["completionSource"] = json!("kernel_verified_checkpoint");
             self.state.store.audit("acceptance.kernel_reconciled", json!({
                 "executionId": self.execution_id,
@@ -1671,10 +1648,14 @@ impl Host for MainTurn<'_> {
         })
     }
     fn exhausted(&mut self) -> Result<(), String> {
+        // A completed file cannot release an uncertain in-flight effect, a
+        // superseded owner revision, or an unsatisfied standing procedure.
+        let safe_to_close = self.closure_admitted()?;
+        if !safe_to_close { self.acceptance_passed = false; }
         // The final model round may finish an effectful tool call with no paid
         // round left to emit the completion prose. Re-read persisted receipts
         // rather than paying a ninth call or treating a mere file as success.
-        if !self.acceptance_passed && !self.owner_changed()? {
+        if !self.acceptance_passed && safe_to_close {
             if let Some(receipts) = terminal_acceptance_receipt(
                 self.state, self.session_id, self.reply_to.as_deref(),
                 self.execution_id, self.acceptance.as_ref(),
@@ -1743,6 +1724,37 @@ impl Host for MainTurn<'_> {
     }
 }
 impl MainTurn<'_> {
+    /// Shared terminal safety gate for both early receipt completion and
+    /// exhausted-budget reconciliation. Unresolved effects never become a
+    /// success just because another action produced the expected file.
+    fn closure_admitted(&self) -> Result<bool, String> {
+        if !self.program_finished || self.owner_changed()? {
+            return Ok(false);
+        }
+        let operations = self.state.store.execution_operations(self.execution_id)?;
+        if operations.iter().any(|op| {
+            op["outcomeUnknown"] == true
+                || matches!(op["status"].as_str(), Some("running" | "interrupted"))
+        }) {
+            return Ok(false);
+        }
+        let mut completed = operations.into_iter()
+            .filter(|op| op["status"] == "completed").collect::<Vec<_>>();
+        crate::engine::procedure::sort_operations(&mut completed);
+        let standing_violation = self.strategy_candidates.iter().any(|strategy| {
+            strategy["authority"] == "standing"
+                && crate::engine::procedure::applies(
+                    strategy, &self.request.input, None, None,
+                )
+                && {
+                    let verdict = crate::engine::procedure::evaluate(
+                        strategy, &completed, &self.state.config.workspace,
+                    );
+                    verdict["verified"] == true && verdict["followed"] == false
+                }
+        });
+        Ok(!standing_violation)
+    }
     fn owner_changed(&self) -> Result<bool, String> {
         self.owner
             .as_ref()
