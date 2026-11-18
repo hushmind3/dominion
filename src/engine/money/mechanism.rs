@@ -99,8 +99,9 @@ fn pair_score(supply:&Value,buyer:&Value,pattern:Mechanism)->Option<f64>{
         ||!tags(buyer,"changeTags").contains(&pattern.buyer)
         ||a.is_empty()||b.is_empty(){return None;}
     // Require independent origins and at least one cross-domain difference.
-    if source_name(supply).is_empty()||source_name(buyer).is_empty()
-        ||source_name(supply)==source_name(buyer){return None;}
+    // The same RSS channel can contain reporting from two real publishers.
+    // Feed labels are mandatory provenance but never independence criteria.
+    if source_name(supply).is_empty()||source_name(buyer).is_empty(){return None;}
     let supply_host=source_host(supply);
     let buyer_host=source_host(buyer);
     if supply_host.is_empty()||buyer_host.is_empty()||supply_host==buyer_host{
@@ -158,7 +159,7 @@ pub fn discover(signals:&[Value],max:usize)->Vec<Value>{
                     "topicBridgeStatus":if a_topics.iter().any(|t|b_topics.contains(t)){
                         "shared_topic_not_verified_causality"
                     }else{"cross_sector_bridge_unverified"},
-                    "evidenceStatus":"two_independent_source_mentions_not_causality",
+                    "evidenceStatus":"two_distinct_publisher_mentions_not_verified_independent_reporting",
                     "purchaseEvidence":false,
                     "createdAt":chrono::Utc::now().to_rfc3339()}));
             }
@@ -238,6 +239,21 @@ mod tests{
         assert_eq!(source_host(&finance),"reuters.com");
         let other=json!({"url":"https://example.org/report"});
         assert_eq!(source_host(&other),"example.org");
+    }
+
+    #[test] fn distinct_original_publishers_from_the_same_search_feed_can_pair(){
+        let mut supply=article("supply","Shared RSS search",
+            &["hardware","manufacturing"],"cost_drop");
+        let mut buyer=article("buyer","Shared RSS search",
+            &["construction"],"cost_rise");
+        supply["publisherDomain"]=json!("chinese-supplier.example");
+        buyer["publisherDomain"]=json!("korean-buyer.example");
+        let matches=discover(&[supply.clone(),buyer.clone()],8);
+        assert_eq!(matches.len(),1);
+        assert_eq!(matches[0]["evidenceStatus"],
+            "two_distinct_publisher_mentions_not_verified_independent_reporting");
+        buyer["publisherDomain"]=json!("chinese-supplier.example");
+        assert!(discover(&[supply,buyer],8).is_empty());
     }
 
     #[test] fn two_feeds_from_same_publisher_are_not_independent_sources(){
