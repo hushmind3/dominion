@@ -2,7 +2,7 @@ import {useEffect,useRef,useState} from 'react'
 import {get,post} from '../api'
 
 type GoogleResponse={credential:string}
-type GoogleIdentity={accounts:{id:{initialize:(config:{client_id:string;callback:(response:GoogleResponse)=>void})=>void;renderButton:(element:HTMLElement,options:Record<string,unknown>)=>void;disableAutoSelect?:()=>void}}}
+type GoogleIdentity={accounts:{id:{initialize:(config:{client_id:string;callback:(response:GoogleResponse)=>void})=>void;renderButton:(element:HTMLElement,options:Record<string,unknown>)=>void;disableAutoSelect?:()=>void;disableAutoSelect?:()=>void}}}
 declare global {interface Window {google?:GoogleIdentity}}
 type Model={id:string;name?:string;free:boolean;provider?:string;input_micro_krw?:number;output_micro_krw?:number}
 type CatalogProvider={id:string;name:string;api:string;models:number;doc?:string}
@@ -17,6 +17,8 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
  const [modelSearch,setModelSearch]=useState('')
  const [modelFilter,setModelFilter]=useState<'all'|'free'|'paid'>('all')
  const [showAdvanced,setShowAdvanced]=useState(false)
+ const [activeTab,setActiveTab]=useState<'cloud'|'providers'>('cloud')
+ const [providerSort,setProviderSort]=useState<'name'|'models'>('name')
  const [advancedTab,setAdvancedTab]=useState<'providers'|'router'>('providers')
  const [managementTab,setManagementTab]=useState<'cloud'|'providers'>('cloud')
  const [providerSort,setProviderSort]=useState<'name'|'models'>('name')
@@ -91,6 +93,7 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
    const baseUrl=entry.api.replace(/\/$/,'')
    const existing=await get<Array<{id:string;baseUrl:string;model?:string}>>('/api/providers')
    const same=existing.find(p=>p.baseUrl.replace(/\/$/,'')===baseUrl)
+   if(!catalogKey.trim()&&!same)throw Error('모델 카탈로그는 공개되어 있지만, 실제 연결에는 업체 API 키가 필요합니다.')
    const provider=same||await post<{id:string}>('/api/providers',{name:entry.name,baseUrl,kind:'openai',apiKey:catalogKey.trim()||undefined,enabled:true,local:false,toolMode:'auto'})
    setCatalogProviderId(provider.id)
    const models=await get<RemoteModel[]>('/api/providers/'+encodeURIComponent(provider.id)+'/models')
@@ -188,6 +191,7 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
    </select>
    <button type="button" disabled={busy||!selected||!models.some(model=>model.id===selected&&(modelFilter==='all'||(modelFilter==='free'?model.free:!model.free))&&(model.id+' '+(model.name||'')+' '+(model.provider||'')).toLowerCase().includes(modelSearch.toLowerCase()))} onClick={()=>void register()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">모델 등록</button>
   </div>}
+  {token&&<button type="button" className="mt-3 rounded-lg border px-3 py-2 text-[12px]" onClick={()=>{setToken('');setModels([]);setSelected('');setMessage('로그아웃되었습니다.');window.google?.accounts.id.disableAutoSelect?.()}}>로그아웃</button>}
   {message&&<p role="status" className="mt-2 text-[12px] text-[#7C7469]">{message}</p>}
   <div className="mt-4 flex flex-wrap gap-2 border-b border-[#E7E0D5] pb-3" role="tablist" aria-label="클라우드 모델 관리">
    <button type="button" role="tab" aria-selected={cloudTab==='models'} onClick={()=>{setCloudTab('models');setShowAdvanced(false)}} className={'rounded-lg px-3 py-2 text-[12px] '+(cloudTab==='models'?'bg-[#C96442] text-white':'border')}>내 클라우드 모델</button>
@@ -222,6 +226,7 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
     <button type="button" disabled={catalogBusy||!catalogProviderId} onClick={()=>void importCatalogModels()} className="rounded-lg border px-3 py-2 text-[12px] disabled:opacity-50">조회된 모델 전체 등록</button>
    </div>}
    {catalog.length>0&&<p className="mt-2 text-[12px] text-[#7C7469]">검색 결과 {catalog.filter(p=>(p.name+' '+p.id).toLowerCase().includes(catalogSearch.toLowerCase())).length}개 / 전체 {catalog.length}개 업체 · 중복 ID 제외</p>}
+   <p className="mt-2 text-[12px] text-[#7C7469]">업체 목록의 모델 수는 공개 카탈로그 기준입니다. 실제 사용에는 API 키 또는 기존 연결이 필요합니다.</p>
    {catalogMessage&&<p role="status" className="mt-2 text-[12px] text-[#7C7469]">{catalogMessage}</p>}
   </div>
   {cloudTab==='providers'&&showAdvanced&&<div className="mt-4 border-t border-[#E7E0D5] pt-4">
@@ -233,5 +238,6 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
    </div>
    {routerMessage&&<p role="status" className="mt-2 text-[12px] text-[#7C7469]">{routerMessage}</p>}
   </div>
+  </>}
  </section>
 }
