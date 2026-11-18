@@ -6,16 +6,12 @@
 //! execution receipts, idempotency checks, cancellations, and tool budget.
 //! The external process is a delegated worker, NEVER a second DOMINION core.
 use super::*;
-use std::process::Stdio;
-use tokio::{io::{AsyncRead,AsyncReadExt,AsyncWriteExt},process::{Child,Command}};
 use std::time::{Duration,Instant};
 
 const ENV_KEY:&str="DOMINION_EXTERNAL_HARNESSES";
 const MAX_ADAPTERS:usize=8;
 const MAX_ARGS:usize=20;
 const MAX_PROMPT:usize=24_000;
-const MAX_STDOUT:usize=48_000;
-const MAX_STDERR:usize=6_000;
 
 #[derive(Clone,Debug)]
 struct Adapter {
@@ -65,28 +61,6 @@ pub(super) fn configured_ids()->Vec<String>{
     adapters().into_iter().map(|entry|entry.id).collect()
 }
 
-async fn read_tail<R:AsyncRead+Unpin>(mut stream:R,limit:usize)->(String,bool){
-    let mut retained=Vec::<u8>::with_capacity(limit.min(4096));
-    let mut truncated=false;
-    let mut buf=[0u8;4096];
-    loop {
-        let Ok(size)=stream.read(&mut buf).await else{break};
-        if size==0 {break;}
-        if size>=limit {
-            retained.clear();
-            retained.extend_from_slice(&buf[size-limit..size]);
-            truncated=true;
-            continue;
-        }
-        let overflow=retained.len().saturating_add(size).saturating_sub(limit);
-        if overflow>0 {
-            retained.drain(..overflow);
-            truncated=true;
-        }
-        retained.extend_from_slice(&buf[..size]);
-    }
-    (String::from_utf8_lossy(&retained).into_owned(),truncated)
-}
 fn has_failed_turn(stdout:&str)->bool{
     stdout.lines().any(|line|serde_json::from_str::<Value>(line)
         .ok().is_some_and(|value|value["type"]=="turn.failed"))
@@ -112,23 +86,6 @@ fn agent_answer(stdout:&str)->Option<String>{
     }
     last
 }
-#[cfg(unix)]
-fn stop_descendants(pid:Option<u32>){
-    if let Some(id)=pid.and_then(|v|i32::try_from(v).ok()).filter(|v|*v>1){
-        extern "C" {fn kill(pid:i32,sig:i32)->i32;}
-        // A private process group is created before spawn. Kill that group,
-        // not the engine or any other user's process group.
-        unsafe {let _=kill(-id,9);}
-    }
-}
-#[cfg(not(unix))]
-fn stop_descendants(_pid:Option<u32>){}
-
-async fn terminate(child:&mut Child,pid:Option<u32>){
-    stop_descendants(pid);
-    let _=child.start_kill();
-    let _=tokio::time::timeout(Duration::from_secs(3),child.wait()).await;
-}
 async fn execute_adapter(
     ctx:&ToolContext<'_>,
     spec:&Adapter,
@@ -142,90 +99,49 @@ async fn execute_adapter(
         return Err("delegation cancelled before process start".into());
     }
     let started=Instant::now();
-    let mut cmd=Command::new(&spec.command);
-    cmd.args(&spec.argv)
-        .current_dir(ctx.workspace)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        cmd.as_std_mut().process_group(0);
-    }
-    let mut child=cmd.spawn().map_err(|error|format!(
-        "external harness '{}' not available or failed to start: {error}",spec.id
-    ))?;
-    let pid=child.id();
-    let stdout=child.stdout.take().ok_or("harness has no stdout")?;
-    let stderr=child.stderr.take().ok_or("harness has no stderr")?;
-    let mut stdout_reader=tokio::spawn(read_tail(stdout,MAX_STDOUT));
-    let mut stderr_reader=tokio::spawn(read_tail(stderr,MAX_STDERR));
-    if let Some(mut stdin)=child.stdin.take(){
-        if stdin.write_all(prompt.as_bytes()).await.is_err(){
-            terminate(&mut child,pid).await;
-            return Ok(json!({"error":"harness rejected task input",
-                "outcomeUnknown":true,"harnessId":spec.id,
-                "requiresInspection":true}));
-        }
-        let _=stdin.shutdown().await;
-    }
-    let deadline=tokio::time::Instant::now()
-        +Duration::from_secs(timeout_seconds.clamp(5,600));
-    let status=loop{
+    let mut cmd=tokio::process::Command::new(&spec.command);
+    cmd.args(&spec.argv).current_dir(ctx.workspace);
+    // One native process supervisor serves terminal_exec, shell_exec and
+    // this optional adapter. No child lifecycle, pipe reader or timeout
+    // implementation is duplicated in the harness integration.
+    let pending=super::run_command_with_input(
+        &mut cmd,Duration::from_secs(timeout_seconds.clamp(5,600)),
+        prompt.as_bytes(),
+    );
+    tokio::pin!(pending);
+    let outcome=loop{
         if ctx.state.is_cancelled(ctx.session_id){
-            terminate(&mut child,pid).await;
             return Ok(json!({"error":"external harness was cancelled",
                 "outcomeUnknown":true,"harnessId":spec.id,
                 "requiresInspection":true}));
         }
         tokio::select!{
-            exit=child.wait()=>break exit.map_err(|e|e.to_string())?,
-            _=tokio::time::sleep_until(deadline)=>{
-                terminate(&mut child,pid).await;
-                return Ok(json!({"error":"external harness timed out",
-                    "outcomeUnknown":true,"harnessId":spec.id,
-                    "requiresInspection":true}));
-            }
-            _=ctx.state.cancel_notify.notified()=>{}
+            finished=&mut pending =>break finished,
+            _=ctx.state.cancel_notify.notified()=>{},
+            // Covers a cancellation signal racing with Notify registration
+            // and a cancellation initiated from another engine process.
+            _=tokio::time::sleep(Duration::from_millis(500))=>{},
         }
     };
-    let stdout_result=tokio::time::timeout(
-        Duration::from_secs(3),&mut stdout_reader,
-    ).await;
-    let (stdout,outputTruncated)=match stdout_result {
-        Ok(Ok(output))=>output,
-        _=>{
-            stop_descendants(pid);
-            stdout_reader.abort();
-            stderr_reader.abort();
-            return Ok(json!({"harnessId":spec.id,
-                "error":"external harness output streams did not close",
-                "outcomeUnknown":true,"requiresInspection":true}));
-        }
+    let (output,outputTruncated,errorsTruncated)=match outcome{
+        Ok(value)=>value,
+        Err(error)=>return Ok(json!({
+            "harnessId":spec.id,"error":error,"outcomeUnknown":true,
+            "requiresInspection":true,"elapsedMs":started.elapsed().as_millis() as u64,
+        })),
     };
-    let stderr_result=tokio::time::timeout(
-        Duration::from_secs(3),&mut stderr_reader,
-    ).await;
-    let (stderr,errorsTruncated)=match stderr_result{
-        Ok(Ok(output))=>output,
-        _=>{
-            stop_descendants(pid);
-            stderr_reader.abort();
-            return Ok(json!({"harnessId":spec.id,
-                "error":"external harness stderr did not close",
-                "outcomeUnknown":true,"requiresInspection":true}));
-        }
-    };
-    let verifiedExit=status.success() && !outputTruncated && !has_failed_turn(&stdout);
+    let stdout=String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr=String::from_utf8_lossy(&output.stderr).into_owned();
     let answer=agent_answer(&stdout).unwrap_or_else(||
         stdout.chars().rev().take(12000).collect::<String>()
             .chars().rev().collect::<String>());
+    let verifiedExit=output.status.success()
+        && !outputTruncated && !has_failed_turn(&stdout)
+        && !answer.trim().is_empty();
     Ok(json!({
         "harnessId":spec.id,
         "runtime":"external_process",
-        "exitCode":status.code(),
+        "exitCode":output.status.code(),
         "completed":verifiedExit,
         "answer":answer,
         "stdoutTruncated":outputTruncated,
