@@ -51,6 +51,7 @@ jobs:
           cargo test --bin dominion-rust engine::native_replay::tests
           cargo test --bin dominion-rust api::native_replay::tests
           cargo test --bin dominion-rust engine::program::tests
+          cargo test --bin dominion-rust engine::program::tests::refuted_verifier_cannot_be_bypassed_by_appending_unreachable_fix
           cargo test --bin dominion-rust engine::algorithms::tests
           cargo test --bin dominion-rust engine::adaptation_loop::tests
           cargo test --bin dominion-rust engine::chat::runtime::program::evidence_join_tests

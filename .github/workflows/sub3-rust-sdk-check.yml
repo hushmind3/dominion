@@ -51,5 +51,6 @@ jobs:
           cargo test --bin dominion-rust engine::chat::kernel_bridge::tests
           cargo test --bin dominion-rust api::sdk_runs::tests
           cargo test --bin dominion-rust engine::algorithms::tests
+          cargo test --bin dominion-rust engine::program::tests
           cargo test --bin dominion-rust db::tests
           cargo test --bin dominion-rust engine::native_agent::tests
