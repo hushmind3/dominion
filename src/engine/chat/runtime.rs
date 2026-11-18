@@ -846,7 +846,8 @@ async fn run_turn_body(
         execution["budgetChecked"] = json!(true);
         state.store.put("execution", &execution);
     }
-    if session["readOnly"]==true {tool_definitions.retain(|tool|tools::observational(tool_name(tool)));}
+    // Read-only and isolated-session policy was applied before progressive
+    // selection. Reapplying it here was redundant and hid a missing boundary.
     let native_tool_names = tool_definitions
         .iter()
         .filter_map(|definition| {
