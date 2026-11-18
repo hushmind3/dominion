@@ -5,7 +5,7 @@ import {get,post,del} from '../api'
 import {matchesRefreshTarget,type RefreshScope} from '../refreshEvents'
 import {t,useLocale} from '../i18n'
 import {translateError} from '../i18n/errors'
-import {classifyRuntimeFailure,memoryFit as getMemoryFit,requiredMemory,selectRecommended,selectSmaller} from '../utils/modelHardware'
+import {classifyRuntimeFailure,memoryFit as getMemoryFit,planDownloadLaunch,requiredMemory,selectRecommended,selectSmaller} from '../utils/modelHardware'
 type Catalog={id:string;author:string;name:string;library:string;createdAt?:string;downloads:number;likes:number;gated:boolean;updatedAt:string;description:string;task:string;tags:string[]}
 type Option={id:string;format:'gguf'|'mlx';label:string;quantization:string;bytes:number;files:string[];shards:number}
 type Detail=Catalog&{revision:string;license:string;architecture:string;options:Option[];readme:string}
@@ -18,6 +18,20 @@ const compactNumber=(v=0)=>v>=1e6?(v/1e6).toFixed(1)+'M':v>=1e3?(v/1e3).toFixed(
 const cleanMarkdown=(value='')=>String(value).replace(/^---[\s\S]*?---/,'').replace(/```[\s\S]*?```/g,' ').replace(/\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)/g,' ').replace(/!\[[^\]]*\]\([^)]*\)/g,' ').replace(/\[([^\]]+)\]\([^)]*\)/g,'$1').replace(/^\s*\|.*$/gm,' ').replace(/^\s*[-:]{3,}\s*$/gm,' ').replace(/<[^>]+>/g,' ').replace(/^#{1,6}\s*/gm,'').replace(/[*_`>]/g,'').replace(/\n{3,}/g,'\n\n').trim()
 const updatedLabel=(value:string)=>value?new Date(value).toLocaleDateString():''
 const viewTabs=[{id:'installed',label:'models.tab.installed',icon:HardDrive},{id:'search',label:'models.tab.search',icon:Search},{id:'import',label:'models.tab.import',icon:FolderOpen}] as const
+type PendingLaunch={jobId:string;repo:string;optionId:string;revision:string;createdAt:number}
+const launchKey='dominion-model-pending-launch'
+const readPendingLaunch=():PendingLaunch|null=>{
+ try{
+  const raw=window.sessionStorage.getItem(launchKey)
+  if(!raw)return null
+  const value=JSON.parse(raw) as Partial<PendingLaunch>
+  if(typeof value.jobId==='string'&&value.jobId&&typeof value.repo==='string'&&typeof value.optionId==='string'
+   &&typeof value.revision==='string'&&typeof value.createdAt==='number'
+   &&Date.now()-value.createdAt>=0&&Date.now()-value.createdAt<24*60*60*1000)return value as PendingLaunch
+  window.sessionStorage.removeItem(launchKey)
+ }catch{/* The browser may block session storage; launching still works in memory. */}
+ return null
+}
 export function ModelExplorer({initialView='installed',hideNavigation=false}:{initialView?:'installed'|'search'|'import';hideNavigation?:boolean}={}){
  useLocale()
  const [view,setView]=useState<'installed'|'search'|'import'>(initialView)
@@ -39,7 +53,8 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
  const [loading,setLoading]=useState(false)
  const [working,setWorking]=useState('')
  const [error,setError]=useState('')
- const [pendingLaunch,setPendingLaunch]=useState<{repo:string;optionId:string;revision:string}|null>(null)
+ const [pendingLaunch,setPendingLaunch]=useState<PendingLaunch|null>(readPendingLaunch)
+ useEffect(()=>{try{if(pendingLaunch)window.sessionStorage.setItem(launchKey,JSON.stringify(pendingLaunch));else window.sessionStorage.removeItem(launchKey)}catch{/* private browser session */}},[pendingLaunch])
  const [localPath,setLocalPath]=useState('')
  const [picking,setPicking]=useState(false)
  const detailScroll=useRef<HTMLDivElement>(null)
@@ -164,19 +179,39 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
  const load=(id:string)=>safe('load'+id,()=>post('/api/model-library/runtime/load',{id,context}))
  const requestDownload=async(autoLaunch:boolean,target:Option|undefined=option)=>{
   if(!detail||!target)return
+  const previous=jobs.filter(j=>j.repo===detail.id&&j.optionId===target.id
+   &&(j.revision||'main')===(detail.revision||'main'))
+   .sort((a,b)=>(b.startedAt||'').localeCompare(a.startedAt||''))[0]
+  const alreadyInstalled=installed.find(m=>m.id===previous?.installedId)
+   ||installed.find(m=>m.repo===detail.id&&m.optionId===target.id)
+  const plan=planDownloadLaunch(previous?.status,Boolean(alreadyInstalled))
+  if(plan==='installed'){
+   if(autoLaunch&&alreadyInstalled)void load(alreadyInstalled.id)
+   return
+  }
+  if(plan==='wait'&&previous){
+   if(autoLaunch)setPendingLaunch({jobId:previous.id,repo:detail.id,optionId:target.id,revision:detail.revision,createdAt:Date.now()})
+   return
+  }
   setWorking('download');setError('')
   try{
-   await post('/api/model-library/download',{repo:detail.id,optionId:target.id,format:target.format,files:target.files,revision:detail.revision})
-   if(autoLaunch)setPendingLaunch({repo:detail.id,optionId:target.id,revision:detail.revision})
+   const job=plan==='resume'&&previous
+    ?await post<Job>('/api/model-library/jobs/'+encodeURIComponent(previous.id)+'/resume',{})
+    :await post<Job>('/api/model-library/download',{repo:detail.id,optionId:target.id,format:target.format,files:target.files,revision:detail.revision})
+   if(autoLaunch)setPendingLaunch({jobId:job.id,repo:detail.id,optionId:target.id,revision:detail.revision,createdAt:Date.now()})
    await refresh()
   }catch(e){if(autoLaunch)setPendingLaunch(null);setError((e as Error).message)}
   finally{setWorking('')}
  }
  useEffect(()=>{
   if(!pendingLaunch)return
-  const job=jobs.filter(j=>j.repo===pendingLaunch.repo&&j.optionId===pendingLaunch.optionId&&(j.revision||'main')===(pendingLaunch.revision||'main')).sort((a,b)=>(b.startedAt||'').localeCompare(a.startedAt||''))[0]
+  const job=jobs.find(j=>j.id===pendingLaunch.jobId)
   if(!job)return
-  if(['failed','cancelled'].includes(job.status)){setPendingLaunch(null);return}
+  if(['failed','cancelled'].includes(job.status)){
+   setError('다운로드 후 자동 실행이 중단됐습니다: '+(job.error?translateError(job.error):job.status))
+   setPendingLaunch(null)
+   return
+  }
   if(job.status!=='completed')return
   const model=installed.find(m=>m.id===job.installedId)
   if(!model)return
@@ -195,6 +230,7 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
    <div className="flex items-center gap-2 text-[11px] text-[#7C7469]"><span className={'size-1.5 rounded-full '+(runtime.status==='ready'?'bg-emerald-500':runtime.status==='loading'?'bg-amber-500':'bg-slate-300')}/>{runtime.status==='ready'?t('models.status.ready'):runtime.status==='loading'?t('models.status.loading'):runtime.status==='installing'?t('models.status.installing'):t('models.status.idle')}<Button variant="bare" type="button" aria-label={t('models.refresh')} onClick={()=>void refresh()} className="ml-2 text-[#9C9388] hover:text-[#4A443C]"><RefreshCw size={14}/></Button></div>
   </div>
   {error&&<div role="alert" className="mx-4 mt-3 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-700"><CircleAlert size={15}/><span className="flex-1">{error}</span><Button variant="bare" aria-label={t('models.ui.close')} onClick={()=>setError('')}><X size={14}/></Button></div>}
+  {pendingLaunch&&<div role="status" className="mx-4 mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] text-emerald-800"><span className="min-w-0 break-all">다운로드 후 자동 실행 대기 · {pendingLaunch.repo} · {pendingLaunch.optionId}</span><Button variant="bare" type="button" className="text-[11px] font-semibold underline" onClick={()=>setPendingLaunch(null)}>자동 실행 취소 (다운로드 유지)</Button></div>}
   {runtime.status==='error'&&runtime.error&&<div role="alert" className="flex flex-wrap items-center justify-between gap-3 border-t border-rose-100 bg-rose-50 px-4 py-3 text-[11px] text-rose-700"><div className="flex min-w-0 flex-1 items-start gap-2"><CircleAlert size={15} className="mt-0.5 shrink-0"/><div><strong className="block">모델 실행 실패</strong><p className="mt-1 break-words">{translateError(runtime.error)}</p><p className="mt-1 text-rose-600">{runtimeFailure==='memory'?'메모리가 부족할 수 있습니다. 더 작은 양자화 모델을 선택해 보세요.':runtimeFailure==='file'?'모델 파일을 찾을 수 없거나 손상되었을 수 있습니다. 설치 목록과 파일을 확인하세요.':runtimeFailure==='engine'?'실행 엔진을 사용할 수 없습니다. 로컬 실행 엔진의 설치 상태를 확인하세요.':'오류 내용을 확인하고 실행 상태를 다시 조회해 보세요.'}</p></div></div><div className="flex shrink-0 flex-wrap gap-2">{runtimeFailure==='memory'&&smallerOption&&(runtime.id===existing?.id||runtime.id===selectedJob?.installedId)&&<Button variant="bare" type="button" className={btn} disabled={Boolean(working)} onClick={()=>{
  setView('search');setVariant(smallerOption.id);setError('')
  if(!smaller.fits)return
@@ -300,10 +336,10 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
      {option&&<div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl bg-[#FAF7F1] p-3">
       <span className="text-[12px] text-[#5C544A]">{t('models.sizeLabel')} <strong>{fmt(option.bytes)}</strong></span>
       {existing?<><Button variant="bare" type="button" className={btn+' !border-[#C96442] !bg-[#C96442] !text-white'} disabled={Boolean(working)||runtime.status==='loading'||(runtime.status==='ready'&&runtime.id===existing.id)} onClick={()=>void load(existing.id)}><Play size={13}/>{working==='load'+existing.id?t('models.loadingModel'):runtime.status==='ready'&&runtime.id===existing.id?t('models.inUse'):t('models.run')}</Button>{runtime.status==='ready'&&runtime.id===existing.id&&runtime.model&&<Button variant="bare" type="button" className={btn} onClick={()=>{window.location.hash='#/chat?'+new URLSearchParams({provider:'dominion-native',model:runtime.model!})}}><ArrowRight size={14}/>{t('models.chat')}</Button>}<Button variant="bare" type="button" className={btn} onClick={()=>setView('installed')}><Check size={14}/>{t('models.installedView')}</Button></>:
-       <><Button variant="bare" type="button" className="flex h-8 items-center gap-2 rounded-lg bg-[#C96442] px-3 text-[11px] font-semibold text-white disabled:opacity-40" disabled={Boolean(working)||['resolving','downloading','paused'].includes(selectedJob?.status||'')||detail.gated} onClick={()=>void requestDownload(false)}><ArrowDownToLine size={14}/>{working==='download'?t('models.requesting'):selectedJob?.status==='downloading'?t('models.downloading'):t('models.downloadStart')}</Button><Button variant="bare" type="button" className={btn} disabled={Boolean(working)||detail.gated||['failed','cancelled'].includes(selectedJob?.status||'')} onClick={()=>{if(['resolving','downloading','paused'].includes(selectedJob?.status||'')){setPendingLaunch({repo:detail.id,optionId:option.id,revision:detail.revision});return}void requestDownload(true)}}><Play size={13}/>다운로드 후 실행</Button></>}
+       <><Button variant="bare" type="button" className="flex h-8 items-center gap-2 rounded-lg bg-[#C96442] px-3 text-[11px] font-semibold text-white disabled:opacity-40" disabled={Boolean(working)||['resolving','downloading','paused'].includes(selectedJob?.status||'')||detail.gated} onClick={()=>void requestDownload(false)}><ArrowDownToLine size={14}/>{working==='download'?t('models.requesting'):selectedJob?.status==='downloading'?t('models.downloading'):t('models.downloadStart')}</Button><Button variant="bare" type="button" className={btn} disabled={Boolean(working)||detail.gated||Boolean(pendingLaunch&&pendingLaunch.repo===detail.id&&pendingLaunch.optionId===option.id)} onClick={()=>void requestDownload(true)}><Play size={13}/>{pendingLaunch?.repo===detail.id&&pendingLaunch.optionId===option.id?'자동 실행 대기 중':['paused','failed','cancelled'].includes(selectedJob?.status||'')?'이어받고 실행':'다운로드 후 실행'}</Button></>}
       {detail.gated&&<span className="text-[11px] text-amber-700">{t('models.approval')}</span>}
      </div>}
-     {pendingLaunch?.repo===detail.id&&pendingLaunch.optionId===option?.id&&<p className="mt-2 text-[11px] text-emerald-700">다운로드 완료 후 자동으로 실행합니다. 실행이 준비되면 채팅 버튼이 나타납니다.</p>}
+     
      {selectedJob?.status==='completed'&&!existing&&<div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-800">다운로드가 완료되었습니다. 설치 목록을 새로고침하면 실행할 수 있습니다. <Button variant="bare" type="button" className="ml-2 underline" onClick={()=>void refresh()}>목록 새로고침</Button></div>}
      {selectedJob&&<div className="mt-3 rounded-lg border border-[#EFE9DF] p-3 text-[11px]"><div className="flex justify-between gap-3"><span>{selectedJob.status} {selectedJob.current&&'· '+shorten(selectedJob.current,30)}</span><span>{fmt(selectedJob.downloaded)} / {fmt(selectedJob.total)}</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[#F3EEE5]"><div className="h-full bg-[#C96442]" style={{width:Math.min(100,selectedJob.downloaded/Math.max(1,selectedJob.total)*100)+'%'}}/></div>{selectedJob.error&&<p className="mt-2 text-rose-600">{translateError(selectedJob.error)}</p>}<div className="mt-2 flex gap-2">{selectedJob.status==='downloading'&&<Button variant="bare" type="button" className={btn} onClick={()=>void safe('pause',()=>post('/api/model-library/jobs/'+selectedJob.id+'/pause',{}))}><Pause size={13}/> {t('models.pause')}</Button>}{['paused','failed','cancelled'].includes(selectedJob.status)&&<Button variant="bare" type="button" className={btn} onClick={()=>void safe('resume',()=>post('/api/model-library/jobs/'+selectedJob.id+'/resume',{}))}><Play size={13}/> {t('models.resume')}</Button>}{['resolving','downloading','paused'].includes(selectedJob.status)&&<Button variant="bare" type="button" className={btn} onClick={()=>void safe('cancel',()=>post('/api/model-library/jobs/'+selectedJob.id+'/cancel',{}))}><Square size={13}/> {t('models.download.cancel')}</Button>}</div></div>}
          <div className="mt-5 rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-4"><div className="flex items-center justify-between gap-2"><strong className="text-[13px] text-[#3A342D]">{t('models.readme')}</strong><span className="text-[10px] font-semibold text-[#A79C8E]">HUGGING FACE</span></div><p className="mt-2 whitespace-pre-wrap text-[12px] leading-6 text-[#5C544A]">{readmePlain.slice(0,1200)||readmeSummary||t('models.readmeEmpty')}</p>{readmePlain.length>1200&&<details className="mt-2"><summary className="cursor-pointer text-[11px] font-semibold text-[#C96442]">{t('models.showReadme')}</summary><pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap text-[11px] leading-5 text-[#5C544A]">{readmePlain.slice(0,14000)}</pre></details>}</div>
