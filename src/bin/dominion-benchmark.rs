@@ -480,6 +480,10 @@ fn aggregate(trials: &[Value], arm: &str, pairs: usize) -> Value {
         .iter()
         .filter_map(|trial| trial["tokens"].as_u64())
         .sum::<u64>();
+    let observed_token_trials=rows.iter()
+        .filter(|trial|trial["tokens"].as_u64().is_some()
+            && trial["tokenSource"]=="session_usage_all_model_calls")
+        .count();
     let compliant = rows
         .iter()
         .filter(|trial| trial["compliance"] == true)
@@ -520,7 +524,8 @@ fn aggregate(trials: &[Value], arm: &str, pairs: usize) -> Value {
         "compliance": compliant,
         "triggerCoverage": if applicable == 0 { Value::Null } else { json!(compliant as f64 / applicable as f64) },
         "tokens": tokens,
-        "tokensPerVerifiedCompletion":if success>0 {
+        "tokenCoverage":{"observedSessions":observed_token_trials,"assignedTrials":rows.len()},
+        "tokensPerVerifiedCompletion":if success>0 && observed_token_trials==rows.len() {
             json!(tokens as f64 / success as f64)
         } else {Value::Null},
         "planQuality": round4(plan_quality),
@@ -1165,7 +1170,12 @@ async fn main() -> Result<(), String> {
         "model": {
             "provider": "ollama",
             "model": cfg.model,
-            "temperature": 0,
+            // The non-streaming repair planner explicitly sets 0.2, while
+            // normal chat sampling depends on provider configuration.
+            // Do not label the whole benchmark as temperature=0.
+            "temperature": Value::Null,
+            "repairPlannerTemperature": 0.2,
+            "chatTemperature": "provider_default_not_frozen",
             "thinking": false,
             "seedSupport": "unknown-recorded",
         },
@@ -1382,6 +1392,15 @@ async fn main() -> Result<(), String> {
             } else {
                 json!([])
             };
+            // Unlike execution.tokens, session_usage includes helper model
+            // calls made by the program repair planner. A/B token efficiency
+            // must charge both arms for *all* their actual model work.
+            let session_usage=get(
+                &client,&format!("{base}/api/sessions/{session_id}/usage"),
+            ).await.unwrap_or(Value::Null);
+            let observed_tokens=if session_usage["calls"].as_u64().unwrap_or(0)>0 {
+                session_usage["totalTokens"].clone()
+            } else {Value::Null};
             let task_id = execution["taskId"].as_str().unwrap_or("").to_string();
             let task = if task_id.is_empty() {
                 Value::Null
@@ -1482,7 +1501,20 @@ async fn main() -> Result<(), String> {
                     .unwrap_or(0),
                 "preStateHash": pre_hash,
                 "postStateHash": fixture_digest(&root, &cfg.fixture),
-                "tokens": execution["tokens"],
+                "tokens": observed_tokens,
+                "tokenSource": if session_usage["calls"].as_u64().unwrap_or(0)>0 {
+                    "session_usage_all_model_calls"
+                }else{"missing_usage"},
+                "modelUsage": {
+                    "recordedCalls":session_usage["calls"],
+                    "promptTokens":session_usage["promptTokens"],
+                    "completionTokens":session_usage["completionTokens"],
+                    "cachedPromptTokens":session_usage["cachedPromptTokens"],
+                    "estimatedCalls":session_usage["estimatedCalls"],
+                    "pricedCalls":session_usage["pricedCalls"],
+                    "unpricedCalls":session_usage["unpricedCalls"],
+                    "configuredCostUsd":session_usage["configuredCostUsd"],
+                },
                 "toolCalls": execution["toolCalls"],
                 "modelCalls": execution["modelCalls"],
                 "streamChars": stream.chars().count(),
