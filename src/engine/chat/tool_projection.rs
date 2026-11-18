@@ -4,6 +4,14 @@
 use crate::state::AppState;
 use serde_json::Value;
 
+/// A model-origin call is admitted only if this provider round actually
+/// declared its tool. ProgramIR and approved native procedures are separate
+/// authorities and continue to use their own validated tool contracts.
+pub(super) fn advertised_tool(definitions:&[Value],requested:&str)->bool{
+    !requested.is_empty() && definitions.iter()
+        .any(|definition|tool_name(definition)==requested)
+}
+
 pub(super) fn tool_name(definition: &Value) -> &str {
     definition["function"]["name"]
         .as_str()
@@ -353,6 +361,19 @@ mod tests {
         assert_eq!(select_panel_tool_definitions(definitions.clone(),"읽어"),
             vec![valid.clone()]);
         assert_eq!(trim_tool_definitions(definitions,10000),vec![valid]);
+    }
+
+    #[test]
+    fn model_cannot_name_an_unadvertised_tool_even_if_it_exists_elsewhere(){
+        let round=vec![
+            json!({"function":{"name":"workspace_read"}}),
+            json!({"function":{"name":"dominion_tool_search"}}),
+        ];
+        assert!(advertised_tool(&round,"workspace_read"));
+        assert!(advertised_tool(&round,"dominion_tool_search"));
+        assert!(!advertised_tool(&round,"workspace_write"));
+        assert!(!advertised_tool(&round,"mcp__private__delete"));
+        assert!(!advertised_tool(&round,""));
     }
 
     #[test]
