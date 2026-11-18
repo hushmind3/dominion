@@ -1,70 +1,79 @@
-# Dominion Native Rust SDK
+# DOMINION Rust SDK (active `dominion-sub3` contract)
 
-**The Rust SDK is the primary agent harness.** The canonical `dominion_sdk::harness` exposes the actual native model-independent kernel, with bounded model/tool loops, parallel read-only actions, owner steering, evidence verification and durable pre-effect journals. The HTTP client in lib.rs is optional.
+[Product README](../../README.md) · [한국어](../../README.ko.md) · [Native execution architecture](../../docs/HARNESS.md) · [Kernel source](../../crates/dominion-agent-sdk/src/lib.rs)
 
-Use it from another Rust application with this path dependency:
+The `dominion-sdk` workspace crate has **two roles**:
 
-    dominion-sdk = { path = "sdk/rust" }
+1. `dominion_sdk::harness` re-exports the model-independent **`dominion-agent-sdk` Rust kernel**. It runs the bounded plan → tool → evidence/verification cycle with durable checkpoints. The embedding host supplies model access, tools, authorization, and the journal.
+2. `dominion_sdk::Dominion` is an optional **HTTP/SSE client** for a running DOMINION server (default `http://127.0.0.1:4317`). It does not execute an agent loop.
 
-Implement the provider-independent `dominion_sdk::harness::{Model, Tools, Evidence, Journal}` traits in the host, construct `Kernel { model, tools, evidence, journal }`, and call `kernel.run(RunRequest { ... }).await`. The Rust kernel owns the plan/act/verify loop and tool-dispatch scheduling; the host provides credentials, actual tools, durable checkpoints and approval gates. Every checkpoint must persist before external effects.
+The retired `dominion-harness` crate, standalone RSI generations, built-in video/audio generation API, and their earlier clients are **not part of the active branch**. Older documentation claiming that they still execute is historical and must not be used as an installation guide.
 
-The DOMINION production adapter, src/engine/native_agent.rs, is an actual Driver implementation: model planning through the native router, execution through the native Rust agent tool/approval/runtime, deterministic acceptance through the native verifier, and checkpoints through the SQLite-backed job queue. GUI tasks and TypeScript SDK both target that path via /api/jobs. The separately isolated RSI generation/independent acceptance path remains in place.
+## Embed the Rust kernel
 
-The client methods in sdk/rust/src/lib.rs optionally connect to an existing Rust engine at 127.0.0.1:4317 for jobs, sessions, approvals, rooms, video, RSI, chat SSE and replayable events. They are secondary to the native harness.
+Use the workspace dependency:
 
-No vendor SDK owns the loop. No goals.rs and no /api/goals API. The Rust kernel includes deterministic scheduling tests for read concurrency, dependency barriers and authorization, plus scripted integration tests of failure-driven replanning and write stopping. Run cargo test --manifest-path sdk/rust/Cargo.toml and cargo test --manifest-path Cargo.toml in a Rust development environment. Live model and server tests remain outstanding. See docs/SDK-ARCHITECTURE-2026-11-15.md.
+```toml
+dominion-sdk = { path = "sdk/rust" }
+```
 
-Native entrypoint: `use dominion_sdk::harness::{Kernel, RunRequest, Model, Tools, Evidence, Journal};`. This is a real execution kernel rather than a wrapper around an agent provider. `Dominion` HTTP methods are secondary, for remote/local product integration.
+The public harness contract is re-exported from `crates/dominion-agent-sdk`:
 
+```rust
+use dominion_sdk::harness::{
+    Kernel, RunRequest, Model, Tools, Evidence, Journal,
+    Limits, Criterion, Strategy, Snapshot,
+};
+```
 
-## Rust-owned dependency scheduler (2026-11-15)
+Implement `Model` (model planning and optional native tool calls), `Tools` (definitions and actual authorized operations), `Evidence` (independent postconditions), and `Journal` (durable write-ahead storage). Construct `Kernel` with those host adapters, then call `kernel.run(request).await`; for a previously persisted safe checkpoint, use `kernel.resume(request, snapshot).await`.
 
-The `dominion-agent-sdk` crate now implements a dependency-aware dispatcher in `crates/dominion-agent-sdk/src/scheduler.rs`. Tool calls must reference prior durable receipts or earlier actions in model order. Independent read operations may execute in bounded parallel groups; every mutating operation creates a barrier. Invalid dependency graphs are rejected before effects, and any failed batch is durably recorded and sent to a new model planning step rather than blindly continuing the old plan. The production MCP adapter treats structured errors and non-success HTTP statuses as failures instead of successful tool receipts.
+**Owner approval belongs in the host tool boundary**, and `Journal::save` must persist the intended effect before execution. Unknown in-flight model/tool outcomes are for manual review, not automatic replay. Independent host-confirmed reads can be scheduled concurrently; writes are serialized by the Rust scheduler.
 
-The canonical Rust entrypoint remains `Kernel::run`, re-exported as `dominion_sdk::harness`. The TypeScript package is only a typed HTTP/SSE client. This set of changes is source-implemented and accompanied by scripted tests; Rust SDK and native host compilation passed targeted tests in GitHub run 43684016242; live-provider validation has not yet run. Full CI and SWE-bench should follow product integration, stale-asset cleanup and user-authorized budget checks.
+`RunRequest` contains an ID, instruction, owner instructions, strategy, tool allowlist, limits and acceptance checks. The native kernel validates sizes, permission names and evidence criteria before model/tool calls. Evidence receipts remain in durable `Snapshot` records; `dominion_receipt_search` and `dominion_receipt_read` provide bounded lookup of previous operations.
 
+## Use the already-running product
 
-## Durable, safe continuation
+```rust
+use dominion_sdk::Dominion;
 
-`Kernel::resume(request, checkpoint)` continues an interrupted job from the exact previously committed `Snapshot`. Identity and owner-task text must match. The kernel rejects any checkpoint with a pending model request or outstanding tool effect, preserves prior receipts and token counters, and starts at the next unfinished planning step. A terminal snapshot can be returned without another model request. No prior command is reissued automatically.
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+let client = Dominion::local();
+let status: serde_json::Value = client.health().await?;
+let job = client.submit_prompt(
+    "Inspect this workspace and report failing tests",
+    None,
+).await?;
+let saved = client.get_job(&job.id).await?;
+println!("engine={status:?}, job={}", saved.status);
+# Ok(())
+# }
+```
 
-The live adapter `src/engine/native_agent.rs` now reads the SQLite-backed `nativeState` checkpoint and calls `Kernel::resume` only when `nativeInFlight` is clear. Restored job runs reuse the original session, execution identifier and chat message identifiers; the existing job recovery worker leaves uncertain tool/model outcomes in `needs_review` rather than requeueing. Scripted tests cover successful continuation, failed dependency recovery, missing identity, and unknown-outcome rejection. These tests executed and passed in the focused GitHub Rust SDK run 43684016242.
+The real Rust client supports jobs, wait/cancel/steering, approvals, rooms, sessions, health, SSE chat, stored events and Money read/analysis methods, as defined in [`src/lib.rs`](src/lib.rs). Some calls need a configured model or permission. `with_admin_token` supports server installations that require an admin token.
 
+## Integrated product execution
 
-### Native coding verification
+```text
+React work panel / sdk/typescript / optional Rust HTTP client
+       -> POST /api/jobs or POST /api/sdk/runs
+       -> src/engine/jobs.rs (SQLite queue)
+       -> src/engine/native_agent.rs (provider/tools/journal)
+       -> dominion_sdk::harness::Kernel
+```
 
-The public job API accepts a `command_succeeded` criterion and transforms it into a Rust-owned exact shell execution receipt check. The verifier only treats a passing command *after the latest workspace edit* as satisfying the owner's acceptance condition. The same requirement flows from the main-based GUI through `/api/jobs`; no TypeScript execution loop. Workflow child jobs also use `Kernel::run` with stable IDs and resumable checkpoints. Test commands still require actual owner approval.
+New `POST /api/harness/runs` compatibility requests also use the native job kernel under a restricted workspace/shell tool set. Historical `sdk_run` records are visible as **read-only archives**, not re-executable checkpoints. Interactive `/api/chat` has a separate streaming turn lifecycle; it is **not** yet the same top-level Rust SDK loop.
 
+## Targeted development checks
 
-### Automatic acceptance/repair loop
+```sh
+cargo test -p dominion-agent-sdk --lib
+cargo test -p dominion-agent-sdk --test kernel_replanning
+cargo test -p dominion-agent-sdk --test progressive_tool_discovery
+cargo test --bin dominion-rust engine::native_agent::tests
+cargo test --bin dominion-rust api::sdk::tests
+```
 
-Native `Kernel::run` and `Kernel::resume` own verification-command scheduling as well as model and tool turns. Set `RunRequest.checks` to a `ToolSucceeded` criterion with `tool: Some("shell_exec")` and `contains: Some("cargo test")`; the kernel executes the exact missing test under the host's normal permission and journal controls when the model proposes final completion. A failed check is fed into repair, not blindly repeated, and later side effects invalidate earlier passes. For HTTP callers, use `acceptanceChecks: [{ "type": "command_succeeded", "command": "cargo test" }]`. This is executable Rust source with authored tests. Rust SDK and host builds passed in the focused GitHub run 43684016242; live-provider operation remains unverified.
+Run relevant **development-profile** Rust tests during regular work; release builds, Windows/macOS packaging, frontend builds and paid provider comparisons are separate release/evaluation steps. An earlier focused GitHub run passing on its original commit does **not** establish success on the latest `dominion-sub3` HEAD. This document update itself has not been compiled or validated with a real model.
 
-
-## Executed verification — 2026-11-15
-
-**[GitHub Actions run 43684016242](https://github.com/hushmind3/dominion-rust/actions/runs/43684016242)** on commit `58c37744763506268a369674e3f828ae56b2a699` **concluded SUCCESS**:
-
-- `cargo test --manifest-path crates/dominion-agent-sdk/Cargo.toml -- --nocapture`: **35 passed, 0 failed** (12 unit + 6 kernel integration + 15 replanning + 2 real-file/shell tests)
-- The two real-file tests run actual filesystem writes, `sh -c` commands, a real nonzero exit code, repair, re-verification and disk checkpoint restore. A scripted model supplies deterministic decisions; this is **not** a claim that a live frontier model solved a fresh task.
-- `cargo test --manifest-path Cargo.toml --bin dominion-rust native_ -- --nocapture`: **22 passed, 0 failed** (filtered Rust host tests; 724 others not run)
-- `cargo test --manifest-path Cargo.toml --bin dominion-rust recover_new_workflow_reuses_durable_rust_sdk_child -- --nocapture`: **1 passed, 0 failed** (745 other host tests not run)
-- `npm ci --prefix web`, `npm run typecheck --prefix web`, `npm run build --prefix web`: **all succeeded**. Vite reported a successful production build.
-
-**Total executed Rust cases in this narrow gate: 58 passed / 0 failed.** Full product CI, live-model coding success, live-browser UI, paid provider budget, and SWE-bench remain independently unverified. The regular full CI workflow was not invoked by this gate; verification is a dedicated `sub3-rust-sdk-check.yml` workflow and is scoped to core/host/UI validation. This narrows one proven execution capability, not a declaration that all of Dominion or its coding intelligence is frontier-equivalent.
-
-
-
-### Context preservation across long agent runs
-
-The SDK's Rust-native, read-only `dominion_receipt_search` and `dominion_receipt_read` tools expose bounded lookup of this run's durable receipts to the planner without reissuing external operations. Recent tool output, past failures and operation IDs are projected with explicit size budgets. Their full authoritative JSON remains in `Snapshot.receipts` across `Kernel::resume`. The native `/api/jobs` and GUI execution path inherit this automatically. See `docs/SUB3-DURABLE-CONTEXT-2026-11-15.md`.
-
-
-### Provider-native function calls (backwards-compatible)
-
-The exported `Model` trait now offers optional `complete_with_tools(system, prompt, tool_specs, durable_receipts)` returning `ModelTurn { reply, decision }` and a `supports_native_tools()` flag. Text-only implementations require **no changes** and retain `complete()`; native adapters decode provider `tool_calls` into typed `Decision.actions`, preserving tool call IDs and JSON objects. The `Kernel` still decides dispatch and validation. Actual host wire adapters and protocol fixtures live under `src/engine/native_model.rs`. See `docs/SUB3-NATIVE-FUNCTION-CALLS-2026-11-15.md`.
-
-
-### Streaming provider adapters used by the Rust SDK
-
-The `dominion-agent-sdk` kernel remains model/provider-agnostic. The **production host** `src/engine/native_model.rs` now reads native SSE frames incrementally through `src/engine/native_stream.rs`; a parser emits provider-complete typed `Decision.actions` only after Chat `[DONE]`, Anthropic `message_stop`, or Codex `response.completed`. Ongoing progress is persisted in the same job record and never grants tool authority. Existing JSON fallback remains for self-hosted providers that ignore streaming. See `docs/SUB3-NATIVE-STREAM-2026-11-15.md`.
+See [source audit](../../docs/SUB3-SOURCE-AUDIT-2026-11-18.md) and [SDK architecture notes](../../docs/HARNESS.md) for current boundaries.
