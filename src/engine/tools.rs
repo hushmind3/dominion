@@ -136,13 +136,17 @@ pub fn definitions() -> Vec<Value> {
     ];
     // No installed external harness is packaged or started by DOMINION.
     // With no owner-configured adapter, even its tool schema is absent.
-    if external_harness::configured(){
-        defs.push(tool("external_harness_run",
-            "Delegate one independent task to an owner-configured, separately installed coding harness; approval required. DOMINION keeps one Rust execution/receipt owner.",
+    let enabled_harnesses=external_harness::configured_ids();
+    if !enabled_harnesses.is_empty(){
+        let description=format!(
+            "Delegate a task to one separately installed owner-approved harness ({}). No runtime is bundled. DOMINION retains its single Rust execution and approval gateway.",
+            enabled_harnesses.join(", "),
+        );
+        defs.push(tool("external_harness_run",&description,
             object(json!({
-                "harnessId":text("Configured external runtime id (e.g. codex, claude, hermes)"),
+                "harnessId":{"type":"string","enum":enabled_harnesses},
                 "prompt":text("Self-contained delegated task with expected result"),
-                "timeoutSeconds":json!({"type":"integer","minimum":5,"maximum":600}),
+                "timeoutSeconds":{"type":"integer","minimum":5,"maximum":600},
             }),vec!["harnessId","prompt"])));
     }
     defs
