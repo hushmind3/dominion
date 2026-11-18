@@ -17,6 +17,8 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
  const [modelSearch,setModelSearch]=useState('')
  const [modelFilter,setModelFilter]=useState<'all'|'free'|'paid'>('all')
  const [showAdvanced,setShowAdvanced]=useState(false)
+ const [advancedTab,setAdvancedTab]=useState<'providers'|'router'>('providers')
+ const [providerSort,setProviderSort]=useState<'name'|'models'>('name')
  const [cloudTab,setCloudTab]=useState<'models'|'providers'>('models')
  const [providerSort,setProviderSort]=useState<'name'|'models'>('name')
  const [providerMinModels,setProviderMinModels]=useState(false)
@@ -184,7 +186,8 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
    <p className="mt-1 text-[12px] text-[#7C7469]">업체 검색 → API 키 연결 → 실제 모델 조회 → 채팅 등록</p>
    <div className="mt-2 flex flex-wrap gap-2">
     <button type="button" disabled={catalogBusy} onClick={()=>void loadCatalog()} className="rounded-lg border px-3 py-2 text-[12px]">업체 목록 불러오기</button>
-    <input aria-label="AI 업체 검색" value={catalogSearch} onChange={e=>setCatalogSearch(e.target.value)} placeholder="업체 검색" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
+    <input aria-label="AI 업체 검색" value={catalogSearch} onChange={e=>setCatalogSearch(e.target.value)} placeholder="업체 이름 검색" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
+    <select aria-label="업체 정렬" value={providerSort} onChange={e=>setProviderSort(e.target.value as 'name'|'models')} className="rounded-lg border px-3 py-2 text-[12px]"><option value="name">이름순</option><option value="models">모델 많은 순</option></select>
    </div>
    {catalog.length>0&&<div className="mt-2 flex flex-wrap items-center gap-2 text-[12px]">
     <span className="text-[#7C7469]">{catalog.filter(p=>(p.name+' '+p.id).toLowerCase().includes(catalogSearch.toLowerCase())&&(!providerMinModels||p.models>0)).length} / {catalog.length}개 업체</span>
@@ -204,6 +207,7 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
     <button type="button" disabled={catalogBusy||!catalogModel} onClick={()=>void saveCatalogModel()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">채팅에 등록</button>
     <button type="button" disabled={catalogBusy||!catalogProviderId} onClick={()=>void importCatalogModels()} className="rounded-lg border px-3 py-2 text-[12px] disabled:opacity-50">조회된 모델 전체 등록</button>
    </div>}
+   {catalog.length>0&&<p className="mt-2 text-[12px] text-[#7C7469]">검색 결과 {catalog.filter(p=>(p.name+' '+p.id).toLowerCase().includes(catalogSearch.toLowerCase())).length}개 / 전체 {catalog.length}개 업체 · 중복 ID 제외</p>}
    {catalogMessage&&<p role="status" className="mt-2 text-[12px] text-[#7C7469]">{catalogMessage}</p>}
   </div>
   {cloudTab==='providers'&&showAdvanced&&<div className="mt-4 border-t border-[#E7E0D5] pt-4">
