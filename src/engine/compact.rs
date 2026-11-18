@@ -104,11 +104,20 @@ pub async fn run(
     });
 
     let client = reqwest::Client::new();
-    let response = crate::engine::gateway::send(
+    // This independent summary prompt should never displace the main
+    // participant's cached persona, but OpenCode Go still requires a
+    // deterministic session header. Keep one compaction affinity per room.
+    let affinity=state.store.get("provider",&route.id)
+        .filter(|provider|provider["integration"]=="opencode-go")
+        .map(|_|format!("dominion-compact-{}",crate::engine::memory::stable_id(&[
+            "opencode-compaction-v1",session_id,&route.id,&route.model,
+        ])));
+    let response = crate::engine::gateway::send_with_affinity(
         &route,
         &client,
         &request,
         std::time::Duration::from_secs(180),
+        affinity.as_deref(),
     )
     .await?;
     let response = response.response;
