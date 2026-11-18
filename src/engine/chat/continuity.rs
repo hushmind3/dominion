@@ -73,6 +73,27 @@ fn frame_key(message: &Value, source: &str, index: usize) -> String {
         .unwrap_or_else(|| format!("transient-{}", stable_id(&[source, &index.to_string(), &wire_message(message).to_string()])))
 }
 
+/// The room's contextBudgetTokens bounds the FRESH selected context. For an
+/// actually persistent Codex WebSocket chain, reusing the older frames costs
+/// no transcript bytes on the next turn. Rebase only once that carried-over
+/// history approaches a separate, still finite physical model allowance.
+/// Generic HTTP/Cloudflare/local routes keep the exact selected budget: they
+/// resend full prompts, so growing their carried-over history would cost more.
+fn continuation_history_allowance(
+    provider:&ProviderRef, selected:usize, fixed:usize
+)->usize{
+    let incremental=provider.kind=="codex" && !std::env::var("DOMINION_CODEX_WS")
+        .is_ok_and(|mode|matches!(mode.as_str(),"off"|"http"));
+    let preferred=if incremental{
+        selected.max(selected.saturating_mul(4).min(12_000))
+    }else{selected};
+    provider.context_tokens.map(|capacity|{
+        preferred.min((capacity as usize)
+            .saturating_sub(provider.max_output_tokens.unwrap_or(4096) as usize)
+            .saturating_sub(fixed))
+    }).unwrap_or(preferred)
+}
+
 /// A selected context is a *delta* to a participant's committed working view.
 /// Rebuilding a sliding window on every turn changes its first user boundary,
 /// defeating prefix reuse even when the persona and cache key are identical.
@@ -138,9 +159,8 @@ pub(crate) fn project(
         let allowance = room.as_ref().map(|room|room["contextBudgetTokens"].as_u64().unwrap_or(2_000) as usize)
             .unwrap_or(40_000);
         let fixed = super::room_context::input_estimate(&[wire_message(&messages[0])], tools);
-        let allowance = provider.context_tokens.map(|capacity| {
-            allowance.min((capacity as usize).saturating_sub(provider.max_output_tokens.unwrap_or(4096) as usize).saturating_sub(fixed))
-        }).unwrap_or(allowance);
+        let allowance=continuation_history_allowance(provider,allowance,fixed);
+        plan["workingViewBudgetTokens"]=json!(allowance);
         let history_cost = |rows:&[Value]| super::room_context::input_estimate(
             &rows.iter().map(|frame|frame["message"].clone()).collect::<Vec<_>>(), &[]);
         if history_cost(&frames) > allowance.max(history_cost(&fresh)) {
@@ -163,6 +183,11 @@ pub(crate) fn project(
         "rebaseReason":reason,"sourceMessageId":source,
         "inputDigest":stable_id(&[&json!(projected).to_string()]),
         "estimatedInputTokens":super::room_context::input_estimate(&projected, tools),
+        "freshHistoryEstimatedTokens":super::room_context::input_estimate(
+            &fresh.iter().map(|f|f["message"].clone()).collect::<Vec<_>>(),&[]),
+        "retainedHistoryEstimatedTokens":super::room_context::input_estimate(
+            &frames.iter().map(|f|f["message"].clone()).collect::<Vec<_>>(),&[]),
+        "historyAllowanceTokens":plan["workingViewBudgetTokens"],
     });
     (projected, Some(Projection { frames, dependencies, signature, epoch }))
 }
@@ -395,6 +420,28 @@ mod tests {
     fn route() -> ProviderRef {
         ProviderRef { id:"p".into(),name:"test".into(),base_url:"https://example.test/codex".into(),api_key:"never-store-this".into(),model:"model-a".into(),tool_mode:"native".into(),reasoning_protocol:"openai".into(),local:false,context_tokens:None,max_output_tokens:None,requests_per_minute:None,kind:"codex".into(),account_id:Some("account-a".into()) }
     }
+    #[test]
+    fn only_persistent_ws_enlarges_bounded_history_not_http_replay(){
+        let mut provider=route();
+        // Offline test validates the model/provider boundary, not the live
+        // provider cache hit rate.
+        provider.context_tokens=None;
+        std::env::remove_var("DOMINION_CODEX_WS");
+        assert_eq!(continuation_history_allowance(&provider,2000,500),8000);
+        assert_eq!(continuation_history_allowance(&provider,6000,500),12000);
+        provider.kind="openai".into();
+        assert_eq!(continuation_history_allowance(&provider,2000,500),2000,
+            "normal HTTP input is re-sent in full, no expanded history");
+        provider.kind="ollama".into();
+        assert_eq!(continuation_history_allowance(&provider,2000,500),2000,
+            "local stateless completion must not inflate context");
+        provider.kind="codex".into();
+        provider.context_tokens=Some(4500);
+        provider.max_output_tokens=Some(1000);
+        assert_eq!(continuation_history_allowance(&provider,2000,500),3000,
+            "native model context and output reservation remain hard bounds");
+    }
+
     #[test]
     fn continuity_survives_restart_and_separates_bots_routes_and_prefix_revisions() {
         let root=std::env::temp_dir().join(format!("dominion-continuity-{}",uuid::Uuid::new_v4()));
