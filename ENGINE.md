@@ -310,3 +310,14 @@ Rust 커널의 구조 검사와 컴파일 성공은 DB 조회량·불용 호출�
 `task_result`는 모든 과거 `execution_operation`을 역직렬화하던 경로를 제거하고 `idx_completed_operation_session_recent` 인덱스로 **해당 자식 세션의 최신 성공 영수증 최대 20건만** 읽습니다. SQLite `EXPLAIN QUERY PLAN` 회귀는 실제 인덱스 선택을 확인합니다. `delegate_task(wait=true)`는 250ms 주기 DB 폴링 대신 특정 자식의 durable `job` 이벤트를 우선 대기하며, 이벤트 유실·취소를 위한 3초 이하 유한 간격 상태 재확인을 사용합니다.
 
 관련 개발용 회귀: `db::tests::delegated_results_use_recent_index_without_loading_unrelated_history`, `engine::tools::delegation::profile_tests`, `engine::capability::tests::verification_profile_discovery_cannot_bypass_test_only_command_gate`. 아키텍처 검사는 간접 기록 전체 조회·역할 게이트 누락을 차단합니다. 개발용 Rust CI와 별도로 실제 모델의 위임 성공률·작업당 토큰·시간·총비용은 아직 통제 실험을 진행하지 않았습니다.
+
+## 실측 실패 후 실행 취소·그룹 사용량 증거 (2026-11-18)
+
+첫 모델 실측에서 메인은 단순 코딩 3건 중 1건만 완료하고, 그룹 3인 대화에서는 입력 토큰이 출력보다 크게 발생했습니다. 이 기록을 실제 모델 능력 개선으로 간주하지 않고 실행·계측 결함부터 분리했습니다.
+
+- 저장소 내 `src/bin/dominion-benchmark.rs`의 SSE 제한시간 초과·전송 단절은 응답 종료만으로 서버 작업이 취소된다고 가정하지 않습니다. `POST /api/sessions/:id/cancel` 후 해당 세션의 실행 기록이 모두 종료 상태인지 확인하고 다음 실험의 파일 fixture를 재사용합니다. 취소 확인 실패 시 다음 실험을 시작하지 않습니다. 이 코드는 **저장소 내 S7 벤치마크 실행기**에 적용되며, 별도로 배포된 ZIP 생성 도구까지 수정한 것으로 보고하지 않습니다.
+- 결과물 JSON을 의미별로 나누어 Rust JSON 매크로 재귀 한도 오류를 제거했습니다. `trial.json`과 `trials.jsonl`에는 작업 원문 `taskPrompt`, 취소 확인 `cancellation`, `inputContext`, 실행별 보조 모델 비용 `modelAccounting`, 도구·모델 호출과 산출물 판정을 포함합니다. 리포트의 성공 판정 조건을 느슨하게 하지 않았습니다.
+- `src/api/sessions.rs`의 취소 확인은 전체 `execution` 기록을 역직렬화하지 않습니다. `idx_active_execution_session` SQLite 부분 인덱스로 실행 중인 해당 세션만 조회하며 `EXPLAIN QUERY PLAN` 회귀에서 인덱스 선택을 검증합니다.
+- 그룹의 `rooms.rs`는 각 발언의 원본 `metadata.executionId`를 이용해 실행 기록을 조회합니다. `outputs[].modelAccounting`에 참가자별 실제/추정 사용량 여부, 입력·출력·캐시 토큰, 모델·도구 호출 횟수 및 추정 시스템·페르소나·기억·공유 상태·이력·도구 스키마를 구분해 저장합니다. **프롬프트 구성 추정치와 Provider 보고 토큰을 별개 값**으로 보관하며, 토큰 수가 실제로 감소했다고 주장하지 않습니다.
+
+개발 CI에는 `cargo test --locked --bin dominion-benchmark`의 제한시간 취소·SSE 오류 분류 특정 회귀와 `dominion-rust` 그룹 토큰·DB 쿼리 회귀를 추가했습니다. 실측 ZIP 원본과 동일한 모델의 재시험이 없는 상태이므로 메인의 기존 **63/100** 점수·**1/3** 완수 기록을 임의로 변경하지 않습니다.
