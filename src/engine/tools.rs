@@ -56,6 +56,7 @@ pub fn definitions() -> Vec<Value> {
         tool("http_fetch", "Fetch a URL and return its readable text content", object(json!({"url": text("HTTP or HTTPS URL")}), vec!["url"])),
         tool("memory_store", "Save a grounded memory for this agent. Quote the user's exact words; invented facts are rejected. Shared memories are managed by the user.", object(json!({"text": text("Fact to remember, maximum 1600 characters"), "evidenceQuote": text("Exact quote from the current user message supporting the fact"), "sourceMessageId": text("Optional earlier source message ID"), "type": json!({"type":"string","enum":["fact","preference","decision","procedure","lesson"]}), "key": text("Optional stable fact key; a new value replaces the previous value for this key"), "scope": json!({"type":"string","enum":["agent"]})}), vec!["text", "evidenceQuote"])),
         tool("memory_search", "Find saved knowledge relevant to a topic", object(json!({"query": text("Search query")}), vec!["query"])),
+        tool("skill_read", "Read the full instructions of one enabled skill from the skill index, using its exact ID; do not guess instructions from the description", object(json!({"skillId": text("Exact enabled skill ID shown in the skill index")}), vec!["skillId"])),
         tool("skill_propose", "Draft a reusable skill for user review", object(json!({"name": text("Skill name"), "instructions": text("Reusable instructions")}), vec!["name", "instructions"])),
         tool("delegate_task", "Delegate a self-contained task to another agent and optionally wait for its result", object(json!({
             "agentId": text("Target agent id"),
@@ -208,7 +209,7 @@ pub fn requires_approval(name: &str) -> bool {
 /// arbitrary absolute reads, external MCP and further delegation are denied.
 pub fn parallel_read_only_tool(name:&str)->bool{
     matches!(name,"workspace_list"|"workspace_read"|"workspace_read_range"|
-        "code_search"|"memory_search"|"web_search"|"http_fetch"|
+        "code_search"|"memory_search"|"skill_read"|"web_search"|"http_fetch"|
         "github_file_read"|"github_repositories"|"github_repository_activity"|
         "google_drive_search"|"google_docs_read"|"google_sheets_read"|
         // Pure discovery only exposes this child's existing read-only catalog.
@@ -441,6 +442,24 @@ pub async fn execute(
             Ok(json!({
                 "results": crate::engine::memory::retrieve(ctx.store, &scope, &query, 10)
             }))
+        }
+        "skill_read" => {
+            let id=required_arg(args,"skillId")?;
+            let scope=crate::engine::memory::MemoryScope::for_session(
+                ctx.store,ctx.session_id,ctx.agent_id);
+            let record=ctx.store.get("skill",&id)
+                .filter(|skill|skill["enabled"]!=false
+                    && skill["status"]!="draft"
+                    && crate::engine::memory::visible(skill,&scope))
+                .ok_or("해당 세션에서 읽을 수 있는 활성 스킬이 아닙니다.")?;
+            let content=record["instructions"].as_str().unwrap_or("");
+            if content.is_empty(){return Err("스킬에 지침 본문이 없습니다.".into());}
+            // Bound read payload independently of long untrusted skill text.
+            // No modification, proposal, or network call is performed.
+            Ok(json!({"id":id,"name":record["name"],
+                "instructions":content.chars().take(12_000).collect::<String>(),
+                "truncated":content.chars().count()>12_000,
+                "readOnly":true}))
         }
         "skill_propose" => {
             let name = required_arg(args, "name")?;
