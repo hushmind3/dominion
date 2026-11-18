@@ -198,7 +198,7 @@ async function proxy(request, env, user) {
   const reserve = encoded.length * inputPrice + maxTokens * outputPrice;
   if (!Number.isSafeInteger(reserve) || reserve > 1000000000) return err('Request exceeds limit');
   // Operator-side daily ceiling is independent of users' prepaid balances.
-  // Include outstanding reservations so concurrent requests count toward the budget.
+  // Count outstanding reservations; strict concurrency enforcement needs an atomic budget ledger.
   const dailyBudget = Number(env.PAID_DAILY_BUDGET_MICRO_KRW || 0);
   if (dailyBudget !== 0) {
     if (!Number.isSafeInteger(dailyBudget) || dailyBudget < 0)
