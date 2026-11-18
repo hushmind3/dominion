@@ -664,3 +664,85 @@ async fn room_model_call_records_component_breakdown_and_exact_provider_usage() 
     server.abort();
     crate::test_support::cleanup_dir(&state.config.data_dir);
 }
+
+
+#[tokio::test]
+async fn cancel_api_interrupts_silent_http_generation_and_allows_same_session_retry() {
+    use axum::{body::{Body,Bytes},extract::{Path,State},routing::post,Router};
+    use axum::http::{header::CONTENT_TYPE,Response};
+    use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
+    use std::convert::Infallible;
+    use futures_util::stream;
+    let requests=Arc::new(AtomicUsize::new(0));
+    async fn model(State(requests):State<Arc<AtomicUsize>>)->Response<Body>{
+        let step=requests.fetch_add(1,Ordering::SeqCst);
+        if step==0 {
+            // Send HTTP headers but no SSE data. No token event will wake a
+            // read loop; owner cancellation must preempt the pending socket.
+            Response::builder().header(CONTENT_TYPE,"text/event-stream")
+                .body(Body::from_stream(stream::pending::<Result<Bytes,Infallible>>()))
+                .unwrap()
+        }else {
+            let s=format!("data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+                json!({"choices":[{"index":0,"delta":{"content":"SECOND_RUN_OK"}}]}),
+                json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],
+                    "usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8}}));
+            Response::builder().header(CONTENT_TYPE,"text/event-stream")
+                .body(Body::from(s)).unwrap()
+        }
+    }
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr=listener.local_addr().unwrap();
+    let app=Router::new().route("/chat/completions",post(model))
+        .with_state(requests.clone());
+    let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap()});
+    let state=temp_state();
+    state.store.put("provider",&json!({"id":"cancel-model","kind":"openai",
+        "model":"cancel-model","baseUrl":format!("http://{addr}"),"enabled":true})).unwrap();
+    state.store.put("session",&json!({"id":"cancel-ui","providerId":"cancel-model"})).unwrap();
+    let input=json!({"sessionId":"cancel-ui","providerId":"cancel-model",
+        "input":"Read this request","toolsEnabled":false,
+        "toolsExecutionEnabled":false,"autoLearning":false});
+    let request=TurnRequest::from_value(&input).unwrap();
+    let model_state=state.clone();
+    let task_request=request.clone();
+    let (tx,_rx)=tokio::sync::mpsc::unbounded_channel();
+    let task=tokio::spawn(async move {
+        run_turn(&model_state,&task_request,&tx).await
+    });
+    tokio::time::timeout(Duration::from_secs(8),async {
+        while requests.load(Ordering::SeqCst)==0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("The real HTTP request must have reached the stalled provider");
+    let running=state.store.all("execution").into_iter().find(|e|
+        e["sessionId"]=="cancel-ui"&&e["status"]=="running").unwrap();
+    let first_id=running["id"].as_str().unwrap().to_owned();
+
+    let response=crate::api::sessions::cancel_session(
+        State(state.clone()),Path("cancel-ui".into())).await;
+    assert_eq!(response.0["cancelled"],true);
+    let result=tokio::time::timeout(Duration::from_secs(2),task).await
+        .expect("Cancelling must preempt a provider that never sends SSE")
+        .unwrap();
+    assert!(result.is_err(),"A cancelled turn cannot report a saved answer");
+    let cancelled=state.store.get("execution",&first_id).unwrap();
+    assert_eq!(cancelled["status"],"cancelled");
+    assert_eq!(cancelled["phase"],"cancelled");
+    assert!(!state.store.messages("cancel-ui").iter().any(|m|
+        m["role"]=="assistant"));
+    assert!(!state.store.all("execution_operation").iter().any(|op|
+        op["runId"]==first_id && op["status"]=="completed"));
+    // A normal second user send resets only the cancellation epoch for this
+    // NEW turn. The old durable cancellation and error remain immutable.
+    let (second_tx,_second_rx)=tokio::sync::mpsc::unbounded_channel();
+    let second=tokio::time::timeout(Duration::from_secs(8),
+        run_turn(&state,&request,&second_tx)).await.unwrap().unwrap().unwrap();
+    assert_eq!(second["content"],"SECOND_RUN_OK");
+    assert_eq!(requests.load(Ordering::SeqCst),2);
+    assert_eq!(state.store.get("execution",&first_id).unwrap()["status"],"cancelled");
+    assert_eq!(state.store.messages("cancel-ui").iter().filter(|m|
+        m["role"]=="assistant").count(),1);
+    server.abort();
+    crate::test_support::cleanup_dir(&state.config.data_dir);
+}
