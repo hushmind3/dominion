@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue" /></a>
+  <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-blue" /></a>
   <img alt="Rust engine" src="https://img.shields.io/badge/engine-Rust-262626" />
   <img alt="React interface" src="https://img.shields.io/badge/interface-React-149ECA" />
   <img alt="BYOK and local LLMs" src="https://img.shields.io/badge/models-BYOK%20%2B%20local-6855D8" />
@@ -248,7 +248,7 @@ You choose the models. You control the credentials. You run the workspace.
 - **Model flexibility:** use supported cloud models or run locally without locking the entire workflow to one provider.
 - **Execution you can inspect:** tasks have tool calls, outcomes, approvals, and error records, not just chat messages.
 - **Local-first state:** SQLite stores agent data and history locally by default.
-- **Open code:** inspect and extend a Rust engine with a React UI under the Apache-2.0 license.
+- **Open code:** inspect and extend a Rust engine with a React UI under the MIT license.
 
 ## ⚡ Quick start
 
