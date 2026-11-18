@@ -429,6 +429,8 @@ pub(super) async fn dispatch_tool_call(
             Err(error.clone())
         } else if session["delegationWorkspace"].is_object()&&(call.name.starts_with("mcp__")||matches!(call.name.as_str(),"github_api"|"github_file_read"|"github_file_update"|"browser_control")){
             Err("격리 위임 작업에서는 외부 변경 도구를 실행할 수 없습니다.".into())
+        } else if !tools::profile_tool_allowed(&session,&call.name,&arguments) {
+            Err("위임 역할에 허용되지 않는 도구 또는 명령입니다.".into())
         } else if session["readOnly"]==true&&!tools::observational(&call.name){
             Err("읽기 전용 위임 작업에는 이 도구를 실행할 권한이 없습니다.".into())
         } else if call.name.starts_with("mcp__") {
