@@ -1792,6 +1792,54 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn room_source_reader_preserves_full_peer_history_and_private_scope(){
+        use crate::{config::Config,db::Store,vault::Vault};
+        let dir=std::env::temp_dir().join(format!("dominion-room-reader-{}",uuid::Uuid::new_v4()));
+        let config=Config{port:0,data_dir:dir.join("data"),
+            web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=crate::state::AppState::new(config.clone(),
+            Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()));
+        state.store.put("room",&json!({"id":"r","agentIds":["member"]}));
+        state.store.put("session",&json!({"id":"room:r","roomId":"r"}));
+        let full=format!("{}끝", "기억".repeat(3_100));
+        state.store.write_message(&json!({"id":"peer",
+            "session_id":"room:r","role":"assistant","agent_id":"member",
+            "content":full,"reasoning":"PRIVATE_CHAIN_OF_THOUGHT",
+            "metadata":{"replyToMessageId":"owner"}})).unwrap();
+        state.store.write_message(&json!({"id":"foreign",
+            "session_id":"elsewhere","role":"assistant","agent_id":"member",
+            "content":"FOREIGN_PRIVATE"})).unwrap();
+        state.store.write_message(&json!({"id":"nonmember",
+            "session_id":"room:r","role":"assistant","agent_id":"outsider",
+            "content":"OUTSIDE_AGENT_PRIVATE"})).unwrap();
+        state.store.write_message(&json!({"id":"owner",
+            "session_id":"room:r","role":"user","content":"owner instructions"})).unwrap();
+        let ctx=ToolContext{workspace:&dir,store:&state.store,state:&state,
+            session_id:"room:r",agent_id:Some("member"),
+            tools_enabled:true,tools_execution_enabled:true};
+        let first=execute(&ctx,"room_message_read",
+            &json!({"messageId":"peer"}),"r").await.unwrap();
+        assert_eq!(first["hasMore"],true);
+        assert_eq!(first["nextOffset"],6_000);
+        let next=execute(&ctx,"room_message_read",
+            &json!({"messageId":"peer","offset":6_000}),"r").await.unwrap();
+        let combined=format!("{}{}",
+            first["content"].as_str().unwrap(),next["content"].as_str().unwrap());
+        assert_eq!(combined,full);
+        assert_eq!(next["hasMore"],false);
+        assert!(!json!(first).to_string().contains("PRIVATE_CHAIN_OF_THOUGHT"));
+        for bad in ["foreign","nonmember","owner","unknown"]{
+            assert!(execute(&ctx,"room_message_read",
+                &json!({"messageId":bad}),"r").await.is_err(),
+                "reader must reject {bad}");
+        }
+        assert!(execute(&ctx,"room_message_read",
+            &json!({"messageId":"peer","offset":20_000}),"r").await.is_err());
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
     async fn skill_read_requires_enabled_visible_skill_and_returns_original_body(){
         use crate::{config::Config,db::Store,vault::Vault};
         let dir=std::env::temp_dir().join(format!("dominion-skill-read-{}",uuid::Uuid::new_v4()));
