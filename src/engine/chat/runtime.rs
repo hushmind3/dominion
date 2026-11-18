@@ -149,14 +149,23 @@ async fn run_turn_with_policy(
         return Err("Session is already running".into());
     }
     let _session_guard = state.session_guard(&session_id);
+    if super::transport::request_cancelled(
+        state,&session_id,request.request_id.as_deref()
+    ) {
+        return Err("실행이 중단되었습니다.".into());
+    }
     // Durable ownership: a crashed process leaves a lease that startup
     // recovery releases, while a live owner (even across restarts) is refused.
     let _lease = crate::engine::lease::LeaseGuard::acquire(state, &session_id)
         .ok_or("다른 엔진 프로세스가 이 세션을 실행 중입니다.")?;
     if reset_cancel {
+        // The session can carry an earlier cancelled epoch; it must not
+        // revive this exact browser request if Stop raced ahead of POST.
         state.clear_cancel(&session_id);
     }
-    if state.is_cancelled(&session_id) {
+    if super::transport::request_cancelled(
+        state,&session_id,request.request_id.as_deref()
+    ) || state.is_cancelled(&session_id) {
         return Err("실행이 중단되었습니다.".into());
     }
     let generation = state.cancellation_generation(&session_id);
@@ -303,6 +312,13 @@ async fn run_turn_with_policy(
         run_turn_body(state, &request, tx, &session_id, &metrics, &execution_id,
             &task_id, record_input, generation, source_message_id),
     ).await;
+    // The stop endpoint may race with the final model delta. Never report a
+    // successful completion for the browser request if its stop was accepted.
+    let result=if super::transport::request_cancelled(
+        state,&session_id,request.request_id.as_deref()
+    ) || state.cancellation_generation(&session_id)!=generation {
+        Err("실행이 중단되었습니다.".into())
+    }else{result};
     finish_attempt(state, &execution_id, &result, &metrics);
     close_pending_approvals(state, &session_id);
 
