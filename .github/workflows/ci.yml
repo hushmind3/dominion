@@ -46,6 +46,11 @@ jobs:
           cargo test --lib engine::chat::room_context::tests::wire_profile_attributes_selected_messages_without_retaining_raw_text
           cargo test --lib engine::rooms::tests::fresh_owner_job_after_stop_uses_new_epoch_and_gets_a_real_reply
           cargo test --lib engine::rooms::tests::nine_participants_share_one_owner_message_and_all_speak
+          # Group-context efficiency with preserved owner/peer provenance.
+          cargo test --lib engine::chat::room_context::tests::group_replay_keeps_committed_answer_but_not_prior_private_reasoning
+          cargo test --lib engine::chat::room_context::tests::nine_speaker_long_prose_uses_profitable_peer_brief_and_preserves_sources
+          cargo test --lib engine::chat::room_context::tests::explicit_exact_quote_request_never_compacts_peer_speech
+          cargo test --lib engine::rooms::tests::nine_speakers_complete_three_owner_turns_without_false_completion
           cargo test --lib engine::verification::verified_patch_tests
           cargo test --lib engine::autonomy::tests::verifier_
           cargo test --lib engine::jobs::tests
