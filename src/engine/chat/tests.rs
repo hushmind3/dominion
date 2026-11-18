@@ -25,6 +25,107 @@ fn temp_state() -> AppState {
     AppState::new(config, store, vault)
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn browser_stop_tombstone_precedes_late_chat_post_without_creating_messages() {
+    let state=temp_state();
+    state.store.put("session",&json!({"id":"s"}));
+    let request_id=uuid::Uuid::new_v4().to_string();
+    let stop=crate::api::sessions::cancel_session(
+        axum::extract::State(state.clone()),
+        axum::extract::Path("s".to_string()),
+        Some(axum::Json(json!({"requestId":request_id})))
+    ).await.0;
+    assert_eq!(stop["requestRecorded"],true);
+    assert_eq!(stop["cancelled"],true);
+    assert!(super::transport::request_cancelled(&state,"s",Some(&request_id)));
+    assert!(!super::transport::request_cancelled(&state,"different",Some(&request_id)));
+    let request=TurnRequest::from_value(&json!({
+        "sessionId":"s","requestId":request_id,"input":"must not begin",
+        "toolsEnabled":false,"autoLearning":false
+    })).unwrap();
+    let (tx,_rx)=tokio::sync::mpsc::unbounded_channel();
+    let result=run_turn(&state,&request,&tx).await;
+    assert!(result.unwrap_err().contains("중단"));
+    assert_eq!(state.store.messages("s").len(),0,
+        "late POST must not write a user turn after its cancellation");
+    let _=std::fs::remove_dir_all(&state.config.data_dir);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn browser_stop_preempts_model_with_no_output_and_next_turn_succeeds() {
+    use axum::{extract::State,routing::post,response::{Response,IntoResponse},Router};
+    use std::sync::{Arc,Mutex,atomic::{AtomicUsize,Ordering}};
+    type Counter=Arc<AtomicUsize>;
+    type Signal=Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>;
+    async fn stalled_model(State((calls,signal)):State<(Counter,Signal)>)->Response {
+        if calls.fetch_add(1,Ordering::SeqCst)==0 {
+            if let Some(tx)=signal.lock().unwrap().take(){let _=tx.send(());}
+            return std::future::pending::<Response>().await;
+        }
+        let events=format!(
+            "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+            json!({"choices":[{"delta":{"content":"next turn completed"}}]}),
+            json!({"choices":[{"delta":{},"finish_reason":"stop"}],
+                "usage":{"prompt_tokens":14,"completion_tokens":3,"total_tokens":17}})
+        );
+        ([(axum::http::header::CONTENT_TYPE,"text/event-stream")],events).into_response()
+    }
+    let calls=Arc::new(AtomicUsize::new(0));
+    let (started_tx,started_rx)=tokio::sync::oneshot::channel();
+    let signal=Arc::new(Mutex::new(Some(started_tx)));
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address=listener.local_addr().unwrap();
+    let server=tokio::spawn(async move{
+        axum::serve(listener,Router::new()
+            .route("/chat/completions",post(stalled_model))
+            .with_state((calls.clone(),signal))).await.unwrap()
+    });
+    let state=temp_state();
+    state.store.put("provider",&json!({
+        "id":"p","baseUrl":format!("http://{address}"),"model":"fixture",
+        "enabled":true
+    }));
+    state.store.put("session",&json!({"id":"s","providerId":"p"}));
+    let request_id=uuid::Uuid::new_v4().to_string();
+    let request=TurnRequest::from_value(&json!({
+        "sessionId":"s","requestId":request_id,"input":"quietly think for a very long time",
+        "toolsEnabled":false,"autoLearning":false
+    })).unwrap();
+    let work_state=state.clone();
+    let (tx,_rx)=tokio::sync::mpsc::unbounded_channel();
+    let running=tokio::spawn(async move{run_turn(&work_state,&request,&tx).await});
+    tokio::time::timeout(Duration::from_secs(8),started_rx)
+        .await.expect("provider did not receive first request").unwrap();
+    let stopped=crate::api::sessions::cancel_session(
+        axum::extract::State(state.clone()),axum::extract::Path("s".into()),
+        Some(axum::Json(json!({"requestId":request_id})))
+    ).await.0;
+    assert_eq!(stopped["running"],true);
+    assert_eq!(stopped["requestRecorded"],true);
+    let first=tokio::time::timeout(Duration::from_secs(3),running)
+        .await.expect("cancelled silent HTTP request did not terminate")
+        .unwrap().unwrap_err();
+    assert!(first.contains("중단"),"{first}");
+    assert_eq!(state.store.messages("s").iter()
+        .filter(|m|m["role"]=="assistant").count(),0);
+    assert_eq!(state.store.all("execution").iter()
+        .filter(|e|e["status"]=="cancelled").count(),1);
+
+    let next=TurnRequest::from_value(&json!({
+        "sessionId":"s","requestId":uuid::Uuid::new_v4().to_string(),
+        "input":"next user turn","toolsEnabled":false,"autoLearning":false
+    })).unwrap();
+    let (next_tx,_next_rx)=tokio::sync::mpsc::unbounded_channel();
+    let saved=tokio::time::timeout(Duration::from_secs(8),
+        run_turn(&state,&next,&next_tx)).await.unwrap().unwrap().unwrap();
+    assert_eq!(saved["content"],"next turn completed");
+    assert_eq!(state.store.messages("s").iter()
+        .filter(|m|m["role"]=="assistant").count(),1,
+        "the cancelled first model may never save a late answer");
+    server.abort();
+    let _=std::fs::remove_dir_all(&state.config.data_dir);
+}
+
 #[test]
 fn split_korean_utf8_and_crlf_events_are_lossless() {
     let bytes = "data: {\"text\":\"장기기억\"}\r\n\r\ndata: [DONE]\n\n".as_bytes();
