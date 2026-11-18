@@ -30,6 +30,56 @@ Previously `execute_program_tool` called `mark_program_completed` even when a to
 
 Now such a node remains pending; the failure's exact tool `callId` is durably recorded and becomes the anchor for the evidence graph. A later successful revised execution clears that failed-node marker, without clearing prior external effect receipts. Confirmed completed nodes still cannot be replaced.
 
+## Native candidate-local execution (2026-11-18 follow-up)
+
+After shared read-only preflights, eligible local candidates are now
+**actually executed**. The new candidate_rollout.rs calls the existing
+execute_nodes ProgramIR interpreter and dispatch_tool_call gateway. Every
+candidate receives its own disposable file-dependency snapshot, independent
+SQLite database and native receipts.
+
+The execution path is:
+
+1. Collect an exact failed-call provenance slice and generate up to three
+   typed alternatives with machine-readable postconditions.
+2. Run deduplicated read-only preflights and determine the eligible plans.
+3. For local-only ProgramIR revisions, build separate workspaces containing
+   at most 32 declared file dependencies, up to 8 MiB total. File parents,
+   symlinks, traversal, protected paths and static input paths are checked.
+4. Run the **existing** execute_nodes and native tool dispatch in each
+   isolated state. Only workspace reads, local writes/replacements and
+   non-effectful ProgramIR observation/verification nodes are permitted.
+   Shell, browser, network, MCP, delegation and model-decision nodes are
+   rejected as unisolatable; no external effects are simulated.
+5. Read the modified sandbox files through actual native tools. Only complete
+   receipts, a changed file and postflight predicates evaluated True qualify.
+   Failed local rollouts never fall through to unverified live execution.
+6. Select the verified candidate with fewer native tool calls and lower actual
+   elapsed time. With no verified candidate, **do not change the owner
+   workspace**. Store bounded receipt digests and decision evidence.
+7. Revalidate the original file-state baseline before promotion. Existing
+   target files receive the observed SHA-256 as a native conditional-write
+   expectation; missing files use atomic create-if-absent. The live execution
+   still requires normal owner approval, cancellation, budget, effect
+   idempotence and independent read-back verification.
+
+A Tokio integration regression explicitly executes two different real
+ProgramIR workspace writes in two independent SQLite/workspace copies.
+Only the candidate producing the expected readback wins, the original file
+does not change, and speculative receipts never enter the owner's database.
+A second case requires all failed trials to leave the original unmodified.
+
+### Deliberate isolation limit
+
+This is task-local isolation for **native local-file operations**, not a
+general-purpose security sandbox for arbitrary shell commands. It does not
+execute cargo tests in a candidate, does not isolate external services, and
+does not implement full Harness2 recursive benchmark optimization.
+Unsupported candidates retain the old read-only preflight selection and are
+labelled preflight_only_no_isolated_execution. A model-generated postflight
+is a checked observation, not an independent user acceptance oracle.
+Real-model benchmark gains remain unmeasured.
+
 ## What is combined from 2026 public implementations
 
 - **Harness² (Google Research, October 2026)**: propose multiple concrete alternatives, actually run small controlled probes, compose compatible gains. In Dominion, probes are read-only on the current real task, not multiple speculative full-workspace mutation rollouts. Source: https://github.com/google-research/harness2/blob/main/harness2/core/recursion.py
@@ -131,4 +181,4 @@ stock-harness winner is presumed.
 
 Commit source and unit-test bodies exist on `dominion-sub2`. This session does not have `rustc` or `cargo`. GitHub Actions development-test jobs were queued or previously cancelled during rapid changes, with no confirmed passing test result observed for the final revision. Do not describe this as compiled, benchmark-winning, frontier-equivalent, or production-verified yet. CI completion is not part of this owner's current request.
 
-Measured complete-task success rate, postflight recovery rate, token cost, CPU/DB utilization and time comparisons under controlled identical tasks are **not measured yet**. Actual counterfactual mutations in separate isolated worktrees and offline held-out harness optimization are also **not implemented**; only read-only candidate preflights execute before selecting a live revision.
+Measured complete-task success rate, postflight recovery rate, token cost, CPU/DB utilization and time comparisons under controlled identical tasks are **not measured yet**. Local file candidate counterfactuals are now executed in separate disposable SQLite/workspace copies; full Git worktrees, sandboxed shell/test execution, remote effects and held-out harness optimization are not implemented.
