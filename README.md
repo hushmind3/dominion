@@ -52,6 +52,23 @@ receipts and frozen acceptance conditions.
 | **Memory / context** | [Evidence-lineage memory reranking](src/engine/memory.rs), [owner-confirmed room state](src/engine/room_state.rs), [source-aware room compilation](src/engine/chat/room_context.rs), and [lazy skill inspection](src/engine/tools.rs). Lexical search is a candidate retrieval component, **not the harness policy**. |
 | **Provider / token reuse** | [Provider-specific request assembly](src/engine/chat/provider.rs), [Codex incremental WebSocket](src/engine/chat/codex_ws.rs) and [continuity policy](src/engine/chat/continuity.rs). History eviction and owner edits may require a safe full rebase; transport byte estimates and provider-billed cache tokens are recorded separately. |
 
+### Deferred tool discovery and live capability binding (2026-11-19)
+
+The [native capability gateway](src/engine/capability.rs) now ranks deferred
+native/MCP tools using rarity-weighted name, description and parameter-key
+relevance, with exact tool identifiers prioritized. Per-query corpus frequencies
+are calculated once rather than rescanning the catalog for every candidate.
+This is **tool selection**, not the agent's planning or completion algorithm.
+
+A discovered call remains bound to the **same running execution, current
+session/room permission and the SHA-256 digest of the exact parameter schema
+returned by its search receipt**. If the owner disables tools, disconnects a
+capability or its schema changes, the old receipt cannot invoke the tool;
+another successful search is required. The normal role, argument-schema,
+approval and effect-journal gates still apply. Unit regressions cover search
+ranking, catalog-order stability, stale schemas, finished runs and room
+revocation; they do not establish an end-to-end model success or cost metric.
+
 **Verified-checkpoint completion:** after real tool effects satisfy every frozen
 postcondition, the kernel can finish without buying an extra model round.
 That shortcut requires attributable persisted receipts, no unresolved effects,
