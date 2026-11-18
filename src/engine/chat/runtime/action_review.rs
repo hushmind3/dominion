@@ -18,6 +18,28 @@ pub(super) fn simple_file_creation(
     verification::resolve_path(state,check["path"].as_str()?).ok()
 }
 
+/// A local multi-file acceptance contract already gives the native turn
+/// concrete targets and an independent verifier. The primary model still
+/// decides edits and receives all user instructions; a second, separate
+/// planning model would only paraphrase the same bounded file list.
+/// Owner-requested planning and explicit planning policies remain authoritative.
+pub(super) fn local_multifile_contract_needs_no_secondary_planner(
+    input:&str, acceptance:&Option<(String,Value)>
+)->bool{
+    let lower=input.to_lowercase();
+    if ["계획을", "계획부터", "실행 계획", "plan first", "make a plan",
+        "design a plan", "계획 수립"].iter().any(|word|lower.contains(word)){
+        return false;
+    }
+    let Some((_,checks))=acceptance else{return false};
+    let Some(items)=checks.as_array() else{return false};
+    (2..=20).contains(&items.len()) && items.iter().all(|check|{
+        matches!(check["type"].as_str(),
+            Some("file_exists"|"file_changed"|"file_contains"|"file_equals"))
+            && check["path"].as_str().is_some_and(|path|!path.trim().is_empty())
+    })
+}
+
 /// Deterministic single-step file work should not pay for an extra planner
 /// call. Multi-step, long or unverified requests still get one.
 pub(super) fn needs_plan(input: &str, acceptance: &Option<(String, Value)>) -> bool {
@@ -177,6 +199,29 @@ pub(super) async fn review_action(
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]
+    fn multi_file_contract_reuses_native_plan_but_preserves_explicit_planning(){
+        let multiple=Some(("make two files".to_string(),json!([
+            {"type":"file_changed","path":"docs/a.txt"},
+            {"type":"file_changed","path":"docs/b.txt"},
+            {"type":"file_contains","path":"SUMMARY.md","contains":"docs/a.txt"}
+        ])));
+        assert!(local_multifile_contract_needs_no_secondary_planner(
+            "docs/a.txt, docs/b.txt 그리고 SUMMARY.md 작성해",&multiple));
+        assert!(!local_multifile_contract_needs_no_secondary_planner(
+            "make a plan first then create docs/a.txt and docs/b.txt",&multiple));
+        let single=Some(("single".to_string(),json!([
+            {"type":"file_changed","path":"main.rs"}
+        ])));
+        assert!(!local_multifile_contract_needs_no_secondary_planner("fix main.rs",&single));
+        let mixed=Some(("mixed".to_string(),json!([
+            {"type":"file_changed","path":"main.rs"},
+            {"type":"command_succeeded","command":"cargo test"}
+        ])));
+        assert!(!local_multifile_contract_needs_no_secondary_planner("fix and test",&mixed));
+        assert!(!local_multifile_contract_needs_no_secondary_planner("write",&None));
+    }
+
     #[test]
     fn reviewer_needs_real_successful_tool_evidence(){
         assert!(!review_worth_calling(&[],false));

@@ -570,10 +570,23 @@ pub(super) async fn run_turn_body(
         && state.store.messages(session_id).iter().any(|message|
             message["role"]=="assistant"
             && message["metadata"]["authorKind"]=="agent");
+    let native_contract_plan=session["sdkUiPolicy"].is_object()
+        && planning_policy.is_none()
+        && local_multifile_contract_needs_no_secondary_planner(&request.input,&acceptance);
     let plan_requested=match session["sdkUiPolicy"]["planningMode"].as_str(){
         Some("always")=>true,Some("never")=>false,
-        _=>plan_requested_by_engine && !previous_panel_answer,
+        _=>plan_requested_by_engine && !previous_panel_answer && !native_contract_plan,
     };
+    if let Some(mut execution)=state.store.get("execution",execution_id){
+        execution["planningAdmission"]=json!({
+            "secondaryPlannerRequested":plan_requested,
+            "nativeMultifileAcceptance":native_contract_plan,
+            "nativeSubtasks":subtask_count,
+            "explicitPolicy":planning_policy.is_some(),
+            "mode":session["sdkUiPolicy"]["planningMode"],
+        });
+        let _=state.store.put("execution",&execution);
+    }
     let mut plan_digest: Option<String> = None;
     if acceptance.is_some()
         && request.tools_enabled
@@ -1138,6 +1151,38 @@ pub(super) async fn run_turn_body(
             call_prompt + call_completion
         };
         total_tokens += call_total;
+        // Record the provider's per-round accounting for SDK coding jobs as
+        // well as rooms. These are numeric receipts, never tool arguments or
+        // provider text. Estimated usage and unknown cache hits stay labelled.
+        if let Some(mut execution)=state.store.get("execution",execution_id){
+            if !execution["providerRounds"].is_array(){
+                execution["providerRounds"]=json!([]);
+            }
+            if let Some(rounds)=execution["providerRounds"].as_array_mut(){
+                if rounds.len()<80{
+                    rounds.push(json!({
+                        "round":round+1,
+                        "promptTokens":call_prompt,
+                        "completionTokens":call_completion,
+                        "totalTokens":call_total,
+                        "cachedPromptTokens":if completion.usage_exact {
+                            json!(completion.cached_prompt_tokens)
+                        }else{Value::Null},
+                        "uncachedPromptTokens":if completion.usage_exact{
+                            completion.cached_prompt_tokens.map(|cached|
+                                call_prompt.saturating_sub(cached.min(call_prompt)))
+                                .map_or(Value::Null,|tokens|json!(tokens))
+                        }else{Value::Null},
+                        "usageExact":completion.usage_exact,
+                        "toolsAdvertised":round_tools.len(),
+                        "toolSchemaTokensEstimated":super::room_context::estimate(&json!(round_tools).to_string()),
+                        "nativeInputTokensEstimated":round_input_tokens,
+                        "modelToolCalls":completion.tool_calls.len(),
+                    }));
+                }
+            }
+            let _=state.store.put("execution",&execution);
+        }
         if is_room {
             if let Some(mut execution)=state.store.get("execution",execution_id) {
                 execution["inputContext"]["providerPromptTokens"]=json!(prompt_tokens_total);
