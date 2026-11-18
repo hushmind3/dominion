@@ -70,3 +70,35 @@ there is no global upstream spend ceiling, and upstream billing may continue
 after client cancellation. Add upstream billing controls, token metering,
 rate limiting by IP and account, replay/abuse protection, expiry handling,
 and tests before enabling broad public signup.
+
+## Free model catalog and desktop login
+
+The existing Models page includes a DOMINION Cloud Google sign-in card. After
+sign-in it requests `GET /v1/models`, displays the enabled free models in a
+selector, and saves the chosen model as a normal Rust provider. No end-user
+upstream API key is needed. The cloud URL and Google web client ID are supplied
+at frontend build time:
+
+```env
+VITE_DOMINION_CLOUD_URL=https://your-worker.your-domain.example
+VITE_DOMINION_GOOGLE_CLIENT_ID=your-google-web-client-id
+```
+
+Configure `FREE_MODELS_JSON` on the Worker to explicitly allow models supplied
+by the configured upstream provider, for example:
+
+```json
+[{"id":"openrouter/free","name":"Free auto router","free":true}]
+```
+
+This is an example only; the upstream account must actually support the model.
+Use an upstream API base URL that ends in `/api/v1` for OpenRouter, and store
+its API key in `UPSTREAM_API_KEY` as a Worker secret. For specific free models,
+use their current API IDs and confirm tool-call support individually. Free
+availability and upstream quotas are not guaranteed; OpenRouter free models
+have shared per-account rate limits. Never publish the upstream key or offer
+unrestricted resale of provider free-tier capacity without permission.
+
+Apply `cloud/schema.sql` to D1 before calling free models; `free_quota`
+is required. Configure `FREE_DAILY_LIMIT` conservatively. This code has not
+been deployed or verified end-to-end with real Google/Cloudflare credentials.
