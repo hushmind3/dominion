@@ -21,7 +21,7 @@ use tool_catalog::{parallel_read_admitted, tool_is_read_only, normalize_tool_arg
     tool_name, recent_room_tools, select_room_tools, select_tool_definitions, trim_tool_definitions};
 pub(super) use finalization::{finalize_execution, tool_succeeded};
 use finalization::{simple_file_creation, needs_plan, action_plan, review_action,
-    record_success_experience, record_selection_snapshot,
+    acceptance_repair, AcceptanceRepair, record_success_experience, record_selection_snapshot,
     finish_attempt, mark_budget_exhausted, retitle_if_placeholder, ensure_session, record_tool_stat};
 use tool_dispatch::{frozen_replacements, run_frozen_replacements, dispatch_tool_call, record_soft_tool_error};
 use program::{execute_program_tool, run_program};
