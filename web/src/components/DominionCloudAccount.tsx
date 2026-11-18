@@ -1,5 +1,5 @@
 import {useEffect,useRef,useState} from 'react'
-import {post} from '../api'
+import {get,post} from '../api'
 
 type GoogleResponse={credential:string}
 type GoogleIdentity={accounts:{id:{initialize:(config:{client_id:string;callback:(response:GoogleResponse)=>void})=>void;renderButton:(element:HTMLElement,options:Record<string,unknown>)=>void}}}
@@ -48,7 +48,13 @@ export function DominionCloudAccount({onProviderAdded}:{onProviderAdded:()=>Prom
   if(!token||!selected)return
   setBusy(true);setMessage('')
   try{
-   await post('/api/providers',{name:'DOMINION Cloud · '+selected,baseUrl:cloudUrl+'/v1',kind:'openai',apiKey:token,model:selected,enabled:true,local:false,toolMode:'native'})
+   const existing=await get<Array<{id:string;baseUrl:string;model:string}>>('/api/providers')
+   const match=existing.find(p=>p.baseUrl.replace(/\\/$/,'')===cloudUrl+'/v1'&&p.model===selected)
+   if(match){
+    setMessage('이미 등록된 모델입니다. 중복 등록하지 않았습니다.')
+    return
+   }
+   await post('/api/providers',{name:'DOMINION Cloud · '+selected,baseUrl:cloudUrl+'/v1',kind:'openai',apiKey:token,model:selected,enabled:true,local:false,toolMode:'compat'})
    await onProviderAdded()
    setMessage('모델이 등록됐습니다. 채팅에서 선택해 사용하세요.')
   }catch(error){setMessage((error as Error).message)}finally{setBusy(false)}
