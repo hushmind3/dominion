@@ -393,16 +393,20 @@ async fn run_locked(
         .or_else(|| existing.get("generation"))
         .and_then(Value::as_u64)
         .unwrap_or(0);
-    if job_cancelled(context) || !state.resume_session_if_generation(session_id, generation) {
-        return Ok(finish(
-            context,
-            room_id,
-            session_id,
-            "cancelled",
-            &[],
-            "stopped",
-            None,
-        ));
+    // A real owner stop advances the durable epoch and cancels the job.
+    // A SQLite resume failure at the *same* epoch is NOT a user cancellation.
+    // Record the distinction so a two-second empty group run is diagnosable.
+    if job_cancelled(context) || state.cancellation_generation(session_id)!=generation {
+        let reason=if job_cancelled(context){"job_cancel_requested"}
+            else{"session_epoch_changed"};
+        return Ok(finish(context,room_id,session_id,"cancelled",&[],reason,None));
+    }
+    if !state.resume_session_if_generation(session_id, generation) {
+        if state.cancellation_generation(session_id)!=generation {
+            return Ok(finish(context,room_id,session_id,"cancelled",&[],
+                "session_epoch_changed",None));
+        }
+        return Err("그룹 세션 취소 세대를 복구하는 저장소 작업이 실패했습니다.".into());
     }
 
     // Internal automations and compatibility callers receive the same frozen
@@ -554,7 +558,7 @@ async fn run_locked(
                 session_id,
                 "cancelled",
                 &outputs,
-                "stopped",
+                stop_reason(context,session_id,generation).unwrap_or("session_cancelled"),
                 None,
             ));
         }
@@ -674,7 +678,7 @@ async fn run_locked(
                     session_id,
                     "cancelled",
                     &outputs,
-                    "stopped",
+                    stop_reason(context,session_id,generation).unwrap_or("session_cancelled"),
                     None,
                 ))
             }
@@ -698,11 +702,23 @@ async fn run_locked(
             continue;
         }
         let evidence_count = message_evidence_count(state, &message);
+        // Message usage is the provider's reported per-speaker total when
+        // available. Execution counters also include auxiliary planner and
+        // review calls; neither count is inferred from a generated answer.
+        let completed_execution=message["metadata"]["executionId"].as_str()
+            .and_then(|id|state.store.get("execution",id))
+            .unwrap_or(Value::Null);
         outputs.push(json!({
             "agentId":agent_id,
             "name":name,
             "content":content,
             "messageId":message["id"],
+            "executionId":message["metadata"]["executionId"],
+            "usage":message["metadata"]["usage"],
+            "modelCalls":completed_execution["modelCalls"],
+            "toolCallCount":completed_execution["toolCalls"],
+            "inputContext":completed_execution["inputContext"]["wireRounds"]
+                .as_array().and_then(|rounds|rounds.first()).cloned().unwrap_or(Value::Null),
             "evidenceCount":evidence_count,
             "toolCalls":message["tool_calls"].clone(),
         }));
@@ -797,7 +813,7 @@ async fn run_locked(
             session_id,
             "cancelled",
             &outputs,
-            "stopped",
+            stop_reason(context,session_id,generation).unwrap_or("session_cancelled"),
             None,
         ));
     }
@@ -907,10 +923,22 @@ fn job_cancelled(context: &JobContext) -> bool {
             job["cancelRequested"].as_bool() == Some(true) || job["status"] == "cancelled"
         })
 }
+/// Stable diagnostic reason. A job stop, changed SQLite epoch, and a local
+/// cancellation notification have different recovery implications.
+fn stop_reason(context: &JobContext, session_id: &str, generation: u64)
+    -> Option<&'static str>
+{
+    if job_cancelled(context) { return Some("job_cancel_requested"); }
+    if context.state.cancellation_generation(session_id)!=generation {
+        return Some("session_epoch_changed");
+    }
+    if context.state.is_cancelled(session_id) {
+        return Some("session_cancelled");
+    }
+    None
+}
 fn stopped(context: &JobContext, session_id: &str, generation: u64) -> bool {
-    job_cancelled(context)
-        || context.state.cancellation_generation(session_id) != generation
-        || context.state.is_cancelled(session_id)
+    stop_reason(context,session_id,generation).is_some()
 }
 fn patch_room(state: &AppState, room_id: &str, patch: Value) {
     if let Some(saved) = state
@@ -957,7 +985,12 @@ fn finish(
         room_id,
         json!({"status":if status=="cancelled" {"paused"} else {"idle"},"activeAgentId":null,"pauseReason":reason,"yieldedToMessageId":yielded}),
     );
-    context.state.store.audit("room.exchange_finished",json!({"roomId":room_id,"sessionId":session_id,"turns":outputs.len(),"status":status,"reason":reason}));
+    context.state.store.audit("room.exchange_finished",json!({
+        "roomId":room_id,"sessionId":session_id,"jobId":context.job_id,
+        "turns":outputs.len(),"status":status,"reason":reason,
+        "generation":context.state.cancellation_generation(session_id),
+        "cancelRequested":job_cancelled(context)
+    }));
     context.emit(json!({"type":"room_finished","roomId":room_id,"sessionId":session_id,"status":status,"reason":reason}));
     // One completed exchange is one learning unit. The job is content-
     // addressed by its last message, so retries and duplicate completion do
