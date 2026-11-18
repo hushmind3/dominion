@@ -598,6 +598,24 @@ async fn run_turn_body(
     if !is_room {
         tool_definitions = select_tool_definitions(tool_definitions, &request.input, &discovery);
     }
+    // A skill index without a usable lookup would silently remove existing
+    // instructions from tool-enabled agents. Advertise exactly one small
+    // read-only schema when this agent can actually view an enabled skill.
+    if request.tools_enabled && request.tools_execution_enabled {
+        let scope = crate::engine::memory::MemoryScope::for_session(
+            &state.store, session_id, request.agent_id.as_deref(),
+        );
+        let has_skill = state.store.all("skill").into_iter().any(|record|
+            record["enabled"] != false && record["status"] != "draft"
+                && crate::engine::memory::visible(&record, &scope)
+        );
+        if has_skill && !tool_definitions.iter().any(|def|tool_name(def)=="skill_view") {
+            if let Some(definition) = tools::definitions().into_iter()
+                .find(|def|tool_name(def)=="skill_view") {
+                tool_definitions.push(definition);
+            }
+        }
+    }
     if simple_creation_target.is_some() {
         // A concrete file creation has no use for web, memory, delegation or
         // Keep native file access and shell fallback available.
