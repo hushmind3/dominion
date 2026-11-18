@@ -42,6 +42,10 @@ jobs:
         run: cargo test --locked --bin dominion-rust engine::jobs::tests
       - name: Streamable HTTP MCP and concurrent capability discovery (dev profile)
         run: cargo test --locked --bin dominion-rust engine::mcp::tests
+      - name: Execution-scoped auxiliary model receipts and token coverage (dev profile)
+        run: |
+          cargo test --locked --bin dominion-rust engine::llm::
+          cargo test --locked --bin dominion-rust db::tests::auxiliary_model_receipts_are_scoped_to_one_execution
       - name: Indexed improvement finalization and strategy selection (dev profile)
         run: |
           cargo test --locked --bin dominion-rust engine::improve::tests
