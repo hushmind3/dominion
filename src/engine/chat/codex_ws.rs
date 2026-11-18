@@ -688,7 +688,7 @@ async fn receive_completion(
                     &piece["response"].to_string(), "prompt_cache_key") {
                     return Err(WsError::HintRejected("Codex 캐시 힌트가 지원되지 않습니다.".into()));
                 }
-                if rejects_persistent_developer(&piece["response"]) {
+                if !*output_started && rejects_persistent_developer(&piece["response"]) {
                     return Err(WsError::Fallback(
                         "Codex WebSocket developer-input role rejected; restore complete HTTP instructions".into()
                     ));
@@ -705,7 +705,7 @@ async fn receive_completion(
                 let code = piece["error"]["code"].as_str().unwrap_or("");
                 let param = piece["error"]["param"].as_str().unwrap_or("");
                 let message = piece["error"]["message"].as_str().unwrap_or("알 수 없는 오류");
-                if rejects_persistent_developer(&piece) {
+                if !*output_started && rejects_persistent_developer(&piece) {
                     return Err(WsError::Fallback(
                         "Codex WebSocket developer-input role rejected; restore complete HTTP instructions".into()
                     ));
