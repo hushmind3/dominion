@@ -3,13 +3,12 @@ import { ContextMenu } from './components/ContextMenu'
 import {OwnerProfileProvider} from './components/OwnerProfile'
 import {Component,lazy,Suspense,useCallback,useEffect,useLayoutEffect,useState,type ReactNode} from 'react'
 import {get} from './api'
-import {refreshScopeForEvent} from './refreshScope'
+import {classifyRefreshEvent,emptyRefreshScope,mergeRefreshScopes} from './refreshEvents'
 import {WorkspaceSidebar,SettingsHeader,navigation,type PageId} from './components/WorkspaceShell'
 const HomePage=lazy(()=>import('./pages/Home').then(module=>({default:module.HomePage})))
 const CapabilitiesPage=lazy(()=>import('./pages/Capabilities').then(module=>({default:module.CapabilitiesPage})))
 const MemoryPage=lazy(()=>import('./pages/Memory').then(module=>({default:module.MemoryPage})))
 const ChatPage=lazy(()=>import('./pages/Chat').then(module=>({default:module.ChatPage})))
-const MoneyPage=lazy(()=>import('./pages/Money').then(module=>({default:module.MoneyPage})))
 const ModelHub=lazy(()=>import('./pages/Models').then(module=>({default:module.ModelHub})))
 const AgentsPage=lazy(()=>import('./pages/Agents').then(module=>({default:module.AgentsPage})))
 const RoomsPage=lazy(()=>import('./pages/Rooms').then(module=>({default:module.RoomsPage})))
@@ -167,30 +166,47 @@ export default function App(){
   void check();void approvals()
   const poll=setInterval(()=>{void check()},12000)
   const stream=new EventSource('/api/events')
-  let refreshTimer: ReturnType<typeof setTimeout> | undefined
-  const refreshScopes=new Set<string>()
+  let refreshTimer:ReturnType<typeof setTimeout>|undefined
+  let statusTimer:ReturnType<typeof setTimeout>|undefined
+  let approvalsTimer:ReturnType<typeof setTimeout>|undefined
+  let pendingRefresh=emptyRefreshScope()
+  const scheduleStatus=()=>{
+   if(statusTimer)return
+   statusTimer=setTimeout(()=>{statusTimer=undefined;void check()},250)
+  }
+  const scheduleApprovals=()=>{
+   if(approvalsTimer)return
+   approvalsTimer=setTimeout(()=>{approvalsTimer=undefined;void approvals()},250)
+  }
   stream.onmessage=event=>{
    try{
     const item=JSON.parse(event.data)
-    if(item.type==='room_event'){window.dispatchEvent(new CustomEvent('dominion-room-event',{detail:item}));return}
-    if(['record','message','job_event','audit','approval','channel_status','goal_event','execution_event'].includes(item.type)){
-     refreshScopes.add(refreshScopeForEvent(item))
+    if(item.type==='room_event'){
+     window.dispatchEvent(new CustomEvent('dominion-room-event',{detail:item}))
+     return
+    }
+    // Keep SSE records scoped to their consumers. A busy tool journal should
+    // not re-fetch agents, providers or account connections on every receipt.
+    const next=classifyRefreshEvent(item)
+    if(next.targets.length||next.rooms.length||next.sessions.length){
+     pendingRefresh=mergeRefreshScopes(pendingRefresh,next)
      refreshTimer ??= setTimeout(()=>{
       refreshTimer=undefined
-      const scopes=[...refreshScopes]
-      refreshScopes.clear()
-      window.dispatchEvent(new CustomEvent('dominion-refresh',{detail:{scopes}}))
+      const batch=pendingRefresh
+      pendingRefresh=emptyRefreshScope()
+      window.dispatchEvent(new CustomEvent('dominion-data-change',{detail:batch}))
      },100)
-     if(item.type==='approval')void approvals()
-     if(item.type==='job_event'||item.type==='goal_event'||item.type==='execution_event')void check()
     }
+    if(item.type==='approval')scheduleApprovals()
+    if(item.type==='job_event'||item.type==='goal_event'||item.type==='execution_event'
+      ||(item.type==='record'&&item.kind==='job'))scheduleStatus()
    }catch{}
   }
   const shortcuts=(e:KeyboardEvent)=>{
    if((e.metaKey||e.ctrlKey)&&e.key===','){e.preventDefault();navigate('settings')}
   }
   window.addEventListener('keydown',shortcuts)
-  return()=>{mounted=false;clearInterval(poll);clearTimeout(refreshTimer);stream.close();window.removeEventListener('keydown',shortcuts)}
+  return()=>{mounted=false;clearInterval(poll);clearTimeout(refreshTimer);clearTimeout(statusTimer);clearTimeout(approvalsTimer);stream.close();window.removeEventListener('keydown',shortcuts)}
  },[navigate])
  return <OwnerProfileProvider><div className="h-dvh overflow-hidden bg-[#FFFDF9] font-sans text-[#24211D]">
   <ContextMenu/>
@@ -204,14 +220,13 @@ export default function App(){
    {visited.rooms&&<div hidden={mode!=='rooms'} className="h-full page-rooms"><PageLoadBoundary><Suspense fallback={<div role="status" className="p-8 text-sm text-[#7C7469]">대화 불러오는 중…</div>}><RoomsPage active={mode==='rooms'&&!settingsOpen} openSession={id=>navigate('chat',id)} openSettings={()=>navigate('settings')} switchMode={switchMode}/></Suspense></PageLoadBoundary></div>}
 
   </main>
-  {settingsOpen&&<DialogBackdrop onDismiss={closeSettings}><div role="dialog" aria-modal="true" aria-label="설정" className={"workspace-settings relative h-[calc(100dvh-40px)] w-full overflow-hidden rounded-2xl border border-[#E7E0D5] bg-[#F6F3EC] shadow-2xl "+(page==='money'?"max-w-[1760px]":"max-w-[1440px]")}>
+  {settingsOpen&&<DialogBackdrop onDismiss={closeSettings}><div role="dialog" aria-modal="true" aria-label="설정" className="workspace-settings relative h-[calc(100dvh-40px)] w-full max-w-[1440px] overflow-hidden rounded-2xl border border-[#E7E0D5] bg-[#F6F3EC] shadow-2xl">
    <WorkspaceSidebar settingsOnly page={page} open collapsed={false} online={online} running={running} pending={pending} onNavigate={navigate} onNewChat={()=>navigate('chat')} onClose={closeSettings} navOpen={settingsNav} onToggleNav={toggleSettingsNav}/>
    <div className={'workspace-settings-main flex h-full min-w-0 flex-col '+(settingsNav?'ml-[216px]':'ml-14')}>
     <SettingsHeader page={page} online={online} build={engineBuild} onClose={closeSettings}/>
     <div className="workspace-settings-content min-h-0 flex-1 overflow-y-auto">
      <PageLoadBoundary key={page}><Suspense fallback={<div role="status" className="p-8 text-sm text-[#7C7469]">화면 불러오는 중…</div>}>
       {page==='home'&&<HomePage navigate={navigate}/>}
-      {page==='money'&&<MoneyPage openSession={id=>navigate('chat',id)}/>}
       {page==='capabilities'&&<CapabilitiesPage navigate={navigate}/>}
       {page==='memory'&&<MemoryPage/>}
       {page==='models'&&<ModelHub/>}

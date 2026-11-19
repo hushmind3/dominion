@@ -3,10 +3,6 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-mod money;
-mod money_implementation;
-mod money_review;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FinalizeOutcome {
     Applied,
@@ -212,8 +208,6 @@ impl Store {
                  ON records(json_extract(data,'$.kind'),id)
                  WHERE kind='algorithm';",
         )?;
-        // Additive Money indexes and FTS, without replacing sub3's schema.
-        conn.execute_batch(include_str!("db/money_schema.sql"))?;
         // Older databases predate reasoning/tool columns.
         for (column, decl) in [
             ("reasoning", "TEXT NOT NULL DEFAULT ''"),
