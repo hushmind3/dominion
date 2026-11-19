@@ -429,9 +429,9 @@ export default {
       const path = new URL(request.url).pathname;
       let response;
       if (path === '/v1/auth/google' && request.method === 'POST') response = await login(request, env);
-      else if (/^\\/v1\\/auth\\/(kakao|naver)\\/start$/.test(path) && request.method === 'GET')
+      else if (['/v1/auth/kakao/start','/v1/auth/naver/start'].includes(path) && request.method === 'GET')
         response = await oauthStart(request,env,path.split('/')[3]);
-      else if (/^\\/v1\\/auth\\/(kakao|naver)\\/callback$/.test(path) && request.method === 'GET')
+      else if (['/v1/auth/kakao/callback','/v1/auth/naver/callback'].includes(path) && request.method === 'GET')
         response = await oauthCallback(request,env,path.split('/')[3]);
       else if (path === '/v1/models' && request.method === 'GET') {
         const user = await account(request, env);
