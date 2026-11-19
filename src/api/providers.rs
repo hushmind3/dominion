@@ -337,7 +337,7 @@ fn public_openrouter_free_models(value: &Value) -> Vec<Value> {
                 .is_some_and(|price|price==0.0);
             if !zero("prompt")||!zero("completion") {return None;}
             if model["architecture"]["output_modalities"].as_array()
-                .is_some_and(|modalities|!modalities.iter().any(|mode|mode=="text"))
+                .is_some_and(|modalities|!modalities.iter().any(|mode|mode.as_str()==Some("text")))
             {return None;}
             Some(json!({
                 "id":id,
