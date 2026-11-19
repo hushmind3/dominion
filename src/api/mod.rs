@@ -1,5 +1,4 @@
 mod response;
-pub mod money;
 #[cfg(test)]
 mod tests;
 pub mod algorithms;
@@ -58,7 +57,6 @@ async fn retired_capability()->impl IntoResponse {
 
 pub fn router(state: AppState) -> Router {
     let mut router = Router::new()
-        .merge(money::routes())
         // core
         .route("/api/health", get(system::health))
         .route("/api/benchmark/strategies", post(benchmark::seed_strategy))

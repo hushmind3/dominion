@@ -1,20 +1,3 @@
-// One optional Money tool; aliases keep existing domain clients compatible.
-pub mod money;
-pub use money::{
-    asymmetry as money_asymmetry,
-    brief as money_brief,
-    buyer as money_buyer,
-    catalog as money_catalog,
-    folding as money_folding,
-    health as money_health,
-    intelligence as money_intelligence,
-    kit as money_kit,
-    mechanism as money_mechanism,
-    rank as money_rank,
-    retrieval as money_retrieval,
-    sources as money_sources,
-    strategy as money_strategy,
-};
 pub mod autonomy;
 pub mod execution_scope;
 pub mod agent_kernel;

@@ -3,7 +3,6 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-mod money;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FinalizeOutcome {
@@ -139,8 +138,8 @@ impl Store {
                  detail TEXT NOT NULL,
                  created_at TEXT NOT NULL DEFAULT (datetime('now'))
              );
-             -- Session usage is read repeatedly during active jobs and the
-             -- Money panel. A filtered expression index avoids scanning the
+             -- Session usage is read repeatedly during active jobs. A filtered
+             -- expression index avoids scanning the
              -- entire lifetime audit log on every progress poll. Corrupt
              -- legacy entries stay untouched and are excluded safely.
              CREATE INDEX IF NOT EXISTS idx_audit_usage_session
@@ -201,8 +200,6 @@ impl Store {
                  ON records(json_extract(data,'$.taskId'))
                  WHERE kind='execution';",
         )?;
-        // Same shared SQLite Store; the optional tool owns its schema.
-        conn.execute_batch(money::SCHEMA_SQL)?;
         // Older databases predate reasoning/tool columns.
         for (column, decl) in [
             ("reasoning", "TEXT NOT NULL DEFAULT ''"),
@@ -2070,13 +2067,13 @@ mod tests {
     #[test]
     fn audit_usage_session_index_is_scoped_and_ignores_unrelated_records(){
         let store=Store::open(std::path::Path::new(":memory:")).unwrap();
-        store.audit("model.usage",json!({"sessionId":"money-s","promptTokens":350,
+        store.audit("model.usage",json!({"sessionId":"usage-s","promptTokens":350,
             "completionTokens":150,"totalTokens":500,"cachedPromptTokens":100,
             "estimated":false}));
         store.audit("model.usage",json!({"sessionId":"other","promptTokens":10_000,
             "completionTokens":1000,"totalTokens":11_000,"estimated":false}));
-        store.audit("irrelevant",json!({"sessionId":"money-s","totalTokens":90_000}));
-        let usage=store.session_usage("money-s");
+        store.audit("irrelevant",json!({"sessionId":"usage-s","totalTokens":90_000}));
+        let usage=store.session_usage("usage-s");
         assert_eq!(usage["calls"],1);
         assert_eq!(usage["totalTokens"],500);
         assert_eq!(usage["cachedPromptTokens"],100);
@@ -2086,7 +2083,7 @@ mod tests {
         let plan:String=conn.query_row(
             "EXPLAIN QUERY PLAN SELECT COUNT(*) FROM audit
                 WHERE event='model.usage' AND json_valid(detail)
-                  AND json_extract(detail,'$.sessionId')='money-s'",
+                  AND json_extract(detail,'$.sessionId')='usage-s'",
             [],|row|row.get(3)).unwrap();
         assert!(plan.contains("idx_audit_usage_session"),"{plan}");
     }
