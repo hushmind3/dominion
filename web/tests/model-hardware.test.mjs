@@ -100,11 +100,12 @@ test('interrupted launch remembers the exact required execution engine',()=>{
 })
 test('engine installation retains failed model and resumes after a fresh runtime check',()=>{
  const source=readFileSync(new URL('../src/components/ModelExplorer.tsx',import.meta.url),'utf8')
- assert.match(source,/setPendingEngineLaunch\(\{id:model.id/)
+ assert.match(source,/setPendingEngineLaunch\(current=>current\?\.id===model\.id\?current:/)
  assert.match(source,/setView\('import'\)/)
  assert.match(source,/const succeeded=await load\(pending.id\)/)
  assert.match(source,/if\(succeeded\)setView\(pending.from\)/)
  assert.match(source,/pendingEngineCheck\?\.status==='blocked'/)
+ assert.match(source,/pendingEngineLaunch&&view!=='import'/)
  assert.match(source,/\/api\/model-library\/runtime\/install/)
  assert.match(source,/const snapshot=await get<Runtime>\('\/api\/model-library\/runtime'\)/)
 })
