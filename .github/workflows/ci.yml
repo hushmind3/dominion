@@ -155,6 +155,8 @@ jobs:
           cargo test --locked --bin dominion-benchmark truncated_http_stream_is_not_counted_as_a_completed_trial
           cargo test --locked --bin dominion-rust speaker_accounting_joins_only_the_owning_execution_and_marks_estimates
           cargo test --locked --bin dominion-rust db::tests::session_running_probe_avoids_global_history_and_uses_session_index
+      - name: Public keyless provider and OpenRouter model catalog regressions (dev profile)
+        run: cargo test --locked --bin dominion-rust api::providers::tests::public_
       - name: Shared SDK run and retry regressions (dev profile)
         run: cargo test --locked --bin dominion-rust api::sdk::view_tests
 
