@@ -176,6 +176,7 @@ pub fn router(state: AppState) -> Router {
             axum::routing::delete(providers::delete_provider),
         )
         .route("/api/providers/catalog", get(providers::provider_catalog))
+        .route("/api/providers/catalog/:id/models", get(providers::public_catalog_models))
         .route("/api/providers/free-catalog", get(providers::free_catalog))
         .route("/api/providers/free-catalog/refresh", post(providers::free_catalog_refresh))
         .route("/api/providers/cli", get(providers::cli_credentials))
