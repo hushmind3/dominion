@@ -1932,7 +1932,7 @@ pub async fn provider_models(State(state): State<AppState>, Path(id): Path<Strin
     let mut request = client.get(&url).timeout(Duration::from_secs(12));
     if kind == "anthropic" {
         request = request
-            .header("x-api-key", key)
+            .header("x-api-key", key.as_str())
             .header("anthropic-version", "2023-06-01");
     } else if !key.is_empty() {
         request = request.header("Authorization", format!("Bearer {key}"));
