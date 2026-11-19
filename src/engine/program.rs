@@ -108,6 +108,19 @@ fn validate_node(node: &Value) -> Result<(), String> {
     }
 }
 
+/// Run parallel nodes only when every child is an independent read.
+/// Commands, mutation tools and data-dependent branches form serial barriers.
+pub fn parallel_read_safe(children:&[Value])->bool {
+    !children.is_empty() && children.len()<=8 && children.iter().all(|node|{
+        if node["type"]!="call_tool" || node["id"].as_str().is_none_or(str::is_empty){return false;}
+        let Some(tool)=node["tool"].as_str() else{return false};
+        if !matches!(tool,"workspace_read"|"workspace_read_range"|"workspace_list"
+            |"file_read"|"file_list"){return false;}
+        node["inputs"].as_object().is_some_and(|inputs|
+            inputs.values().all(|v|v.get("from").is_none()))
+    })
+}
+
 pub fn new_checkpoint(program: &Value) -> Value {
     json!({
         "schemaVersion": SUPPORTED_REVISION,

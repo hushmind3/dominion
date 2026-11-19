@@ -177,6 +177,7 @@ struct Chain {
     socket: Option<Socket>,
     last_response_id: Option<String>,
     items: Vec<(String, String)>,
+    request_contract: Option<String>,
     opened: Option<Instant>,
     used: Instant,
 }
@@ -187,6 +188,7 @@ impl Chain {
             socket: None,
             last_response_id: None,
             items: Vec::new(),
+            request_contract: None,
             opened: None,
             used: Instant::now(),
         }
@@ -196,6 +198,7 @@ impl Chain {
         self.socket = None;
         self.last_response_id = None;
         self.items.clear();
+        self.request_contract = None;
         self.opened = None;
     }
 }
@@ -217,6 +220,16 @@ pub(super) enum WsError {
 pub(super) struct Outcome {
     pub completion: Completion,
     pub transport: Value,
+}
+
+fn request_contract(base:&Value)->String {
+    let mut contract=serde_json::Map::new();
+    for key in ["model","instructions","tools","tool_choice","parallel_tool_calls",
+        "reasoning","text","temperature","top_p","max_output_tokens",
+        "prompt_cache_key","prompt_cache_retention","service_tier"] {
+        if let Some(value)=base.get(key){contract.insert(key.into(),value.clone());}
+    }
+    crate::engine::memory::stable_id(&[&Value::Object(contract).to_string()])
 }
 
 fn websocket_url(base_url: &str) -> String {
@@ -346,6 +359,11 @@ pub(super) async fn stream(
         .iter()
         .map(item_signature)
         .collect::<Vec<(String, String)>>();
+    // Preserve a Codex response chain only while its model/tool contract matches.
+    let contract=request_contract(base);
+    let contract_changed=guard.request_contract.as_deref()
+        .is_some_and(|old|old!=contract);
+    if contract_changed{guard.reset();}
     let plan = plan_chain(&guard.items, &incoming);
     match exchange(
         state,
@@ -367,12 +385,14 @@ pub(super) async fn stream(
             chain_items.extend(output.iter().map(item_signature));
             guard.items = chain_items;
             guard.last_response_id = Some(response_id.clone());
+            guard.request_contract = Some(contract.clone());
             guard.used = Instant::now();
             Ok(Outcome {
                 completion,
                 transport: json!({
                     "wire":"websocket",
                     "mode":if delta_items == 0 {"full"} else {"delta"},
+                    "rebaseReason":if contract_changed {"request_contract_changed"} else {"none"},
                     "deltaItems":input.len().saturating_sub(delta_items),
                     "chainReusedItems":delta_items,
                     "chainItems":guard.items.len(),
@@ -424,6 +444,7 @@ pub(super) async fn stream(
                     chain_items.extend(output.iter().map(item_signature));
                     guard.items = chain_items;
                     guard.last_response_id = Some(response_id.clone());
+                    guard.request_contract = Some(contract.clone());
                     guard.used = Instant::now();
                     state.store.audit(
                         "codex.ws.reconnected",
@@ -925,6 +946,46 @@ mod tests {
             }
         });
         (provider, rx, server)
+    }
+
+    #[test]
+    fn codex_contract_changing_tool_or_reasoning_invalidates_cache_chain() {
+        let base=json!({"model":"fixture","instructions":"persona","stream":true,
+            "reasoning":{"effort":"low"},"tools":[{"name":"workspace_read"}]});
+        let mut changed=base.clone();
+        changed["stream"]=json!(false);
+        assert_eq!(request_contract(&base),request_contract(&changed));
+        changed["reasoning"]["effort"]=json!("high");
+        assert_ne!(request_contract(&base),request_contract(&changed));
+        changed["reasoning"]["effort"]=json!("low");
+        changed["tools"]=json!([{"name":"workspace_write"}]);
+        assert_ne!(request_contract(&base),request_contract(&changed));
+    }
+
+    #[tokio::test]
+    async fn codex_contract_change_restarts_previous_response_chain() {
+        let (state,root)=test_state();
+        let (provider,mut requests,server)=fixture(vec![
+            json!({"type":"response.output_text.delta","delta":"answer"}),
+            json!({"type":"response.completed","response":{"id":"response-one","output":[]}}),
+        ]).await;
+        let (tx,_)=tokio::sync::mpsc::unbounded_channel();
+        let base=json!({"model":"fixture","instructions":"stable",
+            "reasoning":{"effort":"low"},"tools":[{"name":"workspace_read"}]});
+        stream(&state,&provider,"fixture","fixture","contract-change",
+            &base,vec![item("user","one")],"contract-change",&tx).await.unwrap();
+        assert!(requests.recv().await.unwrap().get("previous_response_id").is_none());
+        let mut changed=base;
+        changed["reasoning"]["effort"]=json!("high");
+        let result=stream(&state,&provider,"fixture","fixture","contract-change",
+            &changed,vec![item("user","one"),item("assistant","answer"),item("user","two")],
+            "contract-change",&tx).await.unwrap();
+        assert!(requests.recv().await.unwrap().get("previous_response_id").is_none());
+        assert_eq!(result.transport["mode"],"full");
+        assert_eq!(result.transport["rebaseReason"],"request_contract_changed");
+        forget(&registry_key(&provider,"fixture","contract-change"));
+        server.abort();
+        crate::test_support::cleanup_dir(root);
     }
 
     #[tokio::test]
