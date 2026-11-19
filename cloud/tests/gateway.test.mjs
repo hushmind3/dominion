@@ -6,6 +6,7 @@ const appOrigin='https://dominion.example'
 const endpoint=(path, options={})=>new Request('https://edge.example'+path,options)
 const env=(more={})=>({ALLOWED_ORIGIN:appOrigin,DB:{prepare(){throw Error('unexpected DB query')}},...more})
 const bearer='A'.repeat(43)
+const json=(value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'content-type':'application/json'}})
 
 test('health reports configuration without requiring client login or a database',async()=>{
  const response=await gateway.fetch(endpoint('/health'),{})
