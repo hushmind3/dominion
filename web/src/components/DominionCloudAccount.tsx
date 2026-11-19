@@ -381,7 +381,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
       <button type="button" disabled={loginConfig?.kakao!==true} onClick={()=>void openSocialLogin('kakao')} className="w-full rounded-lg bg-[#FEE500] px-4 py-2 text-[12px] font-semibold text-[#191919] disabled:opacity-50">카카오로 계속하기{loginConfig?.kakao===false?' · 설정 필요':''}</button>
       <button type="button" disabled={loginConfig?.naver!==true} onClick={()=>void openSocialLogin('naver')} className="w-full rounded-lg bg-[#03C75A] px-4 py-2 text-[12px] font-semibold text-white disabled:opacity-50">네이버로 계속하기{loginConfig?.naver===false?' · 설정 필요':''}</button>
       <p className="text-[11px] text-[#7C7469]">{loginConfig?.toss?'토스페이먼츠 결제는 로그인 후 요금제 메뉴에서 이용할 수 있습니다.':'토스페이먼츠는 운영자 결제 키와 요금 설정 후 활성화됩니다.'}</p>
-      {message&&<p role="status" className="text-[12px] text-[#9A3C29]">{message}</p>
+      {message&&<p role="status" className="text-[12px] text-[#9A3C29]">{message}</p>}
      </div>
     </div>
    </div>}
