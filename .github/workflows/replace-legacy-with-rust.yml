@@ -1,0 +1,40 @@
+name: Replace legacy Node repository with canonical Rust main
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/replace-legacy-with-rust.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  replace-legacy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout legacy repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Copy the reviewed Rust source tree and remove Node/Electron residues
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --no-checkout https://github.com/hushmind3/dominion-rust.git "${RUNNER_TEMP}/dominion-rust"
+          git -C "${RUNNER_TEMP}/dominion-rust" checkout --detach 93dcee8c5d385528d886662abd694abf339c8ee8
+          test -e "${RUNNER_TEMP}/dominion-rust/src-tauri/tauri.conf.json"
+          test -e "${RUNNER_TEMP}/dominion-rust/crates/dominion-core/src/engine.rs"
+          test ! -e "${RUNNER_TEMP}/dominion-rust/server/capability-kernel.mjs"
+          test ! -e "${RUNNER_TEMP}/dominion-rust/src/api/money.rs"
+          rsync -a --delete --exclude='.git/' "${RUNNER_TEMP}/dominion-rust/" "${GITHUB_WORKSPACE}/"
+          git add -A
+          git config user.name "DOMINION Rust migration"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --cached --quiet; then
+            echo 'Legacy repository already matches canonical Rust source.'
+            exit 0
+          fi
+          git commit -m "refactor: replace legacy Node/Electron source with DOMINION Rust main (93dcee8c5d38)"
+          git push origin HEAD:main
