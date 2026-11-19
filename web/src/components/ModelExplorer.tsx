@@ -5,13 +5,13 @@ import {get,post,del} from '../api'
 import {matchesRefreshTarget,type RefreshScope} from '../refreshEvents'
 import {t,useLocale} from '../i18n'
 import {translateError} from '../i18n/errors'
-import {classifyRuntimeFailure,memoryFit as getMemoryFit,planDownloadLaunch,preferredServerModelFormat,requiredMemory,selectRecommended,selectSmaller} from '../utils/modelHardware'
+import {classifyRuntimeFailure,memoryFit as getMemoryFit,modelPreflight,planDownloadLaunch,preferredServerModelFormat,requiredMemory,selectRecommended,selectSmaller} from '../utils/modelHardware'
 type Catalog={id:string;author:string;name:string;library:string;createdAt?:string;downloads:number;likes:number;gated:boolean;updatedAt:string;description:string;task:string;tags:string[]}
 type Option={id:string;format:'gguf'|'mlx';label:string;quantization:string;bytes:number;files:string[];shards:number}
 type Detail=Catalog&{revision:string;license:string;architecture:string;options:Option[];readme:string}
 type Installed={id:string;repo:string;optionId?:string;source?:string;externalPath?:string;format:'gguf'|'mlx';label:string;bytes:number;installedAt:string}
 type Job={id:string;repo:string;optionId:string;revision?:string;status:string;downloaded:number;total:number;current:string;error:string;installedId?:string;startedAt?:string}
-type Runtime={status:string;id?:string;repo?:string;engine?:string;name?:string;model?:string;error?:string;setup?:{status:string;engine?:string;backend:string;downloaded:number;total:number;tag:string;file?:string;error:string};capabilities?:{gguf:{available:boolean;backend?:string;installable?:boolean;path?:string|null;installMethod?:string};mlx:{available:boolean;backend?:string;installable?:boolean;standalone?:boolean;path?:string|null;installMethod?:string};memory:{total:number;free:number;platform?:string;arch?:string};gpu?:{kind:string;free:number}|null}}
+type Runtime={status:string;id?:string;repo?:string;engine?:string;name?:string;model?:string;error?:string;setup?:{status:string;engine?:string;backend:string;downloaded:number;total:number;tag:string;file?:string;error:string};capabilities?:{gguf:{available:boolean;backend?:string;installable?:boolean;path?:string|null;installMethod?:string};mlx:{available:boolean;backend?:string;installable?:boolean;standalone?:boolean;path?:string|null;installMethod?:string};lmstudio?:{available:boolean};memory:{total:number;free:number;platform?:string;arch?:string};gpu?:{kind:string;free:number}|null}}
 const fmt=(v=0)=>v>=1073741824?(v/1073741824).toFixed(1)+' GB':v>=1048576?(v/1048576).toFixed(0)+' MB':v>=1024?(v/1024).toFixed(0)+' KB':String(v)+' B'
 const shorten=(v:string,n=45)=>v.length>n?v.slice(0,n-3)+'…':v
 const compactNumber=(v=0)=>v>=1e6?(v/1e6).toFixed(1)+'M':v>=1e3?(v/1e3).toFixed(1)+'K':String(v)
@@ -152,6 +152,7 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
  const installedId=selectedJob?.installedId??
   (selectedJob?.status==='completed'?selectedJob.optionId.split('/').at(-1):undefined)
  const existing=installed.find(m=>m.id===installedId||(m.repo===detail?.id&&m.optionId===option?.id))
+ const selectedPreflight=option&&detail?modelPreflight(existing||{id:option.format==='mlx'?'mlx:'+detail.id:'hf:'+detail.id,format:option.format,bytes:option.bytes},runtime.capabilities):null
  const activeModel=installed.find(m=>m.id===runtime.id)
  const needEngine=runtime.capabilities?.gguf.available===false;
  const installing=['checking','downloading','extracting','verifying'].includes(runtime.setup?.status||'');
@@ -179,7 +180,20 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
   try{const {path}=await post<{path?:string}>('/api/model-library/pick-file',{});if(path)setLocalPath(path)}
   catch(e){setError((e as Error).message)}finally{setPicking(false)}
  }
- const load=(id:string)=>safe('load'+id,()=>post('/api/model-library/runtime/load',{id,context}))
+ const load=(id:string)=>safe('load'+id,async()=>{
+  // Fetch a fresh snapshot: a cached card could still show an engine that was removed.
+  const snapshot=await get<Runtime>('/api/model-library/runtime')
+  setRuntime(snapshot)
+  const model=installed.find(m=>m.id===id)
+  if(model){
+   const check=modelPreflight(model,snapshot.capabilities)
+   if(check.status==='blocked'){
+    setView('import')
+    throw Error(check.engine+' 실행기가 설치되지 않았습니다. 실행기 설치에서 준비한 뒤 다시 실행하세요.')
+   }
+  }
+  await post('/api/model-library/runtime/load',{id,context})
+ })
  const requestDownload=async(autoLaunch:boolean,target:Option|undefined=option)=>{
   if(!detail||!target)return
   const previous=jobs.filter(j=>j.repo===detail.id&&j.optionId===target.id
@@ -250,7 +264,7 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
    <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><h3 className="text-[13px] font-bold">{t('models.installedTitle')}</h3><Button variant="bare" type="button" className={btn} onClick={()=>setView('import')}><FolderOpen size={14}/> {t('models.importFile')}</Button></div>
    {installed.length?<div className="divide-y divide-[#EFE9DF] rounded-lg border border-[#EFE9DF]">{installed.map(m=><div key={m.id} className="flex flex-wrap items-center gap-3 p-3">
     <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-[#F3EEE5] text-[#A94E30]"><Cpu size={17}/></div>
-    <div className="min-w-0 flex-1"><div className="break-all text-[12px] font-semibold text-[#24211D]">{m.repo}</div><div className="mt-1 text-[11px] text-[#8A8176]">{m.format.toUpperCase()} · {fmt(m.bytes)} · {m.source==='external'?t('models.source.external'):m.source==='lmstudio'?t('models.source.lmstudio'):t('models.source.downloaded')}{m.externalPath?' · '+shorten(m.externalPath,65):''}</div></div>
+    <div className="min-w-0 flex-1"><div className="break-all text-[12px] font-semibold text-[#24211D]">{m.repo}</div><div className="mt-1 text-[11px] text-[#8A8176]">{m.format.toUpperCase()} · {fmt(m.bytes)} · {m.source==='external'?t('models.source.external'):m.source==='lmstudio'?t('models.source.lmstudio'):t('models.source.downloaded')}{m.externalPath?' · '+shorten(m.externalPath,65):''}</div>{modelPreflight(m,runtime.capabilities).status==='blocked'&&<div className="mt-1 text-[11px] font-semibold text-rose-700">실행기 필요 · {modelPreflight(m,runtime.capabilities).engine}</div>}{modelPreflight(m,runtime.capabilities).status==='warning'&&<div className="mt-1 text-[11px] font-semibold text-amber-700">메모리 여유 부족 가능 · 실행 전 확인</div>}</div>
     <div className="flex items-center gap-1.5">{runtime.status==='ready'&&runtime.id===m.id?<span className="mr-1 rounded bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700">{t('models.inUse')}</span>:<Button variant="bare" type="button" className={btn+' !border-[#C96442] !bg-[#C96442] !text-white hover:!bg-[#A94E30]'} disabled={Boolean(working)||runtime.status==='loading'} onClick={()=>void load(m.id)}><Play size={13}/>{working==='load'+m.id?t('models.loadingModel'):t('models.run')}</Button>}
      <Button variant="bare" type="button" className="rounded-md p-2 text-[#A79C8E] hover:bg-rose-50 hover:text-rose-600" aria-label={t('models.delete')+' '+m.repo} disabled={Boolean(working)||m.source==='lmstudio'||(runtime.id===m.id&&runtime.status==='ready')} title={m.source==='lmstudio'?unsupported:undefined} onClick={()=>void remove(m)}><Trash2 size={14}/></Button>
     </div>
@@ -336,6 +350,12 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
      </div>}
      <div className="mt-2 max-h-56 overflow-auto rounded-xl border border-[#E7E0D5]">{detail.options.filter(o=>format==='all'||o.format===format).map(o=><Button variant="bare" type="button" key={o.id} onClick={()=>setVariant(o.id)} className={'flex w-full items-center gap-3 border-b border-[#EFE9DF] px-3.5 py-3.5 text-left last:border-0 '+(variant===o.id?'bg-[#F7E8E1]':'hover:bg-[#FAF7F1]')}><span className="rounded bg-[#F3EEE5] px-2 py-1 text-[10px] font-semibold text-[#7C7469]">{o.format.toUpperCase()}</span><span className="min-w-0 flex-1 text-[13px] font-semibold text-[#3A342D]">{o.label}<span className="ml-2 text-[10px] font-normal text-[#8A8176]">{o.quantization&&o.quantization!==o.label?o.quantization:''}{o.shards>1?' · '+t('models.ui.shardFiles',{count:o.shards}):''}</span></span><span className="text-[12px] text-[#5C544A]">{fmt(o.bytes)}</span>{variant===o.id&&<Check size={15} className="text-[#C96442]"/>}</Button>)}</div>
      {!detail.options.length&&<p className="mt-3 text-[12px] text-amber-700">{t('models.noGguf')}</p>}
+     {selectedPreflight&&<div className={'mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3 text-[11px] '+(selectedPreflight.status==='blocked'?'border-rose-200 bg-rose-50 text-rose-800':selectedPreflight.status==='warning'?'border-amber-200 bg-amber-50 text-amber-900':'border-[#E7E0D5] bg-[#FAF7F1] text-[#5C544A]')}>
+      <div className="min-w-0"><strong className="text-[12px]">실행 전 점검 · {selectedPreflight.status==='blocked'?'실행기 필요':selectedPreflight.status==='warning'?'메모리 주의':selectedPreflight.status==='ready'?'준비 상태 양호':'측정 정보 확인 중'}</strong>
+      <p className="mt-1 leading-5">{selectedPreflight.status==='blocked'?selectedPreflight.engine+' 실행기가 없습니다. 먼저 설치하거나 기존 실행기를 연결하세요.':selectedPreflight.status==='warning'?'선택한 모델의 파일 크기에 비해 사용 가능한 메모리가 빠듯할 수 있습니다. 실제 사용량은 컨텍스트와 오프로딩 방식에 따라 달라집니다.':selectedPreflight.status==='ready'?'실행기 및 모델 용량에 대한 기본 점검을 통과했습니다.':'실행기 또는 사용 가능 메모리 정보가 부족합니다. 실행할 때 서버 상태를 다시 검사합니다.'}</p></div>
+      {selectedPreflight.status==='blocked'&&<Button variant="bare" type="button" className={btn} onClick={()=>setView('import')}><Cpu size={13}/>실행기 설치·확인</Button>}
+      {selectedPreflight.status==='warning'&&smallerOption&&<Button variant="bare" type="button" className={btn} onClick={()=>setVariant(smallerOption.id)}>작은 양자화 선택</Button>}
+     </div>}
      {option&&<div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl bg-[#FAF7F1] p-3">
       <span className="text-[12px] text-[#5C544A]">{t('models.sizeLabel')} <strong>{fmt(option.bytes)}</strong></span>
       {existing?<><Button variant="bare" type="button" className={btn+' !border-[#C96442] !bg-[#C96442] !text-white'} disabled={Boolean(working)||runtime.status==='loading'||(runtime.status==='ready'&&runtime.id===existing.id)} onClick={()=>void load(existing.id)}><Play size={13}/>{working==='load'+existing.id?t('models.loadingModel'):runtime.status==='ready'&&runtime.id===existing.id?t('models.inUse'):t('models.run')}</Button>{runtime.status==='ready'&&runtime.id===existing.id&&runtime.model&&<Button variant="bare" type="button" className={btn} onClick={()=>{window.location.hash='#/chat?'+new URLSearchParams({provider:'dominion-native',model:runtime.model!})}}><ArrowRight size={14}/>{t('models.chat')}</Button>}<Button variant="bare" type="button" className={btn} onClick={()=>setView('installed')}><Check size={14}/>{t('models.installedView')}</Button></>:
