@@ -368,16 +368,6 @@ export default {
       }
       else if (path === '/v1/billing' && request.method === 'GET') {
         const user = await account(request, env);
-        if (!user) response = err('Unauthorized', 401);
-        else {
-          const subscription = await env.DB.prepare('SELECT plan,status,current_period_end FROM subscriptions WHERE account_id=?').bind(user.id).first();
-          const payments = await env.DB.prepare('SELECT order_id,amount_krw,status,created_at FROM payments WHERE account_id=? ORDER BY created_at DESC LIMIT 20').bind(user.id).all();
-          response = json({ plan: subscription?.plan || 'free', status: subscription?.status || 'inactive',
-            current_period_end: subscription?.current_period_end || null, payments: payments.results || [] });
-        }
-      }
-      else if (path === '/v1/billing' && request.method === 'GET') {
-        const user = await account(request, env);
         response = user ? await billingSummary(env, user) : err('Unauthorized',401);
       } else if (path === '/v1/billing/checkout' && request.method === 'POST') {
         const user = await account(request, env);
