@@ -257,12 +257,33 @@ async function freeProxy(request, env, user) {
       JSON.stringify(body.messages).length > 50000 ||
       (body.max_tokens !== undefined && (!Number.isSafeInteger(body.max_tokens) || body.max_tokens < 1)))
     return err('Invalid or oversized messages');
-  const limit = Math.max(1, Math.min(1000, Number(env.FREE_DAILY_LIMIT || 20)));
+  // Free and Pro both have hard account-level limits. A subscription is not unlimited inference.
+  const subscription = await env.DB.prepare('SELECT status,current_period_end FROM subscriptions WHERE account_id=?').bind(user.id).first();
+  const isPro = subscription?.status === 'active' && subscription.current_period_end > now();
+  const configured = Number(isPro ? env.PRO_DAILY_LIMIT || 50 : env.FREE_DAILY_LIMIT || 20);
+  const limit = Number.isSafeInteger(configured) ? Math.max(1, Math.min(1000, configured)) : 20;
+  const monthLimitConfig = Number(env.PRO_MONTHLY_LIMIT || 500);
+  const monthLimit = Number.isSafeInteger(monthLimitConfig) ? Math.max(1, Math.min(10000, monthLimitConfig)) : 500;
   const day = new Date().toISOString().slice(0, 10);
   const key = user.id + ':' + day;
+  const monthlyKey = user.id + ':pro-month:' + day.slice(0, 7);
+  let monthlyReserved = false;
+  if (isPro) {
+    const month = await env.DB.prepare('INSERT INTO free_quota(account_day,used) VALUES(?,1) ON CONFLICT(account_day) DO UPDATE SET used=used+1 WHERE used<? RETURNING used')
+      .bind(monthlyKey, monthLimit).first();
+    if (!month) return err('Monthly Pro quota exhausted', 429);
+    monthlyReserved = true;
+  }
+  const refundQuota = async () => {
+    await env.DB.prepare('UPDATE free_quota SET used=MAX(0,used-1) WHERE account_day=?').bind(key).run();
+    if (monthlyReserved) await env.DB.prepare('UPDATE free_quota SET used=MAX(0,used-1) WHERE account_day=?').bind(monthlyKey).run();
+  };
   const updated = await env.DB.prepare('INSERT INTO free_quota(account_day,used) VALUES(?,1) ON CONFLICT(account_day) DO UPDATE SET used=used+1 WHERE used<? RETURNING used')
     .bind(key, limit).first();
-  if (!updated) return err('Daily free quota exhausted', 429);
+  if (!updated) {
+    if (monthlyReserved) await env.DB.prepare('UPDATE free_quota SET used=MAX(0,used-1) WHERE account_day=?').bind(monthlyKey).run();
+    return err('Daily free quota exhausted', 429);
+  }
   if (model.backend === 'workers-ai') {
     try {
       const answer = await env.AI.run(model.id, { messages: body.messages, max_tokens: Math.min(1024, body.max_tokens || 512) });
@@ -284,7 +305,7 @@ async function freeProxy(request, env, user) {
         } });
       }
       return json({ id: completionId, object: 'chat.completion', model: model.id, choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }], usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } }, 200, quotaHeaders);
-    } catch { markModelResult(model.id, false); await env.DB.prepare('UPDATE free_quota SET used=MAX(0,used-1) WHERE account_day=?').bind(key).run(); return err('Workers AI inference unavailable', 502); }
+    } catch { markModelResult(model.id, false); await refundQuota(); return err('Workers AI inference unavailable', 502); }
   }
   let upstream;
   try {
@@ -296,10 +317,10 @@ async function freeProxy(request, env, user) {
     });
   } catch {
     markModelResult(model.id, false);
-    await env.DB.prepare('UPDATE free_quota SET used=MAX(0,used-1) WHERE account_day=?').bind(key).run();
+    await refundQuota();
     return err('Free model provider connection failed', 502);
   }
-  if (!upstream.ok) { if (upstream.status === 404 || upstream.status === 429 || upstream.status >= 500) markModelResult(model.id, false); await env.DB.prepare('UPDATE free_quota SET used=MAX(0,used-1) WHERE account_day=?').bind(key).run(); return err('Free model provider unavailable', 502); }
+  if (!upstream.ok) { if (upstream.status === 404 || upstream.status === 429 || upstream.status >= 500) markModelResult(model.id, false); await refundQuota(); return err('Free model provider unavailable', 502); }
   markModelResult(model.id, true);
   const headers = new Headers({ 'cache-control': 'no-store', 'x-dominion-free-remaining': String(Math.max(0, limit - updated.used)) });
   headers.set('content-type', upstream.headers.get('content-type') || (body.stream ? 'text/event-stream' : 'application/json'));
