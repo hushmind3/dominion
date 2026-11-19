@@ -99,3 +99,9 @@ export function modelPreflight(model:LocalModelToLaunch,capabilities:LaunchCapab
  if(engineAvailable===null||memory==='unknown')return {status:'unknown',reason:'none',engine,memory,gpu}
  return {status:'ready',reason:'none',engine,memory,gpu}
 }
+
+export type ManagedEngineId='llama-cpp'|'mlx-lm'|'lm-studio'
+export function engineForModel(model:LocalModelToLaunch):ManagedEngineId{
+ if(model.id.startsWith('lms:'))return 'lm-studio'
+ return model.format==='mlx'?'mlx-lm':'llama-cpp'
+}
