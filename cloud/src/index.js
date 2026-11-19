@@ -188,6 +188,57 @@ async function confirmCheckout(request, env, user) {
     return err('Payment status pending verification; contact support with order ID',503);
   }
 }
+// Naver and Kakao authorization-code login; OAuth state is single-use and server-held.
+const oauthConfig=(provider,env)=>{
+ if(provider==='naver'&&env.NAVER_CLIENT_ID&&env.NAVER_CLIENT_SECRET)return {id:env.NAVER_CLIENT_ID,secret:env.NAVER_CLIENT_SECRET,authorize:'https://nid.naver.com/oauth2.0/authorize',token:'https://nid.naver.com/oauth2.0/token',profile:'https://openapi.naver.com/v1/nid/me'};
+ if(provider==='kakao'&&env.KAKAO_REST_API_KEY)return {id:env.KAKAO_REST_API_KEY,secret:env.KAKAO_CLIENT_SECRET||'',authorize:'https://kauth.kakao.com/oauth/authorize',token:'https://kauth.kakao.com/oauth/token',profile:'https://kapi.kakao.com/v2/user/me'};
+ return null;
+};
+async function oauthStart(request,env,provider){
+ const config=oauthConfig(provider,env);
+ if(!config)return err('Login provider not configured',503);
+ const state=b64url(crypto.getRandomValues(new Uint8Array(32)));
+ const redirect=new URL('/v1/auth/'+provider+'/callback',request.url).href;
+ await env.DB.prepare('INSERT INTO oauth_states(state_hash,provider,expires_at) VALUES(?,?,?)').bind(await hash(state),provider,now()+600).run();
+ const url=new URL(config.authorize);
+ url.searchParams.set('client_id',config.id);url.searchParams.set('redirect_uri',redirect);
+ url.searchParams.set('response_type','code');url.searchParams.set('state',state);
+ return Response.redirect(url.href,302);
+}
+async function oauthCallback(request,env,provider){
+ const config=oauthConfig(provider,env);if(!config)return err('Login provider not configured',503);
+ const url=new URL(request.url),state=url.searchParams.get('state'),code=url.searchParams.get('code');
+ if(!state||!code||state.length>200||code.length>2000)return err('Invalid OAuth callback',400);
+ const consumed=await env.DB.prepare('DELETE FROM oauth_states WHERE state_hash=? AND provider=? AND expires_at>? RETURNING state_hash').bind(await hash(state),provider,now()).first();
+ if(!consumed)return err('Expired or replayed login',403);
+ const redirect=new URL('/v1/auth/'+provider+'/callback',request.url).href;
+ let tokenUrl,options;
+ if(provider==='naver'){
+  tokenUrl=new URL(config.token);tokenUrl.searchParams.set('grant_type','authorization_code');tokenUrl.searchParams.set('client_id',config.id);tokenUrl.searchParams.set('client_secret',config.secret);tokenUrl.searchParams.set('code',code);tokenUrl.searchParams.set('state',state);
+  options={method:'POST',signal:AbortSignal.timeout(10000)};
+ }else{
+  const form=new URLSearchParams({grant_type:'authorization_code',client_id:config.id,redirect_uri:redirect,code});
+  if(config.secret)form.set('client_secret',config.secret);
+  tokenUrl=config.token;options={method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:form,signal:AbortSignal.timeout(10000)};
+ }
+ const tokenResponse=await fetch(tokenUrl,options);
+ if(!tokenResponse.ok)return err('OAuth token exchange failed',502);
+ const access=(await tokenResponse.json()).access_token;
+ if(typeof access!=='string'||!access)return err('OAuth access token missing',502);
+ const profileResponse=await fetch(config.profile,{headers:{Authorization:'Bearer '+access},signal:AbortSignal.timeout(10000)});
+ if(!profileResponse.ok)return err('OAuth profile unavailable',502);
+ const profile=await profileResponse.json();
+ const identity=provider==='naver'?profile.response?.id:profile.id;
+ if((typeof identity!=='string'&&typeof identity!=='number')||!String(identity))return err('OAuth identity missing',502);
+ const email=provider==='naver'?profile.response?.email:profile.kakao_account?.email;
+ const id=provider+':'+String(identity);
+ await env.DB.prepare('INSERT INTO accounts(id,email,credits,created_at) VALUES(?,?,0,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email').bind(id,typeof email==='string'?email.slice(0,320):'',now()).run();
+ const session=b64url(crypto.getRandomValues(new Uint8Array(32)));
+ await env.DB.prepare('INSERT INTO sessions(token_hash,account_id,expires_at) VALUES(?,?,?)').bind(await hash(session),id,now()+7*86400).run();
+ const origin=env.ALLOWED_ORIGIN;
+ const html='<!doctype html><html><meta charset="utf-8"><body><script>window.opener?.postMessage('+JSON.stringify({type:'dominion-oauth',provider,token:session})+','+JSON.stringify(origin)+');window.close();</script><p>로그인이 완료되었습니다. 창을 닫으셔도 됩니다.</p></body></html>';
+ return new Response(html,{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'none'; script-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",'referrer-policy':'no-referrer'}});
+}
 const builtinModels = [
   { id: '@cf/meta/llama-3.1-8b-instruct-fast', name: 'Llama 3.1 8B Fast', free: true, backend: 'workers-ai' },
   { id: '@cf/meta/llama-3.2-3b-instruct', name: 'Llama 3.2 3B', free: true, backend: 'workers-ai' }
@@ -429,6 +480,8 @@ export default {
       const path = new URL(request.url).pathname;
       let response;
       if (path === '/v1/auth/google' && request.method === 'POST') response = await login(request, env);
+      else if (/^\\/v1\\/auth\\/(naver|kakao)\\/start$/.test(path) && request.method === 'GET') response = await oauthStart(request,env,path.split('/')[3]);
+      else if (/^\\/v1\\/auth\\/(naver|kakao)\\/callback$/.test(path) && request.method === 'GET') response = await oauthCallback(request,env,path.split('/')[3]);
       else if (/^\\/v1\\/auth\\/(kakao|naver)\\/start$/.test(path) && request.method === 'GET')
         response = await oauthStart(request,env,path.split('/')[3]);
       else if (/^\\/v1\\/auth\\/(kakao|naver)\\/callback$/.test(path) && request.method === 'GET')
