@@ -67,10 +67,10 @@ function proPrice(env) {
   return Number.isSafeInteger(amount) && amount >= 100 && amount <= 10000000 ? amount : null;
 }
 async function billingSummary(env, user) {
-  const subscription = await env.DB.prepare('SELECT plan,valid_until FROM subscriptions WHERE account_id=?').bind(user.id).first();
+  const subscription = await env.DB.prepare('SELECT plan,status,current_period_end FROM subscriptions WHERE account_id=?').bind(user.id).first();
   return json({
-    plan: subscription?.valid_until > now() ? subscription.plan : 'free',
-    valid_until: subscription?.valid_until || null,
+    plan: subscription?.status === 'active' && subscription?.current_period_end > now() ? subscription.plan : 'free',
+    valid_until: subscription?.current_period_end || null,
     pro_price_krw: proPrice(env),
     checkout_enabled: Boolean(proPrice(env) && env.TOSS_CLIENT_KEY && env.TOSS_SECRET_KEY),
     toss_client_key: proPrice(env) && env.TOSS_SECRET_KEY ? (env.TOSS_CLIENT_KEY || null) : null
@@ -112,7 +112,7 @@ async function confirmCheckout(request, env, user) {
     // One transaction: grant exactly one subscription period after verified payment.
     await env.DB.batch([
       env.DB.prepare("UPDATE checkout_orders SET status='paid',payment_key=?,paid_at=? WHERE id=? AND account_id=? AND status='processing'").bind(paymentKey,now(),orderId,user.id),
-      env.DB.prepare("INSERT INTO subscriptions(account_id,plan,valid_until,updated_at) VALUES(?,'pro',?,?) ON CONFLICT(account_id) DO UPDATE SET plan='pro',valid_until=MAX(subscriptions.valid_until,?)+2592000,updated_at=?")
+      env.DB.prepare("INSERT INTO subscriptions(account_id,plan,status,current_period_end,updated_at) VALUES(?,'pro','active',?,?) ON CONFLICT(account_id) DO UPDATE SET plan='pro',status='active',current_period_end=MAX(COALESCE(subscriptions.current_period_end,0),?)+2592000,updated_at=?")
         .bind(user.id,now()+2592000,now(),now(),now())
     ]);
     return json({status:'paid',orderId});
