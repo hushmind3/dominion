@@ -125,12 +125,15 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
   setCatalogBusy(true)
   try{
    const {providers,linked,key,baseUrl}=await ensureCatalogCredential(entry)
-   if(providers.some(p=>p.baseUrl.replace(/\/$/,'')===baseUrl&&p.model===catalogModel&&p.hasKey)){
+   const duplicate=providers.find(p=>p.baseUrl.replace(/\/$/,'')===baseUrl&&p.model===catalogModel&&p.hasKey)
+   if(duplicate){
+    setRegistered({providerId:duplicate.id,model:catalogModel,source:'catalog'})
     setCatalogMessage('이미 채팅에 연결된 모델입니다.');return
    }
-   const blank=providers.find(p=>p.baseUrl.replace(/\/$/,'')===baseUrl&&!p.model&&p.hasKey)
+   const blank=!key?providers.find(p=>p.baseUrl.replace(/\/$/,'')===baseUrl&&!p.model&&p.hasKey):undefined
    const saved=await post<{id:string}>('/api/providers',{id:blank?.id,name:entry.name+' · '+catalogModel,baseUrl,kind:'openai',apiKey:key||undefined,credentialSourceId:key?undefined:linked?.id,model:catalogModel,enabled:true,local:false,toolMode:'auto'})
    setCatalogProviderId(saved.id)
+   setRegistered({providerId:saved.id,model:catalogModel,source:'catalog'})
    await onProviderAdded()
    setCatalogMessage('모델이 채팅에 등록됐습니다.')
   }catch(e){setCatalogMessage((e as Error).message)}finally{setCatalogBusy(false)}
@@ -191,10 +194,12 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
    const existing=await get<Array<{id:string;baseUrl:string;model:string}>>('/api/providers')
    const match=existing.find(p=>p.baseUrl.replace(/\/$/,'')===cloudUrl+'/v1'&&p.model===selected)
    if(match){
+    setRegistered({providerId:match.id,model:selected,source:'cloud'})
     setMessage('이미 등록된 모델입니다. 중복 등록하지 않았습니다.')
     return
    }
-   await post('/api/providers',{name:'DOMINION Cloud · '+selected,baseUrl:cloudUrl+'/v1',kind:'openai',apiKey:token,model:selected,enabled:true,local:false,toolMode:'compat'})
+   const saved=await post<{id:string}>('/api/providers',{name:'DOMINION Cloud · '+selected,baseUrl:cloudUrl+'/v1',kind:'openai',apiKey:token,model:selected,enabled:true,local:false,toolMode:'compat'})
+   setRegistered({providerId:saved.id,model:selected,source:'cloud'})
    await onProviderAdded()
    setMessage('모델이 등록됐습니다. 채팅에서 선택해 사용하세요.')
   }catch(error){setMessage((error as Error).message)}finally{setBusy(false)}
@@ -225,6 +230,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
    </select>
    <button type="button" disabled={busy||!selected||!models.some(model=>model.id===selected&&(modelFilter==='all'||(modelFilter==='free'?model.free:!model.free))&&(model.id+' '+(model.name||'')+' '+(model.provider||'')).toLowerCase().includes(modelSearch.toLowerCase()))} onClick={()=>void register()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">모델 등록</button>
   </div>}
+  {registered?.source==='cloud'&&<button type="button" onClick={goToRegisteredChat} className="mt-2 rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white">등록한 모델로 채팅하기</button>}
   {token&&<button type="button" className="mt-3 rounded-lg border px-3 py-2 text-[12px]" onClick={()=>{setToken('');setModels([]);setSelected('');setMessage('로그아웃되었습니다.');window.google?.accounts.id.disableAutoSelect?.()}}>로그아웃</button>}
   </>}
   {managementTab==='providers'&&<div className="mt-4 border-t border-[#E7E0D5] pt-4">
@@ -240,7 +246,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
     <label className="flex items-center gap-1"><input type="checkbox" checked={providerMinModels} onChange={e=>{setProviderMinModels(e.target.checked);setProviderPage(0)}}/>모델 있는 업체만</label>
    </div>}
    {catalog.length>0&&<div className="mt-2 flex flex-wrap gap-2"><select aria-label="업체 정렬" value={providerSort} onChange={e=>{setProviderSort(e.target.value as 'name'|'models');setProviderPage(0)}} className="rounded-lg border px-3 py-2 text-[12px]"><option value="name">이름순</option><option value="models">모델 많은 순</option></select>
-    <select aria-label="AI 업체 선택" value={catalogId} onChange={e=>{const id=e.target.value;setCatalogId(id);setCatalogModels([]);setCatalogModel('');setCatalogModelSearch('');setCatalogKey('');setCatalogProviderId('');setCatalogMessage('');void loadCatalogModels(id)}} className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]">
+    <select aria-label="AI 업체 선택" value={catalogId} onChange={e=>{const id=e.target.value;setRegistered(null);setCatalogId(id);setCatalogModels([]);setCatalogModel('');setCatalogModelSearch('');setCatalogKey('');setCatalogProviderId('');setCatalogMessage('');void loadCatalogModels(id)}} className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]">
      <option value="">업체를 선택하세요</option>
      {visibleCatalog.map(p=><option key={p.id} value={p.id}>{p.name} ({p.models})</option>)}
     </select>
@@ -255,7 +261,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
      {visibleModels.map(m=><option key={m.id} value={m.id}>{m.name||m.id} · {m.id}</option>)}
     </select>:<p className="mt-2 text-[11px] text-[#7C7469]">검색된 모델이 없습니다.</p>}
     {filteredModels.length>100&&<p className="mt-1 text-[11px] text-[#7C7469]">처음 100개만 표시합니다. 검색어로 모델을 좁혀 주세요.</p>}
-    {catalogModels.find(m=>m.id===catalogModel)&&<p className="mt-2 break-all text-[11px] leading-5 text-[#5C544A]">모델 ID: {catalogModel}{catalogModels.find(m=>m.id===catalogModel)?.context?' · 컨텍스트 '+catalogModels.find(m=>m.id===catalogModel)?.context?.toLocaleString()+' 토큰':''}</p>}
+    {catalogModels.find(m=>m.id===catalogModel)&&<p className="mt-2 break-all text-[11px] leading-5 text-[#5C544A]">모델 ID: {catalogModel}{catalogModels.find(m=>m.id===catalogModel)?.context?' · 컨텍스트 '+catalogModels.find(m=>m.id===catalogModel)?.context?.toLocaleString()+' 토큰':''}{catalogModels.find(m=>m.id===catalogModel)?.reasoning===true?' · 추론 지원':''}{catalogModels.find(m=>m.id===catalogModel)?.toolCall===true?' · 도구 호출 지원':''}</p>}
     <div className="mt-3 flex flex-wrap gap-2 border-t border-[#EFE9DF] pt-3">
      <input type="password" autoComplete="off" aria-label="업체 API 키 (등록 시에만 필요)" value={catalogKey} onChange={e=>setCatalogKey(e.target.value)} placeholder="채팅 등록용 API 키 (조회에는 불필요)" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
      <button type="button" disabled={catalogBusy||!visibleModels.some(m=>m.id===catalogModel)} onClick={()=>void saveCatalogModel()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">선택 모델 채팅 등록</button>
@@ -266,6 +272,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
    {catalog.length>0&&<p className="mt-2 text-[12px] text-[#7C7469]">검색 결과 {filteredCatalog.length}개 / 전체 {catalog.length}개 업체 · 중복 ID 제외</p>}
    <p className="mt-2 text-[12px] text-[#7C7469]">공개 모델 목록은 API 키 없이 조회할 수 있습니다. 채팅 등록·호출에는 API 키 또는 기존 인증이 필요할 수 있습니다.</p>
    {catalogMessage&&<p role="status" className="mt-2 text-[12px] text-[#7C7469]">{catalogMessage}</p>}
+   {registered?.source==='catalog'&&<button type="button" onClick={goToRegisteredChat} className="mt-2 rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white">등록한 모델로 채팅하기</button>}
    </div>
   </div>}
   {managementTab==='providers'&&<div className="mt-4 border-t border-[#E7E0D5] pt-4">
