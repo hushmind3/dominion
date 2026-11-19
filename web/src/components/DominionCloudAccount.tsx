@@ -6,7 +6,7 @@ type GoogleIdentity={accounts:{id:{initialize:(config:{client_id:string;callback
 declare global {interface Window {google?:GoogleIdentity}}
 type Model={id:string;name?:string;free:boolean;provider?:string;input_micro_krw?:number;output_micro_krw?:number}
 type CatalogProvider={id:string;name:string;api:string;models:number;doc?:string}
-type RemoteModel={id:string;name?:string}
+type RemoteModel={id:string;name?:string;context?:number|null;reasoning?:boolean|null;toolCall?:boolean|null}
 const cloudUrl=(import.meta.env.VITE_DOMINION_CLOUD_URL||'').replace(/\/$/,'')
 const clientId=import.meta.env.VITE_DOMINION_GOOGLE_CLIENT_ID||''
 export function DominionCloudAccount({onProviderAdded,initialTab='cloud',hideManagementNavigation=false}:{onProviderAdded:()=>Promise<unknown>;initialTab?:'cloud'|'providers';hideManagementNavigation?:boolean}) {
@@ -27,6 +27,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',hideMan
  const [catalogId,setCatalogId]=useState('')
  const [catalogKey,setCatalogKey]=useState('')
  const [catalogModel,setCatalogModel]=useState('')
+ const [catalogModelSearch,setCatalogModelSearch]=useState('')
  const [catalogModels,setCatalogModels]=useState<RemoteModel[]>([])
  const [catalogProviderId,setCatalogProviderId]=useState('')
  const [catalogBusy,setCatalogBusy]=useState(false)
@@ -78,53 +79,56 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',hideMan
   }catch(e){setCatalogMessage((e as Error).message)}finally{setCatalogBusy(false)}
  }
  useEffect(()=>{if(managementTab==='providers'&&!catalog.length)void loadCatalog()},[managementTab])
- async function connectCatalog(){
-  const entry=catalog.find(p=>p.id===catalogId)
-  if(!entry)return
-  setCatalogBusy(true);setCatalogMessage('')
+ async function loadCatalogModels(providerId=catalogId){
+  if(!providerId)return
+  setCatalogBusy(true);setCatalogMessage('공개 모델 목록 조회 중…')
   try{
-   const baseUrl=entry.api.replace(/\/$/,'')
-   const existing=await get<Array<{id:string;baseUrl:string;model?:string}>>('/api/providers')
-   const same=existing.find(p=>p.baseUrl.replace(/\/$/,'')===baseUrl)
-   if(!catalogKey.trim()&&!same)throw Error('모델 카탈로그는 공개되어 있지만, 실제 연결에는 업체 API 키가 필요합니다.')
-   const provider=same||await post<{id:string}>('/api/providers',{name:entry.name,baseUrl,kind:'openai',apiKey:catalogKey.trim()||undefined,enabled:true,local:false,toolMode:'auto'})
-   setCatalogProviderId(provider.id)
-   const models=await get<RemoteModel[]>('/api/providers/'+encodeURIComponent(provider.id)+'/models')
-   setCatalogModels(models)
-   setCatalogModel(models[0]?.id||'')
-   setCatalogMessage(models.length+'개 모델 조회 완료. 원하는 모델을 선택해 등록하세요.')
-   await onProviderAdded()
-  }catch(e){setCatalogMessage((e as Error).message)}finally{setCatalogBusy(false)}
+   const response=await get<{models:RemoteModel[];cached?:boolean;error?:string}>('/api/providers/catalog/'+encodeURIComponent(providerId)+'/models')
+   if(providerId!==catalogId)return
+   const found=response.models||[]
+   setCatalogModels(found)
+   setCatalogModel(found[0]?.id||'')
+   setCatalogMessage(response.error||(found.length+'개 모델 조회 완료 · API 키 없이 공개 목록 확인'))
+  }catch(e){setCatalogMessage((e as Error).message)}
+  finally{setCatalogBusy(false)}
+ }
+ async function ensureCatalogCredential(entry:CatalogProvider){
+  const providers=await get<Array<{id:string;baseUrl:string;model?:string;hasKey?:boolean}>>('/api/providers')
+  const baseUrl=entry.api.replace(/\\/$/,'')
+  const linked=providers.find(p=>p.hasKey&&p.baseUrl.replace(/\\/$/,'')===baseUrl)
+  const key=catalogKey.trim()
+  if(!key&&!linked)throw Error('모델 목록은 API 키 없이 조회할 수 있습니다. 채팅에 등록하려면 API 키를 입력하거나 기존 인증을 연결하세요.')
+  return {providers,linked,key,baseUrl}
  }
  async function saveCatalogModel(){
   const entry=catalog.find(p=>p.id===catalogId)
-  if(!entry||!catalogModel||!catalogProviderId)return
+  if(!entry||!catalogModel)return
   setCatalogBusy(true)
   try{
-   const baseUrl=entry.api.replace(/\/$/,'')
-   const providers=await get<Array<{id:string;baseUrl:string;model?:string}>>('/api/providers')
-   const same=providers.find(p=>p.baseUrl.replace(/\/$/,'')===baseUrl&&p.model===catalogModel)
-   if(same){setCatalogMessage('이미 등록된 모델입니다.');return}
-   const reusable=providers.find(p=>p.id===catalogProviderId&&!p.model)
-   await post('/api/providers',{id:reusable?.id,name:entry.name+' · '+catalogModel,baseUrl,kind:'openai',apiKey:catalogKey.trim()||undefined,credentialSourceId:catalogKey.trim()?undefined:catalogProviderId,model:catalogModel,enabled:true,local:false,toolMode:'auto'})
+   const {providers,linked,key,baseUrl}=await ensureCatalogCredential(entry)
+   if(providers.some(p=>p.baseUrl.replace(/\\/$/,'')===baseUrl&&p.model===catalogModel&&p.hasKey)){
+    setCatalogMessage('이미 채팅에 연결된 모델입니다.');return
+   }
+   const blank=providers.find(p=>p.baseUrl.replace(/\\/$/,'')===baseUrl&&!p.model&&p.hasKey)
+   const saved=await post<{id:string}>('/api/providers',{id:blank?.id,name:entry.name+' · '+catalogModel,baseUrl,kind:'openai',apiKey:key||undefined,credentialSourceId:key?undefined:linked?.id,model:catalogModel,enabled:true,local:false,toolMode:'auto'})
+   setCatalogProviderId(saved.id)
    await onProviderAdded()
    setCatalogMessage('모델이 채팅에 등록됐습니다.')
   }catch(e){setCatalogMessage((e as Error).message)}finally{setCatalogBusy(false)}
  }
  async function importCatalogModels(){
   const entry=catalog.find(p=>p.id===catalogId)
-  if(!entry||!catalogProviderId||!catalogModels.length)return
+  if(!entry||!catalogModels.length)return
   setCatalogBusy(true);setCatalogMessage('모델 일괄 등록 중…')
   try{
-   const baseUrl=entry.api.replace(/\/$/,'')
-   const providers=await get<Array<{id:string;baseUrl:string;model?:string}>>('/api/providers')
-   const known=new Set(providers.filter(p=>p.baseUrl.replace(/\/$/,'')===baseUrl).map(p=>p.model))
-   const blank=providers.find(p=>p.id===catalogProviderId&&!p.model)
+   const {providers,linked,key,baseUrl}=await ensureCatalogCredential(entry)
+   const known=new Set(providers.filter(p=>p.baseUrl.replace(/\\/$/,'')===baseUrl&&p.hasKey).map(p=>p.model))
+   const blank=providers.find(p=>p.baseUrl.replace(/\\/$/,'')===baseUrl&&!p.model&&p.hasKey)
    let added=0
-   for(const m of catalogModels){
-    if(!m.id||known.has(m.id))continue
-    await post('/api/providers',{id:blank&&added===0?blank.id:undefined,name:entry.name+' · '+m.id,baseUrl,kind:'openai',apiKey:catalogKey.trim()||undefined,credentialSourceId:catalogKey.trim()?undefined:catalogProviderId,model:m.id,enabled:true,local:false,toolMode:'auto'})
-    known.add(m.id);added++
+   for(const model of catalogModels){
+    if(!model.id||known.has(model.id))continue
+    await post('/api/providers',{id:blank&&added===0?blank.id:undefined,name:entry.name+' · '+model.id,baseUrl,kind:'openai',apiKey:key||undefined,credentialSourceId:key?undefined:linked?.id,model:model.id,enabled:true,local:false,toolMode:'auto'})
+    known.add(model.id);added++
    }
    await onProviderAdded()
    setCatalogMessage('전체 '+catalogModels.length+'개 중 신규 '+added+'개 등록 · 중복 제외')
@@ -168,6 +172,8 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',hideMan
  const filteredCatalog=catalog.filter(p=>(p.name+' '+p.id).toLowerCase().includes(catalogSearch.toLowerCase())&&(!providerMinModels||p.models>0)).sort((a,b)=>providerSort==='models'?b.models-a.models||a.name.localeCompare(b.name):a.name.localeCompare(b.name))
  const providerPageCount=Math.max(1,Math.ceil(filteredCatalog.length/40))
  const visibleCatalog=filteredCatalog.slice(providerPage*40,(providerPage+1)*40)
+ const filteredModels=catalogModels.filter(model=>(model.id+' '+(model.name||'')).toLowerCase().includes(catalogModelSearch.toLowerCase()))
+ const visibleModels=filteredModels.slice(0,100)
  return <section className="rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] p-4">
   {!hideManagementNavigation&&<div className="flex flex-wrap gap-2 border-b border-[#E7E0D5] pb-3 mb-3" role="tablist" aria-label="모델 연결 관리">
    <button type="button" role="tab" aria-selected={managementTab==='cloud'} onClick={()=>setManagementTab('cloud')} className={`rounded-lg px-3 py-2 text-[12px] ${managementTab==='cloud'?'bg-[#C96442] text-white':'border'}`}>DOMINION Cloud</button>
@@ -192,7 +198,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',hideMan
   {managementTab==='providers'&&<div className="mt-4 border-t border-[#E7E0D5] pt-4">
 
    <div className="mt-3"><strong className="text-[13px]">AI 업체 통합 연결 · models.dev</strong>
-   <p className="mt-1 text-[12px] text-[#7C7469]">업체 검색 → API 키 연결 → 모델 조회 → 채팅 등록 · 공개 모델 목록과 실제 사용 권한은 다를 수 있습니다.</p>
+   <p className="mt-1 text-[12px] text-[#7C7469]">업체 선택 → 공개 모델 조회·검색 (API 키 불필요) → 채팅 등록 시 인증 연결 · 공개 모델 목록과 실제 사용 권한은 다를 수 있습니다.</p>
    <div className="mt-2 flex flex-wrap gap-2">
     <button type="button" disabled={catalogBusy} onClick={()=>void loadCatalog()} className="rounded-lg border px-3 py-2 text-[12px]">업체 목록 불러오기</button>
     <input aria-label="AI 업체 검색" value={catalogSearch} onChange={e=>{setCatalogSearch(e.target.value);setProviderPage(0)}} placeholder="업체 이름 검색" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
@@ -202,21 +208,31 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',hideMan
     <label className="flex items-center gap-1"><input type="checkbox" checked={providerMinModels} onChange={e=>{setProviderMinModels(e.target.checked);setProviderPage(0)}}/>모델 있는 업체만</label>
    </div>}
    {catalog.length>0&&<div className="mt-2 flex flex-wrap gap-2"><select aria-label="업체 정렬" value={providerSort} onChange={e=>{setProviderSort(e.target.value as 'name'|'models');setProviderPage(0)}} className="rounded-lg border px-3 py-2 text-[12px]"><option value="name">이름순</option><option value="models">모델 많은 순</option></select>
-    <select aria-label="AI 업체 선택" value={catalogId} onChange={e=>{setCatalogId(e.target.value);setCatalogModels([]);setCatalogProviderId('')}} className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]">
+    <select aria-label="AI 업체 선택" value={catalogId} onChange={e=>{const id=e.target.value;setCatalogId(id);setCatalogModels([]);setCatalogModel('');setCatalogModelSearch('');setCatalogProviderId('');setCatalogMessage('')}} className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]">
      <option value="">업체를 선택하세요</option>
      {visibleCatalog.map(p=><option key={p.id} value={p.id}>{p.name} ({p.models})</option>)}
     </select>
     <div className="flex items-center gap-2 text-[12px]"><button type="button" className="rounded border px-2 py-1" disabled={providerPage===0} onClick={()=>{setProviderPage(p=>Math.max(0,p-1));setCatalogId('');setCatalogModels([]);setCatalogProviderId('')}}>이전</button><span>{providerPage+1} / {providerPageCount}</span><button type="button" className="rounded border px-2 py-1" disabled={providerPage+1>=providerPageCount} onClick={()=>{setProviderPage(p=>p+1);setCatalogId('');setCatalogModels([]);setCatalogProviderId('')}}>다음</button></div>
-    <input type="password" autoComplete="off" aria-label="업체 API 키" value={catalogKey} onChange={e=>setCatalogKey(e.target.value)} placeholder="API 키" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
-    <button type="button" disabled={catalogBusy||!catalogId} onClick={()=>void connectCatalog()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">연결 및 모델 조회</button>
+    <button type="button" disabled={catalogBusy||!catalogId} onClick={()=>void loadCatalogModels()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">{catalogBusy?'조회 중…':'모델 조회 (키 불필요)'}</button>
    </div>}
-   {catalogModels.length>0&&<div className="mt-2 flex flex-wrap gap-2">
-    <select aria-label="연결된 업체 모델" value={catalogModel} onChange={e=>setCatalogModel(e.target.value)} className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]">{catalogModels.map(m=><option key={m.id} value={m.id}>{m.name||m.id}</option>)}</select>
-    <button type="button" disabled={catalogBusy||!catalogModel} onClick={()=>void saveCatalogModel()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">채팅에 등록</button>
-    <button type="button" disabled={catalogBusy||!catalogProviderId} onClick={()=>void importCatalogModels()} className="rounded-lg border px-3 py-2 text-[12px] disabled:opacity-50">조회된 모델 전체 등록</button>
+   {catalogModels.length>0&&<div className="mt-3 rounded-xl border border-[#E7E0D5] bg-white p-3">
+    <div className="flex flex-wrap items-center justify-between gap-2 text-[12px]"><strong>공개 모델 목록 · {filteredModels.length} / {catalogModels.length}개</strong><span className="text-[#7C7469]">API 키 없이 검색 가능</span></div>
+    <input aria-label="업체 모델 검색" value={catalogModelSearch} onChange={e=>setCatalogModelSearch(e.target.value)} placeholder="모델 이름 또는 ID 검색" className="mt-2 w-full rounded-lg border px-3 py-2 text-[12px]"/>
+    {visibleModels.length>0?<select aria-label="공개 업체 모델 선택" value={visibleModels.some(m=>m.id===catalogModel)?catalogModel:''} onChange={e=>setCatalogModel(e.target.value)} className="mt-2 w-full rounded-lg border px-3 py-2 text-[12px]">
+     <option value="">모델을 선택하세요</option>
+     {visibleModels.map(m=><option key={m.id} value={m.id}>{m.name||m.id} · {m.id}</option>)}
+    </select>:<p className="mt-2 text-[11px] text-[#7C7469]">검색된 모델이 없습니다.</p>}
+    {filteredModels.length>100&&<p className="mt-1 text-[11px] text-[#7C7469]">처음 100개만 표시합니다. 검색어로 모델을 좁혀 주세요.</p>}
+    {catalogModels.find(m=>m.id===catalogModel)&&<p className="mt-2 break-all text-[11px] leading-5 text-[#5C544A]">모델 ID: {catalogModel}{catalogModels.find(m=>m.id===catalogModel)?.context?' · 컨텍스트 '+catalogModels.find(m=>m.id===catalogModel)?.context?.toLocaleString()+' 토큰':''}</p>}
+    <div className="mt-3 flex flex-wrap gap-2 border-t border-[#EFE9DF] pt-3">
+     <input type="password" autoComplete="off" aria-label="업체 API 키 (등록 시에만 필요)" value={catalogKey} onChange={e=>setCatalogKey(e.target.value)} placeholder="채팅 등록용 API 키 (조회에는 불필요)" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
+     <button type="button" disabled={catalogBusy||!visibleModels.some(m=>m.id===catalogModel)} onClick={()=>void saveCatalogModel()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">선택 모델 채팅 등록</button>
+     <button type="button" disabled={catalogBusy} onClick={()=>void importCatalogModels()} className="rounded-lg border px-3 py-2 text-[12px] disabled:opacity-50">전체 등록</button>
+    </div>
+    <p className="mt-2 text-[11px] text-[#7C7469]">조회는 무료 공개 메타데이터입니다. 실제 모델 호출에는 해당 업체의 인증 및 사용 권한이 필요할 수 있습니다.</p>
    </div>}
    {catalog.length>0&&<p className="mt-2 text-[12px] text-[#7C7469]">검색 결과 {filteredCatalog.length}개 / 전체 {catalog.length}개 업체 · 중복 ID 제외</p>}
-   <p className="mt-2 text-[12px] text-[#7C7469]">업체 목록의 모델 수는 공개 카탈로그 기준입니다. 실제 사용에는 API 키 또는 기존 연결이 필요합니다.</p>
+   <p className="mt-2 text-[12px] text-[#7C7469]">공개 모델 목록은 API 키 없이 조회할 수 있습니다. 채팅 등록·호출에는 API 키 또는 기존 인증이 필요할 수 있습니다.</p>
    {catalogMessage&&<p role="status" className="mt-2 text-[12px] text-[#7C7469]">{catalogMessage}</p>}
    </div>
   </div>}
