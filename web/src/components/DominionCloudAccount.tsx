@@ -7,6 +7,7 @@ declare global {interface Window {google?:GoogleIdentity}}
 type Model={id:string;name?:string;free:boolean;provider?:string;input_micro_krw?:number;output_micro_krw?:number}
 type CatalogProvider={id:string;name:string;api:string;models:number;doc?:string}
 type RemoteModel={id:string;name?:string;context?:number|null;reasoning?:boolean|null;toolCall?:boolean|null}
+const catalogProviderKind=(provider:CatalogProvider):'anthropic'|'openai'=>/anthropic/i.test(provider.id+' '+provider.api)?'anthropic':'openai'
 const cloudUrl=(import.meta.env.VITE_DOMINION_CLOUD_URL||'').replace(/\/$/,'')
 const clientId=import.meta.env.VITE_DOMINION_GOOGLE_CLIENT_ID||''
 export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initialProviderId,hideManagementNavigation=false}:{onProviderAdded:()=>Promise<unknown>;initialTab?:'cloud'|'providers';initialProviderId?:string;hideManagementNavigation?:boolean}) {
@@ -131,7 +132,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
     setCatalogMessage('이미 채팅에 연결된 모델입니다.');return
    }
    const blank=!key?providers.find(p=>p.baseUrl.replace(/\/$/,'')===baseUrl&&!p.model&&p.hasKey):undefined
-   const saved=await post<{id:string}>('/api/providers',{id:blank?.id,name:entry.name+' · '+catalogModel,baseUrl,kind:'openai',apiKey:key||undefined,credentialSourceId:key?undefined:linked?.id,model:catalogModel,enabled:true,local:false,toolMode:'auto'})
+   const saved=await post<{id:string}>('/api/providers',{id:blank?.id,name:entry.name+' · '+catalogModel,baseUrl,kind:catalogProviderKind(entry),apiKey:key||undefined,credentialSourceId:key?undefined:linked?.id,model:catalogModel,enabled:true,local:false,toolMode:'auto'})
    setCatalogProviderId(saved.id)
    setRegistered({providerId:saved.id,model:catalogModel,source:'catalog'})
    await onProviderAdded()
@@ -149,7 +150,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
    let added=0
    for(const model of catalogModels){
     if(!model.id||known.has(model.id))continue
-    await post('/api/providers',{id:blank&&added===0?blank.id:undefined,name:entry.name+' · '+model.id,baseUrl,kind:'openai',apiKey:key||undefined,credentialSourceId:key?undefined:linked?.id,model:model.id,enabled:true,local:false,toolMode:'auto'})
+    await post('/api/providers',{id:blank&&added===0?blank.id:undefined,name:entry.name+' · '+model.id,baseUrl,kind:catalogProviderKind(entry),apiKey:key||undefined,credentialSourceId:key?undefined:linked?.id,model:model.id,enabled:true,local:false,toolMode:'auto'})
     known.add(model.id);added++
    }
    await onProviderAdded()
