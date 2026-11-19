@@ -321,6 +321,25 @@ fn public_models_from_metadata(provider: &Value) -> Vec<Value> {
     result
 }
 
+// A saved cloud provider with no credential can still display read-only
+// public metadata. Match its exact API endpoint, not an arbitrary name or host.
+fn public_models_for_endpoint(document:&Value, base:&str)->Option<Vec<Value>>{
+    let target=base.trim().trim_end_matches('/');
+    if target.is_empty(){return None;}
+    let provider=document.as_object()?.values()
+        .filter(|entry|entry["api"].as_str()
+            .is_some_and(|api|api.trim().trim_end_matches('/').eq_ignore_ascii_case(target)))
+        .max_by_key(|entry|entry["models"].as_object().map_or(0,|models|models.len()))?;
+    let mut models=public_models_from_metadata(provider);
+    if models.is_empty(){return None;}
+    for model in &mut models{
+        model["free"]=Value::Null;
+        model["freeStatus"]=json!("unknown");
+        model["catalogSource"]=json!("models.dev");
+    }
+    Some(models)
+}
+
 pub async fn public_catalog_models(
     State(state): State<AppState>, Path(provider_id): Path<String>
 ) -> Json<Value> {
@@ -1932,7 +1951,7 @@ pub async fn provider_models(State(state): State<AppState>, Path(id): Path<Strin
     let mut request = client.get(&url).timeout(Duration::from_secs(12));
     if kind == "anthropic" {
         request = request
-            .header("x-api-key", key)
+            .header("x-api-key", key.as_str())
             .header("anthropic-version", "2023-06-01");
     } else if !key.is_empty() {
         request = request.header("Authorization", format!("Bearer {key}"));
@@ -1992,6 +2011,15 @@ pub async fn provider_models(State(state): State<AppState>, Path(id): Path<Strin
         }
         Ok(response) => {
             let status = response.status();
+            // Not every provider exposes an unauthenticated /models route.
+            // Keep the registered model-check button useful without a key.
+            if key.is_empty() && !provider["local"].as_bool().unwrap_or(false) {
+                if let Ok(metadata)=load_models_dev_document().await {
+                    if let Some(models)=public_models_for_endpoint(&metadata,&base){
+                        return Json(json!(models)).into_response();
+                    }
+                }
+            }
             let hint = match status.as_u16() {
                 401 | 403 => "API 키와 모델 조회 권한을 확인하세요.",
                 404 | 405 => "서버 주소를 확인하세요. 모델 목록을 제공하지 않는 API는 모델 ID를 직접 입력할 수 있습니다.",
@@ -1999,7 +2027,16 @@ pub async fn provider_models(State(state): State<AppState>, Path(id): Path<Strin
             };
             error(StatusCode::BAD_GATEWAY, &format!("모델 목록 조회 실패 (HTTP {status}). {hint}"))
         }
-        Err(err) => error(StatusCode::BAD_GATEWAY, &err.to_string()),
+        Err(err) => {
+            if key.is_empty() && !provider["local"].as_bool().unwrap_or(false) {
+                if let Ok(metadata)=load_models_dev_document().await {
+                    if let Some(models)=public_models_for_endpoint(&metadata,&base){
+                        return Json(json!(models)).into_response();
+                    }
+                }
+            }
+            error(StatusCode::BAD_GATEWAY, &err.to_string())
+        },
     }
 }
 
@@ -2016,6 +2053,26 @@ mod tests {
         let expired=Some((Instant::now()-Duration::from_secs(86_401),Arc::clone(&document)));
         assert!(fresh_models_dev_document(&expired).is_none());
         assert!(fresh_models_dev_document(&None).is_none());
+    }
+
+    #[test]
+    fn public_registered_provider_fallback_requires_exact_api_endpoint() {
+        let catalog=json!({
+            "sample":{"api":"https://api.example.com/v1","models":{
+                "sample-model":{"name":"Sample","limit":{"context":32768}}
+            }},
+            "not-a-match":{"api":"https://other.example.com/v1","models":{
+                "other-model":{"name":"Other"}
+            }}
+        });
+        let models=public_models_for_endpoint(&catalog,"https://api.example.com/v1/").unwrap();
+        assert_eq!(models.len(),1);
+        assert_eq!(models[0]["id"],"sample-model");
+        assert_eq!(models[0]["catalogSource"],"models.dev");
+        assert_eq!(models[0]["freeStatus"],"unknown");
+        assert!(public_models_for_endpoint(&catalog,"https://api.example.com/v1beta").is_none());
+        assert!(public_models_for_endpoint(&catalog,"https://api.example.com").is_none());
+        assert!(public_models_for_endpoint(&catalog,"").is_none());
     }
 
     #[test]
