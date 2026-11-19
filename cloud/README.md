@@ -108,3 +108,32 @@ been deployed or verified end-to-end with real Google/Cloudflare credentials.
 Worker URL: `https://dominion-cloud.dominion-hushmind.workers.dev`
 D1 database: `dominion-cloud` (APAC), ID `edc9c387-310e-4660-aac7-db53f9da5d17`.
 Worker uploaded and workers.dev route enabled. The endpoint returns HTTP 503 until a real Google OAuth web client ID, allowed frontend origin and upstream model API credentials are configured. Do not place credentials in GitHub. Do not advertise free inference until an upstream key and working login are tested.
+
+
+## Kakao and Naver sign-in
+
+DOMINION Cloud supports Google, Kakao, and Naver account identities. Kakao and
+Naver use authorization-code login in a popup, a random state stored in a
+short-lived Secure HttpOnly SameSite=Lax cookie, server-side token exchange,
+provider profile verification, and a DOMINION session scoped to the verified
+provider user ID. The popup returns the session only to `ALLOWED_ORIGIN`.
+The frontend checks the Worker origin before accepting it.
+
+Register **web** applications in Kakao Developers and Naver Developers.
+Set the exact callback URLs:
+`https://YOUR_WORKER/v1/auth/kakao/callback` and
+`https://YOUR_WORKER/v1/auth/naver/callback`.
+Configure `KAKAO_CLIENT_ID` / `NAVER_CLIENT_ID` as Worker variables and
+`KAKAO_CLIENT_SECRET` / `NAVER_CLIENT_SECRET` as Worker secrets.
+The sign-in buttons do not function until those provider apps and callback
+URLs are configured and the Worker is deployed. Google login uses its existing
+separate client ID.
+
+Provider-specific account IDs deliberately stay distinct: logging in with
+Google, Kakao, and Naver does not silently merge accounts based on email.
+A verified, explicit account-linking flow is required before shared credits,
+payments, or subscriptions can move across identities.
+
+TossPayments Pro purchases are one-time thirty-day entitlements, not
+recurring card charges. Test merchant keys and a successful payment-confirmation
+round trip are required before enabling live payments.
