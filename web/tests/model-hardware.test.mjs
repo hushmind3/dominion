@@ -124,7 +124,7 @@ test('public provider model discovery does not ask for or create credentials',()
 })
 test('OpenRouter free model lookup remains separate from authenticated registration',()=>{
  const source=readFileSync(new URL('../src/components/DominionCloudAccount.tsx',import.meta.url),'utf8')
- const browse=source.slice(source.indexOf('async function browseOpenRouterFree('),source.indexOf('async function importOpenRouterFree('))
+ const browse=source.slice(source.indexOf('async function browseOpenRouterFree('),source.indexOf('async function ensureOpenRouterCredential('))
  assert.match(browse,/getOpenRouterFreeModels\(\)/)
  assert.doesNotMatch(browse,/routerKey\.trim\(\)/)
  assert.match(source,/\/api\/providers\/openrouter\/free-models/)
