@@ -108,6 +108,25 @@ pub(super) fn plan_chain(chain: &[(String, String)], incoming: &[(String, String
     }
 }
 
+/// Diagnostic only: a changed context window must never be silently reused.
+/// Distinguish eviction of already-sent leading history from an edited prefix
+/// without claiming that every such eviction was caused by a particular policy.
+fn rebase_reason(chain:&[(String,String)],incoming:&[(String,String)]) -> &'static str {
+    if chain.is_empty() { return "new_chain"; }
+    if incoming.is_empty() { return "empty_input"; }
+    if chain.len()>=incoming.len() && chain.starts_with(incoming) {
+        return "no_new_items";
+    }
+    // An earlier prefix was omitted while the retained chronological suffix
+    // is still byte-identical. Reusing the remote prefix is NOT safe without a
+    // distinct context-epoch policy; this is recorded for targeted optimization.
+    let overlap=(1..=chain.len().min(incoming.len())).rev().find(|size|
+        chain[chain.len()-*size..]==incoming[..*size]);
+    if overlap.is_some() { return "leading_window_evicted"; }
+    if chain.first()!=incoming.first() {return "prefix_changed"; }
+    "context_rewritten_or_reordered"
+}
+
 /// Assistant items the server added to the chain. The next request rebuilds
 /// these from persisted messages, so they must be part of the comparison base.
 fn assistant_items(response: &Value, fallback_text: &str) -> Vec<Value> {
@@ -150,6 +169,8 @@ struct Chain {
     socket: Option<Socket>,
     last_response_id: Option<String>,
     items: Vec<(String, String)>,
+    // A matching transcript alone does not authorize reuse after tool/model changes.
+    request_contract: Option<String>,
     opened: Option<Instant>,
     used: Instant,
 }
@@ -160,6 +181,7 @@ impl Chain {
             socket: None,
             last_response_id: None,
             items: Vec::new(),
+            request_contract: None,
             opened: None,
             used: Instant::now(),
         }
@@ -169,6 +191,7 @@ impl Chain {
         self.socket = None;
         self.last_response_id = None;
         self.items.clear();
+        self.request_contract = None;
         self.opened = None;
     }
 }
@@ -186,6 +209,22 @@ pub(super) enum WsError {
 pub(super) struct Outcome {
     pub completion: Completion,
     pub transport: Value,
+}
+
+/// A Codex chain can inherit its developer persona only while the request
+/// contract remains compatible. Input history is validated independently.
+fn request_contract(base: &Value) -> String {
+    let mut contract = serde_json::Map::new();
+    for key in [
+        "model", "instructions", "tools", "tool_choice", "parallel_tool_calls",
+        "reasoning", "text", "temperature", "top_p", "max_output_tokens",
+        "prompt_cache_key", "prompt_cache_retention", "service_tier",
+    ] {
+        if let Some(value) = base.get(key) {
+            contract.insert(key.to_string(), value.clone());
+        }
+    }
+    crate::engine::memory::stable_id(&[&Value::Object(contract).to_string()])
 }
 
 fn websocket_url(base_url: &str) -> String {
@@ -307,7 +346,20 @@ pub(super) async fn stream(
         .iter()
         .map(item_signature)
         .collect::<Vec<(String, String)>>();
+    let contract = request_contract(base);
+    let contract_changed = guard.request_contract.as_deref()
+        .is_some_and(|previous| previous != contract);
+    // Tool schema, model and reasoning changes invalidate the inherited
+    // server-side request contract even when the visible messages still match.
+    if contract_changed { guard.reset(); }
     let plan = plan_chain(&guard.items, &incoming);
+    let rebase = if contract_changed {
+        "request_contract_changed"
+    } else if plan == Plan::Full {
+        rebase_reason(&guard.items, &incoming)
+    } else {
+        "none"
+    };
     match exchange(
         state,
         provider,
@@ -328,12 +380,16 @@ pub(super) async fn stream(
             chain_items.extend(output.iter().map(item_signature));
             guard.items = chain_items;
             guard.last_response_id = Some(response_id.clone());
+            guard.request_contract = Some(contract.clone());
             guard.used = Instant::now();
             Ok(Outcome {
                 completion,
                 transport: json!({
                     "wire":"websocket",
                     "mode":if delta_items == 0 {"full"} else {"delta"},
+                    "rebaseReason":if delta_items == 0 {
+                        if rebase=="none" {"transport_recycled"} else {rebase}
+                    } else {"none"},
                     "deltaItems":input.len().saturating_sub(delta_items),
                     "chainReusedItems":delta_items,
                     "chainItems":guard.items.len(),
@@ -378,6 +434,7 @@ pub(super) async fn stream(
                     chain_items.extend(output.iter().map(item_signature));
                     guard.items = chain_items;
                     guard.last_response_id = Some(response_id.clone());
+                    guard.request_contract = Some(contract.clone());
                     guard.used = Instant::now();
                     state.store.audit(
                         "codex.ws.reconnected",
@@ -388,6 +445,7 @@ pub(super) async fn stream(
                         transport: json!({
                             "wire":"websocket",
                             "mode":"full-after-reconnect",
+                            "rebaseReason":"transport_reconnected",
                             "deltaItems":input.len(),
                             "chainReusedItems":0,
                             "chainItems":guard.items.len(),
@@ -813,6 +871,53 @@ mod tests {
             }
         });
         (provider, rx, server)
+    }
+
+    #[test]
+    fn codex_chain_contract_captures_tool_and_reasoning_changes_but_not_stream_flags() {
+        let base = json!({"model":"fixture","instructions":"owner","stream":true,
+            "reasoning":{"effort":"low"},"tools":[{"name":"workspace_read"}]});
+        let mut same = base.clone();
+        same["stream"] = json!(false);
+        same["store"] = json!(false);
+        assert_eq!(request_contract(&base), request_contract(&same));
+        same["reasoning"]["effort"] = json!("high");
+        assert_ne!(request_contract(&base), request_contract(&same));
+        same["reasoning"]["effort"] = json!("low");
+        same["tools"] = json!([{"name":"workspace_write"}]);
+        assert_ne!(request_contract(&base), request_contract(&same));
+    }
+
+    #[tokio::test]
+    async fn changed_codex_request_contract_rebases_even_with_matching_history() {
+        let (state, root) = test_state();
+        let (provider, mut requests, server) = fixture(vec![
+            json!({"type":"response.output_text.delta","delta":"answer"}),
+            json!({"type":"response.completed","response":{"id":"response-one","output":[]}}),
+        ]).await;
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let base = json!({"model":"fixture","instructions":"stable",
+            "reasoning":{"effort":"low"},"tools":[{"name":"workspace_read"}]});
+        let first_input = vec![item("developer","identity"),item("user","one")];
+        stream(&state,&provider,"fixture","fixture","contract-change",
+            &base,first_input.clone(),"contract-change",&tx).await.unwrap();
+        let first = requests.recv().await.unwrap();
+        assert!(first.get("previous_response_id").is_none());
+        let mut next_base=base;
+        next_base["reasoning"]["effort"] = json!("high");
+        let next_input = vec![item("developer","identity"),item("user","one"),
+            item("assistant","answer"),item("user","two")];
+        let second = stream(&state,&provider,"fixture","fixture","contract-change",
+            &next_base,next_input.clone(),"contract-change",&tx).await.unwrap();
+        let sent = requests.recv().await.unwrap();
+        assert!(sent.get("previous_response_id").is_none());
+        assert_eq!(sent["input"],json!(next_input));
+        assert_eq!(second.transport["mode"],"full");
+        assert_eq!(second.transport["rebaseReason"],"request_contract_changed");
+        forget(&registry_key(&provider,"fixture","contract-change"));
+        server.abort();
+        drop(state);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]
