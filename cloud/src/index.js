@@ -142,7 +142,7 @@ async function billingSummary(env, user) {
     free_daily_limit: freeDailyLimit,
     free_daily_used: Math.min(freeDailyLimit, freeUsage?.used || 0),
     free_daily_remaining: Math.max(0, freeDailyLimit - (freeUsage?.used || 0)),
-    free_quota_reset_utc: quotaDay + 'T00:00:00Z',
+    free_quota_reset_utc: new Date(Date.parse(quotaDay + 'T00:00:00Z') + 86400000).toISOString(),
     plan: subscription?.status === 'active' && subscription?.current_period_end > now() ? subscription.plan : 'free',
     valid_until: subscription?.current_period_end || null,
     pro_price_krw: proPrice(env),
