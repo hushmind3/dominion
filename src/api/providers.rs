@@ -263,6 +263,68 @@ fn codex_model() -> String {
     "gpt-6.1-sol".to_string()
 }
 
+/// Read-only public model directory. Neither endpoint nor cache depends on
+/// a connected provider or its API key; authorization remains a separate action.
+fn public_models_from_metadata(provider: &Value) -> Vec<Value> {
+    let mut result = provider["models"].as_object().into_iter().flatten()
+        .filter_map(|(id, model)| {
+            let id = model["id"].as_str().filter(|value| !value.trim().is_empty())
+                .unwrap_or(id.as_str());
+            if id.is_empty() { return None; }
+            Some(json!({
+                "id": id,
+                "name": model["name"].as_str().filter(|name| !name.is_empty()).unwrap_or(id),
+                "context": model["limit"]["context"].as_u64(),
+                "reasoning": model["reasoning"].as_bool(),
+                "toolCall": model["tool_call"].as_bool()
+            }))
+        })
+        .collect::<Vec<_>>();
+    result.sort_by(|a,b| a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or("")));
+    result
+}
+
+pub async fn public_catalog_models(
+    State(state): State<AppState>, Path(provider_id): Path<String>
+) -> Json<Value> {
+    if provider_id.is_empty() || provider_id.len()>128
+        || !provider_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte,b'-'|b'_'|b'.'))
+    {
+        return Json(json!({"models":[],"error":"업체 ID가 올바르지 않습니다."}));
+    }
+    let id=provider_id.to_ascii_lowercase();
+    let cached=state.store.get("provider_catalog_models",&id);
+    if let Some(record)=&cached {
+        let fresh=record["fetchedAt"].as_str()
+            .and_then(|value|chrono::DateTime::parse_from_rfc3339(value).ok())
+            .is_some_and(|time|(chrono::Utc::now()-time.with_timezone(&chrono::Utc)).num_seconds()<86_400);
+        if fresh {return Json(json!({"providerId":id,"models":record["models"],"cached":true}));}
+    }
+    let result=async {
+        let client=reqwest::Client::builder().timeout(Duration::from_secs(25))
+            .build().map_err(|error|error.to_string())?;
+        let response=client.get("https://models.dev/api.json").send().await
+            .map_err(|error|error.to_string())?;
+        if !response.status().is_success(){return Err(format!("공개 카탈로그 HTTP {}",response.status()));}
+        let data=response.json::<Value>().await.map_err(|error|error.to_string())?;
+        let provider=data.get(&id).ok_or("공개 카탈로그에서 해당 업체를 찾지 못했습니다.")?;
+        Ok::<Vec<Value>,String>(public_models_from_metadata(provider))
+    }.await;
+    match result {
+        Ok(models)=>{
+            let record=json!({"id":id,"fetchedAt":chrono::Utc::now().to_rfc3339(),"models":models});
+            state.store.put("provider_catalog_models",&record);
+            Json(json!({"providerId":id,"models":models,"cached":false}))
+        }
+        Err(error)=>Json(json!({
+            "providerId":id,
+            "models":cached.as_ref().map(|value|value["models"].clone()).unwrap_or_else(||json!([])),
+            "cached":cached.is_some(),
+            "error":format!("공개 모델 목록을 새로 가져오지 못했습니다: {error}")
+        }))
+    }
+}
+
 /// Public provider catalog backed by models.dev. The cache keeps the Models
 /// tab usable offline and avoids hammering the upstream on every visit.
 pub async fn provider_catalog(State(state): State<AppState>) -> Json<Value> {
