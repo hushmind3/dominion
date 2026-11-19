@@ -49,11 +49,15 @@ export type ServerModelFormat='gguf'|'mlx'
 export function preferredServerModelFormat(
  platform:string|undefined,
  arch:string|undefined,
- mlx:{available?:boolean;installable?:boolean}|null|undefined
+ mlx:{available?:boolean;installable?:boolean}|null|undefined,
+ gguf:{available?:boolean}|null|undefined
 ):ServerModelFormat|null{
  if(!platform)return null
- // MLX targets Apple Silicon on the machine running the Rust model server.
- // A Mac browser connected to a Windows/Linux server must use the server.
+ // MLX only targets Apple Silicon on the actual Rust server.
+ // Prefer an installed execution engine over requiring a fresh install.
  const appleSilicon=platform==='macos'&&(arch==='aarch64'||arch==='arm64')
- return appleSilicon&&(mlx?.available===true||mlx?.installable===true)?'mlx':'gguf'
+ if(!appleSilicon)return 'gguf'
+ if(mlx?.available===true)return 'mlx'
+ if(gguf?.available===true)return 'gguf'
+ return mlx?.installable===true?'mlx':'gguf'
 }
