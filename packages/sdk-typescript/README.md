@@ -47,19 +47,14 @@ silently repeats a potentially applied filesystem or shell operation.
 Build separately with `npm install && npm run build` inside this package.
 Publication is not implied. See [Rust SDK architecture](../../docs/HARNESS.md).
 
-## Optional origin metadata for tool-initiated runs
+## Optional source provenance
 
-`POST /api/sdk/runs` may include `agentId` and `source: {"kind":"money_candidate","id":"..."}`.
-The agent ID is validated and retained in the shared model turn; provider/model overrides remain explicit.
-The source pair is **untrusted display provenance only**, not authorization, evidence, or a tool permission.
-`GET /api/sdk/runs/source/:kind` returns at most 40 recent indexed run links;
-use `GET /api/sdk/runs/:id` for execution/approval status and existing cancel/resume endpoints.
-No second SDK, executor, or SQLite database is created.
-
-
-Money owners may use `POST /api/money/candidates/:id/implement` with explicit `approved: true`, `agentId`, `providerId`, `model` and a `tokenBudget`. The Money adapter atomically claims the candidate and prepares an ordinary SDK run; it returns the same SDK run on repeated approval. Its run ID supports all existing SDK status, approve, cancel, and resume operations. No separate SDK client surface is required.
-
-The optional Money capability is controlled by `GET/POST /api/settings/money` with `{"enabled":true|false}`. Disabled Money routes retain read-only archive access and reject new domain actions. Ordinary SDK jobs remain independent of the Money module switch.
+`POST /api/sdk/runs` accepts an optional agent ID and source reference
+such as `{"kind":"task_request","id":"issue-123"}`. The source reference
+is untrusted display provenance, not authorization or tool permission.
+`GET /api/sdk/runs/source/:kind` retrieves recent indexed runs for that
+source kind. All executions share the same native Rust approval and
+verification pipeline.
 
 Pass an optional `idempotencyKey` when creating a native SDK run through `POST /api/sdk/runs` to make retries safe. An identical retry returns the same persisted run; a changed request with the same key is rejected with HTTP 409. No new API endpoint, model runner or database is required.
 

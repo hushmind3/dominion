@@ -2,9 +2,9 @@
 
 ## Decision
 
-**One native Rust execution driver; many interchangeable tools, strategies and external runtimes.** The primary engine remains `dominion_core::engine::Engine::drive` in `crates/dominion-core/src/engine.rs`. Its single durable budget/checkpoint/approval/effect chain must not be replaced or independently duplicated by an SDK, plugin, Money feature, video feature or optional external harness.
+**One native Rust execution driver; many interchangeable tools, strategies and external runtimes.** The primary engine remains `dominion_core::engine::Engine::drive` in `crates/dominion-core/src/engine.rs`. Its single durable budget/checkpoint/approval/effect chain must not be replaced or independently duplicated by an SDK, plugin, retired built-in media feature or optional external harness.
 
-Branch comparison is selective, not wholesale. The `dominion-sub3` discovery/search approach inspired the capability interface, but the independent `dominion-agent-sdk::Kernel::run/resume` loop is **not imported**. The `dominion-sub2` decision helpers and the standalone `dominion-sub4` engine remain isolated evaluation sources. The `money` branch does not own the primary agent loop.
+Branch comparison is selective, not wholesale. The `dominion-sub3` discovery/search approach inspired the capability interface, but the independent `dominion-agent-sdk::Kernel::run/resume` loop is **not imported**. The `dominion-sub2` decision helpers and the standalone `dominion-sub4` engine remain isolated evaluation sources.
 
 ## Implemented on main
 

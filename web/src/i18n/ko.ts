@@ -6,7 +6,6 @@ const ko = {
   'shell.conversationSwitch': '대화 전환',
   'shell.groupShort': '그룹',
   'nav.chat': '채팅',
-  'nav.money': '돈벌이 찾기',
   'nav.rooms': '그룹 대화 · 회의',
   'nav.models': '모델 관리',
   'nav.agents': '에이전트',

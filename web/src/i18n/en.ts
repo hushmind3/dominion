@@ -7,7 +7,6 @@ const en: Record<LocaleKey, string> = {
   'shell.conversationSwitch': 'Conversation mode',
   'shell.groupShort': 'Group',
   'nav.chat': 'Chat',
-  'nav.money': 'Money discovery',
   'nav.rooms': 'Group rooms',
   'nav.models': 'Models',
   'nav.agents': 'Agents',

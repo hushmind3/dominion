@@ -638,16 +638,16 @@ mod view_tests{
     #[test]
     fn sdk_source_is_generic_metadata_and_cannot_encode_permissions() {
         assert!(source_metadata(None).unwrap().is_null());
-        let source=SourceRef{kind:"money_candidate".into(),id:"money:draft:123".into()};
+        let source=SourceRef{kind:"task_request".into(),id:"task:draft:123".into()};
         let meta=source_metadata(Some(&source)).unwrap();
-        assert_eq!(meta["kind"],"money_candidate");
-        assert_eq!(meta["id"],"money:draft:123");
+        assert_eq!(meta["kind"],"task_request");
+        assert_eq!(meta["id"],"task:draft:123");
         assert_eq!(meta["verified"],false);
-        assert_eq!(source_metadata(Some(&SourceRef{kind:"money_candidate".into(),
+        assert_eq!(source_metadata(Some(&SourceRef{kind:"task_request".into(),
             id:"lead/한글".into()})).unwrap()["id"],"lead/한글");
         assert!(source_metadata(Some(&SourceRef{kind:"../../admin".into(),
             id:"1".into()})).is_err());
-        assert!(source_metadata(Some(&SourceRef{kind:"money".into(),
+        assert!(source_metadata(Some(&SourceRef{kind:"document".into(),
             id:"a".repeat(201)})).is_err());
     }
     #[tokio::test]
@@ -721,15 +721,15 @@ mod view_tests{
     #[test]
     fn sdk_source_query_is_indexed_and_does_not_mix_tools() {
         let state=fixture();
-        state.store.put("sdk_run",&json!({"id":"a","source":{"kind":"money_candidate",
+        state.store.put("sdk_run",&json!({"id":"a","source":{"kind":"task_request",
             "id":"m1"},"status":"completed"})).unwrap();
-        state.store.put("sdk_run",&json!({"id":"b","source":{"kind":"money_candidate",
+        state.store.put("sdk_run",&json!({"id":"b","source":{"kind":"task_request",
             "id":"m2"},"status":"running"})).unwrap();
         state.store.put("sdk_run",&json!({"id":"c","source":{"kind":"other_tool",
             "id":"m1"},"status":"running"})).unwrap();
-        let rows=state.store.sdk_runs_by_source("money_candidate",20).unwrap();
+        let rows=state.store.sdk_runs_by_source("task_request",20).unwrap();
         assert_eq!(rows.len(),2);
-        assert!(rows.iter().all(|r|r["source"]["kind"]=="money_candidate"));
+        assert!(rows.iter().all(|r|r["source"]["kind"]=="task_request"));
         assert_eq!(state.store.sdk_runs_by_source("other_tool",20).unwrap().len(),1);
         let _=std::fs::remove_dir_all(&state.config.data_dir);
     }

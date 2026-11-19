@@ -540,7 +540,7 @@ mod tests {
         drop(parent);
     }
     #[test]
-    fn money_uses_configured_prices_and_reserves_before_the_call() {
+    fn provider_uses_configured_prices_and_reserves_before_the_call() {
         let state = state();
         let s = json!({"id":"parent","budgetUsd":0.001});
         state.store.put("session", &s);
@@ -548,14 +548,14 @@ mod tests {
             "provider",
             &json!({"id":"p","pricing":{"inputUsdPerMillion":2.0,"outputUsdPerMillion":4.0}}),
         );
-        let execution = begin(&state, &s, "money").unwrap();
+        let execution = begin(&state, &s, "budget-case").unwrap();
         let (call, output) = prepare_call(&state, "parent", "p", "m", false, 100, 1000).unwrap();
         assert_eq!(output, 200);
         assert!(prepare_call(&state, "parent", "p", "m", false, 1, 1).is_err());
         state.store.audit("model.usage",json!({"sessionId":"parent","promptTokens":100,"completionTokens":50,"totalTokens":150}));
         finish_call(call, true, None).unwrap();
         assert_eq!(
-            state.store.get("budget_tree", "money").unwrap()["tree"]["accounts"]["money"]["spent"],
+            state.store.get("budget_tree", "budget-case").unwrap()["tree"]["accounts"]["budget-case"]["spent"],
             400
         );
         drop(execution);

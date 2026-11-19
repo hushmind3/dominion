@@ -12,6 +12,7 @@ on:
       - 'Cargo.lock'
       - '.github/workflows/ci.yml'
       - 'scripts/check-runtime-architecture.mjs'
+      - 'web/**'
       - 'web/src/pages/Chat.tsx'
       - 'web/src/components/ModelPicker.tsx'
       - 'web/src/pages/Models.tsx'
@@ -122,8 +123,6 @@ jobs:
         run: cargo test --locked --bin dominion-rust shared_failure_observation_avoids_duplicate
       - name: Runtime structural boundaries and retired-loop guard
         run: node scripts/check-runtime-architecture.mjs
-      - name: Money domain and API regressions (dev profile)
-        run: cargo test --locked --bin dominion-rust money_
       - name: Nine-speaker three-turn work context and complete group delivery (dev profile)
         run: cargo test --locked --bin dominion-rust nine_participants_three_owner_turns_complete_thirty_messages_with_selective_work_context
       - name: Stateful Codex persona inheritance and per-turn wire delta (dev profile)

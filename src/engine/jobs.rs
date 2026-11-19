@@ -299,7 +299,6 @@ async fn wait_dispatch_event(
 
 pub fn start(state: AppState) {
     crate::engine::channel_adapter::start(state.clone());
-    crate::engine::money_tool::schedule(&state);
     let workers = std::env::var("DOMINION_JOB_WORKERS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
@@ -336,8 +335,6 @@ pub fn start(state: AppState) {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(30)).await;
-            // Bound Money scheduling to existing job workers; no separate inference daemon.
-            crate::engine::money_tool::schedule(&state);
             // Approval expiration must run whether the UI is connected or not.
             crate::engine::chat::expire_stale_approvals(&state);
         }
@@ -492,10 +489,11 @@ async fn run_job(state: AppState, job: Value) {
 
     // Retired built-in media and RSI jobs are never resumed automatically.
     // Their persisted inputs, checkpoints, and outputs stay intact for review.
-    if matches!(kind.as_str(), "video" | "youtube_upload" | "rsi_evolve" | "rsi_compare" | "rsi_generation") {
+    if matches!(kind.as_str(), "video" | "youtube_upload" | "rsi_evolve" | "rsi_compare" | "rsi_generation"
+        | "money_discover" | "money_ingest" | "money_catalog" | "money_fold") {
         if let Err(error)=context.finish_terminal(json!({
             "status": "needs_review",
-            "error": "내장 영상/음성 제작 및 RSI 자동 실행 기능이 종료되었습니다. 이전 작업 기록은 보존됩니다.",
+            "error": "삭제된 내장 자동 기능의 작업입니다. 기존 기록은 보존되며 이 작업은 실행되지 않습니다.",
             "finishedAt": chrono::Utc::now().to_rfc3339(),
         })) {
             state.store.audit("job.finalization_failed",
@@ -505,8 +503,6 @@ async fn run_job(state: AppState, job: Value) {
     }
 
     let result = match kind.as_str() {
-        kind if crate::engine::money_tool::handles(kind) =>
-            crate::engine::money_tool::run(&context, &job).await,
         "room" | "meeting" => rooms::run(&context, &job).await,
         "prompt" => run_prompt(&context, &job).await,
         "resume" => run_resume(&context, &job).await,
