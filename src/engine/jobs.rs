@@ -396,7 +396,6 @@ async fn wait_dispatch_event(
 /// One event-driven durable dispatcher with an existing worker-count bound.
 pub fn start(state:AppState){
     crate::engine::channel_adapter::start(state.clone());
-    crate::engine::money::tick(&state);
     let workers=std::env::var("DOMINION_JOB_WORKERS").ok()
         .and_then(|v|v.parse::<usize>().ok()).unwrap_or(4).clamp(1,16);
     let capacity=Arc::new(tokio::sync::Semaphore::new(workers));
@@ -429,7 +428,6 @@ pub fn start(state:AppState){
         loop{
             tokio::time::sleep(Duration::from_secs(30)).await;
             crate::engine::chat::expire_stale_approvals(&state);
-            crate::engine::money::tick(&state);
         }
     });
     // No background model learning/RSI sweeps outside user-initiated work.
@@ -566,8 +564,6 @@ async fn run_job(state: AppState, job: Value) {
     let result = match kind.as_str() {
         "room" | "meeting" => rooms::run(&context, &job).await,
         "prompt" => run_prompt(&context, &job).await,
-        "money_discover" | "money_ingest" | "money_catalog" | "money_fold" =>
-            crate::engine::money::dispatch(&context,&job).await,
         "rsi_compare"|"rsi_evolve"|"rsi_generation" => Err(
             "needs_review: 독립 RSI 캠페인은 종료되었습니다. 기존 작업 기록은 보존했습니다.".into()),
         "resume" => run_resume(&context, &job).await,
@@ -920,7 +916,7 @@ mod tests {
             "record":{"status":"queued"}})));
         assert!(!queued_job_event(&json!({"type":"record","kind":"job",
             "record":{"status":"running"}})));
-        assert!(!queued_job_event(&json!({"type":"record","kind":"money_signal",
+        assert!(!queued_job_event(&json!({"type":"record","kind":"unrelated_record",
             "record":{"status":"queued"}})));
     }
 
