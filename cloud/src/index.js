@@ -495,6 +495,22 @@ export default {
     const headers = cors(origin, env);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
     if (origin && origin !== env.ALLOWED_ORIGIN) return err('Origin not allowed', 403);
+    // Public OAuth metadata: Google client IDs are public identifiers, never secrets.
+    // The browser uses this endpoint so login works without a compile-time VITE key.
+    if (new URL(request.url).pathname === '/v1/public-config' && request.method === 'GET') {
+      const response = json({
+        google_client_id: env.GOOGLE_CLIENT_ID || null,
+        providers: {
+          google: Boolean(env.GOOGLE_CLIENT_ID),
+          kakao: Boolean(env.KAKAO_CLIENT_ID && env.KAKAO_CLIENT_SECRET),
+          naver: Boolean(env.NAVER_CLIENT_ID && env.NAVER_CLIENT_SECRET)
+        },
+        toss_available: Boolean(proPrice(env) && env.TOSS_CLIENT_KEY && env.TOSS_SECRET_KEY)
+      });
+      const out = new Response(response.body, response);
+      for (const [key, value] of Object.entries(headers)) out.headers.set(key, value);
+      return out;
+    }
     if (new URL(request.url).pathname === '/health' && request.method === 'GET') return json({service:'DOMINION Cloud',status:'online',login_configured:Boolean(env.GOOGLE_CLIENT_ID),models_configured:Boolean(freeModels(env).length)});
     if (!env.DB || !env.ALLOWED_ORIGIN) return err('Service not configured', 503);
     try {
