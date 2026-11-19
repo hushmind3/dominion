@@ -1,7 +1,8 @@
 use crate::{engine::codex_oauth, state::AppState};
 use axum::{extract::{Path,State},http::StatusCode,response::{IntoResponse,Response},Json};
 use serde_json::{json,Value};
-use std::time::Duration;
+use std::sync::{Arc,Mutex,OnceLock};
+use std::time::{Duration,Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use super::response::error;
@@ -263,6 +264,33 @@ fn codex_model() -> String {
     "gpt-6.1-sol".to_string()
 }
 
+// One 24-hour in-process snapshot serves every provider. models.dev exposes
+// all providers in one large JSON document: downloading that document again
+// for each model detail click wastes bandwidth and slows the search UI.
+static MODELS_DEV_DOCUMENT:OnceLock<Mutex<Option<(Instant,Arc<Value>)>>>=OnceLock::new();
+fn models_dev_document_cache()->&'static Mutex<Option<(Instant,Arc<Value>)>>{
+    MODELS_DEV_DOCUMENT.get_or_init(||Mutex::new(None))
+}
+async fn load_models_dev_document()->Result<Arc<Value>,String>{
+    if let Ok(cache)=models_dev_document_cache().lock(){
+        if let Some((fetched,document))=cache.as_ref(){
+            if fetched.elapsed()<Duration::from_secs(86_400){return Ok(Arc::clone(document));}
+        }
+    }
+    let client=reqwest::Client::builder().timeout(Duration::from_secs(25))
+        .build().map_err(|error|error.to_string())?;
+    let response=client.get("https://models.dev/api.json").send().await
+        .map_err(|error|error.to_string())?;
+    if !response.status().is_success(){
+        return Err(format!("공개 카탈로그 HTTP {}",response.status()));
+    }
+    let document=Arc::new(response.json::<Value>().await.map_err(|error|error.to_string())?);
+    if let Ok(mut cache)=models_dev_document_cache().lock(){
+        *cache=Some((Instant::now(),Arc::clone(&document)));
+    }
+    Ok(document)
+}
+
 /// Read-only public model directory. Neither endpoint nor cache depends on
 /// a connected provider or its API key; authorization remains a separate action.
 fn public_models_from_metadata(provider: &Value) -> Vec<Value> {
@@ -301,12 +329,7 @@ pub async fn public_catalog_models(
         if fresh {return Json(json!({"providerId":id,"models":record["models"],"cached":true}));}
     }
     let result=async {
-        let client=reqwest::Client::builder().timeout(Duration::from_secs(25))
-            .build().map_err(|error|error.to_string())?;
-        let response=client.get("https://models.dev/api.json").send().await
-            .map_err(|error|error.to_string())?;
-        if !response.status().is_success(){return Err(format!("공개 카탈로그 HTTP {}",response.status()));}
-        let data=response.json::<Value>().await.map_err(|error|error.to_string())?;
+        let data=load_models_dev_document().await?;
         let provider=data.get(&id).ok_or("공개 카탈로그에서 해당 업체를 찾지 못했습니다.")?;
         Ok::<Vec<Value>,String>(public_models_from_metadata(provider))
     }.await;
@@ -398,25 +421,7 @@ pub async fn provider_catalog(State(state): State<AppState>) -> Json<Value> {
             }));
         }
     }
-    let client = match reqwest::Client::builder().timeout(Duration::from_secs(20)).build() {
-        Ok(client) => client,
-        Err(error) => return Json(json!({"providers":[],"error":error.to_string()})),
-    };
-    let fetched = async {
-        let response = client
-            .get("https://models.dev/api.json")
-            .send()
-            .await
-            .map_err(|error| error.to_string())?;
-        if !response.status().is_success() {
-            return Err(format!("HTTP {}", response.status()));
-        }
-        response
-            .json::<Value>()
-            .await
-            .map_err(|_| "카탈로그 JSON 형식을 읽을 수 없습니다.".to_string())
-    }
-    .await;
+    let fetched=load_models_dev_document().await;
     let data = match fetched {
         Ok(data) => data,
         Err(error) => {
