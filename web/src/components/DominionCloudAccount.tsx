@@ -309,9 +309,9 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
    <button type="button" role="tab" aria-selected={managementTab==='cloud'} onClick={()=>setManagementTab('cloud')} className={`rounded-lg px-3 py-2 text-[12px] ${managementTab==='cloud'?'bg-[#C96442] text-white':'border'}`}>DOMINION Cloud</button>
    <button type="button" role="tab" aria-selected={managementTab==='providers'} onClick={()=>{setManagementTab('providers');if(!catalog.length)void loadCatalog()}} className={`rounded-lg px-3 py-2 text-[12px] ${managementTab==='providers'?'bg-[#C96442] text-white':'border'}`}>업체·모델 연결</button>
   </div>}
-  {managementTab==='cloud'&&<><strong className="text-[13px]">DOMINION Cloud · 간편 로그인</strong>
-  <p className="mt-1 text-[12px] text-[#7C7469]">DOMINION 계정 하나로 무료·유료 모델을 선택합니다. 업체 API 키는 서버에서 관리합니다.</p>
-  {cloudUrl&&<div className="mt-3 flex flex-wrap items-center gap-2">
+  {managementTab==='cloud'&&<><strong className="text-[13px]">{token?'DOMINION Cloud · 내 계정':'DOMINION Cloud · 간편 로그인'}</strong>
+  <p className="mt-1 text-[12px] text-[#7C7469]">{token?'로그인 상태입니다. Cloud 모델과 내 이용권을 관리할 수 있습니다.':'로그인 없이도 로컬 모델과 직접 등록한 API를 사용할 수 있습니다. Cloud 모델을 사용하려면 로그인하세요.'}</p>
+  {!token&&cloudUrl&&<div className="mt-3 flex flex-wrap items-center gap-2">
    {clientId&&<div ref={button}/>}
    <button type="button" onClick={()=>void openSocialLogin('kakao')} className="rounded-lg bg-[#FEE500] px-4 py-2 text-[12px] font-semibold text-[#191919]">카카오 로그인</button>
    <button type="button" onClick={()=>void openSocialLogin('naver')} className="rounded-lg bg-[#03C75A] px-4 py-2 text-[12px] font-semibold text-white">네이버 로그인</button>
