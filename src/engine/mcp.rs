@@ -1,0 +1,780 @@
+use crate::state::AppState;
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+
+const CACHE_TTL: Duration = Duration::from_secs(120);
+
+#[derive(Clone)]
+pub struct McpTool {
+    pub server_name: String,
+    pub slug: String,
+    pub tool: String,
+    pub description: String,
+    pub schema: Value,
+}
+
+impl McpTool {
+    /// Tool name exposed to the model. Prefixed so two servers cannot collide.
+    pub fn qualified(&self) -> String {
+        format!("mcp__{}__{}", self.slug, self.tool)
+    }
+}
+
+type Cache = Mutex<HashMap<String, (Instant, Vec<McpTool>)>>;
+
+fn cache() -> &'static Cache {
+    static CACHE: OnceLock<Cache> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn invalidate() {
+    cache().lock().unwrap().clear();
+}
+
+fn slug(value: &str) -> String {
+    let mut out = String::new();
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+        } else if !out.ends_with('_') {
+            out.push('_');
+        }
+    }
+    out.trim_matches('_').to_string()
+}
+
+/// Preserve original MCP tool names for non-colliding servers. When two
+/// distinct display names normalize to the same identifier, use a stable
+/// server-ID suffix instead of silently routing the wrong account's call.
+fn server_namespace(server:&Value, servers:&[Value]) -> String {
+    let mut name=slug(server["name"].as_str().unwrap_or("mcp"));
+    if name.is_empty() {name="mcp".to_string();}
+    let same=servers.iter().filter(|item|{
+        let mut candidate=slug(item["name"].as_str().unwrap_or("mcp"));
+        if candidate.is_empty(){candidate="mcp".to_string();}
+        candidate==name
+    }).count();
+    if same<=1 {return name;}
+    let identity=server["id"].as_str().unwrap_or("");
+    let digest=format!("{:x}",Sha256::digest(identity.as_bytes()));
+    format!("{}_{}",name,&digest[..16])
+}
+
+fn enabled_servers(state: &AppState) -> Vec<Value> {
+    state
+        .store
+        .all("mcp")
+        .into_iter()
+        .filter(|record| record.get("enabled").and_then(|value| value.as_bool()) != Some(false))
+        .collect()
+}
+
+/// Fetch (and cache) the tool list of every enabled MCP server.
+pub async fn tools(state: &AppState) -> Vec<McpTool> {
+    use futures_util::{stream, StreamExt};
+    let servers = enabled_servers(state);
+    // Discover independent MCP servers concurrently, but keep tool ordering
+    // deterministic for model-schema caching and reproducible tool selection.
+    // Bounded fan-out also prevents many configured servers from spawning at
+    // once or a single slow server from delaying all other handshakes.
+    // Own each record before entering an async future. Borrowing from an
+    // iterator closure across await makes the outer agent future non-Send on
+    // some stable Rust compilers, breaking tokio::spawn call sites.
+    let entries = servers.iter().filter_map(|server| {
+        let id = server["id"].as_str()?.to_string();
+        if id.is_empty() { return None; }
+        Some((id, server_namespace(server, &servers), server.clone()))
+    }).collect::<Vec<_>>();
+    let lookups = entries.into_iter().map(|(id, namespace, server)| async move {
+        let cache_key = format!("{id}:{namespace}");
+            let cached = {
+                let guard = cache().lock().unwrap();
+                guard.get(&cache_key).and_then(|(at, tools)| {
+                    (at.elapsed() < CACHE_TTL).then(|| tools.clone())
+                })
+            };
+            if let Some(tools) = cached { return tools; }
+            match list_server(state, &server, &namespace).await {
+                Ok(tools) => {
+                    cache().lock().unwrap().insert(
+                        cache_key, (Instant::now(), tools.clone())
+                    );
+                    tools
+                }
+                Err(error) => {
+                    state.store.audit(
+                        "mcp.list_failed", json!({ "server": id, "error": error })
+                    );
+                    Vec::new()
+                }
+            }
+    });
+    stream::iter(lookups)
+        .buffered(4)
+        .collect::<Vec<Vec<McpTool>>>()
+        .await
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
+async fn list_server(state: &AppState, server: &Value, server_slug:&str) -> Result<Vec<McpTool>, String> {
+    let server_name = server
+        .get("name")
+        .and_then(|value| value.as_str())
+        .unwrap_or("mcp")
+        .to_string();
+    let transport = server
+        .get("transport")
+        .and_then(|value| value.as_str())
+        .unwrap_or("stdio");
+
+    let result = if transport == "http" {
+        let mut session = HttpSession::open(server, state).await?;
+        session.request("tools/list", json!({})).await?
+    } else {
+        let mut session = StdioSession::open(server, &state.config.workspace).await?;
+        let result = session.request("tools/list", json!({})).await;
+        drop(session);
+        result?
+    };
+
+    let tools = result
+        .get("tools")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    Ok(tools
+        .into_iter()
+        .filter_map(|tool| {
+            let name = tool
+                .get("name")
+                .and_then(|value| value.as_str())?
+                .to_string();
+            Some(McpTool {
+                server_name: server_name.clone(),
+                slug: server_slug.to_string(),
+                tool: name,
+                description: tool
+                    .get("description")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                schema: tool
+                    .get("inputSchema")
+                    .cloned()
+                    .unwrap_or_else(|| json!({ "type": "object", "properties": {} })),
+            })
+        })
+        .collect())
+}
+
+pub async fn definitions(state: &AppState) -> Vec<Value> {
+    tools(state)
+        .await
+        .into_iter()
+        .map(|tool| {
+            json!({
+                "type": "function",
+                "function": {
+                    "name": tool.qualified(),
+                    "description": format!("[MCP · {}] {}", tool.server_name, tool.description),
+                    "parameters": tool.schema,
+                }
+            })
+        })
+        .collect()
+}
+
+pub fn requires_approval(state: &AppState, qualified: &str) -> bool {
+    let policy = state
+        .store
+        .get("policy", "default")
+        .unwrap_or_else(|| json!({}));
+    if policy
+        .get("autoApproveMcp")
+        .and_then(|value| value.as_bool())
+        == Some(true)
+    {
+        return false;
+    }
+    let qualified = qualified.to_string();
+    let server_slug = qualified
+        .strip_prefix("mcp__")
+        .and_then(|rest| rest.split_once("__"))
+        .map(|(slug, _)| slug.to_string())
+        .unwrap_or_default();
+    let servers = enabled_servers(state);
+    servers
+        .iter()
+        .find(|server| server_namespace(server,&servers)==server_slug)
+        .and_then(|server| server.get("approval").and_then(|value| value.as_bool()))
+        .unwrap_or(true)
+}
+
+/// Executes `mcp__{server}__{tool}`.
+pub async fn call(state: &AppState, qualified: &str, args: &Value) -> Result<Value, String> {
+    let rest = qualified
+        .strip_prefix("mcp__")
+        .ok_or_else(|| format!("MCP 도구 이름이 아닙니다: {qualified}"))?;
+    let (server_slug, tool_name) = rest
+        .split_once("__")
+        .ok_or_else(|| format!("MCP 도구 이름을 해석할 수 없습니다: {qualified}"))?;
+
+    let servers=enabled_servers(state);
+    let server=servers.iter()
+        .find(|server|server_namespace(server,&servers)==server_slug)
+        .ok_or_else(|| format!("MCP 서버를 찾을 수 없습니다: {server_slug}"))?;
+
+    let transport = server
+        .get("transport")
+        .and_then(|value| value.as_str())
+        .unwrap_or("stdio");
+    let params = json!({ "name": tool_name, "arguments": args });
+
+    if transport == "http" {
+        let mut session = HttpSession::open(server, state).await?;
+        session.request("tools/call", params).await
+    } else {
+        let mut session = StdioSession::open(server, &state.config.workspace).await?;
+        let result = session.request("tools/call", params).await;
+        drop(session);
+        result
+    }
+}
+
+// ------------------------------------------------------------------ stdio
+
+struct StdioSession {
+    _child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+    next_id: u64,
+}
+
+impl StdioSession {
+    async fn open(record: &Value, workspace: &Path) -> Result<Self, String> {
+        let command = record
+            .get("command")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.is_empty())
+            .ok_or("MCP stdio 서버에 command 가 없습니다.")?;
+        let args = record
+            .get("args")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        let mut child = Command::new(command);
+        child
+            .args(&args)
+            .current_dir(workspace)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
+        if let Some(env) = record.get("env").and_then(|value| value.as_object()) {
+            for (key, value) in env {
+                if let Some(value) = value.as_str() {
+                    child.env(key, value);
+                }
+            }
+        }
+
+        let mut child = child
+            .spawn()
+            .map_err(|error| format!("MCP 서버 실행 실패 ({command}): {error}"))?;
+        let stdin = child.stdin.take().ok_or("MCP stdin 을 열 수 없습니다.")?;
+        let stdout = child.stdout.take().ok_or("MCP stdout 을 열 수 없습니다.")?;
+        drop(child.stderr.take());
+
+        let mut session = Self {
+            _child: child,
+            stdin,
+            stdout: BufReader::new(stdout),
+            next_id: 1,
+        };
+        session
+            .request(
+                "initialize",
+                json!({
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": { "name": "dominion-rust", "version": env!("CARGO_PKG_VERSION") }
+                }),
+            )
+            .await?;
+        session
+            .notify("notifications/initialized", json!({}))
+            .await?;
+        Ok(session)
+    }
+
+    async fn notify(&mut self, method: &str, params: Value) -> Result<(), String> {
+        let payload = json!({ "jsonrpc": "2.0", "method": method, "params": params });
+        self.send(&payload).await
+    }
+
+    async fn send(&mut self, payload: &Value) -> Result<(), String> {
+        self.stdin
+            .write_all(format!("{payload}\n").as_bytes())
+            .await
+            .map_err(|error| error.to_string())?;
+        self.stdin.flush().await.map_err(|error| error.to_string())
+    }
+
+    async fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        });
+        self.send(&payload).await?;
+
+        loop {
+            let mut line = String::new();
+            let read =
+                tokio::time::timeout(Duration::from_secs(40), self.stdout.read_line(&mut line))
+                    .await
+                    .map_err(|_| format!("MCP 응답 시간 초과: {method}"))?
+                    .map_err(|error| error.to_string())?;
+            if read == 0 {
+                return Err("MCP 서버가 응답 없이 종료되었습니다.".into());
+            }
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+                continue;
+            };
+            if value.get("id").and_then(|item| item.as_u64()) != Some(id) {
+                continue;
+            }
+            if let Some(error) = value.get("error") {
+                return Err(format!("MCP 오류: {error}"));
+            }
+            return Ok(value.get("result").cloned().unwrap_or_else(|| json!({})));
+        }
+    }
+}
+
+
+const MAX_SSE_EVENT_BYTES: usize = 2 * 1024 * 1024;
+
+/// A request-scoped SSE stream can remain open after its JSON-RPC response.
+/// Parse complete events as bytes (UTF-8 may cross network chunk boundaries),
+/// skipping heartbeat comments and unrelated notifications/responses.
+fn sse_event_boundary(bytes: &[u8]) -> Option<(usize, usize)> {
+    for index in 0..bytes.len() {
+        if bytes[index] != b'\n' {
+            continue;
+        }
+        if bytes.get(index + 1) == Some(&b'\n') {
+            return Some((index, 2));
+        }
+        if bytes.get(index + 1) == Some(&b'\r')
+            && bytes.get(index + 2) == Some(&b'\n')
+        {
+            return Some((index, 3));
+        }
+    }
+    None
+}
+
+fn sse_response_event(event: &[u8], request_id: Option<&Value>) -> Option<Value> {
+    let text = std::str::from_utf8(event).ok()?;
+    let mut data = String::new();
+    for line in text.lines() {
+        let line = line.trim_end_matches('\r');
+        if let Some(value) = line.strip_prefix("data:") {
+            if !data.is_empty() {
+                data.push('\n');
+            }
+            data.push_str(value.strip_prefix(' ').unwrap_or(value));
+        }
+    }
+    let response: Value = serde_json::from_str(&data).ok()?;
+    if response.get("result").is_none() && response.get("error").is_none() {
+        return None;
+    }
+    if let Some(request_id) = request_id {
+        // 2026 Streamable HTTP also permits a transport-level JSON-RPC
+        // error without an id. Never accept another request's response.
+        if response.get("id") != Some(request_id)
+            && !(response.get("id").is_none() && response.get("error").is_some())
+        {
+            return None;
+        }
+    }
+    Some(response)
+}
+
+// ------------------------------------------------------------------- http
+
+struct HttpSession {
+    client: reqwest::Client,
+    url: String,
+    session: Option<String>,
+    token: Option<String>,
+    next_id: u64,
+}
+
+impl HttpSession {
+    /// Full MCP handshake: initialize, capture Mcp-Session-Id, then
+    /// notifications/initialized. Stateless one-shot requests fail against
+    /// spec-compliant Streamable HTTP servers.
+    async fn open(record: &Value, state: &AppState) -> Result<Self, String> {
+        let url = record
+            .get("url")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.is_empty())
+            .ok_or("MCP HTTP 서버에 url 이 없습니다.")?
+            .to_string();
+        let parsed = reqwest::Url::parse(&url).map_err(|error| error.to_string())?;
+        if !matches!(parsed.scheme(), "http" | "https") {
+            return Err("MCP URL 은 HTTP(S)여야 합니다.".into());
+        }
+        let id = record
+            .get("id")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        let token = state.read_secret(&format!("mcp:{id}"));
+        let mut session = Self {
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(60))
+                .build()
+                .map_err(|error| error.to_string())?,
+            url,
+            session: None,
+            token,
+            next_id: 1,
+        };
+
+        session
+            .request(
+                "initialize",
+                json!({
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": { "name": "dominion-rust", "version": env!("CARGO_PKG_VERSION") }
+                }),
+            )
+            .await?;
+        session.notify("notifications/initialized", json!({})).await;
+        Ok(session)
+    }
+
+    async fn notify(&mut self, method: &str, params: Value) {
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+        });
+        // A notification may legitimately return 202 with an empty body.
+        let _ = self.post(&payload).await;
+    }
+
+    async fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        });
+        let value = self.post(&payload).await?;
+        if let Some(error) = value.get("error") {
+            return Err(format!("MCP 오류: {error}"));
+        }
+        Ok(value.get("result").cloned().unwrap_or_else(|| json!({})))
+    }
+
+    async fn post(&mut self, payload: &Value) -> Result<Value, String> {
+        let mut request = self
+            .client
+            .post(&self.url)
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .json(payload);
+        if let Some(session) = &self.session {
+            request = request.header("mcp-session-id", session);
+        }
+        if let Some(token) = &self.token {
+            request = request.header("authorization", format!("Bearer {token}"));
+        }
+
+        let response = request.send().await.map_err(|error| error.to_string())?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!(
+                "MCP HTTP {status}: {}",
+                text.chars().take(400).collect::<String>()
+            ));
+        }
+        if let Some(session) = response
+            .headers()
+            .get("mcp-session-id")
+            .and_then(|value| value.to_str().ok())
+        {
+            self.session = Some(session.to_string());
+        }
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        if content_type.contains("text/event-stream") {
+            use futures_util::StreamExt;
+            let mut stream = response.bytes_stream();
+            let mut pending = Vec::new();
+            while let Some(chunk) = stream.next().await {
+                pending.extend_from_slice(&chunk.map_err(|error| error.to_string())?);
+                while let Some((end, delimiter_len)) = sse_event_boundary(&pending) {
+                    if end > MAX_SSE_EVENT_BYTES {
+                        return Err("MCP SSE 이벤트 크기 제한을 초과했습니다.".into());
+                    }
+                    let event = pending[..end].to_vec();
+                    pending.drain(..end + delimiter_len);
+                    if let Some(value) = sse_response_event(&event, payload.get("id")) {
+                        // Return without waiting for the server to close SSE.
+                        return Ok(value);
+                    }
+                }
+                if pending.len() > MAX_SSE_EVENT_BYTES {
+                    return Err("MCP SSE 이벤트 크기 제한을 초과했습니다.".into());
+                }
+            }
+            if let Some(value) = sse_response_event(&pending, payload.get("id")) {
+                return Ok(value);
+            }
+            return Err("MCP SSE 스트림이 요청 결과 없이 종료됐습니다.".into());
+        }
+        let text = response.text().await.map_err(|error| error.to_string())?;
+        if text.trim().is_empty() {
+            return if payload.get("id").is_none() {
+                Ok(json!({}))
+            } else {
+                Err("MCP HTTP 요청에 대한 응답 본문이 비었습니다.".into())
+            };
+        }
+        let value = serde_json::from_str::<Value>(&text).map_err(|error| error.to_string())?;
+        if let Some(request_id) = payload.get("id") {
+            if value.get("id") != Some(request_id)
+                && !(value.get("id").is_none() && value.get("error").is_some())
+            {
+                return Err("MCP JSON-RPC 응답 ID가 요청과 일치하지 않습니다.".into());
+            }
+        }
+        Ok(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::db::Store;
+    use crate::vault::Vault;
+
+    fn temp_state() -> AppState {
+        let dir = std::env::temp_dir().join(format!("dominion-mcp-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = Config {
+            port: 0,
+            data_dir: dir.clone(),
+            web_dir: dir.join("web"),
+            workspace: dir.clone(),
+        };
+        let store = Store::open(&config.db_path()).unwrap();
+        let vault = Vault::open(&config.key_path());
+        AppState::new(config, store, vault)
+    }
+
+
+    #[test]
+    fn sse_parser_ignores_heartbeats_foreign_replies_and_crlf_boundaries() {
+        let heartbeat = b": keepalive\r\n";
+        assert!(sse_response_event(heartbeat, Some(&json!(7))).is_none());
+        let notification = br#"data: {"jsonrpc":"2.0","method":"notifications/progress"}"#;
+        assert!(sse_response_event(notification, Some(&json!(7))).is_none());
+        let wrong = br#"data: {"jsonrpc":"2.0","id":8,"result":{"wrong":true}}"#;
+        assert!(sse_response_event(wrong, Some(&json!(7))).is_none());
+        let matching = br#"data: {"jsonrpc":"2.0","id":7,"result":{"ready":true}}"#;
+        assert_eq!(sse_response_event(matching, Some(&json!(7))).unwrap()["result"]["ready"], true);
+        assert_eq!(sse_event_boundary(b"data: x\r\n\r\n"), Some((8, 3)));
+        assert_eq!(sse_event_boundary(b"data: x\n\n"), Some((7, 2)));
+        let transport_error = br#"data: {"jsonrpc":"2.0","error":{"code":-32600,"message":"invalid"}}"#;
+        assert!(sse_response_event(transport_error, Some(&json!(7))).is_some());
+    }
+
+    #[tokio::test]
+    async fn sse_request_returns_without_waiting_for_server_to_close() {
+        use axum::{response::sse::{Event, Sse}, routing::post, Json, Router};
+        use std::convert::Infallible;
+        let app = Router::new().route("/mcp", post(|Json(_request): Json<Value>| async move {
+            let events = async_stream::stream! {
+                yield Ok::<Event, Infallible>(Event::default().comment("keepalive"));
+                yield Ok::<Event, Infallible>(Event::default().data(
+                    json!({"jsonrpc":"2.0","id":999,"result":{"wrong":true}}).to_string()
+                ));
+                yield Ok::<Event, Infallible>(Event::default().data(
+                    json!({"jsonrpc":"2.0","id":7,"result":{"ready":true}}).to_string()
+                ));
+                std::future::pending::<()>().await;
+            };
+            Sse::new(events)
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut client = HttpSession {
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(3)).build().unwrap(),
+            url: format!("http://{address}/mcp"),
+            session: None,
+            token: None,
+            next_id: 1,
+        };
+        let reply = tokio::time::timeout(
+            Duration::from_secs(2),
+            client.post(&json!({"jsonrpc":"2.0","id":7,"method":"tools/list","params":{}}))
+        ).await.expect("MCP SSE response must not wait for stream closure").unwrap();
+        assert_eq!(reply["result"]["ready"], true);
+        server.abort();
+    }
+
+
+    #[tokio::test]
+    async fn independent_mcp_servers_list_concurrently_but_keep_stable_order() {
+        use axum::{routing::post, Json, Router};
+        use std::sync::Arc;
+        let state = temp_state();
+        let gate = Arc::new(tokio::sync::Barrier::new(3));
+        let mut servers = Vec::new();
+        for index in 0..3 {
+            let gate = gate.clone();
+            let name = format!("MCP concurrency {index}");
+            let tool_name = format!("tool_{index}");
+            let app = Router::new().route("/mcp", post(move |Json(payload): Json<Value>| {
+                let gate = gate.clone();
+                let tool_name = tool_name.clone();
+                async move {
+                    let method = payload["method"].as_str().unwrap_or("");
+                    if method == "tools/list" {
+                        gate.wait().await;
+                    }
+                    Json(json!({
+                        "jsonrpc":"2.0", "id": payload["id"],
+                        "result": if method == "tools/list" {
+                            json!({"tools":[{"name": tool_name,
+                                "inputSchema":{"type":"object","properties":{}}}]})
+                        } else { json!({}) }
+                    }))
+                }
+            }));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            servers.push(tokio::spawn(async move {
+                axum::serve(listener, app).await.unwrap();
+            }));
+            state.store.put("mcp", &json!({
+                "id": format!("concurrent-{index}"),
+                "name": name,
+                "transport": "http",
+                "url": format!("http://{addr}/mcp"),
+            }));
+        }
+        let expected = enabled_servers(&state).iter().map(|server| {
+            let suffix = server["id"].as_str().unwrap().trim_start_matches("concurrent-");
+            format!("tool_{suffix}")
+        }).collect::<Vec<_>>();
+        let listed = tokio::time::timeout(Duration::from_secs(6), tools(&state))
+            .await.expect("independent MCP discovery must not be serialized");
+        assert_eq!(listed.len(), 3);
+        let names = listed.into_iter().map(|tool| tool.tool).collect::<Vec<_>>();
+        assert_eq!(names, expected, "completion order cannot reorder tool schemas");
+        for server in servers { server.abort(); }
+    }
+
+    #[test]
+    fn qualified_names_are_namespaced() {
+        let tool = McpTool {
+            server_name: "Echo Lab".into(),
+            slug: slug("Echo Lab"),
+            tool: "echo".into(),
+            description: String::new(),
+            schema: json!({}),
+        };
+        assert_eq!(slug("Echo Lab"), "echo_lab");
+        assert_eq!(tool.qualified(), "mcp__echo_lab__echo");
+    }
+
+    #[test]
+    fn collision_renames_only_ambiguous_server_namespaces() {
+        let first=json!({"id":"one","name":"Search Lab","approval":false});
+        let second=json!({"id":"two","name":"Search-Lab","approval":true});
+        let lone=vec![first.clone()];
+        assert_eq!(server_namespace(&first,&lone),"search_lab");
+        let both=vec![first.clone(),second.clone()];
+        let a=server_namespace(&first,&both);
+        let b=server_namespace(&second,&both);
+        assert_ne!(a,b);
+        assert!(a.starts_with("search_lab_"));
+        assert!(b.starts_with("search_lab_"));
+        assert_eq!(a,server_namespace(&first,&both));
+    }
+
+    #[test]
+    fn colliding_mcp_servers_retain_independent_approval_policies() {
+        let state=temp_state();
+        let first=state.store.put("mcp",&json!({"id":"mcp-one",
+            "name":"Search Lab","approval":false})).unwrap();
+        let second=state.store.put("mcp",&json!({"id":"mcp-two",
+            "name":"Search-Lab","approval":true})).unwrap();
+        let servers=enabled_servers(&state);
+        let a=format!("mcp__{}__lookup",server_namespace(&first,&servers));
+        let b=format!("mcp__{}__lookup",server_namespace(&second,&servers));
+        assert_ne!(a,b);
+        assert!(!requires_approval(&state,&a));
+        assert!(requires_approval(&state,&b));
+        // An ambiguous legacy alias must never silently target the first.
+        assert!(requires_approval(&state,"mcp__search_lab__lookup"));
+    }
+
+    #[test]
+    fn mcp_approval_follows_policy() {
+        let state = temp_state();
+        state.store.put(
+            "mcp",
+            &json!({ "name": "Echo Lab", "transport": "stdio", "command": "node" }),
+        );
+        assert!(requires_approval(&state, "mcp__echo_lab__echo"));
+
+        state.store.put(
+            "policy",
+            &json!({ "id": "default", "autoApproveMcp": true }),
+        );
+        assert!(!requires_approval(&state, "mcp__echo_lab__echo"));
+    }
+}

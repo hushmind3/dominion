@@ -1,90 +1,47 @@
-# DOMINION 데스크톱 패키징
+# Native DOMINION desktop
 
-## 산출물
+The native app uses Tauri 2 with WKWebView on macOS 13.3 or newer and WebView2 on Windows. Both run the same DOMINION Rust engine and the React/Vite interface. Node and npm are build tools; neither is needed after installation. Other agent projects and engines are not bundled.
 
-| 플랫폼 | 파일 | 비고 |
-|---|---|---|
-| Windows | `release/DOMINION-Setup.exe` | NSIS 설치형, 사용자 단위 설치 |
-| Windows | `release/DOMINION-Portable.exe` | 설치 없이 실행 |
-| macOS Apple Silicon | `release/DOMINION-<version>-arm64.dmg` | 미서명 |
-| macOS Intel | `release/DOMINION-<version>-x64.dmg` | 미서명 |
+## Build
 
-```powershell
-npm ci
-npm run dist:win
+Install Rust stable, the platform's native build tools, and Node 24 or newer. On Windows use MSVC with the C++ desktop workload. Then:
+
+```sh
+npm ci --prefix web
+node scripts/build-desktop.mjs
 ```
 
-```bash
-npm ci
-npm run dist:mac
+macOS produces `src-tauri/target/release/bundle/macos/DOMINION.app` and a DMG under `bundle/dmg/`. Windows builds `.msi` and NSIS `-setup.exe` installers under `bundle/msi/` and `bundle/nsis/`. The GitHub workflow builds Apple Silicon, Intel macOS, and Windows MSVC independently. A macOS build does not prove that Windows has been built; download Windows artifacts only after that workflow succeeds.
+
+Use `--target aarch64-apple-darwin`, `--target x86_64-apple-darwin`, or `--target x86_64-pc-windows-msvc` on the corresponding supported build host. `--bundles app,dmg` and `--bundles nsis,msi` select installers. Rust engine artifacts use `target/desktop-engine`; the host uses `src-tauri/target`, independently of normal engine tests.
+
+Unsigned local packages are suitable for local testing. Public distribution should configure the developer's Apple signing/notarization or Windows signing credentials; no certificate or private key belongs in this repository. The workflow creates draft releases for version tags and never claims signing when credentials are absent.
+
+## Runtime and data
+
+The host first checks whether the existing `127.0.0.1:4317` endpoint identifies itself as DOMINION's Rust engine. If so it displays that engine and never owns, stops, or replaces the existing service. Otherwise it starts only its bundled Rust sidecar, selects an available loopback port, and verifies the unique instance ID returned by health. The remembered port is reused when free so browser preferences retain a stable origin.
+
+A standalone app stores its SQLite database, encryption key, logs, and writable task workspace under Tauri's OS app-data directory for `com.hushmind.dominion.desktop`. On macOS this is normally `~/Library/Application Support/com.hushmind.dominion.desktop`; on Windows it is the user's app-data directory for that identifier. Nothing is written into the installed application bundle. Existing development-service data stays in its original directory when the host attaches to that service.
+
+The app contains only the own compiled Rust engine, compiled interface, static channel manifests, and icons. It does not include the developer's repository location, private `runtime/`, keys, sessions, profiles, or `node_modules`. No external browser is used to display the main application.
+
+Quit closes the owned sidecar's input pipe, allowing the Rust backend to stop and release its tool tasks. The host kills only its own child if the graceful shutdown exceeds two seconds. Reopening the app reuses durable records and the engine's existing recovery gates. On macOS closing the window hides it; the app's Quit command stops the app. The system's app switcher or Dock reopens the hidden window.
+
+## Native menus
+
+The Edit menu and right-click popup use native Cut, Copy, Paste and Select All actions. The popup also has Back, Forward and Reload. Developer Tools are absent by default and become available only when the owner starts the host with `DOMINION_DESKTOP_DEVTOOLS=1`. The one exposed native command is restricted to the main window and its exact owned loopback origin; it cannot run a shell or read files.
+
+## Optional source workspace
+
+The installed app is fully usable without a source checkout. To edit and rebuild the source, connect a source directory from DOMINION's development studio, or add `sourceWorkspace` to app-data `desktop.json`. This is an explicit development path and does not replace bundled interface resources or private app data. Moving that optional checkout does not prevent the app from starting. Ordinary task files use `workspace`, which can also be set in that file.
+
+```json
+{
+  "workspace": "/your/writable/tasks",
+  "sourceWorkspace": "/your/optional/dominion-rust"
+}
 ```
 
-`release/`는 `.gitignore` 대상이며 설치 파일을 Git에 커밋하지 않습니다.
+For isolated smoke testing, launch the app executable with `DOMINION_DESKTOP_STANDALONE=1` and `DOMINION_DESKTOP_DATA` pointing at a fresh temporary directory. This bypasses the existing development gateway and cannot reuse its private tokens, databases, or bot settings. These environment settings are testing overrides, not bundled paths. On macOS use the canonical executable path (for example `/private/tmp/…` rather than the `/tmp` symlink); Tauri intentionally rejects symlinked executable paths.
 
-## 독립 실행 구조
-
-- Electron 45의 내장 Node(24.x)가 `server/index.mjs`를 `ELECTRON_RUN_AS_NODE`로 실행합니다.
-- `asar: false`로 패키징해 게이트웨이가 `server/`, `shared/`, `dist/`, `node_modules/`를 일반 파일처럼 읽습니다.
-- 시스템 Node/npm이 없어도 됩니다. MCP의 `npx` 실행은 앱에 포함된 `npm` CLI와 Electron Node로 대체됩니다.
-- ComfyUI 영상 엔진은 용량이 큰 선택형 외부 구성요소라 설치 파일에 포함하지 않습니다. 기존처럼 별도 경로/URL로 연결합니다.
-
-## 데이터 보존
-
-설치·재설치·업데이트 시 아래 경로를 그대로 사용합니다.
-
-- Windows: `%APPDATA%\dominion-desktop\runtime`
-- macOS: `~/Library/Application Support/dominion-desktop/runtime`
-- 작업공간: 사용자 문서 폴더의 `DOMINION Workspace`
-
-SQLite DB, API 키, 설정, 기억, 스킬, 로컬 모델 캐시가 이 디렉터리에 남습니다. NSIS는 `deleteAppDataOnUninstall: false`입니다.
-
-## 개발 모드와 HMR
-
-```bash
-npm ci
-npm --prefix desktop install
-npm run dev:desktop
-```
-
-- Vite: `http://127.0.0.1:5173` (React HMR)
-- 게이트웨이: `http://127.0.0.1:4317`
-- Electron은 Vite URL을 로드하므로 UI 수정이 즉시 반영됩니다.
-- 설치형 앱을 다시 만들려면 `npm run dist:win` / `npm run dist:mac`을 다시 실행합니다.
-
-## GitHub 자동 배포
-
-`.github/workflows/release.yml`
-
-- `v*` 태그 푸시 시 Windows/macOS 빌드
-- Windows: 설치형·포터블 생성 후 **언팩 앱과 실제 설치 앱 모두 스모크 테스트**
-- macOS: DMG를 마운트해 앱을 복사한 뒤 스모크 테스트
-- 두 빌드가 성공하면 GitHub Releases에 `.exe`와 `.dmg` 업로드
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-## 서명 상태
-
-현재 빌드는 **미서명**입니다.
-
-- Windows: 코드 서명 인증서가 없어 SmartScreen 경고가 날 수 있습니다.
-- macOS: `identity: null`, 공증(notarization) 없음. Gatekeeper가 차단할 수 있으며, 이 빌드를 서명본이라고 표시하지 않습니다.
-- 정식 배포 시 Windows 인증서와 Apple Developer ID/공증 자격 증명을 CI 시크릿에 연결해야 합니다.
-
-## 검증 기록
-
-Windows 로컬 검증(2026-11-04):
-
-- `DOMINION-Setup.exe` 무인 설치 성공
-- 설치된 앱 실행, 창 표시, `/api/health` 응답 확인
-- 설치된 앱에서 MCP 43개 도구 검색 성공 (Filesystem, Hugging Face, Playwright)
-- 설치된 앱에서 로컬 GGUF 9B 모델 로드 후 추론 성공 (`3+4 = 7`)
-- 앱 종료 후 게이트웨이 포트와 프로세스 종료 확인
-- 재설치 후 세션 3개, MCP 3개, 프로바이더 1개, 로컬 모델 2개 유지 확인
-- `DOMINION-Portable.exe` 실행·API 응답·종료 확인
-- 설치된 앱 스모크 테스트: `ok=true`, Electron 45.2.1 / Node 24.22.1
-- `npm run dev:desktop`으로 Vite 5173 + 게이트웨이 4317 + Electron HMR 창 실행 확인
-
-macOS는 이 Windows 환경에서 실제 설치·실행 검증을 할 수 없습니다. GitHub Actions의 DMG 마운트·스모크 테스트 결과로만 확인하며, 서명/공증은 되어 있지 않습니다.
+Official API references: [sidecars](https://v2.tauri.app/develop/sidecar/), [resources](https://v2.tauri.app/develop/resources/), [native menus](https://docs.rs/tauri/latest/tauri/menu/struct.PredefinedMenuItem.html), [capabilities](https://v2.tauri.app/security/capabilities/), [DMG](https://v2.tauri.app/distribute/dmg/), [Windows installers](https://v2.tauri.app/distribute/windows-installer/).
