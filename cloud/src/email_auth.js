@@ -16,7 +16,7 @@ const page=(title,text,action='')=>new Response('<!doctype html><html lang="ko">
 const cleanEmail=value=>{
  if(typeof value!=='string')return null;
  const email=value.trim().toLowerCase();
- if(email.length<5||email.length>320||!/^[^\s@<>]{1,64}@[a-z0-9.-]{3,253}$/.test(email)||email.includes('..')||email.endsWith('.'))return null;
+ if(email.length<5||email.length>320||!/^[^\s@<>]{1,64}@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/.test(email)||email.includes('..')||email.endsWith('.'))return null;
  return email;
 };
 export const emailLoginReady=env=>Boolean(env.EMAIL_FROM&&env.DB&&(env.EMAIL?.send||env.RESEND_API_KEY));
@@ -48,7 +48,7 @@ export async function startEmailLogin(request,env){
  const sender=String(env.EMAIL_FROM).trim();
  const message={
   from:sender,to:[email],subject:'DOMINION 로그인 이메일 확인',
-  text:'DOMINION 로그인을 요청하셨다면 아래 링크에서 확인하세요. 링크는 10분 뒤 만료됩니다.\\n\\n'+link.href+'\\n\\n요청하지 않았다면 이 메일을 무시하세요.'
+  text:'DOMINION 로그인을 요청하셨다면 아래 링크에서 확인하세요. 링크는 10분 뒤 만료됩니다.\n\n'+link.href+'\n\n요청하지 않았다면 이 메일을 무시하세요.'
  };
  let sent=false;
  if(env.EMAIL?.send){
