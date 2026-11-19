@@ -191,16 +191,30 @@ pub async fn status(Query(q): Query<StatusQuery>) -> Response {
     match &flight.phase {
         Phase::Waiting => Json(json!({"status":"waiting"})).into_response(),
         Phase::Exchanging => Json(json!({"status":"processing"})).into_response(),
-        Phase::Failed(_) | Phase::Done(_) => {
-            let flight = map.remove(&q.id).expect("present");
-            match flight.phase {
-                Phase::Done(token) => Json(json!({"status":"done","token":token})).into_response(),
-                Phase::Failed(message) => Json(json!({"status":"error","error":message})).into_response(),
-                _ => unreachable!(),
-            }
-        }
+        // Keep the completed result available until the UI has persisted it and
+        // acknowledged the handoff. A dropped HTTP response must not consume
+        // the only bearer session returned by a successful OAuth callback.
+        Phase::Done(token) => Json(json!({"status":"done","token":token})).into_response(),
+        Phase::Failed(message) => Json(json!({"status":"error","error":message})).into_response(),
     }
 }
+/// The UI acknowledges only after persisting the Cloud session. Completion
+/// remains readable until this explicit acknowledgement or the five-minute TTL.
+pub async fn acknowledge(Json(q): Json<StatusQuery>) -> Response {
+    if q.id.len() != 43 || !q.id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+        return error("알 수 없는 로그인 시도입니다.", StatusCode::NOT_FOUND);
+    }
+    let mut map = flights().lock().await;
+    match map.get(&q.id) {
+        Some(flight) if matches!(flight.phase, Phase::Done(_) | Phase::Failed(_)) => {
+            map.remove(&q.id);
+            Json(json!({"acknowledged":true})).into_response()
+        }
+        Some(_) => error("인증 결과가 아직 준비되지 않았습니다.", StatusCode::CONFLICT),
+        None => error("로그인 시도가 만료되었거나 없습니다.", StatusCode::NOT_FOUND),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,5 +231,41 @@ mod tests {
     fn desktop_client_id_requires_google_suffix() {
         assert!(client_id(&json!({"google_desktop_client_id":"example-abc.apps.googleusercontent.com"})).is_some());
         assert!(client_id(&json!({"google_desktop_client_id":"attacker.example"})).is_none());
+    }
+
+    #[tokio::test]
+    async fn completed_login_survives_lost_status_response_until_ack() {
+        let id = nonce();
+        flights().lock().await.insert(id.clone(), Flight {
+            verifier: nonce(),
+            client_id: "test.apps.googleusercontent.com".into(),
+            redirect_uri: "http://127.0.0.1:4317/api/cloud-auth/google/callback".into(),
+            started: Instant::now(),
+            phase: Phase::Done("a".repeat(43)),
+        });
+        let first = status(Query(StatusQuery { id: id.clone() })).await;
+        let retry = status(Query(StatusQuery { id: id.clone() })).await;
+        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(retry.status(), StatusCode::OK);
+        assert!(flights().lock().await.contains_key(&id));
+        let ack = acknowledge(Json(StatusQuery { id: id.clone() })).await;
+        assert_eq!(ack.status(), StatusCode::OK);
+        assert!(!flights().lock().await.contains_key(&id));
+        assert_eq!(status(Query(StatusQuery { id })).await.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn acknowledgement_cannot_consume_pending_login() {
+        let id = nonce();
+        flights().lock().await.insert(id.clone(), Flight {
+            verifier: nonce(),
+            client_id: "test.apps.googleusercontent.com".into(),
+            redirect_uri: "http://127.0.0.1:4317/api/cloud-auth/google/callback".into(),
+            started: Instant::now(),
+            phase: Phase::Waiting,
+        });
+        assert_eq!(acknowledge(Json(StatusQuery { id: id.clone() })).await.status(), StatusCode::CONFLICT);
+        assert!(flights().lock().await.contains_key(&id));
+        flights().lock().await.remove(&id);
     }
 }
