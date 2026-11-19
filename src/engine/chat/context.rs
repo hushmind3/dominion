@@ -200,6 +200,33 @@ fn context_block(
         .map(|(block, _, _)| block)
 }
 
+/// Bounded, relevance-ranked tool reliability advisory. Keep exact receipts
+/// in SQLite; this function only shrinks the provider-facing working view.
+fn select_tool_reliability(
+    stats: Vec<Value>, query: &str, tools_available: bool,
+) -> Vec<(String,u64,u64,u64)> {
+    if !tools_available { return Vec::new(); }
+    let query=query.to_lowercase();
+    let mut selected=stats.into_iter().filter_map(|stat|{
+        let attempts=stat["attempts"].as_u64()?;
+        let successes=stat["successes"].as_u64().unwrap_or(0);
+        let failures=stat["failures"].as_u64().unwrap_or(0);
+        let name=stat["id"].as_str()?;
+        if attempts<3 || failures.saturating_mul(2)<attempts
+            || name.is_empty() || name.len()>128 {return None;}
+        let relevant=!query.is_empty() && query.contains(&name.to_lowercase());
+        let rate=((failures as u128)*1000/(attempts as u128)) as u64;
+        Some((relevant,rate,attempts,name.to_string(),successes,failures))
+    }).collect::<Vec<_>>();
+    selected.sort_by(|a,b|{
+        b.0.cmp(&a.0).then_with(||b.1.cmp(&a.1))
+            .then_with(||b.2.cmp(&a.2)).then_with(||a.3.cmp(&b.3))
+    });
+    selected.into_iter().take(6)
+        .map(|(_,_,attempts,name,successes,failures)|(name,attempts,successes,failures))
+        .collect()
+}
+
 fn context_block_with_manifest(
     state: &AppState,
     session_id: &str,
@@ -260,22 +287,17 @@ fn context_block_with_manifest(
             (id,name,description)
         }).collect::<Vec<_>>();
 
-    let mut reliability = Vec::new();
-    for stat in state.store.all("tool_stat") {
-        let attempts = stat.get("attempts").and_then(|v| v.as_u64()).unwrap_or(0);
-        let successes = stat.get("successes").and_then(|v| v.as_u64()).unwrap_or(0);
-        let failures = stat.get("failures").and_then(|v| v.as_u64()).unwrap_or(0);
-        if attempts >= 3 && failures * 2 >= attempts {
-            let name = stat.get("id").and_then(|v| v.as_str()).unwrap_or("tool");
-            reliability.push(format!("{name}: {successes}/{attempts} 성공"));
-            items.push(json!({
-                "kind": "tool_stat",
-                "id": name,
-                "attempts": attempts,
-                "successes": successes,
-                "failures": failures,
-            }));
-        }
+    // This is advisory evidence, not a tool permission or a recovery proof.
+    // An unbounded archive of failing tools used to be appended to *every*
+    // provider prompt, even when tools were off. Keep the strongest six,
+    // deterministic for cache reuse, and never send it on a tool-free turn.
+    let reliability = select_tool_reliability(state.store.all("tool_stat"),
+        query, allow_skill_read);
+    for (name,attempts,successes,failures) in &reliability {
+        items.push(json!({
+            "kind":"tool_stat","id":name,
+            "attempts":attempts,"successes":successes,"failures":failures,
+        }));
     }
 
     let adopted = match improvements {
@@ -340,8 +362,8 @@ fn context_block_with_manifest(
     }
     if !reliability.is_empty() {
         block.push_str("\n\nTool reliability (from past runs — prefer alternatives when low):");
-        for line in &reliability {
-            block.push_str(&format!("\n- {line}"));
+        for (name,attempts,successes,_) in &reliability {
+            block.push_str(&format!("\n- {name}: {successes}/{attempts} 성공"));
         }
     }
     if let Some(adopted) = adopted {
@@ -669,6 +691,34 @@ mod tests {
         assert!(block.chars().count()<1100,
             "long skill instructions must be loaded on demand");
         assert_eq!(items.iter().filter(|x|x["kind"]=="skill").count(),2);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn tool_reliability_context_is_bounded_deterministic_and_skipped_without_tools(){
+        let (state,dir)=state();
+        state.store.put("session",&json!({"id":"s"}));
+        for index in (0..24).rev() {
+            state.store.put("tool_stat",&json!({
+                "id":format!("tool_{index:02}"),
+                "attempts":10,"successes":1,"failures":9,
+            }));
+        }
+        let (visible,items,_)=context_block_with_manifest(
+            &state,"s",None,"tool_17",None,None,true).unwrap();
+        let stats=items.iter().filter(|row|row["kind"]=="tool_stat").collect::<Vec<_>>();
+        assert_eq!(stats.len(),6);
+        assert!(stats.iter().any(|row|row["id"]=="tool_17"),
+            "explicitly named failed tool should remain available");
+        assert_eq!(visible.matches(" 성공").count(),6);
+        let (again,_,_)=context_block_with_manifest(
+            &state,"s",None,"tool_17",None,None,true).unwrap();
+        assert_eq!(visible,again,"same telemetry should not churn the cache prefix");
+        let disabled=context_block_with_manifest(
+            &state,"s",None,"tool_17",None,None,false);
+        assert!(disabled.is_none(),"tool-free turn must not pay for tool statistics");
+        assert_eq!(state.store.all("tool_stat").len(),24,
+            "prompt optimization must preserve persisted tool evidence");
         let _=std::fs::remove_dir_all(dir);
     }
 
