@@ -13,17 +13,9 @@ on:
       - '.github/workflows/ci.yml'
       - 'scripts/check-runtime-architecture.mjs'
       - 'web/**'
-      - 'web/src/pages/Chat.tsx'
-      - 'web/src/components/ModelPicker.tsx'
-      - 'web/src/pages/Models.tsx'
-      - 'web/src/components/ModelExplorer.tsx'
-      - 'web/src/components/DominionCloudAccount.tsx'
-      - 'web/src/utils/modelHardware.ts'
-      - 'web/tests/model-hardware.test.mjs'
-      - 'web/src/utils/modelFree.ts'
-      - 'web/tests/model-free.test.mjs'
-      - 'web/src/i18n/**'
-      - 'web/tests/chat-stop-contract.test.mjs'
+      - 'web/**'
+      - 'src-tauri/**'
+      - 'scripts/**'
       - 'web/package*.json'
   pull_request:
     branches: [main]
@@ -34,17 +26,9 @@ on:
       - 'Cargo.lock'
       - '.github/workflows/ci.yml'
       - 'scripts/check-runtime-architecture.mjs'
-      - 'web/src/pages/Chat.tsx'
-      - 'web/src/components/ModelPicker.tsx'
-      - 'web/src/pages/Models.tsx'
-      - 'web/src/components/ModelExplorer.tsx'
-      - 'web/src/components/DominionCloudAccount.tsx'
-      - 'web/src/utils/modelHardware.ts'
-      - 'web/tests/model-hardware.test.mjs'
-      - 'web/src/utils/modelFree.ts'
-      - 'web/tests/model-free.test.mjs'
-      - 'web/src/i18n/**'
-      - 'web/tests/chat-stop-contract.test.mjs'
+      - 'web/**'
+      - 'src-tauri/**'
+      - 'scripts/**'
       - 'web/package*.json'
 
 permissions:
@@ -121,8 +105,11 @@ jobs:
         run: cargo test --locked --bin dominion-rust migrations::tests
       - name: Shared failure workspace observation (dev profile)
         run: cargo test --locked --bin dominion-rust shared_failure_observation_avoids_duplicate
-      - name: Runtime structural boundaries and retired-loop guard
-        run: node scripts/check-runtime-architecture.mjs
+      - name: Runtime architecture, retired features and release contract
+        run: |
+          node scripts/check-runtime-architecture.mjs
+          node scripts/check-retired-domains.mjs
+          node scripts/check-release-contract.mjs
       - name: Nine-speaker three-turn work context and complete group delivery (dev profile)
         run: cargo test --locked --bin dominion-rust nine_participants_three_owner_turns_complete_thirty_messages_with_selective_work_context
       - name: Stateful Codex persona inheritance and per-turn wire delta (dev profile)
@@ -158,6 +145,33 @@ jobs:
         run: cargo test --locked --bin dominion-rust api::providers::tests::public_
       - name: Shared SDK run and retry regressions (dev profile)
         run: cargo test --locked --bin dominion-rust api::sdk::view_tests
+
+  windows-backend-and-frontend:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: SQLite, native runtime and Windows toolchain validation
+        run: |
+          cargo test --locked -p dominion-core --lib
+          cargo test --locked --bin dominion-rust engine::capability::tests
+          cargo test --locked --bin dominion-rust api::sdk::view_tests
+      - name: Retired feature guard and version parity
+        run: |
+          node scripts/check-retired-domains.mjs
+          node scripts/check-release-contract.mjs
+      - name: Windows frontend typecheck and production bundle
+        run: |
+          npm ci --prefix web --no-audit --no-fund
+          npm run typecheck --prefix web
+          npm run build --prefix web
 
   chat-and-model-ui-contract:
     runs-on: ubuntu-latest

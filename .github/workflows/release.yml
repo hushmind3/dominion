@@ -1,10 +1,22 @@
-name: Native desktop release
+name: Windows and macOS native desktop release
+
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     tags: ['v*']
+    paths:
+      - 'Cargo.toml'
+      - 'src-tauri/tauri.conf.json'
+      - '.github/workflows/release.yml'
+
 permissions:
   contents: read
+
+concurrency:
+  group: native-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   desktop:
     strategy:
@@ -21,6 +33,7 @@ jobs:
             target: x86_64-pc-windows-msvc
             bundles: nsis,msi
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -36,45 +49,79 @@ jobs:
           workspaces: |
             . -> target/desktop-engine
             src-tauri -> target
-      - run: npm ci --prefix web
-      - run: npm run typecheck --prefix web
-      # Release-only, complete Rust tests: Windows + macOS; no Linux tests.
-      # The second macOS build uses the same source but avoids duplicate tests.
-      # Contract tests live in ci.yml. The release job only needs working
-      # installers, so a flaky macOS e2e run must not block publishing while
-      # its log stays visible here.
-      - run: cargo test --locked --workspace --release
-        if: matrix.os == 'macos-15'
-        continue-on-error: true
-
-      - name: Build own Rust engine and native installers
+      - name: Restore frontend toolchain
+        run: npm ci --prefix web --no-audit --no-fund
+      - name: Cross-platform source and frontend contracts
+        run: |
+          node scripts/check-runtime-architecture.mjs
+          node scripts/check-retired-domains.mjs
+          node scripts/check-release-contract.mjs
+          npm run typecheck --prefix web
+          npm run build --prefix web
+      - name: Rust runtime regression and end-to-end suite
+        if: matrix.target != 'x86_64-apple-darwin'
+        run: cargo test --locked --workspace --release
+      - name: Shared kernel regression for Intel release
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: cargo test --locked -p dominion-core --lib
+      - name: Build Rust sidecar and native installers
         run: node scripts/build-desktop.mjs --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
         env:
           CI: 'true'
-      - uses: actions/upload-artifact@v4
+      - name: Store platform installers for release gate
+        uses: actions/upload-artifact@v4
         with:
           name: dominion-${{ matrix.target }}
           if-no-files-found: error
+          retention-days: 14
           path: |
             src-tauri/target/**/bundle/dmg/*.dmg
             src-tauri/target/**/bundle/nsis/*.exe
             src-tauri/target/**/bundle/msi/*.msi
+
   release:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: desktop
+    needs: [desktop]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - uses: actions/download-artifact@v4
         with:
           pattern: dominion-*
           merge-multiple: true
           path: release-artifacts
-      - name: Attach successful platform builds to a draft release
+      - name: Validate installers and generate checksums
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          tag="v${version}"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "${tag}" ]]; then
+            echo "Tag and package version disagree: ${GITHUB_REF_NAME} vs ${tag}" >&2
+            exit 1
+          fi
+          test "$(find release-artifacts -name '*.dmg' -type f | wc -l)" -ge 2
+          test "$(find release-artifacts -name '*.msi' -type f | wc -l)" -ge 1
+          test "$(find release-artifacts -name '*.exe' -type f | wc -l)" -ge 1
+          (cd release-artifacts; find . -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.msi' \) -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt)
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+      - name: Publish verified Windows and macOS installers
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
         run: |
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --draft --title "DOMINION $GITHUB_REF_NAME" --notes "Native Rust desktop installers. macOS and Windows use the same DOMINION engine and React interface. Unsigned builds may require OS confirmation."
-          find release-artifacts -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*-setup.exe' \) -exec gh release upload "$GITHUB_REF_NAME" {} --clobber \;
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" >/dev/null 2>&1 || gh release create "$RELEASE_TAG" \
+            --target "$GITHUB_SHA" --draft --title "DOMINION $RELEASE_TAG" \
+            --notes "Verified native Rust/Tauri desktop installers for Windows x64, macOS ARM64 and macOS x64. Unsigned builds; check SHA256SUMS.txt."
+          while IFS= read -r -d '' file; do
+            gh release upload "$RELEASE_TAG" "$file" --clobber
+          done < <(find release-artifacts -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.msi' -o -name 'SHA256SUMS.txt' \) -print0)
+          gh release edit "$RELEASE_TAG" --draft=false

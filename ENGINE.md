@@ -1,353 +1,73 @@
-# DOMINION 자체 Rust 엔진
-
-## 실행 경로 현황 (2026-11-16)
-
-운영 실행 코어는 `crates/dominion-core` 하나입니다. 서브4의 상태머신·저널·도구 스키마 검증을 메인의 SQLite·제품 어댑터에 연결했습니다.
-
-1. **공통 실행:** 채팅·그룹·작업·워크플로·SDK 자동 작업은 `src/engine/chat/runtime.rs`에서 공통 코어의 모델 호출 승인·도구 전이·완료 검사를 거칩니다. 제품의 문맥·계약·검증 정책은 해당 어댑터가 연결합니다.
-2. **영속 상태:** 기존 SQLite의 `execution.kernelState`, `execution_operation`, `native_frame`에 실행과 증거를 저장합니다. 별도 JSON 실행 저장소를 만들지 않습니다.
-3. **제품 연결:** `src/api/sdk.rs`도 같은 실행 경로를 사용합니다. React 프론트와 선택적 TypeScript 클라이언트는 기존 HTTP API를 호출합니다.
-4. **정리:** 이전 독립 실행기·CLI·워크스페이스 패키지는 삭제했습니다. 빌드와 CI는 현재 제품·공통 코어만 검사합니다. RSI 캠페인·자동 채택 코드는 별도 엔진에서 제거했습니다.
-
-모델 전송·인증, 기존 도구·승인·기억·사용자 교정 기록과 사용자 데이터는 유지합니다. Node는 프론트 빌드와 보조 클라이언트에 사용합니다. 이 구조 통합을 실전 모델 성능 향상이나 일반적인 자기개선 성과로 주장하지 않습니다.
-
-## 머니 유휴 DB 비용 개선
-
-`/api/money/stats`는 더 이상 모든 후보·과거 작업·수집 보고서를 Rust 메모리로 역직렬화하지 않습니다. SQLite에서 집계하고 최근 보고서 1건과 현재 자동 순환 상태만 읽으며, 필요한 머니 인덱스를 같은 공유 DB의 도메인 모듈에서 관리합니다. API 필드와 사용자 기록은 유지됩니다. 처리 시간·메모리 절감은 실제 배포 측정 전까지 수치로 주장하지 않습니다.
-
-## 2026-11-18 실행 비용·백업 경계 개선
-
-- **그룹 도구 선택:** 이전에는 각 그룹 턴의 도구 이력을 찾을 때 해당 세션의 모든 메시지(JSON 본문·추론·메타데이터 포함)를 가져왔습니다. 이제 `Store::recent_message_tool_names`가 SQLite 세션/시각 인덱스로 **최근 30건의 도구 호출 열만** 읽습니다. 작업 의도가 모호한 승인 가능 턴도 전체 MCP 스키마를 보내지 않고 최대 8개의 작업 시작 도구를 제공하며, 최근 실제 사용 도구와 명시적 도구 이름의 선택 규칙은 유지합니다.
-- **취소·위임:** `AppState::cancel_session`은 모든 과거 `job`과 `session` 기록을 역직렬화하지 않습니다. 활성 상태 인덱스와 위임 부모의 부분 인덱스로 관련 대기/실행 작업과 자식 세션을 조회합니다. 기존 영속 취소 세대, 조건부 상태 전이, 자식 예산 정산은 유지합니다.
-- **백업:** 실패할 수 있는 모든 경로에서 평문 VACUUM 임시 DB를 정리하고, 암호화된 결과는 임시 파일 쓰기·`sync_all`·같은 디렉터리 내 이름 바꾸기로 게시합니다. 동시 생성은 마이크로초 시각과 UUID로 구분하며 외부 백업 사본에도 완성 전 공개 방지 규칙을 적용합니다. SQLite VACUUM과 암호화는 `spawn_blocking`에서 실행되어 비동기 채팅/SDK 작업을 가로막지 않습니다. 기존 암호화 형식·키 버전·복원 API는 유지합니다.
-- **회귀 근거:** `src/db.rs`, `src/state.rs`, `src/engine/maintenance.rs`, `src/engine/chat/runtime/tests.rs`에 인덱스·스코프·취소 전파·백업 유일성·오류 경로 테스트를 추가했습니다. GitHub 코드 변경만으로 실사용 성능 향상을 측정했다고 주장하지 않으며, 현재 별도 Rust 실행/CI 결과 확인 전입니다.
-
-## 개발/릴리즈 검증 분리
-
-일반 소스 푸시는 `.github/workflows/ci.yml`에서 Rust 개발 프로파일의 공통 코어·작업 상태·머니 회귀 테스트만 수행합니다. 프론트 빌드·릴리즈 프로파일·데스크톱 패키징·Windows/macOS 전체 검증은 버전 태그나 수동 실행으로 시작하는 `.github/workflows/release.yml`에만 있습니다. Linux 빌드·테스트는 수행하지 않습니다. 이전 테스트 기록은 과거 검증 이력으로만 취급합니다.
-
-## 작업 체크포인트의 상태 소유권
-
-공통 `jobs::JobContext::checkpoint`는 개별 `cancelRequested` 필드만 비교하지 않고, **하나의 SQLite 쓰기 트랜잭션에서** 현재 작업이 `queued` 또는 `running`이며 취소 요청이 없는지 확인한 후 경과 상태를 저장합니다. 완료·실패·취소·검토 필요 상태의 기록은 늦게 끝난 워커가 다시 갱신할 수 없습니다. 작업의 최종 완료는 기존 `finish_terminal`을 계속 사용합니다. 추가 러너·DB·모델 호출은 도입하지 않았습니다.
-
-머니는 별도 실행기를 갖지 않습니다. 선택한 머니 에이전트 ID는 무료 제공자/모델 순환 중에도 유지되고, 기존 공통 제공자 라우팅의 **명시적 providerId/model 우선 규칙**으로 모델만 교체합니다. 머니 UI의 자동 순환 버튼도 선택한 `agentId`를 기존 API에 전달합니다. 상태·증거·작업 기록은 같은 SQLite에 남습니다.
-
-빌드 및 회귀 CI는 Windows·macOS 대상이며 Linux는 제외합니다. 자동 테스트 성공과 실제 모델/브라우저 24시간 운영 검증은 구분합니다.
-
-## Money 근거 기반 발굴
-
-머니 화면의 사용자 승인 버튼은 `POST /api/money/candidates/:id/implement`를 호출합니다. 이 얇은 어댑터가 공통 SDK의 실행 준비 기능을 사용해 후보의 승인 영수증, SDK 세션·실행을 동일 SQLite 트랜잭션에 기록하고 동시 승인을 하나로 합칩니다. 선택한 `agentId`와 모델을 기존 공통 실행기에 전달합니다. SDK 실행 기록에는 제품 중립적인 `source.kind/id`가 보존됩니다. 재접속 시 `GET /api/sdk/runs/source/money_candidate`가 SQLite 인덱스를 사용해 최근 연결 작업을 읽고, 진행·도구 승인·중단·재개는 SDK API를 그대로 이용합니다. 비즈니스 아이디어와 실제 유료 거래의 성립 여부는 별도로 검증해야 합니다.
-
-
-기존 Rust 실행기·SQLite·작업 큐에 공개 자료 수집·시장 사건 인덱싱·수익 가설 생성 기능을 연결합니다. `src/db/money.rs`에 별도 시장 도메인 저장 코드를 유지하고, `/api/money/find`에서 DB 초안을 제공하며 사용자 선택 시 기존 `money_discover` 작업으로 추론합니다. [설계 및 한계](docs/MONEY.md).
-
-## 기억과 학습
-
-`memory.rs`가 기억의 소유권과 검색을 결정하고, `learning.rs`가 검증된 원문을 저장합니다.
-
-1. 턴 완료 시 메시지 마지막 ID·에이전트·제공자·모델을 고정하여 학습 작업을 저장합니다.
-2. 에이전트별 학습 잠금과 체크포인트를 확인합니다. 이미 처리한 범위는 모델을 호출하지 않습니다.
-3. 새 메시지를 최대 30개씩 처리하며, 모델에는 JSON 추출만 요청합니다.
-4. 후보가 가리키는 원문 메시지 ID와 정확한 인용을 검증합니다. 사용자 발언 또는
-   성공한 실행 기록과 연결된 도구 결과만 허용합니다. assistant 발언·실패한 명령·봇 발언은 배제합니다.
-5. 저장하는 기억의 본문은 검증한 원문 인용입니다. 모델이 만든 사실 요약으로 대체하지 않습니다.
-6. 동일한 정정 키에 새 근거가 생기면 이전 기록은 `superseded`로 보존합니다.
-7. 저장을 마친 뒤 체크포인트를 갱신합니다. 잘못된 JSON·저장 실패는 성공 처리하지 않습니다.
-
-자동 기억과 모델 도구가 저장하는 기억에는 엔진이 `agentId`, `sessionId`, `partitionKey`를 붙입니다.
-모델이 `scope: global`을 요청해도 경계를 넓힐 수 없습니다. Discord 경계는 연결·서버·채널을
-포함합니다. 로컬의 기존 수동 공유 기억은 로컬에서 유지하지만 채널에 자동 공개하지 않습니다.
-범위 정보가 없는 과거 자동 기억은 원래 세션에서만 읽습니다.
-
-검색은 자체 Rust 문자 정규화·단어·한국어 2글자 조합·관련성 점수를 사용합니다.
-벡터 임베딩이나 외부 검색 서버를 요구하지 않습니다. 의미가 전혀 다른 표현까지 이해하는
-임베딩 검색은 구현하지 않았습니다. 만료·비활성·이전 정정 기록은 주입에서 제외합니다.
-기억은 출처를 포함한 인용 데이터로 전달하며 현재 사용자 정정이 우선합니다.
-
-절차 추출은 비활성 스킬 초안을 만듭니다. 검토·활성화한 스킬만 다음 턴에 적용합니다.
-이 파이프라인은 가중치 훈련이나 모델 자체의 성능 향상을 보장하는 기능이 아닙니다.
-
-## 목표 하네스
-
-모델은 계획과 검토를 제안하고, Rust가 완료 상태를 결정합니다.
-`POST /api/goals`에서 명시적인 `successCriteria`를 지정할 수 있습니다.
-
-```json
-{
-  "goal": "report.md 파일을 작성하고 결과를 확인해라",
-  "maxIterations": 5,
-  "executor": {"agentId": "my-agent"},
-  "successCriteria": [
-    {"type": "file_changed", "path": "report.md"},
-    {"type": "file_contains", "path": "report.md", "contains": "검증 결과"}
-  ]
-}
-```
-
-| type | 필수 값 | Rust가 확인하는 것 |
-| --- | --- | --- |
-| `file_exists` | `path` | 경로 존재 |
-| `file_absent` | `path` | 경로 부재 |
-| `file_changed` | `path` | 실행 시작 전 상태와 비교한 변경 |
-| `file_contains` | `path`, `contains` | 파일의 실제 내용 |
-| `tool_succeeded` | `tool` | 해당 이름의 실제 성공 결과 |
-| `command_succeeded` | `command` | 동일 명령의 종료 코드 0 |
-
-상대 경로는 워크스페이스 안으로 제한하고 심볼릭 링크 이탈을 거부합니다.
-절대 경로는 `file_*` 도구와 같은 명시적 컴퓨터 경로입니다.
-조건이 없으면 목표 문장에서 파일 경로와 변경·삭제 의도를 보수적으로 추론합니다.
-셸 명령의 임의 의미를 완전히 판정할 수는 없으므로 복잡한 작업에는 명시적 조건을 사용하세요.
-`tool_succeeded`는 그 도구의 성공만 확인하며 더 넓은 업무 결과를 보장하지 않습니다.
-
-실행 후 검토 모델에 실제 도구 인수·결과와 Rust 검증의 미충족 조건을 전달합니다.
-검토 JSON이 올바르고, 완료 판정이고, 미충족 조건도 없어야 `completed`가 됩니다.
-미완료는 수정 턴으로 이어지고 한도에 도달하면 `needs_review`입니다.
-실패·취소·검토 필요 상태는 부모 작업에도 그대로 반영합니다.
-
-일반 SDK·백그라운드·Discord 턴은 도구 이벤트의 소비 채널만 유지하고,
-사용하지 않는 도구 결과를 별도의 `TurnStats` 벡터로 축적하지 않습니다.
-도구 성공 증거가 필요한 호출은 기존 `run_quiet_outcome`을 사용하며,
-원본 실행 저널·완료 판정·취소·복구 기록은 변경하지 않습니다.
-
-## 실행 기록·복구·취소
-
-SQLite에 실행·사용자 메시지·도구 호출 시작을 저장하지 못하면 모델/도구 실행을 진행하지 않습니다.
-각 도구 호출은 실행 ID·라운드·호출 위치를 가진 독립 기록으로 인수·결과·상태를 보존합니다.
-셸의 비정상 종료·HTTP 오류·MCP `isError`는 성공 증거가 아닙니다.
-
-작업은 원자적으로 선점합니다. 기본 워커는 4개이며 `DOMINION_JOB_WORKERS`로 1~16개를
-설정할 수 있습니다. 동일 세션의 동시 턴은 차단합니다. 에이전트별 모델·지시·기억을 적용하고,
-공유 회의 기록에서 다른 화자의 발언을 자신의 assistant 메시지로 전달하지 않습니다.
-
-목표·워크플로·회의·프롬프트·Discord는 부수 효과 전에 체크포인트를 기록합니다.
-중단 지점의 실행/전송 여부가 불확실하면 자동 반복하지 않고 `needs_review`로 남깁니다.
-일반 실행 재개는 `effect.rs`의 관찰 전용 판정과 영속 효과 영수증을 함께 사용합니다. 성공/실패 기록이 있는 GitHub 변경·MCP 쓰기·브라우저 제어·미분류 외부 도구는 자동 전체 재실행하지 않습니다. 이미 완료한 작업을 아는 프로그램 체크포인트의 재개는 별도 절차로 조정합니다. 실행 취소 API는 `status`와 `phase`를 같은 SQLite 갱신에서 종료하고, 단계 전이는 조건부 패치로 다른 실행 증거를 덮어쓰지 않습니다.
-완료한 회의 발언과 워크플로 단계는 저장된 커서로 건너뜁니다. 검토가 끝나지 않은 목표도
-확인 없이 다음 실행 턴을 시작하지 않습니다. 종료 상태의 목표를 재시작으로 다시 열지 않습니다.
-
-취소는 DB에도 저장됩니다. 해당 세션의 대기 작업과 실행 중 작업을 취소하고,
-새 UI 대화가 시작되어도 이전 작업의 취소를 되돌리지 않습니다.
-응답 대기·스트리밍·승인 대기에서 취소를 감지합니다. 이미 완료된 외부 변경을 되돌리지는 않습니다.
-
-## 주인이 참여하는 그룹 대화
-
-방의 대화는 하나의 공용 세션에 저장됩니다. 실제 주인 메시지는 `metadata.authorKind: owner`,
-에이전트 응답은 각 `agent_id`와 원문을 가리키는 `replyToMessageId`, 실행 ID를 갖습니다.
-사용자 메시지와 응답 작업을 한 SQLite 트랜잭션으로 저장하고 클라이언트 재전송은 중복 제거합니다.
-에이전트에게 차례를 줄 때는 기존 공용 기록을 읽히며 인공 사용자 턴을 만들지 않습니다.
-
-- `discussion`: 참가자 모두의 첫 발언을 보장한 뒤 서로의 멘션에 따라 대화를 이어갑니다.
-- `round_robin`: 사용자 메시지마다 다음 참가자가 응답합니다.
-- `mentioned`: 주인이 선택하거나 `@이름`·`@ID`로 지정한 참가자가 시작하고 동료에게 이어갈 수 있습니다.
-
-라운드·최대 발언 수로 자동 대화를 제한합니다. 새 주인 메시지가 들어오면 현재 발언을 마친
-경계에서 이전 대화를 양보하고 새 작업을 처리합니다. 같은 방의 작업은 직렬로 수행합니다.
-중지는 영속적인 취소 세대를 올립니다. 이후 새 메시지가 방을 재개해도 과거 작업이 살아나지 않습니다.
-판단의 기준은 실제 주인 원문과 실행 결과이며 동료의 주장은 별도 인용 데이터입니다.
-
-기억은 방·에이전트별로 격리합니다. 일반 개인 기억을 방에 공유하려면 명시적인 공유가 필요합니다.
-과거에 생성된 가짜 사용자 프롬프트나 동료 발언을 주인 사실로 학습하지 않습니다.
-모든 방의 현재 발언·도구 작업·승인·학습은 실제 서버 기록으로 표시합니다.
-스트리밍은 턴 ID로 구분하고 최종 저장된 메시지 ID와 연결합니다.
-
-브라우저는 작업 실행기가 아닙니다. Rust 워커가 큐를 소비하고 모델·도구·기억을 처리하므로
-대화 탭을 닫아도 자동화는 계속됩니다. GUI 없는 실행은 다음과 같습니다.
-
-```bash
-DOMINION_HOME=/path/to/dominion-rust DOMINION_JOB_WORKERS=4 \
-  /path/to/dominion-rust/target/release/dominion-rust
-```
-
-도구 허용과 기존 승인 정책은 그대로 적용됩니다. 모델이 임의로 실행 권한을 넓히지 못합니다.
-현재 서버 바인딩은 로컬 루프백입니다.
-
-## 페르소나·아바타 가져오기
-
-`GET /api/personas/import/preview`에서 실제 파일을 미리 보고,
-`POST /api/personas/import`에 `{"apply":true}`를 보내 적용합니다.
-대상은 사용자의 `~/.hermes/profiles/` 안 9개 명시된 프로필이며 SOUL·아바타만 읽습니다.
-원문은 `personaOriginal`로 보존하고 프로필에는 DOMINION 실행 경계를 함께 넣습니다.
-기존 사용자 수정은 기본적으로 보존하고 명시적으로 갱신하더라도 모델·제공자는 유지합니다.
-이미지는 `runtime/avatars`에 복사하며 안전한 네이티브 아바타 경로로만 제공합니다.
-실제 봇 사진이 별도 이미지 캐시에 있다면 `avatarSources`에 프로필별 파일명을 지정할 수 있습니다.
-허용된 로컬 이미지 폴더에서만 읽고, 선택한 원본과 이미지 URL 버전을 보존합니다.
-이식된 개인 데이터와 이미지 자체는 저장소에 포함하지 않습니다.
-
-## Discord 설정과 지원 범위
-
-1. Discord Developer Portal의 Bot Token을 준비합니다. Message Content Intent를 활성화하고
-   봇에 View Channel·Read Message History·Send Messages 권한을 부여합니다.
-2. Discord 개발자 모드에서 서버 ID와 채널/스레드 ID를 복사합니다.
-3. DOMINION의 연결 화면에서 Discord를 선택하고 토큰·ID·에이전트 또는 최대 9명 회의실을 저장합니다.
-4. 활성화 시점 이후의 새 메시지를 약 5초 간격으로 수신합니다. 이전 대화에 갑자기 답하지 않습니다.
-
-API로 저장할 수도 있습니다. 실제 토큰을 로그나 문서에 남기지 마세요.
-
-```json
-{
-  "kind": "discord",
-  "name": "내 Discord 방",
-  "token": "YOUR_BOT_TOKEN",
-  "guildId": "YOUR_SERVER_ID",
-  "channelId": "YOUR_CHANNEL_ID",
-  "agentId": "YOUR_AGENT_ID",
-  "enabled": true,
-  "mentionOnly": true,
-  "allowedUserIds": "USER_ID_1,USER_ID_2",
-  "allowedBotIds": "EXTERNAL_BOT_ID",
-  "toolsEnabled": false
-}
-```
-
-이 객체를 `POST /api/channels`에 보냅니다. `roomId`를 사용하면 해당 방의 에이전트들이
-독립 세션으로 발언하며 한 Discord 봇 계정에서 이름을 붙여 전송합니다.
-`roomPolicy`는 `all_or_named`, `named_only`, `round_robin`을 지원합니다.
-기존 9개 Discord 봇을 각각 운용하려면 봇별 토큰으로 연결을 별도 등록합니다.
-기존 OpenClaw 프로세스와 동일 토큰으로 동시에 응답하지 않도록 전환해야 합니다.
-이 변경이 기존 봇 설정을 가져오거나 자동으로 중지하지는 않습니다.
-
-외부 봇은 `allowedBotIds`와 DOMINION 봇 멘션이 모두 있어야 응답하며 연결별 분당 2회입니다.
-외부 봇이 멘션을 요구하면 `replyMentionBots: true`를 선택합니다. 허용된 발신 봇만
-첫 응답에서 엔진이 멘션하며, 모델이 만든 다른 멘션은 차단합니다. 기본값은 꺼짐입니다.
-봇의 도구 실행·사용자 기억 학습은 차단합니다. 사람의 도구 실행은 `toolsEnabled: true`와
-명시적인 `allowedUserIds`가 모두 있어야 합니다. 일반 도구 승인 정책도 적용됩니다.
-허용한 대상 외의 출력 멘션을 막고, 참가자당 메시지는 최대 4개 조각으로 제한합니다.
-
-토큰은 vault에서 암호화하며 목록·개별 조회·이벤트에 포함하지 않습니다.
-수신 위치·메시지 ID·발언 생성·전송 상태를 저장하고, 불확실한 전송을 자동 재시도하지 않습니다.
-REST 제한은 토큰별로 처리하며 최대 9개 연결을 병렬 조회합니다.
-서버 텍스트/공지 채널·명시적으로 지정한 스레드를 지원합니다.
-DM·음성·파일 첨부·슬래시 명령·Gateway 실시간 이벤트는 이번 범위에 포함하지 않습니다.
-
-검증은 모의 모델과 모의 Discord HTTP 서버로 수행합니다. 사용자의 실제 봇에 접속하거나
-실제 Discord 메시지를 보내는 검증은 수행하지 않았습니다.
-
-2026-11-04 검증 결과:
-
-- `cargo test --release`: 단위 테스트 99개 + E2E 8개 통과
-- `tsc --noEmit`: 통과
-- `npm run build`: 통과
-- `git diff --check`: 통과
-
-## 구조 참고 자료
-
-다음 공식 문서는 기억 계층·프로필 격리·라우팅·프로토콜을 이해하기 위해 참고했습니다.
-프로젝트 코드나 엔진을 가져오지 않았습니다.
-
-- [OpenClaw 기억 구조](https://docs.openclaw.ai/concepts/memory-architecture)
-- [OpenClaw 에이전트 라우팅](https://docs.openclaw.ai/concepts/multi-agent)
-- [Hermes 지속 기억](https://hermes-agent.nousresearch.com/docs/user-guide/features/memory)
-- [Hermes 스킬](https://hermes-agent.nousresearch.com/docs/user-guide/features/skills)
-- [Discord 메시지 API](https://docs.discord.com/developers/resources/message)
-- [Discord 요청 제한](https://docs.discord.com/developers/topics/rate-limits)
-
-## 독립 머니 도구 활성화와 작업 소유권 (2026-11-18)
-
-`설정 → 머니 도구`의 on/off는 `/api/settings/money`에서 기존 SQLite `money_module` 기록으로 관리합니다. 신규 DB는 기본 off이며 기존 Money 실사용 DB는 활성 상태를 승계합니다. Off 전환과 머니 자동 순환·대기/실행 작업의 취소는 한 SQLite 트랜잭션으로 적용합니다. 공통 SDK로 명시 승인한 작업, 기존 원문·후보·실험 기록은 보존합니다. 모듈은 공통 작업 큐·모델·도구·메모리를 재사용하고 별도 실행 루프와 DB 파일을 만들지 않습니다. HTTP 쓰기 요청과 워커 실행·후속 작업 저장을 각각 차단해 중단 상태를 적용합니다.
-
-정보 연결 알고리즘은 신규 RSS 수집 자료가 같은 회차의 경제적 가설 생성에 포함되도록 저장 후 최근 표본을 읽습니다. 추가 모델 호출은 발생하지 않습니다. 릴리즈 빌드·프론트 빌드는 개발 단계에서 수행하지 않습니다.
-
-## 머니 후보 보관함
-
-머니 화면의 접힌 보관함은 `/api/money/candidates/archive`에서 기존 SQLite의 후보를 페이지 단위로 검색합니다. 상위 3건 이외의 낮은 순위·보류·제외 후보도 원문 출처와 함께 열람하며, 보류/재검토는 기존 후보 상태 API를 사용합니다. 새 대형 DB·모델 호출·작업 실행기는 추가하지 않습니다.
-
-## 공통 SDK의 요청 재시도 중복 방지 (2026-11-18)
-
-`POST /api/sdk/runs`에 선택적 `idempotencyKey`가 추가됐습니다. 클라이언트 연결이 끊겨 같은 요청을 재전송해도 기존 실행 기록을 그대로 반환합니다. 같은 키로 내용이 다른 요청을 보내면 409를 반환합니다. SDK 실행·세션·요청 영수증을 기존 SQLite 트랜잭션 하나에 묶어 동시 요청에서도 작업 1개만 생성합니다. 키를 주지 않은 기존 SDK 호출은 유지합니다. 개발용 CI에 관련 Rust API 회귀 테스트를 별도로 포함했습니다.
-
-## SDK 실행 증거·복구 조회 최적화 (2026-11-18)
-
-공통 SDK 완료 판정은 과거 전체 `execution` 기록을 역직렬화하지 않고, 세션별 최신 실행 1건을 기존 SQLite 인덱스로 조회합니다. 외부 도구 결과의 운영자 재확인은 해당 실행의 `native_frame`만 부분 인덱스로 검색하며 다른 세션의 체크포인트는 읽지 않습니다. 조회 오류는 성공한 검증으로 취급하지 않고 기록·전달합니다. 채팅·작업·머니가 공유하는 실행 커널이나 사용자 데이터 형식에는 변경이 없습니다. 실제 처리시간·메모리 개선 수치는 배포 측정 전입니다.
-
-SDK 완료 증거 조회 실패는 `needs_review`와 `failureClass=completion_evidence_unavailable`로 남기며, 재개 API는 이 경우 모델·도구를 재호출하지 않고 SQLite에 저장된 완료 실행과 메시지만 재확인합니다. 외부 도구 효과가 불명확하거나 완료 기록이 없으면 재확인을 거부합니다. 머니 구현 화면에도 별도의 '저장된 완료 증거 재확인' 조작을 연결했습니다.
-
-## 머니 원문 리비전과 인용 대조 (2026-11-18)
-
-머니는 기존 SQLite의 `money_signal`을 유지하면서 `money_source_revision`에 내용 해시 기준의 원문 개정본을 보존합니다. 페이지가 달라지면 기존 개정본은 삭제·교체하지 않고 최신 참조만 이동합니다. 자동 수집 재확인은 7일 쿨다운과 기존 RSS 한도에 따릅니다. 모델 출력의 `evidence.quote`는 `money_citation`에서 DB의 URL·본문·리비전과 비교하며 구매 근거는 `money_buyer`가 같은 기준을 사용합니다. 머니 화면과 보관함에서 인용 상태 및 개정 기록을 요청 시 조회합니다. 원문 일치와 거래 성립은 구분하며 추가 모델 실행과 별도 DB/하네스는 없습니다.
-
-## 머니 비교 가격의 계산·근거 경계 (2026-11-18)
-
-`money_price`는 원문에 인용된 구매측·공급측 가격의 단위·사양·수량·관측 시점과 호가·희망가격·거래 언급의 차이를 검토합니다. 가격과 환율 인용을 기존 SQLite 원문에서 확인할 수 있고 배송·관세·수수료·반품·노동 비용이 모두 입력된 때만 원화 단위 차액을 계산합니다. 외화 환율 원문이 없으면 원화 환산은 미확인으로 둡니다. 계산 결과는 머니 후보와 보관함에서 참고 가격 차이로만 표시하며 실제 매출·순이익으로 간주하지 않습니다. 모델·도구 추가 호출이나 별도 DB가 없습니다.
-
-## MCP 원격 도구 발견·스트리밍 응답 (2026-11-18)
-
-`src/engine/mcp.rs`에서 활성 MCP 서버의 `tools/list` 조회를 최대 4개 동시 실행합니다. 단일 서버의 연결·응답이 느리더라도 다른 서버의 도구 목록 조회가 순차 대기하지 않으며, 모델에 전달할 목록은 설정 레코드 조회 순서대로 합칩니다. 기존 120초 서버별 스키마 캐시, 서버 이름 충돌 방지, 기존 승인 정책과 도구 실행 게이트는 그대로 사용합니다.
-
-HTTP MCP의 `text/event-stream` 응답은 전체 연결 종료를 기다리지 않고 네트워크 청크에서 이벤트를 조립합니다. `data:`의 JSON-RPC 응답은 요청 ID를 검증하고, 무관한 진행 알림·하트비트·다른 요청의 응답은 건너뜁니다. 응답을 찾으면 즉시 스트림을 닫으며, 단일 이벤트 2MiB 상한과 미완료 스트림 오류를 명시합니다. 빈 HTTP 본문을 도구 호출 성공으로 오인하지 않으며 일반 JSON 응답에도 요청 ID 검증을 적용합니다.
-
-관련 Rust 회귀는 `cargo test --locked --bin dominion-rust engine::mcp::tests`이고 개발 CI의 별도 단계로 등록됐습니다. 테스트는 응답을 보낸 뒤 서버가 연결을 닫지 않는 SSE, 무관한 ID, 하트비트, 독립 MCP 서버의 동시 목록 조회 및 결과 순서 보존을 대상으로 합니다. 2026-07-28 MCP의 신규 핸드셰이크 없는 `_meta`·필수 HTTP 헤더·`x-mcp-header` 전면 지원은 이번 변경 범위 밖입니다. 기존 클라이언트의 초기화 절차는 유지되므로 이 개선을 2026년 최신 MCP 프로토콜 전체 지원으로 표현하지 않습니다.
-
-참조: [MCP 2026-07-28 Streamable HTTP 규격](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2026-07-28/basic/transports/streamable-http.mdx), [Goose 확장 관리](https://github.com/aaif-goose/goose/blob/main/documentation/docs/mcp/extension-manager-mcp.md), [DeepSeek Harness의 Cordis 구조](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md). 외부 프로젝트의 실행기를 합치지 않고 기존 Rust 도구 경계를 개선했습니다.
-
-## 실행 경로 전수 점검: 간접 DB 스캔·미사용 실험 루프 정리 (2026-11-18)
-
-Rust 커널의 구조 검사와 컴파일 성공은 DB 조회량·불용 호출·중복 상태 책임의 부재를 보증하지 않습니다. 메인 런타임의 `finalization.rs → improve::execution_updates`와 `improve::active_values_with_execution` 실제 호출 경로를 추적해 아래 잔재를 제거했습니다.
-
-- **종료 처리:** 모든 과거 `execution_operation` 조회 및 `improvement` 2회 전체 조회를 없애고 `Store::execution_operations(run_id)`와 `Store::try_records_by_ids("improvement", applied_ids)`로 전환했습니다. 적용 개선안 ID가 없으면 즉시 반환합니다. 이전 실행의 도구 영수증이 현재 작업의 통계에 포함되지 않는 회귀를 추가했습니다.
-- **전략 검색:** 매 대화에서 비활성·다른 에이전트의 개선안까지 전체 역직렬화하던 경로를 `active_improvements_for_scope`의 SQL 필터와 부분 인덱스로 변경했습니다. 작업의 전략 선택 커널 조회도 후보마다 반복하지 않고 1회 수행합니다.
-- **최근 기준선:** `all("execution").rev().take(40)`가 최신이 아니라 오래된 실행을 선택하던 오류를 수정했습니다. 이제 SQLite 인덱스로 최근 40건만 결정적 순서로 조회합니다.
-- **중복/퇴역:** 호출자가 없는 `run_quiet_with_stats` 래퍼, 이중 read-only 도구 필터, 실행 불가능한 `schedule_experiments` 생산자, 이전 H8 자동 실험 스케줄러의 등록·부팅·소스 파일을 제거했습니다. 이전 실험·RSI·영상의 읽기 전용 기록 조회와 수동 평가 API는 데이터 호환을 위해 유지합니다.
-- **재발 방지:** `scripts/check-runtime-architecture.mjs`는 이제 `finalization.rs`뿐 아니라 `improve::execution_updates`의 간접 전체 테이블 조회, 전략 선택의 전체 스캔·후보별 커널 호출, 퇴역 스케줄러 재도입도 검사합니다. 개발 CI에 `engine::improve::tests`를 별도 추가했습니다.
-
-이는 구조 및 SQL 조회 범위의 개선입니다. 실제 모델 작업의 완료당 토큰·시간·총비용 감소 수치는 별도 비교 전까지 주장하지 않습니다. 기존 학습·사용자 교정·작업 실행·SDK·API·DB 파일은 교체하지 않았습니다.
-
-## 검증 증거 기반 재계획 분기 (2026-11-18)
-
-채팅·SDK·작업은 여전히 공통 `dominion-core::Engine::drive`를 사용합니다. 모델이 도구 작업의 완료를 주장했지만 실제 사후조건이 실패하면 `recovery::acceptance_progress`가 해당 실행의 `execution_operation` 영수증과 위반 조건을 결합해 `obligationLineage.frontiers`를 생성합니다. `finalization::acceptance_repair`가 그 증거를 기준으로 후속 경로를 선택합니다.
-
-- `Verifier`: 처음 나타난 유형화된 위반 조건에는 기록된 검증기의 다음 행동을 현재 주 모델에게 전달합니다. 불필요한 별도 `acceptance_review` 모델 호출을 생략하고 검사 조건 자체는 유지합니다.
-- `Reviewer`: 같은 위반 조건이 도구 라운드를 지나도 개선되지 않았거나 유형화할 수 없는 실패에 한해 기존 보조 검토 모델을 활용합니다. 반드시 다음 도구를 실행할 수 있는 잔여 예산이 있어야 합니다.
-- `Reconcile`: 해당 출력 자원에 결과 미확정 외부 변경 영수증이 있으면 비용과 관계없이 자동 재시도를 중단합니다. 실행 효과 확인 없이 재실행하지 않습니다.
-
-실제 파일 바이트, SQLite 영수증과 작업 진척 기록을 묶은 `acceptance_repair_tests`를 개발 Rust CI에 등록했으며, 구조 검사는 무조건적 보조 검토 호출 또는 확인되지 않은 외부 효과에 대한 자동 재시도 경로가 되살아나면 실패합니다. **CI는 분기·증거·중단 계약의 회귀를 확인합니다. 실제 프런티어급 모델의 작업 완수율, 평균 모델 호출·토큰·시간 절약률은 아직 측정하지 않았습니다.**
-
-## 역할별 위임·인덱스 기반 결과 조회 (2026-11-18)
-
-기존 `delegate_task → jobs::run_prompt → run_quiet → dominion-core::Engine::drive`가 모든 자식 작업의 유일한 실행 경로입니다. 메인에 이미 구현된 계층형 토큰/금액 예산 예약·정산과 격리 Git 워크트리·승인·도구 효과 영수증을 재사용합니다. 별도 서브에이전트 모델 루프나 독립 저장소는 만들지 않습니다.
-
-`delegate_task`의 선택적 `profile`은 `general`(기존 동작), `inspection`(관측·읽기 전용), `implementation`(격리 워크트리 내 코드 변경), `verification`(관측과 승인된 `cargo test` 실행만)입니다. 명시적인 역할 작업에는 `isolatedWorktree=true`가 필수입니다. 역할은 자식 세션·작업 레코드에 기록되며, 모델 프롬프트만으로 도구를 제한하지 않습니다. 일반 도구 목록, 점진적 도구 검색·실행, 공통 실행 어댑터의 승인 전 게이트, 실제 Rust 도구 실행기에서 동일한 제한을 적용합니다. 실행기의 기본 사용자 승인·샌드박스와 부모보다 좁은 권한은 유지됩니다.
-
-`task_result`는 모든 과거 `execution_operation`을 역직렬화하던 경로를 제거하고 `idx_completed_operation_session_recent` 인덱스로 **해당 자식 세션의 최신 성공 영수증 최대 20건만** 읽습니다. SQLite `EXPLAIN QUERY PLAN` 회귀는 실제 인덱스 선택을 확인합니다. `delegate_task(wait=true)`는 250ms 주기 DB 폴링 대신 특정 자식의 durable `job` 이벤트를 우선 대기하며, 이벤트 유실·취소를 위한 3초 이하 유한 간격 상태 재확인을 사용합니다.
-
-관련 개발용 회귀: `db::tests::delegated_results_use_recent_index_without_loading_unrelated_history`, `engine::tools::delegation::profile_tests`, `engine::capability::tests::verification_profile_discovery_cannot_bypass_test_only_command_gate`. 아키텍처 검사는 간접 기록 전체 조회·역할 게이트 누락을 차단합니다. 개발용 Rust CI와 별도로 실제 모델의 위임 성공률·작업당 토큰·시간·총비용은 아직 통제 실험을 진행하지 않았습니다.
-
-## 실측 실패 후 실행 취소·그룹 사용량 증거 (2026-11-18)
-
-첫 모델 실측에서 메인은 단순 코딩 3건 중 1건만 완료하고, 그룹 3인 대화에서는 입력 토큰이 출력보다 크게 발생했습니다. 이 기록을 실제 모델 능력 개선으로 간주하지 않고 실행·계측 결함부터 분리했습니다.
-
-- 저장소 내 `src/bin/dominion-benchmark.rs`의 SSE 제한시간 초과·전송 단절은 응답 종료만으로 서버 작업이 취소된다고 가정하지 않습니다. `POST /api/sessions/:id/cancel` 후 해당 세션의 실행 기록이 모두 종료 상태인지 확인하고 다음 실험의 파일 fixture를 재사용합니다. 취소 확인 실패 시 다음 실험을 시작하지 않습니다. 이 코드는 **저장소 내 S7 벤치마크 실행기**에 적용되며, 별도로 배포된 ZIP 생성 도구까지 수정한 것으로 보고하지 않습니다.
-- 결과물 JSON을 의미별로 나누어 Rust JSON 매크로 재귀 한도 오류를 제거했습니다. `trial.json`과 `trials.jsonl`에는 작업 원문 `taskPrompt`, 취소 확인 `cancellation`, `inputContext`, 실행별 보조 모델 비용 `modelAccounting`, 도구·모델 호출과 산출물 판정을 포함합니다. 리포트의 성공 판정 조건을 느슨하게 하지 않았습니다.
-- `src/api/sessions.rs`의 취소 확인은 전체 `execution` 기록을 역직렬화하지 않습니다. `idx_active_execution_session` SQLite 부분 인덱스로 실행 중인 해당 세션만 조회하며 `EXPLAIN QUERY PLAN` 회귀에서 인덱스 선택을 검증합니다.
-- 그룹의 `rooms.rs`는 각 발언의 원본 `metadata.executionId`를 이용해 실행 기록을 조회합니다. `outputs[].modelAccounting`에 참가자별 실제/추정 사용량 여부, 입력·출력·캐시 토큰, 모델·도구 호출 횟수 및 추정 시스템·페르소나·기억·공유 상태·이력·도구 스키마를 구분해 저장합니다. **프롬프트 구성 추정치와 Provider 보고 토큰을 별개 값**으로 보관하며, 토큰 수가 실제로 감소했다고 주장하지 않습니다.
-
-개발 CI에는 `cargo test --locked --bin dominion-benchmark`의 제한시간 취소·SSE 오류 분류 특정 회귀와 `dominion-rust` 그룹 토큰·DB 쿼리 회귀를 추가했습니다. 실측 ZIP 원본과 동일한 모델의 재시험이 없는 상태이므로 메인의 기존 **63/100** 점수·**1/3** 완수 기록을 임의로 변경하지 않습니다.
-
-## 9인 그룹 누적 토큰·작업 문맥 경로 복구 (2026-11-18)
-
-9인 그룹의 3개 주인 요청에서 메인은 실제 모델 실측 기준 총 74,045토큰·30개 메시지로 가장 낮은 그룹 입력 증가를 보였지만, 입력 누적을 완전히 통제한 것은 아닙니다. `room_context::compile`은 이미 주인 원문, 참가자별 최근 발언, 본인의 마지막 발언·원문, 확정된 주인 상태, 출처가 확인된 관련 근거를 결정적으로 선별합니다. 이 단계는 별도 모델 호출을 요구하지 않고 원본 전체 대화를 SQLite에 보존합니다.
-
-조사 중 **도구 정의의 고정 비용 때문에 `requiredOverBudget=true`가 발생한 그룹 작업에서, `native-work-context`로 넘어가면 일반 채팅 `history()`를 다시 조회하는 실행 분기**를 발견했습니다. 기존에는 이 분기가 관련없는 동료의 오래된 발언을 재전송하거나 현재 주인 메시지보다 뒤의 기록을 선택할 가능성이 있었습니다. 지금은 그룹 작업이 네이티브 도구·절차 프롬프트를 유지하면서, 대화 부분만 주인 메시지 커서에 고정된 `room_context::compile`의 선별 이력을 사용합니다. 도구 권한·모델 라우팅·SDK·기존 GUI·모델 요청 계약을 변경하지 않습니다.
-
-`execution.inputContext`에는 `conversationSelection=room-selective-v1`, `selectedMessageIds`, `availableMessages`, `sharedStateTokens`, `ownerStateTokens`와 기존 토큰 추정 정보를 남깁니다. 과거 작업·사용자 지침·참가자별 전용 기억·직전 본인 답변 및 도구 호출/결과의 연결은 보존합니다.
-
-`nine_participants_three_owner_turns_complete_thirty_messages_with_selective_work_context` 통합 테스트는 모의 OpenAI 호환 SSE 제공자 27회와 그룹 주인 메시지 3개를 사용해 각 9명 전원의 응답, 모든 그룹 작업의 `completed` 판정, 27건의 네이티브 실행 기록, 3번째 턴의 오래된 1번째 턴 동료 발언 제거와 직전 본인 답변 보존까지 확인합니다. GitHub Actions 개발용 Rust CI에서 통과했습니다.
-
-이번 변경의 모델 품질 및 유료 API 토큰 절약량은 동일한 9인·3턴·동일 제공자·동일 작업으로 재실측하기 전까지 주장하지 않습니다. 2026년의 Shared Selective Persistent Memory (arXiv:2607.09493) 및 ContextWeaver (arXiv:2604.23069)는 중복 원문 제거와 출처/의존 보존을 함께 다루므로 설계 검토에 참고했습니다. 기존 엔진의 메모리 선택기를 또 하나 복제하거나 모델 요약 라운드를 추가하지 않았습니다.
-
-## 채팅 실행 중단과 그룹 프리픽스 캐시 (2026-11-18)
-
-### 채팅 중단: UI → HTTP → 네이티브 커널 → Provider 스트림
-
-기존 `Chat.tsx`에는 전송 중 회전 아이콘만 있었고, 실제 사용자 중단 버튼은 없었습니다. 이제 전송 버튼이 활성 실행 중 키보드 접근 가능한 ■ 중단 버튼으로 바뀝니다. `stopChat`은 `POST /api/sessions/:id/cancel`을 호출하고 서버의 `stopped=true` 확인 후에만 브라우저의 `AbortController`를 종료합니다. 이 절차가 끝나면 로딩과 승인 UI를 정리하고 새 전송을 허용합니다. 만료된 SSE 이벤트는 실행별 `AbortController` 신원·stopping 상태로 무시하고 실행 이력/승인 목록을 갱신합니다. 기존 `/stop`도 동일한 함수를 사용합니다.
-
-`src/api/sessions.rs`는 작업 취소 후 해당 세션의 실행 가드와 SQLite 상태가 모두 종료됐는지 확인하며 최대 5초 동안 기다립니다. 도중 종료되지 않으면 `stopped=false`를 반환해 화면이 중단 완료를 섣불리 표시하지 않습니다. Rust `run_turn_with_policy`의 `tokio::select!`는 취소 세대 번호 변경을 감지해 네이티브 모델/도구 실행 Future를 드롭하고, `finish_attempt`에서 `cancelled` 상태를 기록합니다. HTTP 요청이 실제 실행 시작보다 먼저 승인됐을 때도 입장 시점 취소 세대 번호를 전달해, 늦게 시작된 과거 요청이 새 STOP을 지울 수 없도록 차단합니다.
-
-개발 CI는 모델이 HTTP SSE 헤더만 보낸 뒤 토큰을 전혀 내보내지 않는 모의 Provider 테스트, 실제 API 취소 확인, `cancelled` 실행 기록, 응답 미저장, 동일 세션에서 새 대화 재개, 시작 전 취소 경쟁을 검증합니다. 프론트엔드 타입 검사·Vite 빌드와 UI 회귀 계약 테스트도 수행합니다. 외부 제공자 서버의 물리적 GPU 추론 종료는 해당 서비스가 끊긴 HTTP 요청을 감지하는지에 영향을 받으므로, DOMINION 자체가 외부 모델 프로세스를 임의로 종료했다고 주장하지 않습니다.
-
-### 공동 정적 프리픽스 → 참가자 페르소나 → 동적 대화
-
-방 시스템 프롬프트는 `DOMINION 공통 정체성 + 주인 지침 + 방 규칙·참가자 명단·주제·도구 계약 + 해당 참가자 페르소나` 순서로 조립합니다. 기존 private/chat `identity_prefix`는 바꾸지 않아 1:1 대화 호환성을 유지합니다. 동일한 방에서 9명에게 서로 다른 페르소나를 부여하더라도 앞쪽 공통 정적 토큰은 정확히 동일하며, 원래 역할 지침과 기억·증거는 보존합니다. 각 사용자 발언과 검색 근거는 뒤의 동적 컨텍스트에서 이전과 같이 선별됩니다.
-
-Cloudflare Workers AI에서는 공식 프리픽스 캐시 문서(https://developers.cloudflare.com/workers-ai/features/prompt-caching/)의 권고에 따라 `x-session-affinity` 헤더를 전달합니다. 하나의 방·제공자·모델·계정에 속하는 참가자는 동일한 캐시 라우팅 ID를 사용하지만 각 에이전트의 `transportSessionId`, 대화 커서, 권한 및 DB 상태는 서로 분리됩니다. 개인 세션은 자체 ID를 사용합니다. Workers AI 경로에서는 명세가 다른 OpenAI `prompt_cache_key`를 불필요하게 삽입하지 않습니다. 그 외 OpenAI 호환 Provider의 기존 캐시 협상은 유지합니다.
-
-실제 제공자 캐시 사용량은 `cachedPromptTokens`의 `null`/0/양수 상태를 구분합니다. 캐시 미지원 또는 미보고 모델(GLM-4.7-Flash 포함 가능성)에서 지원을 추정하지 않습니다. `promptTokens` 총량이 유지돼도 `cachedPromptTokens`, 비캐시 입력, 첫 토큰 지연, 비용이 달라질 수 있으므로 동일 모델·같은 9인×3턴 작업으로 재측정해야 합니다. 캐시 가능 접두부가 제공자 블록 최소 크기보다 짧을 수도 있으므로 코드 변경만으로 적중이나 절감을 주장하지 않습니다.
+# DOMINION — active Rust architecture (2026-11-19)
+
+This file documents the **current main-branch execution path**. Historical
+design notes and branch experiments are not the deployed product contract.
+
+## 1. One kernel, one effect boundary
+
+The authoritative execution kernel is
+[`dominion-core::Engine`](crates/dominion-core/src/engine.rs).
+The [Rust runtime adapter](src/engine/chat/runtime.rs) and
+[provider orchestrator](src/engine/chat/product.rs) connect incoming turns,
+model calls and tool effects to the same kernel.
+
+A task consists of bounded model iterations, admitted tool proposals,
+durable approvals, committed effect receipts and independent verification.
+Unresolved mutating side effects cannot be silently retried. The
+[journal](crates/dominion-core/src/journal.rs) and
+[tool gateway](src/engine/chat/runtime/tool_dispatch.rs) preserve evidence
+for cancellation, reconciliation and recovery.
+
+## 2. Provider routing and incremental context
+
+[Provider adapters](src/engine/chat/provider.rs) handle local and remote
+model APIs. The [conversation continuity module](src/engine/chat/continuity.rs)
+maintains per-participant history frames and routes provider cache hints.
+[Room context](src/engine/chat/room_context.rs) budgets selected evidence
+separately from the immutable identity prefix.
+[Room state](src/engine/room_state.rs) retains owner-confirmed facts and
+stable shared-state digests. [Group orchestration](src/engine/rooms.rs)
+owns speaker selection, cancellation and group delivery.
+
+A stable cache key is a **request** to the provider, not proof of a cache
+hit. Provider-reported cache reads, uncached input and model output are
+recorded separately when available. User-visible history remains in SQLite.
+
+## 3. Progressive tools and MCP
+
+[Capability retrieval](src/engine/capability.rs) ranks real registered
+tools and exposes bounded search results rather than emitting every schema.
+Every subsequently resolved tool call passes the actual schema, current
+session permission, effect journal, approval and cancellation checks.
+MCP tools do not bypass the Rust execution kernel.
+
+## 4. Persistent state and SDK
+
+The [API](src/api/mod.rs) exposes session, room, tool, model and SDK routes.
+The [SQLite store](src/db.rs) owns records, messages, effect receipts and
+indexed execution lookup. The [TypeScript SDK](packages/sdk-typescript/src/index.ts)
+is an HTTP client for the same native kernel; it is not a parallel executor.
+The [React frontend](web/src/App.tsx) uses the same Rust API in browser and
+the [Tauri 2 desktop shell](src-tauri/tauri.conf.json).
+
+## 5. Retired features
+
+Built-in business opportunity research, autonomous RSI campaigns and media
+generation are not part of the active runtime. Their old executable modules,
+API bindings, scheduled jobs and frontend menus have been removed.
+Previously stored user records are retained for backup/export, without
+re-enabling their old processors.
+
+## 6. Quality and release gates
+
+- `node scripts/check-runtime-architecture.mjs`
+- `node scripts/check-retired-domains.mjs`
+- `node scripts/check-release-contract.mjs`
+- `cargo test --locked --workspace`
+- `npm run typecheck --prefix web` and `npm run build --prefix web`
+- `.github/workflows/ci.yml` for incremental regression tests
+- `.github/workflows/release.yml` for Windows/macOS tests, native installers,
+  checksums and GitHub release publication after all platforms pass
+
+See [README](README.md), [한국어 README](README.ko.md) and
+[Harness contract](docs/HARNESS.md).
