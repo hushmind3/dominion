@@ -194,17 +194,17 @@ Pro checkout is a one-time 30-day purchase, not recurring auto-billing.
 
 ## Atomic paid reservation ledger (sub3)
 
-The isolated D1 schema now creates a \`usage_atomic_reservation\` trigger.
-The paid inference request writes one \`usage\` reservation; SQLite atomically
+The isolated D1 schema now creates a `usage_atomic_reservation` trigger.
+The paid inference request writes one `usage` reservation; SQLite atomically
 checks the UTC-day operator budget and prepaid account balance and debits credits
 in the same statement. Concurrent Worker invocations cannot pass an independent
 read-then-write budget check, and a failed insertion does not strand a debit.
 After inference, the existing D1 batch settles the reserved amount against
 provider-reported token usage; unsettled reservations continue consuming budget.
 
-Apply this version of \`cloud/schema.sql\` to a **fresh sub3 staging D1** before
+Apply this version of `cloud/schema.sql` to a **fresh sub3 staging D1** before
 sending paid traffic. A database created from the previous schema needs an
-explicit migration for \`usage.budget_cap\`, index and trigger: \`CREATE TABLE IF NOT EXISTS\`
+explicit migration for `usage.budget_cap`, index and trigger: `CREATE TABLE IF NOT EXISTS`
 does not upgrade an existing table. Existing deployments must not run new
 paid Worker code against an unmigrated D1 database. Live payment/provider
 verification and recovery of interrupted reservations remain required.

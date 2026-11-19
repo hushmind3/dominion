@@ -5,7 +5,7 @@ import {spawnSync} from 'node:child_process';
 
 // Real SQLite exercises the same trigger and transaction semantics used by D1.
 test('paid reservation ledger is atomic under budget, balance and replay conflicts',()=>{
-  const python=String.raw\`
+  const python=String.raw`
 import sqlite3,sys
 db=sqlite3.connect(':memory:')
 db.executescript(sys.stdin.read())
@@ -42,7 +42,7 @@ assert balance('acct-a')==880 and balance('acct-b')==750
 reserve('next-day','acct-a',400,500,t+86400)
 assert balance('acct-a')==480
 print('paid ledger: atomic debit, budget, replay, settlement and day rollover OK')
-\`;
+`;
   const result=spawnSync('python3',['-c',python],{
     input:readFileSync(new URL('../schema.sql',import.meta.url),'utf8'),
     encoding:'utf8',
