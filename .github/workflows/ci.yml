@@ -114,6 +114,8 @@ jobs:
         run: cargo test --locked --bin dominion-rust nine_participants_three_owner_turns_complete_thirty_messages_with_selective_work_context
       - name: Stateful Codex persona inheritance and per-turn wire delta (dev profile)
         run: |
+          cargo test --locked --bin dominion-rust changed_codex_request_contract_rebases_even_with_matching_history
+          cargo test --locked --bin dominion-rust codex_chain_contract_captures_tool_and_reasoning_changes_but_not_stream_flags
           cargo test --locked --bin dominion-rust codex_ws_registers_full_persona_once_and_reuses_its_response_chain
           cargo test --locked --bin dominion-rust complete_websocket_exchange_sends_static_persona_only_on_first_response
           cargo test --locked --bin dominion-rust rejected_developer_role_requires_full_instruction_fallback_not_silent_omission
@@ -141,6 +143,13 @@ jobs:
           cargo test --locked --bin dominion-benchmark truncated_http_stream_is_not_counted_as_a_completed_trial
           cargo test --locked --bin dominion-rust speaker_accounting_joins_only_the_owning_execution_and_marks_estimates
           cargo test --locked --bin dominion-rust db::tests::session_running_probe_avoids_global_history_and_uses_session_index
+      - name: Native Codex tool verification, room snapshot rotation and ordered mutation e2e
+        run: |
+          cargo test --locked --test e2e codex_websocket_verified_tool_finishes_without_extra_model_call
+          cargo test --locked --test e2e codex_http_fallback_executes_a_structured_tool_call
+          cargo test --locked --test e2e codex_websocket_chain_reuses_identity_and_sends_only_the_new_suffix
+          cargo test --locked --test e2e nine_room_participants_keep_actual_request_prefix_across_sliding_windows_and_restart
+          cargo test --locked --test e2e unsafe_nested_program_mutations_run_sequentially_with_truthful_checkpoint
       - name: Public keyless provider and OpenRouter model catalog regressions (dev profile)
         run: cargo test --locked --bin dominion-rust api::providers::tests::public_
       - name: Shared SDK run and retry regressions (dev profile)

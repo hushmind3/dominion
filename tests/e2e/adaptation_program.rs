@@ -983,7 +983,7 @@ fn a_paused_program_resumes_after_restart_without_repeating_completed_steps() {
 
 
 #[test]
-fn parallel_and_nested_program_nodes_execute_concurrently() {
+fn unsafe_nested_program_mutations_run_sequentially_with_truthful_checkpoint() {
     let _serial = serial();
     let (port, _) = scripted_provider(|_| {
         vec![json!({"choices":[{"delta":{"content":"병렬 프로그램 완료."},"finish_reason":"stop"}]})]
@@ -1049,13 +1049,13 @@ fn parallel_and_nested_program_nodes_execute_concurrently() {
         chrono::DateTime::parse_from_rfc3339(operation[key].as_str().unwrap()).unwrap()
     };
     assert!(
-        timestamp(shells[0], "startedAt") < timestamp(shells[1], "finishedAt")
-            && timestamp(shells[1], "startedAt") < timestamp(shells[0], "finishedAt"),
-        "parallel shell operations must overlap: {operations}"
+        timestamp(shells[0], "finishedAt") <= timestamp(shells[1], "startedAt")
+            || timestamp(shells[1], "finishedAt") <= timestamp(shells[0], "startedAt"),
+        "effectful shell commands must not race across unsafe branches: {operations}"
     );
     let checkpoint = &execution["programCheckpoint"];
     assert_eq!(checkpoint["status"], "completed", "{checkpoint}");
-    assert_eq!(checkpoint["parallelMode"], "concurrent", "{checkpoint}");
+    assert_eq!(checkpoint["parallelMode"], "sequential", "{checkpoint}");
     assert_eq!(
         checkpoint["resolvedInputs"]["lastVerify"]["ok"], true,
         "verify node did not run: {checkpoint}"

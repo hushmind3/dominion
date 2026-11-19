@@ -2,7 +2,7 @@
 use super::*;
 
 #[test]
-fn codex_websocket_executes_a_structured_tool_call_and_continues_the_chain() {
+fn codex_websocket_verified_tool_finishes_without_extra_model_call() {
     let _serial = serial();
     let (port, requests) = scripted_codex_tool_provider();
     let app = TestApp::new(port, "compat");
@@ -25,13 +25,15 @@ fn codex_websocket_executes_a_structured_tool_call_and_continues_the_chain() {
         "input":"ws_tool.txt 파일을 만들어줘",
         "toolsEnabled":true,"autoLearning":false
     }));
-    assert!(stream.contains("웹소켓 도구 실행 완료"), "{stream}");
+    assert!(stream.contains("acceptance_passed"), "{stream}");
+    assert!(stream.contains("assistant_saved"), "{stream}");
     assert_eq!(
         std::fs::read_to_string(app._root.join("ws_tool.txt")).unwrap_or_default(),
         "WS_TOOL_OK"
     );
     let seen = requests.lock().unwrap();
-    assert_eq!(seen.len(), 2, "one tool round plus one final answer: {seen:?}");
+    assert_eq!(seen.len(), 1,
+        "verified output should not require another paid model round: {seen:?}");
     let tools = seen[0]["tools"].as_array().expect("native tools");
     assert!(
         tools.iter().any(|tool| {
@@ -42,30 +44,8 @@ fn codex_websocket_executes_a_structured_tool_call_and_continues_the_chain() {
         "workspace_write schema was not sent: {tools:?}"
     );
     assert!(seen[0].get("previous_response_id").is_none());
-    assert_eq!(seen[1]["previous_response_id"], "resp_ws_tool_1");
-    let second = seen[1]["input"].as_array().unwrap();
-    assert!(
-        second.iter().any(|item| {
-            item["type"] == "function_call_output"
-                && item["call_id"] == "call_ws_tool_1"
-                && item["output"]
-                    .as_str()
-                    .is_some_and(|output| output.contains("ws_tool.txt"))
-        }),
-        "the continuation must carry the function-call output: {second:?}"
-    );
-    assert!(
-        !second
-            .iter()
-            .any(|item| item["role"] == "user" && item["content"].to_string().contains("Tool observation")),
-        "tool output stayed structured instead of becoming user text: {second:?}"
-    );
-    assert!(
-        !second
-            .iter()
-            .any(|item| item.to_string().contains("ws_tool.txt 파일을 만들어줘")),
-        "the chained user turn must not be re-sent: {second:?}"
-    );
+    // The tool receipt and independently verified completion already exist.
+    // An extra response.create round only burns tokens and increases latency.
     let messages = app.get(&format!(
         "/api/sessions/{}/messages",
         session["id"].as_str().unwrap()
@@ -142,7 +122,8 @@ fn codex_http_fallback_executes_a_structured_tool_call() {
         "input":"http_tool.txt 파일을 만들어줘",
         "toolsEnabled":true,"autoLearning":false
     }));
-    assert!(stream.contains("HTTP 도구 완료"), "{stream}");
+    assert!(stream.contains("acceptance_passed"), "{stream}");
+    assert!(stream.contains("assistant_saved"), "{stream}");
     assert_eq!(
         std::fs::read_to_string(app._root.join("http_tool.txt")).unwrap_or_default(),
         "HTTP_TOOL_OK"
@@ -158,20 +139,14 @@ fn codex_http_fallback_executes_a_structured_tool_call() {
         }),
         "HTTP fallback must send the tool schema: {seen:?}"
     );
-    assert!(
-        seen.iter().any(|body| {
-            body["input"].as_array().is_some_and(|items| {
-                items.iter().any(|item| {
-                    item["type"] == "function_call_output"
-                        && item["call_id"] == "call_http_tool_1"
-                        && item["output"]
-                            .as_str()
-                            .is_some_and(|output| output.contains("http_tool.txt"))
-                })
-            })
-        }),
-        "HTTP fallback must send the function-call output: {seen:?}"
-    );
+    assert_eq!(seen.len(), 1,
+        "verified tool execution must not start a redundant HTTP continuation");
+    let messages = app.get(&format!("/api/sessions/{}/messages",session["id"].as_str().unwrap()));
+    assert!(messages.as_array().unwrap().iter().any(|row|
+        row["tool_calls"].as_array().is_some_and(|calls|
+            calls.iter().any(|call|call["id"]=="call_http_tool_1"))),
+        "the native tool call must be durably recorded");
+
 }
 
 
@@ -207,12 +182,11 @@ fn codex_websocket_chain_reuses_identity_and_sends_only_the_new_suffix() {
     assert!(seen[0].get("previous_response_id").is_none());
     assert_eq!(seen[1]["previous_response_id"], "resp_ws_fixture_1");
     assert_eq!(seen[1]["client_metadata"]["session_id"], seen[0]["client_metadata"]["session_id"]);
-    for request in seen.iter() {
-        assert!(
-            request["instructions"].as_str().unwrap().contains("WEBSOCKET_IDENTITY_VERBATIM"),
-            "identity is re-sent on every websocket call"
-        );
-    }
+    // The stable high-priority persona is sent as an input item only on
+    // the first socket request. Later turns inherit it by response ID.
+    assert!(seen[0]["input"].to_string().contains("WEBSOCKET_IDENTITY_VERBATIM"));
+    assert!(!seen[1]["input"].to_string().contains("WEBSOCKET_IDENTITY_VERBATIM"),
+        "repeating 4k+ persona on every turn wastes the WebSocket chain");
     let first = seen[0]["input"].as_array().unwrap();
     let second = seen[1]["input"].as_array().unwrap();
     assert!(

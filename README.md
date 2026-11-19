@@ -94,6 +94,18 @@ permission, schema, cancellation and effect journal gates.
 
 ### Context and token accounting
 
+### Native execution contracts and lean model rounds
+
+The native Codex WebSocket chain now invalidates `previous_response_id`
+when tools, reasoning settings or other provider request controls change,
+preventing a stale policy/persona from leaking across turns. After a real
+file/tool action has independently satisfied its acceptance checks, the
+agent can persist a verified answer without a redundant final model call.
+Program nodes labeled `parallel` run concurrently **only for independent
+read-only calls**; shell commands, mutations and dependent branches are
+serialized, and their checkpoint records the effective mode from the start.
+Focused GitHub CI exercises these paths on the real API and Rust engine.
+
 A group room preserves historical messages on disk but sends a bounded,
 source-aware working view to each model. Cache routing and optional provider
 cache hints improve prefix reuse where the provider supports them. They do not

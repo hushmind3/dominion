@@ -388,12 +388,6 @@ fn execute_nodes<'a>(
                         .iter()
                         .map(|child| json!(child["id"]))
                         .collect::<Vec<_>>();
-                    checkpoint["pendingOperationIds"] = json!(child_ids);
-                    checkpoint["parallelMode"] = json!("concurrent");
-                    checkpoint["resolvedInputs"] = resolved.clone();
-                    if persist {
-                        save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
-                    }
                     let parallel_mode = crate::engine::algorithms::choose_for_agent(
                         ctx.state,
                         "execution.parallelism",
@@ -404,9 +398,18 @@ fn execute_nodes<'a>(
                         algorithm["implementation"].as_str().map(str::to_string)
                     })
                     .unwrap_or_else(|| "concurrent".into());
-                    if parallel_mode == "sequential"
-                        || !crate::engine::program::parallel_read_safe(&children)
-                    {
+                    let concurrent = parallel_mode != "sequential"
+                        && crate::engine::program::parallel_read_safe(&children);
+                    checkpoint["pendingOperationIds"] = json!(child_ids);
+                    // Persist the *effective* execution policy before the first
+                    // child starts: a restart must not misread a serial mutation
+                    // sequence as a concurrent set of independent reads.
+                    checkpoint["parallelMode"] = json!(if concurrent {"concurrent"} else {"sequential"});
+                    checkpoint["resolvedInputs"] = resolved.clone();
+                    if persist {
+                        save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint)?;
+                    }
+                    if !concurrent {
                         let mut paused = false;
                         for child in &children {
                             let frame = execute_nodes(

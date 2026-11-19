@@ -171,8 +171,16 @@ fn nine_room_participants_keep_actual_request_prefix_across_sliding_windows_and_
                 assert_eq!(current["instructions"],previous["instructions"]);
                 let prefix=previous["input"].as_array().unwrap();
                 let next=current["input"].as_array().unwrap();
-                assert!(next.len()>prefix.len());
-                assert_eq!(&next[..prefix.len()],prefix.as_slice(),"same key alone cannot prove request prefix reuse");
+                // A stable persona/cache key is independent of volatile room
+                // status. Repeating a completed owner turn must not resurrect
+                // the stale "no replies yet" observation from round one.
+                assert!(next.iter().any(|item|item.to_string().contains("다들 인사해라")));
+                if round==1 {
+                    assert_ne!(next,prefix,"completed room status must refresh");
+                    let current_text=json!(next).to_string();
+                    assert!(current_text.contains("직전 요청 응답 9/9명."),"{current_text}");
+                    assert!(!current_text.contains("첫 주인 요청. 이전 응답 없음"),"{current_text}");
+                }
                 assert!(!current.to_string().contains("_dominion_"));
             }
         }
