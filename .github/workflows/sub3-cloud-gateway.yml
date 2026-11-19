@@ -1,0 +1,50 @@
+name: Sub3 Cloud Gateway checks
+
+on:
+  push:
+    branches: [dominion-sub3]
+    paths:
+      - 'cloud/**'
+      - 'services/dominion-cloud/**'
+      - 'web/src/components/DominionCloudAccount.tsx'
+      - '.github/workflows/sub3-cloud-gateway.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sub3-cloud-gateway
+  cancel-in-progress: true
+
+jobs:
+  cloud:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Check Worker syntax and account gateway behavior (no deployment)
+        run: |
+          node --check cloud/src/index.js
+          node --test cloud/tests/*.test.mjs
+      - name: Validate isolated D1 schema and Wrangler configuration
+        run: |
+          python3 - <<'PY'
+          import pathlib,sqlite3,tomllib
+          config=tomllib.loads(pathlib.Path('cloud/wrangler.toml').read_text())
+          assert config['name']=='dominion-cloud-sub3'
+          d1=config['d1_databases'][0]
+          assert d1['database_name']=='dominion-cloud-sub3'
+          assert d1['database_id']!='edc9c387-310e-4660-aac7-db53f9da5d17', 'Refuse main production D1'
+          assert d1['database_id']=='REPLACE_WITH_SUB3_D1_DATABASE_ID', 'No staging database provisioned'
+          db=sqlite3.connect(':memory:')
+          db.executescript(pathlib.Path('cloud/schema.sql').read_text())
+          tables={r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+          required={'accounts','sessions','usage','free_quota','checkout_orders',
+                    'subscriptions','identity_verifications','identity_attempts'}
+          assert required.issubset(tables),required-tables
+          print('Sub3 cloud backend structure and DB schema OK; deployment intentionally disabled')
+          PY
