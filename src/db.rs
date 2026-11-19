@@ -104,6 +104,16 @@ pub struct Store {
 }
 
 impl Store {
+    /// Count records of any kind using the shared primary index, without
+    /// materializing their JSON. This generic SDK helper must not depend on
+    /// a removed optional feature module.
+    pub fn count_kind(&self, kind: &str) -> usize {
+        let Ok(conn) = self.conn.lock() else { return 0; };
+        conn.query_row("SELECT COUNT(*) FROM records WHERE kind=?1", [kind],
+            |row| row.get::<_, i64>(0))
+            .map(|n| n.max(0) as usize).unwrap_or(0)
+    }
+
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
