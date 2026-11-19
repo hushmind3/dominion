@@ -41,3 +41,17 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   current_period_end INTEGER,
   updated_at INTEGER NOT NULL
 );
+
+-- Provider-verified paid access; never store resident numbers or raw identity payloads.
+CREATE TABLE IF NOT EXISTS identity_verifications (
+ account_id TEXT PRIMARY KEY REFERENCES accounts(id),
+ provider TEXT NOT NULL,
+ verified_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS identity_attempts (
+ id TEXT PRIMARY KEY,
+ account_id TEXT NOT NULL REFERENCES accounts(id),
+ status TEXT NOT NULL CHECK(status IN ('pending','verified')),
+ created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS identity_attempts_account ON identity_attempts(account_id,created_at);
