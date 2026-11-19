@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS checkout_orders (
 CREATE INDEX IF NOT EXISTS checkout_orders_account ON checkout_orders(account_id,created_at);
 CREATE TABLE IF NOT EXISTS subscriptions (
   account_id TEXT PRIMARY KEY REFERENCES accounts(id),
-  plan TEXT NOT NULL CHECK (plan IN ('pro')),
-  valid_until INTEGER NOT NULL,
+  plan TEXT NOT NULL DEFAULT 'free' CHECK (plan IN ('free','pro')),
+  status TEXT NOT NULL DEFAULT 'inactive' CHECK (status IN ('inactive','active','past_due','canceled')),
+  current_period_end INTEGER,
   updated_at INTEGER NOT NULL
 );
