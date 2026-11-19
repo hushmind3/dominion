@@ -16,6 +16,7 @@ const clientId=import.meta.env.VITE_DOMINION_GOOGLE_CLIENT_ID||''
 export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initialProviderId,hideManagementNavigation=false}:{onProviderAdded:()=>Promise<unknown>;initialTab?:'cloud'|'providers';initialProviderId?:string;hideManagementNavigation?:boolean}) {
  const button=useRef<HTMLDivElement>(null)
  const [token,setToken]=useState(()=>sessionStorage.getItem('dominion_cloud_session')||'')
+ const [showLoginOptions,setShowLoginOptions]=useState(false)
  const [billing,setBilling]=useState<Billing|null>(null)
  const [showCheckout,setShowCheckout]=useState(false)
  const [billingMessage,setBillingMessage]=useState('')
@@ -61,7 +62,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
    const session=event.data.token
    if(typeof session!=='string'||!/^[A-Za-z0-9_-]{32,}$/.test(session))return
    sessionStorage.setItem('dominion_cloud_session',session)
-   setToken(session);setMessage(event.data.provider==='kakao'?'카카오 로그인 완료':'네이버 로그인 완료')
+   setToken(session);setShowLoginOptions(false);setMessage(event.data.provider==='kakao'?'카카오 로그인 완료':'네이버 로그인 완료')
    void Promise.all([fetchModels(session),loadBilling(session)]).catch(e=>setMessage((e as Error).message))
   }
   window.addEventListener('message',listener)
@@ -132,7 +133,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
      const data=await response.json() as {token:string}
      await Promise.all([fetchModels(data.token),loadBilling(data.token)])
      sessionStorage.setItem('dominion_cloud_session',data.token)
-     setToken(data.token);setMessage('도미니언 계정으로 연결됐습니다.')
+     setToken(data.token);setShowLoginOptions(false);setMessage('도미니언 계정으로 연결됐습니다.')
     }catch(error){setMessage((error as Error).message)}finally{setBusy(false)}
    }})
    window.google.accounts.id.renderButton(button.current,{theme:'outline',size:'large',text:'signin_with',width:240})
@@ -311,10 +312,19 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
   </div>}
   {managementTab==='cloud'&&<><strong className="text-[13px]">{token?'DOMINION Cloud · 내 계정':'DOMINION Cloud · 간편 로그인'}</strong>
   <p className="mt-1 text-[12px] text-[#7C7469]">{token?'로그인 상태입니다. Cloud 모델과 내 이용권을 관리할 수 있습니다.':'로그인 없이도 로컬 모델과 직접 등록한 API를 사용할 수 있습니다. Cloud 모델을 사용하려면 로그인하세요.'}</p>
-  {!token&&cloudUrl&&<div className="mt-3 flex flex-wrap items-center gap-2">
-   {clientId&&<div ref={button}/>}
-   <button type="button" onClick={()=>void openSocialLogin('kakao')} className="rounded-lg bg-[#FEE500] px-4 py-2 text-[12px] font-semibold text-[#191919]">카카오 로그인</button>
-   <button type="button" onClick={()=>void openSocialLogin('naver')} className="rounded-lg bg-[#03C75A] px-4 py-2 text-[12px] font-semibold text-white">네이버 로그인</button>
+  {!token&&cloudUrl&&<div className="mt-3">
+   <button type="button" onClick={()=>setShowLoginOptions(true)} className="rounded-lg bg-[#C96442] px-4 py-2 text-[12px] font-semibold text-white">가입 · 로그인</button>
+   {showLoginOptions&&<div role="dialog" aria-modal="true" aria-label="DOMINION 가입 및 로그인" className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={()=>setShowLoginOptions(false)}>
+    <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl" onClick={event=>event.stopPropagation()}>
+     <div className="flex items-center justify-between gap-3"><strong className="text-base">DOMINION 가입 · 로그인</strong><button type="button" onClick={()=>setShowLoginOptions(false)} aria-label="닫기" className="rounded-lg border px-3 py-1">닫기</button></div>
+     <p className="my-3 text-[12px] text-[#7C7469]">처음 인증하면 자동 가입됩니다. 로그인 없이도 로컬 모델과 개인 API를 사용할 수 있습니다.</p>
+     <div className="flex flex-col items-start gap-3">
+      {clientId&&<div ref={button}/>}
+      <button type="button" onClick={()=>void openSocialLogin('kakao')} className="w-full rounded-lg bg-[#FEE500] px-4 py-2 text-[12px] font-semibold text-[#191919]">카카오로 계속하기</button>
+      <button type="button" onClick={()=>void openSocialLogin('naver')} className="w-full rounded-lg bg-[#03C75A] px-4 py-2 text-[12px] font-semibold text-white">네이버로 계속하기</button>
+     </div>
+    </div>
+   </div>}
   </div>}
   {!cloudUrl&&<p className="mt-2 text-[12px] text-[#7C7469]">DOMINION Cloud 서버 주소가 설정되지 않았습니다.</p>}
   {token&&<div className="mt-3 flex flex-wrap items-center gap-2">
