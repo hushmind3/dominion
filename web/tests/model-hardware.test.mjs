@@ -51,13 +51,15 @@ test('local model format follows the actual Rust server, not the browser OS',()=
  const macMlx={available:true,installable:false}
  const macNeedsSetup={available:false,installable:true}
  const unavailable={available:false,installable:false}
- assert.equal(preferredServerModelFormat(undefined,undefined,macMlx),null)
- assert.equal(preferredServerModelFormat('win32','x86_64',macMlx),'gguf')
- assert.equal(preferredServerModelFormat('linux','aarch64',macMlx),'gguf')
- assert.equal(preferredServerModelFormat('macos','x86_64',macMlx),'gguf')
- assert.equal(preferredServerModelFormat('macos','aarch64',macMlx),'mlx')
- assert.equal(preferredServerModelFormat('macos','arm64',macNeedsSetup),'mlx')
- assert.equal(preferredServerModelFormat('macos','aarch64',unavailable),'gguf')
+ assert.equal(preferredServerModelFormat(undefined,undefined,macMlx,{available:false}),null)
+ assert.equal(preferredServerModelFormat('win32','x86_64',macMlx,{available:false}),'gguf')
+ assert.equal(preferredServerModelFormat('linux','aarch64',macMlx,{available:false}),'gguf')
+ assert.equal(preferredServerModelFormat('macos','x86_64',macMlx,{available:false}),'gguf')
+ assert.equal(preferredServerModelFormat('macos','aarch64',macMlx,{available:false}),'mlx')
+ assert.equal(preferredServerModelFormat('macos','arm64',macNeedsSetup,{available:false}),'mlx')
+ assert.equal(preferredServerModelFormat('macos','aarch64',unavailable,{available:false}),'gguf')
+ assert.equal(preferredServerModelFormat('macos','aarch64',macNeedsSetup,{available:true}),'gguf')
+ assert.equal(preferredServerModelFormat('macos','aarch64',macMlx,{available:true}),'mlx')
 })
 test('model format selection uses runtime capabilities and preserves manual choices',()=>{
  const source=readFileSync(new URL('../src/components/ModelExplorer.tsx',import.meta.url),'utf8')
