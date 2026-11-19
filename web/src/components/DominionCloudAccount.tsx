@@ -2,6 +2,9 @@ import {useEffect,useRef,useState} from 'react'
 import {get,post} from '../api'
 
 type GoogleResponse={credential:string}
+type IdentityStatus={verified:boolean;verified_at:number|null;provider:string|null}
+type PortOneSdk={requestIdentityVerification:(options:Record<string,unknown>)=>Promise<{code?:string;message?:string}>}
+declare global {interface Window {PortOne?:PortOneSdk}}
 type Billing={plan:string;valid_until:number|null;pro_price_krw:number|null;checkout_enabled:boolean;toss_client_key:string|null;free_daily_limit:number;free_daily_used:number;free_daily_remaining:number;free_quota_reset_utc:string}
 type TossPayment={requestPayment:(args:{method:string;amount:{currency:string;value:number};orderId:string;orderName:string;successUrl:string;failUrl:string})=>Promise<void>}
 declare global {interface Window {TossPayments?:(key:string)=>{payment:(args:{customerKey:string})=>TossPayment}}}
@@ -18,6 +21,8 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
  const [token,setToken]=useState(()=>sessionStorage.getItem('dominion_cloud_session')||'')
  const [showLoginOptions,setShowLoginOptions]=useState(false)
  const [billing,setBilling]=useState<Billing|null>(null)
+ const [identity,setIdentity]=useState<IdentityStatus|null>(null)
+ const [identityBusy,setIdentityBusy]=useState(false)
  const [showCheckout,setShowCheckout]=useState(false)
  const [billingMessage,setBillingMessage]=useState('')
  const [billingBusy,setBillingBusy]=useState(false)
@@ -72,9 +77,32 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
   const response=await fetch(cloudUrl+'/v1/billing',{headers:{Authorization:'Bearer '+session}})
   if(!response.ok)throw Error('구독 정보를 불러오지 못했습니다.')
   setBilling(await response.json())
+  const identityResponse=await fetch(cloudUrl+'/v1/identity',{headers:{Authorization:'Bearer '+session}})
+  if(identityResponse.ok)setIdentity(await identityResponse.json())
+ }
+ async function verifyIdentity(){
+  if(!token||identityBusy)return
+  setIdentityBusy(true);setBillingMessage('')
+  try{
+   const start=await fetch(cloudUrl+'/v1/identity/start',{method:'POST',headers:{Authorization:'Bearer '+token}})
+   const config=await start.json() as {identityVerificationId?:string;storeId?:string;channelKey?:string;error?:string}
+   if(!start.ok||!config.identityVerificationId||!config.storeId||!config.channelKey)throw Error(config.error||'본인확인 설정을 확인해 주세요.')
+   if(!window.PortOne){
+    const script=document.createElement('script');script.src='https://cdn.portone.io/v2/browser-sdk.js'
+    await new Promise<void>((resolve,reject)=>{script.onload=()=>resolve();script.onerror=()=>reject(Error('본인확인 창을 불러오지 못했습니다.'));document.head.appendChild(script)})
+   }
+   if(!window.PortOne)throw Error('본인확인 SDK를 사용할 수 없습니다.')
+   const result=await window.PortOne.requestIdentityVerification({storeId:config.storeId,channelKey:config.channelKey,identityVerificationId:config.identityVerificationId})
+   if(result.code)throw Error(result.message||'본인확인이 취소되었거나 실패했습니다.')
+   const confirm=await fetch(cloudUrl+'/v1/identity/confirm',{method:'POST',headers:{Authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({identityVerificationId:config.identityVerificationId})})
+   if(!confirm.ok)throw Error('본인확인 결과를 검증하지 못했습니다.')
+   setIdentity({verified:true,verified_at:Math.floor(Date.now()/1000),provider:'portone'})
+   setBillingMessage('본인확인이 완료됐습니다.')
+  }catch(e){setBillingMessage((e as Error).message)}finally{setIdentityBusy(false)}
  }
  async function startCheckout(){
   if(!token||!billing?.checkout_enabled)return
+  if(!identity?.verified){setBillingMessage('유료 결제 전에 본인확인을 완료해 주세요.');return}
   setBillingBusy(true);setBillingMessage('')
   try{
    const response=await fetch(cloudUrl+'/v1/billing/checkout',{method:'POST',headers:{Authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({plan:'pro'})})
@@ -142,7 +170,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
   return()=>{active=false;script.remove()}
  },[])
  function logout(){
-  sessionStorage.removeItem('dominion_cloud_session');setBilling(null);setToken('');setModels([]);setSelected('');setModelSearch('');setMessage('DOMINION Cloud에서 로그아웃했습니다.');
+  sessionStorage.removeItem('dominion_cloud_session');setIdentity(null);setBilling(null);setToken('');setModels([]);setSelected('');setModelSearch('');setMessage('DOMINION Cloud에서 로그아웃했습니다.');
   window.google?.accounts.id.disableAutoSelect?.()
  }
  async function loadCatalog(){
@@ -341,6 +369,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
   {token&&<div className="mt-3 rounded-xl border border-[#E7E0D5] bg-white p-3 text-[12px]">
    <div className="flex flex-wrap items-center justify-between gap-2"><span>내 구독: <strong>{billing?.plan==='pro'?'Pro':'무료'}</strong>{billing?.valid_until&&billing.plan==='pro'?' · 만료 '+new Date(billing.valid_until*1000).toLocaleDateString('ko-KR'):''}</span>
     <button type="button" className="rounded-lg border px-3 py-2" onClick={()=>setShowCheckout(true)}>요금제 · 결제</button></div>
+   <div className="mt-2 flex flex-wrap items-center gap-2"><span className="text-[#7C7469]">유료 API 본인확인: {identity?.verified?'완료':'미완료'}</span>{!identity?.verified&&<button type="button" disabled={identityBusy} onClick={()=>void verifyIdentity()} className="rounded-lg border px-3 py-2">{identityBusy?'인증 진행 중…':'PASS · 간편 본인확인'}</button>}</div>
    {billingMessage&&<p role="status" className="mt-2">{billingMessage}</p>}
   </div>}
   {token&&billing&&<p className="mt-2 text-[12px] text-[#7C7469]" role="status">DOMINION 무료 AI: 오늘 {billing.free_daily_used ?? 0} / {billing.free_daily_limit ?? 20}회 사용 · 남은 {billing.free_daily_remaining ?? 0}회 (매일 오전 9시 KST 초기화)</p>}
