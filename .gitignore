@@ -1,13 +1,13 @@
-/target
-/runtime
-/runtime-test
-web/node_modules
-web/dist
+node_modules/
+dist/
+release/
+.env
+.env.*
+!.env.example
+runtime/
+workspace/
 *.log
 .DS_Store
-/bench
-
-.dominion/
-
-# TypeScript incremental compiler artifacts
 *.tsbuildinfo
+coverage/
+playwright-report/

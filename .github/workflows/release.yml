@@ -1,127 +1,133 @@
-name: Windows and macOS native desktop release
+name: Build desktop installers
 
 on:
-  workflow_dispatch:
   push:
-    branches: [main]
-    tags: ['v*']
-    paths:
-      - 'Cargo.toml'
-      - 'src-tauri/tauri.conf.json'
-      - '.github/workflows/release.yml'
+    tags:
+      - 'v*'
+  workflow_dispatch:
 
 permissions:
-  contents: read
-
-concurrency:
-  group: native-release-${{ github.ref }}
-  cancel-in-progress: false
+  contents: write
 
 jobs:
-  desktop:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-15
-            target: aarch64-apple-darwin
-            bundles: app,dmg
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
-            bundles: app,dmg
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            bundles: nsis,msi
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 120
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '24.12.0'
           cache: npm
-          cache-dependency-path: web/package-lock.json
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            . -> target/desktop-engine
-            src-tauri -> target
-      - name: Restore frontend toolchain
-        run: npm ci --prefix web --no-audit --no-fund
-      - name: Cross-platform source and frontend contracts
-        run: |
-          node scripts/check-runtime-architecture.mjs
-          node scripts/check-retired-domains.mjs
-          node scripts/check-release-contract.mjs
-          npm run typecheck --prefix web
-          npm run build --prefix web
-      - name: Rust runtime regression and end-to-end suite
-        if: matrix.target != 'x86_64-apple-darwin'
-        run: cargo test --locked --workspace --release
-      - name: Shared kernel regression for Intel release
-        if: matrix.target == 'x86_64-apple-darwin'
-        run: cargo test --locked -p dominion-core --lib
-      - name: Build Rust sidecar and native installers
-        run: node scripts/build-desktop.mjs --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+          cache-dependency-path: package-lock.json
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Build React UI
+        run: npm run build
+      - name: Package Windows installer and portable
+        run: npx electron-builder --win --x64 --publish never
         env:
-          CI: 'true'
-      - name: Store platform installers for release gate
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Smoke test unpacked packaged app
+        shell: pwsh
+        run: |
+          $out = Join-Path $PWD 'smoke-unpacked.json'
+          $env:DOMINION_SMOKE='1'
+          $env:DOMINION_SMOKE_OUT=$out
+          $p = Start-Process -FilePath '.\release\win-unpacked\DOMINION.exe' -ArgumentList '--smoke' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Unpacked smoke exited $($p.ExitCode)" }
+          Get-Content $out -Raw
+          $result = Get-Content $out -Raw | ConvertFrom-Json
+          if (-not $result.ok) { throw 'Unpacked smoke failed' }
+      - name: Silent install and smoke test installed app
+        shell: pwsh
+        run: |
+          $installer = '.\release\DOMINION-Setup.exe'
+          $p = Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Installer exited $($p.ExitCode)" }
+          $exe = Join-Path $env:LOCALAPPDATA 'Programs\DOMINION\DOMINION.exe'
+          if (-not (Test-Path $exe)) { throw "Installed executable missing: $exe" }
+          $out = Join-Path $PWD 'smoke-installed.json'
+          $env:DOMINION_SMOKE='1'
+          $env:DOMINION_SMOKE_OUT=$out
+          $p = Start-Process -FilePath $exe -ArgumentList '--smoke' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Installed smoke exited $($p.ExitCode)" }
+          Get-Content $out -Raw
+          $result = Get-Content $out -Raw | ConvertFrom-Json
+          if (-not $result.ok) { throw 'Installed smoke failed' }
+      - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: dominion-${{ matrix.target }}
-          if-no-files-found: error
-          retention-days: 14
+          name: dominion-windows
           path: |
-            src-tauri/target/**/bundle/dmg/*.dmg
-            src-tauri/target/**/bundle/nsis/*.exe
-            src-tauri/target/**/bundle/msi/*.msi
+            release/DOMINION-Setup.exe
+            release/DOMINION-Portable.exe
+          if-no-files-found: error
 
-  release:
-    needs: [desktop]
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: write
+  macos:
+    runs-on: macos-14
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: dominion-*
-          merge-multiple: true
-          path: release-artifacts
-      - name: Validate installers and generate checksums
-        id: meta
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
-          tag="v${version}"
-          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "${tag}" ]]; then
-            echo "Tag and package version disagree: ${GITHUB_REF_NAME} vs ${tag}" >&2
-            exit 1
-          fi
-          test "$(find release-artifacts -name '*.dmg' -type f | wc -l)" -ge 2
-          test "$(find release-artifacts -name '*.msi' -type f | wc -l)" -ge 1
-          test "$(find release-artifacts -name '*.exe' -type f | wc -l)" -ge 1
-          (cd release-artifacts; find . -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.msi' \) -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt)
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-      - name: Publish verified Windows and macOS installers
-        shell: bash
+          node-version: '24.12.0'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Build React UI
+        run: npm run build
+      - name: Package macOS DMGs (arm64 + x64, unsigned)
+        run: npx electron-builder --mac --x64 --arm64 --publish never
         env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Verify DMGs by mounting and smoke testing
         run: |
-          set -euo pipefail
-          gh release view "$RELEASE_TAG" >/dev/null 2>&1 || gh release create "$RELEASE_TAG" \
-            --target "$GITHUB_SHA" --draft --title "DOMINION $RELEASE_TAG" \
-            --notes "Verified native Rust/Tauri desktop installers for Windows x64, macOS ARM64 and macOS x64. Unsigned builds; check SHA256SUMS.txt."
-          while IFS= read -r -d '' file; do
-            gh release upload "$RELEASE_TAG" "$file" --clobber
-          done < <(find release-artifacts -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.msi' -o -name 'SHA256SUMS.txt' \) -print0)
-          gh release edit "$RELEASE_TAG" --draft=false
+          set -e
+          for arch in arm64 x64; do
+            dmg=$(ls release/DOMINION-*-${arch}.dmg | head -n1)
+            test -f "$dmg"
+            mount="/tmp/dominion-${arch}"
+            rm -rf "$mount" "/tmp/DOMINION-${arch}.app"
+            mkdir -p "$mount"
+            hdiutil attach "$dmg" -nobrowse -mountpoint "$mount"
+            cp -R "$mount/DOMINION.app" "/tmp/DOMINION-${arch}.app"
+            hdiutil detach "$mount"
+            xattr -dr com.apple.quarantine "/tmp/DOMINION-${arch}.app" || true
+            DOMINION_SMOKE=1 DOMINION_SMOKE_OUT="/tmp/smoke-${arch}.json" \
+              "/tmp/DOMINION-${arch}.app/Contents/MacOS/DOMINION" --smoke
+            cat "/tmp/smoke-${arch}.json"
+            node -e "const x=require('/tmp/smoke-${arch}.json'); if(!x.ok)process.exit(1)"
+          done
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dominion-macos
+          path: release/*.dmg
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dominion-windows
+          path: artifacts/windows
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dominion-macos
+          path: artifacts/macos
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/windows/DOMINION-Setup.exe
+            artifacts/windows/DOMINION-Portable.exe
+            artifacts/macos/*.dmg
+          fail_on_unmatched_files: true
