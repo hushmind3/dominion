@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/sub3-rust-sdk-check.yml'
       - 'crates/dominion-agent-sdk/**'
+      - 'sdk/rust/**'
       - 'src/api/jobs.rs'
       - 'src/api/sdk_runs.rs'
       - 'src/engine/native_agent.rs'
@@ -46,12 +47,13 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: SDK kernel and replay Rust tests (dev profile only)
         run: |
           cargo test -p dominion-agent-sdk --lib
+          cargo test -p dominion-sdk --lib
           cargo test --bin dominion-rust engine::native_evidence::tests
           cargo test -p dominion-agent-sdk --test kernel_replanning
           cargo test --bin dominion-rust engine::chat::kernel_bridge::tests

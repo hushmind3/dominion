@@ -4,6 +4,7 @@
 // older main intentionally exposes features this product no longer carries.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import {execFileSync} from 'node:child_process';
 const read=p=>fs.readFileSync(p,'utf8');
 const exists=p=>fs.existsSync(p);
 const absent=[
@@ -16,6 +17,23 @@ const absent=[
  'scripts/rsi-lab.mjs','scripts/rsi-measure.mjs',
  'crates/harness'
 ];
+// Prevent retired-domain code, clients and docs from silently returning.
+// Assemble the forbidden identifiers, rather than introducing them into
+// the source that the scanner itself inspects.
+const retiredTerms=[['mo','ney'].join(''),['머','니'].join(''),['돈','벌'].join('')];
+const tracked=execFileSync('git',['ls-files','-z'],{
+ encoding:'utf8',maxBuffer:4*1024*1024
+}).split('\0').filter(Boolean);
+for(const file of tracked){
+ const lowered=file.toLocaleLowerCase();
+ assert.ok(!retiredTerms.some(term=>lowered.includes(term)),
+  'Retired domain filename reintroduced: '+file);
+ if(!/\.(rs|ts|tsx|js|mjs|cjs|json|md|toml|yml|yaml|sh)$/i.test(file))continue;
+ if(!exists(file))continue;
+ const content=read(file).toLocaleLowerCase();
+ assert.ok(!retiredTerms.some(term=>content.includes(term)),
+  'Retired domain reference reintroduced: '+file);
+}
 for(const p of absent)assert.ok(!exists(p),'Retired built-in product feature still exists: '+p);
 for(const p of fs.readdirSync('src/engine').filter(p=>/^rsi.*\.rs$/.test(p))){
  assert.fail('Live Rust RSI engine module survived retirement: '+p);
