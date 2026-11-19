@@ -2,7 +2,7 @@ import {useEffect,useRef,useState} from 'react'
 import {get,post} from '../api'
 
 type GoogleResponse={credential:string}
-type Billing={plan:string;valid_until:number|null;pro_price_krw:number|null;checkout_enabled:boolean;toss_client_key:string|null}
+type Billing={plan:string;valid_until:number|null;pro_price_krw:number|null;checkout_enabled:boolean;toss_client_key:string|null;free_daily_limit:number;free_daily_used:number;free_daily_remaining:number;free_quota_reset_utc:string}
 type TossPayment={requestPayment:(args:{method:string;amount:{currency:string;value:number};orderId:string;orderName:string;successUrl:string;failUrl:string})=>Promise<void>}
 declare global {interface Window {TossPayments?:(key:string)=>{payment:(args:{customerKey:string})=>TossPayment}}}
 type GoogleIdentity={accounts:{id:{initialize:(config:{client_id:string;callback:(response:GoogleResponse)=>void})=>void;renderButton:(element:HTMLElement,options:Record<string,unknown>)=>void;disableAutoSelect?:()=>void}}}
@@ -16,7 +16,7 @@ const clientId=import.meta.env.VITE_DOMINION_GOOGLE_CLIENT_ID||''
 export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initialProviderId,hideManagementNavigation=false}:{onProviderAdded:()=>Promise<unknown>;initialTab?:'cloud'|'providers';initialProviderId?:string;hideManagementNavigation?:boolean}) {
  const button=useRef<HTMLDivElement>(null)
  const [token,setToken]=useState(()=>sessionStorage.getItem('dominion_cloud_session')||'')
- const [billing,setBilling]=useState<{plan:string;valid_until:number|null;pro_price_krw:number|null;checkout_enabled:boolean;toss_client_key:string|null}|null>(null)
+ const [billing,setBilling]=useState<Billing|null>(null)
  const [showCheckout,setShowCheckout]=useState(false)
  const [billingMessage,setBillingMessage]=useState('')
  const [billingBusy,setBillingBusy]=useState(false)
@@ -333,6 +333,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
     <button type="button" className="rounded-lg border px-3 py-2" onClick={()=>setShowCheckout(true)}>요금제 · 결제</button></div>
    {billingMessage&&<p role="status" className="mt-2">{billingMessage}</p>}
   </div>}
+  {token&&billing&&<p className="mt-2 text-[12px] text-[#7C7469]" role="status">DOMINION 무료 AI: 오늘 {billing.free_daily_used ?? 0} / {billing.free_daily_limit ?? 20}회 사용 · 남은 {billing.free_daily_remaining ?? 0}회 (매일 오전 9시 KST 초기화)</p>}
   {token&&showCheckout&&<div role="dialog" aria-modal="true" aria-label="DOMINION 구독 결제" className="mt-3 rounded-xl border border-[#E7E0D5] bg-white p-4">
    <div className="flex items-center justify-between"><strong>DOMINION Pro · 구독 결제</strong><button type="button" onClick={()=>setShowCheckout(false)}>닫기</button></div>
    <p className="mt-2 text-[12px]">무료 플랜은 계속 이용할 수 있습니다. Pro는 결제일부터 30일 이용권이며 자동 갱신되지 않습니다.</p>
