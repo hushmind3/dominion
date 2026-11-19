@@ -135,7 +135,14 @@ function proPrice(env) {
 }
 async function billingSummary(env, user) {
   const subscription = await env.DB.prepare('SELECT plan,status,current_period_end FROM subscriptions WHERE account_id=?').bind(user.id).first();
+  const freeDailyLimit = Math.max(1, Math.min(1000, Number(env.FREE_DAILY_LIMIT || 20)));
+  const quotaDay = new Date().toISOString().slice(0, 10);
+  const freeUsage = await env.DB.prepare('SELECT used FROM free_quota WHERE account_day=?').bind(user.id + ':' + quotaDay).first();
   return json({
+    free_daily_limit: freeDailyLimit,
+    free_daily_used: Math.min(freeDailyLimit, freeUsage?.used || 0),
+    free_daily_remaining: Math.max(0, freeDailyLimit - (freeUsage?.used || 0)),
+    free_quota_reset_utc: quotaDay + 'T00:00:00Z',
     plan: subscription?.status === 'active' && subscription?.current_period_end > now() ? subscription.plan : 'free',
     valid_until: subscription?.current_period_end || null,
     pro_price_krw: proPrice(env),
