@@ -26,8 +26,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Check Cloud Worker syntax
-        run: node --check cloud/src/index.js
+      - name: Check Cloud Worker and email identity syntax
+        run: |
+          node --check cloud/src/index.js
+          node --check cloud/src/email_auth.js
+      - name: Verify email magic-link security and D1 claim transactions
+        run: node --test cloud/tests/email-auth.test.mjs
       - name: Validate SQL and Worker configuration
         run: |
           python3 - <<'PY'
