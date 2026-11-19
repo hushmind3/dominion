@@ -1660,6 +1660,7 @@ pub fn runtime_snapshot(state: &AppState) -> Value {
         "capabilities": {
             "gguf": { "available": lms_bin().is_some() || llama_server_bin_for(state).is_some(), "backend": "llama.cpp", "installable": llama_installable(state), "path": llama_server_bin_for(state).map(|path| path.to_string_lossy().to_string()), "installMethod": if cfg!(target_os="macos") && brew_bin().is_some() { "homebrew" } else { "release" } },
             "mlx": mlx_runtime_snapshot(state),
+            "lmstudio": { "available": lms_bin().is_some() },
             "memory": {
                 "total": total_memory,
                 "free": free_memory,
