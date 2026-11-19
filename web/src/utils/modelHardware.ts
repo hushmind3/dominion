@@ -44,3 +44,16 @@ export function planDownloadLaunch(status:string|undefined,installed:boolean):La
  if(status==='paused'||status==='failed'||status==='cancelled')return 'resume'
  return 'start'
 }
+
+export type ServerModelFormat='gguf'|'mlx'
+export function preferredServerModelFormat(
+ platform:string|undefined,
+ arch:string|undefined,
+ mlx:{available?:boolean;installable?:boolean}|null|undefined
+):ServerModelFormat|null{
+ if(!platform)return null
+ // MLX targets Apple Silicon on the machine running the Rust model server.
+ // A Mac browser connected to a Windows/Linux server must use the server.
+ const appleSilicon=platform==='macos'&&(arch==='aarch64'||arch==='arm64')
+ return appleSilicon&&(mlx?.available===true||mlx?.installable===true)?'mlx':'gguf'
+}
