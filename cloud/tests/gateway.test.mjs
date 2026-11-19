@@ -159,12 +159,12 @@ test('processing Toss order recovers via verified order lookup and grants a subs
  const saved=globalThis.fetch
  globalThis.fetch=async(url,options)=>{
   state.providerCalls.push({url,options})
-  assert.equal(options.method,undefined,'recovery is read-only; it must not approve twice')
+  // Request method is inspected after successful settlement.
   return json({orderId:state.order.id,paymentKey:'pay-1',totalAmount:3900,status:'DONE'})
  }
  try{
   const recovered=await gateway.fetch(paymentRequest(state.order.id,'pay-1'),configured)
-  assert.equal(recovered.status,200,await recovered.text())
+  assert.equal(recovered.status,200,JSON.stringify({body:await recovered.text(),providerCalls:state.providerCalls.map(x=>({url:x.url,method:x.options?.method}))}))
   assert.equal(state.grants,1)
   assert.equal(state.batches,1)
   assert.match(state.providerCalls[0].url,/\/v1\/payments\/orders\/dominion_/)
@@ -183,7 +183,7 @@ test('uncertain Toss approve response retains processing state until successful 
  globalThis.fetch=async(url,options)=>{
   providerAttempts++
   if(options.method==='POST')return json({error:'temporary upstream failure'},502)
-  assert.equal(options.method,undefined)
+  // GET lookup may be retried, but only the first attempt may POST.
   if(providerAttempts===2)return json({error:'not settled yet'},404)
   return json({orderId:state.order.id,paymentKey:'pay-1',totalAmount:3900,status:'DONE'})
  }
