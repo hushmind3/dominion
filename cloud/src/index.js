@@ -61,6 +61,66 @@ async function login(request, env) {
   return json({ token, expires_in: 7 * 86400, account_id: id });
 }
 
+// Checkout amounts are set by the operator, never trusted from a browser.
+function proPrice(env) {
+  const amount = Number(env.PLAN_PRO_KRW);
+  return Number.isSafeInteger(amount) && amount >= 100 && amount <= 10000000 ? amount : null;
+}
+async function billingSummary(env, user) {
+  const subscription = await env.DB.prepare('SELECT plan,valid_until FROM subscriptions WHERE account_id=?').bind(user.id).first();
+  return json({
+    plan: subscription?.valid_until > now() ? subscription.plan : 'free',
+    valid_until: subscription?.valid_until || null,
+    pro_price_krw: proPrice(env),
+    checkout_enabled: Boolean(proPrice(env) && env.TOSS_CLIENT_KEY && env.TOSS_SECRET_KEY),
+    toss_client_key: proPrice(env) && env.TOSS_SECRET_KEY ? (env.TOSS_CLIENT_KEY || null) : null
+  });
+}
+async function checkout(request, env, user) {
+  if (!env.TOSS_CLIENT_KEY || !env.TOSS_SECRET_KEY || !proPrice(env)) return err('Test checkout not configured', 503);
+  const body = await maxBody(request);
+  if (body.plan !== 'pro') return err('Unknown plan');
+  const orderId = 'dominion_' + crypto.randomUUID().replace(/-/g, '');
+  const amount = proPrice(env);
+  await env.DB.prepare('INSERT INTO checkout_orders(id,account_id,plan,amount_krw,status,created_at) VALUES(?,?,?,?,?,?)')
+    .bind(orderId, user.id, 'pro', amount, 'pending', now()).run();
+  return json({ orderId, amount, orderName: 'DOMINION Pro 30일', customerKey: await hash(user.id), clientKey: env.TOSS_CLIENT_KEY });
+}
+async function confirmCheckout(request, env, user) {
+  if (!env.TOSS_SECRET_KEY) return err('Checkout not configured', 503);
+  const { orderId, paymentKey, amount } = await maxBody(request);
+  if (typeof orderId !== 'string' || !/^dominion_[a-f0-9]{32}$/.test(orderId) ||
+      typeof paymentKey !== 'string' || paymentKey.length > 200 ||
+      !Number.isSafeInteger(amount)) return err('Invalid payment confirmation');
+  const order = await env.DB.prepare('SELECT * FROM checkout_orders WHERE id=? AND account_id=?').bind(orderId,user.id).first();
+  if (!order || order.amount_krw !== amount) return err('Order not found or amount mismatch', 403);
+  if (order.status === 'paid') return order.payment_key === paymentKey ? json({status:'paid',orderId}) : err('Payment mismatch',409);
+  if (order.status !== 'pending') return err('Payment already being processed',409);
+  const locked = await env.DB.prepare("UPDATE checkout_orders SET status='processing' WHERE id=? AND account_id=? AND status='pending' RETURNING id").bind(orderId,user.id).first();
+  if (!locked) return err('Payment already being processed',409);
+  try {
+    const basic = btoa(env.TOSS_SECRET_KEY + ':');
+    const response = await fetch('https://api.tosspayments.com/v1/payments/confirm',{
+      method:'POST',headers:{authorization:'Basic '+basic,'content-type':'application/json','Idempotency-Key':orderId},
+      body:JSON.stringify({paymentKey,orderId,amount}),signal:AbortSignal.timeout(15000)
+    });
+    const result = await response.json();
+    if (!response.ok || result.orderId !== orderId || result.totalAmount !== amount || result.status !== 'DONE') {
+      await env.DB.prepare("UPDATE checkout_orders SET status='failed' WHERE id=? AND status='processing'").bind(orderId).run();
+      return err('Payment was not approved',502);
+    }
+    // One transaction: grant exactly one subscription period after verified payment.
+    await env.DB.batch([
+      env.DB.prepare("UPDATE checkout_orders SET status='paid',payment_key=?,paid_at=? WHERE id=? AND account_id=? AND status='processing'").bind(paymentKey,now(),orderId,user.id),
+      env.DB.prepare("INSERT INTO subscriptions(account_id,plan,valid_until,updated_at) VALUES(?,'pro',?,?) ON CONFLICT(account_id) DO UPDATE SET plan='pro',valid_until=MAX(subscriptions.valid_until,?)+2592000,updated_at=?")
+        .bind(user.id,now()+2592000,now(),now(),now())
+    ]);
+    return json({status:'paid',orderId});
+  } catch {
+    // Timeout may mean the provider approved payment: preserve processing for reconciliation.
+    return err('Payment status pending verification; contact support with order ID',503);
+  }
+}
 const builtinModels = [
   { id: '@cf/meta/llama-3.1-8b-instruct-fast', name: 'Llama 3.1 8B Fast', free: true, backend: 'workers-ai' },
   { id: '@cf/meta/llama-3.2-3b-instruct', name: 'Llama 3.2 3B', free: true, backend: 'workers-ai' }
@@ -316,7 +376,16 @@ export default {
             current_period_end: subscription?.current_period_end || null, payments: payments.results || [] });
         }
       }
-      else if (path === '/v1/me' && request.method === 'GET') {
+      else if (path === '/v1/billing' && request.method === 'GET') {
+        const user = await account(request, env);
+        response = user ? await billingSummary(env, user) : err('Unauthorized',401);
+      } else if (path === '/v1/billing/checkout' && request.method === 'POST') {
+        const user = await account(request, env);
+        response = user ? await checkout(request,env,user) : err('Unauthorized',401);
+      } else if (path === '/v1/billing/confirm' && request.method === 'POST') {
+        const user = await account(request, env);
+        response = user ? await confirmCheckout(request,env,user) : err('Unauthorized',401);
+      } else if (path === '/v1/me' && request.method === 'GET') {
         const user = await account(request, env);
         response = user ? json({ account_id: user.id, credits_micro_krw: user.credits }) : err('Unauthorized', 401);
       } else if (path === '/v1/chat/completions' && request.method === 'POST') {
