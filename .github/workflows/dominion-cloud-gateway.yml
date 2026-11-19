@@ -1,0 +1,33 @@
+name: DOMINION Cloud Gateway
+on:
+  push:
+    paths:
+      - 'cloud/**'
+      - 'web/src/components/DominionCloudAccount.tsx'
+      - '.github/workflows/dominion-cloud-gateway.yml'
+  pull_request:
+    paths:
+      - 'cloud/**'
+      - 'web/src/components/DominionCloudAccount.tsx'
+      - '.github/workflows/dominion-cloud-gateway.yml'
+jobs:
+  gateway:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate Cloudflare Worker syntax
+        run: node --check cloud/src/index.js
+      - name: Verify service routing and budget guard
+        run: |
+          node --input-type=module <<'EOF'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const code=fs.readFileSync('cloud/src/index.js','utf8');
+          for(const marker of ['function paidModels(env)', 'async function routeCompletion(', 'async function availableModels(', 'Operator daily paid budget must be configured', "path === '/v1/models'", "path === '/v1/chat/completions'"]) {
+            assert.ok(code.includes(marker), 'Missing gateway feature: '+marker);
+          }
+          assert.equal((code.match(/const modelFailures = new Map\(\)/g)||[]).length,1,'Duplicate model circuit breaker');
+          EOF
