@@ -119,3 +119,96 @@ test('unprovisioned Worker is unavailable rather than accepting model traffic',a
  const response=await gateway.fetch(endpoint('/v1/models'),{ALLOWED_ORIGIN:appOrigin})
  assert.equal(response.status,503)
 })
+
+const paymentRequest=(orderId,paymentKey,amount=3900)=>endpoint('/v1/billing/confirm',{
+ method:'POST',headers:{Origin:appOrigin,Authorization:'Bearer '+bearer,'Content-Type':'application/json'},
+ body:JSON.stringify({orderId,paymentKey,amount})
+})
+function paymentFixture(status='processing'){
+ const order={id:'dominion_'+'a'.repeat(32),account_id:'google:fixture',amount_krw:3900,status,payment_key:null}
+ const state={order,grants:0,batches:0,providerCalls:[]}
+ const DB={
+  prepare(sql){return {bind(...values){
+   const first=async()=>{
+    if(sql.includes('FROM sessions s JOIN accounts'))return {id:order.account_id,credits:0}
+    if(sql.startsWith('SELECT * FROM checkout_orders'))return {...order}
+    if(sql.startsWith('SELECT status,payment_key FROM checkout_orders'))return {status:order.status,payment_key:order.payment_key}
+    if(sql.startsWith("UPDATE checkout_orders SET status='processing'")){
+     if(order.status!=='pending')return null
+     order.status='processing';return {id:order.id}
+    }
+    throw Error('unexpected D1 first: '+sql)
+   }
+   return {sql,values,first,run:async()=>{throw Error('unexpected D1 run: '+sql)}}
+  }}},
+  async batch(statements){
+   state.batches++
+   assert.equal(statements.length,2)
+   assert.match(statements[0].sql,/status='paid'.*status='processing'/)
+   assert.match(statements[1].sql,/WHERE changes\(\)=1/)
+   if(order.status==='processing'){
+    order.status='paid';order.payment_key=statements[0].values[0];state.grants++
+   }
+   return [{success:true},{success:true}]
+  }
+ }
+ return {state,env:env({TOSS_SECRET_KEY:'test_secret',DB})}
+}
+test('processing Toss order recovers via verified order lookup and grants a subscription once',async()=>{
+ const {state,env:configured}=paymentFixture('processing')
+ const saved=globalThis.fetch
+ globalThis.fetch=async(url,options)=>{
+  state.providerCalls.push({url,options})
+  assert.equal(options.method,undefined,'recovery is read-only; it must not approve twice')
+  return json({orderId:state.order.id,paymentKey:'pay-1',totalAmount:3900,status:'DONE'})
+ }
+ try{
+  const recovered=await gateway.fetch(paymentRequest(state.order.id,'pay-1'),configured)
+  assert.equal(recovered.status,200,await recovered.text())
+  assert.equal(state.grants,1)
+  assert.equal(state.batches,1)
+  assert.match(state.providerCalls[0].url,/\/v1\/payments\/orders\/dominion_/)
+  const repeated=await gateway.fetch(paymentRequest(state.order.id,'pay-1'),configured)
+  assert.equal(repeated.status,200)
+  assert.equal(state.grants,1,'paid repeat must not extend subscription')
+  const wrongKey=await gateway.fetch(paymentRequest(state.order.id,'wrong-key'),configured)
+  assert.equal(wrongKey.status,409)
+  assert.equal(state.grants,1)
+ }finally{globalThis.fetch=saved}
+})
+test('uncertain Toss approve response retains processing state until successful read-only recovery',async()=>{
+ const {state,env:configured}=paymentFixture('pending')
+ const saved=globalThis.fetch
+ let providerAttempts=0
+ globalThis.fetch=async(url,options)=>{
+  providerAttempts++
+  if(options.method==='POST')return json({error:'temporary upstream failure'},502)
+  assert.equal(options.method,undefined)
+  if(providerAttempts===2)return json({error:'not settled yet'},404)
+  return json({orderId:state.order.id,paymentKey:'pay-1',totalAmount:3900,status:'DONE'})
+ }
+ try{
+  const initial=await gateway.fetch(paymentRequest(state.order.id,'pay-1'),configured)
+  assert.equal(initial.status,503)
+  assert.equal(state.order.status,'processing')
+  assert.equal(state.grants,0)
+  const stillPending=await gateway.fetch(paymentRequest(state.order.id,'pay-1'),configured)
+  assert.equal(stillPending.status,503)
+  assert.equal(state.order.status,'processing')
+  const repaired=await gateway.fetch(paymentRequest(state.order.id,'pay-1'),configured)
+  assert.equal(repaired.status,200)
+  assert.equal(state.grants,1)
+  assert.equal(providerAttempts,3,'do not POST the payment again')
+ }finally{globalThis.fetch=saved}
+})
+test('Toss lookup identity mismatch cannot mint a Pro subscription',async()=>{
+ const {state,env:configured}=paymentFixture('processing')
+ const saved=globalThis.fetch
+ globalThis.fetch=async()=>json({orderId:'different',paymentKey:'pay-1',totalAmount:3900,status:'DONE'})
+ try{
+  const response=await gateway.fetch(paymentRequest(state.order.id,'pay-1'),configured)
+  assert.equal(response.status,503)
+  assert.equal(state.grants,0)
+  assert.equal(state.order.status,'processing')
+ }finally{globalThis.fetch=saved}
+})
