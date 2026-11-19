@@ -55,3 +55,19 @@ CREATE TABLE IF NOT EXISTS identity_attempts (
  created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS identity_attempts_account ON identity_attempts(account_id,created_at);
+
+-- Email magic-link requests never contain raw bearer sessions or link tokens.
+-- A separate secret poll token authorizes delivery only to the initiating device.
+CREATE TABLE IF NOT EXISTS email_login_attempts (
+  id TEXT PRIMARY KEY,
+  email TEXT NOT NULL,
+  email_hash TEXT NOT NULL,
+  ip_hash TEXT NOT NULL,
+  poll_hash TEXT NOT NULL,
+  verify_hash TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending','verified','consumed')),
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS email_login_attempts_rate_email ON email_login_attempts(email_hash,created_at);
+CREATE INDEX IF NOT EXISTS email_login_attempts_rate_ip ON email_login_attempts(ip_hash,created_at);
