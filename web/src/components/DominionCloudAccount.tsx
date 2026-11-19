@@ -31,6 +31,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',hideMan
  const [catalogModels,setCatalogModels]=useState<RemoteModel[]>([])
  const [catalogProviderId,setCatalogProviderId]=useState('')
  const [catalogBusy,setCatalogBusy]=useState(false)
+ const catalogBrowseSeq=useRef(0)
  const [catalogMessage,setCatalogMessage]=useState('')
  const [routerKey,setRouterKey]=useState('')
  const [routerBusy,setRouterBusy]=useState(false)
@@ -80,17 +81,18 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',hideMan
  }
  useEffect(()=>{if(managementTab==='providers'&&!catalog.length)void loadCatalog()},[managementTab])
  async function loadCatalogModels(providerId=catalogId){
+  const request=++catalogBrowseSeq.current
   if(!providerId)return
   setCatalogBusy(true);setCatalogMessage('공개 모델 목록 조회 중…')
   try{
    const response=await get<{models:RemoteModel[];cached?:boolean;error?:string}>('/api/providers/catalog/'+encodeURIComponent(providerId)+'/models')
-   if(providerId!==catalogId)return
+   if(request!==catalogBrowseSeq.current)return
    const found=response.models||[]
    setCatalogModels(found)
    setCatalogModel(found[0]?.id||'')
    setCatalogMessage(response.error||(found.length+'개 모델 조회 완료 · API 키 없이 공개 목록 확인'))
-  }catch(e){setCatalogMessage((e as Error).message)}
-  finally{setCatalogBusy(false)}
+  }catch(e){if(request===catalogBrowseSeq.current)setCatalogMessage((e as Error).message)}
+  finally{if(request===catalogBrowseSeq.current)setCatalogBusy(false)}
  }
  async function ensureCatalogCredential(entry:CatalogProvider){
   const providers=await get<Array<{id:string;baseUrl:string;model?:string;hasKey?:boolean}>>('/api/providers')
@@ -208,11 +210,11 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',hideMan
     <label className="flex items-center gap-1"><input type="checkbox" checked={providerMinModels} onChange={e=>{setProviderMinModels(e.target.checked);setProviderPage(0)}}/>모델 있는 업체만</label>
    </div>}
    {catalog.length>0&&<div className="mt-2 flex flex-wrap gap-2"><select aria-label="업체 정렬" value={providerSort} onChange={e=>{setProviderSort(e.target.value as 'name'|'models');setProviderPage(0)}} className="rounded-lg border px-3 py-2 text-[12px]"><option value="name">이름순</option><option value="models">모델 많은 순</option></select>
-    <select aria-label="AI 업체 선택" value={catalogId} onChange={e=>{const id=e.target.value;setCatalogId(id);setCatalogModels([]);setCatalogModel('');setCatalogModelSearch('');setCatalogProviderId('');setCatalogMessage('')}} className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]">
+    <select aria-label="AI 업체 선택" value={catalogId} onChange={e=>{const id=e.target.value;setCatalogId(id);setCatalogModels([]);setCatalogModel('');setCatalogModelSearch('');setCatalogKey('');setCatalogProviderId('');setCatalogMessage('');void loadCatalogModels(id)}} className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]">
      <option value="">업체를 선택하세요</option>
      {visibleCatalog.map(p=><option key={p.id} value={p.id}>{p.name} ({p.models})</option>)}
     </select>
-    <div className="flex items-center gap-2 text-[12px]"><button type="button" className="rounded border px-2 py-1" disabled={providerPage===0} onClick={()=>{setProviderPage(p=>Math.max(0,p-1));setCatalogId('');setCatalogModels([]);setCatalogProviderId('')}}>이전</button><span>{providerPage+1} / {providerPageCount}</span><button type="button" className="rounded border px-2 py-1" disabled={providerPage+1>=providerPageCount} onClick={()=>{setProviderPage(p=>p+1);setCatalogId('');setCatalogModels([]);setCatalogProviderId('')}}>다음</button></div>
+    <div className="flex items-center gap-2 text-[12px]"><button type="button" className="rounded border px-2 py-1" disabled={providerPage===0} onClick={()=>{catalogBrowseSeq.current++;setCatalogBusy(false);setProviderPage(p=>Math.max(0,p-1));setCatalogId('');setCatalogModels([]);setCatalogKey('');setCatalogModel('');setCatalogProviderId('')}}>이전</button><span>{providerPage+1} / {providerPageCount}</span><button type="button" className="rounded border px-2 py-1" disabled={providerPage+1>=providerPageCount} onClick={()=>{catalogBrowseSeq.current++;setCatalogBusy(false);setProviderPage(p=>p+1);setCatalogId('');setCatalogModels([]);setCatalogKey('');setCatalogModel('');setCatalogProviderId('')}}>다음</button></div>
     <button type="button" disabled={catalogBusy||!catalogId} onClick={()=>void loadCatalogModels()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">{catalogBusy?'조회 중…':'모델 조회 (키 불필요)'}</button>
    </div>}
    {catalogModels.length>0&&<div className="mt-3 rounded-xl border border-[#E7E0D5] bg-white p-3">
