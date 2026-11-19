@@ -58,8 +58,13 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
    const response=await fetch(cloudUrl+'/v1/billing/checkout',{method:'POST',headers:{Authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({plan:'pro'})})
    if(!response.ok)throw Error('결제 주문 생성 실패')
    const order=await response.json() as {orderId:string;amount:number;orderName:string;customerKey:string;clientKey:string}
-   const sdk=await import('@tosspayments/tosspayments-sdk')
-   const payment=sdk.TossPayments(order.clientKey).payment({customerKey:order.customerKey})
+   if(!document.querySelector('script[data-dominion-toss]')){
+    const script=document.createElement('script');script.src='https://js.tosspayments.com/v2/standard';script.dataset.dominionToss='1'
+    await new Promise<void>((resolve,reject)=>{script.onload=()=>resolve();script.onerror=()=>reject(Error('결제 SDK 로딩 실패'));document.head.appendChild(script)})
+   }
+   const toss=(window as Window & {TossPayments?:(key:string)=>{payment:(options:{customerKey:string})=>{requestPayment:(options:Record<string,unknown>)=>Promise<void>}}}).TossPayments
+   if(!toss)throw Error('결제 SDK를 사용할 수 없습니다.')
+   const payment=toss(order.clientKey).payment({customerKey:order.customerKey})
    await payment.requestPayment({method:'CARD',amount:{currency:'KRW',value:order.amount},orderId:order.orderId,orderName:order.orderName,
     successUrl:window.location.origin+window.location.pathname+'?dominionPayment=success',
     failUrl:window.location.origin+window.location.pathname+'?dominionPayment=fail'})
