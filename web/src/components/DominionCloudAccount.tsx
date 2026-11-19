@@ -94,8 +94,8 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',hideMan
  }
  async function ensureCatalogCredential(entry:CatalogProvider){
   const providers=await get<Array<{id:string;baseUrl:string;model?:string;hasKey?:boolean}>>('/api/providers')
-  const baseUrl=entry.api.replace(/\\/$/,'')
-  const linked=providers.find(p=>p.hasKey&&p.baseUrl.replace(/\\/$/,'')===baseUrl)
+  const baseUrl=entry.api.replace(/\/$/,'')
+  const linked=providers.find(p=>p.hasKey&&p.baseUrl.replace(/\/$/,'')===baseUrl)
   const key=catalogKey.trim()
   if(!key&&!linked)throw Error('모델 목록은 API 키 없이 조회할 수 있습니다. 채팅에 등록하려면 API 키를 입력하거나 기존 인증을 연결하세요.')
   return {providers,linked,key,baseUrl}
@@ -106,10 +106,10 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',hideMan
   setCatalogBusy(true)
   try{
    const {providers,linked,key,baseUrl}=await ensureCatalogCredential(entry)
-   if(providers.some(p=>p.baseUrl.replace(/\\/$/,'')===baseUrl&&p.model===catalogModel&&p.hasKey)){
+   if(providers.some(p=>p.baseUrl.replace(/\/$/,'')===baseUrl&&p.model===catalogModel&&p.hasKey)){
     setCatalogMessage('이미 채팅에 연결된 모델입니다.');return
    }
-   const blank=providers.find(p=>p.baseUrl.replace(/\\/$/,'')===baseUrl&&!p.model&&p.hasKey)
+   const blank=providers.find(p=>p.baseUrl.replace(/\/$/,'')===baseUrl&&!p.model&&p.hasKey)
    const saved=await post<{id:string}>('/api/providers',{id:blank?.id,name:entry.name+' · '+catalogModel,baseUrl,kind:'openai',apiKey:key||undefined,credentialSourceId:key?undefined:linked?.id,model:catalogModel,enabled:true,local:false,toolMode:'auto'})
    setCatalogProviderId(saved.id)
    await onProviderAdded()
@@ -122,8 +122,8 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',hideMan
   setCatalogBusy(true);setCatalogMessage('모델 일괄 등록 중…')
   try{
    const {providers,linked,key,baseUrl}=await ensureCatalogCredential(entry)
-   const known=new Set(providers.filter(p=>p.baseUrl.replace(/\\/$/,'')===baseUrl&&p.hasKey).map(p=>p.model))
-   const blank=providers.find(p=>p.baseUrl.replace(/\\/$/,'')===baseUrl&&!p.model&&p.hasKey)
+   const known=new Set(providers.filter(p=>p.baseUrl.replace(/\/$/,'')===baseUrl&&p.hasKey).map(p=>p.model))
+   const blank=providers.find(p=>p.baseUrl.replace(/\/$/,'')===baseUrl&&!p.model&&p.hasKey)
    let added=0
    for(const model of catalogModels){
     if(!model.id||known.has(model.id))continue
