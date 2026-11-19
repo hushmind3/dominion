@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
-import {classifyRuntimeFailure,memoryFit,requiredMemory,selectRecommended,selectSmaller,planDownloadLaunch,preferredServerModelFormat} from '../src/utils/modelHardware.ts'
+import {classifyRuntimeFailure,memoryFit,modelPreflight,requiredMemory,selectRecommended,selectSmaller,planDownloadLaunch,preferredServerModelFormat} from '../src/utils/modelHardware.ts'
 
 const gguf=(id,bytes)=>({id,format:'gguf',bytes})
 const mlx=(id,bytes)=>({id,format:'mlx',bytes})
@@ -67,4 +67,27 @@ test('model format selection uses runtime capabilities and preserves manual choi
  assert.match(source,/preferredServerModelFormat\(runtime\.capabilities\?\.memory\.platform/)
  assert.match(source,/if\(preferredFormat&&!userChoseFormat\.current\)setFormat\(preferredFormat\)/)
  assert.match(source,/userChoseFormat\.current=true;setFormat\(item\.id\)/)
+})
+
+test('preflight blocks missing native GGUF engine even when LM Studio is available',()=>{
+ const caps={gguf:{available:true,path:null},mlx:{available:true,standalone:false},lmstudio:{available:true},memory:{free:8_000},gpu:{free:0}}
+ assert.deepEqual(modelPreflight(gguf('managed-model.gguf',4_000),caps).status,'blocked')
+ assert.equal(modelPreflight({id:'lms:imported',format:'gguf',bytes:4_000},caps).status,'ready')
+ assert.equal(modelPreflight({id:'mlx:owner/model',format:'mlx',bytes:4_000},caps).status,'ready')
+ assert.equal(modelPreflight({id:'external:mlx',format:'mlx',bytes:4_000},caps).status,'blocked')
+})
+test('preflight uses separate memory budgets and warns rather than forbidding a risky launch',()=>{
+ const caps={gguf:{available:true,path:'/bin/llama-server'},mlx:{available:true,standalone:true},lmstudio:{available:false},memory:{free:2_000},gpu:{free:8_000}}
+ assert.equal(modelPreflight(gguf('model',4_000),caps).status,'ready')
+ assert.equal(modelPreflight(mlx('model',4_000),caps).status,'warning')
+ assert.equal(modelPreflight(gguf('large',10_000),caps).status,'warning')
+ assert.equal(modelPreflight(gguf('model',4_000),undefined).status,'unknown')
+ assert.equal(modelPreflight({id:'lms:test',format:'gguf',bytes:4_000},caps).status,'blocked')
+})
+test('both installed and Hugging Face launch use the same fresh preflight',()=>{
+ const source=readFileSync(new URL('../src/components/ModelExplorer.tsx',import.meta.url),'utf8')
+ assert.match(source,/const snapshot=await get<Runtime>\('\/api\/model-library\/runtime'\)/)
+ assert.match(source,/const check=modelPreflight\(model,snapshot.capabilities\)/)
+ assert.match(source,/if\(check.status==='blocked'\)/)
+ assert.match(source,/selectedPreflight&&<div/)
 })
