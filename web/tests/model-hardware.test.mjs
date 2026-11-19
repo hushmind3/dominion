@@ -157,3 +157,23 @@ test('OpenRouter free model single registration reuses existing credentials with
  assert.match(account,/선택 모델 등록/)
  assert.match(account,/onClick=\{goToRegisteredChat\}/)
 })
+
+test('a public models.dev document is shared by provider and model browsing',()=>{
+ const api=readFileSync(new URL('../../src/api/providers.rs',import.meta.url),'utf8')
+ const fetches=[...api.matchAll(/get\("https:\/\/models\.dev\/api\.json"\)/g)]
+ assert.equal(fetches.length,1)
+ assert.match(api,/static MODELS_DEV_DOCUMENT:OnceLock/)
+ assert.match(api,/if fetched\.elapsed\(\)<Duration::from_secs\(86_400\)/)
+ const models=api.slice(api.indexOf('pub async fn public_catalog_models('),api.indexOf('/// OpenRouter publishes'))
+ assert.match(models,/load_models_dev_document\(\)\.await/)
+ const providers=api.slice(api.indexOf('pub async fn provider_catalog('),api.indexOf('/// Refreshes every enabled provider'))
+ assert.match(providers,/load_models_dev_document\(\)\.await/)
+})
+test('catalog registration selects the Anthropic protocol and chat route retains its model',()=>{
+ const account=readFileSync(new URL('../src/components/DominionCloudAccount.tsx',import.meta.url),'utf8')
+ const app=readFileSync(new URL('../src/App.tsx',import.meta.url),'utf8')
+ assert.match(account,/catalogProviderKind=\(provider:CatalogProvider\)/)
+ assert.match(account,/kind:catalogProviderKind\(entry\)/)
+ assert.match(app,/provider:params\.get\('provider'\)\|\|undefined/)
+ assert.match(app,/model:params\.get\('model'\)\|\|undefined/)
+})
