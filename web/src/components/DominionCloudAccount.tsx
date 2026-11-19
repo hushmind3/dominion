@@ -12,7 +12,11 @@ const cloudUrl=(import.meta.env.VITE_DOMINION_CLOUD_URL||'').replace(/\/$/,'')
 const clientId=import.meta.env.VITE_DOMINION_GOOGLE_CLIENT_ID||''
 export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initialProviderId,hideManagementNavigation=false}:{onProviderAdded:()=>Promise<unknown>;initialTab?:'cloud'|'providers';initialProviderId?:string;hideManagementNavigation?:boolean}) {
  const button=useRef<HTMLDivElement>(null)
- const [token,setToken]=useState('')
+ const [token,setToken]=useState(()=>sessionStorage.getItem('dominion_cloud_session')||'')
+ const [billing,setBilling]=useState<{plan:string;valid_until:number|null;pro_price_krw:number|null;checkout_enabled:boolean;toss_client_key:string|null}|null>(null)
+ const [showCheckout,setShowCheckout]=useState(false)
+ const [billingMessage,setBillingMessage]=useState('')
+ const [billingBusy,setBillingBusy]=useState(false)
  const [models,setModels]=useState<Model[]>([])
  const [selected,setSelected]=useState('')
  const [modelSearch,setModelSearch]=useState('')
@@ -42,7 +46,43 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
  const [routerMessage,setRouterMessage]=useState('')
  const [routerModels,setRouterModels]=useState<RemoteModel[]>([])
  const [routerSearch,setRouterSearch]=useState('')
- async function fetchModels(session:string){
+ async function loadBilling(session:string){
+  const response=await fetch(cloudUrl+'/v1/billing',{headers:{Authorization:'Bearer '+session}})
+  if(!response.ok)throw Error('구독 정보를 불러오지 못했습니다.')
+  setBilling(await response.json())
+ }
+ async function startCheckout(){
+  if(!token||!billing?.checkout_enabled)return
+  setBillingBusy(true);setBillingMessage('')
+  try{
+   const response=await fetch(cloudUrl+'/v1/billing/checkout',{method:'POST',headers:{Authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({plan:'pro'})})
+   if(!response.ok)throw Error('결제 주문 생성 실패')
+   const order=await response.json() as {orderId:string;amount:number;orderName:string;customerKey:string;clientKey:string}
+   const sdk=await import('@tosspayments/tosspayments-sdk')
+   const payment=sdk.TossPayments(order.clientKey).payment({customerKey:order.customerKey})
+   await payment.requestPayment({method:'CARD',amount:{currency:'KRW',value:order.amount},orderId:order.orderId,orderName:order.orderName,
+    successUrl:window.location.origin+window.location.pathname+'?dominionPayment=success',
+    failUrl:window.location.origin+window.location.pathname+'?dominionPayment=fail'})
+  }catch(e){setBillingMessage((e as Error).message)}finally{setBillingBusy(false)}
+ }
+ useEffect(()=>{
+  const saved=sessionStorage.getItem('dominion_cloud_session')
+  if(!saved||!cloudUrl)return
+  const params=new URLSearchParams(window.location.search)
+  const outcome=params.get('dominionPayment')
+  if(outcome){
+   window.history.replaceState(null,'',window.location.pathname+window.location.hash)
+   if(outcome==='success'){
+    const orderId=params.get('orderId'),paymentKey=params.get('paymentKey'),amount=Number(params.get('amount'))
+    if(!orderId||!paymentKey||!Number.isSafeInteger(amount)){setBillingMessage('결제 정보가 올바르지 않습니다.');return}
+    void fetch(cloudUrl+'/v1/billing/confirm',{method:'POST',headers:{Authorization:'Bearer '+saved,'content-type':'application/json'},body:JSON.stringify({orderId,paymentKey,amount})})
+     .then(async response=>{if(!response.ok)throw Error('결제 확인 중 오류가 발생했습니다. 주문번호: '+orderId);setBillingMessage('결제 확인 완료 · Pro 구독이 활성화됐습니다.');await loadBilling(saved)})
+     .catch(e=>setBillingMessage((e as Error).message))
+   }else setBillingMessage('결제가 취소되었거나 실패했습니다.')
+  }
+  void Promise.all([fetchModels(saved),loadBilling(saved)]).catch(()=>{sessionStorage.removeItem('dominion_cloud_session');setToken('')})
+ },[])
+  async function fetchModels(session:string){
   const response=await fetch(cloudUrl+'/v1/models',{headers:{Authorization:'Bearer '+session}})
   if(!response.ok)throw Error('모델 목록을 가져오지 못했습니다.')
   const data=await response.json() as {data:Model[]}
@@ -64,7 +104,8 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
      const response=await fetch(cloudUrl+'/v1/auth/google',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({credential})})
      if(!response.ok)throw Error('도미니언 로그인 실패')
      const data=await response.json() as {token:string}
-     await fetchModels(data.token)
+     await Promise.all([fetchModels(data.token),loadBilling(data.token)])
+     sessionStorage.setItem('dominion_cloud_session',data.token)
      setToken(data.token);setMessage('도미니언 계정으로 연결됐습니다.')
     }catch(error){setMessage((error as Error).message)}finally{setBusy(false)}
    }})
@@ -74,7 +115,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
   return()=>{active=false;script.remove()}
  },[])
  function logout(){
-  setToken('');setModels([]);setSelected('');setModelSearch('');setMessage('DOMINION Cloud에서 로그아웃했습니다.');
+  sessionStorage.removeItem('dominion_cloud_session');setBilling(null);setToken('');setModels([]);setSelected('');setModelSearch('');setMessage('DOMINION Cloud에서 로그아웃했습니다.');
   window.google?.accounts.id.disableAutoSelect?.()
  }
  async function loadCatalog(){
@@ -255,6 +296,18 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
     {models.filter(model=>(modelFilter==='all'||(modelFilter==='free'?model.free:!model.free))&&(model.id+' '+(model.name||'')+' '+(model.provider||'')).toLowerCase().includes(modelSearch.toLowerCase())).map(model=><option key={model.id} value={model.id}>{model.name||model.id} · {model.free?'무료':'유료'}{model.provider?' · '+model.provider:''}</option>)}
    </select>
    <button type="button" disabled={busy||!selected||!models.some(model=>model.id===selected&&(modelFilter==='all'||(modelFilter==='free'?model.free:!model.free))&&(model.id+' '+(model.name||'')+' '+(model.provider||'')).toLowerCase().includes(modelSearch.toLowerCase()))} onClick={()=>void register()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">모델 등록</button>
+  </div>}
+  {token&&<div className="mt-3 rounded-xl border border-[#E7E0D5] bg-white p-3 text-[12px]">
+   <div className="flex flex-wrap items-center justify-between gap-2"><span>내 구독: <strong>{billing?.plan==='pro'?'Pro':'무료'}</strong>{billing?.valid_until&&billing.plan==='pro'?' · 만료 '+new Date(billing.valid_until*1000).toLocaleDateString('ko-KR'):''}</span>
+    <button type="button" className="rounded-lg border px-3 py-2" onClick={()=>setShowCheckout(true)}>요금제 · 결제</button></div>
+   {billingMessage&&<p role="status" className="mt-2">{billingMessage}</p>}
+  </div>}
+  {token&&showCheckout&&<div role="dialog" aria-modal="true" aria-label="DOMINION 구독 결제" className="mt-3 rounded-xl border border-[#E7E0D5] bg-white p-4">
+   <div className="flex items-center justify-between"><strong>DOMINION Pro · 구독 결제</strong><button type="button" onClick={()=>setShowCheckout(false)}>닫기</button></div>
+   <p className="mt-2 text-[12px]">무료 플랜은 계속 이용할 수 있습니다. Pro는 결제일부터 30일 이용권이며 자동 갱신되지 않습니다.</p>
+   <p className="mt-2 text-[14px] font-semibold">{billing?.pro_price_krw?.toLocaleString('ko-KR')||'가격 미설정'}원 / 30일</p>
+   <button type="button" disabled={!billing?.checkout_enabled||billingBusy} onClick={()=>void startCheckout()} className="mt-3 rounded-lg bg-[#C96442] px-4 py-2 text-white disabled:opacity-50">{billingBusy?'결제창 여는 중…':billing?.checkout_enabled?'토스페이먼츠 결제하기':'결제 준비 중'}</button>
+   {!billing?.checkout_enabled&&<p className="mt-2 text-[12px]">운영자 결제 키와 요금 설정 후 테스트 결제를 시작할 수 있습니다.</p>}
   </div>}
   {registered?.source==='cloud'&&<button type="button" onClick={goToRegisteredChat} className="mt-2 rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white">등록한 모델로 채팅하기</button>}
   {token&&<button type="button" className="mt-3 rounded-lg border px-3 py-2 text-[12px]" onClick={()=>{setToken('');setModels([]);setSelected('');setMessage('로그아웃되었습니다.');window.google?.accounts.id.disableAutoSelect?.()}}>로그아웃</button>}
