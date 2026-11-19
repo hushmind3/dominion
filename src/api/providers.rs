@@ -1940,6 +1940,23 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn public_model_directory_reads_metadata_without_provider_credentials() {
+        let provider=json!({"models":{
+            "beta-model":{"name":"Beta","limit":{"context":128000},"tool_call":true,"reasoning":false},
+            "alpha-model":{"name":"Alpha","limit":{"context":64000},"tool_call":false},
+            "unnamed-model":{}
+        }});
+        let models=public_models_from_metadata(&provider);
+        assert_eq!(models.len(),3);
+        assert_eq!(models[0]["id"],"alpha-model");
+        assert_eq!(models[0]["name"],"Alpha");
+        assert_eq!(models[0]["context"],64000);
+        assert_eq!(models[1]["toolCall"],true);
+        assert_eq!(models[2]["name"],"unnamed-model");
+        assert!(public_models_from_metadata(&json!({"models":{}})).is_empty());
+    }
+
+    #[test]
     fn codex_catalog_uses_real_slugs_and_no_obsolete_stub() {
         let models = parse_codex_models(&json!({"models":[
             {"slug":"gpt-6.1-sol","display_name":"GPT-6.1 Sol",
