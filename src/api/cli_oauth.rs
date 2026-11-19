@@ -1,6 +1,7 @@
 //! Official CLI OAuth broker: runs the login behind a pseudo terminal, not Terminal.app.
 //! OAuth credentials remain with the CLI; DOMINION never imports subscription tokens.
-use axum::{extract::Path,http::StatusCode,response::{IntoResponse,Response},Json};
+use axum::{extract::{Path,State},http::StatusCode,response::{IntoResponse,Response},Json};
+use crate::state::AppState;
 use serde::Deserialize;
 use serde_json::{json,Value};
 use std::{collections::HashMap,path::{Path as FilePath,PathBuf},process::Stdio,sync::{Arc,OnceLock},time::{Duration,UNIX_EPOCH}};
@@ -21,6 +22,7 @@ fn logins()->&'static Mutex<HashMap<String,Arc<Login>>>{
 fn command(source:&str, provider:Option<&str>)->Result<(&'static str,Vec<String>),String>{
     match source {
         "claude"=>Ok(("claude",vec!["auth".into(),"login".into()])),
+        "github"=>Ok(("gh",vec!["auth".into(),"login".into(),"--hostname".into(),"github.com".into(),"--git-protocol".into(),"https".into(),"--web".into(),"--skip-ssh-key".into(),"--scopes".into(),"repo,read:user,user:email".into()])),
         "gemini"=>Ok(("gemini",vec![])),
         "opencode"=>{
             let id=provider.unwrap_or("openai");
@@ -45,6 +47,7 @@ fn credential_marker(source:&str)->Option<u128>{
     let h=home()?;
     let paths:Vec<PathBuf>=match source{
         "claude"=>vec![h.join(".claude/.credentials.json")],
+        "github"=>vec![std::env::var_os("GH_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(||h.join(".config/gh")).join("hosts.yml")],
         "gemini"=>vec![h.join(".gemini/oauth_creds.json")],
         "opencode"=>vec![h.join(".local/share/opencode/opencode.db"),h.join(".local/share/opencode/auth.json")],
         _=>return None
@@ -67,6 +70,29 @@ fn authorization_url(text:&str)->Option<String>{
     }
     None
 }
+/// Extract only the one-time code, never expose the CLI access token.
+fn github_device_code(text:&str)->Option<String>{
+    for token in text.split_whitespace(){
+        let code=token.trim_matches(|c:char|!c.is_ascii_alphanumeric()&&c!='-');
+        let Some((left,right))=code.split_once('-')else{continue};
+        if left.len()==4&&right.len()==4
+            &&left.bytes().chain(right.bytes()).all(|b|b.is_ascii_uppercase()||b.is_ascii_digit()){
+            return Some(code.to_string());
+        }
+    }
+    None
+}
+async fn import_cli_github(state:&AppState)->Result<(),String>{
+    let exe=binary("gh").ok_or("GitHub CLI가 설치되지 않았습니다.")?;
+    let output=tokio::time::timeout(Duration::from_secs(10),Command::new(exe)
+        .args(["auth","token","--hostname","github.com"]).kill_on_drop(true).output())
+        .await.map_err(|_|"GitHub CLI 토큰 조회 시간 초과")?
+        .map_err(|e|format!("GitHub CLI 토큰 조회 실패: {e}"))?;
+    if !output.status.success(){return Err("GitHub CLI에 로그인한 계정이 없습니다.".into());}
+    let access=String::from_utf8(output.stdout).map_err(|_|"GitHub CLI 토큰 인코딩 오류")?;
+    crate::engine::oauth::link_github_cli_account(state,access.trim()).await
+}
+
 /// Check CLI-owned authentication without reading or copying OAuth secrets.
 pub(super) async fn credential_verified(source:&str)->bool{
     if source=="gemini"{
@@ -74,12 +100,13 @@ pub(super) async fn credential_verified(source:&str)->bool{
             .and_then(|raw|serde_json::from_slice::<Value>(&raw).ok())
             .is_some_and(|v|v["access_token"].as_str().is_some()||v["refresh_token"].as_str().is_some());
     }
-    let name=match source{"claude"=>"claude","opencode"=>"opencode",_=>return false};
+    let name=match source{"claude"=>"claude","opencode"=>"opencode","github"=>"gh",_=>return false};
     let Some(exe)=binary(name)else{return false;};
-    let args:&[&str]=if source=="claude"{&["auth","status"]}else{&["auth","list","--format","json"]};
+    let args:&[&str]=match source{"claude"=>&["auth","status"],"github"=>&["auth","status","--hostname","github.com"],_=>&["auth","list","--format","json"]};
     let output=tokio::time::timeout(Duration::from_secs(5),Command::new(exe).args(args).kill_on_drop(true).output()).await;
     let Ok(Ok(output))=output else{return false;};
     if !output.status.success(){return false;}
+    if source=="github"{return true;}
     let Ok(value)=serde_json::from_slice::<Value>(&output.stdout)else{return false;};
     if source=="claude"{
         return value["loggedIn"].as_bool()==Some(true);
@@ -95,7 +122,7 @@ pub(super) async fn credential_verified(source:&str)->bool{
 
 async fn state(source:&str,login:&Arc<Login>)->Value{
     let p=login.progress.lock().await;
-    json!({"source":source,"status":p.phase,"message":p.message,"url":p.url,"requiresInput":p.phase=="input"})
+    json!({"source":source,"status":p.phase,"message":p.message,"url":p.url,"userCode":if source=="github"{github_device_code(&p.text)}else{None},"requiresInput":p.phase=="input"})
 }
 async fn set_phase(login:&Arc<Login>, phase:&'static str, message:&str){
     let mut p=login.progress.lock().await;
@@ -155,13 +182,19 @@ fn make_process(exe:&FilePath,args:&[String])->Command{
     p.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
     p
 }
-pub async fn start(Path(source):Path<String>,Json(body):Json<StartBody>)->Response{
+pub async fn start(State(app_state):State<AppState>,Path(source):Path<String>,Json(body):Json<StartBody>)->Response{
     let (bin,args)=match command(&source,body.provider.as_deref()){
         Ok(v)=>v,Err(e)=>return error(StatusCode::BAD_REQUEST,&e)
     };
     if let Some(existing)=logins().lock().await.get(&source).cloned(){
         let active=!matches!(existing.progress.lock().await.phase,"completed"|"failed"|"cancelled");
         if active{return Json(state(&source,&existing).await).into_response();}
+    }
+    if source=="github"&&credential_verified("github").await{
+        match import_cli_github(&app_state).await{
+            Ok(())=>return Json(json!({"source":"github","status":"completed","message":"기존 GitHub CLI 로그인을 도미니언에 연결했습니다.","url":null})).into_response(),
+            Err(e)=>return error(StatusCode::BAD_GATEWAY,&e)
+        }
     }
     let Some(exe)=binary(bin)else{
         return error(StatusCode::NOT_FOUND,&format!("{bin} CLI 실행 파일이 없습니다. 먼저 설치하세요."));
@@ -183,6 +216,7 @@ pub async fn start(Path(source):Path<String>,Json(body):Json<StartBody>)->Respon
     if let Some(err)=child.stderr.take(){tokio::spawn(capture(err,login.clone()));}
     let current=login.clone();
     let kind=source.clone();
+    let github_state=app_state.clone();
     tokio::spawn(async move{
         let mut tick=tokio::time::interval(Duration::from_secs(2));
         let timeout=tokio::time::sleep(Duration::from_secs(600));
@@ -191,7 +225,14 @@ pub async fn start(Path(source):Path<String>,Json(body):Json<StartBody>)->Respon
             tokio::select!{
                 exit=child.wait()=>{
                     match exit{
-                        Ok(exit) if exit.success()&&credential_verified(&kind).await=>set_phase(&current,"completed","CLI 인증이 확인됐습니다. 모델 연결 상태는 별도로 확인하세요.").await,
+                        Ok(exit) if exit.success()&&credential_verified(&kind).await=>{
+                            if kind=="github"{
+                                match import_cli_github(&github_state).await{
+                                    Ok(())=>set_phase(&current,"completed","GitHub 계정이 도미니언에 연결됐습니다.").await,
+                                    Err(e)=>set_phase(&current,"failed",&e).await
+                                }
+                            }else{set_phase(&current,"completed","CLI 인증이 확인됐습니다. 모델 연결 상태는 별도로 확인하세요.").await}
+                        },
                         Ok(exit)=>set_phase(&current,"failed",&format!("로그인 완료 정보를 찾지 못했습니다 (종료 상태: {exit}).")).await,
                         Err(e)=>set_phase(&current,"failed",&format!("CLI 인증 오류: {e}")).await
                     };break;
@@ -202,7 +243,12 @@ pub async fn start(Path(source):Path<String>,Json(body):Json<StartBody>)->Respon
                     let after=credential_marker(&kind);
                     if after.is_some()&&after!=before&&credential_verified(&kind).await{
                         let _=child.kill().await;
-                        set_phase(&current,"completed","CLI 인증이 확인됐습니다.").await;
+                        if kind=="github" {
+                            match import_cli_github(&github_state).await{
+                                Ok(())=>set_phase(&current,"completed","GitHub 계정이 도미니언에 연결됐습니다.").await,
+                                Err(e)=>set_phase(&current,"failed",&e).await
+                            }
+                        } else {set_phase(&current,"completed","CLI 인증이 확인됐습니다.").await;}
                         break;
                     }
                 }
@@ -251,9 +297,15 @@ mod tests{
     #[test]
     fn commands_reject_arbitrary_shell_input(){
         assert!(command("claude",None).is_ok());
+        assert_eq!(command("github",None).unwrap().0,"gh");
         assert_eq!(command("opencode",Some("anthropic")).unwrap().1.last().unwrap(),"anthropic");
         assert!(command("opencode",Some("openai;rm")).is_err());
         assert!(command("../../bin/bash",None).is_err());
+    }
+    #[test]
+    fn github_device_code_is_extracted_without_a_token(){
+        assert_eq!(github_device_code("First copy your one-time code: AB12-CD34").as_deref(),Some("AB12-CD34"));
+        assert_eq!(github_device_code("press ENTER only"),None);
     }
     #[test]
     fn authorization_url_is_https_and_nonlocal(){

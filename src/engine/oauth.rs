@@ -420,6 +420,43 @@ pub async fn callback(
     Ok(json!({ "provider": id, "connected": true, "account": account }))
 }
 
+/// Import an explicitly authorized GitHub CLI account through the shared OAuth vault.
+pub async fn link_github_cli_account(state:&AppState, access:&str)->Result<(),String>{
+    if access.is_empty()||access.len()>4096||access.chars().any(char::is_control){
+        return Err("GitHub CLI 인증 토큰 형식이 올바르지 않습니다.".into());
+    }
+    let client=reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build().map_err(|error|error.to_string())?;
+    let response=client
+        .get("https://api.github.com/user")
+        .bearer_auth(access)
+        .header("User-Agent","DOMINION")
+        .header("Accept","application/vnd.github+json")
+        .send().await.map_err(|e|format!("GitHub 인증 확인 실패: {e}"))?;
+    if !response.status().is_success(){
+        return Err("GitHub CLI 계정 인증 확인이 거부됐습니다. CLI에서 다시 로그인하세요.".into());
+    }
+    let scopes=response.headers().get("x-oauth-scopes")
+        .and_then(|v|v.to_str().ok()).unwrap_or("").to_string();
+    let body:Value=response.json().await.map_err(|e|format!("GitHub 계정 조회 실패: {e}"))?;
+    let account=body["login"].as_str().filter(|s|!s.is_empty())
+        .ok_or("GitHub 계정 ID를 읽지 못했습니다.")?;
+    let token=json!({"accessToken":access,"refreshToken":null,"scopes":scopes,
+        "obtainedAt":chrono::Utc::now().to_rfc3339(),"expiresAt":null});
+    state.save_secret("oauth:github:token",&token.to_string());
+    let mut record=config(state,"github").unwrap_or_else(||json!({"id":"github"}));
+    record["id"]=json!("github");record["connected"]=json!(true);
+    record["account"]=json!(account);record["scopes"]=json!(scopes);
+    record["credentialSource"]=json!("github-cli");
+    record["connectedAt"]=json!(chrono::Utc::now().to_rfc3339());
+    state.store.put("oauth_config",&record).ok_or("GitHub 연결 상태 저장 실패")?;
+    state.bus.record("oauth_config",&record);
+    state.store.audit("oauth.connected",json!({"provider":"github","account":account,"mode":"github-cli"}));
+    Ok(())
+}
+
+
 pub fn disconnect(state: &AppState, id: &str) {
     state.store.remove_secret(&format!("oauth:{id}:token"));
     if let Some(mut record) = config(state, id) {
