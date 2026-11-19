@@ -8,7 +8,7 @@ const TOKEN='a'.repeat(48);
 const headers=(extra={})=>({origin:ORIGIN,...extra});
 const request=(path,init={})=>new Request('https://sub3.worker.test'+path,init);
 
-function dbFixture({verified=false}={}){
+function dbFixture({verified=false,rejectReservation=null}={}){
   const quota=new Map();
   const calls=[];
   const db={
@@ -34,7 +34,11 @@ function dbFixture({verified=false}={}){
               }
               return null;
             },
-            async run(){return {success:true};},
+            async run(){
+              if(query.startsWith('INSERT INTO usage(') && rejectReservation)
+                throw Error(rejectReservation);
+              return {success:true};
+            },
             async all(){return {results:[]};},
           };
         },
@@ -152,5 +156,30 @@ test('React cloud account actions target routes exposed by imported Worker',()=>
   ]){
     assert.ok(workerSource.includes(route),'Worker missing API '+route);
     if(route!=='/v1/chat/completions')assert.ok(react.includes(route),'React account card missing '+route);
+  }
+});
+
+test('paid reservations reject concurrent-budget overflow and insufficient credit without upstream calls',async()=>{
+  for(const [reason,status] of [
+    ['paid_daily_budget_reached',429],
+    ['insufficient_prepaid_credits',402],
+  ]){
+    const environment=env({
+      DB:dbFixture({verified:true,rejectReservation:reason}),
+      GROQ_API_KEY:'test-only-provider-secret',
+      PAID_DAILY_BUDGET_MICRO_KRW:'200000',
+      PAID_MODELS_JSON:JSON.stringify([{
+        id:'paid-demo',provider:'groq',upstream_model:'private',
+        input_micro_krw:2,output_micro_krw:4,
+      }]),
+    });
+    const response=await worker.fetch(request('/v1/chat/completions',{
+      method:'POST',headers:bearer(),
+      body:JSON.stringify({model:'paid-demo',messages:[{role:'user',content:'hi'}]}),
+    }),environment);
+    assert.equal(response.status,status,reason);
+    assert.equal(environment.DB.calls.filter(x=>x.query.startsWith('INSERT INTO usage(')).length,1);
+    assert.ok(!environment.DB.calls.some(x=>x.query.startsWith('UPDATE accounts SET credits=credits-')),
+      'credit debit must happen within the D1 trigger, not in a separate Worker statement');
   }
 });

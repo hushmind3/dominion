@@ -14,11 +14,34 @@ CREATE TABLE IF NOT EXISTS usage (
   account_id TEXT NOT NULL,
   model TEXT NOT NULL,
   reserved INTEGER NOT NULL,
+  budget_cap INTEGER NOT NULL DEFAULT 0 CHECK (budget_cap >= 0),
   charged INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS usage_account ON usage(account_id, created_at);
+CREATE INDEX IF NOT EXISTS usage_created_at ON usage(created_at);
+
+-- Serialize credit debits and provider-spend admission in one D1 write.
+-- Every INSERT either records the reservation AND debits credits, or does neither.
+-- Settled usage counts at its actual charge; pending usage counts at its reserve.
+CREATE TRIGGER IF NOT EXISTS usage_atomic_reservation
+BEFORE INSERT ON usage WHEN NEW.status = 'reserved'
+BEGIN
+  SELECT RAISE(ABORT, 'paid_daily_budget_reached')
+  WHERE NEW.reserved <= 0 OR NEW.budget_cap <= 0
+    OR NEW.reserved > NEW.budget_cap - COALESCE((
+      SELECT SUM(CASE WHEN status = 'reserved' THEN reserved ELSE charged END)
+      FROM usage
+      WHERE created_at >= NEW.created_at - (NEW.created_at % 86400)
+        AND created_at < NEW.created_at - (NEW.created_at % 86400) + 86400
+    ), 0);
+  SELECT RAISE(ABORT, 'insufficient_prepaid_credits')
+  WHERE NOT EXISTS (
+    SELECT 1 FROM accounts WHERE id = NEW.account_id AND credits >= NEW.reserved
+  );
+  UPDATE accounts SET credits = credits - NEW.reserved WHERE id = NEW.account_id;
+END;
 
 CREATE TABLE IF NOT EXISTS free_quota (account_day TEXT PRIMARY KEY, used INTEGER NOT NULL DEFAULT 0);
 

@@ -422,25 +422,25 @@ async function proxy(request, env, user) {
   // Conservative upper bound: charge for all input bytes as tokens, plus max output tokens.
   const reserve = encoded.length * inputPrice + maxTokens * outputPrice;
   if (!Number.isSafeInteger(reserve) || reserve > 1000000000) return err('Request exceeds limit');
-  // Operator-side daily ceiling is independent of users' prepaid balances.
-  // Count outstanding reservations; strict concurrency enforcement needs an atomic budget ledger.
+  // The D1 usage INSERT is the authoritative write. A SQLite trigger validates
+  // the account balance and daily spend under the same writer transaction, then
+  // debits the credits exactly once. A separate SELECT+UPDATE races with other
+  // Workers and can strand charged credits when the usage INSERT fails.
   const dailyBudget = Number(env.PAID_DAILY_BUDGET_MICRO_KRW);
-  if (!env.PAID_DAILY_BUDGET_MICRO_KRW || !Number.isSafeInteger(dailyBudget) || dailyBudget <= 0)
+  if (!Number.isSafeInteger(dailyBudget) || dailyBudget <= 0)
     return err('Operator daily paid budget must be configured', 503);
-  {
-    const dayStart = Math.floor(Date.now() / 86400000) * 86400;
-    const spent = await env.DB.prepare(
-      "SELECT COALESCE(SUM(CASE WHEN status='reserved' THEN reserved ELSE charged END),0) AS total FROM usage WHERE created_at>=?"
-    ).bind(dayStart).first();
-    if (Number(spent?.total || 0) + reserve > dailyBudget)
-      return err('Operator daily model budget reached', 429);
-  }
   const id = crypto.randomUUID();
-  const debited = await env.DB.prepare('UPDATE accounts SET credits=credits-? WHERE id=? AND credits>=? RETURNING credits')
-    .bind(reserve, user.id, reserve).first();
-  if (!debited) return err('Insufficient prepaid credits', 402);
-  await env.DB.prepare('INSERT INTO usage(id,account_id,model,reserved,status,created_at) VALUES(?,?,?,?,?,?)')
-    .bind(id, user.id, modelId, reserve, 'reserved', now()).run();
+  try {
+    await env.DB.prepare('INSERT INTO usage(id,account_id,model,reserved,budget_cap,status,created_at) VALUES(?,?,?,?,?,?,?)')
+      .bind(id, user.id, modelId, reserve, dailyBudget, 'reserved', now()).run();
+  } catch (e) {
+    const reason = String(e?.message || e);
+    if (reason.includes('paid_daily_budget_reached'))
+      return err('Operator daily model budget reached', 429);
+    if (reason.includes('insufficient_prepaid_credits'))
+      return err('Insufficient prepaid credits', 402);
+    throw e;
+  }
   let charge = 0, status = 'failed', result;
   try {
     const upstream = await fetch(modelEndpoint.replace(/\/$/, '') + '/chat/completions', {
