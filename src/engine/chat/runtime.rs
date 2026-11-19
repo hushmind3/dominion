@@ -227,7 +227,7 @@ async fn run_turn_with_policy(
     let applied_improvement_ids = crate::engine::improve::injected_ids_with_execution(
         state, &improvement_scope, Some(&execution_id),
     );
-    let mut strategy_candidates = crate::engine::improve::active_values_with_execution(
+    let strategy_candidates = crate::engine::improve::active_values_with_execution(
         state, &improvement_scope, Some(&execution_id),
     );
     // Derived prompts (goal iterations, room speakers) attach to the root the

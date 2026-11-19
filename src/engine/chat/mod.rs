@@ -9,7 +9,6 @@ mod context;
 mod continuity;
 mod room_context;
 
-pub(crate) fn estimate_text_tokens(text:&str)->u64 {room_context::estimate(text) as u64}
 mod evidence;
 pub(crate) use evidence::prepare_owner_action;
 mod protocol;
@@ -24,16 +23,6 @@ mod transport;
 
 pub use protocol::parse_text_tool_calls;
 pub use runtime::{run_room_turn, run_turn, run_turn_background, run_turn_resume};
-
-/// The coordinator owns the fixture and assertions. Only aliases to the real
-/// runtime functions cross this boundary; candidate-owned test helpers cannot
-/// manufacture the oracle's observations.
-#[cfg(test)]
-pub(crate) mod context_oracle {
-    pub(crate) use super::room_context::compile;
-    pub(crate) use super::provider::select_provider;
-    pub(crate) use super::continuity::{dependencies,prepare,project,commit,commit_projection};
-}
 
 /// Cancel approvals bound to a session that is being archived/reset.
 pub(crate) fn close_session_approvals(state: &crate::state::AppState, session_id: &str) {

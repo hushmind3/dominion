@@ -157,5 +157,6 @@ jobs:
           npm --prefix web run build
           node --experimental-strip-types --test web/tests/*.test.mjs
           node scripts/check-sub2-contract.mjs
+          node --test scripts/sub2-compare.test.mjs
           ./web/node_modules/.bin/tsc -p sdk/typescript/tsconfig.json
           node --test sdk/typescript/tests/sdk.test.mjs

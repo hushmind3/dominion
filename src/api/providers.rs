@@ -594,24 +594,6 @@ pub async fn free_catalog_refresh(State(state): State<AppState>) -> Json<Value> 
     Json(refresh_free_catalog(&state).await)
 }
 
-async fn claude_cli_authenticated() -> bool {
-    if home_file(".claude/.credentials.json").is_some_and(|path| path.exists()) {
-        return true;
-    }
-    // Claude on macOS can hold its login in Keychain instead of a credentials file.
-    let binary = home_file(".local/bin/claude")
-        .filter(|path| path.exists())
-        .unwrap_or_else(|| std::path::PathBuf::from("claude"));
-    let status = tokio::time::timeout(
-        Duration::from_secs(4),
-        tokio::process::Command::new(binary).args(["auth", "status"]).kill_on_drop(true).output(),
-    ).await;
-    matches!(status,
-        Ok(Ok(output)) if output.status.success()
-            && serde_json::from_slice::<Value>(&output.stdout).ok()
-                .and_then(|value| value["loggedIn"].as_bool()) == Some(true)
-    )
-}
 
 fn cli_provider_id(source:&str)->String{format!("cli-{source}")}
 

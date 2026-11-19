@@ -123,7 +123,7 @@ async fn execute_adapter(
             _=tokio::time::sleep(Duration::from_millis(500))=>{},
         }
     };
-    let (output,outputTruncated,errorsTruncated)=match outcome{
+    let (output,output_truncated,errors_truncated)=match outcome{
         Ok(value)=>value,
         Err(error)=>return Ok(json!({
             "harnessId":spec.id,"error":error,"outcomeUnknown":true,
@@ -135,24 +135,24 @@ async fn execute_adapter(
     let answer=agent_answer(&stdout).unwrap_or_else(||
         stdout.chars().rev().take(12000).collect::<String>()
             .chars().rev().collect::<String>());
-    let verifiedExit=output.status.success()
-        && !outputTruncated && !has_failed_turn(&stdout)
+    let verified_exit=output.status.success()
+        && !output_truncated && !has_failed_turn(&stdout)
         && !answer.trim().is_empty();
     Ok(json!({
         "harnessId":spec.id,
         "runtime":"external_process",
         "exitCode":output.status.code(),
-        "completed":verifiedExit,
+        "completed":verified_exit,
         "answer":answer,
-        "stdoutTruncated":outputTruncated,
-        "stderrTruncated":errorsTruncated,
+        "stdoutTruncated":output_truncated,
+        "stderrTruncated":errors_truncated,
         "stderr":stderr.chars().take(2500).collect::<String>(),
         "elapsedMs":started.elapsed().as_millis() as u64,
-        "error":if verifiedExit{Value::Null}else{
+        "error":if verified_exit{Value::Null}else{
             json!("external harness failed or output was truncated; inspect external state before retry")
         },
-        "outcomeUnknown":!verifiedExit,
-        "requiresInspection":!verifiedExit,
+        "outcomeUnknown":!verified_exit,
+        "requiresInspection":!verified_exit,
         "externalPermissions":"governed by installed harness; DOMINION approval is an outer gate",
     }))
 }

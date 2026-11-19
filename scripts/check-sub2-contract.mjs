@@ -23,8 +23,9 @@ const visit=(dir)=>{
     else if(/\.(?:rs|ts|tsx|js|jsx|mjs)$/.test(entry.name))codePaths.push(path);
   }
 };
-for(const dir of ['src','web/src','sdk','tests'])visit(dir);
+for(const dir of ['src','web/src','sdk','tests','crates','src-tauri/src','scripts'])visit(dir);
 for(const path of codePaths){
+  if(path==='scripts/check-sub2-contract.mjs')continue; // The gate's own banned-symbol regex is not product code.
   const text=source(path);
   if(/\bmoney(?:_|::|\/|\b)|MoneyPage|\/api\/money/i.test(text)){
     errors.push(`retired Money reference in ${path}`);

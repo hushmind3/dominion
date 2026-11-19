@@ -855,7 +855,7 @@ mod tests {
         assert_eq!(seen[0],seen[1],"same request retries preserve the affinity");
         assert_ne!(seen[1],seen[2],"independent sessions must not share one affinity");
         assert_ne!(seen[2],seen[3],"other bots have a separate affinity");
-        drop(seen);server.abort();let _=drop(state); std::fs::remove_dir_all(root);
+        drop(seen);server.abort();let _=drop(state); let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -918,7 +918,7 @@ mod tests {
         let affinity=plan["cacheAffinityId"].as_str().unwrap();
         assert_eq!(seen[0].0,affinity);
         assert_eq!(seen[0].1.as_deref(),Some(affinity),"direct OpenCode Go must receive the session affinity");
-        drop(seen);server.abort();let _=drop(state); std::fs::remove_dir_all(root);
+        drop(seen);server.abort();let _=drop(state); let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
