@@ -253,7 +253,7 @@ fn same_envelope(a:&Value,b:&Value)->Vec<&'static str>{
 /// Dominion's SDK already supplies budget/permission enforcement.
 ///
 /// Only independently accepted, host-consistent, same-task observations enter
-/// this read-only portfolio. Missing money/time measurements cannot be treated
+/// this read-only portfolio. Missing cost/latency measurements cannot be treated
 /// as a free or fast run. Tradeoffs remain visible instead of being compressed
 /// into a fictional weighted quality score.
 fn portfolio_entry(run_id:&str,matched:bool,proof:&Value,trace:&Value)->Value{

@@ -12,28 +12,6 @@ use serde_json::{json, Value};
 use std::{path::PathBuf, collections::HashSet};
 use sha2::Sha256;
 
-// The generic SDK uses an action envelope for text-only/compat models.
-// Domain JSON from small local models is wrapped as a terminal answer only
-// when it matches the Money opportunity schema; other tasks stay unchanged.
-fn normalize_domain_answer(content:String, money_json:bool)->String {
-    if !money_json {return content;}
-    let trimmed=content.trim();
-    let unwrapped=if let Some(fence)=trimmed.strip_prefix("```") {
-        fence.split_once('\n').and_then(|(_,body)|body.trim().strip_suffix("```"))
-            .map(str::trim).unwrap_or(trimmed)
-    }else{trimmed};
-    if let Ok(value)=serde_json::from_str::<Value>(unwrapped) {
-        let opportunities=value.as_array().is_some()
-            ||value["opportunities"].is_array()
-            ||value["candidates"].is_array()
-            ||(value["title"].is_string()&&value["customer"].is_string()
-                &&value["mechanism"].is_string());
-        if opportunities {
-            return json!({"plan":[],"actions":[],"answer":content}).to_string();
-        }
-    }
-    content
-}
 struct ConfiguredModel {
     state: AppState,
     provider: String,
@@ -42,7 +20,6 @@ struct ConfiguredModel {
     run_id: String,
     route_binding: String,
     allow_fallback: bool,
-    money_json: bool,
 }
 impl Model for ConfiguredModel {
     fn complete<'a>(&'a self, system: &'a str, prompt: &'a str)
@@ -63,7 +40,7 @@ impl Model for ConfiguredModel {
             };
             // This adapter's helper API already records provider-reported
             // usage centrally. None explicitly means the kernel must estimate.
-            Ok(ModelReply {content:normalize_domain_answer(content,self.money_json),
+            Ok(ModelReply {content,
                 input_tokens: None, output_tokens: None})
         })
     }
@@ -603,7 +580,6 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
         run_id:context.job_id.clone(),
         route_binding:crate::engine::native_routing::binding(&route),
         allow_fallback:input["allowFallback"].as_bool().unwrap_or(false),
-        money_json:job["kind"]=="money_discover" && input["toolsEnabled"]==false,
     };
     let host_tools=NativeTools {
         state:context.state.clone(),workspace:context.state.config.workspace.clone(),
@@ -761,18 +737,6 @@ mod native_evidence_tests {
 #[cfg(test)]
 mod native_result_tests {
     use super::*;
-    #[test]
-    fn local_money_json_is_a_terminal_sdk_answer_without_new_model_calls(){
-        let raw=json!({"opportunities":[{"title":"Test","customer":"Buyer",
-            "mechanism":"Source-backed hypothesis"}]}).to_string();
-        let wrapped=normalize_domain_answer(raw.clone(),true);
-        let envelope:Value=serde_json::from_str(&wrapped).unwrap();
-        assert_eq!(envelope["answer"],raw);
-        assert_eq!(envelope["actions"],json!([]));
-        assert_eq!(normalize_domain_answer(raw.clone(),false),raw);
-        assert_eq!(normalize_domain_answer("{\"error\":\"bad\"}".into(),true),
-            "{\"error\":\"bad\"}");
-    }
     #[test]
     fn failing_shell_exit_is_not_a_successful_sdk_receipt() {
         assert!(verified_tool_result("shell_exec",json!({"exitCode":1,"stdout":"","stderr":"failed"})).is_err());

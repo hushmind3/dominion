@@ -31,8 +31,10 @@ jobs:
         shell: bash
         run: |
           pattern="$(printf '%s%s' mo ney)"
+          korean="$(printf '%s%s' '머' '니')"
+          earnings="$(printf '%s%s' '돈' '벌')"
           echo "::group::Tracked source inventory"
-          git grep -n -i -e "$pattern" -e '머니' -e '돈벌' -- ':!*.webp' || true
+          git grep -n -i -e "$pattern" -e "$korean" -e "$earnings" -- ':!*.webp' || true
           echo "::endgroup::"
   rust:
     runs-on: macos-latest

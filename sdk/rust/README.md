@@ -50,7 +50,7 @@ println!("engine={status:?}, job={}", saved.status);
 }
 ```
 
-The real Rust client supports jobs, wait/cancel/steering, approvals, rooms, sessions, health, SSE chat, stored events and Money read/analysis methods, as defined in [`src/lib.rs`](src/lib.rs). Some calls need a configured model or permission. `with_admin_token` supports server installations that require an admin token.
+The real Rust client supports jobs, wait/cancel/steering, approvals, rooms, sessions, health, SSE chat, stored events, as defined in [`src/lib.rs`](src/lib.rs). Some calls need a configured model or permission. `with_admin_token` supports server installations that require an admin token.
 
 ## Integrated product execution
 
