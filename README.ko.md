@@ -119,6 +119,10 @@ GitHub·Google 등의 연결은 구성된 OAuth 앱 또는 인증된 공식 CLI�
 
 ```sh
 cargo test -p dominion-agent-sdk --lib
+cargo test -p dominion-sdk --lib
+cargo test --bin dominion-rust engine::rooms::tests
+cargo test --bin dominion-rust api::providers::tests
+cargo test --bin dominion-rust api::cli_oauth::tests
 cargo test --bin dominion-rust engine::chat::context::tests
 cargo test --bin dominion-rust engine::skill_discovery::tests
 cargo test --bin dominion-rust api::sdk::tests
@@ -133,7 +137,7 @@ npm run build --prefix web
 node scripts/check-lean-product.mjs
 ```
 
-**실제 CI 통과 기준 코드:** `ed70b2e`(2026-11-19). [Rust 제품·프론트 CI](https://github.com/hushmind3/dominion-rust/actions/runs/44483266148)와 [Rust SDK CI](https://github.com/hushmind3/dominion-rust/actions/runs/44483266171)가 통과했습니다. 모의 제공자 기반 API·엔진 테스트 및 프론트 컴파일 결과입니다. `.github/workflows/ci.yml` 전체 릴리즈 게이트와 실제 27B 모델/유료 모델 성능 측정은 실행하지 않았습니다. [최신 통합 점검 기록](docs/SUB3-INTEGRATION-2026-11-19.md)을 참고하십시오.
+**최신 검증 코드:** `affd870`(2026-11-19). [Rust 제품·프론트·TypeScript SDK CI](https://github.com/hushmind3/dominion-rust/actions/runs/44499894159)가 통과했습니다. [Rust SDK 전용 CI](https://github.com/hushmind3/dominion-rust/actions/runs/44499399570)는 `536447c` 기준 통과했으며, 이후 코드 변경은 그룹방 정책 회귀 테스트의 기대값 보정입니다. 9명 방 호출·도구 실행, 최소 토큰 설정의 필수 맥락 보존, 공개 모델 목록, OAuth, Rust SDK 클라이언트 테스트와 퇴역 기능의 재유입 방지 소스 검사를 포함합니다. GitHub Actions는 Node 24 지원 버전으로 갱신했습니다. `.github/workflows/ci.yml` 전체 릴리즈 게이트·실제 27B 모델 및 유료 제공자 검증은 실행하지 않았습니다. [최신 통합 점검 기록](docs/SUB3-INTEGRATION-2026-11-19.md)을 참고하십시오.
 
 **미완성·미측정:** 채팅/자율 실행 루프 완전 통합, 실제 모델의 장기 작업 완수율, 최신 브랜치의 Windows/macOS 릴리즈 검증, 실과금 기준의 캐시 절감률과 상용 운영 검증.
 

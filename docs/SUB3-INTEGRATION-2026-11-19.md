@@ -5,7 +5,7 @@
 - Repository: `hushmind3/dominion-rust`; all writes scoped to `dominion-sub3`; `main` only inspected.
 - Latest main comparison: `f86a36e1c8ddac149baea2ac2391d317add36cbe`.
 - **Identical `web/` subtree SHA**: `fe65b961b037ad04e8ab4fc7f5c3d6e18abba392` in both main and sub3 at time of audit. This includes React/Vite sources, dependencies, lockfile, public OAuth client environment, model exploration, connected accounts and regression tests.
-- Tested sub3 code commit: `ed70b2efa0581d94a1d52e35eb057043a3917223`.
+- Latest tested sub3 code commit: `affd8700b813c2fb3e529335438e63ba28b61ad4`.
 
 ## Main-derived API and runtime changes
 
@@ -17,8 +17,10 @@
 
 ## Completed CI and boundaries
 
-- [Sub3 Rust SDK tests — passed](https://github.com/hushmind3/dominion-rust/actions/runs/44483266171) on the tested source commit.
-- [Sub3 product Rust + frontend tests — passed](https://github.com/hushmind3/dominion-rust/actions/runs/44483266148) on the tested source commit. Frontend job runs npm install, TypeScript checker, all `web/tests/*.test.mjs` and Vite production build. Rust job covers SDK/room/provider/repair fixtures and a native job e2e.
+- [Sub3 Rust SDK — passed](https://github.com/hushmind3/dominion-rust/actions/runs/44499399570), source `536447c` (later code change affects only a group-room regression assertion).
+- [Sub3 product Rust + frontend + TypeScript SDK — passed](https://github.com/hushmind3/dominion-rust/actions/runs/44499894159), source `affd870`.
+- Expanded the product Rust suite with `engine::rooms::tests`, `api::providers::tests` and `api::cli_oauth::tests`, plus `dominion-sdk` Rust client tests in the SDK workflow. This caught a stale test assumption: a deliberately tiny conversation target must keep required owner/agent/tool evidence and report `room-required-evidence-over-soft-target`, not the older `native-work-context` value. The test now checks the actual policy, required-over-budget accounting and completed tool receipt.
+- All tracked source files are checked for retired-domain identifier reintroduction. Both scoped workflows use Node 24-compatible GitHub Actions; frontend additionally runs TypeScript SDK type and HTTP transport tests.
 - These are automated tests, **not** end-user desktop launch on Windows/macOS, production OAuth payment certification, or an actual 9-person live 27B provider throughput test.
 - `.github/workflows/ci.yml` is a separately dispatched full release gate and was not triggered.
 

@@ -113,6 +113,10 @@ Routine changes: run *focused Rust development-profile tests*, not a blanket rel
 
 ```sh
 cargo test -p dominion-agent-sdk --lib
+cargo test -p dominion-sdk --lib
+cargo test --bin dominion-rust engine::rooms::tests
+cargo test --bin dominion-rust api::providers::tests
+cargo test --bin dominion-rust api::cli_oauth::tests
 cargo test --bin dominion-rust engine::chat::context::tests
 cargo test --bin dominion-rust engine::skill_discovery::tests
 cargo test --bin dominion-rust api::sdk::tests
@@ -127,7 +131,7 @@ npm run build --prefix web
 node scripts/check-lean-product.mjs
 ```
 
-**Verified source commit:** `ed70b2efa0581d94a1d52e35eb057043a3917223` passed [Sub3 product Rust and frontend tests](https://github.com/hushmind3/dominion-rust/actions/runs/44483266148) and [Sub3 Rust SDK tests](https://github.com/hushmind3/dominion-rust/actions/runs/44483266171) on 2026-11-19. These checks include mock-provider execution and frontend compilation. `.github/workflows/ci.yml` remains an opt-in full release validation and was not run; no live 27B or paid-provider benchmark was executed. See [current integration audit](docs/SUB3-INTEGRATION-2026-11-19.md).
+**Current tested source:** `affd8700b813c2fb3e529335438e63ba28b61ad4` passed [Sub3 product Rust + frontend + TypeScript SDK CI](https://github.com/hushmind3/dominion-rust/actions/runs/44499894159) on 2026-11-19. [Sub3 Rust SDK CI](https://github.com/hushmind3/dominion-rust/actions/runs/44499399570) passed at `536447c`; the only subsequent source change is a group-room policy regression assertion. This expanded gate now exercises group-room routing, consented tool work under extremely small soft context targets, public provider metadata, OAuth parsing, and the typed Rust SDK. The source inventory rejects retired feature references and file names across tracked source files. Node 24-compatible GitHub Actions are used. `.github/workflows/ci.yml` remains a separately dispatched full release validation and was not run. These are mock-provider and compiler results, not actual billed-token savings or a live 27B benchmark. See [current integration audit](docs/SUB3-INTEGRATION-2026-11-19.md).
 
 Current limitations: interactive chat and the native work kernel are not yet a single lifecycle; independent commercial-grade long-horizon task success, full release validation, and reproducible provider-billed cache gains are still unmeasured. Avoid treating source existence or scripted-model fixtures as competitive benchmark wins.
 
