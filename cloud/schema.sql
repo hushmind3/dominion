@@ -41,10 +41,3 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   current_period_end INTEGER,
   updated_at INTEGER NOT NULL
 );
-
--- Short-lived, single-use OAuth state prevents login CSRF and replay.
-CREATE TABLE IF NOT EXISTS oauth_states (
- state_hash TEXT PRIMARY KEY,
- provider TEXT NOT NULL CHECK(provider IN ('naver','kakao')),
- expires_at INTEGER NOT NULL
-);
