@@ -47,9 +47,8 @@ The Model Hub now displays a DOMINION Cloud account card. Configure the frontend
 with `VITE_DOMINION_CLOUD_URL=https://YOUR_WORKER.workers.dev` and
 `VITE_DOMINION_GOOGLE_CLIENT_ID=YOUR_GOOGLE_WEB_CLIENT_ID`. The Worker must use the
 same `GOOGLE_CLIENT_ID` and set `ALLOWED_ORIGIN` to the exact frontend origin.
-Use Google Identity Services on a supported HTTPS web origin. Google Sign-In
-is not supported inside embedded desktop webviews; native desktop needs a
-system-browser authorization-code/PKCE flow before production.
+Use Google Identity Services on a supported HTTPS web origin. Native desktop sign-in uses a system-browser authorization-code/S256 PKCE
+flow with a loopback callback and acknowledgement-based session handoff.
 
 The Worker `FREE_MODELS_JSON` variable is a JSON array, e.g.
 `[{"id":"example-free-model","upstream_model":"provider-specific-id"}]`.
@@ -173,3 +172,44 @@ Before live charging: implement and verify refund/cancellation handling,
 payment-status webhook reconciliation, stuck `processing` order recovery,
 admin-only settlement reconciliation and customer support processes. Existing
 Pro checkout is a one-time 30-day purchase, not recurring auto-billing.
+
+
+## Email confirmation login (2026-11-19)
+
+DOMINION also contains an optional email link sign-in flow matching the
+request → receive verification email → confirm in mail → return to DOMINION UX.
+The email does **not** contain a session bearer token. The initiating browser
+holds a separate 256-bit polling credential in session storage. A 10-minute
+email link only marks the attempt verified after the user presses a confirmation
+button. An atomic D1 batch issues the session to the initiating browser once;
+replayed or expired attempts cannot mint another session. Mail sends are
+rate-limited by originating IP and destination email hash, with raw links and
+session tokens absent from database columns.
+
+Provision the additional D1 table/indexes in `cloud/schema.sql` **before**
+enabling the login provider. Apply the SQL to the existing D1 instance using
+Wrangler after reviewing the database/backup state. Changes to tracked SQL
+files alone do not migrate the deployed database.
+
+For email delivery, configure **one** of these adapters:
+
+- **Cloudflare Email Service (2026 public beta):** Onboard and authenticate a
+  sender domain; available for arbitrary recipients on Workers Paid. Add
+  `[[send_email]]\nname = "EMAIL"` to `cloud/wrangler.toml` after
+  provisioning. Set Worker variable `EMAIL_FROM` to a verified address, e.g.
+  `DOMINION <login@your-verified-domain.example>`.
+- **Resend fallback:** Verify a sender domain with Resend; set `EMAIL_FROM`
+  and store `RESEND_API_KEY` using a Worker secret. The API key must never
+  appear in client assets or version control.
+
+Optional secret `EMAIL_RATE_PEPPER` keeps IP-based throttle keys unlinkable
+across deployments. The public config advertises `providers.email=true`
+only when both D1, a sender, and a sending adapter are configured. The UI
+hides email sign-in otherwise, leaving Google and local models unaffected.
+
+The email sender and D1 schema are **not** automatically provisioned or
+activated by source commits. Cloud deployments remain opt-in through the
+workflow dispatch and operator-controlled secrets. Production hardening should
+include Turnstile/WAF abuse controls, sender reputation monitoring and a
+live end-to-end verification test. The 2026 Cloudflare send binding reference:
+https://developers.cloudflare.com/email-service/api/send-emails/workers-api/
