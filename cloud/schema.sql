@@ -42,3 +42,22 @@ CREATE TABLE IF NOT EXISTS payments (
   confirmed_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS payments_account ON payments(account_id,created_at);
+
+-- Checkout intents belong to the authenticated account; prices are server-side.
+CREATE TABLE IF NOT EXISTS checkout_orders (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL REFERENCES accounts(id),
+  plan TEXT NOT NULL,
+  amount_krw INTEGER NOT NULL CHECK (amount_krw > 0),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','paid','failed')),
+  payment_key TEXT UNIQUE,
+  created_at INTEGER NOT NULL,
+  paid_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS checkout_orders_account ON checkout_orders(account_id,created_at);
+CREATE TABLE IF NOT EXISTS subscriptions (
+  account_id TEXT PRIMARY KEY REFERENCES accounts(id),
+  plan TEXT NOT NULL,
+  valid_until INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
