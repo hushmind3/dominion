@@ -18,6 +18,7 @@ pub mod agents;
 pub mod sdk;
 pub mod providers;
 pub mod cli_oauth;
+pub mod cloud_auth;
 pub mod benchmark;
 pub mod experiments;
 pub mod chat;
@@ -273,6 +274,10 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/dev/jobs/:id", get(dev::get_job))
         .route("/api/dev/update", get(dev::update_status).post(dev::update))
+        // DOMINION Cloud desktop sign-in: browser OAuth, loopback state and PKCE.
+        .route("/api/cloud-auth/google/start", post(cloud_auth::start))
+        .route("/api/cloud-auth/google/status", get(cloud_auth::status))
+        .route("/api/cloud-auth/google/callback", get(cloud_auth::callback))
         .route("/api/oauth/providers", get(oauth::providers))
         .route("/api/oauth/connections", get(channels::connections))
         .route("/api/oauth/providers/:id", post(oauth::save))
