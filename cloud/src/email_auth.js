@@ -19,7 +19,7 @@ const cleanEmail=value=>{
  if(email.length<5||email.length>320||!/^[^\s@<>]{1,64}@[a-z0-9.-]{3,253}$/.test(email)||email.includes('..')||email.endsWith('.'))return null;
  return email;
 };
-export const emailLoginReady=env=>Boolean(env.RESEND_API_KEY&&env.EMAIL_FROM&&env.DB);
+export const emailLoginReady=env=>Boolean(env.EMAIL_FROM&&env.DB&&(env.EMAIL?.send||env.RESEND_API_KEY));
 const parseJson=async request=>{
  if(Number(request.headers.get('content-length')||0)>2048)return null;
  const text=await request.text();
@@ -33,7 +33,7 @@ export async function startEmailLogin(request,env){
  if(!email)return fail('올바른 이메일 주소를 입력하세요.');
  const addressHash=await digest(email);
  const clientIp=request.headers.get('cf-connecting-ip')||'unknown';
- const ipHash=await digest(String(env.RESEND_API_KEY)+':'+clientIp);
+ const ipHash=await digest(String(env.EMAIL_RATE_PEPPER||env.SESSION_SECRET||env.RESEND_API_KEY||'dominion-email-rate')+':'+clientIp);
  const since=epoch()-3600;
  const ipRate=await env.DB.prepare('SELECT COUNT(*) AS total FROM email_login_attempts WHERE ip_hash=? AND created_at>?').bind(ipHash,since).first();
  const mailRate=await env.DB.prepare('SELECT COUNT(*) AS total FROM email_login_attempts WHERE email_hash=? AND created_at>?').bind(addressHash,since).first();
@@ -46,11 +46,21 @@ export async function startEmailLogin(request,env){
  link.searchParams.set('id',id);
  link.searchParams.set('token',verify);
  const sender=String(env.EMAIL_FROM).trim();
- const send=await fetch('https://api.resend.com/emails',{method:'POST',headers:{authorization:'Bearer '+env.RESEND_API_KEY,'content-type':'application/json'},body:JSON.stringify({
+ const message={
   from:sender,to:[email],subject:'DOMINION 로그인 이메일 확인',
-  text:'DOMINION 로그인을 요청하셨다면 아래 링크에서 확인하세요. 링크는 10분 뒤 만료됩니다.\n\n'+link.href+'\n\n요청하지 않았다면 이 메일을 무시하세요.'
- }),signal:AbortSignal.timeout(12000)}).catch(()=>null);
- if(!send?.ok){
+  text:'DOMINION 로그인을 요청하셨다면 아래 링크에서 확인하세요. 링크는 10분 뒤 만료됩니다.\\n\\n'+link.href+'\\n\\n요청하지 않았다면 이 메일을 무시하세요.'
+ };
+ let sent=false;
+ if(env.EMAIL?.send){
+  // Cloudflare Email Service (2026); keep the Resend adapter for other plans.
+  try{await env.EMAIL.send(message);sent=true}catch{}
+ }else if(env.RESEND_API_KEY){
+  const response=await fetch('https://api.resend.com/emails',{method:'POST',
+   headers:{authorization:'Bearer '+env.RESEND_API_KEY,'content-type':'application/json'},
+   body:JSON.stringify(message),signal:AbortSignal.timeout(12000)}).catch(()=>null);
+  sent=Boolean(response?.ok);
+ }
+ if(!sent){
   await env.DB.prepare('DELETE FROM email_login_attempts WHERE id=?').bind(id).run();
   return fail('인증 메일을 발송하지 못했습니다. 잠시 후 다시 시도하세요.',502);
  }
