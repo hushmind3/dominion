@@ -483,6 +483,13 @@ export default {
       } else if (path === '/v1/billing/confirm' && request.method === 'POST') {
         const user = await account(request, env);
         response = user ? await confirmCheckout(request,env,user) : err('Unauthorized',401);
+      } else if (path === '/v1/billing/orders' && request.method === 'GET') {
+        const user = await account(request, env);
+        if (!user) response = err('Unauthorized', 401);
+        else {
+          const orders = await env.DB.prepare('SELECT id,plan,amount_krw,status,created_at,paid_at FROM checkout_orders WHERE account_id=? ORDER BY created_at DESC LIMIT 30').bind(user.id).all();
+          response = json({ orders: orders.results || [], settlement: 'managed_by_payment_provider' });
+        }
       } else if (path === '/v1/me' && request.method === 'GET') {
         const user = await account(request, env);
         response = user ? json({ account_id: user.id, credits_micro_krw: user.credits }) : err('Unauthorized', 401);
