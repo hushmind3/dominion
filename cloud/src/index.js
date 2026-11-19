@@ -501,7 +501,12 @@ export default {
     const origin = request.headers.get('origin');
     const headers = cors(origin, env);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
-    if (origin && !isAllowedOrigin(origin, env)) return err('Origin not allowed', 403);
+    // The email verification form is hosted by this Worker, not the desktop
+    // frontend. Allow only its exact same-origin POST, never foreign origins.
+    const sameOriginEmailConfirm = request.method === 'POST'
+      && new URL(request.url).pathname === '/v1/auth/email/verify'
+      && origin === new URL(request.url).origin;
+    if (origin && !isAllowedOrigin(origin, env) && !sameOriginEmailConfirm) return err('Origin not allowed', 403);
     // Public OAuth metadata: Google client IDs are public identifiers, never secrets.
     // The browser uses this endpoint so login works without a compile-time VITE key.
     if (new URL(request.url).pathname === '/v1/public-config' && request.method === 'GET') {
