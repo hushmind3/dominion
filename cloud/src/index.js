@@ -211,6 +211,40 @@ async function checkout(request, env, user) {
     .bind(orderId, user.id, 'pro', amount, 'pending', now()).run();
   return json({ orderId, amount, orderName: 'DOMINION Pro 30일', customerKey: await hash(user.id), clientKey: env.TOSS_CLIENT_KEY });
 }
+// A provider-approved payment must grant a period at most once. D1 batch
+// executes these SQL statements as one transaction; SQLite changes() observes
+// the preceding conditional order transition, even under duplicate callbacks.
+async function settleApprovedOrder(env, user, order, paymentKey, result) {
+  if (result?.orderId !== order.id || result?.paymentKey !== paymentKey ||
+      result?.totalAmount !== order.amount_krw || result?.status !== 'DONE')
+    return err('Payment verification incomplete; order requires reconciliation', 503);
+  const stamp = now();
+  await env.DB.batch([
+    env.DB.prepare("UPDATE checkout_orders SET status='paid',payment_key=?,paid_at=? WHERE id=? AND account_id=? AND status='processing'")
+      .bind(paymentKey, stamp, order.id, user.id),
+    env.DB.prepare("INSERT INTO subscriptions(account_id,plan,status,current_period_end,updated_at) SELECT ?,'pro','active',?,? WHERE changes()=1 ON CONFLICT(account_id) DO UPDATE SET plan='pro',status='active',current_period_end=MAX(COALESCE(subscriptions.current_period_end,0),?)+2592000,updated_at=?")
+      .bind(user.id, stamp + 2592000, stamp, stamp, stamp)
+  ]);
+  const persisted = await env.DB.prepare('SELECT status,payment_key FROM checkout_orders WHERE id=? AND account_id=?')
+    .bind(order.id, user.id).first();
+  return persisted?.status === 'paid' && persisted.payment_key === paymentKey
+    ? json({status:'paid',orderId:order.id})
+    : err('Payment reconciliation pending',503);
+}
+// A timeout can mean Toss approved the charge while the Worker lost its reply.
+// Recover by querying the payment, never by resending a new approval.
+async function reconcileProcessingPayment(env, user, order, paymentKey) {
+  try {
+    const auth='Basic '+btoa(env.TOSS_SECRET_KEY+':');
+    const response=await fetch('https://api.tosspayments.com/v1/payments/orders/'+encodeURIComponent(order.id),{
+      headers:{authorization:auth},signal:AbortSignal.timeout(12000)
+    });
+    if (!response.ok) return err('Payment confirmation pending provider reconciliation',503);
+    return settleApprovedOrder(env,user,order,paymentKey,await response.json());
+  } catch {
+    return err('Payment confirmation pending provider reconciliation',503);
+  }
+}
 async function confirmCheckout(request, env, user) {
   if (!env.TOSS_SECRET_KEY) return err('Checkout not configured', 503);
   const { orderId, paymentKey, amount } = await maxBody(request);
@@ -220,9 +254,17 @@ async function confirmCheckout(request, env, user) {
   const order = await env.DB.prepare('SELECT * FROM checkout_orders WHERE id=? AND account_id=?').bind(orderId,user.id).first();
   if (!order || order.amount_krw !== amount) return err('Order not found or amount mismatch', 403);
   if (order.status === 'paid') return order.payment_key === paymentKey ? json({status:'paid',orderId}) : err('Payment mismatch',409);
-  if (order.status !== 'pending') return err('Payment already being processed',409);
+  if (order.status === 'processing') return reconcileProcessingPayment(env,user,order,paymentKey);
+  if (order.status !== 'pending') return err('Payment requires owner review',409);
   const locked = await env.DB.prepare("UPDATE checkout_orders SET status='processing' WHERE id=? AND account_id=? AND status='pending' RETURNING id").bind(orderId,user.id).first();
-  if (!locked) return err('Payment already being processed',409);
+  if (!locked) {
+    const latest = await env.DB.prepare('SELECT * FROM checkout_orders WHERE id=? AND account_id=?').bind(orderId,user.id).first();
+    if (latest?.status === 'paid') return latest.payment_key === paymentKey
+      ? json({status:'paid',orderId}) : err('Payment mismatch',409);
+    return latest?.status === 'processing'
+      ? reconcileProcessingPayment(env,user,latest,paymentKey)
+      : err('Payment requires owner review',409);
+  }
   try {
     const basic = btoa(env.TOSS_SECRET_KEY + ':');
     const response = await fetch('https://api.tosspayments.com/v1/payments/confirm',{
@@ -230,17 +272,10 @@ async function confirmCheckout(request, env, user) {
       body:JSON.stringify({paymentKey,orderId,amount}),signal:AbortSignal.timeout(15000)
     });
     const result = await response.json();
-    if (!response.ok || result.orderId !== orderId || result.totalAmount !== amount || result.status !== 'DONE') {
-      await env.DB.prepare("UPDATE checkout_orders SET status='failed' WHERE id=? AND status='processing'").bind(orderId).run();
-      return err('Payment was not approved',502);
-    }
-    // One transaction: grant exactly one subscription period after verified payment.
-    await env.DB.batch([
-      env.DB.prepare("UPDATE checkout_orders SET status='paid',payment_key=?,paid_at=? WHERE id=? AND account_id=? AND status='processing'").bind(paymentKey,now(),orderId,user.id),
-      env.DB.prepare("INSERT INTO subscriptions(account_id,plan,status,current_period_end,updated_at) VALUES(?,'pro','active',?,?) ON CONFLICT(account_id) DO UPDATE SET plan='pro',status='active',current_period_end=MAX(COALESCE(subscriptions.current_period_end,0),?)+2592000,updated_at=?")
-        .bind(user.id,now()+2592000,now(),now(),now())
-    ]);
-    return json({status:'paid',orderId});
+    // 5xx and incomplete responses are ambiguous: keep processing so a
+    // future attempt can look up the actual payment instead of charging twice.
+    if (!response.ok) return err('Payment status pending verification; retry with the same order',503);
+    return settleApprovedOrder(env,user,order,paymentKey,result);
   } catch {
     // Timeout may mean the provider approved payment: preserve processing for reconciliation.
     return err('Payment status pending verification; contact support with order ID',503);
