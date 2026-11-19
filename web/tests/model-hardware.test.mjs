@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
-import {classifyRuntimeFailure,memoryFit,modelPreflight,requiredMemory,selectRecommended,selectSmaller,planDownloadLaunch,preferredServerModelFormat} from '../src/utils/modelHardware.ts'
+import {classifyRuntimeFailure,engineForModel,memoryFit,modelPreflight,requiredMemory,selectRecommended,selectSmaller,planDownloadLaunch,preferredServerModelFormat} from '../src/utils/modelHardware.ts'
 
 const gguf=(id,bytes)=>({id,format:'gguf',bytes})
 const mlx=(id,bytes)=>({id,format:'mlx',bytes})
@@ -90,4 +90,21 @@ test('both installed and Hugging Face launch use the same fresh preflight',()=>{
  assert.match(source,/const check=modelPreflight\(model,snapshot.capabilities\)/)
  assert.match(source,/if\(check.status==='blocked'\)/)
  assert.match(source,/selectedPreflight&&<div/)
+})
+
+test('interrupted launch remembers the exact required execution engine',()=>{
+ assert.equal(engineForModel({id:'lms:model-key',format:'gguf',bytes:4_000}),'lm-studio')
+ assert.equal(engineForModel({id:'mlx:owner/model',format:'mlx',bytes:4_000}),'mlx-lm')
+ assert.equal(engineForModel({id:'external:123',format:'mlx',bytes:4_000}),'mlx-lm')
+ assert.equal(engineForModel({id:'owner--repo/q4.gguf',format:'gguf',bytes:4_000}),'llama-cpp')
+})
+test('engine installation retains failed model and resumes after a fresh runtime check',()=>{
+ const source=readFileSync(new URL('../src/components/ModelExplorer.tsx',import.meta.url),'utf8')
+ assert.match(source,/setPendingEngineLaunch\(\{id:model.id/)
+ assert.match(source,/setView\('import'\)/)
+ assert.match(source,/const succeeded=await load\(pending.id\)/)
+ assert.match(source,/if\(succeeded\)setView\(pending.from\)/)
+ assert.match(source,/pendingEngineCheck\?\.status==='blocked'/)
+ assert.match(source,/\/api\/model-library\/runtime\/install/)
+ assert.match(source,/const snapshot=await get<Runtime>\('\/api\/model-library\/runtime'\)/)
 })
