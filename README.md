@@ -111,6 +111,14 @@ The standalone RSI generation/campaign/core-auto-promotion engine and built-in v
 
 Connections to GitHub/Google may use a configured OAuth application or an authorized official CLI flow. Provider consent/configuration is still required; credentials are not bundled. See [connected accounts](docs/CONNECTED-ACCOUNTS-2026-11-17.md).
 
+## Sub3 input-token optimization (2026-11-20)
+
+- Checkpoint summarization budgets its input from the configured model context window (output reserved) and caps the transcript at 48,000 characters instead of forwarding up to 110,000.
+- Older successful tool observations are represented by bounded head/tail excerpts; exact repeated results are marked once, while recent observations, failures, and owner messages retain higher priority. The original SQLite conversation is never rewritten by checkpoint projection.
+- Chat context editing for **local models without confirmed server KV caching** now triggers earlier (40% of estimated input capacity) so stale read results are not repeatedly paid for as fresh prefill. Explicit cache-capable local backends and remote routes retain the existing cache-friendly 75% threshold. Writes, errors, latest three results, and tool-call identities remain intact.
+- The retired-feature regression scanner also examines SQL, HTML, CSS, Python, XML, SVG, text/config and dotenv files in addition to Rust/TypeScript/Markdown. This guard prevents dormant feature fragments from reappearing outside application source.
+- New regressions test replay fidelity, error tails, repeated tool outputs, Unicode safety and cache-sensitive thresholds. All savings are **projected prompt characters**, not claimed provider-billed token reductions. Verify with real model usage/cache telemetry before asserting cost savings.
+
 ## Development verification
 
 Routine changes: run *focused Rust development-profile tests*, not a blanket release build.

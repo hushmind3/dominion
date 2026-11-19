@@ -214,7 +214,7 @@ mod token_budget_tests {
         assert!(prompt.chars().count() <= 8_000);
         assert!(prompt.contains("LATEST_EVIDENCE"));
         assert!(prompt.contains("Exact duplicate"));
-        assert!(prompt.len() < 8_000);
+        assert!(prompt.len() * 10 < before.len(), "repeated outputs must be materially smaller");
         assert_eq!(serde_json::to_string(&original).unwrap(), before);
     }
     #[test]
