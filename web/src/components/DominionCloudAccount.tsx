@@ -319,7 +319,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
     <button type="button" disabled={routerBusy||!routerModels.length} onClick={()=>void importOpenRouterFree()} className="rounded-lg border px-3 py-2 text-[12px] disabled:opacity-50">전체 등록</button>
    </div>
    {routerMessage&&<p role="status" className="mt-2 text-[12px] text-[#7C7469]">{routerMessage}</p>}
-   {registered?.source==='openrouter'&&<button type="button" onClick={goToRegisteredChat} className="mt-2 rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white">등록한 모델로 채팅하기</button>
+   {registered?.source==='openrouter'&&<button type="button" onClick={goToRegisteredChat} className="mt-2 rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white">등록한 모델로 채팅하기</button>}
   </div>}
  </section>
 }
