@@ -145,3 +145,31 @@ DOMINION never transfers customer payments to the operator's bank account itself
 Before production activation the operator must register a business, complete the PG merchant contract and underwriting, register and verify the merchant settlement bank account in the PG dashboard, and obtain production client and secret keys. Store the secret only as a Cloudflare Worker secret; never place it in GitHub or desktop app settings. Configure PLAN_PRO_KRW and the production TOSS_CLIENT_KEY, TOSS_SECRET_KEY only after merchant onboarding. Keep test keys during testing; test payments do not result in bank deposits. Verify actual deposits and fees against the PG merchant settlement report and bank statement. A merchant account and payout bank account cannot be created or verified by this repository.
 
 Authenticated users can read their own recent order statuses through GET /v1/billing/payments (up to 50 entries; no payment keys or bank details returned). This endpoint is an order ledger, **not** proof that a merchant bank payout occurred. Before accepting real payments, add authenticated administrator-only settlement reconciliation, refund/cancellation handling, recovery of stuck processing orders, and end-to-end production verification. Do not label a payment as bank-settled merely because its checkout order is paid.
+
+
+## Merchant settlement and payment operations
+
+DOMINION never transfers a customer's payment directly to an operator bank account.
+TossPayments processes payment approval and settles the net proceeds to the merchant
+bank account registered during the merchant contract. Do not store bank account
+numbers or Toss secret keys in the repository, browser, or desktop application.
+
+Merchant setup checklist:
+1. Register the business and complete TossPayments merchant onboarding and review.
+2. Register the merchant-owned settlement bank account in TossPayments merchant admin.
+3. Register the service URL, product description, terms, refund policy and contact details.
+4. Configure `TOSS_CLIENT_KEY`, `TOSS_SECRET_KEY` (Worker secret), and `PLAN_PRO_KRW`.
+5. Use TEST keys for end-to-end checkout and approval before enabling LIVE keys.
+6. Compare confirmed orders with TossPayments merchant settlement reports and bank deposits.
+
+Authenticated `GET /v1/billing/orders` returns the current member's most recent
+30 checkout orders, including order ID, price, payment status, and timestamps.
+It intentionally excludes provider payment keys and all bank details. This is a
+payment ledger, **not** proof that the payment provider has transferred funds.
+Settlement timing, fees, chargebacks and refunds are controlled by the
+merchant agreement and must be reconciled against provider reports.
+
+Before live charging: implement and verify refund/cancellation handling,
+payment-status webhook reconciliation, stuck `processing` order recovery,
+admin-only settlement reconciliation and customer support processes. Existing
+Pro checkout is a one-time 30-day purchase, not recurring auto-billing.
