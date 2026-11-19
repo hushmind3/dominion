@@ -306,6 +306,16 @@ export default {
         const user = await account(request, env);
         response = user ? json({ data: [{ id: 'dominion/free-auto', name: 'DOMINION Free Auto', object: 'model', free: true }, ...(await availableModels(env)).map(x => ({ id: x.id, name: x.name || x.id, object: 'model', free: true })), ...paidModels(env).map(x => ({ id: x.id, name: x.name, object: 'model', free: false, provider: x.provider, input_micro_krw: x.input_micro_krw, output_micro_krw: x.output_micro_krw }))] }) : err('Unauthorized', 401);
       }
+      else if (path === '/v1/billing' && request.method === 'GET') {
+        const user = await account(request, env);
+        if (!user) response = err('Unauthorized', 401);
+        else {
+          const subscription = await env.DB.prepare('SELECT plan,status,current_period_end FROM subscriptions WHERE account_id=?').bind(user.id).first();
+          const payments = await env.DB.prepare('SELECT order_id,amount_krw,status,created_at FROM payments WHERE account_id=? ORDER BY created_at DESC LIMIT 20').bind(user.id).all();
+          response = json({ plan: subscription?.plan || 'free', status: subscription?.status || 'inactive',
+            current_period_end: subscription?.current_period_end || null, payments: payments.results || [] });
+        }
+      }
       else if (path === '/v1/me' && request.method === 'GET') {
         const user = await account(request, env);
         response = user ? json({ account_id: user.id, credits_micro_krw: user.credits }) : err('Unauthorized', 401);
