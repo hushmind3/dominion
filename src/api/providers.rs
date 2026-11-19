@@ -325,6 +325,61 @@ pub async fn public_catalog_models(
     }
 }
 
+/// OpenRouter publishes a public catalog. Showing free-model names never
+/// needs the user's OpenRouter API key; actual chat calls still require auth.
+fn public_openrouter_free_models(value: &Value) -> Vec<Value> {
+    let mut models=value["data"].as_array().into_iter().flatten()
+        .filter_map(|model| {
+            let id=model["id"].as_str()?;
+            if !id.ends_with(":free") {return None;}
+            let zero=|field:&str|model["pricing"][field].as_str()
+                .and_then(|price|price.parse::<f64>().ok())
+                .is_some_and(|price|price==0.0);
+            if !zero("prompt")||!zero("completion") {return None;}
+            if model["architecture"]["output_modalities"].as_array()
+                .is_some_and(|modalities|!modalities.iter().any(|mode|mode=="text"))
+            {return None;}
+            Some(json!({
+                "id":id,
+                "name":model["name"].as_str().unwrap_or(id),
+                "context":model["context_length"].as_u64(),
+            }))
+        })
+        .collect::<Vec<_>>();
+    models.sort_by(|a,b|a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or("")));
+    models
+}
+pub async fn public_openrouter_free_catalog(State(state):State<AppState>)->Json<Value>{
+    let cached=state.store.get("public_free_models","openrouter");
+    if let Some(record)=&cached {
+        let fresh=record["fetchedAt"].as_str()
+            .and_then(|value|chrono::DateTime::parse_from_rfc3339(value).ok())
+            .is_some_and(|time|(chrono::Utc::now()-time.with_timezone(&chrono::Utc)).num_seconds()<21_600);
+        if fresh{return Json(json!({"models":record["models"],"cached":true}));}
+    }
+    let result=async{
+        let client=reqwest::Client::builder().timeout(Duration::from_secs(20))
+            .build().map_err(|error|error.to_string())?;
+        let response=client.get("https://openrouter.ai/api/v1/models").send().await
+            .map_err(|error|error.to_string())?;
+        if !response.status().is_success(){return Err(format!("OpenRouter HTTP {}",response.status()));}
+        let body=response.json::<Value>().await.map_err(|error|error.to_string())?;
+        Ok::<Vec<Value>,String>(public_openrouter_free_models(&body))
+    }.await;
+    match result {
+        Ok(models)=>{
+            let record=json!({"id":"openrouter","fetchedAt":chrono::Utc::now().to_rfc3339(),"models":models});
+            state.store.put("public_free_models",&record);
+            Json(json!({"models":models,"cached":false}))
+        }
+        Err(error)=>Json(json!({
+            "models":cached.as_ref().map(|value|value["models"].clone()).unwrap_or_else(||json!([])),
+            "cached":cached.is_some(),
+            "error":format!("무료 모델 목록 조회 실패: {error}")
+        }))
+    }
+}
+
 /// Public provider catalog backed by models.dev. The cache keeps the Models
 /// tab usable offline and avoids hammering the upstream on every visit.
 pub async fn provider_catalog(State(state): State<AppState>) -> Json<Value> {
