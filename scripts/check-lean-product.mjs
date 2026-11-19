@@ -23,6 +23,7 @@ absent.push(
  'src/db/money_schema.sql','.github/workflows/sub3-money-acceptance.yml'
 );
 for(const dir of ['src/api','src/engine','src/db']){
+ if(!exists(dir))continue;
  for(const file of fs.readdirSync(dir).filter(file=>/^money(?:_|\.)/.test(file))){
   assert.fail('Money domain source survived removal: '+dir+'/'+file);
  }
