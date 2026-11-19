@@ -8,8 +8,8 @@ const TOKEN='a'.repeat(48);
 const headers=(extra={})=>({origin:ORIGIN,...extra});
 const request=(path,init={})=>new Request('https://sub3.worker.test'+path,init);
 
-function dbFixture({verified=false,freeLimit=5}={}){
-  let used=0;
+function dbFixture({verified=false}={}){
+  const quota=new Map();
   const calls=[];
   const db={
     calls,
@@ -22,10 +22,15 @@ function dbFixture({verified=false,freeLimit=5}={}){
               if(query.includes('FROM sessions s JOIN accounts a'))return {id:'google:isolated-test',credits:5000};
               if(query.includes('FROM identity_verifications'))return verified?{verified_at:1700000000,provider:'portone'}:null;
               if(query.includes('FROM subscriptions'))return null;
-              if(query.includes('FROM free_quota'))return {used};
+              if(query.includes('FROM free_quota'))return {used:quota.get(String(parameters[0]))||0};
               if(query.includes('INSERT INTO free_quota')){
-                used+=1;
-                return used<=freeLimit?{used}:null;
+                // Mirror D1's ON CONFLICT ... WHERE used < ? RETURNING used.
+                // A rejected reservation must not increment the stored counter.
+                const key=String(parameters[0]),limit=Number(parameters[1]);
+                const used=quota.get(key)||0;
+                if(!Number.isSafeInteger(limit)||used>=limit)return null;
+                quota.set(key,used+1);
+                return {used:used+1};
               }
               return null;
             },
@@ -114,7 +119,7 @@ test('authenticated free streaming uses Worker-owned inference with quota accoun
   assert.match(streamed,/Hello from sub3/);
   assert.match(streamed,/data: \[DONE\]/);
   const second=await send();
-  assert.equal(second.status,429,JSON.stringify(environment.DB.calls.filter(c=>c.query.includes('free_quota'))));
+  assert.equal(second.status,429);
 });
 test('identity verification gates both paid inference and checkout',async()=>{
   const environment=env({
