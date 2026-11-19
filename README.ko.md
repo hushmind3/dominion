@@ -1,6 +1,6 @@
 # 도미니언 — 자체 Rust 자율 에이전트 플랫폼
 
-[English](README.md) · [실행 구조](docs/HARNESS.md) · [Rust SDK](sdk/rust/README.md) · [TypeScript SDK](sdk/typescript/README.md) · [서브3 소스 감사](docs/SUB3-SOURCE-AUDIT-2026-11-18.md)
+[English](README.md) · [실행 구조](docs/HARNESS.md) · [Rust SDK](sdk/rust/README.md) · [TypeScript SDK](sdk/typescript/README.md) · [서브3 최신 통합 점검](docs/SUB3-INTEGRATION-2026-11-19.md)
 
 **도미니언(DOMINION)**은 로컬·외부 AI 모델을 연결해 코드 수정, 파일·셸·웹/MCP 작업, 검증, 승인, 중단 및 복구를 수행하는 **사용자 통제형 Rust 실행 플랫폼**입니다. 단순한 채팅 UI가 아니라 실제 작업과 결과 증거를 SQLite에 남기는 실행 제품을 목표로 합니다.
 
@@ -27,7 +27,7 @@ Rust 서버가 기본적으로 **http://127.0.0.1:4317**에 React 화면을 제�
 
 ## 최신 메인 프론트 적용 및 머니 기능 정리
 
-프론트는 2026-11-19 `main` 커밋 `93dcee8`의 모델 탐색·공개 모델 조회·계정 연결·채팅·그룹방 화면을 동일 소스로 반영했습니다. 서브3의 Rust 실행 커널과 컨텍스트 최적화는 유지합니다. 내장 머니 기능의 메뉴·API·실행 모듈·자동 실행은 제거하고 과거 SQLite 사용자 데이터는 삭제하지 않습니다. 이전 머니 작업은 실행 불가 상태로 취급합니다.
+프론트는 2026-11-19 최신 `main` 커밋 `f86a36e`과 **`web/` Git 트리 해시까지 동일**합니다(`fe65b961b037ad04e8ab4fc7f5c3d6e18abba392`). 모델 탐색, API 키 없는 공개 모델 목록, GitHub·Google 계정 연결 UI, 채팅·그룹방 화면을 적용했습니다. 서브3 Rust 하네스·그룹 컨텍스트 최적화는 유지하며, 메인의 최신 Codex WebSocket 계약 무효화 및 효과 안전 병렬 체크포인트 개선도 서브3에 반영했습니다. 내장 머니의 메뉴·API·실행 모듈·자동 실행은 제거했고 기존 SQLite 사용자 데이터는 삭제하지 않았습니다. 이전 머니 작업의 자동 재실행은 차단합니다.
 
 ## 🧠 현재 구현 범위
 
@@ -124,15 +124,16 @@ cargo test --bin dominion-rust engine::skill_discovery::tests
 cargo test --bin dominion-rust api::sdk::tests
 ```
 
-프론트 타입 검사·빌드, Windows/macOS 플랫폼 검증 및 전체 release 빌드는 릴리즈 단계의 별도 검증입니다.
+프론트 타입 검사·전체 프론트 테스트·Vite 빌드는 서브3 제품 CI에서 실행합니다. Windows/macOS 설치 패키지 릴리즈 빌드는 별도 릴리즈 게이트입니다.
 
 ```sh
 npm run typecheck --prefix web
+node --experimental-strip-types --test web/tests/*.test.mjs
 npm run build --prefix web
 node scripts/check-lean-product.mjs
 ```
 
-`.github/workflows/ci.yml`은 수동 실행하는 전체 게이트이며, `sub3-*` 워크플로는 개발 범위의 Rust 회귀 테스트를 확인합니다. 과거 성공한 CI는 **당시 커밋의 결과**일 뿐, 최신 문서·컨텍스트 수정 커밋의 성공 증거가 아닙니다.
+**실제 CI 통과 기준 코드:** `ed70b2e`(2026-11-19). [Rust 제품·프론트 CI](https://github.com/hushmind3/dominion-rust/actions/runs/44483266148)와 [Rust SDK CI](https://github.com/hushmind3/dominion-rust/actions/runs/44483266171)가 통과했습니다. 모의 제공자 기반 API·엔진 테스트 및 프론트 컴파일 결과입니다. `.github/workflows/ci.yml` 전체 릴리즈 게이트와 실제 27B 모델/유료 모델 성능 측정은 실행하지 않았습니다. [최신 통합 점검 기록](docs/SUB3-INTEGRATION-2026-11-19.md)을 참고하십시오.
 
 **미완성·미측정:** 채팅/자율 실행 루프 완전 통합, 실제 모델의 장기 작업 완수율, 최신 브랜치의 Windows/macOS 릴리즈 검증, 실과금 기준의 캐시 절감률과 상용 운영 검증.
 

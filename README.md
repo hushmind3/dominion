@@ -1,6 +1,6 @@
 # DOMINION — Rust agent execution platform
 
-[한국어 안내](README.ko.md) · [Architecture](docs/HARNESS.md) · [Rust SDK](sdk/rust/README.md) · [TypeScript SDK](sdk/typescript/README.md) · [Source audit (2026-11-18)](docs/SUB3-SOURCE-AUDIT-2026-11-18.md)
+[한국어 안내](README.ko.md) · [Architecture](docs/HARNESS.md) · [Rust SDK](sdk/rust/README.md) · [TypeScript SDK](sdk/typescript/README.md) · [Current integration audit](docs/SUB3-INTEGRATION-2026-11-19.md)
 
 DOMINION is a local-first AI workspace and **owner-controlled Rust agent execution system**. It connects configured local or remote models to coding tasks, files, shell commands, web/MCP tools, conversation memory, durable job records, approvals, cancellation, and evidence-based verification.
 
@@ -27,7 +27,7 @@ For frontend development, use `npm run dev --prefix web` alongside the Rust serv
 
 ## Frontend baseline and retired domain
 
-The React frontend is synchronized with `main` at `93dcee8c5d385528d886662abd694abf339c8ee8` (2026-11-19). This includes the latest model explorer, public provider catalogs without credentials, connected accounts, and updated chat/room shell. The sub3 native Rust kernel and context implementation remain independent of main.
+The React frontend is **byte-identical to `main`** at `f86a36e1c8ddac149baea2ac2391d317add36cbe` (2026-11-19): both `web/` Git tree SHA values are `fe65b961b037ad04e8ab4fc7f5c3d6e18abba392`. This includes model exploration, public keyless model browsing, GitHub/Google account connection UI, chat and rooms. The sub3 native Rust kernel and context engine remain separate from main.
 
 The built-in Money research/earning domain, its API routes, background scheduling, frontend page and executable modules have been removed. Existing SQLite user records are intentionally preserved, not migrated or deleted. Older Money jobs cannot be re-enqueued or restarted.
 
@@ -119,15 +119,16 @@ cargo test --bin dominion-rust engine::skill_discovery::tests
 cargo test --bin dominion-rust api::sdk::tests
 ```
 
-Frontend/API checks and full Windows/macOS builds are **release-stage** checks:
+Frontend tests, typecheck and production UI build run on every sub3 product CI push. Full installer and Windows/macOS release packaging remain separate release-stage checks:
 
 ```sh
 npm run typecheck --prefix web
+node --experimental-strip-types --test web/tests/*.test.mjs
 npm run build --prefix web
 node scripts/check-lean-product.mjs
 ```
 
-`.github/workflows/ci.yml` is manually dispatched for the full gate; the scoped `sub3-*` workflows run targeted Rust tests. The workflows and historical green checks are **not proof that the newest commit passed**. At the time of this documentation update, the latest README/context changes have **not** been compiled or exercised with a paid/live model in this environment.
+**Verified source commit:** `ed70b2efa0581d94a1d52e35eb057043a3917223` passed [Sub3 product Rust and frontend tests](https://github.com/hushmind3/dominion-rust/actions/runs/44483266148) and [Sub3 Rust SDK tests](https://github.com/hushmind3/dominion-rust/actions/runs/44483266171) on 2026-11-19. These checks include mock-provider execution and frontend compilation. `.github/workflows/ci.yml` remains an opt-in full release validation and was not run; no live 27B or paid-provider benchmark was executed. See [current integration audit](docs/SUB3-INTEGRATION-2026-11-19.md).
 
 Current limitations: interactive chat and the native work kernel are not yet a single lifecycle; independent commercial-grade long-horizon task success, full release validation, and reproducible provider-billed cache gains are still unmeasured. Avoid treating source existence or scripted-model fixtures as competitive benchmark wins.
 
