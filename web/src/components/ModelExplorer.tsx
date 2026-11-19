@@ -201,7 +201,7 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
   catch(e){setError((e as Error).message)}finally{setPicking(false)}
  }
  const queueEngineSetup=(model:Installed|undefined)=>{
-  if(model)setPendingEngineLaunch({id:model.id,from:view==='search'?'search':'installed',createdAt:Date.now()})
+  if(model)setPendingEngineLaunch(current=>current?.id===model.id?current:{id:model.id,from:view==='search'?'search':'installed',createdAt:Date.now()})
   setView('import')
  }
  const load=(id:string)=>safe('load'+id,async()=>{
@@ -278,6 +278,10 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
    <div className="flex items-center gap-2 text-[11px] text-[#7C7469]"><span className={'size-1.5 rounded-full '+(runtime.status==='ready'?'bg-emerald-500':runtime.status==='loading'?'bg-amber-500':'bg-slate-300')}/>{runtime.status==='ready'?t('models.status.ready'):runtime.status==='loading'?t('models.status.loading'):runtime.status==='installing'?t('models.status.installing'):t('models.status.idle')}<Button variant="bare" type="button" aria-label={t('models.refresh')} onClick={()=>void refresh()} className="ml-2 text-[#9C9388] hover:text-[#4A443C]"><RefreshCw size={14}/></Button></div>
   </div>
   {error&&<div role="alert" className="mx-4 mt-3 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-700"><CircleAlert size={15}/><span className="flex-1">{error}</span><Button variant="bare" aria-label={t('models.ui.close')} onClick={()=>setError('')}><X size={14}/></Button></div>}
+  {pendingEngineLaunch&&view!=='import'&&<div role="status" className="mx-4 mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#D9DFC8] bg-[#F6F8F0] px-3 py-2 text-[11px] text-[#5C544A]">
+   <span className="min-w-0 break-all">실행기 설치 후 이어갈 모델 · {pendingEngineLaunch.id}</span>
+   <Button variant="bare" type="button" className={btn} onClick={()=>setView('import')}><ArrowRight size={13}/>실행 준비 이어가기</Button>
+  </div>}
   {pendingLaunch&&<div role="status" className="mx-4 mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] text-emerald-800"><span className="min-w-0 break-all">다운로드 후 자동 실행 대기 · {pendingLaunch.repo} · {pendingLaunch.optionId}</span><Button variant="bare" type="button" className="text-[11px] font-semibold underline" onClick={()=>setPendingLaunch(null)}>자동 실행 취소 (다운로드 유지)</Button></div>}
   {runtime.status==='error'&&runtime.error&&<div role="alert" className="flex flex-wrap items-center justify-between gap-3 border-t border-rose-100 bg-rose-50 px-4 py-3 text-[11px] text-rose-700"><div className="flex min-w-0 flex-1 items-start gap-2"><CircleAlert size={15} className="mt-0.5 shrink-0"/><div><strong className="block">모델 실행 실패</strong><p className="mt-1 break-words">{translateError(runtime.error)}</p><p className="mt-1 text-rose-600">{runtimeFailure==='memory'?'메모리가 부족할 수 있습니다. 더 작은 양자화 모델을 선택해 보세요.':runtimeFailure==='file'?'모델 파일을 찾을 수 없거나 손상되었을 수 있습니다. 설치 목록과 파일을 확인하세요.':runtimeFailure==='engine'?'실행 엔진을 사용할 수 없습니다. 로컬 실행 엔진의 설치 상태를 확인하세요.':'오류 내용을 확인하고 실행 상태를 다시 조회해 보세요.'}</p></div></div><div className="flex shrink-0 flex-wrap gap-2">{runtimeFailure==='memory'&&smallerOption&&(runtime.id===existing?.id||runtime.id===selectedJob?.installedId)&&<Button variant="bare" type="button" className={btn} disabled={Boolean(working)} onClick={()=>{
  setView('search');setVariant(smallerOption.id);setError('')
