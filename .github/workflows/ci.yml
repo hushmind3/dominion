@@ -198,6 +198,7 @@ jobs:
         run: |
           node --experimental-strip-types --test web/tests/model-free.test.mjs
           node --experimental-strip-types --test web/tests/model-hardware.test.mjs
+          node --experimental-strip-types --test web/tests/cloud-auth-flight.test.mjs
           node --test web/tests/chat-stop-contract.test.mjs
           npm run typecheck --prefix web
           npm run build --prefix web
