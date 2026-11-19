@@ -156,7 +156,44 @@ async function paymentHistory(env, user) {
   const rows = await env.DB.prepare("SELECT id,plan,amount_krw,status,created_at,paid_at FROM checkout_orders WHERE account_id=? ORDER BY created_at DESC LIMIT 50").bind(user.id).all();
   return json({ payments: rows.results || [], settlement_provider: 'tosspayments', settlement_managed_externally: true });
 }
+// Paid Cloud access requires independently verified identity. OAuth alone is not identity proof.
+async function identityStatus(env, user) {
+  const row = await env.DB.prepare('SELECT verified_at,provider FROM identity_verifications WHERE account_id=?').bind(user.id).first();
+  return { verified: Boolean(row?.verified_at), verified_at: row?.verified_at || null, provider: row?.provider || null };
+}
+async function identityStart(env, user) {
+  if (!env.PORTONE_STORE_ID || !env.PORTONE_IDENTITY_CHANNEL_KEY)
+    return err('Identity verification provider not configured',503);
+  // The client starts the provider SDK with this server-issued, account-bound identity ID.
+  const identityVerificationId = crypto.randomUUID();
+  await env.DB.prepare('INSERT INTO identity_attempts(id,account_id,status,created_at) VALUES(?,?,?,?)')
+    .bind(identityVerificationId,user.id,'pending',now()).run();
+  return json({identityVerificationId,storeId:env.PORTONE_STORE_ID,channelKey:env.PORTONE_IDENTITY_CHANNEL_KEY});
+}
+async function identityConfirm(request, env, user) {
+  if (!env.PORTONE_API_SECRET) return err('Identity verification provider not configured',503);
+  const {identityVerificationId}=await maxBody(request);
+  if (typeof identityVerificationId!=='string'||!/^[0-9a-f-]{36}$/.test(identityVerificationId))
+    return err('Invalid verification ID');
+  const attempt=await env.DB.prepare('SELECT status FROM identity_attempts WHERE id=? AND account_id=?')
+    .bind(identityVerificationId,user.id).first();
+  if (!attempt) return err('Unknown identity verification',403);
+  if (attempt.status==='verified') return json({verified:true});
+  if (attempt.status!=='pending') return err('Verification not pending',409);
+  const response=await fetch('https://api.portone.io/identity-verifications/'+encodeURIComponent(identityVerificationId),{
+    headers:{Authorization:'PortOne '+env.PORTONE_API_SECRET},signal:AbortSignal.timeout(12000)
+  });
+  if (!response.ok) return err('Identity provider verification failed',502);
+  const result=await response.json();
+  if (result.status!=='VERIFIED') return err('Identity verification incomplete',403);
+  await env.DB.batch([
+    env.DB.prepare("UPDATE identity_attempts SET status='verified' WHERE id=? AND account_id=? AND status='pending'").bind(identityVerificationId,user.id),
+    env.DB.prepare("INSERT INTO identity_verifications(account_id,provider,verified_at) VALUES(?,'portone',?) ON CONFLICT(account_id) DO UPDATE SET provider='portone',verified_at=excluded.verified_at").bind(user.id,now())
+  ]);
+  return json({verified:true});
+}
 async function checkout(request, env, user) {
+  if (!(await identityStatus(env,user)).verified) return err('Identity verification required for paid access',403);
   if (!env.TOSS_CLIENT_KEY || !env.TOSS_SECRET_KEY || !proPrice(env)) return err('Test checkout not configured', 503);
   const body = await maxBody(request);
   if (body.plan !== 'pro') return err('Unknown plan');
@@ -362,6 +399,7 @@ function paidModels(env) {
       upstream_model: m.upstream_model || m.id }));
 }
 async function proxy(request, env, user) {
+  if (!(await identityStatus(env,user)).verified) return err('Identity verification required for paid models',403);
   const body = await maxBody(request);
   const selected = paidModels(env).find(m => m.id === body.model);
   const legacy = body.model === env.MODEL_ID && env.UPSTREAM_API_KEY && env.UPSTREAM_URL && env.PRICE_INPUT_MICRO_KRW && env.PRICE_OUTPUT_MICRO_KRW;
@@ -477,6 +515,15 @@ export default {
       } else if (path === '/v1/billing/payments' && request.method === 'GET') {
         const user = await account(request, env);
         response = user ? await paymentHistory(env, user) : err('Unauthorized',401);
+      } else if (path === '/v1/identity' && request.method === 'GET') {
+        const user=await account(request,env);
+        response=user ? json(await identityStatus(env,user)) : err('Unauthorized',401);
+      } else if (path === '/v1/identity/start' && request.method === 'POST') {
+        const user=await account(request,env);
+        response=user ? await identityStart(env,user) : err('Unauthorized',401);
+      } else if (path === '/v1/identity/confirm' && request.method === 'POST') {
+        const user=await account(request,env);
+        response=user ? await identityConfirm(request,env,user) : err('Unauthorized',401);
       } else if (path === '/v1/billing/checkout' && request.method === 'POST') {
         const user = await account(request, env);
         response = user ? await checkout(request,env,user) : err('Unauthorized',401);
