@@ -42,7 +42,7 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
  const [q,setQ]=useState('')
  const [format,setFormat]=useState('gguf')
  const userChoseFormat=useRef(false)
- const preferredFormat=preferredServerModelFormat(runtime.capabilities?.memory.platform,runtime.capabilities?.memory.arch,runtime.capabilities?.mlx)
+ const preferredFormat=preferredServerModelFormat(runtime.capabilities?.memory.platform,runtime.capabilities?.memory.arch,runtime.capabilities?.mlx,runtime.capabilities?.gguf)
  useEffect(()=>{if(preferredFormat&&!userChoseFormat.current)setFormat(preferredFormat)},[preferredFormat])
  const [chatOnly,setChatOnly]=useState(false)
  const [maxParams,setMaxParams]=useState('')
