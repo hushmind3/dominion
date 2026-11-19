@@ -21,3 +21,24 @@ CREATE TABLE IF NOT EXISTS usage (
 CREATE INDEX IF NOT EXISTS usage_account ON usage(account_id, created_at);
 
 CREATE TABLE IF NOT EXISTS free_quota (account_day TEXT PRIMARY KEY, used INTEGER NOT NULL DEFAULT 0);
+
+-- Billing records are always scoped to the authenticated DOMINION account.
+-- A payment is never marked paid by a browser request.
+CREATE TABLE IF NOT EXISTS subscriptions (
+  account_id TEXT PRIMARY KEY REFERENCES accounts(id),
+  plan TEXT NOT NULL DEFAULT 'free' CHECK (plan IN ('free','pro')),
+  status TEXT NOT NULL DEFAULT 'inactive' CHECK (status IN ('inactive','active','past_due','canceled')),
+  current_period_end INTEGER,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS payments (
+  order_id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL REFERENCES accounts(id),
+  amount_krw INTEGER NOT NULL CHECK (amount_krw > 0),
+  status TEXT NOT NULL CHECK (status IN ('pending','paid','failed','canceled')),
+  provider TEXT NOT NULL DEFAULT 'toss',
+  payment_key TEXT UNIQUE,
+  created_at INTEGER NOT NULL,
+  confirmed_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS payments_account ON payments(account_id,created_at);
