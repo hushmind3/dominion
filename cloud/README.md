@@ -137,3 +137,11 @@ payments, or subscriptions can move across identities.
 TossPayments Pro purchases are one-time thirty-day entitlements, not
 recurring card charges. Test merchant keys and a successful payment-confirmation
 round trip are required before enabling live payments.
+
+## Merchant settlement and bank payout (TossPayments)
+
+DOMINION never transfers customer payments to the operator's bank account itself. TossPayments is the payment gateway and settles captured payments to the merchant's bank account registered in the TossPayments merchant agreement, net of applicable fees, on the contractual payout schedule. This is distinct from DOMINION's checkout confirmation and Pro entitlement grant.
+
+Before production activation the operator must register a business, complete the PG merchant contract and underwriting, register and verify the merchant settlement bank account in the PG dashboard, and obtain production client and secret keys. Store the secret only as a Cloudflare Worker secret; never place it in GitHub or desktop app settings. Configure PLAN_PRO_KRW and the production TOSS_CLIENT_KEY, TOSS_SECRET_KEY only after merchant onboarding. Keep test keys during testing; test payments do not result in bank deposits. Verify actual deposits and fees against the PG merchant settlement report and bank statement. A merchant account and payout bank account cannot be created or verified by this repository.
+
+Authenticated users can read their own recent order statuses through GET /v1/billing/payments (up to 50 entries; no payment keys or bank details returned). This endpoint is an order ledger, **not** proof that a merchant bank payout occurred. Before accepting real payments, add authenticated administrator-only settlement reconciliation, refund/cancellation handling, recovery of stuck processing orders, and end-to-end production verification. Do not label a payment as bank-settled merely because its checkout order is paid.
