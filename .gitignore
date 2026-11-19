@@ -8,3 +8,8 @@ web/dist
 /bench
 
 .dominion/
+
+# Local frontend OAuth configuration (never commit live env files)
+/web/.env
+/web/.env.local
+/web/.env.*.local
