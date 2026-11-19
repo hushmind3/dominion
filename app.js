@@ -49,6 +49,16 @@
       var el = document.getElementById(id);
       if (el) el.textContent = text;
     });
+    // Keep the structured data in step with the release it points at.
+    var ld = document.querySelector('script[type="application/ld+json"]');
+    if (!ld) return;
+    try {
+      var data = JSON.parse(ld.textContent);
+      data.softwareVersion = String(text).replace(/^v/i, "");
+      ld.textContent = JSON.stringify(data, null, 2);
+    } catch (e) {
+      /* leave the static JSON-LD as it is */
+    }
   }
 
   fetch(API, { headers: { Accept: "application/vnd.github+json" } })
