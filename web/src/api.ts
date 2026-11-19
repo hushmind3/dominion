@@ -56,9 +56,8 @@ export async function resolveApproval(id: string, allow: boolean) {
  if (!result.resolved) throw Error(result.error ? translateError(result.error) : t('chat.approvalGone'))
 }
 
-export async function openOAuth(id: string, mode: 'oauth'|'cli'|'browser'|'setup_required'='oauth') {
+export async function openOAuth(id: string) {
  const path = '/api/oauth/' + encodeURIComponent(id)
- if (mode === 'cli' || mode === 'browser') { await post(path + '/open', {}); return }
  if ('__DOMINION_NATIVE__' in window) {
   await post(path + '/open', {})
   return
@@ -75,7 +74,7 @@ export async function openOAuth(id: string, mode: 'oauth'|'cli'|'browser'|'setup
 }
 
 export type ChatRequest = {
- sessionId: string; requestId?: string; agentId: string; providerId?: string; model?: string; input: string;
+ sessionId: string; agentId: string; providerId?: string; model?: string; input: string;
  toolsEnabled: boolean; toolsExecutionEnabled: boolean; autoLearning: boolean;
  reasoningLanguage?: string; reasoningEffort?: string; thinking?: boolean;
 }
