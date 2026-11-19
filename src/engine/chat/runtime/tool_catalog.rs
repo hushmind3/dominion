@@ -75,7 +75,7 @@ pub(super) fn tool_name(definition: &Value) -> &str {
 
 /// Casual room turns carry zero tool schemas. Action requests select the
 /// exact native schemas the harness judges relevant; no model call is used.
-fn room_tool_request(input: &str) -> bool {
+pub(super) fn room_tool_request(input: &str) -> bool {
     let lower = input.to_lowercase();
     [
         "파일", "폴더", "읽고", "읽어", "읽어줘", "읽어봐", "읽기",
@@ -302,7 +302,7 @@ pub(super) fn select_tool_definitions(
 /// Provider-visible progressive disclosure. The native dispatcher retains the
 /// full, owner-enabled catalog; the provider sees a bounded shortlist and
 /// stable discovery/search tools, never hundreds of MCP parameter schemas.
-pub(super) fn progressive_tools(definitions: Vec<Value>, query: &str) -> Vec<Value> {
+pub(super) fn progressive_tools(definitions: Vec<Value>, query: &str, pending_action: bool) -> Vec<Value> {
     if definitions.is_empty() { return definitions; }
     let mut selected = crate::engine::capability::definitions();
     let mut seen = selected.iter().map(tool_name)
@@ -310,6 +310,12 @@ pub(super) fn progressive_tools(definitions: Vec<Value>, query: &str) -> Vec<Val
     let full = definitions.into_iter().filter(|definition|
         !matches!(tool_name(definition),"dominion_tool_search"|"dominion_tool_call")
     ).collect::<Vec<_>>();
+    // A conversational turn needs the tiny discovery gateway, not a bundle
+    // of unrelated full parameter schemas. Discovery stays available if the
+    // model discovers that the user's request actually needs a tool.
+    if !pending_action && !room_tool_request(query) {
+        return selected;
+    }
     let picked = if full.len() <= 18 {
         full.clone()
     } else {

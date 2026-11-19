@@ -579,14 +579,22 @@ async fn run_turn_body(
     } else {
         Vec::new()
     };
-    if request.tools_enabled && request.tools_execution_enabled {
+    let is_room = session["roomId"].is_string();
+    let casual_room = is_room && acceptance.is_none()
+        && !tool_catalog::room_tool_request(&request.input);
+    // Do not enumerate remote MCP servers or scan old tool receipts for
+    // ordinary group conversation. A resumed action still uses the full path.
+    if request.tools_enabled && request.tools_execution_enabled && !casual_room {
         tool_definitions.extend(mcp::definitions(state).await);
     }
-    let is_room = session["roomId"].is_string();
     if is_room && request.tools_enabled && request.tools_execution_enabled {
-        let recent = recent_room_tools(state, session_id);
-        tool_definitions =
-            select_room_tools(tool_definitions, &request.input, &recent, acceptance.is_some());
+        if casual_room {
+            tool_definitions.clear();
+        } else {
+            let recent = recent_room_tools(state, session_id);
+            tool_definitions =
+                select_room_tools(tool_definitions, &request.input, &recent, acceptance.is_some());
+        }
     }
     let discovery = if is_room {
         Value::Null
@@ -601,7 +609,8 @@ async fn run_turn_body(
     // A skill index without a usable lookup would silently remove existing
     // instructions from tool-enabled agents. Advertise exactly one small
     // read-only schema when this agent can actually view an enabled skill.
-    if request.tools_enabled && request.tools_execution_enabled {
+    if request.tools_enabled && request.tools_execution_enabled
+        && (!is_room || !tool_definitions.is_empty()) {
         let scope = crate::engine::memory::MemoryScope::for_session(
             &state.store, session_id, request.agent_id.as_deref(),
         );
@@ -637,6 +646,23 @@ async fn run_turn_body(
             execution["contextPolicy"] = json!("single-file-creation");
             state.store.put("execution", &execution);
         }
+    }
+    // Freeze the *provider-visible* catalog before compiling context, so
+    // room budgets, stored accounting, continuity hashes and actual model
+    // requests all use the same schemas. Previously pruning happened AFTER
+    // context compilation and falsely pushed tool-heavy rooms over budget.
+    if session["delegationWorkspace"].is_object(){tool_definitions.retain(|tool|!tool_name(tool).starts_with("mcp__")&&!matches!(tool_name(tool),"github_api"|"github_repositories"|"github_file_read"|"github_file_update"|"github_file_replace"|"browser_control"));}
+    if session["readOnly"]==true {tool_definitions.retain(|tool|tools::observational(tool_name(tool)));}
+    tool_definitions.retain(|tool|tools::profile_tool_visible(&session,tool_name(tool)));
+    if request.tools_enabled && request.tools_execution_enabled
+        && simple_creation_target.is_none() && !tool_definitions.is_empty() {
+        tool_definitions = tool_catalog::progressive_tools(
+            tool_definitions, &request.input, acceptance.is_some()
+        );
+        // Progressive disclosure adds discovery adapters; apply the original
+        // session restrictions to those newly inserted definitions as well.
+        if session["readOnly"]==true {tool_definitions.retain(|tool|tools::observational(tool_name(tool)));}
+        tool_definitions.retain(|tool|tools::profile_tool_visible(&session,tool_name(tool)));
     }
     // A tool-heavy room may need the full native tool/procedure prompt.
     // Its *conversation* must still use the shared, provenance-scoped room
@@ -914,13 +940,6 @@ async fn run_turn_body(
     // native calls or the text-tool manual for whichever local/API model
     // actually handles each round, including after failover.
 
-    if session["delegationWorkspace"].is_object(){tool_definitions.retain(|tool|!tool_name(tool).starts_with("mcp__")&&!matches!(tool_name(tool),"github_api"|"github_repositories"|"github_file_read"|"github_file_update"|"github_file_replace"|"browser_control"));}
-    if session["readOnly"]==true {tool_definitions.retain(|tool|tools::observational(tool_name(tool)));}
-    tool_definitions.retain(|tool|tools::profile_tool_visible(&session,tool_name(tool)));
-    if request.tools_enabled && request.tools_execution_enabled
-        && simple_creation_target.is_none() && !tool_definitions.is_empty() {
-        tool_definitions = tool_catalog::progressive_tools(tool_definitions, &request.input);
-    }
     let discovered_tool_names = tool_definitions
         .iter()
         .filter_map(|definition| {

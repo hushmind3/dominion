@@ -823,7 +823,7 @@ mod harness_tool_selection_tests {
                 "parameters":{"type":"object","properties":{}}
             }}));
         }
-        let shown=tool_catalog::progressive_tools(available.clone(),"read code and inspect files");
+        let shown=tool_catalog::progressive_tools(available.clone(),"read code and inspect files",false);
         let names=shown.iter().map(tool_name).collect::<Vec<_>>();
         assert!(names.contains(&"dominion_tool_search"));
         assert!(names.contains(&"dominion_tool_call"));
@@ -834,12 +834,49 @@ mod harness_tool_selection_tests {
     }
 
     #[test]
+    fn casual_private_chat_sends_only_lazy_discovery_not_expensive_schemas() {
+        let mut all = vec![
+            json!({"type":"function","function":{"name":"workspace_read","description":"Read files"}}),
+            json!({"type":"function","function":{"name":"workspace_write","description":"Write files"}}),
+        ];
+        for index in 0..60 {
+            all.push(json!({"type":"function","function":{
+                "name":format!("mcp__external__tool_{index}"),
+                "description":"Long third-party schema ".repeat(60),
+                "parameters":{"type":"object","properties":{"large":{"type":"string","description":"x".repeat(300)}}}
+            }}));
+        }
+        let casual = tool_catalog::progressive_tools(all.clone(), "안녕", false);
+        assert_eq!(casual.iter().map(tool_name).collect::<Vec<_>>(),
+            vec!["dominion_tool_search", "dominion_tool_call"]);
+        let bytes = |defs: &[Value]| defs.iter().map(|d|d.to_string().len()).sum::<usize>();
+        assert!(bytes(&casual) * 10 < bytes(&all),
+            "casual conversation should avoid full MCP parameter schemas");
+
+        let action = tool_catalog::progressive_tools(all.clone(), "파일을 읽고 수정해", false);
+        assert!(action.iter().any(|d| tool_name(d) == "workspace_read"));
+        assert!(action.iter().any(|d| tool_name(d) == "workspace_write"));
+
+        // An explicit acceptance must preserve tool access even for "응".
+        let resumed = tool_catalog::progressive_tools(all, "응", true);
+        assert!(resumed.iter().any(|d| tool_name(d) == "workspace_read"));
+    }
+
+    #[test]
+    fn casual_room_predicate_skips_only_non_action_turns() {
+        assert!(!tool_catalog::room_tool_request("안녕"));
+        assert!(!tool_catalog::room_tool_request("오늘 기분은 어때?"));
+        assert!(tool_catalog::room_tool_request("파일 읽어서 수정해"));
+        assert!(tool_catalog::room_tool_request("계속"));
+    }
+
+    #[test]
     fn small_catalog_retains_native_tool_contracts() {
         let definitions=crate::engine::tools::definitions().into_iter()
             .filter(|definition|matches!(tool_name(definition),
                 "workspace_read"|"workspace_write"|"dominion_tool_search"|"dominion_tool_call"))
             .collect::<Vec<_>>();
-        let shown=tool_catalog::progressive_tools(definitions,"write file");
+        let shown=tool_catalog::progressive_tools(definitions,"write file",false);
         assert_eq!(shown.len(),4);
         assert!(shown.iter().any(|definition|tool_name(definition)=="workspace_write"));
     }
