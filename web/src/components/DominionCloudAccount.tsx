@@ -9,7 +9,7 @@ type CatalogProvider={id:string;name:string;api:string;models:number;doc?:string
 type RemoteModel={id:string;name?:string;context?:number|null;reasoning?:boolean|null;toolCall?:boolean|null}
 const cloudUrl=(import.meta.env.VITE_DOMINION_CLOUD_URL||'').replace(/\/$/,'')
 const clientId=import.meta.env.VITE_DOMINION_GOOGLE_CLIENT_ID||''
-export function DominionCloudAccount({onProviderAdded,initialTab='cloud',hideManagementNavigation=false}:{onProviderAdded:()=>Promise<unknown>;initialTab?:'cloud'|'providers';hideManagementNavigation?:boolean}) {
+export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initialProviderId,hideManagementNavigation=false}:{onProviderAdded:()=>Promise<unknown>;initialTab?:'cloud'|'providers';initialProviderId?:string;hideManagementNavigation?:boolean}) {
  const button=useRef<HTMLDivElement>(null)
  const [token,setToken]=useState('')
  const [models,setModels]=useState<Model[]>([])
@@ -32,6 +32,9 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',hideMan
  const [catalogProviderId,setCatalogProviderId]=useState('')
  const [catalogBusy,setCatalogBusy]=useState(false)
  const catalogBrowseSeq=useRef(0)
+ const initialCatalogApplied=useRef('')
+ const [registered,setRegistered]=useState<{providerId:string;model:string;source:'catalog'|'openrouter'|'cloud'}|null>(null)
+ const [routerSelected,setRouterSelected]=useState('')
  const [catalogMessage,setCatalogMessage]=useState('')
  const [routerKey,setRouterKey]=useState('')
  const [routerBusy,setRouterBusy]=useState(false)
@@ -82,6 +85,18 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',hideMan
   }catch(e){setCatalogMessage((e as Error).message)}finally{setCatalogBusy(false)}
  }
  useEffect(()=>{if(managementTab==='providers'&&!catalog.length)void loadCatalog()},[managementTab])
+ useEffect(()=>{
+  if(!initialProviderId||managementTab!=='providers'||!catalog.length||initialCatalogApplied.current===initialProviderId)return
+  const ordered=[...catalog].sort((a,b)=>a.name.localeCompare(b.name))
+  const index=ordered.findIndex(p=>p.id===initialProviderId)
+  if(index<0)return
+  initialCatalogApplied.current=initialProviderId
+  setCatalogSearch('');setProviderSort('name');setProviderMinModels(false)
+  setProviderPage(Math.floor(index/40))
+  setCatalogId(initialProviderId);setCatalogModel('');setCatalogModels([])
+  setCatalogModelSearch('');setCatalogKey('');setRegistered(null)
+  void loadCatalogModels(initialProviderId)
+ },[initialProviderId,managementTab,catalog])
  async function loadCatalogModels(providerId=catalogId){
   const request=++catalogBrowseSeq.current
   if(!providerId)return
@@ -189,6 +204,8 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',hideMan
  const visibleCatalog=filteredCatalog.slice(providerPage*40,(providerPage+1)*40)
  const filteredModels=catalogModels.filter(model=>(model.id+' '+(model.name||'')).toLowerCase().includes(catalogModelSearch.toLowerCase()))
  const visibleModels=filteredModels.slice(0,100)
+ const filteredRouterModels=routerModels.filter(model=>(model.id+' '+(model.name||'')).toLowerCase().includes(routerSearch.toLowerCase()))
+ const goToRegisteredChat=()=>{if(registered)window.location.hash='#/chat?'+new URLSearchParams({provider:registered.providerId,model:registered.model})}
  return <section className="rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] p-4">
   {!hideManagementNavigation&&<div className="flex flex-wrap gap-2 border-b border-[#E7E0D5] pb-3 mb-3" role="tablist" aria-label="모델 연결 관리">
    <button type="button" role="tab" aria-selected={managementTab==='cloud'} onClick={()=>setManagementTab('cloud')} className={`rounded-lg px-3 py-2 text-[12px] ${managementTab==='cloud'?'bg-[#C96442] text-white':'border'}`}>DOMINION Cloud</button>
