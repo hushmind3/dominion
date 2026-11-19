@@ -49,6 +49,24 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
  const [routerMessage,setRouterMessage]=useState('')
  const [routerModels,setRouterModels]=useState<RemoteModel[]>([])
  const [routerSearch,setRouterSearch]=useState('')
+ async function openSocialLogin(provider:'kakao'|'naver'){
+  if(!cloudUrl)return
+  const popup=window.open(cloudUrl+'/v1/auth/'+provider+'/start','dominion-'+provider,'width=520,height=720')
+  if(!popup)setMessage('브라우저에서 로그인 팝업을 허용해 주세요.')
+ }
+ useEffect(()=>{
+  if(!cloudUrl)return
+  const listener=(event:MessageEvent)=>{
+   if(event.origin!==new URL(cloudUrl).origin||event.data?.type!=='dominion-oauth-session')return
+   const session=event.data.token
+   if(typeof session!=='string'||!/^[A-Za-z0-9_-]{32,}$/.test(session))return
+   sessionStorage.setItem('dominion_cloud_session',session)
+   setToken(session);setMessage(event.data.provider==='kakao'?'카카오 로그인 완료':'네이버 로그인 완료')
+   void Promise.all([fetchModels(session),loadBilling(session)]).catch(e=>setMessage((e as Error).message))
+  }
+  window.addEventListener('message',listener)
+  return()=>window.removeEventListener('message',listener)
+ },[])
  async function loadBilling(session:string){
   const response=await fetch(cloudUrl+'/v1/billing',{headers:{Authorization:'Bearer '+session}})
   if(!response.ok)throw Error('구독 정보를 불러오지 못했습니다.')
@@ -291,9 +309,14 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
    <button type="button" role="tab" aria-selected={managementTab==='cloud'} onClick={()=>setManagementTab('cloud')} className={`rounded-lg px-3 py-2 text-[12px] ${managementTab==='cloud'?'bg-[#C96442] text-white':'border'}`}>DOMINION Cloud</button>
    <button type="button" role="tab" aria-selected={managementTab==='providers'} onClick={()=>{setManagementTab('providers');if(!catalog.length)void loadCatalog()}} className={`rounded-lg px-3 py-2 text-[12px] ${managementTab==='providers'?'bg-[#C96442] text-white':'border'}`}>업체·모델 연결</button>
   </div>}
-  {managementTab==='cloud'&&<><strong className="text-[13px]">DOMINION Cloud · 구글 로그인</strong>
+  {managementTab==='cloud'&&<><strong className="text-[13px]">DOMINION Cloud · 간편 로그인</strong>
   <p className="mt-1 text-[12px] text-[#7C7469]">DOMINION 계정 하나로 무료·유료 모델을 선택합니다. 업체 API 키는 서버에서 관리합니다.</p>
-  {cloudUrl&&clientId?<div className="mt-3" ref={button}/>:<p className="mt-2 text-[12px] text-[#7C7469]">DOMINION Cloud 로그인 미설정 · 다른 AI 업체는 아래에서 연결할 수 있습니다.</p>}
+  {cloudUrl&&<div className="mt-3 flex flex-wrap items-center gap-2">
+   {clientId&&<div ref={button}/>}
+   <button type="button" onClick={()=>void openSocialLogin('kakao')} className="rounded-lg bg-[#FEE500] px-4 py-2 text-[12px] font-semibold text-[#191919]">카카오 로그인</button>
+   <button type="button" onClick={()=>void openSocialLogin('naver')} className="rounded-lg bg-[#03C75A] px-4 py-2 text-[12px] font-semibold text-white">네이버 로그인</button>
+  </div>}
+  {!cloudUrl&&<p className="mt-2 text-[12px] text-[#7C7469]">DOMINION Cloud 서버 주소가 설정되지 않았습니다.</p>}
   {token&&<div className="mt-3 flex flex-wrap items-center gap-2">
    <input aria-label="모델 검색" value={modelSearch} onChange={e=>setModelSearch(e.target.value)} placeholder="모델 이름 또는 업체 검색" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
    <select aria-label="모델 요금 필터" value={modelFilter} onChange={e=>setModelFilter(e.target.value as 'all'|'free'|'paid')} className="rounded-lg border px-3 py-2 text-[12px]">
