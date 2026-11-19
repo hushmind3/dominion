@@ -277,6 +277,7 @@ pub fn router(state: AppState) -> Router {
         // DOMINION Cloud desktop sign-in: browser OAuth, loopback state and PKCE.
         .route("/api/cloud-auth/google/start", post(cloud_auth::start))
         .route("/api/cloud-auth/google/status", get(cloud_auth::status))
+        .route("/api/cloud-auth/google/ack", post(cloud_auth::acknowledge))
         .route("/api/cloud-auth/google/callback", get(cloud_auth::callback))
         .route("/api/oauth/providers", get(oauth::providers))
         .route("/api/oauth/connections", get(channels::connections))
