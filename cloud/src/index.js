@@ -1,3 +1,4 @@
+import {emailLoginReady, startEmailLogin, verifyEmailLogin, pollEmailLogin} from './email_auth.js';
 // DOMINION account gateway: no Nous credentials and no shared client-side API key.
 // Cloudflare Worker + D1. Credits are integer micro-KRW (one KRW = 1,000 units).
 const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), {
@@ -508,6 +509,7 @@ export default {
         google_client_id: env.GOOGLE_CLIENT_ID || null,
         google_desktop_client_id: env.GOOGLE_DESKTOP_CLIENT_ID || null,
         providers: {
+          email: emailLoginReady(env),
           google: Boolean(env.GOOGLE_CLIENT_ID),
           kakao: Boolean(env.KAKAO_CLIENT_ID && env.KAKAO_CLIENT_SECRET),
           naver: Boolean(env.NAVER_CLIENT_ID && env.NAVER_CLIENT_SECRET)
@@ -523,7 +525,10 @@ export default {
     try {
       const path = new URL(request.url).pathname;
       let response;
-      if (path === '/v1/auth/google' && request.method === 'POST') response = await login(request, env);
+      if (path === '/v1/auth/email/start' && request.method === 'POST') response = await startEmailLogin(request, env);
+      else if (path === '/v1/auth/email/status' && request.method === 'POST') response = await pollEmailLogin(request, env);
+      else if (path === '/v1/auth/email/verify' && ['GET','POST'].includes(request.method)) response = await verifyEmailLogin(request, env);
+      else if (path === '/v1/auth/google' && request.method === 'POST') response = await login(request, env);
       else if (['/v1/auth/kakao/start','/v1/auth/naver/start'].includes(path) && request.method === 'GET')
         response = await oauthStart(request,env,path.split('/')[3]);
       else if (['/v1/auth/kakao/callback','/v1/auth/naver/callback'].includes(path) && request.method === 'GET')
