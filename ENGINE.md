@@ -25,6 +25,7 @@ differences remain intentional and are checked in CI.
   model-visible semantic status; unchanged room outcomes have a stable digest.
 - `src/engine/chat/room_context.rs` selects committed source, prior self-answer,
   owner facts, peer excerpts and bounded retrieved evidence for each room turn.
+- `src/engine/chat/codex_ws.rs` invalidates inherited WebSocket chains when model, reasoning, tool schemas or other request contract parameters change; per-turn diagnostics distinguish full rebases from delta transport reuse.
 - `src/engine/chat/continuity.rs` deduplicates immutable frames and rotates
   outdated room observations instead of accumulating contradictory states.
 - `src/engine/chat/trace_budget.rs` retains the latest source-read result

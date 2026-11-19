@@ -77,6 +77,9 @@ jobs:
           cargo test --lib engine::chat::provider::tests::cache_usage_distinguishes_hit_from_missing_telemetry
           cargo test --lib engine::chat::provider::tests::codex_websocket_bootstraps_persona_once_as_developer_input
           cargo test --lib engine::chat::codex_ws::tests::developer_persona_is_wire_sent_once_and_rebased_on_revision
+          cargo test --lib engine::chat::codex_ws::tests::codex_chain_contract_captures_tool_and_reasoning_changes_but_not_stream_flags
+          cargo test --lib engine::chat::codex_ws::tests::changed_codex_request_contract_rebases_even_with_matching_history
+          cargo test --lib engine::chat::codex_ws::tests::rebase_diagnostics_separate_window_eviction_from_modified_context
           # Shared room execution: cancelled epoch versus fresh owner, and
           # provider-wire input costs per participating agent.
           cargo test --lib engine::chat::room_context::tests::wire_profile_attributes_selected_messages_without_retaining_raw_text

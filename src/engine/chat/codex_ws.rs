@@ -762,6 +762,27 @@ mod tests {
     }
 
     #[test]
+    fn rebase_diagnostics_separate_window_eviction_from_modified_context() {
+        let previous=vec![
+            ("user".to_string(),"old".to_string()),
+            ("assistant".to_string(),"answer".to_string()),
+            ("user".to_string(),"current".to_string()),
+        ];
+        let shifted=vec![
+            ("assistant".to_string(),"answer".to_string()),
+            ("user".to_string(),"current".to_string()),
+            ("user".to_string(),"next".to_string()),
+        ];
+        assert_eq!(plan_chain(&previous,&shifted),Plan::Full,
+            "an evicted prefix cannot be silently treated as a safe delta");
+        assert_eq!(rebase_reason(&previous,&shifted),"leading_window_evicted");
+        assert_eq!(rebase_reason(&previous,&[
+            ("user".into(),"owner changed".into()),("assistant".into(),"answer".into()),
+            ("user".into(),"current".into()),("user".into(),"next".into())
+        ]),"prefix_changed");
+    }
+
+    #[test]
     fn a_matching_prefix_sends_only_the_new_suffix() {
         let chain = vec![("user".to_string(), "one".to_string())];
         let incoming = vec![
