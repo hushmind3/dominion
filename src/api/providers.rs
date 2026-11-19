@@ -1992,6 +1992,15 @@ pub async fn provider_models(State(state): State<AppState>, Path(id): Path<Strin
         }
         Ok(response) => {
             let status = response.status();
+            // A public models.dev catalog is not a substitute for account
+            // authorization, but model names can be inspected without a key.
+            if key.is_empty() && !provider["local"].as_bool().unwrap_or(false) {
+                if let Ok(metadata) = load_models_dev_document().await {
+                    if let Some(models) = public_models_for_endpoint(&metadata, &base) {
+                        return Json(json!(models)).into_response();
+                    }
+                }
+            }
             let hint = match status.as_u16() {
                 401 | 403 => "API 키와 모델 조회 권한을 확인하세요.",
                 404 | 405 => "서버 주소를 확인하세요. 모델 목록을 제공하지 않는 API는 모델 ID를 직접 입력할 수 있습니다.",
@@ -1999,7 +2008,16 @@ pub async fn provider_models(State(state): State<AppState>, Path(id): Path<Strin
             };
             error(StatusCode::BAD_GATEWAY, &format!("모델 목록 조회 실패 (HTTP {status}). {hint}"))
         }
-        Err(err) => error(StatusCode::BAD_GATEWAY, &err.to_string()),
+        Err(err) => {
+            if key.is_empty() && !provider["local"].as_bool().unwrap_or(false) {
+                if let Ok(metadata) = load_models_dev_document().await {
+                    if let Some(models) = public_models_for_endpoint(&metadata, &base) {
+                        return Json(json!(models)).into_response();
+                    }
+                }
+            }
+            error(StatusCode::BAD_GATEWAY, &err.to_string())
+        },
     }
 }
 
@@ -2007,6 +2025,35 @@ pub async fn provider_models(State(state): State<AppState>, Path(id): Path<Strin
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn public_model_lookup_does_not_require_provider_credentials() {
+        let catalog=json!({
+            "test":{"api":"https://models.example.test/v1","models":{
+                "alpha":{"name":"Alpha","limit":{"context":64000},"tool_call":true},
+                "beta":{"name":"Beta","limit":{"context":128000}}
+            }},
+            "other":{"api":"https://other.example.test/v1","models":{"wrong":{}}}
+        });
+        let models=public_models_for_endpoint(&catalog,"https://models.example.test/v1/").unwrap();
+        assert_eq!(models.len(),2);
+        assert_eq!(models[0]["id"],"alpha");
+        assert_eq!(models[0]["freeStatus"],"unknown");
+        assert_eq!(models[0]["catalogSource"],"models.dev");
+        assert!(public_models_for_endpoint(&catalog,"https://models.example.test/v1beta").is_none());
+    }
+
+    #[test]
+    fn openrouter_free_directory_requires_both_price_fields_zero() {
+        let data=json!({"data":[
+            {"id":"free:free","pricing":{"prompt":"0","completion":"0"}},
+            {"id":"paid:free","pricing":{"prompt":"0.05","completion":"0"}},
+            {"id":"not-suffixed","pricing":{"prompt":"0","completion":"0"}}
+        ]});
+        let rows=public_openrouter_free_models(&data);
+        assert_eq!(rows.len(),1);
+        assert_eq!(rows[0]["id"],"free:free");
+    }
 
     #[test]
     fn codex_catalog_uses_real_slugs_and_no_obsolete_stub() {

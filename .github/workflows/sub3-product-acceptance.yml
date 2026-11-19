@@ -113,4 +113,5 @@ jobs:
         run: |
           npm ci --prefix web --no-audit --no-fund
           npm run typecheck --prefix web
+          node --experimental-strip-types --test web/tests/*.test.mjs
           npm run build --prefix web
