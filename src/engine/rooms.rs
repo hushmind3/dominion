@@ -1918,7 +1918,19 @@ mod tests {
             .as_array()
             .is_some_and(|tools| !tools.is_empty()));
         let operations = state.store.all("execution_operation");
-        assert_eq!(state.store.all("execution")[0]["contextPolicy"],"native-work-context");
+        let execution = state.store.all("execution");
+        assert_eq!(execution.len(), 1);
+        // The conversational token target is soft; a tiny target must not
+        // discard mandatory owner/agent instructions or authenticated evidence.
+        assert_eq!(
+            execution[0]["contextPolicy"],
+            "room-required-evidence-over-soft-target"
+        );
+        assert_eq!(execution[0]["inputContext"]["requiredOverBudget"], true);
+        assert_eq!(
+            execution[0]["contextPolicyReason"],
+            "preserve required owner/agent/speaker evidence without expanding into legacy room history"
+        );
         assert_eq!(operations.len(), 1);
         assert_eq!(operations[0]["status"], "completed");
         assert_eq!(operations[0]["tool"], "workspace_write");
