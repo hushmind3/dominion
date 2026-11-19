@@ -205,7 +205,9 @@ fn context_block(
 fn select_tool_reliability(
     stats: Vec<Value>, query: &str, tools_available: bool,
 ) -> Vec<(String,u64,u64,u64)> {
-    if !tools_available { return Vec::new(); }
+    if !tools_available || !super::tool_projection::room_tool_request(query) {
+        return Vec::new();
+    }
     let query=query.to_lowercase();
     let mut selected=stats.into_iter().filter_map(|stat|{
         let attempts=stat["attempts"].as_u64()?;
@@ -717,6 +719,9 @@ mod tests {
         let disabled=context_block_with_manifest(
             &state,"s",None,"tool_17",None,None,false);
         assert!(disabled.is_none(),"tool-free turn must not pay for tool statistics");
+        let greeting=context_block_with_manifest(
+            &state,"s",None,"안녕하세요",None,None,true);
+        assert!(greeting.is_none(),"casual chat must not replay tool telemetry");
         assert_eq!(state.store.all("tool_stat").len(),24,
             "prompt optimization must preserve persisted tool evidence");
         let _=std::fs::remove_dir_all(dir);
