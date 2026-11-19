@@ -170,17 +170,42 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
    setRouterMessage(message||('OpenRouter 무료 텍스트 모델 '+models.length+'개 조회 · API 키 불필요'))
   }catch(error){setRouterMessage((error as Error).message)}finally{setRouterBusy(false)}
  }
+ async function ensureOpenRouterCredential(){
+  const baseUrl='https://openrouter.ai/api/v1'
+  const existing=await get<Array<{id:string;baseUrl:string;model?:string;hasKey?:boolean}>>('/api/providers')
+  const linked=existing.find(p=>p.hasKey&&p.baseUrl.replace(/\/$/,'')===baseUrl)
+  const key=routerKey.trim()
+  if(!key&&!linked)throw Error('공개 무료 모델은 키 없이 조회됩니다. 채팅 등록에는 OpenRouter API 키 또는 기존 연결이 필요합니다.')
+  return {baseUrl,existing,linked,key}
+ }
+ async function saveOpenRouterModel(){
+  const selectedModel=routerModels.find(model=>model.id===routerSelected)
+  if(!selectedModel)return
+  setRouterBusy(true);setRouterMessage('')
+  try{
+   const {baseUrl,existing,linked,key}=await ensureOpenRouterCredential()
+   const duplicate=existing.find(p=>p.baseUrl.replace(/\/$/,'')===baseUrl&&p.model===selectedModel.id&&p.hasKey)
+   if(duplicate){
+    setRegistered({providerId:duplicate.id,model:selectedModel.id,source:'openrouter'})
+    setRouterMessage('이미 연결된 모델입니다. 바로 채팅에서 이용할 수 있습니다.')
+    return
+   }
+   const saved=await post<{id:string}>('/api/providers',{name:'OpenRouter 무료 · '+(selectedModel.name||selectedModel.id),baseUrl,kind:'openai',apiKey:key||undefined,credentialSourceId:key?undefined:linked?.id,model:selectedModel.id,enabled:true,local:false,toolMode:'auto'})
+   setRegistered({providerId:saved.id,model:selectedModel.id,source:'openrouter'})
+   await onProviderAdded()
+   setRouterMessage('선택한 무료 모델을 채팅에 등록했습니다.')
+  }catch(error){setRouterMessage((error as Error).message)}finally{setRouterBusy(false)}
+ }
  async function importOpenRouterFree(){
-  if(!routerKey.trim()){setRouterMessage('모델 조회에는 키가 필요 없습니다. 채팅에 등록하려면 OpenRouter API 키가 필요합니다.');return}
   setRouterBusy(true);setRouterMessage('무료 모델 등록 중…')
   try{
+   const {baseUrl,existing,linked,key}=await ensureOpenRouterCredential()
    const free=routerModels.length?routerModels:(await getOpenRouterFreeModels()).models
-   const existing=await get<Array<{baseUrl:string;model:string;hasKey?:boolean}>>('/api/providers')
-   const known=new Set(existing.filter(p=>p.baseUrl==='https://openrouter.ai/api/v1'&&p.hasKey).map(p=>p.model))
+   const known=new Set(existing.filter(p=>p.baseUrl.replace(/\/$/,'')===baseUrl&&p.hasKey).map(p=>p.model))
    let added=0
    for(const model of free){
-    if(known.has(model.id))continue
-    await post('/api/providers',{name:'OpenRouter 무료 · '+(model.name||model.id),baseUrl:'https://openrouter.ai/api/v1',kind:'openai',apiKey:routerKey.trim(),model:model.id,enabled:true,local:false,toolMode:'auto'})
+    if(!model.id||known.has(model.id))continue
+    await post('/api/providers',{name:'OpenRouter 무료 · '+(model.name||model.id),baseUrl,kind:'openai',apiKey:key||undefined,credentialSourceId:key?undefined:linked?.id,model:model.id,enabled:true,local:false,toolMode:'auto'})
     known.add(model.id);added++
    }
    await onProviderAdded()
@@ -283,14 +308,17 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
     <input aria-label="OpenRouter 무료 모델 검색" value={routerSearch} onChange={e=>setRouterSearch(e.target.value)} placeholder="무료 모델 이름 검색" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
    </div>
    {routerModels.length>0&&<div className="mt-2 max-h-48 overflow-y-auto rounded-lg border bg-white px-3 py-2 text-[11px] text-[#5C544A]">
-    <strong>공개 무료 모델 · {routerModels.filter(m=>(m.id+' '+(m.name||'')).toLowerCase().includes(routerSearch.toLowerCase())).length} / {routerModels.length}개</strong>
-    {routerModels.filter(m=>(m.id+' '+(m.name||'')).toLowerCase().includes(routerSearch.toLowerCase())).slice(0,60).map(m=><div key={m.id} className="border-b border-[#EFE9DF] py-1.5"><span className="font-semibold">{m.name||m.id}</span><span className="ml-2 break-all text-[#8A8176]">{m.id}</span></div>)}
+    <strong>공개 무료 모델 · {filteredRouterModels.length} / {routerModels.length}개</strong>
+    {filteredRouterModels.slice(0,60).map(m=><button type="button" key={m.id} aria-pressed={routerSelected===m.id} onClick={()=>{setRouterSelected(m.id);setRegistered(null)}} className={'block w-full border-b border-[#EFE9DF] px-1 py-1.5 text-left hover:bg-[#FAF7F1] '+(routerSelected===m.id?'bg-[#F7E8E1]':'')}><span className="font-semibold">{m.name||m.id}</span><span className="ml-2 break-all text-[#8A8176]">{m.id}</span>{m.context?' · '+m.context.toLocaleString()+' 토큰':''}</button>)}
+    {filteredRouterModels.length>60&&<p className="mt-2 text-[#8A8176]">처음 60개만 표시합니다. 검색어로 좁혀 주세요.</p>}
    </div>}
    <div className="mt-2 flex flex-wrap gap-2">
     <input type="password" autoComplete="off" aria-label="OpenRouter API 키 (등록 시에만 필요)" value={routerKey} onChange={e=>setRouterKey(e.target.value)} placeholder="채팅 등록용 API 키" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
-    <button type="button" disabled={routerBusy||!routerKey.trim()} onClick={()=>void importOpenRouterFree()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">{routerBusy?'등록 중…':'무료 모델 전체 등록'}</button>
+    <button type="button" disabled={routerBusy||!routerSelected} onClick={()=>void saveOpenRouterModel()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">{routerBusy?'등록 중…':'선택 모델 등록'}</button>
+    <button type="button" disabled={routerBusy||!routerModels.length} onClick={()=>void importOpenRouterFree()} className="rounded-lg border px-3 py-2 text-[12px] disabled:opacity-50">전체 등록</button>
    </div>
    {routerMessage&&<p role="status" className="mt-2 text-[12px] text-[#7C7469]">{routerMessage}</p>}
+   {registered?.source==='openrouter'&&<button type="button" onClick={goToRegisteredChat} className="mt-2 rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white">등록한 모델로 채팅하기</button>
   </div>}
  </section>
 }
