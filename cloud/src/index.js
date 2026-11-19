@@ -150,6 +150,12 @@ async function billingSummary(env, user) {
     toss_client_key: proPrice(env) && env.TOSS_SECRET_KEY ? (env.TOSS_CLIENT_KEY || null) : null
   });
 }
+// Account-scoped payment ledger. Settlement is performed by the contracted PG,
+// never by the desktop client or by transferring funds from this Worker.
+async function paymentHistory(env, user) {
+  const rows = await env.DB.prepare("SELECT id,plan,amount_krw,status,created_at,paid_at FROM checkout_orders WHERE account_id=? ORDER BY created_at DESC LIMIT 50").bind(user.id).all();
+  return json({ payments: rows.results || [], settlement_provider: 'tosspayments', settlement_managed_externally: true });
+}
 async function checkout(request, env, user) {
   if (!env.TOSS_CLIENT_KEY || !env.TOSS_SECRET_KEY || !proPrice(env)) return err('Test checkout not configured', 503);
   const body = await maxBody(request);
@@ -468,6 +474,9 @@ export default {
       else if (path === '/v1/billing' && request.method === 'GET') {
         const user = await account(request, env);
         response = user ? await billingSummary(env, user) : err('Unauthorized',401);
+      } else if (path === '/v1/billing/payments' && request.method === 'GET') {
+        const user = await account(request, env);
+        response = user ? await paymentHistory(env, user) : err('Unauthorized',401);
       } else if (path === '/v1/billing/checkout' && request.method === 'POST') {
         const user = await account(request, env);
         response = user ? await checkout(request,env,user) : err('Unauthorized',401);
