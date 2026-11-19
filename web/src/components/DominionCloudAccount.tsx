@@ -21,7 +21,6 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
  const [token,setToken]=useState(()=>sessionStorage.getItem('dominion_cloud_session')||'')
  const [showLoginOptions,setShowLoginOptions]=useState(false)
  const [googleClientId,setGoogleClientId]=useState(clientId)
- const [loginConfig,setLoginConfig]=useState<{google:boolean;kakao:boolean;naver:boolean;toss:boolean}|null>(null)
  const [billing,setBilling]=useState<Billing|null>(null)
  const [identity,setIdentity]=useState<IdentityStatus|null>(null)
  const [identityBusy,setIdentityBusy]=useState(false)
@@ -62,38 +61,13 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
   const controller=new AbortController()
   void fetch(cloudUrl+'/v1/public-config',{signal:controller.signal})
    .then(async response=>{
-    if(!response.ok)throw Error('Cloud 로그인 서버 설정을 조회하지 못했습니다.')
-    return response.json() as Promise<{google_client_id?:string|null;providers?:{google?:boolean;kakao?:boolean;naver?:boolean};toss_available?:boolean}>
+    const data=await response.json().catch(()=>({})) as {google_client_id?:string|null;error?:string}
+    if(!response.ok)throw Error(data.error||'Google 로그인 서버에 연결하지 못했습니다.')
+    if(!data.google_client_id)throw Error('Google 로그인 키가 Cloudflare 서버에 등록되지 않았습니다.')
+    if(!controller.signal.aborted)setGoogleClientId(data.google_client_id)
    })
-   .then(config=>{
-    if(controller.signal.aborted)return
-    if(typeof config.google_client_id==='string'&&config.google_client_id)setGoogleClientId(config.google_client_id)
-    setLoginConfig({google:Boolean(config.providers?.google),kakao:Boolean(config.providers?.kakao),naver:Boolean(config.providers?.naver),toss:Boolean(config.toss_available)})
-   })
-   .catch(error=>{if(!controller.signal.aborted)setMessage((error as Error).message)})
+   .catch(error=>{if(!controller.signal.aborted)setMessage('Google 로그인 설정 조회 실패: '+(error as Error).message)})
   return()=>controller.abort()
- },[])
- async function openSocialLogin(provider:'kakao'|'naver'){
-  if(!cloudUrl)return
-  if(loginConfig&&!loginConfig[provider]){
-   setMessage((provider==='kakao'?'카카오':'네이버')+' 로그인 앱 키가 서버에 등록되지 않았습니다.')
-   return
-  }
-  const popup=window.open(cloudUrl+'/v1/auth/'+provider+'/start','dominion-'+provider,'width=520,height=720')
-  if(!popup)setMessage('브라우저에서 로그인 팝업을 허용해 주세요.')
- }
- useEffect(()=>{
-  if(!cloudUrl)return
-  const listener=(event:MessageEvent)=>{
-   if(event.origin!==new URL(cloudUrl).origin||event.data?.type!=='dominion-oauth-session')return
-   const session=event.data.token
-   if(typeof session!=='string'||!/^[A-Za-z0-9_-]{32,}$/.test(session))return
-   sessionStorage.setItem('dominion_cloud_session',session)
-   setToken(session);setShowLoginOptions(false);setMessage(event.data.provider==='kakao'?'카카오 로그인 완료':'네이버 로그인 완료')
-   void Promise.all([fetchModels(session),loadBilling(session)]).catch(e=>setMessage((e as Error).message))
-  }
-  window.addEventListener('message',listener)
-  return()=>window.removeEventListener('message',listener)
  },[])
  async function loadBilling(session:string){
   const response=await fetch(cloudUrl+'/v1/billing',{headers:{Authorization:'Bearer '+session}})
@@ -377,10 +351,8 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
      <div className="flex items-center justify-between gap-3"><strong className="text-base">DOMINION 가입 · 로그인</strong><button type="button" onClick={()=>setShowLoginOptions(false)} aria-label="닫기" className="rounded-lg border px-3 py-1">닫기</button></div>
      <p className="my-3 text-[12px] text-[#7C7469]">처음 인증하면 자동 가입됩니다. 로그인 없이도 로컬 모델과 개인 API를 사용할 수 있습니다.</p>
      <div className="flex flex-col items-start gap-3">
-      {googleClientId?<div ref={button} aria-label="Google 계정으로 계속하기"/>:<button type="button" disabled className="w-full rounded-lg border px-4 py-2 text-[12px] opacity-60">Google로 계속하기 · 인증 키 설정 필요</button>}
-      <button type="button" disabled={loginConfig?.kakao!==true} onClick={()=>void openSocialLogin('kakao')} className="w-full rounded-lg bg-[#FEE500] px-4 py-2 text-[12px] font-semibold text-[#191919] disabled:opacity-50">카카오로 계속하기{loginConfig?.kakao===false?' · 설정 필요':''}</button>
-      <button type="button" disabled={loginConfig?.naver!==true} onClick={()=>void openSocialLogin('naver')} className="w-full rounded-lg bg-[#03C75A] px-4 py-2 text-[12px] font-semibold text-white disabled:opacity-50">네이버로 계속하기{loginConfig?.naver===false?' · 설정 필요':''}</button>
-      <p className="text-[11px] text-[#7C7469]">{loginConfig?.toss?'토스페이먼츠 결제는 로그인 후 요금제 메뉴에서 이용할 수 있습니다.':'토스페이먼츠는 운영자 결제 키와 요금 설정 후 활성화됩니다.'}</p>
+      {googleClientId?<div ref={button} aria-label="Google 계정으로 계속하기"/>:<button type="button" disabled className="w-full rounded-lg border px-4 py-2 text-[12px] opacity-60">Google로 계속하기 · 설정 확인 중</button>}
+      <p className="text-[11px] text-[#7C7469]">Google 계정으로 가입하고 로그인합니다. 비밀번호는 DOMINION에 입력하지 않습니다.</p>
       {message&&<p role="status" className="text-[12px] text-[#9A3C29]">{message}</p>}
      </div>
     </div>
