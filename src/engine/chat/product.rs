@@ -1971,7 +1971,7 @@ impl MainTurn<'_> {
         if self.session["delegationWorkspace"].is_object(){self.tool_definitions.retain(|tool|!tool_name(tool).starts_with("mcp__")&&!matches!(tool_name(tool),"github_api"|"github_repositories"|"github_file_read"|"github_file_update"|"github_file_replace"|"browser_control"));}
         if self.simple_creation_target.is_none() && !self.tool_definitions.is_empty() {
             self.tool_definitions = tool_catalog::progressive_tools(
-                std::mem::take(&mut self.tool_definitions), &goal,
+                std::mem::take(&mut self.tool_definitions), &goal, self.acceptance.is_some(),
             );
         }
         self.owner_revision = revision;
