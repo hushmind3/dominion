@@ -22,20 +22,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  source-inventory:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-      - name: Search complete tracked repository for retired-domain references
-        shell: bash
-        run: |
-          pattern="$(printf '%s%s' mo ney)"
-          korean="$(printf '%s%s' '머' '니')"
-          earnings="$(printf '%s%s' '돈' '벌')"
-          echo "::group::Tracked source inventory"
-          git grep -n -i -e "$pattern" -e "$korean" -e "$earnings" -- ':!*.webp' || true
-          echo "::endgroup::"
   rust:
     runs-on: macos-latest
     timeout-minutes: 45
@@ -105,3 +91,7 @@ jobs:
           npm run typecheck --prefix web
           node --experimental-strip-types --test web/tests/*.test.mjs
           npm run build --prefix web
+      - name: SDK client type contracts and HTTP transport tests
+        run: |
+          npm install --prefix sdk/typescript --no-package-lock --ignore-scripts --no-audit --no-fund
+          npm test --prefix sdk/typescript
