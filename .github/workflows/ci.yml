@@ -16,6 +16,7 @@ on:
       - '.github/workflows/ci.yml'
       - 'scripts/check-sub2-contract.mjs'
       - 'web/tests/**/*.mjs'
+      - 'sdk/typescript/**'
   pull_request:
     branches: [main, dominion-sub2]
     paths:
@@ -26,6 +27,7 @@ on:
       - '.github/workflows/ci.yml'
       - 'scripts/check-sub2-contract.mjs'
       - 'web/tests/**/*.mjs'
+      - 'sdk/typescript/**'
   workflow_dispatch:
 
 permissions:
@@ -150,3 +152,5 @@ jobs:
           npm --prefix web run typecheck
           node --experimental-strip-types --test web/tests/*.test.mjs
           node scripts/check-sub2-contract.mjs
+          ./web/node_modules/.bin/tsc -p sdk/typescript/tsconfig.json
+          node --test sdk/typescript/tests/sdk.test.mjs

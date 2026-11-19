@@ -4,7 +4,7 @@
 <p align="center"><strong>내 모델, 내 작업 공간, 독립 Rust 에이전트 실행기</strong></p>
 <p align="center"><strong>한국어</strong> · <a href="README.md">English</a> · <a href="ENGINE.md">엔진 구조</a> · <a href="LICENSE">Apache-2.0</a></p>
 
-**2026년 11월 19일 기준 \`dominion-sub2\` 실험 브랜치** 설명입니다. React/Vite 프론트는 최신 main 화면(\`f86a36e\`)과 동기화하고, 백엔드는 서브2 고유의 Rust 하네스·대화 연속성·실행/검증 구조를 유지했습니다. main과 **백엔드가 동일하다는 뜻은 아닙니다.**
+**2026년 11월 19일 기준 `dominion-sub2` 실험 브랜치** 설명입니다. React/Vite 프론트는 최신 main 화면(`f86a36e`)과 동기화하고, 백엔드는 서브2 고유의 Rust 하네스·대화 연속성·실행/검증 구조를 유지했습니다. main과 **백엔드가 동일하다는 뜻은 아닙니다.**
 
 <p align="center">
   <img src="docs/01-multi-agent-room.webp" alt="다중 에이전트 방" width="48%" />
@@ -16,9 +16,9 @@
 - **Rust 단일 실행기:** 도구 호출, 권한·승인, 실행 영수증, 취소, 복구 및 결과 검증.
 - **멀티 에이전트 대화방:** SQLite 원문 보존, 참가자별 독립 기억, 확정된 사용자 상태, 동료 발언 공유, 호출별 토큰 사용량.
 - **최신 main 프론트:** 모델 관리·허깅페이스 탐색, 제공자 선택, 연결 계정, 대화방/채팅, 범위별 새로고침.
-- **API 키 없는 공개 모델 탐색:** \`/api/providers/catalog/:id/models\`, \`/api/providers/openrouter/free-models\`에서 읽기 전용 목록 조회. 실제 추론 권한과 분리.
+- **API 키 없는 공개 모델 탐색:** `/api/providers/catalog/:id/models`, `/api/providers/openrouter/free-models`에서 읽기 전용 목록 조회. 실제 추론 권한과 분리.
 - **GitHub CLI 계정 연결:** 화면의 로그인 흐름을 백엔드에 연결하고 사용자 승인 후 계정 검증·암호화 저장.
-- **도구/SDK:** 파일·셸·브라우저·MCP, \`sdk/typescript/\` TypeScript 클라이언트와 \`crates/dominion-agent-kernel/\` Rust 커널.
+- **도구/SDK:** 파일·셸·브라우저·MCP, `sdk/typescript/` TypeScript 클라이언트와 `crates/dominion-agent-kernel/` Rust 커널.
 
 기존 **머니 전용 기능은 제거**했습니다. 화면·HTTP API·Rust 엔진·주기 실행·DB 스키마 초기화·전용 CI 테스트·과거 관련 문서를 정리했습니다. 기존 SQLite 데이터는 임의로 삭제하지 않습니다.
 
@@ -26,28 +26,28 @@
 
 필요 환경: Rust stable, Node.js 24.12 이상.
 
-\`\`\`bash
+```bash
 npm ci --prefix web
 npm --prefix web run typecheck
 node --experimental-strip-types --test web/tests/*.test.mjs
 node scripts/check-sub2-contract.mjs
 cargo test --lib
 cargo run -- --home .
-\`\`\`
+```
 
-UI 개발 서버: \`npm --prefix web run dev\`. 데스크톱 실행/설치, 실제 계정 인증, 실모델 9명 대화 비용은 각각 실환경 검증이 필요한 항목입니다.
+UI 개발 서버: `npm --prefix web run dev`. 데스크톱 실행/설치, 실제 계정 인증, 실모델 9명 대화 비용은 각각 실환경 검증이 필요한 항목입니다.
 
 ## 핵심 코드
 
 | 기능 | 실제 경로 |
 | --- | --- |
-| 최신 프론트와 페이지 | \`web/src/App.tsx\`, \`web/src/pages/\`, \`web/src/components/\` |
-| API·공개 모델 목록·GitHub 연결 | \`src/api/mod.rs\`, \`src/api/providers.rs\`, \`src/api/cli_oauth.rs\` |
-| 에이전트 실행·도구 경계 | \`src/engine/chat/runtime.rs\`, \`src/engine/chat/runtime/turn_body.rs\` |
-| 대화 비용·기억 연속성 | \`src/engine/chat/room_context.rs\`, \`src/engine/chat/continuity.rs\` |
-| 방 상태와 발언자 선택 | \`src/engine/room_state.rs\`, \`src/engine/rooms.rs\` |
-| 실행 작업·지속 저장 | \`src/engine/jobs.rs\`, \`src/db.rs\` |
-| SDK/커널 | \`sdk/typescript/src/index.ts\`, \`crates/dominion-agent-kernel/src/lib.rs\` |
+| 최신 프론트와 페이지 | `web/src/App.tsx`, `web/src/pages/`, `web/src/components/` |
+| API·공개 모델 목록·GitHub 연결 | `src/api/mod.rs`, `src/api/providers.rs`, `src/api/cli_oauth.rs` |
+| 에이전트 실행·도구 경계 | `src/engine/chat/runtime.rs`, `src/engine/chat/runtime/turn_body.rs` |
+| 대화 비용·기억 연속성 | `src/engine/chat/room_context.rs`, `src/engine/chat/continuity.rs` |
+| 방 상태와 발언자 선택 | `src/engine/room_state.rs`, `src/engine/rooms.rs` |
+| 실행 작업·지속 저장 | `src/engine/jobs.rs`, `src/db.rs` |
+| SDK/커널 | `sdk/typescript/src/index.ts`, `crates/dominion-agent-kernel/src/lib.rs` |
 
 [엔진 구조](ENGINE.md) · [문서 목차](docs/INDEX.md) · [서브2 CI](.github/workflows/ci.yml)
 
