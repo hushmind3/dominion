@@ -14,6 +14,8 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/ci.yml'
+      - 'scripts/check-sub2-contract.mjs'
+      - 'web/tests/**/*.mjs'
   pull_request:
     branches: [main, dominion-sub2]
     paths:
@@ -22,6 +24,8 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/ci.yml'
+      - 'scripts/check-sub2-contract.mjs'
+      - 'web/tests/**/*.mjs'
   workflow_dispatch:
 
 permissions:
@@ -140,7 +144,9 @@ jobs:
           node-version: '24'
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
-      - name: Frontend stop-button TypeScript contract (no build or browser matrix)
+      - name: Main frontend typecheck, UI unit tests and API compatibility gate
         run: |
           npm ci --prefix web --ignore-scripts
           npm --prefix web run typecheck
+          node --experimental-strip-types --test web/tests/*.test.mjs
+          node scripts/check-sub2-contract.mjs
