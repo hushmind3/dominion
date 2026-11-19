@@ -58,7 +58,7 @@ test('CORS exact-origin checks reject untrusted origins',async()=>{
   assert.notEqual(bad.headers.get('access-control-allow-origin'),'https://evil.example');
 });
 test('unconfigured gateway and unauthenticated account routes fail closed',async()=>{
-  assert.equal((await worker.fetch(request('/v1/models',{headers:headers()}),{})).status,503);
+  assert.equal((await worker.fetch(request('/v1/models'),{})).status,503);
   for(const [method,path] of [
     ['GET','/v1/models'],['GET','/v1/me'],['GET','/v1/billing'],
     ['GET','/v1/identity'],['GET','/v1/billing/payments'],
@@ -113,7 +113,8 @@ test('authenticated free streaming uses Worker-owned inference with quota accoun
   const streamed=await first.text();
   assert.match(streamed,/Hello from sub3/);
   assert.match(streamed,/data: \[DONE\]/);
-  assert.equal((await send()).status,429);
+  const second=await send();
+  assert.equal(second.status,429,JSON.stringify(environment.DB.calls.filter(c=>c.query.includes('free_quota'))));
 });
 test('identity verification gates both paid inference and checkout',async()=>{
   const environment=env({
