@@ -15,6 +15,7 @@ const cloudUrl=(import.meta.env.VITE_DOMINION_CLOUD_URL||'').replace(/\/$/,'')
 const clientId=import.meta.env.VITE_DOMINION_GOOGLE_CLIENT_ID||''
 export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initialProviderId,hideManagementNavigation=false}:{onProviderAdded:()=>Promise<unknown>;initialTab?:'cloud'|'providers';initialProviderId?:string;hideManagementNavigation?:boolean}) {
  const button=useRef<HTMLDivElement>(null)
+ const oauthPopup=useRef<Window|null>(null)
  const [token,setToken]=useState(()=>sessionStorage.getItem('dominion_cloud_session')||'')
  const [billing,setBilling]=useState<{plan:string;valid_until:number|null;pro_price_krw:number|null;checkout_enabled:boolean;toss_client_key:string|null}|null>(null)
  const [showCheckout,setShowCheckout]=useState(false)
@@ -108,6 +109,25 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
   }
   void Promise.all([fetchModels(saved),loadBilling(saved)]).catch(()=>{sessionStorage.removeItem('dominion_cloud_session');setToken('')})
  },[])
+ useEffect(()=>{
+  function onOAuth(event:MessageEvent){
+   if(event.origin!==new URL(cloudUrl||window.location.origin).origin||event.source!==oauthPopup.current)return
+   const payload=event.data as {type?:string;provider?:string;token?:string};
+   if(payload?.type!=='dominion-oauth'||!['naver','kakao'].includes(payload.provider||'')||typeof payload.token!=='string')return
+   oauthPopup.current=null;setBusy(true);
+   void Promise.all([fetchModels(payload.token),loadBilling(payload.token)])
+    .then(()=>{sessionStorage.setItem('dominion_cloud_session',payload.token!);setToken(payload.token!);setMessage((payload.provider==='naver'?'네이버':'카카오')+' 로그인 완료')})
+    .catch(e=>setMessage((e as Error).message)).finally(()=>setBusy(false))
+  }
+  window.addEventListener('message',onOAuth)
+  return()=>window.removeEventListener('message',onOAuth)
+ },[])
+ function openOAuth(provider:'naver'|'kakao'){
+  if(!cloudUrl)return
+  const popup=window.open(cloudUrl+'/v1/auth/'+provider+'/start','dominion-'+provider,'width=520,height=700')
+  if(!popup){setMessage('팝업 차단을 해제해 주세요.');return}
+  oauthPopup.current=popup
+ }
   async function fetchModels(session:string){
   const response=await fetch(cloudUrl+'/v1/models',{headers:{Authorization:'Bearer '+session}})
   if(!response.ok)throw Error('모델 목록을 가져오지 못했습니다.')
@@ -317,6 +337,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
    <button type="button" onClick={()=>void openSocialLogin('naver')} className="rounded-lg bg-[#03C75A] px-4 py-2 text-[12px] font-semibold text-white">네이버 로그인</button>
   </div>}
   {!cloudUrl&&<p className="mt-2 text-[12px] text-[#7C7469]">DOMINION Cloud 서버 주소가 설정되지 않았습니다.</p>}
+  {cloudUrl&&<div className="mt-3 flex flex-wrap gap-2"><button type="button" disabled={busy} onClick={()=>openOAuth('naver')} className="rounded-lg border px-3 py-2 text-[12px]">네이버 로그인</button><button type="button" disabled={busy} onClick={()=>openOAuth('kakao')} className="rounded-lg border px-3 py-2 text-[12px]">카카오 로그인</button></div>}
   {token&&<div className="mt-3 flex flex-wrap items-center gap-2">
    <input aria-label="모델 검색" value={modelSearch} onChange={e=>setModelSearch(e.target.value)} placeholder="모델 이름 또는 업체 검색" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
    <select aria-label="모델 요금 필터" value={modelFilter} onChange={e=>setModelFilter(e.target.value as 'all'|'free'|'paid')} className="rounded-lg border px-3 py-2 text-[12px]">
