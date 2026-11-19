@@ -1,180 +1,57 @@
-# DOMINION
+# DOMINION — Rust agent workspace (dominion-sub2)
+
+<p align="center"><img src="src-tauri/icons/icon.png" alt="DOMINION" width="90" /></p>
+<p align="center"><strong>Your models. Your workspace. Native Rust execution.</strong></p>
+<p align="center"><a href="README.ko.md">한국어</a> · English · <a href="ENGINE.md">Architecture</a> · <a href="LICENSE">Apache-2.0</a></p>
+
+This document describes the **experimental \`dominion-sub2\` branch**, checked against source on **2026-11-19**. The complete React/Vite frontend has been synchronized with main's 2026-11-19 interface (`f86a36e`), while the Rust runtime and SDK retain sub2-specific execution, evidence, cache and recovery work. This is **not** a claim that the sub2 backend is identical to main or that a production desktop release has been verified.
 
 <p align="center">
-  <img src="src-tauri/icons/icon.png" width="88" alt="DOMINION icon" />
-</p>
-<p align="center"><strong>Bring your model. Keep control of your agents, tools and data.</strong></p>
-<p align="center">
-  <a href="README.md">English</a> · <a href="README.ko.md">한국어</a> ·
-  <a href="ENGINE.md">Architecture</a> · <a href="sdk/typescript/README.md">TypeScript SDK</a>
-</p>
-<p align="center">
-  <a href="LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue" /></a>
-  <img alt="Engine: Rust" src="https://img.shields.io/badge/engine-Rust-262626" />
-  <img alt="UI: React" src="https://img.shields.io/badge/UI-React-149ECA" />
-  <a href="https://github.com/hushmind3/dominion-rust/actions/workflows/ci.yml?query=branch%3Adominion-sub2"><img alt="sub2 development CI" src="https://img.shields.io/github/actions/workflow/status/hushmind3/dominion-rust/ci.yml?branch=dominion-sub2&label=sub2%20dev%20tests" /></a>
+  <img src="docs/01-multi-agent-room.webp" alt="Group conversation workspace" width="48%" />
+  <img src="docs/02-chat-workspace.webp" alt="Local agent chat" width="48%" />
 </p>
 
-**DOMINION** is a local-first, open-source agent workspace. The **native Rust engine** owns model calls, tool execution, approvals, cancellation, durable jobs, verification and recovery. The React UI, HTTP API, embeddable Rust SDK and optional TypeScript SDK are interfaces to that same engine—not separate agents.
+## What is available
 
-**This README describes the experimental `dominion-sub2` branch as of 2026-11-19**, not the default `main` branch or a verified production release. Connect your own model/provider; DOMINION does not resell model tokens.
+- **Rust-native agent runs:** tool calls, policy-bound approvals, effect receipts, test evidence, cancellation and recovery. The Rust kernel is the execution owner.
+- **Multi-agent rooms:** shared SQLite transcript, distinct participant identities, precise self-recall, owner facts, per-agent context windows and observable token accounting.
+- **2026 main frontend:** model management/Hugging Face exploration, provider picker, GitHub/connected accounts, conversations and scoped live refresh from the main web tree.
+- **Public model discovery without an API key:** read-only provider models via \`/api/providers/catalog/:id/models\` and verified OpenRouter free entries via \`/api/providers/openrouter/free-models\`. Actual model inference still follows the selected provider's authentication rules.
+- **GitHub CLI connection:** the main UI flow calls native CLI login; the Rust backend validates GitHub account credentials and stores the grant in the encrypted vault.
+- **Extensible tools and SDK:** native workspace/file/shell/browser/MCP execution, TypeScript client at \`sdk/typescript/\`, Rust kernel at \`crates/dominion-agent-kernel/\`.
 
-[Quick start](#quick-start) · [Features](#features) · [Architecture](#architecture-and-source-map) · [SDKs and API](#sdks-and-api) · [Honest limits](#verification-and-limitations) · [한국어](README.ko.md)
+The former standalone Money discovery/business-opportunity module **has been removed** from the frontend, HTTP routes, Rust engine, startup workers, DB schema initialization, active tests and feature-specific documents. The application does not silently delete user data from existing SQLite databases.
 
-## Screenshots
+## Development
 
-**Multi-agent room**
+Prerequisites: a stable Rust toolchain and Node.js 24.12+ for the synchronized frontend.
 
-![Nine-agent conversation workspace and room controls](docs/01-multi-agent-room.webp)
-
-| Chat | Agent configuration |
-| --- | --- |
-| ![Chat workspace](docs/02-chat-workspace.webp) | ![Agent studio](docs/03-agent-studio.webp) |
-
-*Development-build screenshots; an interface screenshot is not proof of live-model benchmark success.*
-
-## Features
-
-| Capability | What is implemented | Where |
-| --- | --- | --- |
-| **Local & bring-your-own-model** | Configured local inference (GGUF / llama.cpp, Ollama, compatible runtimes) and external API providers; model features depend on the chosen backend | `src/engine/models.rs`, `src/engine/chat/provider.rs` |
-| **Agent chat** | Streaming messages, native tool calls, approval gates, per-request Stop and per-session persisted history | `web/src/pages/Chat.tsx`, `src/api/chat.rs`, `src/engine/chat/` |
-| **Autonomous jobs** | User goals, bounded execution, explicit verification, checkpoints, review states, cancel/retry and owner steering | `src/engine/jobs.rs`, `src/engine/autonomy.rs`, `src/engine/verification.rs` |
-| **Multi-agent rooms** | Individual personas, room-wide owner facts, selected peer context and independent participant continuations | `src/engine/rooms.rs`, `src/engine/chat/room_context.rs` |
-| **Context efficiency** | Stable room prefix, source-aware tool-result replay (one budgeted full read before compaction), bounded context selection, cache telemetry and Codex WebSocket continuation | `src/engine/chat/context.rs`, `trace_budget.rs`, `continuity.rs`, `codex_ws.rs` |
-| **Skills / MCP / discovery** | Permission-scoped native tools, progressive tool schemas, enabled-skill index and on-demand `skill_read` with pagination | `src/engine/tools.rs`, `src/engine/chat/capability.rs` |
-| **Money research** | Optional evidence gathering, article provenance, candidate comparison, hypotheses and explicit owner review; no automatic business purchase/deployment | `src/engine/money/`, `src/api/money/` |
-| **External integrations** | Configured connections such as Telegram, Discord, GitHub and MCP; credentials/permissions required | `src/engine/telegram.rs`, `discord.rs`, `mcp.rs` |
-| **SDKs** | Embeddable Rust lifecycle and typed TypeScript HTTP client | `src/sdk.rs`, `sdk/typescript/` |
-
-**Durable conversation correctness (sub2):** Provider-route and participant continuation cursors are advanced together by one SQLite compare-and-swap transaction. Late concurrent replies and obsolete persona prefixes cannot partially overwrite persisted continuity; regression tests cover both cases. Source: `src/engine/chat/continuity.rs` and `src/db.rs`. This is a source-level correctness change; live provider behavior remains separately measured.
-
-**Sub2 2026-11-19 room-cache update:** The room-wide status frame now uses its semantic content digest instead of the owner's message ID; unchanged observations reuse the frame, changed observations rotate the old snapshot. Owner message IDs and exact peer receipts remain persisted. Bare speaker names inside illustrative text no longer route the whole room to one participant; direct addressing requires an explicit vocative/recipient particle or `@name`. Live token savings have not been independently benchmarked for this revision.
-
-**Product scope:** The built-in video/audio rendering pipeline and autonomous generational RSI campaigns were retired **on this branch**. Media generation can be invoked through user-configured MCP/Connections. Historical SQLite rows, chat, archived jobs and existing media files remain readable; there is no background self-modifying-core campaign.
-
-## Quick start
-
-**Source checkout** for macOS or Windows. Install Rust stable/Cargo, Git, Node.js **24.12+**, and native C/C++ toolchain prerequisites (MSVC Build Tools + Windows SDK on Windows).
-
-```bash
-git clone https://github.com/hushmind3/dominion-rust.git
-cd dominion-rust
-git switch dominion-sub2
+\`\`\`bash
 npm ci --prefix web
-npm run build --prefix web
-cargo run --release -- --home .
-```
+npm --prefix web run typecheck
+node --experimental-strip-types --test web/tests/*.test.mjs
+node scripts/check-sub2-contract.mjs
+cargo test --lib
+cargo run -- --home .
+\`\`\`
 
-Open **http://127.0.0.1:4317**. Your first step is to configure a model/provider in **Models**; then open **Chat** or **Home → Autonomous work**. Browser UI assets are built from `web/`; Node.js is **not** the production agent runtime.
+Start the UI separately with \`npm --prefix web run dev\`. A release package and live-model performance must be verified against the target machine/provider; a passing unit test is not a real-model benchmark.
 
-- Development Rust tests: `cargo test --lib engine::chat::continuity::tests`, `cargo test --lib engine::tools::tests`, `cargo test --lib sdk::tests`, `cargo test -p dominion-agent-kernel --lib`.
-- Optional frontend source validation: `npm --prefix web run typecheck`.
-- Desktop packaging is a separate release workflow; a passing development test job does not verify macOS/Windows installers. See [installation](docs/GETTING-STARTED.md) and [desktop packaging](docs/DESKTOP.md).
+## Execution/source map
 
-By default the server binds to loopback. Data, model downloads and keys are stored under the configured local data location (`DOMINION_DATA`, normally `runtime/` for this checkout). Override `DOMINION_HOME`, `DOMINION_WORKSPACE`, `DOMINION_WEB` and `DOMINION_PORT` when needed. Back up SQLite, the secret key and referenced workspace files together. Never commit secrets or `runtime/`.
-
-## Architecture and source map
-
-```text
- React / Vite UI ────────────┐
- TypeScript @dominion/sdk ───┼──► Axum /api/* ───────────────┐
- External API callers ───────┘                               │
- Embedded Rust callers ─────────────► src/sdk.rs ────────────┤
-                                                              ▼
-                                      Native Rust job/chat/room engine
-                                      ├── dominion-agent-kernel (limits/decisions)
-                                      ├── tool admission → approvals → effects
-                                      ├── verifier → receipt → job state
-                                      ├── context / memory / skills / MCP
-                                      └── cancellation / recovery / event bus
-                                             │             │
-                                             ▼             ▼
-                                        SQLite state   Provider APIs /
-                                                       local inference
-```
-
-| Layer | Entry point | State / contract |
-| --- | --- | --- |
-| HTTP routes | `src/api/mod.rs` | Axum route composition; same job engine, no duplicate SDK worker |
-| Native SDK & bootstrap | `src/sdk.rs`, `src/bootstrap.rs` | `Dominion::open/start/submit/steer/wait`; Tokio runtime required for `start` |
-| Chat, provider stream | `src/engine/chat/runtime.rs`, `runtime/turn_body.rs`, `provider.rs` | Durable user/assistant messages, model usage and tool receipts |
-| Jobs & harness | `src/engine/jobs.rs`, `autonomy.rs`, `crates/dominion-agent-kernel/` | Per-job state and review-safe verification; one owner for execution |
-| Source-of-truth / recovery | `src/db.rs`, `src/state.rs`, `src/engine/effect.rs` | SQLite persistence, owner/epoch fencing, uncertain-effect reconciliation |
-| Room context | `src/engine/rooms.rs`, `chat/room_context.rs`, `room_state.rs` | Shared owner decisions + persona-specific context, source pointers retained |
-| User interfaces | `web/src/pages/`, `web/src/components/NativeAgentPanel.tsx` | Chat, models, jobs, agent configuration, money and integrations |
-
-The repository contains historical documentation under `docs/` and `benchmark/`. Old experiments are retained as evidence, not active runtime features.
-
-## SDKs and API
-
-The **Rust SDK is the native engine interface**:
-
-```rust
-use dominion_rust::sdk::{Dominion, EngineOptions, Prompt};
-use std::time::Duration;
-
-#[tokio::main]
-async fn main() -> Result<(), String> {
-    let sdk = Dominion::open(EngineOptions::new(".", "./runtime"))?;
-    sdk.start()?;
-    let job = sdk.submit(Prompt::new("Inspect and verify a repository change"))?;
-    let result = sdk.wait(job["id"].as_str().unwrap(), Duration::from_secs(120)).await?;
-    println!("{}", result["status"]);
-    Ok(())
-}
-```
-
-The independent **[TypeScript SDK](sdk/typescript/README.md)** (`sdk/typescript/`, package name `@dominion/sdk`) is a typed HTTP client, not another execution runtime. It requires a running DOMINION server. A minimal external client creates a prompt job with `jobs.create()` and awaits `waitForJob()`.
-
-Useful native routes:
-
-| Action | API |
+| Boundary | Active source |
 | --- | --- |
-| Stream chat | `POST /api/chat` |
-| Stop the current chat request | `POST /api/sessions/:id/cancel` with `{ "requestId": "<UUID>" }` |
-| Confirm stop settlement | `GET /api/sessions/:id/cancel-status` |
-| Create / inspect job | `POST /api/jobs`, `GET /api/jobs/:id` |
-| Cancel / steer job | `POST /api/jobs/:id/cancel`, `POST /api/jobs/:id/steer` |
-| Home autonomous-work interface | `/api/sdk/runs` and its ID-specific approval, cancel, resume and reconcile endpoints |
-| Durable execution evidence | `/api/executions/:id/operations` |
+| Main-synchronized frontend, routing and pages | \`web/src/App.tsx\`, \`web/src/pages/\`, \`web/src/components/\` |
+| HTTP API, public model catalog and GitHub login | \`src/api/mod.rs\`, \`src/api/providers.rs\`, \`src/api/cli_oauth.rs\` |
+| Chat turn execution and tool dispatch | \`src/engine/chat/runtime.rs\`, \`src/engine/chat/runtime/turn_body.rs\` |
+| Room context and semantic continuation | \`src/engine/chat/room_context.rs\`, \`src/engine/chat/continuity.rs\` |
+| Room status, owner facts, speaker routing | \`src/engine/room_state.rs\`, \`src/engine/rooms.rs\` |
+| Native tool contracts, verification | \`src/engine/chat/tool_projection.rs\`, \`src/engine/verification.rs\` |
+| Durable jobs and SQLite storage | \`src/engine/jobs.rs\`, \`src/db.rs\` |
+| User SDK and Rust kernel | \`sdk/typescript/src/index.ts\`, \`crates/dominion-agent-kernel/src/lib.rs\` |
 
-`POST /api/jobs` supports an optional `input.verifyCommand`, `input.tokenBudget` (1,024–2,000,000, *admission estimate*, not a strict billing guarantee) and explicit validated `input.successCriteria`. The Rust `Prompt` struct has its documented separate fields; **do not assume every HTTP field is available as a Rust SDK struct field**. A file's existence does not by itself justify marking a risky external side effect as verified.
+See [ENGINE.md](ENGINE.md), [documentation index](docs/INDEX.md) and [development CI](.github/workflows/ci.yml). This branch deliberately retains its own Rust design; main's cloud/backend modules have **not** been copied indiscriminately.
 
-**Stop semantics:** A chat Stop records a request cancellation on the server, cancels the Rust execution epoch, and waits until the session and execution settle before re-enabling Send. When a remote provider has already accepted an HTTP call, it may still compute/charge work before observing disconnect. External effects that cannot be proved settled require review; a browser AbortSignal alone is not proof of remote cancellation. [Cancellation and cache details](docs/SUB2-CHAT-STOP-CACHE-2026-11-18.md).
+## Verification boundary
 
-## Context, cache and cost measurements
-
-DOMINION distinguishes three values:
-
-1. **Total provider input tokens:** what the provider reports, including any cached input.
-2. **Cached input tokens:** reported only when that provider supplies cache-hit data; absence is **unknown**, not zero.
-3. **Uncached input tokens:** total minus cached **only when both are available**.
-
-**2026-11-18 prefix-reuse hardening (sub2):** A cache affinity is now scoped to one `sessionId + participant + provider route`, never shared accidentally by the same persona in unrelated chats. Native read/edit/test tool schemas are serialized in a canonical order (including across asynchronous MCP registration), preserving the same provider cache prefix for an unchanged tool set. Direct OpenCode Go integration recognizes both the original `/zen/go` and current `/inference/go` endpoint families, and helper planner/reviewer/compaction calls carry a separate stable Go session header. `execution.providerRounds` records hashed system/tool/option revisions, classified prefix changes, cache-read ratio when reported, and whether benchmark mode disabled cache. **These are cache reuse opportunities and diagnostics, not proof that a stateless HTTP backend omitted or discounted its 4,000-token persona.** [Implementation and regression tests](docs/SUB2-PREFIX-REUSE-HARNESS-2026-11-18.md).
-
-For Codex **WebSocket**, incremental transcript reuse depends on a live provider-side response chain; only **confirmed** previous WS use permits a larger, finite retained-history horizon. A provider change, edited source, revoked evidence, restart, or HTTP fallback can require a full rebase. **Cloudflare, other HTTP providers and stateless local backends do not inherit an expanded WS-only history budget.**
-
-**Nine-agent group context:** On large room turns, the newest peer contributions remain verbatim while older participants' latest statements become immutable, message-ID-addressed excerpts. Full source text is kept in the same room's SQLite transcript, not deleted or synthesized into new facts. When a group request asks for quotations, recall or source comparison and native tools are enabled, `room_message_read({messageId, offset?})` can retrieve the original in 6,000-character pages without exposing another room or private model reasoning. Each peer index frame retains its own stable source ID so adding another speaker appends one frame rather than rewriting the whole shared prefix. Continuation skips an excerpt if the full peer source is already in the retained model view. Estimated peer-index tokens and actual provider cached/uncached token usage are separately reported. This is a code-level optimization, **not yet an externally measured cache-cost improvement**. [Group context design and tests](docs/SUB2-ROOM-DELTA-MEMORY-2026-11-18.md).
-
-Skills send a compact index when native tools are enabled; approved details are fetched on demand via `skill_read({skillId, offset?})`. Long skills are paginated with `nextOffset`, not silently cut off. Tool-disabled conversations retain bounded instructions instead of pointing to an unavailable tool.
-
-**Historical, not current proof:** [100-owner-turn room benchmark, 2026-11-09](benchmark/ROOM-100-TURN-LUNA-2026-11-09.json) recorded 2,630,782 prompt tokens, 18.15% cache hit rate, 621 history-budget rebases and **0/9 late recall** at its listed checkpoints. The [2026-11-08 WS experiment](benchmark/CODEX-WEBSOCKET-INCREMENTAL-2026-11-08.json) reported a 76.9% third-turn **transcript wire reduction**, not a reliable billed-cost reduction. These measurements predate current sub2 code. **No new 100-turn recall or live cache-efficiency result has been established by source changes alone.**
-
-## Verification and limitations
-
-- **Development checks:** the `dominion-sub2` [Rust development test workflow](.github/workflows/ci.yml) runs scoped Rust regressions; it also has a separate frontend TypeScript typecheck job. This is **not** full release CI or a live-model acceptance benchmark.
-- **Quality:** job `status=completed` and a user's verified output are distinct. A correct file can still have an unresolved verification gap (`needs_review`); records preserve source receipts and outstanding conditions.
-- **Cost:** provider prices, cache behavior, throttling and model-specific tool support vary. Usage estimates are not invoices. Native approval and concurrency controls do not roll back remote effects.
-- **Operations:** no bundled cloud service, no automatic hosted inference and no guaranteed prebuilt installer. Telegram/Discord/MCP and local model backends need their own configuration.
-
-For the detailed scope and known gaps, consult the [2026-11-18 source audit](docs/SUB2-SOURCE-AUDIT-2026-11-18.md), [harness verification repair](docs/SUB2-HARNESS-DECISION-REPAIR-2026-11-18.md), [context/caching](docs/SUB2-HARNESS-CONTEXT-CACHE-2026-11-18.md) and [Money provenance](docs/SUB2-MONEY-SOURCE-LINEAGE-2026-11-18.md).
-
-## Development and contribution
-
-- Technical architecture: [ENGINE.md](ENGINE.md) · [documentation index](docs/INDEX.md)
-- Frontend: `web/` · Rust native SDK: `src/sdk.rs` · TypeScript SDK: `sdk/typescript/`
-- Tests: `src/**` unit tests, `crates/dominion-agent-kernel/`, `tests/e2e/` (run separately for release/acceptance)
-- File a reproducible issue with the **branch SHA, model/provider, actual job status, masked logs, code path and evidence**. Never include API tokens, OAuth data, private prompts or personal records.
-
-Licensed under [Apache-2.0](LICENSE). Contributions, focused tests and evidence-backed bug reports are welcome.
+CI includes Rust regression tests, TypeScript checking, main UI unit tests and an active-source/API route contract gate. Actual browser interaction, desktop packaging, connected-account authorization and full nine-agent token benchmarks require independent live integration checks. Provider prompt-cache hints and context-frame reuse are not evidence of discounted billed tokens without provider usage receipts.
