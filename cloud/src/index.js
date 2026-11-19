@@ -51,6 +51,7 @@ async function account(request, env) {
 async function login(request, env) {
   const { credential } = await maxBody(request);
   if (typeof credential !== 'string' || credential.length > 10000) return err('Google credential required');
+  if(!env.GOOGLE_CLIENT_ID)return err('Google login not configured',503);
   const google = await verifyGoogle(credential, env);
   const id = 'google:' + google.sub;
   await env.DB.prepare('INSERT INTO accounts (id,email,credits,created_at) VALUES (?,?,0,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email')
@@ -423,7 +424,7 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
     if (origin && origin !== env.ALLOWED_ORIGIN) return err('Origin not allowed', 403);
     if (new URL(request.url).pathname === '/health' && request.method === 'GET') return json({service:'DOMINION Cloud',status:'online',login_configured:Boolean(env.GOOGLE_CLIENT_ID),models_configured:Boolean(freeModels(env).length)});
-    if (!env.DB || !env.GOOGLE_CLIENT_ID || !env.ALLOWED_ORIGIN) return err('Service not configured', 503);
+    if (!env.DB || !env.ALLOWED_ORIGIN) return err('Service not configured', 503);
     try {
       const path = new URL(request.url).pathname;
       let response;
