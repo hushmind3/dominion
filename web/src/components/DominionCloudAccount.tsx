@@ -2,6 +2,9 @@ import {useEffect,useRef,useState} from 'react'
 import {get,post} from '../api'
 
 type GoogleResponse={credential:string}
+type Billing={plan:string;valid_until:number|null;pro_price_krw:number|null;checkout_enabled:boolean;toss_client_key:string|null}
+type TossPayment={requestPayment:(args:{method:string;amount:{currency:string;value:number};orderId:string;orderName:string;successUrl:string;failUrl:string})=>Promise<void>}
+declare global {interface Window {TossPayments?:(key:string)=>{payment:(args:{customerKey:string})=>TossPayment}}}
 type GoogleIdentity={accounts:{id:{initialize:(config:{client_id:string;callback:(response:GoogleResponse)=>void})=>void;renderButton:(element:HTMLElement,options:Record<string,unknown>)=>void;disableAutoSelect?:()=>void}}}
 declare global {interface Window {google?:GoogleIdentity}}
 type Model={id:string;name?:string;free:boolean;provider?:string;input_micro_krw?:number;output_micro_krw?:number}
@@ -87,7 +90,50 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
   }
   void Promise.all([fetchModels(saved),loadBilling(saved)]).catch(()=>{sessionStorage.removeItem('dominion_cloud_session');setToken('')})
  },[])
-  async function fetchModels(session:string){
+  async function fetchBilling(session:string){
+  const response=await fetch(cloudUrl+'/v1/billing',{headers:{Authorization:'Bearer '+session}})
+  if(!response.ok)throw Error('구독 정보를 불러오지 못했습니다.')
+  setBilling(await response.json() as Billing)
+ }
+ useEffect(()=>{
+  if(!token||!cloudUrl)return
+  void fetchBilling(token).catch(e=>setPaymentMessage((e as Error).message))
+  const url=new URL(window.location.href)
+  const params=url.searchParams
+  const outcome=params.get('dominion_payment')
+  if(!outcome)return
+  const orderId=params.get('orderId'),paymentKey=params.get('paymentKey'),amount=Number(params.get('amount'))
+  window.history.replaceState(null,'',url.pathname+url.hash)
+  if(outcome!=='success'){setPaymentMessage('결제가 취소되었거나 실패했습니다.');return}
+  if(!orderId||!paymentKey||!Number.isSafeInteger(amount)){setPaymentMessage('결제 응답이 올바르지 않습니다.');return}
+  setPaymentBusy(true)
+  void fetch(cloudUrl+'/v1/billing/confirm',{method:'POST',headers:{'content-type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({orderId,paymentKey,amount})})
+   .then(async r=>{if(!r.ok)throw Error((await r.json()).error||'결제 승인 실패');await fetchBilling(token);setPaymentMessage('결제 승인 및 Pro 이용권 등록 완료')})
+   .catch(e=>setPaymentMessage((e as Error).message))
+   .finally(()=>setPaymentBusy(false))
+ },[token])
+ async function startCheckout(){
+  if(!token||!billing?.checkout_enabled||!billing.toss_client_key)return
+  setPaymentBusy(true);setPaymentMessage('')
+  try{
+   const response=await fetch(cloudUrl+'/v1/billing/checkout',{method:'POST',headers:{'content-type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({plan:'pro'})})
+   if(!response.ok)throw Error((await response.json()).error||'주문 생성 실패')
+   const order=await response.json() as {orderId:string;amount:number;orderName:string;customerKey:string;clientKey:string}
+   if(!window.TossPayments){
+    await new Promise<void>((resolve,reject)=>{const script=document.createElement('script');script.src='https://js.tosspayments.com/v2/standard';script.onload=()=>resolve();script.onerror=()=>reject(Error('결제창 로드 실패'));document.head.appendChild(script)})
+   }
+   if(!window.TossPayments)throw Error('토스 결제창을 열 수 없습니다.')
+   const callback=new URL(window.location.href)
+   callback.search=''
+   callback.hash=''
+   const success=new URL(callback.href);success.searchParams.set('dominion_payment','success')
+   const fail=new URL(callback.href);fail.searchParams.set('dominion_payment','fail')
+   await window.TossPayments(order.clientKey).payment({customerKey:order.customerKey}).requestPayment({
+    method:'CARD',amount:{currency:'KRW',value:order.amount},orderId:order.orderId,orderName:order.orderName,successUrl:success.href,failUrl:fail.href
+   })
+  }catch(e){setPaymentMessage((e as Error).message)}finally{setPaymentBusy(false)}
+ }
+ async function fetchModels(session:string){
   const response=await fetch(cloudUrl+'/v1/models',{headers:{Authorization:'Bearer '+session}})
   if(!response.ok)throw Error('모델 목록을 가져오지 못했습니다.')
   const data=await response.json() as {data:Model[]}
@@ -111,7 +157,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
      const data=await response.json() as {token:string}
      await Promise.all([fetchModels(data.token),loadBilling(data.token)])
      sessionStorage.setItem('dominion_cloud_session',data.token)
-     setToken(data.token);setMessage('도미니언 계정으로 연결됐습니다.')
+     sessionStorage.setItem('dominion-cloud-session',data.token);setToken(data.token);setMessage('도미니언 계정으로 연결됐습니다.')
     }catch(error){setMessage((error as Error).message)}finally{setBusy(false)}
    }})
    window.google.accounts.id.renderButton(button.current,{theme:'outline',size:'large',text:'signin_with',width:240})
@@ -314,8 +360,14 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
    <button type="button" disabled={!billing?.checkout_enabled||billingBusy} onClick={()=>void startCheckout()} className="mt-3 rounded-lg bg-[#C96442] px-4 py-2 text-white disabled:opacity-50">{billingBusy?'결제창 여는 중…':billing?.checkout_enabled?'토스페이먼츠 결제하기':'결제 준비 중'}</button>
    {!billing?.checkout_enabled&&<p className="mt-2 text-[12px]">운영자 결제 키와 요금 설정 후 테스트 결제를 시작할 수 있습니다.</p>}
   </div>}
+  {token&&<div className="mt-3 rounded-lg border border-[#E7E0D5] p-3 text-[12px]">
+   <strong>DOMINION 이용권 · {billing?.plan==='pro'?'Pro':'무료'}</strong>
+   <p className="mt-1 text-[#7C7469]">{billing?.valid_until?'이용 기간 종료: '+new Date(billing.valid_until*1000).toLocaleDateString('ko-KR'): '기본 무료 이용권'} · {billing?.pro_price_krw?'Pro 30일 '+billing.pro_price_krw.toLocaleString('ko-KR')+'원':'Pro 요금 미설정'}</p>
+   <button type="button" disabled={paymentBusy||!billing?.checkout_enabled} onClick={()=>void startCheckout()} className="mt-2 rounded-lg bg-[#C96442] px-3 py-2 font-semibold text-white disabled:opacity-50">{paymentBusy?'결제 처리 중…':billing?.checkout_enabled?'Pro 결제하기':'결제 준비 중'}</button>
+   {paymentMessage&&<p role="status" className="mt-2 text-[#7C7469]">{paymentMessage}</p>}
+  </div>}
   {registered?.source==='cloud'&&<button type="button" onClick={goToRegisteredChat} className="mt-2 rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white">등록한 모델로 채팅하기</button>}
-  {token&&<button type="button" className="mt-3 rounded-lg border px-3 py-2 text-[12px]" onClick={()=>{setToken('');setModels([]);setSelected('');setMessage('로그아웃되었습니다.');window.google?.accounts.id.disableAutoSelect?.()}}>로그아웃</button>}
+  {token&&<button type="button" className="mt-3 rounded-lg border px-3 py-2 text-[12px]" onClick={logout}>로그아웃</button>}
   </>}
   {managementTab==='providers'&&<div className="mt-4 border-t border-[#E7E0D5] pt-4">
 
