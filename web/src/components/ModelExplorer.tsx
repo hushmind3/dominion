@@ -5,7 +5,7 @@ import {get,post,del} from '../api'
 import {matchesRefreshTarget,type RefreshScope} from '../refreshEvents'
 import {t,useLocale} from '../i18n'
 import {translateError} from '../i18n/errors'
-import {classifyRuntimeFailure,memoryFit as getMemoryFit,modelPreflight,planDownloadLaunch,preferredServerModelFormat,requiredMemory,selectRecommended,selectSmaller} from '../utils/modelHardware'
+import {classifyRuntimeFailure,engineForModel,memoryFit as getMemoryFit,modelPreflight,planDownloadLaunch,preferredServerModelFormat,requiredMemory,selectRecommended,selectSmaller} from '../utils/modelHardware'
 type Catalog={id:string;author:string;name:string;library:string;createdAt?:string;downloads:number;likes:number;gated:boolean;updatedAt:string;description:string;task:string;tags:string[]}
 type Option={id:string;format:'gguf'|'mlx';label:string;quantization:string;bytes:number;files:string[];shards:number}
 type Detail=Catalog&{revision:string;license:string;architecture:string;options:Option[];readme:string}
@@ -30,6 +30,20 @@ const readPendingLaunch=():PendingLaunch|null=>{
    &&Date.now()-value.createdAt>=0&&Date.now()-value.createdAt<24*60*60*1000)return value as PendingLaunch
   window.sessionStorage.removeItem(launchKey)
  }catch{/* The browser may block session storage; launching still works in memory. */}
+ return null
+}
+type PendingEngineLaunch={id:string;from:'installed'|'search';createdAt:number}
+const engineLaunchKey='dominion-model-engine-retry'
+const readPendingEngineLaunch=():PendingEngineLaunch|null=>{
+ try{
+  const raw=window.sessionStorage.getItem(engineLaunchKey)
+  if(!raw)return null
+  const value=JSON.parse(raw) as Partial<PendingEngineLaunch>
+  if(typeof value.id==='string'&&value.id&&['installed','search'].includes(value.from||'')
+    &&typeof value.createdAt==='number'&&Date.now()-value.createdAt>=0
+    &&Date.now()-value.createdAt<24*60*60*1000)return value as PendingEngineLaunch
+  window.sessionStorage.removeItem(engineLaunchKey)
+ }catch{/* Session storage can be disabled; in-memory navigation still works. */}
  return null
 }
 export function ModelExplorer({initialView='installed',hideNavigation=false}:{initialView?:'installed'|'search'|'import';hideNavigation?:boolean}={}){
@@ -57,6 +71,8 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
  const [working,setWorking]=useState('')
  const [error,setError]=useState('')
  const [pendingLaunch,setPendingLaunch]=useState<PendingLaunch|null>(readPendingLaunch)
+ const [pendingEngineLaunch,setPendingEngineLaunch]=useState<PendingEngineLaunch|null>(readPendingEngineLaunch)
+ useEffect(()=>{try{if(pendingEngineLaunch)window.sessionStorage.setItem(engineLaunchKey,JSON.stringify(pendingEngineLaunch));else window.sessionStorage.removeItem(engineLaunchKey)}catch{/* private session */}},[pendingEngineLaunch])
  useEffect(()=>{try{if(pendingLaunch)window.sessionStorage.setItem(launchKey,JSON.stringify(pendingLaunch));else window.sessionStorage.removeItem(launchKey)}catch{/* private browser session */}},[pendingLaunch])
  const [localPath,setLocalPath]=useState('')
  const [picking,setPicking]=useState(false)
@@ -154,14 +170,18 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
  const existing=installed.find(m=>m.id===installedId||(m.repo===detail?.id&&m.optionId===option?.id))
  const selectedPreflight=option&&detail?modelPreflight(existing||{id:option.format==='mlx'?'mlx:'+detail.id:'hf:'+detail.id,format:option.format,bytes:option.bytes},runtime.capabilities):null
  const activeModel=installed.find(m=>m.id===runtime.id)
+ const pendingEngineModel=installed.find(m=>m.id===pendingEngineLaunch?.id)
+ const pendingEngineCheck=pendingEngineModel?modelPreflight(pendingEngineModel,runtime.capabilities):null
+ const pendingEngineId=pendingEngineModel?engineForModel(pendingEngineModel):null
+ const pendingEngineItem=runtimes.find((item:any)=>item.id===pendingEngineId)
  const needEngine=runtime.capabilities?.gguf.available===false;
  const installing=['checking','downloading','extracting','verifying'].includes(runtime.setup?.status||'');
  const recommendedBackend=runtime.capabilities?.memory.platform==='win32'&&runtime.capabilities.memory.arch==='x64'?'cuda':'cpu';
  const installerPercent=Math.round((runtime.setup?.downloaded||0)/Math.max(1,runtime.setup?.total||0)*100);
- const safe=async(key:string,action:()=>Promise<unknown>)=>{
+ const safe=async(key:string,action:()=>Promise<unknown>):Promise<boolean>=>{
   setWorking(key);setError('')
-  try{await action();await refresh()}
-  catch(e){setError((e as Error).message)}
+  try{await action();await refresh();return true}
+  catch(e){setError((e as Error).message);return false}
   finally{setWorking('')}
  }
  const importLocal=()=>safe('import',async()=>{
@@ -180,20 +200,31 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
   try{const {path}=await post<{path?:string}>('/api/model-library/pick-file',{});if(path)setLocalPath(path)}
   catch(e){setError((e as Error).message)}finally{setPicking(false)}
  }
+ const queueEngineSetup=(model:Installed|undefined)=>{
+  if(model)setPendingEngineLaunch({id:model.id,from:view==='search'?'search':'installed',createdAt:Date.now()})
+  setView('import')
+ }
  const load=(id:string)=>safe('load'+id,async()=>{
-  // Fetch a fresh snapshot: a cached card could still show an engine that was removed.
+  // Fetch a fresh snapshot: an engine may have been installed or removed since the last poll.
   const snapshot=await get<Runtime>('/api/model-library/runtime')
   setRuntime(snapshot)
   const model=installed.find(m=>m.id===id)
   if(model){
    const check=modelPreflight(model,snapshot.capabilities)
    if(check.status==='blocked'){
-    setView('import')
-    throw Error(check.engine+' 실행기가 설치되지 않았습니다. 실행기 설치에서 준비한 뒤 다시 실행하세요.')
+    queueEngineSetup(model)
+    throw Error(check.engine+' 실행기가 필요합니다. 설치 후 아래에서 실행을 이어갈 수 있습니다.')
    }
   }
   await post('/api/model-library/runtime/load',{id,context})
+  setPendingEngineLaunch(current=>current?.id===id?null:current)
  })
+ const continueEngineLaunch=async()=>{
+  const pending=pendingEngineLaunch
+  if(!pending||!installed.some(m=>m.id===pending.id))return
+  const succeeded=await load(pending.id)
+  if(succeeded)setView(pending.from)
+ }
  const requestDownload=async(autoLaunch:boolean,target:Option|undefined=option)=>{
   if(!detail||!target)return
   const previous=jobs.filter(j=>j.repo===detail.id&&j.optionId===target.id
@@ -255,7 +286,7 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
  const ready=installed.find(m=>m.id===completed?.installedId)
  if(ready)void load(ready.id)
  else void requestDownload(true,smallerOption)
-}}>작은 양자화 {smaller.fits?'다운로드·실행':'선택'} · {fmt(smallerOption.bytes)}{smaller.fits?'':' (메모리 확인 필요)'}</Button>}{runtimeFailure==='memory'&&(!smallerOption||(runtime.id!==existing?.id&&runtime.id!==selectedJob?.installedId))&&<Button variant="bare" type="button" className={btn} onClick={()=>{setView('search');setError('')}}>작은 모델 찾기</Button>}{runtimeFailure==='file'&&<Button variant="bare" type="button" className={btn} onClick={()=>{setView('installed');setError('')}}>설치 목록 확인</Button>}{runtimeFailure==='engine'&&<Button variant="bare" type="button" className={btn} onClick={()=>{setView('import');setError('')}}>실행 엔진 확인</Button>}<Button variant="bare" type="button" className={btn} onClick={()=>void refresh()}><RefreshCw size={13}/>상태 확인</Button>{activeModel&&<Button variant="bare" type="button" className={btn} disabled={Boolean(working)} onClick={()=>void load(activeModel.id)}><Play size={13}/>다시 실행</Button>}</div></div>}
+}}>작은 양자화 {smaller.fits?'다운로드·실행':'선택'} · {fmt(smallerOption.bytes)}{smaller.fits?'':' (메모리 확인 필요)'}</Button>}{runtimeFailure==='memory'&&(!smallerOption||(runtime.id!==existing?.id&&runtime.id!==selectedJob?.installedId))&&<Button variant="bare" type="button" className={btn} onClick={()=>{setView('search');setError('')}}>작은 모델 찾기</Button>}{runtimeFailure==='file'&&<Button variant="bare" type="button" className={btn} onClick={()=>{setView('installed');setError('')}}>설치 목록 확인</Button>}{runtimeFailure==='engine'&&<Button variant="bare" type="button" className={btn} onClick={()=>{queueEngineSetup(installed.find(m=>m.id===runtime.id));setError('')}}>실행 엔진 확인</Button>}<Button variant="bare" type="button" className={btn} onClick={()=>void refresh()}><RefreshCw size={13}/>상태 확인</Button>{activeModel&&<Button variant="bare" type="button" className={btn} disabled={Boolean(working)} onClick={()=>void load(activeModel.id)}><Play size={13}/>다시 실행</Button>}</div></div>}
   {runtime.status==='ready'&&<div className="flex flex-wrap items-center justify-between gap-3 border-b border-emerald-100 bg-[#f2fbf7] px-4 py-3">
    <span className="flex min-w-0 items-center gap-2 text-[12px]"><Check size={16} className="text-emerald-600"/><strong className="truncate">{runtime.name||runtime.repo}</strong><span className="text-emerald-700">{t('models.ui.running')}</span></span>
    <div className="flex gap-2"><Button variant="bare" type="button" className={btn} disabled={!runtime.model} onClick={()=>{if(runtime.model)window.location.hash='#/chat?'+new URLSearchParams({provider:'dominion-native',model:runtime.model})}}><ArrowRight size={14}/> {t('models.chat')}</Button><Button variant="bare" type="button" className={btn} onClick={()=>void unload()} disabled={Boolean(working)}><Square size={13}/> {t('models.stop')}</Button></div>
@@ -271,6 +302,18 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
    </div>)}</div>:<div className="flex min-h-48 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-[#E7E0D5] bg-[#FAF7F1] px-4 py-7 text-center"><HardDrive size={25} className="text-[#B8AFA2]"/><strong className="text-[13px]">{t('models.emptyTitle')}</strong><p className="text-[11px] text-[#8A8176]">{t('models.emptyDesc')}</p><div className="flex flex-wrap gap-2"><Button variant="bare" type="button" className={btn} onClick={()=>setView('import')}>{t('models.connectExisting')}</Button><Button variant="bare" type="button" className={btn} onClick={()=>setView('search')}>{t('models.downloadModels')}</Button></div></div>}
   </div>}
   {view==='import'&&<div className="max-w-3xl p-4">
+   {pendingEngineLaunch&&<div role="status" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#D9DFC8] bg-[#F6F8F0] p-3">
+    <div className="min-w-0 flex-1"><strong className="text-[12px] text-[#3A342D]">실행 이어가기 · {pendingEngineModel?.label||pendingEngineLaunch.id}</strong>
+     <p className="mt-1 text-[11px] leading-5 text-[#6F675D]">{!pendingEngineModel?'모델을 설치 목록에서 찾지 못했습니다. 목록을 새로고침한 후 확인하세요.':pendingEngineCheck?.status==='blocked'?((pendingEngineItem?.name as string)||pendingEngineCheck.engine)+' 실행기가 필요합니다. 설치가 끝나면 바로 실행할 수 있습니다.':pendingEngineCheck?.status==='warning'?'실행기는 준비됐습니다. 메모리 여유가 적을 수 있으니 실행 시 확인하세요.':'실행기 상태를 다시 확인한 후 원래 모델을 실행할 수 있습니다.'}</p>
+     {installing&&<p className="mt-1 text-[11px] text-[#A06C31]">실행기 설치 진행 중 · 완료 후 상태가 자동 갱신됩니다.</p>}
+    </div>
+    <div className="flex flex-wrap items-center gap-2">
+     {pendingEngineModel&&pendingEngineCheck?.status==='blocked'&&pendingEngineItem?.installable&&!installing&&<Button variant="bare" type="button" className={btn} disabled={Boolean(working)} onClick={()=>void safe('install-'+pendingEngineId,()=>post('/api/model-library/runtime/install',{engine:pendingEngineId}))}><ArrowDownToLine size={13}/>필요한 실행기 설치</Button>}
+     {pendingEngineModel&&pendingEngineCheck?.status==='blocked'&&pendingEngineItem?.url&&!pendingEngineItem?.installable&&<a className={btn} href={pendingEngineItem.url} target="_blank" rel="noreferrer">실행기 받기 <ExternalLink size={12}/></a>}
+     {pendingEngineModel&&pendingEngineCheck?.status!=='blocked'&&<Button variant="bare" type="button" className={btn+' !border-[#C96442] !bg-[#C96442] !text-white'} disabled={Boolean(working)||installing||runtime.status==='loading'} onClick={()=>void continueEngineLaunch()}><Play size={13}/>원래 모델 실행</Button>}
+     <Button variant="bare" type="button" className={btn} onClick={()=>setPendingEngineLaunch(null)}><X size={13}/>대기 취소</Button>
+    </div>
+   </div>}
    <h3 className="text-[13px] font-bold">{t('models.importTitle')}</h3>
    <p className="mt-1 text-[11px] text-[#7C7469]">{t('models.importDesc')}</p>
    <label className="mt-4 block text-[11px] font-medium text-[#5C544A]">{t('models.path')}</label>
@@ -353,7 +396,7 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
      {selectedPreflight&&<div className={'mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3 text-[11px] '+(selectedPreflight.status==='blocked'?'border-rose-200 bg-rose-50 text-rose-800':selectedPreflight.status==='warning'?'border-amber-200 bg-amber-50 text-amber-900':'border-[#E7E0D5] bg-[#FAF7F1] text-[#5C544A]')}>
       <div className="min-w-0"><strong className="text-[12px]">실행 전 점검 · {selectedPreflight.status==='blocked'?'실행기 필요':selectedPreflight.status==='warning'?'메모리 주의':selectedPreflight.status==='ready'?'준비 상태 양호':'측정 정보 확인 중'}</strong>
       <p className="mt-1 leading-5">{selectedPreflight.status==='blocked'?selectedPreflight.engine+' 실행기가 없습니다. 먼저 설치하거나 기존 실행기를 연결하세요.':selectedPreflight.status==='warning'?'선택한 모델의 파일 크기에 비해 사용 가능한 메모리가 빠듯할 수 있습니다. 실제 사용량은 컨텍스트와 오프로딩 방식에 따라 달라집니다.':selectedPreflight.status==='ready'?'실행기 및 모델 용량에 대한 기본 점검을 통과했습니다.':'실행기 또는 사용 가능 메모리 정보가 부족합니다. 실행할 때 서버 상태를 다시 검사합니다.'}</p></div>
-      {selectedPreflight.status==='blocked'&&<Button variant="bare" type="button" className={btn} onClick={()=>setView('import')}><Cpu size={13}/>실행기 설치·확인</Button>}
+      {selectedPreflight.status==='blocked'&&<Button variant="bare" type="button" className={btn} onClick={()=>queueEngineSetup(existing)}><Cpu size={13}/>실행기 설치·확인</Button>}
       {selectedPreflight.status==='warning'&&smallerOption&&<Button variant="bare" type="button" className={btn} onClick={()=>setVariant(smallerOption.id)}>작은 양자화 선택</Button>}
      </div>}
      {option&&<div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl bg-[#FAF7F1] p-3">
