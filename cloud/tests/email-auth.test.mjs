@@ -2,6 +2,7 @@ import {test} from 'node:test'
 import assert from 'node:assert/strict'
 import {DatabaseSync} from 'node:sqlite'
 import {emailLoginReady,startEmailLogin,verifyEmailLogin,pollEmailLogin,emailAuthTest} from '../src/email_auth.js'
+import worker from '../src/index.js'
 
 // Node SQLite executes the exact prepared SQL used by the Cloudflare D1 adapter.
 // batch() models D1's transaction boundary so replay assertions are meaningful.
@@ -101,6 +102,24 @@ test('email request throttle applies before dispatching a sixth email',async()=>
  for(let i=0;i<5;i++)assert.equal((await begin('demo@example.com')).status,200)
  assert.equal((await begin('demo@example.com')).status,429)
  assert.equal(sent.length,5)
+ db.close()
+})
+
+test('Worker allows its own email confirmation form but rejects foreign-origin posts',async()=>{
+ const {db,env,sent,begin}=fixture()
+ env.ALLOWED_ORIGIN='http://127.0.0.1:4317'
+ const data=await (await begin('demo@example.com')).json()
+ const link=new URL(sent[0].text.match(/https:\/\/\S+/)[0])
+ const body=new URLSearchParams({id:data.id,token:link.searchParams.get('token')})
+ const own=await worker.fetch(new Request(link.origin+link.pathname,{
+  method:'POST',headers:{origin:link.origin,'content-type':'application/x-www-form-urlencoded'},body
+ }),env)
+ assert.equal(own.status,200)
+ assert.equal(db.prepare('SELECT status FROM email_login_attempts WHERE id=?').get(data.id).status,'verified')
+ const malicious=await worker.fetch(new Request(link.origin+link.pathname,{
+  method:'POST',headers:{origin:'https://malicious.example','content-type':'application/x-www-form-urlencoded'},body
+ }),env)
+ assert.equal(malicious.status,403)
  db.close()
 })
 
