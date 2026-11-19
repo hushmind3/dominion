@@ -4,10 +4,11 @@ This is the first independent DOMINION account gateway, **not** a Nous Portal in
 The existing desktop UI and Rust execution engine remain unchanged.
 
 Cloudflare Worker + D1 provides Google ID-token verification (RS256 against Google's JWKs),
-a DOMINION bearer session, account balance, and a single-model OpenAI-compatible relay.
-Users never receive the upstream provider API key. No paid model call is permitted without
-a positive prepaid balance. The first release intentionally rejects streaming, tools,
-unconfigured models, and unsupported options.
+Kakao/Naver OAuth, DOMINION bearer sessions, free-model request quotas, paid-credit reservations,
+an operator-managed model registry and TossPayments checkout-confirmation handlers.
+Users never receive upstream provider API keys. Configured free text models support SSE
+streaming; paid model routing currently allows **non-streaming text only**, with tool calls
+and unsupported options rejected. Paid inference requires verified identity and prepaid credits.
 
 ## Provisioning
 

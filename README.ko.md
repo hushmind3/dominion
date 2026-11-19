@@ -27,7 +27,11 @@ Rust 서버가 기본적으로 **http://127.0.0.1:4317**에 React 화면을 제�
 
 ## 최신 메인 프론트 및 백엔드 호환성
 
-프론트는 2026-11-19 최신 `main` 커밋 `f86a36e`과 **`web/` Git 트리 해시까지 동일**합니다(`fe65b961b037ad04e8ab4fc7f5c3d6e18abba392`). 모델 탐색, API 키 없는 공개 모델 목록, GitHub·Google 계정 연결 UI, 채팅·그룹방 화면을 적용했습니다. 서브3 Rust 하네스·그룹 컨텍스트 최적화는 유지하며, 메인의 최신 Codex WebSocket 계약 무효화 및 효과 안전 병렬 체크포인트 개선도 서브3에 반영했습니다.
+2026-11-19 메인 `f86a36e`의 모델 탐색·공개 모델 목록·Google/카카오/네이버 로그인·계정 연결·채팅·그룹방 React 소스를 유지했습니다. 서브3에는 스테이징 설정 예시 `web/.env.cloud-sub3.example`이 추가돼 `web/` 전체 트리 해시는 메인과 달라졌지만, 실제 화면 구성요소 소스는 동일합니다. 서브3 Rust 하네스·그룹 컨텍스트 최적화, Codex WebSocket 계약별 캐시 무효화와 병렬 체크포인트 개선도 유지합니다.
+
+**도미니언 회원제 클라우드 서버 이식:** 메인 `cloud/` Worker, D1 회원·사용량·결제 스키마, Google/카카오/네이버 로그인, 무료 모델 중계·스트리밍, 유료 모델 크레딧·TossPayments 결제 경로, `services/dominion-cloud/` 계약 코드를 서브3에 반영했습니다. 메인 운영 인프라와 분리한 `dominion-cloud-sub3` Worker 및 신규 D1 설정을 사용합니다. 실제 신규 D1과 OAuth/API 키를 아직 연결하지 않아 상용 로그인·결제가 완료된 상태는 아닙니다.
+
+[클라우드 구조·스테이징 설정](docs/SUB3-CLOUD-GATEWAY-2026-11-19.md) · [클라우드 CI 8개 테스트 통과](https://github.com/hushmind3/dominion-rust/actions/runs/44503096540). 로컬 모델·사용자 개인 API 키 기능은 클라우드 계정 없이 계속 사용할 수 있습니다.
 
 ## 🧠 현재 구현 범위
 
@@ -137,7 +141,7 @@ npm run build --prefix web
 node scripts/check-lean-product.mjs
 ```
 
-**최신 검증 코드:** `affd870`(2026-11-19). [Rust 제품·프론트·TypeScript SDK CI](https://github.com/hushmind3/dominion-rust/actions/runs/44499894159)가 통과했습니다. [Rust SDK 전용 CI](https://github.com/hushmind3/dominion-rust/actions/runs/44499399570)는 `536447c` 기준 통과했으며, 이후 코드 변경은 그룹방 정책 회귀 테스트의 기대값 보정입니다. 9명 방 호출·도구 실행, 최소 토큰 설정의 필수 맥락 보존, 공개 모델 목록, OAuth, Rust SDK 클라이언트 테스트와 퇴역 기능의 재유입 방지 소스 검사를 포함합니다. GitHub Actions는 Node 24 지원 버전으로 갱신했습니다. `.github/workflows/ci.yml` 전체 릴리즈 게이트·실제 27B 모델 및 유료 제공자 검증은 실행하지 않았습니다. [최신 통합 점검 기록](docs/SUB3-INTEGRATION-2026-11-19.md)을 참고하십시오.
+**최신 검증 코드:** `affd870`(2026-11-19). [Rust 제품·프론트·TypeScript SDK CI](https://github.com/hushmind3/dominion-rust/actions/runs/44499894159)가 통과했습니다. [Rust SDK 전용 CI](https://github.com/hushmind3/dominion-rust/actions/runs/44499399570)는 `536447c` 기준 통과했으며, 이후 클라우드 Worker·스테이징 설정은 네이티브 Rust SDK 소스를 바꾸지 않습니다. 9명 방 호출·도구 실행, 최소 토큰 설정의 필수 맥락 보존, 공개 모델 목록, OAuth, Rust SDK 클라이언트 테스트와 퇴역 기능의 재유입 방지 소스 검사를 포함합니다. GitHub Actions는 Node 24 지원 버전으로 갱신했습니다. `.github/workflows/ci.yml` 전체 릴리즈 게이트·실제 27B 모델 및 유료 제공자 검증은 실행하지 않았습니다. [최신 통합 점검 기록](docs/SUB3-INTEGRATION-2026-11-19.md)을 참고하십시오.
 
 **미완성·미측정:** 채팅/자율 실행 루프 완전 통합, 실제 모델의 장기 작업 완수율, 최신 브랜치의 Windows/macOS 릴리즈 검증, 실과금 기준의 캐시 절감률과 상용 운영 검증.
 

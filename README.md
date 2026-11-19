@@ -25,9 +25,13 @@ Optional environment settings: `DOMINION_PORT` (default `4317`), `DOMINION_DATA`
 
 For frontend development, use `npm run dev --prefix web` alongside the Rust server; for desktop builds, see `scripts/build-desktop.mjs` and `src-tauri/`. The development launch above is **not** an installer or a signed release.
 
-## Frontend baseline and retired domain
+## Frontend baseline and Dominion Cloud Gateway
 
-The React frontend is **byte-identical to `main`** at `f86a36e1c8ddac149baea2ac2391d317add36cbe` (2026-11-19): both `web/` Git tree SHA values are `fe65b961b037ad04e8ab4fc7f5c3d6e18abba392`. This includes model exploration, public keyless model browsing, GitHub/Google account connection UI, chat and rooms. The sub3 native Rust kernel and context engine remain separate from main.
+React application sources were copied from `main` at `f86a36e` (2026-11-19): model exploration, public keyless model browsing, Google/Kakao/Naver cloud login UI, connected accounts, chat and rooms remain unchanged. Sub3 additionally has `web/.env.cloud-sub3.example`, so the complete `web/` Git tree now differs from main even though the app implementation is unchanged. The sub3 native Rust kernel and context engine remain separate from main.
+
+The full `main/cloud/` Cloudflare Worker implementation, D1 identity/usage/payment schema, operator-owned AI gateway, and typed service contracts have been imported under `cloud/` and `services/dominion-cloud/`. The **staging** Worker is named `dominion-cloud-sub3` and uses a separate, intentionally unprovisioned D1 database. The existing React account card registers it as an ordinary OpenAI-compatible provider once the staging gateway and OAuth origins are configured.
+
+[Cloud staging integration and setup](docs/SUB3-CLOUD-GATEWAY-2026-11-19.md) · [Cloud gateway test results](https://github.com/hushmind3/dominion-rust/actions/runs/44503096540). This import does not deploy a worker or authorize real purchases. Local models and BYOK work without a cloud account.
 
 
 ## What is implemented
@@ -131,7 +135,7 @@ npm run build --prefix web
 node scripts/check-lean-product.mjs
 ```
 
-**Current tested source:** `affd8700b813c2fb3e529335438e63ba28b61ad4` passed [Sub3 product Rust + frontend + TypeScript SDK CI](https://github.com/hushmind3/dominion-rust/actions/runs/44499894159) on 2026-11-19. [Sub3 Rust SDK CI](https://github.com/hushmind3/dominion-rust/actions/runs/44499399570) passed at `536447c`; the only subsequent source change is a group-room policy regression assertion. This expanded gate now exercises group-room routing, consented tool work under extremely small soft context targets, public provider metadata, OAuth parsing, and the typed Rust SDK. The source inventory rejects retired feature references and file names across tracked source files. Node 24-compatible GitHub Actions are used. `.github/workflows/ci.yml` remains a separately dispatched full release validation and was not run. These are mock-provider and compiler results, not actual billed-token savings or a live 27B benchmark. See [current integration audit](docs/SUB3-INTEGRATION-2026-11-19.md).
+**Current tested source:** `affd8700b813c2fb3e529335438e63ba28b61ad4` passed [Sub3 product Rust + frontend + TypeScript SDK CI](https://github.com/hushmind3/dominion-rust/actions/runs/44499894159) on 2026-11-19. [Sub3 Rust SDK CI](https://github.com/hushmind3/dominion-rust/actions/runs/44499399570) passed at `536447c`; the subsequent imported Cloud Worker and staging settings do not change the native Rust SDK. This expanded gate now exercises group-room routing, consented tool work under extremely small soft context targets, public provider metadata, OAuth parsing, and the typed Rust SDK. The source inventory rejects retired feature references and file names across tracked source files. Node 24-compatible GitHub Actions are used. `.github/workflows/ci.yml` remains a separately dispatched full release validation and was not run. These are mock-provider and compiler results, not actual billed-token savings or a live 27B benchmark. See [current integration audit](docs/SUB3-INTEGRATION-2026-11-19.md).
 
 Current limitations: interactive chat and the native work kernel are not yet a single lifecycle; independent commercial-grade long-horizon task success, full release validation, and reproducible provider-billed cache gains are still unmeasured. Avoid treating source existence or scripted-model fixtures as competitive benchmark wins.
 

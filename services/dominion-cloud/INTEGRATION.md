@@ -1,11 +1,29 @@
-# Dominion native integration contract
+# Dominion native/cloud integration (sub3)
 
-Keep existing UI and native agent harness intact. Add a new opt-in provider type **Dominion Cloud** to the existing provider selection path in `src/engine/chat/provider.rs` and `src/engine/gateway.rs` only after a live gateway exists.
+The main Cloudflare Worker implementation has been ported to `dominion-sub3`
+with a separate staging Worker/D1 configuration. No production deployment has
+occurred from this branch.
 
-The native app should store a revocable Dominion session token in the OS credential store (not the provider API-key field or project SQLite). Use a fixed operator-owned HTTPS base URL; never allow the client to substitute arbitrary relay origins. The gateway owns Google login, token validation, upstream credentials, per-account quota and billing.
+**Current actual client wiring:** the existing React
+`web/src/components/DominionCloudAccount.tsx` supports Google and Kakao/Naver
+account sign-in. On model selection, it stores a DOMINION bearer session as the
+`apiKey` of an ordinary local OpenAI-compatible Rust provider, with base URL
+`<staging-worker-url>/v1`. The native provider's secret vault handles this
+credential; the React account card also maintains an ephemeral browser
+`sessionStorage` copy. This is the observed implementation, not a claim of
+native system-browser PKCE or a dedicated OS credential-store workflow.
 
-Local models, BYOK providers, Codex OAuth and existing agent/room execution must continue to function without Dominion login. The native app forwards model requests and receives OpenAI-compatible streamed responses; the cloud gateway must preserve tool calls and usage receipts. Do not use Nous OAuth endpoints or Nous access tokens.
+The Rust chat/provider gateway and tools remain unchanged. Local models, BYOK,
+Codex OAuth, chat/room execution and agent jobs must continue operating without
+DOMINION Cloud login. The Worker owns the OAuth verification, per-account
+free quota, operator upstream credentials and prepaid/entitlement handling.
 
-## Rollout gates
+**Hardening needed before public launch:** migrate the desktop login flow to
+system-browser OAuth with explicit callback state; manage session revocation,
+bound origins and secure refresh; validate SSE/tool use and actual upstream
+usage receipts under billing; enforce atomic spend caps and reconciled
+reservations; configure real merchant callbacks and verified provider
+commercial terms. The current paid Cloud path rejects stream/tool requests.
 
-Google OAuth application + verified redirect domains; hosted database with atomic credit ledger; server-side model registry; commercial terms for each free provider; billing integration; rate-limit and replay tests; streamed usage accounting; then end-to-end CI. Do not enable paid routing before these gates pass.
+See `../../docs/SUB3-CLOUD-GATEWAY-2026-11-19.md` and
+`../../cloud/README.md` for the isolated setup and tested contract.
