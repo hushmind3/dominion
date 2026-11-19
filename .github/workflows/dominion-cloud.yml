@@ -6,7 +6,7 @@ on:
       - 'cloud/**'
       - '.github/workflows/dominion-cloud.yml'
   push:
-    branches: [main]
+    branches: [main, dominion-sub2]
     paths:
       - 'cloud/**'
       - '.github/workflows/dominion-cloud.yml'
@@ -28,6 +28,8 @@ jobs:
           node-version: '24'
       - name: Check Cloud Worker syntax
         run: node --check cloud/src/index.js
+      - name: Cloud account and model gateway contract tests
+        run: node --test cloud/tests/*.test.mjs
       - name: Validate SQL and Worker configuration
         run: |
           python3 - <<'PY'
@@ -43,7 +45,7 @@ jobs:
 
   deploy:
     needs: check
-    if: github.event_name == 'workflow_dispatch' && inputs.deploy
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: dominion-cloud
     steps:

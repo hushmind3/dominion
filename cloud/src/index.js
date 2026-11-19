@@ -48,6 +48,14 @@ async function account(request, env) {
   return env.DB.prepare('SELECT a.id, a.credits FROM sessions s JOIN accounts a ON a.id=s.account_id WHERE s.token_hash=? AND s.expires_at>?')
     .bind(await hash(token), now()).first();
 }
+// Revoke the precise bearer session; local sessionStorage alone is not logout.
+async function logout(request, env) {
+  const token = /^Bearer ([A-Za-z0-9_-]{32,})$/.exec(request.headers.get('authorization') || '')?.[1];
+  if (!token) return err('Unauthorized', 401);
+  await env.DB.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await hash(token)).run();
+  return json({ok:true});
+}
+
 async function login(request, env) {
   const { credential } = await maxBody(request);
   if (typeof credential !== 'string' || credential.length > 10000) return err('Google credential required');
@@ -501,6 +509,7 @@ export default {
       const path = new URL(request.url).pathname;
       let response;
       if (path === '/v1/auth/google' && request.method === 'POST') response = await login(request, env);
+      else if (path === '/v1/auth/logout' && request.method === 'POST') response = await logout(request, env);
       else if (['/v1/auth/kakao/start','/v1/auth/naver/start'].includes(path) && request.method === 'GET')
         response = await oauthStart(request,env,path.split('/')[3]);
       else if (['/v1/auth/kakao/callback','/v1/auth/naver/callback'].includes(path) && request.method === 'GET')

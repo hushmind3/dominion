@@ -170,8 +170,12 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
   return()=>{active=false;script.remove()}
  },[])
  function logout(){
+  const session=token
   sessionStorage.removeItem('dominion_cloud_session');setIdentity(null);setBilling(null);setToken('');setModels([]);setSelected('');setModelSearch('');setMessage('DOMINION Cloud에서 로그아웃했습니다.');
   window.google?.accounts.id.disableAutoSelect?.()
+  // Local logout works offline; the gateway is asked to revoke the token.
+  if(session&&cloudUrl)void fetch(cloudUrl+'/v1/auth/logout',{method:'POST',headers:{Authorization:'Bearer '+session}})
+   .catch(()=>{ /* Browser is already signed out. */ })
  }
  async function loadCatalog(){
   setCatalogBusy(true)
@@ -313,11 +317,14 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
   if(!token||!selected)return
   setBusy(true);setMessage('')
   try{
-   const existing=await get<Array<{id:string;baseUrl:string;model:string}>>('/api/providers')
+   const existing=await get<Array<{id:string;name?:string;baseUrl:string;model:string;enabled?:boolean;toolMode?:string}>>('/api/providers')
    const match=existing.find(p=>p.baseUrl.replace(/\/$/,'')===cloudUrl+'/v1'&&p.model===selected)
    if(match){
-    setRegistered({providerId:match.id,model:selected,source:'cloud'})
-    setMessage('이미 등록된 모델입니다. 중복 등록하지 않았습니다.')
+    // A prior login may have expired: update the vault token without a duplicate.
+    const renewed=await post<{id:string}>('/api/providers',{...match,apiKey:token,enabled:true})
+    setRegistered({providerId:renewed.id,model:selected,source:'cloud'})
+    await onProviderAdded()
+    setMessage('기존 모델 연결의 로그인 세션을 갱신했습니다.')
     return
    }
    const saved=await post<{id:string}>('/api/providers',{name:'DOMINION Cloud · '+selected,baseUrl:cloudUrl+'/v1',kind:'openai',apiKey:token,model:selected,enabled:true,local:false,toolMode:'compat'})

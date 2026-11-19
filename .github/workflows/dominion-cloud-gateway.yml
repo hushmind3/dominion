@@ -17,9 +17,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
       - name: Validate Cloudflare Worker syntax
         run: node --check cloud/src/index.js
+      - name: Cloud gateway behavior tests
+        run: node --test cloud/tests/*.test.mjs
       - name: Verify service routing and budget guard
         run: |
           node --input-type=module <<'EOF'

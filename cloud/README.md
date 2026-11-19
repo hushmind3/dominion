@@ -173,3 +173,25 @@ Before live charging: implement and verify refund/cancellation handling,
 payment-status webhook reconciliation, stuck `processing` order recovery,
 admin-only settlement reconciliation and customer support processes. Existing
 Pro checkout is a one-time 30-day purchase, not recurring auto-billing.
+
+## Sub2 branch integration (2026-11-19)
+
+The `dominion-sub2` branch imports the main Cloudflare Worker, D1 schema,
+authentication, quota, model relay, identity and TossPayments purchase flows.
+The existing main-synchronized React model screen registers a Cloud model via
+the normal Rust provider API. The imported UI now refreshes its token on
+repeat registration, and browser logout also requests server-side revocation.
+
+Configure `VITE_DOMINION_CLOUD_URL` (your HTTPS Worker origin) and
+`VITE_DOMINION_GOOGLE_CLIENT_ID` (public OAuth web client ID) in the web build.
+Server provider keys, payment secret, Google/Kakao/Naver credentials, and any
+production service credentials must be bound to the Worker, never to Vite.
+
+Cloud CI is enabled on `dominion-sub2`; production deployment is restricted to
+`main`. The imported Wrangler configuration names the same existing Worker and
+D1 database, so **do not deploy this branch over production**.
+
+Free chat is text-first with server-enforced quotas. Paid-model streaming and
+tool calls are intentionally not enabled; Pro membership is separate from
+prepaid inference credit. Real provider credentials, payment merchant approval,
+and live account verification are not included in this source import.
