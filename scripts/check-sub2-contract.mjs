@@ -11,6 +11,7 @@ const expect=(ok,message)=>{if(!ok)errors.push(message);};
 const retired=[
   'src/api/money','src/engine/money','src/db/money.rs',
   'web/src/pages/Money.tsx','web/src/refreshScope.ts',
+  'rsi/evaluations', 'benchmark/rsi-evidence',
 ];
 for(const path of retired)expect(!existsSync(join(root,path)),`retired path remains: ${path}`);
 const codePaths=[];
