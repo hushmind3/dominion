@@ -61,3 +61,41 @@ export function preferredServerModelFormat(
  if(gguf?.available===true)return 'gguf'
  return mlx?.installable===true?'mlx':'gguf'
 }
+
+export type LocalModelToLaunch={id:string;format:'gguf'|'mlx';bytes:number}
+export type LaunchCapabilities={
+ gguf?:{available?:boolean;path?:string|null}
+ mlx?:{available?:boolean;standalone?:boolean}
+ memory?:{free?:number}
+ gpu?:{free?:number}|null
+}
+export type ModelPreflight={status:'ready'|'warning'|'blocked'|'unknown';reason:'engine'|'memory'|'none';engine:string;memory:MemoryFit;gpu:MemoryFit}
+// This is an advisory check. File size is only a weight-memory approximation;
+// the runtime owns actual allocations (KV cache, offload, fragmentation).
+export function modelPreflight(model:LocalModelToLaunch,capabilities:LaunchCapabilities|undefined):ModelPreflight{
+ const engine=model.id.startsWith('lms:')?'LM Studio':model.format==='mlx'?'MLX (mlx-lm)':'llama.cpp'
+ const ram=memoryFit(model.bytes,capabilities?.memory?.free||0)
+ const gpu=model.format==='gguf'?memoryFit(model.bytes,capabilities?.gpu?.free||0):'unknown'
+ const memory=ram==='comfortable'||gpu==='comfortable'?'comfortable'
+  :ram==='tight'||gpu==='tight'?'tight'
+  :ram==='insufficient'&&gpu==='insufficient'?'insufficient'
+  :ram==='insufficient'&&model.format==='mlx'?'insufficient'
+  :ram==='insufficient'&&(!capabilities?.gpu||capabilities.gpu.free===0)?'insufficient':'unknown'
+ let engineAvailable:boolean|null=null
+ if(model.id.startsWith('lms:')){
+  if(capabilities?.mlx?.available===true||capabilities?.gguf?.available===true)engineAvailable=true
+  else if(capabilities?.mlx?.available===false&&capabilities?.gguf?.available===false)engineAvailable=false
+ }else if(model.format==='mlx'){
+  if(model.id.startsWith('mlx:')){
+   if(capabilities?.mlx?.available!==undefined)engineAvailable=capabilities.mlx.available
+  }else if(capabilities?.mlx?.standalone!==undefined)engineAvailable=capabilities.mlx.standalone
+ }else if(capabilities?.gguf?.path!==undefined){
+  engineAvailable=Boolean(capabilities.gguf.path)
+ }else if(capabilities?.gguf?.available===false){
+  engineAvailable=false
+ }
+ if(engineAvailable===false)return {status:'blocked',reason:'engine',engine,memory,gpu}
+ if(memory==='insufficient'||memory==='tight')return {status:'warning',reason:'memory',engine,memory,gpu}
+ if(engineAvailable===null||memory==='unknown')return {status:'unknown',reason:'none',engine,memory,gpu}
+ return {status:'ready',reason:'none',engine,memory,gpu}
+}
