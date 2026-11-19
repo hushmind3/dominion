@@ -15,8 +15,14 @@ const maxBody = async (request, limit = 150000) => {
   if (text.length > limit) throw new Error('Request too large');
   return JSON.parse(text);
 };
+function isAllowedOrigin(origin, env) {
+  // The local DOMINION desktop browser runs on loopback. Keep this
+  // allowlist specific; don't reflect arbitrary external Origin headers.
+  return Boolean(origin && (origin === env.ALLOWED_ORIGIN ||
+    ['http://127.0.0.1:4317', 'http://localhost:4317', 'http://localhost:5173', 'http://127.0.0.1:5173'].includes(origin)));
+}
 function cors(origin, env) {
-  return origin && origin === env.ALLOWED_ORIGIN ? {
+  return isAllowedOrigin(origin, env) ? {
     'access-control-allow-origin': origin,
     'access-control-allow-methods': 'POST, GET, OPTIONS',
     'access-control-allow-headers': 'content-type, authorization',
@@ -494,7 +500,7 @@ export default {
     const origin = request.headers.get('origin');
     const headers = cors(origin, env);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
-    if (origin && origin !== env.ALLOWED_ORIGIN) return err('Origin not allowed', 403);
+    if (origin && !isAllowedOrigin(origin, env)) return err('Origin not allowed', 403);
     // Public OAuth metadata: Google client IDs are public identifiers, never secrets.
     // The browser uses this endpoint so login works without a compile-time VITE key.
     if (new URL(request.url).pathname === '/v1/public-config' && request.method === 'GET') {
