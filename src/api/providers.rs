@@ -264,19 +264,28 @@ fn codex_model() -> String {
     "gpt-6.1-sol".to_string()
 }
 
-// One 24-hour in-process snapshot serves every provider. models.dev exposes
-// all providers in one large JSON document: downloading that document again
-// for each model detail click wastes bandwidth and slows the search UI.
+// Share one 24-hour snapshot across public provider and model browsing.
+// The async fetch lock also coalesces simultaneous cold-cache requests: the
+// models.dev API is one large JSON document, not a per-provider endpoint.
 static MODELS_DEV_DOCUMENT:OnceLock<Mutex<Option<(Instant,Arc<Value>)>>>=OnceLock::new();
+static MODELS_DEV_FETCH:tokio::sync::Mutex<()>=tokio::sync::Mutex::const_new(());
 fn models_dev_document_cache()->&'static Mutex<Option<(Instant,Arc<Value>)>>{
     MODELS_DEV_DOCUMENT.get_or_init(||Mutex::new(None))
 }
+fn fresh_models_dev_document(cache:&Option<(Instant,Arc<Value>)>)->Option<Arc<Value>>{
+    cache.as_ref().and_then(|(fetched,document)|{
+        (fetched.elapsed()<Duration::from_secs(86_400)).then(||Arc::clone(document))
+    })
+}
+fn cached_models_dev_document()->Option<Arc<Value>>{
+    let cache=models_dev_document_cache().lock().ok()?;
+    fresh_models_dev_document(&cache)
+}
 async fn load_models_dev_document()->Result<Arc<Value>,String>{
-    if let Ok(cache)=models_dev_document_cache().lock(){
-        if let Some((fetched,document))=cache.as_ref(){
-            if fetched.elapsed()<Duration::from_secs(86_400){return Ok(Arc::clone(document));}
-        }
-    }
+    if let Some(document)=cached_models_dev_document(){return Ok(document);}
+    let _fetch_guard=MODELS_DEV_FETCH.lock().await;
+    // Another request may have populated the cache while we awaited the lock.
+    if let Some(document)=cached_models_dev_document(){return Ok(document);}
     let client=reqwest::Client::builder().timeout(Duration::from_secs(25))
         .build().map_err(|error|error.to_string())?;
     let response=client.get("https://models.dev/api.json").send().await
@@ -1998,6 +2007,16 @@ pub async fn provider_models(State(state): State<AppState>, Path(id): Path<Strin
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn public_models_dev_cache_expires_after_one_day() {
+        let document=Arc::new(json!({"sample-provider":{"models":{}}}));
+        let fresh=Some((Instant::now(),Arc::clone(&document)));
+        assert!(Arc::ptr_eq(&fresh_models_dev_document(&fresh).unwrap(),&document));
+        let expired=Some((Instant::now()-Duration::from_secs(86_401),Arc::clone(&document)));
+        assert!(fresh_models_dev_document(&expired).is_none());
+        assert!(fresh_models_dev_document(&None).is_none());
+    }
 
     #[test]
     fn public_model_directory_reads_metadata_without_provider_credentials() {
