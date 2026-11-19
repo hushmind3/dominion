@@ -36,6 +36,8 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',hideMan
  const [routerKey,setRouterKey]=useState('')
  const [routerBusy,setRouterBusy]=useState(false)
  const [routerMessage,setRouterMessage]=useState('')
+ const [routerModels,setRouterModels]=useState<RemoteModel[]>([])
+ const [routerSearch,setRouterSearch]=useState('')
  async function fetchModels(session:string){
   const response=await fetch(cloudUrl+'/v1/models',{headers:{Authorization:'Bearer '+session}})
   if(!response.ok)throw Error('모델 목록을 가져오지 못했습니다.')
@@ -136,21 +138,32 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',hideMan
    setCatalogMessage('전체 '+catalogModels.length+'개 중 신규 '+added+'개 등록 · 중복 제외')
   }catch(e){setCatalogMessage((e as Error).message)}finally{setCatalogBusy(false)}
  }
- async function importOpenRouterFree(){
-  if(!routerKey.trim())return
-  setRouterBusy(true);setRouterMessage('무료 모델 조회 중…')
+ async function getOpenRouterFreeModels(){
+  const response=await get<{models:RemoteModel[];cached?:boolean;error?:string}>('/api/providers/openrouter/free-models')
+  if(response.error&&!response.models?.length)throw Error(response.error)
+  const models=response.models||[]
+  setRouterModels(models)
+  return {models,message:response.error}
+ }
+ async function browseOpenRouterFree(){
+  setRouterBusy(true);setRouterMessage('공개 무료 모델 조회 중…')
   try{
-   const res=await fetch('https://openrouter.ai/api/v1/models')
-   if(!res.ok)throw Error('OpenRouter 모델 목록 조회 실패')
-   const data=await res.json() as {data:Array<{id:string;name?:string;pricing?:{prompt?:string;completion?:string};architecture?:{output_modalities?:string[]}}>}
-   const free=data.data.filter(m=>m.id.endsWith(':free')&&Number(m.pricing?.prompt)===0&&Number(m.pricing?.completion)===0&&(!m.architecture?.output_modalities||m.architecture.output_modalities.includes('text')))
-   const existing=await get<Array<{baseUrl:string;model:string}>>('/api/providers')
-   const known=new Set(existing.filter(p=>p.baseUrl==='https://openrouter.ai/api/v1').map(p=>p.model))
+   const {models,message}=await getOpenRouterFreeModels()
+   setRouterMessage(message||('OpenRouter 무료 텍스트 모델 '+models.length+'개 조회 · API 키 불필요'))
+  }catch(error){setRouterMessage((error as Error).message)}finally{setRouterBusy(false)}
+ }
+ async function importOpenRouterFree(){
+  if(!routerKey.trim()){setRouterMessage('모델 조회에는 키가 필요 없습니다. 채팅에 등록하려면 OpenRouter API 키가 필요합니다.');return}
+  setRouterBusy(true);setRouterMessage('무료 모델 등록 중…')
+  try{
+   const free=routerModels.length?routerModels:(await getOpenRouterFreeModels()).models
+   const existing=await get<Array<{baseUrl:string;model:string;hasKey?:boolean}>>('/api/providers')
+   const known=new Set(existing.filter(p=>p.baseUrl==='https://openrouter.ai/api/v1'&&p.hasKey).map(p=>p.model))
    let added=0
-   for(const m of free){
-    if(known.has(m.id))continue
-    await post('/api/providers',{name:'OpenRouter 무료 · '+(m.name||m.id),baseUrl:'https://openrouter.ai/api/v1',kind:'openai',apiKey:routerKey.trim(),model:m.id,enabled:true,local:false,toolMode:'auto'})
-    known.add(m.id);added++
+   for(const model of free){
+    if(known.has(model.id))continue
+    await post('/api/providers',{name:'OpenRouter 무료 · '+(model.name||model.id),baseUrl:'https://openrouter.ai/api/v1',kind:'openai',apiKey:routerKey.trim(),model:model.id,enabled:true,local:false,toolMode:'auto'})
+    known.add(model.id);added++
    }
    await onProviderAdded()
    setRouterMessage('무료 '+free.length+'개 확인, 신규 '+added+'개 등록, 중복 제외')
@@ -240,9 +253,17 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',hideMan
   </div>}
   {managementTab==='providers'&&<div className="mt-4 border-t border-[#E7E0D5] pt-4">
    <strong className="text-[13px]">OpenRouter 무료 모델 일괄 등록</strong>
-   <p className="mt-1 text-[12px] text-[#7C7469]">OpenRouter API 키로 최신 무료 텍스트 모델을 가져옵니다.</p>
+   <p className="mt-1 text-[12px] text-[#7C7469]">공개 무료 모델 이름·ID 검색은 API 키가 필요하지 않습니다. 실제 채팅 등록 시에만 키를 입력하세요.</p>
    <div className="mt-2 flex flex-wrap gap-2">
-    <input type="password" autoComplete="off" aria-label="OpenRouter API 키" value={routerKey} onChange={e=>setRouterKey(e.target.value)} placeholder="OpenRouter API 키" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
+    <button type="button" disabled={routerBusy} onClick={()=>void browseOpenRouterFree()} className="rounded-lg border px-3 py-2 text-[12px] disabled:opacity-50">{routerBusy?'조회 중…':'무료 모델 조회 (키 불필요)'}</button>
+    <input aria-label="OpenRouter 무료 모델 검색" value={routerSearch} onChange={e=>setRouterSearch(e.target.value)} placeholder="무료 모델 이름 검색" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
+   </div>
+   {routerModels.length>0&&<div className="mt-2 max-h-48 overflow-y-auto rounded-lg border bg-white px-3 py-2 text-[11px] text-[#5C544A]">
+    <strong>공개 무료 모델 · {routerModels.filter(m=>(m.id+' '+(m.name||'')).toLowerCase().includes(routerSearch.toLowerCase())).length} / {routerModels.length}개</strong>
+    {routerModels.filter(m=>(m.id+' '+(m.name||'')).toLowerCase().includes(routerSearch.toLowerCase())).slice(0,60).map(m=><div key={m.id} className="border-b border-[#EFE9DF] py-1.5"><span className="font-semibold">{m.name||m.id}</span><span className="ml-2 break-all text-[#8A8176]">{m.id}</span></div>)}
+   </div>}
+   <div className="mt-2 flex flex-wrap gap-2">
+    <input type="password" autoComplete="off" aria-label="OpenRouter API 키 (등록 시에만 필요)" value={routerKey} onChange={e=>setRouterKey(e.target.value)} placeholder="채팅 등록용 API 키" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
     <button type="button" disabled={routerBusy||!routerKey.trim()} onClick={()=>void importOpenRouterFree()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">{routerBusy?'등록 중…':'무료 모델 전체 등록'}</button>
    </div>
    {routerMessage&&<p role="status" className="mt-2 text-[12px] text-[#7C7469]">{routerMessage}</p>}
