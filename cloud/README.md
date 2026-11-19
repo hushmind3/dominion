@@ -170,9 +170,16 @@ Settlement timing, fees, chargebacks and refunds are controlled by the
 merchant agreement and must be reconciled against provider reports.
 
 Before live charging: implement and verify refund/cancellation handling,
-payment-status webhook reconciliation, stuck `processing` order recovery,
-admin-only settlement reconciliation and customer support processes. Existing
-Pro checkout is a one-time 30-day purchase, not recurring auto-billing.
+payment-status webhook reconciliation, admin-only settlement reconciliation
+and customer support processes. An interrupted `processing` confirmation can
+now be reconciled through TossPayments `GET /v1/payments/orders/{orderId}`
+without repeating the approval request. The stored order, provider payment
+key, charged amount and `DONE` status must agree; the D1 transaction grants
+a subscription period only when the order transitions to `paid`.
+The browser retains the returned order in same-tab session storage until
+confirmation so a reload can retry verification. Mock-provider CI confirms
+these branches, **not** a live merchant payment or bank settlement. Pro checkout
+remains a one-time 30-day purchase, not recurring auto-billing.
 
 ## Sub2 branch integration (2026-11-19)
 
