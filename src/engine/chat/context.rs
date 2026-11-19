@@ -263,14 +263,23 @@ fn context_block_with_manifest(
     // Tool-disabled turns must not expand the old five-skill bound into
     // twelve eagerly injected 700-character instruction bodies.
     let skill_limit=if allow_skill_read {12} else {5};
+    let query_terms=crate::engine::memory::terms(query);
     let skills = available_skills.into_iter().take(skill_limit)
         .map(|skill|{
             let id=skill["id"].as_str().unwrap_or("").to_owned();
             let name=skill["name"].as_str().unwrap_or("").chars().take(80).collect::<String>();
             let description=if allow_skill_read {
-                skill["description"].as_str().filter(|s|!s.trim().is_empty())
-                    .unwrap_or_else(||skill["instructions"].as_str().unwrap_or(""))
-                    .chars().take(120).collect::<String>()
+                let text=skill["description"].as_str().filter(|s|!s.trim().is_empty())
+                    .unwrap_or_else(||skill["instructions"].as_str().unwrap_or(""));
+                // The full 120-char preview is useful when the skill matches
+                // this turn. Preserve every advertised ID and name, but only
+                // spend 48 chars on unrelated skills; their full instructions
+                // are always reachable via the native scoped skill_read.
+                let searchable=format!("{} {} {}",id,name,text.chars().take(180).collect::<String>())
+                    .to_lowercase();
+                let relevant=query_terms.iter().any(|term|
+                    term.chars().count()>1 && searchable.contains(&term.to_lowercase()));
+                text.chars().take(if relevant {120}else{48}).collect::<String>()
             }else{
                 // Tools are disabled for this turn; the agent could not load
                 // anything lazily. Preserve the previous bounded instructions
@@ -693,6 +702,39 @@ mod tests {
         assert!(block.chars().count()<1100,
             "long skill instructions must be loaded on demand");
         assert_eq!(items.iter().filter(|x|x["kind"]=="skill").count(),2);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn skill_previews_avoid_repeating_unrelated_descriptions_but_retain_ids(){
+        let (state,dir)=state();
+        state.store.put("session",&json!({"id":"s"}));
+        for index in 0..12 {
+            let relevant=index==4;
+            state.store.put("skill",&json!({
+                "id":format!("skill-{index:02}"),
+                "name":format!("Skill {index:02}"),
+                "scope":"global","status":"active","enabled":true,
+                "description":if relevant {
+                    format!("database query optimization {}", "R".repeat(125))
+                }else{
+                    format!("unrelated cooking background {}", "U".repeat(125))
+                },
+                "instructions":"Full original retained for skill_read",
+            }));
+        }
+        let (block,items,_)=context_block_with_manifest(
+            &state,"s",None,"database query optimization",None,None,true).unwrap();
+        assert_eq!(items.iter().filter(|item|item["kind"]=="skill").count(),12);
+        for index in 0..12 {
+            assert!(block.contains(&format!("[skill-{index:02}]")),
+                "all skill IDs stay discoverable");
+        }
+        assert!(block.contains(&"R".repeat(75)),
+            "a relevant skill keeps enough preview context");
+        assert!(!block.contains(&"U".repeat(60)),
+            "unrelated skills must not replay verbose previews");
+        assert!(block.len()<2300,"the 12-skill prompt index must be bounded");
         let _=std::fs::remove_dir_all(dir);
     }
 
