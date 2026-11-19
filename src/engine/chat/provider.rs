@@ -2515,7 +2515,7 @@ mod tests {
         let mut uncached = original.clone();
         assert_eq!(edit_stale_read_context(&mut cached, 110_000, 0, false), 0,
             "cacheable route should preserve its stable prefix at low pressure");
-        let saved = edit_stale_read_context(&mut uncached, 110_000, 0, true);
+        let saved = edit_stale_read_context(&mut uncached, 90_000, 0, true);
         assert!(saved > 20_000,"uncached route paid full repeated prefill: {saved}");
         for i in [6,8,10] {
             assert_eq!(uncached[i], original[i], "newest three reads stay exact");
