@@ -18,6 +18,7 @@
 - **최신 main 프론트:** 모델 관리·허깅페이스 탐색, 제공자 선택, 연결 계정, 대화방/채팅, 범위별 새로고침.
 - **API 키 없는 공개 모델 탐색:** `/api/providers/catalog/:id/models`, `/api/providers/openrouter/free-models`에서 읽기 전용 목록 조회. 실제 추론 권한과 분리.
 - **GitHub CLI 계정 연결:** 화면의 로그인 흐름을 백엔드에 연결하고 사용자 승인 후 계정 검증·암호화 저장.
+- **DOMINION Cloud:** 구글·카카오·네이버 인증, 무료 모델 조회, 사용자별 구독·본인확인·결제 연동. 로그인 성공을 모델/요금 조회 장애와 분리하고, 결제 승인 중 통신이 끊기면 주문번호 대조를 통해 복구합니다. 실결제·상용 정산 검증은 별개입니다.
 - **도구/SDK:** 파일·셸·브라우저·MCP, `sdk/typescript/` TypeScript 클라이언트와 `crates/dominion-agent-kernel/` Rust 커널.
 
 기존 **머니 전용 기능은 제거**했습니다. 화면·HTTP API·Rust 엔진·주기 실행·DB 스키마 초기화·전용 CI 테스트·과거 관련 문서를 정리했습니다. 기존 SQLite 데이터는 임의로 삭제하지 않습니다.
