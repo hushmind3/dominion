@@ -1,7 +1,3 @@
-## Money evidence provenance (sub2, 2026-11-18)
-
-The existing Money endpoints and SDK HTTP contract are unchanged. The Rust Money workflow now archives original RSS publisher identity and bounded `observedFeeds` separately, preserves distinct article URLs sharing a headline, carries story-cluster markers into the indexed events, and prevents aggregator mirrors from masquerading as independent buyer/supplier sources. A newly ingested market signal is eligible for the same collection cycle's bounded evidence pairing. This feature does not start a new SDK agent process or approve business implementation automatically. [Rust source, regression tests and limits](../../docs/SUB2-MONEY-SOURCE-LINEAGE-2026-11-18.md).
-
 ## Shared Rust tool discovery contract (sub2, 2026-11-18)
 
 The SDK calls the same chat/prompt-job Rust turn engine as the GUI. For large available native/MCP tool catalogs, the engine may advertise `dominion_tool_search` alongside a bounded set of relevant real tool schemas. After a successful search receipt, subsequent model rounds can invoke newly promoted tools by their **original** names. The TypeScript SDK does not implement its own search, tool executor or authorization, and no new public SDK endpoint is required. Unadvertised model tool names are rejected before native dispatch. Explicit user-selected core/filtered strategies and single-file shortcuts keep their previous tool inventory. See [Rust code and verification scope](../../docs/SUB2-PROGRESSIVE-NATIVE-TOOLS-2026-11-18.md).
@@ -62,9 +58,3 @@ This TypeScript package is auxiliary; the embedded native Rust SDK in `src/sdk.r
 The initial SDK surface is explicit and versioned rather than pretending to cover every experimental backend endpoint; new operations should be mapped to their Rust handler and tested before publication.
 
 2026 reference patterns reviewed: [Hermes architecture](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/developer-guide/architecture.md), [OpenAI Agents streaming lifecycle](https://openai.github.io/openai-agents-js/guides/streaming/), [MCP transport cancellation/reconnection](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/packages/client/src/client/streamableHttp.ts). Implementation uses Dominion's own contract.
-
-## Money Lab (source-backed commercial research)
-
-`money.latest()` reads the latest stored opportunity shortlist without a new model call.
-`money.find({mode:'db',infer:false})` explicitly selects database-only drafts;
-`money.find({mode:'agent',agentId:'...',infer:true})` schedules one bounded model inference job through the existing Rust worker. The SDK does **not** auto-repeat any POST. `money.campaign(id)`, `money.start(id,{mode:'discover'})`, `money.autopilot(id)`, `money.setAutopilot(id,{enabled:false})`, `money.candidate(id)`, and `money.recordExperiment(id,entry)` use the identical native API endpoints as the Money UI. Buyers, prices, and reported revenue are not automatically verified by the SDK.
