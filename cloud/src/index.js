@@ -234,16 +234,19 @@ async function settleApprovedOrder(env, user, order, paymentKey, result) {
 // A timeout can mean Toss approved the charge while the Worker lost its reply.
 // Recover by querying the payment, never by resending a new approval.
 async function reconcileProcessingPayment(env, user, order, paymentKey) {
+  let result;
   try {
     const auth='Basic '+btoa(env.TOSS_SECRET_KEY+':');
     const response=await fetch('https://api.tosspayments.com/v1/payments/orders/'+encodeURIComponent(order.id),{
       headers:{authorization:auth},signal:AbortSignal.timeout(12000)
     });
     if (!response.ok) return err('Payment confirmation pending provider reconciliation',503);
-    return settleApprovedOrder(env,user,order,paymentKey,await response.json());
+    result=await response.json();
   } catch {
     return err('Payment confirmation pending provider reconciliation',503);
   }
+  // Do not mask our own D1 settlement defects as a provider connectivity error.
+  return settleApprovedOrder(env,user,order,paymentKey,result);
 }
 async function confirmCheckout(request, env, user) {
   if (!env.TOSS_SECRET_KEY) return err('Checkout not configured', 503);
