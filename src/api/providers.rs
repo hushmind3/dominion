@@ -2012,6 +2012,22 @@ mod tests {
     }
 
     #[test]
+    fn public_openrouter_catalog_filters_nonzero_pricing_and_nontext_models() {
+        let catalog=json!({"data":[
+            {"id":"alpha:free","name":"Alpha","pricing":{"prompt":"0","completion":"0"},"architecture":{"output_modalities":["text"]}},
+            {"id":"paid:free","pricing":{"prompt":"0.01","completion":"0"}},
+            {"id":"without-suffix","pricing":{"prompt":"0","completion":"0"}},
+            {"id":"image:free","pricing":{"prompt":"0","completion":"0"},"architecture":{"output_modalities":["image"]}},
+            {"id":"unknown:free","pricing":{}},
+            {"id":"beta:free","name":"Beta","pricing":{"prompt":"0","completion":"0"}}
+        ]});
+        let models=public_openrouter_free_models(&catalog);
+        assert_eq!(models.len(),2);
+        assert_eq!(models[0]["id"],"alpha:free");
+        assert_eq!(models[1]["id"],"beta:free");
+    }
+
+    #[test]
     fn codex_catalog_uses_real_slugs_and_no_obsolete_stub() {
         let models = parse_codex_models(&json!({"models":[
             {"slug":"gpt-6.1-sol","display_name":"GPT-6.1 Sol",
