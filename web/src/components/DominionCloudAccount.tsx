@@ -135,7 +135,19 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
      .catch(e=>setBillingMessage((e as Error).message))
    }else setBillingMessage('결제가 취소되었거나 실패했습니다.')
   }
-  void Promise.all([fetchModels(saved),loadBilling(saved)]).catch(()=>{sessionStorage.removeItem('dominion_cloud_session');setToken('')})
+  void Promise.allSettled([fetchModels(saved),loadBilling(saved)]).then(async results=>{
+   if(results.every(result=>result.status==='fulfilled'))return
+   // A temporary catalog/billing outage is not an expired session.
+   try{
+    const session=await fetch(cloudUrl+'/v1/me',{headers:{Authorization:'Bearer '+saved}})
+    if(session.status===401){
+     sessionStorage.removeItem('dominion_cloud_session');setToken('')
+     setMessage('Cloud 로그인 세션이 만료됐습니다. 다시 로그인해 주세요.')
+     return
+    }
+   }catch{ /* Network outage is not proof that credentials were revoked. */ }
+   setMessage('Cloud 계정은 연결된 상태입니다. 일부 정보를 불러오지 못했습니다.')
+  })
  },[])
   async function fetchModels(session:string){
   const response=await fetch(cloudUrl+'/v1/models',{headers:{Authorization:'Bearer '+session}})
@@ -159,9 +171,13 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
      const response=await fetch(cloudUrl+'/v1/auth/google',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({credential})})
      if(!response.ok)throw Error('도미니언 로그인 실패')
      const data=await response.json() as {token:string}
-     await Promise.all([fetchModels(data.token),loadBilling(data.token)])
+     // Authentication is complete when the gateway issues a session.
+     // Catalog and billing are independent reads; an outage must not undo login.
      sessionStorage.setItem('dominion_cloud_session',data.token)
      setToken(data.token);setShowLoginOptions(false);setMessage('도미니언 계정으로 연결됐습니다.')
+     const loaded=await Promise.allSettled([fetchModels(data.token),loadBilling(data.token)])
+     if(loaded.some(result=>result.status==='rejected'))
+      setMessage('로그인은 완료됐습니다. 모델 또는 구독 정보는 잠시 후 다시 조회해 주세요.')
     }catch(error){setMessage((error as Error).message)}finally{setBusy(false)}
    }})
    window.google.accounts.id.renderButton(button.current,{theme:'outline',size:'large',text:'signin_with',width:240})
