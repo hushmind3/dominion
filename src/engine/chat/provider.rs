@@ -508,7 +508,7 @@ fn clip_tool_for_provider(text: &str, allowed_encoded_chars: usize) -> String {
 /// Keep recent observations and all writes/errors intact. Older large reads
 /// are reduced only near a declared context limit AND when the reduction is
 /// large enough to justify losing a prompt-cache prefix.
-fn edit_stale_read_context(messages: &mut [Value], capacity: usize, schema_chars: usize) -> usize {
+fn edit_stale_read_context(messages: &mut [Value], capacity: usize, schema_chars: usize, uncached_local: bool) -> usize {
     if capacity < 4096 { return 0; }
     let mut total = fixed_prompt_chars(messages)
         .saturating_add(schema_chars)
@@ -517,7 +517,12 @@ fn edit_stale_read_context(messages: &mut [Value], capacity: usize, schema_chars
         .filter(|row| row["role"] == "tool")
         .filter_map(|row| row["content"].as_str())
         .map(escaped_content_chars).sum::<usize>());
-    if total <= capacity.saturating_mul(3) / 4 { return 0; }
+    // Local routes without a declared server KV cache pay full prefill again
+    // every round; reclaim stale reads earlier. On cacheable routes wait until
+    // pressure is real, avoiding gratuitous cache-prefix invalidation.
+    let threshold = if uncached_local { 2 } else { 3 };
+    let divisor = if uncached_local { 5 } else { 4 };
+    if total <= capacity.saturating_mul(threshold) / divisor { return 0; }
 
     // IDs are only unique within their assistant tool batch. Providers may
     // reuse an ID in a later turn: never reclassify an older WRITE as a READ.
@@ -576,7 +581,11 @@ fn edit_stale_read_context(messages: &mut [Value], capacity: usize, schema_chars
         let saving = size.saturating_sub(escaped_content_chars(&compact));
         if saving > 1000 { candidates.push((index, compact, saving)); }
     }
-    let minimum = (capacity / 12).clamp(8_000, 24_000);
+    let minimum = if uncached_local {
+        (capacity / 20).clamp(2_000, 12_000)
+    } else {
+        (capacity / 12).clamp(8_000, 24_000)
+    };
     if candidates.iter().map(|(_, _, saving)| saving).sum::<usize>() < minimum {
         return 0;
     }
@@ -595,13 +604,13 @@ fn edit_stale_read_context(messages: &mut [Value], capacity: usize, schema_chars
 
 /// Prepare a different model's copy from the original, unabridged tool
 /// observations. No 6k/20k/80k magic limits or local/cloud distinction.
-fn fit_tool_context(provider: &ProviderRef, messages: &mut [Value], schema_chars: usize) -> usize {
+fn fit_tool_context(provider: &ProviderRef, messages: &mut [Value], schema_chars: usize, uncached_local: bool) -> usize {
     let Some(tokens) = provider.context_tokens else { return 0 };
     let fixed = fixed_prompt_chars(messages)
         .saturating_add(schema_chars)
         .saturating_add(512);
     let capacity = input_char_capacity(tokens, provider.max_output_tokens);
-    let reclaimed = edit_stale_read_context(messages, capacity, schema_chars);
+    let reclaimed = edit_stale_read_context(messages, capacity, schema_chars, uncached_local);
     let mut available = capacity.saturating_sub(fixed);
     // Preserve the most recent observation; old tool outputs get the
     // remaining space, with each tool-call ID kept intact.
@@ -968,7 +977,8 @@ async fn stream_completion_once_body(
         tools.iter().map(|tool| tool.to_string().chars().count()).sum::<usize>()
     };
     let mut provider_messages = messages.to_vec();
-    let reclaimed = fit_tool_context(provider, &mut provider_messages, schema_chars);
+    let reclaimed = fit_tool_context(provider, &mut provider_messages, schema_chars,
+        provider.local && local_cache_backend(state, provider).is_none());
     if reclaimed > 0 {
         state.store.audit("chat.context_edit_prepared", json!({
             "sessionId":session_id,"providerId":provider.id,"model":provider.model,
@@ -1858,7 +1868,8 @@ async fn stream_anthropic_once(
     let started = std::time::Instant::now();
     let mut fitted_messages = messages.to_vec();
     let schema_chars = tools.iter().map(|tool| tool.to_string().chars().count()).sum();
-    let reclaimed = fit_tool_context(provider, &mut fitted_messages, schema_chars);
+    let reclaimed = fit_tool_context(provider, &mut fitted_messages, schema_chars,
+        provider.local && local_cache_backend(state, provider).is_none());
     if reclaimed > 0 {
         state.store.audit("chat.context_edit_prepared", json!({
             "sessionId":session_id,"providerId":provider.id,"model":provider.model,
@@ -2432,7 +2443,7 @@ mod tests {
             json!({"role":"tool","tool_call_id":"latest","content":"y".repeat(9000)}),
         ];
         let mut local_messages = original.clone();
-        fit_tool_context(&base, &mut local_messages, 500);
+        fit_tool_context(&base, &mut local_messages, 500, true);
         let local_latest = local_messages[2]["content"].as_str().unwrap();
         assert_eq!(local_latest.chars().count(), 9000, "most recent evidence wins");
         assert!(local_messages[1]["content"].as_str().unwrap().chars().count() < 40_000);
@@ -2442,7 +2453,7 @@ mod tests {
         api.context_tokens = Some(128_000);
         api.local = false;
         let mut api_messages = original.clone();
-        fit_tool_context(&api, &mut api_messages, 500);
+        fit_tool_context(&api, &mut api_messages, 500, false);
         assert_eq!(api_messages, original, "large API receives full evidence");
         assert_eq!(original[1]["content"].as_str().unwrap().chars().count(), 40_000);
     }
@@ -2468,7 +2479,7 @@ mod tests {
         }
         let before_chars=serde_json::to_string(&original).unwrap().chars().count();
         let mut edited=original.clone();
-        let saved=edit_stale_read_context(&mut edited, before_chars + 2_000, 0);
+        let saved=edit_stale_read_context(&mut edited, before_chars + 2_000, 0, false);
         assert!(saved > 30_000, "expected material reduction, got {saved}");
         assert!(serde_json::to_string(&edited).unwrap().chars().count() < before_chars - 30_000);
         assert!(edited[2]["content"].as_str().unwrap().contains("compacted"));
@@ -2482,8 +2493,34 @@ mod tests {
         assert_eq!(original[2]["content"].as_str().unwrap().len(),22_000,
             "durable context must never be mutated");
         let mut short=original.clone();
-        assert_eq!(edit_stale_read_context(&mut short,before_chars * 2,0),0);
+        assert_eq!(edit_stale_read_context(&mut short,before_chars * 2,0, false),0);
         assert_eq!(short,original, "avoid breaking prompt cache far below threshold");
+    }
+
+
+    #[test]
+    fn uncached_local_compacts_older_reads_before_the_hard_context_limit() {
+        let mut original = vec![json!({"role":"system","content":"stable task"})];
+        for (id,content) in [
+            ("first","A".repeat(15_000)),("second","B".repeat(15_000)),
+            ("fresh1","X".repeat(2_800)),("fresh2","Y".repeat(2_800)),
+            ("fresh3","Z".repeat(2_800)),
+        ] {
+            original.push(json!({"role":"assistant","tool_calls":[{
+                "id":id,"function":{"name":"workspace_read","arguments":"{}"}
+            }]}));
+            original.push(json!({"role":"tool","tool_call_id":id,"content":content}));
+        }
+        let mut cached = original.clone();
+        let mut uncached = original.clone();
+        assert_eq!(edit_stale_read_context(&mut cached, 110_000, 0, false), 0,
+            "cacheable route should preserve its stable prefix at low pressure");
+        let saved = edit_stale_read_context(&mut uncached, 110_000, 0, true);
+        assert!(saved > 20_000,"uncached route paid full repeated prefill: {saved}");
+        for i in [6,8,10] {
+            assert_eq!(uncached[i], original[i], "newest three reads stay exact");
+        }
+        assert_eq!(original[2]["content"].as_str().unwrap().len(),15_000);
     }
 
     #[test]
@@ -2502,7 +2539,7 @@ mod tests {
             rows.push(json!({"role":"tool","tool_call_id":id,"content":text}));
         }
         let original=rows.clone();
-        let saved=edit_stale_read_context(&mut rows,40_000,0);
+        let saved=edit_stale_read_context(&mut rows,40_000,0, false);
         assert!(saved>8_000, "older read should be compacted");
         assert_eq!(rows[2],original[2], "earlier write output cannot be cleared");
         assert!(rows[4]["content"].as_str().unwrap().contains("compacted"),
@@ -2525,7 +2562,7 @@ mod tests {
             messages.push(json!({"role":"tool","tool_call_id":id,"content":content}));
         }
         let original=messages.clone();
-        let _=edit_stale_read_context(&mut messages,30_000,0);
+        let _=edit_stale_read_context(&mut messages,30_000,0, false);
         assert_eq!(messages[2],original[2]);
         assert_eq!(messages[4],original[4]);
     }

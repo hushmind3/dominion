@@ -28,7 +28,10 @@ for(const file of tracked){
  const lowered=file.toLocaleLowerCase();
  assert.ok(!retiredTerms.some(term=>lowered.includes(term)),
   'Retired domain filename reintroduced: '+file);
- if(!/\.(rs|ts|tsx|js|mjs|cjs|json|md|toml|yml|yaml|sh)$/i.test(file))continue;
+ // Scan all tracked, human-readable product/configuration formats, not just
+ // Rust/TS. Legacy features can survive in SQL, styles, HTML or env examples.
+ if(!/\.(rs|ts|tsx|js|mjs|cjs|json|md|toml|yml|yaml|sh|sql|py|html|css|scss|svg|xml|txt|ini|conf|properties|graphql|gql|env)$/i.test(file)
+  && !/(^|\/)\.env(?:\.[^/]+)?$/i.test(file))continue;
  if(!exists(file))continue;
  const content=read(file).toLocaleLowerCase();
  assert.ok(!retiredTerms.some(term=>content.includes(term)),

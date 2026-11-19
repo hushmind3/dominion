@@ -3,6 +3,53 @@ use serde_json::{json, Value};
 
 const KEEP_RECENT: usize = 8;
 
+const MAX_TRANSCRIPT_CHARS: usize = 48_000;
+
+/// Extract only the evidence needed for a continuation checkpoint. Full tool
+/// responses and identifiers remain in SQLite, not in this model request.
+fn excerpt(text: &str, limit: usize) -> String {
+    let count = text.chars().count();
+    if count <= limit { return text.to_string(); }
+    let head = limit.saturating_mul(3) / 5;
+    let tail = limit.saturating_sub(head).saturating_sub(56);
+    let prefix: String = text.chars().take(head).collect();
+    let suffix: String = text.chars().rev().take(tail).collect::<String>().chars().rev().collect();
+    format!("{prefix}\n[{} chars omitted; full record retained]\n{suffix}",
+        count.saturating_sub(head + tail))
+}
+
+/// Latest observations stay prominent. Exact duplicate tool replies should not
+/// cost another model call's input allocation during checkpoint creation.
+fn checkpoint_transcript(candidates: &[Value], budget: usize) -> String {
+    let mut recent_tools = 0usize;
+    let mut seen_tool_results = std::collections::HashSet::<&str>::new();
+    let mut chunks = Vec::with_capacity(candidates.len());
+    for row in candidates.iter().rev() {
+        let role = row.get("role").and_then(Value::as_str).unwrap_or("?");
+        let content = row.get("content").and_then(Value::as_str).unwrap_or("");
+        let output = if role == "tool" {
+            recent_tools += 1;
+            let duplicate = content.chars().count() > 512 && !seen_tool_results.insert(content);
+            if duplicate {
+                "[Exact duplicate of a later tool result; original preserved in SQLite]".to_string()
+            } else {
+                let failure = content.starts_with("Error:")
+                    || serde_json::from_str::<Value>(content).ok().is_some_and(|value|
+                        value.get("error").is_some() || value.get("ok") == Some(&json!(false)));
+                excerpt(content, if recent_tools <= 3 || failure { 3_200 } else { 800 })
+            }
+        } else {
+            excerpt(content, 3_200)
+        };
+        if output.is_empty() && role == "tool" { continue; }
+        chunks.push(format!("[{role}] {output}"));
+    }
+    chunks.reverse();
+    let joined = chunks.join("\n");
+    joined.chars().rev().take(budget).collect::<String>().chars().rev().collect()
+}
+
+
 /// Summarizes older messages into a checkpoint. The original messages stay in
 /// the database (the UI still lists them); the engine uses the summary plus the
 /// recent window on later turns.
@@ -52,38 +99,23 @@ pub async fn run(
     }
 
     let candidates = &history[(prior_index + 1) as usize..cut];
-    let transcript = candidates
-        .iter()
-        .map(|row| {
-            let role = row
-                .get("role")
-                .and_then(|value| value.as_str())
-                .unwrap_or("?");
-            let content = row
-                .get("content")
-                .and_then(|value| value.as_str())
-                .unwrap_or("")
-                .chars()
-                .take(3200)
-                .collect::<String>();
-            format!("[{role}] {content}")
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let transcript: String = transcript
-        .chars()
-        .rev()
-        .take(110_000)
-        .collect::<String>()
-        .chars()
-        .rev()
-        .collect();
-
-    let previous_summary = prior
+    let old_summary = prior
         .as_ref()
         .and_then(|value| value.get("summary"))
         .and_then(|value| value.as_str())
         .unwrap_or("");
+    // A checkpoint should fit even a small local model. Leave output tokens
+    // free and bound the new evidence separately from the carried checkpoint.
+    // 3 chars/token is a conservative heuristic, not provider-billed usage.
+    let context_tokens = route.context_tokens.unwrap_or(32_768).max(2_048);
+    let output_reserve = route.max_output_tokens.unwrap_or(context_tokens / 8)
+        .min(context_tokens / 4).max(128);
+    let input_chars = (context_tokens.saturating_sub(output_reserve) as usize)
+        .saturating_mul(3).min(70_000);
+    let previous_summary = excerpt(old_summary, (input_chars / 4).min(12_000));
+    let transcript_budget = input_chars.saturating_sub(previous_summary.chars().count())
+        .saturating_sub(1_024).clamp(1_000, MAX_TRANSCRIPT_CHARS);
+    let transcript = checkpoint_transcript(candidates, transcript_budget);
     let request = json!({
         "model": model,
         "stream": false,
@@ -162,4 +194,45 @@ pub async fn run(
         "remaining": history.len() - cut,
         "summary": summary,
     }))
+}
+
+
+#[cfg(test)]
+mod token_budget_tests {
+    use super::*;
+    #[test]
+    fn checkpoint_bounds_repeated_tool_outputs_without_mutating_history() {
+        let original = (0..24).map(|i| json!({
+            "role": "tool", "content": if i == 23 {
+                format!("LATEST_EVIDENCE {}", "N".repeat(8_000))
+            } else {
+                format!("FILE_RESULT {}", "A".repeat(9_000))
+            },
+        })).collect::<Vec<_>>();
+        let before = serde_json::to_string(&original).unwrap();
+        let prompt = checkpoint_transcript(&original, 8_000);
+        assert!(prompt.chars().count() <= 8_000);
+        assert!(prompt.contains("LATEST_EVIDENCE"));
+        assert!(prompt.contains("Exact duplicate"));
+        assert!(prompt.len() < 8_000);
+        assert_eq!(serde_json::to_string(&original).unwrap(), before);
+    }
+    #[test]
+    fn checkpoint_preserves_recent_error_tail_and_owner_intent() {
+        let messages = vec![
+            json!({"role":"user","content":"중요한 사용자 제약 유지"}),
+            json!({"role":"tool","content":format!("Error: build failed {}", "x".repeat(5_000)) + " CRITICAL_TAIL"}),
+        ];
+        let prompt = checkpoint_transcript(&messages, 10_000);
+        assert!(prompt.contains("중요한 사용자 제약 유지"));
+        assert!(prompt.contains("Error: build failed"));
+        assert!(prompt.contains("CRITICAL_TAIL"));
+    }
+    #[test]
+    fn excerpt_does_not_cut_unicode_characters() {
+        let source = "가".repeat(10_000) + "끝";
+        let output = excerpt(&source, 800);
+        assert!(output.contains("끝"));
+        assert!(output.chars().count() <= 800);
+    }
 }
