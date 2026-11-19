@@ -20,6 +20,8 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
  const button=useRef<HTMLDivElement>(null)
  const [token,setToken]=useState(()=>sessionStorage.getItem('dominion_cloud_session')||'')
  const [showLoginOptions,setShowLoginOptions]=useState(false)
+ const [googleClientId,setGoogleClientId]=useState(clientId)
+ const [loginConfig,setLoginConfig]=useState<{google:boolean;kakao:boolean;naver:boolean;toss:boolean}|null>(null)
  const [billing,setBilling]=useState<Billing|null>(null)
  const [identity,setIdentity]=useState<IdentityStatus|null>(null)
  const [identityBusy,setIdentityBusy]=useState(false)
@@ -55,8 +57,28 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
  const [routerMessage,setRouterMessage]=useState('')
  const [routerModels,setRouterModels]=useState<RemoteModel[]>([])
  const [routerSearch,setRouterSearch]=useState('')
+ useEffect(()=>{
+  if(!cloudUrl)return
+  const controller=new AbortController()
+  void fetch(cloudUrl+'/v1/public-config',{signal:controller.signal})
+   .then(async response=>{
+    if(!response.ok)throw Error('Cloud 로그인 서버 설정을 조회하지 못했습니다.')
+    return response.json() as Promise<{google_client_id?:string|null;providers?:{google?:boolean;kakao?:boolean;naver?:boolean};toss_available?:boolean}>
+   })
+   .then(config=>{
+    if(controller.signal.aborted)return
+    if(typeof config.google_client_id==='string'&&config.google_client_id)setGoogleClientId(config.google_client_id)
+    setLoginConfig({google:Boolean(config.providers?.google),kakao:Boolean(config.providers?.kakao),naver:Boolean(config.providers?.naver),toss:Boolean(config.toss_available)})
+   })
+   .catch(error=>{if(!controller.signal.aborted)setMessage((error as Error).message)})
+  return()=>controller.abort()
+ },[])
  async function openSocialLogin(provider:'kakao'|'naver'){
   if(!cloudUrl)return
+  if(loginConfig&&!loginConfig[provider]){
+   setMessage((provider==='kakao'?'카카오':'네이버')+' 로그인 앱 키가 서버에 등록되지 않았습니다.')
+   return
+  }
   const popup=window.open(cloudUrl+'/v1/auth/'+provider+'/start','dominion-'+provider,'width=520,height=720')
   if(!popup)setMessage('브라우저에서 로그인 팝업을 허용해 주세요.')
  }
@@ -146,29 +168,37 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
   setSelected(previous=>unique.some(m=>m.id===previous)?previous:(unique[0]?.id||''))
  }
  useEffect(()=>{
-  if(!cloudUrl||!clientId||!button.current)return
+  if(!showLoginOptions||!cloudUrl||!googleClientId||!button.current)return
   let active=true
-  const script=document.createElement('script')
-  script.src='https://accounts.google.com/gsi/client'
-  script.async=true
-  script.onload=()=>{
+  const initialize=()=>{
    if(!active||!button.current||!window.google)return
-   window.google.accounts.id.initialize({client_id:clientId,callback:async({credential})=>{
+   button.current.replaceChildren()
+   window.google.accounts.id.initialize({client_id:googleClientId,callback:async({credential})=>{
     setBusy(true);setMessage('')
     try{
      const response=await fetch(cloudUrl+'/v1/auth/google',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({credential})})
-     if(!response.ok)throw Error('도미니언 로그인 실패')
+     if(!response.ok){
+      const error=await response.json().catch(()=>({})) as {error?:string}
+      throw Error(error.error||'Google 계정 인증에 실패했습니다.')
+     }
      const data=await response.json() as {token:string}
-     await Promise.all([fetchModels(data.token),loadBilling(data.token)])
      sessionStorage.setItem('dominion_cloud_session',data.token)
-     setToken(data.token);setShowLoginOptions(false);setMessage('도미니언 계정으로 연결됐습니다.')
+     setToken(data.token);setShowLoginOptions(false);setMessage('Google 계정으로 로그인했습니다.')
+     try{await Promise.all([fetchModels(data.token),loadBilling(data.token)])}
+     catch(error){setMessage('로그인은 완료됐지만 Cloud 정보 조회에 실패했습니다: '+(error as Error).message)}
     }catch(error){setMessage((error as Error).message)}finally{setBusy(false)}
    }})
    window.google.accounts.id.renderButton(button.current,{theme:'outline',size:'large',text:'signin_with',width:240})
   }
+  if(window.google){initialize();return()=>{active=false}}
+  const script=document.createElement('script')
+  script.src='https://accounts.google.com/gsi/client'
+  script.async=true
+  script.onload=initialize
+  script.onerror=()=>{if(active)setMessage('Google 로그인 창을 불러오지 못했습니다. 네트워크나 차단 설정을 확인해 주세요.')}
   document.head.appendChild(script)
   return()=>{active=false;script.remove()}
- },[])
+ },[showLoginOptions,googleClientId])
  function logout(){
   sessionStorage.removeItem('dominion_cloud_session');setIdentity(null);setBilling(null);setToken('');setModels([]);setSelected('');setModelSearch('');setMessage('DOMINION Cloud에서 로그아웃했습니다.');
   window.google?.accounts.id.disableAutoSelect?.()
@@ -347,9 +377,11 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
      <div className="flex items-center justify-between gap-3"><strong className="text-base">DOMINION 가입 · 로그인</strong><button type="button" onClick={()=>setShowLoginOptions(false)} aria-label="닫기" className="rounded-lg border px-3 py-1">닫기</button></div>
      <p className="my-3 text-[12px] text-[#7C7469]">처음 인증하면 자동 가입됩니다. 로그인 없이도 로컬 모델과 개인 API를 사용할 수 있습니다.</p>
      <div className="flex flex-col items-start gap-3">
-      {clientId&&<div ref={button}/>}
-      <button type="button" onClick={()=>void openSocialLogin('kakao')} className="w-full rounded-lg bg-[#FEE500] px-4 py-2 text-[12px] font-semibold text-[#191919]">카카오로 계속하기</button>
-      <button type="button" onClick={()=>void openSocialLogin('naver')} className="w-full rounded-lg bg-[#03C75A] px-4 py-2 text-[12px] font-semibold text-white">네이버로 계속하기</button>
+      {googleClientId?<div ref={button} aria-label="Google 계정으로 계속하기"/>:<button type="button" disabled className="w-full rounded-lg border px-4 py-2 text-[12px] opacity-60">Google로 계속하기 · 인증 키 설정 필요</button>}
+      <button type="button" disabled={loginConfig?.kakao!==true} onClick={()=>void openSocialLogin('kakao')} className="w-full rounded-lg bg-[#FEE500] px-4 py-2 text-[12px] font-semibold text-[#191919] disabled:opacity-50">카카오로 계속하기{loginConfig?.kakao===false?' · 설정 필요':''}</button>
+      <button type="button" disabled={loginConfig?.naver!==true} onClick={()=>void openSocialLogin('naver')} className="w-full rounded-lg bg-[#03C75A] px-4 py-2 text-[12px] font-semibold text-white disabled:opacity-50">네이버로 계속하기{loginConfig?.naver===false?' · 설정 필요':''}</button>
+      <p className="text-[11px] text-[#7C7469]">{loginConfig?.toss?'토스페이먼츠 결제는 로그인 후 요금제 메뉴에서 이용할 수 있습니다.':'토스페이먼츠는 운영자 결제 키와 요금 설정 후 활성화됩니다.'}</p>
+      {message&&<p role="status" className="text-[12px] text-[#9A3C29]">{message}</p>
      </div>
     </div>
    </div>}
