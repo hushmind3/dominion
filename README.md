@@ -25,6 +25,12 @@ Optional environment settings: `DOMINION_PORT` (default `4317`), `DOMINION_DATA`
 
 For frontend development, use `npm run dev --prefix web` alongside the Rust server; for desktop builds, see `scripts/build-desktop.mjs` and `src-tauri/`. The development launch above is **not** an installer or a signed release.
 
+## Frontend baseline and retired domain
+
+The React frontend is synchronized with `main` at `93dcee8c5d385528d886662abd694abf339c8ee8` (2026-11-19). This includes the latest model explorer, public provider catalogs without credentials, connected accounts, and updated chat/room shell. The sub3 native Rust kernel and context implementation remain independent of main.
+
+The built-in Money research/earning domain, its API routes, background scheduling, frontend page and executable modules have been removed. Existing SQLite user records are intentionally preserved, not migrated or deleted. Older Money jobs cannot be re-enqueued or restarted.
+
 ## What is implemented
 
 | Area | Source-backed scope |
@@ -34,7 +40,6 @@ For frontend development, use `npm run dev --prefix web` alongside the Rust serv
 | Providers and costs | Configurable local/remote model routes, native function calls where supported, usage records, selected provider cache hints, and Codex WebSocket incremental history where its connection/prefix survives. |
 | Tools | Workspace/file/shell actions, selected browser/web and connected-service tools, MCP manifests, scoped Skills and progressively discovered tool schemas. Tools do not receive authority just because a model mentions their names. |
 | Memory and recovery | SQLite-backed sessions, correction/learning records, bounded retrieval of past job receipts, cancellation and review of uncertain prior effects. |
-| Money (optional) | Source collection, archived original evidence and revisions, hypothesis ranking, review/defer/revisit, and owner-approved implementation through the existing Rust job queue. It is **research support**, not verified revenue. |
 | Client integrations | `sdk/rust` re-exports the kernel and provides an HTTP client; `sdk/typescript` is the primary typed HTTP/SSE client; `packages/sdk-typescript` supports the older `/api/harness/runs` contract. |
 
 ### One native job kernel, two product entry paths
@@ -64,7 +69,6 @@ The **new** `/api/harness/runs` compatibility requests are translated into the s
 - **Jobs:** `GET/POST /api/jobs`, `GET /api/jobs/:id`, `POST /api/jobs/:id/cancel`, `POST /api/jobs/:id/directive`. Jobs can carry explicit acceptance checks and approved tool limits.
 - **Native work panel:** `GET/POST /api/sdk/runs` and `/api/sdk/runs/:id/{approve,cancel,resume,reconcile,steer}`. Read-only evidence tools: `GET /api/sdk/runs/:id/replay`, `POST /api/sdk/runs/:id/compare` and `POST /api/sdk/runs/:id/adjudicate`.
 - **Chat and data:** `POST /api/chat`, `/api/sessions`, `/api/providers`, `/api/rooms`, `/api/memory/overview`, `/api/mcp/catalog`, `/api/skill-catalog`.
-- **Money:** `GET/POST /api/money/find`, `GET /api/money/archive`, `GET /api/money/source`, `POST /api/money/candidates/:id/review` and `POST /api/money/candidates/:id/implement`. Implementation requires explicit authorization.
 - **Compatibility:** `/api/harness/runs` supports new native-backed jobs and archive-only legacy reads, with a restricted capability contract.
 
 ```ts

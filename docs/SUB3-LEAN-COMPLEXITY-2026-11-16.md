@@ -1,3 +1,5 @@
+> Historical change log. The Money-specific source paths cited below were removed on 2026-11-19; no scheduled Money jobs or Money API remain. Existing SQLite records are preserved. 
+
 # Sub3 — Lean agent execution architecture (2026-11-16)
 
 Branch: `dominion-sub3` only. The current owner direction **supersedes** the former 100-point RSI/video-focused rubric and prior feature-growth guides.

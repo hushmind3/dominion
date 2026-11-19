@@ -25,6 +25,10 @@ Rust 서버가 기본적으로 **http://127.0.0.1:4317**에 React 화면을 제�
 
 화면만 개발할 때는 Rust 서버를 실행한 상태에서 `npm run dev --prefix web`을 사용할 수 있습니다. 데스크톱 패키지 빌드 코드는 `src-tauri/`와 `scripts/build-desktop.mjs`에 있습니다.
 
+## 최신 메인 프론트 적용 및 머니 기능 정리
+
+프론트는 2026-11-19 `main` 커밋 `93dcee8`의 모델 탐색·공개 모델 조회·계정 연결·채팅·그룹방 화면을 동일 소스로 반영했습니다. 서브3의 Rust 실행 커널과 컨텍스트 최적화는 유지합니다. 내장 머니 기능의 메뉴·API·실행 모듈·자동 실행은 제거하고 과거 SQLite 사용자 데이터는 삭제하지 않습니다. 이전 머니 작업은 실행 불가 상태로 취급합니다.
+
 ## 🧠 현재 구현 범위
 
 | 영역 | 실제 코드 연결 |
@@ -34,7 +38,6 @@ Rust 서버가 기본적으로 **http://127.0.0.1:4317**에 React 화면을 제�
 | 모델·비용 | 로컬/API 제공자, 가능한 모델의 네이티브 도구 호출, 사용량 기록, 프롬프트 캐시 힌트와 Codex 증분 WebSocket |
 | 도구 확장 | 파일·셸·브라우저·MCP·스킬·OAuth 연결, 승인된 도구만 실행하는 권한 경계 |
 | 장기 기억 | SQLite 원문 보존, 교정·실패 기록, 작업 영수증 검색과 부분 복원 |
-| 머니(선택 기능) | 자료 수집·출처·원문/개정 이력·가설·보류 후보·사용자 판단·명시적 구현 승인 |
 | SDK | 독립 Rust 실행 커널과 Rust/TypeScript API 클라이언트 |
 
 **중요한 구조적 경계:** 일반 채팅 실행 경로와 자율 작업 Rust SDK 커널은 아직 **상위 실행 루프가 완전히 통합되지 않았습니다.** 겉으로 같은 화면과 작업 기록을 제공하더라도 하나의 실행기라고 주장하지 않습니다.
@@ -69,7 +72,6 @@ React 자율 작업 패널 / TypeScript SDK / Rust HTTP 클라이언트
 - 자율 실행 패널: `GET/POST /api/sdk/runs`와 `:id/approve`, `:id/cancel`, `:id/resume`, `:id/reconcile`, `:id/steer`
 - 실행 기록 재검토: `GET /api/sdk/runs/:id/replay`, `POST /api/sdk/runs/:id/compare`, `POST /api/sdk/runs/:id/adjudicate` — 저장된 증거의 **읽기 전용** 재구성·비교
 - 기존 기능: `POST /api/chat`, `/api/sessions`, `/api/providers`, `/api/rooms`, `/api/memory/overview`, `/api/mcp/catalog`, `/api/skill-catalog`
-- 머니: `GET/POST /api/money/find`, `GET /api/money/archive`, `GET /api/money/source`, `POST /api/money/candidates/:id/review`, `POST /api/money/candidates/:id/implement`
 
 ### TypeScript 클라이언트
 

@@ -450,25 +450,9 @@ pub async fn provider_catalog(State(state): State<AppState>) -> Json<Value> {
             }));
         }
     }
-    let client = match reqwest::Client::builder().timeout(Duration::from_secs(20)).build() {
-        Ok(client) => client,
-        Err(error) => return Json(json!({"providers":[],"error":error.to_string()})),
-    };
-    let fetched = async {
-        let response = client
-            .get("https://models.dev/api.json")
-            .send()
-            .await
-            .map_err(|error| error.to_string())?;
-        if !response.status().is_success() {
-            return Err(format!("HTTP {}", response.status()));
-        }
-        response
-            .json::<Value>()
-            .await
-            .map_err(|_| "카탈로그 JSON 형식을 읽을 수 없습니다.".to_string())
-    }
-    .await;
+    // Same 24h coalesced models.dev snapshot as the individual public
+    // provider model browser. One cold fetch serves both UI tabs.
+    let fetched = load_models_dev_document().await;
     let data = match fetched {
         Ok(data) => data,
         Err(error) => {

@@ -1,4 +1,3 @@
-pub(crate) mod plugins;
 pub mod goal_control;
 pub mod native_agent;
 pub(crate) mod native_evidence;

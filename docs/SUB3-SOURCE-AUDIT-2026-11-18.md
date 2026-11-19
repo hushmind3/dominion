@@ -1,3 +1,5 @@
+> **Historical audit (2026-11-18):** This snapshot describes the code before 2026-11-19 Money removal and latest-main frontend import. See the current branch README for current capabilities. Do not follow references to deleted Money modules or the previous UI. 
+
 # DOMINION sub3 — source-tree and documentation audit (2026-11-18)
 
 **Scope:** `hushmind3/dominion-rust`, branch `dominion-sub3`. **No changes to `main`.** This is a static repository/API/source-path review, not a claim that all 196 Rust files were line-reviewed or runtime-tested. The GitHub recursive tree returned **479 file/directory entries**, untruncated: **196 `.rs`**, **47 frontend `.ts/.tsx` under `web/src`**, **62 `.md`**, and five `.yml`. Core code at the actual entry/dispatch/storage/UI/API boundaries was read directly; dependencies and workspace/build manifests were compared. Prior measured artifacts were dated separately.

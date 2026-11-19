@@ -10,7 +10,8 @@ const MAX_EVENTS: usize = 200;
 
 fn retired_legacy_kind(kind: &str) -> bool {
     matches!(kind, "video" | "video_plan" | "youtube_upload"
-        | "rsi_evolve" | "rsi_compare" | "rsi_generation")
+        | "rsi_evolve" | "rsi_compare" | "rsi_generation"
+        | "money_discover" | "money_ingest" | "money_catalog" | "money_fold")
 }
 
 /// Shared handle a running job uses to report progress and persist its state.
@@ -171,7 +172,7 @@ pub fn recover(state: &AppState) {
             if let Some(saved)=state.store.patch_if("job",id,"status",old_status,&json!({
                 "status":if uncertain {"needs_review"} else {"cancelled"},
                 "legacyRetired":true,"cancelRequested":true,
-                "error":"Retired built-in media/RSI task: execution disabled; historical data retained",
+                "error":"Retired built-in task: execution disabled; historical data retained",
                 "finishedAt":chrono::Utc::now().to_rfc3339()
             })){state.bus.record("job",&saved);}
             continue;
@@ -303,9 +304,6 @@ pub fn retry_failed_learning(state: &AppState) -> usize {
 
 pub fn start(state: AppState) {
     crate::engine::channel_adapter::start(state.clone());
-    // Domain plug-ins are dormant unless the owner invoked or explicitly
-    // enabled their background mode. The core owns only job execution.
-    crate::engine::plugins::start(&state);
     let workers = std::env::var("DOMINION_JOB_WORKERS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
@@ -334,19 +332,10 @@ pub fn start(state: AppState) {
     }
 
     tokio::spawn(async move {
-        let mut heartbeat_ticks=0u64;
         loop {
             tokio::time::sleep(Duration::from_secs(30)).await;
-            heartbeat_ticks=heartbeat_ticks.wrapping_add(1);
-            // A process restart removes in-memory approval timers. The persisted
-            // deadline still expires automatically during normal operation.
+            // Persisted approval deadlines continue to expire across restarts.
             crate::engine::chat::expire_stale_approvals(&state);
-            // Keep host approval expiry at 30s; the optional Money plug-in
-            // is checked only every 60s to halve idle SQLite lookups.
-            // An explicit enable triggers the first Money job immediately.
-            if heartbeat_ticks%2==0{
-                crate::engine::plugins::maintenance_tick(&state);
-            }
         }
     });
 
@@ -506,8 +495,6 @@ async fn run_job(state: AppState, job: Value) {
     let result = match kind.as_str() {
         "room" | "meeting" => rooms::run(&context, &job).await,
         "prompt" => run_prompt(&context, &job).await,
-        kind if crate::engine::plugins::supports(kind) =>
-            crate::engine::plugins::run(&context,&job).await,
         "resume" => run_resume(&context, &job).await,
         "learn" => learning::run(&context, &job).await,
         "reflect" => reflect::run(&context, &job).await,
@@ -992,21 +979,21 @@ mod tests {
         assert_eq!(state.store.messages("s").len(),2);
     }
     #[test]
-    fn acquisition_read_fence_rejects_cancellation_and_reclaimed_attempt() {
+    fn durable_job_read_fence_rejects_cancellation_and_reclaimed_attempt() {
         let state=temp_state();
-        state.store.put("job",&json!({"id":"acquisition-fence","kind":"money_ingest",
+        state.store.put("job",&json!({"id":"acquisition-fence","kind":"prompt",
             "status":"running","cancelRequested":false,"attempts":2})).unwrap();
         let old=JobContext::new(state.clone(),"acquisition-fence".into());
         assert!(old.ensure_running().is_ok());
-        state.store.put("job",&json!({"id":"acquisition-fence","kind":"money_ingest",
+        state.store.put("job",&json!({"id":"acquisition-fence","kind":"prompt",
             "status":"running","cancelRequested":true,"attempts":2})).unwrap();
         assert!(old.ensure_running().is_err());
-        state.store.put("job",&json!({"id":"acquisition-fence","kind":"money_ingest",
+        state.store.put("job",&json!({"id":"acquisition-fence","kind":"prompt",
             "status":"running","cancelRequested":false,"attempts":3})).unwrap();
         assert!(old.ensure_running().is_err());
         let current=JobContext::new(state.clone(),"acquisition-fence".into());
         assert!(current.ensure_running().is_ok());
-        state.store.put("job",&json!({"id":"acquisition-fence","kind":"money_ingest",
+        state.store.put("job",&json!({"id":"acquisition-fence","kind":"prompt",
             "status":"cancelled","cancelRequested":true,"attempts":3})).unwrap();
         assert!(current.ensure_running().is_err());
     }
