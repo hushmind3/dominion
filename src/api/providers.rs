@@ -1,7 +1,8 @@
 use crate::{engine::codex_oauth, state::AppState};
 use axum::{extract::{Path,State},http::StatusCode,response::{IntoResponse,Response},Json};
 use serde_json::{json,Value};
-use std::time::Duration;
+use std::sync::{Arc,Mutex,OnceLock};
+use std::time::{Duration,Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use super::response::error;
@@ -265,6 +266,173 @@ fn codex_model() -> String {
 
 /// Public provider catalog backed by models.dev. The cache keeps the Models
 /// tab usable offline and avoids hammering the upstream on every visit.
+// Share one 24-hour snapshot across public provider and model browsing.
+// The async fetch lock also coalesces simultaneous cold-cache requests: the
+// models.dev API is one large JSON document, not a per-provider endpoint.
+static MODELS_DEV_DOCUMENT:OnceLock<Mutex<Option<(Instant,Arc<Value>)>>>=OnceLock::new();
+static MODELS_DEV_FETCH:tokio::sync::Mutex<()>=tokio::sync::Mutex::const_new(());
+fn models_dev_document_cache()->&'static Mutex<Option<(Instant,Arc<Value>)>>{
+    MODELS_DEV_DOCUMENT.get_or_init(||Mutex::new(None))
+}
+fn fresh_models_dev_document(cache:&Option<(Instant,Arc<Value>)>)->Option<Arc<Value>>{
+    cache.as_ref().and_then(|(fetched,document)|{
+        (fetched.elapsed()<Duration::from_secs(86_400)).then(||Arc::clone(document))
+    })
+}
+fn cached_models_dev_document()->Option<Arc<Value>>{
+    let cache=models_dev_document_cache().lock().ok()?;
+    fresh_models_dev_document(&cache)
+}
+async fn load_models_dev_document()->Result<Arc<Value>,String>{
+    if let Some(document)=cached_models_dev_document(){return Ok(document);}
+    let _fetch_guard=MODELS_DEV_FETCH.lock().await;
+    // Another request may have populated the cache while we awaited the lock.
+    if let Some(document)=cached_models_dev_document(){return Ok(document);}
+    let client=reqwest::Client::builder().timeout(Duration::from_secs(25))
+        .build().map_err(|error|error.to_string())?;
+    let response=client.get("https://models.dev/api.json").send().await
+        .map_err(|error|error.to_string())?;
+    if !response.status().is_success(){
+        return Err(format!("공개 카탈로그 HTTP {}",response.status()));
+    }
+    let document=Arc::new(response.json::<Value>().await.map_err(|error|error.to_string())?);
+    if let Ok(mut cache)=models_dev_document_cache().lock(){
+        *cache=Some((Instant::now(),Arc::clone(&document)));
+    }
+    Ok(document)
+}
+
+/// Read-only public model directory. Neither endpoint nor cache depends on
+/// a connected provider or its API key; authorization remains a separate action.
+fn public_models_from_metadata(provider: &Value) -> Vec<Value> {
+    let mut result = provider["models"].as_object().into_iter().flatten()
+        .filter_map(|(id, model)| {
+            let id = model["id"].as_str().filter(|value| !value.trim().is_empty())
+                .unwrap_or(id.as_str());
+            if id.is_empty() { return None; }
+            Some(json!({
+                "id": id,
+                "name": model["name"].as_str().filter(|name| !name.is_empty()).unwrap_or(id),
+                "context": model["limit"]["context"].as_u64(),
+                "reasoning": model["reasoning"].as_bool(),
+                "toolCall": model["tool_call"].as_bool()
+            }))
+        })
+        .collect::<Vec<_>>();
+    result.sort_by(|a,b| a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or("")));
+    result
+}
+
+// A saved cloud provider with no credential can still display read-only
+// public metadata. Match its exact API endpoint, not an arbitrary name or host.
+fn public_models_for_endpoint(document:&Value, base:&str)->Option<Vec<Value>>{
+    let target=base.trim().trim_end_matches('/');
+    if target.is_empty(){return None;}
+    let provider=document.as_object()?.values()
+        .filter(|entry|entry["api"].as_str()
+            .is_some_and(|api|api.trim().trim_end_matches('/').eq_ignore_ascii_case(target)))
+        .max_by_key(|entry|entry["models"].as_object().map_or(0,|models|models.len()))?;
+    let mut models=public_models_from_metadata(provider);
+    if models.is_empty(){return None;}
+    for model in &mut models{
+        model["free"]=Value::Null;
+        model["freeStatus"]=json!("unknown");
+        model["catalogSource"]=json!("models.dev");
+    }
+    Some(models)
+}
+
+pub async fn public_catalog_models(
+    State(state): State<AppState>, Path(provider_id): Path<String>
+) -> Json<Value> {
+    if provider_id.is_empty() || provider_id.len()>128
+        || !provider_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte,b'-'|b'_'|b'.'))
+    {
+        return Json(json!({"models":[],"error":"업체 ID가 올바르지 않습니다."}));
+    }
+    let id=provider_id.to_ascii_lowercase();
+    let cached=state.store.get("provider_catalog_models",&id);
+    if let Some(record)=&cached {
+        let fresh=record["fetchedAt"].as_str()
+            .and_then(|value|chrono::DateTime::parse_from_rfc3339(value).ok())
+            .is_some_and(|time|(chrono::Utc::now()-time.with_timezone(&chrono::Utc)).num_seconds()<86_400);
+        if fresh {return Json(json!({"providerId":id,"models":record["models"],"cached":true}));}
+    }
+    let result=async {
+        let data=load_models_dev_document().await?;
+        let provider=data.get(&id).ok_or("공개 카탈로그에서 해당 업체를 찾지 못했습니다.")?;
+        Ok::<Vec<Value>,String>(public_models_from_metadata(provider))
+    }.await;
+    match result {
+        Ok(models)=>{
+            let record=json!({"id":id,"fetchedAt":chrono::Utc::now().to_rfc3339(),"models":models});
+            state.store.put("provider_catalog_models",&record);
+            Json(json!({"providerId":id,"models":models,"cached":false}))
+        }
+        Err(error)=>Json(json!({
+            "providerId":id,
+            "models":cached.as_ref().map(|value|value["models"].clone()).unwrap_or_else(||json!([])),
+            "cached":cached.is_some(),
+            "error":format!("공개 모델 목록을 새로 가져오지 못했습니다: {error}")
+        }))
+    }
+}
+
+/// OpenRouter publishes a public catalog. Showing free-model names never
+/// needs the user's OpenRouter API key; actual chat calls still require auth.
+fn public_openrouter_free_models(value: &Value) -> Vec<Value> {
+    let mut models=value["data"].as_array().into_iter().flatten()
+        .filter_map(|model| {
+            let id=model["id"].as_str()?;
+            if !id.ends_with(":free") {return None;}
+            let zero=|field:&str|model["pricing"][field].as_str()
+                .and_then(|price|price.parse::<f64>().ok())
+                .is_some_and(|price|price==0.0);
+            if !zero("prompt")||!zero("completion") {return None;}
+            if model["architecture"]["output_modalities"].as_array()
+                .is_some_and(|modalities|!modalities.iter().any(|mode|mode.as_str()==Some("text")))
+            {return None;}
+            Some(json!({
+                "id":id,
+                "name":model["name"].as_str().unwrap_or(id),
+                "context":model["context_length"].as_u64(),
+            }))
+        })
+        .collect::<Vec<_>>();
+    models.sort_by(|a,b|a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or("")));
+    models
+}
+pub async fn public_openrouter_free_catalog(State(state):State<AppState>)->Json<Value>{
+    let cached=state.store.get("public_free_models","openrouter");
+    if let Some(record)=&cached {
+        let fresh=record["fetchedAt"].as_str()
+            .and_then(|value|chrono::DateTime::parse_from_rfc3339(value).ok())
+            .is_some_and(|time|(chrono::Utc::now()-time.with_timezone(&chrono::Utc)).num_seconds()<21_600);
+        if fresh{return Json(json!({"models":record["models"],"cached":true}));}
+    }
+    let result=async{
+        let client=reqwest::Client::builder().timeout(Duration::from_secs(20))
+            .build().map_err(|error|error.to_string())?;
+        let response=client.get("https://openrouter.ai/api/v1/models").send().await
+            .map_err(|error|error.to_string())?;
+        if !response.status().is_success(){return Err(format!("OpenRouter HTTP {}",response.status()));}
+        let body=response.json::<Value>().await.map_err(|error|error.to_string())?;
+        Ok::<Vec<Value>,String>(public_openrouter_free_models(&body))
+    }.await;
+    match result {
+        Ok(models)=>{
+            let record=json!({"id":"openrouter","fetchedAt":chrono::Utc::now().to_rfc3339(),"models":models});
+            state.store.put("public_free_models",&record);
+            Json(json!({"models":models,"cached":false}))
+        }
+        Err(error)=>Json(json!({
+            "models":cached.as_ref().map(|value|value["models"].clone()).unwrap_or_else(||json!([])),
+            "cached":cached.is_some(),
+            "error":format!("무료 모델 목록 조회 실패: {error}")
+        }))
+    }
+}
+
 pub async fn provider_catalog(State(state): State<AppState>) -> Json<Value> {
     let cached = state.store.get("provider_catalog", "models.dev");
     if let Some(cached) = &cached {
@@ -1785,7 +1953,7 @@ pub async fn provider_models(State(state): State<AppState>, Path(id): Path<Strin
     let mut request = client.get(&url).timeout(Duration::from_secs(12));
     if kind == "anthropic" {
         request = request
-            .header("x-api-key", key)
+            .header("x-api-key", key.as_str())
             .header("anthropic-version", "2023-06-01");
     } else if !key.is_empty() {
         request = request.header("Authorization", format!("Bearer {key}"));
@@ -1845,6 +2013,15 @@ pub async fn provider_models(State(state): State<AppState>, Path(id): Path<Strin
         }
         Ok(response) => {
             let status = response.status();
+            // Not every provider exposes an unauthenticated /models route.
+            // Keep the registered model-check button useful without a key.
+            if key.is_empty() && !provider["local"].as_bool().unwrap_or(false) {
+                if let Ok(metadata)=load_models_dev_document().await {
+                    if let Some(models)=public_models_for_endpoint(&metadata,&base){
+                        return Json(json!(models)).into_response();
+                    }
+                }
+            }
             let hint = match status.as_u16() {
                 401 | 403 => "API 키와 모델 조회 권한을 확인하세요.",
                 404 | 405 => "서버 주소를 확인하세요. 모델 목록을 제공하지 않는 API는 모델 ID를 직접 입력할 수 있습니다.",
@@ -1852,7 +2029,16 @@ pub async fn provider_models(State(state): State<AppState>, Path(id): Path<Strin
             };
             error(StatusCode::BAD_GATEWAY, &format!("모델 목록 조회 실패 (HTTP {status}). {hint}"))
         }
-        Err(err) => error(StatusCode::BAD_GATEWAY, &err.to_string()),
+        Err(err) => {
+            if key.is_empty() && !provider["local"].as_bool().unwrap_or(false) {
+                if let Ok(metadata)=load_models_dev_document().await {
+                    if let Some(models)=public_models_for_endpoint(&metadata,&base){
+                        return Json(json!(models)).into_response();
+                    }
+                }
+            }
+            error(StatusCode::BAD_GATEWAY, &err.to_string())
+        },
     }
 }
 
