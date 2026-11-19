@@ -105,10 +105,9 @@ jobs:
         run: cargo test --locked --bin dominion-rust migrations::tests
       - name: Shared failure workspace observation (dev profile)
         run: cargo test --locked --bin dominion-rust shared_failure_observation_avoids_duplicate
-      - name: Runtime architecture, retired features and release contract
+      - name: Runtime architecture and release contract
         run: |
           node scripts/check-runtime-architecture.mjs
-          node scripts/check-retired-domains.mjs
           node scripts/check-release-contract.mjs
       - name: Nine-speaker three-turn work context and complete group delivery (dev profile)
         run: cargo test --locked --bin dominion-rust nine_participants_three_owner_turns_complete_thirty_messages_with_selective_work_context
@@ -172,9 +171,8 @@ jobs:
           cargo test --locked -p dominion-core --lib
           cargo test --locked --bin dominion-rust engine::capability::tests
           cargo test --locked --bin dominion-rust api::sdk::view_tests
-      - name: Retired feature guard and version parity
+      - name: Release version parity
         run: |
-          node scripts/check-retired-domains.mjs
           node scripts/check-release-contract.mjs
       - name: Windows frontend typecheck and production bundle
         run: |

@@ -489,8 +489,7 @@ async fn run_job(state: AppState, job: Value) {
 
     // Retired built-in media and RSI jobs are never resumed automatically.
     // Their persisted inputs, checkpoints, and outputs stay intact for review.
-    if matches!(kind.as_str(), "video" | "youtube_upload" | "rsi_evolve" | "rsi_compare" | "rsi_generation"
-        | "money_discover" | "money_ingest" | "money_catalog" | "money_fold") {
+    if matches!(kind.as_str(), "video" | "youtube_upload" | "rsi_evolve" | "rsi_compare" | "rsi_generation") {
         if let Err(error)=context.finish_terminal(json!({
             "status": "needs_review",
             "error": "삭제된 내장 자동 기능의 작업입니다. 기존 기록은 보존되며 이 작업은 실행되지 않습니다.",

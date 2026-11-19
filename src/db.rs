@@ -265,26 +265,6 @@ impl Store {
                  ON records(kind, created_at DESC);
 ",
         )?;
-        // Retired optional module indexes have no consumers. Preserve old
-        // records for backup/export instead of deleting user evidence.
-        conn.execute_batch("DROP INDEX IF EXISTS idx_money_signal_created;
-            DROP INDEX IF EXISTS idx_money_source_unfolded;
-            DROP INDEX IF EXISTS idx_money_campaign;
-            DROP INDEX IF EXISTS idx_money_experiment_candidate;
-            DROP INDEX IF EXISTS idx_money_experiment_campaign;
-            DROP INDEX IF EXISTS idx_money_metric_entity;
-            DROP INDEX IF EXISTS idx_money_metric_change;
-            DROP INDEX IF EXISTS idx_money_event_entity;
-            DROP INDEX IF EXISTS idx_money_event_state;
-            DROP INDEX IF EXISTS idx_money_asym_state;
-            DROP INDEX IF EXISTS idx_money_tension_priority;
-            DROP INDEX IF EXISTS idx_money_relation_from;
-            DROP INDEX IF EXISTS idx_money_relation_to;
-            DROP INDEX IF EXISTS idx_money_signal_captured;
-            DROP INDEX IF EXISTS idx_money_signal_source_url;
-            DROP INDEX IF EXISTS idx_money_revision_source;
-            DROP INDEX IF EXISTS idx_money_last_ingest;
-            DROP INDEX IF EXISTS idx_money_active_autopilot;")?;
         // Older databases predate reasoning/tool columns.
         for (column, decl) in [
             ("reasoning", "TEXT NOT NULL DEFAULT ''"),
