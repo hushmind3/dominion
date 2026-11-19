@@ -163,7 +163,10 @@ test('a public models.dev document is shared by provider and model browsing',()=
  const fetches=[...api.matchAll(/get\("https:\/\/models\.dev\/api\.json"\)/g)]
  assert.equal(fetches.length,1)
  assert.match(api,/static MODELS_DEV_DOCUMENT:OnceLock/)
- assert.match(api,/if fetched\.elapsed\(\)<Duration::from_secs\(86_400\)/)
+ assert.match(api,/fetched\.elapsed\(\)<Duration::from_secs\(86_400\)/)
+ assert.match(api,/static MODELS_DEV_FETCH:tokio::sync::Mutex/)
+ assert.match(api,/let _fetch_guard=MODELS_DEV_FETCH\.lock\(\)\.await/)
+ assert.equal([...api.matchAll(/if let Some\(document\)=cached_models_dev_document\(\)\{return Ok\(document\);\}/g)].length,2)
  const models=api.slice(api.indexOf('pub async fn public_catalog_models('),api.indexOf('/// OpenRouter publishes'))
  assert.match(models,/load_models_dev_document\(\)\.await/)
  const providers=api.slice(api.indexOf('pub async fn provider_catalog('),api.indexOf('/// Refreshes every enabled provider'))
