@@ -125,15 +125,39 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
   if(!saved||!cloudUrl)return
   const params=new URLSearchParams(window.location.search)
   const outcome=params.get('dominionPayment')
+  // Preserve the returned Toss order across a reload or gateway timeout.
+  // The Worker verifies every field against its stored order and Toss itself.
+  const pendingKey='dominion_cloud_pending_payment'
   if(outcome){
    window.history.replaceState(null,'',window.location.pathname+window.location.hash)
    if(outcome==='success'){
     const orderId=params.get('orderId'),paymentKey=params.get('paymentKey'),amount=Number(params.get('amount'))
-    if(!orderId||!paymentKey||!Number.isSafeInteger(amount)){setBillingMessage('결제 정보가 올바르지 않습니다.');return}
-    void fetch(cloudUrl+'/v1/billing/confirm',{method:'POST',headers:{Authorization:'Bearer '+saved,'content-type':'application/json'},body:JSON.stringify({orderId,paymentKey,amount})})
-     .then(async response=>{if(!response.ok)throw Error('결제 확인 중 오류가 발생했습니다. 주문번호: '+orderId);setBillingMessage('결제 확인 완료 · Pro 구독이 활성화됐습니다.');await loadBilling(saved)})
-     .catch(e=>setBillingMessage((e as Error).message))
+    if(!orderId||!paymentKey||!Number.isSafeInteger(amount)||amount<=0){
+     setBillingMessage('결제 정보가 올바르지 않습니다.')
+    }else{
+     sessionStorage.setItem(pendingKey,JSON.stringify({orderId,paymentKey,amount}))
+    }
    }else setBillingMessage('결제가 취소되었거나 실패했습니다.')
+  }
+  const pendingRaw=outcome==='fail'?null:sessionStorage.getItem(pendingKey)
+  if(pendingRaw){
+   try{
+    const pending=JSON.parse(pendingRaw) as {orderId:string;paymentKey:string;amount:number}
+    if(!/^dominion_[a-f0-9]{32}$/.test(pending.orderId)||typeof pending.paymentKey!=='string'||!pending.paymentKey||
+      !Number.isSafeInteger(pending.amount)||pending.amount<=0)throw Error('Invalid pending order')
+    void fetch(cloudUrl+'/v1/billing/confirm',{method:'POST',headers:{Authorization:'Bearer '+saved,'content-type':'application/json'},body:JSON.stringify(pending)})
+     .then(async response=>{
+      const data=await response.json() as {status?:string;error?:string}
+      if(!response.ok||data.status!=='paid')throw Error(data.error||'결제 승인 상태를 다시 조회해 주세요.')
+      sessionStorage.removeItem(pendingKey)
+      setBillingMessage('결제 확인 완료 · Pro 구독이 활성화됐습니다.')
+      await loadBilling(saved)
+     })
+     .catch(()=>setBillingMessage('결제 승인 상태를 확인 중입니다. 새로고침하면 같은 주문을 다시 조회합니다.'))
+   }catch{
+    sessionStorage.removeItem(pendingKey)
+    setBillingMessage('저장된 결제 정보가 올바르지 않습니다.')
+   }
   }
   void Promise.allSettled([fetchModels(saved),loadBilling(saved)]).then(async results=>{
    if(results.every(result=>result.status==='fulfilled'))return
