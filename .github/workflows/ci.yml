@@ -136,6 +136,10 @@ jobs:
           cargo test --lib db::tests::algorithm_kind_query_is_indexed_and_excludes_unrelated_live_policies
           # Isolated native A/B runner: compile and validate frozen repair fixture.
           cargo test --bin dominion-benchmark
+          # Boot the real Rust Axum binary against a scripted local model.
+          # Verify HTTP room persistence and 9-speaker routing end to end.
+          cargo test --test e2e persistent_room_http_flow_keeps_owner_once_and_shares_peer_context -- --test-threads=1
+          cargo test --test e2e a_short_greeting_reaches_all_nine_when_the_turn_cap_covers_the_roster -- --test-threads=1
 
   frontend-typecheck:
     runs-on: ubuntu-latest
@@ -150,6 +154,7 @@ jobs:
         run: |
           npm ci --prefix web --ignore-scripts
           npm --prefix web run typecheck
+          npm --prefix web run build
           node --experimental-strip-types --test web/tests/*.test.mjs
           node scripts/check-sub2-contract.mjs
           ./web/node_modules/.bin/tsc -p sdk/typescript/tsconfig.json
