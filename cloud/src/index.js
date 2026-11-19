@@ -35,7 +35,7 @@ async function verifyGoogle(idToken, env) {
   if (parts.length !== 3) throw new Error('Invalid Google token');
   const header = JSON.parse(new TextDecoder().decode(unb64(parts[0])));
   const claims = JSON.parse(new TextDecoder().decode(unb64(parts[1])));
-  if (header.alg !== 'RS256' || !header.kid || claims.aud !== env.GOOGLE_CLIENT_ID ||
+  if (header.alg !== 'RS256' || !header.kid || ![env.GOOGLE_CLIENT_ID,env.GOOGLE_DESKTOP_CLIENT_ID].filter(Boolean).includes(claims.aud) ||
       !['accounts.google.com', 'https://accounts.google.com'].includes(claims.iss) ||
       !claims.sub || !Number.isSafeInteger(claims.exp) || claims.exp <= now() ||
       !Number.isSafeInteger(claims.iat) || claims.iat > now() + 60) throw new Error('Invalid Google claims');
@@ -57,7 +57,7 @@ async function account(request, env) {
 async function login(request, env) {
   const { credential } = await maxBody(request);
   if (typeof credential !== 'string' || credential.length > 10000) return err('Google credential required');
-  if(!env.GOOGLE_CLIENT_ID)return err('Google login not configured',503);
+  if(!env.GOOGLE_CLIENT_ID&&!env.GOOGLE_DESKTOP_CLIENT_ID)return err('Google login not configured',503);
   const google = await verifyGoogle(credential, env);
   const id = 'google:' + google.sub;
   await env.DB.prepare('INSERT INTO accounts (id,email,credits,created_at) VALUES (?,?,0,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email')
@@ -506,6 +506,7 @@ export default {
     if (new URL(request.url).pathname === '/v1/public-config' && request.method === 'GET') {
       const response = json({
         google_client_id: env.GOOGLE_CLIENT_ID || null,
+        google_desktop_client_id: env.GOOGLE_DESKTOP_CLIENT_ID || null,
         providers: {
           google: Boolean(env.GOOGLE_CLIENT_ID),
           kakao: Boolean(env.KAKAO_CLIENT_ID && env.KAKAO_CLIENT_SECRET),
