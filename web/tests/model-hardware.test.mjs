@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
-import {classifyRuntimeFailure,memoryFit,requiredMemory,selectRecommended,selectSmaller,planDownloadLaunch} from '../src/utils/modelHardware.ts'
+import {classifyRuntimeFailure,memoryFit,requiredMemory,selectRecommended,selectSmaller,planDownloadLaunch,preferredServerModelFormat} from '../src/utils/modelHardware.ts'
 
 const gguf=(id,bytes)=>({id,format:'gguf',bytes})
 const mlx=(id,bytes)=>({id,format:'mlx',bytes})
@@ -45,4 +45,24 @@ test('queued model launch resumes interrupted downloads instead of leaving them 
  assert.equal(planDownloadLaunch('cancelled',false),'resume')
  assert.equal(planDownloadLaunch('completed',false),'start')
  assert.equal(planDownloadLaunch('completed',true),'installed')
+})
+
+test('local model format follows the actual Rust server, not the browser OS',()=>{
+ const macMlx={available:true,installable:false}
+ const macNeedsSetup={available:false,installable:true}
+ const unavailable={available:false,installable:false}
+ assert.equal(preferredServerModelFormat(undefined,undefined,macMlx),null)
+ assert.equal(preferredServerModelFormat('win32','x86_64',macMlx),'gguf')
+ assert.equal(preferredServerModelFormat('linux','aarch64',macMlx),'gguf')
+ assert.equal(preferredServerModelFormat('macos','x86_64',macMlx),'gguf')
+ assert.equal(preferredServerModelFormat('macos','aarch64',macMlx),'mlx')
+ assert.equal(preferredServerModelFormat('macos','arm64',macNeedsSetup),'mlx')
+ assert.equal(preferredServerModelFormat('macos','aarch64',unavailable),'gguf')
+})
+test('model format selection uses runtime capabilities and preserves manual choices',()=>{
+ const source=readFileSync(new URL('../src/components/ModelExplorer.tsx',import.meta.url),'utf8')
+ assert.doesNotMatch(source,/navigator\.platform/)
+ assert.match(source,/preferredServerModelFormat\(runtime\.capabilities\?\.memory\.platform/)
+ assert.match(source,/if\(preferredFormat&&!userChoseFormat\.current\)setFormat\(preferredFormat\)/)
+ assert.match(source,/userChoseFormat\.current=true;setFormat\(item\.id\)/)
 })
