@@ -61,6 +61,72 @@ async function login(request, env) {
   return json({ token, expires_in: 7 * 86400, account_id: id });
 }
 
+
+// Kakao / Naver authorization-code login. State is short-lived, signed and
+// bound to a browser cookie; provider tokens never reach the frontend.
+const oauthProviders = {
+  kakao: { authorize:'https://kauth.kakao.com/oauth/authorize', token:'https://kauth.kakao.com/oauth/token', profile:'https://kapi.kakao.com/v2/user/me' },
+  naver: { authorize:'https://nid.naver.com/oauth2.0/authorize', token:'https://nid.naver.com/oauth2.0/token', profile:'https://openapi.naver.com/v1/nid/me' }
+};
+function oauthConfig(provider, env) {
+  const prefix=provider.toUpperCase();
+  const id=env[prefix+'_CLIENT_ID'], secret=env[prefix+'_CLIENT_SECRET'];
+  return id&&secret ? {id,secret,...oauthProviders[provider]} : null;
+}
+async function createSession(env,id,email) {
+  await env.DB.prepare('INSERT INTO accounts(id,email,credits,created_at) VALUES(?,?,0,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email')
+    .bind(id,String(email||'').slice(0,320),now()).run();
+  const token=b64url(crypto.getRandomValues(new Uint8Array(32)));
+  await env.DB.prepare('INSERT INTO sessions(token_hash,account_id,expires_at) VALUES(?,?,?)')
+    .bind(await hash(token),id,now()+7*86400).run();
+  return token;
+}
+function oauthCookie(provider,value,maxAge) {
+  return 'dominion_oauth_'+provider+'='+value+'; HttpOnly; Secure; SameSite=Lax; Path=/v1/auth/'+provider+'; Max-Age='+maxAge;
+}
+async function oauthStart(request,env,provider) {
+  const config=oauthConfig(provider,env);
+  if(!config)return err('Login provider not configured',503);
+  const state=b64url(crypto.getRandomValues(new Uint8Array(32)));
+  const callback=new URL('/v1/auth/'+provider+'/callback',request.url).href;
+  const url=new URL(config.authorize);
+  url.searchParams.set('response_type','code');
+  url.searchParams.set('client_id',config.id);
+  url.searchParams.set('redirect_uri',callback);
+  url.searchParams.set('state',state);
+  if(provider==='naver')url.searchParams.set('state',state);
+  return new Response(null,{status:302,headers:{location:url.href,'set-cookie':oauthCookie(provider,state,600),'cache-control':'no-store'}});
+}
+async function oauthCallback(request,env,provider) {
+  const config=oauthConfig(provider,env);
+  if(!config)return err('Login provider not configured',503);
+  const url=new URL(request.url),state=url.searchParams.get('state')||'';
+  const cookie=(request.headers.get('cookie')||'').split(';').map(x=>x.trim()).find(x=>x.startsWith('dominion_oauth_'+provider+'='))?.split('=')[1];
+  if(!state||!cookie||state.length!==cookie.length||await hash(state)!==await hash(cookie))return err('OAuth state mismatch',403);
+  const code=url.searchParams.get('code');
+  if(!code||code.length>2048)return err('OAuth authorization denied',400);
+  const callback=new URL('/v1/auth/'+provider+'/callback',request.url).href;
+  const params=new URLSearchParams({grant_type:'authorization_code',client_id:config.id,client_secret:config.secret,code,redirect_uri:callback});
+  if(provider==='naver')params.set('state',state);
+  const exchange=await fetch(config.token,{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:params,signal:AbortSignal.timeout(12000)});
+  if(!exchange.ok)return err('OAuth token exchange failed',502);
+  const tokens=await exchange.json();
+  if(typeof tokens.access_token!=='string')return err('OAuth token missing',502);
+  const profileResponse=await fetch(config.profile,{headers:{authorization:'Bearer '+tokens.access_token},signal:AbortSignal.timeout(12000)});
+  if(!profileResponse.ok)return err('OAuth profile unavailable',502);
+  const profile=await profileResponse.json();
+  const user=provider==='naver'?profile.response:profile;
+  const id=user?.id;
+  if((typeof id!=='string'&&typeof id!=='number')||!String(id))return err('OAuth identity missing',502);
+  const email=provider==='kakao'?user.kakao_account?.email:user.email;
+  const session=await createSession(env,provider+':'+id,email);
+  // The popup reports only to the configured DOMINION frontend origin.
+  const payload=JSON.stringify({type:'dominion-oauth-session',provider,token:session}).replace(/</g,'\\u003c');
+  const target=JSON.stringify(env.ALLOWED_ORIGIN);
+  const html='<!doctype html><meta charset="utf-8"><title>DOMINION 로그인</title><script>if(window.opener){window.opener.postMessage('+payload+','+target+');window.close()}else{document.body.textContent="로그인 창을 닫고 다시 시도하세요."}</script>';
+  return new Response(html,{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'none'; script-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",'set-cookie':oauthCookie(provider,'',0)}});
+}
+
 // Checkout amounts are set by the operator, never trusted from a browser.
 function proPrice(env) {
   const amount = Number(env.PLAN_PRO_KRW);
@@ -362,6 +428,10 @@ export default {
       const path = new URL(request.url).pathname;
       let response;
       if (path === '/v1/auth/google' && request.method === 'POST') response = await login(request, env);
+      else if (/^\\/v1\\/auth\\/(kakao|naver)\\/start$/.test(path) && request.method === 'GET')
+        response = await oauthStart(request,env,path.split('/')[3]);
+      else if (/^\\/v1\\/auth\\/(kakao|naver)\\/callback$/.test(path) && request.method === 'GET')
+        response = await oauthCallback(request,env,path.split('/')[3]);
       else if (path === '/v1/models' && request.method === 'GET') {
         const user = await account(request, env);
         response = user ? json({ data: [{ id: 'dominion/free-auto', name: 'DOMINION Free Auto', object: 'model', free: true }, ...(await availableModels(env)).map(x => ({ id: x.id, name: x.name || x.id, object: 'model', free: true })), ...paidModels(env).map(x => ({ id: x.id, name: x.name, object: 'model', free: false, provider: x.provider, input_micro_krw: x.input_micro_krw, output_micro_krw: x.output_micro_krw }))] }) : err('Unauthorized', 401);
