@@ -66,6 +66,7 @@ export type LocalModelToLaunch={id:string;format:'gguf'|'mlx';bytes:number}
 export type LaunchCapabilities={
  gguf?:{available?:boolean;path?:string|null}
  mlx?:{available?:boolean;standalone?:boolean}
+ lmstudio?:{available?:boolean}
  memory?:{free?:number}
  gpu?:{free?:number}|null
 }
@@ -83,8 +84,7 @@ export function modelPreflight(model:LocalModelToLaunch,capabilities:LaunchCapab
   :ram==='insufficient'&&(!capabilities?.gpu||capabilities.gpu.free===0)?'insufficient':'unknown'
  let engineAvailable:boolean|null=null
  if(model.id.startsWith('lms:')){
-  if(capabilities?.mlx?.available===true||capabilities?.gguf?.available===true)engineAvailable=true
-  else if(capabilities?.mlx?.available===false&&capabilities?.gguf?.available===false)engineAvailable=false
+  if(capabilities?.lmstudio?.available!==undefined)engineAvailable=capabilities.lmstudio.available
  }else if(model.format==='mlx'){
   if(model.id.startsWith('mlx:')){
    if(capabilities?.mlx?.available!==undefined)engineAvailable=capabilities.mlx.available
