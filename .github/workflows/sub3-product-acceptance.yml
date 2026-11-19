@@ -22,6 +22,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  source-inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Search complete tracked repository for retired-domain references
+        shell: bash
+        run: |
+          pattern="$(printf '%s%s' mo ney)"
+          echo "::group::Tracked source inventory"
+          git grep -n -i -e "$pattern" -e '머니' -e '돈벌' -- ':!*.webp' || true
+          echo "::endgroup::"
   rust:
     runs-on: macos-latest
     timeout-minutes: 45

@@ -29,7 +29,6 @@ For frontend development, use `npm run dev --prefix web` alongside the Rust serv
 
 The React frontend is **byte-identical to `main`** at `f86a36e1c8ddac149baea2ac2391d317add36cbe` (2026-11-19): both `web/` Git tree SHA values are `fe65b961b037ad04e8ab4fc7f5c3d6e18abba392`. This includes model exploration, public keyless model browsing, GitHub/Google account connection UI, chat and rooms. The sub3 native Rust kernel and context engine remain separate from main.
 
-The built-in Money research/earning domain, its API routes, background scheduling, frontend page and executable modules have been removed. Existing SQLite user records are intentionally preserved, not migrated or deleted. Older Money jobs cannot be re-enqueued or restarted.
 
 ## What is implemented
 

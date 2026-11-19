@@ -7,12 +7,6 @@
 - **Identical `web/` subtree SHA**: `fe65b961b037ad04e8ab4fc7f5c3d6e18abba392` in both main and sub3 at time of audit. This includes React/Vite sources, dependencies, lockfile, public OAuth client environment, model exploration, connected accounts and regression tests.
 - Tested sub3 code commit: `ed70b2efa0581d94a1d52e35eb057043a3917223`.
 
-## Money domain retirement (safe archival behavior)
-
-Removed the built-in Money research/earning menu, public routes, engine, database feature modules, incremental SQL schema initializer, plugin scheduler, CI Money workflow and active integration docs. The job worker no longer starts the collector, schedules maintenance or dispatches Money tool runners. Deprecated Money job kinds are rejected and marked for review rather than dispatched. **Existing SQLite user records and historical receipts are preserved**; this is source removal, not a destructive database migration.
-
-The source-inventory and architecture guard in `scripts/check-lean-product.mjs` rejects executable Money modules/routes and validates key frontend/backend contract surfaces.
-
 ## Main-derived API and runtime changes
 
 - Added `GET /api/providers/catalog/:id/models` and `GET /api/providers/openrouter/free-models` to the sub3 backend for public model browsing without API keys. Model invocation still requires applicable authorization.

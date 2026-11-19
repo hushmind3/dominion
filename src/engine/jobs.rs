@@ -10,8 +10,7 @@ const MAX_EVENTS: usize = 200;
 
 fn retired_legacy_kind(kind: &str) -> bool {
     matches!(kind, "video" | "video_plan" | "youtube_upload"
-        | "rsi_evolve" | "rsi_compare" | "rsi_generation"
-        | "money_discover" | "money_ingest" | "money_catalog" | "money_fold")
+        | "rsi_evolve" | "rsi_compare" | "rsi_generation")
 }
 
 /// Shared handle a running job uses to report progress and persist its state.

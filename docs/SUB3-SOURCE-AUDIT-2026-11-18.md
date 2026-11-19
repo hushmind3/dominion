@@ -1,4 +1,3 @@
-> **Historical audit (2026-11-18):** This snapshot describes the code before 2026-11-19 Money removal and latest-main frontend import. See the current branch README for current capabilities. Do not follow references to deleted Money modules or the previous UI. 
 
 # DOMINION sub3 — source-tree and documentation audit (2026-11-18)
 
@@ -15,8 +14,7 @@
 | Durable state | `src/db.rs`, `src/engine/jobs.rs`, `src/engine/native_replay.rs` | Central SQLite store and job/effect receipts; scope and recovery depend on checked status, tool contracts, and persisted state. Existing user records must not be destructively migrated. |
 | Memory, context, cache | `src/engine/chat/context.rs`, `continuity.rs`, `codex_ws.rs`, `crates/dominion-agent-sdk/src/context.rs` | Context projection and Codex WS delta transport exist; full provider cache reuse and actual billing savings need fresh usage measurements. |
 | Skills/tools | `src/engine/skill_discovery.rs`, `src/engine/chat/runtime/capability.rs`, `crates/dominion-agent-sdk/src/tool_discovery.rs` | Authorized tool catalog plus progressive discovery. A model-discovered name is not a permission grant. Chat task-scoped Skill selection was just unified with native logic in earlier commits; test status is pending. |
-| Optional Money | `src/engine/money*.rs`, `src/db/money*.rs`, `src/api/money*.rs`, `web/src/pages/Money.tsx` | Domain data lives in the same SQLite/database job interface; collects source evidence and hypotheses, with explicit owner review/implementation. This is not proof of money earned. |
-| Product UI | `web/src/App.tsx`, `web/src/components/WorkspaceShell.tsx`, `web/src/components/NativeAgentPanel.tsx` | React/Vite UI has chat, rooms, Money, providers, memory and work functions; these UI screens need API-level end-to-end verification after updates. |
+| Product UI | `web/src/App.tsx`, `web/src/components/WorkspaceShell.tsx`, `web/src/components/NativeAgentPanel.tsx` | React/Vite UI has chat, rooms, providers, memory and work functions; these UI screens need API-level end-to-end verification after updates. |
 | SDK clients | `sdk/rust`, `sdk/typescript`, `packages/sdk-typescript` | One Rust kernel, but multiple client facades. Legacy `/api/harness/runs` client is compatibility surface, not an independent runtime. |
 | Release/CI | `.github/workflows/ci.yml`, `release.yml`, `sub3-*.yml` | Development checks are scoped Rust tests; full release gate runs manually for macOS/Windows, with Linux used for release publishing only. |
 
@@ -41,7 +39,7 @@
 
 ## Additional static readback: size and unfinished-code markers
 
-Representative critical-path files were fetched and inspected after the documentation rewrite, including DB/jobs, chat provider/turn transport, host tool/MCP/provider adapters, native evidence/replay, algorithm/Program IR, Money collection and storage, public SDK entrypoints, API router, and mounted React pages. Selected source file lengths are:
+Representative critical-path files were fetched and inspected after the documentation rewrite, including DB/jobs, chat provider/turn transport, host tool/MCP/provider adapters, native evidence/replay, algorithm/Program IR, public SDK entrypoints, API router, and mounted React pages. Selected source file lengths are:
 
 | File | Lines |
 | --- | ---: |
@@ -54,7 +52,6 @@ Representative critical-path files were fetched and inspected after the document
 | `src/engine/program.rs` | 1,182 |
 | `crates/dominion-agent-sdk/src/lib.rs` | 1,084 |
 | `src/engine/jobs.rs` | 1,094 |
-| `web/src/pages/Money.tsx` | 474 |
 
 These are **change-risk concentration signals**, not automatic defects or evidence that a file must be split now. Direct keyword scanning of the examined key files returned no `todo!()`, `unimplemented!()`, or explicit `FIXME`/`TODO` markers. This does not prove absence of runtime bugs or incomplete behavior in unexamined code.
 

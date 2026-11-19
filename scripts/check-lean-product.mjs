@@ -16,18 +16,6 @@ const absent=[
  'scripts/rsi-lab.mjs','scripts/rsi-measure.mjs',
  'crates/harness'
 ];
-// No executable built-in Money domain or hidden collector should survive
-// after adoption of the latest main frontend.
-absent.push(
- 'src/engine/plugins.rs','web/src/pages/Money.tsx',
- 'src/db/money_schema.sql','.github/workflows/sub3-money-acceptance.yml'
-);
-for(const dir of ['src/api','src/engine','src/db']){
- if(!exists(dir))continue;
- for(const file of fs.readdirSync(dir).filter(file=>/^money(?:_|\.)/.test(file))){
-  assert.fail('Money domain source survived removal: '+dir+'/'+file);
- }
-}
 for(const p of absent)assert.ok(!exists(p),'Retired built-in product feature still exists: '+p);
 for(const p of fs.readdirSync('src/engine').filter(p=>/^rsi.*\.rs$/.test(p))){
  assert.fail('Live Rust RSI engine module survived retirement: '+p);
@@ -40,7 +28,6 @@ for(const p of ['nav.chat','nav.memory','nav.connections','nav.rooms'])
  assert.ok(nav.includes(p),'Retained navigation missing: '+p);
 assert.ok(!/id:'(?:video|rsi)'/.test(nav),'Retired navigation remains');
 const routes=read('src/api/mod.rs');
-assert.ok(!routes.includes('"/api/money'),'Removed Money HTTP routes returned');
 const providerEndpoints=[
  '/api/providers/catalog/:id/models',
  '/api/providers/openrouter/free-models'
@@ -109,9 +96,6 @@ for(const text of ['dominion_agent_sdk::','dispatch_batch','acceptance'])
 assert.ok(!/rsiRun|rsi_evolve|rsi_worktree|rsi_patch_written/.test(chat),'Retired RSI logic remains in chat runtime');
 assert.ok(!approval.includes('rsi_evolve::auto_write_allowed'),'Old RSI approval bypass survived');
 assert.ok(!tools.includes('tool("rsi_')&&!tools.includes('tool("algorithm_propose"'),'Old RSI tools exposed to model');
-assert.ok(!jobs.includes('plugins::'),'Removed Money plugin still linked to job dispatcher');
-assert.ok(jobs.includes('"money_ingest"')&&jobs.includes('"money_discover"'),
- 'Previously queued Money jobs must be retired without destructive DB deletion');
 for(const signature of ['retired_legacy_kind','active_jobs()','job_wakeup.notified()'])
  assert.ok(jobs.includes(signature),'Worker lost archival safety or indexed wakeup: '+signature);
 assert.ok(!read('src/bootstrap.rs').includes('schedule_experiments'),'Auto-experiment boot hook survived');

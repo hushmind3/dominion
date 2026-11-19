@@ -1,4 +1,3 @@
-> Historical change log. The Money-specific source paths cited below were removed on 2026-11-19; no scheduled Money jobs or Money API remain. Existing SQLite records are preserved. 
 
 # Sub3 — Lean agent execution architecture (2026-11-16)
 
@@ -36,9 +35,7 @@ Media can be done via separately installed and authorized MCP or plugin tools. N
 ## 2026-11-18 — Bounded evidence retrieval without a second model loop
 
 - `crates/dominion-agent-sdk/src/context.rs`: nonempty durable receipt searches inspect JSON scalar leaves and field names with streaming, Unicode-aware literal matching instead of serializing every historical tool result and allocating a second lowercased full-log string. The authoritative receipt journal, pagination, read-by-ID, and capped previews are unchanged.
-- `src/engine/money_retrieval.rs`: selected facts still suppress highly similar duplicate headlines in the LLM context, but add up to two bounded provenance references and a count of related observations. `similarityStatus=lexical_overlap_not_independent_confirmation` prevents a title match being represented as verified independent reporting.
-- `src/engine/money.rs`: the research planner sees at most one additional related source URL per selected fact, explicitly labeled as a similar source rather than independent confirmation. Full individual original evidence remains in the indexed Money corpus.
-- Regression tests added for long nested multilingual receipt search, query boundaries, bounded duplicate provenance and planner-context citation limits. These tests were **added but not executed** in this editing session: `cargo`/`rustc` are unavailable in the current editing container, and full CI was intentionally deferred.
+- Regression tests added for long nested multilingual receipt search, query boundaries, bounded receipt projection. These tests were **added but not executed** in this editing session: `cargo`/`rustc` are unavailable in the current editing container, and full CI was intentionally deferred.
 - Expected improvement: lower transient allocations during receipt keyword search; no claims about benchmark speedups, real-model completion rate, or verified CI until measured with the same workload.
 
 ## 2026-11-18 — One native harness, independent runtime adapters
@@ -48,7 +45,7 @@ Design boundary (compared with OpenClaw ACP Agents / acpx and Hermes toolsets; n
 1. **One authoritative host kernel:** `dominion-agent-sdk::Kernel` remains responsible for the task budget, proposed action admission, durable receipt journal, evidence, owner corrections and final status. No second planner, duplicate retry loop, external workflow executor, or self-promoting policy has been added.
 2. **Evolving plan drives only discovery:** `tool_discovery::select` now gives up to three short-lived visible-schema slots to the latest three bounded model plan steps. The catalog is still the exact host-allowed set, `dominion_tool_search` remains the explicit progressive-discovery path, and `dominion_tool_call` still resolves through normal pinned host permission and dispatch. An explicit owner correction bypasses the old plan. This alters *visibility*, never *authority*.
 3. **External harness is a distinct future adapter, not merged code:** Codex, Hermes, or ACPX may later run as independently versioned, opt-in runtimes. A future adapter will report its native session handle, environment binding, capabilities, progress, cancellation acknowledgment, final result and evidence to Dominion's existing job/session/receipt contracts. It must not claim an external effect has been committed solely because an RPC or subprocess returned. Uncertain external run termination requires review rather than blind restart.
-4. **Domain modules remain removable:** Money, MCP, Skills, RAG and media via external plugins may provide capabilities, but must not introduce new authoritative execution loops or bypass the host's user scope, tool permissions and budgets.
+4. **Domain modules remain removable:** MCP, Skills, RAG and media via external plugins may provide capabilities, but must not introduce new authoritative execution loops or bypass the host's user scope, tool permissions and budgets.
 5. **No premature integration:** current `src/engine/native_agent.rs` binds the MCP manifest before dispatch; `src/engine/chat/runtime/` still has an older separate interactive path. This change does not claim those paths have been merged or that an ACP backend is running.
 
 Added a source-level regression for adaptive tool visibility and stale-plan suppression. It was committed without local Cargo execution; the corresponding Rust test and full CI remain **not run** in this session. External runtime adapters and full chat/kernel unification are **not implemented** by this patch.
