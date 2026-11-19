@@ -21,14 +21,20 @@ const visit=(dir)=>{
   for(const entry of readdirSync(full,{withFileTypes:true})){
     const path=join(dir,entry.name);
     if(entry.isDirectory()){if(entry.name!=='node_modules')visit(path);}
-    else if(/\.(?:rs|ts|tsx|js|jsx|mjs)$/.test(entry.name))codePaths.push(path);
+    else if(/\.(?:rs|ts|tsx|js|jsx|mjs|sql|ya?ml|json)$/.test(entry.name))codePaths.push(path);
   }
 };
-for(const dir of ['src','web/src','sdk','tests','crates','src-tauri/src','scripts'])visit(dir);
+// Scan every active runtime surface, including Cloudflare, deploy routing,
+// SQL schemas, frontend tests and public SDK. Historical docs and user DB
+// records remain archived; they are not executable feature remnants.
+for(const dir of [
+  'src','web/src','web/tests','web/shared','sdk','tests','crates',
+  'src-tauri/src','scripts','cloud','services','.github/workflows','assets/channels'
+])visit(dir);
 for(const path of codePaths){
   if(path==='scripts/check-sub2-contract.mjs')continue; // The gate's own banned-symbol regex is not product code.
   const text=source(path);
-  if(/\bmoney(?:_|::|\/|\b)|MoneyPage|\/api\/money/i.test(text)){
+  if(/\bmoney(?:_|::|\/|\b)|MoneyPage|\/api\/money|\b(?:money|opportunity)_(?:miner|scanner|worker|scheduler)\b/i.test(text)){
     errors.push(`retired Money reference in ${path}`);
   }
 }
