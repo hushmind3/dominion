@@ -18,7 +18,7 @@ test('intelligence owns policy and tool scoring; SDK receives it by injection',(
  const algorithms=read('crates/dominion-agent-algorithms/src/lib.rs');
  const ranking=read('crates/dominion-agent-algorithms/src/ranking.rs');
  const sdk=read('crates/dominion-agent-sdk/src/lib.rs');
- const tools=read('crates/dominion-agent-sdk/src/tool_discovery.rs');
+ const tools=read('crates/dominion-agent-algorithms/src/tool_discovery.rs');
  assert.match(algorithms,/pub trait AgentAlgorithm/);
  assert.match(algorithms,/impl AgentAlgorithm for StandardAlgorithm/);
  assert.match(ranking,/pub fn tool_relevance_with_schema/);
