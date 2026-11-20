@@ -69,8 +69,8 @@ async fn serve(mut config: Config, open_browser: bool, parent_bound: bool) -> Re
     engine::algorithms::seed(&state);
     engine::jobs::start(state.clone());
     engine::maintenance::start(state.clone());
-    engine::discord::start(state.clone());
-    engine::telegram::start(state.clone());
+    // Messaging is an optional extension supervisor, never a core service.
+    engine::extensions::channels::start_inbound(state.clone());
     let app = api::router(state);
     println!(
         "DOMINION (rust engine) listening on http://127.0.0.1:{}",
