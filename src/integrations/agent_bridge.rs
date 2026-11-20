@@ -124,18 +124,34 @@ fn codex_finish(thread_id:&str,completed:bool,answer:&str)->Result<Value,String>
         "threadId":thread_id,"answer":answer,
         "evidenceGrade":"external_unverified"}))
 }
+fn thread_request(resume:Option<&str>,workspace:&std::path::Path,
+    model:Option<&str>)->(&'static str,Value){
+    let mut params=json!({"cwd":workspace.to_string_lossy(),
+        "sandbox":"read-only","approvalPolicy":"never"});
+    if let Some(name)=model{params["model"]=json!(name);}
+    if let Some(id)=resume{
+        params["threadId"]=json!(id);
+        ("thread/resume",params)
+    }else{("thread/start",params)}
+}
 async fn run_codex(ctx:&JobContext,child:&mut Child,started:Instant,
-    prompt:&str,model:Option<&str>,workspace:&std::path::Path)->Result<Value,String>{
+    prompt:&str,model:Option<&str>,workspace:&std::path::Path,
+    resume:Option<&str>)->Result<Value,String>{
     let mut reader=BufReader::new(child.stdout.take().ok_or("Codex stdout missing")?);
     rpc(ctx,child,&mut reader,started,1,"initialize",
         json!({"clientInfo":{"name":"dominion","title":"DOMINION","version":"0.3.0"}})).await?;
     send(child,json!({"method":"initialized","params":{}})).await?;
-    let mut params=json!({"cwd":workspace.to_string_lossy(),
-        "sandbox":"read-only","approvalPolicy":"never"});
-    if let Some(model)=model{params["model"]=json!(model);}
-    let (thread,_)=rpc(ctx,child,&mut reader,started,2,"thread/start",params).await?;
+    let (method,params)=thread_request(resume,workspace,model);
+    let (thread,_)=rpc(ctx,child,&mut reader,started,2,method,params).await?;
     let thread_id=thread["thread"]["id"].as_str().filter(|s|!s.is_empty())
         .ok_or("Codex thread ID missing")?.to_string();
+    if resume.is_some_and(|id|id!=thread_id){
+        return Err("Codex resumed a different thread; refuse to launch".into());
+    }
+    if resume.is_some()&&(thread["thread"]["status"]=="active"
+        ||thread["thread"]["status"]["type"]=="active"){
+        return Err("Codex thread is still active; owner review required".into());
+    }
     ctx.checkpoint(json!({"bridgeState":{"runtime":"codex",
         "inFlight":true,"phase":"turn","threadId":thread_id}}))?;
     let (_,pre_response)=rpc(ctx,child,&mut reader,started,3,"turn/start",
@@ -183,6 +199,34 @@ async fn run_claude(ctx:&JobContext,child:&mut Child,started:Instant)->Result<Va
         "answer":text.chars().take(MAX_ANSWER).collect::<String>(),
         "evidenceGrade":"external_unverified"}))
 }
+
+pub async fn bridge_preflight()->Value{
+    // No authentication or paid call is attempted by this capability probe.
+    let enabled=std::env::var("DOMINION_EXTERNAL_AGENTS")
+        .ok().as_deref()==Some("1");
+    let mut bridges=serde_json::Map::new();
+    for runtime in ["codex","claude"]{
+        let key=if runtime=="codex"{"DOMINION_CODEX_BINARY"}
+            else{"DOMINION_CLAUDE_BINARY"};
+        let binary=std::env::var(key).ok().filter(|v|!v.is_empty())
+            .unwrap_or_else(||runtime.into());
+        let output=if enabled{
+            tokio::time::timeout(Duration::from_secs(3),
+                Command::new(&binary).arg("--version")
+                    .stdin(Stdio::null()).kill_on_drop(true).output())
+                .await.ok().and_then(Result::ok)
+        }else{None};
+        let available=output.as_ref().is_some_and(|o|o.status.success());
+        let version=output.as_ref().filter(|o|o.status.success())
+            .map(|o|String::from_utf8_lossy(&o.stdout).chars().take(120)
+                .collect::<String>());
+        bridges.insert(runtime.into(),json!({"runtime":runtime,
+            "kind":"independent_agent","enabled":enabled,
+            "binaryAvailable":available,"version":version,
+            "authentication":"unknown","executionPermission":"read_only"}));
+    }
+    json!({"version":1,"bridges":bridges,"paidRunPerformed":false})
+}
 pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
     if std::env::var("DOMINION_EXTERNAL_AGENTS").ok().as_deref()!=Some("1"){
         return Err("External Agent Bridge requires DOMINION_EXTERNAL_AGENTS=1".into());
@@ -211,6 +255,9 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
         if let Some(model)=job["input"]["model"].as_str(){
             command.arg("--model").arg(model);
         }
+        if let Some(session)=job["input"]["resumeId"].as_str(){
+            command.arg("--resume").arg(session);
+        }
         command.arg("--").arg(prompt);
     }
     ctx.ensure_running()?;
@@ -226,7 +273,8 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
     };
     let started=Instant::now();
     let outcome=if runtime=="codex"{
-        run_codex(ctx,&mut child,started,prompt,job["input"]["model"].as_str(),&workspace).await
+        run_codex(ctx,&mut child,started,prompt,job["input"]["model"].as_str(),
+            &workspace,job["input"]["resumeId"].as_str()).await
     }else{run_claude(ctx,&mut child,started).await};
     let _=child.kill().await;
     match outcome{
@@ -321,7 +369,7 @@ done
             .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
             .kill_on_drop(true).spawn().unwrap();
         let output=tokio::time::timeout(Duration::from_secs(8),
-            run_codex(&context,&mut child,Instant::now(),"Inspect fixture",None,&context.state.config.workspace))
+            run_codex(&context,&mut child,Instant::now(),"Inspect fixture",None,&context.state.config.workspace,None))
             .await.expect("The buffered finish must not hang").unwrap();
         assert_eq!(output["status"],"completed");
         assert_eq!(output["answer"],"verified JSONL exchange");
@@ -356,6 +404,19 @@ done
         assert!(failure.contains("size cap"),"{failure}");
         let _=child.kill().await;
         crate::test_support::cleanup_dir(&root);
+    }
+    #[test] fn explicit_resume_preserves_readonly_codex_thread_permissions(){
+        let root=std::path::Path::new("/tmp/isolated-project");
+        let (method,p)=thread_request(Some("thr_2026"),root,None);
+        assert_eq!(method,"thread/resume");
+        assert_eq!(p["threadId"],"thr_2026");
+        assert_eq!(p["sandbox"],"read-only");
+        assert_eq!(p["approvalPolicy"],"never");
+        assert_eq!(p["cwd"],"/tmp/isolated-project");
+        let (fresh,params)=thread_request(None,root,Some("test-model"));
+        assert_eq!(fresh,"thread/start");
+        assert!(params["threadId"].is_null());
+        assert_eq!(params["model"],"test-model");
     }
     #[test] fn unmediated_approval_request_is_denied(){
         let mut text=String::new();
