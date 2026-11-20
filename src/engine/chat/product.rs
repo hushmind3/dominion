@@ -343,8 +343,13 @@ impl Host for MainTurn<'_> {
                 );
             }
             self.wire_messages = self.messages.clone();
-            if self.is_room {
-                if let Some(mut execution) = self.state.store.get("execution", self.execution_id) {
+            if let Some(mut execution) = self.state.store.get("execution", self.execution_id) {
+                // Diagnose large cached prefixes without resending the
+                // transcript to a second model or altering its cache order.
+                execution["inputComposition"] =
+                    crate::engine::chat::room_context::input_composition(
+                        &self.wire_messages, &self.round_tools);
+                if self.is_room {
                     execution["inputContext"]["preparedInputTokensEstimate"] =
                         json!(crate::engine::chat::room_context::input_estimate(
                             &self.wire_messages,
@@ -355,8 +360,8 @@ impl Host for MainTurn<'_> {
                             &json!({"messages":self.wire_messages,"tools":self.round_tools})
                                 .to_string()
                         ]));
-                    self.state.store.put("execution", &execution);
                 }
+                self.state.store.put("execution", &execution);
             }
             Ok(self.round_tools.clone())
         })
