@@ -1,6 +1,7 @@
 //! The smallest entrypoint: natural-language turn -> native execution -> result.
 //! Providers, tools, memory, rooms, jobs and other product subsystems live
 //! outside this module. Historical API paths are reexported by engine::mod.
+pub mod driver;
 use super::chat;
 use crate::state::AppState;
 use serde_json::Value;

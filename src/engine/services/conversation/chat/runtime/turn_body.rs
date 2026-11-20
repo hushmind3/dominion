@@ -910,8 +910,14 @@ pub(super) async fn run_turn_body(
     };
     messages.extend(harness_messages);
 
+    // This provider-neutral gate has no knowledge of memory, MCP, plans,
+    // SQLite, or product UI. The host retains the existing effect receipts.
+    let mut driver=crate::engine::core::driver::Driver::new(max_rounds,max_tools);
     for round in 0..max_rounds {
         if finished { break; }
+        driver.begin_model_round(state.is_cancelled(session_id)
+            || state.cancellation_generation(session_id)!=generation)
+            .map_err(str::to_string)?;
         if !budget.charge_round() {
             mark_budget_exhausted(state, execution_id);
             return Err("모델 라운드 예산을 초과했습니다.".into());
@@ -1391,7 +1397,10 @@ pub(super) async fn run_turn_body(
             }
         }
 
-        if completion.tool_calls.is_empty() {
+        let next_step=driver.select_step(completion.tool_calls.len(),
+            request.tools_enabled && request.tools_execution_enabled)
+            .map_err(str::to_string)?;
+        if next_step==crate::engine::core::driver::Step::Answer {
             {
                 let mut operations=state.store.execution_operations(execution_id)?
                     .into_iter().filter(|operation|operation["status"]=="completed")
@@ -1710,7 +1719,8 @@ pub(super) async fn run_turn_body(
             {
                 return Err("실행이 중단되었습니다.".into());
             }
-            if !super::super::tool_projection::advertised_tool(&round_tools,&call.name){
+            if driver.admit_tool(&call.name,&round_tools,
+                request.tools_enabled && request.tools_execution_enabled).is_err(){
                 let error=format!(
                     "도구 {}는 이번 모델 요청에 제공되지 않았습니다. 필요한 도구는 dominion_tool_search로 탐색하세요.",
                     call.name);
@@ -1733,9 +1743,15 @@ pub(super) async fn run_turn_body(
             if parallel_reads {
                 // Inspect the live call suffix only *after* every preceding
                 // exclusive barrier has settled; fail closed on invalid args.
-                let batch_len=super::tool_schedule::parallel_prefix(
+                let candidate=super::tool_schedule::parallel_prefix(
                     round_calls[call_index..].iter()
                         .map(|item|(item.name.as_str(),item.arguments.as_str())),4);
+                // Every member must have been visible in this model call.
+                // Otherwise fall back to serial dispatch, which returns an
+                // explicit tool-not-advertised observation for the hidden one.
+                let batch_len=if crate::engine::core::driver::Driver::batch_advertised(
+                    round_calls[call_index..call_index+candidate].iter()
+                        .map(|item|item.name.as_str()),&round_tools) {candidate} else {1};
                 if batch_len>=2 {
                     let _=crate::engine::algorithms::choose_for_agent(
                         state,"tool.combination",request.agent_id.as_deref(),Some(execution_id));
@@ -1745,9 +1761,14 @@ pub(super) async fn run_turn_body(
                     // Preflight every call and charge the complete batch
                     // before starting *any* side effect or external request.
                     for (offset,read_call) in batch.iter().enumerate(){
-                        if offset>0 && !budget.charge_proposal(){
-                            return Err(format!("도구 제안 예산({}회)을 초과했습니다.",
-                                max_tools.saturating_mul(2)));
+                        if offset>0 {
+                            if !budget.charge_proposal(){
+                                return Err(format!("도구 제안 예산({}회)을 초과했습니다.",
+                                    max_tools.saturating_mul(2)));
+                            }
+                            driver.admit_tool(&read_call.name,&round_tools,
+                                request.tools_enabled && request.tools_execution_enabled)
+                                .map_err(str::to_string)?;
                         }
                         let parsed=serde_json::from_str::<Value>(&read_call.arguments);
                         match parsed {

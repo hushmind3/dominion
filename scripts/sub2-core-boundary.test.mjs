@@ -104,3 +104,12 @@ test('HTTP handler implementations are source-isolated from the minimal API core
  for(const mod of ['chat','sdk_bridge','approvals'])assert.ok(exists('src/api/'+mod+'.rs'));
 });
 
+
+test('real chat model loop consults pure execution driver and gates parallel tool batches',()=>{
+ const s=source('src/engine/services/conversation/chat/runtime/turn_body.rs');
+ assert.match(s,/driver\.begin_model_round/);
+ assert.match(s,/driver\.select_step/);
+ assert.match(s,/driver\.admit_tool/);
+ assert.match(s,/Driver::batch_advertised/);
+ assert.ok(exists('src/engine/core/driver.rs'));
+});
