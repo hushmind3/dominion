@@ -144,7 +144,8 @@ jobs:
           cargo test --locked --bin dominion-rust engine::chat::context_engine::tests
           cargo test --locked --bin dominion-rust private_context_epoch_keeps_stable_snapshot_and_invalidates_corrections
           cargo test --locked --bin dominion-rust engine::chat::context::tests::private_
-          cargo test --locked --test e2e room_identity::private_chat
+          cargo test --locked --bin dominion-rust db::tests::session_cache_ledger_never_turns_unknown_hits_into_zero
+          cargo test --locked --test e2e room_identity::private_chat -- --nocapture
       - name: Native Codex tool verification, room snapshot rotation and ordered mutation e2e
         run: |
           cargo test --locked --test e2e codex_websocket_verified_tool_finishes_without_extra_model_call
