@@ -28,7 +28,7 @@ for(const name of e2eModules){
   if(lines>1500)throw Error('E2E module grew past 1500 lines: '+file+' ('+lines+')')
   e2eCases+=(body.match(/^#\[test\]/gm)||[]).length
 }
-if(e2eCases!==106)throw Error('E2E regression tests lost or duplicated: '+e2eCases+' (expected 106)')
+if(e2eCases!==108)throw Error('E2E regression tests lost or duplicated: '+e2eCases+' (expected 108)')
 
 const runtime=readFileSync(path.join(root,'src/engine/chat/runtime.rs'),'utf8')
 const adapter=readFileSync(path.join(root,'src/engine/chat/product.rs'),'utf8')
