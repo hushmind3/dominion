@@ -410,7 +410,12 @@ pub(super) fn history(
     // every participant make each turn slower and more expensive without
     // making the reply better.
     let limit = if is_room { 16 } else { HISTORY_LIMIT };
-    let byte_budget = byte_budget.unwrap_or(if is_room { 16_000 } else { 160_000 });
+    // Private 1:1 chat previously replayed up to 40 long messages and
+    // 400k provider-sized bytes. A large advertised context window is not
+    // a sensible default per-turn input budget. Keep the latest owner message
+    // even when it alone exceeds the budget; SQLite retains the full history.
+    let byte_budget = byte_budget.unwrap_or(if is_room { 16_000 } else { 32_000 })
+        .min(if is_room { usize::MAX } else { 32_000 });
     let mut start = all.len().saturating_sub(limit);
     let mut bytes = 0;
     for index in (start..all.len()).rev() {
@@ -676,6 +681,45 @@ mod tests {
         assert!(built_off.dynamic_context.contains("SECRET-FULL-SKILL-TEXT-NEVER-PRELOAD"),
             "tool-free model must still receive necessary skill instructions");
         let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn private_history_caps_old_transcript_even_with_large_provider_window() {
+        let (state,dir)=state();
+        state.store.put("session",&json!({"id":"private:cost"})).unwrap();
+        for i in 0..30 {
+            state.store.write_message(&json!({"session_id":"private:cost",
+                "role":"user","content":format!("owner-{i}:{}", "A".repeat(1_400)),
+                "metadata":{"authorKind":"owner"}})).unwrap();
+            state.store.write_message(&json!({"session_id":"private:cost",
+                "role":"assistant","content":format!("answer-{i}:{}", "B".repeat(1_400))})).unwrap();
+        }
+        let selected=history(&state,"private:cost",None,Some(400_000)).unwrap();
+        let sum=selected.iter().map(|message|
+            message["content"].as_str().unwrap_or("").len()).sum::<usize>();
+        assert!(sum<=32_000,"private input should have a fixed 32KB history budget: {sum}");
+        assert!(selected.len()<40,"old forty-message history should not be replayed");
+        let wire=selected.to_string();
+        assert!(!wire.contains("owner-0:"));
+        assert!(wire.contains("answer-29:"));
+        assert!(wire.contains("owner-29:"));
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn private_history_never_truncates_the_current_owners_message() {
+        let (state,dir)=state();
+        state.store.put("session",&json!({"id":"private:large-user"})).unwrap();
+        let full=format!("CURRENT_OWNER_INPUT:{}", "X".repeat(40_000));
+        state.store.write_message(&json!({"session_id":"private:large-user",
+            "role":"user","content":full,"metadata":{"authorKind":"owner"}})).unwrap();
+        let selected=history(&state,"private:large-user",None,Some(400_000)).unwrap();
+        assert_eq!(selected.len(),1);
+        assert_eq!(selected[0]["content"],full,
+            "an explicitly provided large current message must be preserved");
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
