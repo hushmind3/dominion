@@ -36,6 +36,7 @@ export function ConnectionsPage(){
  const rooms=useRemote<any[]>(showChannels?'/api/rooms':null,[]);
  const providers=useRemote<any[]>(editor?'/api/providers':null,[]);
  const [busyAction,setBusyAction]=useState<string|null>(null);
+ const [focusChannelId,setFocusChannelId]=useState<string|null>(null);
  const [refreshing,setRefreshing]=useState(false);
  const openEditor=(entry:ChannelEntry,existing?:Channel)=>{
   if(!entry.available)return;
@@ -47,7 +48,8 @@ export function ConnectionsPage(){
   if(!editor||saving)return;
   setSaving(true);setError('');
   try{
-   await post('/api/channels',editor.record);
+   const saved=await post<{id?:string}>('/api/channels',editor.record);
+   if(saved.id)setFocusChannelId(saved.id);
    setEditor(null);setInfo(t('conn.dlg.saved',{name:editor.entry.name}));
    await channels.reload();await registry.reload();
   }catch(e){setError((e as Error).message)}finally{setSaving(false)}
@@ -105,7 +107,7 @@ export function ConnectionsPage(){
   {section==='quick-connect'&&<ConnectedAccounts onSetupApp={id=>{setOauthError('');setOauthEditor({id,clientId:'',clientSecret:''});setSection('accounts')}}/>}
   {info&&<div role="status" className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><Check size={16}/>{info}</div>}
   {error&&!editor&&<Notice message={error}/>}
-  {section==='channels'&&<ChannelDirectory entries={registry.value} bindings={channels.value}
+  {section==='channels'&&<ChannelDirectory entries={registry.value} bindings={channels.value} focusId={focusChannelId}
    rooms={rooms.value} loading={registry.loading||channels.loading} error={registry.error||channels.error}
    probes={probe} busyAction={busyAction} onEdit={openEditor}
    onDiagnose={binding=>void diagnose(binding.id)} onDelete={binding=>void removeChannel(binding)}/>}

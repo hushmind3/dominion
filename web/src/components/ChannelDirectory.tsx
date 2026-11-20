@@ -1,4 +1,4 @@
-import {useMemo,useState} from 'react'
+import {useEffect,useMemo,useState} from 'react'
 import {Activity,AlertCircle,ArrowLeft,ArrowUpRight,Check,ChevronRight,ExternalLink,MessageCircle,Plus,Search,Send,Settings2,ShieldCheck,Trash2,Users} from 'lucide-react'
 import {Button,TextInput} from './Primitives'
 import {t,useLocale,type LocaleKey} from '../i18n'
@@ -24,7 +24,7 @@ const categories:[
 ]
 type ConnectionFilter='all'|'attention'|'ready'
 type Props={
- entries:ChannelEntry[];bindings:Channel[];rooms:{id:string;name:string}[];
+ entries:ChannelEntry[];bindings:Channel[];rooms:{id:string;name:string}[];focusId?:string|null;
  loading:boolean;error:string;probes:Record<string,string>;busyAction:string|null;
  onEdit:(entry:ChannelEntry,existing?:Channel)=>void;
  onDiagnose:(channel:Channel)=>void;onDelete:(channel:Channel)=>void
@@ -55,10 +55,11 @@ function DataPair({label,value}:{label:string;value:string|number}){
   <span className="min-w-0 break-all text-right font-semibold text-[#3C342C]">{value}</span>
  </div>
 }
-export function ChannelDirectory({entries,bindings,rooms,loading,error,probes,busyAction,onEdit,onDiagnose,onDelete}:Props){
+export function ChannelDirectory({entries,bindings,rooms,focusId,loading,error,probes,busyAction,onEdit,onDiagnose,onDelete}:Props){
  useLocale()
  const [adding,setAdding]=useState(false)
  const [selectedId,setSelectedId]=useState<string|null>(null)
+ useEffect(()=>{if(focusId)setSelectedId(focusId)},[focusId])
  const [filter,setFilter]=useState<ConnectionFilter>('all')
  const [query,setQuery]=useState('')
  const [category,setCategory]=useState('all')
