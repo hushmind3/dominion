@@ -9,6 +9,7 @@ use crate::state::AppState;
 use serde_json::{json,Value};
 
 pub mod channels;
+pub mod jobs;
 pub mod knowledge;
 pub mod tools;
 
