@@ -4,6 +4,9 @@ use crate::state::AppState;
 use serde_json::{json, Value};
 use std::collections::{HashSet, VecDeque};
 
+#[path = "room_parallel.rs"]
+mod parallel;
+
 pub const MAX_PARTICIPANTS: usize = 32;
 /// Safety ceiling only. The room's own rounds/maxTurns decide the budget;
 /// operators can raise this without a code change.
@@ -533,6 +536,30 @@ async fn run_locked(
     };
     if pending.iter().any(|id| !roster.contains(id)) {
         return Err("대화방 발언 순서에 없는 참가자가 포함되어 있습니다.".into());
+    }
+    // Parallel mode is explicit, owner-controlled, and only accepted for one
+    // independent, read-only wave. Tool-enabled work and discussion follow the
+    // original serial approval, context and durable checkpoint path.
+    if room["executionMode"]=="parallel_readonly" && room["toolsEnabled"]!=true
+        && rounds==1 && initial.len()>=2 && initial.len()<=8
+        && initial.len()==budget && pending.len()==initial.len()
+        && outputs.is_empty()
+        && (token_budget==0 || token_budget>=initial.len() as u64 * 1024)
+    {
+        patch_room(state,room_id,json!({
+            "status":"running","activeAgentId":null,
+            "lastJobId":context.job_id,
+            "lastSourceMessageId":source_id,
+            "pauseReason":null,"lastError":null,
+        }));
+        checkpoint(context,session_id,generation,source_id,&mode,&roster,
+            &initial,&pending,&outputs,budget,true,None)?;
+        let route_pool=model_pool(state,&room);
+        return parallel::run(
+            context,&room,input,room_id,session_id,source_id,owner_text,
+            &task_id,generation,&mode,&roster,&initial,budget,
+            &route_pool,token_budget,
+        ).await;
     }
     patch_room(
         state,

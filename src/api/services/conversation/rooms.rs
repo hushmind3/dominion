@@ -168,6 +168,12 @@ fn validated_config(state: &AppState, id: &str, previous: &Value, body: &Value) 
     if !matches!(routing.as_str(), "discussion" | "round_robin" | "mentioned") {
         return Err(bad("지원하지 않는 발언 방식입니다."));
     }
+    // Opt-in concurrency is restricted to read-only agent replies. Existing
+    // group discussion and tool-enabled turns remain sequential.
+    let execution_mode=text_field(body,previous,"executionMode","sequential",32)?;
+    if !matches!(execution_mode.as_str(),"sequential"|"parallel_readonly"){
+        return Err(bad("지원하지 않는 그룹 실행 방식입니다."));
+    }
     // Owner-picked model pool. FreeLLMAPI exposes dozens of models; the owner
     // checks the ones they trust once and every turn rotates inside that list.
     let models_source = body
@@ -226,7 +232,7 @@ fn validated_config(state: &AppState, id: &str, previous: &Value, body: &Value) 
         return Err(bad("추론 강도 값이 올바르지 않습니다."));
     }
     Ok(json!({
-        "id":id,"name":name,"agentIds":agent_ids,"routingMode":routing,
+        "id":id,"name":name,"agentIds":agent_ids,"routingMode":routing,"executionMode":execution_mode,
         "description":text_field(body,previous,"description","",4000)?,
         "topic":text_field(body,previous,"topic","",16000)?,
         "ownerName":text_field(body,previous,"ownerName","나",100)?,

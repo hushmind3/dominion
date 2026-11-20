@@ -5,7 +5,8 @@ use serde_json::{json,Value};
 use super::response::error;
 
 pub async fn list_sessions(State(state): State<AppState>) -> Json<Value> {
-    Json(json!(state.store.all("session")))
+    Json(json!(state.store.all("session").into_iter()
+        .filter(|session|session["kind"]!="room_worker").collect::<Vec<_>>()))
 }
 
 pub async fn create_session(State(state): State<AppState>, Json(body): Json<Value>) -> Response {

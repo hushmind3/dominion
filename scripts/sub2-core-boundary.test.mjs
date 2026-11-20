@@ -235,3 +235,19 @@ test('final answer persistence and continuity commit are isolated from the infer
  assert.match(finish,/super::continuity::commit_projection\(/);
  assert.match(finish,/cancellation_generation\(session_id\)/);
 });
+
+test('room workers use bounded Tokio JoinSet and remain private to the existing chat surface',()=>{
+ const rooms=source('src/engine/services/conversation/rooms.rs');
+ const workers=source('src/engine/services/conversation/room_parallel.rs');
+ const roomApi=source('src/api/services/conversation/rooms.rs');
+ const sessionApi=source('src/api/services/conversation/sessions.rs');
+ assert.match(rooms,/parallel::run\(/);
+ assert.match(workers,/JoinSet::<WorkerResult>/);
+ assert.match(workers,/const MAX_CONCURRENT:usize=4/);
+ assert.match(workers,/chat::run_turn_background/);
+ assert.match(workers,/tools_enabled:false,tools_execution_enabled:false/);
+ assert.match(workers,/room_workboard::record/);
+ assert.match(roomApi,/executionMode/);
+ assert.match(sessionApi,/room_worker/);
+ assert.doesNotMatch(source('crates/dominion-turn-core/src/lib.rs'),/room_parallel/);
+});
