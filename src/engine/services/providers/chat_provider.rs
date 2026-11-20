@@ -586,7 +586,11 @@ pub(super) async fn stream_completion(
             .and_then(|item|item["maxConcurrency"].as_u64());
         let allowed=configured.unwrap_or(if candidate.local{1}else{4})
             .clamp(1,16) as usize;
-        let grant=state.provider_slot(&candidate.id,&candidate.model,allowed);
+        // Clone the route identity before pinning the admission future: the
+        // successful provider object is moved into the return value.
+        let gate_provider_id=candidate.id.clone();
+        let gate_model=candidate.model.clone();
+        let grant=state.provider_slot(&gate_provider_id,&gate_model,allowed);
         tokio::pin!(grant);
         let _provider_permit=loop{
             tokio::select!{
