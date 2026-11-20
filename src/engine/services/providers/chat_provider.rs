@@ -500,14 +500,26 @@ async fn fallback_candidates(
             })
         })
         .filter(|route| {
-            if request.attachment_ids.is_empty() {
-                return true;
+            let Some(item)=state.store.get("provider",&route.id) else {
+                return false;
+            };
+            // Unknown capability is not a positive vision grant. Tool
+            // compatibility may be native or an existing explicit text
+            // protocol, while explicit toolCalling=false forbids either.
+            if !request.attachment_ids.is_empty()
+                && item["modelCapabilities"][&route.model]["vision"]!=true
+                && item["modelCapabilities"][&route.model]["images"]!=true
+                && item["capabilities"]["vision"]!=true
+                && item["capabilities"]["images"]!=true{
+                return false;
             }
-            // Never silently send an image turn to a text-only route.
-            state.store.get("provider", &route.id).is_some_and(|item| {
-                item["capabilities"]["vision"] == true
-                    || item["capabilities"]["images"] == true
-            })
+            crate::engine::gateway::supports_requirements(
+                &item,&route.model,
+                crate::engine::gateway::ModelRequirements{
+                    tools:!tools.is_empty(),
+                    vision:!request.attachment_ids.is_empty(),
+                    reasoning:false,
+                })
         })
         .map(|route| ProviderRef {
             id: route.id,

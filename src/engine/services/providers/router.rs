@@ -53,6 +53,10 @@ pub fn select_provider(state: &AppState, complexity: Complexity) -> Option<Value
         .into_iter()
         .filter(gateway::provider_eligible)
         .filter(|provider| provider["enabled"] != false)
+        .filter(|provider|gateway::supports_requirements(
+            provider,provider["model"].as_str().unwrap_or(""),
+            gateway::ModelRequirements::default(),
+        ))
         .collect::<Vec<_>>();
     if candidates.is_empty() {
         return None;

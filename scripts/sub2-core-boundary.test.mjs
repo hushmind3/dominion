@@ -315,3 +315,13 @@ test('provider tool history compaction is pure independently testable middleware
  assert.doesNotMatch(source('crates/dominion-turn-core/Cargo.toml'),/dominion-context-policy/);
  assert.match(source('Cargo.toml'),/dominion-context-policy =/);
 });
+
+test('fallback model capabilities are model specific and fail closed on explicit incompatibility',()=>{
+ const gateway=source('src/engine/services/providers/gateway.rs');
+ const completion=source('src/engine/services/providers/chat_provider.rs');
+ assert.match(gateway,/pub struct ModelRequirements/);
+ assert.match(gateway,/pub fn supports_requirements\(/);
+ assert.match(gateway,/modelCapabilities/);
+ assert.match(completion,/gateway::supports_requirements\(/);
+ assert.match(completion,/tools:!tools\.is_empty\(\)/);
+});

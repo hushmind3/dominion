@@ -101,3 +101,7 @@ ProgramIR 실행, 대안 후보 실험, 작업 검토, 정책 스냅샷과 세�
 ## Context middleware 독립 Rust 크레이트
 
 `crates/dominion-context-policy`는 기존 `chat_trace_budget.rs`의 provider-wire 압축 알고리즘을 실제 독립 크레이트로 옮긴 것입니다. `bounded_tool_trace`와 `compact_historical` 및 7개의 단위 회귀 테스트를 보존했습니다. `serde_json` 외부 런타임 의존성이 없으며 SQLite 원본, 도구 영수증, 주인 메시지 내용을 변경하지 않습니다. 완료된 도구 호출+실제 응답을 프로토콜 원자 단위로 다루고 모델에만 짧은 비명령형 요약을 전달하며, 현재 source read가 필요한 상황에서는 원본을 유지합니다. 기존 chat::trace_budget 서비스는 호환 래퍼만 남겨 UI/API 변경 없이 실행 경로에 적용합니다.
+
+## 모델별·엔드포인트별 Capability Admission
+
+`gateway::ModelRequirements`는 `text`, `toolCalling`, `vision`, `reasoningSupported` 등의 명시적 거부를 우선 적용합니다. `provider.modelCapabilities[modelId]`가 있으면 제공자 기본 `capabilities`보다 먼저 적용하며, 대체 모델은 사전에 현재 도구 스키마·이미지 요구사항과 비교합니다. 기존 미등록 제공자/모델은 보수적인 호환 동작을 유지하되 **명시적으로 지원하지 않는 기능을 fallback에서 실행하지 않습니다.** Codex/Claude 등 외부 에이전트 실행기 연결은 이 ModelGateway와 별도 AgentBridge 계약이 필요합니다.

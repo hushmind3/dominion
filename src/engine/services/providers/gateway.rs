@@ -56,6 +56,38 @@ pub fn is_local_provider(provider: &Value) -> bool {
         || base.contains("localhost")
 }
 
+
+/// Stable capability view for one model + endpoint. A model override can have
+/// different limits from the provider's default model; absent declarations
+/// remain unknown and must never be guessed from a model name.
+#[derive(Clone,Copy,Debug,Default,PartialEq,Eq)]
+pub struct ModelRequirements{
+    pub tools:bool,
+    pub vision:bool,
+    pub reasoning:bool,
+}
+pub fn supports_requirements(
+    provider:&Value,model_id:&str,required:ModelRequirements,
+)->bool{
+    let base=&provider["capabilities"];
+    let model=&provider["modelCapabilities"][model_id];
+    let supported=|keys:&[&str]|->bool{
+        for key in keys{
+            if model[*key].as_bool()==Some(false){return false;}
+            if model[*key].as_bool()==Some(true){return true;}
+        }
+        for key in keys{
+            if base[*key].as_bool()==Some(false){return false;}
+            if base[*key].as_bool()==Some(true){return true;}
+        }
+        true
+    };
+    supported(&["text"]) &&
+        (!required.tools || supported(&["toolCalling","tools"])) &&
+        (!required.vision || supported(&["vision","images"])) &&
+        (!required.reasoning || supported(&["reasoningSupported","thinking"]))
+}
+
 /// A provider may explicitly declare `capabilities.text=false`; absence means
 /// unknown, not unqualified.
 pub fn provider_eligible(provider: &Value) -> bool {
@@ -648,6 +680,46 @@ pub fn record_usage_total(
         total_tokens,
         true,
     );
+}
+
+#[cfg(test)]
+mod sub2_capability_tests {
+    use super::*;
+    #[test]
+    fn model_level_negative_capabilities_override_provider_level_positive(){
+        let provider=json!({
+            "model":"basic","capabilities":{
+                "text":true,"toolCalling":true,"vision":true,
+                "reasoningSupported":true
+            },
+            "modelCapabilities":{
+                "basic":{"toolCalling":false,"vision":false},
+                "advanced":{"toolCalling":true,"vision":true}
+            }
+        });
+        assert!(!supports_requirements(&provider,"basic",ModelRequirements{
+            tools:true,..Default::default()
+        }));
+        assert!(!supports_requirements(&provider,"basic",ModelRequirements{
+            vision:true,..Default::default()
+        }));
+        assert!(supports_requirements(&provider,"advanced",ModelRequirements{
+            tools:true,vision:true,reasoning:true,
+        }));
+        assert!(supports_requirements(&provider,"unknown",ModelRequirements{
+            tools:true,..Default::default()
+        }));
+    }
+    #[test]
+    fn explicitly_unsupported_text_or_tools_never_receives_fallback_work(){
+        let provider=json!({"capabilities":{"text":false,"tools":true}});
+        assert!(!supports_requirements(&provider,"any",ModelRequirements::default()));
+        let provider=json!({"capabilities":{"toolCalling":false}});
+        assert!(!supports_requirements(&provider,"model",ModelRequirements{
+            tools:true,..Default::default()
+        }));
+        assert!(supports_requirements(&provider,"model",ModelRequirements::default()));
+    }
 }
 
 #[cfg(test)]
