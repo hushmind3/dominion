@@ -51,6 +51,7 @@ jobs:
           cargo test --lib engine::chat::context_window::tests
           cargo test --lib engine::chat::prompt_sources::tests
           cargo test --lib engine::chat::context::tests::long_real_owner_and_persona_are_source_indexed_not_56k_fixed_prefix
+          cargo test --lib engine::chat::context::tests::multi_turn_architecture_does_not_rebuild_50k_context_from_cached_views
           cargo test --lib engine::tools::tests::prompt_source_reader_rejects_stale_revisions_and_peer_persona
           cargo test --lib engine::chat::context::tests::full_sqlite_transcript_replays_as_small_current_context_without_data_loss
           cargo test --lib engine::tools::tests::historical_evidence_reader_paginates_exact_results_and_enforces_agent_scope

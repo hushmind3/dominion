@@ -762,6 +762,87 @@ mod tests {
     }
 
     #[test]
+    fn multi_turn_architecture_does_not_rebuild_50k_context_from_cached_views(){
+        let (state,dir)=state();
+        state.store.put("session",&json!({"id":"replay","title":"token regression"})).unwrap();
+        let persona=format!("역할: 개발 에이전트.\n{}","이전 성격과 배경 설정.\n".repeat(9_000));
+        let owner=format!("최우선: 원문 보존과 검증.\n{}","과거 참고 정책.\n".repeat(9_000));
+        state.store.put("agent",&json!({"id":"worker","name":"worker",
+            "systemPrompt":persona})).unwrap();
+        state.store.put("assistant_settings",&json!({"id":"global",
+            "enabled":true,"instructions":owner})).unwrap();
+        let provider=crate::engine::chat::ProviderRef{
+            id:"local".into(),name:"local".into(),
+            base_url:"http://localhost:9080/v1".into(),api_key:String::new(),
+            model:"test".into(),tool_mode:"native".into(),
+            reasoning_protocol:"openai".into(),local:true,
+            context_tokens:Some(128_000),max_output_tokens:Some(4096),
+            requests_per_minute:None,kind:"ollama".into(),account_id:None
+        };
+        let archive="REPEATED_IRRELEVANT_WEB_HTML_".repeat(7_000);
+        state.store.write_message(&json!({"session_id":"replay",
+            "role":"user","content":"검색해"})).unwrap();
+        state.store.write_message(&json!({"session_id":"replay","role":"assistant",
+            "agent_id":"worker","tool_calls":[{
+                "id":"fetch-1","type":"function",
+                "function":{"name":"http_fetch","arguments":"{}"}}],
+            "content":"읽는 중"})).unwrap();
+        let original=state.store.write_message(&json!({"session_id":"replay",
+            "role":"tool","agent_id":"worker","tool_call_id":"fetch-1",
+            "content":archive})).unwrap();
+        state.store.write_message(&json!({"session_id":"replay","role":"assistant",
+            "agent_id":"worker","content":"자료 요약 완료"})).unwrap();
+        let baseline=crate::engine::chat::room_context::estimate(
+            &format!("{}\n{}\n{}",persona,owner,archive));
+        assert!(baseline>50_000,"baseline must reproduce a large prompt: {baseline}");
+        let mut selected_sum=0usize;
+        for (index,query) in [
+            "말 짧게 해라","비슷한 앱 만들 수 있냐",
+            "그거는 어떻게?","왜 토큰을 많이 쓰지?","설명 간단하게"
+        ].iter().enumerate(){
+            state.store.write_message(&json!({"session_id":"replay",
+                "role":"user","content":query})).unwrap();
+            let req=crate::engine::chat::TurnRequest::from_value(&json!({
+                "sessionId":"replay","agentId":"worker","input":query,
+                "toolsEnabled":true,"toolsExecutionEnabled":true
+            })).unwrap();
+            let prompt=system_prompt_with_manifest(&state,&req,"replay",query,None);
+            let history=history(&state,"replay",Some("worker"),Some(24_000)).unwrap();
+            let focus=crate::engine::chat::context_window::focus(
+                history,query,false,true);
+            let mut view=vec![json!({"role":"system","content":prompt.prompt,
+                "_dominion_source":format!("query-{index}")})];
+            view.extend(focus);
+            if !prompt.source_instructions.is_empty(){
+                view.push(json!({"role":"system","content":prompt.source_instructions}));
+            }
+            if !prompt.dynamic_context.is_empty(){
+                view.push(json!({"role":"user","content":prompt.dynamic_context}));
+            }
+            let mut plan=crate::engine::chat::continuity::prepare(
+                &state,&provider,&req,"replay",
+                view[0]["content"].as_str().unwrap(),&json!({})).unwrap();
+            let (wire,projection)=crate::engine::chat::continuity::project(
+                &state,&provider,&view,&[],"replay",&mut plan);
+            assert!(projection.is_none());
+            let tokens=crate::engine::chat::room_context::input_estimate(&wire,&[]);
+            selected_sum+=tokens;
+            assert!(tokens<baseline/3,
+                "short follow-up must not rehydrate original persona and HTML: {tokens}/{baseline}");
+            assert!(!json!(wire).to_string().contains(
+                &"REPEATED_IRRELEVANT_WEB_HTML_".repeat(50)));
+            assert_eq!(plan["workingView"]["mode"],"selected-private-context-v1");
+            state.store.write_message(&json!({"session_id":"replay",
+                "role":"assistant","agent_id":"worker","content":format!("답변 {index}")})).unwrap();
+        }
+        assert!(selected_sum < baseline*2,
+            "five cheap follow-ups must cost less than two full legacy prompts: {selected_sum} / {baseline}");
+        assert_eq!(state.store.message(original["id"].as_str().unwrap()).unwrap()["content"],
+            archive,"source evidence stays recoverable for exact quotes");
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn long_real_owner_and_persona_are_source_indexed_not_56k_fixed_prefix(){
         let (state,dir)=state();
         state.store.put("session",&json!({"id":"prompt-case"}));
