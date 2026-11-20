@@ -755,14 +755,14 @@ mod tests {
             "arguments":{"content":"SECRET_SHOULD_NOT_ENTER_PEER_CONTEXT"},
             "toolReceipt":{"verified":true}
         })).unwrap();
-        let message=state.store.write_message(&json!({
+        let published_message=state.store.write_message(&json!({
             "id":"writer-answer","session_id":"room:r","role":"assistant",
             "agent_id":"writer","content":"작업을 완료했습니다.",
             "metadata":{"authorKind":"agent","executionId":"run",
                 "replyToMessageId":"current"}
         })).unwrap();
         assert!(crate::addons::room_board::publish(
-            &state,"r","room:r","current",&message).unwrap());
+            &state,"r","room:r","current",&published_message).unwrap());
         let request=TurnRequest::from_value(&json!({
             "input":"파일을 바꾸고 검토해라.","agentId":"a","toolsEnabled":false
         })).unwrap();
