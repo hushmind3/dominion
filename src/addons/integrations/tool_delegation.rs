@@ -38,6 +38,10 @@ pub(super) async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Valu
     let profile = args["profile"].as_str().unwrap_or("general");
     let external=args["externalRuntime"].as_str();
     let resume_from=args["resumeFromJobId"].as_str();
+    if !args["resumeFromJobId"].is_null()
+        &&resume_from.is_none_or(str::is_empty){
+        return Err("resumeFromJobId는 비어 있지 않은 문자열이어야 합니다.".into());
+    }
     if resume_from.is_some()&&external.is_none(){
         return Err("외부 CLI 작업에만 resumeFromJobId를 사용할 수 있습니다.".into());
     }
