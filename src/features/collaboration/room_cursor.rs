@@ -52,6 +52,20 @@ pub(crate) fn plan(
                 && m["tool_calls"].as_array().is_none_or(Vec::is_empty)))
             && m["id"].as_str().is_some_and(|id|!id.is_empty())
     }).collect::<Vec<_>>();
+    // The first turn establishes a baseline at the latest committed room
+    // record. Historical messages are still searchable by the existing
+    // relevance ranker; they are not newly delivered to a joining agent.
+    // Later turns use the saved anchor to deliver a contiguous unread prefix.
+    if previous.is_none() {
+        return Ok(Window {
+            required_indices:Vec::new(),
+            through_message_id:unread.last()
+                .and_then(|(_,m)|m["id"].as_str()).map(str::to_string),
+            previous_message_id:None,
+            unread_remaining:0,
+            oversized_first_unread:false,
+        });
+    }
     let mut required=Vec::new();
     let mut chars=0usize;
     for (index,m) in unread.iter().take(MAX_UNREAD_PER_TURN) {
@@ -91,15 +105,20 @@ mod tests {
             if i==0 {"user"} else {"assistant"},"room:one","short"))
             .collect::<Vec<_>>();
         let a=plan(&messages,"room:one","a","m0",None).unwrap();
-        assert_eq!(a.required_indices,vec![0,1,2,3]);
-        assert_eq!(a.through_message_id.as_deref(),Some("m3"));
-        assert_eq!(a.unread_remaining,7);
-        let cursor=checkpoint("room:one","a","owner","m3");
+        assert!(a.required_indices.is_empty(),"bootstrap uses existing context ranker");
+        assert_eq!(a.through_message_id.as_deref(),Some("m10"));
+        let cursor=checkpoint("room:one","a","m0","m0");
         let b=plan(&messages,"room:one","a","m0",Some(&cursor)).unwrap();
-        assert_eq!(b.required_indices,vec![4,5,6,7]);
-        assert_eq!(b.through_message_id.as_deref(),Some("m7"));
-        let c=plan(&messages,"room:one","b","m0",None).unwrap();
-        assert_eq!(c.required_indices,vec![0,1,2,3],"agents cannot share cursors");
+        assert_eq!(b.required_indices,vec![1,2,3,4]);
+        assert_eq!(b.through_message_id.as_deref(),Some("m4"));
+        assert_eq!(b.unread_remaining,6);
+        let next=checkpoint("room:one","a","m0","m4");
+        let again=plan(&messages,"room:one","a","m0",Some(&next)).unwrap();
+        assert_eq!(again.required_indices,vec![5,6,7,8]);
+        assert_eq!(again.through_message_id.as_deref(),Some("m8"));
+        let other=plan(&messages,"room:one","b","m0",None).unwrap();
+        assert!(other.required_indices.is_empty());
+        assert_eq!(other.through_message_id.as_deref(),Some("m10"));
     }
     #[test]
     fn cursors_fail_closed_for_other_sessions_and_missing_anchors(){
@@ -112,14 +131,16 @@ mod tests {
     #[test]
     fn oversized_unread_message_is_not_acked_or_silently_skipped(){
         let messages=vec![
+            msg("previous","user","room:one","old"),
             msg("large","user","room:one",&"x".repeat(MAX_REQUIRED_UNREAD_CHARS+1)),
             msg("small","assistant","room:one","good"),
         ];
-        let window=plan(&messages,"room:one","a","large",None).unwrap();
+        let prior=checkpoint("room:one","a","previous","previous");
+        let window=plan(&messages,"room:one","a","large",Some(&prior)).unwrap();
         assert!(window.required_indices.is_empty());
         assert_eq!(window.unread_remaining,2);
         assert!(window.oversized_first_unread);
-        assert!(window.through_message_id.is_none());
+        assert_eq!(window.through_message_id.as_deref(),Some("previous"));
     }
     #[test]
     fn tool_fragments_and_foreign_sessions_are_not_acknowledged(){
@@ -130,7 +151,7 @@ mod tests {
             msg("owner","user","room:one","current"),
         ];
         let window=plan(&messages,"room:one","a","owner",None).unwrap();
-        assert_eq!(window.required_indices,vec![2]);
+        assert!(window.required_indices.is_empty());
         assert_eq!(window.through_message_id.as_deref(),Some("owner"));
     }
     #[test]
@@ -140,7 +161,7 @@ mod tests {
         messages.push(msg("current","user","room:one","new owner task"));
         messages.push(msg("peer","assistant","room:one","reply on this task"));
         let window=plan(&messages,"room:one","new-agent","current",None).unwrap();
-        assert_eq!(window.required_indices,vec![100,101]);
+        assert!(window.required_indices.is_empty());
         assert_eq!(window.through_message_id.as_deref(),Some("peer"));
         assert_eq!(window.unread_remaining,0);
         assert!(!window.required_indices.contains(&0));
