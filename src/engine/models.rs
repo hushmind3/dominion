@@ -332,10 +332,7 @@ pub fn installed(state: &AppState) -> Vec<Value> {
     let available = gguf.iter()
         .map(|path| path.to_string_lossy().to_string())
         .collect::<std::collections::HashSet<_>>();
-    let managed_paths=gguf.iter()
-        .filter_map(|path|path.canonicalize().ok())
-        .collect::<std::collections::HashSet<_>>();
-    gguf.into_iter()
+    let complete_gguf=gguf.into_iter()
         .filter(|path| {
             let path = path.to_string_lossy();
             match gguf_shard_parts(&path) {
@@ -345,6 +342,13 @@ pub fn installed(state: &AppState) -> Vec<Value> {
                         available.contains(&format!("{prefix}-{index:05}-of-{total:05}.gguf"))),
             }
         })
+        .collect::<Vec<_>>();
+    // Hide aliases only for models that are actually visible in the managed
+    // list; incomplete split-GGUF sets have no managed catalog entry.
+    let managed_paths=complete_gguf.iter()
+        .filter_map(|path|path.canonicalize().ok())
+        .collect::<std::collections::HashSet<_>>();
+    complete_gguf.into_iter()
         .filter_map(|path| {
             let metadata = std::fs::metadata(&path).ok()?;
             let bytes = if let Some((prefix, _, total)) =
