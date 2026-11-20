@@ -9,28 +9,6 @@ use axum::{
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-pub async fn youtube_uploads(State(state): State<AppState>) -> Json<Value> {
-    let mut uploads = crate::api::video::archived_jobs(&state,Some("youtube_upload"),false);
-    uploads.sort_by(|a, b| {
-        b["createdAt"]
-            .as_str()
-            .unwrap_or("")
-            .cmp(a["createdAt"].as_str().unwrap_or(""))
-    });
-    Json(json!(uploads))
-}
-
-pub async fn youtube_status(State(state): State<AppState>) -> Json<Value> {
-    let connection = crate::engine::oauth::status(&state)
-        .into_iter()
-        .find(|p| p["id"] == "youtube")
-        .unwrap_or(json!({}));
-    Json(
-        json!({"connected":connection["connected"],"uploadAllowed":false,"archiveOnly":true,"replacement":"MCP/Connections","account":connection["account"],"uploads":crate::api::video::archived_jobs(&state,Some("youtube_upload"),false),"channel":null}),
-    )
-}
-
-
 /// Opens the platform folder picker. Headless hosts can set DOMINION_FOLDER
 /// to bypass the dialog; the result is always a real existing directory.
 pub async fn pick_folder() -> Response {
@@ -135,8 +113,8 @@ pub async fn webhook(
     }
 }
 
-/// Compatibility actions for YouTube live/upload flows. Each maps to the
-/// existing OAuth/video implementation instead of a 501 stub.
+/// Generic binary attachment upload used by the active compatibility API.
+/// This route does not generate or publish media.
 pub async fn upload(
     State(state): State<AppState>,
     Query(query): Query<HashMap<String, String>>,
