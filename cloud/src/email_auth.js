@@ -52,9 +52,10 @@ export async function startEmailLogin(request,env){
  };
  let sent=false;
  if(env.EMAIL?.send){
-  // Cloudflare Email Service (2026); keep the Resend adapter for other plans.
+  // Prefer native delivery, then try Resend if the native sender fails.
   try{await env.EMAIL.send(message);sent=true}catch{}
- }else if(env.RESEND_API_KEY){
+ }
+ if(!sent&&env.RESEND_API_KEY){
   const response=await fetch('https://api.resend.com/emails',{method:'POST',
    headers:{authorization:'Bearer '+env.RESEND_API_KEY,'content-type':'application/json'},
    body:JSON.stringify(message),signal:AbortSignal.timeout(12000)}).catch(()=>null);
