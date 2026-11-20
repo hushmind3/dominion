@@ -5,6 +5,7 @@ pub mod translation;
 pub mod algorithms;
 pub mod settings;
 pub mod executions;
+pub mod runs;
 pub mod tasks;
 pub mod task_teams;
 pub mod experience;
@@ -117,6 +118,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/sdk/runs/:id/steer",post(sdk_runs::steer))
         .route("/api/tasks", get(tasks::list))
         .route("/api/tasks/:id", get(tasks::one))
+        .route("/api/runs/:id",get(runs::one))
         .route("/api/task-teams",get(task_teams::list).post(task_teams::create))
         .route("/api/task-teams/:id",get(task_teams::one))
         .route("/api/task-teams/:id/cancel",post(task_teams::cancel))

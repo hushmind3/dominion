@@ -11,6 +11,7 @@ pub mod recovery;
 pub mod jobs;
 pub mod lease;
 pub mod run_state;
+pub(crate) mod run_view;
 
 
 use crate::conversation::chat;
