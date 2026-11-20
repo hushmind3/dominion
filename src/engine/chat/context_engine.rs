@@ -48,8 +48,8 @@ pub(super) fn compile_private(
     query: &str,
     improvements: Option<&[Value]>,
     execution_id: Option<&str>,
-    provider_context_tokens: Option<u32>,
-    provider_max_output_tokens: Option<u32>,
+    provider_context_tokens: Option<u64>,
+    provider_max_output_tokens: Option<u64>,
     tools: &[Value],
 ) -> Result<CompiledPrivate, String> {
     let system=context::system_prompt_with_manifest_at(
