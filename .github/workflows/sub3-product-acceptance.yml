@@ -42,6 +42,8 @@ jobs:
           cargo test --bin dominion-rust features::collaboration::rooms::tests
           cargo test --bin dominion-rust features::collaboration::workboard::tests
           cargo test --bin dominion-rust features::collaboration::task_team::tests
+          cargo test --bin dominion-rust features::collaboration::worktree::tests
+          cargo test --bin dominion-rust host::execution::run_view::tests
           cargo test --bin dominion-rust api::task_teams::tests
           cargo test --bin dominion-rust host::execution::lease::tests
           cargo test --bin dominion-rust host::execution::jobs::tests
