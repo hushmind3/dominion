@@ -7,7 +7,7 @@ const ui=load('web/src/pages/Connections.tsx');
 const broker=load('src/api/cli_oauth.rs');
 const oauth=load('src/integrations/accounts/oauth.rs');
 const accountTools=load('src/integrations/accounts/tools.rs');
-const tools=load('src/engine/tools.rs');
+const tools=load('src/integrations/local_tools.rs');
 
 test('only the quick-connect UI exposes GitHub and Google sign-in',()=>{
   const quick=load('web/src/components/ConnectedAccounts.tsx');

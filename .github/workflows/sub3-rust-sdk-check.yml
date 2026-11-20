@@ -27,7 +27,7 @@ on:
       - 'src/engine/github_files.rs'
       - 'src/engine/github_workflow.rs'
       - 'src/engine/google_workspace.rs'
-      - 'src/engine/tools.rs'
+      - 'src/integrations/local_tools.rs'
       - 'src/engine/oauth.rs'
       - 'src/api/cli_oauth.rs'
       - 'src/api/collections.rs'

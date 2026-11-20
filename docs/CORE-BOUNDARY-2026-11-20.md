@@ -4,7 +4,7 @@
 
 Owner utterance → model inference → authorized action selection → effect execution → observed result → next model turn/final answer. A minimal engine **still must** retain approval/effect identity, cancellation, durable journal and verification to avoid replaying unknown writes.
 
-The independent `crates/dominion-agent-sdk/` contains typed model/tool/evidence/journal ports and the native agent loop. The Rust product host `src/engine/` is now a reduced composition adapter with 11 top-level module declarations. Its 11 modules contain the native agent execution adapter, local filesystem/shell execution, goal/run state, job execution, evidence/verification and recovery. The conversation service's streaming, per-room context and chat provider adapters are separately owned by `src/conversation/chat/`.
+The independent `crates/dominion-agent-sdk/` contains typed model/tool/evidence/journal ports and the native agent loop. The Rust product host `src/engine/` is now a reduced composition adapter with 10 top-level module declarations. Its 10 modules contain the native agent execution adapter, goal/run state, job execution, evidence/verification and recovery. The workspace/file/shell driver implementation now lives at `src/integrations/local_tools.rs` and is called through the existing SDK Tools host port. The conversation service's streaming, per-room context and chat provider adapters are separately owned by `src/conversation/chat/`.
 
 | Ownership | Path | Former engine modules |
 | --- | --- | ---: |
@@ -25,7 +25,7 @@ The former `src/engine/chat/` implementation (27 Rust files) now lives in `src/c
 
 - `bootstrap.rs` boots the executor independently of `features::start` and `integrations::start`; feature recovery, maintenance and optional algorithms are coordinated outside the core worker.
 - `engine/jobs.rs` owns only `prompt` and `resume`; rooms, learning and reflection are handled by `features::dispatch_job`; Discord by `integrations::registry::dispatch_job`.
-- `engine/tools.rs` declares and implements workspace/file/shell execution and delegates feature/tool declarations through `features::registry` and `integrations::registry`. Memory tools move to `features/cognition/tools.rs`, web search/HTTP transport to `integrations/network.rs`.
+- `integrations/local_tools.rs` declares and implements workspace/file/shell execution and delegates feature/tool declarations through `features::registry` and `integrations::registry`. Memory tools move to `features/cognition/tools.rs`, web search/HTTP transport to `integrations/network.rs`.
 - Existing approvals, user-selected permissions, MCP schema checks, durable receipts, tool identifiers, SQLite data shapes and HTTP/UI routing are preserved.
 - The 2026 comparison target is a minimal agent-loop spine with service/provider/feature plugins around it, as in [DeepSeek Harness official architecture](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md) and [Qwen Code architecture](https://github.com/QwenLM/qwen-code/blob/main/docs/developers/architecture.md). This refactor is independently authored Rust, **not** importing those runtimes.
 
@@ -38,4 +38,4 @@ The former `src/engine/chat/` implementation (27 Rust files) now lives in `src/c
 
 ## Regression protection
 
-`scripts/core-boundary.test.mjs` is part of the sub3 product CI and asserts the 11 core declarations, 45 relocated optional modules, and registry-based dispatch and execution. `scripts/integration-boundary.test.mjs` continues to police external connector ownership. Focused Rust CI filters were changed to follow the relocated test modules; avoiding 0-test false positives is part of the refactor.
+`scripts/core-boundary.test.mjs` is part of the sub3 product CI and asserts the 10 core declarations, 45 relocated optional modules, and registry-based dispatch and execution. `scripts/integration-boundary.test.mjs` continues to police external connector ownership. Focused Rust CI filters were changed to follow the relocated test modules; avoiding 0-test false positives is part of the refactor.

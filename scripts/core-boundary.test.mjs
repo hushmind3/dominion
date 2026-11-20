@@ -15,12 +15,14 @@ const groups={
  forensics:['native_replay','native_adjudication']
 };
 test('only the language-to-action execution spine is declared by engine',()=>{
- assert.deepEqual(coreNames.sort(),['goal_control','native_agent','native_evidence','effect','program','verification','recovery','jobs','lease','run_state','tools'].sort());
+ assert.deepEqual(coreNames.sort(),['goal_control','native_agent','native_evidence','effect','program','verification','recovery','jobs','lease','run_state'].sort());
  assert.ok(existsSync(path.join(root,'crates/dominion-agent-sdk/src/lib.rs')));
  assert.match(read('src/main.rs'),/mod features;/);
  assert.match(read('src/main.rs'),/mod conversation;/);
  assert.equal(existsSync(path.join(root,'src/engine/chat/mod.rs')),false);
  assert.ok(existsSync(path.join(root,'src/conversation/chat/mod.rs')));
+ assert.equal(existsSync(path.join(root,'src/engine/tools.rs')),false);
+ assert.ok(existsSync(path.join(root,'src/integrations/local_tools.rs')));
 });
 test('optional module implementations cannot be reintroduced under engine',()=>{
  for(const [group,names] of Object.entries(groups)){
@@ -40,7 +42,7 @@ test('non-core jobs and tools are dispatched through feature registries',()=>{
  for(const kind of ['room','meeting','learn','reflect','discord']){
   assert.doesNotMatch(jobs,new RegExp('"'+kind+'"\\s*=>'));
  }
- const tools=read('src/engine/tools.rs');
+ const tools=read('src/integrations/local_tools.rs');
  assert.match(tools,/features::registry::definitions/);
  assert.match(tools,/integrations::registry::definitions/);
  assert.doesNotMatch(tools,/tool\("(?:memory_store|memory_search|web_search|http_fetch|code_search)"/);

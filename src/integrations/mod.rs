@@ -7,6 +7,7 @@ pub mod browser;
 pub mod skills;
 pub mod registry;
 pub mod network;
+pub mod local_tools;
 use crate::state::AppState;
 use std::sync::Arc;
 

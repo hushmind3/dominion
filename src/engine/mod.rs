@@ -18,7 +18,8 @@ pub mod recovery;
 pub mod jobs;
 pub mod lease;
 pub mod run_state;
-pub mod tools;
+// Actual workspace/file/shell drivers live with optional local integrations.
+pub use crate::integrations::local_tools as tools;
 
 use crate::state::AppState;
 use serde_json::Value;

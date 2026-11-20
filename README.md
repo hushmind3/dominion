@@ -131,7 +131,7 @@ MCP sessions, messaging transports, browser CDP control, local Skills and third-
 
 ## Minimal language-to-action core (2026-11-20)
 
-The host `src/engine/` now declares **11 executable modules**: native agent entry and model/tool execution mediation, durable jobs, approvals/effects, plan IR, verification, cancellation/recovery, leasing and run state. **45 former engine modules** are now grouped in `src/features/` as cognition, collaboration, model providers, product platform and forensics. MCP, messaging, account connections, browser, Skills and web networking remain in `src/integrations/`.
+The host `src/engine/` now declares **10 executable modules**: native agent entry and model/tool execution mediation, durable jobs, approvals/effects, plan IR, verification, cancellation/recovery, leasing and run state. **45 former engine modules** are now grouped in `src/features/` as cognition, collaboration, model providers, product platform and forensics. MCP, messaging, account connections, browser, Skills and web networking remain in `src/integrations/`.
 
 Core jobs execute only `prompt` and `resume` directly; other job kinds run through `features::dispatch_job` or `integrations::registry::dispatch_job`. Optional memory tools, account tools, browser, Skill tools and network tools register outside `engine/tools.rs` while sharing the existing approval/effect journal. All UI menus, API routes and SQLite record kinds are unchanged.
 

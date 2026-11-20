@@ -39,7 +39,7 @@ test('connector ownership stays out of agent worker and host tool catalog',()=>{
  assert.doesNotMatch(state,/pub\(crate\) mcp_sessions:/);
  assert.match(source('src/bootstrap.rs'),/integrations::start\(state.clone\(\)\)/);
  assert.doesNotMatch(source('src/engine/jobs.rs'),/channel_adapter::start/);
- const tools=source('src/engine/tools.rs');
+ const tools=source('src/integrations/local_tools.rs');
  assert.doesNotMatch(tools,/tool\("(?:github_|google_workspace|account_status)/);
  assert.doesNotMatch(tools,/async fn github_api/);
  assert.match(tools,/integrations::registry::execute/);
