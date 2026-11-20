@@ -21,6 +21,7 @@ fn wire_message(message: &Value) -> Value {
         object.remove("_dominion_peer");
         object.remove("_dominion_volatile");
         object.remove("_dominion_context_snapshot");
+        object.remove("_dominion_context_reset");
     }
     value
 }
@@ -358,7 +359,9 @@ pub(crate) fn project(
     let fresh_private_context=fresh.iter().find(|frame|frame["key"]=="private-context:snapshot")
         .map(|frame|&frame["message"]);
     let private_context_changed=old_private_context!=fresh_private_context;
+    let private_light_reset=messages[0]["_dominion_context_reset"]==true;
     let mut reason = if frames.is_empty() { Some("initial") }
+        else if private_light_reset { Some("private_light_chat_reset") }
         else if private_context_changed { Some("private_context_changed") }
         else if legacy_volatile { Some("legacy_volatile_context") }
         else if previous["signature"] != signature { Some("contract_changed") }
