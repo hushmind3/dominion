@@ -17,7 +17,7 @@ use dominion_agent_runtime::scheduler;
 mod acceptance;
 pub use dominion_agent_algorithms::{AgentAlgorithm,StandardAlgorithm,Intent};
 pub use dominion_agent_algorithms::{tool_relevance,tool_relevance_with_schema};
-use dominion_agent_algorithms::{tool_discovery,failure_guidance};
+use dominion_agent_algorithms::{context,tool_discovery,failure_guidance};
 use dominion_agent_runtime::schema;
 pub use schema::validate_arguments;
 pub mod replay;
