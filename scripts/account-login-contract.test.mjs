@@ -8,18 +8,21 @@ const broker=load('src/api/cli_oauth.rs');
 const oauth=load('src/engine/oauth.rs');
 const tools=load('src/engine/tools.rs');
 
-test('connected-account UI offers one-click browser login and never developer credentials',()=>{
-  assert.match(ui,/async\(item:OAuthProvider\)/);
-  assert.match(ui,/github'\?'github':item\.id==='google'\?'google_workspace'/);
-  assert.match(ui,/\/api\/providers\/cli\//);
-  assert.match(ui,/\/login\/status/);
-  assert.match(ui,/공식 로그인 페이지 열기/);
-  assert.match(ui,/연결 해제/);
-  assert.match(ui,/closeCliFlow/);
-  assert.doesNotMatch(ui,/OAuth 앱 설정/);
-  assert.doesNotMatch(ui,/<FormField label="Client ID">/);
-  assert.doesNotMatch(ui,/Client Secret/);
-  assert.doesNotMatch(ui,/setOauthEditor|clientSecret/);
+test('only the quick-connect UI exposes GitHub and Google sign-in',()=>{
+  const quick=load('web/src/components/ConnectedAccounts.tsx');
+  const accounts=load('web/src/pages/Connections.tsx');
+  const operations=load('web/src/pages/Operations.tsx');
+  const authority=load('src/api/channels.rs');
+  assert.match(quick,/supportedOAuthAccounts\(providers\.value\)/);
+  assert.match(accounts,/supportedOAuthAccounts\(oauth\.value\)/);
+  assert.match(quick,/await openOAuth\(id\)/);
+  assert.doesNotMatch(accounts,/\bopenOAuth\b/);
+  assert.doesNotMatch(operations,/\bopenOAuth\b/);
+  assert.doesNotMatch(operations,/\/api\/oauth\/providers/);
+  assert.match(authority,/is_supported_provider/);
+  assert.doesNotMatch(oauth,/id:\s*"youtube"/);
+  assert.doesNotMatch(oauth,/auth\/youtube\./);
+  assert.match(oauth,/pub fn purge_retired_grants/);
 });
 
 test('provider-owned browser flow uses fixed official CLI binaries not user-supplied shells',()=>{

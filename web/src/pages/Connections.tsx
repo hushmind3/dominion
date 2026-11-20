@@ -3,7 +3,7 @@ import {StatusPill} from '../components/StatusPill'
 import {Button,TextInput,SelectInput} from '../components/Primitives'
 import {useEffect,useMemo,useState} from 'react'
 import {Activity,Blocks,BookOpenText,PackagePlus,Sparkles,Server,ArrowRight,Check,ChevronRight,Cloud,ExternalLink,Filter,Globe2,Github,KeyRound,Link2,LockKeyhole,MessageCircle,Plus,RadioTower,Search,Send,Settings2,ShieldCheck,Trash2,UsersRound,X} from 'lucide-react'
-import {del,openOAuth,post} from '../api'
+import {del,post} from '../api'
 import {Action,FormField,Headline,Notice,Panel,StateTag,Subheading,useRemote} from '../components/UI'
 import {t,useLocale,type LocaleKey} from '../i18n'
 import {ExtensionsPage,type ExtensionTab} from './Extensions'
@@ -62,10 +62,6 @@ export function ConnectionsPage(){
    setProbe(x=>({...x,[id]:r.verified?t('conn.dlg.verified'):r.message||t('conn.dlg.checkNeeded')}));
   }catch(e){setProbe(x=>({...x,[id]:(e as Error).message}))}
  };
- const connect=async(id:OAuthAccountId)=>{
-  setError('');
-  try{await openOAuth(id)}catch(e){setError((e as Error).message)}
- };
  const saveOAuthApp=async()=>{
   if(!oauthEditor||oauthSaving)return
   setOauthSaving(true);setOauthError('')
@@ -113,7 +109,7 @@ export function ConnectionsPage(){
   </>}
   {section==='accounts'&&<>
    <Subheading title={t('conn.accounts')} extra={<span className="text-[10px] font-bold uppercase tracking-widest text-[#9C9388]">{t('ui.label.oauth')}</span>}/>
-   <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">{supportedOAuthAccounts(oauth.value).map(item=>{const account=accounts.value.find(a=>a.provider===item.id&&a.hasToken);const Icon=item.id==='github'?Github:Globe2;return <Panel className="flex min-w-0 flex-col gap-3 p-5" key={item.id}><div className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]"><Icon size={28}/></div><h3>{item.id==='github'?'GitHub':'Google'}</h3><p>{item.id==='github'?t('conn.dlg.githubTitle'):t('conn.dlg.googleTitle')}</p><p className="text-[11px] leading-5 text-[#7C7469]">{t(item.id==='github'?'conn.githubCapability':'conn.googleCapability')}</p><small className="break-words text-[10px] text-[#9C9388]">{t('conn.scopeName')}: {account?.scopes||item.scope}</small><div className="integration-status"><StateTag online={Boolean(account)}>{account?t('conn.accountReady',{name:account.displayName}):item.configured?t('conn.oauthReady'):t('conn.oauthNeeded')}</StateTag></div><div className="mt-auto flex flex-wrap items-center gap-2"><Action variant="secondary" onClick={()=>{setOauthError('');setOauthEditor({id:item.id,clientId:'',clientSecret:''})}}><Settings2 size={15}/>{t('conn.oauthAppSetup')}</Action><Action variant="secondary" disabled={!item.configured} onClick={()=>connect(item.id)}><Link2 size={16}/>{account?t('conn.reconnect'):t('conn.connect')}</Action></div></Panel>})}</div>
+   <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">{supportedOAuthAccounts(oauth.value).map(item=>{const account=accounts.value.find(a=>a.provider===item.id&&a.hasToken);const Icon=item.id==='github'?Github:Globe2;return <Panel className="flex min-w-0 flex-col gap-3 p-5" key={item.id}><div className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]"><Icon size={28}/></div><h3>{item.id==='github'?'GitHub':'Google'}</h3><p>{item.id==='github'?t('conn.dlg.githubTitle'):t('conn.dlg.googleTitle')}</p><p className="text-[11px] leading-5 text-[#7C7469]">{t(item.id==='github'?'conn.githubCapability':'conn.googleCapability')}</p><small className="break-words text-[10px] text-[#9C9388]">{t('conn.scopeName')}: {account?.scopes||item.scope}</small><div className="integration-status"><StateTag online={Boolean(account)}>{account?t('conn.accountReady',{name:account.displayName}):item.configured?t('conn.oauthReady'):t('conn.oauthNeeded')}</StateTag></div><div className="mt-auto flex flex-wrap items-center gap-2"><Action variant="secondary" onClick={()=>{setOauthError('');setOauthEditor({id:item.id,clientId:'',clientSecret:''})}}><Settings2 size={15}/>{t('conn.oauthAppSetup')}</Action></div></Panel>})}</div>
   </>}
   {oauthEditor&&<DialogBackdrop onDismiss={()=>{if(!oauthSaving)setOauthEditor(null)}}><DialogPanel size="wide" aria-label={t('conn.oauthAppSetup')}>
    <div className="flex items-center justify-between border-b border-[#EFE9DF] p-5"><div><small>OAUTH · {oauthEditor.id.toUpperCase()}</small><h2 className="text-lg font-bold">{t('conn.oauthAppSetup')}</h2></div><Button size="icon" variant="ghost" disabled={oauthSaving} onClick={()=>setOauthEditor(null)} aria-label={t('conn.cancel')}><X size={18}/></Button></div>

@@ -101,6 +101,14 @@ for(const file of ['web/src/pages/Connections.tsx',
 assert.ok(read('src/api/channels.rs').includes('is_supported_provider'),
  'Archived OAuth records are still exposed through the account API');
 
+const accountPage=read('web/src/pages/Connections.tsx');
+const operationsPage=read('web/src/pages/Operations.tsx');
+assert.ok(!/\bopenOAuth\b/.test(accountPage),
+ 'Duplicate OAuth login button returned to app settings');
+assert.ok(!/\bopenOAuth\b/.test(operationsPage),
+ 'Legacy OAuth login button returned to advanced settings');
+assert.ok(!operationsPage.includes("'/api/oauth/providers'"),
+ 'Duplicate OAuth provider loading returned to advanced settings');
 const app=read('web/src/App.tsx'),nav=read('web/src/components/WorkspaceShell.tsx');
 for(const p of ['ChatPage','MemoryPage','ConnectionsPage','RoomsPage','HomePage'])
  assert.ok(app.includes(p),'Retained feature disconnected from app: '+p);

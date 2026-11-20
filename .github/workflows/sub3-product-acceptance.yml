@@ -98,6 +98,7 @@ jobs:
           npm ci --prefix web --no-audit --no-fund
           npm run typecheck --prefix web
           node --experimental-strip-types --test web/tests/*.test.mjs
+          node --test scripts/account-login-contract.test.mjs
           npm run build --prefix web
       - name: SDK client type contracts and HTTP transport tests
         run: |
