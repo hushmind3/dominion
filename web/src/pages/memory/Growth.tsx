@@ -14,8 +14,6 @@ type Usage={calls?:number;totalTokens?:number;completionTokens?:number;groups?:U
 type Transfer={
  principles?:any[];rules?:any[];usages?:any[];learningCases?:any[];
 }
-type Policy={id?:string;slot?:string;name?:string;status?:string;evidenceGrade?:string;lastExperiment?:any}
-type Experiment={id?:string;status?:string;fixture?:string;strategyId?:string;prompt?:string;error?:string}
 const number=(value:any)=>typeof value==='number'?value:0
 const percent=(value:any)=>`${Math.round(number(value)*100)}%`
 const label=(value:any,fallback=t('growth.none'))=>typeof value==='string'&&value?value:fallback
@@ -25,11 +23,6 @@ export function GrowthDashboard(){
  const synergy=useRemote<Synergy>('/api/synergy',{agents:[],sharedMethods:[],algorithmStats:[]})
  const usage=useRemote<Usage>('/api/model-usage',{groups:[]})
  const transfer=useRemote<Transfer>('/api/transfer',{principles:[],rules:[],usages:[],learningCases:[]})
- const policies=useRemote<Policy[]>('/api/policies',[])
- const searches=useRemote<any[]>('/api/policy-searches',[])
- const experiments=useRemote<Experiment[]>('/api/experiment-requests',[])
- const evaluations=useRemote<{items?:any[]}>('/api/algorithms/evaluations',{items:[]})
- const latestEval=(evaluations.value.items||[])[0]
  const agents=(synergy.value.agents||[]).filter(agent=>number(agent.growth?.runs)>0).sort((a,b)=>number(b.growth?.runs)-number(a.growth?.runs))
  const rated=agents.reduce((sum,agent)=>sum+number(agent.growth?.ratedRuns),0)
  const principles=transfer.value.principles||[]
@@ -40,7 +33,7 @@ export function GrowthDashboard(){
  const tokens=number(usage.value.totalTokens)
  const groups=(usage.value.groups||[]).slice(0,10)
  return <div className="mt-3 grid gap-4">
-  <Notice message={synergy.error||usage.error||transfer.error||policies.error||searches.error||experiments.error}/>
+  <Notice message={synergy.error||usage.error||transfer.error}/>
   <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
    <div className="rounded-xl border border-[#EFE9DF] bg-white p-3"><small className="text-[10px] font-semibold text-[#8A8176]">{t('growth.verifiedRuns')}</small><strong className="block text-lg">{rated}</strong></div>
    <div className="rounded-xl border border-[#EFE9DF] bg-white p-3"><small className="text-[10px] font-semibold text-[#8A8176]">{t('growth.activePrinciples')}</small><strong className="block text-lg">{activePrinciples}</strong></div>
@@ -92,16 +85,5 @@ export function GrowthDashboard(){
    </div>)}</div>}
   </Panel>
 
-  <Panel className="min-w-0 p-4">
-   <Subheading title={t('growth.experiments')} extra={<span className="text-[10px] text-[#9C9388]">{t('ui.label.evidenceGate')}</span>}/>
-   <div className="grid gap-1 text-[11px]">
-    {policies.value.slice(0,6).map(policy=><div className="flex flex-wrap items-center gap-2 rounded-lg border border-[#EFE9DF] px-3 py-2" key={policy.id}><strong>{label(policy.slot,t('growth.policy'))}</strong><span className="text-[#7C7469]">{label(policy.name)}</span><span className="ml-auto">{label(policy.status)} · {label(policy.evidenceGrade,'E0')}</span></div>)}
-    {experiments.value.slice(0,6).map(experiment=><div className="flex flex-wrap items-center gap-2 rounded-lg border border-[#EFE9DF] px-3 py-2" key={experiment.id}><strong>{t('growth.experiment')}</strong><span className="text-[#7C7469]">{label(experiment.fixture,t('growth.noFixture'))} · {label(experiment.strategyId)}</span><span className="ml-auto">{label(experiment.status)}{experiment.error?' · '+experiment.error:''}</span></div>)}
-    <div className="text-[10px] text-[#9C9388]">{t('growth.policySearches',{searches:searches.value.length,experiments:experiments.value.length})}</div>
-    <div className="mt-2 border-t border-[#EFE9DF] pt-2"><div className="flex items-center justify-between"><strong className="text-[11px]">{t('growth.evalTitle')}</strong><span className="text-[10px] text-[#9C9388]">{latestEval?formatDateTime(latestEval.generatedAt):''}</span></div>
-     {!latestEval?<p className="mt-1 text-[10px] text-[#9C9388]">{t('growth.evalNone')}</p>:<div className="mt-1 grid gap-1">{((latestEval.dimensions||[]) as any[]).map((dimension:any)=><div className="flex flex-wrap items-center gap-2 text-[10px]" key={dimension.kind}><span className="font-semibold text-[#4A443C]">{dimension.kind}</span><span className="text-[#7C7469]">{t('growth.evalLine',{kind:dimension.kind,active:dimension.active||dimension.baseline,winner:dimension.winner,recommendation:t(('growth.recommend.'+(dimension.recommendation||'keep')) as any)})}</span></div>)}</div>}
-    </div>
-   </div>
-  </Panel>
  </div>
 }
