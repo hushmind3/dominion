@@ -1289,7 +1289,7 @@ mod tests {
             "turn-local retrieval must not persist into the reusable working view");
         let mut second=prepare(&state,&provider,&request,"private:volatile","stable private instructions",&json!({})).unwrap();
         let (second_wire,_)=project(&state,&provider,&messages("owner-2","CORRECTED_MEMORY"),&[],"private:volatile",&mut second);
-        let wire=second_wire.to_string();
+        let wire=json!(second_wire).to_string();
         assert!(!wire.contains("CURRENT_MEMORY"));
         assert_eq!(wire.matches("CORRECTED_MEMORY").count(),1);
         assert!(wire.contains("answer one"));
