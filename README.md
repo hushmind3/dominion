@@ -24,6 +24,9 @@ execution receipts and user-controlled workspace boundaries in the application.
   user-confirmed state, bounded context selection and per-call usage evidence.
 - **Tools and extensions:** native file/shell/browser operations plus MCP
   integrations. Mutations use the same approval and audit pipeline.
+- **Web evidence:** public HTTP fetches store readable source text in session-scoped
+  SQLite records; agent prompts receive an excerpt and can retrieve further
+  windows or locate text by document ID without repeating the full page.
 - **Memory:** SQLite-backed sessions, retrieval, evidence, verified changes and
   explicit owner instructions.
 - **SDK:** a Rust kernel and a lightweight TypeScript HTTP client with
