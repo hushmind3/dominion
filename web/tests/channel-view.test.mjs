@@ -48,3 +48,12 @@ test('diagnosis results separate verified authentication from failed reachabilit
  })
  assert.equal(normalizeChannelProbe({},'Verified','Check needed',at).status,'unverified')
 })
+
+test('guided channel validation rejects stale rooms and oversized teams without altering data',()=>{
+ const withRoom={...entry,requiresRoom:true,maxRoomParticipants:3}
+ const draft={name:'Work',roomId:'group9',channelId:'C123',token:'x'}
+ assert.deepEqual(channelDraftMissing(withRoom,draft,[{id:'group9',agentIds:['a','b','c','d']}]),['roomId'])
+ assert.deepEqual(channelDraftMissing(withRoom,draft,[{id:'group9',agentIds:['a','b']}]),[])
+ assert.deepEqual(channelDraftMissing(withRoom,draft,[{id:'different',agentIds:[]}]),['roomId'])
+ assert.equal(draft.roomId,'group9')
+})

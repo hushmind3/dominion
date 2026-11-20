@@ -45,12 +45,15 @@ export function matchingChannels(
   &&[entry.name,entry.id,entry.description,...(entry.features||[])].join(' ').toLocaleLowerCase().includes(needle))
   .sort((a,b)=>Number(b.available)-Number(a.available)||a.name.localeCompare(b.name))
 }
-export function channelDraftMissing(entry:ChannelEntry,record:Record<string,unknown>):string[]{
+export function channelDraftMissing(entry:ChannelEntry,record:Record<string,unknown>,rooms?:{id:string;agentIds?:string[]}[]):string[]{
  const missing=entry.fields.filter(field=>field.required
   &&!(typeof record[field.key]==='string' && (record[field.key] as string).trim())
   &&!(field.type==='secret' && (record.credentialsPresent as Record<string,boolean>|undefined)?.[field.key]))
   .map(field=>field.label)
- if(entry.requiresRoom&&!String(record.roomId||'').trim())missing.push('roomId')
+ const roomId=String(record.roomId||'').trim()
+ if(entry.requiresRoom&&!roomId)missing.push('roomId')
+ if(roomId&&rooms&&!rooms.some(room=>room.id===roomId
+  &&(!entry.maxRoomParticipants||(room.agentIds?.length||0)<=entry.maxRoomParticipants)))missing.push('roomId')
  if(!String(record.name||'').trim())missing.push('name')
- return missing
+ return [...new Set(missing)]
 }
