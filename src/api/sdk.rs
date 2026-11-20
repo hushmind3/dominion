@@ -275,11 +275,6 @@ fn prepare_start(state:&AppState,input:&Start)->Result<(Value,Value),String>{
     Ok((session_row,record))
 }
 
-pub(crate) fn prepare_from_value(state:&AppState,body:Value)->Result<(Value,Value),String>{
-    let input:Start=serde_json::from_value(body).map_err(|e|e.to_string())?;
-    prepare_start(state,&input)
-}
-
 /// Opt-in retry protection. Receipt, session and SDK run share one transaction.
 fn retry_identity(input:&Start)->Result<Option<(String,String)>,String>{
     let Some(key)=input.idempotency_key.as_deref()else{return Ok(None)};
