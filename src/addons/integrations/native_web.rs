@@ -53,7 +53,7 @@ pub(super) fn public_http_url(url: &str) -> Result<reqwest::Url, String> {
     Ok(parsed)
 }
 
-fn append_http_chunk(output:&mut Vec<u8>,chunk:&[u8])->bool {
+pub(super) fn append_http_chunk(output:&mut Vec<u8>,chunk:&[u8])->bool {
     let room=HTTP_FETCH_LIMIT.saturating_sub(output.len());
     output.extend_from_slice(&chunk[..chunk.len().min(room)]);
     chunk.len()>room

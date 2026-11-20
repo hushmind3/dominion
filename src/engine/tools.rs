@@ -10,7 +10,7 @@ use native_github::github_file_url;
 pub(crate) use native_web::http_fetch;
 use native_web::web_search;
 #[cfg(test)]
-use native_web::{public_http_url,parse_ddg_search_results,parse_bing_rss_search_results};
+use native_web::{public_http_url,parse_ddg_search_results,parse_bing_rss_search_results,append_http_chunk};
 #[path = "../addons/integrations/tool_github_repositories.rs"]
 mod github_repositories;
 #[path = "../addons/integrations/tool_github_replace.rs"]
