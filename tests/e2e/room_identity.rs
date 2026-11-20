@@ -78,6 +78,23 @@ fn private_chat_wire_budget_probe(turns:usize) {
         "model-only chat must not send an irrelevant discovery schema");
     eprintln!("PRIVATE_CONTEXT_WIRE_PROBE turns={turns} requests={turns} observed_json_bytes={observed} naive_unbounded_json_bytes={naive} ratio={:.3}",
         observed as f64 / naive as f64);
+    drop(seen);
+    let greeting=app.chat(&json!({"sessionId":session["id"],
+        "agentId":agent["id"],"input":"안녕",
+        "toolsEnabled":true,"autoLearning":false,"thinking":false}));
+    assert!(greeting.contains("cost-fixture-ack"));
+    let calls=requests.lock().unwrap();
+    assert_eq!(calls.len(),turns+1);
+    let social=&calls[turns];
+    let social_messages=social["messages"].as_array().unwrap();
+    assert_eq!(social_messages.len(),2,
+        "an ordinary greeting after a long task must carry only identity and current owner text");
+    assert!(!social.to_string().contains("WIRE_OWNER_TURN_"),
+        "earlier large task messages must stay in SQLite, not the social provider request");
+    assert!(!social.to_string().contains("dominion_tool_search"),
+        "a social request must not incur tool schemas");
+    eprintln!("PRIVATE_CONTEXT_SOCIAL turns_before={turns} social_wire_bytes={}",
+        social.to_string().len());
 }
 
 #[test]
