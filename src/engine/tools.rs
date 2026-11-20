@@ -358,84 +358,8 @@ pub async fn execute(
             let url = required_arg(args, "url")?;
             http_fetch(&url).await
         }
-        "memory_store" => {
-            let scope = crate::engine::memory::MemoryScope::for_session(
-                ctx.store,
-                ctx.session_id,
-                ctx.agent_id,
-            );
-            crate::engine::memory::store_tool(ctx.store, &scope, args)
-        }
-        "memory_search" => {
-            let query = required_arg(args, "query")?;
-            let scope = crate::engine::memory::MemoryScope::for_session(
-                ctx.store,
-                ctx.session_id,
-                ctx.agent_id,
-            );
-            Ok(json!({
-                "results": crate::engine::memory::retrieve(ctx.store, &scope, &query, 10)
-            }))
-        }
-        "skill_view" => {
-            let id = required_arg(args, "id")?;
-            let scope = crate::engine::memory::MemoryScope::for_session(
-                ctx.store, ctx.session_id, ctx.agent_id,
-            );
-            let record = ctx.store.all("skill").into_iter().find(|record| {
-                (record["id"].as_str() == Some(id.as_str())
-                    || record["name"].as_str() == Some(id.as_str()))
-                    && record["enabled"] != false
-                    && record["status"] != "draft"
-                    && crate::engine::memory::visible(record, &scope)
-            }).ok_or("활성화된 스킬을 찾을 수 없거나 접근 권한이 없습니다.")?;
-            let instructions = record["instructions"].as_str()
-                .or_else(||record["description"].as_str()).unwrap_or("");
-            let lines: Vec<&str> = instructions.lines().collect();
-            let start = args["startLine"].as_u64().unwrap_or(1).max(1) as usize;
-            let count = args["maxLines"].as_u64().unwrap_or(100).clamp(1,160) as usize;
-            if start > lines.len().max(1) {
-                return Err("스킬의 읽기 시작 줄이 전체 줄 수를 초과했습니다.".into());
-            }
-            let end = start.saturating_sub(1).saturating_add(count).min(lines.len());
-            let excerpt = lines[start - 1..end].join("\n");
-            Ok(json!({
-                "id":record["id"],"name":record["name"],"content":excerpt,
-                "startLine":start,"endLine":end,"totalLines":lines.len(),
-                "hasMore":end<lines.len(),
-                "revision":crate::engine::memory::stable_id(&[
-                    record["id"].as_str().unwrap_or(""),
-                    instructions,
-                    record["updatedAt"].as_str().unwrap_or("")
-                ])
-            }))
-        }
-        "skill_propose" => {
-            let name = required_arg(args, "name")?;
-            let instructions = required_arg(args, "instructions")?;
-            let scope = crate::engine::memory::MemoryScope::for_session(
-                ctx.store,
-                ctx.session_id,
-                ctx.agent_id,
-            );
-            let record = ctx.store.put(
-                "skill",
-                &json!({
-                    "name": name,
-                    "instructions": instructions,
-                    "description": instructions.chars().take(160).collect::<String>(),
-                    "enabled": false,
-                    "status": "draft",
-                    "source": "agent",
-                    "scope": "agent",
-                    "sessionId": ctx.session_id,
-                    "agentId": ctx.agent_id,
-                    "partitionKey": scope.partition_key,
-                    "createdAt": chrono::Utc::now().to_rfc3339(),
-                }),
-            );
-            Ok(json!({ "proposed": true, "skill": record }))
-        }
+        "memory_store"|"memory_search"|"skill_view"|"skill_propose" =>
+            crate::engine::extensions::knowledge_tools::execute(ctx,name,args),
         "workspace_git_status"=>crate::engine::delegation_worktree::inspect(ctx.workspace,false).await,
         "workspace_git_diff"=>crate::engine::delegation_worktree::inspect(ctx.workspace,true).await,
         "delegate_task" => delegate(ctx, args).await,
