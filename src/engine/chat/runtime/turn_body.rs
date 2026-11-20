@@ -982,7 +982,12 @@ pub(super) async fn run_turn_body(
                 execution["inputContext"]["preAdapterWireProfile"]=super::room_context::wire_profile(
                     &wire_messages,&round_tools
                 );
-                execution["inputContext"]["historyBudgetBytes"]=json!(history_budget);
+                execution["inputContext"]["historyBudgetBytes"]=json!(
+                    super::context::history_wire_allowance(
+                        &request.input,false,session["sdkUiPolicy"].is_object(),
+                        provider.context_tokens,
+                    )
+                );
                 execution["inputContext"]["toolTraceBudgetBytes"]=json!(tool_trace_budget);
                 state.store.put("execution",&execution);
             }
