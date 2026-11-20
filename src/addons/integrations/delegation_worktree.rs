@@ -118,6 +118,44 @@ pub async fn prepare(state: &AppState, source: &Path, job: &str) -> Result<Value
     .await?;
     Ok(json!({"path":target,"source":source,"baseCommit":head.trim(),"jobId":job}))
 }
+/// Reuse the exact project-scoped CLI session directory for a FOLLOW-UP
+/// read-only inspector, never an implementation worker. Qwen and Claude keep
+/// session JSONL under the project directory, so a freshly detached worktree
+/// would silently start a different conversation.
+pub async fn reuse_inspection_workspace(
+    state:&AppState,old_session:&Value,current_source:&Path,
+)->Result<Value,String>{
+    if old_session["delegationProfile"]!="inspection"
+        ||old_session["readOnly"]!=true {
+        return Err("읽기 전용 조사 작업공간만 재연결할 수 있습니다.".into());
+    }
+    let owned=&old_session["delegationWorkspace"];
+    let expected_source=Path::new(owned["source"].as_str()
+        .ok_or("기존 작업공간의 원본 경로가 없습니다.")?)
+        .canonicalize().map_err(|e|e.to_string())?;
+    let source=current_source.canonicalize().map_err(|e|e.to_string())?;
+    if source!=expected_source{
+        return Err("다른 Git 원본의 외부 Agent 세션은 이어받지 않습니다.".into());
+    }
+    let workspace=scoped_workspace(state,old_session)?
+        .ok_or("기존 CLI 작업공간이 남아 있지 않습니다.")?;
+    let base=owned["baseCommit"].as_str()
+        .ok_or("기존 작업공간의 Git 기준 커밋이 없습니다.")?;
+    for path in [&source,&workspace]{
+        let head=String::from_utf8(git(path,&["rev-parse","HEAD"]).await?)
+            .map_err(|e|e.to_string())?;
+        if head.trim()!=base{
+            return Err("원본 또는 격리 작업공간의 기준 커밋이 바뀌었습니다.".into());
+        }
+        let changes=git(path,&["diff","--binary","--no-ext-diff","HEAD","--"]).await?;
+        let untracked=git(path,&["ls-files","--others","--exclude-standard","-z"]).await?;
+        if !changes.is_empty()||!untracked.is_empty(){
+            return Err("기존 Git 작업공간에 검토되지 않은 변경이 있습니다.".into());
+        }
+    }
+    Ok(owned.clone())
+}
+
 pub async fn discard_prepared(workspace: &Value) -> Result<(), String> {
     let source = Path::new(
         workspace["source"]
@@ -397,6 +435,24 @@ mod tests {
         );
         (state, source)
     }
+    #[tokio::test]
+    async fn resumed_inspector_keeps_same_clean_git_checkout(){
+        let (state,source)=fixture().await;
+        let owned=prepare(&state,&source,"inspector-original").await.unwrap();
+        let old_session=json!({"delegationProfile":"inspection","readOnly":true,
+            "delegationWorkspace":owned});
+        let selected=reuse_inspection_workspace(&state,&old_session,&source).await.unwrap();
+        assert_eq!(selected,old_session["delegationWorkspace"]);
+        let changed=Path::new(selected["path"].as_str().unwrap()).join("target.txt");
+        std::fs::write(&changed,"tampered\n").unwrap();
+        assert!(reuse_inspection_workspace(&state,&old_session,&source).await.is_err());
+        std::fs::write(&changed,"original\n").unwrap();
+        assert!(reuse_inspection_workspace(&state,&old_session,&source).await.is_ok());
+        let foreign=state.config.data_dir.join("foreign");
+        std::fs::create_dir_all(&foreign).unwrap();
+        assert!(reuse_inspection_workspace(&state,&old_session,&foreign).await.is_err());
+    }
+
     #[tokio::test]
     async fn verifier_inherits_only_frozen_upstream_patch_in_own_worktree() {
         let (state,source)=fixture().await;
