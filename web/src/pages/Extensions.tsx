@@ -349,7 +349,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
   }>("/api/skill-catalog", { items: [], total: 0, updatedAt: "" }, false);
   const [repo, setRepo] = useState(""),
     [repoBusy, setRepoBusy] = useState(false),
-    [pluginRemote, setPluginRemote] = useState<any[]>([]);
+    [mcpSaving, setMcpSaving] = useState(false);
   const [localTab, setTab] = useState<ExtensionTab>(
       "market",
     ),
@@ -514,19 +514,32 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
     await loadCatalog(query.trim());
   };
   const saveMcp = async () => {
-    if (!edit) return;
+    if (!edit || mcpSaving) return;
+    if (!edit.name?.trim() || (edit.transport === "http"
+      ? !/^https?:\/\//i.test(edit.url?.trim() || "")
+      : !edit.command?.trim())) {
+      setError(loc === "en"
+        ? "Enter a name and a valid HTTP address or command."
+        : "이름과 올바른 HTTP 주소 또는 실행 명령을 입력하세요.");
+      return;
+    }
+    setMcpSaving(true);
+    setError("");
     try {
       await post("/api/mcp", {
         ...edit,
-        args: argText
-          .split("\n")
-          .map((x) => x.trim())
-          .filter(Boolean),
+        name: edit.name.trim(),
+        url: edit.url?.trim(),
+        command: edit.command?.trim(),
+        args: argText.split("\n").map((x) => x.trim()).filter(Boolean),
       });
       setEdit(null);
-      mcp.reload();
+      await mcp.reload();
+      if (tab === "installed") await discover(true);
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setMcpSaving(false);
     }
   };
   const saveSkill = async () => {
@@ -581,27 +594,6 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
       setRepoBusy(false);
     }
   };
-  useEffect(() => {
-    const q = pluginQuery.trim();
-    if (q.length < 2) {
-      setPluginRemote([]);
-      return;
-    }
-    let alive = true;
-    const timer = setTimeout(() => {
-      get<any[]>("/api/mcp/catalog?q=" + encodeURIComponent(q))
-        .then((rows) => {
-          if (alive) setPluginRemote(rows || []);
-        })
-        .catch(() => {
-          if (alive) setPluginRemote([]);
-        });
-    }, 350);
-    return () => {
-      alive = false;
-      clearTimeout(timer);
-    };
-  }, [pluginQuery]);
   const discover = async (silent = false) => {
     try {
       setTools(await get("/api/mcp/discover"));
@@ -610,15 +602,16 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
       if (!silent) setError((e as Error).message);
     }
   };
+  // Active-tab only: do not run remote MCP discovery from the plugins/skills screens.
   useEffect(() => {
-    void discover(true);
+    if (tab === "installed") void discover(true);
   }, [tab]);
   useEffect(() => {
-    void loadCatalog();
-  }, []);
+    if (tab === "market") void loadCatalog();
+  }, [tab]);
   return (
     <div className={embedded?"min-w-0":"mx-auto w-full max-w-[1320px] px-5 py-4 sm:px-7 lg:px-6 lg:pb-8"}>
-      <Headline
+      {!embedded && <Headline
         eyebrow={t('ui.eyebrow.marketplace')}
         title={t('ext.title')}
         description={t('ext.description')}
@@ -639,7 +632,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
             <Plus size={17} /> {t('ext.addMcp')}
           </Action>
         }
-      />
+      />}
       <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] px-4 py-3 text-[11px] text-[#5C544A]">
         <StatusLine label={t('ext.tab.servers')} value={mcp.value.length} />
         <StatusLine
@@ -731,31 +724,20 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
             <div className="registry-results">
               {catalog.map((x) => (
                 <div
-                  className="flex min-w-0 items-start gap-3 rounded-xl border border-[#E7E0D5] bg-white p-4 hover:border-[#E6C9B8]"
+                  className="flex min-w-0 flex-wrap items-start gap-3 rounded-xl border border-[#E7E0D5] bg-white p-4 hover:border-[#E6C9B8]"
                   key={x.name}
                 >
                   <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-[#F7E8E1] text-[#C96442]">
                     <Server size={19} />
                   </span>
-                  <div>
-                    <strong>{x.name}</strong>
-                    <p>{x.description || "MCP server"}</p>
-                    <small>{x.packageName || x.url || t('ext.noInstallInfo')}</small>
+                  <div className="min-w-0 flex-1">
+                    <strong className="block break-words text-sm">{x.name}</strong>
+                    <p className="mt-1 break-words text-xs leading-5 text-[#7C7469]">{x.description || "MCP server"}</p>
+                    <small className="mt-1 block break-all text-[11px] text-[#8A8176]">{x.packageName || x.url || t('ext.noInstallInfo')}</small>
                   </div>
                   {(x.packageName || x.url) &&
                     (mcp.value.some((r: any) => r.name === x.name) ? (
-                      <Button
-                        variant="secondary"
-                        className="shrink-0 whitespace-nowrap"
-                        onClick={async () => {
-                          const rec = mcp.value.find((r: any) => r.name === x.name);
-                          if (!rec) return;
-                          await del("/api/mcp/" + rec.id);
-                          await mcp.reload();
-                        }}
-                      >
-                        {t('ext.cancel')}
-                      </Button>
+                      <StateTag online>{t('ext.registeredCheck')}</StateTag>
                     ) : (
                       <Button
                         variant="secondary"
@@ -774,7 +756,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                     ))}
                 </div>
               ))}
-              {!catalog.length && (
+              {!catalog.length && !searching && (
                 <Empty
                   icon={Compass}
                   title={t('ext.emptySearch')}
@@ -932,68 +914,6 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
               </Button>
             )}
           </div>
-          <div className="mb-4">
-            <Subheading
-              title={t('ext.pluginResults')}
-              extra={
-                <span className="text-[11px] text-[#8A8176]">
-                  {t('ext.count', { count: pluginRemote.length })}
-                </span>
-              }
-            />
-            {pluginRemote.length ? (
-              <div className="mt-2 grid gap-2">
-                {pluginRemote.map((x: any) => (
-                  <div
-                    key={x.name}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#E7E0D5] bg-white p-3"
-                  >
-                    <div className="min-w-0">
-                      <strong className="block truncate text-[12px] text-[#3A342D]">
-                        {x.name}
-                      </strong>
-                      <small className="text-[10px] text-[#8A8176]">
-                        {(x.description || "").slice(0, 90)}
-                      </small>
-                    </div>
-                    {mcp.value.some((r: any) => r.name === x.name) ? (
-                      <Button
-                        variant="secondary"
-                        className="shrink-0 whitespace-nowrap"
-                        onClick={async () => {
-                          const rec = mcp.value.find((r: any) => r.name === x.name);
-                          if (!rec) return;
-                          await del("/api/mcp/" + rec.id);
-                          await mcp.reload();
-                        }}
-                      >
-                        {t('ext.cancel')}
-                      </Button>
-                    ) : (
-                      <Button
-                        variant="secondary"
-                        onClick={() =>
-                          void install({
-                            name: x.name,
-                            transport: x.packageName ? "stdio" : "http",
-                            command: "npx",
-                            args: x.packageName ? ["-y", x.packageName] : [],
-                            endpoint: x.url,
-                          })
-                        }
-                      >
-                        {t('ext.install')}
-                      </Button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="mt-2 text-[11px] text-[#8A8176]">
-                {t('ext.remoteHint')}
-              </p>
-            )}
-          </div>
           <div className="mb-4 flex flex-wrap items-center gap-1.5">
             {pluginCategories.map((category) => (
               <Button
@@ -1089,7 +1009,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
             title={t('ext.recommendedTools')}
             extra={
               <span className="text-[10px] font-bold uppercase tracking-widest text-[#9C9388]">
-                VERIFIED SOURCES
+                CURATED EXAMPLES
               </span>
             }
           />
@@ -1148,9 +1068,15 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
           <Subheading
             title={t('ext.connectedServers')}
             extra={
-              <Action variant="secondary" onClick={discover}>
-                <Activity size={16} /> {t('ext.toolSearch')}
-              </Action>
+              <div className="flex flex-wrap gap-2">
+                <Action variant="secondary" onClick={() => {
+                  setEdit({name: "", transport: "stdio", command: "npx", url: "", enabled: true});
+                  setArgText("");
+                }}><Plus size={16}/>{t('ext.addMcp')}</Action>
+                <Action variant="secondary" onClick={() => void discover()}>
+                  <Activity size={16}/>{t('ext.toolSearch')}
+                </Action>
+              </div>
             }
           />
           <div className="flex min-w-0 flex-col gap-3">
@@ -1162,24 +1088,26 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                 <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]">
                   <Blocks size={21} />
                 </div>
-                <div>
-                  <strong>{x.name}</strong>
-                  <p>
-                    {x.transport === "stdio"
-                      ? x.command + " " + (x.args || []).join(" ")
-                      : x.url}
+                <div className="min-w-0 flex-1">
+                  <strong className="block break-words text-sm">{x.name}</strong>
+                  <p className="mt-1 break-all text-xs leading-5 text-[#7C7469]">
+                    {x.transport === "stdio" ? x.command + " " + (x.args || []).join(" ") : x.url}
                   </p>
+                  <small className="mt-1 block text-[11px] text-[#8A8176]">
+                    {x.transport.toUpperCase()} · {x.enabled ? t('conn.enable') : t('conn.status.disabled')}
+                  </small>
                 </div>
                 <StateTag
-                  online={Boolean(
+                  online={x.enabled && Boolean(
                     tools.find((t) => t.mcpId === x.id && !t.error),
                   )}
                 >
                   {(() => {
                     const own = tools.filter((t) => t.mcpId === x.id);
                     const ok = own.filter((t) => !t.error).length;
-                    if (ok) return t('ext.connectedTools', { count: ok });
+                    if (!x.enabled) return t('conn.status.disabled');
                     if (own.some((t) => t.error)) return t('ext.connectionFailed');
+                    if (ok) return t('ext.connectedTools', { count: ok });
                     return tools.length ? t('ext.checkConnection') : t('ext.checking');
                   })()}
                 </StateTag>
@@ -1187,6 +1115,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                   size="icon"
                   variant="ghost"
                   title={t('ext.settings')}
+                  aria-label={t('ext.settings') + ' ' + x.name}
                   onClick={() => {
                     setEdit(x);
                     setArgText((x.args || []).join("\n"));
@@ -1198,10 +1127,18 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                   size="icon"
                   variant="ghost"
                   title={t('ext.remove')}
+                  aria-label={t('ext.remove') + ' ' + x.name}
                   onClick={async () => {
                     if (confirm(t('ext.confirmRemove'))) {
-                      await del("/api/mcp/" + x.id);
-                      mcp.reload();
+                      try {
+                        setError("");
+                        await del("/api/mcp/" + x.id);
+                        await mcp.reload();
+                        setTools(previous => previous.filter(tool => tool.mcpId !== x.id));
+                        setMessage(t('ext.cancelled', {name: x.name}));
+                      } catch (e) {
+                        setError((e as Error).message);
+                      }
                     }
                   }}
                 >
@@ -1324,7 +1261,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
               <Action variant="secondary" onClick={() => setEdit(null)}>
                 {t('ext.cancel')}
               </Action>
-              <Action onClick={saveMcp}>
+              <Action onClick={saveMcp} disabled={mcpSaving || !edit.name?.trim()}>
                 <Check size={16} /> {t('ext.save')}
               </Action>
             </div>
