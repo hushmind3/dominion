@@ -56,6 +56,12 @@ impl ModelCapabilities {
         Ok(configured.to_owned())
     }
 
+    pub fn require_vision(&self,images:bool)->Result<(),String>{
+        if images&&self.vision!=Some(true){
+            return Err("이 모델 엔드포인트가 이미지 입력을 지원한다고 선언하지 않았습니다.".into());
+        }
+        Ok(())
+    }
     pub fn streaming(&self,stream_required:bool)->Result<(),String>{
         if stream_required&&self.streaming==Some(false){
             return Err("선택 모델 엔드포인트는 스트리밍 생성을 지원하지 않습니다.".into());
@@ -65,6 +71,9 @@ impl ModelCapabilities {
 }
 pub fn negotiate_tool_mode(provider:&Value,model:&str,mode:&str,tools:bool)->Result<String,String>{
     ModelCapabilities::for_route(provider,model).tool_mode(mode,tools)
+}
+pub fn require_vision(provider:&Value,model:&str,images:bool)->Result<(),String>{
+    ModelCapabilities::for_route(provider,model).require_vision(images)
 }
 pub fn require_streaming(provider:&Value,model:&str,required:bool)->Result<(),String>{
     ModelCapabilities::for_route(provider,model).streaming(required)
@@ -86,6 +95,12 @@ mod tests{
         assert!(require_streaming(&provider,"model-2",true).is_err());
         assert!(require_streaming(&provider,"model-1",true).is_ok());
         assert_eq!(negotiate_tool_mode(&provider,"model-3","native",true).unwrap(),"native");
+        assert!(require_vision(&provider,"model-1",true).is_err());
+        assert!(require_vision(&provider,"model-1",false).is_ok());
+        let images=json!({"capabilities":{"vision":true},
+            "modelCapabilities":{"text-only":{"vision":false}}});
+        assert!(require_vision(&images,"vision-enabled",true).is_ok());
+        assert!(require_vision(&images,"text-only",true).is_err());
     }
     #[test]
     fn disabled_compat_mode_cannot_be_used_to_hide_unsupported_tools(){

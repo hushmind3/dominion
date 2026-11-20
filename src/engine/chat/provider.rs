@@ -569,6 +569,9 @@ async fn fallback_candidates(
     // A room may only fall back to its own participants' routes. Otherwise a
     // dead free model silently escalates to whatever paid provider happens to
     // rank highest, which is exactly the surprise bill to avoid.
+    let needs_vision=request.attachment_ids.iter().any(|id|
+        state.store.get("attachment",id)
+            .is_some_and(|attachment|attachment["isImage"]==true));
     let room_routes = request
         .session_id
         .as_deref()
@@ -603,14 +606,11 @@ async fn fallback_candidates(
             })
         })
         .filter(|route| {
-            if request.attachment_ids.is_empty() {
-                return true;
-            }
-            // Never silently send an image turn to a text-only route.
-            state.store.get("provider", &route.id).is_some_and(|item| {
-                item["capabilities"]["vision"] == true
-                    || item["capabilities"]["images"] == true
-            })
+            // An image requires the exact endpoint + selected model to
+            // declare vision. Text-only attachments do not trigger this gate.
+            state.store.get("provider",&route.id).is_some_and(|provider|
+                crate::engine::gateway::require_vision(
+                    &provider,&route.model,needs_vision).is_ok())
         })
         .map(|route| ProviderRef {
             id: route.id,
@@ -798,6 +798,11 @@ async fn stream_completion_once(
     if let Some(record)=state.store.get("provider",&provider.id){
         crate::engine::gateway::require_streaming(
             &record,&provider.model,provider.kind!="cli")?;
+        let needs_vision=request.attachment_ids.iter().any(|id|
+            state.store.get("attachment",id)
+                .is_some_and(|attachment|attachment["isImage"]==true));
+        crate::engine::gateway::require_vision(
+            &record,&provider.model,needs_vision)?;
         selected_route.tool_mode=crate::engine::gateway::negotiate_tool_mode(
             &record,&provider.model,&provider.tool_mode,!ordered_tools.is_empty())?;
         if selected_route.tool_mode!=provider.tool_mode {

@@ -9,7 +9,7 @@
 use crate::state::AppState;
 #[path = "model_capabilities.rs"]
 mod model_capabilities;
-pub use model_capabilities::{ModelCapabilities,negotiate_tool_mode,require_streaming};
+pub use model_capabilities::{ModelCapabilities,negotiate_tool_mode,require_streaming,require_vision};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
