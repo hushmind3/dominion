@@ -50,18 +50,9 @@ is an HTTP client for the same native kernel; it is not a parallel executor.
 The [React frontend](web/src/App.tsx) uses the same Rust API in browser and
 the [Tauri 2 desktop shell](src-tauri/tauri.conf.json).
 
-## 5. Retired features
-
-The retired domain-specific source modules and API bindings are not registered
-in the current Rust runtime. The public surface consists of ordinary agent,
-tool, memory, SDK and optional externally connected MCP services.
-Previously stored user records remain intact unless separately exported or
-deleted by the operator.
-
-## 6. Quality and release gates
+## 5. Quality and release gates
 
 - `node scripts/check-runtime-architecture.mjs`
-- `node scripts/check-retired-domains.mjs`
 - `node scripts/check-release-contract.mjs`
 - `cargo test --locked --workspace`
 - `npm run typecheck --prefix web` and `npm run build --prefix web`
