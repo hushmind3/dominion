@@ -3,8 +3,7 @@
 //! Rust requires `unsafe` but does not require a justification. This module
 //! reports every `unsafe` block, function, impl, trait or extern item whose
 //! preceding lines do not contain a `SAFETY` marker. It is used by the
-//! `dominion-unsafe-audit` binary, by the RSI `unsafe_audit` tool, and by the
-//! RSI worktree verifier when a patch introduces an `unsafe` construct.
+//! `dominion-unsafe-audit` binary and the native patch-verification path.
 
 use serde_json::{json, Value};
 use std::ffi::OsStr;
