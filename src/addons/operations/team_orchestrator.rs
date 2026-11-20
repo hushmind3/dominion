@@ -16,6 +16,16 @@ fn agents(state:&AppState,session:&str)->Vec<Value>{
         ids.iter().filter_map(|v|v.as_str().and_then(|id|state.store.get("agent",id)))
             .collect::<Vec<_>>()
     }else{state.store.all("agent")};
+    // Agents commonly inherit the default model from their configured
+    // provider. Do not exclude them just because model is not duplicated.
+    for agent in &mut found {
+        if agent["model"].as_str().is_none_or(str::is_empty) {
+            if let Some(provider)=agent["providerId"].as_str()
+                .and_then(|id|state.store.get("provider",id)) {
+                agent["model"]=provider["model"].clone();
+            }
+        }
+    }
     found.retain(|agent|agent["enabled"]!=false &&
         agent["providerId"].as_str().is_some_and(|id|
             state.store.get("provider",id).is_some_and(|p|p["enabled"]!=false)) &&
@@ -75,7 +85,9 @@ fn validate(plan:&Value,roster:&[Value])->Result<Vec<Step>,String>{
     }
     Ok(steps)
 }
-async fn model_plan(ctx:&ToolContext<'_>,goal:&str,roster:&[Value])->Result<Value,String>{
+async fn model_plan(
+    ctx:&ToolContext<'_>,goal:&str,roster:&[Value],execution_id:&str,
+)->Result<Value,String>{
     let session=ctx.store.get("session",ctx.session_id).ok_or("Lead 세션이 없습니다.")?;
     let lead=ctx.agent_id.and_then(|id|ctx.store.get("agent",id));
     let provider=lead.as_ref().and_then(|a|a["providerId"].as_str())
@@ -95,8 +107,9 @@ async fn model_plan(ctx:&ToolContext<'_>,goal:&str,roster:&[Value])->Result<Valu
         step directly depending on it. Use general for read-only research outside git; \
         implementation and verification require clean git worktrees. No invented agents.";
     let text=format!("GOAL:\n{goal}\nAVAILABLE AGENTS:\n{}",json!(pool));
-    let answer=crate::engine::llm::complete_for_session(
-        ctx.state,provider,model,system,&text,ctx.session_id).await?;
+    let answer=crate::engine::llm::complete_for_execution(
+        ctx.state,provider,model,system,&text,Some(ctx.session_id),
+        execution_id,"team_planning").await?;
     if answer.len()>24000{return Err("계획 응답이 너무 깁니다.".into());}
     let start=answer.find('{').ok_or("Lead 계획의 JSON이 없습니다.")?;
     let end=answer.rfind('}').ok_or("Lead 계획의 JSON이 잘렸습니다.")?;
@@ -112,7 +125,7 @@ pub async fn start(ctx:&ToolContext<'_>,args:&Value,execution_id:&str)->Result<V
     let pool=agents(ctx.state,ctx.session_id);
     if pool.is_empty(){return Err("모델을 연결한 Worker 에이전트가 없습니다.".into());}
     let proposed=if args["steps"].is_array(){json!({"steps":args["steps"]})}
-        else if args["steps"].is_null(){model_plan(ctx,goal,&pool).await?}
+        else if args["steps"].is_null(){model_plan(ctx,goal,&pool,execution_id).await?}
         else{return Err("steps는 배열이어야 합니다.".into())};
     let plan=validate(&proposed,&pool)?;
     let team_id=format!("team:{}",uuid::Uuid::new_v4());
@@ -177,6 +190,7 @@ pub async fn start(ctx:&ToolContext<'_>,args:&Value,execution_id:&str)->Result<V
     let ids=plan.iter().filter_map(|s|job_ids.get(&s.id)).cloned()
         .collect::<Vec<_>>();
     let team=json!({"id":team_id,"kind":"team","status":"queued",
+        "executionId":execution_id,
         "queuedAt":chrono::Utc::now().to_rfc3339(),
         "attempts":0,"stepIndex":0,"stepTotal":steps.len(),"events":[],
         "input":{"sessionId":ctx.session_id,"parentSessionId":ctx.session_id,
@@ -295,7 +309,15 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
         }
         let jobs=ids.iter().map(|id|ctx.state.store.get("job",id)
             .ok_or("Worker 기록이 없습니다.")).collect::<Result<Vec<_>,_>>()?;
-        if jobs.iter().all(|job|matches!(job["status"].as_str(),
+        // Completing a worker job precedes freezing its isolated patch.
+        // Never finalize the team from the transient pre-freeze state.
+        let freeze_pending=jobs.iter().any(|worker|{
+            worker["status"]=="completed"&&worker["delegationPatchSha256"].is_null()
+                &&worker["input"]["sessionId"].as_str()
+                    .and_then(|id|ctx.state.store.get("session",id))
+                    .is_some_and(|s|s["delegationWorkspace"].is_object())
+        });
+        if !freeze_pending&&jobs.iter().all(|job|matches!(job["status"].as_str(),
             Some("completed"|"failed"|"needs_review"|"cancelled"))){
             let mut nodes=Vec::new();
             let mut gaps=Vec::new();
@@ -318,7 +340,11 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
                 n["evidenceLevel"].as_str().unwrap_or(""),
                 n["jobId"].as_str().unwrap_or(""),
                 n["answer"].as_str().unwrap_or(""))).collect::<Vec<_>>().join("\n\n");
-            return Ok(json!({"status":if gaps.is_empty(){"completed"}else{"needs_review"},
+            // A staged code patch is not an integrated deliverable. The
+            // explicitly approved team_integrate step closes that gap.
+            let pending_review=!pending.is_empty();
+            return Ok(json!({"status":if gaps.is_empty()&&!pending_review
+                    {"completed"}else{"needs_review"},
                 "teamId":job["id"],"goal":job["input"]["goal"],
                 "nodes":nodes,"gaps":gaps,"synthesis":summary,
                 "pendingIntegrationJobs":pending,"integrationRequiresApproval":!pending.is_empty()}));
@@ -339,7 +365,7 @@ pub async fn integrate(ctx:&ToolContext<'_>,args:&Value)->Result<Value,String>{
     let id=args["jobId"].as_str().ok_or("팀 작업 ID가 없습니다.")?;
     let team=ctx.store.get("job",id).ok_or("팀 작업이 없습니다.")?;
     if team["kind"]!="team"||team["input"]["sessionId"]!=ctx.session_id
-        ||team["status"]!="completed"{
+        ||!matches!(team["status"].as_str(),Some("completed"|"needs_review")){
         return Err("자신의 완료된 팀 작업만 승인 후 통합할 수 있습니다.".into());
     }
     if !team["result"]["gaps"].as_array().is_some_and(Vec::is_empty){
@@ -360,16 +386,27 @@ pub async fn integrate(ctx:&ToolContext<'_>,args:&Value)->Result<Value,String>{
         if worker["integratedAt"].is_string(){
             out.push(json!({"jobId":child_id,"alreadyIntegrated":true}));continue;
         }
-        let result=crate::engine::delegation_worktree::integrate(
-            ctx,&json!({"jobId":child_id})).await?;
+        let result=match crate::engine::delegation_worktree::integrate(
+            ctx,&json!({"jobId":child_id})).await{
+            Ok(value)=>value,
+            Err(error)=>{
+                ctx.state.store.audit("team.integration_incomplete",
+                    json!({"teamJobId":id,"workerJobId":child_id,
+                        "alreadyIntegrated":out,"error":error}));
+                return Ok(json!({"teamId":id,"status":"needs_review",
+                    "outcomeUnknown":!out.is_empty(),
+                    "error":error,"integrated":out}));
+            }
+        };
         if result["outcomeUnknown"]==true||result["error"].is_string(){
             return Ok(json!({"teamId":id,"status":"needs_review",
                 "integrated":out,"unresolved":result}));
         }
         out.push(result);
     }
-    if let Some(saved)=ctx.store.patch_if("job",id,"status",&json!("completed"),
-        &json!({"integratedAt":chrono::Utc::now().to_rfc3339(),
+    let prior=team["status"].clone();
+    if let Some(saved)=ctx.store.patch_if("job",id,"status",&prior,
+        &json!({"status":"completed","integratedAt":chrono::Utc::now().to_rfc3339(),
             "integration":out})){
         ctx.state.bus.record("job",&saved);
     }
