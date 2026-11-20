@@ -39,12 +39,16 @@ fn valid_tool_definition(definition: &Value) -> bool {
 pub(super) fn canonical_tool_definitions(mut definitions:Vec<Value>)->Vec<Value>{
     let priority=|name:&str|->usize{match name{
         "dominion_tool_search"=>0,
-        "workspace_list"=>1,"workspace_read"=>2,"workspace_read_range"=>3,
-        "code_search"=>4,"workspace_apply_patch"=>5,
-        "workspace_replace_range"=>6,"workspace_replace"=>7,
-        "workspace_write"=>8,"shell_exec"=>9,"terminal_exec"=>10,
-        "web_search"=>11,"http_fetch"=>12,
-        "skill_read"=>13,"room_message_read"=>14,
+        // Without a source reader, an indexed policy or archived owner
+        // constraint would be silently unavailable after schema trimming.
+        // Pin read-only source capabilities ahead of bulky optional tools.
+        "prompt_source_read"=>1,"history_evidence_read"=>2,
+        "workspace_list"=>3,"workspace_read"=>4,"workspace_read_range"=>5,
+        "code_search"=>6,"workspace_apply_patch"=>7,
+        "workspace_replace_range"=>8,"workspace_replace"=>9,
+        "workspace_write"=>10,"shell_exec"=>11,"terminal_exec"=>12,
+        "web_search"=>13,"http_fetch"=>14,
+        "skill_read"=>15,"room_message_read"=>16,
         _=>100,
     }};
     definitions.sort_by(|a,b|{
@@ -387,6 +391,27 @@ pub(super) fn trim_tool_definitions(definitions: Vec<Value>, budget: usize) -> V
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn priority_reserves_source_reader_under_tight_provider_schema_budget(){
+        let make=|name:&str,description:&str|json!({
+            "type":"function",
+            "function":{"name":name,"description":description,
+                "parameters":{"type":"object","properties":{},"required":[]}}
+        });
+        let search=make("dominion_tool_search","Search tools");
+        let persona=make("prompt_source_read","Recover owner/persona original");
+        let evidence=make("history_evidence_read","Recover archived exact event");
+        let bulky=make("optional_heavy","OVERLONG_SCHEMA_DESCRIPTION".repeat(1000));
+        let ordered=canonical_tool_definitions(vec![
+            bulky,persona.clone(),evidence.clone(),search.clone()]);
+        let budget=search.to_string().len()+persona.to_string().len()+evidence.to_string().len()+4;
+        let result=trim_tool_definitions(ordered,budget);
+        assert!(advertised_tool(&result,"dominion_tool_search"));
+        assert!(advertised_tool(&result,"prompt_source_read"));
+        assert!(advertised_tool(&result,"history_evidence_read"));
+        assert!(!advertised_tool(&result,"optional_heavy"));
+    }
 
     #[test]
     fn canonical_tools_preserve_cache_prefix_across_mcp_registration_order(){
