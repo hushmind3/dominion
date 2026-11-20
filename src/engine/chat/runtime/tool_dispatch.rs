@@ -53,6 +53,72 @@ async fn deterministic_tool(
     Ok((result,operation))
 }
 
+/// An explicit owner-directed public web search is a required observable
+/// action, not a suggestion to the language model. Execute it exactly once
+/// through the same approval/effect/receipt gateway as other tools before
+/// the first model token. The tool exchange is provider-compatible and its
+/// full receipt remains in SQLite. Failure is surfaced, never turned into
+/// an ungrounded answer that pretends a search happened.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn run_required_web_search(
+    state: &AppState,
+    request: &TurnRequest,
+    tx: &UnboundedSender<Value>,
+    session_id: &str,
+    execution_id: &str,
+    op_seq: &mut u64,
+    metrics: &std::sync::Mutex<Metrics>,
+) -> Result<Vec<Value>, String> {
+    let Some(query)=super::super::web_research::explicit_query(&request.input) else {
+        return Ok(Vec::new());
+    };
+    if !request.tools_enabled || !request.tools_execution_enabled {
+        return Err("웹 검색을 요청하셨지만 현재 채팅의 도구 실행이 꺼져 있습니다. 검색을 수행하지 않았습니다.".into());
+    }
+    let session=state.store.get("session",session_id).unwrap_or(Value::Null);
+    if !tools::profile_tool_visible(&session,"web_search")
+        || !tools::profile_tool_allowed(&session,"web_search",&json!({"query":query}))
+    {
+        return Err("이 세션에서는 웹 검색 도구를 사용할 권한이 없습니다. 검색을 수행하지 않았습니다.".into());
+    }
+    let next=state.store.execution_operations(execution_id)?
+        .iter().filter_map(|op|op["opSeq"].as_u64()).max().unwrap_or(*op_seq);
+    *op_seq=(*op_seq).max(next).saturating_add(1);
+    let call_id=format!("frozen-{}-web_search",*op_seq);
+    let arguments=json!({"query":query});
+    let tool_call=json!({"id":call_id,"type":"function",
+        "function":{"name":"web_search","arguments":arguments.to_string()}});
+    let assistant=json!({"role":"assistant","content":"",
+        "tool_calls":[tool_call]});
+    let stored=state.store.write_message(&json!({
+        "session_id":session_id,"role":"assistant","content":"",
+        "agent_id":request.agent_id,"tool_calls":assistant["tool_calls"],
+        "metadata":{"authorKind":"harness","origin":"explicit_web_search",
+            "executionId":execution_id}
+    })).ok_or("웹 검색 호출 기록을 저장하지 못했습니다.")?;
+    state.bus.message(&stored);
+    let (result,operation)=deterministic_tool(
+        state,request,tx,session_id,execution_id,
+        "web_search",&arguments,*op_seq,metrics,
+    ).await?;
+    let count=result["results"].as_array().map(Vec::len).unwrap_or(0);
+    if operation["status"]!="completed" || count==0 {
+        state.store.audit("chat.web_research_failed",json!({
+            "sessionId":session_id,"executionId":execution_id,
+            "operationId":operation["id"],"result":result,
+        }));
+        return Err("실제 웹 검색 결과를 확보하지 못했습니다. 검색했다고 주장하는 답변은 생성하지 않습니다. 연결 상태와 검색 공급자를 확인하세요.".into());
+    }
+    state.store.audit("chat.web_research_observed",json!({
+        "sessionId":session_id,"executionId":execution_id,
+        "operationId":operation["id"],"resultCount":count,
+    }));
+    let _=tx.send(json!({"type":"web_research","status":"verified",
+        "results":count,"operationId":operation["id"]}));
+    Ok(vec![assistant,json!({"role":"tool",
+        "tool_call_id":call_id,"content":result.to_string()})])
+}
+
 /// Records what was already applied when a later write cannot proceed. The
 /// operations remain the primary evidence; this marker makes the partial state
 /// explicit on the execution record.
