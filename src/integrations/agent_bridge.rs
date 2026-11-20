@@ -281,6 +281,81 @@ mod tests{
         assert!(codex_finish("thread1",true," ").is_err());
         assert!(codex_finish("thread1",false,"false success").is_err());
     }
+    #[tokio::test]
+    async fn real_jsonl_pipe_preserves_completion_before_turn_start_rpc_response(){
+        use crate::{config::Config,db::Store,state::AppState,vault::Vault};
+        let root=std::env::temp_dir().join(format!(
+            "dominion-codex-fake-server-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config=Config{port:0,data_dir:root.clone(),web_dir:root.join("web"),
+            workspace:root.clone()};
+        let state=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()));
+        state.store.put("job",&json!({"id":"fake-app-server-job",
+            "kind":"external_agent","status":"running","attempts":1})).unwrap();
+        let context=JobContext::new(state.clone(),"fake-app-server-job".into());
+
+        // A real subprocess running the app-server's JSONL protocol, not a
+        // mocked Rust callback. The terminal event deliberately precedes the
+        // turn/start RPC result to cover a formerly lost-completion race.
+        let mock=r#"
+while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"id":1,"result":{}}'
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{"method":"thread/started","params":{}}'
+      printf '%s\n' '{"id":2,"result":{"thread":{"id":"fixture-thread"}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{"method":"item/agentMessage/delta","params":{"delta":"verified JSONL exchange"}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+      printf '%s\n' '{"id":3,"result":{"turn":{"id":"fixture-turn"}}}'
+      ;;
+  esac
+done
+"#;
+        let mut child=Command::new("sh").arg("-c").arg(mock)
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+            .kill_on_drop(true).spawn().unwrap();
+        let output=tokio::time::timeout(Duration::from_secs(8),
+            run_codex(&context,&mut child,Instant::now(),"Inspect fixture",None))
+            .await.expect("The buffered finish must not hang").unwrap();
+        assert_eq!(output["status"],"completed");
+        assert_eq!(output["answer"],"verified JSONL exchange");
+        assert_eq!(output["threadId"],"fixture-thread");
+        assert_eq!(output["evidenceGrade"],"external_unverified");
+        let _=child.kill().await;
+        crate::test_support::cleanup_dir(&root);
+    }
+
+    #[tokio::test]
+    async fn overlong_external_jsonl_is_rejected_before_a_full_line_allocates(){
+        use crate::{config::Config,db::Store,state::AppState,vault::Vault};
+        let root=std::env::temp_dir().join(format!(
+            "dominion-codex-line-cap-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config=Config{port:0,data_dir:root.clone(),web_dir:root.join("web"),
+            workspace:root.clone()};
+        let state=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()));
+        state.store.put("job",&json!({"id":"bounded-jsonl-job",
+            "kind":"external_agent","status":"running","attempts":1})).unwrap();
+        let context=JobContext::new(state.clone(),"bounded-jsonl-job".into());
+        let mut child=Command::new("sh").arg("-c")
+            .arg("printf '%1048577s\n' x")
+            .stdout(Stdio::piped()).stderr(Stdio::null())
+            .kill_on_drop(true).spawn().unwrap();
+        let mut reader=BufReader::new(child.stdout.take().unwrap());
+        let failure=tokio::time::timeout(Duration::from_secs(8),
+            read(&context,&mut reader,Instant::now()))
+            .await.expect("Bounded parser must reject without waiting for EOF")
+            .unwrap_err();
+        assert!(failure.contains("size cap"),"{failure}");
+        let _=child.kill().await;
+        crate::test_support::cleanup_dir(&root);
+    }
     #[test] fn unmediated_approval_request_is_denied(){
         let mut text=String::new();
         assert!(codex_event(&json!({"id":3,
