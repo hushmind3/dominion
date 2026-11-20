@@ -630,6 +630,10 @@ async fn run_locked(
             room_id,
             json!({"status":"running","activeAgentId":agent_id}),
         );
+        let work_assignment=if room["toolsEnabled"]==true && roster.len()>=2 {
+            Some(crate::engine::room_workboard::assign(state,room_id,
+                session_id,source_id,&task_id,&agent_id,outputs.len()+1)?)
+        }else{None};
         // Include the selected speaker in the saved pending queue until the
         // result is durable; any interrupted inFlight turn requires review.
         let mut saved_pending = pending.clone();
@@ -718,6 +722,9 @@ async fn run_locked(
                 ))
             }
             Err(error) if error.contains("빈 응답") => {
+                if let Some(assignment)=work_assignment.as_ref(){
+                    crate::engine::room_workboard::skip(state,assignment,"empty")?;
+                }
                 context.emit(json!({"type":"silence","roomId":room_id,"agentId":agent_id,"reason":"empty"}));
                 checkpoint(
                     context, session_id, generation, source_id, &mode, &roster, &initial, &pending,
@@ -729,6 +736,9 @@ async fn run_locked(
         };
         let content = message["content"].as_str().unwrap_or("");
         if is_silence(content) {
+            if let Some(assignment)=work_assignment.as_ref(){
+                crate::engine::room_workboard::skip(state,assignment,"pass")?;
+            }
             context.emit(json!({"type":"silence","roomId":room_id,"agentId":agent_id,"reason":"pass"}));
             checkpoint(
                 context, session_id, generation, source_id, &mode, &roster, &initial, &pending,
@@ -760,11 +770,12 @@ async fn run_locked(
         // Persist a task-scoped observation after the assistant message
         // is committed, before room checkpoint acknowledges the speaker.
         // Ordinary discussion rooms keep their historical transcript flow.
-        if room["toolsEnabled"].as_bool().unwrap_or(false) && roster.len() >= 2 {
-            crate::engine::room_workboard::record(
+        if let Some(assignment)=work_assignment.as_ref(){
+            let observed=crate::engine::room_workboard::record(
                 state,room_id,session_id,source_id,&task_id,
                 &agent_id,outputs.len(),&message,
             )?;
+            crate::engine::room_workboard::complete(state,assignment,&observed)?;
         }
         let resolution =
             crate::engine::debate::resolve(owner_text, &outputs, &conflict_strategy);

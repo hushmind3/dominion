@@ -10,6 +10,73 @@ const MAX_SUMMARY_CHARS:usize=260;
 const MAX_ITEMS_IN_PROMPT:usize=6;
 const MAX_TOOL_REFS:usize=4;
 
+
+/// Native work assignment is a durable, source-addressed job stage. The
+/// room's original owner message, not a peer model prompt, supplies authority.
+pub fn assign(
+    state:&AppState,room_id:&str,session_id:&str,source_id:&str,
+    task_id:&str,agent_id:&str,step:usize,
+)->Result<Value,String>{
+    let linked=state.store.get("session",session_id)
+        .ok_or("workboard assignment: missing room session")?;
+    if linked["roomId"].as_str()!=Some(room_id){
+        return Err("workboard assignment: room/session mismatch".into());
+    }
+    let source=state.store.message(source_id)
+        .ok_or("workboard assignment: missing owner message")?;
+    if source["session_id"]!=session_id || source["role"]!="user"
+        || source["metadata"]["authorKind"]!="owner"
+        || source["metadata"]["roomId"].as_str().is_some_and(|id|id!=room_id){
+        return Err("workboard assignment: owner scope mismatch".into());
+    }
+    let id=format!("room-assignment-{}",uuid::Uuid::new_v4());
+    let value=json!({
+        "id":id,"roomId":room_id,"sessionId":session_id,
+        "sourceMessageId":source_id,"taskId":task_id,
+        "agentId":agent_id,"step":step,"status":"assigned",
+        "ownerDigest":memory::stable_id(&[source_id,
+            source["content"].as_str().unwrap_or("")]),
+    });
+    let saved=state.store.put_if_absent("room_work_assignment",&value)
+        .ok_or("workboard assignment: could not persist before execution")?;
+    state.bus.record("room_work_assignment",&saved);
+    Ok(saved)
+}
+
+/// A model assertion is never automatically converted to verified work.
+/// Completion references an already committed, scope-matching workboard item.
+pub fn complete(state:&AppState,assignment:&Value,work:&Value)->Result<Value,String>{
+    if assignment["roomId"]!=work["roomId"]
+        || assignment["sourceMessageId"]!=work["sourceMessageId"]
+        || assignment["agentId"]!=work["agentId"]
+        || assignment["taskId"]!=work["taskId"]{
+        return Err("workboard completion: provenance mismatch".into());
+    }
+    let id=assignment["id"].as_str().ok_or("workboard completion: missing id")?;
+    let saved=state.store.patch_if(
+        "room_work_assignment",id,"status",&json!("assigned"),
+        &json!({"status":"completed","workItemId":work["id"],
+            "messageId":work["messageId"],
+            "evidenceStatus":work["evidenceStatus"],
+            "completedToolCount":work["completedToolCount"]}),
+    ).or_else(||state.store.get("room_work_assignment",id)
+        .filter(|row|row["status"]=="completed"
+            && row["workItemId"]==work["id"]))
+        .ok_or("workboard completion: assignment is not live")?;
+    state.bus.record("room_work_assignment",&saved);
+    Ok(saved)
+}
+
+/// A voluntary pass is recorded without inventing a completed result.
+pub fn skip(state:&AppState,assignment:&Value,reason:&str)->Result<(),String>{
+    let id=assignment["id"].as_str().ok_or("workboard skip: missing id")?;
+    let _=state.store.patch_if("room_work_assignment",id,"status",
+        &json!("assigned"),&json!({"status":"skipped",
+            "reason":reason.chars().take(80).collect::<String>()}))
+        .ok_or("workboard skip: assignment is not live")?;
+    Ok(())
+}
+
 /// Persist one completed assistant contribution only after the real chat
 /// engine has committed its message. Deterministic message identity prevents
 /// duplicate workboard entries on checkpoint replay.
@@ -233,6 +300,30 @@ mod tests{
         assert_eq!(count,6);
         assert!(text.contains("reply-11"));
         assert!(!text.contains("reply-0\""));
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn assignment_can_only_complete_with_a_matching_durable_observation(){
+        let (state,dir)=state();
+        seed(&state,"owner-a","reply-a","a","exec-a");
+        let msg=state.store.message("reply-a").unwrap();
+        let assignment=assign(&state,"r","room:r","owner-a","task-a","a",1).unwrap();
+        assert_eq!(assignment["status"],"assigned");
+        let work=record(&state,"r","room:r","owner-a","task-a","a",1,&msg).unwrap();
+        let bad=json!({"id":"forgery","roomId":"r","sourceMessageId":"owner-a",
+            "taskId":"different","agentId":"a"});
+        assert!(complete(&state,&assignment,&bad).is_err());
+        let done=complete(&state,&assignment,&work).unwrap();
+        assert_eq!(done["status"],"completed");
+        assert_eq!(done["evidenceStatus"],"agent_report");
+        assert_eq!(done["workItemId"],work["id"]);
+        assert_eq!(complete(&state,&assignment,&work).unwrap()["id"],done["id"]);
+        assert!(skip(&state,&assignment,"late pass").is_err());
+        let other=assign(&state,"r","room:r","owner-a","task-a","a",2).unwrap();
+        skip(&state,&other,"pass").unwrap();
+        assert_eq!(state.store.get("room_work_assignment",other["id"].as_str().unwrap())
+            .unwrap()["status"],"skipped");
         let _=std::fs::remove_dir_all(dir);
     }
 }

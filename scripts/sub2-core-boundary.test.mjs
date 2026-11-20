@@ -262,3 +262,18 @@ test('owner ingress and acceptance preflight are outside the model loop',()=>{
  assert.match(setup,/episode::attach_source/);
  assert.doesNotMatch(setup,/stream_completion|dispatch_tool_call|run_program/);
 });
+
+test('group work assignments require committed source-matching receipts',()=>{
+ const board=source('src/engine/services/conversation/room_workboard.rs');
+ const room=source('src/engine/services/conversation/rooms.rs');
+ const parallel=source('src/engine/services/conversation/room_parallel.rs');
+ assert.match(board,/pub fn assign\(/);
+ assert.match(board,/pub fn complete\(/);
+ assert.match(board,/pub fn skip\(/);
+ assert.match(board,/ownerDigest/);
+ assert.match(board,/status":"assigned"/);
+ assert.match(board,/evidenceStatus/);
+ assert.match(room,/room_workboard::assign\(/);
+ assert.match(room,/room_workboard::complete\(/);
+ assert.match(parallel,/room_workboard::complete\(/);
+});

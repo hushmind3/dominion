@@ -100,6 +100,15 @@ pub(super) async fn run(
         state.store.put_if_absent("session",&v)
             .ok_or("그룹 워커의 독립 세션을 저장하지 못했습니다.")?;
     }
+    // Freeze each assignment before launching any provider request.
+    let mut assignments=std::collections::HashMap::<String,Value>::new();
+    for agent_id in initial{
+        let assignment=crate::engine::room_workboard::assign(
+            state,room_id,room_session,source_id,task_id,agent_id,
+            assignments.len()+1,
+        )?;
+        assignments.insert(agent_id.clone(),assignment);
+    }
     state.store.audit("room.parallel_started",json!({
         "roomId":room_id,"sourceMessageId":source_id,
         "workerCount":work.len(),"concurrency":MAX_CONCURRENT,
@@ -227,8 +236,13 @@ pub(super) async fn run(
             "parallelReadOnly":true,
         }));
         // Shared board is durable and idempotent, even for a read-only peer.
-        crate::engine::room_workboard::record(state,room_id,room_session,
-            source_id,task_id,agent_id,outputs.len(),&saved)?;
+        let observed=crate::engine::room_workboard::record(
+            state,room_id,room_session,source_id,task_id,agent_id,
+            outputs.len(),&saved,
+        )?;
+        let assignment=assignments.get(agent_id)
+            .ok_or("그룹 작업의 사전 할당 기록이 누락되었습니다.")?;
+        crate::engine::room_workboard::complete(state,assignment,&observed)?;
         state.bus.emit(json!({"type":"room_event","roomId":room_id,
             "sessionId":room_session,"agentId":agent_id,
             "event":{"type":"assistant_saved","messageId":saved["id"]}}));
