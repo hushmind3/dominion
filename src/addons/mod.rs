@@ -5,6 +5,8 @@
 pub mod runtime_hooks;
 #[path = "operations/team_dag.rs"]
 pub mod team_dag;
+#[path = "operations/team_orchestrator.rs"]
+pub mod team_orchestrator;
 #[path = "integrations/room_board.rs"]
 pub mod room_board;
 #[path = "strategies/turn_policy.rs"]
