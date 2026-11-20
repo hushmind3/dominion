@@ -8,7 +8,6 @@ on:
     paths:
       - 'Cargo.toml'
       - 'src-tauri/tauri.conf.json'
-      - '.github/workflows/release.yml'
 
 permissions:
   contents: read
@@ -54,7 +53,7 @@ jobs:
       - name: Cross-platform source and frontend contracts
         run: |
           node scripts/check-runtime-architecture.mjs
-                    node scripts/check-release-contract.mjs
+          node scripts/check-release-contract.mjs
           npm run typecheck --prefix web
           npm run build --prefix web
       - name: Rust runtime regression and end-to-end suite
