@@ -189,7 +189,11 @@ pub fn recover(state: &AppState) {
     };
     for job in jobs {
         let external_unknown=job["id"].as_str()
-            .is_some_and(|id|external_jobs.contains(id));
+            .is_some_and(|id|external_jobs.contains(id))
+            || (job["status"]=="running"
+                &&job["input"]["externalRuntime"].as_str().is_some());
+        // A running external CLI job is never safe to replay after restart,
+        // including when its separate receipt could not be read.
         if job.get("status").and_then(|value| value.as_str()) != Some("running") {
             if external_unknown && job["status"]=="queued" {
                 if let Some(id)=job["id"].as_str(){
