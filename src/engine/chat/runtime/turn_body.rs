@@ -781,6 +781,7 @@ pub(super) async fn run_turn_body(
     let mut finished = false;
     let mut force_final = false;
     let mut call_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut repeat_warnings = std::collections::HashSet::<String>::new();
     let mut failed_calls: std::collections::HashMap<String, (String, String)> =
         std::collections::HashMap::new();
     let mut environment_version = 0u64;
@@ -1928,7 +1929,9 @@ pub(super) async fn run_turn_body(
                 *counter += 1;
                 *counter
             };
-            if repeat > 2 {
+            if repeat > 2 && repeat_warnings.insert(call_key.clone()) {
+                // Emit one actionable warning per distinct repeated call. Repeated
+                // identical warnings otherwise grow the uncached system suffix.
                 // Repeated calls are an observation, not a hard stop. The model
                 // sees the same real result and decides whether to change tack.
                 messages.push(json!({
