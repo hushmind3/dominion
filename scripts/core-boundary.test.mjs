@@ -61,6 +61,9 @@ test('product capabilities register outside the host execution adapter',()=>{
  for(const kind of ['room','meeting','learn','reflect','discord'])
   assert.doesNotMatch(jobs,new RegExp('"'+kind+'"\\s*=>'));
  const native=read('src/host/execution/native_agent.rs');
+ assert.doesNotMatch(native,/impl Journal for/);
+ assert.match(read('src/host/journal.rs'),/impl Journal for DurableJournal/);
+ assert.match(native,/use crate::host::journal::DurableJournal/);
  assert.doesNotMatch(native,/\bmcp::/);
  assert.match(native,/external::native_external_tools/);
  const tools=read('src/integrations/local_tools.rs');

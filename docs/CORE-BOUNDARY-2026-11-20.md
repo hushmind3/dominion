@@ -39,7 +39,7 @@ The feature catalog, conversation facade and local tool-driver reexports were re
 
 This is an actual source ownership separation, with **an independently compilable Rust agent-kernel crate** and host-owned persistent storage. It does **not** assert the product host can run without database services or that host features are independently hot-unloadable plugins. The host `AppState` and job adapters still use `Store`; this is intentionally outside the SDK and must be further narrowed by host-specific persistence traits before multiple backends are supported.
 
-The kernel's `Journal` trait already receives snapshots/receipts; SQLite serialization is performed in the host's implementation. Mutating operations retain existing approval, cancellation epoch, pinned MCP contracts and effect receipts, so this change does not remove execution safeguards.
+The kernel's `Journal` trait already receives snapshots/receipts. The concrete durable checkpoint implementation is now extracted from the agent runner into `src/host/journal.rs` and uses the host `JobContext`/SQLite store; the kernel imports no storage code. Mutating operations retain existing approval, cancellation epoch, pinned MCP contracts and effect receipts, so this change does not remove execution safeguards.
 
 ## Regression verification
 
