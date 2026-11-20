@@ -5,7 +5,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::{json, Value};
 
-use crate::engine::browser;
+use crate::integrations::browser;
 use crate::state::AppState;
 
 pub async fn status(State(state): State<AppState>) -> Json<Value> {

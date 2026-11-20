@@ -196,7 +196,7 @@ fn context_block_with_manifest(
     // including unrelated instructions, while skill_search/read used a
     // different permission scope. Only task-matched procedures are preloaded;
     // full text remains available through owner-authorized skill_read.
-    let skills = crate::engine::skill_discovery::select(
+    let skills = crate::integrations::skills::discovery::select(
         state.store.all("skill"), &scope, query, 2,
     ).into_iter().map(|skill| {
         let id = skill["id"].as_str().unwrap_or("").to_string();

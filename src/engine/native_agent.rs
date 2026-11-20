@@ -529,7 +529,7 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
     // Context is selected by task relevance, not DB insertion order.
     // Remaining owner-enabled Skills are discoverable later through the
     // existing Rust host tool registry without another planning/runtime loop.
-    context_instructions.push_str(&crate::engine::skill_discovery::initial_context(
+    context_instructions.push_str(&crate::integrations::skills::discovery::initial_context(
         &context.state.store,&scope,task,
         available.iter().any(|spec|spec.name=="skill_search"),
     ));

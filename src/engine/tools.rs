@@ -239,7 +239,7 @@ pub async fn execute(
         "browser_control" => {
             let action = required_arg(args, "action")?;
             let owner_id=format!("{}:{}",ctx.agent_id.unwrap_or("user"),ctx.session_id);
-            crate::engine::browser::execute_for_owner(
+            crate::integrations::browser::execute_for_owner(
                 &action,
                 args,
                 &ctx.state.config.data_dir,
@@ -281,14 +281,14 @@ pub async fn execute(
             let scope = crate::engine::memory::MemoryScope::for_session(
                 ctx.store,ctx.session_id,ctx.agent_id
             );
-            crate::engine::skill_discovery::search(ctx.store,&scope,&query,limit)
+            crate::integrations::skills::discovery::search(ctx.store,&scope,&query,limit)
         }
         "skill_read" => {
             let id = required_arg(args, "id")?;
             let scope = crate::engine::memory::MemoryScope::for_session(
                 ctx.store,ctx.session_id,ctx.agent_id
             );
-            crate::engine::skill_discovery::read(ctx.store,&scope,&id)
+            crate::integrations::skills::discovery::read(ctx.store,&scope,&id)
         }
         "skill_resource_read" => {
             let id=required_arg(args,"id")?;
@@ -296,7 +296,7 @@ pub async fn execute(
             let scope=crate::engine::memory::MemoryScope::for_session(
                 ctx.store,ctx.session_id,ctx.agent_id
             );
-            crate::engine::skill_discovery::read_resource(ctx.store,&scope,&id,&path)
+            crate::integrations::skills::discovery::read_resource(ctx.store,&scope,&id,&path)
         }
         "skill_propose" => {
             let name = required_arg(args, "name")?;

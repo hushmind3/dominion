@@ -69,12 +69,12 @@ pub async fn export_skill(State(state): State<AppState>, Path(id): Path<String>)
 }
 
 pub async fn skill_catalog(State(state): State<AppState>) -> Json<Value> {
-    Json(engine::skills::catalog(&state))
+    Json(crate::integrations::skills::catalog::catalog(&state))
 }
 
 pub async fn skill_catalog_meta(State(state): State<AppState>) -> Json<Value> {
     Json(json!({
-        "roots": engine::skills::roots(&state).into_iter().map(|(source, path)| json!({
+        "roots": crate::integrations::skills::catalog::roots(&state).into_iter().map(|(source, path)| json!({
             "source": source,
             "path": path.to_string_lossy(),
         })).collect::<Vec<_>>(),
@@ -86,7 +86,7 @@ pub async fn import_skill(State(state): State<AppState>, Json(body): Json<Value>
         .get("id")
         .and_then(|value| value.as_str())
         .unwrap_or("");
-    match engine::skills::import(&state, id) {
+    match crate::integrations::skills::catalog::import(&state, id) {
         Ok(record) => Json(record).into_response(),
         Err(message) => error(StatusCode::BAD_REQUEST, &message),
     }
@@ -97,7 +97,7 @@ pub async fn import_skill_repo(State(state): State<AppState>, Json(body): Json<V
         .get("repo")
         .and_then(|value| value.as_str())
         .unwrap_or("");
-    match engine::skills::import_repo(&state, repo) {
+    match crate::integrations::skills::catalog::import_repo(&state, repo) {
         Ok(result) => Json(result).into_response(),
         Err(message) => error(StatusCode::BAD_REQUEST, &message),
     }

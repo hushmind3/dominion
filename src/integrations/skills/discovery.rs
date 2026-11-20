@@ -4,7 +4,7 @@
 use crate::db::Store;
 use serde_json::{json,Value};
 use sha2::{Digest,Sha256};
-use super::memory::MemoryScope;
+use crate::engine::memory::MemoryScope;
 use std::collections::BTreeSet;
 
 const MAX_MATCHES:usize=8;

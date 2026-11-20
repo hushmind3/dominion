@@ -33,7 +33,7 @@ jobs:
         run: |
           grep -Fq 'pub use tool_discovery::tool_relevance;' crates/dominion-agent-sdk/src/lib.rs
           grep -Fq 'dominion_agent_sdk::tool_relevance(' src/engine/chat/runtime/selection.rs
-          cargo test --bin dominion-rust engine::skill_discovery::tests
+          cargo test --bin dominion-rust integrations::skills::discovery::tests
           cargo test --bin dominion-rust engine::chat::runtime::capability::tests
           cargo test --bin dominion-rust planning_cost_tests
           cargo test --bin dominion-rust shared_sdk_relevance_ignores_tool_parameter_payload

@@ -8,6 +8,8 @@
 - **Composition**: `src/bootstrap.rs` starts integration transports separately from core job workers. Shared MCP leases now live in `AppState::integrations.mcp_sessions`, so the core state machine does not own connector sessions.
 - **Presentation**: `web/` and `src/api/` remain in place; no UI menu, saved connection configuration, room history or external API path is renamed.
 
+Additional optional integrations: `src/integrations/browser.rs` owns Chrome DevTools browser control; `src/integrations/skills/` owns Skill installation, discovery and scoped retrieval. Their existing API routes remain stable.
+
 ## Runtime paths
 
 ```text

@@ -16,6 +16,9 @@ const moved=[
  ['github_files.rs','accounts/github_files.rs'],
  ['github_workflow.rs','accounts/github_workflow.rs'],
  ['google_workspace.rs','accounts/google_workspace.rs'],
+ ['browser.rs','browser.rs'],
+ ['skills.rs','skills/catalog.rs'],
+ ['skill_discovery.rs','skills/discovery.rs'],
 ];
 function rustFiles(dir){return readdirSync(join(root,dir),{withFileTypes:true}).flatMap(entry=>{
  const path=join(dir,entry.name);
@@ -43,7 +46,7 @@ test('connector ownership stays out of agent worker and host tool catalog',()=>{
  assert.match(source('src/integrations/accounts/tools.rs'),/pub fn definitions\(\)/);
 });
 test('old engine connector paths cannot leak back into API or core source',()=>{
- const legacy=/\b(?:crate::)?engine::(?:mcp|bridge|channel_adapter|discord|telegram|oauth|github_files|github_workflow|google_workspace)\b/;
+ const legacy=/\b(?:crate::)?engine::(?:mcp|bridge|channel_adapter|discord|telegram|oauth|github_files|github_workflow|google_workspace|browser|skills|skill_discovery)\b/;
  for(const file of rustFiles('src')){
   assert.doesNotMatch(source(file),legacy,'legacy connector import at '+file);
  }
