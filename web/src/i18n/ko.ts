@@ -1135,6 +1135,11 @@ const ko = {
   'conn.dlg.saved': '{name} 설정이 저장되었습니다.',
   'conn.dlg.diagnosing': '진단 중',
   'conn.dlg.verified': '인증 확인됨',
+  'conn.probeVerified': '연결 인증 확인',
+  'conn.probeUnverified': '연결 확인 필요',
+  'conn.probeCheckedAt': '확인 시각: {time}',
+  'conn.probeIsNotDelivery': '이 진단은 원격 인증·접속 상태를 확인합니다. 메시지 실제 전송 성공과는 구분됩니다.',
+
   'conn.dlg.checkNeeded': '연결 상태 확인 필요',
   'conn.dlg.secretHint': '기존 키는 표시하지 않습니다. 변경할 때만 입력하세요.',
   'conn.dlg.roomOption': '회의실 · {name} ({count}명)',

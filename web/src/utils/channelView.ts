@@ -13,6 +13,11 @@ export type Channel={
  };
  toolsEnabled?:boolean;replyMentionBots?:boolean;webhookPath?:string
 }
+export type ChannelProbe={status:'checking'|'verified'|'unverified';message:string;checkedAt?:string}
+export function normalizeChannelProbe(result:{verified?:boolean;message?:string},verifiedMessage:string,fallbackMessage:string,checkedAt:string):ChannelProbe{
+ return {status:result.verified===true?'verified':'unverified',
+  message:result.verified===true?verifiedMessage:result.message||fallbackMessage,checkedAt}
+}
 export type ChannelHealth='setup'|'issue'|'connected'|'outbound'|'paused'|'disabled'|'starting'|'stopped'
 export function channelHealth(c:Channel):ChannelHealth{
  if(!c.configured || (c.missing?.length??0)>0)return 'setup'

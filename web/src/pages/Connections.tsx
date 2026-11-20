@@ -7,7 +7,7 @@ import {del,post} from '../api'
 import {Action,FormField,Notice,Panel,StateTag,Subheading,useRemote} from '../components/UI'
 import {t,useLocale} from '../i18n'
 import {ChannelDirectory} from '../components/ChannelDirectory'
-import {type Channel,type ChannelEntry} from '../utils/channelView'
+import {normalizeChannelProbe,type ChannelProbe,type Channel,type ChannelEntry} from '../utils/channelView'
 import {ExtensionsPage,type ExtensionTab} from './Extensions'
 import {CapabilitiesPage} from './Capabilities'
 import {ConnectedAccounts} from '../components/ConnectedAccounts'
@@ -20,7 +20,7 @@ export function ConnectionsPage(){
  useLocale()
  const [section,setSection]=useState<'channels'|'quick-connect'|'accounts'|'capabilities'|ExtensionTab>('channels');
  const [editor,setEditor]=useState<{entry:ChannelEntry;record:any}|null>(null);
- const [error,setError]=useState(''),[info,setInfo]=useState(''),[probe,setProbe]=useState<Record<string,string>>({}),[saving,setSaving]=useState(false);
+ const [error,setError]=useState(''),[info,setInfo]=useState(''),[probe,setProbe]=useState<Record<string,ChannelProbe>>({}),[saving,setSaving]=useState(false);
  const [oauthEditor,setOauthEditor]=useState<{id:OAuthAccountId;clientId:string;clientSecret:string}|null>(null);
  const [oauthSaving,setOauthSaving]=useState(false),[oauthError,setOauthError]=useState('');
  // Each section loads only the data it actually renders. Quick-connect
@@ -46,24 +46,40 @@ export function ConnectionsPage(){
  };
  const save=async()=>{
   if(!editor||saving)return;
-  setSaving(true);setError('');
+  setSaving(true);setError('');setInfo('');
+  let saved:Channel;
   try{
-   const saved=await post<{id?:string}>('/api/channels',editor.record);
-   if(saved.id)setFocusChannelId(saved.id);
-   setEditor(null);setInfo(t('conn.dlg.saved',{name:editor.entry.name}));
-   await channels.reload();await registry.reload();
-  }catch(e){setError((e as Error).message)}finally{setSaving(false)}
+   saved=await post<Channel>('/api/channels',editor.record);
+  }catch(e){setError((e as Error).message);setSaving(false);return}
+  // Once the write succeeds it is not a failed save merely because a
+  // subsequent diagnostic or list refresh cannot reach the remote service.
+  if(saved.id){
+   setFocusChannelId(saved.id);
+   setProbe(previous=>{const next={...previous};delete next[saved.id];return next});
+  }
+  setEditor(null);
+  setInfo(t('conn.dlg.saved',{name:editor.entry.name}));
+  setSaving(false);
+  try{await Promise.all([channels.reload(),registry.reload()])}
+  catch(e){setError((e as Error).message)}
+  // Close the loop on setup. Diagnosing never sends a message and its
+  // result must not be misrepresented as a confirmed outbound delivery.
+  if(saved.id&&saved.enabled)await diagnose(saved.id);
  };
  const diagnose=async(id:string)=>{
   if(busyAction)return;
   setBusyAction('probe:'+id);
-  setProbe(x=>({...x,[id]:t('conn.dlg.diagnosing')}));
+  setProbe(previous=>({...previous,[id]:{status:'checking',message:t('conn.dlg.diagnosing')}}));
   try{
    const result=await post<{verified?:boolean;message?:string}>('/api/channels/'+encodeURIComponent(id)+'/diagnose',{});
-   setProbe(x=>({...x,[id]:result.verified?t('conn.dlg.verified'):result.message||t('conn.dlg.checkNeeded')}));
+   const outcome=normalizeChannelProbe(result,t('conn.dlg.verified'),t('conn.dlg.checkNeeded'),new Date().toISOString());
+   setProbe(previous=>({...previous,[id]:outcome}));
    await channels.reload();
-  }catch(e){setProbe(x=>({...x,[id]:(e as Error).message}))}
-  finally{setBusyAction(null)}
+  }catch(e){
+   setProbe(previous=>({...previous,[id]:{
+    status:'unverified',message:(e as Error).message,checkedAt:new Date().toISOString()
+   }}));
+  }finally{setBusyAction(null)}
  };
  const removeChannel=async(channel:Channel)=>{
   if(busyAction||!window.confirm(t('conn.dlg.removeConfirm',{name:channel.name})))return;

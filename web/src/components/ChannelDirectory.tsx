@@ -2,7 +2,7 @@ import {useEffect,useMemo,useState} from 'react'
 import {Activity,AlertCircle,ArrowLeft,ArrowUpRight,Check,ChevronRight,ExternalLink,MessageCircle,Plus,Search,Send,Settings2,ShieldCheck,Trash2,Users} from 'lucide-react'
 import {Button,TextInput} from './Primitives'
 import {t,useLocale,type LocaleKey} from '../i18n'
-import {channelHealth,matchingChannels,sortChannelBindings,type Channel,type ChannelEntry,type ChannelHealth} from '../utils/channelView'
+import {channelHealth,matchingChannels,sortChannelBindings,type Channel,type ChannelEntry,type ChannelHealth,type ChannelProbe} from '../utils/channelView'
 
 const iconByChannel:Record<string,typeof MessageCircle>={
  discord:MessageCircle,telegram:Send,slack:MessageCircle,
@@ -25,7 +25,7 @@ const categories:[
 type ConnectionFilter='all'|'attention'|'ready'
 type Props={
  entries:ChannelEntry[];bindings:Channel[];rooms:{id:string;name:string}[];focusId?:string|null;
- loading:boolean;error:string;probes:Record<string,string>;busyAction:string|null;
+ loading:boolean;error:string;probes:Record<string,ChannelProbe>;busyAction:string|null;
  onEdit:(entry:ChannelEntry,existing?:Channel)=>void;
  onDiagnose:(channel:Channel)=>void;onDelete:(channel:Channel)=>void
 }
@@ -242,9 +242,14 @@ export function ChannelDirectory({entries,bindings,rooms,focusId,loading,error,p
        </div>
        <p className="mt-2 text-[11px] leading-5 text-[#8A8074]">{t('conn.outboundNoteCompact')}</p>
       </div>}
-      {probes[selected.id]&&<p role="status" className="rounded-xl border border-[#D8E5E6] bg-[#F3FAFA] p-3 text-xs leading-5 text-[#42656B]">{probes[selected.id]}</p>}
+      {probes[selected.id]&&<div role="status" aria-live="polite" className={'rounded-xl border p-3 text-xs leading-5 '+(probes[selected.id].status==='verified'?'border-emerald-200 bg-emerald-50 text-emerald-800':probes[selected.id].status==='unverified'?'border-amber-200 bg-amber-50 text-amber-900':'border-[#D8E5E6] bg-[#F3FAFA] text-[#42656B]')}>
+       <strong className="block text-[12px]">{probes[selected.id].status==='verified'?t('conn.probeVerified'):probes[selected.id].status==='checking'?t('conn.dlg.diagnosing'):t('conn.probeUnverified')}</strong>
+       <span className="mt-1 block break-words">{probes[selected.id].message}</span>
+       {probes[selected.id].checkedAt&&<span className="mt-1 block opacity-70">{t('conn.probeCheckedAt',{time:new Date(probes[selected.id].checkedAt).toLocaleString()})}</span>}
+       <span className="mt-1 block opacity-80">{t('conn.probeIsNotDelivery')}</span>
+      </div>}
       <div className="flex flex-wrap items-center gap-2 border-t border-[#EFE8DD] pt-4">
-       <Button size="sm" variant="secondary" disabled={busyAction!==null} onClick={()=>onDiagnose(selected)}>
+       <Button size="sm" variant={probes[selected.id]?.status==='unverified'?'primary':'secondary'} disabled={busyAction!==null} onClick={()=>onDiagnose(selected)}>
         <Activity size={15} className={busyAction==='probe:'+selected.id?'animate-spin':''}/>
         {busyAction==='probe:'+selected.id?t('conn.dlg.diagnosing'):t('conn.dlg.diagnose')}
        </Button>

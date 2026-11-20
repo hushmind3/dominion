@@ -1,6 +1,6 @@
 import {test} from 'node:test'
 import assert from 'node:assert/strict'
-import {channelHealth,sortChannelBindings,matchingChannels,channelDraftMissing} from '../src/utils/channelView.ts'
+import {channelHealth,sortChannelBindings,matchingChannels,channelDraftMissing,normalizeChannelProbe} from '../src/utils/channelView.ts'
 
 const entry={id:'slack',name:'Slack',category:'workplace',mode:'outbound',description:'Send room replies',docs:'https://slack.com',
  available:true,status:'available',features:['messages'],requiresRoom:true,fields:[
@@ -36,4 +36,15 @@ test('editing retains sealed secrets and requires destination and room fields',(
  assert.deepEqual(channelDraftMissing(entry,{...saved,credentialsPresent:{token:false}}),['Access token'])
  assert.deepEqual(channelDraftMissing(entry,{...saved,roomId:''}),['roomId'])
  assert.deepEqual(channelDraftMissing(entry,{...saved,channelId:''}),['Channel ID'])
+})
+
+test('diagnosis results separate verified authentication from failed reachability and preserve timestamp',()=>{
+ const at='2026-11-20T09:00:00.000Z'
+ assert.deepEqual(normalizeChannelProbe({verified:true,message:'OK'},'Verified','Check needed',at),{
+  status:'verified',message:'Verified',checkedAt:at
+ })
+ assert.deepEqual(normalizeChannelProbe({verified:false,message:'Token expired'},'Verified','Check needed',at),{
+  status:'unverified',message:'Token expired',checkedAt:at
+ })
+ assert.equal(normalizeChannelProbe({},'Verified','Check needed',at).status,'unverified')
 })

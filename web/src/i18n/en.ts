@@ -1136,6 +1136,11 @@ const en: Record<LocaleKey, string> = {
   'conn.dlg.saved': '{name} settings saved.',
   'conn.dlg.diagnosing': 'Diagnosing',
   'conn.dlg.verified': 'Authentication verified',
+  'conn.probeVerified': 'Connection authentication verified',
+  'conn.probeUnverified': 'Connection requires attention',
+  'conn.probeCheckedAt': 'Checked at {time}',
+  'conn.probeIsNotDelivery': 'This check verifies remote authentication and reachability; it does not confirm message delivery.',
+
   'conn.dlg.checkNeeded': 'Connection check required',
   'conn.dlg.secretHint': 'Existing keys are not shown. Enter a value only to change it.',
   'conn.dlg.roomOption': 'Room · {name} ({count})',
