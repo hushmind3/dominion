@@ -85,6 +85,7 @@ pub fn definitions() -> Vec<Value> {
             "isolatedWorktree":json!({"type":"boolean","description":"Use an independent Git worktree and enforced shell sandbox; integrate explicitly with task_integrate"}),
             "externalRuntime":json!({"type":"string","enum":["codex","claude","qwen"],
                 "description":"Optional external agent inspector (not a model provider). Requires inspection profile and isolatedWorktree. Runs with read-only CLI permissions; its internal actions are not native tool receipts."}),
+            "resumeFromJobId":json!({"type":"string","description":"Explicitly continue a completed, same-owner external inspection worker's CLI session. Requires externalRuntime, inspection and isolatedWorktree. Reuses its clean project-scoped read-only checkout; never resumes a crashed or uncertain call."}),
             "dependsOnJobIds":json!({"type":"array","maxItems":16,
                 "items":{"type":"string"},"description":"Earlier sibling delegated job IDs from the same parent session. Queued child starts only after all prerequisites are durably completed and any isolated patches are frozen."}),
             "profile": json!({"type":"string","enum":["general","inspection","implementation","verification"],
