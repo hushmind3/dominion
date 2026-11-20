@@ -186,6 +186,12 @@ pub async fn execute(
     if !profile_tool_allowed(&session,name,args) {
         return Err("위임 역할에 허용되지 않는 도구 또는 명령입니다.".into());
     }
+    // Tool schemas can be cached across a policy change. Revalidate at the
+    // actual execution boundary, not only when the model saw its catalog.
+    if !crate::engine::extensions::tool_allowed(
+        ctx.state,ctx.session_id,ctx.agent_id,name) {
+        return Err("이 세션에서 해당 부가기능이 비활성화되어 있습니다.".into());
+    }
     if session["readOnly"]==true && !observational(name) {
         return Err("읽기 전용 위임 작업에는 이 도구를 실행할 권한이 없습니다.".into());
     }
