@@ -40,6 +40,7 @@ use super::{budget,capability,context,continuity,protocol,room_context,tool_sche
 mod turn_body;
 mod finalize;
 mod preflight;
+mod tool_catalog;
 #[path = "../../decision/runtime_program.rs"]
 mod program;
 mod observations;

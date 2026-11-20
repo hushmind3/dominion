@@ -287,3 +287,16 @@ test('actual provider requests share bounded local/cloud gates independent of al
  assert.match(state,/OwnedSemaphorePermit/);
  assert.match(state,/Arc<Semaphore>/);
 });
+
+test('catalog and MCP/skill/account visibility live outside the model-round loop',()=>{
+ const turn=source('src/engine/services/conversation/chat/runtime/turn_body.rs');
+ const catalog=source('src/engine/services/conversation/chat/runtime/tool_catalog.rs');
+ assert.match(turn,/super::tool_catalog::prepare\(/);
+ assert.match(catalog,/pub\(super\) async fn prepare\(/);
+ assert.match(catalog,/retain_connected_account_tools/);
+ assert.match(catalog,/canonical_tool_definitions/);
+ assert.match(catalog,/capability::should_enable/);
+ assert.match(catalog,/discovery_catalog/);
+ assert.doesNotMatch(catalog,/stream_completion|dispatch_tool_call/);
+ assert.doesNotMatch(turn,/addons::tool_definitions\(state\)\.await/);
+});
