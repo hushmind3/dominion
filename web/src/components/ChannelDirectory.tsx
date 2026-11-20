@@ -1,6 +1,7 @@
 import {useEffect,useMemo,useState} from 'react'
 import {Activity,AlertCircle,ArrowLeft,ArrowUpRight,Check,ChevronRight,ExternalLink,MessageCircle,Plus,Search,Send,Settings2,ShieldCheck,Trash2,Users} from 'lucide-react'
 import {Button,TextInput} from './Primitives'
+import {ChannelDeliveryReview} from './ChannelDeliveryReview'
 import {t,useLocale,type LocaleKey} from '../i18n'
 import {channelHealth,matchingChannels,sortChannelBindings,type Channel,type ChannelEntry,type ChannelHealth,type ChannelProbe} from '../utils/channelView'
 
@@ -27,7 +28,8 @@ type Props={
  entries:ChannelEntry[];bindings:Channel[];rooms:{id:string;name:string}[];focusId?:string|null;
  loading:boolean;error:string;probes:Record<string,ChannelProbe>;busyAction:string|null;
  onEdit:(entry:ChannelEntry,existing?:Channel)=>void;
- onDiagnose:(channel:Channel)=>void;onDelete:(channel:Channel)=>void
+ onDiagnose:(channel:Channel)=>void;onDelete:(channel:Channel)=>void;
+ onDeliveryReconciled:()=>Promise<void>
 }
 function needsAttention(channel:Channel){
  return ['issue','setup'].includes(channelHealth(channel))
@@ -55,7 +57,7 @@ function DataPair({label,value}:{label:string;value:string|number}){
   <span className="min-w-0 break-all text-right font-semibold text-[#3C342C]">{value}</span>
  </div>
 }
-export function ChannelDirectory({entries,bindings,rooms,focusId,loading,error,probes,busyAction,onEdit,onDiagnose,onDelete}:Props){
+export function ChannelDirectory({entries,bindings,rooms,focusId,loading,error,probes,busyAction,onEdit,onDiagnose,onDelete,onDeliveryReconciled}:Props){
  useLocale()
  const [adding,setAdding]=useState(false)
  const [selectedId,setSelectedId]=useState<string|null>(null)
@@ -241,6 +243,8 @@ export function ChannelDirectory({entries,bindings,rooms,focusId,loading,error,p
         </div>)}
        </div>
        <p className="mt-2 text-[11px] leading-5 text-[#8A8074]">{t('conn.outboundNoteCompact')}</p>
+       {(selected.delivery?.needsReview||0)>0&&<ChannelDeliveryReview
+        channelId={selected.id} onChanged={onDeliveryReconciled}/>}
       </div>}
       {probes[selected.id]&&<div role="status" aria-live="polite" className={'rounded-xl border p-3 text-xs leading-5 '+(probes[selected.id].status==='verified'?'border-emerald-200 bg-emerald-50 text-emerald-800':probes[selected.id].status==='unverified'?'border-amber-200 bg-amber-50 text-amber-900':'border-[#D8E5E6] bg-[#F3FAFA] text-[#42656B]')}>
        <strong className="block text-[12px]">{probes[selected.id].status==='verified'?t('conn.probeVerified'):probes[selected.id].status==='checking'?t('conn.dlg.diagnosing'):t('conn.probeUnverified')}</strong>
