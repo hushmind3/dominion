@@ -1,14 +1,10 @@
+import {hash as digest, randomToken as random} from './token_crypto.js';
 // DOMINION email link identity: a mail-link grants no session by itself.
 // A separate, secret polling credential on the initiating device receives the session.
 // Use Resend as an optional transactional mail adapter; no secrets in the browser.
 const epoch=()=>Math.floor(Date.now()/1000);
 const TTL=600;
-const random=()=>btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
 const validSecret=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{43}$/.test(value);
-const digest=async value=>{
- const buffer=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value));
- return btoa(String.fromCharCode(...new Uint8Array(buffer))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
-};
 const reply=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}});
 const fail=(message,status=400)=>reply({error:message},status);
 const page=(title,text,action='')=>new Response('<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+title+'</title><body style="max-width:32rem;margin:10vh auto;padding:1.5rem;font:16px system-ui;color:#24211d"><h1>'+title+'</h1><p>'+text+'</p>'+action+'</body></html>',{
