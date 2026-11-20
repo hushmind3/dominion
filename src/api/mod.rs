@@ -6,6 +6,7 @@ pub mod algorithms;
 pub mod settings;
 pub mod executions;
 pub mod tasks;
+pub mod task_teams;
 pub mod experience;
 pub mod memory;
 pub mod browser;
@@ -115,6 +116,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/sdk/runs/:id/steer",post(sdk_runs::steer))
         .route("/api/tasks", get(tasks::list))
         .route("/api/tasks/:id", get(tasks::one))
+        .route("/api/task-teams",get(task_teams::list).post(task_teams::create))
+        .route("/api/task-teams/:id",get(task_teams::one))
+        .route("/api/task-teams/:id/cancel",post(task_teams::cancel))
         .route("/api/tools", get(extensions::list_tools))
         .route("/api/browser/status", get(browser::status))
         .route("/api/browser/screenshot", get(browser::screenshot))

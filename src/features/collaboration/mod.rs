@@ -6,3 +6,4 @@ pub mod room_knowledge;
 pub mod room_state;
 pub(crate) mod workboard;
 pub(crate) mod room_cursor;
+pub mod task_team;

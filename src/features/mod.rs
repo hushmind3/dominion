@@ -13,6 +13,7 @@ pub async fn dispatch_job(
 )->Option<Result<serde_json::Value,String>>{
     match kind {
         "room"|"meeting" => Some(collaboration::rooms::run(ctx,job).await),
+        "team" => Some(collaboration::task_team::run(ctx,job).await),
         "learn" => Some(cognition::learning::run(ctx,job).await),
         "reflect" => Some(cognition::reflect::run(ctx,job).await),
         _=>None,
