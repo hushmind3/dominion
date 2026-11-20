@@ -66,7 +66,11 @@ pub(super) fn compile_private(
     // user-supplied message is never truncated by this selector.
     let available=capacity.saturating_sub(fixed_tokens.saturating_add(reserve));
     let history_target_tokens=available.min(8_000);
-    let history_byte_budget=history_target_tokens.saturating_mul(3)
+    // The previous 3-bytes-per-token proxy dropped an immediately preceding
+    // 24KB ASCII owner message even though it fit the model's 8K-token
+    // history allocation. Use the conservative 4-char ASCII upper envelope;
+    // the separate provider-token estimate still reports oversubscription.
+    let history_byte_budget=history_target_tokens.saturating_mul(4)
         .clamp(1_024,32_000);
     let history=context::history(state,session_id,request.agent_id.as_deref(),
         Some(history_byte_budget))?;
