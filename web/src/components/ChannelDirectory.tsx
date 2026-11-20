@@ -245,7 +245,7 @@ export function ChannelDirectory({entries,bindings,rooms,focusId,loading,error,p
        <p className="mt-2 text-[11px] leading-5 text-[#8A8074]">{t('conn.outboundNoteCompact')}</p>
       </div>}
       {(selected.delivery?.needsReview||0)>0&&<ChannelDeliveryReview
-       channelId={selected.id} onChanged={onDeliveryReconciled}/>
+       channelId={selected.id} onChanged={onDeliveryReconciled}/>}
       {probes[selected.id]&&<div role="status" aria-live="polite" className={'rounded-xl border p-3 text-xs leading-5 '+(probes[selected.id].status==='verified'?'border-emerald-200 bg-emerald-50 text-emerald-800':probes[selected.id].status==='unverified'?'border-amber-200 bg-amber-50 text-amber-900':'border-[#D8E5E6] bg-[#F3FAFA] text-[#42656B]')}>
        <strong className="block text-[12px]">{probes[selected.id].status==='verified'?t('conn.probeVerified'):probes[selected.id].status==='checking'?t('conn.dlg.diagnosing'):t('conn.probeUnverified')}</strong>
        <span className="mt-1 block break-words">{probes[selected.id].message}</span>
