@@ -1238,6 +1238,44 @@ impl Store {
     /// A heartbeat cannot resurrect an expired lease, or a lease that was
     /// replaced by another owner. Compare owner + active status + expiry in one
     /// SQL update. A stale runner's heartbeat must not refresh the new owner.
+    /// Cross-process workspace read/write admission for Task Team workers.
+    /// All readers can coexist; a writer excludes every reader and writer of
+    /// the same canonical workspace. BEGIN IMMEDIATE serializes competing
+    /// admissions on independent SQLite connections.
+    pub fn acquire_workspace_access(
+        &self,id:&str,owner:&str,ttl_ms:i64,scope:&str,mode:&str,
+    )->Option<Value>{
+        if id.is_empty()||owner.is_empty()||ttl_ms<=0
+            ||scope.is_empty()||scope.len()>4096
+            ||!matches!(mode,"read"|"write"){return None;}
+        let now=chrono::Utc::now().timestamp_millis();
+        let mut conn=self.conn.lock().ok()?;
+        let tx=conn.transaction_with_behavior(
+            rusqlite::TransactionBehavior::Immediate).ok()?;
+        let exists:Option<i64>=tx.query_row(
+            "SELECT 1 FROM records WHERE kind='run_lease' AND id=?1",
+            [id],|row|row.get(0)).optional().ok()?;
+        if exists.is_some(){return None;}
+        let blockers:i64=tx.query_row(
+            "SELECT COUNT(*) FROM records
+             WHERE kind='run_lease'
+               AND json_extract(data,'$.workspaceScope')=?1
+               AND json_extract(data,'$.status')='active'
+               AND json_extract(data,'$.expiresAtMs')>?3
+               AND (json_extract(data,'$.accessMode')='write' OR ?2='write')",
+            params![scope,mode,now],|row|row.get(0)).ok()?;
+        if blockers!=0{return None;}
+        let lease=json!({
+            "id":id,"owner":owner,"status":"active",
+            "workspaceScope":scope,"accessMode":mode,
+            "acquiredAtMs":now,"heartbeatAtMs":now,
+            "expiresAtMs":now.saturating_add(ttl_ms),
+        });
+        upsert_tx(&tx,"run_lease",&lease).ok()?;
+        tx.commit().ok()?;
+        Some(lease)
+    }
+
     pub fn renew_lease(&self, id: &str, owner: &str, ttl_ms: i64) -> Option<Value> {
         if ttl_ms <= 0 { return None; }
         let now = chrono::Utc::now().timestamp_millis();
@@ -1909,6 +1947,47 @@ mod tests {
         assert!(store.active_lease("session:expired").is_none());
     }
 
+
+    #[test]
+    fn workspace_access_preserves_parallel_readers_and_excludes_writers_across_connections(){
+        let dir=std::env::temp_dir().join(format!(
+            "dominion-rw-cross-process-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path=dir.join("shared.sqlite");
+        let left=Store::open(&path).unwrap();
+        let right=Store::open(&path).unwrap();
+        let scope="/test/workspace-a";
+        assert!(left.acquire_workspace_access("r1","read-one",60_000,scope,"read").is_some());
+        assert!(right.acquire_workspace_access("r2","read-two",60_000,scope,"read").is_some());
+        assert!(left.acquire_workspace_access("w1","writer-one",60_000,scope,"write").is_none());
+        // A different workspace never inherits another project's locks.
+        assert!(right.acquire_workspace_access("w2","writer-two",60_000,
+            "/test/workspace-b","write").is_some());
+        assert!(left.release_lease("r1","read-one"));
+        assert!(right.acquire_workspace_access("w1","writer-one",60_000,scope,"write").is_none());
+        assert!(right.release_lease("r2","read-two"));
+        assert!(left.acquire_workspace_access("w1","writer-one",60_000,scope,"write").is_some());
+        assert!(right.acquire_workspace_access("r3","read-three",60_000,scope,"read").is_none());
+        assert!(left.acquire_workspace_access("w4","writer-four",60_000,scope,"write").is_none());
+        assert!(!right.release_lease("w1","not-the-owner"));
+        assert!(left.release_lease("w1","writer-one"));
+        assert!(right.acquire_workspace_access("r3","read-three",60_000,scope,"read").is_some());
+        drop(right);drop(left);let _=std::fs::remove_dir_all(dir);
+    }
+    #[test]
+    fn expired_workspace_writer_frees_readers_without_replaying_old_owner(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        assert!(store.acquire_workspace_access("old","dead",-1,"workspace","write").is_none());
+        assert!(store.acquire_workspace_access("old","dead",1,"workspace","write").is_some());
+        // Explicitly force expiry through an owner-fenced update to avoid
+        // wall-clock sleeps in CI.
+        let past=chrono::Utc::now().timestamp_millis()-1;
+        store.patch_if("run_lease","old","owner",&json!("dead"),
+            &json!({"expiresAtMs":past})).unwrap();
+        assert!(store.renew_lease("old","dead",60_000).is_none());
+        assert!(store.acquire_workspace_access("read","new",60_000,"workspace","read").is_some());
+        assert!(!store.release_lease("old","someone-else"));
+    }
     #[test]
     fn usage_summary_aggregates_calls_and_estimates() {
         let store = Store::open(std::path::Path::new(":memory:")).unwrap();
