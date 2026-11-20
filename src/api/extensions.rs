@@ -40,6 +40,11 @@ pub async fn list_tools(State(state): State<AppState>) -> Json<Value> {
         .filter_map(|definition| {
             let function = definition.get("function")?;
             let name = function.get("name")?.as_str()?.to_string();
+            if engine::extensions::Extension::from_tool(&name)
+                .is_some_and(|extension|
+                    !engine::extensions::globally_enabled(&state,extension)) {
+                return None;
+            }
             Some(json!({
                 "name": name,
                 "description": function.get("description"),
@@ -50,6 +55,8 @@ pub async fn list_tools(State(state): State<AppState>) -> Json<Value> {
         })
         .collect::<Vec<_>>();
 
+    if engine::extensions::globally_enabled(
+        &state,engine::extensions::Extension::Mcp) {
     for tool in engine::mcp::tools(&state).await {
         let qualified = tool.qualified();
         items.push(json!({
@@ -61,6 +68,7 @@ pub async fn list_tools(State(state): State<AppState>) -> Json<Value> {
             "server": tool.server_name,
         }));
     }
+    }
     Json(json!(items))
 }
 
@@ -71,6 +79,10 @@ pub async fn mcp_presets() -> Json<Value> {
 }
 
 pub async fn mcp_discover(State(state): State<AppState>) -> Json<Value> {
+    if !engine::extensions::globally_enabled(
+        &state,engine::extensions::Extension::Mcp) {
+        return Json(json!([]));
+    }
     let items = engine::mcp::tools(&state)
         .await
         .into_iter()
