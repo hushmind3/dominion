@@ -125,7 +125,7 @@ mod tests{
         assert!(out.iter().any(|r|r["content"]=="그럼 어떤 방식으로?"));
         assert!(!json!(out).to_string().contains("NOISY_HTML_NOISY_HTML"));
         assert!(json!(out).to_string().len()<2000);
-        assert_eq!(original[2]["tool_call_id"],"fetch-one");
+        assert_eq!(original[3]["tool_call_id"],"fetch-one");
     }
     #[test]
     fn code_continue_keeps_goal_and_recent_tool_paths_not_old_file_body(){
