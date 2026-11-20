@@ -117,6 +117,16 @@ assert.ok(!/\bopenOAuth\b/.test(operationsPage),
  'Legacy OAuth login button returned to advanced settings');
 assert.ok(!operationsPage.includes("'/api/oauth/providers'"),
  'Duplicate OAuth provider loading returned to advanced settings');
+const legacyFrontendRoutes=[
+ '/api/improvements','/api/experiment-requests','/api/policy-searches',
+ '/api/optimizers','/api/algorithms/evaluate','/api/algorithms/evaluations'
+];
+for(const file of ['web/src/pages/memory/Growth.tsx','web/src/pages/memory/LearningRecords.tsx']){
+ const source=read(file);
+ for(const route of legacyFrontendRoutes)
+  assert.ok(!source.includes(route),'Retired API still requested by UI: '+file+' -> '+route);
+}
+
 const app=read('web/src/App.tsx'),nav=read('web/src/components/WorkspaceShell.tsx');
 for(const p of ['ChatPage','MemoryPage','ConnectionsPage','RoomsPage','HomePage'])
  assert.ok(app.includes(p),'Retained feature disconnected from app: '+p);
