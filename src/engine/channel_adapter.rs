@@ -250,7 +250,7 @@ pub async fn flush_enabled(state: &AppState) -> usize {
     if !crate::engine::extensions::channels::enabled(state) {return 0;}
     let mut sent = 0usize;
     for config in state.store.all("channel") {
-        if config["enabled"] != true
+        if !crate::engine::extensions::channels::enabled_binding(state,&config)
             || !supports(text(&config, "kind"))
             || text(&config, "roomId").is_empty()
         {
