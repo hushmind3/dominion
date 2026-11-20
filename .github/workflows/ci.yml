@@ -50,6 +50,10 @@ jobs:
         run: cargo test --locked -p dominion-core --lib
       - name: Isolated agent-loop algorithm regressions (dev profile)
         run: cargo test --locked -p dominion-algorithms --lib
+      - name: Verified multi-agent work board, isolation and indexed reads (dev profile)
+        run: |
+          cargo test --locked --bin dominion-rust addons::room_board::tests
+          cargo test --locked --bin dominion-rust db::tests::room_work_board_is_immutable_scoped_indexed_and_bounded
       - name: Durable job and cancellation regressions (dev profile)
         run: cargo test --locked --bin dominion-rust addons::jobs::tests
       - name: Silent SSE chat stop, cancellation epoch and same-session resume (dev profile)

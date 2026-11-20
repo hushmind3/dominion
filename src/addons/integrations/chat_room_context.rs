@@ -361,6 +361,18 @@ pub(crate) fn compile(
         .unwrap_or_else(||memory::stable_id(&[shared["text"].as_str().unwrap_or("")]));
     let shared_frame=json!({"role":"user","_dominion_frame":format!("room-shared:{shared_text_digest}"),"content":shared["text"]});
     let shared_tokens=estimate(&shared_frame.to_string());
+    // Only committed verified operations from this specific owner turn are
+    // peer-visible. No raw tool output, transcript replay or model claims.
+    let work_board=crate::addons::room_board::context_frame(
+        state,room_id,session_id,source_id)
+        .map_err(|error|format!("회의실 작업 증거를 읽을 수 없습니다: {error}"))?;
+    let board_tokens=work_board.as_ref().map(|(frame,_)|estimate(&frame.to_string()))
+        .unwrap_or(0);
+    if let Some((frame,count))=&work_board {
+        items.push(json!({"kind":"room_work_board","entries":count,
+            "digest":memory::stable_id(&[&frame.to_string()]),
+            "sourceMessageId":source_id}));
+    }
     items.push(json!({"kind":"room_shared_context","digest":shared["digest"],"sourceMessageId":source_id}));
     let owner_state=crate::engine::room_state::context_snapshot_at(state,room_id,query,&all[..=source]).map(|(id,block)|{
         items.push(json!({"kind":"owner_state","id":id,"digest":memory::stable_id(&[&block])}));
@@ -374,7 +386,7 @@ pub(crate) fn compile(
         estimate(&json!(tools).to_string())
     };
     let owner_state_tokens=owner_state.as_ref().map(|message|estimate(&message.to_string())).unwrap_or(0);
-    let fixed_cost = estimate(&prompt) + schema_tokens + owner_state_tokens + shared_tokens;
+    let fixed_cost = estimate(&prompt) + schema_tokens + owner_state_tokens + shared_tokens + board_tokens;
     let previous_owner = all[..source].iter().rposition(|row| row["role"] == "user");
     // Each participant carries its own last visible answer and the owner
     // message it answered, even after other participants have spoken. Read
@@ -628,6 +640,7 @@ pub(crate) fn compile(
         estimate(&json!(prefix).to_string())
     };
     prefix.insert(0,shared_frame);
+    if let Some((frame,_))=work_board {prefix.insert(1,frame);}
     if let Some(owner_state)=owner_state {prefix.insert(0,owner_state);}
     let mut history = context::render_history(
         state,
@@ -647,9 +660,10 @@ pub(crate) fn compile(
     let accounting = json!({"estimated":true,"estimator":"ascii-four-unicode-one-v1","contextModelCalls":0,
         "targetInputTokens":target,"requiredInputTokens":required_tokens,"requiredOverBudget":required_tokens>target,
         "personaTokens":persona_tokens,"memoryTokens":memory_tokens,"ownerStateTokens":owner_state_tokens,
-        "sharedStateTokens":shared_tokens,"sharedStateDigest":shared["digest"],
+        "sharedStateTokens":shared_tokens,"boardTokens":board_tokens,
+        "sharedStateDigest":shared["digest"],
         "sharedTextDigest":shared_text_digest,
-        "historyTokens":estimate(&json!(history).to_string()).saturating_sub(memory_tokens+owner_state_tokens+shared_tokens),
+        "historyTokens":estimate(&json!(history).to_string()).saturating_sub(memory_tokens+owner_state_tokens+shared_tokens+board_tokens),
         "systemTokens":estimate(&prompt).saturating_sub(persona_tokens),"toolSchemaTokens":schema_tokens,"totalInputTokens":input_estimate(&messages,tools),
         "previousSelfMessageId":previous_self.map(|index|all[index]["id"].clone()),
         "peerCandidates":current_speaker_candidates.len(),

@@ -698,6 +698,19 @@ async fn run_locked(
             )?;
             continue;
         }
+        // Publish only verified tool receipts after the speaker's completed
+        // turn. Board failure must never replay an already executed mutation.
+        match crate::addons::room_board::publish(
+            state,room_id,session_id,source_id,&message
+        ){
+            Ok(true)=>context.emit(json!({"type":"room_work_published",
+                "roomId":room_id,"agentId":agent_id,"messageId":message["id"]})),
+            Ok(false)=>{},
+            Err(error)=>state.store.audit("room.board_publish_failed",json!({
+                "roomId":room_id,"sessionId":session_id,"sourceMessageId":source_id,
+                "messageId":message["id"],"error":error
+            })),
+        }
         let evidence_count = message_evidence_count(state, &message);
         let elapsed_ms=speaker_started.elapsed().as_millis() as u64;
         let accounting = speaker_model_accounting(state, &message);
