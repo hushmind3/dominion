@@ -61,11 +61,7 @@ async function login(request, env) {
   if(!env.GOOGLE_CLIENT_ID&&!env.GOOGLE_DESKTOP_CLIENT_ID)return err('Google login not configured',503);
   const google = await verifyGoogle(credential, env);
   const id = 'google:' + google.sub;
-  await env.DB.prepare('INSERT INTO accounts (id,email,credits,created_at) VALUES (?,?,0,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email')
-    .bind(id, String(google.email || '').slice(0, 320), now()).run();
-  const token = b64url(crypto.getRandomValues(new Uint8Array(32)));
-  await env.DB.prepare('INSERT INTO sessions (token_hash,account_id,expires_at) VALUES (?,?,?)')
-    .bind(await hash(token), id, now() + 7 * 86400).run();
+  const token = await createSession(env, id, google.email);
   return json({ token, expires_in: 7 * 86400, account_id: id });
 }
 
@@ -102,7 +98,6 @@ async function oauthStart(request,env,provider) {
   url.searchParams.set('client_id',config.id);
   url.searchParams.set('redirect_uri',callback);
   url.searchParams.set('state',state);
-  if(provider==='naver')url.searchParams.set('state',state);
   return new Response(null,{status:302,headers:{location:url.href,'set-cookie':oauthCookie(provider,state,600),'cache-control':'no-store'}});
 }
 async function oauthCallback(request,env,provider) {
@@ -499,17 +494,18 @@ export default {
   },
   async fetch(request, env) {
     const origin = request.headers.get('origin');
+    const path = new URL(request.url).pathname;
     const headers = cors(origin, env);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
     // The email verification form is hosted by this Worker, not the desktop
     // frontend. Allow only its exact same-origin POST, never foreign origins.
     const sameOriginEmailConfirm = request.method === 'POST'
-      && new URL(request.url).pathname === '/v1/auth/email/verify'
+      && path === '/v1/auth/email/verify'
       && origin === new URL(request.url).origin;
     if (origin && !isAllowedOrigin(origin, env) && !sameOriginEmailConfirm) return err('Origin not allowed', 403);
     // Public OAuth metadata: Google client IDs are public identifiers, never secrets.
     // The browser uses this endpoint so login works without a compile-time VITE key.
-    if (new URL(request.url).pathname === '/v1/public-config' && request.method === 'GET') {
+    if (path === '/v1/public-config' && request.method === 'GET') {
       const response = json({
         google_client_id: env.GOOGLE_CLIENT_ID || null,
         google_desktop_client_id: env.GOOGLE_DESKTOP_CLIENT_ID || null,
@@ -525,10 +521,9 @@ export default {
       for (const [key, value] of Object.entries(headers)) out.headers.set(key, value);
       return out;
     }
-    if (new URL(request.url).pathname === '/health' && request.method === 'GET') return json({service:'DOMINION Cloud',status:'online',login_configured:Boolean(env.GOOGLE_CLIENT_ID),models_configured:Boolean(freeModels(env).length)});
+    if (path === '/health' && request.method === 'GET') return json({service:'DOMINION Cloud',status:'online',login_configured:Boolean(env.GOOGLE_CLIENT_ID),models_configured:Boolean(freeModels(env).length)});
     if (!env.DB || !env.ALLOWED_ORIGIN) return err('Service not configured', 503);
     try {
-      const path = new URL(request.url).pathname;
       let response;
       if (path === '/v1/auth/email/start' && request.method === 'POST') response = await startEmailLogin(request, env);
       else if (path === '/v1/auth/email/status' && request.method === 'POST') response = await pollEmailLogin(request, env);
