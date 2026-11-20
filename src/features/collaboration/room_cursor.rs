@@ -57,12 +57,13 @@ pub(crate) fn plan(
     let through=required.last().and_then(|index|messages[*index]["id"].as_str())
         .map(str::to_string);
     let remaining=unread.len().saturating_sub(required.len());
+    let oversized_first_unread=!unread.is_empty()&&required.is_empty();
     Ok(Window{
         required_indices:required,
         through_message_id:through.or_else(||previous.map(str::to_string)),
         previous_message_id:previous.map(str::to_string),
         unread_remaining:remaining,
-        oversized_first_unread:!unread.is_empty()&&required.is_empty(),
+        oversized_first_unread,
     })
 }
 pub(crate) fn checkpoint(session_id:&str,agent_id:&str,source_id:&str,through:&str)->Value {
