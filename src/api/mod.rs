@@ -1,4 +1,5 @@
 mod response;
+mod addons;
 #[cfg(test)]
 mod tests;
 pub mod translation;
@@ -127,10 +128,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/sdk/runs/:id/reconcile", post(sdk_bridge::reconcile))
         .route("/api/tasks", get(tasks::list))
         .route("/api/tasks/:id", get(tasks::one))
-        .route("/api/tools", get(extensions::list_tools))
-        .route("/api/browser/status", get(browser::status))
-        .route("/api/browser/screenshot", get(browser::screenshot))
-        .route("/api/browser/action", post(browser::action))
+        
+        
+        
+        
         .route("/api/policy", get(approvals::get_policy).post(approvals::save_policy))
         .route("/api/audit", get(system::audit_log))
         .route("/api/model-route", get(system::model_route))
@@ -164,8 +165,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/providers/cli/import", post(providers::import_cli_credential))
         .route("/api/providers/:id/models", get(providers::provider_models))
         .route("/api/providers/:id/test", post(providers::test_provider))
-        .route("/api/gateways/freellmapi", get(gateways::freellmapi))
-        .route("/api/providers/:id/gateway", get(gateways::inspect))
+        
+        
         // agents
         .route("/api/agents", get(agents::list_agents).post(agents::save_agent))
         .route("/api/agents/bulk-model", post(agents::bulk_agent_model))
@@ -216,7 +217,7 @@ pub fn router(state: AppState) -> Router {
             "/api/executions/:id/operations",
             get(executions::execution_operations),
         )
-        .route("/api/skills/:id/export", get(extensions::export_skill))
+        
         // approvals
         .route(
             "/api/approvals",
@@ -226,13 +227,13 @@ pub fn router(state: AppState) -> Router {
         .route("/api/capabilities", get(system::capabilities))
         .route("/api/commands", get(system::commands))
         // compatibility surface
-        .route("/api/mcp/presets", get(extensions::mcp_presets))
-        .route("/api/mcp/catalog", get(extensions::mcp_catalog))
-        .route("/api/mcp/discover", get(extensions::mcp_discover))
-        .route("/api/skill-catalog", get(extensions::skill_catalog))
-        .route("/api/skill-catalog/meta", get(extensions::skill_catalog_meta))
-        .route("/api/skill-catalog/import", post(extensions::import_skill))
-        .route("/api/skills/import-repo", post(extensions::import_skill_repo))
+        
+        
+        
+        
+        
+        
+        
         .route("/api/model-library/catalog", get(models::catalog))
         .route("/api/model-library/details", get(models::details))
         .route("/api/model-library/installed", get(models::installed))
@@ -252,24 +253,19 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/dev/jobs/:id", get(dev::get_job))
         .route("/api/dev/update", get(dev::update_status).post(dev::update))
-        .route("/api/oauth/providers", get(oauth::providers))
-        .route("/api/oauth/connections", get(channels::connections))
-        .route("/api/oauth/providers/:id", post(oauth::save))
-        .route("/api/oauth/:id/start", get(oauth::start))
-        .route("/api/oauth/:id/open", post(oauth::open))
-        .route("/api/oauth/:id/browser-open", post(oauth::browser_open))
-        .route("/api/oauth/:id/callback", get(oauth::callback))
-        .route("/api/oauth/:id", axum::routing::delete(oauth::disconnect))
+        
+        
+        
+        
+        
+        
+        
+        
         .route("/api/system/pick-folder", post(compat::pick_folder))
-        .route("/api/channels/catalog", get(channels::catalog_handler))
-        .route("/api/channels", get(channels::list).post(channels::save))
-        .route(
-            "/api/channels/:id",
-            get(channels::one)
-                .post(channels::update)
-                .delete(channels::remove),
-        )
-        .route("/api/channels/:id/diagnose", post(channels::diagnose))
+        
+        
+        
+        
         .route("/api/executions", get(executions::list))
         .route("/api/executions/active", get(executions::active_executions))
         .route("/api/improvements", get(improvements::list))
@@ -278,7 +274,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/improvements/:id/:action", post(improvements::decide))
         .route("/api/executions/:id", get(executions::one))
         .route("/api/executions/:id/cancel", post(executions::cancel))
-        .route("/api/webhooks/:id", post(compat::webhook));
+        ;
+
+    // Optional integrations share the same global guard and runtime, but
+    // own no core API routes or independent listener.
+    router=router.merge(addons::routes());
 
     for kind in collections::COLLECTIONS {
         router = router
