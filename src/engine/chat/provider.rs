@@ -461,7 +461,7 @@ fn edit_stale_read_context(messages: &mut [Value], capacity: usize, schema_chars
         let Some(id) = message["tool_call_id"].as_str() else { continue; };
         let Some(tool) = names_by_result.get(&index) else { continue; };
         if !matches!(tool.as_str(), "workspace_read" | "workspace_read_range"
-            | "workspace_list" | "file_read" | "file_list" | "web_search" | "http_fetch") {
+            | "workspace_list" | "file_read" | "file_list" | "web_search" | "http_fetch" | "http_document_read") {
             continue;
         }
         let Some(content) = message["content"].as_str() else { continue; };
