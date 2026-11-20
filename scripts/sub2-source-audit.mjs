@@ -46,7 +46,7 @@ const addons=content.get('src/api/addons.rs')||'';
 const domains=[...content].filter(([name])=>name.startsWith('src/api/surfaces/'))
   .map(([,source])=>source).join('\n');
 if(!addons.includes('pub(super) fn routes()'))failures.push('optional API router missing');
-const collections=content.get('src/api/collections.rs')||'';
+const collections=content.get('src/api/services/management/collections.rs')||'';
 const staticPaths=[...(router+'\n'+addons+'\n'+domains).matchAll(/\.route\(\s*["'](\/api\/[^"']+)["']/g)]
   .map(match=>match[1]);
 const collectionBlock=collections.match(/pub const COLLECTIONS:\s*&\[&str\]\s*=\s*&\[([\s\S]*?)\];/);
