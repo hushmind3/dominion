@@ -144,9 +144,10 @@ mod tests {
         let messages=(0..12).map(|i|msg(&format!("agent{i}"),
             "room:one","owner",&format!("run{i}"),&format!("msg{i}")))
             .collect::<Vec<_>>();
-        let mk=||project("room:one","owner",&allowed,&messages,|run,_|(
-            0..10).map(|i|op(&format!("{run}:{i}"),run,"room:one","src/x.rs","verified",true))
-                .collect::<Vec<_>>())).unwrap();
+        let mk=||project("room:one","owner",&allowed,&messages,|run,_|{
+            (0..10).map(|i|op(&format!("{run}:{i}"),run,"room:one","src/x.rs","verified",true))
+                .collect::<Vec<_>>()
+        }).unwrap();
         let first=mk();
         assert_eq!(first,mk(),"identical source data must have a stable frame");
         let parts=first["contributions"].as_array().unwrap();

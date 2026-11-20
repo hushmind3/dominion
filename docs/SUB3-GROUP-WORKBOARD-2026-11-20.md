@@ -1,6 +1,6 @@
 # Sub3 group evidence workboard — 2026-11-20
 
-Scope: \`dominion-sub3\` only. No UI/route/model provider changes.
+Scope: `dominion-sub3` only. No UI/route/model provider changes.
 
 ## Objective
 
@@ -8,10 +8,10 @@ Group chat is a user-facing interface, not an authority for task completion.
 The existing room transcript, cross-room parallelism, per-room serial lock and
 local/API provider routing are retained.
 
-The new \`features/collaboration/workboard.rs\` creates a **pure projection**
+The new `features/collaboration/workboard.rs` creates a **pure projection**
 of the current owner's committed agent turns and host-executed operations.
-\`conversation/chat/room_context.rs\` injects a single bounded, content-addressed
-\`workboard:<digest>\` data frame for the next model. Only the room's actual
+`conversation/chat/room_context.rs` injects a single bounded, content-addressed
+`workboard:<digest>` data frame for the next model. Only the room's actual
 agent roster, owner source ID, session ID, execution ownership and operation run
 ID are eligible. The projection never contains full tool arguments or raw
 model claims. It carries operation IDs for inspection, tool name, optional
@@ -33,8 +33,8 @@ is made: the added frame may increase prompt tokens for evidence-heavy rooms.
 
 ## Verification
 
-\`cargo test --bin dominion-rust features::collaboration::workboard::tests\`
-\`cargo test --bin dominion-rust conversation::chat::room_context::tests\`
+`cargo test --bin dominion-rust features::collaboration::workboard::tests`
+`cargo test --bin dominion-rust conversation::chat::room_context::tests`
 
 2026 source patterns compared: Codex multi-agent task delegation, ZeroClaw's
 separate runtime/agents/providers. This adapts the isolation principle to
