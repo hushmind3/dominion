@@ -34,7 +34,7 @@ const chatServices={
 };
 test('context, providers, catalogs and transport are outside execution core',()=>{
  for(const [mod,target] of Object.entries(chatServices)){
-  assert.ok(chat.includes('#[path = "../../services/'+target+'"]'),'missing path boundary '+mod);
+  assert.ok(chat.includes('#[path = "../../'+target+'"]'),'missing path boundary '+mod);
   assert.ok(exists('src/engine/services/'+target),'missing service '+target);
   assert.ok(!exists('src/engine/services/conversation/chat/'+mod+'.rs'),'core still owns '+mod);
  }
@@ -53,7 +53,7 @@ const runtimeServices={
 test('optional program and policy modules are no longer part of runtime core',()=>{
  const runtime=source('src/engine/services/conversation/chat/runtime.rs');
  for(const [mod,target] of Object.entries(runtimeServices)){
-  assert.ok(runtime.includes('#[path = "../../services/'+target+'"]'),mod+' service declaration missing');
+  assert.ok(runtime.includes('#[path = "../../'+target+'"]'),mod+' service declaration missing');
   assert.ok(exists('src/engine/services/'+target),'missing runtime service '+target);
   assert.ok(!exists('src/engine/services/conversation/chat/runtime/'+mod+'.rs'),'core still owns '+mod);
  }
