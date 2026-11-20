@@ -266,19 +266,51 @@ pub fn enqueue_child(
 struct Rates {
     input: f64,
     output: f64,
+    cache_read: Option<f64>,
+    cache_write: Option<f64>,
 }
 impl Rates {
     fn amount(self, input: u64, output: u64) -> u64 {
-        ((input as f64 * self.input + output as f64 * self.output).ceil()).min(u64::MAX as f64)
-            as u64
+        self.observed(input,0,0,output)
+    }
+    /// Conservative admission: a cache write may be more expensive than
+    /// an ordinary input. Never reserve less than the highest configured
+    /// possible input rate before provider usage is known.
+    fn reserve(self, input:u64, output:u64)->u64 {
+        let input_rate=self.input.max(self.cache_write.unwrap_or(self.input))
+            .max(self.cache_read.unwrap_or(self.input));
+        ((input as f64*input_rate+output as f64*self.output).ceil())
+            .min(u64::MAX as f64) as u64
+    }
+    fn observed(self, input:u64, cached:u64,created:u64,output:u64)->u64 {
+        let cached=cached.min(input);
+        let created=created.min(input-cached);
+        let fresh=input-cached-created;
+        ((fresh as f64*self.input
+            + cached as f64*self.cache_read.unwrap_or(self.input)
+            + created as f64*self.cache_write.unwrap_or(self.input)
+            + output as f64*self.output).ceil()).min(u64::MAX as f64) as u64
     }
 }
 fn rates(state: &AppState, provider: &str, model: &str, local: bool) -> Result<Rates, String> {
     let p = state.store.get("provider", provider).unwrap_or(Value::Null);
     let price = p["modelPricing"].get(model).unwrap_or(&p["pricing"]);
+    let optional_rate=|name:&str|->Result<Option<f64>,String>{
+        match price.get(name) {
+            None|Some(Value::Null)=>Ok(None),
+            Some(value)=>match value.as_f64() {
+                Some(rate) if rate.is_finite()&&rate>=0.0&&rate<=10000.0=>Ok(Some(rate)),
+                _=>Err(format!("제공자 pricing.{name} 값이 올바르지 않습니다.")),
+            }
+        }
+    };
+    let cache_read=optional_rate("cacheReadUsdPerMillion")?;
+    let cache_write=optional_rate("cacheCreationUsdPerMillion")?;
     match (price["inputUsdPerMillion"].as_f64(),price["outputUsdPerMillion"].as_f64()){
-        (Some(input),Some(output)) if input.is_finite()&&output.is_finite()&&input>=0.0&&output>=0.0&&input<=10000.0&&output<=10000.0=>Ok(Rates{input,output}),
-        (None,None) if local||p["free"]==true=>Ok(Rates{input:0.0,output:0.0}),
+        (Some(input),Some(output)) if input.is_finite()&&output.is_finite()&&input>=0.0&&output>=0.0&&input<=10000.0&&output<=10000.0=>
+            Ok(Rates{input,output,cache_read,cache_write}),
+        (None,None) if local||p["free"]==true=>
+            Ok(Rates{input:0.0,output:0.0,cache_read:None,cache_write:None}),
         _=>Err("금액 예산을 사용하려면 제공자 pricing.inputUsdPerMillion/outputUsdPerMillion을 설정하세요.".into())
     }
 }
@@ -335,7 +367,11 @@ impl Call {
         if total == 0 && !success && !no_generation {
             return Ok(());
         }
-        let observed = self.rates.map(|r| r.amount(input, output)).unwrap_or(total);
+        let cached=after["reportedCachedPromptTokens"].as_u64().unwrap_or(0)
+            .saturating_sub(self.before["reportedCachedPromptTokens"].as_u64().unwrap_or(0));
+        let created=after["reportedCacheCreationTokens"].as_u64().unwrap_or(0)
+            .saturating_sub(self.before["reportedCacheCreationTokens"].as_u64().unwrap_or(0));
+        let observed = self.rates.map(|r| r.observed(input,cached,created,output)).unwrap_or(total);
         mutate(&self.state, &self.tree, |tree, _| {
             tree.settle_call(&self.account, &self.id, observed)?;
             Ok(vec![])
@@ -393,7 +429,7 @@ pub fn prepare_call(
         let reserve = if limited {
             let available = a.remaining();
             if let Some(r) = rate {
-                let input_cost = r.amount(input, 0);
+                let input_cost = r.reserve(input, 0);
                 if input_cost > available {
                     return Err("금액 예산이 부족해 모델 호출 전에 중단했습니다.".into());
                 }
@@ -404,7 +440,7 @@ pub fn prepare_call(
                 if output == 0 {
                     return Err("남은 금액 예산으로 출력을 생성할 수 없습니다.".into());
                 }
-                r.amount(input, output)
+                r.reserve(input, output)
             } else {
                 if input >= available {
                     return Err("토큰 예산이 부족해 모델 호출 전에 중단했습니다.".into());
@@ -419,7 +455,7 @@ pub fn prepare_call(
         Ok(vec![])
     })?;
     let maximum = rate
-        .map(|r| r.amount(input, output))
+        .map(|r| r.reserve(input, output))
         .unwrap_or(input.saturating_add(output));
     Ok((
         Some(Call {
