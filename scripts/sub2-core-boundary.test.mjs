@@ -277,3 +277,13 @@ test('group work assignments require committed source-matching receipts',()=>{
  assert.match(room,/room_workboard::complete\(/);
  assert.match(parallel,/room_workboard::complete\(/);
 });
+
+test('actual provider requests share bounded local/cloud gates independent of algorithm',()=>{
+ const provider=source('src/engine/services/providers/chat_provider.rs');
+ const state=source('src/state.rs');
+ assert.match(provider,/provider_slot\(&candidate\.id,&candidate\.model,allowed\)/);
+ assert.match(provider,/candidate\.local\{1\}else\{4\}/);
+ assert.match(provider,/state\.cancel_notify\.notified\(\)/);
+ assert.match(state,/OwnedSemaphorePermit/);
+ assert.match(state,/Arc<Semaphore>/);
+});

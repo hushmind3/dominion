@@ -579,6 +579,25 @@ pub(super) async fn stream_completion(
         if state.is_cancelled(session_id) {
             return Err("실행이 중단되었습니다.".into());
         }
+        // Each provider route owns its concurrency budget; one local llama.cpp
+        // or Ollama endpoint defaults to a single live request, while cloud
+        // routes may execute up to four. A configured owner cap wins.
+        let configured=state.store.get("provider",&candidate.id)
+            .and_then(|item|item["maxConcurrency"].as_u64());
+        let allowed=configured.unwrap_or(if candidate.local{1}else{4})
+            .clamp(1,16) as usize;
+        let grant=state.provider_slot(&candidate.id,&candidate.model,allowed);
+        tokio::pin!(grant);
+        let _provider_permit=loop{
+            tokio::select!{
+                obtained=&mut grant=>break obtained?,
+                _=state.cancel_notify.notified()=>{
+                    if state.is_cancelled(session_id){
+                        return Err("실행이 중단되었습니다.".into());
+                    }
+                }
+            }
+        };
         let (relay, mut relay_rx) = tokio::sync::mpsc::unbounded_channel();
         let candidate_started = std::time::Instant::now();
         let (result, exposed) = {

@@ -5,7 +5,7 @@ use crate::vault::Vault;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, Weak};
-use tokio::sync::{oneshot, Notify};
+use tokio::sync::{oneshot, Notify, Semaphore, OwnedSemaphorePermit};
 
 type FileMutations = Arc<Mutex<HashMap<PathBuf, Weak<tokio::sync::Mutex<()>>>>>;
 
@@ -21,6 +21,8 @@ pub struct AppState {
     pub cancelled: Arc<Mutex<HashSet<String>>>,
     /// Local cancellation wakeup. Persisted generations still govern cross-process safety.
     pub cancel_notify: Arc<Notify>,
+    /// Shared process-local backpressure per model route. Clone keeps one gate.
+    provider_gates: Arc<Mutex<HashMap<String, Arc<Semaphore>>>>,
     /// Sessions currently executing. Prevents two turns racing on one history.
     pub active: Arc<Mutex<HashSet<String>>>,
     /// Coordinates checked and unchecked writes to the same canonical path.
@@ -49,6 +51,7 @@ impl AppState {
             approvals: Arc::new(Mutex::new(HashMap::new())),
             cancelled: Arc::new(Mutex::new(HashSet::new())),
             cancel_notify: Arc::new(Notify::new()),
+            provider_gates: Arc::new(Mutex::new(HashMap::new())),
             active: Arc::new(Mutex::new(HashSet::new())),
             file_mutations: Arc::new(Mutex::new(HashMap::new())),
             principle_learning: Arc::new(Mutex::new(())),
@@ -56,6 +59,25 @@ impl AppState {
             instance_id,
             maintenance: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    /// Acquire a live streaming provider slot. This is not an authorization
+    /// substitute: route credentials and tool consent are checked elsewhere.
+    /// When a local model is shared by several room workers, it must not
+    /// receive overlapping requests that would thrash limited GPU memory.
+    pub async fn provider_slot(
+        &self,provider_id:&str,model:&str,capacity:usize,
+    )->Result<OwnedSemaphorePermit,String>{
+        let key=format!("{provider_id}:{model}:{}",capacity.clamp(1,16));
+        let gate={
+            let mut slots=self.provider_gates.lock()
+                .map_err(|_|"제공자 동시성 잠금 오류")?;
+            slots.entry(key).or_insert_with(||Arc::new(
+                Semaphore::new(capacity.clamp(1,16))
+            )).clone()
+        };
+        gate.acquire_owned().await
+            .map_err(|_|"제공자 동시성 게이트가 종료되었습니다.".into())
     }
 
     pub fn set_maintenance(&self, enabled: bool) {
@@ -270,5 +292,23 @@ mod tests {
         assert!(!state.is_cancelled("room:r"));
         assert_ne!(state.cancellation_generation("room:r"), initial);
         let _ = std::fs::remove_dir_all(dir);
+    }
+    #[tokio::test]
+    async fn shared_provider_gate_prevents_local_gpu_overlap(){
+        let (state,dir)=temp_state();
+        let held=state.provider_slot("local","qwen",1).await.unwrap();
+        let clone=state.clone();
+        let queued=tokio::spawn(async move{clone.provider_slot("local","qwen",1).await.unwrap()});
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(30),async{
+            while !queued.is_finished(){tokio::task::yield_now().await;}
+        }).await.is_err());
+        drop(held);
+        let next=tokio::time::timeout(std::time::Duration::from_secs(2),queued)
+            .await.unwrap().unwrap();
+        drop(next);
+        // A separate provider is not blocked by another model's capacity.
+        let other=state.provider_slot("cloud","opus",4).await.unwrap();
+        drop(other);
+        let _=std::fs::remove_dir_all(dir);
     }
 }
