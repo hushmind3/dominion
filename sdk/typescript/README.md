@@ -57,3 +57,7 @@ This TypeScript package is auxiliary; the embedded native Rust SDK in `src/sdk.r
 The initial SDK surface is explicit and versioned rather than pretending to cover every experimental backend endpoint; new operations should be mapped to their Rust handler and tested before publication.
 
 2026 reference patterns reviewed: [Hermes architecture](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/developer-guide/architecture.md), [OpenAI Agents streaming lifecycle](https://openai.github.io/openai-agents-js/guides/streaming/), [MCP transport cancellation/reconnection](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/packages/client/src/client/streamableHttp.ts). Implementation uses Dominion's own contract.
+
+## Typed run lifecycle subscription (sub2, 2026-11-20)
+
+`client.runEvents({after:lastSeq})` filters the existing durable SSE feed to versioned `run_state` events originating in actual persisted `execution`, `job` or `room_work_assignment` records. Events include `runId`, `runKind`, `state`, `agentId`, nullable `sourceMessageId` and monotonic `eventSeq===seq`. The same `/api/events` endpoint and reconnect logic are reused. Unknown schema versions, bad state names and mismatched journal cursors are rejected instead of being presented as trustworthy lifecycle updates. This method does not create a new runtime or execute any tools.

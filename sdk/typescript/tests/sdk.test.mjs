@@ -147,3 +147,29 @@ test('evaluation summary SDK accesses the same Rust persisted scorecard as GUI',
   assert.equal(calls[0].method,'GET');
   assert.equal(result.verified.successRate,0.5);
 });
+
+
+test('typed runEvents includes persisted Chat Room and SDK states on one ordered cursor',async()=>{
+  const reply=[
+    {seq:1,type:'record',kind:'job',record:{id:'job-1',status:'queued'}},
+    {seq:2,eventSeq:2,type:'run_state',schemaVersion:1,runKind:'job',runId:'job-1',
+      sourceMessageId:null,agentId:null,state:'queued'},
+    {seq:3,eventSeq:999,type:'run_state',schemaVersion:1,runKind:'execution',
+      runId:'forgery',sourceMessageId:null,agentId:null,state:'completed'},
+    {seq:4,eventSeq:4,type:'run_state',schemaVersion:1,runKind:'room_work_assignment',
+      runId:'room-1',sourceMessageId:'owner-1',agentId:'worker',state:'completed'}
+  ];
+  const d=new Dominion({fetch:async()=>sse(
+    reply.map(x=>'id: '+x.seq+'\\ndata: '+JSON.stringify(x)+'\\n\\n')
+  )});
+  const received=[];
+  for await(const event of d.runEvents({reconnectDelayMs:1})){
+    received.push(event);
+    if(received.length===2) break;
+  }
+  assert.deepEqual(received.map(x=>[x.runKind,x.runId,x.eventSeq]),[
+    ['job','job-1',2],['room_work_assignment','room-1',4]
+  ]);
+  assert.equal(received[0].sourceMessageId,null);
+  assert.equal(received[1].sourceMessageId,'owner-1');
+});
