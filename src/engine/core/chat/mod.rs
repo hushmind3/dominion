@@ -3,24 +3,36 @@ mod approval;
 mod cancellation;
 mod budget;
 mod tool_schedule;
+#[path = "../../services/operations/chat_trace_budget.rs"]
 mod trace_budget;
+#[path = "../../services/conversation/chat_context_window.rs"]
 mod context_window;
+#[path = "../../services/conversation/chat_prompt_sources.rs"]
 pub(crate) mod prompt_sources;
+#[path = "../../services/providers/chat_codex_ws.rs"]
 mod codex_ws;
+#[path = "../../services/conversation/chat_context.rs"]
 mod context;
+#[path = "../../services/conversation/chat_continuity.rs"]
 mod continuity;
+#[path = "../../services/conversation/chat_room_context.rs"]
 mod room_context;
 
+#[path = "../../services/decision/chat_evidence.rs"]
 mod evidence;
 pub(crate) use evidence::prepare_owner_action;
 mod protocol;
+#[path = "../../services/providers/chat_provider.rs"]
 mod provider;
 mod runtime;
+#[path = "../../services/tools/chat_tool_projection.rs"]
 mod tool_projection;
+#[path = "../../services/tools/chat_capability.rs"]
 mod capability;
 mod outcome;
 #[cfg(test)]
 mod tests;
+#[path = "../../services/providers/chat_transport.rs"]
 mod transport;
 
 pub use protocol::parse_text_tool_calls;
