@@ -1,4 +1,5 @@
 use crate::db::Store;
+use dominion_turn_core::run_state::RunEvent;
 use serde_json::{json, Value};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -30,19 +31,36 @@ impl Bus {
         }
     }
 
-    pub fn emit(&self, mut value: Value) {
-        // The fetch-add alone did not serialize parallel writers: a later event
-        // could reach SQLite/broadcast first and older seq would be skipped on
-        // a cursor-based consumer. The lock belongs to this shared Bus clone.
+    /// One lock protects the durable sequence and broadcast for all events
+    /// produced by a single record mutation. Reconnect sees record -> typed
+    /// run state in order, without an unrelated writer interleaving the pair.
+    fn emit_many(&self, values:impl IntoIterator<Item=Value>){
         let _emit_guard = self.emit_gate.lock().unwrap();
-        let seq = self.seq.fetch_add(1, Ordering::SeqCst) + 1;
-        value["seq"] = json!(seq);
-        self.store.append_event(seq, &value);
-        let _ = self.sender.send(value);
+        for mut value in values {
+            let seq=self.seq.fetch_add(1,Ordering::SeqCst)+1;
+            value["seq"]=json!(seq);
+            if value["type"]=="run_state"{
+                // eventSeq is the canonical durable cursor. No per-room
+                // guessed step arithmetic, so it remains monotonic on replay.
+                value["eventSeq"]=json!(seq);
+            }
+            self.store.append_event(seq,&value);
+            let _=self.sender.send(value);
+        }
     }
 
-    pub fn record(&self, kind: &str, record: &Value) {
-        self.emit(json!({ "type": "record", "kind": kind, "record": record }));
+    pub fn emit(&self,value:Value){
+        self.emit_many([value]);
+    }
+
+    pub fn record(&self,kind:&str,record:&Value){
+        let mut events=vec![json!({"type":"record","kind":kind,"record":record})];
+        if let Some(typed)=RunEvent::from_record(kind,record){
+            let mut event=typed.into_value();
+            event["runKind"]=json!(kind);
+            events.push(event);
+        }
+        self.emit_many(events);
     }
 
     pub fn message(&self, message: &Value) {
@@ -125,4 +143,37 @@ mod tests {
         assert_eq!(recent.last().unwrap()["index"], 599);
         assert!(recent.len() <= 600);
     }
+    #[test]
+    fn job_chat_and_room_share_durable_ordered_run_events_without_invented_owner(){
+        let bus=Bus::new(store());
+        bus.record("job",&json!({"id":"job-1","status":"queued"}));
+        bus.record("execution",&json!({"id":"chat-1","status":"running",
+            "phase":"queued","sourceMessageId":"owner-1","agentId":"worker"}));
+        bus.record("room_work_assignment",&json!({"id":"room-1",
+            "status":"assigned","sourceMessageId":"owner-1","agentId":"worker"}));
+        let all=bus.replay(0,20);
+        assert_eq!(all.len(),6);
+        for (index,item) in all.iter().enumerate(){
+            assert_eq!(item["seq"].as_u64(),Some(index as u64+1));
+            if index%2==0 {assert_eq!(item["type"],"record");}
+            else {
+                assert_eq!(item["type"],"run_state");
+                assert_eq!(item["schemaVersion"],1);
+                assert_eq!(item["eventSeq"],item["seq"]);
+            }
+        }
+        assert_eq!(all[1]["runKind"],"job");
+        assert!(all[1]["sourceMessageId"].is_null());
+        assert_eq!(all[3]["runKind"],"execution");
+        assert_eq!(all[3]["state"],"queued");
+        assert_eq!(all[5]["runKind"],"room_work_assignment");
+        assert_eq!(all[5]["sourceMessageId"],"owner-1");
+        let restarted=Bus::new(bus.store.clone());
+        restarted.record("job",&json!({"id":"job-1","status":"completed"}));
+        let next=restarted.replay(6,10);
+        assert_eq!(next.len(),2);
+        assert_eq!(next[1]["state"],"completed");
+        assert_eq!(next[1]["eventSeq"],8);
+    }
+
 }

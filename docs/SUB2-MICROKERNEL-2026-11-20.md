@@ -127,3 +127,12 @@ ProgramIR 실행, 대안 후보 실험, 작업 검토, 정책 스냅샷과 세�
 - Qwen Code (2026-07-20): https://github.com/QwenLM/qwen-code/blob/main/docs/design/2026-07-20-plan-mode-mid-turn-guidance.md
 - OpenClaw agent loop: https://docs.openclaw.ai/agent-loop
 - Qwen Code tool telemetry: https://github.com/QwenLM/qwen-code/blob/main/docs/developers/development/telemetry.md
+
+## 2026-11-20: Chat·Room·SDK 공통 RunState 이벤트 경계
+
+- 기존 `Bus::record` 경계에서 `job`(SDK/automation), `execution`(채팅), `room_work_assignment`(그룹 작업)의 **저장된** 상태를 `dominion-turn-core::run_state::RunEvent`로 투영합니다.
+- 모든 클라이언트는 기존 record 이벤트와 별도로 `type=run_state`, `schemaVersion=1`, `runKind`, `runId`, `state`, `eventSeq`를 받습니다. `eventSeq`는 SQLite 이벤트 저널의 전역 순서와 동일합니다. 한 변경에서 파생된 record/run_state 2개가 끼어들지 않도록 같은 락으로 기록/방송합니다.
+- owner 원문 ID가 없으면 `sourceMessageId=null`을 내보냅니다. SDK job ID를 owner 메시지라고 날조하지 않습니다.
+- 기존 그룹 할당/완료/건너뜀 이벤트의 인위적 step×2 계산과 중복 수동 발행을 제거했습니다. 성공한 CAS 전이에서만 실제 run_state를 방송하며, 완료 재생은 새 이벤트를 발생시키지 않습니다.
+- 이 변경은 **단일 이벤트 스키마의 실제 소비 가능 경계**입니다. 기존 복합 Chat 실행 루프와 독립 AgentLoop 통합을 완료했다는 뜻은 아닙니다. 저장된 실행 내용, API URL, UI, 메인 브랜치의 기능은 변경하지 않았습니다.
+- 2026 참고: https://openai.com/index/unlocking-the-codex-harness/ (안정적인 클라이언트용 실행 이벤트), https://github.com/QwenLM/qwen-code/blob/main/docs/developers/architecture.md (공통 에이전트 런타임 및 클라이언트 경계).

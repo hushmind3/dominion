@@ -2,13 +2,13 @@
 //! Approval and persistence remain the responsibility of the host.
 use serde_json::{json,Value};
 #[derive(Debug,Clone,Copy,PartialEq,Eq)]
-pub enum RunState{Queued,Running,Completed,Failed,Cancelled,NeedsReview,Skipped}
+pub enum RunState{Queued,Running,Completed,Failed,Cancelled,Interrupted,NeedsReview,Skipped}
 impl RunState{
     pub const fn as_str(self)->&'static str{
         match self{
             Self::Queued=>"queued",Self::Running=>"running",
             Self::Completed=>"completed",Self::Failed=>"failed",
-            Self::Cancelled=>"cancelled",Self::NeedsReview=>"needs_review",
+            Self::Cancelled=>"cancelled",Self::Interrupted=>"interrupted",Self::NeedsReview=>"needs_review",
             Self::Skipped=>"skipped",
         }
     }
@@ -16,9 +16,10 @@ impl RunState{
         match value{
             "queued"|"assigned"=>Some(Self::Queued),
             "running"=>Some(Self::Running),
-            "completed"=>Some(Self::Completed),
+            "completed"|"succeeded"=>Some(Self::Completed),
             "failed"=>Some(Self::Failed),
             "cancelled"=>Some(Self::Cancelled),
+            "interrupted"=>Some(Self::Interrupted),
             "needs_review"=>Some(Self::NeedsReview),
             "skipped"=>Some(Self::Skipped),_=>None,
         }
@@ -42,9 +43,34 @@ pub struct RunEvent{
     pub actor_id:Option<String>,
 }
 impl RunEvent{
+    /// Project durable product records into one typed, source-addressed
+    /// contract. Missing owner-message identity stays null, never an invented
+    /// user message or job id. All clients can consume the same state names.
+    pub fn from_record(kind:&str,record:&Value)->Option<Self>{
+        if !matches!(kind,"execution"|"job"|"room_work_assignment"){
+            return None;
+        }
+        let run_id=record["id"].as_str().filter(|id|!id.is_empty())?;
+        let status=record["status"].as_str()?;
+        let state=if kind=="execution" && status=="running"
+            && record["phase"]=="queued" {
+            RunState::Queued
+        }else{
+            RunState::parse(status)?
+        };
+        let source_id=record["sourceMessageId"].as_str()
+            .or_else(||record["input"]["sourceMessageId"].as_str())
+            .unwrap_or("").to_string();
+        let actor_id=record["agentId"].as_str()
+            .or_else(||record["input"]["agentId"].as_str())
+            .map(str::to_string);
+        Some(Self{run_id:run_id.to_string(),source_id,event_seq:0,state,actor_id})
+    }
+
     pub fn into_value(self)->Value{
+        let source=if self.source_id.is_empty(){Value::Null}else{json!(self.source_id)};
         json!({"schemaVersion":1,"type":"run_state",
-            "runId":self.run_id,"sourceMessageId":self.source_id,
+            "runId":self.run_id,"sourceMessageId":source,
             "eventSeq":self.event_seq,"state":self.state.as_str(),
             "agentId":self.actor_id})
     }
@@ -55,7 +81,7 @@ mod tests{
     #[test]
     fn terminal_states_never_reopen_and_review_requires_explicit_recovery(){
         for terminal in [RunState::Completed,RunState::Failed,
-            RunState::Cancelled,RunState::Skipped]{
+            RunState::Cancelled,RunState::Interrupted,RunState::Skipped]{
             assert!(!terminal.permits(RunState::Running));
             assert!(!terminal.permits(RunState::NeedsReview));
         }
@@ -73,4 +99,25 @@ mod tests{
         assert_eq!(event["state"],"needs_review");
         assert_eq!(RunState::parse("assigned"),Some(RunState::Queued));
     }
+    #[test]
+    fn durable_job_chat_and_room_records_project_into_one_run_schema(){
+        let job=RunEvent::from_record("job",&json!({
+            "id":"job-1","status":"queued","input":{"agentId":"agent-1"}
+        })).unwrap().into_value();
+        assert_eq!(job["state"],"queued");
+        assert!(job["sourceMessageId"].is_null());
+        assert_eq!(job["agentId"],"agent-1");
+        let chat=RunEvent::from_record("execution",&json!({
+            "id":"chat-1","status":"completed","sourceMessageId":"owner-1"
+        })).unwrap().into_value();
+        assert_eq!(chat["state"],"completed");
+        assert_eq!(chat["sourceMessageId"],"owner-1");
+        let room=RunEvent::from_record("room_work_assignment",&json!({
+            "id":"room-1","status":"assigned","sourceMessageId":"owner-2"
+        })).unwrap().into_value();
+        assert_eq!(room["state"],"queued");
+        assert_eq!(RunState::parse("interrupted"),Some(RunState::Interrupted));
+        assert!(RunEvent::from_record("provider",&json!({"id":"p","status":"running"})).is_none());
+    }
+
 }

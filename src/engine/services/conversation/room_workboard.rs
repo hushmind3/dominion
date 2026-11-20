@@ -5,7 +5,7 @@
 use crate::{engine::memory,state::AppState};
 use serde_json::{json,Value};
 use std::collections::HashSet;
-use dominion_turn_core::run_state::{RunEvent,RunState};
+use dominion_turn_core::run_state::RunState;
 
 const MAX_SUMMARY_CHARS:usize=260;
 const MAX_ITEMS_IN_PROMPT:usize=6;
@@ -41,11 +41,9 @@ pub fn assign(
             source["content"].as_str().unwrap_or("")]),
     });
     if let Some(saved)=state.store.put_if_absent("room_work_assignment",&value){
+        // The event bus projects this committed record into the common
+        // run_state contract exactly once. Replays return without publishing.
         state.bus.record("room_work_assignment",&saved);
-        state.bus.emit(RunEvent{
-            run_id:id,source_id:source_id.into(),event_seq:(step as u64).saturating_mul(2),
-            state:RunState::Queued,actor_id:Some(agent_id.into()),
-        }.into_value());
         return Ok(saved);
     }
     state.store.get("room_work_assignment",&id)
@@ -70,25 +68,22 @@ pub fn complete(state:&AppState,assignment:&Value,work:&Value)->Result<Value,Str
         .is_some_and(|current|current.permits(RunState::Completed)){
         return Err("workboard completion: invalid state transition".into());
     }
-    let saved=state.store.patch_if(
+    let updated=state.store.patch_if(
         "room_work_assignment",id,"status",&json!("assigned"),
         &json!({"status":"completed","workItemId":work["id"],
             "messageId":work["messageId"],
             "evidenceStatus":work["evidenceStatus"],
             "completedToolCount":work["completedToolCount"]}),
-    ).or_else(||state.store.get("room_work_assignment",id)
-        .filter(|row|row["status"]=="completed"
-            && row["workItemId"]==work["id"]))
-        .ok_or("workboard completion: assignment is not live")?;
-    state.bus.record("room_work_assignment",&saved);
-    state.bus.emit(RunEvent{
-        run_id:id.into(),
-        source_id:work["sourceMessageId"].as_str().unwrap_or("").into(),
-        event_seq:work["step"].as_u64().unwrap_or(0).saturating_mul(2).saturating_add(1),
-        state:RunState::Completed,
-        actor_id:work["agentId"].as_str().map(str::to_string),
-    }.into_value());
-    Ok(saved)
+    );
+    if let Some(saved)=updated{
+        state.bus.record("room_work_assignment",&saved);
+        return Ok(saved);
+    }
+    // A completed replay is idempotent: return its durable result without
+    // emitting a second completion or advancing any consumer cursor.
+    state.store.get("room_work_assignment",id)
+        .filter(|row|row["status"]=="completed"&&row["workItemId"]==work["id"])
+        .ok_or("workboard completion: assignment is not live".into())
 }
 
 /// A voluntary pass is recorded without inventing a completed result.
@@ -98,17 +93,11 @@ pub fn skip(state:&AppState,assignment:&Value,reason:&str)->Result<(),String>{
         .is_some_and(|current|current.permits(RunState::Skipped)){
         return Err("workboard skip: invalid state transition".into());
     }
-    let _=state.store.patch_if("room_work_assignment",id,"status",
+    let saved=state.store.patch_if("room_work_assignment",id,"status",
         &json!("assigned"),&json!({"status":"skipped",
             "reason":reason.chars().take(80).collect::<String>()}))
         .ok_or("workboard skip: assignment is not live")?;
-    state.bus.emit(RunEvent{
-        run_id:id.into(),
-        source_id:assignment["sourceMessageId"].as_str().unwrap_or("").into(),
-        event_seq:assignment["step"].as_u64().unwrap_or(0).saturating_mul(2).saturating_add(1),
-        state:RunState::Skipped,
-        actor_id:assignment["agentId"].as_str().map(str::to_string),
-    }.into_value());
+    state.bus.record("room_work_assignment",&saved);
     Ok(())
 }
 
@@ -374,4 +363,30 @@ mod tests{
             .unwrap()["id"],first["id"]);
         let _=std::fs::remove_dir_all(dir);
     }
+    #[test]
+    fn replayed_room_assignment_and_completion_never_reemit_a_terminal_event(){
+        let (state,dir)=state();
+        seed(&state,"owner-a","reply-a","a","exec-a");
+        let msg=state.store.message("reply-a").unwrap();
+        let assignment=assign(&state,"r","room:r","owner-a","task-a","a",1).unwrap();
+        let after_assign=state.bus.replay(0,200);
+        let typed=|events:&[Value]|events.iter().filter(|v|
+            v["type"]=="run_state"&&v["runId"]==assignment["id"]
+        ).count();
+        assert_eq!(typed(&after_assign),1);
+        assign(&state,"r","room:r","owner-a","task-a","a",1).unwrap();
+        assert_eq!(typed(&state.bus.replay(0,200)),1);
+        let work=record(&state,"r","room:r","owner-a","task-a","a",1,&msg).unwrap();
+        complete(&state,&assignment,&work).unwrap();
+        let after_complete=state.bus.replay(0,200);
+        assert_eq!(typed(&after_complete),2);
+        complete(&state,&assignment,&work).unwrap();
+        assert_eq!(typed(&state.bus.replay(0,200)),2);
+        let terminal=after_complete.iter().find(|v|v["type"]=="run_state"
+            &&v["runId"]==assignment["id"]&&v["state"]=="completed").unwrap();
+        assert_eq!(terminal["sourceMessageId"],"owner-a");
+        assert_eq!(terminal["eventSeq"],terminal["seq"]);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
 }
