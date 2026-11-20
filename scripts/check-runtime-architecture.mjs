@@ -82,6 +82,8 @@ if(coreLib.includes('pub mod engine;')||
    !coreLib.includes('pub mod runtime_port;')||
    nativePort.includes('pub struct Engine;')||
    !nativePort.includes('pub trait Host: Send')||
+   !nativePort.includes('pub trait AgentLoop<H: Host>')||
+   !driver.includes('impl<H: Host> dominion_core::runtime_port::AgentLoop<H> for Engine')||
    !driver.includes('pub async fn drive<H: Host>')||
    !driver.includes('dominion_core::runtime_port::'))
   throw Error('Agent iteration logic leaked into core or algorithm crate missing')
@@ -136,7 +138,7 @@ if(!quietTurn||quietTurn.includes('run_quiet_with_stats(')||
    !quietTurn.includes('chat::run_turn_background(')||
    !quietTurn.includes('drain_quiet_events(receiver)'))
   throw Error('Quiet background turns must drain events without collecting discarded tool evidence')
-if(!runtime.includes('dominion_algorithms::engine::Engine::drive('))throw Error('Native driver must run product turns')
+if(!runtime.includes('dominion_core::runtime_port::AgentLoop::run('))throw Error('Native driver must run product turns')
 if(!outcome.includes('pub(super) fn determine_task_outcome(')||!runtime.includes('mod outcome;'))
   throw Error('Outcome policy must remain independently verifiable')
 if(/while\s+!\s*(?:self\.)?finished/.test(runtime+adapter))throw Error('Legacy model retry loop reintroduced')
@@ -232,7 +234,7 @@ if(!helperSource.includes('mod receipts;')||
    !store.includes('idx_aux_model_call_execution'))
   throw Error('Execution cost accounting no longer includes auxiliary upstream retries')
 if(!sdkApi.includes('engine::run_quiet(&state,&request).await')||
-   !runtime.includes('dominion_algorithms::engine::Engine::drive(')||
+   !runtime.includes('dominion_core::runtime_port::AgentLoop::run(')||
    !sdkApi.includes('record["modelAccounting"]=run["modelAccounting"].clone()'))
   throw Error('SDK/chat execution or cost semantics diverged from common Rust core')
 

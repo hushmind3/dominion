@@ -61,3 +61,15 @@ the gain today is test scope, ownership and independent runtime evolution.
 - [OpenCrust Rust workspace](https://github.com/opencrust-org/opencrust)
 
 These are patterns to compare, not source-code dependencies of DOMINION.
+
+## Stable iteration interface
+
+`dominion-core::runtime_port::AgentLoop<H>` is the gateway-visible iteration
+contract. `dominion-algorithms::engine::Engine` implements the trait while
+the product adapter invokes `AgentLoop::run(&Engine, host, context)`. The
+original loop regression suite also runs through this trait. Alternative
+implementations can be swapped at the product composition point without
+adding algorithm imports to the core crate.
+
+The algorithm remains in the same trusted Rust address space; the interface
+is not a sandbox and its type-level boundary must not be mistaken for one.

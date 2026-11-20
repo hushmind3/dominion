@@ -1066,7 +1066,11 @@ async fn run_turn_body(
         prepared_key:String::new(),completed_operations:vec![],
     };
     let context=dominion_algorithms::engine::Context{snapshot:kernel_state,budget:adapter.budget.clone(),round:0,journal:&kernel_journal};
-    dominion_algorithms::engine::Engine::drive(&mut adapter,context).await?;
+    dominion_core::runtime_port::AgentLoop::run(
+        &dominion_algorithms::engine::Engine,
+        &mut adapter,
+        context,
+    ).await?;
     adapter.save().await
 
 }

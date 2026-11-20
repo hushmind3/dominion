@@ -1,5 +1,6 @@
 use super::*;
 use dominion_core::hosted::{self, Action, DispatchResult, Dispatcher};
+use dominion_core::runtime_port::AgentLoop;
 use std::{
     collections::VecDeque,
     sync::{
@@ -82,7 +83,8 @@ impl Fixture {
     async fn drive(&mut self, rounds: usize) -> Result<(), String> {
         let store = self.store.clone();
         let snapshot = store.saved.lock().unwrap().clone();
-        Engine::drive(
+        AgentLoop::run(
+            &Engine,
             self,
             Context {
                 snapshot,

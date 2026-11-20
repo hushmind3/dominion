@@ -112,6 +112,17 @@ impl Engine {
     }
 }
 
+/// The default ReAct-style agent loop implements the native interface.
+impl<H: Host> dominion_core::runtime_port::AgentLoop<H> for Engine {
+    fn run<'a>(
+        &'a self,
+        host: &'a mut H,
+        ctx: Context<'a>,
+    ) -> dominion_core::hosted::BoxFuture<'a, Result<(), String>> {
+        Box::pin(Engine::drive(host, ctx))
+    }
+}
+
 #[cfg(test)]
 #[path = "engine_tests.rs"]
 mod tests;

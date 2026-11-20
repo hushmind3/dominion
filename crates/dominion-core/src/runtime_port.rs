@@ -115,6 +115,17 @@ pub trait Host: Send {
     }
 }
 
+/// Plug an iteration algorithm into the native runtime without granting it
+/// extra tool authority. The algorithm crate implements this contract; the
+/// core never depends on an algorithm or chooses one.
+pub trait AgentLoop<H: Host>: Send + Sync {
+    fn run<'a>(
+        &'a self,
+        host: &'a mut H,
+        ctx: Context<'a>,
+    ) -> BoxFuture<'a, Result<(), String>>;
+}
+
 /// Gate an auxiliary paid call (review, adaptation or program repair) through
 /// the same durable intent as the main model phase. Dropping the future keeps
 /// intent in flight; a returned transport error still closes the attempt.
