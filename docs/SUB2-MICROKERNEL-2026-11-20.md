@@ -35,3 +35,7 @@
 2026년 아키텍처 참고:
 https://github.com/QwenLM/qwen-code/blob/main/docs/developers/architecture.md
 https://github.com/QwenLM/qwen-code/issues/11695
+
+## 런타임 내부 추가 분리
+
+ProgramIR 실행, 대안 후보 실험, 작업 검토, 정책 스냅샷과 세션 상태 관리 5개 파일도 `services/decision/` 및 `services/conversation/`으로 이동했습니다. 기존 단일 실행 루프는 결과를 수집하는 역할을 유지합니다.

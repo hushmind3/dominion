@@ -43,6 +43,22 @@ test('context, providers, catalogs and transport are outside execution core',()=
  }
 });
 
+const runtimeServices={
+ program:'decision/runtime_program.rs',
+ candidate_rollout:'decision/runtime_candidate_rollout.rs',
+ action_review:'decision/runtime_action_review.rs',
+ selection:'decision/runtime_selection.rs',
+ session_state:'conversation/runtime_session_state.rs'
+};
+test('optional program and policy modules are no longer part of runtime core',()=>{
+ const runtime=source('src/engine/core/chat/runtime.rs');
+ for(const [mod,target] of Object.entries(runtimeServices)){
+  assert.ok(runtime.includes('#[path = "../../services/'+target+'"]'),mod+' service declaration missing');
+  assert.ok(exists('src/engine/services/'+target),'missing runtime service '+target);
+  assert.ok(!exists('src/engine/core/chat/runtime/'+mod+'.rs'),'core still owns '+mod);
+ }
+});
+
 test('no UI navigation changes or SDK API removal from core refactor',()=>{
  assert.match(source('src/lib.rs'),/pub mod sdk;/);
  assert.match(source('web/src/components/WorkspaceShell.tsx'),/id:'connections'/);

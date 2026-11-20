@@ -15,6 +15,7 @@ on:
       - 'Cargo.lock'
       - '.github/workflows/ci.yml'
       - 'web/tests/**/*.mjs'
+      - 'scripts/sub2-*.mjs'
       - 'sdk/typescript/**'
   pull_request:
     branches: [main, dominion-sub2]
@@ -25,6 +26,7 @@ on:
       - 'Cargo.lock'
       - '.github/workflows/ci.yml'
       - 'web/tests/**/*.mjs'
+      - 'scripts/sub2-*.mjs'
       - 'sdk/typescript/**'
   workflow_dispatch:
 
