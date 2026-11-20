@@ -1,3 +1,4 @@
+import { McpRegistryMarket } from "./extensions/McpRegistryMarket";
 import { DialogBackdrop, DialogPanel } from "../components/Dialog";
 import { SkillsPanel } from "./extensions/SkillsPanel";
 import { t, useLocale } from "../i18n";
@@ -691,100 +692,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
           {message}
         </div>
       )}
-      {tab === "market" && (
-        <>
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <Subheading
-              title={t('ext.registry')}
-              extra={
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-[#8A8176]">
-                    {t('ext.realtime', { count: catalog.length })}
-                  </span>
-                  <Button
-                    variant="secondary"
-                    onClick={() => void loadCatalog(query.trim())}
-                    disabled={searching}
-                  >
-                    <RefreshCw size={14} /> {t('ext.refresh')}
-                  </Button>
-                </div>
-              }
-            />
-          </div>
-          <Panel className="min-w-0 p-5">
-            <div className="flex min-w-0 items-center gap-2 rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] px-3 py-2">
-              <Search size={18} />
-              <TextInput
-                value={query}
-                placeholder={t('ext.searchPlaceholder')}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && search()}
-              />
-              <Action onClick={search} disabled={searching}>
-                {searching ? t('ext.searching') : t('ext.search')}
-              </Action>
-            </div>
-            <div className="rounded-xl bg-[#FAF7F1] p-3 text-xs leading-5 text-[#7C7469]">
-              {t('ext.registryNote')}
-            </div>
-            <div className="registry-results">
-              {catalog.map((x) => (
-                <div
-                  className="flex min-w-0 items-start gap-3 rounded-xl border border-[#E7E0D5] bg-white p-4 hover:border-[#E6C9B8]"
-                  key={x.name}
-                >
-                  <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-[#F7E8E1] text-[#C96442]">
-                    <Server size={19} />
-                  </span>
-                  <div>
-                    <strong>{x.name}</strong>
-                    <p>{x.description || "MCP server"}</p>
-                    <small>{x.packageName || x.url || t('ext.noInstallInfo')}</small>
-                  </div>
-                  {(x.packageName || x.url) &&
-                    (mcp.value.some((r: any) => r.name === x.name) ? (
-                      <Button
-                        variant="secondary"
-                        className="shrink-0 whitespace-nowrap"
-                        onClick={async () => {
-                          const rec = mcp.value.find((r: any) => r.name === x.name);
-                          if (!rec) return;
-                          await del("/api/mcp/" + rec.id);
-                          await mcp.reload();
-                        }}
-                      >
-                        {t('ext.cancel')}
-                      </Button>
-                    ) : (
-                      <Button
-                        variant="secondary"
-                        onClick={() =>
-                          install({
-                            name: x.name,
-                            transport: x.packageName ? "stdio" : "http",
-                            command: "npx",
-                            args: x.packageName ? ["-y", x.packageName] : [],
-                            endpoint: x.url,
-                          })
-                        }
-                      >
-                        {t('ext.install')}
-                      </Button>
-                    ))}
-                </div>
-              ))}
-              {!catalog.length && (
-                <Empty
-                  icon={Compass}
-                  title={t('ext.emptySearch')}
-                  description={t('ext.emptySearchDesc')}
-                />
-              )}
-            </div>
-          </Panel>
-        </>
-      )}
+      {tab === "market" && <McpRegistryMarket installed={mcp.value} onChanged={() => void mcp.reload()} />}
       {tab === "plugins" && (
         <>
           <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
