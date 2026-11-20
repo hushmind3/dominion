@@ -1438,6 +1438,36 @@ mod memory_algorithm_tests {
         assert_eq!(db.get("memory", "used-memory").unwrap()["uses"], 2);
     }
 
+}
+
+#[cfg(test)]
+mod per_agent_memory_learning_tests {
+    use super::*;
+    use crate::{config::Config, state::AppState, vault::Vault};
+
+    fn state() -> (AppState, std::path::PathBuf) {
+        let dir = std::env::temp_dir()
+            .join(format!("dominion-memory-learn-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = Config {
+            port: 0, data_dir: dir.clone(),
+            web_dir: dir.join("web"), workspace: dir.clone(),
+        };
+        let store = Store::open(&config.db_path()).unwrap();
+        let vault = Vault::open(&config.key_path());
+        (AppState::new(config, store, vault), dir)
+    }
+
+    fn only_kernel(state: &AppState, kind: &str, implementation: &str) {
+        crate::engine::algorithms::seed(state);
+        for mut item in state.store.all("algorithm") {
+            if item["kind"].as_str() != Some(kind) { continue; }
+            item["status"] = json!(if item["implementation"].as_str()
+                == Some(implementation) { "active" } else { "disabled" });
+            state.store.put("algorithm", &item);
+        }
+    }
+
     #[test]
     fn cached_cross_room_recall_never_promotes_peer_or_external_evidence() {
         let (state, dir) = state();
