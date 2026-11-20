@@ -82,7 +82,7 @@ export function ConnectionsPage(){
    await post('/api/oauth/providers/'+encodeURIComponent(oauthEditor.id),{
     clientId:oauthEditor.clientId.trim(),clientSecret:oauthEditor.clientSecret
    })
-   await oauth.reload()
+   await Promise.all([oauth.reload(),accounts.reload()])
    setInfo(t('conn.oauthAppSaved'))
    setOauthEditor(null)
   }catch(e){setOauthError((e as Error).message)}finally{setOauthSaving(false)}
@@ -94,7 +94,7 @@ export function ConnectionsPage(){
  return <div className="mx-auto w-full max-w-[1320px] px-4 py-3 sm:px-6">
   {pageHeader}
   {sectionTabs}
-  {section==='quick-connect'&&<ConnectedAccounts/>}
+  {section==='quick-connect'&&<ConnectedAccounts onSetupApp={id=>{setOauthError('');setOauthEditor({id,clientId:'',clientSecret:''});setSection('accounts')}}/>}
   {info&&<div role="status" className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><Check size={16}/>{info}</div>}
   {error&&!editor&&<Notice message={error}/>}
   {section==='channels'&&<ChannelDirectory entries={registry.value} bindings={channels.value}
@@ -109,12 +109,14 @@ export function ConnectionsPage(){
    <div className="flex items-center justify-between border-b border-[#EFE9DF] p-5"><div><small>OAUTH · {oauthEditor.id.toUpperCase()}</small><h2 className="text-lg font-bold">{t('conn.oauthAppSetup')}</h2></div><Button size="icon" variant="ghost" disabled={oauthSaving} onClick={()=>setOauthEditor(null)} aria-label={t('conn.cancel')}><X size={18}/></Button></div>
    <div className="grid gap-4 p-5">
     <p className="text-xs leading-6 text-[#7C7469]">{t('conn.oauthAppHint')}</p>
+     {oauth.value.find(item=>item.id===oauthEditor.id)?.configured&&<p role="note" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">{t('conn.oauthAppReconfigure')}</p>}
+     {oauthEditor.id==='google'&&<p className="text-xs text-[#7C7469]">{t('conn.oauthGoogleSecret')}</p>
     <FormField label={t('conn.oauthRedirectUri')}><code className="block break-all rounded-lg bg-[#FAF7F1] p-3 text-xs text-[#4A443C]">{oauth.value.find(item=>item.id===oauthEditor.id)?.callback||''}</code></FormField>
     <FormField label={t('conn.oauthClientId')}><TextInput autoComplete="off" value={oauthEditor.clientId} disabled={oauthSaving} onChange={e=>setOauthEditor(previous=>previous?{...previous,clientId:e.target.value}:previous)}/></FormField>
     <FormField label={t('conn.oauthClientSecret')}><TextInput type="password" autoComplete="new-password" value={oauthEditor.clientSecret} disabled={oauthSaving} onChange={e=>setOauthEditor(previous=>previous?{...previous,clientSecret:e.target.value}:previous)}/></FormField>
     {oauthError&&<Notice message={oauthError}/>}
    </div>
-   <div className="flex justify-end gap-2 border-t border-[#EFE9DF] p-5"><Action variant="secondary" disabled={oauthSaving} onClick={()=>setOauthEditor(null)}>{t('conn.cancel')}</Action><Action disabled={oauthSaving||!oauthEditor.clientId.trim()||!oauthEditor.clientSecret.trim()} onClick={()=>void saveOAuthApp()}><Check size={16}/>{t('conn.oauthAppSave')}</Action></div>
+   <div className="flex justify-end gap-2 border-t border-[#EFE9DF] p-5"><Action variant="secondary" disabled={oauthSaving} onClick={()=>setOauthEditor(null)}>{t('conn.cancel')}</Action><Action disabled={oauthSaving||!oauthEditor.clientId.trim()||(oauthEditor.id==='github'&&!oauthEditor.clientSecret.trim())} onClick={()=>void saveOAuthApp()}><Check size={16}/>{t('conn.oauthAppSave')}</Action></div>
   </DialogPanel></DialogBackdrop>}
   {editor&&<DialogBackdrop onDismiss={()=>{if(!saving)setEditor(null)}}><DialogPanel size="wide" aria-label={editor.entry.name+' '+t('conn.edit')}>
    <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[#EFE9DF] bg-white p-5"><div><small>CHANNEL CONFIGURATION · {editor.entry.id.toUpperCase()}</small><h2>{editor.record.id?t('conn.edit'):t('conn.new')}</h2></div><Button size="icon" variant="ghost" disabled={saving} onClick={()=>setEditor(null)} aria-label={t('conn.cancel')}><X size={18}/></Button></div>

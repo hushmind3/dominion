@@ -9,7 +9,7 @@ type Provider={id:string;name:string;configured:boolean;connected:boolean;accoun
 type Account={provider:string;displayName:string;hasToken:boolean;scopes:string}
 type CliLogin={source:string;status:string;message?:string;url?:string|null;userCode?:string|null;requiresInput?:boolean}
 
-export function ConnectedAccounts(){
+export function ConnectedAccounts({onSetupApp}:{onSetupApp?:(id:OAuthAccountId)=>void}={}){
  const providers=useRemote<Provider[]>('/api/oauth/providers',[])
  const accounts=useRemote<Account[]>('/api/oauth/connections',[])
  const [busy,setBusy]=useState<string|null>(null)
@@ -99,7 +99,9 @@ export function ConnectedAccounts(){
      {!provider.configured&&<p className="text-xs leading-5 text-amber-800">{t(provider.id==='github'?'conn.quick.githubCliFallback':'conn.quick.appSetupMissing')}</p>}
      {provider.id==='github'&&!provider.configured&&<a href="https://cli.github.com/" target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-[#C96442] underline">{t('conn.quick.githubCliInstall')}</a>}
      <div className="mt-auto flex flex-wrap gap-2 border-t border-[#EFE9DF] pt-4">
-      <Action disabled={busy!==null} onClick={()=>{void connect(provider.id)}}><Link2 size={17}/>{busy===provider.id?t('conn.quick.opening'):ready?t('conn.quick.reconnect'):provider.id==='github'&&!provider.configured?t('conn.quick.githubCliConnect'):t('conn.quick.connect')}<ExternalLink size={14}/></Action>
+      {provider.id==='google'&&!provider.configured&&onSetupApp
+       ?<Action disabled={busy!==null} onClick={()=>onSetupApp(provider.id)}><Link2 size={17}/>{t('conn.oauthAppSetup')}</Action>
+       :<Action disabled={busy!==null} onClick={()=>{void connect(provider.id)}}><Link2 size={17}/>{busy===provider.id?t('conn.quick.opening'):ready?t('conn.quick.reconnect'):provider.id==='github'&&!provider.configured?t('conn.quick.githubCliConnect'):t('conn.quick.connect')}<ExternalLink size={14}/></Action>}
       {ready&&<Action variant="secondary" disabled={busy!==null} onClick={()=>{void disconnect(provider.id)}}><Unlink size={15}/>{t('conn.quick.disconnect')}</Action>}
      </div>
     </Panel>
