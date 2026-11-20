@@ -920,7 +920,7 @@ impl Host for MainTurn<'_> {
                 .ok_or("도구 호출 메시지를 저장할 수 없습니다.")?;
             self.state.bus.message(&saved);
 
-            let ordering = crate::engine::algorithms::choose_for_agent(
+            let ordering = crate::addons::runtime_hooks::choose_for_agent(
                 self.state,
                 "execution.ordering",
                 self.request.agent_id.as_deref(),
@@ -939,14 +939,14 @@ impl Host for MainTurn<'_> {
                     .iter()
                     .any(|call| !tool_is_read_only(&call.name))
             {
-                crate::engine::algorithms::mark_unrated(
+                crate::addons::runtime_hooks::mark_unrated(
                     self.state,
                     self.execution_id,
                     "execution.ordering",
                     "effect ordering barrier preserved",
                 );
             }
-            let combination = crate::engine::algorithms::choose_for_agent(
+            let combination = crate::addons::runtime_hooks::choose_for_agent(
                 self.state,
                 "tool.combination",
                 self.request.agent_id.as_deref(),
@@ -1096,7 +1096,7 @@ impl Host for MainTurn<'_> {
                 )
             });
             if mutating_call && !has_prior_read {
-                let tool_selection = crate::engine::algorithms::choose_for_agent(
+                let tool_selection = crate::addons::runtime_hooks::choose_for_agent(
                     self.state,
                     "tool.selection",
                     self.request.agent_id.as_deref(),
@@ -1117,7 +1117,7 @@ impl Host for MainTurn<'_> {
                         error,
                         self.metrics,
                     );
-                    crate::engine::algorithms::mark_signal(
+                    crate::addons::runtime_hooks::mark_signal(
                         self.state,
                         self.execution_id,
                         "tool.selection",
@@ -1137,7 +1137,7 @@ impl Host for MainTurn<'_> {
             }
             let call_key = format!("{}:{}", call.name, arguments);
             let current_fingerprint = environment_fingerprint(self.state, &call.name, &arguments);
-            let recovery_mode = crate::engine::algorithms::choose_for_agent(
+            let recovery_mode = crate::addons::runtime_hooks::choose_for_agent(
                 self.state,
                 "recovery.strategy",
                 self.request.agent_id.as_deref(),
@@ -1325,7 +1325,7 @@ impl Host for MainTurn<'_> {
                     )
                     .await?;
                     if prepared.len() > 1 {
-                        crate::engine::algorithms::mark_signal(
+                        crate::addons::runtime_hooks::mark_signal(
                             self.state,
                             self.execution_id,
                             "tool.combination",
@@ -1367,13 +1367,13 @@ impl Host for MainTurn<'_> {
             if !ok {
                 self.ordering_ok = false;
             }
-            crate::engine::algorithms::mark_signal(
+            crate::addons::runtime_hooks::mark_signal(
                 self.state,
                 self.execution_id,
                 "tool.selection",
                 ok,
             );
-            crate::engine::algorithms::mark_signal(
+            crate::addons::runtime_hooks::mark_signal(
                 self.state,
                 self.execution_id,
                 "recovery.strategy",
@@ -1428,6 +1428,9 @@ impl Host for MainTurn<'_> {
                     &error_text,
                 );
                 if self.adaptation_attempts < 3
+                    && crate::addons::runtime_hooks::strategies_enabled(
+                        self.state,self.session_id,self.request.agent_id.as_deref(),
+                    )
                     && !self.request.provider_id.as_deref().unwrap_or("").is_empty()
                 {
                     self.adaptation_attempts += 1;
@@ -1539,7 +1542,7 @@ impl Host for MainTurn<'_> {
             let round = ctx.round;
 
             if self.ordering_used {
-                crate::engine::algorithms::mark_signal(
+                crate::addons::runtime_hooks::mark_signal(
                     self.state,
                     self.execution_id,
                     "execution.ordering",

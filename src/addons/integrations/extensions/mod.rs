@@ -20,13 +20,14 @@ pub enum Extension {
     Memory,
     Skills,
     Channels,
+    Strategies,
 }
 impl Extension {
-    pub const ALL: [Self;4]=[Self::Mcp,Self::Memory,Self::Skills,Self::Channels];
+    pub const ALL: [Self;5]=[Self::Mcp,Self::Memory,Self::Skills,Self::Channels,Self::Strategies];
     pub const fn key(self)->&'static str {
         match self {
             Self::Mcp=>"mcp", Self::Memory=>"memory",
-            Self::Skills=>"skills",Self::Channels=>"channels",
+            Self::Skills=>"skills",Self::Channels=>"channels",Self::Strategies=>"strategies",
         }
     }
     pub fn from_tool(name:&str)->Option<Self>{

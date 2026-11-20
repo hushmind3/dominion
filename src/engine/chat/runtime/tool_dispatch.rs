@@ -341,7 +341,7 @@ pub(super) async fn dispatch_tool_call(
         None => arguments,
     };
     let call = effective_call.as_ref().unwrap_or(call);
-    let argument_strategy = crate::engine::algorithms::choose_for_agent(
+    let argument_strategy = crate::addons::runtime_hooks::choose_for_agent(
         state,
         "tool.arguments",
         request.agent_id.as_deref(),
@@ -355,7 +355,7 @@ pub(super) async fn dispatch_tool_call(
     })
     .unwrap_or_default();
     let arguments = normalize_tool_arguments(arguments, &argument_strategy);
-    crate::engine::algorithms::mark_signal(state, execution_id, "tool.arguments", true);
+    crate::addons::runtime_hooks::mark_signal(state, execution_id, "tool.arguments", true);
     // Programs/adaptations enter the same sub4 journal as model calls. The
     // model dispatcher has already recorded its whole read batch. Product
     // program branches receive child frames linked to this execution.

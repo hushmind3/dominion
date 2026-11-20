@@ -213,18 +213,11 @@ async fn run_turn_with_policy(
         .put("session", &session)
         .ok_or("세션 설정을 저장할 수 없습니다.")?;
 
-    let improvement_scope = crate::engine::memory::MemoryScope::for_session(
-        &state.store,
-        &session_id,
-        request.agent_id.as_deref(),
-    );
     let execution_id = uuid::Uuid::new_v4().to_string();
-    let applied_improvement_ids = crate::engine::improve::injected_ids_with_execution(
-        state, &improvement_scope, Some(&execution_id),
-    );
-    let strategy_candidates = crate::engine::improve::active_values_with_execution(
-        state, &improvement_scope, Some(&execution_id),
-    );
+    let (applied_improvement_ids,strategy_candidates) =
+        crate::addons::runtime_hooks::prepare_turn(
+            state,&session_id,request.agent_id.as_deref(),&execution_id,
+        );
     // Derived prompts (goal iterations, room speakers) attach to the root the
     // parent lifecycle created. Only an owner-facing chat turn creates a root.
     let task_id = request.task_id.clone().unwrap_or_else(|| execution_id.clone());
@@ -322,7 +315,7 @@ async fn run_turn_with_policy(
     execution_budget.finish();
     close_pending_approvals(state, &session_id);
 
-    extensions::knowledge::after_turn(
+    crate::addons::runtime_hooks::after_turn(
         state,&request,&session_id,&execution_id,&result,
     );
     result
@@ -515,7 +508,7 @@ async fn run_turn_body(
 
     let provider = select_provider(state, request, &session)?;
     let allow_provider_fallback = true;
-    let budget_algorithm = crate::engine::algorithms::choose_for_agent(
+    let budget_algorithm = crate::addons::runtime_hooks::choose_for_agent(
         state,
         "execution.budget",
         request.agent_id.as_deref(),
@@ -573,7 +566,7 @@ async fn run_turn_body(
     let discovery = if is_room {
         Value::Null
     } else {
-        crate::engine::algorithms::choose_for_agent(
+        crate::addons::runtime_hooks::choose_for_agent(
             state, "tool.discovery", request.agent_id.as_deref(), Some(execution_id),
         ).unwrap_or(Value::Null)
     };
@@ -612,7 +605,7 @@ async fn run_turn_body(
             }
         }).collect();
         if !request.tools_enabled || !request.tools_execution_enabled { tool_definitions.clear(); }
-        crate::engine::algorithms::mark_unrated(state, execution_id, "tool.discovery", "single-file task catalog");
+        crate::addons::runtime_hooks::mark_unrated(state, execution_id, "tool.discovery", "single-file task catalog");
         if let Some(mut execution) = state.store.get("execution", execution_id) {
             execution["contextPolicy"] = json!("single-file-creation");
             state.store.put("execution", &execution);
@@ -847,7 +840,7 @@ async fn run_turn_body(
     // Deterministic decomposition runs before any model call. It gives the
     // turn an engine-owned ordered sub-goal list and an independently graded
     // signal that does not depend on whole-task success.
-    let decomposition_algorithm = crate::engine::algorithms::choose_decomposition_for_agent(
+    let decomposition_algorithm = crate::addons::runtime_hooks::choose_decomposition_for_agent(
         state,
         request.agent_id.as_deref(),
         Some(execution_id),
@@ -859,7 +852,7 @@ async fn run_turn_body(
         task_input(&session,&request.input), &decomposition_algorithm, frozen_checks,
     );
     if decomposition["qualityScore"].is_null() {
-        crate::engine::algorithms::mark_unrated(
+        crate::addons::runtime_hooks::mark_unrated(
             state, execution_id,"task.decomposition",
             "postcondition graph pending real native verification receipts",
         );

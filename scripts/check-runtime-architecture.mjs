@@ -73,6 +73,14 @@ const outcome=readFileSync(path.join(root,'src/engine/chat/outcome.rs'),'utf8')
 const driver=readFileSync(path.join(root,'crates/dominion-core/src/engine.rs'),'utf8')
 const modules=readFileSync(path.join(root,'src/engine/mod.rs'),'utf8')
 const addonIndex=readFileSync(path.join(root,'src/addons/mod.rs'),'utf8')
+const runtimeHooks=readFileSync(path.join(root,'src/addons/runtime_hooks.rs'),'utf8')
+if(!addonIndex.includes('pub mod runtime_hooks;')||
+   !runtimeHooks.includes('pub fn prepare_turn(')||
+   !runtimeHooks.includes('pub fn strategies_enabled_for_execution(')||
+   !runtime.includes('crate::addons::runtime_hooks::prepare_turn(')||
+   !runtime.includes('crate::addons::runtime_hooks::after_turn(')||
+   runtime.includes('crate::engine::improve::active_values_with_execution('))
+  throw Error('Optional strategy lifecycle regained direct core ownership')
 const benchmarkRunner=readFileSync(path.join(root,'src/bin/dominion-benchmark.rs'),'utf8')
 if(!benchmarkRunner.includes('../addons/strategies/plan_quality.rs')||
    benchmarkRunner.includes('../engine/plan_quality.rs'))

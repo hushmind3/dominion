@@ -574,7 +574,7 @@ pub(in crate::engine::chat) fn finalize_execution(
         record["failureClass"] = failure["failureClass"].clone();
         record["recoveryHint"] = failure["recoveryHint"].clone();
     }
-    let updates = match crate::engine::improve::execution_updates(state, &record) {
+    let updates = match crate::addons::runtime_hooks::execution_updates(state, &record) {
         Ok(updates) => updates,
         Err(error) => {
             state.store.audit(
@@ -636,7 +636,9 @@ pub(in crate::engine::chat) fn finalize_execution(
         regime: ObservationRegime::ProductionObserved,
         labels: LabelProvenance::DeterministicOracle,
     };
-    let observations = if observation.validate().is_ok() {
+    let strategies_enabled=crate::addons::runtime_hooks::strategies_enabled_for_execution(state,&record);
+    let memory_enabled=crate::addons::runtime_hooks::memory_enabled_for_execution(state,&record);
+    let observations = if strategies_enabled && observation.validate().is_ok() {
         let mut value = serde_json::to_value(&observation).unwrap_or_else(|_| json!({}));
         value["id"] = json!(format!("observation:{execution_id}"));
         vec![value]
@@ -704,7 +706,7 @@ pub(in crate::engine::chat) fn finalize_execution(
     // Every terminal execution updates only this agent's growth record:
     // runs, failures, failing tools and concrete guidance for next time.
     // A deterministic shortcut is excluded: zero model calls is not growth.
-    if record["deterministicShortcut"].is_null() {
+    if memory_enabled && record["deterministicShortcut"].is_null() {
         if let Some(agent_id) = record["agentId"]
             .as_str()
             .filter(|value| !value.is_empty())
@@ -725,25 +727,28 @@ pub(in crate::engine::chat) fn finalize_execution(
     }
     // Close the principle loop before learning new ones: a used principle
     // gains a supporting case or counterexample for this run.
-    let _ = crate::engine::principle::finalize_usage(
-        state,
-        &record,
-        task_outcome == TaskOutcome::Succeeded,
-    );
+    if strategies_enabled {
+        let _ = crate::engine::principle::finalize_usage(
+            state,&record,task_outcome==TaskOutcome::Succeeded,
+        );
+    }
     // A success experience requires Succeeded and a first-time finalization.
-    if applied && task_outcome == TaskOutcome::Succeeded {
+    if memory_enabled && applied && task_outcome == TaskOutcome::Succeeded {
         // Use the same first-success-per-root marker as the original case
         // bank: room speakers and repeat task attempts are not independent
         // evidence for conditional intervention rules.
         if record_success_experience(state, &record, execution_id, task_outcome).is_some() {
             let _ = crate::engine::experience::learn_verified_adaptations(state, &record);
-            let _ = crate::engine::principle::learn_from_execution(state, &record);
+            if strategies_enabled {
+                let _ = crate::engine::principle::learn_from_execution(state, &record);
+            }
         }
     }
-    mark_run_signals(state, &record);
-    // Finalize after learning so algorithm usages created while learning
-    // (for example multiagent.sharing) are included in this execution.
-    crate::engine::algorithms::finalize_execution(state, &record);
+    if strategies_enabled {
+        mark_run_signals(state,&record);
+        // Includes any usages recorded by optional experience/learning.
+        crate::engine::algorithms::finalize_execution(state,&record);
+    }
     if let Some(mut saved) = state.store.get("execution", execution_id) {
         saved["growthFinalized"] = json!(true);
         state.store.put("execution", &saved);

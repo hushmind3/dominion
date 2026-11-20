@@ -158,3 +158,20 @@ Nine more implementation modules moved from `src/engine/` into categorized add-o
 
 The app's `src/engine/mod.rs` retains compatibility exports temporarily. The
 standalone `crates/dominion-core` still owns the only model/tool execution loop.
+
+## Optional strategy runtime boundary (2026-11-20)
+
+The product hook `src/addons/runtime_hooks.rs` now owns the pre-turn
+strategy/experience lookup, algorithm selection and post-turn learning.
+`src/engine/chat/runtime.rs` does not query improvement history directly.
+The extension admission policy additionally accepts `"strategies": false`
+at global, room, agent or session level. Missing values default to enabled
+to preserve existing installations.
+
+With `strategies=false`, the native turn still has model routing, built-in
+file/shell tools, approvals, durable journal, cancellation and verification.
+It skips strategy selection, strategy observation writes, improvement updates,
+and optional adaptation retries. With `memory=false`, it additionally skips
+long-term recall, turn-learning and agent-growth updates. Neither flag deletes
+stored records or disables a native execution capability. This is a runtime
+opt-out, not a dynamic-library unloader or a Cargo compilation feature.

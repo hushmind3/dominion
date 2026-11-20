@@ -66,6 +66,11 @@ pub(super) async fn attempt_model_adaptation(
     op_seq: &mut u64,
     environment_version: u64,
 ) -> Result<Value, String> {
+    if !crate::addons::runtime_hooks::strategies_enabled(
+        state,session_id,request.agent_id.as_deref(),
+    ) {
+        return Err("부가 전략 기능이 비활성화되어 적응 실행을 시작하지 않았습니다.".into());
+    }
     let provider_id = request
         .provider_id
         .as_deref()

@@ -142,6 +142,7 @@ jobs:
       - name: Optional backend extension boundaries (dev profile)
         run: |
           cargo test --locked --bin dominion-rust addons::extensions::tests
+          cargo test --locked --bin dominion-rust addons::runtime_hooks::tests
           cargo test --locked --test e2e room_identity::backend_extensions_are_isolated_from_the_core_conversation -- --nocapture
       - name: Explicit public web search requires verified tool evidence (dev profile)
         run: |

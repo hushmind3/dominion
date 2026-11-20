@@ -2,6 +2,8 @@
 //! adapters provide knowledge, optimization, integrations and operations.
 //! `crate::engine` re-exports are compatibility paths, not ownership.
 
+pub mod runtime_hooks;
+
 // knowledge
 #[path = "knowledge/agent_growth.rs"]
 pub mod agent_growth;
