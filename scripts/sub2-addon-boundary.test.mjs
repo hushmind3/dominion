@@ -41,9 +41,9 @@ test('all seven optional adapters are physically isolated and compatibility-expo
 });
 
 test('native model turn delegates all MCP tool operations through addon port',()=>{
- const turn=source('src/engine/chat/runtime/turn_body.rs');
- const dispatcher=source('src/engine/chat/runtime/tool_calls.rs');
- const discovery=source('src/engine/chat/capability.rs');
+ const turn=source('src/engine/core/chat/runtime/turn_body.rs');
+ const dispatcher=source('src/engine/core/chat/runtime/tool_calls.rs');
+ const discovery=source('src/engine/core/chat/capability.rs');
  assert.match(turn,/addons::tool_definitions/);
  assert.match(discovery,/addons::tool_definitions/);
  assert.match(dispatcher,/addons::requires_tool_approval/);
