@@ -269,7 +269,7 @@ export function ConnectionsPage(){
   {id:'installed',label:t('ext.tab.installed'),icon:Server},
   {id:'skills',label:t('ext.tab.skills'),icon:BookOpenText},
   {id:'plugins',label:t('ext.tab.plugins'),icon:PackagePlus},
-  {id:'capabilities',label:'역량 마켓',icon:Sparkles},
+  {id:'capabilities',label:english?'Built-in tools':'기본 도구',icon:Sparkles},
  ] as const
  const openEditor=(entry:ChannelEntry,existing?:ChannelBinding)=>{
   if(!entry.available)return
@@ -332,7 +332,7 @@ export function ConnectionsPage(){
    </Button>)}
   </nav>
   {section==='quick-connect'&&<ConnectedAccounts/>}
-  {section==='capabilities'&&<CapabilitiesPage navigate={page=>setSection(page==='extensions'?'market':'channels')}/>}
+  {section==='capabilities'&&<CapabilitiesPage embedded navigate={page=>setSection(page==='extensions'?'market':'channels')}/>}
   {section!=='channels'&&section!=='quick-connect'&&section!=='capabilities'&&<ExtensionsPage section={section} embedded/>}
   {section==='channels'&&<>
    <div className="mb-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
