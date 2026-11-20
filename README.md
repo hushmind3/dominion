@@ -4,7 +4,7 @@
 <p align="center"><strong>Your models. Your workspace. Native Rust execution.</strong></p>
 <p align="center"><a href="README.ko.md">한국어</a> · English · <a href="ENGINE.md">Architecture</a> · <a href="LICENSE">Apache-2.0</a></p>
 
-This document describes the **experimental `dominion-sub2` branch**, checked against source on **2026-11-19**. The complete React/Vite frontend has been synchronized with main's 2026-11-19 interface (`f86a36e`), while the Rust runtime and SDK retain sub2-specific execution, evidence, cache and recovery work. This is **not** a claim that the sub2 backend is identical to main or that a production desktop release has been verified.
+This document describes the **experimental `dominion-sub2` branch**, checked against source on **2026-11-20**. The complete React/Vite frontend has been synchronized with main's 2026-11-19 interface (`f86a36e`), while the Rust runtime and SDK retain sub2-specific execution, evidence, cache and recovery work. This is **not** a claim that the sub2 backend is identical to main or that a production desktop release has been verified.
 
 <p align="center">
   <img src="docs/01-multi-agent-room.webp" alt="Group conversation workspace" width="48%" />
@@ -20,8 +20,6 @@ This document describes the **experimental `dominion-sub2` branch**, checked aga
 - **GitHub CLI connection:** the main UI flow calls native CLI login; the Rust backend validates GitHub account credentials and stores the grant in the encrypted vault.
 - **Extensible tools and SDK:** native workspace/file/shell/browser/MCP execution, TypeScript client at `sdk/typescript/`, Rust kernel at `crates/dominion-agent-kernel/`.
 
-The former standalone Money discovery/business-opportunity module **has been removed** from the frontend, HTTP routes, Rust engine, startup workers, DB schema initialization, active tests and feature-specific documents. The application does not silently delete user data from existing SQLite databases.
-
 ## Development
 
 Prerequisites: a stable Rust toolchain and Node.js 24.12+ for the synchronized frontend.
@@ -31,6 +29,7 @@ npm ci --prefix web
 npm --prefix web run typecheck
 node --experimental-strip-types --test web/tests/*.test.mjs
 node scripts/check-sub2-contract.mjs
+node scripts/sub2-source-audit.mjs
 cargo test --lib
 cargo run -- --home .
 ```
@@ -54,4 +53,8 @@ See [ENGINE.md](ENGINE.md), [documentation index](docs/INDEX.md) and [developmen
 
 ## Verification boundary
 
-CI includes Rust regression tests, TypeScript checking, main UI unit tests and an active-source/API route contract gate. Actual browser interaction, desktop packaging, connected-account authorization and full nine-agent token benchmarks require independent live integration checks. Provider prompt-cache hints and context-frame reuse are not evidence of discounted billed tokens without provider usage receipts.
+CI includes Rust regression tests, TypeScript checking, main UI unit tests and an active-source/API route contract gate and a full executable-source duplicate audit. Actual browser interaction, desktop packaging, connected-account authorization and full nine-agent token benchmarks require independent live integration checks. Provider prompt-cache hints and context-frame reuse are not evidence of discounted billed tokens without provider usage receipts.
+
+## Legacy code cleanup (2026-11-20)
+
+Obsolete embedded generation, campaign and upload endpoints, their Rust implementation modules, stale SDK facades and related OAuth/UI adapters were removed. User-directed code inspection, native execution, validation, recovery and external MCP extensions remain. Historical SQLite records and user-created files are not destructively migrated or erased by this cleanup.
