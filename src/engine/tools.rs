@@ -57,7 +57,13 @@ pub fn definitions() -> Vec<Value> {
         tool("shell_exec", "Run a shell command on this computer and return stdout/stderr (approval required)", object(json!({"command": text("Shell command line"), "cwd": text("Optional absolute working directory")}), vec!["command"])),
         tool("terminal_exec", "Run an executable with an argument array without a shell (approval required)", object(json!({"command": text("Executable"), "args": json!({"type": "array", "items": {"type": "string"}})}), vec!["command"])),
         tool("web_search", "Search the public web for current information", object(json!({"query": text("Search query")}), vec!["query"])),
-        tool("http_fetch", "Fetch a URL and return its readable text content", object(json!({"url": text("HTTP or HTTPS URL")}), vec!["url"])),
+        tool("http_fetch", "Fetch readable public web text into durable session evidence and return the first excerpt. Read other sections by documentId using http_document_read; no whole-page prompt dump.", object(json!({"url": text("HTTP or HTTPS URL")}), vec!["url"])),
+        tool("http_document_read", "Read a saved web page by documentId; use offset for another window or find to jump to exact relevant text without network access.", object(json!({
+            "documentId":text("documentId returned by http_fetch in this session"),
+            "offset":json!({"type":"integer","minimum":0,"description":"Character offset to start reading"}),
+            "maxChars":json!({"type":"integer","minimum":1,"maximum":24000,"description":"Maximum characters in this response; default 10000"}),
+            "find":text("Optional exact text to locate within the saved original")
+        }),vec!["documentId"])),
         tool("memory_store", "Save a grounded memory for this agent. Quote the user's exact words; invented facts are rejected. Shared memories are managed by the user.", object(json!({"text": text("Fact to remember, maximum 1600 characters"), "evidenceQuote": text("Exact quote from the current user message supporting the fact"), "sourceMessageId": text("Optional earlier source message ID"), "type": json!({"type":"string","enum":["fact","preference","decision","procedure","lesson"]}), "key": text("Optional stable fact key; a new value replaces the previous value for this key"), "scope": json!({"type":"string","enum":["agent"]})}), vec!["text", "evidenceQuote"])),
         tool("memory_search", "Find saved knowledge relevant to a topic", object(json!({"query": text("Search query")}), vec!["query"])),
         tool("skill_view", "Load an enabled skill's original instructions on demand by exact skill ID or name; page large skills by startLine", object(json!({"id": text("Enabled skill ID or exact name from the skill index"),"startLine":json!({"type":"integer","minimum":1}),"maxLines":json!({"type":"integer","minimum":1,"maximum":160})}), vec!["id"])),
@@ -173,7 +179,7 @@ pub fn requires_approval(name: &str) -> bool {
 }
 
 pub fn observational(name:&str)->bool{
-    matches!(name,"dominion_tool_search" | "dominion_tool_call" | "workspace_git_status"|"workspace_git_diff"|"workspace_list"|"workspace_read"|"workspace_read_range"|"code_search"|"file_list"|"file_read"|"memory_search"|"skill_view"|"web_search"|"http_fetch"|"task_status"|"task_result"|"account_status"|"github_file_read"|"github_repositories")
+    matches!(name,"dominion_tool_search" | "dominion_tool_call" | "workspace_git_status"|"workspace_git_diff"|"workspace_list"|"workspace_read"|"workspace_read_range"|"code_search"|"file_list"|"file_read"|"memory_search"|"skill_view"|"web_search"|"http_fetch"|"http_document_read"|"task_status"|"task_result"|"account_status"|"github_file_read"|"github_repositories")
 }
 
 pub async fn execute(
@@ -350,7 +356,14 @@ pub async fn execute(
         }
         "http_fetch" => {
             let url = required_arg(args, "url")?;
-            http_fetch(&url).await
+            http_fetch(&url,ctx.store,ctx.session_id).await
+        }
+        "http_document_read" => {
+            let id = required_arg(args, "documentId")?;
+            let offset = args["offset"].as_u64().unwrap_or(0) as usize;
+            let limit = args["maxChars"].as_u64().unwrap_or(10_000) as usize;
+            crate::engine::web_document::read(ctx.store,ctx.session_id,
+                &id,offset,limit,args["find"].as_str())
         }
         "memory_store" => {
             let scope = crate::engine::memory::MemoryScope::for_session(
@@ -1281,7 +1294,7 @@ fn append_http_chunk(output:&mut Vec<u8>,chunk:&[u8])->bool {
     chunk.len()>room
 }
 
-pub(crate) async fn http_fetch(url: &str) -> Result<Value, String> {
+pub(crate) async fn http_fetch(url: &str, store: &crate::db::Store, session_id: &str) -> Result<Value, String> {
     let mut current=public_http_url(url)?;
     for redirect in 0..=HTTP_REDIRECT_LIMIT {
         let hostname=current.host_str().ok_or("URL 호스트가 없습니다.")?
@@ -1333,13 +1346,9 @@ pub(crate) async fn http_fetch(url: &str) -> Result<Value, String> {
         }
         let body=String::from_utf8_lossy(&bytes);
         let text=if content_type.contains("html") {strip_html(&body)} else {body.into_owned()};
-        let clipped=text.chars().take(60_000).collect::<String>();
-        truncated|=clipped.len()!=text.len();
-        return Ok(json!({
-            "status":status,"contentType":content_type,"text":clipped,
-            "truncated":truncated,"maxResponseBytes":HTTP_FETCH_LIMIT,
-            "redirects":redirect
-        }));
+        return crate::engine::web_document::save(
+            store,session_id,url,current.as_str(),&text,status,&content_type,truncated,redirect
+        );
     }
     Err("http_fetch 리다이렉션 상한을 초과했습니다.".into())
 }
@@ -1418,18 +1427,45 @@ fn percent_decode(value: &str) -> String {
 }
 
 fn strip_html(html: &str) -> String {
-    let mut out = String::with_capacity(html.len() / 2);
-    let mut in_tag = false;
-    for ch in html.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => {
-                in_tag = false;
-                out.push(' ');
+    // HTML tags are not the only noise. Script/style/template bodies contain
+    // thousands of tokens of JS/CSS that a simple tag stripper sends to the
+    // model as if they were article text. Omit those non-visible subtrees
+    // while keeping the original response in the session's evidence store.
+    let lower=html.to_ascii_lowercase();
+    let mut out=String::with_capacity(html.len()/2);
+    let mut index=0usize;
+    while index<html.len() {
+        let Some(relative)=html[index..].find('<') else {
+            out.push_str(&html[index..]);
+            break;
+        };
+        let open=index+relative;
+        out.push_str(&html[index..open]);
+        let Some(close_relative)=html[open..].find('>') else {
+            out.push_str(&html[open..]);
+            break;
+        };
+        let close=open+close_relative;
+        let label=lower[open+1..close].trim();
+        let name=label.trim_start_matches('/').split(|ch:char|
+            ch.is_ascii_whitespace() || ch=='/' || ch=='>'
+        ).next().unwrap_or("");
+        if !label.starts_with('/') && matches!(name,"script"|"style"|"template"|"noscript"|"svg") {
+            let closing=format!("</{name}");
+            if let Some(relative_end)=lower[close+1..].find(&closing) {
+                let closing_start=close+1+relative_end;
+                if let Some(end)=html[closing_start..].find('>') {
+                    index=closing_start+end+1;
+                    out.push(' ');
+                    continue;
+                }
             }
-            _ if !in_tag => out.push(ch),
-            _ => {}
+            // A malformed non-visible subtree should not dump its JS/CSS as
+            // article text if its closing tag is missing.
+            break;
         }
+        out.push(' ');
+        index=close+1;
     }
     out.replace("&amp;", "&")
         .replace("&lt;", "<")
@@ -1445,6 +1481,16 @@ fn strip_html(html: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fetched_html_excludes_executable_and_style_payloads() {
+        let html = "<title>Article</title><style>.huge { color:red; }</style>                    <main><h1>Readable headline</h1><p>Price &amp; evidence</p></main>                    <script type='application/json'>{\"huge\":\"SECRET_JS_PAYLOAD\"}</script>                    <template>HIDDEN_TEMPLATE</template><svg><text>HIDDEN_SVG</text></svg>";
+        let text=strip_html(html);
+        assert_eq!(text,"Article Readable headline Price & evidence");
+        for discarded in ["color:red","SECRET_JS_PAYLOAD","HIDDEN_TEMPLATE","HIDDEN_SVG"] {
+            assert!(!text.contains(discarded),"{discarded}");
+        }
+    }
 
     #[test]
     fn workspace_paths_cannot_escape() {
