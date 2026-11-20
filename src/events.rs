@@ -36,7 +36,25 @@ impl Bus {
     }
 
     pub fn record(&self, kind: &str, record: &Value) {
-        self.emit(json!({ "type": "record", "kind": kind, "record": record }));
+        use dominion_agent_sdk::{RunRef,RunSurface};
+        let surface=match kind {
+            "job"=>Some(match record["kind"].as_str() {
+                Some("team")=>RunSurface::Team,
+                Some("room"|"meeting")=>RunSurface::Room,
+                Some("external_agent")=>RunSurface::ExternalAgent,
+                _=>RunSurface::Sdk,
+            }),
+            "execution"=>Some(if record["roomId"].is_string(){
+                RunSurface::Room
+            }else{RunSurface::Sdk}),
+            _=>None,
+        };
+        let run_ref=surface.and_then(|surface|record["id"].as_str().and_then(|id|
+            RunRef::new(surface,id,record["input"]["parentRunId"].as_str()
+                .map(str::to_string).or_else(||record["parentRunId"].as_str()
+                .map(str::to_string))).ok()));
+        self.emit(json!({ "type":"record","kind":kind,"record":record,
+            "runRef":run_ref }));
     }
 
     pub fn message(&self, message: &Value) {

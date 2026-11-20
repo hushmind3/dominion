@@ -119,7 +119,8 @@ pub(crate) fn choose(
             .is_some_and(|m|m!=route.model) {continue;}
         // Do not substitute CLI compatibility/manual tools for the native SDK
         // and never equate OAuth subscriptions with metered API prices.
-        if route.kind=="cli"||route.kind=="codex"||route.tool_mode=="compat"{
+        if route.kind=="cli"||route.kind=="codex"||route.tool_mode=="compat"
+            || route.capabilities.require_native_tools().is_err(){
             continue;
         }
         if !route.local && route.api_key.is_empty(){continue;}

@@ -18,3 +18,4 @@ pub mod adaptation;
 
 pub mod tools;
 pub mod profiles;
+pub mod strategy_eval;

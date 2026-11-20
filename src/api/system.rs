@@ -79,14 +79,24 @@ pub async fn events(
         })
         .unwrap_or(0);
     let bus = state.bus.clone();
-    let backlog = bus.replay(after, 500);
+    // Subscribe before the database replay snapshot: events committed in the
+    // gap are present on the receiver and then deduplicated by sequence.
     let mut receiver = bus.subscribe();
     let stream = async_stream::stream! {
         let mut last = after;
-        for value in backlog {
-            let seq = value["seq"].as_u64().unwrap_or(0);
-            last = last.max(seq);
-            yield Ok(Event::default().id(seq.to_string()).data(value.to_string()));
+        // Drain all durable pages, not only the first 500. Otherwise a client
+        // reconnecting after a busy offline period skips the middle pages.
+        loop {
+            let batch=bus.replay(last,500);
+            if batch.is_empty(){break;}
+            let n=batch.len();
+            for value in batch {
+                let seq=value["seq"].as_u64().unwrap_or(0);
+                if seq<=last{continue;}
+                last=seq;
+                yield Ok(Event::default().id(seq.to_string()).data(value.to_string()));
+            }
+            if n<500{break;}
         }
         loop {
             match receiver.recv().await {
@@ -101,13 +111,17 @@ pub async fn events(
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                     // The live buffer is bounded. Replay the gap from the
                     // durable log instead of silently dropping writes.
-                    for value in bus.replay(last, 500) {
-                        let seq = value["seq"].as_u64().unwrap_or(0);
-                        if seq <= last {
-                            continue;
+                    loop {
+                        let batch=bus.replay(last,500);
+                        if batch.is_empty(){break;}
+                        let n=batch.len();
+                        for value in batch {
+                            let seq=value["seq"].as_u64().unwrap_or(0);
+                            if seq<=last{continue;}
+                            last=seq;
+                            yield Ok(Event::default().id(seq.to_string()).data(value.to_string()));
                         }
-                        last = seq;
-                        yield Ok(Event::default().id(seq.to_string()).data(value.to_string()));
+                        if n<500{break;}
                     }
                 }
                 Err(_) => break,

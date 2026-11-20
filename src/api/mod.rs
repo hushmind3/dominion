@@ -67,6 +67,7 @@ pub fn router(state: AppState) -> Router {
         // campaign scheduling, independent experimentation or auto promotion.
         .route("/api/algorithms",get(algorithms::list).post(algorithms::register))
         .route("/api/algorithms/:id/activate",post(algorithms::activate))
+        .route("/api/algorithms/evaluation",get(algorithms::evaluation))
         .route("/api/algorithms/:id/disable",post(algorithms::disable))
         .route("/api/policies", get(system::policies))
         .route("/api/system/backup", post(system::create_backup))
