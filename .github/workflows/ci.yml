@@ -121,6 +121,7 @@ jobs:
           cargo test --lib engine::chat::capability::tests::discovery_receipt_never_echoes_full_mcp_schema_but_promotes_exact_original
           cargo test --locked -p dominion-turn-core --lib
           cargo test --locked -p dominion-agent-loop --lib
+          cargo test --locked -p dominion-context-policy --lib
           cargo test --lib engine::tools::tests::room_source_reader_preserves_full_peer_history_and_private_scope
           cargo test --lib engine::chat::continuity::tests::indexed_peer_never_duplicates_a_full_reply_in_committed_prefix
           cargo test --lib engine::chat::continuity::tests::semantically_stable_room_state_reuses_one_frame_and_changed_state_rotates

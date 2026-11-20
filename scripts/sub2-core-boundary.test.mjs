@@ -300,3 +300,18 @@ test('catalog and MCP/skill/account visibility live outside the model-round loop
  assert.doesNotMatch(catalog,/stream_completion|dispatch_tool_call/);
  assert.doesNotMatch(turn,/addons::tool_definitions\(state\)\.await/);
 });
+
+test('provider tool history compaction is pure independently testable middleware',()=>{
+ const pure=source('crates/dominion-context-policy/src/lib.rs');
+ const facade=source('src/engine/services/operations/chat_trace_budget.rs');
+ const dep=source('crates/dominion-context-policy/Cargo.toml');
+ assert.match(pure,/pub fn bounded_tool_trace/);
+ assert.match(pure,/pub fn compact_historical/);
+ assert.match(pure,/completed_frame_end/);
+ assert.match(pure,/sourceMessageId/);
+ assert.match(facade,/dominion_context_policy::bounded_tool_trace/);
+ assert.match(facade,/dominion_context_policy::compact_historical/);
+ assert.doesNotMatch(dep,/dominion-rust|dominion-turn-core|reqwest|rusqlite|axum/);
+ assert.doesNotMatch(source('crates/dominion-turn-core/Cargo.toml'),/dominion-context-policy/);
+ assert.match(source('Cargo.toml'),/dominion-context-policy =/);
+});
