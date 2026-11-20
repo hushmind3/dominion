@@ -1,7 +1,7 @@
 //! Native Telegram Bot API polling. Only an explicitly enabled binding opens a
 //! connection; credentials stay in the vault and are never reported in errors.
 use crate::{
-    engine::{
+    integrations::channels::{
         bridge,
         discord::{ids, text, token_name},
     },

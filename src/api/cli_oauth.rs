@@ -215,7 +215,7 @@ pub async fn start(State(app):State<AppState>,Path(source):Path<String>,Json(bod
     // Previously authorized official CLI accounts can be connected without
     // repeating browser consent, developer keys or copying a personal token.
     if matches!(source.as_str(),"github"|"google_workspace"){
-        if let Ok(connected)=crate::engine::oauth::adopt_cli_grant(&app,&source).await{
+        if let Ok(connected)=crate::integrations::accounts::oauth::adopt_cli_grant(&app,&source).await{
             return Json(json!({"source":source,"status":"completed",
                 "message":"연결된 계정을 사용할 준비가 되었습니다.",
                 "connected":connected})).into_response();
@@ -259,7 +259,7 @@ pub async fn start(State(app):State<AppState>,Path(source):Path<String>,Json(bod
                 exit=child.wait()=>{
                     match exit{
                         Ok(exit) if exit.success()&&matches!(kind.as_str(),"github"|"google_workspace")=>{
-                            match crate::engine::oauth::adopt_cli_grant(&account_state,&kind).await{
+                            match crate::integrations::accounts::oauth::adopt_cli_grant(&account_state,&kind).await{
                                 Ok(_)=>set_phase(&current,"completed","계정 연결이 완료되었습니다. 에이전트 도구를 사용할 수 있습니다.").await,
                                 Err(_)=>set_phase(&current,"failed","공식 로그인은 끝났지만 계정 권한을 가져오지 못했습니다. 연결을 다시 시도하세요.").await,
                             }
@@ -276,7 +276,7 @@ pub async fn start(State(app):State<AppState>,Path(source):Path<String>,Json(bod
                     if after.is_some()&&after!=before&&credential_verified(&kind).await{
                         let _=child.kill().await;
                         if matches!(kind.as_str(),"github"|"google_workspace"){
-                            match crate::engine::oauth::adopt_cli_grant(&account_state,&kind).await{
+                            match crate::integrations::accounts::oauth::adopt_cli_grant(&account_state,&kind).await{
                                 Ok(_)=>set_phase(&current,"completed","계정 연결이 완료되었습니다.").await,
                                 Err(_)=>set_phase(&current,"failed","로그인 이후 계정 권한 확인에 실패했습니다.").await,
                             }

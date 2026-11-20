@@ -457,7 +457,7 @@ async fn poll(state: &AppState, config: &Value) -> Result<(), String> {
             config,
             session_id: text(&session, "id"),
         };
-        crate::engine::bridge::flush(state,config,2000,|content|{
+        crate::integrations::channels::bridge::flush(state,config,2000,|content|{
             let nonce=uuid::Uuid::new_v4().simple().to_string()[..25].to_string();
             let body=json!({"content":content,"nonce":nonce,"enforce_nonce":true,"allowed_mentions":{"parse":[],"replied_user":false}});
             let path=format!("/channels/{}/messages",text(config,"channelId"));
@@ -698,7 +698,7 @@ pub async fn run(context: &JobContext, job: &Value) -> Result<Value, String> {
     }
     if !text(&config, "roomId").is_empty() {
         let author = &message["author"];
-        let result = crate::engine::bridge::ingest(
+        let result = crate::integrations::channels::bridge::ingest(
             state,
             &config,
             text(message, "id"),

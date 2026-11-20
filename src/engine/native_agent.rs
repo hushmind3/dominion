@@ -3,7 +3,8 @@
 //! The Rust job worker, GUI and external TypeScript client all call this exact
 //! execution path. Existing provider, vault, SQLite, MCP, tool and approval
 //! implementations are adapters, not owners of the new agent loop.
-use crate::{engine::{chat, gateway, jobs::JobContext, llm, mcp, tools, verification}, state::AppState};
+use crate::{engine::{chat, gateway, jobs::JobContext, llm, tools, verification}, state::AppState};
+use crate::integrations::mcp;
 use dominion_sdk::harness::{
     Action, BoxFuture, Criterion, CriterionKind, Evidence, Journal, Kernel,
     Limits, Model, ModelReply, ModelTurn, Receipt, RunRequest, Snapshot, Strategy, ToolSpec, Tools,

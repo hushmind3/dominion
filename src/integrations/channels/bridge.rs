@@ -1,10 +1,8 @@
 //! One canonical room ledger with durable, bounded transport outboxes.
 //! A transport never creates nine independent identities or a second history.
 use crate::{
-    engine::{
-        discord::{ids, text},
-        memory,
-    },
+    engine::memory,
+    integrations::channels::discord::{ids, text},
     state::AppState,
 };
 use serde_json::{json, Value};

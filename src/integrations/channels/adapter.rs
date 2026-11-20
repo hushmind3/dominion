@@ -3,7 +3,7 @@
 //! The Rust bridge already owns the room ledger, outbox, revisions and
 //! idempotency. This module only performs the platform-specific HTTP call, so
 //! adding a messenger never creates a second history or a parallel runtime.
-use crate::{engine::discord::text, state::AppState};
+use crate::{integrations::channels::discord::text, state::AppState};
 use serde_json::{json, Value};
 
 pub const SUPPORTED: &[&str] = &[
@@ -22,7 +22,7 @@ pub fn supports(kind: &str) -> bool {
 
 fn secret(state: &AppState, config: &Value) -> String {
     state
-        .read_secret(&crate::engine::discord::token_name(text(config, "id")))
+        .read_secret(&crate::integrations::channels::discord::token_name(text(config, "id")))
         .or_else(|| {
             config["token"]
                 .as_str()
@@ -256,7 +256,7 @@ pub async fn flush_enabled(state: &AppState) -> usize {
             continue;
         }
         let owned = config.clone();
-        let result = crate::engine::bridge::flush(state, &config, 4000, |content| {
+        let result = crate::integrations::channels::bridge::flush(state, &config, 4000, |content| {
             let state = state.clone();
             let config = owned.clone();
             async move { send(&state, &config, &content).await }

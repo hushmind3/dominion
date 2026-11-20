@@ -1,4 +1,4 @@
-use crate::engine::oauth;
+use crate::integrations::accounts::oauth;
 use crate::state::AppState;
 use axum::{
     extract::{Path, Query, State},

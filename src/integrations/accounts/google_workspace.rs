@@ -393,7 +393,7 @@ pub async fn execute(state:&AppState,args:&Value,write:bool)->Result<Value,Strin
     let operation=arg(args,"operation")?;
     let scope=scope_for(service,operation,write)?;
     ensure_granted(state,scope)?;
-    let token=crate::engine::oauth::fresh_access_token(state,"google").await
+    let token=crate::integrations::accounts::oauth::fresh_access_token(state,"google").await
         .map_err(|e|format!("Reconnect Google to grant Workspace permissions: {e}"))?;
     let client=state.provider_http_client(30)?;
     execute_with(&client,&token,&[GMAIL,DRIVE,UPLOAD,CALENDAR,DOCS],args,write).await

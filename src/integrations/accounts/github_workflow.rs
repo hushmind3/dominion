@@ -188,7 +188,7 @@ async fn execute_with(client:&Client,token:&str,origin:&str,args:&Value,write:bo
     }
 }
 pub async fn execute(state:&AppState,args:&Value,write:bool)->Result<Value,String>{
-    let token=crate::engine::oauth::fresh_access_token(state,"github").await
+    let token=crate::integrations::accounts::oauth::fresh_access_token(state,"github").await
         .map_err(|e|format!("Connect GitHub or refresh its permissions: {e}"))?;
     let client=state.provider_http_client(30)?;
     execute_with(&client,&token,ROOT,args,write).await

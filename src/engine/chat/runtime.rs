@@ -13,11 +13,12 @@ use crate::engine::adaptation::types::TaskOutcome;
 use crate::engine::verification;
 use crate::{
     engine::{
-        llm, mcp,
+        llm,
         tools::{self, ToolContext},
     },
     state::AppState,
 };
+use crate::integrations::mcp;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::time::Duration;

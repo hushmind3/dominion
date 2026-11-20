@@ -22,13 +22,13 @@ pub async fn list_tools(State(state): State<AppState>) -> Json<Value> {
         })
         .collect::<Vec<_>>();
 
-    for tool in engine::mcp::tools(&state).await {
+    for tool in crate::integrations::mcp::tools(&state).await {
         let qualified = tool.qualified();
         items.push(json!({
             "name": qualified,
             "description": format!("[MCP · {}] {}", tool.server_name, tool.description),
             "parameters": tool.schema,
-            "approval": engine::mcp::requires_approval(&state, &qualified),
+            "approval": crate::integrations::mcp::requires_approval(&state, &qualified),
             "source": "mcp",
             "server": tool.server_name,
         }));
@@ -43,7 +43,7 @@ pub async fn mcp_presets() -> Json<Value> {
 }
 
 pub async fn mcp_discover(State(state): State<AppState>) -> Json<Value> {
-    let items = engine::mcp::tools(&state)
+    let items = crate::integrations::mcp::tools(&state)
         .await
         .into_iter()
         .map(|tool| {
@@ -54,7 +54,7 @@ pub async fn mcp_discover(State(state): State<AppState>) -> Json<Value> {
                 "tool": tool.tool,
                 "description": tool.description,
                 "parameters": tool.schema,
-                "approval": engine::mcp::requires_approval(&state, &qualified),
+                "approval": crate::integrations::mcp::requires_approval(&state, &qualified),
             })
         })
         .collect::<Vec<_>>();
