@@ -2,6 +2,7 @@
 //! They may provide tools or channel transport, but the native dispatcher
 //! retains permission checks, effects, cancellation and execution receipts.
 pub mod browser;
+pub mod bridge;
 pub mod channel_adapter;
 pub mod discord;
 pub mod github_work;
