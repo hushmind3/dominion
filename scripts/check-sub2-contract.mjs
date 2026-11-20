@@ -11,7 +11,9 @@ const expect=(ok,message)=>{if(!ok)errors.push(message);};
 const retired=[
   'src/api/money','src/engine/money','src/db/money.rs',
   'web/src/pages/Money.tsx','web/src/refreshScope.ts',
-  'rsi/evaluations', 'benchmark/rsi-evidence',
+  'src/api/rsi.rs','src/api/video.rs','src/engine/goal_control.rs',
+  'web/src/pages/Video.tsx','web/src/pages/SelfImprovement.tsx',
+  'rsi/evaluations','benchmark/rsi-evidence',
 ];
 for(const path of retired)expect(!existsSync(join(root,path)),`retired path remains: ${path}`);
 const codePaths=[];
@@ -34,8 +36,14 @@ for(const dir of [
 for(const path of codePaths){
   if(path==='scripts/check-sub2-contract.mjs')continue; // The gate's own banned-symbol regex is not product code.
   const text=source(path);
-  if(/\bmoney(?:_|::|\/|\b)|MoneyPage|\/api\/money|\b(?:money|opportunity)_(?:miner|scanner|worker|scheduler)\b/i.test(text)){
-    errors.push(`retired Money reference in ${path}`);
+  const forbidden=[
+    ['Money',/\bmoney(?:_|::|\/|\b)|MoneyPage|\/api\/money|\b(?:money|opportunity)_(?:miner|scanner|worker|scheduler)\b/i],
+    ['embedded media',/\bvideo(?:_|\b)|\byoutube(?:_|\b)|\/api\/(?:video|youtube)\b|\bVideoJob\b|\barchived_media_job\b/i],
+    ['independent RSI',/\brsi(?:_|\b|[A-Z])|\bRsi[A-Z]|\/api\/rsi\b/i],
+    ['orphan goal controller',/\bgoal_control\b|\bGoalControl\b/i],
+  ];
+  for(const [feature,pattern] of forbidden){
+    if(pattern.test(text))errors.push(`retired ${feature} reference in ${path}`);
   }
 }
 const router=source('src/api/mod.rs');
@@ -82,5 +90,5 @@ if(errors.length){
   for(const issue of errors)console.error(` - ${issue}`);
   process.exitCode=1;
 }else{
-  console.log(`DOMINION sub2 gate OK: ${codePaths.length} source files, ${paths.length} API routes; main UI + credential-free model discovery + no Money runtime references.`);
+  console.log(`DOMINION sub2 gate OK: ${codePaths.length} source files, ${paths.length} API routes; main UI + credential-free model discovery + no retired Money/video/RSI/goal-control runtime references.`);
 }
