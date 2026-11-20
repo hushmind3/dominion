@@ -391,12 +391,25 @@ pub(crate) fn compile(
     // Each participant carries its own last visible answer and the owner
     // message it answered, even after other participants have spoken. Read
     // only committed transcript rows, never an in-flight transport buffer.
-    let previous_self = request.agent_id.as_deref().and_then(|agent_id| {
-        all[..source].iter().rposition(|row| row["role"] == "assistant"
-            && row["agent_id"].as_str() == Some(agent_id)
-            && row["content"].as_str().is_some_and(|text| !text.trim().is_empty())
-            && row["tool_calls"].as_array().is_none_or(Vec::is_empty))
-    });
+    // A participant's prior committed reply is a more reliable anchor
+    // than another participant's latest message in a very long room.
+    // The cursor is a committed reply position, never a claim that the
+    // agent consumed every preceding transcript message.
+    let agent_cursor=request.agent_id.as_deref()
+        .map(|agent|state.store.room_agent_read(room_id,session_id,agent))
+        .transpose().map_err(|error|format!("룸 읽기 위치를 읽지 못했습니다: {error}"))?
+        .flatten();
+    let previous_self=agent_cursor.as_ref()
+        .and_then(|cursor|cursor["replyMessageId"].as_str())
+        .and_then(|id|all[..source].iter().rposition(|row|
+            row["id"]==id && row["agent_id"]==request.agent_id.as_deref() &&
+            row["role"]=="assistant"))
+        .or_else(||request.agent_id.as_deref().and_then(|agent_id| {
+            all[..source].iter().rposition(|row| row["role"] == "assistant"
+                && row["agent_id"].as_str() == Some(agent_id)
+                && row["content"].as_str().is_some_and(|text| !text.trim().is_empty())
+                && row["tool_calls"].as_array().is_none_or(Vec::is_empty))
+        }));
     let previous_self_source = previous_self.and_then(|index| {
         let reply_to = all[index]["metadata"]["replyToMessageId"].as_str();
         reply_to.and_then(|id| all[..index].iter().position(|row|row["id"] == id))
@@ -666,6 +679,12 @@ pub(crate) fn compile(
         "historyTokens":estimate(&json!(history).to_string()).saturating_sub(memory_tokens+owner_state_tokens+shared_tokens+board_tokens),
         "systemTokens":estimate(&prompt).saturating_sub(persona_tokens),"toolSchemaTokens":schema_tokens,"totalInputTokens":input_estimate(&messages,tools),
         "previousSelfMessageId":previous_self.map(|index|all[index]["id"].clone()),
+        "agentReadCursor":agent_cursor.as_ref().map(|cursor|json!({
+            "sourceMessageId":cursor["sourceMessageId"],
+            "replyMessageId":cursor["replyMessageId"],
+            "sourceCursor":cursor["sourceCursor"],
+            "replyCursor":cursor["replyCursor"]
+        })),
         "peerCandidates":current_speaker_candidates.len(),
         "peerPinned":pinned_current_speakers.len(),
         "peerSelected":selected_history.iter().filter(|index|current_speaker_candidates.contains(&candidates[**index].order)).count(),

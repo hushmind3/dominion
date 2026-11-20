@@ -711,6 +711,21 @@ async fn run_locked(
                 "messageId":message["id"],"error":error
             })),
         }
+        // Commit the participant's read position ONLY after the assistant
+        // reply has been durably written. This does not prevent intentional
+        // repeated room rounds under the same owner message.
+        let reply_id=message["id"].as_str().ok_or("룸 응답 메시지 ID가 없습니다.")?;
+        let run_id=message["metadata"]["executionId"]
+            .as_str().ok_or("룸 응답의 실행 ID가 없습니다.")?;
+        let committed_run=state.store.get("execution",run_id)
+            .ok_or("룸 응답의 실행 기록이 없습니다.")?;
+        let visible_ids=committed_run["inputContext"]["selectedMessageIds"]
+            .as_array().cloned().unwrap_or_default();
+        state.store.commit_room_agent_read(
+            room_id,session_id,&agent_id,source_id,reply_id,&visible_ids,
+        ).map_err(|error|format!(
+            "완료된 룸 응답의 읽기 위치를 저장하지 못했습니다. 재실행 전 확인이 필요합니다: {error}"
+        ))?;
         let evidence_count = message_evidence_count(state, &message);
         let elapsed_ms=speaker_started.elapsed().as_millis() as u64;
         let accounting = speaker_model_accounting(state, &message);

@@ -52,10 +52,15 @@ const board=readFileSync(path.join(root,'src/addons/integrations/room_board.rs')
 const rooms=readFileSync(path.join(root,'src/addons/integrations/rooms.rs'),'utf8')
 const boardRoomContext=readFileSync(path.join(root,'src/addons/integrations/chat_room_context.rs'),'utf8')
 const dbSource=readFileSync(path.join(root,'src/db.rs'),'utf8')
+const roomCursor=readFileSync(path.join(root,'src/db/room_cursor.rs'),'utf8')
 if(!boardAddonIndex.includes('pub mod room_board;')||
    !rooms.includes('crate::addons::room_board::publish(')||
    !boardRoomContext.includes('crate::addons::room_board::context_frame(')||
    !board.includes('operation["toolReceipt"]["verified"]==true')||
+   !dbSource.includes('CREATE INDEX IF NOT EXISTS idx_room_agent_cursor_session')||
+   !roomCursor.includes('pub fn commit_room_agent_read(')||
+   !rooms.includes('state.store.commit_room_agent_read(')||
+   !boardRoomContext.includes('room_agent_read(')||
    !dbSource.includes('CREATE INDEX IF NOT EXISTS idx_room_work_source')||
    !dbSource.includes('pub fn room_work_receipts('))
   throw Error('Room work board lost verified receipt provenance or scoped SQLite admission')

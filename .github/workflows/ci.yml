@@ -50,6 +50,8 @@ jobs:
         run: cargo test --locked -p dominion-core --lib
       - name: Isolated agent-loop algorithm regressions (dev profile)
         run: cargo test --locked -p dominion-algorithms --lib
+      - name: Durable participant room cursors and anti-regression (dev profile)
+        run: cargo test --locked --bin dominion-rust db::room_cursor::tests
       - name: Verified multi-agent work board, isolation and indexed reads (dev profile)
         run: |
           cargo test --locked --bin dominion-rust addons::room_board::tests
