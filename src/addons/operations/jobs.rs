@@ -388,6 +388,7 @@ fn next_queued(state: &AppState) -> Option<Value> {
         // Learning is background work: at most one at a time, so it can never
         // occupy every worker while a prompt/room job waits.
         .filter(|job| !(job["kind"] == "learn" && learning_running))
+        .filter(|job| crate::addons::team_dag::ready_or_block(state,job))
         .filter(|job| {
             if !matches!(job["kind"].as_str(), Some("room" | "meeting")) {
                 return true;
@@ -454,6 +455,9 @@ pub fn start_now(state: AppState, job_id: String) {
             return;
         };
         if job["status"] != "queued" {
+            return;
+        }
+        if !crate::addons::team_dag::ready_or_block(&state,&job){
             return;
         }
         let Some(running) = state.store.patch_if(
@@ -542,6 +546,12 @@ async fn run_job(state: AppState, job: Value) {
                         state.store.audit("job.freeze_failed",
                             json!({"jobId":job_id,"error":error}));
                     }
+                } else if let Some(frozen)=state.store.get("job",&job_id)
+                    .filter(|row|row["delegationPatchSha256"].is_string()) {
+                    // Wake dependent workers only after a completed isolated
+                    // writer's diff was actually frozen, not at a transient
+                    // pre-freeze "completed" event.
+                    state.bus.record("job",&frozen);
                 }
             }
             // Final audit reflects the frozen result, not a transient completed
@@ -688,6 +698,33 @@ mod tests {
         let store = Store::open(&config.db_path()).unwrap();
         let vault = Vault::open(&config.key_path());
         AppState::new(config, store, vault)
+    }
+
+    #[test]
+    fn dependency_scheduler_does_not_start_unfinished_or_failed_predecessors(){
+        let state=temp_state();
+        state.store.put("session",&json!({"id":"child1"})).unwrap();
+        state.store.put("job",&json!({"id":"parent","kind":"prompt",
+            "status":"running","input":{"parentSessionId":"other","delegation":true}})).unwrap();
+        state.store.put("job",&json!({"id":"pre","kind":"prompt","status":"running",
+            "input":{"parentSessionId":"root","sessionId":"child1","delegation":true}})).unwrap();
+        state.store.put("job",&json!({"id":"child","kind":"prompt","status":"queued",
+            "input":{"parentSessionId":"root","delegation":true,
+                "dependsOnJobIds":["pre"]}})).unwrap();
+        assert!(next_queued(&state).is_none(),
+            "a pending prerequisite cannot start child execution");
+        state.store.patch_if("job","pre","status",&json!("running"),
+            &json!({"status":"completed"})).unwrap();
+        let claimed=next_queued(&state).expect("completed predecessor admits child");
+        assert_eq!(claimed["id"],"child");
+        state.store.patch_if("job","child","status",&json!("running"),
+            &json!({"status":"queued"})).unwrap();
+        state.store.patch_if("job","pre","status",&json!("completed"),
+            &json!({"status":"needs_review"})).unwrap();
+        assert!(next_queued(&state).is_none());
+        assert_eq!(state.store.get("job","child").unwrap()["status"],"needs_review");
+        assert!(state.store.get("job","child").unwrap()["error"]
+            .as_str().unwrap().contains("선행 작업 실패"));
     }
 
     #[test]

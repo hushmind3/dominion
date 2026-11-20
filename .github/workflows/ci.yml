@@ -54,6 +54,11 @@ jobs:
         run: cargo test --locked -p dominion-algorithms --lib
       - name: Durable participant room cursors and anti-regression (dev profile)
         run: cargo test --locked --bin dominion-rust db::room_cursor::tests
+      - name: Lead/Worker DAG dependency admission, isolation and persistence (dev profile)
+        run: |
+          cargo test --locked --bin dominion-rust addons::team_dag::tests
+          cargo test --locked --bin dominion-rust db::team_dag::tests
+          cargo test --locked --bin dominion-rust addons::jobs::tests::dependency_scheduler
       - name: Model capability negotiation and endpoint tool-mode contracts (dev profile)
         run: cargo test --locked --bin dominion-rust engine::gateway::model_capabilities::tests
       - name: Verified multi-agent work board, isolation and indexed reads (dev profile)

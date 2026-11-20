@@ -58,6 +58,23 @@ pub(super) async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Valu
 
     let session_id=uuid::Uuid::new_v4().to_string();
     let job_id=uuid::Uuid::new_v4().to_string();
+    let deps=crate::addons::team_dag::validate_edges(
+        ctx.store,ctx.session_id,&job_id,&args["dependsOnJobIds"])?;
+    // Concurrent team writers must not modify a shared parent worktree.
+    // The legacy single-child general delegation stays unchanged.
+    if !deps.is_empty()&&args["isolatedWorktree"]!=true
+        &&args["readOnly"]!=true&&profile=="general"{
+        return Err("의존성 기반 쓰기 작업은 격리 워크트리 또는 읽기 전용이 필요합니다.".into());
+    }
+    if wait&&!deps.is_empty() {
+        let dry_run=json!({"id":job_id,"input":{
+            "parentSessionId":ctx.session_id,"dependsOnJobIds":deps
+        }});
+        if crate::addons::team_dag::gate(ctx.store,&dry_run)
+            != crate::addons::team_dag::Gate::Ready {
+            return Err("선행 작업을 기다리는 DAG 위임은 wait=false로 예약한 뒤 task_status로 조회하세요.".into());
+        }
+    }
     let mut session=json!({"id":session_id,"workspaceDir":ctx.workspace.canonicalize().map_err(|e|e.to_string())?,"title":format!("Delegate · {}",prompt.chars().take(36).collect::<String>()),
         "agentId":agent_id,"providerId":agent["providerId"],"model":agent["model"],
         "parentSessionId":ctx.session_id,"delegated":true,"delegationProfile":profile,
@@ -72,7 +89,8 @@ pub(super) async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Valu
             "prompt":prompt,"agentId":agent_id,"providerId":agent["providerId"],"model":agent["model"],
             "sessionId":session_id,"toolsEnabled":ctx.tools_enabled&&ctx.tools_execution_enabled,
             "toolsExecutionEnabled":ctx.tools_execution_enabled,"parentSessionId":ctx.session_id,
-            "parentAgentId":ctx.agent_id,"delegation":true,"delegationProfile":profile}});
+            "parentAgentId":ctx.agent_id,"delegation":true,
+            "dependsOnJobIds":deps,"delegationProfile":profile}});
     let prepared=session["delegationWorkspace"].clone();
     if let Err(error)=crate::engine::execution_budget::enqueue_child(ctx.state,ctx.session_id,session,job,args["budget"].as_u64()){
         if prepared.is_object(){let _=crate::engine::delegation_worktree::discard_prepared(&prepared).await;}
@@ -86,6 +104,7 @@ pub(super) async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Valu
     if !wait {
         return Ok(json!({
             "jobId": job_id, "status": "queued", "sessionId": session_id,
+            "dependsOnJobIds":deps,
             "hint": "task_status 또는 task_result로 확인하세요."
         }));
     }
@@ -164,7 +183,22 @@ pub(super) fn task_payload(ctx: &ToolContext<'_>, args: &Value, with_result: boo
         "workspace":job["delegationWorkspace"],
         "patchSha256":job["delegationPatchSha256"],
         "budget":job["input"]["delegationBudget"],
+        "dependsOnJobIds":job["input"]["dependsOnJobIds"],
     });
+    if args["includeTeam"]==true {
+        if let Some(parent)=job["input"]["parentSessionId"].as_str() {
+            let siblings=ctx.store.team_jobs(parent,64)?;
+            payload["teamGraph"]=json!({"parentSessionId":parent,
+                "nodes":siblings.into_iter().map(|row|json!({
+                    "jobId":row["id"],"status":row["status"],
+                    "agentId":row["input"]["agentId"],
+                    "profile":row["input"]["delegationProfile"],
+                    "dependsOnJobIds":row["input"]["dependsOnJobIds"],
+                    "patchSha256":row["delegationPatchSha256"],
+                    "error":row["error"]
+                })).collect::<Vec<_>>()});
+        }
+    }
     if !with_result || !matches!(status, "completed" | "failed" | "needs_review") {
         return Ok(payload);
     }

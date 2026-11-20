@@ -48,6 +48,14 @@ for(const [owner,original,replacement] of [["src/engine/chat/runtime.rs","src/en
     throw Error('Chat product extension leaked into engine: '+original)
 }
 const boardAddonIndex=readFileSync(path.join(root,'src/addons/mod.rs'),'utf8')
+const taskDag=readFileSync(path.join(root,'src/addons/operations/team_dag.rs'),'utf8')
+const tasks=readFileSync(path.join(root,'src/addons/operations/jobs.rs'),'utf8')
+const delegated=readFileSync(path.join(root,'src/addons/integrations/tool_delegation.rs'),'utf8')
+if(!taskDag.includes('pub fn ready_or_block(')||
+   !tasks.includes('crate::addons::team_dag::ready_or_block(state,job)')||
+   !delegated.includes('crate::addons::team_dag::validate_edges(')||
+   !readFileSync(path.join(root,'src/db.rs'),'utf8').includes('idx_team_parent_jobs'))
+  throw Error('Lead/Worker DAG lost dependency scheduler or scoped graph index')
 const capabilityNegotiation=readFileSync(path.join(root,'src/addons/integrations/model_capabilities.rs'),'utf8')
 const providerGateway=readFileSync(path.join(root,'src/addons/integrations/gateway.rs'),'utf8')
 const chatProvider=readFileSync(path.join(root,'src/engine/chat/provider.rs'),'utf8')

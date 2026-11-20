@@ -83,11 +83,13 @@ pub fn definitions() -> Vec<Value> {
             "budget": json!({"type":"integer","minimum":1,"description":"Child allowance in the parent budget unit (tokens or USD micros)"}),
             "readOnly":json!({"type":"boolean","description":"Constrain the worker to observational tools"}),
             "isolatedWorktree":json!({"type":"boolean","description":"Use an independent Git worktree and enforced shell sandbox; integrate explicitly with task_integrate"}),
+            "dependsOnJobIds":json!({"type":"array","maxItems":16,
+                "items":{"type":"string"},"description":"Earlier sibling delegated job IDs from the same parent session. Queued child starts only after all prerequisites are durably completed and any isolated patches are frozen."}),
             "profile": json!({"type":"string","enum":["general","inspection","implementation","verification"],
                 "description":"2026 role-scoped child task: inspection is read-only; implementation and verification require isolatedWorktree; verification admits only a sandboxed Cargo test runner and observational tools"})
         }), vec!["agentId", "prompt"])),
         tool("task_integrate","Integrate a completed isolated child patch into this parent workspace (approval required)",object(json!({"jobId":text("Completed child job id")}),vec!["jobId"])),
-        tool("task_status", "Check a delegated task's status", object(json!({"jobId": text("Job id")}), vec!["jobId"])),
+        tool("task_status", "Check a delegated task's status or its parent-scoped Lead/Worker DAG", object(json!({"jobId": text("Job id"),"includeTeam":json!({"type":"boolean","description":"Include the sibling task DAG with status and dependency edges but no raw prompts"})}), vec!["jobId"])),
         tool("task_result", "Read a delegated task's result, artifacts and final answer", object(json!({"jobId": text("Job id")}), vec!["jobId"])),
         tool("account_status", "List OAuth accounts connected to DOMINION", object(json!({}), vec![])),
         tool("browser_control", "Control a local Chrome/Chromium window: open pages, observe text and interactive elements, click, type, press keys and capture screenshots (approval required)", object(json!({
