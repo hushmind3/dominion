@@ -1,9 +1,9 @@
-use crate::host::journal::DurableJournal;
 //! Product adapter for the independent DOMINION Rust agent SDK.
 //!
 //! The Rust job worker, GUI and external TypeScript client all call this exact
 //! execution path. Existing provider, vault, SQLite, MCP, tool and approval
 //! implementations are adapters, not owners of the new agent loop.
+use crate::host::journal::DurableJournal;
 use crate::{engine::{chat, gateway, jobs::JobContext, llm, tools, verification}, state::AppState};
 use crate::integrations::registry as external;
 use dominion_sdk::harness::{
