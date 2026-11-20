@@ -5,6 +5,7 @@ pub mod tool_schema;
 pub mod policy;
 pub mod hosted;
 pub mod runtime_port;
+pub mod run_event;
 pub mod strategy;
 pub mod budget;
 mod mcp {

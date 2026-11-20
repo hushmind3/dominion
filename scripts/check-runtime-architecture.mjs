@@ -102,6 +102,11 @@ for(const source of [activeContract,harnessContract,extensionContract]){
 const outcome=readFileSync(path.join(root,'src/engine/chat/outcome.rs'),'utf8')
 const driver=readFileSync(path.join(root,'crates/dominion-algorithms/src/engine.rs'),'utf8')
 const nativePort=readFileSync(path.join(root,'crates/dominion-core/src/runtime_port.rs'),'utf8')
+const executionEvents=readFileSync(path.join(root,'src/events.rs'),'utf8')
+if(!existsSync(path.join(root,'crates/dominion-core/src/run_event.rs'))||
+   !executionEvents.includes('RunEventRef')||
+   !executionEvents.includes('value["runRef"]=json!(reference)'))
+  throw Error('Shared run/event identity lost typed durable correlation')
 const coreLib=readFileSync(path.join(root,'crates/dominion-core/src/lib.rs'),'utf8')
 const algorithmsLib=readFileSync(path.join(root,'crates/dominion-algorithms/src/lib.rs'),'utf8')
 if(coreLib.includes('pub mod context;')||

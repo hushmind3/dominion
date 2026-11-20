@@ -88,3 +88,13 @@ OpenClaw's 2026 runtime and plugin architecture similarly distinguishes
 the reusable core, host-owned runtime, documented capabilities and plugins:
 - https://docs.openclaw.ai/agent-runtime-architecture
 - https://github.com/openclaw/openclaw/blob/main/docs/plugins/architecture.md
+
+## Shared execution events
+
+[`run_event::RunEventRef`](../crates/dominion-core/src/run_event.rs)
+is a versioned, typed execution correlation reference. The Rust product
+event bus adds `runRef` only when a real execution ID is present in a
+committed execution/message/approval/SDK record. This is additive: public
+SSE event fields and existing room/job statuses are not renamed.
+`RunLifecycle` intentionally excludes room presentation states like
+`idle` or `silence`. Existing `seq` remains the durable replay position.

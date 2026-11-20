@@ -72,3 +72,14 @@ the [Tauri 2 desktop shell](src-tauri/tauri.conf.json).
 
 See [README](README.md), [한국어 README](README.ko.md) and
 [Harness contract](docs/HARNESS.md).
+
+## 6. Versioned run/event correlation (2026-11-20)
+
+The native [`RunEventRef`](crates/dominion-core/src/run_event.rs)
+records `schemaVersion`, `executionId` and, when known, `sessionId`,
+`taskId`, `roomId`, `agentId`, `sourceMessageId` and lifecycle.
+The [event journal](src/events.rs) attaches this optional `runRef` to
+execution, message, approval and SDK records when an authoritative execution
+ID is present. Existing event `type`, `kind`, `seq` and record payloads
+remain unchanged; unrelated room IDs and job IDs are **never** misidentified
+as execution IDs. The global `seq` remains the reconnect/replay cursor.
