@@ -15,7 +15,7 @@ const absent=[
  'web/src/components/VideoModelInstall.tsx','web/scripts/video-studio-smoke.mjs',
  'src/api/benchmark.rs','src/api/experiments.rs','src/engine/scheduler.rs',
  'scripts/rsi-lab.mjs','scripts/rsi-measure.mjs',
- 'crates/harness', 'packages/sdk-typescript'
+ 'crates/harness', 'packages/sdk-typescript', 'src/engine/policy_patch.rs'
 ];
 // Prevent retired-domain code, clients and docs from silently returning.
 // Assemble the forbidden identifiers, rather than introducing them into
@@ -69,6 +69,14 @@ assert.ok(!/id:'(?:video|rsi)'/.test(nav),'Retired navigation remains');
 
 // A retired upload integration must not remain a live OAuth provider or
 // silently regain a Google refresh grant through fallback credentials.
+// Retired RSI automation must not return as a hidden module-only
+// implementation, even if the router has no public campaign endpoint.
+const runtimePolicy=read('src/engine/policy.rs');
+for(const name of ['propose_candidates','enqueue_policy_request','select_best',
+ 'apply_experiment_result','register_optimizer','meta_improve','experiment_request',
+ 'optimizer_policy','policy.candidate_queued']){
+ assert.ok(!runtimePolicy.includes(name),'Retired policy campaign remains: '+name);
+}
 const oauth=read('src/engine/oauth.rs');
 assert.ok(!/id:\s*["']youtube["']/.test(oauth),'Removed upload OAuth provider returned');
 assert.ok(!oauth.includes('auth/youtube.'),'Removed upload permission returned');

@@ -55,7 +55,6 @@ pub mod oauth;
 pub mod personas;
 pub mod plan_quality;
 pub mod policy;
-pub mod policy_patch;
 pub mod preflight_fixture;
 pub mod principle;
 pub mod router;

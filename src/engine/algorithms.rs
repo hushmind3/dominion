@@ -2462,20 +2462,5 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    #[test]
-    fn active_optimizer_is_found_by_status_not_a_fixed_id() {
-        let (state, dir) = state();
-        state.store.put(
-            "optimizer_policy",
-            &json!({
-                "id":"optimizer-custom",
-                "revision":"optimizer-custom-v2",
-                "status":"active",
-                "failureClustering":"custom"
-            }),
-        );
-        let active = crate::engine::policy::active_optimizer(&state);
-        assert_eq!(active["revision"], "optimizer-custom-v2");
-        let _ = std::fs::remove_dir_all(dir);
-    }
+
 }
