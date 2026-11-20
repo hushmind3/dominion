@@ -96,35 +96,20 @@ pub fn propose(
         }
     }
 
-    let mut status = "adopted";
-    let mut reason = String::new();
     let tool_name = tool.map(str::to_string);
-    match kind {
-        "tool_policy" => {
-            let Some(name) = tool_name.clone() else {
-                return reject(state, scope, kind, text, rationale, evidence_ids, &id);
-            };
-            let Some(stat) = state.store.get("tool_stat", &name) else {
-                return reject(state, scope, kind, text, rationale, evidence_ids, &id);
-            };
-            let attempts = stat["attempts"].as_u64().unwrap_or(0);
-            let failures = stat["failures"].as_u64().unwrap_or(0);
-            if attempts < 3 || failures * 2 < attempts {
-                return reject(state, scope, kind, text, rationale, evidence_ids, &id);
-            }
-            if !text.to_lowercase().contains(&name.to_lowercase()) {
-                return reject(state, scope, kind, text, rationale, evidence_ids, &id);
-            }
+    if kind == "tool_policy" {
+        let Some(name) = tool_name.as_deref() else {
+            return reject(state, scope, kind, text, rationale, evidence_ids, &id);
+        };
+        let Some(stat) = state.store.get("tool_stat", name) else {
+            return reject(state, scope, kind, text, rationale, evidence_ids, &id);
+        };
+        let attempts = stat["attempts"].as_u64().unwrap_or(0);
+        let failures = stat["failures"].as_u64().unwrap_or(0);
+        if attempts < 3 || failures * 2 < attempts
+            || !text.to_lowercase().contains(&name.to_lowercase()) {
+            return reject(state, scope, kind, text, rationale, evidence_ids, &id);
         }
-        "strategy" => {
-            if evidence_ids.len() == 0 {
-                return reject(state, scope, kind, text, rationale, evidence_ids, &id);
-            }
-        }
-        _ => {}
-    }
-    if status == "rejected" {
-        return reject(state, scope, kind, text, rationale, evidence_ids, &id);
     }
 
     let baseline = if kind == "tool_policy" {
@@ -158,21 +143,21 @@ pub fn propose(
         "version": 1,
         "scoreVersion": 2,
         "evidenceGrade": "E0",
-        "status": status,
-        "reason": reason,
+        "status": "adopted",
+        "reason": "",
         "baselineSuccess": baseline,
         "uses": 0,
         "successes": 0,
         "failures": 0,
         "createdAt": chrono::Utc::now().to_rfc3339(),
-        "adoptedAt": if status == "adopted" { json!(chrono::Utc::now().to_rfc3339()) } else { Value::Null },
+        "adoptedAt": chrono::Utc::now().to_rfc3339(),
     }));
     let saved = state.store.put("improvement", &record);
     if let Some(saved) = &saved {
         state.bus.record("improvement", saved);
         state.store.audit(
             "improvement.proposed",
-            json!({"id": saved["id"], "kind": kind, "status": status}),
+            json!({"id": saved["id"], "kind": kind, "status": "adopted"}),
         );
     }
     saved
