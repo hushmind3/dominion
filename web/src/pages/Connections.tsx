@@ -18,23 +18,28 @@ type Connection={id:string;provider:string;displayName:string;scopes:string;hasT
 
 export function ConnectionsPage(){
  useLocale()
- const registry=useRemote<ChannelEntry[]>('/api/channels/catalog',[]);
- const channels=useRemote<Channel[]>('/api/channels',[]);
- const oauth=useRemote<OAuthProvider[]>('/api/oauth/providers',[]);
- const accounts=useRemote<Connection[]>('/api/oauth/connections',[]);
- const agents=useRemote<any[]>('/api/agents',[]);
- const rooms=useRemote<any[]>('/api/rooms',[]);
- const providers=useRemote<any[]>('/api/providers',[]);
  const [section,setSection]=useState<'channels'|'quick-connect'|'accounts'|'capabilities'|ExtensionTab>('channels');
  const [editor,setEditor]=useState<{entry:ChannelEntry;record:any}|null>(null);
  const [error,setError]=useState(''),[info,setInfo]=useState(''),[probe,setProbe]=useState<Record<string,string>>({}),[saving,setSaving]=useState(false);
  const [oauthEditor,setOauthEditor]=useState<{id:OAuthAccountId;clientId:string;clientSecret:string}|null>(null);
  const [oauthSaving,setOauthSaving]=useState(false),[oauthError,setOauthError]=useState('');
+ // Each section loads only the data it actually renders. Quick-connect
+ // owns its own OAuth polling; extension tabs must not start seven unrelated
+ // API reads on every page visit.
+ const showChannels=section==='channels';
+ const showOauth=section==='accounts'||oauthEditor!==null;
+ const registry=useRemote<ChannelEntry[]>(showChannels?'/api/channels/catalog':null,[]);
+ const channels=useRemote<Channel[]>(showChannels?'/api/channels':null,[]);
+ const oauth=useRemote<OAuthProvider[]>(showOauth?'/api/oauth/providers':null,[]);
+ const accounts=useRemote<Connection[]>(showOauth?'/api/oauth/connections':null,[]);
+ const agents=useRemote<any[]>(editor?'/api/agents':null,[]);
+ const rooms=useRemote<any[]>(showChannels?'/api/rooms':null,[]);
+ const providers=useRemote<any[]>(editor?'/api/providers':null,[]);
  const [busyAction,setBusyAction]=useState<string|null>(null);
  const [refreshing,setRefreshing]=useState(false);
  const openEditor=(entry:ChannelEntry,existing?:Channel)=>{
   if(!entry.available)return;
-  const record:any=existing?{...existing}:{name:entry.name,kind:entry.id,enabled:false,syncRoomMessages:entry.mode==='outbound',mentionOnly:true,roomId:'',roomPolicy:'all_or_named',agentId:'',providerId:'',model:''};
+  const record:any=existing?{...existing}:{name:entry.name,kind:entry.id,enabled:true,syncRoomMessages:entry.mode==='outbound',mentionOnly:true,roomId:'',roomPolicy:'all_or_named',agentId:'',providerId:'',model:''};
   for(const field of entry.fields)if(field.type==='secret')record[field.key]='';
   setEditor({entry,record});setError('');setInfo('');
  };
@@ -89,7 +94,10 @@ export function ConnectionsPage(){
  }
  const tabs=[{id:'channels',label:t('conn.tab.channels'),icon:RadioTower},{id:'quick-connect',label:t('conn.tab.quickConnect'),icon:Link2},{id:'accounts',label:t('conn.tab.accounts'),icon:KeyRound},{id:'market',label:'MCP 마켓',icon:Blocks},{id:'installed',label:t('ext.tab.installed'),icon:Server},{id:'skills',label:t('ext.tab.skills'),icon:BookOpenText},{id:'plugins',label:t('ext.tab.plugins'),icon:PackagePlus},{id:'capabilities',label:'역량 마켓',icon:Sparkles}] as const
  const pageHeader=<div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><h1 className="m-0 text-[19px] font-bold text-[#24211D]">{t('conn.title')}</h1><p className="mt-1 text-[12px] text-[#7C7469]">{t('conn.description')}</p></div>{section==='channels'&&<Button type="button" variant="secondary" disabled={refreshing} onClick={()=>void refreshChannels()}><Activity size={15} className={refreshing?'animate-spin':''}/> {t('conn.refresh')}</Button>}</div>
- const sectionTabs=<nav className="connection-tabs" aria-label={t('conn.navigation')}>{tabs.map(({id,label,icon:Icon})=><Button key={id} variant="bare" aria-current={section===id?'page':undefined} onClick={()=>setSection(id)}><Icon size={15}/>{label}</Button>)}</nav>
+ const sectionTabs=<nav className="connection-tabs" aria-label={t('conn.navigation')}>{tabs.map(({id,label,icon:Icon},index)=><span key={id} className="inline-flex shrink-0 items-center gap-1">
+  {(index===3||index===7)&&<span aria-hidden="true" className="mx-2 h-5 w-px shrink-0 bg-[#DED4C8]"/>}
+  <Button variant="bare" aria-current={section===id?'page':undefined} onClick={()=>setSection(id)}><Icon size={15}/>{label}</Button>
+ </span>)}</nav>
  if(section!=='channels'&&section!=='accounts'&&section!=='quick-connect')return <div className="mx-auto w-full max-w-[1320px] px-4 py-3 sm:px-6">{pageHeader}{sectionTabs}{section==='capabilities'?<CapabilitiesPage embedded navigate={page=>setSection(page==='extensions'?'market':'channels')}/>:<ExtensionsPage section={section} embedded/>}</div>
  return <div className="mx-auto w-full max-w-[1320px] px-4 py-3 sm:px-6">
   {pageHeader}
