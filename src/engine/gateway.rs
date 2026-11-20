@@ -543,23 +543,40 @@ pub fn record_usage_tokens(
     total_tokens: u64,
     estimated: bool,
 ) {
-    if total_tokens == 0 {
-        return;
-    }
-    state.store.audit(
-        "model.usage",
-        json!({
-            "providerId": provider_id,
-            "model": model,
-            "local": local,
-            "purpose": purpose,
-            "sessionId": session_id,
-            "promptTokens": prompt_tokens,
-            "completionTokens": completion_tokens,
-            "totalTokens": total_tokens,
-            "estimated": estimated,
-        }),
+    record_usage_tokens_with_cache(
+        state,provider_id,model,local,purpose,session_id,prompt_tokens,
+        completion_tokens,total_tokens,None,None,estimated,
     );
+}
+
+/// The same append-only usage event is the authoritative per-model-call
+/// source for both private and group sessions. Cache read and cache creation
+/// are distinct from transport prefix reuse, and absent provider telemetry
+/// remains null rather than fabricated zero.
+#[allow(clippy::too_many_arguments)]
+pub fn record_usage_tokens_with_cache(
+    state: &AppState,
+    provider_id: &str,
+    model: &str,
+    local: bool,
+    purpose: &str,
+    session_id: Option<&str>,
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    total_tokens: u64,
+    cache_read_tokens: Option<u64>,
+    cache_creation_tokens: Option<u64>,
+    estimated: bool,
+) {
+    if total_tokens == 0 {return;}
+    state.store.audit("model.usage",json!({
+        "providerId":provider_id,"model":model,"local":local,
+        "purpose":purpose,"sessionId":session_id,
+        "promptTokens":prompt_tokens,"completionTokens":completion_tokens,
+        "totalTokens":total_tokens,"estimated":estimated,
+        "cachedPromptTokens":if estimated{None}else{cache_read_tokens.map(|v|v.min(prompt_tokens))},
+        "cacheCreationTokens":if estimated{None}else{cache_creation_tokens.map(|v|v.min(prompt_tokens))},
+    }));
 }
 
 #[allow(clippy::too_many_arguments)]
