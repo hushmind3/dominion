@@ -57,9 +57,35 @@ pub fn trace(snapshot:&Snapshot)->Value{
    };
    // A bridge target differs from the model's fixed tool-call name.
    if let Some(r)=receipt{
-    // The discovery bridge intentionally resolves both tool name and args.
-    // Ordinary actions must match their durable model decision exactly.
-    if action.tool!="dominion_tool_call" {
+    let current_position=receipt_order.get(action.id.as_str()).copied();
+    // The provider sees the fixed discovery bridge, but the Rust worker
+    // executes a different, explicitly discovered host tool. Bind that
+    // resolved target and the full argument object to the model decision.
+    // A rejected wrapper is different: it never reached a host tool, and
+    // its failure receipt legitimately retains the wrapper identity.
+    if action.tool==crate::tool_discovery::CALL {
+     if r.tool==crate::tool_discovery::CALL && !r.success {
+      if r.arguments!=action.arguments {
+       issues.push(format!("Rejected bridge arguments mismatch for {}",action.id));
+      }
+     } else {
+      let target=action.arguments["name"].as_str();
+      if target!=Some(r.tool.as_str())
+       || action.arguments.get("arguments")!=Some(&r.arguments) {
+       issues.push(format!("Discovered action target or arguments mismatch for {}",action.id));
+      }
+      // The source of a bridged capability must be a preceding successful
+      // kernel discovery receipt, not a later/failing/foreign observation.
+      let discovered=snapshot.receipts.iter()
+       .take(current_position.unwrap_or(0)).any(|prior|
+        prior.tool==crate::tool_discovery::SEARCH && prior.success
+        && prior.result["matches"].as_array().is_some_and(|matches|
+         matches.iter().any(|entry|entry["name"].as_str()==target)));
+      if !discovered {
+       issues.push(format!("Discovered action lacks prior authorized search receipt: {}",action.id));
+      }
+     }
+    } else {
      if r.tool!=action.tool {
       issues.push(format!("Action identity mismatch for {}",action.id));
      }
@@ -67,7 +93,6 @@ pub fn trace(snapshot:&Snapshot)->Value{
       issues.push(format!("Action arguments mismatch for {}",action.id));
      }
     }
-    let current_position=receipt_order.get(action.id.as_str()).copied();
     if r.success && action.depends_on.iter().any(|dependency| {
      !by_id.get(dependency.as_str()).is_some_and(|prior|prior.success)
       || !receipt_order.get(dependency.as_str()).is_some_and(|position|
@@ -241,6 +266,53 @@ mod tests{
   skipped.receipts[1].success=false;
   skipped.receipts[1].result=json!({"skipped":true});
   assert_eq!(trace(&skipped)["traceConsistent"],false);
+ }
+ #[test]
+ fn discovered_bridge_replay_requires_exact_target_arguments_and_prior_discovery(){
+  let req=RunRequest{id:"bridge-replay".into(),instruction:"Publish archive".into(),
+   owner_instructions:String::new(),strategy:Strategy::Balanced,
+   limits:Limits::default(),allowed_tools:vec![],checks:vec![],
+   require_evidence:true};
+  let mut s=Snapshot::from_request(&req);
+  s.step=2;
+  let lookup=Action{id:"find".into(),tool:"dominion_tool_search".into(),
+   arguments:json!({"query":"archive publish"}),depends_on:vec![]};
+  let wrapper=Action{id:"publish".into(),tool:"dominion_tool_call".into(),
+   arguments:json!({"name":"mcp__archive_publish",
+    "arguments":{"archive":"2026","dryRun":false}}),
+   depends_on:vec!["find".into()]};
+  s.decision_tape.push(Decision{plan:vec![],answer:None,
+   actions:vec![lookup.clone()]});
+  s.decision_tape.push(Decision{plan:vec![],answer:None,
+   actions:vec![wrapper.clone()]});
+  s.receipts.push(Receipt{id:"find".into(),tool:lookup.tool,
+   arguments:lookup.arguments,success:true,
+   result:json!({"matches":[{"name":"mcp__archive_publish"}]}),step:1});
+  s.receipts.push(Receipt{id:"publish".into(),tool:"mcp__archive_publish".into(),
+   arguments:json!({"archive":"2026","dryRun":false}),
+   success:true,result:json!({"published":true}),step:2});
+  assert_eq!(trace(&s)["traceConsistent"],true,
+   "a genuine bridged effect must remain replayable offline");
+  let mut wrong_target=s.clone();
+  wrong_target.receipts[1].tool="mcp__delete_archive".into();
+  assert_eq!(trace(&wrong_target)["traceConsistent"],false);
+  let mut changed_arguments=s.clone();
+  changed_arguments.receipts[1].arguments["dryRun"]=json!(true);
+  assert_eq!(trace(&changed_arguments)["traceConsistent"],false);
+  let mut no_discovery=s.clone();
+  no_discovery.receipts[0].result=json!({"matches":[{"name":"different_tool"}]});
+  assert_eq!(trace(&no_discovery)["traceConsistent"],false);
+  let mut failed_discovery=s.clone();
+  failed_discovery.receipts[0].success=false;
+  assert_eq!(trace(&failed_discovery)["traceConsistent"],false);
+  // A bridge denied before host dispatch retains the original wrapper
+  // in its unsuccessful receipt. Do not invent a resolved tool effect.
+  let mut rejected=s;
+  rejected.receipts[1].tool="dominion_tool_call".into();
+  rejected.receipts[1].arguments=wrapper.arguments;
+  rejected.receipts[1].success=false;
+  rejected.receipts[1].result=json!({"error":"Discovery was not authorized"});
+  assert_eq!(trace(&rejected)["traceConsistent"],true);
  }
  #[test]
  fn legacy_snapshots_deserialize_and_report_missing_decision_tape(){
