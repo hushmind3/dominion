@@ -620,9 +620,9 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
     <div className={embedded?"min-w-0":"mx-auto w-full max-w-[1320px] px-5 py-4 sm:px-7 lg:px-6 lg:pb-8"}>
       <Headline
         eyebrow={t('ui.eyebrow.marketplace')}
-        title={t('ext.title')}
+        title={embedded?(tab==='market'?'MCP 마켓':tab==='installed'?t('ext.tab.installed'):tab==='plugins'?t('ext.tab.plugins'):t('ext.tab.skills')):t('ext.title')}
         description={t('ext.description')}
-        actions={
+        actions={(tab==='market'||tab==='installed')?
           <Action
             variant="secondary"
             onClick={() => {
@@ -637,7 +637,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
             }}
           >
             <Plus size={17} /> {t('ext.addMcp')}
-          </Action>
+          </Action>:undefined
         }
       />
       <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] px-4 py-3 text-[11px] text-[#5C544A]">

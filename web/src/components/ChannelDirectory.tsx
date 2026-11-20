@@ -1,8 +1,8 @@
 import {useMemo,useState} from 'react'
-import {Activity,Blocks,CheckCircle2,ExternalLink,Filter,Globe2,Link2,MessageCircle,Plus,Search,Send,Settings2,ShieldCheck,Trash2} from 'lucide-react'
+import {Activity,Blocks,CheckCircle2,ExternalLink,Filter,MessageCircle,Plus,Search,Send,Settings2,ShieldCheck,Trash2} from 'lucide-react'
 import {Button,TextInput} from './Primitives'
 import {Panel} from './UI'
-import {t,useLocale} from '../i18n'
+import {t,useLocale,type LocaleKey} from '../i18n'
 import {channelHealth,matchingChannels,sortChannelBindings,type Channel,type ChannelEntry,type ChannelHealth} from '../utils/channelView'
 
 const categories=[
@@ -17,12 +17,11 @@ const icons:Record<string,typeof MessageCircle>={
  signal:ShieldCheck,matrix:Blocks,line:MessageCircle,whatsapp_business:MessageCircle,
  mattermost:Blocks,zulip:MessageCircle
 }
-const healthLabels:Record<ChannelHealth,ReturnType<typeof key>>={
+const healthLabels:Record<ChannelHealth,LocaleKey>={
  setup:'conn.health.setup',issue:'conn.health.issue',connected:'conn.status.connected',
  outbound:'conn.status.outbound_ready',paused:'conn.status.sync_disabled',
  disabled:'conn.status.disabled',starting:'conn.status.starting',stopped:'conn.status.not_started'
 }
-function key<T extends string>(x:T):T{return x}
 function Health({channel}:{channel:Channel}){
  const status=channelHealth(channel)
  const tone=status==='connected'||status==='outbound'?'bg-emerald-50 text-emerald-800 ring-emerald-200':
