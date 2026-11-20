@@ -11,6 +11,29 @@ use super::{context::{self, PromptContext}, room_context, TurnRequest};
 use crate::state::AppState;
 use serde_json::{json, Value};
 
+/// Only unequivocally social one-liners bypass expensive optional retrieval
+/// and tool discovery. A follow-up ("continue", "yes", etc.) is not social:
+/// it must retain enough work context to resume a real task.
+pub(super) fn is_social_turn(query: &str) -> bool {
+    let q=query.trim().trim_matches(|ch:char|
+        ch.is_ascii_punctuation() || matches!(ch,'！'|'？'|'。'|'~'|'～'|' ') )
+        .to_lowercase();
+    matches!(q.as_str(),
+        "안녕"|"안녕하세요"|"하이"|"반가워"|"고마워"|"고맙습니다"|
+        "감사합니다"|"감사해요"|"잘자"|"굿모닝"|"hello"|"hi"|
+        "thanks"|"thank you"|"good morning")
+}
+
+/// Date is task evidence, not an instruction. Most "hello"/code/reflection
+/// turns have no reason to rebill a changing clock field every request.
+pub(super) fn needs_clock(query:&str) -> bool {
+    let q=query.to_lowercase();
+    ["오늘","어제","내일","지금","이번 주","이번주","이번 달","이번달",
+     "현재 날짜","날짜","몇 시","몇시","최신","최근","올해","내년",
+     "today","tomorrow","yesterday","latest","current date",
+     "this week","this month","right now"].iter().any(|term|q.contains(term))
+}
+
 pub(super) struct CompiledPrivate {
     pub system: PromptContext,
     pub history: Vec<Value>,
