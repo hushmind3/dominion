@@ -2290,11 +2290,6 @@ pub fn jobs(state: &AppState) -> Vec<Value> {
     state.store.all(MODEL_KIND)
 }
 
-/// Streams a GGUF file from Hugging Face and records progress as a job.
-pub fn start_download(state: AppState, repo: String, option: String) -> Result<Value, String> {
-    start_download_with(state, repo, option, "gguf".into(), Vec::new())
-}
-
 /// Starts a GGUF or multi-file MLX download. The job stores a repo-scoped
 /// target directory and a per-file list so resume never has to guess which
 /// bytes are already on disk.
@@ -2311,16 +2306,6 @@ fn partial_download_path(target: &Path, revision: &str) -> PathBuf {
         ".part".to_string()
     };
     PathBuf::from(format!("{}{}", target.display(), suffix))
-}
-
-pub fn start_download_with(
-    state: AppState,
-    repo: String,
-    option: String,
-    format: String,
-    requested_files: Vec<String>,
-) -> Result<Value, String> {
-    start_download_at_revision(state, repo, option, format, requested_files, None)
 }
 
 /// Pin a single immutable Hugging Face commit for every shard and resume.
