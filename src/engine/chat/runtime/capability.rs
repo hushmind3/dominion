@@ -201,6 +201,21 @@ mod tests {
         (app,root)
     }
     #[test]
+    fn chat_tool_search_ranks_opaque_mcp_names_by_schema_fields(){
+        let tools=vec![
+            json!({"function":{"name":"mcp__connector__execute_008",
+                "description":"Execute connector operation",
+                "parameters":{"type":"object","properties":{"video_frames":{"type":"array"}}}}}),
+            json!({"function":{"name":"mcp__connector__execute_007",
+                "description":"Execute connector operation",
+                "parameters":{"type":"object","properties":{
+                    "repository_name":{"type":"string"},"issue_number":{"type":"integer"}}}}}),
+        ];
+        let choices=rank(&tools,"repository issue",2);
+        assert_eq!(choices.len(),1);
+        assert_eq!(tool_name(choices[0]),"mcp__connector__execute_007");
+    }
+    #[test]
     fn no_tools_for_casual_rooms_disabled_actions_or_single_file_fast_path(){
         assert!(!should_expose(40,6,false,true,false));
         assert!(!should_expose(40,6,true,false,false));
