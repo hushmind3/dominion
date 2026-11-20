@@ -164,6 +164,28 @@ mod tests {
     }
 
     #[test]
+    fn room_session_can_mute_messenger_without_affecting_core_room_data(){
+        let root=std::env::temp_dir().join(format!("dominion-room-channel-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config=Config{port:0,data_dir:root.clone(),web_dir:root.join("web"),workspace:root.clone()};
+        let state=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),Vault::open(&config.key_path()));
+        state.store.put("room",&json!({"id":"room","sessionId":"room:room"})).unwrap();
+        state.store.put("session",&json!({"id":"room:room",
+            "roomId":"room","extensions":{"channels":false}})).unwrap();
+        let binding=json!({"id":"bound","kind":"discord","roomId":"room","enabled":true});
+        assert!(!channels::enabled_binding(&state,&binding));
+        assert!(state.store.get("room","room").is_some());
+        assert!(state.store.get("session","room:room").is_some());
+        state.store.put("session",&json!({"id":"room:room","roomId":"room"})).unwrap();
+        assert!(channels::enabled_binding(&state,&binding));
+        state.store.put("room",&json!({"id":"room","sessionId":"room:room",
+            "extensions":{"channels":false}})).unwrap();
+        assert!(!channels::enabled_binding(&state,&binding));
+        drop(state);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn policy_rejects_unknown_or_untyped_capability_keys(){
         assert_eq!(validate_policy(&json!({"mcp":false,"memory":false})).unwrap(),
             json!({"mcp":false,"memory":false}));
