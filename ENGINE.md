@@ -41,6 +41,15 @@ Every subsequently resolved tool call passes the actual schema, current
 session permission, effect journal, approval and cancellation checks.
 MCP tools do not bypass the Rust execution kernel.
 
+Public HTTP content is stored as session-scoped, content-addressed evidence
+instead of being copied wholesale into each prompt. The `http_fetch` tool
+returns an initial readable excerpt and a document ID; `http_document_read`
+retrieves later windows or exact phrase matches without a new network fetch.
+The original source is kept for audit, not replaced by a generated summary.
+Execution records also retain a pre-provider input composition estimate by
+system, conversation, tool output, retrieval and tool-schema origin. Provider
+usage and cache hits remain separately measured authoritative counters.
+
 ## 4. Persistent state and SDK
 
 The [API](src/api/mod.rs) exposes session, room, tool, model and SDK routes.
