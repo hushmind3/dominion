@@ -14,6 +14,9 @@ pub(super) async fn run_turn_body(
     source_message_id: Option<&str>,
 ) -> Result<Option<Value>, String> {
     let turn_started = std::time::Instant::now();
+    let decision_policy=crate::engine::turn_policy::TurnPolicy::new(
+        state,request.agent_id.as_deref(),execution_id,
+    );
     let mut session = state
         .store
         .get("session", session_id)
@@ -134,12 +137,11 @@ pub(super) async fn run_turn_body(
     let mut acceptance_retries = 0usize;
     let mut last_repair_signature:Option<String> = None;
     let mut procedure_repairs = 0usize;
-    let recovery_policy = crate::engine::policy::active(state, "recovery");
-    let program_policy = crate::engine::policy::active(state, "execution");
+    let recovery_policy = decision_policy.active("recovery");
+    let program_policy = decision_policy.active("execution");
     // The file guard is opt-in: an operator or a verified policy must
     // activate mutation.preflight before it applies. No automatic promotion.
-    let selected_preflight = crate::engine::policy::portable_file_guard(state)
-        .or_else(|| crate::engine::policy::active(state, "mutation.preflight"));
+    let selected_preflight = decision_policy.file_guard();
     if let Some(policy) = selected_preflight {
         let mut execution = state.store.get("execution", execution_id)
             .ok_or("실행 기록을 찾을 수 없습니다.")?;
@@ -168,40 +170,21 @@ pub(super) async fn run_turn_body(
             }
         }
     }
-    let (max_acceptance_retries, max_procedure_repairs) = recovery_policy
-        .as_ref()
-        .map(|policy| {
-            crate::engine::policy::recovery_limits(&policy["parameters"])
-        })
-        .unwrap_or((2, 2));
+    let (max_acceptance_retries, max_procedure_repairs) =
+        crate::engine::turn_policy::TurnPolicy::recovery_limits(recovery_policy.as_ref());
     let mut op_seq = 0u64;
 
     let mut metadata = json!({"authorKind":"agent","roomId":session.get("roomId"),"replyToMessageId":reply_to,"executionId":execution_id,"taskId":task_id,"reasoningLanguageRequested":request.reasoning_language,"reasoningTranslated":false});
 
     let mut provider = select_provider(state, request, &session)?;
     let allow_provider_fallback = true;
-    let budget_algorithm = crate::engine::algorithms::choose_for_agent(
-        state,
-        "execution.budget",
-        request.agent_id.as_deref(),
-        Some(execution_id),
-    );
-    let mut max_rounds = budget_algorithm
-        .as_ref()
-        .and_then(|algorithm| algorithm["parameters"]["maxRounds"].as_u64())
-        .unwrap_or(MAX_ROUNDS as u64)
-        .clamp(2, 24) as usize;
+    let (mut max_rounds,mut max_tools)=decision_policy.budget(MAX_ROUNDS,MAX_TOOL_CALLS);
     if let Some(rounds)=session["sdkUiPolicy"]["maxRounds"].as_u64(){
         // This option is exposed by the main Home auto-work API. A 24-round
         // user ceiling must not be silently replaced by the general 8-round
         // chat default; the token/elapsed ceilings still bound real spend.
         max_rounds=rounds.clamp(1,80) as usize;
     }
-    let mut max_tools = budget_algorithm
-        .as_ref()
-        .and_then(|algorithm| algorithm["parameters"]["maxTools"].as_u64())
-        .unwrap_or(MAX_TOOL_CALLS as u64)
-        .clamp(4, 120) as usize;
     let elapsed_limit=MAX_ELAPSED;
     let simple_creation_target=if !session["roomId"].is_string() {
         simple_file_creation(state,&request.input,&acceptance)
@@ -271,13 +254,7 @@ pub(super) async fn run_turn_body(
         tool_definitions =
             select_room_tools(tool_definitions, &request.input, &recent, acceptance.is_some());
     }
-    let discovery = if is_room {
-        Value::Null
-    } else {
-        crate::engine::algorithms::choose_for_agent(
-            state, "tool.discovery", request.agent_id.as_deref(), Some(execution_id),
-        ).unwrap_or(Value::Null)
-    };
+    let discovery = decision_policy.discovery(is_room);
     if !is_room {
         tool_definitions = select_tool_definitions(tool_definitions, &request.input, &discovery);
     }
@@ -298,8 +275,7 @@ pub(super) async fn run_turn_body(
         if !request.tools_enabled || !request.tools_execution_enabled{
             tool_definitions.clear();
         }
-        crate::engine::algorithms::mark_unrated(
-            state,execution_id,"tool.discovery","single-file creation");
+        decision_policy.unrated("tool.discovery","single-file creation");
         if let Some(mut execution)=state.store.get("execution",execution_id){
             execution["contextPolicy"]=json!("single-file-creation");
             state.store.put("execution",&execution);
@@ -564,7 +540,7 @@ pub(super) async fn run_turn_body(
     // Action requests get an explicit plan before tools. A versioned policy in
     // the planning slot can override the built-in heuristic; no active policy
     // means the existing behaviour is unchanged.
-    let planning_policy = crate::engine::policy::active(state, "planning");
+    let planning_policy = decision_policy.active("planning");
     if let Some(policy) = &planning_policy {
         context_items.push(json!({
             "kind": "planning_policy",
@@ -592,13 +568,7 @@ pub(super) async fn run_turn_body(
     // Deterministic decomposition runs before any model call. It gives the
     // turn an engine-owned ordered sub-goal list and an independently graded
     // signal that does not depend on whole-task success.
-    let decomposition_algorithm = crate::engine::algorithms::choose_decomposition_for_agent(
-        state,
-        request.agent_id.as_deref(),
-        Some(execution_id),
-        task_input(&session,&request.input),
-    )
-    .unwrap_or(Value::Null);
+    let decomposition_algorithm=decision_policy.decomposition(task_input(&session,&request.input));
     let decomposition =
         crate::engine::decompose::decompose(task_input(&session,&request.input), &decomposition_algorithm);
     let subtask_count = decomposition["subtasks"]
@@ -619,15 +589,7 @@ pub(super) async fn run_turn_body(
             decomposition["kernel"].as_str().unwrap_or(""),
         ]),
     }));
-    let plan_requested_by_engine = match planning_policy.as_ref().and_then(|policy| {
-        crate::engine::policy::outline_decision(
-            &policy["parameters"],
-            request.input.chars().count(),
-        )
-    }) {
-        Some(decision) => decision,
-        None => needs_plan(&request.input, &acceptance) || subtask_count > 1,
-    };
+    let plan_heuristic=needs_plan(&request.input,&acceptance)||subtask_count>1;
     // Home autonomous jobs already retain an engine-owned task plan and
     // deterministic unmet checks across repair turns. Paying another planner
     // model on every repeat is redundant; the repair instruction provides
@@ -639,10 +601,11 @@ pub(super) async fn run_turn_body(
     let native_contract_plan=!is_room
         && planning_policy.is_none()
         && local_multifile_contract_needs_no_secondary_planner(&request.input,&acceptance);
-    let plan_requested=match session["sdkUiPolicy"]["planningMode"].as_str(){
-        Some("always")=>true,Some("never")=>false,
-        _=>plan_requested_by_engine && !previous_panel_answer && !native_contract_plan,
-    };
+    let plan_requested=crate::engine::turn_policy::TurnPolicy::plan_requested(
+        planning_policy.as_ref(),request.input.chars().count(),plan_heuristic,
+        previous_panel_answer,native_contract_plan,
+        session["sdkUiPolicy"]["planningMode"].as_str(),
+    );
     if let Some(mut execution)=state.store.get("execution",execution_id){
         execution["planningAdmission"]=json!({
             "secondaryPlannerRequested":plan_requested,
@@ -1672,14 +1635,9 @@ pub(super) async fn run_turn_body(
         // sequence. An exclusive mutation must finish before subsequent reads.
         // The older "read-first" optimizer could move those reads before the
         // write and feed stale observations back to the model.
-        let ordering = crate::engine::algorithms::choose_for_agent(
-            state, "execution.ordering", request.agent_id.as_deref(), Some(execution_id),
-        );
-        let ordering_kernel = ordering.as_ref()
-            .and_then(|algorithm|algorithm["implementation"].as_str())
-            .unwrap_or("as-written");
+        let ordering_kernel=decision_policy.order();
         let round_calls = completion.tool_calls.clone();
-        let barrier_override=ordering_kernel=="read-first"
+        let barrier_override=ordering_kernel.wants_read_first()
             && round_calls.iter().enumerate().any(|(index,call)|
                 !tool_is_read_only(&call.name) && round_calls[index+1..].iter()
                     .any(|later|tool_is_read_only(&later.name)));
@@ -1690,12 +1648,7 @@ pub(super) async fn run_turn_body(
                 "reason":"later reads may depend on earlier mutations",
             }));
         }
-        let combination = crate::engine::algorithms::choose_for_agent(
-            state, "tool.combination", request.agent_id.as_deref(), None,
-        );
-        let parallel_reads = combination.as_ref()
-            .and_then(|algorithm|algorithm["implementation"].as_str())
-            ==Some("parallel-reads");
+        let parallel_reads=decision_policy.combination().parallel_reads();
         let mut parallel_done = std::collections::HashSet::<String>::new();
         let mut ordering_used = false;
         let mut ordering_ok = !barrier_override;
@@ -1732,8 +1685,7 @@ pub(super) async fn run_turn_body(
                     "role":"tool","tool_call_id":call.id,
                     "content":json!({"error":error,"toolNotAdvertised":true}).to_string()
                 }));
-                crate::engine::algorithms::mark_signal(
-                    state,execution_id,"tool.selection",false);
+                decision_policy.signal("tool.selection",false);
                 continue;
             }
             // Only adjacent read-only calls are concurrency-safe; an earlier
@@ -1753,8 +1705,7 @@ pub(super) async fn run_turn_body(
                     round_calls[call_index..call_index+candidate].iter()
                         .map(|item|item.name.as_str()),&round_tools) {candidate} else {1};
                 if batch_len>=2 {
-                    let _=crate::engine::algorithms::choose_for_agent(
-                        state,"tool.combination",request.agent_id.as_deref(),Some(execution_id));
+                    decision_policy.note_combination();
                     let batch=&round_calls[call_index..call_index+batch_len];
                     let mut ordered=vec![None::<(String,bool)>;batch_len];
                     let mut ready=std::collections::VecDeque::<(usize,Value,u64)>::new();
@@ -1857,13 +1808,10 @@ pub(super) async fn run_turn_body(
                         messages.push(json!({
                             "role":"tool","tool_call_id":read_call.id,"content":text,
                         }));
-                        crate::engine::algorithms::mark_signal(
-                            state,execution_id,"tool.selection",ok);
-                        crate::engine::algorithms::mark_signal(
-                            state,execution_id,"recovery.strategy",ok);
+                        decision_policy.signal("tool.selection",ok);
+                        decision_policy.signal("recovery.strategy",ok);
                     }
-                    crate::engine::algorithms::mark_signal(
-                        state,execution_id,"tool.combination",all_ok);
+                    decision_policy.signal("tool.combination",all_ok);
                     ordering_used=true;
                     ordering_ok &= all_ok;
                     continue;
@@ -1950,31 +1898,20 @@ pub(super) async fn run_turn_body(
                 )
             });
             if mutating_call && !has_prior_read {
-                let tool_selection = crate::engine::algorithms::choose_for_agent(
-                    state,
-                    "tool.selection",
-                    request.agent_id.as_deref(),
-                    Some(execution_id),
-                )
-                .and_then(|algorithm| {
-                    algorithm["implementation"].as_str().map(str::to_string)
-                })
-                .unwrap_or_else(|| "read-before-write".into());
-                if tool_selection == "block-write-without-read" {
+                let tool_selection=decision_policy.write_choice();
+                if tool_selection.blocks_without_read() {
                     let error = "도구 선택 알고리즘(block-write-without-read)이 읽기/목록 확인 없는 쓰기를 차단했습니다. workspace_list 또는 workspace_read를 먼저 실행하세요.";
                     record_soft_tool_error(
                         state, tx, session_id, request, execution_id, &call.name, &call.id,
                         error, metrics,
                     );
-                    crate::engine::algorithms::mark_signal(
-                        state, execution_id, "tool.selection", false,
-                    );
+                    decision_policy.signal("tool.selection",false);
                     messages.push(json!({
                         "role":"tool","tool_call_id":call.id,
                         "content": json!({"error":error,"toolSelectionBlocked":true}).to_string()
                     }));
                     continue;
-                } else if tool_selection == "read-before-write" {
+                } else if tool_selection.recommends_read() {
                     messages.push(json!({
                         "role":"system",
                         "content":"도구 선택 알고리즘(read-before-write): 쓰기 전에 workspace_list/workspace_read로 대상 상태를 먼저 확인하는 것이 권장됩니다. 이 힌트는 실행을 막지 않습니다."
@@ -1984,23 +1921,11 @@ pub(super) async fn run_turn_body(
             let call_key = format!("{}:{}", call.name, arguments);
             let current_fingerprint =
                 environment_fingerprint(state, &call.name, &arguments);
-            let recovery_mode = crate::engine::algorithms::choose_for_agent(
-                state,
-                "recovery.strategy",
-                request.agent_id.as_deref(),
-                Some(execution_id),
-            )
-            .and_then(|algorithm| {
-                algorithm["implementation"].as_str().map(str::to_string)
-            })
-            .unwrap_or_else(|| "fingerprint".into());
-            let repeat_allowed = match recovery_mode.as_str() {
-                "allow-all" => true,
-                "block-identical" => false,
-                _ => failed_calls
-                    .get(&call_key)
-                    .is_some_and(|(_, fingerprint)| fingerprint != &current_fingerprint),
-            };
+            let recovery_mode=decision_policy.retry_choice();
+            let repeat_allowed=recovery_mode.repeat_allowed(
+                failed_calls.get(&call_key).map(|(_,fingerprint)|fingerprint.as_str()),
+                &current_fingerprint,
+            );
             if repeat_allowed {
                 failed_calls.remove(&call_key);
             }
@@ -2013,7 +1938,7 @@ pub(super) async fn run_turn_body(
                     | "github_api" | "github_file_commit" | "delegate_task" | "external_harness_run"
             );
             if mutating {
-            if recovery_mode != "allow-all" {
+            if !recovery_mode.allows_unsafe_repeat() {
             if let Some((previous_error, _)) = failed_calls.get(&call_key) {
                 // Section 11-1: an unchanged repeat of a failed mutating call
                 // is not re-executed. The model must choose a changed action.
@@ -2097,12 +2022,8 @@ pub(super) async fn run_turn_body(
                     "visibleSchemas":tool_definitions.len(),
                 }));
             }
-            crate::engine::algorithms::mark_signal(
-                state, execution_id, "tool.selection", ok,
-            );
-            crate::engine::algorithms::mark_signal(
-                state, execution_id, "recovery.strategy", ok,
-            );
+            decision_policy.signal("tool.selection",ok);
+            decision_policy.signal("recovery.strategy",ok);
             if ok {
                 failed_calls.remove(&call_key);
                 if matches!(
@@ -2189,9 +2110,7 @@ pub(super) async fn run_turn_body(
         }
 
         if ordering_used {
-            crate::engine::algorithms::mark_signal(
-                state, execution_id, "execution.ordering", ordering_ok,
-            );
+            decision_policy.signal("execution.ordering",ordering_ok);
         }
         // Check acceptance after the tool round, not only when the model
         // decides to stop. A model that keeps verifying can otherwise burn the
