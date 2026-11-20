@@ -428,6 +428,7 @@ mod tests {
             tool_mode:"native".into(),reasoning_protocol:"openai".into(),local:true,
             disable_thinking:false,context_tokens:None,max_output_tokens:None,
             requests_per_minute:None,account_id:Some("account".into()),
+            capabilities:gateway::ModelCapabilities::default(),
         }
     }
     fn state()->(AppState,PathBuf,String) {
