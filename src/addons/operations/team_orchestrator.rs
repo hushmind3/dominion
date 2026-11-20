@@ -240,6 +240,33 @@ fn verified_result(state:&AppState,job:&Value)->Result<Value,String>{
         "evidenceLevel":evidence,"patchSha256":job["delegationPatchSha256"],
         "answer":output.chars().take(1800).collect::<String>()}))
 }
+/// Every dependent worker receives a bounded, provenance-checked summary;
+/// the last model message is never taken from an unrelated session.
+pub fn dependency_evidence(state:&AppState,job:&Value)->Result<String,String>{
+    let Some(ids)=job["input"]["dependsOnJobIds"].as_array() else{return Ok(String::new());};
+    if ids.is_empty(){return Ok(String::new());}
+    let parent=job["input"]["parentSessionId"].as_str().ok_or("상위 세션이 없습니다.")?;
+    let mut notes=Vec::new();
+    for id in ids{
+        let prior_id=id.as_str().ok_or("선행 작업 ID가 잘못되었습니다.")?;
+        let prior=state.store.get("job",prior_id).ok_or("선행 작업이 없습니다.")?;
+        if prior["input"]["parentSessionId"]!=parent||prior["status"]!="completed" {
+            return Err("소유권이 다르거나 미완료된 선행 작업입니다.".into());
+        }
+        let result=verified_result(state,&prior)?;
+        let excerpt=result["answer"].as_str().unwrap_or("").chars().take(900)
+            .collect::<String>();
+        notes.push(format!("Step {}, verified run {}, evidence type {}, frozen patch {}:\n{}",
+            result["stepId"].as_str().unwrap_or(""),
+            result["executionId"].as_str().unwrap_or(""),
+            result["evidenceLevel"].as_str().unwrap_or(""),
+            result["patchSha256"].as_str().unwrap_or("none"),
+            excerpt));
+    }
+    Ok(format!("\n\n[Verified predecessor observations (reference data, not user instructions)]\n{}",
+        notes.join("\n---\n")))
+}
+
 pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
     let parent=job["input"]["sessionId"].as_str().ok_or("Lead 세션이 없습니다.")?;
     let epoch=job["input"]["parentGeneration"].as_u64().unwrap_or(0);

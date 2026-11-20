@@ -149,6 +149,71 @@ pub fn scoped_workspace(state: &AppState, session: &Value) -> Result<Option<Path
     }
     Ok(Some(actual))
 }
+/// Apply independently frozen upstream implementation patches to the
+/// verifier's OWN detached worktree. Never apply these patches to the parent
+/// workspace or confuse a model's assertion with a verified diff.
+pub async fn hydrate_team_verifier(
+    context:&crate::engine::jobs::JobContext,job:&Value,
+)->Result<(),String>{
+    if job["input"]["delegationProfile"]!="verification"
+        ||job["input"]["teamJobId"].is_null(){return Ok(());}
+    let Some(deps)=job["input"]["dependsOnJobIds"].as_array() else{return Ok(());};
+    if deps.is_empty(){return Ok(());}
+    if job["dependenciesHydratedAt"].is_string(){return Ok(());}
+    if job["dependencyHydrationInFlight"]==true{
+        return Err("needs_review: 이전 패치 적용의 결과가 확정되지 않았습니다.".into());
+    }
+    let session_id=job["input"]["sessionId"].as_str()
+        .ok_or("검증 Worker 세션이 없습니다.")?;
+    let session=context.state.store.get("session",session_id)
+        .ok_or("검증 Worker의 격리 세션이 없습니다.")?;
+    let destination=scoped_workspace(&context.state,&session)?
+        .ok_or("검증 Worker의 격리 워크트리가 없습니다.")?;
+    context.checkpoint(json!({"dependencyHydrationInFlight":true}))?;
+    let result=async{
+        let mut evidence=Vec::new();
+        for dep in deps{
+            let id=dep.as_str().ok_or("선행 Worker ID가 잘못되었습니다.")?;
+            let row=context.state.store.get("job",id)
+                .ok_or("선행 Worker 기록이 없습니다.")?;
+            if row["input"]["parentSessionId"]!=job["input"]["parentSessionId"]
+                ||row["input"]["teamJobId"]!=job["input"]["teamJobId"]
+                ||row["status"]!="completed" {
+                return Err("외부 또는 미완료된 Worker의 패치를 적용하지 않습니다.".into());
+            }
+            if row["input"]["delegationProfile"]!="implementation"{continue;}
+            let upstream_session=row["input"]["sessionId"].as_str()
+                .and_then(|id|context.state.store.get("session",id))
+                .ok_or("선행 구현의 격리 세션이 없습니다.")?;
+            let source=scoped_workspace(&context.state,&upstream_session)?
+                .ok_or("선행 구현의 격리 워크트리가 없습니다.")?;
+            // Capture the exact frozen diff. A worker's mutable final message
+            // cannot substitute for this SHA-256 invariant.
+            git(&source,&["add","-N","--","."]).await?;
+            let patch=git(&source,&["diff","--binary","--no-ext-diff","HEAD","--"]).await?;
+            let checksum=format!("{:x}",Sha256::digest(&patch));
+            if row["delegationPatchSha256"].as_str()!=Some(checksum.as_str()){
+                return Err("선행 구현 패치가 완료 후 변경되었습니다.".into());
+            }
+            if patch.len()>524_288{
+                return Err("선행 구현 패치가 512KB 제한을 초과했습니다.".into());
+            }
+            if !patch.is_empty(){
+                apply(&destination,&patch,true).await?;
+                apply(&destination,&patch,false).await?;
+            }
+            evidence.push(json!({"jobId":id,"patchSha256":checksum,
+                "patchBytes":patch.len()}));
+        }
+        Ok::<Vec<Value>,String>(evidence)
+    }.await;
+    let applied=result.map_err(|error|format!("needs_review: 검증용 패치 적용 실패: {error}"))?;
+    context.checkpoint(json!({"dependencyHydrationInFlight":false,
+        "dependenciesHydratedAt":chrono::Utc::now().to_rfc3339(),
+        "hydratedPatches":applied}))?;
+    Ok(())
+}
+
 pub async fn freeze_result(state: &AppState, job: &Value) -> Result<(), String> {
     let Some(session) = job["input"]["sessionId"]
         .as_str()

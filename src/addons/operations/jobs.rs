@@ -173,6 +173,7 @@ pub fn recover(state: &AppState) {
         let flagged = [
             "/inFlight",
             "/promptState/inFlight",
+            "/dependencyHydrationInFlight",
             "/goalState/inFlight",
             "/goalState/reviewPending",
             "/roomState/inFlight",
@@ -605,7 +606,11 @@ pub(crate) async fn run_prompt(context: &JobContext, job: &Value) -> Result<Valu
         })).and_then(|session|session["id"].as_str().map(str::to_string))
             .ok_or("작업 세션을 저장할 수 없습니다.")?,
     };
-    let (_job_scope, goal) = crate::engine::job_control::configure(&context.state,job,&session_id)?;
+    crate::engine::delegation_worktree::hydrate_team_verifier(context,job).await?;
+    let (_job_scope, mut goal) = crate::engine::job_control::configure(&context.state,job,&session_id)?;
+    if input["teamJobId"].is_string(){
+        goal.push_str(&crate::addons::team_orchestrator::dependency_evidence(&context.state,job)?);
+    }
     context.checkpoint(json!({"sessionId":session_id,"promptState":{"inFlight":true}}))?;
     let request = TurnRequest {
         session_id: Some(session_id.clone()), input: goal,
