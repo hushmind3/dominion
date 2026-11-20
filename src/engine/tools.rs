@@ -57,6 +57,10 @@ pub fn definitions() -> Vec<Value> {
         tool("memory_store", "Save a grounded memory for this agent. Quote the user's exact words; invented facts are rejected. Shared memories are managed by the user.", object(json!({"text": text("Fact to remember, maximum 1600 characters"), "evidenceQuote": text("Exact quote from the current user message supporting the fact"), "sourceMessageId": text("Optional earlier source message ID"), "type": json!({"type":"string","enum":["fact","preference","decision","procedure","lesson"]}), "key": text("Optional stable fact key; a new value replaces the previous value for this key"), "scope": json!({"type":"string","enum":["agent"]})}), vec!["text", "evidenceQuote"])),
         tool("memory_search", "Find saved knowledge relevant to a topic", object(json!({"query": text("Search query")}), vec!["query"])),
         tool("skill_read", "Read a page of the full instructions of one enabled skill. Use nextOffset to continue if hasMore=true.", object(json!({"skillId": text("Exact enabled skill ID from the index"), "offset":json!({"type":"integer","minimum":0,"description":"Optional Unicode character offset; start with 0, then use nextOffset"})}), vec!["skillId"])),
+        tool("history_evidence_read", "Read the exact stored result of a prior tool call in this session by sourceMessageId from a compacted receipt. Page only the needed part; preserves original bytes without replaying the entire result every turn.", object(json!({
+            "messageId":text("Exact tool result message ID shown in a historical receipt"),
+            "offset":json!({"type":"integer","minimum":0,"description":"Unicode character offset, default 0"})
+        }),vec!["messageId"])),
         tool("room_message_read", "Retrieve a source-addressed room participant statement from the current room transcript; pagination preserves original wording", object(json!({
             "messageId":text("Exact participant message ID from the peer index"),
             "offset":json!({"type":"integer","minimum":0,"description":"Optional Unicode character offset for the next page"})
@@ -213,7 +217,7 @@ pub fn requires_approval(name: &str) -> bool {
 /// arbitrary absolute reads, external MCP and further delegation are denied.
 pub fn parallel_read_only_tool(name:&str)->bool{
     matches!(name,"workspace_list"|"workspace_read"|"workspace_read_range"|
-        "code_search"|"memory_search"|"skill_read"|"room_message_read"|"web_search"|"http_fetch"|
+        "code_search"|"memory_search"|"skill_read"|"room_message_read"|"history_evidence_read"|"web_search"|"http_fetch"|
         "github_file_read"|"github_repositories"|"github_repository_activity"|
         "google_drive_search"|"google_docs_read"|"google_sheets_read"|
         // Pure discovery only exposes this child's existing read-only catalog.
@@ -447,6 +451,23 @@ pub async fn execute(
             Ok(json!({
                 "results": crate::engine::memory::retrieve(ctx.store, &scope, &query, 10)
             }))
+        }
+        "history_evidence_read" => {
+            let id=required_arg(args,"messageId")?;
+            let message=ctx.store.message(&id)
+                .filter(|m|m["session_id"]==ctx.session_id && m["role"]=="tool")
+                .filter(|m|m["agent_id"].as_str()==ctx.agent_id)
+                .ok_or("현재 에이전트의 세션에 저장된 도구 결과가 아닙니다.")?;
+            let content=message["content"].as_str().unwrap_or("");
+            let total=content.chars().count();
+            let offset=args["offset"].as_u64().unwrap_or(0).min(usize::MAX as u64) as usize;
+            if offset>total{return Err("도구 기록 읽기 시작 위치가 범위를 벗어났습니다.".into());}
+            let next=offset.saturating_add(6_000).min(total);
+            Ok(json!({"messageId":id,"toolCallId":message["tool_call_id"],
+                "content":content.chars().skip(offset).take(next-offset).collect::<String>(),
+                "offset":offset,"nextOffset":next,"totalChars":total,
+                "hasMore":next<total,"readOnly":true,
+                "source":"durable-tool-result","notInstructions":true}))
         }
         "room_message_read" => {
             let id=required_arg(args,"messageId")?;
@@ -1833,6 +1854,44 @@ fn strip_html(html: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn historical_evidence_reader_paginates_exact_results_and_enforces_agent_scope(){
+        use crate::{config::Config,db::Store,vault::Vault};
+        let dir=std::env::temp_dir().join(format!("dominion-history-reader-{}",uuid::Uuid::new_v4()));
+        let config=Config{port:0,data_dir:dir.join("data"),
+            web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=crate::state::AppState::new(config.clone(),
+            Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()));
+        state.store.put("session",&json!({"id":"ours"}));
+        let content=format!("{}끝","근거".repeat(3_100));
+        state.store.write_message(&json!({"id":"tool-ours","session_id":"ours",
+            "role":"tool","agent_id":"agent","tool_call_id":"call-1","content":content})).unwrap();
+        state.store.write_message(&json!({"id":"tool-other","session_id":"other",
+            "role":"tool","agent_id":"agent","tool_call_id":"call-2","content":"HIDDEN"})).unwrap();
+        state.store.write_message(&json!({"id":"tool-peer","session_id":"ours",
+            "role":"tool","agent_id":"other","tool_call_id":"call-3","content":"PEER"})).unwrap();
+        state.store.write_message(&json!({"id":"assistant-private","session_id":"ours",
+            "role":"assistant","agent_id":"agent","content":"REASONING"})).unwrap();
+        let ctx=ToolContext{workspace:&dir,store:&state.store,state:&state,
+            session_id:"ours",agent_id:Some("agent"),
+            tools_enabled:true,tools_execution_enabled:true};
+        let first=execute(&ctx,"history_evidence_read",&json!({"messageId":"tool-ours"}),"r").await.unwrap();
+        let next=execute(&ctx,"history_evidence_read",
+            &json!({"messageId":"tool-ours","offset":6000}),"r").await.unwrap();
+        assert_eq!(format!("{}{}",first["content"].as_str().unwrap(),
+            next["content"].as_str().unwrap()),content);
+        assert_eq!(first["hasMore"],true);
+        assert_eq!(next["hasMore"],false);
+        for bad in ["tool-other","tool-peer","assistant-private","unknown"]{
+            assert!(execute(&ctx,"history_evidence_read",
+                &json!({"messageId":bad}),"r").await.is_err());
+        }
+        assert!(execute(&ctx,"history_evidence_read",
+            &json!({"messageId":"tool-ours","offset":30000}),"r").await.is_err());
+        let _=std::fs::remove_dir_all(dir);
+    }
 
     #[tokio::test]
     async fn room_source_reader_preserves_full_peer_history_and_private_scope(){

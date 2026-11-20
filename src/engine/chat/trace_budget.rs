@@ -67,8 +67,11 @@ fn note(messages:&[Value],start:usize,end:usize)->Value{
             .map(|path|format!(" path={}",narrow(&path,110))).unwrap_or_default();
         let result=results.iter().find(|r|r["tool_call_id"]==id);
         let outcome=result.and_then(|r|r["content"].as_str()).unwrap_or("");
-        lines.push(format!("{} (id={}){} → {}",
-            narrow(name,65),narrow(id,70),path,narrow(outcome,270)));
+        let source=result.and_then(|row|row["_dominion_frame"].as_str())
+            .map(|id|format!(" sourceMessageId={}",narrow(id,80)))
+            .unwrap_or_default();
+        lines.push(format!("{} (id={}){}{} → {}",
+            narrow(name,65),narrow(id,70),source,path,narrow(outcome,270)));
     }
     if calls.len()>8{
         lines.push(format!("그 외 도구 호출 {}개 (상세 기록은 저장됨)",calls.len()-8));

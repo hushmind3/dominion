@@ -47,6 +47,9 @@ fn words(query:&str)->HashSet<String>{
         ("테스트",&["test","shell","terminal"][..]),
         ("위임",&["delegate","task"][..]),
         ("기억",&["memory","search"][..]),
+        ("원문",&["history","evidence","read"][..]),
+        ("이전",&["history","evidence"][..]),
+        ("과거",&["history","evidence"][..]),
     ] {
         if lower.contains(needle){words.extend(aliases.iter().map(|item|item.to_string()));}
     }
