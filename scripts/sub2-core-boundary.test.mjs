@@ -388,7 +388,7 @@ test('dependency aware team execution cannot parallelize delegated writers',()=>
  assert.match(p,/pub fn schedule\(/);
  assert.match(p,/cyclic team dependencies/);
  assert.match(runtime,/schedule\.requires_serial\(\)/);
- assert.match(runtime,/ordered_children/);
+ assert.match(runtime,/for wave in &schedule\.waves/);
  assert.match(ir,/dominion_agent_loop::task_team::schedule/);
 });
 
