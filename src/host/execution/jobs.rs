@@ -129,7 +129,10 @@ fn team_child_gate(state:&AppState,job:&Value)->TeamChildGate{
     use crate::features::collaboration::task_team::{self,Team};
     let id=job["id"].as_str().unwrap_or("");
     let parent=job["input"]["parentRunId"].as_str();
-    if !id.starts_with("team-child:")&&parent.is_none(){
+    if !id.starts_with("team-child:")
+        && job["input"]["teamTaskId"].as_str().is_none(){
+        // Other product job families may use parentRunId for provenance;
+        // only Task Team workers are controlled by this DAG contract.
         return TeamChildGate::Ready;
     }
     let Some(parent)=parent.filter(|value|!value.is_empty()) else{
@@ -738,6 +741,79 @@ mod tests {
         AppState::new(config, store, vault)
     }
 
+
+    fn team_fixture(state:&AppState,lead_status:&str,child_status:&str) {
+        state.store.put("job",&json!({
+            "id":"lead","kind":"team","status":lead_status,
+            "queuedAt":"2026-11-20T10:00:00Z","attempts":1,
+            "input":{"goal":"Inspect repository","maxParallel":1,
+                "tasks":[{"id":"inspect","prompt":"Read the Rust source",
+                    "mode":"read","runtime":"native"}]}
+        })).unwrap();
+        state.store.put("job",&json!({
+            "id":"team-child:lead:inspect","kind":"prompt",
+            "status":child_status,"queuedAt":"2026-11-20T10:01:00Z",
+            "attempts":1,"input":{"parentRunId":"lead",
+                "teamTaskId":"inspect","teamMode":"read",
+                "bridgeRuntime":"native","prompt":"Read the Rust source"}
+        })).unwrap();
+    }
+    #[test]
+    fn restart_reconciles_child_after_parent_cancel_without_replaying_it(){
+        let state=temp_state();
+        team_fixture(&state,"cancelled","queued");
+        recover(&state);
+        let child=state.store.get("job","team-child:lead:inspect").unwrap();
+        assert_eq!(child["status"],"cancelled");
+        assert_eq!(child["cancelRequested"],true);
+        assert_eq!(child["recoveredFromParent"],true);
+        assert!(next_queued(&state).is_none());
+    }
+    #[test]
+    fn queue_claim_waits_for_recovered_team_lead_and_then_admits_valid_child(){
+        let state=temp_state();
+        team_fixture(&state,"queued","queued");
+        assert_eq!(team_child_gate(&state,
+            &state.store.get("job","team-child:lead:inspect").unwrap()),
+            TeamChildGate::WaitingForLead);
+        let lead=next_queued(&state).expect("queued Team Lead is runnable");
+        assert_eq!(lead["id"],"lead");
+        assert_eq!(lead["status"],"running");
+        let child=next_queued(&state).expect("child admitted after parent claim");
+        assert_eq!(child["id"],"team-child:lead:inspect");
+        let context=JobContext::new(state.clone(),"team-child:lead:inspect".into());
+        assert!(context.ensure_running().is_ok());
+        state.store.patch_if("job","lead","status",&json!("running"),
+            &json!({"status":"cancelled","cancelRequested":true})).unwrap();
+        assert!(context.ensure_running().is_err(),
+            "a child detects parent cancellation without waiting for API cascade");
+        assert!(context.checkpoint(json!({"status":"completed"})).is_err());
+        reconcile_team_children(&state,&state.store.active_jobs().unwrap());
+        assert_eq!(state.store.get("job","team-child:lead:inspect").unwrap()["status"],
+            "cancelled");
+    }
+    #[test]
+    fn forged_team_child_binding_fails_closed_even_if_parent_running(){
+        let state=temp_state();
+        team_fixture(&state,"running","queued");
+        let rogue=json!({"id":"team-child:lead:wrong","kind":"prompt",
+            "status":"queued","input":{"parentRunId":"lead",
+                "teamTaskId":"inspect","teamMode":"read",
+                "bridgeRuntime":"native"}});
+        state.store.put("job",&rogue).unwrap();
+        assert!(matches!(team_child_gate(&state,&rogue),
+            TeamChildGate::Halt{status:"needs_review",..}));
+        reconcile_team_children(&state,&state.store.active_jobs().unwrap());
+        assert_eq!(state.store.get("job","team-child:lead:wrong").unwrap()["status"],
+            "needs_review");
+    }
+    #[test]
+    fn non_team_child_with_a_provenance_parent_is_unaffected(){
+        let state=temp_state();
+        let unrelated=json!({"id":"workflow-generated","kind":"prompt",
+            "status":"queued","input":{"parentRunId":"workflow-parent"}});
+        assert_eq!(team_child_gate(&state,&unrelated),TeamChildGate::Ready);
+    }
     #[test]
     fn enqueue_creates_a_queued_job() {
         let state = temp_state();
