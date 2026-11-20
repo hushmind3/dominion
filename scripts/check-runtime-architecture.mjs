@@ -48,6 +48,13 @@ for(const [owner,original,replacement] of [["src/engine/chat/runtime.rs","src/en
     throw Error('Chat product extension leaked into engine: '+original)
 }
 const boardAddonIndex=readFileSync(path.join(root,'src/addons/mod.rs'),'utf8')
+const capabilityNegotiation=readFileSync(path.join(root,'src/addons/integrations/model_capabilities.rs'),'utf8')
+const providerGateway=readFileSync(path.join(root,'src/addons/integrations/gateway.rs'),'utf8')
+const chatProvider=readFileSync(path.join(root,'src/engine/chat/provider.rs'),'utf8')
+if(!capabilityNegotiation.includes('pub fn negotiate_tool_mode(')||
+   !providerGateway.includes('pub use model_capabilities::')||
+   !chatProvider.includes('selected_route.tool_mode=crate::engine::gateway::negotiate_tool_mode('))
+  throw Error('Provider/model capability negotiation no longer gates native tool schemas')
 const board=readFileSync(path.join(root,'src/addons/integrations/room_board.rs'),'utf8')
 const rooms=readFileSync(path.join(root,'src/addons/integrations/rooms.rs'),'utf8')
 const boardRoomContext=readFileSync(path.join(root,'src/addons/integrations/chat_room_context.rs'),'utf8')

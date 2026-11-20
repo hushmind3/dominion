@@ -575,6 +575,14 @@ async fn fallback_candidates(
         .and_then(|session_id| room_route_keys(state, session_id));
     crate::engine::gateway::ordered_alternatives(state, &primary.id)
         .into_iter()
+        .filter_map(|mut route| {
+            let record=state.store.get("provider",&route.id)?;
+            crate::engine::gateway::require_streaming(
+                &record,&route.model,route.kind!="cli").ok()?;
+            route.tool_mode=crate::engine::gateway::negotiate_tool_mode(
+                &record,&route.model,&route.tool_mode,!tools.is_empty()).ok()?;
+            Some(route)
+        })
         .filter(|route| {
             room_routes.as_ref().is_none_or(|allowed| {
                 allowed.contains(&format!("{}|{}", route.id, route.model))
@@ -786,14 +794,27 @@ async fn stream_completion_once(
     // Tool order is part of the execution contract: compatibility menus may
     // use that priority when their schema budget is limited.
     let ordered_tools=tools.to_vec();
+    let mut selected_route=provider.clone();
+    if let Some(record)=state.store.get("provider",&provider.id){
+        crate::engine::gateway::require_streaming(
+            &record,&provider.model,provider.kind!="cli")?;
+        selected_route.tool_mode=crate::engine::gateway::negotiate_tool_mode(
+            &record,&provider.model,&provider.tool_mode,!ordered_tools.is_empty())?;
+        if selected_route.tool_mode!=provider.tool_mode {
+            state.store.audit("model.capability_tool_mode_negotiated",json!({
+                "providerId":provider.id,"model":provider.model,
+                "requested":provider.tool_mode,"effective":selected_route.tool_mode,
+                "executionSessionId":session_id}));
+        }
+    }
     let settings=json!({"thinking":request.thinking,"effort":request.reasoning_effort,
-        "tools":ordered_tools,"toolMode":provider.tool_mode});
-    let mut continuity=super::continuity::prepare(state,provider,request,session_id,&instructions,&settings)?;
-    let (projected, projection)=super::continuity::project(state,provider,messages,&ordered_tools,session_id,&mut continuity);
+        "tools":ordered_tools,"toolMode":selected_route.tool_mode});
+    let mut continuity=super::continuity::prepare(state,&selected_route,request,session_id,&instructions,&settings)?;
+    let (projected, projection)=super::continuity::project(state,&selected_route,messages,&ordered_tools,session_id,&mut continuity);
     let input=super::room_context::input_estimate(&projected,&ordered_tools) as u64;
     let (budget_call,output)=crate::engine::execution_budget::prepare_call(state,session_id,
         &provider.id,&provider.model,provider.local,input,provider.max_output_tokens.unwrap_or(8192))?;
-    let mut selected=provider.clone();
+    let mut selected=selected_route;
     if output<provider.max_output_tokens.unwrap_or(8192){selected.max_output_tokens=Some(output);}
     let result=stream_completion_once_body(state,client,&selected,&projected,&ordered_tools,
         request,session_id,tx,convert_native_history,&mut continuity).await;
