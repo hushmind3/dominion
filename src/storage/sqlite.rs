@@ -2245,4 +2245,50 @@ mod tests {
         let marker = json!({"id":"execution:broken","payloadHash":"hash"});
         assert!(store.finalize_once(&execution, &marker, &[], &[]).is_err());
     }
+    #[test]
+    fn room_answer_and_cursor_are_atomic_and_cannot_rewind() {
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        let owner=json!({"id":"owner","session_id":"room:a","role":"user",
+            "content":"실행","metadata":{"authorKind":"owner"}});
+        store.write_message(&owner).unwrap();
+        store.write_message(&json!({"id":"peer","session_id":"room:a",
+            "role":"assistant","agent_id":"b","content":"참고",
+            "metadata":{"authorKind":"agent"}})).unwrap();
+        let reply=|text:&str|json!({
+            "session_id":"room:a","role":"assistant","agent_id":"a",
+            "content":text,"metadata":{"authorKind":"agent","replyToMessageId":"owner"}
+        });
+        let cursor=|through:&str|json!({
+            "id":"cursor:room-a-agent-a","sessionId":"room:a",
+            "agentId":"a","sourceMessageId":"owner",
+            "throughMessageId":through,"schemaVersion":1
+        });
+        let saved=store.write_room_answer_with_cursor(&reply("ok"),&cursor("peer")).unwrap();
+        assert_eq!(saved["content"],"ok");
+        assert_eq!(store.get("room_read_cursor","cursor:room-a-agent-a").unwrap()["throughMessageId"],"peer");
+        let before=store.messages("room:a").len();
+        assert!(store.write_room_answer_with_cursor(&reply("stale"),&cursor("owner")).is_err());
+        assert_eq!(store.messages("room:a").len(),before,
+            "A stale cursor must roll back the reply, not only the cursor");
+        assert_eq!(store.get("room_read_cursor","cursor:room-a-agent-a").unwrap()["throughMessageId"],"peer");
+        let invalid=json!({"session_id":"room:foreign","role":"assistant",
+            "agent_id":"a","metadata":{"authorKind":"agent","replyToMessageId":"owner"}});
+        assert!(store.write_room_answer_with_cursor(&invalid,&cursor("peer")).is_err());
+        assert_eq!(store.messages("room:a").len(),before);
+    }
+
+    #[test]
+    fn room_cursor_acknowledgement_requires_the_actual_owner_message() {
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        store.write_message(&json!({"id":"source","session_id":"room:a",
+            "role":"user","content":"요청","metadata":{"authorKind":"agent"}})).unwrap();
+        let answer=json!({"session_id":"room:a","role":"assistant","agent_id":"a",
+            "content":"완료","metadata":{"authorKind":"agent","replyToMessageId":"source"}});
+        let cursor=json!({"id":"cursor","sessionId":"room:a","agentId":"a",
+            "sourceMessageId":"source","throughMessageId":"source"});
+        assert!(store.write_room_answer_with_cursor(&answer,&cursor).is_err());
+        assert_eq!(store.messages("room:a").len(),1);
+        assert!(store.get("room_read_cursor","cursor").is_none());
+    }
+
 }

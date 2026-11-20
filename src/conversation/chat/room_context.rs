@@ -812,6 +812,43 @@ mod tests {
     }
 
     #[test]
+    fn room_context_replays_a_bounded_unread_prefix_after_long_history() {
+        let state=state();
+        message(&state,"start","user","프로젝트 기록을 이어가자");
+        for index in 0..100 {
+            let id=format!("history-{index:03}");
+            state.store.write_message(&json!({
+                "id":id,"session_id":"room:r","role":"assistant","agent_id":"a",
+                "content":format!("기록-{index:03}"),
+                "metadata":{"authorKind":"agent"}
+            })).unwrap();
+        }
+        let cursor=crate::features::collaboration::room_cursor::checkpoint(
+            "room:r","a","start","history-049",
+        );
+        state.store.put("room_read_cursor",&cursor).unwrap();
+        message(&state,"current","user","오늘부터 작업 재개");
+        let request=TurnRequest::from_value(&json!({
+            "input":"오늘부터 작업 재개","agentId":"a","toolsEnabled":false
+        })).unwrap();
+        let view=compile(&state,&request,"room:r","current",&[],&[]).unwrap();
+        assert_eq!(view.accounting["readCursorPreviousMessageId"],"history-049");
+        assert_eq!(view.accounting["readThroughMessageId"],"history-053");
+        assert_eq!(view.accounting["roomUnreadPinned"],4);
+        assert_eq!(view.accounting["roomUnreadRemaining"],47);
+        let selected=&view.accounting["selectedMessageIds"];
+        for i in 50..54 {
+            assert!(selected.as_array().unwrap().iter()
+                .any(|id|id.as_str()==Some(format!("history-{i:03}").as_str())));
+        }
+        // No persisted cursor changes happen during compile: committing a
+        // final answer is the only operation allowed to acknowledge delivery.
+        assert_eq!(state.store.get("room_read_cursor",&cursor["id"].as_str().unwrap())
+            .unwrap()["throughMessageId"],"history-049");
+        crate::test_support::cleanup_dir(&state.config.data_dir);
+    }
+
+    #[test]
     fn committed_execution_receipts_reach_next_speaker_as_scoped_workboard() {
         let state=state();
         state.store.put("room",&json!({"id":"r","agentIds":["a"],

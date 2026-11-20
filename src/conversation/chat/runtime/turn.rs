@@ -1714,7 +1714,7 @@ pub(super) async fn run_turn_body(
         "agent_id": request.agent_id,
         "metadata": metadata,
     });
-    let saved=if is_room {
+    let saved=if is_room && room_read_through.is_some() {
         let agent=request.agent_id.as_deref().ok_or("Room answer has no agent")?;
         let source=source_message_id.ok_or("Room answer has no owner source")?;
         let through=room_read_through.as_deref()
@@ -1726,6 +1726,8 @@ pub(super) async fn run_turn_body(
         // cancelled provider turn must not consume another agent's inbox.
         state.store.write_room_answer_with_cursor(&answer,&receipt)?
     }else{
+        // Oversized unread records remain unacknowledged and available for
+        // later targeted retrieval. They must not prevent the current answer.
         state.store.write_message(&answer)
             .ok_or("최종 응답을 저장할 수 없습니다.")?
     };

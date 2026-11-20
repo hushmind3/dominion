@@ -62,7 +62,7 @@ pub(crate) fn plan(
         through_message_id:through.or_else(||previous.map(str::to_string)),
         previous_message_id:previous.map(str::to_string),
         unread_remaining:remaining,
-        oversized_first_unread:!unread.is_empty()&&chars==0,
+        oversized_first_unread:!unread.is_empty()&&required.is_empty(),
     })
 }
 pub(crate) fn checkpoint(session_id:&str,agent_id:&str,source_id:&str,through:&str)->Value {
