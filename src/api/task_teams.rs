@@ -85,6 +85,34 @@ mod tests {
     use super::*;
     use crate::{config::Config,db::Store,vault::Vault};
     #[tokio::test]
+    async fn owner_retry_requires_confirmation_and_never_reuses_prior_child_ids(){
+        let dir=std::env::temp_dir().join(format!(
+            "dominion-team-retry-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=Config{port:0,data_dir:dir.clone(),
+            web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()));
+        state.store.put("job",&json!({"id":"old-team","kind":"team",
+            "status":"needs_review","input":{"goal":"Inspect","maxParallel":1,
+                "tasks":[{"id":"read","prompt":"Check files","mode":"read"}]}})).unwrap();
+        let denied=retry_team(State(state.clone()),Path("old-team".into()),
+            Json(json!({"confirm":false}))).await;
+        assert_eq!(denied.status(),StatusCode::BAD_REQUEST);
+        let accepted=retry_team(State(state.clone()),Path("old-team".into()),
+            Json(json!({"confirm":true}))).await;
+        assert_eq!(accepted.status(),StatusCode::ACCEPTED);
+        let created=state.store.all("job").into_iter()
+            .filter(|j|j["kind"]=="team"&&j["id"]!="old-team")
+            .collect::<Vec<_>>();
+        assert_eq!(created.len(),1);
+        assert_eq!(created[0]["retryOf"],"old-team");
+        assert_eq!(created[0]["status"],"queued");
+        assert_ne!(created[0]["id"],"old-team");
+        assert!(state.store.get("job","team-child:old-team:read").is_none());
+        crate::test_support::cleanup_dir(dir);
+    }
+    #[tokio::test]
     async fn api_cancel_fences_child_before_supervisor_wakes() {
         let root=std::env::temp_dir().join(format!(
             "dominion-team-cancel-{}",uuid::Uuid::new_v4()));
@@ -136,4 +164,50 @@ pub async fn worktree_promote(
         Ok(value)=>Json(value).into_response(),
         Err(reason)=>error(StatusCode::CONFLICT,reason),
     }
+}
+
+/// Version-only detection. Does not verify login, run a model or expose keys.
+pub async fn bridges()->Json<Value>{
+    Json(crate::integrations::agent_bridge::bridge_preflight().await)
+}
+/// Explicit owner replay of a failed Team from its immutable instructions.
+/// Never forge old receipts or claim unfinished external actions succeeded.
+pub async fn retry_team(
+    State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>,
+)->Response{
+    if body["confirm"]!=true {
+        return error(StatusCode::BAD_REQUEST,
+            "Owner confirmation required: replay starts a new Team and may incur model costs");
+    }
+    let Some(old)=state.store.get("job",&id)
+        .filter(|job|job["kind"]=="team") else{
+        return error(StatusCode::NOT_FOUND,"Task Team not found");
+    };
+    if !matches!(old["status"].as_str(),
+        Some("failed"|"interrupted"|"needs_review")){
+        return error(StatusCode::CONFLICT,
+            "Only failed/interrupted/review-needed Teams can be replayed");
+    }
+    let team=match Team::parse(&old["input"]){
+        Ok(team)=>team,Err(error)=>return error(StatusCode::CONFLICT,error),
+    };
+    // Each worker receives a new parent-scoped ID; no old native receipts or
+    // uncertain prior external session are copied into the new run.
+    let input=serde_json::to_value(team).expect("validated Team roundtrip");
+    let Some(new_job)=engine::jobs::enqueue(&state,"team",input) else{
+        return error(StatusCode::INTERNAL_SERVER_ERROR,"Could not enqueue a new Team");
+    };
+    let Some(new_id)=new_job["id"].as_str() else{
+        return error(StatusCode::INTERNAL_SERVER_ERROR,"New Team ID missing");
+    };
+    let _=state.store.patch_if("job",new_id,"id",&json!(new_id),
+        &json!({"retryOf":id,"retryRequestedAt":chrono::Utc::now().to_rfc3339()}));
+    state.store.audit("team.owner_retry",json!({
+        "previousTeamId":id,"nextTeamId":new_id,"freshRun":true
+    }));
+    (StatusCode::ACCEPTED,Json(json!({
+        "newTeamId":new_id,"retryOf":id,"freshRun":true,
+        "automatic":false,"status":"queued",
+        "team":task_team::project(&state,&new_job)
+    }))).into_response()
 }
