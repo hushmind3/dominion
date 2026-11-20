@@ -547,9 +547,34 @@ pub fn record_usage_tokens(
     total_tokens: u64,
     estimated: bool,
 ) {
+    record_usage_tokens_with_cache(
+        state, provider_id, model, local, purpose, session_id,
+        prompt_tokens, completion_tokens, total_tokens, estimated, None,
+    );
+}
+
+/// Durable per-call cache accounting for the session total shown in Chat.
+/// A missing provider cache field remains unknown, never a fabricated miss.
+#[allow(clippy::too_many_arguments)]
+pub fn record_usage_tokens_with_cache(
+    state: &AppState,
+    provider_id: &str,
+    model: &str,
+    local: bool,
+    purpose: &str,
+    session_id: Option<&str>,
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    total_tokens: u64,
+    estimated: bool,
+    cached_prompt_tokens: Option<u64>,
+) {
     if total_tokens == 0 {
         return;
     }
+    let cached = if estimated { None } else {
+        cached_prompt_tokens.map(|tokens|tokens.min(prompt_tokens))
+    };
     state.store.audit(
         "model.usage",
         json!({
@@ -559,6 +584,7 @@ pub fn record_usage_tokens(
             "purpose": purpose,
             "sessionId": session_id,
             "promptTokens": prompt_tokens,
+            "cachedPromptTokens": cached,
             "completionTokens": completion_tokens,
             "totalTokens": total_tokens,
             "estimated": estimated,

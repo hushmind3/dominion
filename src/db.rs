@@ -1387,7 +1387,15 @@ impl Store {
                     COALESCE(SUM(CAST(json_extract(detail,'$.promptTokens') AS INTEGER)),0),
                     COALESCE(SUM(CAST(json_extract(detail,'$.completionTokens') AS INTEGER)),0),
                     COALESCE(SUM(CAST(json_extract(detail,'$.totalTokens') AS INTEGER)),0),
-                    COALESCE(SUM(CASE WHEN json_extract(detail,'$.estimated')=1 THEN 1 ELSE 0 END),0)
+                    COALESCE(SUM(CASE WHEN json_extract(detail,'$.estimated')=1 THEN 1 ELSE 0 END),0),
+                    COALESCE(SUM(CASE WHEN json_type(detail,'$.cachedPromptTokens')='integer'
+                        THEN CAST(json_extract(detail,'$.cachedPromptTokens') AS INTEGER) ELSE 0 END),0),
+                    COALESCE(SUM(CASE WHEN json_type(detail,'$.cachedPromptTokens')='integer'
+                        THEN 1 ELSE 0 END),0),
+                    COALESCE(SUM(CASE WHEN json_type(detail,'$.cachedPromptTokens')='integer'
+                        THEN CAST(json_extract(detail,'$.promptTokens') AS INTEGER)
+                             - CAST(json_extract(detail,'$.cachedPromptTokens') AS INTEGER)
+                        ELSE 0 END),0)
              FROM audit
              WHERE event='model.usage' AND json_extract(detail,'$.sessionId')=?1",
             [session_id],
@@ -1398,19 +1406,28 @@ impl Store {
                     row.get::<_, i64>(2)?,
                     row.get::<_, i64>(3)?,
                     row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, i64>(7)?,
                 ))
             },
         );
         match summary {
-            Ok((calls, prompt, completion, total, estimated)) => json!({
+            Ok((calls, prompt, completion, total, estimated, cached, reported, new_known)) => json!({
                 "calls": calls.max(0),
                 "promptTokens": prompt.max(0),
                 "completionTokens": completion.max(0),
                 "totalTokens": total.max(0),
                 "estimatedCalls": estimated.max(0),
+                "cachedPromptTokensKnown": cached.max(0),
+                "newPromptTokensKnown": new_known.max(0),
+                "cacheReportedCalls": reported.max(0),
+                "cacheUnknownCalls": (calls-reported).max(0),
             }),
             Err(_) => json!({
-                "calls":0,"promptTokens":0,"completionTokens":0,"totalTokens":0,"estimatedCalls":0
+                "calls":0,"promptTokens":0,"completionTokens":0,"totalTokens":0,
+                "estimatedCalls":0,"cachedPromptTokensKnown":0,"newPromptTokensKnown":0,
+                "cacheReportedCalls":0,"cacheUnknownCalls":0,
             }),
         }
     }
@@ -1752,6 +1769,31 @@ mod tests {
         assert_eq!(groups[0]["providerId"], "p1");
         assert_eq!(groups[0]["calls"], 2);
         assert_eq!(groups[1]["estimatedCalls"], 0);
+    }
+
+    #[test]
+    fn session_usage_shows_model_call_amplification_and_unknown_cache_honestly() {
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        for (session, prompt, cached) in [
+            ("few-turns",57_000,Some(56_000)),
+            ("few-turns",57_000,Some(56_000)),
+            ("few-turns",57_000,None),
+            ("different-session",99_999,Some(90_000)),
+        ] {
+            store.audit("model.usage",json!({
+                "sessionId":session,"promptTokens":prompt,"completionTokens":250,
+                "totalTokens":prompt+250,"cachedPromptTokens":cached,
+            }));
+        }
+        let result=store.session_usage("few-turns");
+        assert_eq!(result["calls"],3);
+        assert_eq!(result["totalTokens"],171_750);
+        assert_eq!(result["promptTokens"],171_000);
+        assert_eq!(result["cachedPromptTokensKnown"],112_000);
+        assert_eq!(result["newPromptTokensKnown"],2_000);
+        assert_eq!(result["cacheReportedCalls"],2);
+        assert_eq!(result["cacheUnknownCalls"],1,
+            "older calls without cache telemetry must not be reported as misses");
     }
 
     #[test]
