@@ -8,10 +8,15 @@ const meta=JSON.parse(execFileSync('cargo',['metadata','--format-version','1','-
 const members=meta.packages.filter(pkg=>meta.workspace_members.includes(pkg.id))
 const product=members.find(pkg=>pkg.name==='dominion-rust')
 const core=members.find(pkg=>pkg.name==='dominion-core')
-if(!product||!core)throw Error('Missing product/native core workspace member')
+const algorithms=members.find(pkg=>pkg.name==='dominion-algorithms')
+if(!product||!core||!algorithms)throw Error('Missing product/native core/algorithm workspace member')
 for(const pkg of members)if(!existsSync(pkg.manifest_path))throw Error('Missing manifest: '+pkg.manifest_path)
-if(!product.dependencies.some(dep=>dep.name===core.name&&dep.path===path.dirname(core.manifest_path)))
-  throw Error('Product must embed the Rust native execution core')
+if(!product.dependencies.some(dep=>dep.name===core.name&&dep.path===path.dirname(core.manifest_path))||
+   !product.dependencies.some(dep=>dep.name===algorithms.name&&dep.path===path.dirname(algorithms.manifest_path)))
+  throw Error('Product gateway must compose core and algorithms')
+if(!algorithms.dependencies.some(dep=>dep.name===core.name&&dep.path===path.dirname(core.manifest_path))||
+   core.dependencies.some(dep=>dep.name===algorithms.name))
+  throw Error('Algorithm dependency must point towards core, never backwards')
 // Keep real-process E2E contracts focused while preventing a silent loss
 // of the original cases during test refactors.
 const e2eModules=['room_identity','room_collaboration','run_recovery',
@@ -70,7 +75,16 @@ for(const file of ['src/engine/chat/runtime.rs','src/addons/integrations/chat_pr
 }
 
 const outcome=readFileSync(path.join(root,'src/engine/chat/outcome.rs'),'utf8')
-const driver=readFileSync(path.join(root,'crates/dominion-core/src/engine.rs'),'utf8')
+const driver=readFileSync(path.join(root,'crates/dominion-algorithms/src/engine.rs'),'utf8')
+const nativePort=readFileSync(path.join(root,'crates/dominion-core/src/runtime_port.rs'),'utf8')
+const coreLib=readFileSync(path.join(root,'crates/dominion-core/src/lib.rs'),'utf8')
+if(coreLib.includes('pub mod engine;')||
+   !coreLib.includes('pub mod runtime_port;')||
+   nativePort.includes('pub struct Engine;')||
+   !nativePort.includes('pub trait Host: Send')||
+   !driver.includes('pub async fn drive<H: Host>')||
+   !driver.includes('dominion_core::runtime_port::'))
+  throw Error('Agent iteration logic leaked into core or algorithm crate missing')
 const modules=readFileSync(path.join(root,'src/engine/mod.rs'),'utf8')
 const allowedExecutionModules=new Set(["effect","chat","capability","verification","recovery","lease","llm","policy","router","run_state","tools","execution_budget","sandbox","workspace_scope"])
 const declaredExecutionModules=[...modules.matchAll(/^pub mod ([a-z_]+);$/gm)].map(m=>m[1])
@@ -122,7 +136,7 @@ if(!quietTurn||quietTurn.includes('run_quiet_with_stats(')||
    !quietTurn.includes('chat::run_turn_background(')||
    !quietTurn.includes('drain_quiet_events(receiver)'))
   throw Error('Quiet background turns must drain events without collecting discarded tool evidence')
-if(!runtime.includes('dominion_core::engine::Engine::drive('))throw Error('Native driver must run product turns')
+if(!runtime.includes('dominion_algorithms::engine::Engine::drive('))throw Error('Native driver must run product turns')
 if(!outcome.includes('pub(super) fn determine_task_outcome(')||!runtime.includes('mod outcome;'))
   throw Error('Outcome policy must remain independently verifiable')
 if(/while\s+!\s*(?:self\.)?finished/.test(runtime+adapter))throw Error('Legacy model retry loop reintroduced')
@@ -218,7 +232,7 @@ if(!helperSource.includes('mod receipts;')||
    !store.includes('idx_aux_model_call_execution'))
   throw Error('Execution cost accounting no longer includes auxiliary upstream retries')
 if(!sdkApi.includes('engine::run_quiet(&state,&request).await')||
-   !runtime.includes('dominion_core::engine::Engine::drive(')||
+   !runtime.includes('dominion_algorithms::engine::Engine::drive(')||
    !sdkApi.includes('record["modelAccounting"]=run["modelAccounting"].clone()'))
   throw Error('SDK/chat execution or cost semantics diverged from common Rust core')
 

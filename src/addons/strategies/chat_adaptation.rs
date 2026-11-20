@@ -141,7 +141,7 @@ pub(super) async fn attempt_model_adaptation(
         }
         let mut native=load_native_checkpoint(state,execution_id,&request.input)?;
         let journal=ChatKernelJournal{state,execution_id,session_id,generation:state.cancellation_generation(session_id)};
-        let raw = dominion_core::engine::model_call(&mut native,&journal,"adaptation",
+        let raw = dominion_algorithms::engine::model_call(&mut native,&journal,"adaptation",
             llm::complete_for_execution(state,&provider_id,&model,&system,&attempt_prompt,
                 Some(session_id),execution_id,"adaptation"))
             .await??;
@@ -320,7 +320,7 @@ pub(super) async fn attempt_model_adaptation(
             state, execution_id, session_id,
             generation: state.cancellation_generation(session_id),
         };
-        let proposed = dominion_core::engine::model_call(
+        let proposed = dominion_algorithms::engine::model_call(
             &mut native, &journal, "adaptation_compose",
             llm::complete_for_execution(
                 state, &provider_id, &model, compose_system,

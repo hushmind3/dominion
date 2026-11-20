@@ -1,7 +1,7 @@
 //! Phase-local adapters for SQLite, streaming transports and existing product policies.
 //! The native core calls these phases; this module has no model/tool retry loop.
 use super::*;
-use dominion_core::engine::{Context, Flow, Host, ModelDecision};
+use dominion_algorithms::engine::{Context, Flow, Host, ModelDecision};
 use dominion_core::hosted::BoxFuture;
 
 pub(super) struct MainTurn<'a> {
@@ -747,7 +747,7 @@ impl Host for MainTurn<'_> {
                             counters.model_calls+=1;
                             counters.auxiliary_calls+=1;
                         }
-                        dominion_core::engine::model_call(
+                        dominion_algorithms::engine::model_call(
                             &mut ctx.snapshot,
                             ctx.journal,
                             "acceptance_review",

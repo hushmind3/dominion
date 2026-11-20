@@ -1,5 +1,5 @@
 use super::*;
-use crate::hosted::{self, Action, DispatchResult, Dispatcher};
+use dominion_core::hosted::{self, Action, DispatchResult, Dispatcher};
 use std::{
     collections::VecDeque,
     sync::{
@@ -296,12 +296,12 @@ async fn kernel_never_reconciles_an_uncertain_tool_intent() {
     host.reconcile_on_receipt = true;
     {
         let mut stored = host.store.saved.lock().unwrap();
-        stored.native.in_flight = Some(crate::domain::ToolCall {
+        stored.native.in_flight = Some(dominion_core::domain::ToolCall {
             id: "uncertain".into(),
             name: "workspace_write".into(),
             arguments: json!({"path":"x"}),
         });
-        stored.receipts.push(crate::hosted::Receipt {
+        stored.receipts.push(dominion_core::hosted::Receipt {
             id: "earlier".into(),
             tool: "workspace_write".into(),
             arguments: json!({"path":"x"}),
