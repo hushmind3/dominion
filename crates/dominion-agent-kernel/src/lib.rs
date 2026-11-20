@@ -7,6 +7,7 @@ mod cycle;
 pub mod verification;
 pub mod failure;
 pub mod scheduling;
+pub mod decision_policy;
 pub use budget::BudgetLedger;
 pub use cycle::{Cycle, Observation, Assessment};
 

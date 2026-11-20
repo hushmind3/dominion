@@ -107,6 +107,8 @@ pub mod distill;
 pub mod agent_growth;
 #[path = "services/decision/algorithms.rs"]
 pub mod algorithms;
+#[path = "services/decision/turn_policy.rs"]
+pub mod turn_policy;
 #[path = "services/decision/decompose.rs"]
 pub mod decompose;
 #[path = "services/decision/debate.rs"]
