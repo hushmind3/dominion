@@ -159,7 +159,7 @@ where
                         "oversize"
                     ])
                 );
-                state.store.put("channel_outbox",&json!({"id":id,"bindingId":config["id"],"messageId":message["id"],"status":"needs_review","error":"20개 조각을 초과하여 전송하지 않았습니다. 전체 원문은 공용 대화에 보관했습니다."})).ok_or("대용량 전송 검토 상태를 저장할 수 없습니다.")?;
+                state.store.put("channel_outbox",&json!({"id":id,"bindingId":config["id"],"messageId":message["id"],"status":"needs_review","error":"20개 조각을 초과하여 전송하지 않았습니다. 전체 원문은 공용 대화에 보관했습니다.","errorAt":chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos,true)})).ok_or("대용량 전송 검토 상태를 저장할 수 없습니다.")?;
                 state.store.put("bridge_cursor",&json!({"id":cursor_id,"lastMessageId":message["id"],"sessionId":session_id})).ok_or("전송 위치를 저장할 수 없습니다.")?;
                 continue;
             }
@@ -183,6 +183,7 @@ where
                     "sending" => {
                         record["status"] = json!("needs_review");
                         record["error"]=json!("전송 중 중단되어 실제 전송 여부를 확인해야 합니다. 자동 재전송하지 않습니다.");
+                        record["errorAt"]=json!(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos,true));
                         state
                             .store
                             .put("channel_outbox", &record)
@@ -209,6 +210,7 @@ where
                                 "전송 결과 메시지 ID가 없어 실제 전송 여부를 확인해야 합니다. 자동 재전송하지 않습니다."
                             );
                             record["finishedAt"] = json!(chrono::Utc::now().to_rfc3339());
+                            record["errorAt"] = json!(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos,true));
                             let saved = state
                                 .store
                                 .put("channel_outbox", &record)
@@ -228,6 +230,7 @@ where
                     Err(error) => {
                         record["status"] = json!("needs_review");
                         record["error"] = json!(error);
+                        record["errorAt"] = json!(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos,true));
                     }
                 }
                 let saved = state

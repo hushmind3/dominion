@@ -349,7 +349,7 @@ mod tests {
         ] {
             state.store.put("channel_outbox",&json!({
                 "id":id,"bindingId":binding,"status":status,
-                "error":error,"updatedAt":date
+                "error":error,"errorAt":date
             })).unwrap();
         }
         let values=list(State(state.clone())).await.0;
@@ -475,8 +475,10 @@ fn public_channel_with_delivery(state:&AppState,record:&Value,outbox:&[Value])->
     // first record returned by SQLite. The durable outbox remains untouched.
     let last_error=outbox.iter().filter(|item|item["status"]=="needs_review")
         .max_by(|a,b|{
-            let when_a=a["updatedAt"].as_str().or_else(||a["createdAt"].as_str()).unwrap_or("");
-            let when_b=b["updatedAt"].as_str().or_else(||b["createdAt"].as_str()).unwrap_or("");
+            let when_a=a["errorAt"].as_str().or_else(||a["updatedAt"].as_str())
+                .or_else(||a["createdAt"].as_str()).unwrap_or("");
+            let when_b=b["errorAt"].as_str().or_else(||b["updatedAt"].as_str())
+                .or_else(||b["createdAt"].as_str()).unwrap_or("");
             when_a.cmp(when_b)
         }).and_then(|item|item.get("error")).cloned();
     public["delivery"] = json!({
