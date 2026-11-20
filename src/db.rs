@@ -263,6 +263,9 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_running_operation
                  ON records(json_extract(data,'$.status'))
                  WHERE kind='execution_operation';
+             CREATE INDEX IF NOT EXISTS idx_running_external_agent
+                 ON records(json_extract(data,'$.status'))
+                 WHERE kind='external_agent_run';
              CREATE INDEX IF NOT EXISTS idx_sdk_execution_session
                  ON records(json_extract(data,'$.sessionId'),json_extract(data,'$.startedAt') DESC)
                  WHERE kind='execution';
@@ -399,6 +402,8 @@ impl Store {
                 WHERE kind='execution' AND json_extract(data,'$.status')='running'",
             "execution_operation" => "SELECT data,id,created_at,updated_at FROM records
                 WHERE kind='execution_operation' AND json_extract(data,'$.status')='running'",
+            "external_agent_run" => "SELECT data,id,created_at,updated_at FROM records
+                WHERE kind='external_agent_run' AND json_extract(data,'$.status')='running'",
             _ => return Err(format!("unsupported recovery kind: {kind}")),
         };
         let conn = self.conn.lock().map_err(|error| error.to_string())?;
