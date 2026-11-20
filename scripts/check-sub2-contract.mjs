@@ -14,6 +14,14 @@ const retired=[
   'src/api/rsi.rs','src/api/video.rs','src/engine/goal_control.rs',
   'web/src/pages/Video.tsx','web/src/pages/SelfImprovement.tsx',
   'rsi/evaluations','benchmark/rsi-evidence',
+  // Obsolete documentation that incorrectly advertised the withdrawn APIs.
+  'docs/SUB2-RUNTIME-VIDEO-2026-11-15.md',
+  'docs/SUB2-VIDEO-CANCEL-CHECKPOINT-2026-11-16.md',
+  'docs/SUB2-VIDEO-POSTPRODUCTION-2026-11-16.md',
+  'docs/SUB2-LEAN-CUTOVER-2026-11-16.md',
+  'docs/SUB2-LEAN-CUTOVER-2026-11-17.md',
+  'docs/SUB2-SDK-VIDEO-ARCHIVE.md',
+  'docs/SUB2-SOURCE-AUDIT-2026-11-18.md',
 ];
 for(const path of retired)expect(!existsSync(join(root,path)),`retired path remains: ${path}`);
 const codePaths=[];
@@ -85,6 +93,14 @@ expect(app.includes("from './refreshEvents'"),'App is not wired to main refresh 
 expect(!/MoneyPage|page==='money'/.test(app),'Money page still mounted');
 const oauth=source('src/api/cli_oauth.rs');
 expect(oauth.includes('import_cli_github'),'GitHub CLI UI has no backend handler');
+// The public documentation index is the entrypoint to current contracts.
+// Check actual relative paths rather than trusting outdated markdown tables.
+const docsIndex=source('docs/INDEX.md');
+for(const [,linked] of docsIndex.matchAll(/\]\(([^)#]+)(?:#[^)]+)?\)/g)){
+  if(/^(?:https?:|mailto:|#)/i.test(linked))continue;
+  const path=decodeURIComponent(linked);
+  expect(existsSync(resolve(root,'docs',path)),`broken current documentation link: ${path}`);
+}
 if(errors.length){
   console.error(`DOMINION sub2 contract gate failed (${errors.length}):`);
   for(const issue of errors)console.error(` - ${issue}`);
