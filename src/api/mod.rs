@@ -294,7 +294,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/video/status", get(video::status))
         .route("/api/video/config", get(video::get_config))
         .route("/api/video/outputs", get(video::outputs_handler))
-        .route("/api/video/files", get(video::files))
+        .route("/api/video/files", get(video::outputs_handler))
         .route("/api/video/jobs/:id", get(video::job))
         .route("/api/video/jobs", get(video::list_jobs))
         .route("/api/video/jobs/:id/content", get(video::content))
