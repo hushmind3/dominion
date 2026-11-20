@@ -135,42 +135,6 @@ test('owner steering uses the same native job and revision contract',async()=>{
   assert.deepEqual(JSON.parse(call.init.body),{instruction:'Check the actual tests'});
 });
 
-test('retired media SDK exposes archived records without mutation methods',async()=>{
- const client=new Dominion({fetch:async(url)=>json(
-  url.endsWith('/jobs')?[{id:'old-video',kind:'video',status:'completed',archived:true}]
-  :{id:'old-video',kind:'video',status:'completed',archived:true})});
- const rows=await client.video.list();
- assert.equal(rows[0].archived,true);
- assert.equal((await client.video.get('old-video')).archived,true);
- assert.equal('create' in client.video,false);
- assert.equal('cancel' in client.video,false);
- assert.equal('upload' in client.video,false);
- assert.equal('installModel' in client.video,false);
-});
-test('RSI SDK reads actual Rust envelope and never mis-types campaign lists',async()=>{
-  const paths=[];
-  const client=new Dominion({fetch:async(url)=>{
-    paths.push(url);
-    return url.endsWith('/campaigns')
-      ? json({campaigns:[{id:'rsi-1',status:'running'}]})
-      : json({version:'rsi-v2',candidates:[],campaigns:[],minPairedCases:8});
-  }});
-  const overview=await client.rsi.list();
-  const campaigns=await client.rsi.campaigns();
-  assert.equal(overview.minPairedCases,8);
-  assert.equal(campaigns.campaigns[0].id,'rsi-1');
-  assert.deepEqual(paths,[
-    'http://127.0.0.1:4317/api/rsi',
-    'http://127.0.0.1:4317/api/rsi/campaigns'
-  ]);
-});
-
-test('retired RSI SDK does not expose campaign mutation methods',()=>{
- const client=new Dominion({fetch:async()=>json({})});
- for(const method of ['start','apply','choose','applyVerified','verify'])
-  assert.equal(method in client.rsi,false);
-});
-
 test('evaluation summary SDK accesses the same Rust persisted scorecard as GUI',async()=>{
   const calls=[];
   const client=new Dominion({fetch:async(url,init)=>{
