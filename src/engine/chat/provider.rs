@@ -1133,7 +1133,7 @@ async fn stream_completion_once_body(
     } else {
         prompt_tokens + completion_tokens
     };
-    crate::engine::gateway::record_usage_tokens(
+    crate::engine::gateway::record_usage_tokens_with_cache(
         state,
         &provider.id,
         &provider.model,
@@ -1143,6 +1143,8 @@ async fn stream_completion_once_body(
         prompt_tokens,
         completion_tokens,
         total_tokens,
+        completion.cached_prompt_tokens,
+        None,
         !completion.usage_exact,
     );
     Ok(completion)
@@ -1534,7 +1536,7 @@ async fn stream_codex_once(
             let mut completion = outcome.completion;
             fill_estimated_usage(messages,tools,&mut completion);
             continuity["incrementalTransport"] = outcome.transport;
-            crate::engine::gateway::record_usage_tokens(
+            crate::engine::gateway::record_usage_tokens_with_cache(
                 state,
                 &provider.id,
                 &provider.model,
@@ -1544,6 +1546,8 @@ async fn stream_codex_once(
                 completion.prompt_tokens,
                 completion.completion_tokens,
                 completion.usage,
+                completion.cached_prompt_tokens,
+                None,
                 !completion.usage_exact,
             );
             return Ok(completion);
@@ -1699,7 +1703,7 @@ async fn stream_codex_once(
         return Err("Codex 스트림이 완료 신호 없이 종료되었습니다.".into());
     }
     fill_estimated_usage(messages,tools,&mut completion);
-    crate::engine::gateway::record_usage_tokens(
+    crate::engine::gateway::record_usage_tokens_with_cache(
         state,
         &provider.id,
         &provider.model,
@@ -1709,6 +1713,8 @@ async fn stream_codex_once(
         completion.prompt_tokens,
         completion.completion_tokens,
         completion.usage,
+        completion.cached_prompt_tokens,
+        None,
         !completion.usage_exact,
     );
     Ok(completion)
@@ -1799,6 +1805,7 @@ async fn stream_anthropic_once(
     let mut cache_read_tokens = 0u64;
     let mut cache_read_reported = false;
     let mut cache_write_tokens = 0u64;
+    let mut cache_write_reported = false;
     let mut output_tokens = 0u64;
 
     'stream: while let Some(chunk) = stream.next().await {
@@ -1825,6 +1832,7 @@ async fn stream_anthropic_once(
                     input_tokens = piece["message"]["usage"]["input_tokens"].as_u64().unwrap_or(0);
                     cache_read_reported = piece["message"]["usage"]["cache_read_input_tokens"].as_u64().is_some();
                     cache_read_tokens = piece["message"]["usage"]["cache_read_input_tokens"].as_u64().unwrap_or(0);
+                    cache_write_reported = piece["message"]["usage"]["cache_creation_input_tokens"].as_u64().is_some();
                     cache_write_tokens = piece["message"]["usage"]["cache_creation_input_tokens"].as_u64().unwrap_or(0);
                 }
                 "content_block_start" => {
@@ -1933,7 +1941,7 @@ async fn stream_anthropic_once(
     completion.usage = completion.prompt_tokens + output_tokens;
     completion.usage_exact = input_reported&&output_reported;
     fill_estimated_usage(messages,&tools,&mut completion);
-    crate::engine::gateway::record_usage_tokens(
+    crate::engine::gateway::record_usage_tokens_with_cache(
         state,
         &provider.id,
         &provider.model,
@@ -1943,6 +1951,8 @@ async fn stream_anthropic_once(
         completion.prompt_tokens,
         completion.completion_tokens,
         completion.usage,
+        completion.cached_prompt_tokens,
+        cache_write_reported.then_some(cache_write_tokens),
         !completion.usage_exact,
     );
     Ok(completion)
