@@ -10,13 +10,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 
 pub async fn youtube_uploads(State(state): State<AppState>) -> Json<Value> {
-    let mut uploads = state
-        .store
-        .all("job")
-        .iter()
-        .filter(|job| job["kind"] == "youtube_upload")
-        .map(crate::api::video::public_job)
-        .collect::<Vec<_>>();
+    let mut uploads = crate::api::video::archived_jobs(&state,Some("youtube_upload"),false);
     uploads.sort_by(|a, b| {
         b["createdAt"]
             .as_str()
@@ -32,7 +26,7 @@ pub async fn youtube_status(State(state): State<AppState>) -> Json<Value> {
         .find(|p| p["id"] == "youtube")
         .unwrap_or(json!({}));
     Json(
-        json!({"connected":connection["connected"],"uploadAllowed":false,"archiveOnly":true,"replacement":"MCP/Connections","account":connection["account"],"uploads":state.store.all("job").iter().filter(|j|j["kind"]=="youtube_upload").map(crate::api::video::public_job).collect::<Vec<_>>(),"channel":null}),
+        json!({"connected":connection["connected"],"uploadAllowed":false,"archiveOnly":true,"replacement":"MCP/Connections","account":connection["account"],"uploads":crate::api::video::archived_jobs(&state,Some("youtube_upload"),false),"channel":null}),
     )
 }
 
