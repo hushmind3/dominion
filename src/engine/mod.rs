@@ -1,3 +1,8 @@
+//! Single Rust agent runtime; transport integrations are optional leaves.
+pub mod addons;
+// Preserve established paths for the runtime and SDK while addon implementations
+// live outside the execution kernel. No adapter owns approvals or receipts.
+pub use addons::{browser,channel_adapter,discord,github_work,google_work,mcp,telegram};
 pub mod autonomy;
 pub mod execution_scope;
 pub mod agent_kernel;
@@ -11,13 +16,10 @@ pub mod attachments;
 pub mod backup_keys;
 pub mod bridge;
 pub mod chat;
-pub mod browser;
 pub mod compact;
-pub mod channel_adapter;
 pub mod decompose;
 pub mod debate;
 pub mod dev;
-pub mod discord;
 pub mod adaptation;
 pub mod episode;
 pub mod experience;
@@ -26,8 +28,6 @@ pub mod program;
 pub mod verification;
 pub mod reflect;
 pub mod gateway;
-pub mod github_work;
-pub mod google_work;
 pub mod cli_accounts;
 pub mod model_cost;
 pub mod resource_lock;
@@ -42,7 +42,6 @@ pub mod jobs;
 pub mod learning;
 pub mod lease;
 pub mod llm;
-pub mod mcp;
 pub mod maintenance;
 pub mod memory;
 pub mod models;
@@ -61,7 +60,6 @@ pub mod room_knowledge;
 pub mod room_state;
 pub mod run_state;
 pub mod skills;
-pub mod telegram;
 pub mod tools;
 pub mod unsafe_audit;
 pub mod vault_rotation;
