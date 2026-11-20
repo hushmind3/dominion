@@ -64,14 +64,18 @@ node scripts/check-release-contract.mjs
 node scripts/build-desktop.mjs
 ```
 
+코어와 알고리즘은 [분리 계약](docs/CORE-ALGORITHM-BOUNDARY-2026.md)에 따라
+연결합니다. 코어에는 실행 인터페이스만, 계획·도구 선택·작업 분해 정책은 부가기능에 둡니다.
+
 ## 코드 구조
 
 | 계층 | 실제 코드 |
 | --- | --- |
 | 실행 커널·효과 영수증 | [dominion-core](crates/dominion-core/src/engine.rs), [저널](crates/dominion-core/src/journal.rs) |
+| 코어/알고리즘 인터페이스 | [TurnStrategyPort](crates/dominion-core/src/strategy.rs), [호스트 조립](src/addons/runtime_hooks.rs), [교체형 알고리즘](src/addons/strategies/turn_policy.rs) |
 | 실행·도구 승인 | [채팅 실행기](src/engine/chat/runtime.rs), [도구 게이트웨이](src/engine/chat/runtime/tool_dispatch.rs) |
 | 개인 대화 문맥 | [Context Engine](src/engine/chat/context_engine.rs), [문맥 연속성](src/engine/chat/continuity.rs) |
-| 방·기억·연속성 | [그룹 방](src/engine/rooms.rs), [문맥 구성](src/engine/chat/room_context.rs), [연속성](src/engine/chat/continuity.rs) |
+| 방·기억·연속성 | [그룹 방](src/addons/integrations/rooms.rs), [문맥 구성](src/addons/integrations/chat_room_context.rs), [연속성](src/engine/chat/continuity.rs) |
 | HTTP·영속 저장 | [API 라우터](src/api/mod.rs), [SQLite](src/db.rs) |
 | 화면 | [React 앱](web/src/App.tsx), [메뉴](web/src/components/WorkspaceShell.tsx) |
 | 설치 프로그램 | [Tauri 설정](src-tauri/tauri.conf.json), [빌드 스크립트](scripts/build-desktop.mjs) |
@@ -116,7 +120,7 @@ MCP 검색 후 도구를 호출하는 경우에도 현재 스키마와 실행·�
 
 도미니언의 **Rust 실행 커널**은 대화 원문·실행 저널·모델 호출·권한·검증을 담당합니다.
 MCP 서버·장기기억·스킬·메신저/채널은
-[별도 부가기능 호스트](src/engine/extensions/mod.rs)를 통해 필요할 때만 연결됩니다.
+[별도 부가기능 호스트](src/addons/integrations/extensions/mod.rs)를 통해 필요할 때만 연결됩니다.
 검색 가능한 도구 목록뿐 아니라 **실제 도구 실행 시점에도 부가기능 허용 여부를 다시 확인**합니다.
 메모리 기능을 꺼도 대화 원문은 삭제되지 않으며, 메신저 기능을 꺼도 일반 채팅은 동작합니다.
 기존 프론트 메뉴는 변경하지 않았습니다.

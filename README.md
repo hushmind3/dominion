@@ -70,14 +70,18 @@ node scripts/build-desktop.mjs
 The release workflow runs full macOS/Windows build and test jobs on version
 changes, explicit dispatch or a version tag.
 
+See the [core / algorithm separation contract](docs/CORE-ALGORITHM-BOUNDARY-2026.md) for
+the provider-independent strategy port, optional decisions and ownership rules.
+
 ## System map
 
 | Layer | Implementation |
 | --- | --- |
 | Core execution and durable effects | [dominion-core](crates/dominion-core/src/engine.rs), [effect journal](crates/dominion-core/src/journal.rs) |
+| Algorithm/host contract | [TurnStrategyPort](crates/dominion-core/src/strategy.rs), [product composition](src/addons/runtime_hooks.rs), [replaceable decisions](src/addons/strategies/turn_policy.rs) |
 | Agent orchestration and tool admission | [chat runtime](src/engine/chat/runtime.rs), [native gateway](src/engine/chat/runtime/tool_dispatch.rs) |
 | Private-chat context compilation | [Context Engine](src/engine/chat/context_engine.rs), [continuity](src/engine/chat/continuity.rs) |
-| Group state, memory and provider continuity | [rooms](src/engine/rooms.rs), [room context](src/engine/chat/room_context.rs), [continuity](src/engine/chat/continuity.rs) |
+| Group state, memory and provider continuity | [rooms](src/addons/integrations/rooms.rs), [room context](src/addons/integrations/chat_room_context.rs), [continuity](src/engine/chat/continuity.rs) |
 | Local API, durable records | [HTTP router](src/api/mod.rs), [SQLite store](src/db.rs) |
 | React interface | [App](web/src/App.tsx), [workspace shell](web/src/components/WorkspaceShell.tsx) |
 | Native desktop | [Tauri configuration](src-tauri/tauri.conf.json), [build script](scripts/build-desktop.mjs) |
@@ -127,7 +131,7 @@ billed-token or price-reduction claim. See the
 The native Rust kernel owns session history, execution/checkpoint journals,
 model calls, approval and verification. MCP servers, long-term memory,
 skills and messaging channels are integrated only through the
-[backend extension host](src/engine/extensions/mod.rs), with fresh tool-call
+[backend extension host](src/addons/integrations/extensions/mod.rs), with fresh tool-call
 admission after discovery. Disabling memory never deletes session transcripts;
 disabling channels does not disable normal chat. No frontend navigation changes.
 

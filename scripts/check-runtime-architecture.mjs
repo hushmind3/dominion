@@ -82,6 +82,8 @@ const strategyPort=readFileSync(path.join(root,'crates/dominion-core/src/strateg
 const strategyOwner=readFileSync(path.join(root,'src/addons/strategies/turn_policy.rs'),'utf8')
 if(!strategyPort.includes('pub trait TurnStrategyPort')||
    !strategyOwner.includes('impl TurnStrategyPort for ScopedAlgorithms')||
+   !runtime.includes('crate::addons::runtime_hooks::strategy_port(')||
+   runtime.includes('ScopedAlgorithms::new(')||
    !runtime.includes('intelligence.execution_limits(')||
    !runtime.includes('intelligence.decompose(')||
    !runtime.includes('intelligence.tool_discovery(')||

@@ -511,7 +511,7 @@ async fn run_turn_body(
 
     let provider = select_provider(state, request, &session)?;
     let allow_provider_fallback = true;
-    let intelligence=crate::addons::turn_policy::ScopedAlgorithms::new(
+    let intelligence=crate::addons::runtime_hooks::strategy_port(
         state,session_id,request.agent_id.as_deref(),execution_id,
     );
     let decision_limits=intelligence.execution_limits(MAX_ROUNDS,MAX_TOOL_CALLS);

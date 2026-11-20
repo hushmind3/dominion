@@ -6,6 +6,15 @@ use serde_json::Value;
 use super::{algorithms,improve,memory,extensions};
 use extensions::Extension;
 
+/// Single product assembly point: callers see the port, not the selected
+/// algorithm implementation. The native crate never imports this host module.
+pub fn strategy_port<'a>(
+    state:&'a AppState,session_id:&'a str,agent_id:Option<&'a str>,
+    execution_id:&'a str,
+)->impl dominion_core::strategy::TurnStrategyPort+'a{
+    super::turn_policy::ScopedAlgorithms::new(state,session_id,agent_id,execution_id)
+}
+
 pub fn strategies_enabled(
     state:&AppState,session_id:&str,agent_id:Option<&str>,
 )->bool {
