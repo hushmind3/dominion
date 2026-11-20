@@ -86,7 +86,6 @@ impl Dominion {
         engine::algorithms::seed(&self.state);
         engine::jobs::start(self.state.clone());
         engine::maintenance::start(self.state.clone());
-        engine::scheduler::start(self.state.clone());
         engine::discord::start(self.state.clone());
         engine::telegram::start(self.state.clone());
         let refresh_state=self.state.clone();
