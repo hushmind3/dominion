@@ -93,6 +93,18 @@ for(const path of [
 const app=source('web/src/App.tsx');
 expect(app.includes("from './refreshEvents'"),'App is not wired to main refresh scope');
 expect(!/MoneyPage|page==='money'/.test(app),'Money page still mounted');
+const operations=source('web/src/pages/Operations.tsx');
+expect(
+  !/oauthRows|oauthProvider|oauthId|oauthSecret|openOAuth\(|ops\.accounts|\/api\/oauth\/providers/.test(operations),
+  'duplicate legacy account login/settings panel returned to Operations'
+);
+const connections=source('web/src/pages/Connections.tsx');
+expect(connections.includes('oauthEditor')&&connections.includes('/api/oauth/providers/'),
+  'active OAuth app configuration is missing from Connections');
+const models=source('web/src/pages/Models.tsx');
+expect(models.includes('DominionCloudAccount'),
+  'paid Cloud account and subscription management must remain in Models');
+
 const oauth=source('src/api/cli_oauth.rs');
 expect(oauth.includes('import_cli_github'),'GitHub CLI UI has no backend handler');
 // The public documentation index is the entrypoint to current contracts.
