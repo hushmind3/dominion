@@ -227,10 +227,16 @@ pub async fn inspect(
     if workspace!=expected.canonicalize().map_err(|e|e.to_string())?{
         return Err("외부 실행기 작업 폴더가 격리 워크트리와 다릅니다.".into());
     }
-    if context.state.is_cancelled(parent) {
-        return Err("상위 작업이 취소되어 외부 실행기를 시작하지 않습니다.".into());
+    let bound_job=context.state.store.get("job",&context.job_id)
+        .ok_or("외부 CLI 작업의 실행 기록이 없습니다.")?;
+    let generation=bound_job["input"]["parentGeneration"].as_u64()
+        .ok_or("외부 CLI 작업의 부모 취소 세대가 없습니다.")?;
+    if bound_job["input"]["parentSessionId"].as_str()!=Some(parent)
+        ||bound_job["input"]["sessionId"].as_str()!=Some(session_id)
+        ||context.state.is_cancelled(parent)
+        ||context.state.cancellation_generation(parent)!=generation {
+        return Err("상위 작업이 중단되거나 실행 세대가 바뀌어 외부 CLI를 시작하지 않습니다.".into());
     }
-    let generation=context.state.cancellation_generation(parent);
     if resume_from_job.is_some(){
         let source=Path::new(session["delegationWorkspace"]["source"].as_str()
             .ok_or("재개할 Git 원본 경로가 없습니다.")?);
