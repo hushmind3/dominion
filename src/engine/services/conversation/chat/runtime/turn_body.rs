@@ -915,9 +915,6 @@ pub(super) async fn run_turn_body(
     let mut driver=crate::engine::core::driver::Driver::new(max_rounds,max_tools);
     for round in 0..max_rounds {
         if finished { break; }
-        driver.begin_model_round(state.is_cancelled(session_id)
-            || state.cancellation_generation(session_id)!=generation)
-            .map_err(str::to_string)?;
         if !budget.charge_round() {
             mark_budget_exhausted(state, execution_id);
             return Err("모델 라운드 예산을 초과했습니다.".into());
@@ -1177,18 +1174,21 @@ pub(super) async fn run_turn_body(
                 return Err("모델 판단 횟수 한도에 도달했습니다.".into());
             }
         }
-        let completion_result = stream_completion(
-            state,
-            &client,
-            &provider,
-            &wire_messages,
-            &round_tools,
-            request,
-            session_id,
-            tx,
-            allow_provider_fallback,
-        )
-        .await;
+        let completion_result = driver.request_model(
+            state.is_cancelled(session_id)
+                || state.cancellation_generation(session_id)!=generation,
+            stream_completion(
+                state,
+                &client,
+                &provider,
+                &wire_messages,
+                &round_tools,
+                request,
+                session_id,
+                tx,
+                allow_provider_fallback,
+            ),
+        ).await;
         {
             let mut counters = metrics.lock().unwrap();
             counters.model_elapsed_ms += model_started.elapsed().as_millis() as u64;

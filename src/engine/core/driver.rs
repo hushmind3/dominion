@@ -2,6 +2,7 @@
 //! The host owns I/O, approval, tool implementations, context, planning and
 //! history. Only this driver admits model rounds and provider-visible calls.
 use serde_json::Value;
+use std::future::Future;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
@@ -27,6 +28,15 @@ impl Driver {
         if self.rounds >= self.max_rounds {return Err("model round limit exceeded");}
         self.rounds += 1;
         Ok(())
+    }
+
+    /// The core admits a model round before the supplied provider future is
+    /// polled. Provider selection, streaming and fallback stay in services.
+    pub async fn request_model<T, F>(&mut self, cancelled: bool, provider_call: F)
+        -> Result<T, String>
+    where F: Future<Output = Result<T, String>> {
+        self.begin_model_round(cancelled).map_err(str::to_string)?;
+        provider_call.await
     }
 
     pub fn select_step(&self, count: usize, tools_enabled: bool)
@@ -109,6 +119,21 @@ mod tests {
         assert!(Driver::batch_advertised(["workspace_read","workspace_read"],&visible));
         assert!(!Driver::batch_advertised(["workspace_read","file_read"],&visible));
         assert!(!Driver::batch_advertised(["workspace_read","mcp__other__read"],&visible));
+    }
+
+    #[tokio::test]
+    async fn cancelled_round_never_polls_its_provider() {
+        use std::cell::Cell;
+        let called=Cell::new(false);
+        let mut driver=Driver::new(1,1);
+        let future=async {called.set(true); Ok::<_,String>("response")};
+        assert_eq!(driver.request_model(true,future).await,
+            Err("execution cancelled".to_string()));
+        assert!(!called.get());
+        let result=driver.request_model(false,async {Ok::<_,String>("ok")}).await;
+        assert_eq!(result,Ok("ok"));
+        assert_eq!(driver.request_model(false,async {Ok::<_,String>("no")}).await,
+            Err("model round limit exceeded".to_string()));
     }
 
     #[test]
