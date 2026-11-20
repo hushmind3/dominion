@@ -1,6 +1,6 @@
 # 설치와 첫 사용 — DOMINION (2026-11-20)
 
-DOMINION은 Rust 에이전트 실행 엔진, React UI, SQLite 작업 기록을 사용하는 제품입니다. 채팅, 그룹 대화, 사용자가 지시하는 코드 수정·테스트·검증과 기억/도구/모델 연결을 제공합니다. **내장 영상·음성 제작, YouTube 업로드, 머니 조사 엔진, 독립 RSI 자동 소스 승격/실험 캠페인 기능은 제거됐습니다.**
+DOMINION은 Rust 에이전트 실행 엔진, React UI, SQLite 작업 기록을 사용하는 제품입니다. 채팅, 그룹 대화, 사용자가 지시하는 코드 수정·테스트·검증과 기억/도구/모델 연결을 제공합니다. **내장 영상·음성 제작, YouTube 업로드, 독립 RSI 자동 소스 승격/실험 캠페인 기능은 제거됐습니다.**
 
 ## 준비물
 
@@ -12,20 +12,20 @@ DOMINION은 Rust 에이전트 실행 엔진, React UI, SQLite 작업 기록을 �
 | API 모델 | 제공자 설정 또는 지원 로그인 |
 | 데스크톱 직접 패키징 | [Tauri v2 사전 요구사항](https://v2.tauri.app/start/prerequisites/) |
 
-macOS에는 Xcode Command Line Tools(\`xcode-select --install\`), Windows에는 Visual Studio Build Tools의 C++ 데스크톱 구성요소와 Windows SDK가 필요합니다. 설치된 데스크톱 앱에서 일반 채팅을 하기 위해 별도 Rust나 Node.js 런타임을 설치할 필요는 없습니다.
+macOS에는 Xcode Command Line Tools(`xcode-select --install`), Windows에는 Visual Studio Build Tools의 C++ 데스크톱 구성요소와 Windows SDK가 필요합니다. 설치된 데스크톱 앱에서 일반 채팅을 하기 위해 별도 Rust나 Node.js 런타임을 설치할 필요는 없습니다.
 
 ## 소스 설치와 실행
 
-\`\`\`sh
+```sh
 git clone https://github.com/hushmind3/dominion-rust.git
 cd dominion-rust
 git checkout dominion-sub3
 npm ci --prefix web
 npm run build --prefix web
 cargo run --release -- --home .
-\`\`\`
+```
 
-브라우저에서 \`http://127.0.0.1:4317\`을 엽니다. 자신의 모델 제공자를 연결한 다음 채팅·그룹 대화를 사용하거나 작업을 지시합니다.
+브라우저에서 `http://127.0.0.1:4317`을 엽니다. 자신의 모델 제공자를 연결한 다음 채팅·그룹 대화를 사용하거나 작업을 지시합니다.
 
 1. **모델 관리**에서 로컬 모델 또는 API 제공자를 등록합니다. 모델 카탈로그의 공개 조회는 개별 API 키 없이 가능한 경로를 사용합니다.
 2. **채팅**에서 필요한 파일 조사와 수정을 요청합니다. 도구 접근·쓰기·셸 실행은 실행 권한 및 승인 규칙을 따릅니다.
@@ -42,13 +42,13 @@ cargo run --release -- --home .
 
 ## 개발자 검증
 
-\`\`\`sh
+```sh
 node scripts/check-lean-product.mjs
 cargo test -p dominion-agent-sdk --lib
 cargo test -p dominion-sdk --lib
 cargo test --bin dominion-rust engine::chat::provider::tests
 npm run typecheck --prefix web
 npm run build --prefix web
-\`\`\`
+```
 
 보다 상세한 현재 실행 계약은 [하네스 문서](HARNESS.md), [작업 SDK](../sdk/typescript/README.md), [문서 지도](INDEX.md)를 참고하십시오. 실제 통과 여부는 해당 GitHub Actions 커밋을 기준으로 확인합니다.
