@@ -64,7 +64,7 @@ impl AgentAlgorithm for StandardAlgorithm {
              edit requires a workspace tool receipt with written=true. \
              Previous tool outputs remain in the durable journal. Use dominion_receipt_search \
              and dominion_receipt_read for prior details; never replay external effects merely \
-             to retrieve an observation. {} Strategy: {:?}. Owner instructions: {}.",
+             to retrieve an observation. {} Strategy: {}. Owner instructions: {}.",
             response_contract,discovery_hint,strategy,owner_instructions
         );
         system
