@@ -1047,10 +1047,6 @@ pub async fn enqueue(State(state): State<AppState>, Json(body): Json<Value>) -> 
     }
 }
 
-pub async fn optimizers(State(state): State<AppState>) -> Response {
-    Json(crate::engine::policy::optimizer_report(&state)).into_response()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
