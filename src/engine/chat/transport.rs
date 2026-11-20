@@ -4,10 +4,6 @@ use crate::state::AppState;
 use serde_json::{json, Value};
 use tokio::sync::mpsc::UnboundedSender;
 
-pub async fn run(state: AppState, input: Value, tx: UnboundedSender<Value>) {
-    run_with_http_epoch(state,input,tx,None).await
-}
-
 /// A request admitted by /api/chat carries the cancellation generation read
 /// synchronously by the HTTP handler, before the engine is spawned.
 pub(crate) async fn run_with_http_epoch(
