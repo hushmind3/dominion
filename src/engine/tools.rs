@@ -1450,7 +1450,7 @@ fn strip_html(html: &str) -> String {
         let name=label.trim_start_matches('/').split(|ch:char|
             ch.is_ascii_whitespace() || ch=='/' || ch=='>'
         ).next().unwrap_or("");
-        if !label.starts_with('/') && matches!(name,"script"|"style"|"template"|"noscript"|"svg") {
+        if !label.starts_with('/') && matches!(name,"script"|"style"|"template"|"svg") {
             let closing=format!("</{name}");
             if let Some(relative_end)=lower[close+1..].find(&closing) {
                 let closing_start=close+1+relative_end;
