@@ -2,6 +2,7 @@
 //! Providers, tools, memory, rooms, jobs and other product subsystems live
 //! outside this module. Historical API paths are reexported by engine::mod.
 pub mod driver;
+pub mod agent_loop;
 use serde_json::Value;
 use tokio::sync::mpsc;
 

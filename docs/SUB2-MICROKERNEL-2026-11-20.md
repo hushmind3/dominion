@@ -71,3 +71,13 @@ ProgramIR 실행, 대안 후보 실험, 작업 검토, 정책 스냅샷과 세�
 **구현 범위**: 이번 단계는 계획·행동 선택·복구 정책을 커널에서 격리한 것입니다. 복합 채팅 실행 오케스트레이션 자체를 별도 런타임 프로세스로 완전히 재구축하거나, 실행 도중 동적으로 Rust 코드를 로드하는 방식은 아닙니다. 프론트 메뉴/API/메인은 그대로 유지합니다.
 
 참고: [OpenClaw 공식 런타임 구조](https://docs.openclaw.ai/agent-runtime-architecture), [런타임 플러그인](https://docs.openclaw.ai/concepts/agent-runtimes).
+
+## 독립 AgentLoop Trait / Rust Workspace 실행 알고리즘
+
+2026-11-20: 계약 `crates/dominion-turn-core/src/agent_loop.rs`에 `AgentLoop`, `ModelPort`, `ToolPort`, `RoundObservation`을 정의했습니다. **알고리즘은 모델의 도구 호출을 추가하거나 무단 실행시킬 수 없습니다**: 최종 상태 전이는 코어 `Driver::authorize_step`가 검증합니다. 제품의 현재 채팅 실행 루프도 `TurnPolicy::workflow`로 선택된 알고리즘을 통과합니다.
+
+독립 크레이트 `crates/dominion-agent-loop/`는 `ReActLoop`와 `PlanExecuteLoop`를 구현하고, 실제 모델→도구→모델 반복을 수행할 수 있는 범용 `run` 함수를 제공합니다. 모의 제공자·도구를 활용해 실제 라운드, 툴 광고 경계, 취소, 모델 라운드 상한 회귀 테스트를 제공합니다. 기존 UI, 엔드포인트, 저장소, 구체 모델 및 도구 코드는 종전 서비스 계층에서만 관리합니다.
+
+**실행 범위**: 현재 제품의 기존 대규모 `chat/runtime/turn_body.rs`는 실행 세션 영속화·복합 증거 수집 등을 위해 유지되고, 새 에이전트 알고리즘이 각 모델 응답의 실행 상태 전이에서 실사용됩니다. 새 `run` 전체를 아직 기존 제품의 모든 실행 경로로 대체한 것은 아닙니다.
+
+참고: https://docs.openclaw.ai/agent-loop, https://github.com/zeroclaw-labs/zeroclaw/blob/master/docs/book/src/architecture/overview.md, https://github.com/nearai/ironclaw .

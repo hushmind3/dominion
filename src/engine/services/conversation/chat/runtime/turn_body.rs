@@ -614,6 +614,7 @@ pub(super) async fn run_turn_body(
         });
         let _=state.store.put("execution",&execution);
     }
+    let mut agent_loop=decision_policy.workflow(plan_requested);
     let mut plan_digest: Option<String> = None;
     if acceptance.is_some()
         && request.tools_enabled
@@ -1357,7 +1358,11 @@ pub(super) async fn run_turn_body(
             }
         }
 
-        let next_step=driver.select_step(completion.tool_calls.len(),
+        let next_step=driver.authorize_step(&mut agent_loop,
+            crate::engine::core::agent_loop::RoundObservation{
+                proposed_calls:completion.tool_calls.len(),
+                has_plan:plan_digest.is_some(),
+            },
             request.tools_enabled && request.tools_execution_enabled)
             .map_err(str::to_string)?;
         if next_step==crate::engine::core::driver::Step::Answer {

@@ -115,7 +115,7 @@ test('HTTP handler implementations are source-isolated from the minimal API core
 test('real chat model loop consults pure execution driver and gates parallel tool batches',()=>{
  const s=source('src/engine/services/conversation/chat/runtime/turn_body.rs');
  assert.match(s,/driver\.request_model/);
- assert.match(s,/driver\.select_step/);
+ assert.match(s,/driver\.authorize_step/);
  assert.match(s,/driver\.admit_tool/);
  assert.match(s,/Driver::batch_advertised/);
  assert.ok(exists('crates/dominion-turn-core/src/driver.rs'));
@@ -135,7 +135,7 @@ test('provider and tool authority are exposed as host ports, not implemented in 
 
 test('product core is a one-file facade; standalone core has a stable source boundary',()=>{
  assert.deepEqual(readdirSync(new URL('../src/engine/core/',import.meta.url)).sort(),['mod.rs']);
- assert.deepEqual(readdirSync(new URL('../crates/dominion-turn-core/src/',import.meta.url)).sort(),['driver.rs','lib.rs','port_tests.rs']);
+ assert.deepEqual(readdirSync(new URL('../crates/dominion-turn-core/src/',import.meta.url)).sort(),['agent_loop.rs','driver.rs','lib.rs','port_tests.rs']);
 });
 
 
@@ -175,4 +175,24 @@ test('planning heuristics and decomposition flow only through the decision adapt
  assert.match(adapter,/pub fn plan_scores/);
  assert.match(pure,/pub fn needs_plan/);
  assert.match(pure,/pub fn local_multifile_skips_extra_planner/);
+});
+
+test('swap-ready agent loops use the core trait without importing the gateway',()=>{
+ const contract=source('crates/dominion-turn-core/src/agent_loop.rs');
+ const algo=source('crates/dominion-agent-loop/src/lib.rs');
+ const runtime=source('src/engine/services/conversation/chat/runtime/turn_body.rs');
+ const policy=source('src/engine/services/decision/turn_policy.rs');
+ assert.match(contract,/pub trait AgentLoop/);
+ assert.match(contract,/pub trait ModelPort/);
+ assert.match(contract,/pub trait ToolPort/);
+ assert.match(contract,/fn authorize_step/);
+ assert.match(algo,/impl AgentLoop for ReActLoop/);
+ assert.match(algo,/impl AgentLoop for PlanExecuteLoop/);
+ assert.match(algo,/pub async fn run</);
+ assert.match(runtime,/driver\.authorize_step\(&mut agent_loop/);
+ assert.match(runtime,/decision_policy\.workflow\(plan_requested\)/);
+ assert.match(policy,/pub fn workflow\(/);
+ assert.doesNotMatch(source('crates/dominion-agent-loop/Cargo.toml'),/dominion-rust|rusqlite|reqwest|axum/);
+ assert.doesNotMatch(source('crates/dominion-turn-core/Cargo.toml'),/dominion-agent-loop/);
+ assert.match(source('Cargo.toml'),/dominion-agent-loop =/);
 });

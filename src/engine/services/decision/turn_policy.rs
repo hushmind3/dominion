@@ -53,6 +53,9 @@ impl<'a> TurnPolicy<'a>{
         (crate::engine::plan_quality::score(plan,input),
          crate::engine::plan_quality::score_independent(plan,input))
     }
+    pub fn workflow(&self,plan_requested:bool)->dominion_agent_loop::ActiveLoop{
+        dominion_agent_loop::select(plan_requested)
+    }
     pub fn order(&self)->ToolOrder{
         let choice=self.choose("execution.ordering",true);
         ToolOrder::from_implementation(choice.as_ref()

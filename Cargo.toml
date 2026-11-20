@@ -5,11 +5,12 @@ edition = "2021"
 license = "Apache-2.0"
 
 [workspace]
-members = [".", "crates/dominion-agent-kernel", "crates/dominion-turn-core"]
-default-members = [".", "crates/dominion-agent-kernel", "crates/dominion-turn-core"]
+members = [".", "crates/dominion-agent-kernel", "crates/dominion-turn-core", "crates/dominion-agent-loop"]
+default-members = [".", "crates/dominion-agent-kernel", "crates/dominion-turn-core", "crates/dominion-agent-loop"]
 
 [dependencies]
 dominion-agent-kernel = { path = "crates/dominion-agent-kernel" }
+dominion-agent-loop = { path = "crates/dominion-agent-loop" }
 dominion-turn-core = { path = "crates/dominion-turn-core" }
 axum = "0.7"
 tokio = { version = "1", features = ["full"] }
