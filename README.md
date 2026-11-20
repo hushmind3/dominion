@@ -129,6 +129,14 @@ Connections to GitHub/Google may use a configured OAuth application or an author
 
 MCP sessions, messaging transports, browser CDP control, local Skills and third-party account connectors (including the GitHub/Google tool catalog) are now owned by `src/integrations/` rather than `src/engine/`. The main process wires adapter startup through `bootstrap.rs`, while the Rust SDK kernel keeps planning, approval and durable effect verification. Existing `/api/mcp/*`, channel/account API paths and React navigation remain unchanged. Legacy `engine::mcp`/channel/account aliases were retired; source callers import the new modules directly. The `AppState::integrations` field owns pooled MCP sessions. The functionality is still compiled into the host executable; this refactor does **not** claim a dynamically loaded plugin ABI or fully independent Cargo crates. [Boundary and follow-up architecture](docs/INTEGRATIONS-BOUNDARY-2026-11-20.md).
 
+## Minimal language-to-action core (2026-11-20)
+
+The host `src/engine/` now declares **12 executable modules**: natural-language chat/agent entry, model/tool execution mediation, durable jobs, approvals/effects, plan IR, verification, cancellation/recovery, leasing and run state. **45 former engine modules** are now grouped in `src/features/` as cognition, collaboration, model providers, product platform and forensics. MCP, messaging, account connections, browser, Skills and web networking remain in `src/integrations/`.
+
+Core jobs execute only `prompt` and `resume` directly; other job kinds run through `features::dispatch_job` or `integrations::registry::dispatch_job`. Optional memory tools, account tools, browser, Skill tools and network tools register outside `engine/tools.rs` while sharing the existing approval/effect journal. All UI menus, API routes and SQLite record kinds are unchanged.
+
+This is an in-process module and dispatch separation, **not** a fully independently unloadable plugin ABI or zero-dependency core: historical `engine::feature` paths remain temporarily re-exported for source compatibility. The independent agent-run loop is already `crates/dominion-agent-sdk/`; the host still composes it with application state. Full boundary and non-regression checks: [core architecture](docs/CORE-BOUNDARY-2026-11-20.md).
+
 ## Development verification
 
 Routine changes: run *focused Rust development-profile tests*, not a blanket release build.

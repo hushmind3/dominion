@@ -39,7 +39,7 @@ jobs:
           cargo test --bin dominion-rust shared_sdk_relevance_ignores_tool_parameter_payload
           cargo test --bin dominion-rust engine::chat::tests
           # Keep native nine-participant routing, examples and @mentions honest.
-          cargo test --bin dominion-rust engine::rooms::tests
+          cargo test --bin dominion-rust features::collaboration::rooms::tests
           # Latest main provider UI depends on public, keyless model browsing.
           cargo test --bin dominion-rust api::providers::tests
           cargo test --bin dominion-rust api::channels::tests
@@ -55,23 +55,23 @@ jobs:
           cargo test --bin dominion-rust engine::chat::runtime::cancellation_watch_tests
           cargo test --bin dominion-rust engine::chat::room_context::tests
           cargo test --bin dominion-rust engine::chat::continuity::tests
-          cargo test --bin dominion-rust engine::room_state::tests
+          cargo test --bin dominion-rust features::collaboration::room_state::tests
           cargo test --bin dominion-rust engine::verification
           # Audit-relevant regressions: canonical provider route, source index,
           # and bounded conversation checkpoints now get their own test filters.
           cargo test --bin dominion-rust engine::chat::provider::tests
-          cargo test --bin dominion-rust engine::code_index::tests
-          cargo test --bin dominion-rust engine::compact::token_budget_tests
+          cargo test --bin dominion-rust features::platform::code_index::tests
+          cargo test --bin dominion-rust features::cognition::compact::token_budget_tests
           cargo test --bin dominion-rust db::tests
           cargo test --bin dominion-rust engine::native_evidence::tests
-          cargo test --bin dominion-rust engine::native_replay::tests
+          cargo test --bin dominion-rust features::forensics::native_replay::tests
           cargo test --bin dominion-rust api::native_replay::tests
           cargo test --bin dominion-rust engine::program::tests
-          cargo test --bin dominion-rust engine::algorithms::tests
-          cargo test --bin dominion-rust engine::adaptation_loop::tests
+          cargo test --bin dominion-rust features::cognition::algorithms::tests
+          cargo test --bin dominion-rust features::cognition::adaptation_loop::tests
           cargo test --bin dominion-rust engine::chat::runtime::program::evidence_join_tests
           cargo test --bin dominion-rust engine::chat::runtime::program::recovery_tests
-          cargo test --bin dominion-rust engine::native_adjudication::tests
+          cargo test --bin dominion-rust features::forensics::native_adjudication::tests
           cargo test --bin dominion-rust engine::native_agent::tests
           cargo test --bin dominion-rust api::sdk::tests
           cargo test --test e2e native_job_prompt_runs -- --test-threads=1
@@ -93,6 +93,7 @@ jobs:
           node --experimental-strip-types --test web/tests/*.test.mjs
           node --test scripts/account-login-contract.test.mjs
           node --test scripts/integration-boundary.test.mjs
+          node --test scripts/core-boundary.test.mjs
           npm run build --prefix web
       - name: Chromium connection UI walkthrough (desktop and mobile)
         run: |
