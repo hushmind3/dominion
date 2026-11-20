@@ -335,9 +335,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "dominion-agent-algorithms"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
+name = "dominion-agent-runtime"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "dominion-agent-sdk"
 version = "0.1.0"
 dependencies = [
+ "dominion-agent-algorithms",
+ "dominion-agent-runtime",
  "futures-util",
  "serde",
  "serde_json",

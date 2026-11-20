@@ -6,6 +6,8 @@ on:
     paths:
       - '.github/workflows/sub3-rust-sdk-check.yml'
       - 'crates/dominion-agent-sdk/**'
+      - 'crates/dominion-agent-runtime/**'
+      - 'crates/dominion-agent-algorithms/**'
       - 'sdk/rust/**'
       - 'src/host/**'
       - 'src/storage/**'
@@ -38,6 +40,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: SDK-only kernel, replay and transport tests (dev profile only)
         run: |
+          cargo test -p dominion-agent-runtime --lib
+          cargo test -p dominion-agent-algorithms --lib
           cargo test -p dominion-agent-sdk --lib
           cargo test -p dominion-sdk --lib
           cargo test -p dominion-agent-sdk --test kernel_replanning

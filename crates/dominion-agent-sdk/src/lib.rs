@@ -4,7 +4,7 @@
 //! bounded replanning, progress, and durable write-ahead checkpoints.
 //! The host supplies providers, tools, and storage; there is no imported harness.
 
-pub mod runtime;
+pub use dominion_agent_runtime as runtime;
 mod dispatch;
 pub use dispatch::dispatch_batch;
 
@@ -16,6 +16,7 @@ mod scheduler;
 mod acceptance;
 mod context;
 mod tool_discovery;
+pub use dominion_agent_algorithms::{AgentAlgorithm,StandardAlgorithm,Intent};
 pub use tool_discovery::tool_relevance;
 pub use tool_discovery::tool_relevance_with_schema;
 mod failure_guidance;
@@ -371,26 +372,10 @@ fn validate_decision_plan(decision: Decision) -> Result<Decision, String> {
 /// File changes and generic external actions have different evidence.
 /// Running a command, opening a browser or deploying a service must not be
 /// rejected just because it did not write a workspace file.
-fn owner_requires_file_mutation(text: &str) -> bool {
-    let text=text.to_lowercase();
-    let edit=["수정","편집","작성","만들","생성","삭제","제거","고쳐","구현","개발",
-        "리팩토링","패치","write","edit","delete","remove","modify",
-        "fix","implement","refactor","patch","create"];
-    let artifact=["파일","코드","소스","저장소","프로젝트","버그","구현","개발",
-        "리팩토링","readme","source","repository","code","file","script",
-        "unit test",".rs",".py",".ts",".js",".md",".txt","artifact"];
-    edit.iter().any(|word|text.contains(word))
-        && artifact.iter().any(|word|text.contains(word))
-}
-
-fn owner_requires_effect(text: &str) -> bool {
-    let t = text.to_lowercase();
-    ["만들","생성","작성","수정","편집","삭제","제거","고쳐","구현",
-     "개발","리팩토링","배포","설치","실행","저장","커밋","복사","이동",
-     "create","write","edit","delete","remove","modify","fix","implement",
-     "build","deploy","install","execute","save","commit","refactor"]
-        .iter().any(|word| t.contains(word))
-}
+#[cfg(test)]
+fn owner_requires_file_mutation(text: &str) -> bool { StandardAlgorithm.classify(text).requires_file_mutation }
+#[cfg(test)]
+fn owner_requires_effect(text: &str) -> bool { StandardAlgorithm.classify(text).requires_effect }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AcceptanceRun {
@@ -405,18 +390,29 @@ enum AcceptanceRun {
 
 impl Kernel<'_> {
     pub async fn run(&self, request: RunRequest) -> Result<Snapshot, String> {
-        self.run_from(request, None).await
+        self.run_with_algorithm(request,&StandardAlgorithm).await
+    }
+
+    /// Replace planning policy per run without rebuilding or forking the kernel.
+    /// Permissions, write-ahead receipts, evidence and budgets remain kernel-owned.
+    pub async fn run_with_algorithm(&self,request:RunRequest,
+        algorithm:&dyn AgentAlgorithm)->Result<Snapshot,String>{
+        self.run_from(request,None,algorithm).await
     }
 
     /// Continue only from a committed, exact-job checkpoint. Nothing already
     /// recorded is replayed, including completed read calls and paid model
     /// generations. Unknown external effects require explicit reconciliation.
     pub async fn resume(&self, request: RunRequest, saved: Snapshot) -> Result<Snapshot, String> {
-        self.run_from(request, Some(saved)).await
+        self.resume_with_algorithm(request,saved,&StandardAlgorithm).await
+    }
+    pub async fn resume_with_algorithm(&self,request:RunRequest,saved:Snapshot,
+        algorithm:&dyn AgentAlgorithm)->Result<Snapshot,String>{
+        self.run_from(request,Some(saved),algorithm).await
     }
 
-    async fn run_from(&self, request: RunRequest, saved: Option<Snapshot>)
-        -> Result<Snapshot, String> {
+    async fn run_from(&self, request: RunRequest, saved: Option<Snapshot>,
+        algorithm:&dyn AgentAlgorithm) -> Result<Snapshot, String> {
         request.validate()?;
         let mut run = if let Some(saved) = saved {
             if saved.id != request.id || saved.instruction != request.instruction {
@@ -464,39 +460,8 @@ impl Kernel<'_> {
             }
         }
         let native_wire=self.model.supports_native_tools();
-        let response_contract=if native_wire {
-            "For each action use a provider-native function/tool call with valid JSON object arguments. \
-             Never emit a JSON decision wrapper or impersonate a tool result in text. \
-             When no more actions are needed, respond with the actual final answer as normal text."
-        }else{
-            "Reply with exactly one JSON object: \
-             {\"plan\":[\"concise ordered steps\"],\"actions\":[{\"id\":\"unique-id\", \
-             \"tool\":\"name\",\"arguments\":{},\"dependsOn\":[]}],\"answer\":null}. \
-             On task completion return actions=[] and answer=\"actual result\"."
-        };
-        let discovery_hint=if tool_discovery::needed(&tools) {
-            "If a capability is not advertised, call dominion_tool_search to read \
-             its authorized JSON schema, then dominion_tool_call with the exact \
-             discovered name and arguments. The provider function declaration \
-             list stays fixed; discovery never increases host permissions."
-        }else{
-            "Every currently permitted host tool is directly available."
-        };
-        let system=format!(
-            "You are DOMINION's model planner. The Rust kernel owns action dispatch, \
-             limits, permission checks and verification. Respect the owner's instructions \
-             and never claim an unobserved task is done. {} \
-             Owner-required checks are executed by the Rust kernel on proposed completion. \
-             You may run diagnostic tests while working, but do not waste a model turn \
-             rerunning an unchanged acceptance command. After edits, propose completion; \
-             Rust will execute outstanding exact tests. If a test fails, inspect the recorded \
-             diagnostic, modify the source and propose completion again. A requested source \
-             edit requires a workspace tool receipt with written=true. \
-             Previous tool outputs remain in the durable journal. Use dominion_receipt_search \
-             and dominion_receipt_read for prior details; never replay external effects merely \
-             to retrieve an observation. {} Strategy: {:?}. Owner instructions: {}.",
-            response_contract,discovery_hint,request.strategy,request.owner_instructions
-        );
+        let system=algorithm.planner_instructions(native_wire,tool_discovery::needed(&tools),
+            &format!("{:?}",request.strategy),&request.owner_instructions);
         let mut invalid = 0usize;
         self.journal.save(&run)?;
         'steps: for step in run.step..request.limits.max_steps {
@@ -618,7 +583,8 @@ impl Kernel<'_> {
                 self.journal.save(&run)?;
                 return Ok(run);
             }
-            let decision = match native_decision.map_or_else(||decode(&reply.content),validate_decision_plan) {
+            let decision = match native_decision.map_or_else(||decode(&reply.content),validate_decision_plan)
+                .and_then(|decision|{algorithm.validate_plan(&decision.plan)?;Ok(decision)}) {
                 Ok(d) => d,
                 Err(error) => {
                     invalid += 1;
@@ -656,8 +622,11 @@ impl Kernel<'_> {
                 if let Some(answer) = decision.answer.filter(|s| !s.trim().is_empty()) {
                     // Don't waste user-approved test executions on an edit task
                     // for which the host has not recorded a single real write.
-                    let requires_file_mutation = owner_requires_file_mutation(&request.instruction);
-                    let requires_external_effect = owner_requires_effect(&request.instruction);
+                    // Intelligence may ask for more evidence, never waive standard checks.
+                    let intent=StandardAlgorithm.classify(&request.instruction)
+                        .union(algorithm.classify(&request.instruction));
+                    let requires_file_mutation = intent.requires_file_mutation;
+                    let requires_external_effect = intent.requires_effect;
                     let has_nonread_effect = run.receipts.iter().any(|r|r.success &&
                         tools.get(&r.tool).is_some_and(|tool| !tool.read_only));
                     let has_confirmed_write = run.receipts.iter().any(|r|r.success &&

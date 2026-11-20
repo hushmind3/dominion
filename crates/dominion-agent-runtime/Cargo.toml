@@ -1,0 +1,9 @@
+[package]
+name = "dominion-agent-runtime"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "DOMINION model-independent execution budgets and tool admission"
+
+[dependencies]
+serde_json = "1"
