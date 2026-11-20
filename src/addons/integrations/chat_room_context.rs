@@ -739,6 +739,49 @@ mod tests {
     }
 
     #[test]
+    fn verified_room_board_reaches_peer_as_provenance_not_raw_tool_output() {
+        let state=state();
+        state.store.put("agent",&json!({"id":"writer","name":"작업자"})).unwrap();
+        state.store.put("room",&json!({"id":"r",
+            "agentIds":["writer","a"],"contextBudgetTokens":2000})).unwrap();
+        message(&state,"current","user","파일을 바꾸고 검토해라.");
+        state.store.put("execution",&json!({
+            "id":"run","sessionId":"room:r","agentId":"writer","status":"completed"
+        })).unwrap();
+        state.store.put("execution_operation",&json!({
+            "id":"effect-one","runId":"run","sessionId":"room:r",
+            "agentId":"writer","opSeq":1,"tool":"workspace_write",
+            "status":"completed","resourceKey":"workspace:src/example.rs",
+            "arguments":{"content":"SECRET_SHOULD_NOT_ENTER_PEER_CONTEXT"},
+            "toolReceipt":{"verified":true}
+        })).unwrap();
+        let message=state.store.write_message(&json!({
+            "id":"writer-answer","session_id":"room:r","role":"assistant",
+            "agent_id":"writer","content":"작업을 완료했습니다.",
+            "metadata":{"authorKind":"agent","executionId":"run",
+                "replyToMessageId":"current"}
+        })).unwrap();
+        assert!(crate::addons::room_board::publish(
+            &state,"r","room:r","current",&message).unwrap());
+        let request=TurnRequest::from_value(&json!({
+            "input":"파일을 바꾸고 검토해라.","agentId":"a","toolsEnabled":false
+        })).unwrap();
+        let result=compile(&state,&request,"room:r","current",&[],&[]).unwrap();
+        let visible=json!(result.history).to_string();
+        assert!(visible.contains("effect-one"),"{visible}");
+        assert!(visible.contains("workspace:src/example.rs"));
+        assert!(!visible.contains("SECRET_SHOULD_NOT_ENTER_PEER_CONTEXT"));
+        assert!(result.accounting["boardTokens"].as_u64().unwrap_or(0)>0);
+        message(&state,"next-owner","user","다른 작업");
+        let next=compile(&state,&request,"room:r","next-owner",&[],&[]).unwrap();
+        assert!(next.history.iter().all(|row|
+            row["_dominion_frame"].as_str().is_none_or(|id|!id.starts_with("room-work:"))));
+        let cleanup=state.config.data_dir.clone();
+        drop(state);
+        std::fs::remove_dir_all(cleanup).unwrap();
+    }
+
+    #[test]
     fn compiler_recalls_old_corrections_and_preserves_identity_without_a_model() {
         let state = state();
         message(&state, "old", "user", "배포 포트는 8000이다.");
