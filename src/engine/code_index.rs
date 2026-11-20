@@ -35,9 +35,10 @@ fn is_source(path: &Path) -> bool {
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or("");
-    // Exclude generated/minified, lock and hidden files, not historic names
-    // tied to a removed internal campaign.
-    if name.ends_with(".min.js") || name.ends_with(".lock") || name.starts_with('.') {
+    // Evaluator oracle fixtures must never be exposed as source-edit context.
+    // The legacy fixture-name exclusion is a safety boundary, not a live RSI engine.
+    if name.ends_with("_oracle_fixture.rs") || name == "rsi_meta.rs"
+        || name.ends_with(".min.js") || name.ends_with(".lock") || name.starts_with('.') {
         return false;
     }
     matches!(
@@ -1053,6 +1054,13 @@ mod tests {
     use super::*;
     use crate::{config::Config, db::Store, vault::Vault};
 
+    #[test]
+    fn evaluator_oracle_fixtures_never_enter_model_source_index() {
+        assert!(!is_source(Path::new("src/rsi_oracle_fixture.rs")));
+        assert!(!is_source(Path::new("src/rsi_meta.rs")));
+        assert!(!is_source(Path::new("src/new_oracle_fixture.rs")));
+        assert!(is_source(Path::new("src/project_meta.rs")));
+    }
 
     #[test]
     fn invalid_target_expression_falls_back_for_all_files_not_a_mixed_ranking() {
