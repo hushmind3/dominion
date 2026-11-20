@@ -55,12 +55,29 @@ impl Store {
            reply_meta["authorKind"]!="agent" {
             return Err("room cursor reply lacks matching committed provenance".into());
         }
-        // Only the exact selected context message IDs may be claimed as seen.
-        // All IDs must predate the committed reply and belong to this session.
+        // A participant may finish responding to an older owner turn after
+        // a newer owner message is committed. Such a reply is still a valid
+        // record, but it must not claim context from the *newer* owner turn.
+        // Keep the provenance window anchored to the original source, even
+        // when delivery and execution overlap.
+        let next_owner_row:Option<i64>=tx.query_row(
+            "SELECT MIN(rowid) FROM messages
+             WHERE session_id=?1 AND rowid>?2 AND rowid<?3
+               AND role='user' AND agent_id IS NULL
+               AND json_extract(metadata,'$.authorKind')='owner'",
+            params![session_id,owner_row,reply_row],
+            |row|row.get(0)
+        ).map_err(|e|e.to_string())?;
+        // Selected IDs are exact model-visible evidence, not a broad cursor.
+        // Every ID belongs to this session, predates the reply, and must be
+        // from before any subsequent owner message.
         for id in &ids{
             let (rowid,_,_,_)=get_message(id)?;
             if rowid>=reply_row {
                 return Err("room cursor selection cannot include future messages".into());
+            }
+            if next_owner_row.is_some_and(|next|rowid>=next) {
+                return Err("room cursor selection crosses a newer owner turn".into());
             }
         }
         // A stale worker cannot move the participant back to an earlier
@@ -186,6 +203,38 @@ mod tests {
         }
         std::fs::remove_dir_all(dir).unwrap();
     }
+    #[test]
+    fn delayed_reply_cannot_claim_context_from_a_newer_owner_turn(){
+        let store=setup();
+        msg(&store,"owner1","room:r","user",None,None);
+        msg(&store,"peer1","room:r","assistant",Some("b"),Some("owner1"));
+        // The newer request arrived while the first worker was still running.
+        msg(&store,"owner2","room:r","user",None,None);
+        msg(&store,"peer2","room:r","assistant",Some("b"),Some("owner2"));
+        msg(&store,"late1","room:r","assistant",Some("a"),Some("owner1"));
+        // Neither the new owner request nor its peer answer was part of
+        // the first owner's context window, despite preceding this reply.
+        for newer in ["owner2","peer2"] {
+            assert!(store.commit_room_agent_read(
+                "r","room:r","a","owner1","late1",
+                &[json!("owner1"),json!(newer)]
+            ).unwrap_err().contains("newer owner turn"));
+        }
+        // Delayed replies remain valid if their evidence is source-scoped.
+        assert!(store.commit_room_agent_read(
+            "r","room:r","a","owner1","late1",
+            &[json!("owner1"),json!("peer1")]
+        ).unwrap());
+        msg(&store,"answer2","room:r","assistant",Some("a"),Some("owner2"));
+        assert!(store.commit_room_agent_read(
+            "r","room:r","a","owner2","answer2",
+            &[json!("owner1"),json!("owner2"),json!("late1")]
+        ).unwrap());
+        let read=store.room_agent_read("r","room:r","a").unwrap().unwrap();
+        assert_eq!(read["sourceMessageId"],"owner2");
+        assert_eq!(read["replyMessageId"],"answer2");
+    }
+
     #[test]
     fn cursor_rejects_cross_room_agent_and_uncommitted_or_future_messages(){
         let store=setup();
