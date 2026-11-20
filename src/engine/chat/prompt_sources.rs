@@ -29,6 +29,29 @@ fn terms(query:&str)->Vec<String>{
         .filter(|x|x.chars().count()>1).take(20).map(str::to_owned).collect()
 }
 
+/// Preserve every explicitly normative clause verbatim. If the compulsory
+/// parts themselves are too large to materialize, keep the original intact;
+/// token savings must not silently override the owner's binding contract.
+fn pinned_rules(text:&str)->Option<String>{
+    let words=["반드시","금지","필수","최우선","항상","절대","금한다",
+        "must ","never ","always ","required ","prohibited "];
+    let mut seen=std::collections::HashSet::new();
+    let mut pinned=String::new();
+    for line in text.lines(){
+        let item=line.trim();
+        if item.is_empty() || !words.iter().any(|w|item.to_lowercase().contains(w)){
+            continue;
+        }
+        if !seen.insert(item.to_string()){continue;}
+        if pinned.chars().count()+item.chars().count()>5_000 {
+            return None;
+        }
+        pinned.push_str(item);
+        pinned.push('\n');
+    }
+    Some(pinned)
+}
+
 fn segment_label(text:&str)->String{
     text.lines().find(|line|!line.trim().is_empty())
         .unwrap_or("").trim().chars().take(46).collect()
@@ -37,7 +60,8 @@ fn segment_label(text:&str)->String{
 pub(super) fn project(source:&str,text:&str,query:&str)->Projection{
     let len=text.chars().count();
     let digest=crate::engine::memory::stable_id(&[text]);
-    if len<=DIRECT_CHARS {
+    let pinned=pinned_rules(text);
+    if len<=DIRECT_CHARS || pinned.is_none() {
         return Projection{stable:text.to_string(),relevant:String::new(),indexed:false,
             digest,original_chars:len};
     }
@@ -68,6 +92,14 @@ pub(super) fn project(source:&str,text:&str,query:&str)->Projection{
          [정책 시작]\n{}\n[나머지 정책은 아래 색인 및 원본 조회로 접근]\n",
         slice(text,0,CORE_CHARS)
     );
+    if let Some(rules)=pinned {
+        if !rules.trim().is_empty(){
+            stable.push_str("
+[원문에서 추출한 필수 지시 — 전체 내용 그대로 보존]
+");
+            stable.push_str(&rules);
+        }
+    }
     // A stable, short navigation index; changing the user's question never
     // changes this prefix, so provider cache affinity remains predictable.
     for i in 1..chunks.min(13){
@@ -176,6 +208,24 @@ mod tests{
         assert_eq!(source_page("persona",&raw,0,None,Some(&a.digest)).unwrap()["totalChars"],
             raw.chars().count());
     }
+    #[test]
+    fn late_mandatory_owner_rule_survives_virtualization(){
+        let raw=format!("소개.\n{}\n반드시 주인 승인 전에는 돈을 보내지 않는다.\n",
+            "일반적 역사 배경\n".repeat(9_000));
+        let compiled=project("owner",&raw,"말 짧게 해줘");
+        assert!(compiled.indexed);
+        assert!(compiled.stable.contains("반드시 주인 승인 전에는 돈을 보내지 않는다."));
+        assert!(compiled.stable.chars().count()<6_000);
+    }
+    #[test]
+    fn inseparable_large_owner_policy_remains_full_instead_of_dropping_rules(){
+        let raw=format!("절대 다음 원문을 생략하면 안된다: {}",
+            "장문의 필수 제약 ".repeat(9_000));
+        let compiled=project("owner",&raw,"안녕");
+        assert!(!compiled.indexed);
+        assert_eq!(compiled.stable,raw);
+    }
+
     #[test]
     fn full_source_pages_are_exact_and_revision_checked(){
         let raw="우선 승인하고 검증한다 ✅".repeat(2_000);

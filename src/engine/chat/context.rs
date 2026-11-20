@@ -765,8 +765,8 @@ mod tests {
     fn long_real_owner_and_persona_are_source_indexed_not_56k_fixed_prefix(){
         let (state,dir)=state();
         state.store.put("session",&json!({"id":"prompt-case"}));
-        let persona=format!("역할 핵심: 주인 의도 유지. {}", "긴 페르소나 서술 ".repeat(15_000));
-        let policy=format!("주인 최우선: 사실과 근거만 사용. {}", "기타 프로젝트 지침 ".repeat(15_000));
+        let persona=format!("역할 핵심: 주인 의도 유지.\n{}", "긴 페르소나 서술 ".repeat(15_000));
+        let policy=format!("주인 최우선: 사실과 근거만 사용.\n{}", "기타 프로젝트 지침 ".repeat(15_000));
         state.store.put("agent",&json!({"id":"agent-p","name":"Test",
             "systemPrompt":persona})).unwrap();
         state.store.put("assistant_settings",&json!({"id":"global","enabled":true,
