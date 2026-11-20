@@ -441,19 +441,21 @@ pub(super) fn history(
     agent_id: Option<&str>,
     byte_budget: Option<usize>,
 ) -> Result<Vec<Value>, String> {
-    let mut all = state
-        .store
-        .try_messages(session_id)
-        .map_err(|error| format!("대화 기록을 읽을 수 없습니다: {error}"))?;
+    let session = state.store.get("session",session_id).unwrap_or(Value::Null);
+    let room_id=session["roomId"].as_str();
+    let is_room=room_id.is_some();
+    let compaction=state.store.get("session_compaction",session_id);
+    // Existing room and explicit /compact semantics remain unchanged.
+    // Ordinary un-compacted chat already selects at most HISTORY_LIMIT rows;
+    // avoid loading an entire multi-year archive only to discard older rows.
+    let mut all=if !is_room && compaction.is_none(){
+        state.store.try_recent_messages(session_id,HISTORY_LIMIT)
+    }else{
+        state.store.try_messages(session_id)
+    }.map_err(|error|format!("대화 기록을 읽을 수 없습니다: {error}"))?;
     // Self-improvement notices are for humans and bridged channels, never
     // model context or learning evidence.
-    all.retain(|message| message["metadata"]["kind"] != "learning_report");
-    let session = state
-        .store
-        .get("session", session_id)
-        .unwrap_or(Value::Null);
-    let room_id = session["roomId"].as_str();
-    let is_room = room_id.is_some();
+    all.retain(|message|message["metadata"]["kind"]!="learning_report");
     if is_room {
         // Historical automated prompts are not the owner's words.
         all.retain(|message| {
@@ -462,7 +464,7 @@ pub(super) fn history(
         });
     }
     let mut prefix = Vec::new();
-    if let Some(compaction) = state.store.get("session_compaction", session_id) {
+    if let Some(compaction) = compaction {
         let through = compaction
             .get("throughMessageId")
             .and_then(|value| value.as_str())

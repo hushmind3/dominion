@@ -1009,6 +1009,40 @@ impl Store {
         Ok(messages)
     }
 
+    /// Read just the rows the conversation model can use. Old full tool
+    /// outputs remain in SQLite and can be opened by scoped source ID.
+    /// The DESC index walk keeps long-lived sessions cheap to resume.
+    pub fn try_recent_messages(&self, session_id: &str, limit: usize) -> Result<Vec<Value>, String> {
+        let conn=self.conn.lock().unwrap();
+        let mut stmt=conn.prepare(
+            "SELECT id,session_id,role,content,reasoning,agent_id,tool_calls,tool_call_id,created_at,metadata
+             FROM messages WHERE session_id=?1 ORDER BY created_at DESC,rowid DESC LIMIT ?2"
+        ).map_err(|error|error.to_string())?;
+        let rows=stmt.query_map(rusqlite::params![session_id,limit.min(256) as i64],
+            message_from_row).map_err(|error|error.to_string())?;
+        let mut selected=Vec::new();
+        for row in rows{selected.push(row.map_err(|error|error.to_string())?);}
+        selected.reverse();
+        Ok(selected)
+    }
+
+    /// Restore owner-authored task goals without ever decoding old HTML,
+    /// model reasoning or tool arguments from the full session archive.
+    pub fn try_recent_user_messages(&self, session_id: &str, limit: usize) -> Result<Vec<Value>, String> {
+        let conn=self.conn.lock().unwrap();
+        let mut stmt=conn.prepare(
+            "SELECT id,session_id,role,content,reasoning,agent_id,tool_calls,tool_call_id,created_at,metadata
+             FROM messages WHERE session_id=?1 AND role='user'
+             ORDER BY created_at DESC,rowid DESC LIMIT ?2"
+        ).map_err(|error|error.to_string())?;
+        let rows=stmt.query_map(rusqlite::params![session_id,limit.min(64) as i64],
+            message_from_row).map_err(|error|error.to_string())?;
+        let mut selected=Vec::new();
+        for row in rows{selected.push(row.map_err(|error|error.to_string())?);}
+        selected.reverse();
+        Ok(selected)
+    }
+
     /// Increment a durable cancellation epoch under the same SQLite lock.
     pub fn cancel_session_epoch(&self, session_id: &str) -> Option<u64> {
         let conn = self.conn.lock().unwrap();
@@ -2140,6 +2174,36 @@ mod tests {
         store.put("memory", &json!({"id":"m2","text":"b"}));
         let records = store.try_all("memory").unwrap();
         assert_eq!(records.len(), 2);
+    }
+
+    #[test]
+    fn indexed_recent_history_skips_archived_tool_dumps_and_preserves_order(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        store.write_message(&json!({"session_id":"recent","role":"user",
+            "content":"Original owner task"})).unwrap();
+        for index in 0..70 {
+            store.write_message(&json!({"session_id":"recent","role":"tool",
+                "content":format!("{index}:{}","OLD_HTML_".repeat(2000)),
+                "tool_call_id":format!("call-{index}")})).unwrap();
+        }
+        store.write_message(&json!({"session_id":"recent","role":"user",
+            "content":"이어서해"})).unwrap();
+        store.write_message(&json!({"session_id":"other","role":"user",
+            "content":"ISOLATED_PRIVATE"})).unwrap();
+        let latest=store.try_recent_messages("recent",4).unwrap();
+        assert_eq!(latest.len(),4);
+        assert_eq!(latest.last().unwrap()["content"],"이어서해");
+        assert!(!json!(latest).to_string().contains("0:OLD_HTML_"));
+        let owners=store.try_recent_user_messages("recent",16).unwrap();
+        assert_eq!(owners.len(),2);
+        assert_eq!(owners[0]["content"],"Original owner task");
+        assert_eq!(owners[1]["content"],"이어서해");
+        assert!(!json!(owners).to_string().contains("OLD_HTML_"));
+        assert!(!json!(owners).to_string().contains("ISOLATED_PRIVATE"));
+        assert_eq!(store.messages("recent").len(),72,
+            "indexed retrieval must never mutate or drop archived evidence");
+        let empty=store.try_recent_messages("not-this-session",10).unwrap();
+        assert!(empty.is_empty());
     }
 
     #[test]
