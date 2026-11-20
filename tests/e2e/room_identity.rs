@@ -107,6 +107,104 @@ fn private_chat_hundred_turn_wire_budget_regression() {
     private_chat_wire_budget_probe(100);
 }
 
+fn local_search_page(results:bool)->(u16,Arc<Mutex<usize>>){
+    let listener=TcpListener::bind("127.0.0.1:0").unwrap();
+    let port=listener.local_addr().unwrap().port();
+    let observed=Arc::new(Mutex::new(0usize));
+    let calls=observed.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream)=stream else {break};
+            *calls.lock().unwrap()+=1;
+            let mut read=[0u8;4096];
+            let _=stream.set_read_timeout(Some(Duration::from_secs(3)));
+            let _=stream.read(&mut read);
+            let body=if results {
+                "<html><a class=\"result__a\" href=\"https://example.org/verified-2026\">2026 official release</a></html>"
+            } else {
+                "<html><body>no results</body></html>"
+            };
+            let response=format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),body);
+            let _=stream.write_all(response.as_bytes());
+        }
+    });
+    (port,observed)
+}
+
+#[test]
+fn private_web_search_must_execute_and_receipt_before_model_response() {
+    let _serial=serial();
+    let (port,captured)=scripted_provider(|_|vec![json!({
+        "choices":[{"delta":{"content":"verified research answer"},"finish_reason":"stop"}],
+        "usage":{"prompt_tokens":500,"completion_tokens":6,"total_tokens":506}
+    })]);
+    let (web_port,search_requests)=local_search_page(true);
+    let endpoint=format!("http://127.0.0.1:{web_port}/html/");
+    let app=TestApp::new_with_env(port,"native",
+        &[("DOMINION_WEB_SEARCH_TEST_ENDPOINT",&endpoint)]);
+    let session=app.post("/api/sessions",&json!({"title":"required real web research"}));
+    let input="2026년 Rust 자료 웹에서 검색해줘";
+    let events=app.chat(&json!({"sessionId":session["id"],"input":input,
+        "toolsEnabled":true,"toolsExecutionEnabled":true,
+        "autoLearning":false,"thinking":false}));
+    assert!(events.contains("verified research answer"),"{events}");
+    assert!(events.contains("web_research"),"tool verification event missing: {events}");
+    assert!(events.contains("web_search"),"tool execution not visible: {events}");
+    assert_eq!(*search_requests.lock().unwrap(),1,
+        "explicit search must issue one real outbound request");
+    let seen=captured.lock().unwrap();
+    assert_eq!(seen.len(),1,"tool preflight should not spend a separate model call");
+    let wire=&seen[0];
+    assert!(wire.to_string().contains("https://example.org/verified-2026"),
+        "model must receive actual observed source URLs");
+    let messages=wire["messages"].as_array().unwrap();
+    assert!(messages.iter().any(|r|r["role"]=="assistant"
+        &&r["tool_calls"].as_array().is_some_and(|c|c.iter().any(|v|
+            v["function"]["name"]=="web_search"))),
+        "real search must appear in compatible assistant/tool-call history");
+    assert!(messages.iter().any(|r|r["role"]=="tool" &&
+        r["content"].as_str().is_some_and(|v|v.contains("verified-2026"))));
+    let saved=app.get(&format!("/api/sessions/{}/messages",
+        session["id"].as_str().unwrap()));
+    assert!(saved.as_array().unwrap().iter().any(|r|r["role"]=="tool" &&
+        r["content"].as_str().is_some_and(|v|v.contains("verified-2026"))),
+        "receipt must persist into SQLite history");
+    assert!(!wire.to_string().contains("_dominion_context_snapshot"));
+}
+
+#[test]
+fn private_web_search_disabled_or_empty_fails_without_fabricated_answer() {
+    let _serial=serial();
+    let (port,captured)=scripted_provider(|_|vec![json!({
+        "choices":[{"delta":{"content":"fabricated result"},"finish_reason":"stop"}],
+        "usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13}
+    })]);
+    let (web_port,search_requests)=local_search_page(false);
+    let endpoint=format!("http://127.0.0.1:{web_port}/html/");
+    let app=TestApp::new_with_env(port,"native",
+        &[("DOMINION_WEB_SEARCH_TEST_ENDPOINT",&endpoint)]);
+    let session=app.post("/api/sessions",&json!({"title":"unavailable search"}));
+    let disabled=app.chat(&json!({"sessionId":session["id"],
+        "input":"2026년 최신자료 인터넷 검색해줘",
+        "toolsEnabled":false,"toolsExecutionEnabled":false,
+        "autoLearning":false}));
+    assert!(!disabled.contains("fabricated result"));
+    assert!(disabled.contains("도구 실행"),"{disabled}");
+    assert_eq!(*search_requests.lock().unwrap(),0,
+        "disabled tool must not issue a public request");
+    let failed=app.chat(&json!({"sessionId":session["id"],
+        "input":"2026년 공식 문서 웹에서 검색해줘",
+        "toolsEnabled":true,"toolsExecutionEnabled":true,
+        "autoLearning":false}));
+    assert!(!failed.contains("fabricated result"),"{failed}");
+    assert!(failed.contains("검색 공급자")||failed.contains("검색 결과"),"{failed}");
+    assert_eq!(*search_requests.lock().unwrap(),1);
+    assert!(captured.lock().unwrap().is_empty(),
+        "unverified research must not create a fluent, unsupported model answer");
+}
+
 #[test]
 fn common_participant_state_follows_provider_and_protocol_changes() {
     let _serial=serial();
