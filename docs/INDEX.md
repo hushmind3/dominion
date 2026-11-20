@@ -9,4 +9,3 @@
 ## Current scope
 Rust execution, verification, approval, cancellation, delegation, recovery and persistent history. Media creation uses optional external MCP adapters. Independent RSI campaigns, auto-selection and auto source adoption were removed.
 
-Historical RSI research remains accessible through Git history and is not part of the active runtime.

@@ -174,16 +174,6 @@ measured real-model lift.
   rejection, policy experiment gating, indexed approval, migration and
   shared observation. Structural rules flag full-history scan regressions.
 
-## Archived algorithms and API compatibility
-
-- The retired `adaptation.selection` and `selfimprove.search` rows remain visible in
-  `GET /api/algorithms` with `retired: true`; new registrations, generated
-  candidates and activation are rejected.
-- Explicit owner activation takes precedence; validated alternatives and
-  active executable baselines are retained. No UCB1 runtime exploration remains.
-- Archived RSI campaigns and completed media files remain retrievable
-  through read-only API routes; retired mutation/production workers stay off.
-
 ### Removed unreachable optimizer loops
 
 The old code-only policy search proposer and optimizer meta-improvement loop
@@ -191,13 +181,16 @@ were not called by production API or the running native engine. They have been
 deleted rather than retaining another campaign state machine. The existing
 benchmark-only `policy_search` endpoint is gated by `DOMINION_BENCHMARK=1`,
 and independent powered experiment review still controls policy activation.
-Recorded `optimizer_policy`, `search_episode`, and experiment rows remain
-readable. Legacy `selfimprove.search` algorithm records are likewise archived,
-never seeded/activated/generated. No stored user or experiment rows were deleted.
+Independent benchmark evidence remains available through the active evaluation
+API. The old algorithm kinds are neither listed nor executable. Existing user
+data is not destroyed by source cleanup.
 
 ## Retired subsystems
 
-Native FFmpeg/ComfyUI video composition, narration generation, scene regeneration, YouTube auto upload, RSI campaigns, source-mutation generations, autonomous grading, automatic core adoption and associated external runtime orchestration are retired. Existing media files and job records remain available through read-only archive endpoints. New media creation belongs to explicit MCP integrations or external APIs, not a built-in engine.
+Former native media and autonomous RSI services have no API routes, processors or
+frontend surfaces in the current runtime. Historical local user files are not
+deleted as a side effect of upgrading source. External creation tools remain
+available through explicitly connected MCP services.
 
 ## 2026 prompt-cost and context residency improvements (2026-11-18)
 

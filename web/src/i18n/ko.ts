@@ -1120,7 +1120,6 @@ const ko = {
   'conn.dlg.configured': '설정됨',
   'conn.dlg.notConfigured': '미설정',
   'conn.dlg.githubTitle': '저장소와 계정 연결',
-  'conn.dlg.googleTitle': 'Google 계정과 YouTube 읽기 연결',
   'conn.dlg.settings': '설정',
   'conn.dlg.diagnose': '진단',
   'conn.dlg.delete': '삭제',

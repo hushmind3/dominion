@@ -1121,7 +1121,6 @@ const en: Record<LocaleKey, string> = {
   'conn.dlg.configured': 'configured',
   'conn.dlg.notConfigured': 'not configured',
   'conn.dlg.githubTitle': 'Connect repositories and account',
-  'conn.dlg.googleTitle': 'Connect Google account and YouTube reading',
   'conn.dlg.settings': 'Settings',
   'conn.dlg.diagnose': 'Diagnose',
   'conn.dlg.delete': 'Delete',

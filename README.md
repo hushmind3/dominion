@@ -115,11 +115,10 @@ estimated history reuse is not counted as a billed cache hit.
 
 ## Product boundaries
 
-The former built-in business-discovery module, autonomous RSI campaign loop
-and media-generation pipelines are **not active product features**. External
-media/automation services can be connected through ordinary MCP tools.
-Previously stored user records are not silently erased during an upgrade;
-retired job kinds cannot resume their old processors.
+DOMINION runs one native Rust agent/SDK execution kernel. Optional media
+and research capabilities are integrated through user-connected MCP tools,
+not through parallel product-specific execution engines. User records are
+not deleted as a side effect of upgrading the application.
 
 See [getting started](docs/GETTING-STARTED.md),
 [desktop setup](docs/DESKTOP.md), [engine architecture](ENGINE.md),
