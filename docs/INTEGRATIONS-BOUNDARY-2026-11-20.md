@@ -23,6 +23,8 @@ Web / SDK -> API -> Host engine planner/approval/effect journal
             provider endpoint / MCP server / connected account
 ```
 
+The host engine uses `src/integrations/registry.rs` as its only account/browser/Skill tool-catalog and execution adapter. Each optional module owns its own descriptions and implementation. New host-integrated tools are added to the registry and their module, not by adding another service-specific arm to `engine/tools.rs`.
+
 The host engine retains the final permission, effect-identity, cancellation and durable-receipt gates. A model-visible tool, a changed MCP registry entry or an OAuth connection is never a grant of execution permission. The account adapter returns results to the same tool-execution gate; it does not create a second agent runtime.
 
 ## Transition compatibility

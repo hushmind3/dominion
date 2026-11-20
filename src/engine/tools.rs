@@ -59,15 +59,13 @@ pub fn definitions() -> Vec<Value> {
 
 
     ];
-    definitions.extend(crate::integrations::skills::tools::definitions());
-    definitions.push(crate::integrations::browser::tool_definition());
-    definitions.extend(crate::integrations::accounts::tools::definitions());
+    definitions.extend(crate::integrations::registry::definitions());
     definitions
 }
 
 /// Show connected service tools only when the owner granted that account.
 pub fn definitions_for(state:&crate::state::AppState)->Vec<Value>{
-    crate::integrations::accounts::tools::filter_available(state, definitions())
+    crate::integrations::registry::filter_available(state, definitions())
 }
 
 fn tool(name: &str, description: &str, parameters: Value) -> Value {
@@ -87,8 +85,7 @@ pub fn requires_approval(name: &str) -> bool {
             | "shell_exec"
             | "terminal_exec"
 
-    ) || crate::integrations::browser::requires_approval(name)
-      || crate::integrations::accounts::tools::requires_approval(name)
+    ) || crate::integrations::registry::requires_approval(name)
 }
 
 pub async fn execute(
@@ -97,14 +94,8 @@ pub async fn execute(
     args: &Value,
     run_id: &str,
 ) -> Result<Value, String> {
-    if let Some(result) = crate::integrations::accounts::tools::execute(ctx.state,name,args).await {
+    if let Some(result) = crate::integrations::registry::execute(ctx,name,args).await {
         return result;
-    }
-    if let Some(result) = crate::integrations::skills::tools::execute(ctx,name,args).await {
-        return result;
-    }
-    if name=="browser_control" {
-        return crate::integrations::browser::execute_tool(ctx,args).await;
     }
     match name {
         "workspace_list" => {

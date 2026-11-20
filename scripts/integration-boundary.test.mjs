@@ -42,7 +42,8 @@ test('connector ownership stays out of agent worker and host tool catalog',()=>{
  const tools=source('src/engine/tools.rs');
  assert.doesNotMatch(tools,/tool\("(?:github_|google_workspace|account_status)/);
  assert.doesNotMatch(tools,/async fn github_api/);
- assert.match(tools,/integrations::accounts::tools::execute/);
+ assert.match(tools,/integrations::registry::execute/);
+ assert.match(source('src/integrations/registry.rs'),/pub async fn execute/);
  assert.match(source('src/integrations/accounts/tools.rs'),/pub fn definitions\(\)/);
 });
 test('old engine connector paths cannot leak back into API or core source',()=>{
