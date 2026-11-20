@@ -159,7 +159,8 @@ fn final_answer(kind:ExternalAgent,raw:&str)->Result<String,String>{
             // earlier success can misreport a later failed turn as complete.
             let terminal=parsed.as_array().and_then(|rows|rows.iter().rev()
                 .find(|row|row["type"]=="result"));
-            if terminal.is_some_and(|row|row["is_error"]==true){
+            if terminal.is_some_and(|row|row["is_error"]==true
+                ||row["subtype"].as_str().is_some_and(|subtype|subtype!="success")){
                 return Err("Qwen Agent 최종 실행 결과가 실패했습니다.".into());
             }
             terminal.and_then(|row|row["result"].as_str().map(str::to_string))
@@ -230,6 +231,14 @@ pub async fn inspect(
         return Err("상위 작업이 취소되어 외부 실행기를 시작하지 않습니다.".into());
     }
     let generation=context.state.cancellation_generation(parent);
+    if resume_from_job.is_some(){
+        let source=Path::new(session["delegationWorkspace"]["source"].as_str()
+            .ok_or("재개할 Git 원본 경로가 없습니다.")?);
+        // Recheck the original source and target at dispatch time, not only
+        // when the parent requested the new delegated job.
+        crate::engine::delegation_worktree::reuse_inspection_workspace(
+            &context.state,&session,source).await?;
+    }
     // Explicit continuation is claimed once; a timeout, crash or cancellation
     // after this point is review-only and never automatically replayed.
     let resume_session=resume_from_job
@@ -290,10 +299,10 @@ pub async fn inspect(
         let raw=String::from_utf8(output).map_err(|_|"외부 실행기 출력이 UTF-8이 아닙니다.")?;
         let answer=final_answer(kind,&raw)?;
         let session=terminal_session_id(kind,&raw);
-        // For a resumed process, do not accept a different conversation ID.
-        if resume_session.as_ref().is_some_and(|id|
-            session.as_ref().is_some_and(|observed|observed!=id)){
-            return Err("외부 Agent가 다른 대화 세션으로 재연결되었습니다.".into());
+        // If the terminal event cannot prove the exact expected session,
+        // do not attribute the output to the prior conversation.
+        if resume_session.as_ref().is_some_and(|id|session.as_ref()!=Some(id)){
+            return Err("외부 Agent의 원래 세션 재연결을 확인하지 못했습니다.".into());
         }
         let hash=format!("{:x}",Sha256::digest(raw.as_bytes()));
         Ok::<(String,String,Option<String>),String>((answer,hash,session))
@@ -392,6 +401,9 @@ mod tests{
         assert!(terminal_session_id(ExternalAgent::Claude,
             &json!({"type":"result","subtype":"error_max_turns","result":"partial",
                 "session_id":token}).to_string()).is_none());
+        assert!(final_answer(ExternalAgent::Qwen,
+            &json!([{"type":"result","subtype":"error_max_turns",
+                "result":"partial","is_error":false}]).to_string()).is_err());
         assert!(terminal_session_id(ExternalAgent::Codex,
             "{\"type\":\"turn.completed\"}\n").is_none());
         assert!(ExternalAgent::Qwen.command_with_resume("hello",Some("--last")).is_err());
