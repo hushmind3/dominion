@@ -332,6 +332,9 @@ pub fn installed(state: &AppState) -> Vec<Value> {
     let available = gguf.iter()
         .map(|path| path.to_string_lossy().to_string())
         .collect::<std::collections::HashSet<_>>();
+    let managed_paths=gguf.iter()
+        .filter_map(|path|path.canonicalize().ok())
+        .collect::<std::collections::HashSet<_>>();
     gguf.into_iter()
         .filter(|path| {
             let path = path.to_string_lossy();
@@ -377,6 +380,13 @@ pub fn installed(state: &AppState) -> Vec<Value> {
         })
         .chain(state.store.all(EXTERNAL_KIND).into_iter().filter_map(|record| {
             let path = Path::new(record["path"].as_str()?);
+            // Registration is an alias when a file is already visible as a
+            // managed GGUF. Keep the external DB record and its stable ID
+            // for existing sessions, but render only one catalog entry.
+            if path.is_file() && path.canonicalize().ok()
+                .is_some_and(|real|managed_paths.contains(&real)) {
+                return None;
+            }
             external_model(record["id"].as_str()?, path)
         }))
         .chain(lms)
@@ -2955,6 +2965,24 @@ mod tests {
         assert_eq!(items[0]["id"], "tiny.gguf");
         assert_eq!(items[0]["format"], "gguf");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn managed_gguf_and_registered_alias_are_shown_once_without_erasing_alias() {
+        let (state,dir)=temp_state();
+        let managed=models_dir(&state).join("dedup-contract.gguf");
+        std::fs::create_dir_all(managed.parent().unwrap()).unwrap();
+        std::fs::write(&managed,b"gguf").unwrap();
+        let alias=register_local(&state,&managed.to_string_lossy()).unwrap();
+        assert_eq!(alias["source"],"external");
+        let listed=installed(&state);
+        let matches=listed.iter().filter(|m|m["label"]=="dedup-contract.gguf")
+            .collect::<Vec<_>>();
+        assert_eq!(matches.len(),1,"one physical GGUF must not appear as both managed and external");
+        assert_eq!(matches[0]["source"],"local");
+        assert_eq!(state.store.all(EXTERNAL_KIND).len(),1,
+            "existing external ID must remain persisted for earlier sessions");
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]
