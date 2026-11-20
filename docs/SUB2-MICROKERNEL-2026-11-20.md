@@ -58,3 +58,16 @@ ProgramIR 실행, 대안 후보 실험, 작업 검토, 정책 스냅샷과 세�
 ## 독립 Cargo 경계
 
 `crates/dominion-turn-core/`가 독립 Rust 크레이트로 등록되었습니다. 런타임 의존성은 `tokio`와 `serde_json`이며 provider·DB·UI·MCP·자동화 크레이트는 직접 가져오지 않습니다. 기존 제품 API는 `src/engine/core/mod.rs` 단일 facade가 재내보냅니다. `cargo test --locked -p dominion-turn-core --lib`를 CI에 추가해 호스트 포트를 실제 DB·모델 없이 검증합니다.
+
+## 2026-11-20: 알고리즘 ↔ 하네스 종속성 역전
+
+- **불변 실행 커널**: `crates/dominion-turn-core/` — 모델 라운드 수·도구 광고 범위·중단/실행 영수증; 현재 모델 제공자, 계획 알고리즘, 메모리, 저장소, MCP를 import하지 않습니다.
+- **교체 가능한 순수 알고리즘**: `crates/dominion-agent-kernel/src/decision_policy.rs` — 계획 수립 승인, 도구 실행 순서, 읽기 조합, 읽기 선행 정책, 재시도 전략.
+- **알고리즘 선택 어댑터**: `src/engine/services/decision/turn_policy.rs` — 기존 SQLite 활성 알고리즘과 정책 slot을 조회하고 타입이 지정된 결정을 반환합니다.
+- **제품 서비스**: `src/engine/services/conversation/chat/runtime/turn_body.rs` — 직접 `algorithms::choose_for_agent`나 `policy::active`를 호출하지 않고 어댑터를 사용합니다. 기존 모델·도구 호출, 승인, 환경 fingerprint, 예산, 영수증 로직을 보존합니다.
+
+기존 활성 `implementation` 값(`read-first`, `parallel-reads`, `block-write-without-read`, `allow-all` 등)을 그대로 해석합니다. 미등록 이름은 기존 기본 동작으로 회귀하며 커널 권한이 확대되지 않습니다. `tools_enabled`, 사용자 승인, 샌드박스, 실제 도구 실행은 해당 알고리즘이 우회할 수 없습니다.
+
+**구현 범위**: 이번 단계는 계획·행동 선택·복구 정책을 커널에서 격리한 것입니다. 복합 채팅 실행 오케스트레이션 자체를 별도 런타임 프로세스로 완전히 재구축하거나, 실행 도중 동적으로 Rust 코드를 로드하는 방식은 아닙니다. 프론트 메뉴/API/메인은 그대로 유지합니다.
+
+참고: [OpenClaw 공식 런타임 구조](https://docs.openclaw.ai/agent-runtime-architecture), [런타임 플러그인](https://docs.openclaw.ai/concepts/agent-runtimes).

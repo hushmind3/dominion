@@ -77,3 +77,5 @@ UI 개발 서버: `npm --prefix web run dev`. 데스크톱 실행/설치, 실제
 HTTP API 역시 실행·승인·이벤트 11개 경로만 코어에 두고 제품 기능 123개는 서비스 라우터 5개로, 외부 연동 27개는 부가기능 라우터로 분리했습니다. 기존 주소와 공통 인증·보안 미들웨어는 유지합니다.
 
 최소 실행 코어를 독립 Rust 크레이트 `crates/dominion-turn-core/`로 분리했습니다. 코어는 모델·도구 실행 단계, 서비스 실행 포트, 실행 결과 영수증만 소유하며 모델 연결·메모리·계획·자동화·MCP·UI는 외부 서비스입니다. 기존 `src/engine/core/mod.rs`는 호환 재내보내기만 합니다.
+
+2026-11-20: 실행 코어와 행동 알고리즘 분리를 강화했습니다. 순수 전략 코드는 `crates/dominion-agent-kernel/src/decision_policy.rs`, 활성 정책 버전 선택은 `src/engine/services/decision/turn_policy.rs`, 실행 제어는 `crates/dominion-turn-core/`가 담당합니다. 기존 메뉴와 API는 유지됩니다.

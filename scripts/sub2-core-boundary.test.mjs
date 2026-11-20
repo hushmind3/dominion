@@ -137,3 +137,27 @@ test('product core is a one-file facade; standalone core has a stable source bou
  assert.deepEqual(readdirSync(new URL('../src/engine/core/',import.meta.url)).sort(),['mod.rs']);
  assert.deepEqual(readdirSync(new URL('../crates/dominion-turn-core/src/',import.meta.url)).sort(),['driver.rs','lib.rs','port_tests.rs']);
 });
+
+
+test('policy algorithms are independently replaceable and never imported by execution core',()=>{
+ const execution=source('src/engine/services/conversation/chat/runtime/turn_body.rs');
+ const policy=source('src/engine/services/decision/turn_policy.rs');
+ const strategies=source('crates/dominion-agent-kernel/src/decision_policy.rs');
+ const driver=source('crates/dominion-turn-core/src/driver.rs');
+ assert.doesNotMatch(execution,/crate::engine::algorithms::|crate::engine::policy::/);
+ for(const name of ['budget','discovery','decomposition','order','combination',
+                    'write_choice','retry_choice','signal','unrated','active']){
+  assert.match(policy,new RegExp('pub fn '+name+'\\('));
+ }
+ for(const call of ['decision_policy.order()','decision_policy.combination()',
+                    'decision_policy.retry_choice()','decision_policy.write_choice()']){
+  assert.ok(execution.includes(call),'the running chat turn does not use policy hook '+call);
+ }
+ for(const name of ['ToolOrder','ToolCombination','WriteChoice','RetryChoice']){
+  assert.ok(strategies.includes('pub enum '+name));
+ }
+ assert.match(strategies,/pub fn admit_plan/);
+ assert.doesNotMatch(driver,/dominion_agent_kernel|turn_policy|crate::engine::algorithms/);
+ assert.doesNotMatch(source('crates/dominion-turn-core/Cargo.toml'),/dominion-agent-kernel/);
+ assert.match(source('src/engine/mod.rs'),/services\/decision\/turn_policy.rs/);
+});
