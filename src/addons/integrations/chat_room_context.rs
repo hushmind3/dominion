@@ -607,6 +607,45 @@ pub(crate) fn compile(
         used += candidate.cost;
         selected.push(i);
     }
+    // Retrieval over a long room should preserve the provenance of a
+    // relevant exchange. A lexical match on an old owner request alone does
+    // not tell the model what its agent answered (and vice versa).
+    // Expand only matched historical candidates, never every room turn.
+    // The selected source IDs are still recorded individually for the
+    // durable per-participant read cursor.
+    let mut linked_history_pairs=0usize;
+    for original in selected.clone() {
+        if linked_history_pairs>=4 || scores[original]<=0.0
+            || candidates[original].order>=source { continue; }
+        let Some(row)=candidates[original].history.first() else{continue;};
+        let related=if row["role"]=="user" {
+            row["id"].as_str().and_then(|id|{
+                candidates.iter().enumerate().find(|(_,candidate)|
+                    candidate.order<source
+                    && candidate.history.first().is_some_and(|reply|
+                        reply["role"]=="assistant"
+                        && reply["tool_calls"].as_array().is_none_or(Vec::is_empty)
+                        && reply["metadata"]["replyToMessageId"]==id))
+                    .map(|(index,_)|index)
+            })
+        }else if row["role"]=="assistant" {
+            row["metadata"]["replyToMessageId"].as_str().and_then(|id|{
+                candidates.iter().enumerate().find(|(_,candidate)|
+                    candidate.order<source
+                    && candidate.history.first().is_some_and(|owner|
+                        owner["role"]=="user" && owner["id"]==id))
+                    .map(|(index,_)|index)
+            })
+        }else{None};
+        if let Some(index)=related {
+            if !selected.contains(&index)
+                && used.saturating_add(candidates[index].cost)<=target {
+                used+=candidates[index].cost;
+                selected.push(index);
+                linked_history_pairs+=1;
+            }
+        }
+    }
     let required_tokens = fixed_cost
         + candidates
             .iter()
@@ -688,9 +727,10 @@ pub(crate) fn compile(
         "peerCandidates":current_speaker_candidates.len(),
         "peerPinned":pinned_current_speakers.len(),
         "peerSelected":selected_history.iter().filter(|index|current_speaker_candidates.contains(&candidates[**index].order)).count(),
+        "linkedHistoryPairs":linked_history_pairs,
         "selectedMessageIds":rows.iter().map(|row|row["id"].clone()).collect::<Vec<_>>(),"availableMessages":all.len(),"exactDuplicatesExcluded":rejected});
     items.push(json!({"kind":"system_prompt_final","chars":prompt.chars().count(),"digest":memory::stable_id(&[&prompt])}));
-    items.push(json!({"kind":"room_context","selection":"bm25-cost-v1","accounting":accounting}));
+    items.push(json!({"kind":"room_context","selection":"bm25-cost-linked-v2","accounting":accounting}));
     let watermark = memory::stable_id(&[&json!(items).to_string()]);
     Ok(Compiled {
         system: PromptContext {
@@ -1015,6 +1055,38 @@ mod tests {
         let rendered = json!(compiled.history).to_string();
         assert!(!rendered.contains("FIRST_TURN_MARKER"), "{rendered}");
         let cleanup_dir = state.config.data_dir.clone();
+        drop(state);
+        std::fs::remove_dir_all(cleanup_dir).unwrap();
+    }
+
+    #[test]
+    fn historical_owner_and_answer_are_retrieved_as_a_bounded_evidence_pair(){
+        let state=state();
+        state.store.put("room",&json!({"id":"r","contextBudgetTokens":2400})).unwrap();
+        message(&state,"plan-owner","user","2026년 cobalt blue circuit 설계를 선택했다");
+        state.store.write_message(&json!({
+            "id":"plan-reply","session_id":"room:r","role":"assistant",
+            "agent_id":"b","content":"CONFIRMED_ANSWER_MARKER: 설계 B로 확정",
+            "metadata":{"authorKind":"agent","replyToMessageId":"plan-owner"}
+        })).unwrap();
+        for index in 0..120 {
+            message(&state,&format!("noise-{index}"),"assistant",
+                &format!("unrelated filler conversation no.{index}"));
+        }
+        message(&state,"current","user","cobalt blue circuit 관련해서 어떻게 됐지?");
+        let request=TurnRequest::from_value(&json!({
+            "input":"cobalt blue circuit 관련해서 어떻게 됐지?",
+            "agentId":"a","toolsEnabled":false
+        })).unwrap();
+        let compiled=compile(&state,&request,"room:r","current",&[],&[]).unwrap();
+        let selected=compiled.accounting["selectedMessageIds"].as_array().unwrap();
+        assert!(selected.iter().any(|id|id=="plan-owner"));
+        assert!(selected.iter().any(|id|id=="plan-reply"),
+            "an old owner reference must recover its actual reply");
+        assert!(compiled.accounting["linkedHistoryPairs"].as_u64().unwrap()>=1);
+        assert!(json!(compiled.history).to_string().contains("CONFIRMED_ANSWER_MARKER"));
+        assert_eq!(state.store.messages("room:r").len(),123);
+        let cleanup_dir=state.config.data_dir.clone();
         drop(state);
         std::fs::remove_dir_all(cleanup_dir).unwrap();
     }
