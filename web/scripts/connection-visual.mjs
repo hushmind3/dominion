@@ -53,6 +53,18 @@ const routeApi=async route=>{
  if(name==='/api/rooms')return json(route,[{id:'room-alpha',name:'테스트 연구실',agentIds:['a','b']}])
  if(name==='/api/agents')return json(route,[{id:'general',name:'일반 에이전트'}])
  if(name==='/api/providers')return json(route,[])
+ if(name==='/api/oauth/providers')return json(route,[
+  {id:'github',name:'GitHub',configured:true,connected:false,scope:'repo',callback:base+'/api/oauth/github/callback'},
+  {id:'google',name:'Google',configured:false,connected:false,scope:'drive',callback:base+'/api/oauth/google/callback'}
+ ])
+ if(name==='/api/oauth/connections')return json(route,[])
+ if(name==='/api/mcp'||name==='/api/mcp/presets'||name==='/api/mcp/discover'||name==='/api/skills')return json(route,[])
+ if(name==='/api/mcp/catalog')return json(route,[
+  {name:'Example filesystem tools',description:'Browse a local workspace through MCP',packageName:'@modelcontextprotocol/server-filesystem'},
+  {name:'Example code search',description:'Search and inspect source repositories',packageName:'example-code-search'}
+ ])
+ if(name==='/api/skill-catalog')return json(route,{items:[],total:0,updatedAt:''})
+ if(name==='/api/capabilities')return json(route,{items:[]})
  if(name==='/api/channels'&&method==='GET')return json(route,connections)
  if(name==='/api/channels'&&method==='POST'){
   const record=JSON.parse(route.request().postData()||'{}')
@@ -124,6 +136,22 @@ try{
  await page.locator('section[aria-label="등록한 연결"] button').filter({hasText:'Discord'}).first().click()
  await page.getByRole('button',{name:'연결 목록으로'}).waitFor({timeout:15000})
  await shot(page,'08-mobile-details.png')
+ // Exercise the other existing connection tabs without adding new navigation.
+ await page.setViewportSize({width:1440,height:900})
+ for(const [label,title,file] of [
+  ['계정 연결',null,'09-linked-accounts.png'],
+  ['인증 앱 설정',null,'10-app-credentials.png'],
+  ['MCP 마켓','MCP 마켓','11-mcp-market.png'],
+  ['설치됨','설치된 MCP 서버','12-installed-mcp.png'],
+  ['스킬','스킬','13-skills.png'],
+  ['플러그인','플러그인','14-plugins.png'],
+  ['역량 마켓','역량 마켓','15-capabilities.png']
+ ]){
+  await page.getByRole('button',{name:label,exact:true}).first().click()
+  if(title)await page.getByRole('heading',{name:title,exact:true}).first().waitFor({timeout:15000})
+  await page.waitForTimeout(200)
+  await shot(page,file)
+ }
  assert.deepEqual(errors,[],'No uncaught React page errors during visual flow')
  console.log(JSON.stringify({ok:true,items:screenshots},null,2))
 }finally{
