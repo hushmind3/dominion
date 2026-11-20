@@ -39,7 +39,7 @@ use crate::engine::adaptation::types::TaskOutcome;
 use crate::engine::verification;
 use crate::{
     engine::{
-        llm, mcp,
+        llm, extensions,
         tools::{self, ToolContext},
     },
     state::AppState,
@@ -322,7 +322,8 @@ async fn run_turn_with_policy(
     execution_budget.finish();
     close_pending_approvals(state, &session_id);
 
-    if request.auto_learning {
+    if request.auto_learning && extensions::enabled(
+        state,&session_id,request.agent_id.as_deref(),extensions::Extension::Memory) {
         // Do not turn a failed or cancelled execution (including approval
         // denial) into a success-learning sample.
         let task_outcome = state
@@ -346,6 +347,8 @@ async fn run_turn_with_policy(
     }
     // A correction is worth reflecting on even when the corrective turn
     // itself failed, because the failure is additional evidence.
+    if extensions::enabled(
+        state,&session_id,request.agent_id.as_deref(),extensions::Extension::Memory) {
     if let Some(correction_id) =
         crate::engine::reflect::correction_to_reflect(state, &session_id, &request.input)
     {
@@ -357,6 +360,7 @@ async fn run_turn_with_policy(
             request.provider_id.as_deref().unwrap_or(""),
             request.model.as_deref().unwrap_or(""),
         );
+    }
     }
     result
 }
@@ -575,7 +579,7 @@ async fn run_turn_body(
         simple_file_creation(state,&request.input,&acceptance)
     } else {None};
     let mut tool_definitions = if request.tools_enabled && request.tools_execution_enabled {
-        tools::definitions()
+        extensions::tools::native(state,session_id,request.agent_id.as_deref())
     } else {
         Vec::new()
     };
@@ -591,7 +595,8 @@ async fn run_turn_body(
     // Do not enumerate remote MCP servers or scan old tool receipts for
     // ordinary group conversation. A resumed action still uses the full path.
     if request.tools_enabled && request.tools_execution_enabled && !casual_room && !social_private {
-        tool_definitions.extend(mcp::definitions(state).await);
+        tool_definitions.extend(extensions::tools::external(
+            state,session_id,request.agent_id.as_deref()).await);
     }
     if is_room && request.tools_enabled && request.tools_execution_enabled {
         if casual_room {
@@ -617,15 +622,11 @@ async fn run_turn_body(
     // read-only schema when this agent can actually view an enabled skill.
     if request.tools_enabled && request.tools_execution_enabled && !social_private
         && (!is_room || !tool_definitions.is_empty()) {
-        let scope = crate::engine::memory::MemoryScope::for_session(
-            &state.store, session_id, request.agent_id.as_deref(),
-        );
-        let has_skill = state.store.all("skill").into_iter().any(|record|
-            record["enabled"] != false && record["status"] != "draft"
-                && crate::engine::memory::visible(&record, &scope)
-        );
+        let has_skill=extensions::knowledge::has_visible_skills(
+            state,session_id,request.agent_id.as_deref());
         if has_skill && !tool_definitions.iter().any(|def|tool_name(def)=="skill_view") {
-            if let Some(definition) = tools::definitions().into_iter()
+            if let Some(definition) = extensions::tools::native(
+                state,session_id,request.agent_id.as_deref()).into_iter()
                 .find(|def|tool_name(def)=="skill_view") {
                 tool_definitions.push(definition);
             }
@@ -638,7 +639,8 @@ async fn run_turn_body(
             .unwrap_or_else(|_|state.config.workspace.clone());
         let inside_workspace = simple_creation_target.as_ref().is_some_and(|path|
             path.starts_with(&workspace_root));
-        tool_definitions = tools::definitions().into_iter().filter(|definition| {
+        tool_definitions = extensions::tools::native(
+            state,session_id,request.agent_id.as_deref()).into_iter().filter(|definition| {
             let name = tool_name(definition);
             matches!(name, "shell_exec" | "terminal_exec") || if inside_workspace {
                 matches!(name, "workspace_list" | "workspace_read" | "workspace_write")
@@ -704,7 +706,8 @@ async fn run_turn_body(
             .filter(|item| item["kind"] == "memory")
             .filter_map(|item| item["id"].as_str().and_then(|id| state.store.get("memory", id)))
             .collect::<Vec<_>>();
-        crate::engine::memory::record_context_use(&state.store, &delivered_memories);
+        extensions::knowledge::record_context_use(
+            state,session_id,request.agent_id.as_deref(),&delivered_memories);
         if let Some(mut execution) = state.store.get("execution", execution_id) {
             execution["inputContext"] = compiled.accounting;
             state.store.put("execution", &execution);
