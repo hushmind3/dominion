@@ -100,7 +100,7 @@ pub fn tool_relevance(name:&str,description:&str,query:&str)->i32{
 /// Bounded depth and vocabulary prevent large or recursive schemas from
 /// consuming unbounded matching work.
 fn schema_vocabulary(schema:&Value,depth:usize,fields:&mut BTreeSet<String>){
- if depth>=5||fields.len()>=96{return}
+ if depth>=4||fields.len()>=96{return}
  let Some(object)=schema.as_object() else{return};
  if let Some(properties)=object.get("properties").and_then(Value::as_object){
   for (key,subschema) in properties {
@@ -360,7 +360,7 @@ mod tests{
  #[test]
  fn schema_fields_recover_generic_mcp_capabilities_without_granting_others(){
   let mut c=catalog();
-  let name="mcp__connector__execute_issues";
+  let name="mcp__connector__execute_007";
   c.insert(name.into(),ToolSpec{
    name:name.into(),description:"Execute selected connector operation".into(),
    schema:json!({"type":"object","properties":{
@@ -369,7 +369,7 @@ mod tests{
     "options":{"type":"object","properties":{"issue_state":{"type":"string"}}}
    }}),read_only:true,
   });
-  let irrelevant="mcp__connector__execute_video";
+  let irrelevant="mcp__connector__execute_008";
   c.insert(irrelevant.into(),ToolSpec{
    name:irrelevant.into(),description:"Execute selected connector operation".into(),
    schema:json!({"type":"object","properties":{"video_frames":{"type":"array"}}}),
@@ -377,6 +377,8 @@ mod tests{
   });
   let q="repository issue";
   assert!(score(&c[name],q)>score(&c[irrelevant],q));
+  assert!(score(&c[name],q)>
+   tool_relevance(name,&c[name].description,q));
   let found=search(&json!({"query":q,"limit":5}),&c).unwrap();
   let names=found["matches"].as_array().unwrap();
   assert!(names.iter().any(|item|item["name"]==name));
