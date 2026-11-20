@@ -35,7 +35,7 @@ fn enabled_for_run(state:&AppState,execution_id:Option<&str>)->bool {
 /// strategy or create an algorithm-usage record for an ordinary native turn.
 pub fn prepare_turn(
     state:&AppState,session_id:&str,agent_id:Option<&str>,execution_id:&str,
-)->(Vec<Value>,Vec<Value>) {
+)->(Vec<String>,Vec<Value>) {
     if !strategies_enabled(state,session_id,agent_id){
         return (Vec::new(),Vec::new());
     }
