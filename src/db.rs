@@ -1671,6 +1671,8 @@ impl Store {
                     "estimatedCalls":estimated.max(0),
                     "cacheReportedCalls":reported.max(0),
                     "cacheUnknownCalls":unknown.max(0),
+                    "reportedCachedPromptTokens":cached.max(0),
+                    "reportedCacheCreationTokens":cache_writes.max(0),
                     "cachedPromptTokens":known.then_some(cached.max(0)),
                     "uncachedPromptTokens":known.then_some(prompt.max(0).saturating_sub(cached.max(0))),
                     "cacheCreationTokens":(write_reported>0).then_some(cache_writes.max(0)),
@@ -1679,6 +1681,7 @@ impl Store {
             Err(_) => json!({
                 "calls":0,"promptTokens":0,"completionTokens":0,"totalTokens":0,
                 "estimatedCalls":0,"cacheReportedCalls":0,"cacheUnknownCalls":0,
+                "reportedCachedPromptTokens":0,"reportedCacheCreationTokens":0,
                 "cachedPromptTokens":null,"uncachedPromptTokens":null,
                 "cacheCreationTokens":null,
             }),
