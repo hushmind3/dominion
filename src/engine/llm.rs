@@ -150,51 +150,6 @@ async fn try_complete(
     Err(last)
 }
 
-pub async fn complete(
-    state: &AppState,
-    provider_id: &str,
-    model: &str,
-    system: &str,
-    prompt: &str,
-) -> Result<String, String> {
-    try_complete(state, provider_id, model, system, prompt, None, None).await
-}
-
-/// Session-aware helper call used by room learning, reflection and planning so
-/// their cost is attributed to the conversation that caused it.
-pub async fn complete_for_session(
-    state: &AppState,
-    provider_id: &str,
-    model: &str,
-    system: &str,
-    prompt: &str,
-    session_id: &str,
-) -> Result<String, String> {
-    try_complete(
-        state,
-        provider_id,
-        model,
-        system,
-        prompt,
-        Some(session_id),
-        None,
-    )
-    .await
-}
-
-/// Optional-session variant for turn helpers that can run without a durable
-/// session id. The call is still recorded; only the attribution differs.
-pub async fn complete_for_turn(
-    state: &AppState,
-    provider_id: &str,
-    model: &str,
-    system: &str,
-    prompt: &str,
-    session_id: Option<&str>,
-) -> Result<String, String> {
-    try_complete(state, provider_id, model, system, prompt, session_id, None).await
-}
-
 /// Measure an auxiliary phase against the native execution shared by chat, SDK and jobs.
 #[allow(clippy::too_many_arguments)]
 pub async fn complete_for_execution(
