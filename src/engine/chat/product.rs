@@ -1956,9 +1956,8 @@ impl MainTurn<'_> {
         self.simple_creation_target = simple_file_creation(self.state, &goal, &self.acceptance);
         self.messages.push(json!({"role":"user","content":format!("사용자가 작업 지시를 갱신했습니다 (revision={revision}). 현재 유효한 전체 목표:\n{goal}\n이미 수행한 변경은 보존하고 새 목표의 검증 조건으로 계속하세요.")}));
         if self.request.tools_enabled && self.request.tools_execution_enabled {
-            self.tool_definitions = tools::definitions();
-            self.tool_definitions
-                .extend(mcp::definitions(self.state).await);
+            self.tool_definitions = crate::engine::extensions::tools::catalog(
+                self.state,self.session_id,self.request.agent_id.as_deref()).await;
             if self.session["readOnly"] == true {
                 self.tool_definitions
                     .retain(|tool| tools::observational(tool_name(tool)));
