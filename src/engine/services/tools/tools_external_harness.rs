@@ -210,6 +210,12 @@ pub(super) async fn run(ctx:&ToolContext<'_>,args:&Value)->Result<Value,String>{
         .filter(|id|safe_id(id)).ok_or("harnessId is required")?;
     let spec=adapters().into_iter().find(|entry|entry.id==id)
         .ok_or_else(||format!("external harness '{id}' is not enabled by the server owner"))?;
+    run_with_spec(ctx,&spec,args).await
+}
+/// Testable host gateway without mutating the process-wide adapter registry.
+async fn run_with_spec(
+    ctx:&ToolContext<'_>,spec:&Adapter,args:&Value,
+)->Result<Value,String>{
     let prompt=args["prompt"].as_str()
         .filter(|s|!s.trim().is_empty() && s.len()<=MAX_PROMPT)
         .ok_or("external harness task must be between 1 and 24000 bytes")?;
@@ -305,6 +311,56 @@ mod tests {
         assert!(parse_adapters(r#"{"x":{"enabled":true,"command":"bad\u0000",
             "args":[]}}"#).is_empty());
     }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn real_bridge_session_resumes_once_and_rejects_other_owner_or_busy_session(){
+        let dir=std::env::temp_dir().join(format!("dominion-agent-bridge-{}",
+            uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=crate::config::Config{port:0,data_dir:dir.clone(),
+            web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=crate::state::AppState::new(config.clone(),
+            crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        let ctx=ToolContext{workspace:&dir,store:&state.store,state:&state,
+            session_id:"owner-session",agent_id:Some("a"),
+            tools_enabled:true,tools_execution_enabled:true};
+        let spec=Adapter{id:"echo".into(),command:"/bin/echo".into(),
+            argv:vec![r#"{"result":"first","session_id":"remote-123"}"#.into()],
+            resume_argv:Some(vec![
+                r#"{"result":"second"}"#.into(),"{session_id}".into()]),
+        };
+        let first=run_with_spec(&ctx,&spec,&json!({"prompt":"initial"}))
+            .await.unwrap();
+        assert_eq!(first["answer"],"first");
+        assert_eq!(first["sessionResumable"],true);
+        assert!(first["remoteSessionId"].is_null());
+        let uuid=first["bridgeSessionId"].as_str().unwrap();
+        let stored=ctx.store.get("external_agent_session",uuid).unwrap();
+        assert_eq!(stored["remoteSessionId"],"remote-123");
+        assert_eq!(stored["status"],"ready");
+        let second=run_with_spec(&ctx,&spec,&json!({
+            "prompt":"follow-up","bridgeSessionId":uuid
+        })).await.unwrap();
+        assert_eq!(second["bridgeSessionId"],uuid);
+        assert_eq!(second["sessionResumable"],true);
+        assert_eq!(ctx.store.get("external_agent_session",uuid).unwrap()
+            ["status"],"ready");
+        let foreign=ToolContext{workspace:&dir,store:&state.store,state:&state,
+            session_id:"other-owner",agent_id:Some("a"),
+            tools_enabled:true,tools_execution_enabled:true};
+        assert!(run_with_spec(&foreign,&spec,&json!({
+            "prompt":"take over","bridgeSessionId":uuid
+        })).await.is_err());
+        ctx.store.patch_if("external_agent_session",uuid,"status",
+            &json!("ready"),&json!({"status":"running"})).unwrap();
+        assert!(run_with_spec(&ctx,&spec,&json!({
+            "prompt":"replay after crash","bridgeSessionId":uuid
+        })).await.is_err());
+        drop(ctx);drop(foreign);drop(state);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn only_owner_configured_resume_templates_can_issue_bridge_session_tokens(){
         let list=parse_adapters(r#"{
