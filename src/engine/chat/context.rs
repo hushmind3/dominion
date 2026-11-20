@@ -762,6 +762,38 @@ mod tests {
     }
 
     #[test]
+    fn long_real_owner_and_persona_are_source_indexed_not_56k_fixed_prefix(){
+        let (state,dir)=state();
+        state.store.put("session",&json!({"id":"prompt-case"}));
+        let persona=format!("역할 핵심: 주인 의도 유지. {}", "긴 페르소나 서술 ".repeat(15_000));
+        let policy=format!("주인 최우선: 사실과 근거만 사용. {}", "기타 프로젝트 지침 ".repeat(15_000));
+        state.store.put("agent",&json!({"id":"agent-p","name":"Test",
+            "systemPrompt":persona})).unwrap();
+        state.store.put("assistant_settings",&json!({"id":"global","enabled":true,
+            "instructions":policy})).unwrap();
+        let request=TurnRequest::from_value(&json!({"sessionId":"prompt-case",
+            "agentId":"agent-p","input":"말 짧게 해라","toolsEnabled":true,
+            "toolsExecutionEnabled":true})).unwrap();
+        let indexed=system_prompt_with_manifest(&state,&request,"prompt-case","말 짧게 해라",None);
+        assert!(indexed.items.iter().filter(|i|i["kind"]=="paged_identity_source").count()>=2);
+        assert!(indexed.prompt.contains("주인 최우선"));
+        assert!(indexed.prompt.contains("역할 핵심"));
+        assert!(indexed.prompt.chars().count()<12_000,
+            "large persona+owner policy should be indexed rather than resent");
+        assert!(indexed.source_instructions.chars().count()<4_000);
+        assert_eq!(super::prompt_sources::original_source(&state,Some("agent-p"),"persona").unwrap(),persona);
+        assert_eq!(super::prompt_sources::original_source(&state,Some("agent-p"),"owner").unwrap(),policy);
+        let tools_off=TurnRequest::from_value(&json!({"sessionId":"prompt-case",
+            "agentId":"agent-p","input":"말 짧게 해라","toolsEnabled":false,
+            "toolsExecutionEnabled":false})).unwrap();
+        let full=system_prompt_with_manifest(&state,&tools_off,"prompt-case","말 짧게 해라",None);
+        assert!(full.prompt.chars().count()>indexed.prompt.chars().count()*10);
+        assert!(full.prompt.contains(&persona));
+        assert!(full.prompt.contains(&policy));
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn skill_manifest_is_compact_sorted_and_never_embeds_full_instructions(){
         let (state,dir)=state();
         state.store.put("session",&json!({"id":"s"}));

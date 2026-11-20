@@ -1877,6 +1877,43 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn prompt_source_reader_rejects_stale_revisions_and_peer_persona(){
+        use crate::{config::Config,db::Store,vault::Vault};
+        let dir=std::env::temp_dir().join(format!("dominion-prompt-sources-{}",uuid::Uuid::new_v4()));
+        let config=Config{port:0,data_dir:dir.join("data"),web_dir:dir.join("web"),
+            workspace:dir.clone()};
+        let state=crate::state::AppState::new(config.clone(),
+            Store::open(&config.db_path()).unwrap(),Vault::open(&config.key_path()));
+        let own="PERSONA_SOURCE_".repeat(1_200);
+        let other="PRIVATE_PEER_PERSONA_".repeat(700);
+        state.store.put("session",&json!({"id":"s"})).unwrap();
+        state.store.put("agent",&json!({"id":"a","name":"a","systemPrompt":own})).unwrap();
+        state.store.put("agent",&json!({"id":"b","name":"b","systemPrompt":other})).unwrap();
+        state.store.put("assistant_settings",&json!({"id":"global","enabled":true,
+            "instructions":"OWNER POLICY"})).unwrap();
+        let ctx=ToolContext{workspace:&dir,store:&state.store,state:&state,
+            session_id:"s",agent_id:Some("a"),tools_enabled:true,
+            tools_execution_enabled:true};
+        let first=execute(&ctx,"prompt_source_read",&json!({"source":"persona"}),"r").await.unwrap();
+        let second=execute(&ctx,"prompt_source_read",
+            &json!({"source":"persona","offset":6000}),"r").await.unwrap();
+        assert_eq!(format!("{}{}",first["content"].as_str().unwrap(),
+            second["content"].as_str().unwrap()),own);
+        assert_eq!(first["hasMore"],true);
+        assert_eq!(second["hasMore"],false);
+        assert!(!json!(first).to_string().contains("PRIVATE_PEER_PERSONA_"));
+        assert_eq!(execute(&ctx,"prompt_source_read",
+            &json!({"source":"owner"}),"r").await.unwrap()["content"],"OWNER POLICY");
+        assert!(execute(&ctx,"prompt_source_read",&json!({"source":"persona",
+            "revision":"obsolete"}),"r").await.is_err());
+        assert!(execute(&ctx,"prompt_source_read",&json!({"source":"other"}),"r").await.is_err());
+        let no_agent=ToolContext{agent_id:None,..ctx};
+        assert!(execute(&no_agent,"prompt_source_read",
+            &json!({"source":"persona"}),"r").await.is_err());
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
     async fn historical_evidence_reader_paginates_exact_results_and_enforces_agent_scope(){
         use crate::{config::Config,db::Store,vault::Vault};
         let dir=std::env::temp_dir().join(format!("dominion-history-reader-{}",uuid::Uuid::new_v4()));
