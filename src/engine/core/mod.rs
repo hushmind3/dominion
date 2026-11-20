@@ -16,7 +16,7 @@ pub struct TurnStats {
 /// Keep both success receipts and failed effects for the SAME decision
 /// kernel. Dropping tool_error meant a prior external effect marked unknown
 /// could disappear from autonomous replay admission.
-fn collect_tool_event(stats: &mut TurnStats, event: &Value) {
+pub(super) fn collect_tool_event(stats: &mut TurnStats, event: &Value) {
     let Some(name) = event.get("name").and_then(Value::as_str)
         .filter(|name| !name.is_empty()) else {return;};
     match event.get("type").and_then(Value::as_str) {
