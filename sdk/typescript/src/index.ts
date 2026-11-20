@@ -41,8 +41,7 @@ export interface PromptJobInput {
     executionStrategy?: 'focused' | 'conservative';
   };
 }
-export interface WorkflowJobInput { kind: 'workflow'; input: { workflowId: string; input?: unknown } }
-export type CreateJobInput = PromptJobInput | WorkflowJobInput;
+export type CreateJobInput = PromptJobInput;
 export interface ClientOptions { baseUrl?: string; token?: string; fetch?: typeof globalThis.fetch }
 export interface RequestOptions { signal?: AbortSignal }
 export interface WaitOptions extends RequestOptions { intervalMs?: number; timeoutMs?: number }
