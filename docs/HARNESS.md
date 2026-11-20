@@ -223,6 +223,25 @@ including any delegated worktree patch receipt; a late completion cannot
 overwrite cancellation or an already finalized run. Failed persistence records
 `job.finalization_failed` instead of falsely reporting success.
 
+### Explicit isolated CLI continuation
+
+After an external `codex`, `claude` or `qwen` inspection worker finishes
+successfully, the owner may submit a new `delegate_task` with the same agent
+and `externalRuntime`, `profile: "inspection"`, `isolatedWorktree: true`,
+and `resumeFromJobId: <completed-child-job-id>`. DOMINION validates the
+prior job, exact CLI terminal session UUID, parent/agent/runtime identity,
+frozen base commit and clean original isolated worktree **before dispatch**.
+It reuses that same project directory because provider CLI sessions are
+project-scoped. A SQLite single-use claim prevents two follow-ups from
+resuming one completed CLI transcript. Every resumed process remains in
+read-only/plan mode with unchanged time and output limits.
+
+This is a new owner-requested follow-up job, not replay after a crash:
+uncertain, cancelled, failed and already-claimed CLI sessions are rejected.
+Even after a process exits successfully, a resumed CLI must report the
+expected exact thread ID before its answer is accepted. These external
+answers remain unverified agent reports, never native mutation receipts.
+
 ## 2026-11-20 bounded room, model-route and delegated recovery guards
 
 - Multi-agent context selection can link an old, query-matched owner message
