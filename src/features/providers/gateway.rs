@@ -13,7 +13,54 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
-/// A resolved provider + model pair. `base_url` never has a trailing slash.
+/// Explicit per-model/per-endpoint feature profile. Unknown is not "false",
+/// and a provider declaration never becomes proof of runtime behavior.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ModelCapabilities {
+    pub tool_calling:Option<bool>,
+    pub parallel_tool_calls:Option<bool>,
+    pub reasoning:Option<bool>,
+    pub prompt_cache:Option<bool>,
+    pub vision:Option<bool>,
+    pub streaming:Option<bool>,
+    pub context_window:Option<u64>,
+}
+impl ModelCapabilities {
+    fn field(model:&Value,provider:&Value,names:&[&str])->Option<bool>{
+        for key in names {
+            if let Some(value)=model.get(*key).and_then(Value::as_bool){return Some(value)}
+            if let Some(value)=provider.get(*key).and_then(Value::as_bool){return Some(value)}
+        }
+        None
+    }
+    pub fn from_provider(provider:&Value,model:&str,tool_mode:&str)->Self {
+        let base=&provider["capabilities"];
+        let model_profile=&provider["modelCapabilities"][model];
+        let mut value=Self{
+            tool_calling:Self::field(model_profile,base,&["toolCalling","tools"]),
+            parallel_tool_calls:Self::field(model_profile,base,&["parallelToolCalls"]),
+            reasoning:Self::field(model_profile,base,&["reasoningSupported","thinking"]),
+            prompt_cache:Self::field(model_profile,base,&["promptCache"]),
+            vision:Self::field(model_profile,base,&["vision"]),
+            streaming:Self::field(model_profile,base,&["streaming"]),
+            context_window:model_profile["contextTokens"].as_u64()
+                .or_else(||base["contextTokens"].as_u64()),
+        };
+        // The configured wire adapter cannot deliver native tool calls in
+        // compatibility mode, regardless of a model marketing capability.
+        if tool_mode=="compat" {value.tool_calling=Some(false);}
+        value
+    }
+    /// Unknown is allowed only for legacy native-capable endpoints; an
+    /// explicit negative is a hard rejection before any billable request.
+    pub fn require_native_tools(&self)->Result<(),String>{
+        if self.tool_calling==Some(false){
+            Err("이 모델·엔드포인트 조합은 네이티브 도구 호출을 지원하지 않습니다.".into())
+        }else{Ok(())}
+    }
+}
+
+/// A resolved provider + model pair. \`base_url\` never has a trailing slash.
 #[derive(Clone, Debug)]
 pub struct Route {
     pub id: String,
@@ -32,6 +79,7 @@ pub struct Route {
     pub max_output_tokens: Option<u64>,
     pub requests_per_minute: Option<u64>,
     pub account_id: Option<String>,
+    pub capabilities: ModelCapabilities,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -203,12 +251,15 @@ pub fn route_from_provider(
     let max_output_tokens = provider["capabilities"]["maxOutputTokens"]
         .as_u64()
         .or_else(|| provider["maxOutputTokens"].as_u64());
+    let tool_mode=default_tool_mode(provider,&kind);
+    let capabilities=ModelCapabilities::from_provider(provider,&model,&tool_mode);
     Ok(Route {
+        capabilities,
         name: provider["name"]
             .as_str()
             .unwrap_or("Provider")
             .to_string(),
-        tool_mode: default_tool_mode(provider, &kind),
+        tool_mode,
         reasoning_protocol: default_reasoning_protocol(provider, &kind, &model, &id),
         local,
         disable_thinking: disable_thinking(provider, local),
@@ -713,6 +764,32 @@ mod tests {
         assert_eq!(ordered[0].model, "tiny");
     }
 
+    #[test]
+    fn model_specific_capabilities_override_provider_defaults_and_wire_restrictions() {
+        let profile=json!({"capabilities":{"toolCalling":true,"vision":false},
+            "modelCapabilities":{"no-tools":{"toolCalling":false,"vision":true}}});
+        let denied=ModelCapabilities::from_provider(&profile,"no-tools","native");
+        assert_eq!(denied.tool_calling,Some(false));
+        assert_eq!(denied.vision,Some(true));
+        assert!(denied.require_native_tools().is_err());
+        let parent=ModelCapabilities::from_provider(&profile,"other","native");
+        assert_eq!(parent.tool_calling,Some(true));
+        assert_eq!(parent.vision,Some(false));
+        let compat=ModelCapabilities::from_provider(&profile,"other","compat");
+        assert!(compat.require_native_tools().is_err());
+    }
+
+    #[test]
+    fn provider_route_rejects_explicit_no_tool_model_before_generation() {
+        let state=state();
+        state.store.put("provider",&json!({"id":"test-model","name":"test",
+            "baseUrl":"http://127.0.0.1:1111/v1","model":"known",
+            "toolMode":"native","modelCapabilities":{"known":{"toolCalling":false}}})).unwrap();
+        let route=resolve(&state,"test-model",None).unwrap();
+        assert!(route.capabilities.require_native_tools().is_err());
+        let other=resolve(&state,"test-model",Some("other")).unwrap();
+        assert_eq!(other.capabilities.tool_calling,None);
+    }
     #[test]
     fn usage_parses_snake_and_camel_case() {
         assert_eq!(

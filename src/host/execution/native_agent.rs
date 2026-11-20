@@ -402,6 +402,9 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
             &context.state,provider,chosen_model,&input["nativeRoutingPolicy"],
             task,input["ownerInstructions"].as_str().unwrap_or(""))?
     };
+    // Native kernel needs actual structured tool calls: refuse explicitly
+    // disabled model/endpoint pairs before saving a model-dispatch intent.
+    route.capabilities.require_native_tools()?;
     if previous_route.is_none() {
         context.checkpoint(json!({"nativeRoute":route_record}))?;
         context.state.store.audit("native.route.selected",json!({

@@ -12,6 +12,7 @@ use crate::engine::gateway;
 fn native_panel_provider(state:&AppState,provider_id:Option<&str>)->Result<String,String>{
     let supported=|route:&gateway::Route|{
         route.kind!="cli" && route.tool_mode!="compat"
+            && route.capabilities.require_native_tools().is_ok()
             && (route.kind!="codex" || route.account_id.is_some())
     };
     if let Some(id)=provider_id.filter(|id|!id.is_empty()){

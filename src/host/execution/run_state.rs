@@ -68,12 +68,10 @@ pub fn transition(current: &str, event: &str) -> Option<&'static str> {
 }
 
 pub fn phase_for_status(status: &str) -> &'static str {
-    match status {
-        "completed" => SUCCEEDED,
-        "cancelled" => CANCELLED,
-        "interrupted" => INTERRUPTED,
-        _ => FAILED,
-    }
+    // Product status and SDK jobs use the same typed lifecycle vocabulary.
+    use dominion_agent_sdk::RunPhase;
+    RunPhase::from_host_status(status)
+        .unwrap_or(RunPhase::Failed).as_str()
 }
 
 /// Applies one event to the durable execution record. An illegal transition is
