@@ -49,11 +49,11 @@ for(const [owner,original,replacement] of [["src/engine/chat/runtime.rs","src/en
 }
 const board=readFileSync(path.join(root,'src/addons/integrations/room_board.rs'),'utf8')
 const rooms=readFileSync(path.join(root,'src/addons/integrations/rooms.rs'),'utf8')
-const roomContext=readFileSync(path.join(root,'src/addons/integrations/chat_room_context.rs'),'utf8')
+const boardRoomContext=readFileSync(path.join(root,'src/addons/integrations/chat_room_context.rs'),'utf8')
 const dbSource=readFileSync(path.join(root,'src/db.rs'),'utf8')
 if(!addonIndex.includes('pub mod room_board;')||
    !rooms.includes('crate::addons::room_board::publish(')||
-   !roomContext.includes('crate::addons::room_board::context_frame(')||
+   !boardRoomContext.includes('crate::addons::room_board::context_frame(')||
    !board.includes('operation["toolReceipt"]["verified"]==true')||
    !dbSource.includes('CREATE INDEX IF NOT EXISTS idx_room_work_source')||
    !dbSource.includes('pub fn room_work_receipts('))
