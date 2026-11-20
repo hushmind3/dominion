@@ -42,15 +42,6 @@ export interface PromptJobInput {
   };
 }
 export interface WorkflowJobInput { kind: 'workflow'; input: { workflowId: string; input?: unknown } }
-/** Retired media and RSI are read-only historical records, not workloads. */
-export interface RsiOverview {
- version:string; candidates:RecordItem[]; campaigns:RecordItem[]; minPairedCases:number;
-}
-export interface VideoJob extends RecordItem {
- kind:'video'|'youtube_upload';status:JobStatus;
- archived?:boolean;generationAvailable?:false;
- title?:string;outputUrl?:string|null;result?:unknown;
-}
 export type CreateJobInput = PromptJobInput | WorkflowJobInput;
 export interface ClientOptions { baseUrl?: string; token?: string; fetch?: typeof globalThis.fetch }
 export interface RequestOptions { signal?: AbortSignal }
@@ -200,24 +191,6 @@ export class Dominion {
   readonly approvals = {
     list: (options?:RequestOptions) => this.request<Approval[]>('GET','/api/approvals',undefined,options),
     resolve: (key:string,allow:boolean,options?:RequestOptions) => this.request<{resolved:boolean;status:string}>('POST','/api/approvals',{id:key,allow},options),
-  };
-  /** Historical media access only: no built-in generation, model install or upload. */
-  readonly video = {
-    status:(options?:RequestOptions)=>this.request<unknown>('GET','/api/video/status',undefined,options),
-    list:(options?:RequestOptions)=>this.request<VideoJob[]>('GET','/api/video/jobs',undefined,options),
-    get:(key:string,options?:RequestOptions)=>this.request<VideoJob>('GET','/api/video/jobs/'+id(key),undefined,options),
-    outputs:(options?:RequestOptions)=>this.request<VideoJob[]>('GET','/api/video/outputs',undefined,options),
-    download:async(key:string,options?:RequestOptions)=>{
-      const response=await this.raw('/api/video/jobs/'+id(key)+'/content',{signal:options?.signal});
-      if(!response.ok)await fail(response);
-      return response.blob();
-    },
-  };
-  /** Historical RSI records only. New campaigns and auto-adoption are retired. */
-  readonly rsi = {
-    list:(options?:RequestOptions)=>this.request<RsiOverview>('GET','/api/rsi',undefined,options),
-    campaigns:(options?:RequestOptions)=>this.request<{campaigns:RecordItem[]}>('GET','/api/rsi/campaigns',undefined,options),
-    campaign:(key:string,options?:RequestOptions)=>this.request<RecordItem>('GET','/api/rsi/campaigns/'+id(key),undefined,options),
   };
   /** Chat POST is never retried, to avoid duplicate tool/model actions. */
   async streamChat(input:ChatInput,onEvent:(event:StreamEvent)=>void,options:RequestOptions={}):Promise<void> {
