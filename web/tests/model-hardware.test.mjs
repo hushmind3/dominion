@@ -159,7 +159,7 @@ test('OpenRouter free model single registration reuses existing credentials with
 })
 
 test('a public models.dev document is shared by provider and model browsing',()=>{
- const api=readFileSync(new URL('../../src/api/providers.rs',import.meta.url),'utf8')
+ const api=readFileSync(new URL('../../src/api/services/providers/providers.rs',import.meta.url),'utf8')
  const fetches=[...api.matchAll(/get\("https:\/\/models\.dev\/api\.json"\)/g)]
  assert.equal(fetches.length,1)
  assert.match(api,/static MODELS_DEV_DOCUMENT:OnceLock/)
