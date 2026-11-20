@@ -404,6 +404,33 @@ mod tests{
         (state,root)
     }
     #[tokio::test]
+    async fn native_run_api_forwards_algorithm_and_returns_pinned_revision(){
+        let (state,root)=temporary_state();
+        let response=create(State(state.clone()),Json(json!({
+            "instruction":"Inspect code",
+            "algorithmId":"focused-v1"
+        }))).await;
+        assert_eq!(response.status(),StatusCode::ACCEPTED);
+        let body=to_bytes(response.into_body(),1024*1024).await.unwrap();
+        let view:Value=serde_json::from_slice(&body).unwrap();
+        assert_eq!(view["algorithmId"],"focused-v1");
+        assert!(view["algorithmRevision"].is_null());
+        let job=state.store.get("job",view["id"].as_str().unwrap()).unwrap();
+        assert_eq!(job["input"]["algorithmId"],"focused-v1");
+        let mut pinned=job.clone();
+        pinned["nativeAlgorithm"]=json!({"id":"focused-v1","format":1,
+            "revision":"focused-v1.2026-11-20-r1"});
+        let projected=project(&state,&pinned);
+        assert_eq!(projected["algorithmId"],"focused-v1");
+        assert_eq!(projected["algorithmRevision"],"focused-v1.2026-11-20-r1");
+        let rejected=create(State(state.clone()),Json(json!({
+            "instruction":"Inspect code",
+            "algorithmId":"unknown-v9"
+        }))).await;
+        assert_eq!(rejected.status(),StatusCode::BAD_REQUEST);
+        let _=std::fs::remove_dir_all(root);
+    }
+    #[tokio::test]
     async fn pinned_main_ui_creates_a_real_validated_rust_job_and_can_cancel(){
         let (state,root)=temporary_state();
         let response=create(State(state.clone()),Json(json!({

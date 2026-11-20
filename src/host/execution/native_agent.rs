@@ -594,7 +594,13 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
     let owner_checks=request.checks.clone();
     let kernel=Kernel{model:&model,tools:&host_tools,evidence:&evidence,journal:&journal};
     let snapshot=if let Some(saved)=resume_snapshot {
-        kernel.resume_with_algorithm(request,saved,selected.algorithm).await?
+        match kernel.resume_with_algorithm(request,saved,selected.algorithm).await {
+            Ok(snapshot)=>snapshot,
+            Err(reason) if reason.contains("algorithm") || reason.contains("policy") =>
+                return Ok(json!({"status":"needs_review",
+                    "reason":reason,"snapshot":previous})),
+            Err(reason)=>return Err(reason),
+        }
     } else {
         kernel.run_with_algorithm(request,selected.algorithm).await?
     };
