@@ -699,7 +699,7 @@ mod tests {
             message["content"].as_str().unwrap_or("").len()).sum::<usize>();
         assert!(sum<=32_000,"private input should have a fixed 32KB history budget: {sum}");
         assert!(selected.len()<40,"old forty-message history should not be replayed");
-        let wire=selected.to_string();
+        let wire=json!(selected).to_string();
         assert!(!wire.contains("owner-0:"));
         assert!(wire.contains("answer-29:"));
         assert!(wire.contains("owner-29:"));
