@@ -475,9 +475,9 @@ fn public_channel_with_delivery(state:&AppState,record:&Value,outbox:&[Value])->
     // first record returned by SQLite. The durable outbox remains untouched.
     let last_error=outbox.iter().filter(|item|item["status"]=="needs_review")
         .max_by(|a,b|{
-            let when=|item:&Value|item["updatedAt"].as_str()
-                .or_else(||item["createdAt"].as_str()).unwrap_or("");
-            when(a).cmp(when(b))
+            let when_a=a["updatedAt"].as_str().or_else(||a["createdAt"].as_str()).unwrap_or("");
+            let when_b=b["updatedAt"].as_str().or_else(||b["createdAt"].as_str()).unwrap_or("");
+            when_a.cmp(when_b)
         }).and_then(|item|item.get("error")).cloned();
     public["delivery"] = json!({
         "pending":outbox.iter().filter(|item|item["status"]=="pending").count(),
