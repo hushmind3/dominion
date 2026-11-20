@@ -29,16 +29,16 @@ test('external MCP, channel and account implementations live only in integration
   assert.equal(existsSync(join(root,'src/engine',oldPath)),false,'engine retained '+oldPath);
   assert.equal(existsSync(join(root,'src/integrations',newPath)),true,'missing '+newPath);
  }
- const engine=source('src/engine/mod.rs');
+ const engine=source('src/host/execution/mod.rs');
  assert.doesNotMatch(engine,/pub (?:mod|use) (?:crate::integrations::)?(?:mcp|discord|telegram|channel_adapter|bridge|oauth|github_files|google_workspace|github_workflow)\b/);
  assert.match(source('src/main.rs'),/mod integrations;/);
 });
 test('connector ownership stays out of agent worker and host tool catalog',()=>{
- const state=source('src/state.rs');
+ const state=source('src/host/state.rs');
  assert.match(state,/pub integrations: crate::integrations::IntegrationState/);
  assert.doesNotMatch(state,/pub\(crate\) mcp_sessions:/);
  assert.match(source('src/bootstrap.rs'),/integrations::start\(state.clone\(\)\)/);
- assert.doesNotMatch(source('src/engine/jobs.rs'),/channel_adapter::start/);
+ assert.doesNotMatch(source('src/host/execution/jobs.rs'),/channel_adapter::start/);
  const tools=source('src/integrations/local_tools.rs');
  assert.doesNotMatch(tools,/tool\("(?:github_|google_workspace|account_status)/);
  assert.doesNotMatch(tools,/async fn github_api/);

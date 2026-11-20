@@ -7,32 +7,18 @@ on:
       - '.github/workflows/sub3-rust-sdk-check.yml'
       - 'crates/dominion-agent-sdk/**'
       - 'sdk/rust/**'
+      - 'src/host/**'
+      - 'src/storage/**'
+      - 'src/conversation/**'
+      - 'src/features/providers/**'
+      - 'src/integrations/**'
       - 'src/api/jobs.rs'
       - 'src/api/sdk_runs.rs'
-      - 'src/engine/native_agent.rs'
-      - 'src/engine/skill_discovery.rs'
-      - 'src/engine/mod.rs'
-      - 'src/engine/skills.rs'
       - 'src/api/sdk.rs'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'src/engine/algorithms.rs'
-      - 'src/engine/native_model.rs'
-      - 'src/engine/native_cache.rs'
-      - 'src/engine/native_routing.rs'
-      - 'src/engine/native_stream.rs'
-      - 'src/engine/native_codex_ws.rs'
-      - 'src/conversation/chat/**'
-      - 'src/engine/mcp.rs'
-      - 'src/engine/github_files.rs'
-      - 'src/engine/github_workflow.rs'
-      - 'src/engine/google_workspace.rs'
-      - 'src/integrations/local_tools.rs'
-      - 'src/engine/oauth.rs'
       - 'src/api/cli_oauth.rs'
       - 'src/api/collections.rs'
-      - 'src/state.rs'
-      - 'src/engine/workflows.rs'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
   workflow_dispatch:
 
 permissions:
@@ -57,5 +43,5 @@ jobs:
           cargo test -p dominion-agent-sdk --test kernel_replanning
           cargo test --bin dominion-rust conversation::chat::kernel_bridge::tests
           cargo test --bin dominion-rust api::sdk_runs::tests
-          cargo test --bin dominion-rust engine::native_stream::tests
+          cargo test --bin dominion-rust features::providers::native_stream::tests
           cargo test --bin dominion-rust native_stream_chat_http_fragmented_calls_are_durable_and_unexecuted

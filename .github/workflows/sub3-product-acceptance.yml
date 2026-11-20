@@ -56,23 +56,23 @@ jobs:
           cargo test --bin dominion-rust conversation::chat::room_context::tests
           cargo test --bin dominion-rust conversation::chat::continuity::tests
           cargo test --bin dominion-rust features::collaboration::room_state::tests
-          cargo test --bin dominion-rust engine::verification
+          cargo test --bin dominion-rust host::execution::verification
           # Audit-relevant regressions: canonical provider route, source index,
           # and bounded conversation checkpoints now get their own test filters.
           cargo test --bin dominion-rust conversation::chat::provider::tests
           cargo test --bin dominion-rust features::platform::code_index::tests
           cargo test --bin dominion-rust features::cognition::compact::token_budget_tests
-          cargo test --bin dominion-rust db::tests
-          cargo test --bin dominion-rust engine::native_evidence::tests
+          cargo test --bin dominion-rust storage::sqlite::tests
+          cargo test --bin dominion-rust host::execution::native_evidence::tests
           cargo test --bin dominion-rust features::forensics::native_replay::tests
           cargo test --bin dominion-rust api::native_replay::tests
-          cargo test --bin dominion-rust engine::program::tests
+          cargo test --bin dominion-rust host::execution::program::tests
           cargo test --bin dominion-rust features::cognition::algorithms::tests
           cargo test --bin dominion-rust features::cognition::adaptation_loop::tests
           cargo test --bin dominion-rust conversation::chat::runtime::program::evidence_join_tests
           cargo test --bin dominion-rust conversation::chat::runtime::program::recovery_tests
           cargo test --bin dominion-rust features::forensics::native_adjudication::tests
-          cargo test --bin dominion-rust engine::native_agent::tests
+          cargo test --bin dominion-rust host::execution::native_agent::tests
           cargo test --bin dominion-rust api::sdk::tests
           cargo test --test e2e native_job_prompt_runs -- --test-threads=1
 

@@ -61,7 +61,7 @@ React work panel / TypeScript SDK / Rust HTTP client
        └─ cancellation, approval, recovery
 
 Interactive chat / rooms → /api/chat and room routes
-                         → src/engine/chat/runtime/
+                         → src/conversation/chat/runtime/
                          → its existing streaming turn lifecycle
 ```
 
@@ -131,11 +131,11 @@ MCP sessions, messaging transports, browser CDP control, local Skills and third-
 
 ## Minimal language-to-action core (2026-11-20)
 
-The host `src/engine/` now declares **10 executable modules**: native agent entry and model/tool execution mediation, durable jobs, approvals/effects, plan IR, verification, cancellation/recovery, leasing and run state. **45 former engine modules** are now grouped in `src/features/` as cognition, collaboration, model providers, product platform and forensics. MCP, messaging, account connections, browser, Skills and web networking remain in `src/integrations/`.
+The **only portable agent kernel** is `crates/dominion-agent-sdk/`. Its Model, Tools and Journal host interfaces implement the natural-language → model decision → permitted action → observed result loop without SQLite, `AppState`, credentials, channels or a web server.
 
-Core jobs execute only `prompt` and `resume` directly; other job kinds run through `features::dispatch_job` or `integrations::registry::dispatch_job`. Optional memory tools, account tools, browser, Skill tools and network tools register outside `engine/tools.rs` while sharing the existing approval/effect journal. All UI menus, API routes and SQLite record kinds are unchanged.
+**SQLite and its migrations live in `src/storage/`** (alongside the encrypted vault); product-state ownership and the DB-backed job/approval/effect implementation live under `src/host/`. The old `src/engine/` directory has been removed. `src/main.rs` supplies a temporary `crate::engine` alias to `host::execution` for existing internal Rust imports, preserving network APIs and stored records. Chat lives under `src/conversation/`, learning/group/model-platform features under `src/features/`, and MCP/CLI/web/local tool transports under `src/integrations/`.
 
-This is an in-process module and dispatch separation, **not** a fully independently unloadable plugin ABI or zero-dependency core: historical `engine::feature` paths remain temporarily re-exported for source compatibility. The independent agent-run loop is already `crates/dominion-agent-sdk/`; the host still composes it with application state. Full boundary and non-regression checks: [core architecture](docs/CORE-BOUNDARY-2026-11-20.md).
+This is **module ownership and portable-kernel separation**, not a separately deployable plugin system or complete host-independent app binary. Existing app features still access the host's SQLite through its own `AppState`; the SDK kernel has no such dependency. [Detailed architecture and contract checks](docs/CORE-BOUNDARY-2026-11-20.md).
 
 ## Development verification
 
@@ -144,11 +144,11 @@ Routine changes: run *focused Rust development-profile tests*, not a blanket rel
 ```sh
 cargo test -p dominion-agent-sdk --lib
 cargo test -p dominion-sdk --lib
-cargo test --bin dominion-rust engine::rooms::tests
+cargo test --bin dominion-rust features::collaboration::rooms::tests
 cargo test --bin dominion-rust api::providers::tests
 cargo test --bin dominion-rust api::cli_oauth::tests
-cargo test --bin dominion-rust engine::chat::context::tests
-cargo test --bin dominion-rust engine::skill_discovery::tests
+cargo test --bin dominion-rust conversation::chat::context::tests
+cargo test --bin dominion-rust integrations::skills::discovery::tests
 cargo test --bin dominion-rust api::sdk::tests
 ```
 

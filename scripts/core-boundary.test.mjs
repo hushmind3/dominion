@@ -1,12 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync,existsSync} from 'node:fs';
+import {readFileSync,existsSync,readdirSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
 const root=fileURLToPath(new URL('..',import.meta.url));
-const read=p=>readFileSync(path.join(root,p),'utf8');
-const engine=read('src/engine/mod.rs');
-const coreNames=[...engine.matchAll(/^pub(?:\(crate\))? mod ([a-z_]+);$/gm)].map(x=>x[1]);
+const file=p=>path.join(root,p);
+const read=p=>readFileSync(file(p),'utf8');
 const groups={
  cognition:['adaptation_loop','distill','agent_growth','algorithms','compact','decompose','episode','experience','procedure','reflect','improve','learning','memory','plan_quality','principle','adaptation'],
  collaboration:['debate','personas','rooms','room_knowledge','room_state'],
@@ -14,36 +13,52 @@ const groups={
  platform:['attachments','backup_keys','dev','code_index','remote_backup','maintenance','policy','preflight_fixture','vault_rotation','wake'],
  forensics:['native_replay','native_adjudication']
 };
-test('only the language-to-action execution spine is declared by engine',()=>{
- assert.deepEqual(coreNames.sort(),['goal_control','native_agent','native_evidence','effect','program','verification','recovery','jobs','lease','run_state'].sort());
- assert.ok(existsSync(path.join(root,'crates/dominion-agent-sdk/src/lib.rs')));
- assert.match(read('src/main.rs'),/mod features;/);
- assert.match(read('src/main.rs'),/mod conversation;/);
- assert.equal(existsSync(path.join(root,'src/engine/chat/mod.rs')),false);
- assert.ok(existsSync(path.join(root,'src/conversation/chat/mod.rs')));
- assert.equal(existsSync(path.join(root,'src/engine/tools.rs')),false);
- assert.ok(existsSync(path.join(root,'src/integrations/local_tools.rs')));
-});
-test('optional module implementations cannot be reintroduced under engine',()=>{
- for(const [group,names] of Object.entries(groups)){
-  for(const name of names){
-   const nested=name==='adaptation';
-   const from='src/engine/'+name+(nested?'/mod.rs':'.rs');
-   const to='src/features/'+group+'/'+name+(nested?'/mod.rs':'.rs');
-   assert.equal(existsSync(path.join(root,from)),false,from+' belongs outside core');
-   assert.ok(existsSync(path.join(root,to)),to+' must be maintained as a feature');
-  }
+test('portable agent kernel is the only core, with no SQLite or product AppState',()=>{
+ const manifest=read('crates/dominion-agent-sdk/Cargo.toml');
+ assert.doesNotMatch(manifest,/\brusqlite\b|\breqwest\b/);
+ const srcDir=file('crates/dominion-agent-sdk/src');
+ const sources=readdirSync(srcDir).filter(x=>x.endsWith('.rs'));
+ for(const name of sources){
+  assert.doesNotMatch(read('crates/dominion-agent-sdk/src/'+name),
+    /\brusqlite\b|crate::db\b|crate::storage\b|crate::state\b|\bAppState\b/,name+' must stay portable');
  }
+ const entry=read('crates/dominion-agent-sdk/src/lib.rs');
+ assert.match(entry,/pub trait Model/);
+ assert.match(entry,/pub trait Tools/);
+ assert.match(entry,/pub trait Journal/);
 });
-test('non-core jobs and tools are dispatched through feature registries',()=>{
- const jobs=read('src/engine/jobs.rs');
- assert.doesNotMatch(read('src/engine/native_agent.rs'),/\bmcp::/);
- assert.match(read('src/engine/native_agent.rs'),/external::native_external_tools/);
+test('DB, migrations, vault and shared host state cannot reappear in core',()=>{
+ assert.equal(existsSync(file('src/engine')),false);
+ assert.equal(existsSync(file('src/db.rs')),false);
+ assert.equal(existsSync(file('src/migrations.rs')),false);
+ assert.equal(existsSync(file('src/vault.rs')),false);
+ assert.equal(existsSync(file('src/state.rs')),false);
+ for(const p of ['storage/sqlite.rs','storage/migrations.rs','storage/vault.rs','host/state.rs',
+                  'host/execution/native_agent.rs','host/execution/jobs.rs']){
+  assert.ok(existsSync(file('src/'+p)),'missing product-only '+p);
+ }
+ const main=read('src/main.rs');
+ assert.match(main,/use crate::storage::\{sqlite as db, migrations, vault\}/);
+ assert.match(main,/use crate::host::execution as engine/);
+ const host=read('src/host/execution/mod.rs');
+ const declared=[...host.matchAll(/^pub(?:\(crate\))? mod ([a-z_]+);$/gm)].map(x=>x[1]).sort();
+ assert.deepEqual(declared,['goal_control','native_agent','native_evidence','effect','program',
+ 'verification','recovery','jobs','lease','run_state'].sort());
+});
+test('product capabilities register outside the host execution adapter',()=>{
+ for(const [group,names] of Object.entries(groups))for(const name of names){
+  const nested=name==='adaptation';
+  const path='src/features/'+group+'/'+name+(nested?'/mod.rs':'.rs');
+  assert.ok(existsSync(file(path)),path+' must remain optional');
+ }
+ const jobs=read('src/host/execution/jobs.rs');
  assert.match(jobs,/features::dispatch_job/);
  assert.match(jobs,/integrations::registry::dispatch_job/);
- for(const kind of ['room','meeting','learn','reflect','discord']){
+ for(const kind of ['room','meeting','learn','reflect','discord'])
   assert.doesNotMatch(jobs,new RegExp('"'+kind+'"\\s*=>'));
- }
+ const native=read('src/host/execution/native_agent.rs');
+ assert.doesNotMatch(native,/\bmcp::/);
+ assert.match(native,/external::native_external_tools/);
  const tools=read('src/integrations/local_tools.rs');
  assert.match(tools,/features::registry::definitions/);
  assert.match(tools,/integrations::registry::definitions/);
