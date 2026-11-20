@@ -194,20 +194,20 @@ if(!sdkApi.includes('state.store.sdk_evidence_for_session(session)')||
 if(!sdkApi.includes('state.store.sdk_evidence_rows()')||!store.includes('pub fn sdk_evidence_rows('))
   throw Error('SDK status polling must not scan full execution and tool history')
 // Old optimizer control loops must not creep back in behind the real journal.
-const algorithms=readFileSync(path.join(root,'src/addons/strategies/algorithms.rs'),'utf8')
+const selectedAlgorithms=readFileSync(path.join(root,'src/addons/strategies/algorithms.rs'),'utf8')
 const policySource=readFileSync(path.join(root,'src/engine/policy.rs'),'utf8')
 const approvalSource=readFileSync(path.join(root,'src/engine/chat/approval.rs'),'utf8')
 const startup=readFileSync(path.join(root,'src/migrations.rs'),'utf8')
 if(/\bpub fn (?:meta_improve|propose_candidates)\(/.test(policySource))
   throw Error('Detached optimizer/RSI campaign loop reintroduced')
-if(/\bUCB1 over\b|\(2\.0\s*\*\s*\(total\s*\+\s*1\.0\)/.test(algorithms))
+if(/\bUCB1 over\b|\(2\.0\s*\*\s*\(total\s*\+\s*1\.0\)/.test(selectedAlgorithms))
   throw Error('Obsolete bandit selector reintroduced into active harness')
 if(/\.all\("approval"\)/.test(approvalSource))
   throw Error('Tool approval rescans historical decisions')
 if(/try_all\("(?:execution|execution_operation)"\)/.test(startup))
   throw Error('Restart migration rescans all completed execution payloads')
 if(!store.includes('pub fn algorithms_for_kind(')||
-   !algorithms.includes('state.store.algorithms_for_kind(kind)'))
+   !selectedAlgorithms.includes('state.store.algorithms_for_kind(kind)'))
   throw Error('Hot-path kernel selection must use indexed per-domain candidates')
 if(!store.includes('pub fn legacy_improvements_to_migrate(')||
    !startup.includes('store.legacy_improvements_to_migrate()'))
