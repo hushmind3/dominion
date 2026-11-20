@@ -292,12 +292,12 @@ mod tests {
                 "integration":integration,"enabled":true})).unwrap();
         }
         for session in [Some("room:alpha"),Some("room:alpha"),Some("room:beta"),None,None] {
-            let result=complete_for_turn(&state,"go","deepseek-v4.1-flash",
-                "unchanged owner policy","helper question",session).await.unwrap();
+            let result=try_complete(&state,"go","deepseek-v4.1-flash",
+                "unchanged owner policy","helper question",session,None).await.unwrap();
             assert_eq!(result,"ok");
         }
-        let plain=complete_for_turn(&state,"plain","generic-model",
-            "system","question",Some("room:alpha")).await.unwrap();
+        let plain=try_complete(&state,"plain","generic-model",
+            "system","question",Some("room:alpha"),None).await.unwrap();
         assert_eq!(plain,"ok");
         let rows=seen.lock().unwrap();
         assert_eq!(rows.len(),6);
