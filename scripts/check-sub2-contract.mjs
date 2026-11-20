@@ -43,6 +43,9 @@ for(const dir of [
   'src-tauri/src','scripts','cloud','services','.github/workflows','assets/channels'
 ])visit(dir);
 for(const path of codePaths){
+  // A retired product must not return under a renamed component or page.
+  if(/^web\/src\/(?:pages|components)\/.*(?:video|youtube|money|selfimprovement|rsi)/i.test(path))
+    errors.push(`retired product UI file: ${path}`);
   if(path==='scripts/check-sub2-contract.mjs')continue; // The gate's own banned-symbol regex is not product code.
   const text=source(path);
   const forbidden=[
