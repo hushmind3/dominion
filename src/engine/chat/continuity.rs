@@ -126,7 +126,7 @@ pub(crate) fn project(
     state: &AppState, provider: &ProviderRef, messages: &[Value], tools: &[Value],
     session_id: &str, plan: &mut Value,
 ) -> (Vec<Value>, Option<Projection>) {
-    let clean = || messages.iter().map(wire_message).collect();
+    let clean = || -> Vec<Value> { messages.iter().map(wire_message).collect() };
     // Private chats, Home SDK runs and delegated jobs already get an
     // evidence-selected context from the Rust context compiler. A persistent
     // participant workingView MUST NOT append previously selected, now
