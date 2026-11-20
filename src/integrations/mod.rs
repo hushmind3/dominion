@@ -6,6 +6,7 @@ pub mod mcp;
 pub mod browser;
 pub mod skills;
 pub mod registry;
+pub mod network;
 use crate::state::AppState;
 use std::sync::Arc;
 

@@ -15,3 +15,5 @@ pub mod memory;
 pub mod plan_quality;
 pub mod principle;
 pub mod adaptation;
+
+pub mod tools;

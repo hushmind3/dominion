@@ -4,6 +4,7 @@ pub mod collaboration;
 pub mod providers;
 pub mod platform;
 pub mod forensics;
+pub mod registry;
 
 /// Non-core tasks are dispatched only when their corresponding job is enqueued.
 /// The executor never embeds learning, reflection or group-meeting logic.
