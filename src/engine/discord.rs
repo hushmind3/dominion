@@ -315,13 +315,11 @@ pub fn start(state: AppState) {
     migrate_secrets(&state);
     tokio::spawn(async move {
         loop {
-            let configs = state
-                .store
-                .all("channel")
-                .into_iter()
-                .filter(|config|crate::engine::extensions::channels::enabled(&state)
-                    && native_enabled(config))
-                .collect::<Vec<_>>();
+            let configs=if crate::engine::extensions::channels::enabled(&state){
+                state.store.all("channel").into_iter().filter(|config|
+                    native_enabled(config) && crate::engine::extensions::channels::enabled_binding(&state,config)
+                ).collect::<Vec<_>>()
+            }else{Vec::new()};
             futures_util::stream::iter(configs)
                 .for_each_concurrent(9, |config| {
                     let state = state.clone();
