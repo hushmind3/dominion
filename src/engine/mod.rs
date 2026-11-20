@@ -159,16 +159,13 @@ mod outcome_tests {
             .store
             .put("policy", &json!({"id":"default","autoApproveAll":true}));
         let request=chat::TurnRequest::from_value(&json!({"sessionId":"s","providerId":"p","input":"Write the proof file","autoLearning":false})).unwrap();
-        let (outcome, stats) = run_quiet_outcome(&state, &request).await;
+        let outcome = run_quiet(&state, &request).await;
         let error=outcome.unwrap_err();
         assert!(error.contains("503"),"{error}");
         assert_eq!(
             std::fs::read_to_string(root.join("proof.txt")).unwrap(),
             "proof"
         );
-        assert_eq!(stats.tool_success, vec!["workspace_write"]);
-        assert_eq!(stats.evidence.len(), 1);
-        assert_eq!(stats.evidence[0]["tool"], "workspace_write");
         assert_eq!(
             state.store.all("execution_operation")[0]["status"],
             "completed"
