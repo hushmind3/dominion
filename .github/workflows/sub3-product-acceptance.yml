@@ -93,6 +93,18 @@ jobs:
           node --experimental-strip-types --test web/tests/*.test.mjs
           node --test scripts/account-login-contract.test.mjs
           npm run build --prefix web
+      - name: Chromium connection UI walkthrough (desktop and mobile)
+        run: |
+          cd web
+          npx playwright install --with-deps chromium
+          node scripts/connection-visual.mjs
+      - name: Upload connection UX screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sub3-connection-visuals
+          path: web/artifacts/connection-visual/*.png
+          if-no-files-found: ignore
       - name: SDK client type contracts and HTTP transport tests
         run: |
           npm install --prefix sdk/typescript --no-package-lock --ignore-scripts --no-audit --no-fund
