@@ -247,6 +247,7 @@ fn urlencoding(value: &str) -> String {
 /// Sends pending room messages through every enabled adapter. Started once by
 /// the job runtime; the bridge still owns outbox state and crash semantics.
 pub async fn flush_enabled(state: &AppState) -> usize {
+    if !crate::engine::extensions::channels::enabled(state) {return 0;}
     let mut sent = 0usize;
     for config in state.store.all("channel") {
         if config["enabled"] != true
