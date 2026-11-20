@@ -50,20 +50,12 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: SDK kernel and replay Rust tests (dev profile only)
+      - name: SDK-only kernel, replay and transport tests (dev profile only)
         run: |
           cargo test -p dominion-agent-sdk --lib
           cargo test -p dominion-sdk --lib
-          cargo test --bin dominion-rust engine::native_evidence::tests
           cargo test -p dominion-agent-sdk --test kernel_replanning
           cargo test --bin dominion-rust engine::chat::kernel_bridge::tests
-          cargo test --bin dominion-rust engine::chat::runtime::capability::tests
           cargo test --bin dominion-rust api::sdk_runs::tests
-          cargo test --bin dominion-rust engine::algorithms::tests
-          cargo test --bin dominion-rust engine::program::tests
-          cargo test --bin dominion-rust db::tests
-          cargo test --bin dominion-rust engine::native_agent::tests
           cargo test --bin dominion-rust engine::native_stream::tests
           cargo test --bin dominion-rust native_stream_chat_http_fragmented_calls_are_durable_and_unexecuted
-          cargo test --bin dominion-rust engine::skill_discovery::tests
-          cargo test --bin dominion-rust api::sdk::tests

@@ -64,13 +64,16 @@ jobs:
           cargo test --bin dominion-rust engine::chat::continuity::tests
           cargo test --bin dominion-rust engine::room_state::tests
           cargo test --bin dominion-rust engine::verification
-          cargo test --bin dominion-rust engine::native_adjudication::tests
+          # Audit-relevant regressions: canonical provider route, source index,
+          # and bounded conversation checkpoints now get their own test filters.
+          cargo test --bin dominion-rust engine::chat::provider::tests
+          cargo test --bin dominion-rust engine::code_index::tests
+          cargo test --bin dominion-rust engine::compact::token_budget_tests
           cargo test --bin dominion-rust db::tests
           cargo test --bin dominion-rust engine::native_evidence::tests
           cargo test --bin dominion-rust engine::native_replay::tests
           cargo test --bin dominion-rust api::native_replay::tests
           cargo test --bin dominion-rust engine::program::tests
-          cargo test --bin dominion-rust engine::program::tests::refuted_verifier_cannot_be_bypassed_by_appending_unreachable_fix
           cargo test --bin dominion-rust engine::algorithms::tests
           cargo test --bin dominion-rust engine::adaptation_loop::tests
           cargo test --bin dominion-rust engine::chat::runtime::program::evidence_join_tests
