@@ -112,3 +112,28 @@ mod tests {
         crate::test_support::cleanup_dir(&root);
     }
 }
+
+pub async fn worktree_preview(
+    State(state):State<AppState>,Path((id,task)):Path<(String,String)>
+)->Response{
+    match crate::features::collaboration::worktree::preview(&state,&id,&task).await{
+        Ok(value)=>Json(value).into_response(),
+        Err(reason)=>error(StatusCode::CONFLICT,reason),
+    }
+}
+pub async fn worktree_promote(
+    State(state):State<AppState>,
+    Path((id,task)):Path<(String,String)>,Json(body):Json<Value>
+)->Response{
+    if body["confirm"]!=true {
+        return error(StatusCode::BAD_REQUEST,
+            "Explicit owner confirmation (confirm=true) is required");
+    }
+    let Some(digest)=body["expectedDiffSha256"].as_str() else {
+        return error(StatusCode::BAD_REQUEST,"Preview digest is required");
+    };
+    match crate::features::collaboration::worktree::promote(&state,&id,&task,digest).await{
+        Ok(value)=>Json(value).into_response(),
+        Err(reason)=>error(StatusCode::CONFLICT,reason),
+    }
+}

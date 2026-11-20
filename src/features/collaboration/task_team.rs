@@ -208,7 +208,7 @@ pub(crate) fn belongs_to_team(parent:&str,task:&Task,child:&Value)->bool {
         && child["input"]["teamMode"]==json!(task.mode)
         && child["input"]["bridgeRuntime"]==json!(task.runtime)
 }
-fn complete(task:&Task,child:&Value)->bool {
+pub(crate) fn complete(task:&Task,child:&Value)->bool {
     if child["status"]!="completed"||child["result"]["status"]!="completed"{
         return false;
     }

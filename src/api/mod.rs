@@ -120,6 +120,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/task-teams",get(task_teams::list).post(task_teams::create))
         .route("/api/task-teams/:id",get(task_teams::one))
         .route("/api/task-teams/:id/cancel",post(task_teams::cancel))
+        .route("/api/task-teams/:id/worktrees/:task/preview",
+            get(task_teams::worktree_preview))
+        .route("/api/task-teams/:id/worktrees/:task/promote",
+            post(task_teams::worktree_promote))
         .route("/api/tools", get(extensions::list_tools))
         .route("/api/browser/status", get(browser::status))
         .route("/api/browser/screenshot", get(browser::screenshot))

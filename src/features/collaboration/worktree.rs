@@ -6,6 +6,7 @@ use crate::state::AppState;
 use serde_json::{json,Value};
 use sha2::{Digest,Sha256};
 use std::{path::{Path,PathBuf},process::Stdio,time::Duration};
+use tokio::io::{AsyncReadExt,AsyncWriteExt};
 use tokio::process::Command;
 
 const GIT_TIMEOUT:Duration=Duration::from_secs(20);
@@ -89,7 +90,7 @@ pub async fn prepare(state:&AppState,parent:&str,task:&str)->Result<String,Strin
     let new_record=json!({"id":id,"schemaVersion":1,
         "parentRunId":parent,"taskId":task,
         "sourceRoot":source.to_string_lossy(),"worktreePath":target.to_string_lossy(),
-        "baseCommit":commit,"status":"preparing",
+        "baseCommit":commit,"status":"preparing","mergeStatus":"pending",
         "createdAt":chrono::Utc::now().to_rfc3339()});
     let record=state.store.put_if_absent("team_worktree",&new_record)
         .or_else(||state.store.get("team_worktree",&id))
@@ -153,6 +154,154 @@ pub fn view(state:&AppState,child:&Value)->Value{
         "isolated":true
     })).unwrap_or(Value::Null)
 }
+
+/// Read the exact changes against the pinned source commit; no untracked
+/// files, external diff drivers or textconv are allowed into a promotion.
+/// The patch never enters persistent records, prompt context or HTTP output.
+const MAX_PATCH:usize=2*1024*1024;
+async fn patch(workspace:&Path,base:&str)->Result<Vec<u8>,String>{
+    let mut child=Command::new("git").arg("-C").arg(workspace)
+        .args(["diff","--binary","--no-ext-diff","--no-textconv",base,"--"])
+        .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .kill_on_drop(true).spawn().map_err(|e|e.to_string())?;
+    let mut data=Vec::new();
+    let mut stdout=child.stdout.take().ok_or("Git diff stdout unavailable")?;
+    let read=tokio::time::timeout(GIT_TIMEOUT,
+        stdout.take((MAX_PATCH+1) as u64).read_to_end(&mut data)).await;
+    match read{
+        Ok(Ok(_)) if data.len()<=MAX_PATCH=>{},
+        Ok(Ok(_))=>{let _=child.kill().await;return Err("Worktree patch is over the 2MB review limit".into());},
+        Ok(Err(e))=>{let _=child.kill().await;return Err(e.to_string());},
+        Err(_)=>{let _=child.kill().await;return Err("Worktree diff timed out".into());},
+    }
+    let exit=tokio::time::timeout(GIT_TIMEOUT,child.wait()).await
+        .map_err(|_|"Git diff wait timed out".to_string())?
+        .map_err(|e|e.to_string())?;
+    if !exit.success(){return Err("Git diff failed".into());}
+    Ok(data)
+}
+async fn apply(source:&Path,data:&[u8],check:bool)->Result<(),String>{
+    let mut command=Command::new("git");
+    command.arg("-C").arg(source).arg("apply")
+        .args(["--index","--whitespace=nowarn"]);
+    if check {command.arg("--check");}
+    let mut child=command.stdin(Stdio::piped()).stdout(Stdio::null())
+        .stderr(Stdio::null()).kill_on_drop(true).spawn()
+        .map_err(|e|format!("Git apply unavailable: {e}"))?;
+    let mut pipe=child.stdin.take().ok_or("Git apply input missing")?;
+    let run=tokio::time::timeout(GIT_TIMEOUT,async{
+        pipe.write_all(data).await.map_err(|e|e.to_string())?;
+        drop(pipe);
+        child.wait().await.map_err(|e|e.to_string())
+    }).await.map_err(|_|"Git apply timed out".to_string())??;
+    if !run.success(){
+        return Err(if check{"Worktree patch conflicts with target index/workspace".into()}
+            else{"Git apply failed; target requires owner review".into()});
+    }
+    Ok(())
+}
+async fn review_data(state:&AppState,parent:&str,task_id:&str)
+    ->Result<(Value,PathBuf,PathBuf,Vec<u8>,Value),String>{
+    use super::task_team::{self,Isolation,Mode,Team};
+    let lead=state.store.get("job",parent)
+        .filter(|v|v["kind"]=="team"&&v["status"]=="completed")
+        .ok_or("Task Team has not completed successfully")?;
+    let team=Team::parse(&lead["input"])?;
+    let task=team.tasks.iter().find(|node|node.id==task_id
+        && node.mode==Mode::Write && node.isolation==Isolation::Worktree)
+        .ok_or("Only owner-selected isolated write tasks may be promoted")?;
+    let child=state.store.get("job",&task_team::child_id(parent,task_id))
+        .ok_or("Writer has no durable job")?;
+    if !task_team::belongs_to_team(parent,task,&child)
+        ||!task_team::complete(task,&child){
+        return Err("Worktree writer has no fully verified host receipts".into());
+    }
+    let src=canonical_root(state)?;
+    let isolated=for_job(state,&child)?;
+    let id=id_for(parent,task_id);
+    let record=state.store.get("team_worktree",&id)
+        .ok_or("Host-pinned worktree disappeared")?;
+    if record["mergeStatus"]!="pending"{
+        return Err("Worktree merge is no longer pending; manual review required".into());
+    }
+    validate_existing(&isolated,&record).await?;
+    let base=record["baseCommit"].as_str().ok_or("Base commit missing")?;
+    if git(&src,&["rev-parse","HEAD"]).await?!=base{
+        return Err("Source branch moved after worktree creation; manual rebase required".into());
+    }
+    // The target index and tracked files must both be pristine; untracked
+    // target files are still protected by git apply --check --index.
+    if !git(&src,&["status","--porcelain","--untracked-files=no"]).await?.is_empty(){
+        return Err("Source has uncommitted tracked changes; cannot auto-promote".into());
+    }
+    if !git(&isolated,&["ls-files","--others","--exclude-standard"]).await?.is_empty(){
+        return Err("Worktree contains untracked files; add/commit them before promotion".into());
+    }
+    let data=patch(&isolated,base).await?;
+    if data.is_empty(){return Err("Worktree produced no tracked source changes".into());}
+    let hash=format!("{:x}",Sha256::digest(&data));
+    let names=git(&isolated,&["diff","--name-only","--no-ext-diff",base,"--"]).await?
+        .lines().take(80).map(str::to_owned).collect::<Vec<_>>();
+    Ok((record,src,isolated,data,json!({
+        "teamId":parent,"taskId":task_id,
+        "worktreeId":id,"baseCommit":base,
+        "diffSha256":hash,"patchBytes":data.len(),
+        "fileCount":names.len(),"files":names,
+        "requiresExplicitPromotion":true
+    })))
+}
+/// Preview has zero effects. The approval token is the SHA-256 of the exact
+/// bounded binary patch that promotion will re-read and re-check.
+pub async fn preview(state:&AppState,parent:&str,task:&str)->Result<Value,String>{
+    let (_,_,_,_,view)=review_data(state,parent,task).await?;
+    Ok(view)
+}
+/// Only an explicitly confirmed owner request can apply changes to the
+/// source. Source HEAD/cleanliness and patch digest are revalidated under
+/// an exclusive workspace lock; no branch switch, commit or push occurs.
+pub async fn promote(state:&AppState,parent:&str,task:&str,
+    expected_digest:&str)->Result<Value,String>{
+    if expected_digest.len()!=64||!expected_digest.bytes()
+        .all(|c|c.is_ascii_hexdigit()){
+        return Err("A verified 64-character preview digest is required".into());
+    }
+    let source=canonical_root(state)?;
+    let _guard=crate::host::execution::lease::LeaseGuard::acquire_workspace_for(
+        state,&source,"write")
+        .ok_or("Another Task Team is using this workspace")?;
+    let (record,source,_,data,view)=review_data(state,parent,task).await?;
+    if view["diffSha256"].as_str()!=Some(expected_digest){
+        return Err("Reviewed worktree diff changed; preview again".into());
+    }
+    apply(&source,&data,true).await?;
+    let id=record["id"].as_str().ok_or("Invalid merge record")?;
+    let fenced=state.store.patch_if("team_worktree",id,"mergeStatus",
+        &json!("pending"),&json!({"mergeStatus":"applying",
+            "reviewedDiffSha256":expected_digest,
+            "mergeStartedAt":chrono::Utc::now().to_rfc3339()}))
+        .ok_or("Worktree promotion is already owned by another request")?;
+    let committed=apply(&source,&data,false).await;
+    if let Err(reason)=committed {
+        state.store.patch_if("team_worktree",id,"mergeStatus",&json!("applying"),
+            &json!({"mergeStatus":"needs_review","mergeError":reason}));
+        return Err(reason);
+    }
+    let status=state.store.patch_if("team_worktree",id,"mergeStatus",
+        &json!("applying"),&json!({"mergeStatus":"applied",
+            "appliedAt":chrono::Utc::now().to_rfc3339()}));
+    if status.is_none(){
+        return Err("Patch was applied but durable receipt could not be recorded; review before retry".into());
+    }
+    state.store.audit("team.worktree.promoted",json!({
+        "worktreeId":id,"parentRunId":parent,"taskId":task,
+        "diffSha256":expected_digest,"sourceRoot":fenced["sourceRoot"],
+        "mergeStatus":"applied","committed":false
+    }));
+    Ok(json!({"status":"applied","requiresOwnerCommit":true,
+        "diffSha256":expected_digest,"staged":true,"worktreeId":id,
+        "files":view["files"]}))
+}
+
 #[cfg(test)]
 mod tests{
     use super::*;
