@@ -6,6 +6,7 @@ mod context;
 mod context_engine;
 mod continuity;
 mod room_context;
+mod web_research;
 
 pub(crate) fn estimate_text_tokens(text:&str)->u64 {room_context::estimate(text) as u64}
 mod evidence;
