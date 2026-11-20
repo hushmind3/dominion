@@ -29,7 +29,11 @@ User natural language -> host request adapter -> independent SDK kernel
 
 The entire former `src/engine/` directory (10 implementation modules plus `mod.rs`) was moved to `src/host/execution/`; no file in `src/engine/` remains. SQLite, migrations, vault and shared AppState were moved from root `src/` into storage/host. External feature modules were separated in earlier commits and the chat service has already been moved to `src/conversation/`.
 
-The product's existing Rust calls to `crate::engine::...`, `crate::db::...`, `crate::state::...`, `crate::vault::...` and `crate::migrations::...` are temporarily forwarded by **module aliases in `src/main.rs`**, not by moving implementations back into the core. Network REST contracts, JSON records, database filenames, migration order and UI menus are unchanged.
+The product's existing Rust calls to `crate::engine::...`, `crate::db::...`, `crate::state::...`, `crate::vault::...` and `crate::migrations::...` are temporarily forwarded by **compatibility adapters in `src/compat/engine.rs` and root aliases in `src/main.rs`**, not by moving implementations back into the core. Network REST contracts, JSON records, database filenames, migration order and UI menus are unchanged.
+
+## Isolated legacy imports
+
+The feature catalog, conversation facade and local tool-driver reexports were removed from `src/host/execution/mod.rs` and relocated to `src/compat/engine.rs`. They are **source-only compatibility aliases** for existing `crate::engine::...` imports; they do not belong to the portable kernel or the host execution module. New code imports `host`, `features`, `storage`, `conversation` and `integrations` directly.
 
 ## Isolation level
 

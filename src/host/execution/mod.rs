@@ -1,26 +1,19 @@
-// Thin execution host. The Rust SDK remains the independent language-to-action kernel.
-// Legacy Rust module paths are re-exported only for existing callers.
-pub use crate::features::cognition::{adaptation_loop, distill, agent_growth, algorithms, compact, decompose, episode, experience, procedure, reflect, improve, learning, memory, plan_quality, principle, adaptation};
-pub use crate::features::collaboration::{debate, personas, rooms, room_knowledge, room_state};
-pub use crate::features::providers::{native_model, native_codex_ws, native_cache, native_routing, native_stream, gateway, cli_model, llm, models, codex_oauth, router, reasoning};
-pub use crate::features::platform::{attachments, backup_keys, dev, code_index, remote_backup, maintenance, policy, preflight_fixture, vault_rotation, wake};
-pub use crate::features::forensics::{native_replay, native_adjudication};
-
+//! Product execution adapter: API/session/job effects around the portable Rust kernel.
+//! No storage implementation, account integration or feature catalog is declared here.
 pub mod goal_control;
 pub mod native_agent;
 pub(crate) mod native_evidence;
 pub mod effect;
-// Conversational interaction is a surface adapter, not part of the execution core.
-pub use crate::conversation::chat;
+
 pub mod program;
 pub mod verification;
 pub mod recovery;
 pub mod jobs;
 pub mod lease;
 pub mod run_state;
-// Actual workspace/file/shell drivers live with optional local integrations.
-pub use crate::integrations::local_tools as tools;
 
+
+use crate::conversation::chat;
 use crate::state::AppState;
 use serde_json::Value;
 use tokio::sync::mpsc;

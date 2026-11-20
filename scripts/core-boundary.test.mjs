@@ -39,8 +39,12 @@ test('DB, migrations, vault and shared host state cannot reappear in core',()=>{
  }
  const main=read('src/main.rs');
  assert.match(main,/use crate::storage::\{sqlite as db, migrations, vault\}/);
- assert.match(main,/use crate::host::execution as engine/);
+ assert.match(main,/use crate::compat::engine/);
  const host=read('src/host/execution/mod.rs');
+ assert.doesNotMatch(host,/pub use crate::features::/);
+ assert.doesNotMatch(host,/pub use crate::integrations::/);
+ assert.ok(existsSync(file('src/compat/engine.rs')));
+ assert.match(read('src/compat/engine.rs'),/pub\(crate\) use crate::host::execution::\*/);
  const declared=[...host.matchAll(/^pub(?:\(crate\))? mod ([a-z_]+);$/gm)].map(x=>x[1]).sort();
  assert.deepEqual(declared,['goal_control','native_agent','native_evidence','effect','program',
  'verification','recovery','jobs','lease','run_state'].sort());
