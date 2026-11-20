@@ -70,6 +70,18 @@ impl JobContext {
     }
 
     pub fn checkpoint(&self, patch: Value) -> Result<(), String> {
+        // A parent may be cancelled between two child checkpoints. Terminal
+        // failure/cancellation updates remain permitted so workers can settle,
+        // but success and ordinary progress require a live Team Lead.
+        if !matches!(patch["status"].as_str(),
+            Some("queued"|"cancelled"|"failed"|"interrupted"|"needs_review")) {
+            if let Some(job)=self.state.store.get("job",&self.job_id) {
+                if job["input"]["parentRunId"].is_string()
+                    || job["id"].as_str().is_some_and(|id|id.starts_with("team-child:")) {
+                    self.ensure_running()?;
+                }
+            }
+        }
         // Do not perform a separate read/check/write: owner cancellation,
         // terminal completion and retry may race the in-flight model call.
         let saved=self.state.store.checkpoint_running_job(
@@ -89,8 +101,82 @@ impl JobContext {
             job["status"]=="running"
                 && job["cancelRequested"]!=true
                 && job["attempts"].as_u64().unwrap_or(0)==self.attempt);
-        if active {Ok(())}
-        else {Err("cancelled: job is stopped or owned by a newer attempt".into())}
+        if !active {
+            return Err("cancelled: job is stopped or owned by a newer attempt".into());
+        }
+        let Some(job)=self.state.store.get("job",&self.job_id) else{
+            return Err("cancelled: job vanished after ownership check".into());
+        };
+        match team_child_gate(&self.state,&job) {
+            TeamChildGate::Ready=>Ok(()),
+            TeamChildGate::WaitingForLead=>Err("deferred: Task Team lead has not resumed".into()),
+            TeamChildGate::Halt{status,reason}=>Err(format!("{status}: {reason}")),
+        }
+    }
+}
+
+
+/// Parent-child admission is checked at scheduler claim, worker execution,
+/// checkpoint and recovery. A stale queued child can never escape when its
+/// Team Lead was cancelled just before a process crash.
+#[derive(Debug,Clone,Copy,PartialEq,Eq)]
+enum TeamChildGate {
+    Ready,
+    WaitingForLead,
+    Halt {status:&'static str,reason:&'static str},
+}
+fn team_child_gate(state:&AppState,job:&Value)->TeamChildGate{
+    use crate::features::collaboration::task_team::{self,Team};
+    let id=job["id"].as_str().unwrap_or("");
+    let parent=job["input"]["parentRunId"].as_str();
+    if !id.starts_with("team-child:")&&parent.is_none(){
+        return TeamChildGate::Ready;
+    }
+    let Some(parent)=parent.filter(|value|!value.is_empty()) else{
+        return TeamChildGate::Halt{status:"needs_review",reason:"Team child lacks a parent reference"};
+    };
+    let Some(lead)=state.store.get("job",parent) else {
+        return TeamChildGate::Halt{status:"needs_review",reason:"Team child parent is missing"};
+    };
+    if lead["kind"]!="team" {
+        return TeamChildGate::Halt{status:"needs_review",reason:"Team child parent is not a Task Team"};
+    }
+    let Ok(team)=Team::parse(&lead["input"]) else {
+        return TeamChildGate::Halt{status:"needs_review",reason:"Task Team contract cannot be recovered"};
+    };
+    let task_id=job["input"]["teamTaskId"].as_str().unwrap_or("");
+    if !team.tasks.iter().any(|task|task.id==task_id
+        && task_team::belongs_to_team(parent,task,job)){
+        return TeamChildGate::Halt{status:"needs_review",reason:"Team child is not bound to its declared DAG node"};
+    }
+    match lead["status"].as_str() {
+        Some("running") if lead["cancelRequested"]!=true=>TeamChildGate::Ready,
+        Some("queued") if lead["cancelRequested"]!=true=>TeamChildGate::WaitingForLead,
+        Some("cancelled")=>TeamChildGate::Halt{status:"cancelled",
+            reason:"Team lead was cancelled: child cannot execute"},
+        _=>TeamChildGate::Halt{status:"needs_review",
+            reason:"Team lead is no longer active: child cannot execute"},
+    }
+}
+/// Repair unfinished parent-to-child cancellation even if the process crashed
+/// after committing the parent cancellation but before cascading the children.
+/// CAS prevents overwriting a newer attempt's completed result.
+fn reconcile_team_children(state:&AppState,jobs:&[Value]){
+    for child in jobs.iter().filter(|j|matches!(j["status"].as_str(),
+        Some("queued"|"running"))){
+        let TeamChildGate::Halt{status,reason}=team_child_gate(state,child)
+        else{continue};
+        let Some(id)=child["id"].as_str() else{continue};
+        if let Some(saved)=state.store.patch_if("job",id,"status",&child["status"],&json!({
+            "status":status,"cancelRequested":true,"recoveredFromParent":true,
+            "error":reason,"finishedAt":chrono::Utc::now().to_rfc3339()
+        })){
+            state.store.audit("team.child_parent_fence",json!({
+                "childJobId":id,"parentRunId":child["input"]["parentRunId"],
+                "status":status,"reason":reason
+            }));
+            state.bus.record("job",&saved);
+        }
     }
 }
 
@@ -229,6 +315,14 @@ pub fn recover(state: &AppState) {
             "uncertainExternalEffect":unknown,"cancelRequested":cancelled
         }));
     }
+    // A crash between parent cancellation and child cancellation used to
+    // leave queued children executable after restart. Repair this state
+    // independently of the Team Lead's recovery status.
+    match state.store.active_jobs(){
+        Ok(active)=>reconcile_team_children(state,&active),
+        Err(error)=>state.store.audit("team.child_recovery_query_failed",
+            json!({"error":error}))
+    }
     // Keep all older completed/cancelled executions and tool receipts intact.
     match state.store.active_executions_indexed(){
         Ok(executions)=>for execution in executions{
@@ -350,6 +444,7 @@ fn next_queued(state: &AppState) -> Option<Value> {
             return None;
         }
     };
+    reconcile_team_children(state,&jobs);
     let learning_running = jobs
         .iter()
         .any(|job| job["status"] == "running" && job["kind"] == "learn");
@@ -358,6 +453,9 @@ fn next_queued(state: &AppState) -> Option<Value> {
         .cloned()
         .filter(|job| job.get("status").and_then(|value| value.as_str()) == Some("queued"))
         .filter(|job| !retired_legacy_kind(job["kind"].as_str().unwrap_or("")))
+        // A queued child is not admitted while its lead is queued after
+        // recovery, or if its parent was cancelled/malformed/missing.
+        .filter(|job|team_child_gate(state,job)==TeamChildGate::Ready)
         // Learning is background work: at most one at a time, so it can never
         // occupy every worker while a prompt/room/workflow job waits.
         .filter(|job| !(job["kind"] == "learn" && learning_running))
@@ -501,9 +599,12 @@ async fn run_job(state: AppState, job: Value) {
     }else{None};
     // Only the language-to-action executor runs in the core job worker.
     // Optional job families attach through the host composition boundary.
-    let result=if is_team_writer&&writer_lease.is_none(){
-        Err("deferred: workspace writer lease is held by another worker".into())
-    }else{match kind.as_str() {
+    let result=match team_child_gate(&state,&job){
+        TeamChildGate::WaitingForLead=>Err("deferred: Task Team lead has not resumed".into()),
+        TeamChildGate::Halt{status,reason}=>Err(format!("{status}: {reason}")),
+        TeamChildGate::Ready if is_team_writer&&writer_lease.is_none()=>
+            Err("deferred: workspace writer lease is held by another worker".into()),
+        TeamChildGate::Ready=>match kind.as_str() {
         "prompt" => run_prompt(&context, &job).await,
         "resume" => run_resume(&context, &job).await,
         other => match crate::features::dispatch_job(&context,&job,other).await {
