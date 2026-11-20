@@ -22,6 +22,8 @@ execution receipts and user-controlled workspace boundaries in the application.
   local inference endpoints such as Ollama, llama.cpp and LM Studio.
 - **Nine-plus participant rooms:** per-agent personas, stable session history,
   user-confirmed state, bounded context selection and per-call usage evidence.
+  Each participant's durable read cursor records exact visible message IDs;
+  delayed replies cannot claim evidence from a newer owner turn.
 - **Tools and extensions:** native file/shell/browser operations plus MCP
   integrations. Mutations use the same approval and audit pipeline.
 - **Memory:** SQLite-backed sessions, retrieval, evidence, verified changes and
