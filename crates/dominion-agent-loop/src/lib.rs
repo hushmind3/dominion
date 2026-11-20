@@ -42,6 +42,15 @@ pub fn select(requested_plan:bool)->ActiveLoop{
     if requested_plan{ActiveLoop::PlanExecute(PlanExecuteLoop::default())}
     else{ActiveLoop::ReAct(ReActLoop::default())}
 }
+/// Select only registered, compiled algorithms. Unknown values fall back to
+/// the existing task-specific default; they never grant extra permissions.
+pub fn select_named(name:Option<&str>,requested_plan:bool)->ActiveLoop{
+    match name{
+        Some("react")=>select(false),
+        Some("plan-execute")=>select(true),
+        _=>select(requested_plan),
+    }
+}
 impl AgentLoop for ActiveLoop{
     fn name(&self)->&'static str{
         match self{Self::ReAct(p)=>p.name(),Self::PlanExecute(p)=>p.name()}
@@ -147,6 +156,13 @@ mod tests{
             }]},
             ModelResponse{content:"finished".into(),calls:vec![]},
         ]),called:0,cancelled:false}
+    }
+    #[test]
+    fn configured_algorithm_is_replaceable_without_a_core_change(){
+        assert_eq!(select_named(Some("react"),true).name(),"react");
+        assert_eq!(select_named(Some("plan-execute"),false).name(),"plan-execute");
+        assert_eq!(select_named(Some("unrecognized"),true).name(),"plan-execute");
+        assert_eq!(select_named(Some("unrecognized"),false).name(),"react");
     }
     #[tokio::test]
     async fn both_loops_execute_real_provider_tool_roundtrip_via_ports(){

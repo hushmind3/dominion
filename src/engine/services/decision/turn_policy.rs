@@ -54,7 +54,13 @@ impl<'a> TurnPolicy<'a>{
          crate::engine::plan_quality::score_independent(plan,input))
     }
     pub fn workflow(&self,plan_requested:bool)->dominion_agent_loop::ActiveLoop{
-        dominion_agent_loop::select(plan_requested)
+        // Versioned slot reuses the existing policy storage/API. No new menu.
+        // A missing or unknown value keeps the previous task-derived default.
+        let active=self.active("agent.loop");
+        let selected=active.as_ref().and_then(|item|
+            item["parameters"]["implementation"].as_str()
+                .or_else(||item["parameters"]["mode"].as_str()));
+        dominion_agent_loop::select_named(selected,plan_requested)
     }
     pub fn order(&self)->ToolOrder{
         let choice=self.choose("execution.ordering",true);

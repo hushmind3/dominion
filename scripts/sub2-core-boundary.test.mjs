@@ -196,3 +196,14 @@ test('swap-ready agent loops use the core trait without importing the gateway',(
  assert.doesNotMatch(source('crates/dominion-turn-core/Cargo.toml'),/dominion-agent-loop/);
  assert.match(source('Cargo.toml'),/dominion-agent-loop =/);
 });
+
+test('active workflow revisions use existing policy storage without UI changes',()=>{
+ const adapter=source('src/engine/services/decision/turn_policy.rs');
+ const algorithms=source('crates/dominion-agent-loop/src/lib.rs');
+ assert.match(adapter,/self\.active\("agent\.loop"\)/);
+ assert.match(adapter,/dominion_agent_loop::select_named\(selected,plan_requested\)/);
+ assert.match(algorithms,/pub fn select_named\(/);
+ assert.match(algorithms,/Some\("react"\)/);
+ assert.match(algorithms,/Some\("plan-execute"\)/);
+ assert.doesNotMatch(source('crates/dominion-turn-core/src/agent_loop.rs'),/agent\.loop|select_named/);
+});

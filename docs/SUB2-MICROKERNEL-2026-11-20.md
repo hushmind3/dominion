@@ -81,3 +81,7 @@ ProgramIR 실행, 대안 후보 실험, 작업 검토, 정책 스냅샷과 세�
 **실행 범위**: 현재 제품의 기존 대규모 `chat/runtime/turn_body.rs`는 실행 세션 영속화·복합 증거 수집 등을 위해 유지되고, 새 에이전트 알고리즘이 각 모델 응답의 실행 상태 전이에서 실사용됩니다. 새 `run` 전체를 아직 기존 제품의 모든 실행 경로로 대체한 것은 아닙니다.
 
 참고: https://docs.openclaw.ai/agent-loop, https://github.com/zeroclaw-labs/zeroclaw/blob/master/docs/book/src/architecture/overview.md, https://github.com/nearai/ironclaw .
+
+## 알고리즘 버전 선택 (UI 변경 없음)
+
+기존 정책 저장소의 활성 `agent.loop` 슬롯에서 `parameters.implementation` 값 `react` 또는 `plan-execute`를 읽어 작업별로 루프 구현을 선택합니다. 저장된 선택이 없거나 알 수 없는 이름이면 기존 작업 기반 자동 선택을 사용합니다. 이 레지스트리는 현재 컴파일된 알고리즘의 선택 방식이며, 임의 Rust/WASM 코드를 런타임에 동적으로 로드하는 것은 아닙니다. 외부 모델 인증·승인·샌드박스·도구 실행 허용은 실행 코어 및 호스트에 남습니다.
