@@ -31,16 +31,27 @@ for(const name of e2eModules){
 if(e2eCases!==111)throw Error('E2E regression tests lost or duplicated: '+e2eCases+' (expected 111)')
 
 const runtime=readFileSync(path.join(root,'src/engine/chat/runtime.rs'),'utf8')
-const adapter=readFileSync(path.join(root,'src/engine/chat/product.rs'),'utf8')
+// Product-specific chat phases must be owned outside the native chat directory.
+// This keeps the native execution loop small without changing its module API.
+const chatModule=readFileSync(path.join(root,'src/engine/chat/mod.rs'),'utf8')
+for(const [owner,original,replacement] of [["src/engine/chat/runtime.rs","src/engine/chat/product.rs","src/addons/integrations/chat_product.rs"],["src/engine/chat/mod.rs","src/engine/chat/context.rs","src/addons/knowledge/chat_context.rs"],["src/engine/chat/mod.rs","src/engine/chat/room_context.rs","src/addons/integrations/chat_room_context.rs"],["src/engine/chat/runtime.rs","src/engine/chat/runtime/program.rs","src/addons/strategies/chat_program.rs"],["src/engine/chat/runtime.rs","src/engine/chat/runtime/adaptation.rs","src/addons/strategies/chat_adaptation.rs"]]){
+  const declared=owner==='src/engine/chat/mod.rs'?chatModule:
+    readFileSync(path.join(root,owner),'utf8')
+  if(!declared.includes('../../'+replacement.replace(/^src\//,''))||
+     existsSync(path.join(root,original))||
+     !existsSync(path.join(root,replacement)))
+    throw Error('Chat product extension leaked into engine: '+original)
+}
+const adapter=readFileSync(path.join(root,'src/addons/integrations/chat_product.rs'),'utf8')
 const chatPaths=[
  ['src/engine/chat/runtime.rs',1600],
- ['src/engine/chat/product.rs',2200],
+ ['src/addons/integrations/chat_product.rs',2200],
  ['src/engine/chat/provider.rs',2200],
- ['src/engine/chat/runtime/program.rs',1200],
+ ['src/addons/strategies/chat_program.rs',1200],
  ['src/engine/chat/runtime/tool_dispatch.rs',900],
  ['src/engine/chat/runtime/finalization.rs',1100],
  ['src/engine/chat/runtime/tool_catalog.rs',600],
- ['src/engine/chat/runtime/adaptation.rs',600],
+ ['src/addons/strategies/chat_adaptation.rs',600],
  ['src/engine/chat/runtime/recovery.rs',350],
  ['src/engine/chat/runtime/tests.rs',1000],
  ['src/engine/chat/provider/tests.rs',1000],
@@ -52,7 +63,7 @@ for(const [file,maxLines] of chatPaths){
  const lines=content.split('\n').length
  if(lines>maxLines)throw Error('Runtime module grew past '+maxLines+' lines: '+file+' ('+lines+')')
 }
-for(const file of ['src/engine/chat/runtime.rs','src/engine/chat/product.rs',
+for(const file of ['src/engine/chat/runtime.rs','src/addons/integrations/chat_product.rs',
     'src/engine/chat/runtime/tool_dispatch.rs','src/engine/chat/runtime/finalization.rs']){
  if(/\.all\("execution_operation"\)/.test(readFileSync(path.join(root,file),'utf8')))
    throw Error('Hot-path full tool journal scan reintroduced: '+file)
@@ -158,8 +169,8 @@ const helperSource=readFileSync(path.join(root,'src/engine/llm.rs'),'utf8')
 const auxiliaryReceiptSource=readFileSync(path.join(root,'src/engine/llm/receipts.rs'),'utf8')
 const finalizationSource=readFileSync(path.join(root,'src/engine/chat/runtime/finalization.rs'),'utf8')
 for(const file of ['src/engine/chat/runtime/finalization.rs',
-                   'src/engine/chat/runtime/adaptation.rs',
-                   'src/engine/chat/runtime/program.rs']){
+                   'src/addons/strategies/chat_adaptation.rs',
+                   'src/addons/strategies/chat_program.rs']){
  const source=readFileSync(path.join(root,file),'utf8')
  if(!source.includes('llm::complete_for_execution(')||
     /llm::complete_for_(?:turn|session)\(/.test(source))
@@ -214,8 +225,8 @@ const extensionTools=readFileSync(path.join(root,'src/addons/integrations/extens
 const extensionKnowledge=readFileSync(path.join(root,'src/addons/integrations/extensions/knowledge.rs'),'utf8')
 const extensionChannels=readFileSync(path.join(root,'src/addons/integrations/extensions/channels.rs'),'utf8')
 const extensionJobs=readFileSync(path.join(root,'src/addons/integrations/extensions/jobs.rs'),'utf8')
-const privateContext=readFileSync(path.join(root,'src/engine/chat/context.rs'),'utf8')
-const roomContext=readFileSync(path.join(root,'src/engine/chat/room_context.rs'),'utf8')
+const privateContext=readFileSync(path.join(root,'src/addons/knowledge/chat_context.rs'),'utf8')
+const roomContext=readFileSync(path.join(root,'src/addons/integrations/chat_room_context.rs'),'utf8')
 const apiRoutes=readFileSync(path.join(root,'src/api/mod.rs'),'utf8')
 if(!addonIndex.includes('pub mod extensions;')||
    !extensionHost.includes('pub enum Extension')||

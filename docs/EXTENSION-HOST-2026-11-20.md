@@ -126,3 +126,19 @@ These modules are **still compiled into the application executable** and some
 legacy product entrypoints still call add-ons through re-exported paths. This
 is source ownership separation; Cargo feature/process isolation and eliminating
 all old imports are separate milestones, not claims made by this commit.
+
+## Chat host extraction (same commit series)
+
+The native Rust execution loop remains at `src/engine/chat/runtime.rs`.
+The product-specific chat implementation is now owned by:
+- `src/addons/integrations/chat_product.rs` — product host callbacks
+- `src/addons/knowledge/chat_context.rs` — memory/prompt composition
+- `src/addons/integrations/chat_room_context.rs` — multi-agent room context
+- `src/addons/strategies/chat_program.rs` — optional execution programs
+- `src/addons/strategies/chat_adaptation.rs` — adaptation experiments
+
+Each module is linked with an explicit Rust `#[path]` from its old logical
+module entrypoint. This preserves all visibility and `super::` references
+without placing implementation files in the native execution directory.
+The paths are enforced by the runtime architecture guard. The kernel and
+SQLite/API schemas are unchanged.

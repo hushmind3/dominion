@@ -1,9 +1,9 @@
 //! Product entrypoints and SQLite/tool/model adapters for the native execution driver.
-#[path = "product.rs"]
+#[path = "../../addons/integrations/chat_product.rs"]
 mod product;
 #[path = "outcome.rs"]
 mod outcome;
-#[path = "runtime/program.rs"]
+#[path = "../../addons/strategies/chat_program.rs"]
 mod program;
 #[path = "runtime/tool_dispatch.rs"]
 mod tool_dispatch;
@@ -11,7 +11,7 @@ mod tool_dispatch;
 mod finalization;
 #[path = "runtime/tool_catalog.rs"]
 mod tool_catalog;
-#[path = "runtime/adaptation.rs"]
+#[path = "../../addons/strategies/chat_adaptation.rs"]
 mod adaptation;
 use adaptation::{failure_observation, environment_fingerprint, record_adaptation_error, attempt_model_adaptation};
 #[path = "runtime/recovery.rs"]

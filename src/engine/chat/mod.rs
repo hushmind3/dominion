@@ -2,9 +2,11 @@
 mod approval;
 mod budget;
 mod codex_ws;
+#[path = "../../addons/knowledge/chat_context.rs"]
 mod context;
 mod context_engine;
 mod continuity;
+#[path = "../../addons/integrations/chat_room_context.rs"]
 mod room_context;
 mod web_research;
 
