@@ -11,8 +11,8 @@ import {chromium} from 'playwright'
 const root=fileURLToPath(new URL('../../',import.meta.url))
 const artifacts=path.join(root,'web','artifacts','connection-visual')
 const port=Number(process.env.DOMINION_VISUAL_PORT||4382)
-const server=spawn(process.execPath,['web/node_modules/vite/bin/vite.js','preview','--host','127.0.0.1','--port',String(port),'--strictPort'],{
- cwd:root,stdio:['ignore','pipe','pipe']
+const server=spawn(process.execPath,['node_modules/vite/bin/vite.js','preview','--host','127.0.0.1','--port',String(port),'--strictPort'],{
+ cwd:path.join(root,'web'),stdio:['ignore','pipe','pipe']
 })
 let output=''
 server.stdout.on('data',data=>{output+=data.toString()})
