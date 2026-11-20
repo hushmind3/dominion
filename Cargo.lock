@@ -338,6 +338,7 @@ dependencies = [
  "chacha20poly1305",
  "chrono",
  "dominion-agent-kernel",
+ "dominion-turn-core",
  "futures-util",
  "rand 0.8.8",
  "reqwest",
@@ -349,6 +350,14 @@ dependencies = [
  "tokio-tungstenite",
  "tower-http 0.5.2",
  "uuid",
+]
+
+[[package]]
+name = "dominion-turn-core"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

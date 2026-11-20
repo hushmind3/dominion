@@ -54,3 +54,7 @@ ProgramIR 실행, 대안 후보 실험, 작업 검토, 정책 스냅샷과 세�
 ## 실제 의존성 역전 (2026-11-20)
 
 `core::ExecutionPort`는 자연어 실행 요청을 전달하는 제네릭 Rust 포트입니다. `core::run_with_events`는 서비스에서 발생한 도구 성공/실패/결과 불명 영수증을 수집하고 최종 결과를 그대로 반환합니다. `src/engine/services/automation/turn_quiet.rs`가 현재 `ChatPort`를 구현해 기존 채팅 서비스를 연결합니다. 이 경계 덕분에 코어는 `AppState`, 구체 모델 제공자, 메모리, 방, 계획, MCP를 직접 import하지 않습니다. `core::driver::Driver`는 실제 모델 호출을 provider Future 포트로 실행하고 도구 이름을 현재 모델에 제공된 스키마로 검사합니다. 독립적인 FakePort 회귀 테스트로 DB 없이 성공/실패 영수증 보존을 검증합니다.
+
+## 독립 Cargo 경계
+
+`crates/dominion-turn-core/`가 독립 Rust 크레이트로 등록되었습니다. 런타임 의존성은 `tokio`와 `serde_json`이며 provider·DB·UI·MCP·자동화 크레이트는 직접 가져오지 않습니다. 기존 제품 API는 `src/engine/core/mod.rs` 단일 facade가 재내보냅니다. `cargo test --locked -p dominion-turn-core --lib`를 CI에 추가해 호스트 포트를 실제 DB·모델 없이 검증합니다.

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {existsSync,readFileSync} from 'node:fs';
+import {existsSync,readFileSync,readdirSync} from 'node:fs';
 const source=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
 const exists=path=>existsSync(new URL('../'+path,import.meta.url));
 const engine=source('src/engine/mod.rs');
@@ -8,8 +8,8 @@ const chat=source('src/engine/services/conversation/chat/mod.rs');
 
 test('core entrypoint owns natural language execution, not product services',()=>{
  const core=source('src/engine/core/mod.rs');
- assert.match(core,/pub async fn run_with_events/);
- assert.match(core,/pub trait ExecutionPort/);
+ assert.match(source('crates/dominion-turn-core/src/lib.rs'),/pub async fn run_with_events/);
+ assert.match(source('crates/dominion-turn-core/src/lib.rs'),/pub trait ExecutionPort/);
  const imports=core.split('\n').filter(line=>line.trimStart().startsWith('use ')).join('\n');
  assert.doesNotMatch(imports,/AppState|chat|mcp|memory|jobs|models/);
  assert.match(source('src/engine/services/automation/turn_quiet.rs'),/impl core::ExecutionPort for ChatPort/);
@@ -118,14 +118,22 @@ test('real chat model loop consults pure execution driver and gates parallel too
  assert.match(s,/driver\.select_step/);
  assert.match(s,/driver\.admit_tool/);
  assert.match(s,/Driver::batch_advertised/);
- assert.ok(exists('src/engine/core/driver.rs'));
+ assert.ok(exists('crates/dominion-turn-core/src/driver.rs'));
 });
 
 test('provider and tool authority are exposed as host ports, not implemented in core',()=>{
  const core=source('src/engine/core/mod.rs');
- const driver=source('src/engine/core/driver.rs');
+ const driver=source('crates/dominion-turn-core/src/driver.rs');
  assert.doesNotMatch(core,/crate::engine::(memory|mcp|rooms|jobs|models|policy)/);
+ assert.match(core,/pub use dominion_turn_core::\*/);
+ assert.match(source('Cargo.toml'),/dominion-turn-core =/);
+ assert.doesNotMatch(source('crates/dominion-turn-core/Cargo.toml'),/dominion-rust|mcp|reqwest|rusqlite|axum/);
  assert.doesNotMatch(driver,/crate::engine|AppState|reqwest|tokio::process/);
  assert.match(driver,/pub async fn request_model/);
- assert.match(core,/pub trait ExecutionPort/);
+ assert.match(source('crates/dominion-turn-core/src/lib.rs'),/pub trait ExecutionPort/);
+});
+
+test('product core is a one-file facade; standalone core has a stable source boundary',()=>{
+ assert.deepEqual(readdirSync(new URL('../src/engine/core/',import.meta.url)).sort(),['mod.rs']);
+ assert.deepEqual(readdirSync(new URL('../crates/dominion-turn-core/src/',import.meta.url)).sort(),['driver.rs','lib.rs','port_tests.rs']);
 });

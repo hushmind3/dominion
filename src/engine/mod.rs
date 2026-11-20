@@ -153,5 +153,5 @@ pub mod unsafe_audit;
 pub mod vault_rotation;
 
 #[cfg(test)]
-#[path = "core/tests.rs"]
+#[path = "tests.rs"]
 mod outcome_tests;

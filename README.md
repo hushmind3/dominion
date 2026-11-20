@@ -65,3 +65,5 @@ Obsolete embedded generation, campaign and upload endpoints, their Rust implemen
 The natural-language execution loop is isolated in `src/engine/core/`; provider routing, memory, rooms, automation, planning and concrete tools are in `src/engine/services/`, with MCP and external channels under `src/engine/addons/`. Rust module names and existing API/UI routes remain stable. See [core isolation design](docs/SUB2-MICROKERNEL-2026-11-20.md).
 
 API architecture: 11 execution endpoints remain in the guarded core router; 123 domain endpoints use five service route modules, and 27 external-integration endpoints use the addon router. All retain their original URL paths and shared middleware.
+
+The minimum agent kernel is an independently compiled Rust workspace crate, `crates/dominion-turn-core/`, with only Tokio and serde_json dependencies. It owns the model/tool admission driver, generic execution host port and execution receipts. Providers, planning, memory, tools, automation, UI and MCP remain optional product services. `src/engine/core/mod.rs` is a compatibility reexport only.
