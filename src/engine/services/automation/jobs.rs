@@ -252,6 +252,26 @@ pub fn recover(state: &AppState) {
             None
         }
     };
+    // A previous process may have durably committed the assistant's final
+    // message and execution link, then crashed before settling the parent job.
+    // Such a job must NOT be blindly requeued and billed/executed again.
+    // Require a matching committed message, not a stale or forged string ID.
+    let committed_final_sessions=match state.store.running_recovery_records("execution"){
+        Ok(executions)=>executions.into_iter().filter_map(|execution|{
+            let id=execution["id"].as_str()?;
+            let session=execution["sessionId"].as_str()?;
+            let message_id=execution["finalMessageId"].as_str()?;
+            let message=state.store.message(message_id)?;
+            (message["role"]=="assistant"
+                && message["session_id"].as_str()==Some(session)
+                && message["metadata"]["executionId"].as_str()==Some(id))
+                .then(||session.to_string())
+        }).collect::<std::collections::HashSet<_>>(),
+        Err(error)=>{
+            state.store.audit("recovery.final_answers_read_failed",json!({"error":error}));
+            std::collections::HashSet::new()
+        }
+    };
     for job in jobs {
         if job.get("status").and_then(|value| value.as_str()) != Some("running") {
             continue;
@@ -281,13 +301,18 @@ pub fn recover(state: &AppState) {
         let unknown_external_result=uncertain_sessions.as_ref().is_none_or(
             |sessions|job_session.is_some_and(|session|sessions.contains(session))
         );
-        let uncertain = flagged || unknown_external_result;
+        let committed_final=job_session.is_some_and(|session|
+            committed_final_sessions.contains(session));
+        let uncertain = flagged || unknown_external_result || committed_final;
         updated["status"] = json!(if attempts >= 3 || uncertain {
             "needs_review"
         } else {
             "queued"
         });
-        if uncertain {
+        if committed_final {
+            updated["error"]=json!(
+                "재시작 전 최종 답변이 이미 저장되었습니다. 중복 실행하지 않고 완료 상태 확인을 기다립니다.");
+        } else if uncertain {
             updated["error"] =
                 json!("재시작 전 작업 결과를 확정할 수 없습니다. 실행 기록을 확인하세요.");
         }
@@ -999,6 +1024,36 @@ mod tests {
         recover(&state);
         let stored = state.store.get("job", job["id"].as_str().unwrap()).unwrap();
         assert_eq!(stored["status"], "needs_review");
+    }
+
+    #[test]
+    fn recovery_never_reexecutes_a_job_whose_answer_was_durably_committed(){
+        let state=temp_state();
+        let job=enqueue(&state,"prompt",json!({
+            "prompt":"Write the report","sessionId":"session-final",
+        })).unwrap();
+        let mut running=job.clone();
+        running["status"]=json!("running");
+        running["attempts"]=json!(1);
+        state.store.put("job",&running).unwrap();
+        state.store.put("execution",&json!({
+            "id":"exec-final","status":"running","sessionId":"session-final",
+            "finalMessageId":"message-final",
+        })).unwrap();
+        state.store.write_message(&json!({
+            "id":"message-final","role":"assistant","session_id":"session-final",
+            "content":"The file was created",
+            "metadata":{"executionId":"exec-final"},
+        })).unwrap();
+        recover(&state);
+        let recovered=state.store.get("job",job["id"].as_str().unwrap()).unwrap();
+        assert_eq!(recovered["status"],"needs_review","{recovered}");
+        assert!(recovered["error"].as_str().unwrap().contains("최종 답변"));
+        assert_eq!(state.store.messages("session-final").len(),1);
+        assert_eq!(state.store.get("execution","exec-final").unwrap()["status"],"interrupted");
+        recover(&state);
+        assert_eq!(state.store.get("job",job["id"].as_str().unwrap()).unwrap()["status"],
+            "needs_review");
     }
 
     #[test]

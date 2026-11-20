@@ -412,6 +412,26 @@ impl Store {
         let mut items=rows.collect::<Result<Vec<_>,_>>()
             .map_err(|e|e.to_string())?;
         items.reverse();
+        // The first committed observation anchors long group discussions.
+        // Keep it when the indexed tail window is full, replacing only
+        // the oldest tail entry; memory/SQL response stays strictly bounded.
+        if limit>=3 && items.len()>=limit.clamp(1,48){
+            let first=conn.query_row(
+                "SELECT data,id,created_at,updated_at FROM records
+                 WHERE kind='room_work_item'
+                   AND json_extract(data,'$.roomId')=?1
+                   AND json_extract(data,'$.sourceMessageId')=?2
+                 ORDER BY CAST(json_extract(data,'$.step') AS INTEGER) ASC,id ASC
+                 LIMIT 1",
+                params![room_id,source_id],record_from_row,
+            ).optional().map_err(|e|e.to_string())?;
+            if let Some(first)=first {
+                if items.iter().all(|item|item["id"]!=first["id"]){
+                    items.remove(0);
+                    items.insert(0,first);
+                }
+            }
+        }
         Ok(items)
     }
 

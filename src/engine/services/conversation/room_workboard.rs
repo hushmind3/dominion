@@ -221,7 +221,14 @@ pub fn snapshot(
         a["step"].as_u64().cmp(&b["step"].as_u64())
             .then_with(||a["messageId"].as_str().cmp(&b["messageId"].as_str())));
     if accepted.len()>MAX_ITEMS_IN_PROMPT{
-        accepted=accepted.split_off(accepted.len()-MAX_ITEMS_IN_PROMPT);
+        // A long multi-agent discussion must not silently forget its first
+        // durable observation once the most recent six replies fill the
+        // prompt. Preserve the source anchor, with the recent five responses.
+        let first=accepted.remove(0);
+        let mut tail=accepted.split_off(
+            accepted.len()-(MAX_ITEMS_IN_PROMPT-1));
+        tail.insert(0,first);
+        accepted=tail;
     }
     let projected=accepted.iter().map(|item|json!({
         "agentId":item["agentId"],
@@ -342,7 +349,31 @@ mod tests{
             .unwrap().unwrap();
         assert_eq!(count,6);
         assert!(text.contains("reply-11"));
-        assert!(!text.contains("reply-0\""));
+        assert!(text.contains("reply-0\""));
+        assert!(!text.contains("reply-5\""));
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn one_hundred_turn_workboard_retains_the_original_observation_and_recent_five(){
+        let (state,dir)=state();
+        for step in 0..105{
+            let id=format!("reply-{step}");
+            seed(&state,"owner-a",&id,"a","no-execution");
+            let msg=state.store.message(&id).unwrap();
+            record(&state,"r","room:r","owner-a","task-a","a",step+1,&msg).unwrap();
+        }
+        let window=state.store.room_work_items("r","owner-a",48).unwrap();
+        assert_eq!(window.len(),48);
+        assert_eq!(window[0]["messageId"],"reply-0");
+        assert_eq!(window.last().unwrap()["messageId"],"reply-104");
+        let visible=state.store.messages("room:r");
+        let (_,text,count)=snapshot(&state,"r","owner-a",&visible)
+            .unwrap().unwrap();
+        assert_eq!(count,6);
+        assert!(text.contains("reply-0\""),"{text}");
+        assert!(text.contains("reply-104\""),"{text}");
+        assert!(!text.contains("reply-50\""),"{text}");
         let _=std::fs::remove_dir_all(dir);
     }
 

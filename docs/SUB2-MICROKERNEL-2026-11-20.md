@@ -193,3 +193,9 @@ https://openai.com/index/unrolling-the-codex-agent-loop/
 - Rust SDK `run_events_after`가 TypeScript `runEvents`와 같은 버전 1 `run_state` 이벤트를 원래 저널의 전역 cursor와 함께 제공합니다. HTTP/UI에 새 메뉴나 새 엔드포인트를 추가하지 않았습니다.
 - 회귀 테스트는 CAS terminal monotonicity, SQLite final reply exactly-once, forged group observation rejection, Rust SDK journal parity를 포함합니다. 한 프로세스가 종료되는 전체 E2E와 100턴 end-to-end 모델 비용 실험은 별도 필요합니다.
 - 참고: <https://openai.com/index/unlocking-the-codex-harness/> (thread/turn/item lifecycle), <https://github.com/QwenLM/qwen-code/blob/main/docs/design/2026-09-27-hosted-workspace-tool-turn.md> (원자적 도구 결과 지속과 재개).
+
+## 2026-11-20: 크래시 재시작 및 100턴 그룹 컨텍스트
+
+- `jobs::recover`가 부모 job을 queued로 되돌리기 전에 **running execution과 일치하는 최종 assistant 메시지**를 SQLite에서 검증합니다. 최종 메시지와 그 실행 링크가 이미 커밋된 경우에는 다시 모델 호출·외부 효과를 시작하지 않고 `needs_review`로 보류합니다. 이는 성공을 날조하지 않으면서 중복 비용/효과를 방지하는 복구 경계입니다.
+- 그룹 작업판의 조회는 기존 SQLite 인덱스와 최근 48개 상한을 유지하면서, 기록이 48개를 넘으면 **최초 커밋된 관측 1개와 최신 47개**를 보존합니다. 모델로 전송되는 6개 요약은 최초 관측 1개와 최신 5개로 제한하여 오래된 그룹 합의/근거를 모두 잃지 않도록 합니다.
+- 테스트: 저장된 최종 답변이 있던 job의 재시작 중복 실행 금지, 105턴 모델-프리 그룹 관측의 최초/최근 메시지 유지 및 중간 메시지 제외. 전체 실제 모델 100턴의 비용/지능 평가는 이 테스트의 검증 범위 밖입니다.
