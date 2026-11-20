@@ -20,9 +20,14 @@ pub fn enabled(state:&AppState)->bool{
 /// disrupting any other messenger or the core session ledger.
 pub fn enabled_binding(state:&AppState,config:&serde_json::Value)->bool{
     if !enabled(state) || config["enabled"]!=true {return false;}
-    if let Some(room)=config["roomId"].as_str(){
-        if state.store.get("room",room).is_some_and(|record|
-            record["extensions"]["channels"]==false) {return false;}
+    if let Some(room_id)=config["roomId"].as_str(){
+        if let Some(room)=state.store.get("room",room_id) {
+            if room["extensions"]["channels"]==false {return false;}
+            let session_id=room["sessionId"].as_str()
+                .map(str::to_string).unwrap_or_else(||format!("room:{room_id}"));
+            if state.store.get("session",&session_id).is_some_and(|record|
+                record["extensions"]["channels"]==false) {return false;}
+        }
     }
     if let Some(agent)=config["agentId"].as_str(){
         if state.store.get("agent",agent).is_some_and(|record|
