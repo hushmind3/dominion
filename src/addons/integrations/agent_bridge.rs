@@ -146,8 +146,10 @@ pub async fn inspect(
         let mut output=Vec::new();
         let mut errors=Vec::new();
         let work=async{
-            let a=(&mut stdout).take(MAX_STDOUT+1).read_to_end(&mut output);
-            let b=(&mut stderr).take(MAX_STDERR+1).read_to_end(&mut errors);
+            let mut bounded_stdout=(&mut stdout).take(MAX_STDOUT+1);
+            let mut bounded_stderr=(&mut stderr).take(MAX_STDERR+1);
+            let a=bounded_stdout.read_to_end(&mut output);
+            let b=bounded_stderr.read_to_end(&mut errors);
             let (_a,_b,status)=tokio::try_join!(a,b,child.wait())
                 .map_err(|e|e.to_string())?;
             Ok::<_,String>(status)
