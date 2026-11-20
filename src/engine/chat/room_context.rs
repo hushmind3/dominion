@@ -182,7 +182,8 @@ fn evidence(
 ) {
     let scope =
         memory::MemoryScope::for_session(&state.store, session_id, request.agent_id.as_deref());
-    for record in memory::retrieve(&state.store, &scope, query, 128) {
+    for record in crate::engine::extensions::knowledge::memories_for_room(
+        state,session_id,request.agent_id.as_deref(),query,128) {
         let standing = record["importance"].as_f64().unwrap_or(0.5) >= 0.7
             && matches!(record["type"].as_str(), Some("preference" | "procedure"));
         add_evidence(
@@ -191,9 +192,8 @@ fn evidence(
             standing,
         );
     }
-    for record in state.store.all("skill").into_iter().filter(|record| {
-        memory::visible(record, &scope) && record["enabled"] != false && record["status"] != "draft"
-    }) {
+    for record in crate::engine::extensions::knowledge::visible_skills(
+        state,session_id,request.agent_id.as_deref()) {
         // Keep a small, provenance-bound index in the room context. The full
         // enabled skill stays in SQLite until skill_view(id) is invoked.
         // Model-only rooms cannot call tools and retain the legacy excerpt.
