@@ -358,8 +358,6 @@ version = "0.1.0"
 dependencies = [
  "dominion-agent-algorithms",
  "dominion-agent-runtime",
- "futures-util",
- "serde",
  "serde_json",
  "tokio",
 ]

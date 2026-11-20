@@ -55,5 +55,8 @@ test('intelligence owns policy and tool scoring; SDK receives it by injection',(
  assert.match(loop,/use crate::\{AgentAlgorithm,StandardAlgorithm,context,tool_discovery,failure_guidance\}/);
  assert.doesNotMatch(sdk,/impl Kernel|run_from\(/);
  assert.match(sdk,/pub use dominion_agent_algorithms::\{/);
+ const facadeManifest=read('crates/dominion-agent-sdk/Cargo.toml');
+ assert.doesNotMatch(facadeManifest,/^serde =|^futures-util =/m);
+ assert.doesNotMatch(sdk,/use futures_util|use serde_json|pub struct Kernel/);
  assert.match(read('crates/dominion-agent-runtime/src/dispatch.rs'),/pub async fn dispatch_batch/);
 });
