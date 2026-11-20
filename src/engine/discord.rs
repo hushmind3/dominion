@@ -319,7 +319,8 @@ pub fn start(state: AppState) {
                 .store
                 .all("channel")
                 .into_iter()
-                .filter(native_enabled)
+                .filter(|config|crate::engine::extensions::channels::enabled(&state)
+                    && native_enabled(config))
                 .collect::<Vec<_>>();
             futures_util::stream::iter(configs)
                 .for_each_concurrent(9, |config| {
