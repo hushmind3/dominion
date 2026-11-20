@@ -1485,7 +1485,7 @@ mod tests {
         })).unwrap();
         let compiled=compile(&state,&request,"room:r","owner-1",&[],&[])
             .unwrap();
-        let joined=compiled.history.to_string();
+        let joined=serde_json::to_string(&compiled.history).unwrap();
         assert!(joined.contains("room-workboard:"));
         assert!(joined.contains("reply-1"));
         assert!(!joined.contains("새로운 별도 요청"));
@@ -1494,6 +1494,6 @@ mod tests {
         let newer=compile(&state,&request,"room:r","owner-2",&[],&[])
             .unwrap();
         assert_eq!(newer.accounting["workboardVisibleRecords"],0);
-        assert!(!newer.history.to_string().contains("room-workboard:"));
+        assert!(!serde_json::to_string(&newer.history).unwrap().contains("room-workboard:"));
     }
 }
