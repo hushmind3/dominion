@@ -3,12 +3,16 @@
 
 Branch: `dominion-sub3` only. The current owner direction **supersedes** the former 100-point RSI/video-focused rubric and prior feature-growth guides.
 
+## 2026-11-20 cleanup addendum
+
+The standalone YouTube upload OAuth provider and its requested upload/readonly permissions were removed. Startup removes obsolete YouTube-only OAuth grants and pending verifier records while retaining Google/GitHub logins and user files. The disconnected legacy policy experiment search/meta-optimizer/promotion and patch engine were removed, leaving read-only planning/recovery policy selection and the existing verified file preflight guard. The obsolete `selfimprove.search` builtin no longer seeds; previously persisted entries are disabled, not erased. The unmounted deterministic experiment evaluation module was removed, and owner-triggered algorithm activation no longer depends on historical experiment promotion records. Source-index navigation and SDK/native jobs remain.
+
 ## Actual removals
 
 - `src/engine/rsi*.rs`: all standalone RSI research, optimizer, campaign, self-patch, generation and automatic acceptance loops removed physically. Ordinary source editing, source-hash protection, acceptance tests and owner-driven repair remain.
 - `src/engine/video.rs`, `video_studio.rs`, `video_hub.rs`: built-in media generation, ComfyUI model download/installation, scene production, internal render/autopublish removed.
 - `src/api/rsi.rs`, `src/api/video*.rs`, `src/api/benchmark.rs`, `src/api/experiments.rs`, `src/api/improvements.rs`: old feature/product/auto-experiment routes removed rather than remapped to non-working handlers.
-- `web/src/pages/Video.tsx`, `SelfImprovement.tsx`, media-only subcomponents and memory growth dashboard are removed from source and navigation. `sdk/typescript` no longer declares RSI/media producer facades.
+- `web/src/pages/Video.tsx`, `SelfImprovement.tsx` and media-only subcomponents are removed from source and navigation. The manual memory growth dashboard remains available. `sdk/typescript` has no media-production or standalone RSI client facade.
 - RSI-only Rust tools and special automatic-write approval exception removed. CLI runner, periodic experiment scheduler, media smoke and standalone RSI benchmark GitHub workflows removed.
 - Unused raster library `resvg` and its transitive dependencies removed from `Cargo.toml` and `Cargo.lock`.
 
@@ -72,7 +76,7 @@ Status: code and source-level tests committed; Rust compiler, tests and full CI 
 
 **Observed pre-change duplication:** `/api/harness/runs` started `dominion_harness::AgentSdk::run` with its own `sdk_run` record, `sdk-runs/*.json` FileJournal, approval and resume flow. `/api/sdk/runs` already used `jobs::create` → `engine::native_agent::run` → `dominion_agent_sdk::Kernel`, with the host-owned durable SQLite job/operation journal. The old `crates/harness` binary and the interactive `chat/runtime/turn.rs` loop are separate paths.
 
-**Now:** A NEW POST to `/api/harness/runs` forwards to `sdk_runs::create` and the existing native job kernel. Its `harnessCompat=true` marker is persisted only to keep the two public API history views separate. `sdk::list/one/approve/cancel/resume/reconcile` dispatch to native handlers for this marker and retain old handlers for preexisting `sdk_run` checkpoints. The old `AgentSdk::run` is not invoked for new requests to this HTTP API. Existing legacy files, historical entries and in-doubt effect state are **not** migrated, reinterpreted, or discarded. The standalone `crates/harness` CLI is not removed, and chat remains a separate loop.
+**Now:** A NEW POST to `/api/harness/runs` forwards to `sdk_runs::create` and the existing native job kernel. Its `harnessCompat=true` marker is persisted only to keep the two public API history views separate. `sdk::list/one/approve/cancel/resume/reconcile` dispatch to native handlers for this marker and retain old handlers for preexisting `sdk_run` checkpoints. The old `AgentSdk::run` is not invoked for new requests to this HTTP API. Existing legacy files, historical entries and in-doubt effect state are **not** migrated, reinterpreted, or discarded. The standalone `crates/harness` CLI was removed in the later retirement described below; chat remains a separate loop.
 
 **No permission expansion:** New compatibility jobs pin only the previous workspace list/read/write/replace operations and approved shell, with the former 160-call cap. They cannot silently discover or execute browser, external account, web, arbitrary-host-file or MCP tools. The native tool host rejects a model-provided nonempty `cwd` for legacy-surface shell invocations because the old harness used the fixed workspace root. Native jobs continue using the existing approval, validation, effect journal and verification gates. Default native SDK jobs remain unchanged.
 

@@ -39,6 +39,15 @@ for(const file of tracked){
   'Retired domain reference reintroduced: '+file);
 }
 for(const p of absent)assert.ok(!exists(p),'Retired or duplicate product path still exists: '+p);
+// Legacy feature handoffs must not revive removed media, money or RSI as active
+// setup procedures. Retain unrelated benchmark measurements as dated evidence.
+for(const p of ["docs/DOMINION-DEEPSEEK-HANDOFF-2026-11-05.md","docs/DOMINION-HARNESS-MASTER-DESIGN.md","docs/H7-SMOKE-RESULT-2026-11-05.md","docs/H8-CANARY-2026-11-05.md","docs/H8-CLOSED-LOOP-2026-11-05.md","docs/H9-POLICY-SLOTS-2026-11-05.md","docs/HANDOFF-2026-11-05.md","docs/README-TECHNICAL-SNAPSHOT-2026-11-14.md","docs/S0-S4-CONTRACT-AUDIT-2026-11-05.md","docs/SDK-ARCHITECTURE-2026-11-15.md","docs/SUB3-HANDOFF-2026-11-11.md","docs/SUB3-MAIN-FUNCTIONAL-PARITY-2026-11-15.md","docs/SUB3-MAIN-PARITY-2026-11-15.md"]) {
+ assert.ok(!exists(p),'Outdated retired-feature handoff returned: '+p);
+}
+const currentDocs=read('docs/INDEX.md')+'\n'+read('docs/GETTING-STARTED.md');
+for(const old of ['RSI-MAIN-INTEGRATION','rsi/evaluations','SELF-IMPROVEMENT-BENCHMARK','자기개선 화면','자동 RSI 평가기']) {
+ assert.ok(!currentDocs.includes(old),'Old nonfunctional feature instructions returned: '+old);
+}
 // Reject duplicate local module imports in the existing TypeScript UI. Most
 // imports are single-line; this zero-dependency gate catches accidental
 // double wiring without mutating or rebuilding any UI.

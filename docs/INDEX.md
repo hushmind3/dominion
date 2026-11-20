@@ -1,46 +1,36 @@
-# 문서 지도
+# DOMINION 문서 지도 — dominion-sub3 (2026-11-20)
 
-처음 보는 사람이 30초 안에 필요한 문서를 찾도록 정리한 목차입니다.
-날짜가 붙은 문서는 그 시점의 기록이며, 현재 계약은 아래 "현재 계약" 문서를 따릅니다.
+현재 배포·코드 구조를 설명하는 문서만 안내합니다. 폐기된 영상·머니·독립 RSI 실행기의 설치·세대 반복·자동 실험 문서는 정리했습니다.
 
-## 시작
+## 첫 사용과 주요 구조
 
-- [설치와 첫 사용](GETTING-STARTED.md)
+- [설치 및 시작](GETTING-STARTED.md) — macOS / Windows / Rust + React
+- [프로젝트 개요](../README.ko.md) · [English](../README.md)
+- [하네스 및 실행 경계](HARNESS.md)
+- [네이티브 Rust·TypeScript SDK](../sdk/rust/README.md) · [TypeScript](../sdk/typescript/README.md)
 - [데스크톱 앱](DESKTOP.md)
-- [프로젝트 개요](../README.md)
 
-## 현재 RSI 계약
+## 에이전트 실행·검증
 
-- [전체 시스템 RSI 실행 계약](RSI-MAIN-INTEGRATION-2026-11-12.md) — 실행 경계, 채택·증거 분리, 현재 기준
-- [완료 기준과 현재 상태](rsi-completion.md) — 3세대 채택·전이 판정 기준
-- [수동 실행 런북](RSI-MANUAL-RUNBOOK-2026-11-09.md)
-- [Sub3 아카이브](RSI-SUB3-ARCHIVE-2026-11-12.md)
-- [Sub3 핸드오프](SUB3-HANDOFF-2026-11-11.md)
-- [원리 일반화](PRINCIPLE-GENERALIZATION.md)
+- [경량화된 제품 경계와 기능 퇴역](SUB3-LEAN-COMPLEXITY-2026-11-16.md)
+- [실행 근거와 파일 무결성](SUB3-EVIDENCE-GOVERNOR-2026-11-16.md)
+- [네이티브 도구 함수 호출](SUB3-NATIVE-FUNCTION-CALLS-2026-11-15.md)
+- [네이티브 스트리밍](SUB3-NATIVE-STREAM-2026-11-15.md)
+- [실행 메트릭](SUB3-EXECUTION-METRICS-2026-11-17.md)
+- [현재 소스 경계 감사](SUB3-SOURCE-AUDIT-2026-11-18.md)
 
-## 설계와 감사
+## 컨텍스트·모델·그룹 대화
 
-- [하네스 마스터 설계](DOMINION-HARNESS-MASTER-DESIGN.md)
-- [어려운 문제 정리](HARD-PROBLEMS-2026-11-05.md)
-- [S0~S4 계약 감사](S0-S4-CONTRACT-AUDIT-2026-11-05.md)
-- [브랜치 감사](BRANCH-AUDIT-2026-11-09.md)
+- [그룹 맥락과 캐시 재사용](SUB3-ROOM-CONTEXT-DELTA-2026-11-18.md)
+- [대화 문맥 압축·비용](SUB3-CACHE-CONTEXT-2026-11-18.md)
+- [지속 가능한 작업 문맥](SUB3-DURABLE-CONTEXT-2026-11-15.md)
+- [도구 점진적 탐색](SUB3-PROGRESSIVE-TOOLS-2026-11-16.md)
+- [토큰·캐시 조사 기록](research/README.md)
 
-## 측정과 실험
+## 연결과 운영
 
-- [알고리즘 측정](ALGORITHM-MEASUREMENTS-2026-11-06.md)
-- [실모델 실험](REAL-MODEL-EXPERIMENT-2026-11-06.md)
-- [자기개선 벤치마크](SELF-IMPROVEMENT-BENCHMARK-2026-11-05.md)
-- [자기개선 과제](SELF-IMPROVEMENT-TASKS-2026-11-05.md)
-- [자기개선 설계](SELF-IMPROVEMENT-DESIGN-2026-11-05.md)
+- [GitHub·Google 계정 연결](CONNECTED-ACCOUNTS-2026-11-17.md)
+- [선택형 Cloudflare 스테이징 게이트웨이](SUB3-CLOUD-GATEWAY-2026-11-19.md)
+- [통합 실행 점검](SUB3-INTEGRATION-2026-11-19.md)
 
-## 역사 기록
-
-- H0~H10 진행·상태 문서 (`H*`)
-- [핸드오프 2026-11-05](HANDOFF-2026-11-05.md)
-- [DeepSeek 핸드오프 2026-11-05](DOMINION-DEEPSEEK-HANDOFF-2026-11-05.md)
-- [디자인 2.4 구현](DESIGN-2.4-IMPLEMENTATION-2026-11-06.md)
-
-## 연구 기록
-
-- [research/](research/) — 날짜별 연구·실험 원본 기록
-- [rsi/evaluations/](../rsi/evaluations/README.md) — 평가 계획
+옛날 측정 파일 \`benchmark/\`는 역사적 근거로 유지합니다. 그 수치를 현재 브랜치에서 측정한 결과로 취급하지 않습니다. 실행 가능한 폐기 기능이나 과거 자동 실험 가이드는 더 이상 제품 문서에 포함하지 않습니다.

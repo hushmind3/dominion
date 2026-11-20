@@ -141,7 +141,7 @@ npm run build --prefix web
 node scripts/check-lean-product.mjs
 ```
 
-**최신 검증 코드:** `affd870`(2026-11-19). [Rust 제품·프론트·TypeScript SDK CI](https://github.com/hushmind3/dominion-rust/actions/runs/44499894159)가 통과했습니다. [Rust SDK 전용 CI](https://github.com/hushmind3/dominion-rust/actions/runs/44499399570)는 `536447c` 기준 통과했으며, 이후 클라우드 Worker·스테이징 설정은 네이티브 Rust SDK 소스를 바꾸지 않습니다. 9명 방 호출·도구 실행, 최소 토큰 설정의 필수 맥락 보존, 공개 모델 목록, OAuth, Rust SDK 클라이언트 테스트와 퇴역 기능의 재유입 방지 소스 검사를 포함합니다. GitHub Actions는 Node 24 지원 버전으로 갱신했습니다. `.github/workflows/ci.yml` 전체 릴리즈 게이트·실제 27B 모델 및 유료 제공자 검증은 실행하지 않았습니다. [최신 통합 점검 기록](docs/SUB3-INTEGRATION-2026-11-19.md)을 참고하십시오.
+**최신 문서 정리 이전 검증 코드:** `4e9f5bdf`(2026-11-20). [제품 Rust·프론트·TypeScript SDK CI](https://github.com/hushmind3/dominion-rust/actions/runs/44665179631) 및 [Rust SDK CI](https://github.com/hushmind3/dominion-rust/actions/runs/44665179763)가 통과했습니다. 폐기된 내장 영상·RSI, YouTube 업로드 인증, 구형 정책 자동 승격 및 중복 SDK를 제거하되 대화·사용자 파일·검증 기록은 보존합니다. 이후 커밋은 해당 GitHub Actions 결과를 따로 확인해야 합니다. 전체 릴리즈 게이트, 실제 27B 모델과 유료 제공자 과금 검증은 실행하지 않았습니다. [현재 문서 지도](docs/INDEX.md)를 참고하십시오.
 
 **미완성·미측정:** 채팅/자율 실행 루프 완전 통합, 실제 모델의 장기 작업 완수율, 최신 브랜치의 Windows/macOS 릴리즈 검증, 실과금 기준의 캐시 절감률과 상용 운영 검증.
 

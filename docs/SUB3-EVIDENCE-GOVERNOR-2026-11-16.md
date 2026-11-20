@@ -105,5 +105,5 @@ gate is a *tool-call* ceiling; upstream model token metering and wall-time
 budgets remain separate. Exhaustive cross-platform and paid-provider
 performance measurement still requires isolated repeatable runs.
 
-The base model is fixed throughout; the SDK, Rust engine, GUI, API and RSI
-keep their existing identities and no weight training is added.
+The base model is fixed throughout. The Rust SDK, execution engine, GUI and API
+retain their identities; independent RSI generation was retired, and no model weight training was added.
