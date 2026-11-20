@@ -23,11 +23,6 @@ pub fn store_kind(route_kind: &str) -> &str {
     match route_kind {
         "memories" => "memory",
         "skills" => "skill",
-        "rooms" => "room",
-        "channels" => "channel",
-        "jobs" => "job",
-        "executions" => "execution",
-        "goals" => "goal",
         other => other,
     }
 }
@@ -157,57 +152,4 @@ pub async fn remove(State(state): State<AppState>, OriginalUri(uri): OriginalUri
             .emit(json!({ "type": "record", "kind": kind, "removed": id }));
     }
     Json(json!({ "ok": true }))
-}
-
-/// `POST /api/{kind}/{id}/{action}` for room execution and channel
-/// diagnostics. Unknown actions return a clear JSON error instead of HTML.
-pub async fn action(
-    State(state): State<AppState>,
-    OriginalUri(uri): OriginalUri,
-    Json(body): Json<Value>,
-) -> Response {
-    let kind = kind_from_uri(&uri);
-    let id = id_from_uri(&uri).unwrap_or_default();
-    let action = uri
-        .path()
-        .trim_start_matches('/')
-        .split('/')
-        .nth(3)
-        .unwrap_or_default()
-        .to_string();
-
-    match (kind.as_str(), action.as_str()) {
-        ("room", "run") => enqueue_job(
-            &state,
-            "room",
-            json!({
-                "roomId": id,
-                "goal": body.get("goal").or_else(|| body.get("input")).cloned().unwrap_or(json!("")),
-            }),
-        ),
-        ("skill", "export") => match state.store.get("skill", &id) {
-            Some(skill) => Json(skill).into_response(),
-            None => (
-                StatusCode::NOT_FOUND,
-                Json(json!({ "error": "스킬을 찾을 수 없습니다." })),
-            )
-                .into_response(),
-        },
-        _ => (
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": format!("지원하지 않는 작업입니다: {kind}/{action}") })),
-        )
-            .into_response(),
-    }
-}
-
-fn enqueue_job(state: &AppState, kind: &str, input: Value) -> Response {
-    match crate::engine::jobs::enqueue(state, kind, input) {
-        Some(job) => Json(job).into_response(),
-        None => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "작업을 만들 수 없습니다." })),
-        )
-            .into_response(),
-    }
 }
