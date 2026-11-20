@@ -12,7 +12,7 @@
 //! BENCH_RECALCULATE=1 BENCH_ROOT=/path/to/experiment target/release/dominion-benchmark
 //! ```
 #[allow(dead_code)]
-#[path = "../engine/plan_quality.rs"]
+#[path = "../engine/services/decision/plan_quality.rs"]
 mod plan_quality;
 
 use futures_util::StreamExt;
