@@ -113,9 +113,13 @@ pub(super) async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Valu
                 .ok_or("기존 외부 실행 기록이 없습니다.")?;
             if prior_run["status"]!="completed"
                 ||prior_run["jobId"]!=previous["id"]
+                ||prior_run["sessionId"]!=previous["input"]["sessionId"]
+                ||prior_run["agentId"]!=agent_id
+                ||prior_run["runtime"].as_str()!=external
+                ||prior_run["resumedByJobId"].is_string()
                 ||prior_run["externalSessionId"].as_str()
                     .is_none_or(|id|uuid::Uuid::parse_str(id).is_err()){
-                return Err("정상 완료된 외부 CLI 세션 ID가 없습니다.".into());
+                return Err("정상 완료된 같은 에이전트의 미사용 외부 CLI 세션만 재개할 수 있습니다.".into());
             }
             let old_session=previous["input"]["sessionId"].as_str()
                 .and_then(|id|ctx.store.get("session",id))
