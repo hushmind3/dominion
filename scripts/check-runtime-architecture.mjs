@@ -61,6 +61,18 @@ for(const file of ['src/engine/chat/runtime.rs','src/engine/chat/product.rs',
 const outcome=readFileSync(path.join(root,'src/engine/chat/outcome.rs'),'utf8')
 const driver=readFileSync(path.join(root,'crates/dominion-core/src/engine.rs'),'utf8')
 const modules=readFileSync(path.join(root,'src/engine/mod.rs'),'utf8')
+const addonIndex=readFileSync(path.join(root,'src/addons/mod.rs'),'utf8')
+const addonModules=[{"group":"knowledge","name":"agent_growth"},{"group":"knowledge","name":"distill"},{"group":"knowledge","name":"experience"},{"group":"knowledge","name":"learning"},{"group":"knowledge","name":"memory"},{"group":"knowledge","name":"principle"},{"group":"knowledge","name":"reflect"},{"group":"knowledge","name":"room_knowledge"},{"group":"knowledge","name":"skills"},{"group":"strategies","name":"adaptation"},{"group":"strategies","name":"adaptation_loop"},{"group":"strategies","name":"algorithm_eval"},{"group":"strategies","name":"algorithms"},{"group":"strategies","name":"debate"},{"group":"strategies","name":"decompose"},{"group":"strategies","name":"episode"},{"group":"strategies","name":"improve"},{"group":"strategies","name":"plan_quality"},{"group":"strategies","name":"policy_patch"},{"group":"strategies","name":"preflight_fixture"},{"group":"strategies","name":"procedure"},{"group":"integrations","name":"attachments"},{"group":"integrations","name":"bridge"},{"group":"integrations","name":"browser"},{"group":"integrations","name":"channel_adapter"},{"group":"integrations","name":"cli_model"},{"group":"integrations","name":"code_index"},{"group":"integrations","name":"codex_oauth"},{"group":"integrations","name":"dev"},{"group":"integrations","name":"discord"},{"group":"integrations","name":"extensions"},{"group":"integrations","name":"gateway"},{"group":"integrations","name":"mcp"},{"group":"integrations","name":"models"},{"group":"integrations","name":"oauth"},{"group":"integrations","name":"personas"},{"group":"integrations","name":"room_state"},{"group":"integrations","name":"rooms"},{"group":"integrations","name":"telegram"},{"group":"operations","name":"backup_keys"},{"group":"operations","name":"maintenance"},{"group":"operations","name":"remote_backup"},{"group":"operations","name":"vault_rotation"}]
+for(const {group,name} of addonModules){
+  const suffix=['adaptation','extensions'].includes(name)?name+'/mod.rs':name+'.rs'
+  if(!addonIndex.includes('pub mod '+name+';')||
+     !addonIndex.includes(group+'/'+suffix)||
+     !existsSync(path.join(root,'src/addons',group,suffix))||
+     modules.includes('pub mod '+name+';'))
+    throw Error('Optional implementation leaked into execution core: '+name)
+}
+if(!modules.includes('pub use crate::addons::{'))
+  throw Error('Product add-on compatibility exports missing')
 const quietTurn=modules.match(/pub async fn run_quiet\([\s\S]*?\n\}/)?.[0]
 if(!quietTurn||quietTurn.includes('run_quiet_with_stats(')||
    !quietTurn.includes('chat::run_turn_background(')||
@@ -77,7 +89,7 @@ const bootstrap=readFileSync(path.join(root,'src/bootstrap.rs'),'utf8')
 if(bootstrap.includes('refresh_free_catalog('))throw Error('Idle provider-model sweep reintroduced')
 // Check the transitive finalization and prompt-selection paths, not just
 // the file that calls them: an indirect full-history scan is still O(history).
-const improvementSource=readFileSync(path.join(root,'src/engine/improve.rs'),'utf8')
+const improvementSource=readFileSync(path.join(root,'src/addons/strategies/improve.rs'),'utf8')
 const finalizationUpdates=improvementSource.match(/pub fn execution_updates\([\s\S]*?\n\}/)?.[0]
 const activeSelection=improvementSource.match(/pub fn active_values_with_execution\([\s\S]*?\n\}/)?.[0]
 const recentBaseline=improvementSource.match(/fn baseline_success\([\s\S]*?\n\}/)?.[0]
@@ -117,7 +129,7 @@ if(!sdkApi.includes('state.store.sdk_evidence_for_session(session)')||
 if(!sdkApi.includes('state.store.sdk_evidence_rows()')||!store.includes('pub fn sdk_evidence_rows('))
   throw Error('SDK status polling must not scan full execution and tool history')
 // Old optimizer control loops must not creep back in behind the real journal.
-const algorithms=readFileSync(path.join(root,'src/engine/algorithms.rs'),'utf8')
+const algorithms=readFileSync(path.join(root,'src/addons/strategies/algorithms.rs'),'utf8')
 const policySource=readFileSync(path.join(root,'src/engine/policy.rs'),'utf8')
 const approvalSource=readFileSync(path.join(root,'src/engine/chat/approval.rs'),'utf8')
 const startup=readFileSync(path.join(root,'src/migrations.rs'),'utf8')
@@ -136,7 +148,7 @@ if(!store.includes('pub fn legacy_improvements_to_migrate(')||
    !startup.includes('store.legacy_improvements_to_migrate()'))
   throw Error('Legacy improvement migration must not rewrite all records at every startup')
 if(!store.includes('pub fn algorithm_usages_for_execution(')||
-   !readFileSync(path.join(root,'src/engine/algorithms.rs'),'utf8')
+   !readFileSync(path.join(root,'src/addons/strategies/algorithms.rs'),'utf8')
      .includes('state.store.algorithm_usages_for_execution(execution_id)'))
   throw Error('Algorithm finalization must use indexed run-level usage records')
 
@@ -197,15 +209,15 @@ if(!toolSource.includes('pub(crate) use delegation::{profile_tool_allowed, profi
 
 // Backend extension boundary: provider discovery, optional knowledge and
 // channel drivers must not regain direct dependencies from the Rust chat loop.
-const extensionHost=readFileSync(path.join(root,'src/engine/extensions/mod.rs'),'utf8')
-const extensionTools=readFileSync(path.join(root,'src/engine/extensions/tools.rs'),'utf8')
-const extensionKnowledge=readFileSync(path.join(root,'src/engine/extensions/knowledge.rs'),'utf8')
-const extensionChannels=readFileSync(path.join(root,'src/engine/extensions/channels.rs'),'utf8')
-const extensionJobs=readFileSync(path.join(root,'src/engine/extensions/jobs.rs'),'utf8')
+const extensionHost=readFileSync(path.join(root,'src/addons/integrations/extensions/mod.rs'),'utf8')
+const extensionTools=readFileSync(path.join(root,'src/addons/integrations/extensions/tools.rs'),'utf8')
+const extensionKnowledge=readFileSync(path.join(root,'src/addons/integrations/extensions/knowledge.rs'),'utf8')
+const extensionChannels=readFileSync(path.join(root,'src/addons/integrations/extensions/channels.rs'),'utf8')
+const extensionJobs=readFileSync(path.join(root,'src/addons/integrations/extensions/jobs.rs'),'utf8')
 const privateContext=readFileSync(path.join(root,'src/engine/chat/context.rs'),'utf8')
 const roomContext=readFileSync(path.join(root,'src/engine/chat/room_context.rs'),'utf8')
 const apiRoutes=readFileSync(path.join(root,'src/api/mod.rs'),'utf8')
-if(!modules.includes('pub mod extensions;')||
+if(!addonIndex.includes('pub mod extensions;')||
    !extensionHost.includes('pub enum Extension')||
    !extensionHost.includes('pub fn enabled(')||
    !extensionHost.includes('pub fn tool_allowed(')||

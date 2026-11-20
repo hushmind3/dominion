@@ -53,14 +53,14 @@ jobs:
           cargo test --locked --bin dominion-rust stop_before_native_turn_starts_does_not_clear_newer_cancellation
           cargo test --locked --bin dominion-rust user_stop_preempts_silent_model_stream_and_next_turn_succeeds
       - name: Streamable HTTP MCP and concurrent capability discovery (dev profile)
-        run: cargo test --locked --bin dominion-rust engine::mcp::tests
+        run: cargo test --locked --bin dominion-rust addons::mcp::tests
       - name: Execution-scoped auxiliary model receipts and token coverage (dev profile)
         run: |
           cargo test --locked --bin dominion-rust engine::llm::
           cargo test --locked --bin dominion-rust db::tests::auxiliary_model_receipts_are_scoped_to_one_execution
       - name: Indexed improvement finalization and strategy selection (dev profile)
         run: |
-          cargo test --locked --bin dominion-rust engine::improve::tests
+          cargo test --locked --bin dominion-rust addons::improve::tests
           cargo test --locked --bin dominion-rust db::tests::active_improvement_lookup_uses_partial_index_in_query_plan
       - name: Indexed child evidence and role-scoped delegation (dev profile)
         run: |
@@ -75,7 +75,7 @@ jobs:
       - name: Discovered tool uses the existing native gateway (dev profile)
         run: cargo test --locked --bin dominion-rust discovered_read_uses_the_existing_real_tool_gateway
       - name: Causal diagnosis regressions (dev profile)
-        run: cargo test --locked --bin dominion-rust engine::adaptation::diagnostics::tests
+        run: cargo test --locked --bin dominion-rust addons::adaptation::diagnostics::tests
       - name: Acceptance progress regressions (dev profile)
         run: cargo test --locked --bin dominion-rust engine::recovery::tests::acceptance_feedback
       - name: Causal diagnostic native tool receipt (dev profile)
@@ -85,15 +85,15 @@ jobs:
       - name: 2026 obligation-to-receipt lineage and local repair (dev profile)
         run: cargo test --locked --bin dominion-rust engine::obligation_repair::tests
       - name: 2026 composite repair acceptance gate (dev profile)
-        run: cargo test --locked --bin dominion-rust engine::adaptation::acceptance_gate::tests
+        run: cargo test --locked --bin dominion-rust addons::adaptation::acceptance_gate::tests
       - name: Pareto repair selection and schema regression (dev profile)
-        run: cargo test --locked --bin dominion-rust engine::adaptation_loop::selection_tests
+        run: cargo test --locked --bin dominion-rust addons::adaptation_loop::selection_tests
       - name: Frozen acceptance obligation graph (dev profile)
-        run: cargo test --locked --bin dominion-rust engine::decompose::tests
+        run: cargo test --locked --bin dominion-rust addons::decompose::tests
       - name: Source-evidence memory reranking (dev profile)
         run: cargo test --locked --bin dominion-rust lineage_rerank_prefers_real_tool_receipts
       - name: Algorithm activation and retired-kernel regressions (dev profile)
-        run: cargo test --locked --bin dominion-rust engine::algorithms::tests
+        run: cargo test --locked --bin dominion-rust addons::algorithms::tests
       - name: Policy experiment acceptance regressions (dev profile)
         run: cargo test --locked --bin dominion-rust engine::policy::tests
       - name: Indexed approval reuse and cancellation (dev profile)
@@ -141,7 +141,7 @@ jobs:
           cargo test --locked --bin dominion-rust db::tests::session_running_probe_avoids_global_history_and_uses_session_index
       - name: Optional backend extension boundaries (dev profile)
         run: |
-          cargo test --locked --bin dominion-rust engine::extensions::tests
+          cargo test --locked --bin dominion-rust addons::extensions::tests
           cargo test --locked --test e2e room_identity::backend_extensions_are_isolated_from_the_core_conversation -- --nocapture
       - name: Explicit public web search requires verified tool evidence (dev profile)
         run: |

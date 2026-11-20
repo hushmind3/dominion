@@ -1,64 +1,27 @@
 pub mod goal_control;
-pub mod adaptation_loop;
-pub mod distill;
 pub mod effect;
-pub mod agent_growth;
-pub mod algorithms;
-pub mod algorithm_eval;
-pub mod attachments;
-pub mod backup_keys;
-pub mod bridge;
 pub mod chat;
 pub mod capability;
-pub mod browser;
 pub mod compact;
-pub mod channel_adapter;
-pub mod decompose;
-pub mod debate;
-pub mod dev;
-pub mod discord;
-pub mod adaptation;
-pub mod episode;
-pub mod experience;
-pub mod extensions;
-pub mod procedure;
 pub mod program;
 pub mod verification;
-pub mod reflect;
-pub mod gateway;
-pub mod cli_model;
-pub mod improve;
-pub mod code_index;
 pub mod recovery;
 pub mod obligation_repair;
 pub mod reasoning;
-pub mod remote_backup;
 pub mod jobs;
-pub mod learning;
 pub mod lease;
 pub mod llm;
-pub mod mcp;
-pub mod maintenance;
-pub mod memory;
-pub mod models;
-pub mod codex_oauth;
-pub mod oauth;
-pub mod personas;
-pub mod plan_quality;
 pub mod policy;
-pub mod policy_patch;
-pub mod preflight_fixture;
-pub mod principle;
 pub mod router;
-pub mod rooms;
-pub mod room_knowledge;
-pub mod room_state;
 pub mod run_state;
-pub mod skills;
-pub mod telegram;
 pub mod tools;
-pub mod vault_rotation;
 pub mod wake;
+
+// Backwards-compatible product API: implementation moved to src/addons/.
+// Execution correctness remains in the standalone dominion-core crate.
+pub use crate::addons::{
+    agent_growth, distill, experience, learning, memory, principle, reflect, room_knowledge, skills, adaptation, adaptation_loop, algorithm_eval, algorithms, debate, decompose, episode, improve, plan_quality, policy_patch, preflight_fixture, procedure, attachments, bridge, browser, channel_adapter, cli_model, code_index, codex_oauth, dev, discord, extensions, gateway, mcp, models, oauth, personas, room_state, rooms, telegram, backup_keys, maintenance, remote_backup, vault_rotation
+};
 
 use crate::state::AppState;
 use serde_json::Value;

@@ -1,3 +1,4 @@
+mod addons;
 mod api;
 mod bootstrap;
 mod build_identity;

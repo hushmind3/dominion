@@ -5,7 +5,7 @@
 `crates/dominion-core/` owns the native run loop, journal, cancellation,
 budget and tool sequencing. It has no MCP, messenger, memory or skills client.
 
-`src/engine/extensions/` is the **application host boundary** for four
+`src/addons/integrations/extensions/` is the **application host boundary** for four
 optional add-on families. These are runtime capabilities, not additional chat
 executors or another engine:
 
@@ -100,3 +100,29 @@ compile-time or process-isolation guarantee.
 
 Reference: [MCP client best practices (2026-07-28)](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/docs/2026-07-28/develop/clients/client-best-practices.mdx)
 emphasize progressive discovery and lazy server activation.
+
+
+## Source ownership split (2026-11-20)
+
+Native execution remains in `crates/dominion-core` and the product's
+`src/engine` entrypoints (natural-language input, model calls, tool dispatch,
+approval/effect receipts, cancellation, recovery and verification).
+
+All 43 optional top-level modules were moved **without reimplementing
+their behavior** to `src/addons/` and grouped by concern:
+
+- `knowledge/`: long-term memory, skill records, learning and reflection.
+- `strategies/`: algorithm candidates, improvement and adaptation experiments.
+- `integrations/`: MCP, channels, remote/model adapters, rooms and browser.
+- `operations/`: backups, rotation and maintenance.
+
+`src/engine/mod.rs` re-exports these modules to preserve existing Rust
+callers temporarily; those re-exports are compatibility wiring, not code
+ownership. `src/addons/mod.rs` is the single optional-implementation inventory,
+enforced by the runtime architecture check. No frontend navigation, persisted
+record type, wire contract, or database schema was changed in this move.
+
+These modules are **still compiled into the application executable** and some
+legacy product entrypoints still call add-ons through re-exported paths. This
+is source ownership separation; Cargo feature/process isolation and eliminating
+all old imports are separate milestones, not claims made by this commit.
