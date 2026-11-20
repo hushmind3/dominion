@@ -1506,6 +1506,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn web_search_parsers_produce_real_source_urls_not_empty_success() {
+        let html=r#"<html><a class="result__a" href="https://example.org/source-one">Official docs</a>
+            <a class="result__a" href="https://example.org/source-one">Duplicate</a></html>"#;
+        let parsed=parse_ddg_search_results(html);
+        assert_eq!(parsed.len(),1);
+        assert_eq!(parsed[0]["title"],"Official docs");
+        assert_eq!(parsed[0]["url"],"https://example.org/source-one");
+        assert!(parse_ddg_search_results("<html>blocked</html>").is_empty());
+        let rss="<rss><item><title>Another official source</title><link>https://example.net/docs</link></item></rss>";
+        let parsed=parse_bing_rss_search_results(rss);
+        assert_eq!(parsed.len(),1);
+        assert_eq!(parsed[0]["url"],"https://example.net/docs");
+        assert!(parse_bing_rss_search_results("<rss></rss>").is_empty());
+    }
+
+    #[test]
     fn workspace_paths_cannot_escape() {
         let dir = std::env::temp_dir().join(format!("dominion-ws-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(dir.join("sub")).unwrap();
