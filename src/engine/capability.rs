@@ -39,11 +39,14 @@ fn schema_digest(definition:&Value)->String {
     format!("{:x}",Sha256::digest(definition["function"]["parameters"].to_string().as_bytes()))
 }
 
-fn enabled_in_session(state:&AppState,session_id:&str,name:&str)->bool {
+fn enabled_in_session(
+    state:&AppState,session_id:&str,agent_id:Option<&str>,name:&str,
+)->bool {
     if name.is_empty() || name==SEARCH || name==CALL {return false;}
     let session=state.store.get("session",session_id).unwrap_or(Value::Null);
     if !tools::profile_tool_visible(&session,name) {return false;}
-    if !extensions::tool_allowed(state,session_id,session["agentId"].as_str(),name) {
+    if !extensions::tool_allowed(state,session_id,
+        agent_id.or_else(||session["agentId"].as_str()),name) {
         return false;
     }
     if session["readOnly"]==true && !tools::observational(name) {return false;}
@@ -54,7 +57,7 @@ fn enabled_in_session(state:&AppState,session_id:&str,name:&str)->bool {
     true
 }
 
-async fn catalog(state:&AppState,session_id:&str)->Vec<Value> {
+async fn catalog(state:&AppState,session_id:&str,agent_id:Option<&str>)->Vec<Value> {
     let Some(session)=state.store.get("session",session_id) else {return Vec::new()};
     if session["toolsEnabled"]==false {return Vec::new();}
     if let Some(room_id)=session["roomId"].as_str(){
@@ -62,11 +65,11 @@ async fn catalog(state:&AppState,session_id:&str)->Vec<Value> {
             .is_some_and(|room|room["toolsEnabled"]==false){return Vec::new();}
     }
     let all=extensions::tools::catalog(
-        state,session_id,session["agentId"].as_str()).await;
+        state,session_id,agent_id.or_else(||session["agentId"].as_str())).await;
     let mut unique=HashSet::new();
     all.into_iter().filter(|definition|{
         let name=tool_name(definition);
-        enabled_in_session(state,session_id,name) && unique.insert(name.to_string())
+        enabled_in_session(state,session_id,agent_id,name) && unique.insert(name.to_string())
     }).collect()
 }
 
@@ -172,6 +175,15 @@ fn ranked<'a>(catalog:&'a [Value],query:&str)->Vec<(f64,&'a Value)> {
 }
 
 pub async fn search(state:&AppState,session_id:&str,args:&Value)->Result<Value,String> {
+    search_for_agent(state,session_id,None,args).await
+}
+
+/// Search only capabilities admitted to the actual turn participant. Shared
+/// room sessions have no single session.agentId, so the caller must propagate
+/// its agent identity instead of silently falling back to room-wide grants.
+pub async fn search_for_agent(
+    state:&AppState,session_id:&str,agent_id:Option<&str>,args:&Value,
+)->Result<Value,String> {
     let query=args["query"].as_str().map(str::trim)
         .filter(|query|!query.is_empty()&&query.chars().count()<=256)
         .ok_or("도구 검색어는 1~256자여야 합니다.")?;
@@ -180,7 +192,7 @@ pub async fn search(state:&AppState,session_id:&str,args:&Value)->Result<Value,S
         Some(value)=>value.as_u64().filter(|n|(1..=8).contains(n))
             .ok_or("검색 결과 제한은 1~8이어야 합니다.")? as usize,
     };
-    let all=catalog(state,session_id).await;
+    let all=catalog(state,session_id,agent_id).await;
     let matches=ranked(&all,query).into_iter().take(limit).map(|(_,tool)|json!({
         "name":tool_name(tool),
         "description":tool.pointer("/function/description").and_then(Value::as_str)
@@ -202,6 +214,16 @@ pub async fn search(state:&AppState,session_id:&str,args:&Value)->Result<Value,S
 pub async fn resolve(
     state:&AppState,session_id:&str,execution_id:&str,args:&Value,
 )->Result<(String,Value),String>{
+    resolve_for_agent(state,session_id,None,execution_id,args).await
+}
+
+/// A tool search receipt is scoped to its originating agent as well as the
+/// execution and schema. One room participant cannot borrow another agent's
+/// discovery receipt or reveal tools denied by that agent's policy.
+pub async fn resolve_for_agent(
+    state:&AppState,session_id:&str,agent_id:Option<&str>,
+    execution_id:&str,args:&Value,
+)->Result<(String,Value),String>{
     let name=args["name"].as_str().filter(|name|!name.is_empty()&&name.len()<=128)
         .ok_or("검색한 도구의 정확한 이름이 필요합니다.")?;
     let arguments=args["arguments"].as_object()
@@ -211,7 +233,9 @@ pub async fn resolve(
     if execution["sessionId"].as_str()!=Some(session_id) || execution["status"]!="running" {
         return Err("진행 중인 동일 세션 실행에서만 검색한 도구를 호출할 수 있습니다.".into());
     }
-    let all=catalog(state,session_id).await;
+    let session=state.store.get("session",session_id).unwrap_or(Value::Null);
+    let effective_agent_id=agent_id.or_else(||session["agentId"].as_str());
+    let all=catalog(state,session_id,agent_id).await;
     let definition=all.iter().find(|definition|tool_name(definition)==name)
         .ok_or("도구가 더 이상 연결돼 있지 않거나 현재 세션에서 허용되지 않습니다.")?;
     let current_schema=schema_digest(definition);
@@ -221,6 +245,7 @@ pub async fn resolve(
         operation["status"]=="completed" && operation["tool"]==SEARCH
             && operation["origin"]=="model"
             && operation["sessionId"].as_str()==Some(session_id)
+            && operation["agentId"].as_str()==effective_agent_id
             && operation["result"]["matches"].as_array().is_some_and(|matches|
                 matches.iter().any(|item|
                     item["name"].as_str()==Some(name)
@@ -230,7 +255,6 @@ pub async fn resolve(
         return Err("이 도구의 현재 스키마로 다시 검색해야 합니다.".into());
     }
     let arguments=Value::Object(arguments.clone());
-    let session=state.store.get("session",session_id).unwrap_or(Value::Null);
     if !tools::profile_tool_allowed(&session,name,&arguments) {
         return Err("검색된 도구라도 현재 위임 역할에 허용되지 않는 명령입니다.".into());
     }
@@ -379,6 +403,39 @@ mod tests {
         run["status"]=json!("completed");
         state.store.put("execution",&run).unwrap();
         assert!(resolve(&state,"owner","run",&payload).await.is_err());
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn shared_room_discovery_and_receipts_preserve_agent_permissions(){
+        let (state,dir)=state();
+        state.store.put("agent",&json!({"id":"restricted","extensions":{
+            "memory":false,"skills":false
+        }})).unwrap();
+        state.store.put("agent",&json!({"id":"permitted"})).unwrap();
+        state.store.put("room",&json!({"id":"shared-room"})).unwrap();
+        state.store.put("session",&json!({"id":"shared","roomId":"shared-room"})).unwrap();
+        state.store.put("execution",&json!({"id":"shared-run",
+            "sessionId":"shared","status":"running"})).unwrap();
+        let query=json!({"query":"memory_search","limit":8});
+        let restricted=search_for_agent(&state,"shared",Some("restricted"),&query)
+            .await.unwrap();
+        assert!(restricted["matches"].as_array().unwrap().iter()
+            .all(|item|item["name"]!="memory_search"));
+        let permitted=search_for_agent(&state,"shared",Some("permitted"),&query)
+            .await.unwrap();
+        assert!(permitted["matches"].as_array().unwrap().iter()
+            .any(|item|item["name"]=="memory_search"));
+        state.store.put("execution_operation",&json!({
+            "id":"permitted-search","runId":"shared-run","sessionId":"shared",
+            "agentId":"permitted","origin":"model","status":"completed",
+            "tool":SEARCH,"result":permitted
+        })).unwrap();
+        let call=json!({"name":"memory_search","arguments":{"query":"notes"}});
+        assert!(resolve_for_agent(&state,"shared",Some("restricted"),
+            "shared-run",&call).await.is_err());
+        assert!(resolve_for_agent(&state,"shared",Some("permitted"),
+            "shared-run",&call).await.is_ok());
         let _=std::fs::remove_dir_all(dir);
     }
 

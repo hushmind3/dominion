@@ -366,7 +366,8 @@ pub async fn execute(
         "task_integrate" => crate::engine::delegation_worktree::integrate(ctx,args).await,
         "task_status" => task_payload(ctx, args, false),
         "task_result" => task_payload(ctx, args, true),
-        "dominion_tool_search" => crate::engine::capability::search(ctx.state,ctx.session_id,args).await,
+        "dominion_tool_search" => crate::engine::capability::search_for_agent(
+            ctx.state,ctx.session_id,ctx.agent_id,args).await,
         "dominion_tool_call" => Err("발견한 도구는 승인·효과 추적 게이트를 통해서만 호출할 수 있습니다.".into()),
         "account_status" => Ok(json!({
             "providers": crate::engine::oauth::status(ctx.state),

@@ -318,8 +318,9 @@ pub(super) async fn dispatch_tool_call(
     // An invalid discovery call becomes an ordinary tool failure, not a bypass
     // or a fatal turn error.
     let bridge = if call.name == crate::engine::capability::CALL {
-        Some(crate::engine::capability::resolve(
-            state, session_id, execution_id, &arguments,
+        Some(crate::engine::capability::resolve_for_agent(
+            state, session_id, request.agent_id.as_deref(),
+            execution_id, &arguments,
         ).await)
     } else {
         None
@@ -439,7 +440,9 @@ pub(super) async fn dispatch_tool_call(
             &json!({
                 "id": operation_id, "runId": execution_id, "sessionId": session_id,
                 "callId": call.id, "tool": call.name, "arguments": arguments,
-                "opSeq": op_seq, "origin": origin, "procedureNodeId": procedure_node,
+                "opSeq": op_seq, "origin": origin,
+                "agentId": request.agent_id.as_deref().or_else(||session["agentId"].as_str()),
+                "procedureNodeId": procedure_node,
                 "procedureStrategyId": procedure_strategy,
                 "procedureRevision": procedure_revision,
                 "effectId": effect["effectId"],
@@ -603,6 +606,7 @@ pub(super) async fn dispatch_tool_call(
                 "fileObservation": file_observation,
                 "opSeq": op_seq,
                 "origin": origin,
+                "agentId": request.agent_id.as_deref().or_else(||session["agentId"].as_str()),
                 "procedureNodeId": procedure_node,
                 "procedureStrategyId": procedure_strategy,
                 "procedureRevision": procedure_revision,
