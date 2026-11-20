@@ -3,35 +3,62 @@ mod addons;
 mod surfaces;
 #[cfg(test)]
 mod tests;
+#[path = "services/conversation/translation.rs"]
 pub mod translation;
+#[path = "services/management/settings.rs"]
 pub mod settings;
+#[path = "services/evaluation/improvements.rs"]
 pub mod improvements;
+#[path = "services/automation/executions.rs"]
 pub mod executions;
+#[path = "services/automation/tasks.rs"]
 pub mod tasks;
+#[path = "services/evaluation/experience.rs"]
 pub mod experience;
+#[path = "services/conversation/memory.rs"]
 pub mod memory;
+#[path = "addons/browser.rs"]
 pub mod browser;
+#[path = "addons/extensions.rs"]
 pub mod extensions;
 pub mod approvals;
+#[path = "services/conversation/sessions.rs"]
 pub mod sessions;
+#[path = "services/conversation/agents.rs"]
 pub mod agents;
+#[path = "services/providers/providers.rs"]
 pub mod providers;
+#[path = "services/providers/cli_oauth.rs"]
 pub mod cli_oauth;
+#[path = "services/evaluation/benchmark.rs"]
 pub mod benchmark;
+#[path = "services/evaluation/experiments.rs"]
 pub mod experiments;
 pub mod chat;
+#[path = "services/automation/jobs.rs"]
 pub mod jobs;
 pub mod sdk_bridge;
+#[path = "services/management/system.rs"]
 pub mod system;
+#[path = "services/conversation/attachments.rs"]
 pub mod attachments;
+#[path = "addons/channels.rs"]
 pub mod channels;
+#[path = "services/management/collections.rs"]
 pub mod collections;
+#[path = "addons/compat.rs"]
 pub mod compat;
+#[path = "services/management/dev.rs"]
 pub mod dev;
+#[path = "addons/gateways.rs"]
 pub mod gateways;
+#[path = "services/providers/models.rs"]
 pub mod models;
+#[path = "addons/oauth.rs"]
 pub mod oauth;
+#[path = "services/conversation/personas.rs"]
 pub mod personas;
+#[path = "services/conversation/rooms.rs"]
 pub mod rooms;
 
 use crate::state::AppState;
