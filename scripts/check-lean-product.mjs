@@ -39,7 +39,7 @@ for(const file of tracked){
   'Retired domain reference reintroduced: '+file);
 }
 for(const p of absent)assert.ok(!exists(p),'Retired or duplicate product path still exists: '+p);
-// Legacy feature handoffs must not revive removed media, money or RSI as active
+// Legacy feature handoffs must not revive removed built-in domains as active
 // setup procedures. Retain unrelated benchmark measurements as dated evidence.
 for(const p of ["docs/DOMINION-DEEPSEEK-HANDOFF-2026-11-05.md","docs/DOMINION-HARNESS-MASTER-DESIGN.md","docs/H7-SMOKE-RESULT-2026-11-05.md","docs/H8-CANARY-2026-11-05.md","docs/H8-CLOSED-LOOP-2026-11-05.md","docs/H9-POLICY-SLOTS-2026-11-05.md","docs/HANDOFF-2026-11-05.md","docs/README-TECHNICAL-SNAPSHOT-2026-11-14.md","docs/S0-S4-CONTRACT-AUDIT-2026-11-05.md","docs/SDK-ARCHITECTURE-2026-11-15.md","docs/SUB3-HANDOFF-2026-11-11.md","docs/SUB3-MAIN-FUNCTIONAL-PARITY-2026-11-15.md","docs/SUB3-MAIN-PARITY-2026-11-15.md"]) {
  assert.ok(!exists(p),'Outdated retired-feature handoff returned: '+p);
@@ -69,6 +69,18 @@ for(const stale of ['rsiRun','rsiLocalOnly','rsiApprovedProviderId',
 for(const p of fs.readdirSync('src/engine').filter(p=>/^rsi.*\.rs$/.test(p))){
  assert.fail('Live Rust RSI engine module survived retirement: '+p);
 }
+// The removed producer must not appear as a Google OAuth scope, job kind or
+// built-in UI error catalog. Generic model multimodal formats remain supported.
+for(const p of ['web/src/i18n/en.ts','web/src/i18n/ko.ts']){
+ const words=read(p);
+ assert.ok(!words.includes("'jobk.video'"),'Retired media job label returned: '+p);
+ assert.ok(!/conn\.dlg\.googleTitle[^\n]*YouTube/i.test(words),
+  'Removed Google upload/read authorization returned: '+p);
+}
+assert.ok(!read('web/src/i18n/index.ts').includes("'resume','video'"),
+ 'Retired media job-kind catalog returned');
+assert.ok(!read('web/src/i18n/errors.ts').includes('Create video job'),
+ 'Retired media errors returned');
 const app=read('web/src/App.tsx'),nav=read('web/src/components/WorkspaceShell.tsx');
 for(const p of ['ChatPage','MemoryPage','ConnectionsPage','RoomsPage','HomePage'])
  assert.ok(app.includes(p),'Retained feature disconnected from app: '+p);
