@@ -4,6 +4,11 @@ pub use dominion_core::runtime_port::{Context,Flow,Host,ModelDecision,model_call
 use dominion_core::domain::RunStatus;
 #[cfg(test)]
 use serde_json::{json,Value};
+#[cfg(test)]
+use dominion_core::{
+    budget::BudgetLedger,
+    hosted::{BoxFuture,Journal,Snapshot},
+};
 
 pub struct Engine;
 impl Engine {
