@@ -175,3 +175,13 @@ and optional adaptation retries. With `memory=false`, it additionally skips
 long-term recall, turn-learning and agent-growth updates. Neither flag deletes
 stored records or disables a native execution capability. This is a runtime
 opt-out, not a dynamic-library unloader or a Cargo compilation feature.
+
+## Connector tool source extraction (2026-11-20)
+
+The native `src/engine/tools.rs` retains file/shell and capability admission,
+while `src/addons/integrations/native_tools.rs` dispatches optional browser,
+network, accounts, knowledge and delegation calls. Remote HTTP/GitHub code is
+owned by `native_web.rs` and `native_github.rs`; prior GitHub and delegation
+modules moved to integrations. Tool effects still pass through native approval,
+role admission and receipt tracking. The new `connectors=false` policy option
+hides and denies built-in web/browser/GitHub tools independently of external MCP.

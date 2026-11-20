@@ -105,6 +105,16 @@ mod tests {
         state.store.put("execution",&json!({"id":"run","sessionId":"native",
             "status":"running"})).unwrap();
         assert!(!strategies_enabled(&state,"native",None));
+        state.store.put("session",&json!({"id":"native",
+            "extensions":{"strategies":false,"memory":false,"skills":false,
+                "mcp":false,"connectors":false}
+        })).unwrap();
+        let native_catalog=extensions::tools::native(&state,"native",None);
+        assert!(native_catalog.iter().any(|d|d["function"]["name"]=="workspace_read"));
+        assert!(native_catalog.iter().all(|d|
+            d["function"]["name"]!="web_search" &&
+            d["function"]["name"]!="github_api" &&
+            d["function"]["name"]!="browser_control"));
         assert_eq!(prepare_turn(&state,"native",None,"run"),(vec![],vec![]));
         assert!(choose_for_agent(&state,"execution.budget",None,Some("run")).is_none());
         assert!(choose_decomposition_for_agent(&state,None,Some("run"),"test").is_none());

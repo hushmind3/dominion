@@ -21,13 +21,14 @@ pub enum Extension {
     Skills,
     Channels,
     Strategies,
+    Connectors,
 }
 impl Extension {
-    pub const ALL: [Self;5]=[Self::Mcp,Self::Memory,Self::Skills,Self::Channels,Self::Strategies];
+    pub const ALL: [Self;6]=[Self::Mcp,Self::Memory,Self::Skills,Self::Channels,Self::Strategies,Self::Connectors];
     pub const fn key(self)->&'static str {
         match self {
             Self::Mcp=>"mcp", Self::Memory=>"memory",
-            Self::Skills=>"skills",Self::Channels=>"channels",Self::Strategies=>"strategies",
+            Self::Skills=>"skills",Self::Channels=>"channels",Self::Strategies=>"strategies",Self::Connectors=>"connectors",
         }
     }
     pub fn from_tool(name:&str)->Option<Self>{
@@ -35,6 +36,9 @@ impl Extension {
         match name {
             "memory_search"|"memory_store"=>Some(Self::Memory),
             "skill_view"|"skill_propose"=>Some(Self::Skills),
+            "web_search"|"http_fetch"|"browser_control"|"account_status"|
+            "github_api"|"github_repositories"|"github_file_read"|
+            "github_file_update"|"github_file_replace"=>Some(Self::Connectors),
             _=>None,
         }
     }

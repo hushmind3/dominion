@@ -213,6 +213,15 @@ if(!finalizationSource.includes('pub(super) fn acceptance_repair(')||
 // child results are bounded in SQLite, never fetched from the entire archive.
 const delegateSource=readFileSync(path.join(root,'src/engine/tools/delegation.rs'),'utf8')
 const toolSource=readFileSync(path.join(root,'src/engine/tools.rs'),'utf8')
+for(const addon of ['native_tools.rs','native_web.rs','native_github.rs',
+                    'tool_delegation.rs','tool_github_repositories.rs','tool_github_replace.rs']){
+  if(!existsSync(path.join(root,'src/addons/integrations',addon)))
+    throw Error('Optional native tool module missing: '+addon)
+}
+if(toolSource.includes('async fn github_api(')||
+   toolSource.includes('async fn web_search(')||
+   !toolSource.includes('other => native_tools::execute(ctx,other,args).await'))
+  throw Error('Remote connector implementation reintroduced into native tool executor')
 const capabilitySource=readFileSync(path.join(root,'src/engine/capability.rs'),'utf8')
 const dispatchSource=readFileSync(path.join(root,'src/engine/chat/runtime/tool_dispatch.rs'),'utf8')
 const delegatedResult=delegateSource.match(/pub\(super\) fn task_payload\([\s\S]*?\n\}/)?.[0]
