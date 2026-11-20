@@ -97,6 +97,30 @@ test('email sender failures revoke the login attempt and never return poll crede
  db.close()
 })
 
+test('native sender fails over to Resend once and never sends twice on success',async()=>{
+ const {db,env,begin}=fixture()
+ env.RESEND_API_KEY='test-key'
+ const originalFetch=globalThis.fetch
+ let resendCalls=0
+ globalThis.fetch=async(url,options)=>{
+  assert.equal(String(url),'https://api.resend.com/emails')
+  assert.equal(options.headers.authorization,'Bearer test-key')
+  resendCalls++
+  return new Response(JSON.stringify({id:'message-1'}),{status:201})
+ }
+ try{
+  env.EMAIL.send=async()=>{throw Error('Cloudflare temporarily unavailable')}
+  assert.equal((await begin('fallback@example.com')).status,200)
+  assert.equal(resendCalls,1)
+  let nativeSent=0
+  env.EMAIL.send=async()=>{nativeSent++}
+  assert.equal((await begin('primary@example.com')).status,200)
+  assert.equal(nativeSent,1)
+  assert.equal(resendCalls,1)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM email_login_attempts').get().n,2)
+ }finally{globalThis.fetch=originalFetch;db.close()}
+})
+
 test('email request throttle applies before dispatching a sixth email',async()=>{
  const {db,sent,begin}=fixture()
  for(let i=0;i<5;i++)assert.equal((await begin('demo@example.com')).status,200)
