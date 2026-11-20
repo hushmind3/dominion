@@ -2,7 +2,8 @@ mod api;
 mod build_identity;
 mod bootstrap;
 mod config;
-mod engine;
+// Source-level compatibility: product adapters are host services, not the kernel.
+pub(crate) use crate::host::execution as engine;
 mod host;
 mod conversation;
 mod events;
