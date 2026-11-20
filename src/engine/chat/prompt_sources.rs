@@ -124,7 +124,7 @@ pub(super) fn indexed_identity(
     (stable,relevant,items)
 }
 
-pub(super) fn original_source(state:&AppState,agent_id:Option<&str>,source:&str)->Result<String,String>{
+pub(crate) fn original_source(state:&AppState,agent_id:Option<&str>,source:&str)->Result<String,String>{
     match source{
         "owner"=>state.store.get("assistant_settings","global")
             .filter(|row|row["enabled"]!=false)
@@ -137,7 +137,7 @@ pub(super) fn original_source(state:&AppState,agent_id:Option<&str>,source:&str)
     }
 }
 
-pub(super) fn source_page(source:&str,text:&str,offset:usize,search:Option<&str>,expected:Option<&str>)->Result<Value,String>{
+pub(crate) fn source_page(source:&str,text:&str,offset:usize,search:Option<&str>,expected:Option<&str>)->Result<Value,String>{
     let digest=crate::engine::memory::stable_id(&[text]);
     if expected.is_some_and(|value|value!=digest){
         return Err("정책 원본이 변경됐습니다. 최신 원본 색인을 다시 확인하세요.".into());
