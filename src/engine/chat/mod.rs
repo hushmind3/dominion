@@ -3,6 +3,7 @@ mod approval;
 mod budget;
 mod codex_ws;
 mod context;
+mod context_engine;
 mod continuity;
 mod room_context;
 
